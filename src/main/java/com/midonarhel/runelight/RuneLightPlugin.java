@@ -240,6 +240,9 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 	private int uniCompositeExpandedChunks;
 	private int uniCompositeClientSkyColor;
 
+	private long frameCpuStart;
+	private volatile double cpuFrameMs;
+
 	private final DayCycle dayCycle = new DayCycle();
 	private final ShadowMap shadowMap = new ShadowMap();
 	// when the plugin started; the day cycle and sky animation count from here
@@ -1208,7 +1211,8 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 	private void preSceneDrawToplevel(Scene scene,
 		float cameraX, float cameraY, float cameraZ, float cameraPitch, float cameraYaw)
 	{
-		gpuTimer.mark(GpuTimer.FRAME_START);
+		gpuTimer.begin(GpuTimer.SCENE);
+		frameCpuStart = System.nanoTime();
 		captureFrameState(scene, cameraX, cameraY, cameraZ);
 		scene.setDrawDistance(getDrawDistance());
 
@@ -1426,12 +1430,13 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		sceneTargets.resolve();
 		if (frameShadows)
 		{
+			gpuTimer.begin(GpuTimer.SHADOW);
 			renderShadowMap();
 		}
+		gpuTimer.end();
 		VAO.recordShadowDraws = false;
 		glBindFramebuffer(GL_DRAW_FRAMEBUFFER, awtContext.getFramebuffer(false));
 		sceneFboValid = true;
-		gpuTimer.mark(GpuTimer.SCENE_END);
 	}
 
 	/**
@@ -1609,6 +1614,11 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		glUniform1i(uniCompositeExpandedChunks, client.getExpandedMapLoading());
 		glUniform3f(uniCompositeClientSkyColor,
 			(frameSkyColor >> 16 & 0xFF) / 255f, (frameSkyColor >> 8 & 0xFF) / 255f, (frameSkyColor & 0xFF) / 255f);
+	}
+
+	double getCpuFrameMs()
+	{
+		return cpuFrameMs;
 	}
 
 	double getHourOfDay()
@@ -2071,14 +2081,15 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 
 		if (sceneFboValid && sceneTargets.isInitialized())
 		{
+			gpuTimer.begin(GpuTimer.POST);
 			compositeScene();
 		}
-		gpuTimer.mark(GpuTimer.POST_END);
+		gpuTimer.begin(GpuTimer.PRESENT);
 
 		// Texture on UI
 		drawUi(overlayColor, canvasHeight, canvasWidth);
 
-		gpuTimer.mark(GpuTimer.FRAME_END);
+		gpuTimer.end();
 		try
 		{
 			awtContext.swapBuffers();
@@ -2110,6 +2121,13 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		}
 
 		gpuTimer.endFrame();
+		if (frameCpuStart != 0)
+		{
+			// CPU time from the start of the scene draw to the swap, including the client's own scene traversal
+			double ms = (System.nanoTime() - frameCpuStart) / 1e6;
+			cpuFrameMs = cpuFrameMs == 0 ? ms : cpuFrameMs * 0.9 + ms * 0.1;
+			frameCpuStart = 0;
+		}
 		drawManager.processDrawComplete(this::screenshot);
 
 		glBindFramebuffer(GL_FRAMEBUFFER, awtContext.getFramebuffer(false));

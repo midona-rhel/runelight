@@ -3,28 +3,30 @@ package com.midonarhel.runelight;
 import static org.lwjgl.opengl.GL33C.*;
 
 /**
- * Non-blocking GPU timestamps. Each frame gets a slot of timestamp queries; a slot is only read back
- * when it comes around again several frames later, and only if the driver says the result is ready,
- * so measuring never stalls the pipeline.
+ * Non-blocking GPU timing per frame stage. Each frame gets a slot of GL_TIME_ELAPSED queries, one per stage;
+ * a slot is only read back when it comes around again several frames later, and only if the driver says the
+ * result is ready, so measuring never stalls the pipeline.
+ *
+ * Uses elapsed-time queries rather than timestamps: Apple's OpenGL driver returns 0 for GL_TIMESTAMP.
+ * Stages are sequential, never nested, as elapsed queries of one kind cannot overlap.
  */
 class GpuTimer
 {
-	static final int FRAME_START = 0;
-	static final int SCENE_END = 1;
-	static final int POST_END = 2;
-	static final int FRAME_END = 3;
-	private static final int MARKS = 4;
+	static final int SCENE = 0;
+	static final int SHADOW = 1;
+	static final int POST = 2;
+	static final int PRESENT = 3;
+	private static final int STAGES = 4;
 	private static final int SLOTS = 4;
 
-	private final int[][] queries = new int[SLOTS][MARKS];
-	private final boolean[][] issued = new boolean[SLOTS][MARKS];
+	private final int[][] queries = new int[SLOTS][STAGES];
+	private final boolean[][] ended = new boolean[SLOTS][STAGES];
 	private int slot;
+	private int active = -1;
 	private boolean initialized;
 
 	// exponential moving averages, milliseconds
-	private double sceneMs;
-	private double postMs;
-	private double presentMs;
+	private final double[] ms = new double[STAGES];
 
 	void init()
 	{
@@ -33,6 +35,7 @@ class GpuTimer
 			glGenQueries(queries[s]);
 		}
 		slot = 0;
+		active = -1;
 		initialized = true;
 	}
 
@@ -42,22 +45,38 @@ class GpuTimer
 		{
 			return;
 		}
+		end();
 		for (int s = 0; s < SLOTS; ++s)
 		{
 			glDeleteQueries(queries[s]);
-			java.util.Arrays.fill(issued[s], false);
+			java.util.Arrays.fill(ended[s], false);
 		}
 		initialized = false;
 	}
 
-	void mark(int which)
+	/**
+	 * Start timing a stage, ending the previous one if it is still running.
+	 */
+	void begin(int stage)
 	{
 		if (!initialized)
 		{
 			return;
 		}
-		glQueryCounter(queries[slot][which], GL_TIMESTAMP);
-		issued[slot][which] = true;
+		end();
+		glBeginQuery(GL_TIME_ELAPSED, queries[slot][stage]);
+		active = stage;
+	}
+
+	void end()
+	{
+		if (active < 0)
+		{
+			return;
+		}
+		glEndQuery(GL_TIME_ELAPSED);
+		ended[slot][active] = true;
+		active = -1;
 	}
 
 	/**
@@ -69,44 +88,49 @@ class GpuTimer
 		{
 			return;
 		}
+		end();
 		slot = (slot + 1) % SLOTS;
-		boolean[] is = issued[slot];
-		int[] q = queries[slot];
-		if (is[FRAME_START] && is[SCENE_END] && is[POST_END] && is[FRAME_END]
-			&& glGetQueryObjecti(q[FRAME_END], GL_QUERY_RESULT_AVAILABLE) == GL_TRUE)
+		for (int stage = 0; stage < STAGES; ++stage)
 		{
-			long t0 = glGetQueryObjecti64(q[FRAME_START], GL_QUERY_RESULT);
-			long t1 = glGetQueryObjecti64(q[SCENE_END], GL_QUERY_RESULT);
-			long t2 = glGetQueryObjecti64(q[POST_END], GL_QUERY_RESULT);
-			long t3 = glGetQueryObjecti64(q[FRAME_END], GL_QUERY_RESULT);
-			sceneMs = smooth(sceneMs, (t1 - t0) / 1e6);
-			postMs = smooth(postMs, (t2 - t1) / 1e6);
-			presentMs = smooth(presentMs, (t3 - t2) / 1e6);
+			if (!ended[slot][stage])
+			{
+				continue;
+			}
+			int q = queries[slot][stage];
+			if (glGetQueryObjecti(q, GL_QUERY_RESULT_AVAILABLE) == GL_TRUE)
+			{
+				ms[stage] = smooth(ms[stage], glGetQueryObjecti64(q, GL_QUERY_RESULT) / 1e6);
+			}
+			ended[slot][stage] = false;
 		}
-		java.util.Arrays.fill(is, false);
 	}
 
 	private static double smooth(double avg, double v)
 	{
 		if (v < 0 || v > 1000)
 		{
-			return avg; // wrapped or bogus timestamp
+			return avg;
 		}
 		return avg == 0 ? v : avg * 0.9 + v * 0.1;
 	}
 
 	double getSceneMs()
 	{
-		return sceneMs;
+		return ms[SCENE];
+	}
+
+	double getShadowMs()
+	{
+		return ms[SHADOW];
 	}
 
 	double getPostMs()
 	{
-		return postMs;
+		return ms[POST];
 	}
 
 	double getPresentMs()
 	{
-		return presentMs;
+		return ms[PRESENT];
 	}
 }
