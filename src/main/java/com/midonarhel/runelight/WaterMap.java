@@ -454,8 +454,8 @@ final class WaterMap
 	}
 
 	// bed colors, packed HSL: sand under clear water, mud in swamps, dark stone in caves
-	private static final int SAND = 8 << 10 | 3 << 7 | 40;
-	private static final int PALE_SAND = 8 << 10 | 2 << 7 | 46;
+	private static final int SAND = 8 << 10 | 2 << 7 | 40;
+	private static final int PALE_SAND = 8 << 10 | 1 << 7 | 46;
 	private static final int MUD = 9 << 10 | 3 << 7 | 16;
 	private static final int STONE = 6 << 10 | 1 << 7 | 22;
 

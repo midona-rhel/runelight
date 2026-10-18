@@ -2,11 +2,12 @@
 //
 // The bed and anything else under the water are ordinary pixels of the scene buffers. For those, this finds where
 // the view ray crosses the water surface, then shades what is seen through it (refracted, absorbed on the way down
-// and back up, tinted by the water's depth) and puts the surface on top: the sky's reflection, roughly the world's,
-// sun and lamp glints. The surface normal is two octaves of wave noise moved along the flow map plus a slow swell.
-// Shading after 117 HD's water (BSD-2, see LICENSE): the bed darkens toward the water's depth color with depth,
-// there is no hard waterline, the waves are lit like a surface, and the sky reflection uses a flattened normal so
-// steep waves don't reflect the ground.
+// and back up, the water's own color filling in) and puts the surface on top: the sky's reflection, roughly the
+// world's, sharp sun, moon and lamp glints. The surface normal is two octaves of wave noise dragged along the flow map
+// in two phases, a capillary octave drifting with the wind and a slow swell; fast water gets foam streaks along the
+// current. The surface is glossy: it only roughens by the wave detail the mipmaps average away.
+// Shading after 117 HD's water (BSD-2, see LICENSE): there is no hard waterline, the waves are lit like a surface,
+// and the sky reflection uses a flattened normal so steep waves don't reflect the ground.
 // Included by composite_frag.glsl after its lighting helpers (shadows, point light clusters, ign).
 
 uniform int waterEnabled;
@@ -49,41 +50,56 @@ const vec3 WATER_DEEP[WATER_TYPES] = vec3[](
   vec3(0.007, 0.042, 0.062),
   vec3(0.010, 0.013, 0.004),
   vec3(0.002, 0.008, 0.009));
-// reflectivity, wave strength, flow speed, specular gloss
-// the bed's own color (sRGB, WaterMap.bedColor at the default brightness): sand, pale sand, mud, dark stone. The
-// bed's vertices carry the bank's colors (SceneUploader.uploadBed); this takes over with depth.
+// The bed's vertices carry the bank's colors (SceneUploader.uploadBed). Clear water keeps them: the shallows are a
+// film over the very sand or grass of the bank, so they can't come out a different color than the beach. Murky
+// water turns them into its own bed (sRGB: mud, dark stone) with depth, by WATER_BED_OWN.
 const vec3 WATER_BED[WATER_TYPES] = vec3[](
-  vec3(0.571, 0.521, 0.296),
-  vec3(0.571, 0.521, 0.296),
-  vec3(0.571, 0.521, 0.296),
-  vec3(0.571, 0.521, 0.296),
-  vec3(0.591, 0.550, 0.376),
+  vec3(0.0),
+  vec3(0.0),
+  vec3(0.0),
+  vec3(0.0),
+  vec3(0.0),
   vec3(0.301, 0.287, 0.156),
   vec3(0.329, 0.300, 0.252));
-// depths (world units) over which the bank's color turns into the bed's, and the bed darkens further down
+const float WATER_BED_OWN[WATER_TYPES] = float[](0.0, 0.0, 0.0, 0.0, 0.0, 0.7, 0.5);
+// depths (world units) over which murky water's own bed takes over, and the bed darkens further down
 #define BED_BLEND_NEAR 4.0
 #define BED_BLEND_FAR 56.0
 #define BED_DARKEN 0.3
 #define BED_DARKEN_DEPTH 400.0
+// Under water the bank's color goes wet: on top of WET_SAND, a little darker, cooler and less saturated over
+// BED_WET_DEPTH. Gentle: the water's absorption does the rest.
+#define BED_WET_TINT vec3(0.90, 0.95, 1.0)
+#define BED_DESATURATE 0.25
+#define BED_WET_DEPTH 48.0
+// reflectivity, wave strength, flow speed, specular gloss (Blinn-Phong exponent of a still surface)
 const vec4 WATER_SURFACE[WATER_TYPES] = vec4[](
   vec4(0.0),
-  vec4(1.00, 0.85, 1.00, 900.0),
-  vec4(1.00, 1.00, 1.00, 1100.0),
-  vec4(0.95, 1.00, 1.00, 800.0),
-  vec4(1.00, 0.85, 1.00, 1000.0),
-  vec4(0.55, 0.22, 0.35, 160.0),
-  vec4(0.65, 0.30, 0.45, 220.0));
+  vec4(1.00, 0.85, 1.00, 2400.0),
+  vec4(1.00, 1.00, 1.00, 2400.0),
+  vec4(0.95, 1.00, 1.00, 2000.0),
+  vec4(1.00, 0.85, 1.00, 2400.0),
+  vec4(0.55, 0.22, 0.35, 300.0),
+  vec4(0.65, 0.30, 0.45, 500.0));
 
-// world units per repeat of the two wave octaves and the swell; the second octave is turned so they never line up
-#define WAVE_SCALE_A 420.0
-#define WAVE_SCALE_B 170.0
+// world units per repeat of the two wave octaves, the capillary ripples and the swell; the smaller octaves are
+// turned so they never line up
+#define WAVE_SCALE_A 560.0
+#define WAVE_SCALE_B 190.0
+#define WAVE_SCALE_C 64.0
 #define SWELL_SCALE 1650.0
+// share of the slope from each octave
+#define WAVE_MIX_A 0.58
+#define WAVE_MIX_B 0.36
+#define WAVE_MIX_C 0.24
+// the capillary ripples run ahead of the wind's drift by this factor
+#define CAPILLARY_DRIFT 1.6
 // normal tilt per unit of noise slope: waves, and the swell on open water (scaled by wave energy)
-#define WAVE_STRENGTH 0.42
-#define SWELL_STRENGTH 0.14
+#define WAVE_STRENGTH 0.62
+#define SWELL_STRENGTH 0.2
 // what is seen through a wave face turned toward the camera is brighter, turned away darker: makes the waves read
 // even where nothing bright is reflected
-#define WAVE_SHADE 1.2
+#define WAVE_SHADE 1.4
 // seconds per flow map phase: waves are dragged at most this long before fading to a fresh copy
 #define FLOW_CYCLE 2.4
 // the furthest the waves are dragged in one phase, world units: fast rapids would otherwise stretch them into
@@ -96,21 +112,33 @@ const vec4 WATER_SURFACE[WATER_TYPES] = vec4[](
 // don't pulse in step. Kept gentle: a phase that changes quickly across the water drags neighbouring waves apart.
 #define FLOW_JITTER 0.5
 #define FLOW_JITTER_SCALE 6144.0
+// Current lines on faster water: the octave's finer height, smeared over STREAK_SMEAR seconds of the flow so the
+// lines lie along the current, as foam from STREAK_SPEED to STREAK_SPEED_FULL world units per second
+#define STREAK_SMEAR 2.4
+#define STREAK_SPEED 24.0
+#define STREAK_SPEED_FULL 90.0
+#define STREAK_FOAM 0.45
+#define STREAK_EDGE vec2(0.58, 0.74)
 // how far the bed seen through the water shifts per unit of normal tilt, world units, once the water is deep
-#define REFRACT 150.0
-#define REFRACT_DEPTH 90.0
+#define REFRACT 260.0
+#define REFRACT_DEPTH 70.0
 // Fresnel at normal incidence, for the glints; the reflection never drops below REFLECT_MIN, a little more than
 // physical so the sky shows on water seen from above; the sky reflection's normal keeps SKY_TILT of the tilt
 #define WATER_F0 0.02
-// the gloss drops as wave detail gets smaller than a pixel, so highlights don't sparkle from pixel to pixel
-#define GLOSS_AA 0.004
-#define REFLECT_MIN 0.09
-#define SKY_TILT 0.6
-// glints: sun and moon (tight highlight, broad sheen, sparkle on wave crests), point lights
-#define SPECULAR 0.45
-#define SHEEN 0.06
-#define SPARKLE 1.2
-#define LAMP_SPECULAR 0.6
+#define REFLECT_MIN 0.07
+#define SKY_TILT 0.8
+// the noise's waves have 2 to 22 cycles per repeat; a mip level keeps about GLOSS_KEEP / 2^lod of them, and the
+// slope it averages away roughens the surface instead of vanishing (RMS slope per axis of the noise: NOISE_SLOPE)
+#define GLOSS_KEEP 50.0
+#define NOISE_SLOPE 0.36
+// glints: sun and moon, stretched along the view like a reflection on moving water (STREAK times longer toward the
+// camera than across); sparkle on wave crests; point lights as streaks of LAMP_ALONG by LAMP_ACROSS slope
+#define SPECULAR 1.0
+#define SUN_STREAK 1.6
+#define SPARKLE 0.6
+#define LAMP_SPECULAR 0.5
+#define LAMP_ALONG 0.10
+#define LAMP_ACROSS 0.03
 // vertical depth over which the surface fades in from the waterline: no hard edge
 #define SOFT_EDGE 22.0
 // bed just above the waterline is darker where the water just left it
@@ -159,14 +187,38 @@ vec2 waterScroll(vec2 velocity, float repeat) {
   return fract(cycles * (waterTime / WATER_TIME_WRAP));
 }
 
-// Wave slope and the finer height (for sparkle) of the two octaves at xz, moved along by `move` (world units)
+// Wave slope and the finer height (sparkle, current lines) of the two octaves at xz, moved along by `move` (world
+// units)
 vec3 waterWaves2(vec2 xz, vec2 move, float la, float lb) {
   const mat2 ROT = mat2(0.8, 0.6, -0.6, 0.8);
   vec4 a = textureLod(waterNoise, (xz - move) / WAVE_SCALE_A, la);
   vec4 b = textureLod(waterNoise, ROT * (xz - move * 1.15) / WAVE_SCALE_B + 0.37, lb);
   // the small octave is turned: turn its slope back
-  vec2 slope = (a.rg * 2.0 - 1.0) * 0.62 + ((b.rg * 2.0 - 1.0) * ROT) * 0.38;
+  vec2 slope = (a.rg * 2.0 - 1.0) * WAVE_MIX_A + ((b.rg * 2.0 - 1.0) * ROT) * WAVE_MIX_B;
   return vec3(slope, a.a);
+}
+
+// Share of an octave's slope variance its mip at `lod` has averaged away: the slope power of the noise's waves falls
+// as k^-1.4 over 2 to 22 cycles, and the mip keeps those below GLOSS_KEEP / 2^lod
+float waterLostSlope(float lod) {
+  float kc = GLOSS_KEEP * exp2(-lod);
+  return clamp((pow(kc, -1.4) - 0.0132) / (0.3789 - 0.0132), 0.0, 1.0);
+}
+
+// A glint off the water: Ward's anisotropic lobe around the normal, `along` the RMS slope toward the camera, `across`
+// sideways. Reflections of lights on rippled water are streaks pointing at the viewer; the waves' own normals break
+// them up.
+float waterGlint(vec3 nrm, vec3 toLight, vec3 toCamera, vec3 tAlong, vec3 tAcross, float along, float across) {
+  vec3 h = toLight + toCamera;
+  h *= inversesqrt(max(dot(h, h), 1e-8));
+  float nh = dot(nrm, h);
+  if (nh <= 0.0)
+    return 0.0;
+  // the half vector's slope away from the normal
+  vec3 hs = h / nh - nrm;
+  float ea = dot(hs, tAlong) / along, ec = dot(hs, tAcross) / across;
+  float fh = WATER_F0 + (1.0 - WATER_F0) * pow(1.0 - clamp(dot(h, toCamera), 0.0, 1.0), 5.0);
+  return exp(-(ea * ea + ec * ec)) / (3.14159 * along * across) * fh * clamp(dot(nrm, toLight) * 4.0, 0.0, 1.0);
 }
 
 // Rings from raindrops: one ring at a time per cell, in two offset layers, as many cells active as it rains
@@ -260,12 +312,14 @@ vec4 waterTraceReflection(vec3 s, vec3 r, vec3 approxLight) {
   return vec4(0.0);
 }
 
-// What the bed looks like `depth` under the surface: the bank's color (land, sRGB) near the waterline, the bed's own
-// further down, a little uneven
-vec3 waterBedAlbedo(vec3 land, float depth, int type, vec2 xz, float footprint) {
-  float vary = 0.9 + 0.2 * textureLod(waterNoise, xz / 900.0, waterLod(footprint, 900.0)).b;
-  vec3 bed = WATER_BED[type] * vary * (1.0 - BED_DARKEN * smoothstep(40.0, BED_DARKEN_DEPTH, depth));
-  return mix(land, bed, smoothstep(BED_BLEND_NEAR, BED_BLEND_FAR, depth));
+// What the bed looks like `depth` under the surface: the bank's color (land, sRGB) gone wet, murky water's own bed
+// further down, darker with depth
+vec3 waterBedAlbedo(vec3 land, float depth, int type) {
+  float k = smoothstep(0.0, BED_WET_DEPTH, depth);
+  vec3 bed = mix(land, vec3(dot(land, vec3(0.299, 0.587, 0.114))), BED_DESATURATE * k)
+    * mix(vec3(1.0), BED_WET_TINT, k) * WET_SAND;
+  bed = mix(bed, WATER_BED[type], WATER_BED_OWN[type] * smoothstep(BED_BLEND_NEAR, BED_BLEND_FAR, depth));
+  return bed * (1.0 - BED_DARKEN * smoothstep(40.0, BED_DARKEN_DEPTH, depth));
 }
 
 vec3 waterShoulder(vec3 c) {
@@ -331,14 +385,16 @@ vec3 waterOver(ivec2 px, inout vec3 p, vec3 n, vec3 albedo, vec3 light, float sh
   float pixelNear = length(reconstructPosition(vec2(px) + vec2(1.5, 0.5), 1.0) - reconstructPosition(vec2(px) + 0.5, 1.0));
   float footprint = pixelNear * viewZ / viewDepth(1.0) * inversesqrt(max(v.y, 0.05));
   float la = waterLod(footprint, WAVE_SCALE_A), lb = waterLod(footprint, WAVE_SCALE_B);
+  float lc = waterLod(footprint, WAVE_SCALE_C);
 
-  // ---- surface normal: two wave octaves carried by the flow, the swell, rain rings
+  // ---- surface normal: two wave octaves carried by the flow, capillary ripples on the wind, the swell, rain rings
   vec2 flow = surf0.gb * (WATER_TILE * waterSpeed * surf.z);
   float flowSpeed = length(flow);
   flow *= min(1.0, FLOW_DRAG / max(flowSpeed * FLOW_CYCLE, 1e-3));
   // the wind's drift (integrated in Water.java, so a change in the wind changes the speed, never the position)
   vec2 base = waterDrift.xy * (surf.z * waterSpeed);
   vec3 waves = waterWaves2(sw.xz, base, la, lb);
+  float foam = 0.0;
   // blended in rather than switched, so there is no seam where the flow crosses the threshold
   float flowing = smoothstep(FLOW_MIN * 0.5, FLOW_MIN, flowSpeed);
   if (flowing > 0.0) {
@@ -349,21 +405,52 @@ vec3 waterOver(ivec2 px, inout vec3 p, vec3 n, vec3 albedo, vec3 light, float sh
     float ph0 = fract(waterTime / FLOW_CYCLE + jitter);
     float ph1 = fract(ph0 + 0.5);
     float w0 = 1.0 - abs(1.0 - 2.0 * ph0);
-    vec3 flowed = waterWaves2(sw.xz, base + flow * (ph0 * FLOW_CYCLE), la, lb) * w0
-      + waterWaves2(sw.xz + vec2(173.0, 91.0), base + flow * (ph1 * FLOW_CYCLE), la, lb) * (1.0 - w0);
+    vec2 m0 = base + flow * (ph0 * FLOW_CYCLE), m1 = base + flow * (ph1 * FLOW_CYCLE);
+    vec2 o1 = vec2(173.0, 91.0);
+    vec3 f0 = waterWaves2(sw.xz, m0, la, lb), f1 = waterWaves2(sw.xz + o1, m1, la, lb);
+    vec3 flowed = f0 * w0 + f1 * (1.0 - w0);
     // blending two copies averages their slopes down: give some back
     flowed.xy *= 1.0 + 0.4 * (1.0 - abs(2.0 * w0 - 1.0));
     waves = mix(waves, flowed, flowing);
+    // Current lines: each copy's finer height averaged with itself a little further upstream, which smears its
+    // blobs into lines along the flow wherever it points; foam where both are high
+    float fast = smoothstep(STREAK_SPEED, STREAK_SPEED_FULL, flowSpeed) * step(0.5, surf.y);
+    if (fast > 0.0) {
+      vec2 smear = flow * STREAK_SMEAR;
+      float s0 = 0.5 * (f0.z + textureLod(waterNoise, (sw.xz - m0 - smear) / WAVE_SCALE_A, la).a);
+      float s1 = 0.5 * (f1.z + textureLod(waterNoise, (sw.xz + o1 - m1 - smear) / WAVE_SCALE_A, la).a);
+      foam = smoothstep(STREAK_EDGE.x, STREAK_EDGE.y, s0 * w0 + s1 * (1.0 - w0)) * fast
+        * (1.0 - smoothstep(2.0, 4.0, la));
+    }
   }
   float strength = WAVE_STRENGTH * surf.y * waterWaves * (0.7 + 0.5 * wind) * (0.75 + 0.35 * energy);
   vec2 slope = waves.xy * strength;
-  // the swell: long soft undulations, so open water isn't flat
+  // capillary ripples: always on the wind, never dragged by the flow, livelier with wind
+  {
+    const mat2 ROT_C = mat2(0.28, -0.96, 0.96, 0.28);
+    vec4 cap = textureLod(waterNoise, ROT_C * (sw.xz - waterDrift.xy * CAPILLARY_DRIFT) / WAVE_SCALE_C + 0.61, lc);
+    slope += ((cap.rg * 2.0 - 1.0) * ROT_C) * (WAVE_MIX_C * WAVE_STRENGTH * surf.y * waterWaves * (0.5 + 0.8 * wind));
+  }
+  // the swell: long soft undulations, so open water isn't flat; the sea's run longest and strongest
   vec2 swell = textureLod(waterNoise, (sw.xz - waterDrift.zw) / SWELL_SCALE, waterLod(footprint, SWELL_SCALE)).rg * 2.0 - 1.0;
-  slope += swell * (SWELL_STRENGTH * surf.y * waterWaves * (0.3 + 0.7 * energy) * (0.6 + 0.8 * wind));
+  slope += swell * (SWELL_STRENGTH * surf.y * waterWaves * (0.2 + 0.8 * energy) * (0.6 + 0.8 * wind));
   if (waterRain > 0.01 && outdoors == 1)
     slope += waterRainRings(sw.xz) * surf.y;
   vec3 nrm = normalize(vec3(-slope.x, -1.0, -slope.y));
   vec3 toCamera = -v;
+  // horizontal directions along the view (away from the camera) and across it, for the glint streaks
+  vec2 fwd = v.xz * inversesqrt(max(dot(v.xz, v.xz), 1e-6));
+  vec3 tAlong = vec3(fwd.x, 0.0, fwd.y), tAcross = vec3(-fwd.y, 0.0, fwd.x);
+
+  // The surface is as glossy as still water, roughened only by the wave slope the mipmaps averaged away within
+  // this pixel (per axis variance), so close up the glints stay sharp and far off they widen instead of sparkling
+  float strengthC = WAVE_MIX_C * WAVE_STRENGTH * surf.y * waterWaves * (0.5 + 0.8 * wind);
+  float lostVar = NOISE_SLOPE * NOISE_SLOPE * (strength * strength * (WAVE_MIX_A * WAVE_MIX_A * waterLostSlope(la)
+    + WAVE_MIX_B * WAVE_MIX_B * waterLostSlope(lb)) + strengthC * strengthC * waterLostSlope(lc));
+  float m2 = 2.0 / (surf.w + 2.0) + 2.0 * lostVar;
+  float rough = sqrt(0.5 * m2);  // RMS slope per axis
+  // foam is rough
+  rough = mix(rough, 0.25, foam);
 
   // ---- light falling on the water
   bool lightOn = lightingEnabled == 1;
@@ -374,9 +461,9 @@ vec3 waterOver(ivec2 px, inout vec3 p, vec3 n, vec3 albedo, vec3 light, float sh
     caster = (sunIsCaster == 1 ? sunLight(sunAltitude) : moonLight(sunAltitude)) * envSun;
     if (shadowsEnabled == 1) {
       // one filtered tap: the surface is soft and moving anyway
-      vec4 lc = lightProjRel * vec4(s, 1.0);
-      vec2 uv = lc.xy * 0.5 + 0.5;
-      float z = depthZeroToOne == 1 ? lc.z : lc.z * 0.5 + 0.5;
+      vec4 lc4 = lightProjRel * vec4(s, 1.0);
+      vec2 uv = lc4.xy * 0.5 + 0.5;
+      float z = depthZeroToOne == 1 ? lc4.z : lc4.z * 0.5 + 0.5;
       float bias = 4.0 * (2.0 * shadowRadius / shadowMapSize) / (2.0 * shadowDepthRange);
       if (all(greaterThan(uv, vec2(0.0))) && all(lessThan(uv, vec2(1.0))) && z < 1.0)
         surfShadow = textureLod(shadowCompare, vec3(uv, z - bias), 0.0);
@@ -391,17 +478,16 @@ vec3 waterOver(ivec2 px, inout vec3 p, vec3 n, vec3 albedo, vec3 light, float sh
     waterLight = vec3(1.0);
   }
 
-  // gloss from the wave detail per pixel: the finer octave's texels per pixel
-  float texels = footprint * 256.0 / WAVE_SCALE_B;
-  float gloss = surf.w / (1.0 + surf.w * GLOSS_AA * texels * texels);
   vec3 lampSpec = vec3(0.0);
   if (pointLightsEnabled == 1 && lightOn) {
-    int base = clusterBase(px, viewZ);
-    int count = clusterLightCount(base);
+    int cbase = clusterBase(px, viewZ);
+    int count = clusterLightCount(cbase);
     // lights in buildings stay there (rooms.glsl)
     ivec2 room = count > 0 ? lightRoomAt(sw - vec3(0.0, ROOM_NORMAL_BIAS, 0.0)) : ivec2(-1, 0);
+    // a lamp's reflection is a streak toward the camera; rougher water (far off, foam) smears it wider
+    float along = sqrt(LAMP_ALONG * LAMP_ALONG + rough * rough), across = sqrt(LAMP_ACROSS * LAMP_ACROSS + rough * rough);
     for (int i = 0; i < count; ++i) {
-      int li = int(texelFetch(clusterData, base + 1 + i).r);
+      int li = int(texelFetch(clusterData, cbase + 1 + i).r);
       vec4 posRadius = texelFetch(lightData, li * 2);
       vec3 l = posRadius.xyz - s;
       float d2 = dot(l, l);
@@ -414,9 +500,7 @@ vec3 waterOver(ivec2 px, inout vec3 p, vec3 n, vec3 albedo, vec3 light, float sh
       att *= att;
       vec3 ld = l * inversesqrt(max(d2, 1.0));
       waterLight += color * att * max(-ld.y, 0.2) * 0.5;
-      float g = gloss * 0.25;
-      vec3 hl = ld + toCamera;
-      lampSpec += color * att * pow(max(dot(nrm, hl * inversesqrt(max(dot(hl, hl), 1e-8))), 0.0), g) * (g + 8.0) / 25.0;
+      lampSpec += color * (att * waterGlint(nrm, ld, toCamera, tAlong, tAcross, along, across));
     }
   }
 
@@ -427,7 +511,8 @@ vec3 waterOver(ivec2 px, inout vec3 p, vec3 n, vec3 albedo, vec3 light, float sh
   {
     vec3 seen = albedo;
     bool seenBed = bed;
-    vec3 pr = p + vec3(slope.x, 0.0, slope.y) * (REFRACT * min(depth / REFRACT_DEPTH, 1.0));
+    // the bed wobbles under the waves: strongest where the water is deep enough to bend the view far
+    vec3 pr = p + vec3(slope.x, 0.0, slope.y) * (REFRACT * smoothstep(0.0, REFRACT_DEPTH, depth));
     vec4 clip = viewProj * vec4(pr, 1.0);
     if (clip.w > NEAR) {
       ivec2 rp = ivec2((clip.xy / clip.w * 0.5 + 0.5) * vec2(sceneViewport.zw) + vec2(sceneViewport.xy));
@@ -442,7 +527,7 @@ vec3 waterOver(ivec2 px, inout vec3 p, vec3 n, vec3 albedo, vec3 light, float sh
       }
     }
     if (seenBed)
-      seen = waterBedAlbedo(seen, depth, type, world.xz, footprint);
+      seen = waterBedAlbedo(seen, depth, type);
     vec3 bedLight = light;
     if (waterCaustics == 1 && outdoors == 1 && lightOn && surf.y > 0.5) {
       float fade = smoothstep(6.0, 40.0, depth) * exp(-depth / 300.0);
@@ -480,18 +565,17 @@ vec3 waterOver(ivec2 px, inout vec3 p, vec3 n, vec3 albedo, vec3 light, float sh
     reflection = mix(reflection, hit.rgb, hit.a);
   }
   vec3 color = mix(under, reflection, fresnel);
+  // foam lies on the surface: lit like a white, rough face
+  color = mix(color, waterLight * 0.8, foam * STREAK_FOAM);
 
-  // ---- glints: a tight highlight and a broad sheen, and sparkle where the finer waves crest
+  // ---- glints: the sun or moon as a sharp streak, and sparkle where the finer waves crest
   if (outdoors == 1 && lightOn) {
-    vec3 h = casterDir + toCamera;
-    h *= inversesqrt(max(dot(h, h), 1e-8));
-    float nh = max(dot(nrm, h), 0.0);
-    float fh = WATER_F0 + (1.0 - WATER_F0) * pow(1.0 - clamp(dot(h, toCamera), 0.0, 1.0), 5.0);
-    float spec = pow(nh, gloss) * (gloss + 8.0) / 25.0 + pow(nh, 40.0) * SHEEN;
+    float spec = waterGlint(nrm, casterDir, toCamera, tAlong, tAcross, rough * SUN_STREAK, rough);
     // the sparkle is per-pixel detail: gone before the finer waves get smaller than a pixel
-    spec += smoothstep(0.72, 0.95, waves.z) * pow(nh, 60.0) * SPARKLE * strength / WAVE_STRENGTH
-      * (1.0 - smoothstep(0.0, 1.5, lb));
-    color += caster * (spec * fh * surfShadow * SPECULAR * surf.x * 4.0);
+    float crest = smoothstep(0.72, 0.95, waves.z) * (1.0 - smoothstep(0.0, 1.5, lb)) * strength / WAVE_STRENGTH;
+    if (crest > 0.0)
+      spec += crest * SPARKLE * waterGlint(nrm, casterDir, toCamera, tAlong, tAcross, rough * 2.5, rough * 1.5);
+    color += caster * (spec * surfShadow * SPECULAR * surf.x);
   }
   color += lampSpec * (LAMP_SPECULAR * surf.x);
 
