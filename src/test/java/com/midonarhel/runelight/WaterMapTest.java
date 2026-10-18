@@ -154,6 +154,18 @@ public class WaterMapTest
 	}
 
 	@Test
+	public void bedTakesTheBankColors()
+	{
+		int grass = 15 << 10 | 4 << 7 | 30, sand = 8 << 10 | 2 << 7 | 50;
+		assertEquals(-1, SceneUploader.mixHsl(new int[]{-1, -1, -1, -1}, 4));
+		assertEquals(grass, SceneUploader.mixHsl(new int[]{grass, -1, grass, -1}, 4));
+		int m = SceneUploader.mixHsl(new int[]{grass, sand, -1, -1}, 4);
+		assertEquals(12, m >> 10 & 63);
+		assertEquals(3, m >> 7 & 7);
+		assertEquals(40, m & 127);
+	}
+
+	@Test
 	public void murkyAreas()
 	{
 		assertEquals(WaterMap.CAVE, lake(WaterMap.MURKY_CAVE).type[90 * N + 90]);

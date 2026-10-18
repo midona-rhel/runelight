@@ -50,6 +50,21 @@ const vec3 WATER_DEEP[WATER_TYPES] = vec3[](
   vec3(0.010, 0.013, 0.004),
   vec3(0.002, 0.008, 0.009));
 // reflectivity, wave strength, flow speed, specular gloss
+// the bed's own color (sRGB, WaterMap.bedColor at the default brightness): sand, pale sand, mud, dark stone. The
+// bed's vertices carry the bank's colors (SceneUploader.uploadBed); this takes over with depth.
+const vec3 WATER_BED[WATER_TYPES] = vec3[](
+  vec3(0.571, 0.521, 0.296),
+  vec3(0.571, 0.521, 0.296),
+  vec3(0.571, 0.521, 0.296),
+  vec3(0.571, 0.521, 0.296),
+  vec3(0.591, 0.550, 0.376),
+  vec3(0.301, 0.287, 0.156),
+  vec3(0.329, 0.300, 0.252));
+// depths (world units) over which the bank's color turns into the bed's, and the bed darkens further down
+#define BED_BLEND_NEAR 4.0
+#define BED_BLEND_FAR 56.0
+#define BED_DARKEN 0.3
+#define BED_DARKEN_DEPTH 400.0
 const vec4 WATER_SURFACE[WATER_TYPES] = vec4[](
   vec4(0.0),
   vec4(1.00, 0.85, 1.00, 900.0),
@@ -97,11 +112,12 @@ const vec4 WATER_SURFACE[WATER_TYPES] = vec4[](
 #define SPARKLE 1.2
 #define LAMP_SPECULAR 0.6
 // vertical depth over which the surface fades in from the waterline: no hard edge
-#define SOFT_EDGE 14.0
+#define SOFT_EDGE 22.0
 // bed just above the waterline is darker where the water just left it
 #define WET_SAND 0.86
 #define WET_HEIGHT 12.0
-#define CAUSTICS 0.55
+// caustics: a subtle dappling of the sunlight on the bed, a share of the direct light
+#define CAUSTICS 0.12
 #define CAUSTIC_SCALE 260.0
 // rain rings: cell size (world units), rings per cell per second
 #define RAIN_CELL 40.0
@@ -182,7 +198,7 @@ float waterCausticPattern(vec2 xz, float footprint) {
   float lod = waterLod(footprint, CAUSTIC_SCALE * 0.7);
   float a = textureLod(waterNoise, xz / CAUSTIC_SCALE + waterScroll(vec2(23.0, 11.0), CAUSTIC_SCALE), lod).b;
   float b = textureLod(waterNoise, xz / (CAUSTIC_SCALE * 0.7) + 0.21 + waterScroll(vec2(-15.0, 19.0), CAUSTIC_SCALE * 0.7), lod).b;
-  return smoothstep(0.45, 0.85, a * b * 2.0);
+  return smoothstep(0.35, 0.95, a * b * 2.0);
 }
 
 // Where the reflected ray is at t: its pixel, and how far it is behind the depth buffer there (negative in front)
@@ -242,6 +258,14 @@ vec4 waterTraceReflection(vec3 s, vec3 r, vec3 approxLight) {
     t += stepLen;
   }
   return vec4(0.0);
+}
+
+// What the bed looks like `depth` under the surface: the bank's color (land, sRGB) near the waterline, the bed's own
+// further down, a little uneven
+vec3 waterBedAlbedo(vec3 land, float depth, int type, vec2 xz, float footprint) {
+  float vary = 0.9 + 0.2 * textureLod(waterNoise, xz / 900.0, waterLod(footprint, 900.0)).b;
+  vec3 bed = WATER_BED[type] * vary * (1.0 - BED_DARKEN * smoothstep(40.0, BED_DARKEN_DEPTH, depth));
+  return mix(land, bed, smoothstep(BED_BLEND_NEAR, BED_BLEND_FAR, depth));
 }
 
 vec3 waterShoulder(vec3 c) {
@@ -399,18 +423,23 @@ vec3 waterOver(ivec2 px, inout vec3 p, vec3 n, vec3 albedo, vec3 light, float sh
   vec3 under;
   {
     vec3 seen = albedo;
+    bool seenBed = bed;
     vec3 pr = p + vec3(slope.x, 0.0, slope.y) * (REFRACT * min(depth / REFRACT_DEPTH, 1.0));
     vec4 clip = viewProj * vec4(pr, 1.0);
     if (clip.w > NEAR) {
       ivec2 rp = ivec2((clip.xy / clip.w * 0.5 + 0.5) * vec2(sceneViewport.zw) + vec2(sceneViewport.xy));
       if (inViewport(rp)) {
         float dr = texelFetch(sceneDepth, rp, 0).r;
+        float mr = texelFetch(sceneMaterial, rp, 0).b;
         // only take the offset pixel if it is under this water too, or things above it would show in it
-        if (!isSky(dr) && texelFetch(sceneMaterial, rp, 0).b >= 0.25
-          && reconstructPosition(vec2(rp) + 0.5, dr).y > s.y + 2.0)
+        if (!isSky(dr) && mr >= 0.25 && reconstructPosition(vec2(rp) + 0.5, dr).y > s.y + 2.0) {
           seen = texelFetch(sceneColor, rp, 0).rgb;
+          seenBed = mr > 0.75;
+        }
       }
     }
+    if (seenBed)
+      seen = waterBedAlbedo(seen, depth, type, world.xz, footprint);
     vec3 bedLight = light;
     if (waterCaustics == 1 && outdoors == 1 && lightOn && surf.y > 0.5) {
       float fade = smoothstep(6.0, 40.0, depth) * exp(-depth / 300.0);
