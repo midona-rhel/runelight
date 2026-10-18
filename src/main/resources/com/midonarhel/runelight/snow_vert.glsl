@@ -12,13 +12,13 @@ uniform int dropCount;
 uniform vec3 windOffset;       // world units the wind has carried everything so far
 uniform float gust;            // 0-1: gusts make the flakes sway wider
 
-#define BOX_HALF 1920.0
+#define BOX_HALF 3584.0
 #define BOX_ABOVE 1792.0
 #define BOX_BELOW 640.0
 #define FALL_SPEED 190.0       // world units per second
 #define SWAY 70.0              // world units
-#define FLAKE_SIZE 5.0         // radius, world units; never under MIN_PIXELS
-#define MIN_PIXELS 1.2
+#define FLAKE_SIZE 8.0         // radius, world units; never under MIN_PIXELS
+#define MIN_PIXELS 2.2
 #define FLAKE_ALPHA 0.85
 #define NEAR_FADE 200.0
 #define GUST_SWAY 1.0          // extra sway at full gust, as a multiple of SWAY

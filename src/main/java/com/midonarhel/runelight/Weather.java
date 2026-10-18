@@ -28,14 +28,14 @@ class Weather
 	// redraw once the player is this far from the map center; particles reach ~20 tiles, so 24 keeps a margin
 	private static final float OCCLUSION_RECENTER = 24 * 128;
 	// wet ground and snow cover fade out before the edge of the map, where shelter is unknown
-	private static final float SURFACE_FADE = 38 * 128;
+	private static final float SURFACE_FADE = 62 * 128;
 	// straight up: the "light" looks straight down
 	private static final float[] UP = {0, -1, 0};
 
 	// instance counts at 100% intensity
-	static final int MAX_RAIN_DROPS = 24000;
-	static final int MAX_RAIN_SPLASHES = 1600;
-	static final int MAX_SNOW_FLAKES = 14000;
+	static final int MAX_RAIN_DROPS = 61000;
+	static final int MAX_RAIN_SPLASHES = 4400;
+	static final int MAX_SNOW_FLAKES = 30000;
 
 	// easing time constants, seconds: about three of them for a full change, so a new weather or region blends
 	// in over ~30-60 s

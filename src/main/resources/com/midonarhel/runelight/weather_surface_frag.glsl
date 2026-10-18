@@ -71,8 +71,9 @@ void main() {
   }
 
   // snow settles on upward faces, in patches that thin out on slopes
-  float patches = valueNoise(world.xz / 96.0) * 0.6 + valueNoise(world.xz / 23.0) * 0.4;
-  float cover = smoothstep(0.45, 0.85, up) * smoothstep(0.15, 0.55, patches + amount * 0.45) * exposed;
+  // broad patches: small-scale noise reads as speckle at this distance
+  float patches = valueNoise(world.xz / 192.0) * 0.65 + valueNoise(world.xz / 56.0) * 0.35;
+  float cover = smoothstep(0.25, 0.9, up) * smoothstep(0.15, 0.55, patches + amount * 0.45) * exposed;
   if (cover <= 0.002) {
     discard;
   }
@@ -81,7 +82,10 @@ void main() {
     vec4 lc = lightProjRel * vec4(p + n * 24.0, 1.0);
     vec3 s = vec3(lc.xy * 0.5 + 0.5, depthZeroToOne == 1 ? lc.z : lc.z * 0.5 + 0.5);
     if (all(greaterThan(s, vec3(0.0))) && all(lessThan(s, vec3(1.0)))) {
-      shadow = texture(shadowCompare, s);
+      // 4 taps: a soft edge, not the shadow map's texels
+      vec2 o = vec2(1.5 / 1024.0);
+      shadow = 0.25 * (texture(shadowCompare, s + vec3(-o.x, -o.y * 0.4, 0.0)) + texture(shadowCompare, s + vec3(o.x * 0.4, -o.y, 0.0))
+        + texture(shadowCompare, s + vec3(o.x, o.y * 0.4, 0.0)) + texture(shadowCompare, s + vec3(-o.x * 0.4, o.y, 0.0)));
     }
   }
   shadow = overcastShadow(shadow);

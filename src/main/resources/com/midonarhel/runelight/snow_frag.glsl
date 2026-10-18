@@ -23,7 +23,8 @@ void main() {
   if (fViewZ > scene) {
     discard;
   }
-  float a = fAlpha * (1.0 - r2) * clamp((scene - fViewZ) / SOFT_DEPTH, 0.0, 1.0);
+  // gaussian-like falloff: a soft blob, not a disc with an edge
+  float a = fAlpha * exp(-3.5 * r2) * (1.0 - r2) * clamp((scene - fViewZ) / SOFT_DEPTH, 0.0, 1.0);
   if (a < 0.003) {
     discard;
   }

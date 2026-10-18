@@ -15,7 +15,7 @@ uniform vec3 wind;             // world units per second, this frame; sets the s
 uniform vec3 windOffset;       // world units the wind has carried everything so far (it varies, so not wind * time)
 
 // box around the player: half width, height above and depth below the player's ground, world units
-#define BOX_HALF 2560.0
+#define BOX_HALF 4096.0
 #define BOX_ABOVE 2560.0
 #define BOX_BELOW 768.0
 #define FALL_SPEED 2000.0      // world units per second
@@ -26,7 +26,7 @@ uniform vec3 windOffset;       // world units the wind has carried everything so
 #define COUNT_FADE 0.1         // as the drop count changes, the last tenth of drops fade instead of popping
 #define LIT_ALPHA 0.8          // drops in bright point light show up to this much more
 
-#define SPLASH_HALF 1536.0     // splashes fill a smaller area, where they can be seen
+#define SPLASH_HALF 2560.0     // splashes fill a smaller area, where they can be seen
 #define SPLASH_PERIOD 0.42     // seconds each splash lives
 #define SPLASH_SIZE 14.0
 #define SPLASH_ALPHA 0.40
