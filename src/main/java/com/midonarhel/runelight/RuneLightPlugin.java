@@ -242,7 +242,8 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 
 	private final DayCycle dayCycle = new DayCycle();
 	private final ShadowMap shadowMap = new ShadowMap();
-	private final long startMillis = System.currentTimeMillis();
+	// when the plugin started; the day cycle and sky animation count from here
+	private long startMillis = System.currentTimeMillis();
 
 	// per-frame state for the full-screen passes, captured during the scene draw
 	private float frameCameraX, frameCameraY, frameCameraZ;
@@ -437,6 +438,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		}
 		overlayManager.add(overlay);
 		glErrorChecks = config.glErrorChecks();
+		startMillis = System.currentTimeMillis();
 
 		root = new SceneContext(NUM_ZONES, NUM_ZONES);
 		subs = new SceneContext[MAX_WORLDVIEWS];
@@ -1450,7 +1452,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		int r = frameSkyColor >> 16 & 0xFF, g = frameSkyColor >> 8 & 0xFF, b = frameSkyColor & 0xFF;
 		frameOutdoors = config.sunLighting() && r + g + b > 24;
 
-		dayCycle.update(System.currentTimeMillis(), config.dayCycleMinutes(), config.fixedHour());
+		dayCycle.update(System.currentTimeMillis() - startMillis, config.dayCycleMinutes(), config.fixedHour());
 
 		frameShadows = frameOutdoors && config.shadows() && client.getGameState() == GameState.LOGGED_IN;
 		VAO.clearShadowDraws();

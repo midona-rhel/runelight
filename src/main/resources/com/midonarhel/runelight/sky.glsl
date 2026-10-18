@@ -44,7 +44,7 @@ vec3 skyHorizon(float alt) {
 
 // Direct light from the sun (day) or moon (night). Only one casts at a time; both are ~0 at the switch.
 #define SUN_INTENSITY 0.50
-#define MOON_INTENSITY 0.22
+#define MOON_INTENSITY 0.30
 
 vec3 sunLight(float alt) {
   vec3 warm = vec3(1.00, 0.55, 0.30);
@@ -58,7 +58,7 @@ vec3 moonLight(float alt) {
 
 vec3 ambientLight(float alt) {
   vec3 day = vec3(0.60, 0.62, 0.66);
-  vec3 night = vec3(0.22, 0.26, 0.38);
+  vec3 night = vec3(0.44, 0.48, 0.60);
   vec3 a = mix(night, day, smoothstep(-10.0, 15.0, alt));
   // warmer at sunrise and sunset
   float dusk = smoothstep(-8.0, 2.0, alt) * (1.0 - smoothstep(2.0, 20.0, alt));

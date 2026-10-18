@@ -35,16 +35,17 @@ final class DayCycle
 	double phase;
 
 	/**
+	 * @param elapsedMillis time since the cycle started; it starts at 09:00
 	 * @param cycleMinutes length of a full day in real minutes; 0 holds the time at fixedHour
 	 * @param fixedHour 0-24, 6 is sunrise and 12 is roughly noon
 	 */
-	void update(long nowMillis, int cycleMinutes, double fixedHour)
+	void update(long elapsedMillis, int cycleMinutes, double fixedHour)
 	{
 		if (cycleMinutes > 0)
 		{
 			// start the cycle at 09:00 so the first thing you see is daylight
 			double cycleMs = cycleMinutes * 60_000.0;
-			phase = (nowMillis % (long) cycleMs) / cycleMs + phaseForHour(9);
+			phase = (elapsedMillis % (long) cycleMs) / cycleMs + phaseForHour(9);
 		}
 		else
 		{
