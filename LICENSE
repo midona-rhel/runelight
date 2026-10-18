@@ -29,7 +29,11 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 src/main/resources/com/midonarhel/runelight/lights.json is converted from the light
 definitions of 117 HD (https://github.com/117HD/RLHD) by tools/import_117hd_lights.py,
 src/main/resources/com/midonarhel/runelight/materials.json is derived from 117 HD's
-materials, model overrides and lights by tools/import_117hd_materials.py, and
+materials, model overrides and lights by tools/import_117hd_materials.py,
+src/main/resources/com/midonarhel/runelight/wind.json is derived from 117 HD's model
+overrides (wind displacement modes) by tools/import_117hd_wind.py, with the sway in
+src/main/resources/com/midonarhel/runelight/wind.glsl and
+src/main/java/com/midonarhel/runelight/Wind.java following 117 HD's wind displacement, and
 src/main/resources/com/midonarhel/runelight/environments.json is converted in part
 from the area and environment definitions of 117 HD by tools/import_environments.py.
 The water bed depths and water texture lists in

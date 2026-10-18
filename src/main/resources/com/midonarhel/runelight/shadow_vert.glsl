@@ -2,7 +2,7 @@
 
 // Depth-only pass from the sun or moon. Same vertex formats as the scene pass.
 
-layout(location = 0) in vec3 vertf;
+layout(location = 0) in vec4 vertf; // w: wind code on swaying models (wind.glsl)
 layout(location = 1) in int abhsl;
 layout(location = 2) in ivec4 tex;
 
@@ -15,8 +15,12 @@ flat out int fEmissive;
 flat out int fTransmissive;
 out vec2 fUv;
 
+#include "wind.glsl"
+
 void main() {
-  vec4 worldPos = entityProj * vec4(vertf + base, 1.0);
+  vec4 worldPos = entityProj * vec4(vertf.xyz + base, 1.0);
+  vec3 noNormal = vec3(0.0);
+  worldPos.xyz += windDisplacement(vertf.w, worldPos.xyz, noNormal, false);
   gl_Position = lightProj * worldPos;
   fTextureId = tex.x & 0x3ff;  // material bits above, see SurfaceMaterials.java
   fEmissive = tex.x >> 10 & 3;

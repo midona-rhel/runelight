@@ -77,6 +77,14 @@ class Zone
 
 	final List<AlphaModel> alphaModels = new ArrayList<>(0);
 
+	// opaque buffer ranges (start, end in ints, ascending) holding the models that sway in the wind (Wind.java),
+	// one per level and roof: SceneUploader uploads them after the rest of it
+	int[] swayRanges = new int[0];
+	int swayRangeCount; // ints used, 2 per range
+
+	// what renderOpaque draws of the swaying ranges
+	static final int SWAY_ALL = 0, SWAY_EXCLUDE = 1, SWAY_ONLY = 2;
+
 	void init(VBO o, VBO a)
 	{
 		assert glVao == 0;
@@ -184,9 +192,10 @@ class Zone
 		}
 	}
 
-	private static final int NUM_DRAW_RANGES = 512;
-	private static final IntBuffer drawOff = BufferUtils.createIntBuffer(NUM_DRAW_RANGES);
-	private static final IntBuffer drawEnd = BufferUtils.createIntBuffer(NUM_DRAW_RANGES);
+	// the sway filter splits ranges, so leave room
+	private static final int NUM_DRAW_RANGES = 1024;
+	static final IntBuffer drawOff = BufferUtils.createIntBuffer(NUM_DRAW_RANGES);
+	static final IntBuffer drawEnd = BufferUtils.createIntBuffer(NUM_DRAW_RANGES);
 
 	private void convertForDraw(int vertSize)
 	{
@@ -213,8 +222,40 @@ class Zone
 		}
 	}
 
+	void addSwayRange(int start, int end)
+	{
+		if (end <= start)
+		{
+			return;
+		}
+		if (swayRangeCount > 0 && swayRanges[swayRangeCount - 1] == start)
+		{
+			swayRanges[swayRangeCount - 1] = end;
+			return;
+		}
+		if (swayRangeCount + 2 > swayRanges.length)
+		{
+			swayRanges = java.util.Arrays.copyOf(swayRanges, Math.max(8, swayRanges.length * 2));
+		}
+		swayRanges[swayRangeCount++] = start;
+		swayRanges[swayRangeCount++] = end;
+	}
+
 	void renderOpaque(int zx, int zz, int minLevel, int currentLevel, int maxLevel, Set<Integer> hiddenRoofIds)
 	{
+		renderOpaque(zx, zz, minLevel, currentLevel, maxLevel, hiddenRoofIds, SWAY_ALL);
+	}
+
+	/**
+	 * @param sway {@link #SWAY_ALL}, or {@link #SWAY_EXCLUDE} / {@link #SWAY_ONLY} to leave out or draw only the
+	 *             models that sway in the wind
+	 */
+	void renderOpaque(int zx, int zz, int minLevel, int currentLevel, int maxLevel, Set<Integer> hiddenRoofIds, int sway)
+	{
+		if (sway == SWAY_ONLY && swayRangeCount == 0)
+		{
+			return;
+		}
 		drawOff.clear();
 		drawEnd.clear();
 
@@ -262,6 +303,10 @@ class Zone
 			pushRange(endpos, this.levelOffsets[level]);
 		}
 
+		if (sway != SWAY_ALL && swayRangeCount > 0)
+		{
+			filterSway(sway == SWAY_ONLY);
+		}
 		convertForDraw(VERT_SIZE);
 
 		if (drawOff.limit() > 0)
@@ -272,7 +317,66 @@ class Zone
 		}
 	}
 
-	private static void pushRange(int start, int end)
+	private static final int[] filterOff = new int[NUM_DRAW_RANGES];
+	private static final int[] filterEnd = new int[NUM_DRAW_RANGES];
+
+	/**
+	 * Cut the pushed ranges down to (only) or around (!only) the swaying ranges.
+	 */
+	void filterSway(boolean only)
+	{
+		int n = drawOff.position();
+		for (int i = 0; i < n; ++i)
+		{
+			filterOff[i] = drawOff.get(i);
+			filterEnd[i] = drawEnd.get(i);
+		}
+		drawOff.clear();
+		drawEnd.clear();
+		for (int i = 0; i < n; ++i)
+		{
+			int start = filterOff[i], end = filterEnd[i];
+			int cur = start;
+			for (int j = firstSwayEndingAfter(start); j < swayRangeCount && swayRanges[j] < end; j += 2)
+			{
+				int a = Math.max(swayRanges[j], start), b = Math.min(swayRanges[j + 1], end);
+				if (only)
+				{
+					pushRange(a, b);
+				}
+				else
+				{
+					pushRange(cur, a);
+				}
+				cur = b;
+			}
+			if (!only)
+			{
+				pushRange(cur, end);
+			}
+		}
+	}
+
+	// index (even) of the first swaying range that ends after pos
+	private int firstSwayEndingAfter(int pos)
+	{
+		int lo = 0, hi = swayRangeCount >> 1;
+		while (lo < hi)
+		{
+			int mid = (lo + hi) >>> 1;
+			if (swayRanges[mid * 2 + 1] <= pos)
+			{
+				lo = mid + 1;
+			}
+			else
+			{
+				hi = mid;
+			}
+		}
+		return lo * 2;
+	}
+
+	static void pushRange(int start, int end)
 	{
 		assert end >= start;
 

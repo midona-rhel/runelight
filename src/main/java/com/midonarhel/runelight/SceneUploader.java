@@ -52,6 +52,11 @@ class SceneUploader
 	private final int[] modelLocalXI;
 	private final int[] modelLocalYI;
 	private final int[] modelLocalZI;
+	// per vertex Wind code of the model being uploaded
+	private final int[] swayCodes;
+	// swaying objects of the current level and roof, uploaded after its other tiles so they form one range
+	private final java.util.ArrayList<SwayObject> swayDeferred = new java.util.ArrayList<>();
+	private boolean swayFlushing;
 
 	private final float[] u, v;
 
@@ -72,6 +77,7 @@ class SceneUploader
 		modelLocalXI = new int[ModelUploader.MAX_VERTEX_COUNT];
 		modelLocalYI = new int[ModelUploader.MAX_VERTEX_COUNT];
 		modelLocalZI = new int[ModelUploader.MAX_VERTEX_COUNT];
+		swayCodes = new int[ModelUploader.MAX_VERTEX_COUNT];
 		u = new float[3];
 		v = new float[3];
 	}
@@ -104,6 +110,7 @@ class SceneUploader
 
 		var vb = zone.vboO != null ? new GpuIntBuffer(zone.vboO.vb) : null;
 		var ab = zone.vboA != null ? new GpuIntBuffer(zone.vboA.vb) : null;
+		zone.swayRangeCount = 0;
 
 		for (int level = 0; level <= 3; ++level)
 		{
@@ -231,6 +238,38 @@ class SceneUploader
 				}
 			}
 		}
+		flushSway(zone, vb, ab);
+	}
+
+	/**
+	 * Upload the swaying objects held back by {@link #uploadZoneRenderable} in one run, which the shadow pass
+	 * redraws every frame while the rest of the zone stays in the static shadow cache.
+	 */
+	private void flushSway(Zone zone, GpuIntBuffer vb, GpuIntBuffer ab)
+	{
+		if (swayDeferred.isEmpty())
+		{
+			return;
+		}
+		int savedRid = rid;
+		int start = zone.vboO != null ? zone.vboO.vb.position() : 0;
+		swayFlushing = true;
+		try
+		{
+			for (SwayObject o : swayDeferred)
+			{
+				rid = o.rid;
+				uploadZoneRenderable(o.r, zone, o.orient, o.x, o.y, o.z, o.lx, o.lz, o.ux, o.uz, o.id, vb, ab);
+			}
+		}
+		finally
+		{
+			swayFlushing = false;
+			swayDeferred.clear();
+			rid = savedRid;
+		}
+		int end = zone.vboO != null ? zone.vboO.vb.position() : 0;
+		zone.addSwayRange(start, end);
 	}
 
 	private void zoneSize(Zone z, Tile t)
@@ -426,10 +465,36 @@ class SceneUploader
 		z.sizeO += faceCount;
 	}
 
+	private static final class SwayObject
+	{
+		final Renderable r;
+		final int orient, x, y, z, lx, lz, ux, uz, id, rid;
+
+		SwayObject(Renderable r, int orient, int x, int y, int z, int lx, int lz, int ux, int uz, int id, int rid)
+		{
+			this.r = r;
+			this.orient = orient;
+			this.x = x;
+			this.y = y;
+			this.z = z;
+			this.lx = lx;
+			this.lz = lz;
+			this.ux = ux;
+			this.uz = uz;
+			this.id = id;
+			this.rid = rid;
+		}
+	}
+
 	private void uploadZoneRenderable(Renderable r, Zone zone, int orient, int x, int y, int z, int lx, int lz, int ux, int uz, int id, GpuIntBuffer vb, GpuIntBuffer ab)
 	{
+		int material = SurfaceMaterials.forObject(id, r) | Wind.forObject(id, r);
+		if (!swayFlushing && Wind.sways(material))
+		{
+			swayDeferred.add(new SwayObject(r, orient, x, y, z, lx, lz, ux, uz, id, rid));
+			return;
+		}
 		int pos = zone.vboA != null ? zone.vboA.vb.position() : 0;
-		int material = SurfaceMaterials.forObject(id, r);
 		Model model = null;
 		if (r instanceof Model)
 		{
@@ -895,6 +960,21 @@ class SceneUploader
 			orientCos = Perspective.COSINE[orient];
 		}
 
+		final boolean sway = Wind.sways(material);
+		if (sway)
+		{
+			float height = 0;
+			for (int v = 0; v < vertexCount; ++v)
+			{
+				height = Math.max(height, -vertexY[v]);
+			}
+			int phase = Wind.phase(x + basex, z + basez);
+			for (int v = 0; v < vertexCount; ++v)
+			{
+				swayCodes[v] = Wind.vertexCode(material, vertexX[v], vertexY[v], vertexZ[v], height, phase);
+			}
+		}
+
 		for (int v = 0; v < vertexCount; ++v)
 		{
 			int vx = (int) vertexX[v];
@@ -997,13 +1077,13 @@ class SceneUploader
 			texture |= SurfaceMaterials.face(material, texture - 1, color1);
 			GpuIntBuffer buf = alpha ? ab : vb;
 
-			buf.put22224(vx1, vy1, vz1, alphaBias | color1);
+			buf.put22224(vx1, vy1, vz1, sway ? swayCodes[triangleA] : 0, alphaBias | color1);
 			buf.put2222(texture, su0, sv0, n1);
 
-			buf.put22224(vx2, vy2, vz2, alphaBias | color2);
+			buf.put22224(vx2, vy2, vz2, sway ? swayCodes[triangleB] : 0, alphaBias | color2);
 			buf.put2222(texture, su1, sv1, n2);
 
-			buf.put22224(vx3, vy3, vz3, alphaBias | color3);
+			buf.put22224(vx3, vy3, vz3, sway ? swayCodes[triangleC] : 0, alphaBias | color3);
 			buf.put2222(texture, su2, sv2, n3);
 
 			len += 3;
