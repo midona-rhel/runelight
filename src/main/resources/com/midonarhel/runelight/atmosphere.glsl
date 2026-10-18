@@ -17,6 +17,10 @@ uniform float starBrightness;
 // sky light from the cache: the cosine weighted sky is a little brighter than the zenith color skyLight uses, so
 // a clear midday sky lights as before
 #define SKY_CACHE_LIGHT (SKY_LIGHT * 0.89)
+// Share of the sky light that also reaches surfaces facing sideways, which see half the sky: walls take the color
+// of the sky they face (warm toward a sunset, cool away from it, gray under cloud). The analytic sky light only
+// lights faces turned up.
+#define SKY_CACHE_SIDES 0.5
 // Sun and moon discs are brighter than the sky's white (linear), so they still burn through thin cloud;
 // transmittance to this power hides them behind thick cloud
 #define SUN_DISC 6.0
@@ -57,6 +61,11 @@ vec3 skyFill(vec3 n, float alt) {
   vec3 sky = textureLod(skyIrradiance, skyCacheUv(n), 0.0).rgb * SKY_CACHE_LIGHT;
   // the cache leaves out lightning, which skyLight has through skyZenith
   return sky + srgbToLinear(LIGHTNING_COLOR * (LIGHTNING_SKY * weatherOvercast.z)) * SKY_LIGHT;
+}
+
+// How much of skyFill a surface gets, by how far it faces up (0 sideways, 1 straight up)
+float skyFillWeight(float up) {
+  return (skyCacheMode & 1) == 0 ? up : mix(up, 0.5 + 0.5 * up, SKY_CACHE_SIDES);
 }
 
 vec3 stars(vec3 dir, float pixelAngle, float time) {

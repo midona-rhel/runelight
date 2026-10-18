@@ -1078,7 +1078,7 @@ public interface RuneLightConfig extends Config
 	@ConfigItem(
 		keyName = "skyCache",
 		name = "Sky light from the sky",
-		description = "Light from the sky follows the clouds and the colors of the sky. The sky is captured every few in-game minutes and blended.",
+		description = "Light from the sky follows the clouds and the colors of the sky, on walls too: warm facing a sunset, gray under cloud. The sky is captured every few in-game minutes and blended.",
 		section = cloudsSection,
 		position = 506
 	)

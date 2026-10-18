@@ -349,7 +349,7 @@ void main() {
     shadow = overcastShadow(shadow);
     vec3 caster = sunIsCaster == 1 ? sunLight(sunAltitude) : moonLight(sunAltitude);
     float up = max(-n.y, 0.0);
-    light = (ambientLight(sunAltitude) + skyFill(n, sunAltitude) * up) * envAmbient * ao
+    light = (ambientLight(sunAltitude) + skyFill(n, sunAltitude) * skyFillWeight(up)) * envAmbient * ao
       + caster * envSun * max(ndl, 0.0) * shadow * mix(1.0, ao, AO_DIRECT);
     if (transmissive > 0.0) {
       // light through the leaf isn't occluded by the creases SSAO sees on its front

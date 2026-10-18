@@ -14,16 +14,28 @@ import static org.lwjgl.opengl.GL33C.*;
  * surface facing each way, so the ground follows the clouds and the sky's colors. The composite can also draw the
  * sky from the cache instead of marching the clouds for every sky pixel; only then is the full cache blended.
  *
- * A capture is 512x256 pixels marching 24 cloud steps, about a tenth of a 1440p screen of sky, once every second
- * or few. Between captures the 32x16 irradiance (64 fetches a texel) is redrawn each frame, plus, when the sky is
- * drawn from the cache, the 512x256 blend and its mips.
+ * For the sky light alone a capture is 128x64 pixels marching 12 cloud steps, a few hundredths of a millisecond
+ * once every second or few: the irradiance only needs its blurred 32x16 mip. When the sky itself is drawn from the
+ * cache, captures are 512x256 with 24 steps, drawn in strips over a few frames (the blend waits meanwhile), and the
+ * 512x256 blend and its mips are redrawn each frame. The 32x16 irradiance (32 fetches a texel) is redrawn when the
+ * blend has moved on a little or the sun's glow, which it adds live, has moved.
  */
 class SkyCache
 {
 	static final int WIDTH = 512;
 	static final int HEIGHT = 256;
+	static final int VIEW_STEPS = 24;
+	// sky light only: the irradiance reads a blurred mip anyway
+	static final int LIGHT_WIDTH = 128;
+	static final int LIGHT_HEIGHT = 64;
+	static final int LIGHT_STEPS = 12;
+	// a 512x256 capture is drawn in this many strips, one a frame
+	static final int VIEW_SLICES = 4;
 	static final int IRRADIANCE_WIDTH = 32;
 	static final int IRRADIANCE_HEIGHT = 16;
+	// the irradiance is redrawn when the blend has moved this far, or this often for the sun's glow
+	private static final float IRRADIANCE_BLEND_STEP = 0.02f;
+	private static final long IRRADIANCE_MILLIS = 100;
 
 	static final Shader CAPTURE_PROGRAM = new Shader()
 		.add(GL_VERTEX_SHADER, "composite_vert.glsl")
@@ -161,10 +173,23 @@ class SkyCache
 	private final Schedule schedule = new Schedule();
 	private final Clouds.Locations captureClouds = new Clouds.Locations();
 	private int captureProgram, blendProgram, irradianceProgram;
-	private int uniCameraPos, uniSunDir, uniMoonDir, uniSunAltitude, uniCacheSize, uniOvercast;
+	private int uniCameraPos, uniSunDir, uniMoonDir, uniSunAltitude, uniCacheSize, uniOvercast, uniSteps;
 	private int uniBlend;
-	private int uniIrradianceSize, uniIrradianceBlend;
+	private int uniIrradianceSize, uniIrradianceBlend, uniIrradianceLod, uniIrradianceSunDir, uniIrradianceSunAltitude,
+		uniIrradianceOvercast;
 	private int uniMode, uniHaze, uniStars;
+
+	private int width, height;
+	// capture in progress: next strip, -1 for none; strips in this capture; what the schedule records once it is done
+	private int captureSlice = -1;
+	private int captureSlices;
+	private double captureGameMinutes;
+	private long captureMillis;
+	private float captureCover, captureOvercast, captureSnow, captureAltitude, captureCameraAltitude;
+	private double captureDriftX, captureDriftZ;
+	private int captureSettings;
+	private float irradianceBlend = -1;
+	private long irradianceMillis;
 
 	private final int[] textures = new int[3];
 	private int irradiance;
@@ -216,6 +241,7 @@ class SkyCache
 		uniSunAltitude = glGetUniformLocation(captureProgram, "sunAltitude");
 		uniCacheSize = glGetUniformLocation(captureProgram, "cacheSize");
 		uniOvercast = glGetUniformLocation(captureProgram, "weatherOvercast");
+		uniSteps = glGetUniformLocation(captureProgram, "captureSteps");
 		Clouds.locate(captureClouds, captureProgram, cloudNoiseUnit);
 
 		uniBlend = glGetUniformLocation(blendProgram, "blend");
@@ -224,6 +250,10 @@ class SkyCache
 		glUniform1i(glGetUniformLocation(blendProgram, "cacheTo"), fromUnit + 1);
 		uniIrradianceSize = glGetUniformLocation(irradianceProgram, "irradianceSize");
 		uniIrradianceBlend = glGetUniformLocation(irradianceProgram, "blend");
+		uniIrradianceLod = glGetUniformLocation(irradianceProgram, "radianceLod");
+		uniIrradianceSunDir = glGetUniformLocation(irradianceProgram, "sunDir");
+		uniIrradianceSunAltitude = glGetUniformLocation(irradianceProgram, "sunAltitude");
+		uniIrradianceOvercast = glGetUniformLocation(irradianceProgram, "weatherOvercast");
 		glUseProgram(irradianceProgram);
 		glUniform1i(glGetUniformLocation(irradianceProgram, "radiance"), fromUnit);
 		glUniform1i(glGetUniformLocation(irradianceProgram, "radianceTo"), fromUnit + 1);
@@ -253,6 +283,8 @@ class SkyCache
 		}
 		latest = from = shown = -1;
 		blending = false;
+		captureSlice = -1;
+		irradianceBlend = -1;
 		schedule.invalidate();
 	}
 
@@ -300,39 +332,72 @@ class SkyCache
 		{
 			return;
 		}
+		int w = view ? WIDTH : LIGHT_WIDTH, h = view ? HEIGHT : LIGHT_HEIGHT;
+		if (fbo != 0 && w != width)
+		{
+			free();
+		}
 		if (fbo == 0)
 		{
-			init();
+			init(w, h);
 		}
 		long now = System.currentTimeMillis();
 		if (now - lastUpdateMillis > STALE_MILLIS)
 		{
 			shown = -1;
 			blending = false;
+			captureSlice = -1;
 			schedule.invalidate();
 		}
 		lastUpdateMillis = now;
 		double driftX = clouds.getOriginX() + cameraX, driftZ = clouds.getOriginZ() + cameraZ;
 		float cover = clouds.isEnabled() ? clouds.getCoverage() : 0;
 		boolean changed = false;
-		if (schedule.due(gameMinutes, now, interval, cover, overcast[0], overcast[1], day.sunAltitude, -cameraY,
-			driftX, driftZ, settings))
+		if (captureSlice < 0 && schedule.due(gameMinutes, now, interval, cover, overcast[0], overcast[1],
+			day.sunAltitude, -cameraY, driftX, driftZ, settings))
 		{
 			if (blending && !materialized)
 			{
 				// the next blend starts from what is on screen, so it has to exist as a texture
 				blend(lastBlend, fromUnit);
 			}
-			int[] r = roles(shown);
-			latest = r[0];
-			from = r[1];
-			shown = r[2];
-			blending = from != latest;
-			capture(clouds, cameraX, cameraY, cameraZ, day, overcast);
-			interval = Schedule.interval(minutes, day.sunAltitude);
-			schedule.captured(gameMinutes, now, cover, overcast[0], overcast[1], day.sunAltitude, -cameraY,
-				driftX, driftZ, settings);
-			changed = true;
+			// what is on screen stays until the capture is done
+			blending = false;
+			latest = roles(shown)[0];
+			captureSlice = 0;
+			captureSlices = view && shown >= 0 ? VIEW_SLICES : 1;
+			captureGameMinutes = gameMinutes;
+			captureMillis = now;
+			captureCover = cover;
+			captureOvercast = overcast[0];
+			captureSnow = overcast[1];
+			captureAltitude = day.sunAltitude;
+			captureCameraAltitude = -cameraY;
+			captureDriftX = driftX;
+			captureDriftZ = driftZ;
+			captureSettings = settings;
+		}
+		if (captureSlice >= 0)
+		{
+			capture(clouds, cameraX, cameraY, cameraZ, day, overcast, view ? VIEW_STEPS : LIGHT_STEPS);
+			if (++captureSlice == captureSlices)
+			{
+				captureSlice = -1;
+				mipmaps(latest);
+				int[] r = roles(shown);
+				latest = r[0];
+				from = r[1];
+				shown = r[2];
+				blending = from != latest;
+				interval = Schedule.interval(minutes, captureAltitude);
+				schedule.captured(captureGameMinutes, captureMillis, captureCover, captureOvercast, captureSnow,
+					captureAltitude, captureCameraAltitude, captureDriftX, captureDriftZ, captureSettings);
+				changed = true;
+			}
+		}
+		if (shown < 0)
+		{
+			return;
 		}
 
 		float t = 1;
@@ -345,18 +410,21 @@ class SkyCache
 			{
 				blending = false;
 				shown = latest;
+				changed = true;
 			}
 			else if (view)
 			{
 				blend(t, fromUnit);
 				materialized = true;
 			}
-			changed = true;
 		}
-		if (changed)
+		float irrBlend = blending ? t : 0;
+		if (changed || Math.abs(irrBlend - irradianceBlend) >= IRRADIANCE_BLEND_STEP
+			|| now - irradianceMillis >= IRRADIANCE_MILLIS)
 		{
-			// without the sky drawn from the cache, only the tiny irradiance needs blending
-			irradiance(blending ? from : shown, blending ? latest : shown, blending ? t : 0, fromUnit);
+			irradiance(blending ? from : shown, blending ? latest : shown, irrBlend, fromUnit, day, overcast);
+			irradianceBlend = irrBlend;
+			irradianceMillis = now;
 		}
 	}
 
@@ -397,29 +465,42 @@ class SkyCache
 		glActiveTexture(GL_TEXTURE0);
 	}
 
-	private void capture(Clouds clouds, float cameraX, float cameraY, float cameraZ, DayCycle day, float[] overcast)
+	/** This frame's strip of the capture in progress. */
+	private void capture(Clouds clouds, float cameraX, float cameraY, float cameraZ, DayCycle day, float[] overcast,
+		int steps)
 	{
 		glBindFramebuffer(GL_FRAMEBUFFER, fbo);
 		glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, textures[latest], 0);
-		glViewport(0, 0, WIDTH, HEIGHT);
+		glViewport(0, 0, width, height);
+		int y0 = height * captureSlice / captureSlices, y1 = height * (captureSlice + 1) / captureSlices;
+		boolean strip = captureSlices > 1;
+		if (strip)
+		{
+			glEnable(GL_SCISSOR_TEST);
+			glScissor(0, y0, width, y1 - y0);
+		}
 		glUseProgram(captureProgram);
 		glUniform3f(uniCameraPos, cameraX, cameraY, cameraZ);
 		glUniform3fv(uniSunDir, day.sunDir);
 		glUniform3fv(uniMoonDir, day.moonDir);
 		glUniform1f(uniSunAltitude, day.sunAltitude);
-		glUniform2f(uniCacheSize, WIDTH, HEIGHT);
+		glUniform2f(uniCacheSize, width, height);
+		glUniform1i(uniSteps, steps);
 		// no lightning: it flashes far faster than captures come
 		glUniform3f(uniOvercast, overcast[0], overcast[1], 0);
 		clouds.apply(captureClouds);
 		glDrawArrays(GL_TRIANGLES, 0, 3);
-		mipmaps(latest);
+		if (strip)
+		{
+			glDisable(GL_SCISSOR_TEST);
+		}
 	}
 
 	private void blend(float t, int fromUnit)
 	{
 		glBindFramebuffer(GL_FRAMEBUFFER, fbo);
 		glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, textures[shown], 0);
-		glViewport(0, 0, WIDTH, HEIGHT);
+		glViewport(0, 0, width, height);
 		glUseProgram(blendProgram);
 		glUniform1f(uniBlend, t);
 		glActiveTexture(GL_TEXTURE0 + fromUnit);
@@ -434,7 +515,7 @@ class SkyCache
 		mipmaps(shown);
 	}
 
-	private void irradiance(int a, int b, float t, int unit)
+	private void irradiance(int a, int b, float t, int unit, DayCycle day, float[] overcast)
 	{
 		glBindFramebuffer(GL_FRAMEBUFFER, fbo);
 		glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, irradiance, 0);
@@ -442,6 +523,11 @@ class SkyCache
 		glUseProgram(irradianceProgram);
 		glUniform2f(uniIrradianceSize, IRRADIANCE_WIDTH, IRRADIANCE_HEIGHT);
 		glUniform1f(uniIrradianceBlend, t);
+		// the mip about as wide as the irradiance: clouds between the sample directions still count
+		glUniform1f(uniIrradianceLod, (float) (Math.log((double) width / IRRADIANCE_WIDTH) / Math.log(2)));
+		glUniform3fv(uniIrradianceSunDir, day.sunDir);
+		glUniform1f(uniIrradianceSunAltitude, day.sunAltitude);
+		glUniform3f(uniIrradianceOvercast, overcast[0], overcast[1], 0);
 		glActiveTexture(GL_TEXTURE0 + unit);
 		glBindTexture(GL_TEXTURE_2D, textures[a]);
 		glActiveTexture(GL_TEXTURE0 + unit + 1);
@@ -462,14 +548,16 @@ class SkyCache
 		glBindTexture(GL_TEXTURE_2D, 0);
 	}
 
-	private void init()
+	private void init(int width, int height)
 	{
+		this.width = width;
+		this.height = height;
 		glGenTextures(textures);
 		for (int tex : textures)
 		{
 			glBindTexture(GL_TEXTURE_2D, tex);
 			// half float: linear light, dim at night
-			glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA16F, WIDTH, HEIGHT, 0, GL_RGBA, GL_HALF_FLOAT, 0);
+			glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA16F, width, height, 0, GL_RGBA, GL_HALF_FLOAT, 0);
 			glGenerateMipmap(GL_TEXTURE_2D);
 			glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
 			glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
