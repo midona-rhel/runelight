@@ -87,6 +87,25 @@ vec3 skyLight(float alt) {
   return srgbToLinear(skyZenith(alt)) * SKY_LIGHT;
 }
 
+// Underground: no sun, so a fixed soft key light from above keeps shapes readable. y points down.
+#define CAVE_AMBIENT 0.50
+#define CAVE_KEY 0.40
+#define CAVE_KEY_DIR normalize(vec3(-0.35, -1.0, 0.45))
+
+vec3 caveLight(vec3 n) {
+  return vec3(CAVE_AMBIENT) + vec3(CAVE_KEY) * max(dot(n, CAVE_KEY_DIR), 0.0);
+}
+
+// linear value above which highlights are compressed toward 1
+#define SHOULDER 0.75
+
+// Light an sRGB surface color in linear space and return sRGB, with a soft highlight shoulder
+vec3 shade(vec3 srgb, vec3 light) {
+  vec3 c = srgbToLinear(srgb) * light;
+  c = mix(c, 1.0 - (1.0 - SHOULDER) * exp(-(c - SHOULDER) / (1.0 - SHOULDER)), step(SHOULDER, c));
+  return linearToSrgb(clamp(c, 0.0, 1.0));
+}
+
 float hash13(vec3 p) {
   p = fract(p * 0.1031);
   p += dot(p, p.zyx + 31.32);

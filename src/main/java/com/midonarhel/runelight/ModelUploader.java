@@ -84,6 +84,7 @@ class ModelUploader
 	}
 
 	private final int[] flatNormals = new int[3];
+	private final VertexShading.Normals computedNormals = new VertexShading.Normals();
 
 	int uploadSortedModel(RuneLightPlugin.RenderThread rt, Projection proj, Model model, int orientation, int x, int y, int z,
 		int cameraX, int cameraY, int cameraZ, IntBuffer opaqueBuffer, IntBuffer alphaBuffer, boolean prioritySort)
@@ -109,10 +110,14 @@ class ModelUploader
 		final byte modelTransparency = model.getTransparency();
 		final byte[] bias = model.getFaceBias();
 
-		final int[] normalsX = model.getVertexNormalsX();
-		final int[] normalsY = model.getVertexNormalsY();
-		final int[] normalsZ = model.getVertexNormalsZ();
-		final boolean hasNormals = VertexShading.hasNormals(normalsX, normalsY, normalsZ);
+		final VertexShading.Normals computed = this.computedNormals;
+		computed.ensure(model.getVerticesCount());
+		VertexShading.computeNormals(model.getVerticesCount(), verticesX, verticesY, verticesZ,
+			model.getFaceCount(), indices1, indices2, indices3, faceColors3, computed.x, computed.y, computed.z);
+		final float[] normalsX = computed.x;
+		final float[] normalsY = computed.y;
+		final float[] normalsZ = computed.z;
+		final boolean hasNormals = true;
 		final short[] unlitColors = model.getUnlitFaceColors();
 
 		float orientSine = 0;
@@ -551,10 +556,14 @@ class ModelUploader
 		final byte overrideSat = model.getOverrideSaturation();
 		final byte overrideLum = model.getOverrideLuminance();
 
-		final int[] normalsX = model.getVertexNormalsX();
-		final int[] normalsY = model.getVertexNormalsY();
-		final int[] normalsZ = model.getVertexNormalsZ();
-		final boolean hasNormals = VertexShading.hasNormals(normalsX, normalsY, normalsZ);
+		final VertexShading.Normals computed = this.computedNormals;
+		computed.ensure(model.getVerticesCount());
+		VertexShading.computeNormals(model.getVerticesCount(), verticesX, verticesY, verticesZ,
+			model.getFaceCount(), indices1, indices2, indices3, color3s, computed.x, computed.y, computed.z);
+		final float[] normalsX = computed.x;
+		final float[] normalsY = computed.y;
+		final float[] normalsZ = computed.z;
+		final boolean hasNormals = true;
 		final short[] unlitColors = model.getUnlitFaceColors();
 
 		float orientSine = 0;

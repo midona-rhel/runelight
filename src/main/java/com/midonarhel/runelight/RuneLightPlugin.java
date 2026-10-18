@@ -225,6 +225,13 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 	private final java.util.ArrayList<PointLight> frameLights = new java.util.ArrayList<>();
 	private final PointLight testLight = new PointLight();
 	private int uniCompositePointLights;
+	private int uniAlphaPass;
+	private int uniSceneOutdoors;
+	private int uniSceneProceduralSky;
+	private int uniSceneCasterDir;
+	private int uniSceneSunIsCaster;
+	private int uniSceneSunAltitude;
+	private static final int ALPHA_LAYER_UNIT = RuneLightPlugin.COMPOSITE_TEXTURE_UNIT + 8;
 
 	static final Shader SHADOW_PROGRAM = new Shader()
 		.add(GL_VERTEX_SHADER, "shadow_vert.glsl")
@@ -899,6 +906,12 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		uniCompositeDebugView = glGetUniformLocation(glCompositeProgram, "debugView");
 		uniCompositeAoEnabled = glGetUniformLocation(glCompositeProgram, "aoEnabled");
 		uniCompositeAoStrength = glGetUniformLocation(glCompositeProgram, "aoStrength");
+		uniAlphaPass = glGetUniformLocation(glProgram, "alphaPass");
+		uniSceneOutdoors = glGetUniformLocation(glProgram, "outdoors");
+		uniSceneProceduralSky = glGetUniformLocation(glProgram, "proceduralSky");
+		uniSceneCasterDir = glGetUniformLocation(glProgram, "casterDir");
+		uniSceneSunIsCaster = glGetUniformLocation(glProgram, "sunIsCaster");
+		uniSceneSunAltitude = glGetUniformLocation(glProgram, "sunAltitude");
 		compositeFrame.locate(glCompositeProgram);
 		bindSceneSamplers(glCompositeProgram);
 		glUseProgram(glCompositeProgram);
@@ -935,6 +948,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		glUniform1i(glGetUniformLocation(c, "shadowCompare"), SHADOW_COMPARE_UNIT);
 		glUniform1i(glGetUniformLocation(c, "lightData"), LIGHT_DATA_UNIT);
 		glUniform1i(glGetUniformLocation(c, "clusterData"), CLUSTER_DATA_UNIT);
+		glUniform1i(glGetUniformLocation(c, "sceneAlpha"), ALPHA_LAYER_UNIT);
 		uniCompositePointLights = glGetUniformLocation(c, "pointLightsEnabled");
 		glUseProgram(0);
 
@@ -1383,8 +1397,14 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		final int drawDistance = getDrawDistance();
 		final int fogDepth = config.fogDepth();
 		final int sky = client.getSkyboxColor();
-		// fog is applied in the composite pass, after lighting
-		glUniform1i(uniUseFog, 0);
+		// the scene shader only uses fog for transparent faces; opaque ones are fogged in the composite pass
+		glUniform1i(uniUseFog, fogDepth > 0 ? 1 : 0);
+		glUniform1i(uniAlphaPass, 0);
+		glUniform1i(uniSceneOutdoors, frameOutdoors ? 1 : 0);
+		glUniform1i(uniSceneProceduralSky, config.proceduralSky() && !frameHasSkybox ? 1 : 0);
+		glUniform3fv(uniSceneCasterDir, dayCycle.casterDir);
+		glUniform1i(uniSceneSunIsCaster, dayCycle.sunIsCaster ? 1 : 0);
+		glUniform1f(uniSceneSunAltitude, dayCycle.sunAltitude);
 		glUniform4f(uniFogColor, (sky >> 16 & 0xFF) / 255f, (sky >> 8 & 0xFF) / 255f, (sky & 0xFF) / 255f, 1f);
 		glUniform1i(uniFogDepth, fogDepth);
 		glUniform1i(uniDrawDistance, drawDistance * Perspective.LOCAL_TILE_SIZE);
@@ -1432,6 +1452,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		glEnable(GL_DEPTH_TEST);
 
 		drawSkybox(scene, sky, cameraX, cameraY, cameraZ);
+		sceneTargets.clearAlphaLayer();
 
 		checkGLErrors();
 	}
@@ -1643,6 +1664,24 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		checkGLErrors();
 	}
 
+	/**
+	 * Transparent faces go to their own layer, blended as premultiplied "over" so the composite can put the layer
+	 * on top of the lit opaque scene. They don't write depth (Zone and VAO already turn depth writes off).
+	 */
+	private void setAlphaPass(boolean alpha)
+	{
+		sceneTargets.setAlphaPass(alpha);
+		if (alpha)
+		{
+			glBlendFuncSeparate(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA, GL_ONE, GL_ONE_MINUS_SRC_ALPHA);
+		}
+		else
+		{
+			glBlendFuncSeparate(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA, GL_ONE, GL_ONE);
+		}
+		glUniform1i(uniAlphaPass, alpha ? 1 : 0);
+	}
+
 	private void setFrameUniforms(FrameUniforms u)
 	{
 		glUniformMatrix4fv(u.viewProj, false, frameViewProj);
@@ -1783,6 +1822,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		glUniform1i(uniCompositeAoEnabled, ao ? 1 : 0);
 		glUniform1f(uniCompositeAoStrength, config.aoStrength() / 100f);
 		setLightingUniforms();
+		sceneTargets.bindAlphaLayer(ALPHA_LAYER_UNIT);
 		glDrawArrays(GL_TRIANGLES, 0, 3);
 
 		glBindVertexArray(0);
@@ -1792,6 +1832,9 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		glActiveTexture(GL_TEXTURE0);
 		ShadowMap.unbind(SHADOW_RAW_UNIT, SHADOW_COMPARE_UNIT);
 		LightClusters.unbind(LIGHT_DATA_UNIT, CLUSTER_DATA_UNIT);
+		glActiveTexture(GL_TEXTURE0 + ALPHA_LAYER_UNIT);
+		glBindTexture(GL_TEXTURE_2D, 0);
+		glActiveTexture(GL_TEXTURE0);
 		glUseProgram(0);
 
 		checkGLErrors();
@@ -1877,6 +1920,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		}
 		else if (pass == DrawCallbacks.PASS_ALPHA)
 		{
+			setAlphaPass(false);
 			for (int x = 0; x < ctx.sizeX; ++x)
 			{
 				for (int z = 0; z < ctx.sizeZ; ++z)
@@ -1895,6 +1939,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 
 			glUniformMatrix4fv(uniEntityProj, false, ctx.projection);
 			glUniform4i(uniEntityTint, scene.getOverrideHue(), scene.getOverrideSaturation(), scene.getOverrideLuminance(), scene.getOverrideAmount());
+			setAlphaPass(true);
 		}
 
 		checkGLErrors();

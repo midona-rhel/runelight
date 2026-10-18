@@ -19,16 +19,11 @@
 // how much AO also darkens direct sun and point light; physically 0, but contact shading reads better with some
 #define AO_DIRECT 1.0
 
-// linear value above which highlights are compressed toward 1
-#define SHOULDER 0.75
 
-// underground lighting (linear); y points down, so the key light comes from above with -y
-#define CAVE_AMBIENT 0.50
-#define CAVE_KEY 0.40
-#define CAVE_KEY_DIR normalize(vec3(-0.35, -1.0, 0.45))
 #define TILE_SIZE 128.0
 
 uniform sampler2D sceneAo;  // half resolution
+uniform sampler2D sceneAlpha;  // transparent geometry, already lit, premultiplied
 uniform int debugView;
 uniform int aoEnabled;
 uniform float aoStrength;
@@ -235,6 +230,14 @@ vec3 pointLights(int base, vec3 p, vec3 n) {
 
 // ---------------------------------------------------------------------------------------------------------------
 
+// Transparent surfaces were lit as they were drawn, into their own layer; put them over the lit scene
+vec4 overTransparent(ivec2 px, vec4 base) {
+  vec4 a = texelFetch(sceneAlpha, px, 0);
+  return vec4(a.rgb + base.rgb * (1.0 - a.a), base.a);
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+
 void main() {
   ivec2 px = ivec2(gl_FragCoord.xy);
   vec4 color = texelFetch(sceneColor, px, 0);
@@ -262,7 +265,7 @@ void main() {
       vec3 dir = normalize(reconstructPosition(vec2(px) + 0.5, 1.0));
       color.rgb = skyColor(dir, sunDir, moonDir, sunAltitude, time);
     }
-    FragColor = color;
+    FragColor = overTransparent(px, color);
     return;
   }
 
@@ -288,7 +291,7 @@ void main() {
   } else if (lightingEnabled == 1 && inside) {
     // Underground: no sun, and the game's own baked shading is removed, so a fixed soft key light from above
     // keeps shapes readable. Point lights do the rest.
-    light = vec3(CAVE_AMBIENT) * ao + vec3(CAVE_KEY) * max(dot(n, CAVE_KEY_DIR), 0.0);
+    light = caveLight(n) * ao;
   }
 
   int cluster = clusterBase(px, viewDepth(d));
@@ -316,10 +319,7 @@ void main() {
     return;
   }
 
-  // light in linear space, then a soft shoulder so bright sunlit colors roll off instead of clipping
-  vec3 linear = srgbToLinear(color.rgb) * light;
-  linear = mix(linear, 1.0 - (1.0 - SHOULDER) * exp(-(linear - SHOULDER) / (1.0 - SHOULDER)), step(SHOULDER, linear));
-  vec3 lit = linearToSrgb(clamp(linear, 0.0, 1.0));
+  vec3 lit = shade(color.rgb, light);
   lit = mix(lit, fogColor, fogAmount(p + cameraPos));
-  FragColor = vec4(lit, color.a);
+  FragColor = overTransparent(px, vec4(lit, color.a));
 }

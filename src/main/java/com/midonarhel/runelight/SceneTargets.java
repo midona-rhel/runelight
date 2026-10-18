@@ -17,10 +17,17 @@ class SceneTargets
 
 	// what the scene draws into: fboMsaa when multisampled, else fboResolve
 	private int fboMsaa;
-	private int rboColor, rboNormal, rboDepth;
+	private int rboColor, rboNormal, rboDepth, rboAlpha;
 
 	private int fboResolve;
 	private int texColor, texNormal, texDepth;
+	// transparent geometry, lit as it is drawn, premultiplied; blended over the lit opaque scene by the composite
+	private int texAlpha;
+
+	private static final int[] OPAQUE_BUFFERS = {GL_COLOR_ATTACHMENT0, GL_COLOR_ATTACHMENT1};
+	private static final int[] ALPHA_BUFFERS = {GL_NONE, GL_NONE, GL_COLOR_ATTACHMENT2};
+	private static final int[] ALL_BUFFERS = {GL_COLOR_ATTACHMENT0, GL_COLOR_ATTACHMENT1, GL_COLOR_ATTACHMENT2};
+	private static final float[] TRANSPARENT = {0, 0, 0, 0};
 
 	// ambient occlusion at half resolution, upsampled depth-aware in the composite pass
 	private int fboAo, texAo;
@@ -35,13 +42,15 @@ class SceneTargets
 		texColor = texture(COLOR_FORMAT, GL_RGBA, GL_UNSIGNED_BYTE);
 		texNormal = texture(NORMAL_FORMAT, GL_RGBA, GL_UNSIGNED_INT_2_10_10_10_REV);
 		texDepth = texture(DEPTH_FORMAT, GL_DEPTH_COMPONENT, GL_FLOAT);
+		texAlpha = texture(COLOR_FORMAT, GL_RGBA, GL_UNSIGNED_BYTE);
 
 		fboResolve = glGenFramebuffers();
 		glBindFramebuffer(GL_FRAMEBUFFER, fboResolve);
 		glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, texColor, 0);
 		glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT1, GL_TEXTURE_2D, texNormal, 0);
 		glFramebufferTexture2D(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_TEXTURE_2D, texDepth, 0);
-		glDrawBuffers(new int[]{GL_COLOR_ATTACHMENT0, GL_COLOR_ATTACHMENT1});
+		glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT2, GL_TEXTURE_2D, texAlpha, 0);
+		glDrawBuffers(OPAQUE_BUFFERS);
 		check("resolve");
 
 		aoWidth = (width + 1) / 2;
@@ -67,10 +76,12 @@ class SceneTargets
 			rboColor = renderbuffer(COLOR_FORMAT);
 			rboNormal = renderbuffer(NORMAL_FORMAT);
 			rboDepth = renderbuffer(DEPTH_FORMAT);
+			rboAlpha = renderbuffer(COLOR_FORMAT);
 			glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_RENDERBUFFER, rboColor);
 			glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT1, GL_RENDERBUFFER, rboNormal);
 			glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_RENDERBUFFER, rboDepth);
-			glDrawBuffers(new int[]{GL_COLOR_ATTACHMENT0, GL_COLOR_ATTACHMENT1});
+			glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT2, GL_RENDERBUFFER, rboAlpha);
+			glDrawBuffers(OPAQUE_BUFFERS);
 			check("msaa");
 			glBindRenderbuffer(GL_RENDERBUFFER, 0);
 		}
@@ -81,8 +92,8 @@ class SceneTargets
 		if (fboMsaa != 0)
 		{
 			glDeleteFramebuffers(fboMsaa);
-			glDeleteRenderbuffers(new int[]{rboColor, rboNormal, rboDepth});
-			fboMsaa = rboColor = rboNormal = rboDepth = 0;
+			glDeleteRenderbuffers(new int[]{rboColor, rboNormal, rboDepth, rboAlpha});
+			fboMsaa = rboColor = rboNormal = rboDepth = rboAlpha = 0;
 		}
 		if (fboAo != 0)
 		{
@@ -93,8 +104,8 @@ class SceneTargets
 		if (fboResolve != 0)
 		{
 			glDeleteFramebuffers(fboResolve);
-			glDeleteTextures(new int[]{texColor, texNormal, texDepth});
-			fboResolve = texColor = texNormal = texDepth = 0;
+			glDeleteTextures(new int[]{texColor, texNormal, texDepth, texAlpha});
+			fboResolve = texColor = texNormal = texDepth = texAlpha = 0;
 		}
 	}
 
@@ -150,8 +161,38 @@ class SceneTargets
 		glDrawBuffers(GL_COLOR_ATTACHMENT1);
 		glBlitFramebuffer(0, 0, width, height, 0, 0, width, height, GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT, GL_NEAREST);
 
+		glReadBuffer(GL_COLOR_ATTACHMENT2);
+		glDrawBuffers(GL_COLOR_ATTACHMENT2);
+		glBlitFramebuffer(0, 0, width, height, 0, 0, width, height, GL_COLOR_BUFFER_BIT, GL_NEAREST);
+
 		glReadBuffer(GL_COLOR_ATTACHMENT0);
-		glDrawBuffers(new int[]{GL_COLOR_ATTACHMENT0, GL_COLOR_ATTACHMENT1});
+		glDrawBuffers(OPAQUE_BUFFERS);
+	}
+
+	/**
+	 * Clear the transparency layer to nothing. Call with the render framebuffer bound, after the frame's clear,
+	 * which fills every attachment with the sky color.
+	 */
+	void clearAlphaLayer()
+	{
+		glDrawBuffers(ALL_BUFFERS);
+		glClearBufferfv(GL_COLOR, 2, TRANSPARENT);
+		glDrawBuffers(OPAQUE_BUFFERS);
+	}
+
+	/**
+	 * Route drawing to the transparency layer, or back to the opaque color and normal targets.
+	 */
+	void setAlphaPass(boolean alpha)
+	{
+		glDrawBuffers(alpha ? ALPHA_BUFFERS : OPAQUE_BUFFERS);
+	}
+
+	void bindAlphaLayer(int unit)
+	{
+		glActiveTexture(GL_TEXTURE0 + unit);
+		glBindTexture(GL_TEXTURE_2D, texAlpha);
+		glActiveTexture(GL_TEXTURE0);
 	}
 
 	/**

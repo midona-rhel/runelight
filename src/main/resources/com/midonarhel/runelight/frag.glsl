@@ -57,6 +57,18 @@ layout(std140) uniform uniforms {
 
 layout(location = 0) out vec4 FragColor;
 layout(location = 1) out vec4 FragNormal;
+layout(location = 2) out vec4 FragAlpha;  // transparency layer, see SceneTargets
+
+// Transparent faces are drawn in a separate pass into their own layer and lit right here, because the composite
+// pass only sees the opaque surface behind them. Same lighting as the composite, without shadows.
+uniform int alphaPass;
+uniform int outdoors;
+uniform int proceduralSky;
+uniform vec3 casterDir;
+uniform int sunIsCaster;
+uniform float sunAltitude;
+
+#include "sky.glsl"
 
 #include "hsl_to_rgb.glsl"
 
@@ -103,8 +115,8 @@ void main() {
   c.rgb = colorblind(c.rgb);
 #endif
 
-  vec3 mixedColor = mix(c.rgb, fogColor.rgb, fFogAmount);
-  FragColor = vec4(mixedColor, c.a);
+  // opaque surfaces are lit and fogged later by the composite pass
+  FragColor = c;
 
   // The triangle's own normal from screen-space derivatives, facing the camera. Used for faces the game marks
   // as flat shaded, and as the reference that orients the smooth vertex normal.
@@ -116,6 +128,18 @@ void main() {
     n = dot(sn, n) < 0.0 ? -sn : sn;
   }
   FragNormal = vec4(n * 0.5 + 0.5, c.a);
+
+  if (alphaPass == 1) {
+    vec3 light;
+    if (outdoors == 1) {
+      vec3 caster = sunIsCaster == 1 ? sunLight(sunAltitude) : moonLight(sunAltitude);
+      light = ambientLight(sunAltitude) + skyLight(sunAltitude) * max(-n.y, 0.0) + caster * max(dot(n, casterDir), 0.0);
+    } else {
+      light = caveLight(n);
+    }
+    vec3 fog = outdoors == 1 && proceduralSky == 1 ? skyHorizon(sunAltitude) : fogColor.rgb;
+    FragAlpha = vec4(mix(shade(c.rgb, light), fog, fFogAmount), c.a);
+  }
 
 #ifdef FRAG_UVS
   if (fTextureId > 0) {

@@ -60,7 +60,7 @@ final class VertexShading
 	 * Encoded normal of model vertex {@code v}, rotated by the model's orientation like its position is.
 	 * Returns 0 when the model has no normal for that vertex.
 	 */
-	static int vertexNormal(int[] nx, int[] ny, int[] nz, int v, float orientSine, float orientCosine)
+	static int vertexNormal(float[] nx, float[] ny, float[] nz, int v, float orientSine, float orientCosine)
 	{
 		float x = nx[v], y = ny[v], z = nz[v];
 		if (orientSine != 0 || orientCosine != 1)
@@ -84,7 +84,7 @@ final class VertexShading
 	 * @param out receives the three encoded normals
 	 * @return true if any vertex was smoothed
 	 */
-	static boolean flatFaceNormals(float[] vx, float[] vy, float[] vz, int[] nx, int[] ny, int[] nz,
+	static boolean flatFaceNormals(float[] vx, float[] vy, float[] vz, float[] nx, float[] ny, float[] nz,
 		int a, int b, int c, float orientSine, float orientCosine, int[] out)
 	{
 		float ux = vx[b] - vx[a], uy = vy[b] - vy[a], uz = vz[b] - vz[a];
@@ -139,9 +139,58 @@ final class VertexShading
 		return encodeNormal(x, y, z);
 	}
 
-	static boolean hasNormals(int[] nx, int[] ny, int[] nz)
+	/**
+	 * Smooth vertex normals computed from the model's own geometry: each vertex gets the area-weighted average of
+	 * the normals of the visible faces around it. Doesn't depend on the game providing normals, which it doesn't
+	 * always do, and which 117 HD found to be inaccurate anyway. The sign follows the face winding, which is
+	 * consistent within a model; the fragment shader aligns it with the triangle's facing regardless.
+	 */
+	static void computeNormals(int vertexCount, float[] vx, float[] vy, float[] vz,
+		int faceCount, int[] i1, int[] i2, int[] i3, int[] colors3, float[] nx, float[] ny, float[] nz)
 	{
-		return nx != null && ny != null && nz != null;
+		java.util.Arrays.fill(nx, 0, vertexCount, 0);
+		java.util.Arrays.fill(ny, 0, vertexCount, 0);
+		java.util.Arrays.fill(nz, 0, vertexCount, 0);
+		for (int f = 0; f < faceCount; ++f)
+		{
+			if (colors3[f] == -2)
+			{
+				continue;
+			}
+			int a = i1[f], b = i2[f], c = i3[f];
+			float ux = vx[b] - vx[a], uy = vy[b] - vy[a], uz = vz[b] - vz[a];
+			float wx = vx[c] - vx[a], wy = vy[c] - vy[a], wz = vz[c] - vz[a];
+			// unnormalized cross product: its length weights the face by area
+			float fx = uy * wz - uz * wy, fy = uz * wx - ux * wz, fz = ux * wy - uy * wx;
+			nx[a] += fx;
+			ny[a] += fy;
+			nz[a] += fz;
+			nx[b] += fx;
+			ny[b] += fy;
+			nz[b] += fz;
+			nx[c] += fx;
+			ny[c] += fy;
+			nz[c] += fz;
+		}
+	}
+
+	/**
+	 * Scratch arrays for computed normals, grown as needed.
+	 */
+	static final class Normals
+	{
+		float[] x = new float[0], y = new float[0], z = new float[0];
+
+		void ensure(int n)
+		{
+			if (x.length < n)
+			{
+				int size = Math.max(n, x.length * 2);
+				x = new float[size];
+				y = new float[size];
+				z = new float[size];
+			}
+		}
 	}
 
 	/**
@@ -153,7 +202,7 @@ final class VertexShading
 	 * @param unlit the model's unlit face colors, or null
 	 * @param nx unrotated model vertex normals (vanilla lights in model space), or null
 	 */
-	static int baseColor(int color, int face, int vertex, short[] unlit, int[] nx, int[] ny, int[] nz)
+	static int baseColor(int color, int face, int vertex, short[] unlit, float[] nx, float[] ny, float[] nz)
 	{
 		if (unlitColors && unlit != null)
 		{

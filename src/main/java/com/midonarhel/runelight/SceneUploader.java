@@ -596,6 +596,7 @@ class SceneUploader
 
 	// scene upload
 	private final int[] flatNormals = new int[3];
+	private final VertexShading.Normals computedNormals = new VertexShading.Normals();
 
 	private int uploadStaticModel(Model model, int orient, int x, int y, int z, GpuIntBuffer vb, GpuIntBuffer ab)
 	{
@@ -619,10 +620,14 @@ class SceneUploader
 		final byte[] transparencies = model.getFaceTransparencies();
 		final byte[] bias = model.getFaceBias();
 
-		final int[] normalsX = model.getVertexNormalsX();
-		final int[] normalsY = model.getVertexNormalsY();
-		final int[] normalsZ = model.getVertexNormalsZ();
-		final boolean hasNormals = VertexShading.hasNormals(normalsX, normalsY, normalsZ);
+		final VertexShading.Normals computed = this.computedNormals;
+		computed.ensure(model.getVerticesCount());
+		VertexShading.computeNormals(model.getVerticesCount(), vertexX, vertexY, vertexZ,
+			model.getFaceCount(), indices1, indices2, indices3, color3s, computed.x, computed.y, computed.z);
+		final float[] normalsX = computed.x;
+		final float[] normalsY = computed.y;
+		final float[] normalsZ = computed.z;
+		final boolean hasNormals = true;
 		final short[] unlitColors = model.getUnlitFaceColors();
 		final int[] flatNormals = this.flatNormals;
 		final float normalSin = orient != 0 ? Perspective.SINEF[orient] : 0;
