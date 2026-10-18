@@ -50,3 +50,10 @@ sky haze come from `environments.json`, built by `tools/import_environments.py` 
 environments with 3D Weather's biome regions as fallback (see the script for usage and what it leaves out).
 Rerun it against newer checkouts to pick up their additions. The biome looks (desert, swamp, snow, ...) are set in
 the script's `BIOMES` table.
+
+## Clouds
+
+Plugin config, Clouds section: one slab of clouds over the procedural sky, marched in 12 steps per sky pixel in
+the composite (nothing is spent where scenery covers the sky), with optional cloud shadows on the ground. Rain and
+snow close the sky up through `Weather.cloudCover()`. Tuning constants are `#define`s at the top of `clouds.glsl`;
+the noise texture and wind are in `Clouds.java`.
