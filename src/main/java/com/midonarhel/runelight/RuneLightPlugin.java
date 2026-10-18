@@ -155,6 +155,10 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 	private Gson gson;
 
 	private SceneLights sceneLights;
+	private BuildingLights buildingLights;
+
+	@Inject
+	private BuildingOverlay buildingOverlay;
 
 	@Inject
 	private OverlayManager overlayManager;
@@ -475,6 +479,10 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		sceneLights.load(gson);
 		eventBus.register(sceneLights);
 		clientThread.invoke(sceneLights::rebuild);
+		buildingLights = new BuildingLights(client);
+		eventBus.register(buildingLights);
+		clientThread.invoke(buildingLights::rebuild);
+		overlayManager.add(buildingOverlay);
 		startMillis = System.currentTimeMillis();
 
 		root = new SceneContext(NUM_ZONES, NUM_ZONES);
@@ -647,6 +655,12 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		{
 			eventBus.unregister(sceneLights);
 			sceneLights = null;
+		}
+		overlayManager.remove(buildingOverlay);
+		if (buildingLights != null)
+		{
+			eventBus.unregister(buildingLights);
+			buildingLights = null;
 		}
 		if (shaderWatcher != null)
 		{
@@ -1750,6 +1764,18 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 			float night = frameOutdoors ? t * t * (3 - 2 * t) : 1;
 			lights.collect(frameLights, time, night, frameCameraX, frameCameraZ, frameDrawDistance);
 		}
+		BuildingLights buildings = buildingLights;
+		// caves and dungeons have no buildings; frameOutdoors stands in until areas are classified
+		if (buildings != null && config.buildingLights() && frameOutdoors)
+		{
+			float night = BuildingLights.nightFactor(dayCycle.sunAltitude);
+			if (config.buildingLightsByDay())
+			{
+				night = BuildingLights.DAY_FACTOR + (1 - BuildingLights.DAY_FACTOR) * night;
+			}
+			buildings.collect(frameLights, config.buildingLightBrightness() / 100f, night,
+				frameCameraX, frameCameraZ, frameDrawDistance);
+		}
 		if (config.testLight())
 		{
 			Player player = client.getLocalPlayer();
@@ -1768,6 +1794,11 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 	{
 		SceneLights lights = sceneLights;
 		return lights != null ? lights.getDefinitionCount() : 0;
+	}
+
+	BuildingLights getBuildingLights()
+	{
+		return buildingLights;
 	}
 
 	int getPointLightCount()

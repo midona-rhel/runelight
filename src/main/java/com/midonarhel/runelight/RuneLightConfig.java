@@ -443,6 +443,62 @@ public interface RuneLightConfig extends Config
 	}
 
 	@ConfigSection(
+		name = "Buildings",
+		description = "Soft overhead light inside buildings at night",
+		position = 450
+	)
+	String buildingsSection = "buildings";
+
+	@ConfigItem(
+		keyName = "buildingLights",
+		name = "Building lights",
+		description = "Light the inside of buildings from overhead at night, found from the map's roof data.",
+		section = buildingsSection,
+		position = 451
+	)
+	default boolean buildingLights()
+	{
+		return true;
+	}
+
+	@Range(max = 300)
+	@ConfigItem(
+		keyName = "buildingLightBrightness",
+		name = "Brightness",
+		description = "Strength of building lights, in percent.",
+		section = buildingsSection,
+		position = 452
+	)
+	default int buildingLightBrightness()
+	{
+		return 100;
+	}
+
+	@ConfigItem(
+		keyName = "buildingLightsByDay",
+		name = "Also by day",
+		description = "Keep a dimmer version of the building lights on during the day.",
+		section = buildingsSection,
+		position = 453
+	)
+	default boolean buildingLightsByDay()
+	{
+		return false;
+	}
+
+	@ConfigItem(
+		keyName = "showBuildings",
+		name = "Show detected buildings",
+		description = "Outline the rooms found on your floor and mark where their lights are.",
+		section = buildingsSection,
+		position = 454
+	)
+	default boolean showBuildings()
+	{
+		return false;
+	}
+
+	@ConfigSection(
 		name = "Development",
 		description = "Tools for working on the renderer",
 		position = 100,
