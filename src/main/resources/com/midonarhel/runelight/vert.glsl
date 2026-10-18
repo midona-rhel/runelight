@@ -40,7 +40,7 @@
 #define FOG_CORNER_ROUNDING 1.5
 #define FOG_CORNER_ROUNDING_SQUARED (FOG_CORNER_ROUNDING * FOG_CORNER_ROUNDING)
 
-layout(location = 0) in vec4 vertf; // w: -1 on ground vertices between overlay and underlay (GroundBlender)
+layout(location = 0) in vec4 vertf; // w: -1 on ground vertices between overlay and underlay (GroundBlender), wind code on swaying models
 layout(location = 1) in int abhsl;
 layout(location = 2) in ivec4 tex;
 
@@ -80,6 +80,7 @@ out float fDepth;
 #endif
 
 #include "hsl_to_rgb.glsl"
+#include "sway.glsl"
 
 float fogFactorLinear(const float dist, const float start, const float end) {
   return 1.0 - clamp((dist - start) / (end - start), 0.0, 1.0);
@@ -95,8 +96,6 @@ void main() {
   vec3 rgb = hslToRgb(hsl);
 
   vec4 worldPos = entityProj * vert;
-  vec4 screenPos = worldProj * worldPos;
-  fWorldPos = worldPos.xyz;
 
   // octahedral normal in the last texture short, 0 for flat-shaded faces (see VertexShading.java)
   int packedNormal = tex.w & 0xffff;
@@ -112,6 +111,9 @@ void main() {
     fNormal = vec3(0.0);
     fNormalValid = 0.0;
   }
+  worldPos.xyz += windDisplacement(vertf.w, worldPos.xyz, fNormal, packedNormal != 0);
+  vec4 screenPos = worldProj * worldPos;
+  fWorldPos = worldPos.xyz;
 #ifdef ZBUF_DEBUG
   fDepth = screenPos.z / screenPos.w;
 #endif

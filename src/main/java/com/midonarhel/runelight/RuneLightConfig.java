@@ -1232,4 +1232,50 @@ public interface RuneLightConfig extends Config
 	{
 		return true;
 	}
+
+	@ConfigSection(
+		name = "Wind",
+		description = "Trees, bushes, grass and flowers sway with the wind",
+		position = 650
+	)
+	String windSection = "wind";
+
+	@ConfigItem(
+		keyName = "windSway",
+		name = "Sway in the wind",
+		description = "Trees bend and plants flutter with the weather's wind: barely in calm air, hard in a storm.",
+		section = windSection,
+		position = 651
+	)
+	default boolean windSway()
+	{
+		return true;
+	}
+
+	@Range(
+		max = 200
+	)
+	@ConfigItem(
+		keyName = "windSwayStrength",
+		name = "Sway strength",
+		description = "How far plants move, in percent.",
+		section = windSection,
+		position = 652
+	)
+	default int windSwayStrength()
+	{
+		return 100;
+	}
+
+	@ConfigItem(
+		keyName = "windSwayShadows",
+		name = "Sway in shadows",
+		description = "Shadows of swaying plants move with them. Costs redrawing those plants into the shadow map every frame.",
+		section = windSection,
+		position = 653
+	)
+	default boolean windSwayShadows()
+	{
+		return true;
+	}
 }

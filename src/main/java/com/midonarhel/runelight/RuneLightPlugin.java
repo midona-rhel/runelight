@@ -248,6 +248,8 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 	private static final int MATERIAL_UNIT = RuneLightPlugin.COMPOSITE_TEXTURE_UNIT + 9;
 	private final SurfaceMaterials.Uniforms sceneMaterials = new SurfaceMaterials.Uniforms();
 	private final SurfaceMaterials.Uniforms compositeMaterials = new SurfaceMaterials.Uniforms();
+	private final WindSway.Uniforms sceneSway = new WindSway.Uniforms();
+	private final WindSway.Uniforms shadowSway = new WindSway.Uniforms();
 	private static final int FOG_TEXTURE_UNIT = RuneLightPlugin.COMPOSITE_TEXTURE_UNIT + 10;
 	private static final int FOG_NOISE_UNIT = RuneLightPlugin.COMPOSITE_TEXTURE_UNIT + 11;
 
@@ -529,6 +531,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		sceneLights = new SceneLights(client);
 		sceneLights.load(gson);
 		SurfaceMaterials.load(gson);
+		WindSway.load(gson);
 		eventBus.register(sceneLights);
 		clientThread.invoke(sceneLights::rebuild);
 		buildingLights = new BuildingLights(client);
@@ -1063,6 +1066,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		glUniform1i(glGetUniformLocation(c, "sceneMaterial"), MATERIAL_UNIT);
 		compositeMaterials.locate(c);
 		sceneMaterials.locate(glProgram);
+		sceneSway.locate(glProgram);
 		uniCompositePointLights = glGetUniformLocation(c, "pointLightsEnabled");
 		glUseProgram(0);
 		volumetricFog.locateComposite(c, FOG_TEXTURE_UNIT);
@@ -1076,9 +1080,15 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		uniShadowBase = glGetUniformLocation(glShadowProgram, "base");
 		uniShadowTexturesReady = glGetUniformLocation(glShadowProgram, "texturesReady");
 		uniShadowEmissiveCasts = glGetUniformLocation(glShadowProgram, "emissiveCasts");
+		shadowSway.locate(glShadowProgram);
 		glUseProgram(glShadowProgram);
 		glUniform1i(glGetUniformLocation(glShadowProgram, "textures"), 1); // game texture array lives on unit 1
 		glUseProgram(0);
+	}
+
+	private float windSwayAmount()
+	{
+		return config.windSway() ? config.windSwayStrength() / 100f : 0f;
 	}
 
 	private void setFogProgram(int program)
@@ -1567,6 +1577,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		glUniform1i(uniExpandedMapLoadingChunks, client.getExpandedMapLoading());
 		glUniform1f(uniColorblindIntensity, config.colorBlindIntensity());
 		sceneMaterials.set(config);
+		sceneSway.set(windSwayAmount());
 
 		// Brightness happens to also be stored in the texture provider, so we use that
 		TextureProvider textureProvider = client.getTextureProvider();
@@ -1861,6 +1872,9 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		glUniform1i(uniShadowTexturesReady, textureArrayId != -1 ? 1 : 0);
 		glUniform1i(uniShadowEmissiveCasts, config.emissiveMaterials() ? 0 : 1);
 		glUniformMatrix4fv(uniShadowEntityProj, false, IDENTITY);
+		// swaying plants are left out of the static cache and redrawn each frame (Wind.java)
+		final boolean swayShadows = windSwayAmount() > 0 && config.windSwayShadows();
+		shadowSway.set(swayShadows ? windSwayAmount() : 0);
 
 		// Zone and VAO draw through these shared uniform locations; point them at the shadow program
 		final int savedBase = uniBase, savedEntityProj = uniEntityProj, savedEntityTint = uniEntityTint;
@@ -1871,16 +1885,20 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		{
 			if (cache)
 			{
-				renderStaticShadows(ctx, size, fx, fy, fz, radius, depthRange);
+				renderStaticShadows(ctx, size, fx, fy, fz, radius, depthRange, swayShadows);
 				// this frame's map starts as a copy of the static one
 				shadowMap.useFront(frameCameraX, frameCameraY, frameCameraZ);
 				glViewport(0, 0, size, size);
 				glUniformMatrix4fv(uniShadowLightProj, false, shadowMap.lightProj);
+				if (swayShadows)
+				{
+					shadowZones(ctx, fx, fz, radius, null, 0, Integer.MAX_VALUE, Zone.SWAY_ONLY);
+				}
 			}
 			else
 			{
 				glUniformMatrix4fv(uniShadowLightProj, false, shadowMap.lightProj);
-				shadowZones(ctx, fx, fz, radius, null, 0, Integer.MAX_VALUE);
+				shadowZones(ctx, fx, fz, radius, null, 0, Integer.MAX_VALUE, Zone.SWAY_ALL);
 			}
 
 			// players, NPCs and other models drawn this frame
@@ -1928,12 +1946,13 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 	 * the snapped cell, and draw this frame's share of it.
 	 */
 	private void renderStaticShadows(SceneContext ctx, int size, float fx, float fy, float fz, float radius,
-		float depthRange)
+		float depthRange, boolean swayShadows)
 	{
+		final int sway = swayShadows ? Zone.SWAY_EXCLUDE : Zone.SWAY_ALL;
 		final boolean roofShadows = config.roofShadows();
 		int key = java.util.Objects.hash(System.identityHashCode(ctx), ctx.minLevel, ctx.level, ctx.maxLevel,
 			roofShadows, roofShadows ? 0 : ctx.hideRoofIds.hashCode(), config.emissiveMaterials(), textureArrayId != -1,
-			size, radius);
+			size, radius, sway);
 		shadowMap.checkCacheKey(key);
 		if (shadowStaticDirty)
 		{
@@ -1949,7 +1968,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 			shadowMap.startBuild(dayCycle.casterDir, sx, fy, sz, radius + SHADOW_CACHE_SNAP,
 				depthRange + SHADOW_CACHE_SNAP, glCapabilities.OpenGL45);
 			shadowBuildCount = 0;
-			shadowZones(ctx, sx, sz, radius + SHADOW_CACHE_SNAP, null, 0, 0);
+			shadowZones(ctx, sx, sz, radius + SHADOW_CACHE_SNAP, null, 0, 0, sway);
 			shadowBuildNext = 0;
 			// the first map is needed at once
 			int frames = front == null ? 1 : SHADOW_BUILD_FRAMES;
@@ -1965,7 +1984,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		glViewport(0, 0, size, size);
 		glUniformMatrix4fv(uniShadowLightProj, false, v.proj);
 		int end = Math.min(shadowBuildNext + shadowBuildPerFrame, shadowBuildCount);
-		shadowZones(ctx, v.focusX, v.focusZ, v.radius, shadowBuildZones, shadowBuildNext, end);
+		shadowZones(ctx, v.focusX, v.focusZ, v.radius, shadowBuildZones, shadowBuildNext, end, sway);
 		shadowBuildNext = end;
 		if (shadowBuildNext >= shadowBuildCount)
 		{
@@ -2000,7 +2019,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 	 * The static zones around a focus. With list null and to 0, only collects them into shadowBuildZones; with list
 	 * null and to MAX_VALUE, draws all of them; else draws list[from..to).
 	 */
-	private void shadowZones(SceneContext ctx, float fx, float fz, float radius, int[] list, int from, int to)
+	private void shadowZones(SceneContext ctx, float fx, float fz, float radius, int[] list, int from, int to, int sway)
 	{
 		// zones around the focus, with margin for tall casters just outside the map
 		int offset = SCENE_OFFSET >> 3;
@@ -2010,7 +2029,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		{
 			for (int i = from; i < to; ++i)
 			{
-				shadowZone(ctx, list[i] >> 16, list[i] & 0xFFFF, offset, roofShadows);
+				shadowZone(ctx, list[i] >> 16, list[i] & 0xFFFF, offset, roofShadows, sway);
 			}
 			return;
 		}
@@ -2031,7 +2050,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 				}
 				if (!collect)
 				{
-					shadowZone(ctx, x, z, offset, roofShadows);
+					shadowZone(ctx, x, z, offset, roofShadows, sway);
 					continue;
 				}
 				Zone zone = ctx.zones[x][z];
@@ -2047,7 +2066,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		}
 	}
 
-	private static void shadowZone(SceneContext ctx, int x, int z, int offset, boolean roofShadows)
+	private static void shadowZone(SceneContext ctx, int x, int z, int offset, boolean roofShadows, int sway)
 	{
 		Zone zone = ctx.zones[x][z];
 		if (!zone.initialized || zone.sizeO <= 0)
@@ -2057,11 +2076,11 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		if (roofShadows)
 		{
 			// every level and every roof, including ones hidden from the camera
-			zone.renderOpaque(x - offset, z - offset, ctx.minLevel, ctx.level, 3, Collections.emptySet());
+			zone.renderOpaque(x - offset, z - offset, ctx.minLevel, ctx.level, 3, Collections.emptySet(), sway);
 		}
 		else
 		{
-			zone.renderOpaque(x - offset, z - offset, ctx.minLevel, ctx.level, ctx.maxLevel, ctx.hideRoofIds);
+			zone.renderOpaque(x - offset, z - offset, ctx.minLevel, ctx.level, ctx.maxLevel, ctx.hideRoofIds, sway);
 		}
 	}
 
