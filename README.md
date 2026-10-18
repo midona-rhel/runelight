@@ -29,3 +29,4 @@ Plugin config, Development section:
 
 - Show GPU timings: GPU ms for the scene and for UI + present, measured with non-blocking timestamp queries.
 - Check GL errors: glGetError after each draw step. Slow, keep off when measuring.
+- Debug view: show the depth or normal buffer instead of the final image.

@@ -40,11 +40,21 @@ noperspective centroid in float fHsl;
 flat in int fTextureId;
 in vec2 fUv;
 in float fFogAmount;
+in vec3 fWorldPos;
 #ifdef ZBUF_DEBUG
 in float fDepth;
 #endif
 
-out vec4 FragColor;
+layout(std140) uniform uniforms {
+  float cameraYaw;
+  float cameraPitch;
+  float cameraX;
+  float cameraY;
+  float cameraZ;
+};
+
+layout(location = 0) out vec4 FragColor;
+layout(location = 1) out vec4 FragNormal;
 
 #include "hsl_to_rgb.glsl"
 
@@ -93,6 +103,13 @@ void main() {
 
   vec3 mixedColor = mix(c.rgb, fogColor.rgb, fFogAmount);
   FragColor = vec4(mixedColor, c.a);
+
+  // Face normal from screen-space derivatives of the world position: flat per triangle, which matches
+  // OSRS's faceted look and needs no extra vertex data. Oriented to face the camera.
+  vec3 n = normalize(cross(dFdx(fWorldPos), dFdy(fWorldPos)));
+  if (dot(n, vec3(cameraX, cameraY, cameraZ) - fWorldPos) < 0.0)
+    n = -n;
+  FragNormal = vec4(n * 0.5 + 0.5, c.a);
 
 #ifdef FRAG_UVS
   if (fTextureId > 0) {

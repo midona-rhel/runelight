@@ -33,6 +33,7 @@ import static com.midonarhel.runelight.RuneLightPlugin.MAX_DISTANCE;
 import static com.midonarhel.runelight.RuneLightPlugin.MAX_FOG_DEPTH;
 import com.midonarhel.runelight.config.AntiAliasingMode;
 import com.midonarhel.runelight.config.ColorBlindMode;
+import com.midonarhel.runelight.config.DebugView;
 import com.midonarhel.runelight.config.UIScalingMode;
 
 @ConfigGroup(RuneLightConfig.GROUP)
@@ -275,5 +276,17 @@ public interface RuneLightConfig extends Config
 	default boolean glErrorChecks()
 	{
 		return false;
+	}
+
+	@ConfigItem(
+		keyName = "debugView",
+		name = "Debug view",
+		description = "Show one of the scene buffers instead of the final image.",
+		section = developmentSection,
+		position = 103
+	)
+	default DebugView debugView()
+	{
+		return DebugView.FINAL;
 	}
 }

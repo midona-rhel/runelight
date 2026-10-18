@@ -182,6 +182,14 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		.add(GL_VERTEX_SHADER, "vertui.glsl")
 		.add(GL_FRAGMENT_SHADER, "fragui.glsl");
 
+	static final Shader COMPOSITE_PROGRAM = new Shader()
+		.add(GL_VERTEX_SHADER, "composite_vert.glsl")
+		.add(GL_FRAGMENT_SHADER, "composite_frag.glsl");
+
+	private int glCompositeProgram;
+	private int uniCompositeDebugView;
+	private int uniCompositeDepthZeroToOne;
+
 	static int glProgram;
 	private int glUiProgram;
 
@@ -191,10 +199,11 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 	private int vaoUiHandle;
 	private int vboUiHandle;
 
-	private int fboScene;
+	private final SceneTargets sceneTargets = new SceneTargets();
 	private boolean sceneFboValid;
-	private int rboColorBuffer;
-	private int rboDepthBuffer;
+
+	// composite samples the scene targets from these units; 0 is the UI texture and 1 the game texture array
+	private static final int COMPOSITE_TEXTURE_UNIT = 2;
 
 	private int textureArrayId;
 
@@ -358,7 +367,6 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		{
 			try
 			{
-				fboScene = -1;
 				lastAnisotropicFilteringLevel = -1;
 
 				AWTContext.loadNatives();
@@ -706,6 +714,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		Template template = createTemplate();
 		glProgram = PROGRAM.compile(template);
 		glUiProgram = UI_PROGRAM.compile(template);
+		glCompositeProgram = COMPOSITE_PROGRAM.compile(template);
 
 		glBindVertexArray(0);
 
@@ -737,6 +746,14 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		uniTexSourceDimensions = glGetUniformLocation(glUiProgram, "sourceDimensions");
 		uniUiAlphaOverlay = glGetUniformLocation(glUiProgram, "alphaOverlay");
 		uniUiColorblindIntensity = glGetUniformLocation(glUiProgram, "colorblindIntensity");
+
+		uniCompositeDebugView = glGetUniformLocation(glCompositeProgram, "debugView");
+		uniCompositeDepthZeroToOne = glGetUniformLocation(glCompositeProgram, "depthZeroToOne");
+		glUseProgram(glCompositeProgram);
+		glUniform1i(glGetUniformLocation(glCompositeProgram, "sceneColor"), COMPOSITE_TEXTURE_UNIT);
+		glUniform1i(glGetUniformLocation(glCompositeProgram, "sceneNormal"), COMPOSITE_TEXTURE_UNIT + 1);
+		glUniform1i(glGetUniformLocation(glCompositeProgram, "sceneDepth"), COMPOSITE_TEXTURE_UNIT + 2);
+		glUseProgram(0);
 	}
 
 	private void shutdownProgram()
@@ -746,6 +763,9 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 
 		glDeleteProgram(glUiProgram);
 		glUiProgram = 0;
+
+		glDeleteProgram(glCompositeProgram);
+		glCompositeProgram = 0;
 	}
 
 	/**
@@ -756,17 +776,22 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 	{
 		glBindVertexArray(vaoUiHandle);
 		Template template = createTemplate();
-		int scene = 0, ui = 0;
+		int scene = 0, ui = 0, composite = 0;
 		try
 		{
 			scene = PROGRAM.compile(template);
 			ui = UI_PROGRAM.compile(template);
+			composite = COMPOSITE_PROGRAM.compile(template);
 		}
 		catch (ShaderException ex)
 		{
 			if (scene != 0)
 			{
 				glDeleteProgram(scene);
+			}
+			if (ui != 0)
+			{
+				glDeleteProgram(ui);
 			}
 			String msg = ex.getMessage();
 			if (!msg.equals(shaderError))
@@ -785,6 +810,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		shutdownProgram();
 		glProgram = scene;
 		glUiProgram = ui;
+		glCompositeProgram = composite;
 		initUniforms();
 
 		if (textureAnimations != null)
@@ -975,52 +1001,15 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 			glDisable(GL_MULTISAMPLE);
 		}
 
-		// Create and bind the FBO
-		fboScene = glGenFramebuffers();
-		glBindFramebuffer(GL_FRAMEBUFFER, fboScene);
-
-		// Color render buffer
-		rboColorBuffer = glGenRenderbuffers();
-		glBindRenderbuffer(GL_RENDERBUFFER, rboColorBuffer);
-		glRenderbufferStorageMultisample(GL_RENDERBUFFER, aaSamples, GL_RGBA, width, height);
-		glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_RENDERBUFFER, rboColorBuffer);
-
-		// Depth render buffer
-		rboDepthBuffer = glGenRenderbuffers();
-		glBindRenderbuffer(GL_RENDERBUFFER, rboDepthBuffer);
-		glRenderbufferStorageMultisample(GL_RENDERBUFFER, aaSamples, GL_DEPTH_COMPONENT32F, width, height);
-		glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_RENDERBUFFER, rboDepthBuffer);
-
-		int status = glCheckFramebufferStatus(GL_FRAMEBUFFER);
-		if (status != GL_FRAMEBUFFER_COMPLETE)
-		{
-			throw new RuntimeException("FBO is incomplete. status: " + status);
-		}
+		sceneTargets.init(width, height, aaSamples);
 
 		// Reset
 		glBindFramebuffer(GL_FRAMEBUFFER, awtContext.getFramebuffer(false));
-		glBindRenderbuffer(GL_RENDERBUFFER, 0);
 	}
 
 	private void shutdownFbo()
 	{
-		if (fboScene != -1)
-		{
-			glDeleteFramebuffers(fboScene);
-			fboScene = -1;
-		}
-
-		if (rboColorBuffer != 0)
-		{
-			glDeleteRenderbuffers(rboColorBuffer);
-			rboColorBuffer = 0;
-		}
-
-		if (rboDepthBuffer != 0)
-		{
-			glDeleteRenderbuffers(rboDepthBuffer);
-			rboDepthBuffer = 0;
-		}
+		sceneTargets.free();
 	}
 
 	@Override
@@ -1124,7 +1113,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 				lastAntiAliasingMode = antiAliasingMode;
 			}
 
-			glBindFramebuffer(GL_DRAW_FRAMEBUFFER, fboScene);
+			glBindFramebuffer(GL_DRAW_FRAMEBUFFER, sceneTargets.getRenderFbo());
 		}
 
 		// Setup anisotropic filtering
@@ -1269,12 +1258,17 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		glDisable(GL_CULL_FACE);
 		glDisable(GL_DEPTH_TEST);
 
+		sceneTargets.resolve();
 		glBindFramebuffer(GL_DRAW_FRAMEBUFFER, awtContext.getFramebuffer(false));
 		sceneFboValid = true;
 		gpuTimer.mark(GpuTimer.SCENE_END);
 	}
 
-	private void blitSceneFbo()
+	/**
+	 * Draw the scene targets to the window. Effects that work on the whole frame (fog, AO, grading) go in
+	 * composite_frag.glsl.
+	 */
+	private void compositeScene()
 	{
 		int width = lastStretchedCanvasWidth;
 		int height = lastStretchedCanvasHeight;
@@ -1285,14 +1279,21 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		width = getScaledValue(transform.getScaleX(), width);
 		height = getScaledValue(transform.getScaleY(), height);
 
-		int defaultFbo = awtContext.getFramebuffer(false);
-		glBindFramebuffer(GL_READ_FRAMEBUFFER, fboScene);
-		glBindFramebuffer(GL_DRAW_FRAMEBUFFER, defaultFbo);
-		glBlitFramebuffer(0, 0, width, height, 0, 0, width, height,
-			GL_COLOR_BUFFER_BIT, GL_NEAREST);
+		glBindFramebuffer(GL_FRAMEBUFFER, awtContext.getFramebuffer(false));
+		glViewport(0, 0, width, height);
 
-		// Reset
-		glBindFramebuffer(GL_READ_FRAMEBUFFER, defaultFbo);
+		glUseProgram(glCompositeProgram);
+		glUniform1i(uniCompositeDebugView, config.debugView().ordinal());
+		glUniform1i(uniCompositeDepthZeroToOne, glCapabilities.OpenGL45 ? 1 : 0);
+		sceneTargets.bindTextures(COMPOSITE_TEXTURE_UNIT);
+
+		// fullscreen triangle generated from gl_VertexID; core profile still needs some VAO bound
+		glBindVertexArray(vaoUiHandle);
+		glDrawArrays(GL_TRIANGLES, 0, 3);
+		glBindVertexArray(0);
+
+		sceneTargets.unbindTextures(COMPOSITE_TEXTURE_UNIT);
+		glUseProgram(0);
 
 		checkGLErrors();
 	}
@@ -1700,9 +1701,9 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		glClearColor(0, 0, 0, 1);
 		glClear(GL_COLOR_BUFFER_BIT);
 
-		if (sceneFboValid)
+		if (sceneFboValid && sceneTargets.isInitialized())
 		{
-			blitSceneFbo();
+			compositeScene();
 		}
 
 		// Texture on UI
