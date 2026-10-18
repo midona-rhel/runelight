@@ -470,6 +470,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		VertexShading.undoVanillaShading = config.removeBakedShading();
 		VertexShading.unlitColors = config.unlitColors();
 		VertexShading.smoothFlatFaces = config.smoothShapes();
+		GroundBlender.enabled = config.groundBlending();
 
 		sceneLights = new SceneLights(client);
 		sceneLights.load(gson);
@@ -747,6 +748,18 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 					VertexShading.undoVanillaShading = config.removeBakedShading();
 					VertexShading.unlitColors = config.unlitColors();
 					VertexShading.smoothFlatFaces = config.smoothShapes();
+					if (client.getGameState() == GameState.LOGGED_IN)
+					{
+						client.setGameState(GameState.LOADING);
+					}
+				});
+			}
+			else if (configChanged.getKey().equals("groundBlending"))
+			{
+				clientThread.invokeLater(() ->
+				{
+					// blended colors are baked into the terrain vertices at upload
+					GroundBlender.enabled = config.groundBlending();
 					if (client.getGameState() == GameState.LOGGED_IN)
 					{
 						client.setGameState(GameState.LOADING);

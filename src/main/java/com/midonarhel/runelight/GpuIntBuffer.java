@@ -44,6 +44,14 @@ class GpuIntBuffer
 		buffer.put(w);
 	}
 
+	// 4 x short, then the int: the static vertex format with its fourth position short set
+	void put22224(int x, int y, int z, int w, int v)
+	{
+		buffer.put(((y & 0xffff) << 16) | (x & 0xffff));
+		buffer.put(((w & 0xffff) << 16) | (z & 0xffff));
+		buffer.put(v);
+	}
+
 	void put2222(int x, int y, int z, int w)
 	{
 		buffer.put(((y & 0xffff) << 16) | (x & 0xffff));

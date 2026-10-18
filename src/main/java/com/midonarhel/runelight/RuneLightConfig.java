@@ -443,6 +443,26 @@ public interface RuneLightConfig extends Config
 	}
 
 	@ConfigSection(
+		name = "Ground",
+		description = "How ground tiles look",
+		position = 300
+	)
+	String groundSection = "ground";
+
+	@ConfigItem(
+		keyName = "groundBlending",
+		name = "Ground blending",
+		description = "Blend ground colors smoothly across tile borders and give paths soft edges, like 117 HD. "
+			+ "Also removes the light the game bakes into the ground. Reloads the scene when changed.",
+		section = groundSection,
+		position = 301
+	)
+	default boolean groundBlending()
+	{
+		return true;
+	}
+
+	@ConfigSection(
 		name = "Development",
 		description = "Tools for working on the renderer",
 		position = 100,

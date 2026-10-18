@@ -57,6 +57,9 @@ class SceneUploader
 
 	private final RenderCallbackManager renderCallbackManager;
 	private int basex, basez, rid, level;
+	private final GroundBlender groundBlender = new GroundBlender();
+	private final float[] slope = new float[2];
+	private final float[] tileSlopes = new float[8];
 
 	SceneUploader(RenderCallbackManager renderCallbackManager)
 	{
@@ -109,6 +112,11 @@ class SceneUploader
 					}
 				}
 			}
+		}
+
+		if (GroundBlender.enabled)
+		{
+			groundBlender.build(scene, mzx, mzz);
 		}
 
 		zone.rids = new int[4][roofIds.size()];
@@ -297,7 +305,7 @@ class SceneUploader
 		if (model != null && drawTile)
 		{
 			Point tilePoint = t.getSceneLocation();
-			len += upload(model, tilePoint.getX() << 7, tilePoint.getY() << 7, vertexBuffer);
+			len += upload(scene, model, t.getRenderLevel(), tilePoint.getX(), tilePoint.getY(), vertexBuffer);
 		}
 
 		WallObject wallObject = t.getWallObject();
@@ -453,14 +461,37 @@ class SceneUploader
 		final int neHeight = tileHeights[tileZ][tileX + 1][tileY + 1];
 		final int nwHeight = tileHeights[tileZ][tileX][tileY + 1];
 
-		final int swColor = tile.getSwColor();
-		final int seColor = tile.getSeColor();
-		final int neColor = tile.getNeColor();
-		final int nwColor = tile.getNwColor();
+		int swColor = tile.getSwColor();
+		int seColor = tile.getSeColor();
+		int neColor = tile.getNeColor();
+		int nwColor = tile.getNwColor();
 
 		if (neColor == 12345678)
 		{
 			return 0;
+		}
+
+		int swFlag = 0, seFlag = 0, neFlag = 0, nwFlag = 0;
+		if (GroundBlender.enabled && tile.getTexture() == -1)
+		{
+			boolean blend = !groundBlender.unblended(tileZ, tileX, tileY);
+			int[][] h = tileHeights[tileZ];
+			int sw = groundBlender.lookup(tileX << 7, swHeight, tileY << 7);
+			int se = groundBlender.lookup(tileX + 1 << 7, seHeight, tileY << 7);
+			int ne = groundBlender.lookup(tileX + 1 << 7, neHeight, tileY + 1 << 7);
+			int nw = groundBlender.lookup(tileX << 7, nwHeight, tileY + 1 << 7);
+			GroundBlender.cornerSlope(h, tileX, tileY, slope);
+			swColor = groundColor(swColor, sw, blend);
+			GroundBlender.cornerSlope(h, tileX + 1, tileY, slope);
+			seColor = groundColor(seColor, se, blend);
+			GroundBlender.cornerSlope(h, tileX + 1, tileY + 1, slope);
+			neColor = groundColor(neColor, ne, blend);
+			GroundBlender.cornerSlope(h, tileX, tileY + 1, slope);
+			nwColor = groundColor(nwColor, nw, blend);
+			swFlag = borderFlag(sw);
+			seFlag = borderFlag(se);
+			neFlag = borderFlag(ne);
+			nwFlag = borderFlag(nw);
 		}
 
 		// 0,0
@@ -494,22 +525,22 @@ class SceneUploader
 		final int n2 = terrainNormal(tileHeights[tileZ], tileX + 1, tileY + 1);
 		final int n3 = terrainNormal(tileHeights[tileZ], tileX, tileY + 1);
 
-		vertexBuffer.put22224(lx2, ly2, lz2, hsl2);
+		vertexBuffer.put22224(lx2, ly2, lz2, neFlag, hsl2);
 		vertexBuffer.put2222(tex, 256, 256, n2);
 
-		vertexBuffer.put22224(lx3, ly3, lz3, hsl3);
+		vertexBuffer.put22224(lx3, ly3, lz3, nwFlag, hsl3);
 		vertexBuffer.put2222(tex, 0, 256, n3);
 
-		vertexBuffer.put22224(lx1, ly1, lz1, hsl1);
+		vertexBuffer.put22224(lx1, ly1, lz1, seFlag, hsl1);
 		vertexBuffer.put2222(tex, 256, 0, n1);
 
-		vertexBuffer.put22224(lx0, ly0, lz0, hsl0);
+		vertexBuffer.put22224(lx0, ly0, lz0, swFlag, hsl0);
 		vertexBuffer.put2222(tex, 0, 0, n0);
 
-		vertexBuffer.put22224(lx1, ly1, lz1, hsl1);
+		vertexBuffer.put22224(lx1, ly1, lz1, seFlag, hsl1);
 		vertexBuffer.put2222(tex, 256, 0, n1);
 
-		vertexBuffer.put22224(lx3, ly3, lz3, hsl3);
+		vertexBuffer.put22224(lx3, ly3, lz3, nwFlag, hsl3);
 		vertexBuffer.put2222(tex, 0, 256, n3);
 
 		return 6;
@@ -531,8 +562,39 @@ class SceneUploader
 		return VertexShading.encodeNormal(dhdx, -1, dhdz);
 	}
 
-	private int upload(SceneTileModel sceneTileModel, int lx, int lz, GpuIntBuffer vertexBuffer)
+	// marks a vertex where overlay and underlay ground meet, in the static format's spare position short; the
+	// fragment shader narrows color transitions toward these vertices, as 117 HD does with its overlay mix
+	private static final int BORDER_FLAG = -1;
+
+	private static int borderFlag(int lookup)
 	{
+		return lookup != -1 && (lookup & GroundBlender.BORDER) != 0 ? BORDER_FLAG : 0;
+	}
+
+	/**
+	 * The color for a ground vertex: the blended color shared with the neighboring tiles, or the tile's own,
+	 * with vanilla's baked terrain lighting undone either way (for the slope in {@link #slope}).
+	 */
+	private int groundColor(int own, int lookup, boolean blend)
+	{
+		if (blend && lookup != -1 && (lookup & GroundBlender.BLENDED) != 0)
+		{
+			return lookup & 0xffff;
+		}
+		if (own < 0 || own == 12345678 || !VertexShading.undoVanillaShading)
+		{
+			return own;
+		}
+		return GroundBlender.undoShading(own, slope[0], slope[1]);
+	}
+
+	private int upload(Scene scene, SceneTileModel sceneTileModel, int tileZ, int tileX, int tileY, GpuIntBuffer vertexBuffer)
+	{
+		final int lx = tileX << 7;
+		final int lz = tileY << 7;
+		final int offset = scene.getWorldViewId() == WorldView.TOPLEVEL ? RuneLightPlugin.SCENE_OFFSET : 0;
+		final int ex = tileX + offset, ey = tileY + offset;
+
 		final int[] faceX = sceneTileModel.getFaceX();
 		final int[] faceY = sceneTileModel.getFaceY();
 		final int[] faceZ = sceneTileModel.getFaceZ();
@@ -549,6 +611,14 @@ class SceneUploader
 
 		final int faceCount = faceX.length;
 
+		// With blending, smooth normals like plain tiles have, so a shaped tile (path edge, shore) shades the same
+		// as its neighbors instead of showing its triangles. Its heights are bilinear in the tile's corner heights.
+		final boolean blending = GroundBlender.enabled;
+		GroundBlender.tileSlopes(scene.getTileHeights()[tileZ], ex, ey, slope, tileSlopes);
+		// 117 HD: on shaped tiles with any texture (shores) the overlay faces keep their own colors
+		final boolean blendOverlay = triangleTextures == null && !groundBlender.unblended(tileZ, ex, ey);
+		final int shape = sceneTileModel.getShape();
+
 		int cnt = 0;
 		for (int i = 0; i < faceCount; ++i)
 		{
@@ -556,9 +626,9 @@ class SceneUploader
 			final int vertex1 = faceY[i];
 			final int vertex2 = faceZ[i];
 
-			final int hsl0 = triangleColorA[i];
-			final int hsl1 = triangleColorB[i];
-			final int hsl2 = triangleColorC[i];
+			int hsl0 = triangleColorA[i];
+			int hsl1 = triangleColorB[i];
+			int hsl2 = triangleColorC[i];
 
 			if (hsl0 == 12345678)
 			{
@@ -581,17 +651,58 @@ class SceneUploader
 			int lz2 = vertexZ[vertex2] - basez;
 
 			int tex = triangleTextures != null ? triangleTextures[i] + 1 : 0;
-			vertexBuffer.put22224(lx0, ly0, lz0, hsl0);
-			vertexBuffer.put2222(tex, (int) ((vertexX[vertex0] - lx) * 2f), (int) ((vertexZ[vertex0] - lz) * 2f), 0);
 
-			vertexBuffer.put22224(lx1, ly1, lz1, hsl1);
-			vertexBuffer.put2222(tex, (int) ((vertexX[vertex1] - lx) * 2f), (int) ((vertexZ[vertex1] - lz) * 2f), 0);
+			int n0 = modelNormal(vertexX[vertex0] - lx, vertexZ[vertex0] - lz);
+			float s0x = slope[0], s0z = slope[1];
+			int n1 = modelNormal(vertexX[vertex1] - lx, vertexZ[vertex1] - lz);
+			float s1x = slope[0], s1z = slope[1];
+			int n2 = modelNormal(vertexX[vertex2] - lx, vertexZ[vertex2] - lz);
+			if (!blending)
+			{
+				n0 = n1 = n2 = 0;
+			}
 
-			vertexBuffer.put22224(lx2, ly2, lz2, hsl2);
-			vertexBuffer.put2222(tex, (int) ((vertexX[vertex2] - lx) * 2f), (int) ((vertexZ[vertex2] - lz) * 2f), 0);
+			int f0 = 0, f1 = 0, f2 = 0;
+			if (blending && tex == 0)
+			{
+				boolean blend = !GroundBlender.isOverlayFace(shape, i) || blendOverlay;
+				int o = offset << 7;
+				int b0 = groundBlender.lookup(vertexX[vertex0] + o, ly0, vertexZ[vertex0] + o);
+				int b1 = groundBlender.lookup(vertexX[vertex1] + o, ly1, vertexZ[vertex1] + o);
+				int b2 = groundBlender.lookup(vertexX[vertex2] + o, ly2, vertexZ[vertex2] + o);
+				hsl2 = groundColor(hsl2, b2, blend);
+				slope[0] = s1x;
+				slope[1] = s1z;
+				hsl1 = groundColor(hsl1, b1, blend);
+				slope[0] = s0x;
+				slope[1] = s0z;
+				hsl0 = groundColor(hsl0, b0, blend);
+				f0 = borderFlag(b0);
+				f1 = borderFlag(b1);
+				f2 = borderFlag(b2);
+			}
+
+			vertexBuffer.put22224(lx0, ly0, lz0, f0, hsl0);
+			vertexBuffer.put2222(tex, (int) ((vertexX[vertex0] - lx) * 2f), (int) ((vertexZ[vertex0] - lz) * 2f), n0);
+
+			vertexBuffer.put22224(lx1, ly1, lz1, f1, hsl1);
+			vertexBuffer.put2222(tex, (int) ((vertexX[vertex1] - lx) * 2f), (int) ((vertexZ[vertex1] - lz) * 2f), n1);
+
+			vertexBuffer.put22224(lx2, ly2, lz2, f2, hsl2);
+			vertexBuffer.put2222(tex, (int) ((vertexX[vertex2] - lx) * 2f), (int) ((vertexZ[vertex2] - lz) * 2f), n2);
 		}
 
 		return cnt;
+	}
+
+	/**
+	 * Smooth terrain normal at tile-local position (x, z) of the tile whose corner slopes are in
+	 * {@link #tileSlopes}. Leaves the slope in {@link #slope}.
+	 */
+	private int modelNormal(int x, int z)
+	{
+		GroundBlender.interpolateSlope(tileSlopes, x / 128f, z / 128f, slope);
+		return VertexShading.encodeNormal(slope[0], -1, slope[1]);
 	}
 
 	// scene upload

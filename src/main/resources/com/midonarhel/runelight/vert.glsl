@@ -40,7 +40,7 @@
 #define FOG_CORNER_ROUNDING 1.5
 #define FOG_CORNER_ROUNDING_SQUARED (FOG_CORNER_ROUNDING * FOG_CORNER_ROUNDING)
 
-layout(location = 0) in vec3 vertf;
+layout(location = 0) in vec4 vertf; // w: -1 on ground vertices between overlay and underlay (GroundBlender)
 layout(location = 1) in int abhsl;
 layout(location = 2) in ivec4 tex;
 
@@ -72,6 +72,8 @@ out float fFogAmount;
 out vec3 fWorldPos;
 out vec3 fNormal;       // smooth vertex normal, world space; only meaningful when fNormalValid is 1
 out float fNormalValid;
+out vec4 fBorderColor;  // color * border weight, border weight
+out vec3 fInnerColor;   // color * (1 - border weight)
 #ifdef ZBUF_DEBUG
 out float fDepth;
 #endif
@@ -83,7 +85,7 @@ float fogFactorLinear(const float dist, const float start, const float end) {
 }
 
 void main() {
-  vec4 vert = vec4(vertf + base, 1);
+  vec4 vert = vec4(vertf.xyz + base, 1);
   float a = float(abhsl >> 24 & 0xff) / 255.f;
   int bias = (abhsl >> 16) & 0xff;
 
@@ -119,6 +121,9 @@ void main() {
 #else
   fColor = vec4(rgb, 1.f - a);
 #endif
+  float border = vertf.w < -0.5 ? 1.0 : 0.0;
+  fBorderColor = vec4(rgb * border, border);
+  fInnerColor = rgb * (1.0 - border);
 
   fTextureId = tex.x;  // the texture id + 1
   fUv = vec2(float(tex.y) / 256.f, float(tex.z) / 256.f);
