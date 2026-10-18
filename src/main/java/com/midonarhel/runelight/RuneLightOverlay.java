@@ -11,9 +11,13 @@ import net.runelite.client.ui.overlay.OverlayPanel;
 import net.runelite.client.ui.overlay.OverlayPosition;
 import net.runelite.client.ui.overlay.components.ImageComponent;
 import net.runelite.client.ui.overlay.components.LineComponent;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 class RuneLightOverlay extends OverlayPanel
 {
+	private static final Logger log = LoggerFactory.getLogger(RuneLightOverlay.class);
+	private final LogLimiter logLimiter = new LogLimiter(10_000);
 	private final Client client;
 	private final RuneLightPlugin plugin;
 	private final RuneLightConfig config;
@@ -42,6 +46,37 @@ class RuneLightOverlay extends OverlayPanel
 		}
 
 		if (config.showTimings())
+		{
+			try
+			{
+				timingLines();
+			}
+			catch (RuntimeException ex)
+			{
+				// an overlay that throws is logged by the client every frame
+				logLimiter.warn(log, "overlay " + ex, "Timings overlay failed", ex);
+			}
+		}
+
+		if (shaderError != null)
+		{
+			line("Shaders", "compile error", Color.RED);
+		}
+
+		if (config.weatherFieldMap())
+		{
+			BufferedImage map = weatherMap(plugin.getWeather().getField());
+			if (map != null)
+			{
+				panelComponent.getChildren().add(new ImageComponent(map));
+			}
+		}
+
+		return super.render(graphics);
+	}
+
+	private void timingLines()
+	{
 		{
 			GpuTimer t = plugin.gpuTimer;
 			CpuTimer c = plugin.cpuTimer;
@@ -95,22 +130,6 @@ class RuneLightOverlay extends OverlayPanel
 				line("Shaders", "hot reload", Color.GREEN);
 			}
 		}
-
-		if (shaderError != null)
-		{
-			line("Shaders", "compile error", Color.RED);
-		}
-
-		if (config.weatherFieldMap())
-		{
-			BufferedImage map = weatherMap(plugin.getWeather().getField());
-			if (map != null)
-			{
-				panelComponent.getChildren().add(new ImageComponent(map));
-			}
-		}
-
-		return super.render(graphics);
 	}
 
 	private void environmentLines(EnvironmentManager env)

@@ -240,6 +240,8 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 	private static final int CLUSTER_DATA_UNIT = RuneLightPlugin.COMPOSITE_TEXTURE_UNIT + 7;
 
 	private final LightClusters lightClusters = new LightClusters();
+	// repeating errors are logged once per interval
+	private final LogLimiter logLimiter = new LogLimiter(10_000);
 	private final java.util.ArrayList<PointLight> frameLights = new java.util.ArrayList<>();
 	private final PointLight testLight = new PointLight();
 	private int uniCompositePointLights;
@@ -883,8 +885,8 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 				clientThread.invokeLater(() ->
 				{
 					log.debug("Recompiling shaders");
-					shutdownProgram();
-					initProgram();
+					// keeps the running programs if the new ones fail, and puts the texture animations back
+					reloadShaders();
 				});
 			}
 			else if (configChanged.getKey().equals("numThreads"))
@@ -1735,19 +1737,31 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 
 		gpuTimer.begin(GpuTimer.RESOLVE);
 		sceneTargets.resolve();
-		if (frameShadows)
+		try
 		{
-			gpuTimer.begin(GpuTimer.SHADOW);
-			cpuTimer.begin(CpuTimer.SHADOW_SUBMIT);
-			renderShadowMap();
-			cpuTimer.end(CpuTimer.SHADOW_SUBMIT);
+			if (frameShadows)
+			{
+				gpuTimer.begin(GpuTimer.SHADOW);
+				cpuTimer.begin(CpuTimer.SHADOW_SUBMIT);
+				renderShadowMap();
+				cpuTimer.end(CpuTimer.SHADOW_SUBMIT);
+			}
+			if (weather.isActive())
+			{
+				// usually nothing: the map is only redrawn after the player moves far or the scenery changes
+				gpuTimer.begin(GpuTimer.OCCLUSION);
+				weather.renderOcclusion(root, glShadowProgram, uniShadowLightProj,
+					uniShadowEntityProj, uniShadowBase, uniShadowTexturesReady, textureArrayId != -1, glCapabilities.OpenGL45);
+			}
 		}
-		if (weather.isActive())
+		catch (RuntimeException ex)
 		{
-			// usually nothing: the map is only redrawn after the player moves far or the scenery changes
-			gpuTimer.begin(GpuTimer.OCCLUSION);
-			weather.renderOcclusion(root, glShadowProgram, uniShadowLightProj,
-				uniShadowEntityProj, uniShadowBase, uniShadowTexturesReady, textureArrayId != -1, glCapabilities.OpenGL45);
+			logLimiter.warn(log, "shadows " + ex, "Error drawing the shadow or weather occlusion map", ex);
+			glBindVertexArray(0);
+			glUseProgram(0);
+			glDisable(GL_POLYGON_OFFSET_FILL);
+			glDisable(GL_DEPTH_TEST);
+			glDepthFunc(GL_GREATER);
 		}
 		gpuTimer.end();
 		VAO.recordShadowDraws = false;
@@ -2423,8 +2437,18 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		int settings = java.util.Objects.hash(config.giSunBounce(), config.skyCache(), Math.round(giOvercast[0] * 20),
 			Math.round(giOvercast[1] * 10), Math.round(giOvercast[3] * 10), Math.round(giOvercast[4] * 10),
 			Math.round(giOvercast[5] * 10), Math.round(giOvercast[6] * 10));
-		globalIllumination.prepare(config.globalIllumination(), frameOutdoors, scene, root != null ? root.zones : null,
-			dayCycle, skyCache.getCaptures(), settings, GI_PROBE_UNIT);
+		try
+		{
+			globalIllumination.prepare(config.globalIllumination(), frameOutdoors, scene, root != null ? root.zones : null,
+				dayCycle, skyCache.getCaptures(), settings, GI_PROBE_UNIT);
+		}
+		catch (RuntimeException ex)
+		{
+			// e.g. a framebuffer the driver won't take: the composite keeps its plain ambient light
+			logLimiter.warn(log, "gi " + ex, "Global illumination failed", ex);
+			globalIllumination.free();
+			return false;
+		}
 		return globalIllumination.isActive();
 	}
 
@@ -2470,9 +2494,10 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 				shadowMap.bindForSampling(SHADOW_RAW_UNIT, SHADOW_COMPARE_UNIT);
 				sceneTargets.bindMaterial(MATERIAL_UNIT);
 			}
-			Scene giScene = client.getTopLevelWorldView().getScene();
-			globalIllumination.bindAo(GI_PROBE_UNIT, frameCameraX, frameCameraY, frameCameraZ, giScene.getBaseX(),
-				giScene.getBaseY());
+			WorldView giView = client.getTopLevelWorldView();
+			Scene giScene = giView != null ? giView.getScene() : null;
+			globalIllumination.bindAo(GI_PROBE_UNIT, frameCameraX, frameCameraY, frameCameraZ,
+				giScene != null ? giScene.getBaseX() : 0, giScene != null ? giScene.getBaseY() : 0);
 			glDrawArrays(GL_TRIANGLES, 0, 3);
 			GlobalIllumination.unbind(GI_PROBE_UNIT);
 			sceneTargets.bindAo(AO_TEXTURE_UNIT);
@@ -2987,9 +3012,21 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		glClearColor(0, 0, 0, 1);
 		glClear(GL_COLOR_BUFFER_BIT);
 
-		if (sceneFboValid && sceneTargets.isInitialized())
+		if (sceneFboValid && sceneTargets.isInitialized() && glCompositeProgram != 0)
 		{
-			compositeScene();
+			try
+			{
+				compositeScene();
+			}
+			catch (RuntimeException ex)
+			{
+				// one broken effect must not flood the log every frame or take the UI with it
+				logLimiter.warn(log, "composite " + ex, "Error compositing the scene", ex);
+				glBindFramebuffer(GL_FRAMEBUFFER, awtContext.getFramebuffer(false));
+				glBindVertexArray(0);
+				glUseProgram(0);
+				glActiveTexture(GL_TEXTURE0);
+			}
 		}
 		gpuTimer.begin(GpuTimer.UI);
 
@@ -3714,7 +3751,11 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 					break;
 			}
 
-			log.warn("glGetError:", new Exception(errStr));
+			// an error from a feature that is on keeps coming every frame: log each kind and place once in a while
+			Exception where = new Exception(errStr);
+			StackTraceElement[] st = where.getStackTrace();
+			String caller = st.length > 1 ? st[1].toString() : "";
+			logLimiter.warn(log, errStr + " " + caller, "glGetError:", where);
 		}
 	}
 
