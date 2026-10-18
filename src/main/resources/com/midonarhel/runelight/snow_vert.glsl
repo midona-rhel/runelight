@@ -11,6 +11,7 @@
 uniform int dropCount;
 uniform vec3 windOffset;       // world units the wind has carried everything so far
 uniform float gust;            // 0-1: gusts make the flakes sway wider
+uniform vec2 particleAmount;   // snow at the player, and the most anywhere in the box that the flake count follows
 
 #define BOX_HALF 3584.0
 #define BOX_ABOVE 1792.0
@@ -55,6 +56,12 @@ void main() {
   vec3 size = vec3(BOX_HALF * 2.0, BOX_ABOVE + BOX_BELOW, BOX_HALF * 2.0);
   vec3 center = focusPos + vec3(0.0, (BOX_BELOW - BOX_ABOVE) * 0.5, 0.0);
   vec3 world = wrapAround(h * size + drift, center, size);
+  // the share of the flakes that fall here: the box can reach from a clear region into a snowy one
+  float share = clamp((particleAmount.x + weatherFieldDelta(world.xz).b) / max(particleAmount.y, 1e-3), 0.0, 1.0);
+  if (share <= 0.0) {
+    gl_Position = CULLED;
+    return;
+  }
   vec3 p = world - cameraPos;
 
   // hidden below the top surface of their column; fade out over the last bit above it
@@ -82,7 +89,7 @@ void main() {
   float added = clamp((count - float(id)) / (count * COUNT_FADE + 1.0), 0.0, 1.0);
   vec3 points = weatherPointLights(p, c, vec3(0.0));
   float lit = min(dot(points, vec3(0.2126, 0.7152, 0.0722)), 1.0);
-  fAlpha = FLAKE_ALPHA * amount * edge * near * smoothstep(0.0, 16.0, above) * sub * sub * added * (1.0 + LIT_ALPHA * lit);
+  fAlpha = FLAKE_ALPHA * amount * share * edge * near * smoothstep(0.0, 16.0, above) * sub * sub * added * (1.0 + LIT_ALPHA * lit);
   fQuad = corner;
   fViewZ = c.w;
   fColor = weatherParticleColor(vec3(0.95, 0.97, 1.0), points);

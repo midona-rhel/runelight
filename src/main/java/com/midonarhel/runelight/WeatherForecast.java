@@ -235,6 +235,21 @@ final class WeatherForecast
 		}
 	}
 
+	// the current weather of every biome asked for this slot (WeatherField)
+	private final Map<String, WeatherType> byBiome = new HashMap<>();
+	private long byBiomeSlot = Long.MIN_VALUE;
+
+	/** The current slot's weather for any biome (null: the default biome). {@link #update} first. */
+	WeatherType currentFor(String biome)
+	{
+		if (byBiomeSlot != slot)
+		{
+			byBiome.clear();
+			byBiomeSlot = slot;
+		}
+		return byBiome.computeIfAbsent(biome != null ? biome : "", k -> at(slot, biome));
+	}
+
 	WeatherType getCurrent()
 	{
 		return current;

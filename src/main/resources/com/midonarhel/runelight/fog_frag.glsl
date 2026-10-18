@@ -40,6 +40,22 @@ uniform float fogNoiseAmount;
 uniform float fogBankAmount;
 uniform vec3 fogTint;        // multiplies the fog's ambient color; for per-area fog later
 
+// Fog by region (WeatherField.java): the weather field's fog here relative to the player's, x the player's fog
+// multiplier minus the field's there, y one over the player's multiplier, z 1 when on
+uniform sampler2D weatherField;
+uniform vec4 weatherFieldRect;
+uniform vec3 weatherFieldFog;
+
+#define FOG_FIELD_MAX 6.0
+
+float weatherFogFactor(vec2 worldXZ) {
+  if (weatherFieldFog.z == 0.0) {
+    return 1.0;
+  }
+  float f = textureLod(weatherField, (worldXZ - weatherFieldRect.xy) * weatherFieldRect.zw, 0.0).a * 4.0;
+  return clamp((f + weatherFieldFog.x) * weatherFieldFog.y, 0.0, FOG_FIELD_MAX);
+}
+
 out vec4 FragFog;
 
 #define FOG_STEPS 12
@@ -219,6 +235,7 @@ void main() {
     sigma *= 1.0 - smoothstep(fogFade.x, fogFade.y, centerDist);
     sigma *= mix(FOG_NEAR_FLOOR, 1.0, smoothstep(0.0, fogNear, centerDist));
     sigma *= smoothstep(0.0, fogNear, t);
+    sigma *= weatherFogFactor(wp.xz);
     if (fogNoiseAmount > 0.0 || fogBankAmount > 0.0) {
       vec3 uvw = (wp + FOG_WIND * time) / vec3(FOG_NOISE_SCALE, FOG_NOISE_SCALE_Y, FOG_NOISE_SCALE);
       vec2 n = texture(fogNoise, uvw).rg;

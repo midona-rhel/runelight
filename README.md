@@ -57,6 +57,15 @@ over about a minute. Storms strike lightning (`Lightning.java`): the flash goes 
 (`LIGHTNING_*` in `sky.glsl`), the bolt and cloud glow are in `lightning.glsl`. With GPU timings shown, the
 overlay lists the weather, region, next weather and minutes to it.
 
+Weather by region (`WeatherField.java`): every chunk of the loaded scene, expanded map loading included, takes
+the forecast for its own region's biome, eases toward it and builds up its own wet ground and snow cover. The
+chunks are blurred across region borders (`BLUR`) and sampled by world position as differences from the weather
+at the player, so where you stand nothing changes and elsewhere the clouds close up, the fog thickens and the
+ground gets wet or white by region. The rain and snow particles fill a box around the player wherever it falls in
+it; past the box, `weather_far_frag.glsl` draws streaked curtains of rain and drifting snow out to the draw
+distance and under the clouds on the horizon (`FAR_*` defines). "Show weather map" puts a small map of the field
+in the overlay (green clear, gray cloud, blue rain, white snow, pale fog, player in red).
+
 ## Areas
 
 Which area the camera is in, whether it is under the open sky or underground, and each area's light tint, fog and
@@ -67,11 +76,12 @@ the script's `BIOMES` table.
 
 ## Clouds
 
-Plugin config, Clouds section: one slab of clouds over the procedural sky, marched in 12 steps per sky pixel in
-the composite (nothing is spent where scenery covers the sky), with optional cloud shadows on the ground. Rain and
-snow close the sky up through `Weather.cloudCover()`. Tuning constants are `#define`s at the top of `clouds.glsl`;
-the noise texture and wind are in `Clouds.java`. A detail noise warps the shapes and, with a fine noise, erodes
-ragged edges and mottles the insides (Cloud roughness); some stretches of sky turn wispy. The sun and moon show
+Plugin config, Clouds section: one slab of clouds over the procedural sky, marched in 6 (looking up) to 16 (at
+the horizon) steps per sky pixel in the composite (nothing is spent where scenery covers the sky), with optional
+cloud shadows on the ground. Rain and snow close the sky up through `Weather.cloudCover()` and, by region, the
+weather field. Tuning constants are `#define`s at the top of `clouds.glsl`; the noise texture and wind are in
+`Clouds.java`. A detail noise warps the shapes a little and gently erodes their edges (Cloud roughness), so they
+are soft but not perfectly round; some stretches of sky turn wispy. The sun and moon show
 through thin cloud and hide behind thick cloud, with silver linings, and the stars (`atmosphere.glsl`) are faint
 dots that fade toward the horizon, in haze and behind clouds.
 

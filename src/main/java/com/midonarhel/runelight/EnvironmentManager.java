@@ -392,6 +392,27 @@ final class EnvironmentManager
 	}
 
 	/**
+	 * The biome whose weather a scene tile has, for WeatherField: the region's 3D Weather biome, null where no
+	 * biome describes it (the default biome's weather), or WeatherField.NO_SKY underground and in caves.
+	 *
+	 * @param wp scratch, 3 ints
+	 */
+	String weatherBiome(Scene scene, int sceneX, int sceneY, int plane, int[] wp)
+	{
+		if (!toWorld(scene, sceneX, sceneY, plane, wp))
+		{
+			return null;
+		}
+		Environment env = environmentAt(wp[0], wp[1], wp[2]);
+		if (env != null && env.cave)
+		{
+			return WeatherField.NO_SKY;
+		}
+		Environment biome = regionBiome.get(wp[0] >> 6 << 8 | wp[1] >> 6);
+		return biome != null && !biome.cave ? biome.name : null;
+	}
+
+	/**
 	 * The area at a world point, as {@link #lookup} picks it, without changing the current one. Null where nothing
 	 * describes the point.
 	 */

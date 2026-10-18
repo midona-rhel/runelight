@@ -101,10 +101,10 @@ vec3 celestial(vec3 dir, vec3 sunDir, vec3 moonDir, float alt, float time, float
   return c;
 }
 
-// 0..1 per pixel for jittering the cloud steps. White noise: with crisp cloud edges, the ordered patterns of
-// interleaved gradient noise show as hatching, while white noise reads as ragged edges.
+// 0..1 per pixel for jittering the cloud steps: interleaved gradient noise, whose fine even pattern blends into
+// the soft cloud edges where white noise would read as grain
 float cloudJitter(vec2 px) {
-  return hash13(vec3(px, 17.0));
+  return fract(52.9829189 * fract(dot(px, vec2(0.06711056, 0.00583715))));
 }
 
 // The procedural sky in sRGB: colors, sun glow, clouds, and the sun, moon and stars through the clouds.

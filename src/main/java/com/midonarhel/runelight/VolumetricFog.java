@@ -30,6 +30,10 @@ class VolumetricFog
 	final float[] areaTint = {1, 1, 1};
 	// sky.glsl's weatherOvercast for this frame (Weather.java): cover, rain or snow, lightning flash
 	final float[] overcast = {0, 0, 0};
+	// the weather field, for fog by region, and the weather's fog multiplier at the player it is relative to
+	WeatherField weatherField;
+	float weatherFog = 1;
+	private int uniFieldRect, uniFieldFog;
 
 	// the values the pass uses this frame, in world units
 	private float density;
@@ -57,7 +61,7 @@ class VolumetricFog
 	 * Take ownership of a freshly compiled fog program and look up its uniforms.
 	 */
 	void setProgram(int program, int sceneDepthUnit, int shadowCompareUnit, int lightDataUnit, int clusterDataUnit,
-		int noiseUnit)
+		int noiseUnit, int weatherFieldUnit)
 	{
 		glDeleteProgram(this.program);
 		this.program = program;
@@ -96,6 +100,9 @@ class VolumetricFog
 		glUniform1i(glGetUniformLocation(program, "lightData"), lightDataUnit);
 		glUniform1i(glGetUniformLocation(program, "clusterData"), clusterDataUnit);
 		glUniform1i(glGetUniformLocation(program, "fogNoise"), noiseUnit);
+		uniFieldRect = glGetUniformLocation(program, "weatherFieldRect");
+		uniFieldFog = glGetUniformLocation(program, "weatherFieldFog");
+		glUniform1i(glGetUniformLocation(program, "weatherField"), weatherFieldUnit);
 		glUseProgram(0);
 	}
 
@@ -205,6 +212,18 @@ class VolumetricFog
 		glUniform1f(uniNoiseAmount, noiseAmount);
 		glUniform1f(uniBankAmount, bankAmount);
 		glUniform3fv(uniTint, areaTint);
+		WeatherField field = weatherField;
+		if (field != null && field.isEnabled())
+		{
+			// density times (fog here) / (fog at the player), with the player's own multiplier as the reference
+			float local = Math.max(weatherFog, 0.05f);
+			field.setRect(uniFieldRect);
+			glUniform3f(uniFieldFog, local - field.getFocus(WeatherField.FOG), 1 / local, 1);
+		}
+		else
+		{
+			glUniform3f(uniFieldFog, 0, 0, 0);
+		}
 
 		glActiveTexture(GL_TEXTURE0 + noiseUnit);
 		glBindTexture(GL_TEXTURE_3D, texNoise);

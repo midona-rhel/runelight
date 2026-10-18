@@ -4,10 +4,12 @@ import com.midonarhel.runelight.config.WeatherMode;
 import java.awt.Color;
 import java.awt.Dimension;
 import java.awt.Graphics2D;
+import java.awt.image.BufferedImage;
 import javax.inject.Inject;
 import net.runelite.api.Client;
 import net.runelite.client.ui.overlay.OverlayPanel;
 import net.runelite.client.ui.overlay.OverlayPosition;
+import net.runelite.client.ui.overlay.components.ImageComponent;
 import net.runelite.client.ui.overlay.components.LineComponent;
 
 class RuneLightOverlay extends OverlayPanel
@@ -30,7 +32,7 @@ class RuneLightOverlay extends OverlayPanel
 	public Dimension render(Graphics2D graphics)
 	{
 		String shaderError = plugin.getShaderError();
-		if (!config.showTimings() && shaderError == null)
+		if (!config.showTimings() && shaderError == null && !config.weatherFieldMap())
 		{
 			return null;
 		}
@@ -69,6 +71,15 @@ class RuneLightOverlay extends OverlayPanel
 			line("Shaders", "compile error", Color.RED);
 		}
 
+		if (config.weatherFieldMap())
+		{
+			BufferedImage map = weatherMap(plugin.getWeather().getField());
+			if (map != null)
+			{
+				panelComponent.getChildren().add(new ImageComponent(map));
+			}
+		}
+
 		return super.render(graphics);
 	}
 
@@ -98,8 +109,128 @@ class RuneLightOverlay extends OverlayPanel
 		String biome = forecast.getBiome();
 		line("Region", biome.charAt(0) + biome.substring(1).toLowerCase().replace('_', ' '), Color.WHITE);
 		line("Next", forecast.getNext() + " in " + String.format("%.1f min", forecast.getMinutesToNext()), Color.WHITE);
+		WeatherField field = weather.getField();
+		if (field.isEnabled())
+		{
+			line("Around", sceneWeather(field), Color.WHITE);
+		}
 		line("Cover / fog", String.format("%.2f / %.2f", weather.cloudCover(), weather.fogMultiplier()), Color.WHITE);
 		line("Fog height", String.format("%.2f", weather.fogHeightMultiplier()), Color.WHITE);
+	}
+
+	/** The two most common weathers over the loaded scene, by share of its chunks. */
+	private static String sceneWeather(WeatherField field)
+	{
+		int[] counts = new int[WeatherType.values().length];
+		int total = 0;
+		for (int z = 0; z < field.getSizeZ(); ++z)
+		{
+			for (int x = 0; x < field.getSizeX(); ++x)
+			{
+				WeatherType t = field.type(x, z);
+				if (t != null)
+				{
+					counts[t.ordinal()]++;
+					total++;
+				}
+			}
+		}
+		if (total == 0)
+		{
+			return "-";
+		}
+		StringBuilder sb = new StringBuilder();
+		for (int k = 0; k < 2; ++k)
+		{
+			int best = 0;
+			for (int i = 1; i < counts.length; ++i)
+			{
+				if (counts[i] > counts[best])
+				{
+					best = i;
+				}
+			}
+			if (counts[best] == 0)
+			{
+				break;
+			}
+			if (k > 0)
+			{
+				sb.append(", ");
+			}
+			sb.append(WeatherType.values()[best]).append(' ').append(100 * counts[best] / total).append('%');
+			counts[best] = 0;
+		}
+		return sb.toString();
+	}
+
+	private static final int MAP_CELL = 5;
+
+	/**
+	 * The weather over the loaded scene, north up, a few pixels per chunk: green clear, gray clouds, blue rain,
+	 * white snow, pale fog, black without a sky, the player in red.
+	 */
+	private static BufferedImage weatherMap(WeatherField field)
+	{
+		int w = field.getSizeX(), h = field.getSizeZ();
+		if (w == 0 || h == 0)
+		{
+			return null;
+		}
+		BufferedImage img = new BufferedImage(w * MAP_CELL, h * MAP_CELL, BufferedImage.TYPE_INT_RGB);
+		for (int z = 0; z < h; ++z)
+		{
+			for (int x = 0; x < w; ++x)
+			{
+				int rgb;
+				if (WeatherField.NO_SKY.equals(field.biome(x, z)))
+				{
+					rgb = 0;
+				}
+				else
+				{
+					float r = 50, g = 105, b = 50;
+					float c = field.cell(WeatherField.COVER, x, z);
+					r += (150 - r) * c;
+					g += (150 - g) * c;
+					b += (150 - b) * c;
+					float fog = Math.min(1, Math.max(0, field.cell(WeatherField.FOG, x, z) - 0.3f) / 1.5f);
+					r += (200 - r) * fog;
+					g += (215 - g) * fog;
+					b += (200 - b) * fog;
+					float rain = Math.min(1, field.cell(WeatherField.RAIN, x, z));
+					r += (40 - r) * rain;
+					g += (90 - g) * rain;
+					b += (230 - b) * rain;
+					float snow = Math.min(1, field.cell(WeatherField.SNOW, x, z));
+					r += (250 - r) * snow;
+					g += (250 - g) * snow;
+					b += (255 - b) * snow;
+					rgb = (int) r << 16 | (int) g << 8 | (int) b;
+				}
+				for (int py = 0; py < MAP_CELL; ++py)
+				{
+					for (int pxl = 0; pxl < MAP_CELL; ++pxl)
+					{
+						img.setRGB(x * MAP_CELL + pxl, (h - 1 - z) * MAP_CELL + py, rgb);
+					}
+				}
+			}
+		}
+		int fx = (int) ((field.getFocusX() - field.getOriginX()) / WeatherField.CELL * MAP_CELL);
+		int fz = (int) ((field.getFocusZ() - field.getOriginZ()) / WeatherField.CELL * MAP_CELL);
+		for (int dy = -1; dy <= 1; ++dy)
+		{
+			for (int dx = -1; dx <= 1; ++dx)
+			{
+				int ix = fx + dx, iy = h * MAP_CELL - 1 - (fz + dy);
+				if (ix >= 0 && iy >= 0 && ix < img.getWidth() && iy < img.getHeight())
+				{
+					img.setRGB(ix, iy, 0xFF2020);
+				}
+			}
+		}
+		return img;
 	}
 
 	private void line(String left, String right, Color color)

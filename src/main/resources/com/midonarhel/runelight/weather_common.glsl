@@ -19,6 +19,36 @@ uniform vec3 casterDir;
 uniform int sunIsCaster;
 uniform float amount;              // 0-1: fade in for particles, buildup for surfaces
 
+// The weather over the whole scene (WeatherField.java), one bilinear texel per chunk: r cloud cover, g rain,
+// b snow, a fog / 4; the ground: r wet, g snow cover. Used as differences from its value at the player, which
+// are added to the player's own weather; all zero when the field is off.
+uniform sampler2D weatherField;
+uniform sampler2D weatherGround;
+uniform vec4 weatherFieldRect;     // xy: world xz of the field's corner, zw: one over its size
+uniform vec4 weatherFieldFocus;    // the field at the player, fog unscaled
+uniform vec2 weatherGroundFocus;
+uniform float weatherFieldOn;
+
+vec2 weatherFieldUv(vec2 worldXZ) {
+  return (worldXZ - weatherFieldRect.xy) * weatherFieldRect.zw;
+}
+
+// cover, rain, snow, fog here minus at the player
+vec4 weatherFieldDelta(vec2 worldXZ) {
+  if (weatherFieldOn == 0.0) {
+    return vec4(0.0);
+  }
+  return (textureLod(weatherField, weatherFieldUv(worldXZ), 0.0) * vec4(1.0, 1.0, 1.0, 4.0) - weatherFieldFocus);
+}
+
+// wet, snow cover here minus at the player
+vec2 weatherGroundDelta(vec2 worldXZ) {
+  if (weatherFieldOn == 0.0) {
+    return vec2(0.0);
+  }
+  return textureLod(weatherGround, weatherFieldUv(worldXZ), 0.0).rg - weatherGroundFocus;
+}
+
 // Occlusion map texel and depth of a camera-relative point. Returns false outside the map.
 bool occlusionLookup(vec3 p, out vec2 uv, out float depth) {
   vec4 c = occlusionProjRel * vec4(p, 1.0);

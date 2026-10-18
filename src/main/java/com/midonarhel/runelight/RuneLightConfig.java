@@ -807,6 +807,44 @@ public interface RuneLightConfig extends Config
 		return true;
 	}
 
+	@ConfigItem(
+		keyName = "weatherField",
+		name = "Weather by region",
+		description = "In automatic weather, every region of the loaded map has its own weather: rain clouds, fog and"
+			+ " wet ground over a rainy region in the distance while it is clear where you are.",
+		section = weatherSection,
+		position = 410
+	)
+	default boolean weatherField()
+	{
+		return true;
+	}
+
+	@ConfigItem(
+		keyName = "weatherFarPrecipitation",
+		name = "Distant rain and snow",
+		description = "Rain and snow beyond the falling drops and flakes, as streaked curtains out to the draw distance"
+			+ " and under the clouds on the horizon.",
+		section = weatherSection,
+		position = 411
+	)
+	default boolean weatherFarPrecipitation()
+	{
+		return true;
+	}
+
+	@ConfigItem(
+		keyName = "weatherFieldMap",
+		name = "Show weather map",
+		description = "Development: a small map of the weather over the loaded scene in the timings overlay.",
+		section = weatherSection,
+		position = 412
+	)
+	default boolean weatherFieldMap()
+	{
+		return false;
+	}
+
 	@ConfigSection(
 		name = "Development",
 		description = "Tools for working on the renderer",

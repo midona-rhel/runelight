@@ -84,6 +84,7 @@ import net.runelite.client.plugins.PluginManager;
 import com.midonarhel.runelight.config.AntiAliasingMode;
 import com.midonarhel.runelight.config.DebugView;
 import com.midonarhel.runelight.config.UIScalingMode;
+import com.midonarhel.runelight.config.WeatherMode;
 import com.midonarhel.runelight.template.Template;
 import net.runelite.client.ui.ClientUI;
 import net.runelite.client.ui.DrawManager;
@@ -309,6 +310,8 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 	// samplers a program uses, not unit numbers; units go up to the combined limit, 80 on macOS)
 	private static final int WATER_DATA_UNIT = RuneLightPlugin.COMPOSITE_TEXTURE_UNIT + 14;
 	private static final int WATER_NOISE_UNIT = RuneLightPlugin.COMPOSITE_TEXTURE_UNIT + 15;
+	// two units: the weather field (WeatherField) and its ground, for the fog and the weather passes
+	private static final int WEATHER_FIELD_UNIT = RuneLightPlugin.COMPOSITE_TEXTURE_UNIT + 16;
 	private final Water water = new Water();
 	private final float[] waterWind = new float[3];
 	// when the plugin started; the day cycle and sky animation count from here
@@ -956,7 +959,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		glShadowProgram = SHADOW_PROGRAM.compile(template);
 		setFogProgram(VolumetricFog.PROGRAM.compile(template));
 		weather.setPrograms(weather.compile(template), COMPOSITE_TEXTURE_UNIT, WEATHER_OCCLUSION_UNIT, SHADOW_COMPARE_UNIT, ALPHA_LAYER_UNIT,
-			LIGHT_DATA_UNIT, CLUSTER_DATA_UNIT, MATERIAL_UNIT);
+			LIGHT_DATA_UNIT, CLUSTER_DATA_UNIT, MATERIAL_UNIT, WEATHER_FIELD_UNIT);
 		skyCache.setPrograms(skyCache.compile(template), CLOUD_NOISE_UNIT, SKY_CACHE_UNIT);
 
 		glBindVertexArray(0);
@@ -1063,7 +1066,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 	private void setFogProgram(int program)
 	{
 		volumetricFog.setProgram(program, COMPOSITE_TEXTURE_UNIT + 2, SHADOW_COMPARE_UNIT, LIGHT_DATA_UNIT,
-			CLUSTER_DATA_UNIT, FOG_NOISE_UNIT);
+			CLUSTER_DATA_UNIT, FOG_NOISE_UNIT, WEATHER_FIELD_UNIT);
 	}
 
 	private static void bindSceneSamplers(int program)
@@ -1125,6 +1128,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 				glDeleteProgram(weatherPrograms.rain);
 				glDeleteProgram(weatherPrograms.snow);
 				glDeleteProgram(weatherPrograms.surface);
+				glDeleteProgram(weatherPrograms.far);
 				throw ex;
 			}
 		}
@@ -1159,7 +1163,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		glShadowProgram = shadow;
 		setFogProgram(fog);
 		weather.setPrograms(weatherPrograms, COMPOSITE_TEXTURE_UNIT, WEATHER_OCCLUSION_UNIT, SHADOW_COMPARE_UNIT, ALPHA_LAYER_UNIT,
-			LIGHT_DATA_UNIT, CLUSTER_DATA_UNIT, MATERIAL_UNIT);
+			LIGHT_DATA_UNIT, CLUSTER_DATA_UNIT, MATERIAL_UNIT, WEATHER_FIELD_UNIT);
 		skyCache.setPrograms(skyCachePrograms, CLOUD_NOISE_UNIT, SKY_CACHE_UNIT);
 		initUniforms();
 
@@ -1696,6 +1700,8 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 			volumetricFog.areaDensity = weather.fogMultiplier()
 				* (1 + weather.areaFogWeight() * Math.min(areaFog / AREA_FOG_DEPTH, 2));
 			volumetricFog.areaHeight = weather.fogHeightMultiplier();
+			volumetricFog.weatherField = weather.getField();
+			volumetricFog.weatherFog = weather.fogMultiplier();
 			volumetricFog.updateParameters(config, lp.getX(), ground, lp.getY(), frameDrawDistance);
 			frameFog = true;
 		}
@@ -1722,6 +1728,11 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		EnvironmentManager.Environment biome = config.areaEnvironments() ? environmentManager.getBiome() : null;
 		String biomeName = biome != null && !biome.cave ? biome.name : null;
 		weatherForecast.update(biomeName, System.currentTimeMillis() - startMillis, config.dayCycleMinutes());
+		SceneContext ctx = root;
+		weather.updateField(sky && ctx != null ? wv.getScene() : null, ctx != null ? ctx.sizeX : 0,
+			ctx != null ? ctx.sizeZ : 0, SCENE_OFFSET >> 3, plane, environmentManager, config.areaEnvironments(),
+			biomeName, config.weatherField() && config.weatherMode() == WeatherMode.AUTOMATIC, weatherForecast,
+			config.weatherIntensity(), config.weatherBuildup(), config.fogClimate(), dayCycle.hour(), fx, fz);
 		weather.update(config.weatherMode(), weatherForecast.getCurrent(), config.weatherIntensity(),
 			config.weatherBuildup(), config.weatherVarying(), config.weatherOvercast(), config.weatherLightning(), sky,
 			dayCycle.hour(), biomeName, config.fogClimate(), fx, fy, fz, plane);
@@ -2034,7 +2045,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		long baseX = wv != null ? (long) wv.getBaseX() * Perspective.LOCAL_TILE_SIZE : 0;
 		long baseZ = wv != null ? (long) wv.getBaseY() * Perspective.LOCAL_TILE_SIZE : 0;
 		clouds.update(config.clouds(), config.cloudShadows(), config.cloudCoverage(), config.cloudSpeed(),
-			config.cloudDetail(), weather.cloudCover(), baseX, baseZ);
+			config.cloudDetail(), weather.cloudCover(), baseX, baseZ, weather.getField());
 	}
 
 	private void bindClouds()
@@ -2111,6 +2122,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		setLightingUniforms();
 		sceneTargets.bindAlphaLayer(ALPHA_LAYER_UNIT);
 
+		weather.bindField(WEATHER_FIELD_UNIT);
 		// after setLightingUniforms, which binds the shadow map and light clusters the fog also samples
 		if (frameFog)
 		{
@@ -2142,7 +2154,8 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 			weather.draw(frameViewProj, frameInvViewProj, frameViewport, glCapabilities.OpenGL45,
 				frameCameraX, frameCameraY, frameCameraZ, dayCycle, frameShadows && shadowMap.isInitialized() ? shadowMap.lightProjRel : null,
 				config.weatherSplashes(), config.weatherSurfaces(), WEATHER_OCCLUSION_UNIT,
-				config.pointLights() && config.weatherPointLights() && lightClusters.isInitialized());
+				config.pointLights() && config.weatherPointLights() && lightClusters.isInitialized(),
+				config.weatherFarPrecipitation(), frameDrawDistance);
 			glViewport(0, 0, width, height);
 		}
 
@@ -2160,6 +2173,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		glActiveTexture(GL_TEXTURE0);
 		VolumetricFog.unbind(FOG_TEXTURE_UNIT);
 		Clouds.unbind(CLOUD_NOISE_UNIT);
+		WeatherField.unbind(WEATHER_FIELD_UNIT, WEATHER_FIELD_UNIT + 1);
 		glUseProgram(0);
 
 		checkGLErrors();
