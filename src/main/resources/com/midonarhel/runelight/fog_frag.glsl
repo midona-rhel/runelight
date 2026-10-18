@@ -39,10 +39,11 @@ uniform float fogSunScatter;
 uniform float fogNoiseAmount;
 uniform float fogBankAmount;
 uniform vec3 fogTint;        // multiplies the fog's ambient color; for per-area fog later
+uniform int fogSteps;        // march steps, at most FOG_MAX_STEPS (Performance: fog quality)
 
 out vec4 FragFog;
 
-#define FOG_STEPS 12
+#define FOG_MAX_STEPS 16
 // fog left right around the player, as a fraction of the full density
 #define FOG_NEAR_FLOOR 0.15
 // fraction of the fog's reach by which its color has become the sky's horizon color
@@ -74,10 +75,13 @@ out vec4 FragFog;
 // banks: the band of the bank noise that goes from thin to thick; narrower is more contrast
 #define FOG_BANK_LOW 0.2
 #define FOG_BANK_HIGH 0.8
-// point lights glowing in the fog: every light in the sample's cluster, up to the cluster's capacity. A smaller
-// cap picks different subsets in neighboring clusters and shows the cluster grid as squares.
-#define FOG_POINT_LIGHTS (CLUSTER_STRIDE - 1)
+// Point lights glowing in the fog: every light in the pixel's fog column (LightClusters), each integrated in closed
+// form along the part of the ray inside its sphere instead of being sampled at every step. The halo falls off as
+// (c^2 / (c^2 + d^2) - m) / (1 - m), c = FOG_GLOW_CORE * radius, m its value at the radius: close to the cubic
+// falloff it replaced (0.37, 0.10, 0.03 against 0.42, 0.13, 0.02 at a quarter, half and three quarters of the
+// radius), and the integral along a straight line is an arctangent.
 #define FOG_POINT_LIGHT_SCALE 0.35
+#define FOG_GLOW_CORE 0.2
 
 float ign(vec2 p) {
   return fract(52.9829189 * fract(dot(p, vec2(0.06711056, 0.00583715))));
@@ -90,33 +94,52 @@ float phase(float cosTheta) {
   return mix(1.0, hg, FOG_PHASE_FORWARD);
 }
 
-int clusterBase(ivec2 px, float z) {
+int columnBase(ivec2 px) {
   vec2 rel = (vec2(px) + 0.5 - vec2(sceneViewport.xy)) / vec2(sceneViewport.zw);
   int cx = clamp(int(rel.x * float(CLUSTERS_X)), 0, CLUSTERS_X - 1);
   int cy = clamp(int(rel.y * float(CLUSTERS_Y)), 0, CLUSTERS_Y - 1);
-  int cz = z <= CLUSTER_NEAR ? 0
-    : clamp(int(floor(log(z / CLUSTER_NEAR) / log(CLUSTER_FAR / CLUSTER_NEAR) * float(CLUSTERS_Z))), 0, CLUSTERS_Z - 1);
-  return ((cz * CLUSTERS_Y + cy) * CLUSTERS_X + cx) * CLUSTER_STRIDE;
+  return (CLUSTERS_X * CLUSTERS_Y * CLUSTERS_Z + cy * CLUSTERS_X + cx) * CLUSTER_STRIDE;
 }
 
-// isotropic glow from the lights in this sample's cluster; no shadowing
-vec3 pointGlow(ivec2 px, float z, vec3 p) {
-  int base = clusterBase(px, z);
-  int count = min(int(texelFetch(clusterData, base).r), FOG_POINT_LIGHTS);
+// Light from the point lights scattered toward the camera along the ray dir between t0 and t0 + steps * dt.
+// weight[i]: scattering per unit length in step i (transmittance to the step times the share it scatters, over
+// dt), so each light's integral is split over the steps its sphere spans. No shadowing.
+vec3 pointGlow(ivec2 px, vec3 dir, float t0, float dt, int steps, float weight[FOG_MAX_STEPS]) {
+  int base = columnBase(px);
+  int count = int(texelFetch(clusterData, base).r);
+  float tEnd = t0 + dt * float(steps);
   vec3 sum = vec3(0.0);
-  for (int i = 0; i < count; ++i) {
-    int li = int(texelFetch(clusterData, base + 1 + i).r);
+  for (int k = 0; k < count; ++k) {
+    int li = int(texelFetch(clusterData, base + 1 + k).r);
     vec4 posRadius = texelFetch(lightData, li * 2);
-    vec3 l = posRadius.xyz - p;
-    float d2 = dot(l, l);
+    float tc = dot(posRadius.xyz, dir);
+    float h2 = max(dot(posRadius.xyz, posRadius.xyz) - tc * tc, 0.0);
     float r2 = posRadius.w * posRadius.w;
-    vec4 colorFlags = texelFetch(lightData, li * 2 + 1);
-    // w 1: an indoor light (building lights), which would glow in the fog outside through the walls
-    if (d2 < r2 && colorFlags.w < 0.5) {
-      // steeper than the surface falloff: a soft halo around the light rather than a lit ball of fog
-      float att = 1.0 - sqrt(d2 / r2);
-      sum += colorFlags.rgb * (att * att * att);
+    if (h2 >= r2) {
+      continue;
     }
+    float hc = sqrt(r2 - h2);
+    float a = max(tc - hc, t0);
+    float b = min(tc + hc, tEnd);
+    if (b <= a) {
+      continue;
+    }
+    float c2 = r2 * (FOG_GLOW_CORE * FOG_GLOW_CORE);
+    float q = sqrt(c2 + h2);
+    float m = c2 / (c2 + r2);
+    float k1 = c2 / q;
+    int i0 = clamp(int((a - t0) / dt), 0, steps - 1);
+    int i1 = clamp(int((b - t0) / dt), 0, steps - 1);
+    float glow = 0.0;
+    float s0 = a - tc;
+    float f0 = k1 * atan(s0 / q) - m * s0;
+    for (int i = i0; i <= i1; ++i) {
+      float s1 = min(t0 + dt * float(i + 1), b) - tc;
+      float f1 = k1 * atan(s1 / q) - m * s1;
+      glow += (f1 - f0) * weight[i];
+      f0 = f1;
+    }
+    sum += texelFetch(lightData, li * 2 + 1).rgb * (glow / (1.0 - m));
   }
   return sum * FOG_POINT_LIGHT_SCALE;
 }
@@ -197,16 +220,20 @@ void main() {
   vec3 lcd = (lightProjRel * vec4(dir, 0.0)).xyz;
   float shadowBias = 24.0 / (2.0 * shadowDepthRange);
 
-  // view depth is linear along the ray too, for the light cluster lookup
-  float w0 = (viewProj * vec4(0.0, 0.0, 0.0, 1.0)).w;
-  float wd = (viewProj * vec4(dir, 0.0)).w;
+  // the sun's light in the fog; at night with no moon up the shadow map has nothing to add
+  shafts = shafts && dot(sun, vec3(1.0)) > 1e-4;
   bool glow = pointLightsEnabled == 1;
 
-  float dt = (t1 - t0) / float(FOG_STEPS);
+  int steps = clamp(fogSteps, 1, FOG_MAX_STEPS);
+  float dt = (t1 - t0) / float(steps);
   float jitter = ign(gl_FragCoord.xy);
   vec3 scatter = vec3(0.0);
   float trans = 1.0;
-  for (int i = 0; i < FOG_STEPS; ++i) {
+  float weight[FOG_MAX_STEPS];
+  for (int i = 0; i < FOG_MAX_STEPS; ++i) {
+    weight[i] = 0.0;
+  }
+  for (int i = 0; i < steps; ++i) {
     float t = t0 + (float(i) + jitter) * dt;
     vec3 p = dir * t;
     vec3 wp = p + cameraPos;
@@ -245,14 +272,18 @@ void main() {
       }
       light += sun * vis;
     }
-    if (glow) {
-      light += pointGlow(px, w0 + wd * t, p);
-    }
-    light = mix(light, ambientFar, smoothstep(fogNear, fogFade.y * FOG_SKY_MATCH, centerDist));
+    float far = smoothstep(fogNear, fogFade.y * FOG_SKY_MATCH, centerDist);
+    light = mix(light, ambientFar, far);
 
     float stepTrans = exp(-sigma * dt);
-    scatter += trans * light * (1.0 - stepTrans);
+    float scattered = trans * (1.0 - stepTrans);
+    scatter += light * scattered;
+    // the point lights' share fades into the far color like the rest of the light
+    weight[i] = scattered * (1.0 - far) / dt;
     trans *= stepTrans;
+  }
+  if (glow) {
+    scatter += pointGlow(px, dir, t0, dt, steps, weight);
   }
 
   FragFog = vec4(scatter, trans);

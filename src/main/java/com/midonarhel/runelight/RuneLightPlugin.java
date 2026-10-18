@@ -1951,6 +1951,9 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 			collectLights();
 			cpuTimer.end(CpuTimer.LIGHTS);
 			cpuTimer.begin(CpuTimer.CLUSTERS);
+			// the fog integrates the lights along each pixel's ray from per-column lists
+			lightClusters.setFog(frameFog, volumetricFog.getCenterX() - frameCameraX,
+				volumetricFog.getCenterZ() - frameCameraZ, volumetricFog.getRadius());
 			lightClusters.update(frameLights, frameViewProj, frameCameraX, frameCameraY, frameCameraZ);
 			cpuTimer.end(CpuTimer.CLUSTERS);
 			lightClusters.bind(LIGHT_DATA_UNIT, CLUSTER_DATA_UNIT);

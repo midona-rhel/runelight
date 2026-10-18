@@ -34,6 +34,7 @@ import static com.midonarhel.runelight.RuneLightPlugin.MAX_FOG_DEPTH;
 import com.midonarhel.runelight.config.AntiAliasingMode;
 import com.midonarhel.runelight.config.ColorBlindMode;
 import com.midonarhel.runelight.config.DebugView;
+import com.midonarhel.runelight.config.Quality;
 import com.midonarhel.runelight.config.ShadowResolution;
 import com.midonarhel.runelight.config.UIScalingMode;
 import com.midonarhel.runelight.config.WeatherMode;
@@ -1122,5 +1123,60 @@ public interface RuneLightConfig extends Config
 	default int starBrightness()
 	{
 		return 100;
+	}
+
+	@ConfigSection(
+		name = "Performance",
+		description = "Trade some quality for frame rate. High matches the full look.",
+		position = 600
+	)
+	String performanceSection = "performance";
+
+	@ConfigItem(
+		keyName = "fogQuality",
+		name = "Fog quality",
+		description = "Steps through the volumetric fog: 12 on high, 8 on medium, 6 on low. Lower is grainier in sun shafts.",
+		section = performanceSection,
+		position = 601
+	)
+	default Quality fogQuality()
+	{
+		return Quality.HIGH;
+	}
+
+	@ConfigItem(
+		keyName = "aoQuality",
+		name = "Ambient occlusion quality",
+		description = "Samples per pixel of ambient occlusion: 12 on high, 8 on medium, 6 on low. Lower is noisier.",
+		section = performanceSection,
+		position = 602
+	)
+	default Quality aoQuality()
+	{
+		return Quality.HIGH;
+	}
+
+	@ConfigItem(
+		keyName = "shadowQuality",
+		name = "Soft shadow quality",
+		description = "Samples per pixel of the soft shadows. Lower is grainier at the edges of soft shadows.",
+		section = performanceSection,
+		position = 603
+	)
+	default Quality shadowQuality()
+	{
+		return Quality.HIGH;
+	}
+
+	@ConfigItem(
+		keyName = "shadowCache",
+		name = "Cache static shadows",
+		description = "Draw the scenery into the shadow map only when the sun has moved a little or you walked a few tiles, not every frame. Characters and animated objects still cast every frame.",
+		section = performanceSection,
+		position = 604
+	)
+	default boolean shadowCache()
+	{
+		return true;
 	}
 }

@@ -27,15 +27,31 @@ class LightClusters
 	static final float FAR = 25600;
 
 	private static final int CLUSTER_COUNT = CLUSTERS_X * CLUSTERS_Y * CLUSTERS_Z;
+	// Fog columns, stored after the clusters: per screen tile, the lights that glow in the fog anywhere along its
+	// rays (fog_frag.glsl integrates each once per pixel instead of looking up clusters at every step). Indoor
+	// lights are left out, and lights outside the fog. When a column is full, the brightest lights win, in the same
+	// order for every column, so neighbouring columns keep the same lights instead of showing the tile grid.
+	private static final int COLUMN_COUNT = CLUSTERS_X * CLUSTERS_Y;
 	// per cluster: count, then up to MAX_LIGHTS_PER_CLUSTER indices
 	private static final int CLUSTER_STRIDE = MAX_LIGHTS_PER_CLUSTER + 1;
+	private static final int TABLE_SIZE = (CLUSTER_COUNT + COLUMN_COUNT) * CLUSTER_STRIDE;
 
 	private int lightBuffer, lightTexture;
 	private int clusterBuffer, clusterTexture;
 
 	private final FloatBuffer lightData = BufferUtils.createFloatBuffer(MAX_LIGHTS * 8);
-	private final short[] clusters = new short[CLUSTER_COUNT * CLUSTER_STRIDE];
-	private final ShortBuffer clusterData = BufferUtils.createShortBuffer(CLUSTER_COUNT * CLUSTER_STRIDE);
+	private final short[] clusters = new short[TABLE_SIZE];
+	private final ShortBuffer clusterData = BufferUtils.createShortBuffer(TABLE_SIZE);
+
+	// fog: camera-relative xz of the fog's center and its radius; columns are only filled while enabled
+	private boolean fogColumns;
+	private float fogX, fogZ, fogRadius;
+	// candidates for the fog columns this frame: light index, tile rectangle, packed for sorting by brightness
+	private long[] fogOrder = new long[64];
+	private int[] fogRect = new int[64 * 4];
+	private int fogCandidates;
+	private int[] fogLight = new int[64];
+	private final float[] tile = new float[4];
 
 	private int lightCount;
 	private int overflows;
@@ -57,7 +73,7 @@ class LightClusters
 
 		clusterBuffer = glGenBuffers();
 		glBindBuffer(GL_TEXTURE_BUFFER, clusterBuffer);
-		glBufferData(GL_TEXTURE_BUFFER, (long) CLUSTER_COUNT * CLUSTER_STRIDE * Short.BYTES, GL_STREAM_DRAW);
+		glBufferData(GL_TEXTURE_BUFFER, (long) TABLE_SIZE * Short.BYTES, GL_STREAM_DRAW);
 		clusterTexture = glGenTextures();
 		glBindTexture(GL_TEXTURE_BUFFER, clusterTexture);
 		glTexBuffer(GL_TEXTURE_BUFFER, GL_R16UI, clusterBuffer);
@@ -95,6 +111,17 @@ class LightClusters
 	}
 
 	/**
+	 * Whether to fill the fog columns, and the fog's extent: camera-relative center (xz) and radius, world units.
+	 */
+	void setFog(boolean enabled, float centerX, float centerZ, float radius)
+	{
+		fogColumns = enabled;
+		fogX = centerX;
+		fogZ = centerZ;
+		fogRadius = radius;
+	}
+
+	/**
 	 * Cull lights into clusters and upload both tables.
 	 *
 	 * @param viewProj camera-relative world to clip, as used by the composite pass
@@ -117,11 +144,11 @@ class LightClusters
 		}
 		lightData.clear();
 		overflows = 0;
+		fogCandidates = 0;
 		computeBounds(viewProj);
 
 		int n = Math.min(lights.size(), MAX_LIGHTS);
 		int kept = 0;
-		float[] tile = new float[4];
 		for (int i = 0; i < n; ++i)
 		{
 			PointLight l = lights.get(i);
@@ -149,6 +176,15 @@ class LightClusters
 			lightData.put(x).put(y).put(z).put(l.radius);
 			lightData.put(l.r * l.intensity).put(l.g * l.intensity).put(l.b * l.intensity).put(l.indoor ? 1 : 0);
 
+			if (fogColumns && !l.indoor)
+			{
+				float fx = x - fogX, fz = z - fogZ, reach = fogRadius + l.radius;
+				if (fx * fx + fz * fz < reach * reach)
+				{
+					addFogCandidate(index, x0, y0, x1, y1, (l.r + l.g + l.b) * l.intensity * l.radius);
+				}
+			}
+
 			for (int cz = z0; cz <= z1; ++cz)
 			{
 				for (int cy = y0; cy <= y1; ++cy)
@@ -175,6 +211,58 @@ class LightClusters
 		}
 		lightCount = kept;
 		lightData.flip();
+		fillFogColumns();
+	}
+
+	private void addFogCandidate(int index, int x0, int y0, int x1, int y1, float brightness)
+	{
+		int c = fogCandidates++;
+		if (c == fogOrder.length)
+		{
+			fogOrder = java.util.Arrays.copyOf(fogOrder, c * 2);
+			fogRect = java.util.Arrays.copyOf(fogRect, c * 8);
+			fogLight = java.util.Arrays.copyOf(fogLight, c * 2);
+		}
+		// brightest first; ties by index so the order is stable. Positive floats sort like their bits.
+		long key = (long) Float.floatToIntBits(Math.max(brightness, 0)) << 32 | (0xFFFFFFFFL - c);
+		fogOrder[c] = key;
+		fogRect[c * 4] = x0;
+		fogRect[c * 4 + 1] = y0;
+		fogRect[c * 4 + 2] = x1;
+		fogRect[c * 4 + 3] = y1;
+		fogLight[c] = index;
+	}
+
+	private void fillFogColumns()
+	{
+		int columns = CLUSTER_COUNT * CLUSTER_STRIDE;
+		for (int i = columns; i < TABLE_SIZE; i += CLUSTER_STRIDE)
+		{
+			clusters[i] = 0;
+		}
+		if (fogCandidates == 0)
+		{
+			return;
+		}
+		java.util.Arrays.sort(fogOrder, 0, fogCandidates);
+		for (int k = fogCandidates - 1; k >= 0; --k)
+		{
+			int c = (int) (0xFFFFFFFFL - (fogOrder[k] & 0xFFFFFFFFL));
+			int index = fogLight[c];
+			for (int cy = fogRect[c * 4 + 1]; cy <= fogRect[c * 4 + 3]; ++cy)
+			{
+				for (int cx = fogRect[c * 4]; cx <= fogRect[c * 4 + 2]; ++cx)
+				{
+					int base = columns + (cy * CLUSTERS_X + cx) * CLUSTER_STRIDE;
+					int count = clusters[base];
+					if (count < MAX_LIGHTS_PER_CLUSTER)
+					{
+						clusters[base + 1 + count] = (short) index;
+						clusters[base] = (short) (count + 1);
+					}
+				}
+			}
+		}
 	}
 
 	short[] clusterTable()

@@ -41,12 +41,13 @@ class VolumetricFog
 	private float sunScatter;
 	private float noiseAmount;
 	private float bankAmount;
+	private int steps = 12;
 
 	private int program;
 	private int uniCameraPos, uniTime, uniOutdoors, uniProceduralSky, uniClientSkyColor, uniCasterDir,
 		uniSunIsCaster, uniSunAltitude, uniShadowsEnabled, uniLightProjRel, uniShadowDepthRange,
 		uniPointLights, uniDensity, uniHeight, uniGroundY, uniCenter, uniFade, uniNear, uniSunScatter, uniNoiseAmount, uniBankAmount,
-		uniTint, uniViewProj, uniInvViewProj, uniViewport, uniDepthZeroToOne, uniOvercast;
+		uniTint, uniSteps, uniViewProj, uniInvViewProj, uniViewport, uniDepthZeroToOne, uniOvercast;
 
 	private int uniCompositeEnabled;
 
@@ -85,6 +86,7 @@ class VolumetricFog
 		uniNoiseAmount = glGetUniformLocation(program, "fogNoiseAmount");
 		uniBankAmount = glGetUniformLocation(program, "fogBankAmount");
 		uniTint = glGetUniformLocation(program, "fogTint");
+		uniSteps = glGetUniformLocation(program, "fogSteps");
 		uniViewProj = glGetUniformLocation(program, "viewProj");
 		uniInvViewProj = glGetUniformLocation(program, "invViewProj");
 		uniViewport = glGetUniformLocation(program, "sceneViewport");
@@ -141,6 +143,24 @@ class VolumetricFog
 		sunScatter = config.volumetricFogSunScattering() / 100f;
 		noiseAmount = config.volumetricFogNoise() / 100f;
 		bankAmount = config.volumetricFogBanks() / 100f;
+		steps = config.fogQuality().pick(6, 8, 12);
+	}
+
+	/** World x of the fog's center: the player. */
+	float getCenterX()
+	{
+		return centerX;
+	}
+
+	float getCenterZ()
+	{
+		return centerZ;
+	}
+
+	/** Horizontal distance from the center where the fog has faded out, world units. */
+	float getRadius()
+	{
+		return fadeEnd;
 	}
 
 	/**
@@ -205,6 +225,7 @@ class VolumetricFog
 		glUniform1f(uniNoiseAmount, noiseAmount);
 		glUniform1f(uniBankAmount, bankAmount);
 		glUniform3fv(uniTint, areaTint);
+		glUniform1i(uniSteps, steps);
 
 		glActiveTexture(GL_TEXTURE0 + noiseUnit);
 		glBindTexture(GL_TEXTURE_3D, texNoise);
