@@ -2876,7 +2876,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		if (!z.invalidate)
 		{
 			z.invalidate = true;
-			log.debug("Zone invalidated: wx={} x={} z={}", scene.getWorldViewId(), zx, zz);
+			log.trace("Zone invalidated: wx={} x={} z={}", scene.getWorldViewId(), zx, zz);
 		}
 	}
 
@@ -2953,7 +2953,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 					globalIllumination.zonesChanged();
 				}
 
-				log.debug("Rebuilt zone wv={} x={} z={}", wv.getId(), x, z);
+				log.trace("Rebuilt zone wv={} x={} z={}", wv.getId(), x, z);
 			}
 		}
 	}
