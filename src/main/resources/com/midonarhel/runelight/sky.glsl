@@ -59,18 +59,18 @@ uniform vec2 weatherOvercast;  // x: 0 clear .. 1 fully overcast, y: 0 rain .. 1
 #define OVERCAST_SNOW_TINT vec3(0.98, 0.99, 1.02)
 #define OVERCAST_RAIN_SKY 0.62
 #define OVERCAST_SNOW_SKY 1.18
-// share of the clear sky's own color left at full cover, so sunsets and nights still read, muted
-#define OVERCAST_SKY_KEEP 0.22
+// share of the clear sky's own color left at full cover: an overcast sky is gray, sunsets only a faint warmth
+#define OVERCAST_SKY_KEEP 0.06
 // how far zenith and horizon move toward one brightness: an overcast sky is nearly even
 #define OVERCAST_SKY_FLATTEN 0.7
 // sun or moon left at full cover, and how much of its color it keeps
 #define OVERCAST_DIRECT_RAIN 0.30
 #define OVERCAST_DIRECT_SNOW 0.42
-#define OVERCAST_DIRECT_SATURATION 0.45
+#define OVERCAST_DIRECT_SATURATION 0.2
 // ambient sky light at full cover: grayer, a little lower in rain, brighter in snow
 #define OVERCAST_AMBIENT_RAIN 0.95
 #define OVERCAST_AMBIENT_SNOW 1.30
-#define OVERCAST_AMBIENT_GRAY 0.6
+#define OVERCAST_AMBIENT_GRAY 0.85
 // shadows this much fainter at full cover: the light comes from the whole sky
 #define OVERCAST_SHADOW 0.55
 

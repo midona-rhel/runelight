@@ -126,6 +126,7 @@ class Weather
 			glUniform1i(glGetUniformLocation(p, "sceneNormal"), sceneUnit + 1);
 			glUniform1i(glGetUniformLocation(p, "sceneDepth"), sceneUnit + 2);
 			glUniform1i(glGetUniformLocation(p, "occlusionMap"), occlusionUnit);
+			glUniform1i(glGetUniformLocation(p, "occlusionCompare"), occlusionUnit + 1);
 			glUniform1i(glGetUniformLocation(p, "shadowCompare"), shadowCompareUnit);
 			glUniform1i(glGetUniformLocation(p, "sceneAlpha"), alphaLayerUnit);
 			glUniform1i(glGetUniformLocation(p, "lightData"), lightDataUnit);

@@ -85,5 +85,5 @@ void main() {
   fAlpha = FLAKE_ALPHA * amount * edge * near * smoothstep(0.0, 16.0, above) * sub * sub * added * (1.0 + LIT_ALPHA * lit);
   fQuad = corner;
   fViewZ = c.w;
-  fColor = linearToSrgb(clamp(vec3(0.95, 0.97, 1.0) * (weatherLight() + points), 0.0, 1.0));
+  fColor = weatherParticleColor(vec3(0.95, 0.97, 1.0), points);
 }

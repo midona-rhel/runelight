@@ -107,7 +107,7 @@ void drop(int id, vec2 corner) {
   fQuad = vec2(corner.x, corner.y);
   fSplash = 0;
   fViewZ = c.w;
-  fColor = linearToSrgb(clamp(vec3(0.62, 0.68, 0.78) * (weatherLight() + points), 0.0, 1.0));
+  fColor = weatherParticleColor(vec3(0.62, 0.68, 0.78), points);
 }
 
 void splash(int id, vec2 corner) {
@@ -116,8 +116,10 @@ void splash(int id, vec2 corner) {
   float cycle = time / SPLASH_PERIOD + phase;
   float f = fract(cycle);
   float seed = float(id) * 17.0 + floor(cycle) * 131.0;
+  // spread over a world-anchored box that wraps around the player, so a splash stays where it landed
   vec2 h = hash31(seed).xy;
-  vec2 xz = focusPos.xz + (h - 0.5) * SPLASH_HALF * 2.0;
+  vec2 lo = focusPos.xz - SPLASH_HALF;
+  vec2 xz = lo + mod(h * SPLASH_HALF * 2.0 - lo, SPLASH_HALF * 2.0);
 
   // land on the top surface; only where it is the ground under open sky the camera can see (checked per pixel)
   vec3 p = vec3(xz.x, 0.0, xz.y) - cameraPos;
@@ -145,7 +147,7 @@ void splash(int id, vec2 corner) {
   fQuad = q;
   fSplash = 1;
   fViewZ = c.w;
-  fColor = linearToSrgb(clamp(vec3(0.70, 0.75, 0.82) * (weatherLight() + points), 0.0, 1.0));
+  fColor = weatherParticleColor(vec3(0.70, 0.75, 0.82), points);
 }
 
 void main() {

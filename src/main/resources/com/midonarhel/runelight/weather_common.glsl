@@ -6,6 +6,7 @@
 // Top-down depth of all static scenery around the player, every roof included (Weather.java). Window depth grows
 // downward: depth = (worldY - occlusionCenterY + occlusionDepthRange) / (2 occlusionDepthRange). Cleared to 1.
 uniform sampler2D occlusionMap;
+uniform sampler2DShadow occlusionCompare;  // same map, bilinear compare: smooth edges
 uniform mat4 occlusionProjRel;     // camera-relative world -> occlusion clip
 uniform float occlusionCenterY;
 uniform float occlusionDepthRange;
@@ -44,6 +45,41 @@ float occluderTop(vec3 p) {
 // bias: world units a point may sit below the top surface and still count, for the surface itself.
 float skyExposure(vec3 p, float bias) {
   return p.y + cameraPos.y <= occluderTop(p) + bias ? 1.0 : 0.0;
+}
+
+// point light on particles counts this much more than on surfaces: drops are bright where light catches them
+#define WEATHER_PARTICLE_POINT_BOOST 2.0
+// world units between the smooth exposure taps
+#define SMOOTH_EXPOSURE_STEP 64.0
+
+// Like skyExposure, but filtered: bilinear compares in a 3x3 tent, so shelter edges fade over about a tile and a
+// half instead of following the map's texels
+float smoothExposure(vec3 p, float bias) {
+  float sum = 0.0;
+  for (int x = -1; x <= 1; ++x) {
+    for (int z = -1; z <= 1; ++z) {
+      vec2 uv;
+      float depth;
+      float e = 1.0;
+      if (occlusionLookup(p + vec3(float(x), 0.0, float(z)) * SMOOTH_EXPOSURE_STEP, uv, depth)) {
+        e = texture(occlusionCompare, vec3(uv, depth - bias / (2.0 * occlusionDepthRange)));
+      }
+      sum += (x == 0 ? 2.0 : 1.0) * (z == 0 ? 2.0 : 1.0) * e;
+    }
+  }
+  return sum / 16.0;
+}
+
+// Light falling on weather: sky ambient plus a bit of the sun or moon, linear like the composite
+vec3 weatherLight() {
+  vec3 caster = sunIsCaster == 1 ? sunLight(sunAltitude) : moonLight(sunAltitude);
+  return ambientLight(sunAltitude) + skyLight(sunAltitude) + caster * 0.35;
+}
+
+// Particle color: the weather's light plus point lights, with the composite's soft shoulder instead of a hard
+// clip, so lights still show on drops by day
+vec3 weatherParticleColor(vec3 srgb, vec3 points) {
+  return shade(srgb, weatherLight() + points * WEATHER_PARTICLE_POINT_BOOST);
 }
 
 // Point lights, culled into clusters on the CPU (LightClusters.java); same tables and lookup as the composite
@@ -101,11 +137,6 @@ vec3 weatherPointLights(vec3 p, vec4 clip, vec3 n) {
   return sum * WEATHER_POINT_LIGHT_SCALE;
 }
 
-// Light falling on weather: sky ambient plus a bit of the sun or moon, linear like the composite
-vec3 weatherLight() {
-  vec3 caster = sunIsCaster == 1 ? sunLight(sunAltitude) : moonLight(sunAltitude);
-  return ambientLight(sunAltitude) + skyLight(sunAltitude) + caster * 0.35;
-}
 
 // Hashes for per-particle randomness from gl_InstanceID, no texture needed
 float hash11(float p) {

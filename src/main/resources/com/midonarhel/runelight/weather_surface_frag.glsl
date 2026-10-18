@@ -16,7 +16,7 @@ uniform sampler2D sceneAlpha;  // transparency layer: no snow or wet look under 
 
 out vec4 FragColor;
 
-#define WET_DARKEN 0.62        // scene color multiplier on fully wet surfaces
+#define WET_DARKEN 0.80        // scene color multiplier on fully wet surfaces
 #define WET_SHEEN 0.10         // sky reflection on wet upward surfaces
 #define SNOW_ALBEDO vec3(0.86, 0.89, 0.95)
 #define EXPOSURE_BIAS 40.0     // world units a surface may sit below its column's top and still be exposed
@@ -34,16 +34,7 @@ float valueNoise(vec2 p) {
 
 // Exposure averaged over a few occlusion texels, so the edge under an eave is soft instead of stair-stepped
 float softExposure(vec3 p) {
-  // 3x3 tent over about a third of a tile each way
-  float t = 40.0;
-  float sum = 0.0;
-  for (int x = -1; x <= 1; ++x) {
-    for (int z = -1; z <= 1; ++z) {
-      float w = (x == 0 ? 2.0 : 1.0) * (z == 0 ? 2.0 : 1.0);
-      sum += w * skyExposure(p + vec3(float(x) * t, 0.0, float(z) * t), EXPOSURE_BIAS);
-    }
-  }
-  return sum / 16.0;
+  return smoothExposure(p, EXPOSURE_BIAS);
 }
 
 void main() {
