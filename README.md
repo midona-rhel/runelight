@@ -35,3 +35,11 @@ Plugin config, Development section:
 
 Point light placements come from 117 HD's light definitions, converted with `tools/import_117hd_lights.py`
 (see the script for usage). Rerun it against a newer 117 HD checkout to pick up their additions.
+
+## Weather
+
+Plugin config, Weather section: rain or snow with an intensity, wet ground / snow cover, rain splashes and a
+gradual buildup. Shelter comes from a top-down depth map of all static scenery around the player, drawn with every
+roof (also roofs hidden by the game or a plugin), redrawn only after the player walks ~24 tiles or the scenery
+changes. Tuning constants are `#define`s at the top of `rain_vert.glsl`, `snow_vert.glsl` and
+`weather_surface_frag.glsl`; counts and timings are at the top of `Weather.java`.
