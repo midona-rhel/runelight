@@ -49,5 +49,7 @@ void main() {
       wsum += w;
     }
   }
-  FragColor = vec4(sum / max(wsum, 1e-4), 1.0);
+  vec3 e = sum / max(wsum, 1e-4);
+  // alpha 0 marks a broken texel, where the composite falls back to the analytic sky light
+  FragColor = any(isnan(e)) || any(isinf(e)) ? vec4(0.0) : vec4(clamp(e, 0.0, 64.0), 1.0);
 }

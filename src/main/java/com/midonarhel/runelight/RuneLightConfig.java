@@ -117,6 +117,21 @@ public interface RuneLightConfig extends Config
 	}
 
 	@Range(
+		min = 2,
+		max = 40
+	)
+	@ConfigItem(
+		keyName = "edgeFadeTiles",
+		name = "Edge fade",
+		description = "Tiles over which the world fades into the sky at the draw distance in clear weather. Fog makes it reach further.",
+		position = 5
+	)
+	default int edgeFadeTiles()
+	{
+		return 12;
+	}
+
+	@Range(
 		max = MAX_FOG_DEPTH
 	)
 	@ConfigItem(

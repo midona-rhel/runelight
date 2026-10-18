@@ -468,6 +468,9 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 	private int uniFogColor;
 	private int uniFogDepth;
 	private int uniDrawDistance;
+	private final EdgeFade edgeFade = new EdgeFade();
+	private final EdgeFade.Uniforms sceneEdgeUniforms = new EdgeFade.Uniforms();
+	private final EdgeFade.Uniforms compositeEdgeUniforms = new EdgeFade.Uniforms();
 	private int uniExpandedMapLoadingChunks;
 	private int uniSmoothBanding;
 	private int uniWorldProj;
@@ -685,6 +688,8 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		client.setGpuFlags(DrawCallbacks.GPU
 			| (config.removeVertexSnapping() ? DrawCallbacks.NO_VERTEX_SNAPPING : 0)
 			| DrawCallbacks.ZBUF
+			// zones are culled by zoneInFrustum: a circle around the player and the real frustum (EdgeFade)
+			| DrawCallbacks.ZBUF_ZONE_FRUSTUM_CHECK
 			| DrawCallbacks.RENDER_THREADS(threads)
 		);
 	}
@@ -992,6 +997,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		uniFogColor = glGetUniformLocation(glProgram, "fogColor");
 		uniFogDepth = glGetUniformLocation(glProgram, "fogDepth");
 		uniDrawDistance = glGetUniformLocation(glProgram, "drawDistance");
+		sceneEdgeUniforms.locate(glProgram);
 		uniExpandedMapLoadingChunks = glGetUniformLocation(glProgram, "expandedMapLoadingChunks");
 		uniTextureLightMode = glGetUniformLocation(glProgram, "textureLightMode");
 		uniTick = glGetUniformLocation(glProgram, "tick");
@@ -1055,6 +1061,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		uniCompositeUseFog = glGetUniformLocation(c, "useFog");
 		uniCompositeFogDepth = glGetUniformLocation(c, "fogDepth");
 		uniCompositeDrawDistance = glGetUniformLocation(c, "drawDistance");
+		compositeEdgeUniforms.locate(c);
 		uniCompositeExpandedChunks = glGetUniformLocation(c, "expandedMapLoadingChunks");
 		uniCompositeClientSkyColor = glGetUniformLocation(c, "clientSkyColor");
 		glUseProgram(c);
@@ -1447,7 +1454,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		gpuTimer.begin(GpuTimer.SCENE);
 		frameCpuStart = System.nanoTime();
 		captureFrameState(scene, cameraX, cameraY, cameraZ);
-		scene.setDrawDistance(getDrawDistance());
+		updateEdge(scene, cameraX, cameraZ);
 
 		// UBO
 		uniformBuffer.clear();
@@ -1596,6 +1603,8 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		Mat4.mul(projectionMatrix, Mat4.rotateY(cameraYaw));
 		System.arraycopy(projectionMatrix, 0, frameViewProj, 0, 16);
 		frameInvViewProj = Mat4.inverse(frameViewProj);
+		edgeFade.setFrustum(frameViewProj, cameraX, cameraY, cameraZ);
+		sceneEdgeUniforms.set(edgeFade);
 		Mat4.mul(projectionMatrix, Mat4.translate(-cameraX, -cameraY, -cameraZ));
 		glUniformMatrix4fv(uniWorldProj, false, projectionMatrix);
 
@@ -1743,6 +1752,32 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 			volumetricFog.updateParameters(config, lp.getX(), ground, lp.getY(), frameDrawDistance);
 			frameFog = true;
 		}
+	}
+
+	/**
+	 * Where the drawn world ends this frame (EdgeFade): a circle of the draw distance around the focal point, inside
+	 * the larger square the client is told to draw, with a fade as wide as the weather's fog asks.
+	 */
+	private void updateEdge(Scene scene, float cameraX, float cameraZ)
+	{
+		int drawDistance = getDrawDistance();
+		float fx = client.getCameraFocalPointX(), fz = client.getCameraFocalPointZ();
+		float offset = (float) Math.hypot(cameraX - fx, cameraZ - fz);
+		scene.setDrawDistance(EdgeFade.clientDrawDistance(drawDistance, offset));
+		// read back in case the client limits it
+		float radius = EdgeFade.radius(drawDistance, scene.getDrawDistance(), offset);
+		float areaFog = config.areaEnvironments() && !frameHasSkybox
+			? environmentManager.getFogDepth() * config.areaFogStrength() / 100f * weather.distanceFogScale() : 0;
+		edgeFade.update(fx, fz, radius, client.getExpandedMapLoading(), config.edgeFadeTiles(),
+			EdgeFade.fogginess(weather.fogMultiplier(), areaFog));
+	}
+
+	@Override
+	public boolean zoneInFrustum(int zx, int zz, int maxY, int minY)
+	{
+		// the client asks for the top level only, in its zone indices (as drawZoneOpaque gets them)
+		int offset = SCENE_OFFSET >> 3;
+		return edgeFade.zoneVisible((zx - offset) << 10, (zz - offset) << 10, minY, maxY);
 	}
 
 	private void updateWeather(float cameraX, float cameraY, float cameraZ)
@@ -2160,6 +2195,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		glUniform1i(uniCompositeUseFog, frameFogDepth > 0 ? 1 : 0);
 		glUniform1i(uniCompositeFogDepth, frameFogDepth);
 		glUniform1i(uniCompositeDrawDistance, frameDrawDistance);
+		compositeEdgeUniforms.set(edgeFade);
 		glUniform1i(uniCompositeExpandedChunks, client.getExpandedMapLoading());
 		glUniform3f(uniCompositeClientSkyColor,
 			(frameSkyColor >> 16 & 0xFF) / 255f, (frameSkyColor >> 8 & 0xFF) / 255f, (frameSkyColor & 0xFF) / 255f);
@@ -2178,7 +2214,8 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 			// 0 by day, 1 once the sun is well below the horizon
 			float t = Math.max(0, Math.min(1, (-2 - dayCycle.sunAltitude) / 8));
 			float night = frameOutdoors ? t * t * (3 - 2 * t) : 1;
-			lights.collect(frameLights, time, night, frameCameraX, frameCameraZ, frameDrawDistance);
+			// around the focal point like the drawn world (EdgeFade), so lights don't come and go as the camera turns
+			lights.collect(frameLights, time, night, edgeFade.focalX, edgeFade.focalZ, edgeFade.radius);
 		}
 		BuildingLights buildings = buildingLights;
 		// caves and dungeons have no buildings; frameOutdoors stands in until areas are classified
@@ -2190,7 +2227,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 				night = BuildingLights.DAY_FACTOR + (1 - BuildingLights.DAY_FACTOR) * night;
 			}
 			buildings.collect(frameLights, config.buildingLightBrightness() / 100f, night,
-				frameCameraX, frameCameraZ, frameDrawDistance);
+				edgeFade.focalX, edgeFade.focalZ, edgeFade.radius);
 		}
 		if (config.testLight())
 		{
@@ -2276,8 +2313,12 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		boolean procedural = config.proceduralSky() && !frameHasSkybox;
 		int mode = (config.skyCache() ? SkyCache.MODE_LIGHT : 0)
 			| (config.skyCacheView() && procedural ? SkyCache.MODE_VIEW : 0);
-		if (mode == 0 || !frameOutdoors || client.getGameState() != GameState.LOGGED_IN)
+		// Loading a region keeps drawing the last frames; dropping the cache for them would switch the sky light.
+		// Without updates the composite eases from the last capture back to the analytic light (SkyCache).
+		GameState state = client.getGameState();
+		if (mode == 0 || !frameOutdoors || (state != GameState.LOGGED_IN && state != GameState.LOADING))
 		{
+			skyCache.bind(SKY_CACHE_UNIT);
 			return 0;
 		}
 		int cycle = config.dayCycleMinutes();
@@ -2520,6 +2561,11 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		{
 			return;
 		}
+		// past the edge of the world (EdgeFade) it would be all sky; the client's larger square still offers it
+		if (scene.getWorldViewId() == WorldView.TOPLEVEL && !edgeFade.modelVisible(x, z))
+		{
+			return;
+		}
 
 		int size = m.getFaceCount() * 3 * VAO.VERT_SIZE;
 		int material = SurfaceMaterials.forObject(tileObject.getId(), r);
@@ -2590,6 +2636,10 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		}
 
 		if (!renderCallbackManager.drawObject(scene, gameObject))
+		{
+			return;
+		}
+		if (scene.getWorldViewId() == WorldView.TOPLEVEL && !edgeFade.modelVisible(x, z))
 		{
 			return;
 		}

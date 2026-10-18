@@ -8,6 +8,8 @@
 uniform sampler2D skyCache;  // linear: sky through the clouds (rgb), cloud transmittance (a); see skyCacheUv
 uniform sampler2D skyIrradiance;  // linear: cosine weighted sky seen by a surface facing each way, same layout
 uniform int skyCacheMode;    // bits (SkyCache.MODE_*): 1 sky light from the cache, 2 the sky itself drawn from it
+uniform float skyCacheWeight;  // 0..1, how much of the sky light comes from the cache rather than skyLight: eases
+                               // in and out so the light never switches between the two at once
 uniform float skyHaze;       // 0..1, how hazy the air is (Weather.skyHaze): the stars fade
 uniform float starBrightness;
 
@@ -41,7 +43,8 @@ uniform float starBrightness;
 // Cache layout: u is the azimuth, v the square root of the elevation's sine, so most texels go to the sky near
 // the horizon, where it is seen most and changes fastest
 vec2 skyCacheUv(vec3 dir) {
-  float u = atan(dir.z, dir.x) / SKY_TAU + 0.5;
+  // atan(0, 0) is undefined, and some drivers return NaN for it: straight up and down have any azimuth
+  float u = atan(dir.z, abs(dir.x) + abs(dir.z) > 1e-6 ? dir.x : 1.0) / SKY_TAU + 0.5;
   float v = sqrt(clamp((-dir.y + SKY_CACHE_BELOW) / (1.0 + SKY_CACHE_BELOW), 0.0, 1.0));
   return vec2(u, v);
 }
@@ -53,19 +56,24 @@ vec3 skyCacheDir(vec2 uv) {
   return vec3(cos(a) * c, -s, sin(a) * c);
 }
 
-// Light from the sky on a surface facing n, before the up-facing weight; linear
-vec3 skyFill(vec3 n, float alt) {
-  if ((skyCacheMode & 1) == 0) {
-    return skyLight(alt);
+// Light from the sky on a surface facing n whose normal points up by `up` (0 sideways, 1 straight up); linear.
+// The analytic sky light only lights faces turned up; the cache also lights walls with the sky they face.
+vec3 skyFill(vec3 n, float alt, float up) {
+  vec3 analytic = skyLight(alt) * up;
+  if ((skyCacheMode & 1) == 0 || skyCacheWeight <= 0.0) {
+    return analytic;
   }
-  vec3 sky = textureLod(skyIrradiance, skyCacheUv(n), 0.0).rgb * SKY_CACHE_LIGHT;
+  // alpha is 0 on broken texels (sky_irradiance_frag.glsl), which have no color either
+  vec4 irr = textureLod(skyIrradiance, skyCacheUv(n), 0.0);
+  vec3 sky = irr.rgb / max(irr.a, 1e-3) * SKY_CACHE_LIGHT;
   // the cache leaves out lightning, which skyLight has through skyZenith
-  return sky + srgbToLinear(LIGHTNING_COLOR * (LIGHTNING_SKY * weatherOvercast.z)) * SKY_LIGHT;
-}
-
-// How much of skyFill a surface gets, by how far it faces up (0 sideways, 1 straight up)
-float skyFillWeight(float up) {
-  return (skyCacheMode & 1) == 0 ? up : mix(up, 0.5 + 0.5 * up, SKY_CACHE_SIDES);
+  sky += srgbToLinear(LIGHTNING_COLOR * (LIGHTNING_SKY * weatherOvercast.z)) * SKY_LIGHT;
+  vec3 cached = sky * mix(up, 0.5 + 0.5 * up, SKY_CACHE_SIDES);
+  // a broken capture must not black out the light
+  if (any(isnan(cached)) || any(isinf(cached))) {
+    return analytic;
+  }
+  return mix(analytic, max(cached, 0.0), skyCacheWeight * clamp(irr.a, 0.0, 1.0));
 }
 
 vec3 stars(vec3 dir, float pixelAngle, float time) {
@@ -118,7 +126,7 @@ float cloudJitter(vec2 px) {
 
 // The procedural sky in sRGB: colors, sun glow, clouds, and the sun, moon and stars through the clouds.
 // px: pixel center in target coordinates.
-vec3 atmosphereSky(vec2 px, vec3 dir, vec3 camPos, vec3 sunDir, vec3 moonDir, float alt, float time) {
+vec3 atmosphereSkySteps(vec2 px, vec3 dir, vec3 camPos, vec3 sunDir, vec3 moonDir, float alt, float time, int steps) {
   float pixelAngle = length(normalize(reconstructPosition(px + vec2(0.0, 1.0), 1.0)) - dir);
   vec3 gradient = skyGradient(dir, alt);
   vec3 glowed = gradient + sunGlow(dir, sunDir, alt);
@@ -135,11 +143,15 @@ vec3 atmosphereSky(vec2 px, vec3 dir, vec3 camPos, vec3 sunDir, vec3 moonDir, fl
     lin += lightningCloudGlow(dir.xz * t) * (1.0 - T) * 0.5;
   } else {
     vec4 c = cloudsEnabled == 1
-      ? cloudLayer(dir, camPos, sunDir, moonDir, alt, pixelAngle, cloudJitter(px), CLOUD_STEPS)
+      ? cloudLayer(dir, camPos, sunDir, moonDir, alt, pixelAngle, cloudJitter(px), steps)
       : vec4(0.0, 0.0, 0.0, 1.0);
     T = c.a;
     lin = srgbToLinear(max(glowed, 0.0)) * T + cloudShoulder(c.rgb);
   }
   lin += celestial(dir, sunDir, moonDir, alt, time, pixelAngle, T);
   return linearToSrgb(clamp(lin, 0.0, 1.0));
+}
+
+vec3 atmosphereSky(vec2 px, vec3 dir, vec3 camPos, vec3 sunDir, vec3 moonDir, float alt, float time) {
+  return atmosphereSkySteps(px, dir, camPos, sunDir, moonDir, alt, time, CLOUD_STEPS);
 }

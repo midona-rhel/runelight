@@ -81,6 +81,7 @@ out float fDepth;
 
 #include "hsl_to_rgb.glsl"
 #include "sway.glsl"
+#include "edge_fade.glsl"
 
 float fogFactorLinear(const float dist, const float start, const float end) {
   return 1.0 - clamp((dist - start) / (end - start), 0.0, 1.0);
@@ -140,19 +141,7 @@ void main() {
     fHsl = float(((int(hsl[0]) & 63) << 10) | ((int(hsl[1]) & 7) << 7) | (int(hsl[2]) & 127));
   }
 
-  float fogWest = max(FOG_SCENE_EDGE_MIN, cameraX - drawDistance);
-  float fogEast = min(FOG_SCENE_EDGE_MAX, cameraX + drawDistance);
-  float fogSouth = max(FOG_SCENE_EDGE_MIN, cameraZ - drawDistance);
-  float fogNorth = min(FOG_SCENE_EDGE_MAX, cameraZ + drawDistance);
-
-  // Calculate distance from the scene edge
-  float xDist = min(worldPos.x - fogWest, fogEast - worldPos.x);
-  float zDist = min(worldPos.z - fogSouth, fogNorth - worldPos.z);
-  float nearestEdgeDistance = min(xDist, zDist);
-  float secondNearestEdgeDistance = max(xDist, zDist);
-  float fogDistance =
-      nearestEdgeDistance - FOG_CORNER_ROUNDING * TILE_SIZE *
-                                max(0.f, (nearestEdgeDistance + FOG_CORNER_ROUNDING_SQUARED) / (secondNearestEdgeDistance + FOG_CORNER_ROUNDING_SQUARED));
-
-  fFogAmount = fogFactorLinear(fogDistance, 0.f, fogDepth * TILE_SIZE) * useFog;
+  // the vanilla fog depth, measured from the same edge as the edge fade (edge_fade.glsl) rather than a square
+  // around the camera, which moves as the camera turns
+  fFogAmount = fogFactorLinear(edgeDistance(worldPos.xyz), 0.f, fogDepth * TILE_SIZE) * useFog;
 }

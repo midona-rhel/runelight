@@ -77,6 +77,37 @@ public class SkyCacheTest
 	}
 
 	@Test
+	public void blendLastsAboutAsLongAsCapturesAreApart()
+	{
+		SkyCache.Schedule s = new SkyCache.Schedule();
+		captured(s, Double.NaN, 0, 0);
+		captured(s, Double.NaN, 5000, 0);
+		// the clock standing still: the blend reaches the capture about when the next one comes
+		assertEquals(0.5f, s.blend(Double.NaN, 7500, 5), 1e-6);
+		assertEquals(1, s.blend(Double.NaN, 10_000, 5), 1e-6);
+		// never slower than MAX_BLEND_SECONDS, never faster than BLEND_SECONDS
+		captured(s, Double.NaN, 100_000, 0);
+		assertEquals(1, s.blend(Double.NaN, 100_000 + (long) (SkyCache.Schedule.MAX_BLEND_SECONDS * 1000), 5), 1e-6);
+		captured(s, Double.NaN, 100_100, 0);
+		assertEquals(0.5f, s.blend(Double.NaN, 100_100 + (long) (SkyCache.Schedule.BLEND_SECONDS * 500), 5), 1e-6);
+	}
+
+	@Test
+	public void cacheWeightEasesBothWays()
+	{
+		float w = 0;
+		for (int i = 0; i < 10; ++i)
+		{
+			float next = SkyCache.ease(w, 1, 0.016f);
+			assertTrue(next > w && next - w < 0.02f);
+			w = next;
+		}
+		assertEquals(1, SkyCache.ease(0.99f, 1, 1), 0);
+		assertEquals(0, SkyCache.ease(0.01f, 0, 1), 0);
+		assertTrue(SkyCache.ease(1, 0, 0.016f) < 1);
+	}
+
+	@Test
 	public void capturesMoreOftenAtTwilight()
 	{
 		assertEquals(5, SkyCache.Schedule.interval(5, 50), 1e-9);

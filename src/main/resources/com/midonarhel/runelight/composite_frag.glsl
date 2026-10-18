@@ -11,6 +11,7 @@
 #include "lightning.glsl"
 #include "clouds.glsl"
 #include "atmosphere.glsl"
+#include "edge_fade.glsl"
 
 #define DEBUG_FINAL 0
 #define DEBUG_DEPTH 1
@@ -28,6 +29,8 @@
 
 
 #define TILE_SIZE 128.0
+// cloud steps for the sky seen through the edge fade: it is mostly hidden by the scenery in front
+#define EDGE_SKY_STEPS (CLOUD_STEPS / 2)
 
 uniform sampler2D sceneAlpha;  // transparent geometry, already lit, premultiplied
 uniform sampler2D sceneMaterial;  // r emissive, g transmissive, b water (frag.glsl)
@@ -192,29 +195,26 @@ float shadowFactor(vec3 p, vec3 n, float noise) {
 }
 
 // ---------------------------------------------------------------------------------------------------------------
-// Distance fog toward the scene edge, ported from the vanilla vertex shader so it can be applied after lighting
-
-#define FOG_SCENE_EDGE_MIN ((-float(expandedMapLoadingChunks) * 8.0 + 1.0) * TILE_SIZE)
-#define FOG_SCENE_EDGE_MAX ((104.0 + float(expandedMapLoadingChunks) * 8.0 - 1.0) * TILE_SIZE)
-#define FOG_CORNER_ROUNDING 1.5
-#define FOG_CORNER_ROUNDING_SQUARED (FOG_CORNER_ROUNDING * FOG_CORNER_ROUNDING)
+// Distance fog by the game's fog depth setting, from the same edge as the edge fade, as in vert.glsl
 
 float fogAmount(vec3 world) {
   if (useFog == 0) {
     return 0.0;
   }
-  float dd = float(drawDistance);
-  float fogWest = max(FOG_SCENE_EDGE_MIN, cameraPos.x - dd);
-  float fogEast = min(FOG_SCENE_EDGE_MAX, cameraPos.x + dd);
-  float fogSouth = max(FOG_SCENE_EDGE_MIN, cameraPos.z - dd);
-  float fogNorth = min(FOG_SCENE_EDGE_MAX, cameraPos.z + dd);
-  float xDist = min(world.x - fogWest, fogEast - world.x);
-  float zDist = min(world.z - fogSouth, fogNorth - world.z);
-  float nearest = min(xDist, zDist);
-  float second = max(xDist, zDist);
-  float fogDistance = nearest - FOG_CORNER_ROUNDING * TILE_SIZE *
-    max(0.0, (nearest + FOG_CORNER_ROUNDING_SQUARED) / (second + FOG_CORNER_ROUNDING_SQUARED));
-  return 1.0 - clamp(fogDistance / (float(fogDepth) * TILE_SIZE), 0.0, 1.0);
+  return 1.0 - clamp(edgeDistance(world) / (float(fogDepth) * TILE_SIZE), 0.0, 1.0);
+}
+
+// The sky this pixel would show if nothing stood in front of it, in sRGB: what the world melts into at its edge.
+// steps: cloud march steps, fewer behind the scenery, where it shows only through the fade.
+vec3 skyBehind(vec2 px, vec3 dir, vec3 fogColor, bool sunAndSky, int steps) {
+  if (sunAndSky && proceduralSky == 1) {
+    vec3 sky = atmosphereSkySteps(px, dir, cameraPos, sunDir, moonDir, sunAltitude, time, steps);
+    sky = lightningOverSky(sky, dir, cameraPos);
+    return envSky(sky, fogColor, -dir.y);
+  }
+  // what the sky branch of main() leaves there: the area's fog color underground, else the game's clear color
+  // (with the game's own skybox, the color its fog has)
+  return envCave == 1 && proceduralSky == 1 ? fogColor : clientSkyColor;
 }
 
 // ---------------------------------------------------------------------------------------------------------------
@@ -306,9 +306,7 @@ void main() {
     if (inside && sunAndSky && proceduralSky == 1) {
       // a point on the near plane gives the view ray; the camera is at the origin of camera-relative space
       vec3 dir = normalize(reconstructPosition(vec2(px) + 0.5, 1.0));
-      vec3 sky = atmosphereSky(vec2(px) + 0.5, dir, cameraPos, sunDir, moonDir, sunAltitude, time);
-      sky = lightningOverSky(sky, dir, cameraPos);
-      color.rgb = envSky(sky, fogColor, -dir.y);
+      color.rgb = skyBehind(vec2(px) + 0.5, dir, fogColor, true, CLOUD_STEPS);
     } else if (inside && envCave == 1 && proceduralSky == 1) {
       // underground the void behind the scene takes the area's fog color, so fogged walls fade into it
       color.rgb = fogColor;
@@ -349,7 +347,7 @@ void main() {
     shadow = overcastShadow(shadow);
     vec3 caster = sunIsCaster == 1 ? sunLight(sunAltitude) : moonLight(sunAltitude);
     float up = max(-n.y, 0.0);
-    light = (ambientLight(sunAltitude) + skyFill(n, sunAltitude) * skyFillWeight(up)) * envAmbient * ao
+    light = (ambientLight(sunAltitude) + skyFill(n, sunAltitude, up)) * envAmbient * ao
       + caster * envSun * max(ndl, 0.0) * shadow * mix(1.0, ao, AO_DIRECT);
     if (transmissive > 0.0) {
       // light through the leaf isn't occluded by the creases SSAO sees on its front
@@ -401,6 +399,11 @@ void main() {
   vec3 lit = shade(color.rgb, light);
   lit = waterOver(px, p, n, color.rgb, light, shadow, lit, material.b, fogColor);
   lit = mix(lit, fogColor, max(fogAmount(p + cameraPos), envFogAmount(p)));
+  // the world fades into the sky behind it toward the draw distance, so where the culling stops never shows
+  float edge = inside ? edgeFadeAmount(p + cameraPos) : 0.0;
+  if (edge > 0.002) {
+    lit = mix(lit, skyBehind(vec2(px) + 0.5, normalize(p), fogColor, sunAndSky, EDGE_SKY_STEPS), edge);
+  }
   FragColor = overTransparent(px, vec4(lit, color.a));
   FragColor.rgb = fogDone ? applyFogSample(FragColor.rgb, fog) : applyVolumetricFog(px, FragColor.rgb, d);
 }
