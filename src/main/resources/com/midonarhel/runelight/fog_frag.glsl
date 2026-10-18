@@ -44,6 +44,8 @@ out vec4 FragFog;
 #define FOG_STEPS 12
 // fog left right around the player, as a fraction of the full density
 #define FOG_NEAR_FLOOR 0.15
+// fraction of the fog's reach by which its color has become the sky's horizon color
+#define FOG_SKY_MATCH 0.7
 // the layer is cut off where it has thinned to e^-FOG_TOP, so no steps are spent in clear air above it
 #define FOG_TOP 5.0
 // below the reference ground (valleys) density stops growing at e^FOG_BELOW
@@ -70,7 +72,7 @@ out vec4 FragFog;
 // point lights glowing in the fog: every light in the sample's cluster, up to the cluster's capacity. A smaller
 // cap picks different subsets in neighboring clusters and shows the cluster grid as squares.
 #define FOG_POINT_LIGHTS (CLUSTER_STRIDE - 1)
-#define FOG_POINT_LIGHT_SCALE 0.5
+#define FOG_POINT_LIGHT_SCALE 0.35
 
 float ign(vec2 p) {
   return fract(52.9829189 * fract(dot(p, vec2(0.06711056, 0.00583715))));
@@ -104,8 +106,9 @@ vec3 pointGlow(ivec2 px, float z, vec3 p) {
     float d2 = dot(l, l);
     float r2 = posRadius.w * posRadius.w;
     if (d2 < r2) {
+      // steeper than the surface falloff: a soft halo around the light rather than a lit ball of fog
       float att = 1.0 - sqrt(d2 / r2);
-      sum += texelFetch(lightData, li * 2 + 1).rgb * (att * att);
+      sum += texelFetch(lightData, li * 2 + 1).rgb * (att * att * att);
     }
   }
   return sum * FOG_POINT_LIGHT_SCALE;
@@ -162,17 +165,21 @@ void main() {
 
   bool sunAndSky = outdoors == 1;
   vec3 ambient;
+  // far away the fog takes exactly the sky's horizon color, so distant fog and sky meet without a band
+  vec3 ambientFar;
   vec3 sun = vec3(0.0);
   float density = fogDensity;
   if (sunAndSky) {
     vec3 horizon = proceduralSky == 1 ? skyHorizon(sunAltitude) : clientSkyColor;
     ambient = srgbToLinear(horizon) * FOG_HORIZON + ambientLight(sunAltitude) * FOG_AMBIENT_FILL;
+    ambientFar = srgbToLinear(horizon);
     vec3 caster = sunIsCaster == 1 ? sunLight(sunAltitude) : moonLight(sunAltitude);
     float luma = dot(caster, vec3(0.2126, 0.7152, 0.0722));
     caster = max(mix(vec3(luma), caster, FOG_SUN_SATURATION), 0.0);
     sun = caster * phase(dot(dir, casterDir)) * (fogSunScatter * FOG_SUN_SCALE);
   } else {
     ambient = FOG_CAVE_COLOR;
+    ambientFar = FOG_CAVE_COLOR;
     density *= FOG_CAVE_DENSITY;
   }
   ambient *= fogTint;
@@ -232,6 +239,7 @@ void main() {
     if (glow) {
       light += pointGlow(px, w0 + wd * t, p);
     }
+    light = mix(light, ambientFar, smoothstep(fogNear, fogFade.y * FOG_SKY_MATCH, centerDist));
 
     float stepTrans = exp(-sigma * dt);
     scatter += trans * light * (1.0 - stepTrans);

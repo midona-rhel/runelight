@@ -208,6 +208,16 @@ class Weather
 	}
 
 	/**
+	 * How overcast the sky is, 0 clear to 1 fully covered: rises with rain or snow as it fades in. Shared by
+	 * everything that should follow the weather (clouds, sky, light).
+	 */
+	float cloudCover()
+	{
+		float k = active ? intensity * fadeIn : 0;
+		return activeMode == WeatherMode.OFF ? 0 : k;
+	}
+
+	/**
 	 * How much the weather thickens fog, as a multiplier: thinner in clear weather, thicker as rain or snow
 	 * fades in.
 	 */
