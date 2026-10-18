@@ -9,12 +9,14 @@ package com.midonarhel.runelight;
  */
 final class VertexShading
 {
-	// 117 HD's constants for approximately undoing vanilla's directional shading when no unlit colors exist
+	// 117 HD's constants for approximately undoing vanilla's directional shading
 	private static final int BASE_LIGHTEN = 10;
 	private static final int IGNORE_LOW_LIGHTNESS = 3;
 	private static final float LIGHTNESS_MULTIPLIER = 3;
 
 	static boolean undoVanillaShading = true;
+	// replace colors with the model's unlit colors instead; flattens color gradients (117 HD's "Experimental")
+	static boolean unlitColors = false;
 
 	private VertexShading()
 	{
@@ -76,24 +78,21 @@ final class VertexShading
 	}
 
 	/**
-	 * Vanilla bakes lighting from a fixed direction into vertex colors. Returns the face color with that
-	 * shading approximately removed, so our own lighting does the shading. Untextured faces only: textured faces
-	 * store a bare lightness that the fragment shader multiplies the texture by.
+	 * Vanilla bakes lighting from a fixed direction into vertex colors. Like 117 HD's default shading mode, keep
+	 * the vanilla colors (and their gradients) but brighten what that light darkened, so our own lighting does
+	 * the directional shading. Untextured faces only: textured faces store a bare lightness that the fragment
+	 * shader multiplies the texture by.
 	 *
 	 * @param unlit the model's unlit face colors, or null
 	 * @param nx unrotated model vertex normals (vanilla lights in model space), or null
 	 */
 	static int baseColor(int color, int face, int vertex, short[] unlit, int[] nx, int[] ny, int[] nz)
 	{
-		if (!undoVanillaShading)
-		{
-			return color;
-		}
-		if (unlit != null)
+		if (unlitColors && unlit != null)
 		{
 			return unlit[face] & 0xffff;
 		}
-		if (nx == null)
+		if (!undoVanillaShading || nx == null)
 		{
 			return color;
 		}

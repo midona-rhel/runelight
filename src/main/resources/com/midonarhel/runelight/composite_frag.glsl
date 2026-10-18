@@ -16,6 +16,9 @@
 
 #define TAU 6.28318530718
 
+// how much AO also darkens direct sun and point light; physically 0, but contact shading reads better with some
+#define AO_DIRECT 0.6
+
 // linear value above which highlights are compressed toward 1
 #define SHOULDER 0.75
 
@@ -113,10 +116,10 @@ const vec2 POISSON[16] = vec2[](
   vec2(0.19984126, 0.78641367), vec2(0.14383161, -0.14100790));
 
 // world units of penumbra per world unit between occluder and receiver: the light's apparent size
-#define SUN_SOFTNESS 0.025
-#define MOON_SOFTNESS 0.06
-#define BLOCKER_SEARCH_WORLD 96.0
-#define MAX_PENUMBRA_WORLD 64.0
+#define SUN_SOFTNESS 0.08
+#define MOON_SOFTNESS 0.14
+#define BLOCKER_SEARCH_WORLD 160.0
+#define MAX_PENUMBRA_WORLD 112.0
 
 float ign(vec2 p) {
   return fract(52.9829189 * fract(dot(p, vec2(0.06711056, 0.00583715))));
@@ -191,8 +194,8 @@ float fogAmount(vec3 world) {
 // ---------------------------------------------------------------------------------------------------------------
 // Point lights: only the lights listed in this pixel's cluster are evaluated
 
-// lights.json strengths are 117 HD's, tuned for its linear lighting; this maps them to our gamma-space lighting
-#define POINT_LIGHT_SCALE 0.30
+// lights.json colors are linear and strengths are 117 HD's, used as they are; this is only a global trim
+#define POINT_LIGHT_SCALE 1.0
 
 int clusterBase(ivec2 px, float z) {
   vec2 rel = (vec2(px) + 0.5 - vec2(sceneViewport.xy)) / vec2(sceneViewport.zw);
@@ -224,8 +227,7 @@ vec3 pointLights(int base, vec3 p, vec3 n) {
     // 117 HD's falloff; we light in linear space like it does
     float att = 1.0 - sqrt(d2 / r2);
     att *= att;
-    // wrapped diffuse so faces turned slightly away still catch some light, which suits flat-shaded models
-    float ndl = clamp(dot(n, l * inversesqrt(max(d2, 1.0))) * 0.75 + 0.25, 0.0, 1.0);
+    float ndl = max(dot(n, l * inversesqrt(max(d2, 1.0))), 0.0);
     sum += color * att * ndl * POINT_LIGHT_SCALE;
   }
   return sum;
@@ -282,7 +284,7 @@ void main() {
     vec3 caster = sunIsCaster == 1 ? sunLight(sunAltitude) : moonLight(sunAltitude);
     float up = max(-n.y, 0.0);
     light = (ambientLight(sunAltitude) + skyLight(sunAltitude) * up) * ao
-      + caster * max(dot(n, casterDir), 0.0) * shadow;
+      + caster * max(dot(n, casterDir), 0.0) * shadow * mix(1.0, ao, AO_DIRECT);
   } else if (lightingEnabled == 1 && inside) {
     // Underground: no sun, and the game's own baked shading is removed, so a fixed soft key light from above
     // keeps shapes readable. Point lights do the rest.
@@ -291,7 +293,7 @@ void main() {
 
   int cluster = clusterBase(px, viewDepth(d));
   if (pointLightsEnabled == 1 && inside) {
-    light += pointLights(cluster, p, n);
+    light += pointLights(cluster, p, n) * mix(1.0, ao, AO_DIRECT);
   }
 
   if (debugView == DEBUG_LIGHT_CLUSTERS) {

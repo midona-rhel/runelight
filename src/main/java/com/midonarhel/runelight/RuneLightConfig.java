@@ -393,6 +393,19 @@ public interface RuneLightConfig extends Config
 	}
 
 	@ConfigItem(
+		keyName = "unlitColors",
+		name = "Unlit colors (experimental)",
+		description = "Use the models' unlit colors instead of correcting the baked shading. Flattens color "
+			+ "gradients. Reloads the scene when changed.",
+		section = lightingSection,
+		position = 62
+	)
+	default boolean unlitColors()
+	{
+		return false;
+	}
+
+	@ConfigItem(
 		keyName = "roofShadows",
 		name = "Hidden roofs cast shadows",
 		description = "Roofs and upper floors keep casting shadows when the game hides them, so interiors stay shaded.",

@@ -59,15 +59,21 @@ public class LightDefinition
 	public static final int FLICKER = 1;
 	public static final int PULSE = 2;
 
+	private static float srgbToLinear(float c)
+	{
+		return c <= 0.04045f ? c / 12.92f : (float) Math.pow((c + 0.055) / 1.055, 2.4);
+	}
+
 	void prepare()
 	{
 		if (color == null || color.length < 3)
 		{
 			color = new float[]{255, 255, 255};
 		}
-		red = color[0] / 255f;
-		green = color[1] / 255f;
-		blue = color[2] / 255f;
+		// linear, like 117 HD: their strengths are tuned for lighting in linear space
+		red = srgbToLinear(color[0] / 255f);
+		green = srgbToLinear(color[1] / 255f);
+		blue = srgbToLinear(color[2] / 255f);
 		kind = "FLICKER".equals(type) ? FLICKER : "PULSE".equals(type) ? PULSE : STATIC;
 		nightOnly = "NIGHT".equals(schedule);
 		if (offset == null || offset.length != 3)
