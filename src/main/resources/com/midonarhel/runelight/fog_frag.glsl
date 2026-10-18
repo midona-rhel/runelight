@@ -27,6 +27,17 @@ uniform int pointLightsEnabled;
 uniform samplerBuffer lightData;
 uniform usamplerBuffer clusterData;
 
+#include "rooms.glsl"
+
+// inside building rooms (rooms.glsl) the fog's density is multiplied by this; 1 leaves interiors foggy
+uniform float fogIndoor;
+
+// The water (Water.java, water.glsl): a ray down to something under the water ends at the surface, the fog doesn't
+// go on under it
+uniform int waterEnabled;
+uniform sampler2D waterData;  // page 0: height, flow, type (WaterMap.texture)
+uniform vec2 waterGrid;       // x: extended tile of local tile 0, y: corners per side
+
 uniform sampler3D fogNoise;  // tiling value noise, 0..1: r patches, g banks (constant with height)
 
 uniform float fogDensity;    // extinction per world unit at the ground
@@ -101,6 +112,36 @@ out vec4 FragFog;
 
 #include "bayer.glsl"
 
+vec2 fogWaterCell(vec2 worldXZ) {
+  return clamp(worldXZ / 128.0 + waterGrid.x, vec2(0.0), vec2(waterGrid.y - 1.0));
+}
+
+float fogWaterLevel(vec2 c) {
+  return textureLod(waterData, (c + 0.5) / vec2(2.0 * waterGrid.y, waterGrid.y), 0.0).r;
+}
+
+// Distance along the ray dir to where it enters the water above the camera-relative point hit, or -1 when hit
+// isn't under water (or the camera is). Same two steps onto the crossing as water.glsl.
+float waterSurfaceDistance(vec3 hit, vec3 dir) {
+  if (waterEnabled == 0 || dir.y < 1e-3) {
+    return -1.0;
+  }
+  vec3 world = hit + cameraPos;
+  vec2 c = fogWaterCell(world.xz);
+  ivec2 cell = clamp(ivec2(floor(c)), ivec2(0), ivec2(int(waterGrid.y) - 2));
+  if (texelFetch(waterData, cell, 0).a < 0.5) {
+    return -1.0;
+  }
+  float level = fogWaterLevel(c);
+  // y points down: the camera below the surface, or the point above it
+  if (cameraPos.y >= level || world.y <= level) {
+    return -1.0;
+  }
+  float t = (level - cameraPos.y) / dir.y;
+  t = (fogWaterLevel(fogWaterCell(cameraPos.xz + dir.xz * t)) - cameraPos.y) / dir.y;
+  return t > 0.0 ? t : -1.0;
+}
+
 // normalized so isotropic scattering is 1
 float phase(float cosTheta) {
   float g = FOG_PHASE_G;
@@ -172,6 +213,13 @@ void main() {
   vec3 dir = normalize(hit);
   float t0 = 0.0;
   float t1 = sky ? 1e6 : length(hit);
+  if (!sky) {
+    // no fog under water: the ray stops at the surface
+    float tw = waterSurfaceDistance(hit, dir);
+    if (tw > 0.0) {
+      t1 = min(t1, tw);
+    }
+  }
 
   // Clip the ray to the cylinder around the player where there is fog at all: the steps are spent there, and
   // distant scenery and the sky only see the fog between them and the camera instead of turning into a wall.
@@ -268,6 +316,10 @@ void main() {
       // both average about 1, so they move fog around without changing how much there is
       sigma *= max(mix(1.0, n.r * 2.0, fogNoiseAmount), 0.0);
       sigma *= mix(1.0, smoothstep(FOG_BANK_LOW, FOG_BANK_HIGH, n.g) * 2.0, fogBankAmount);
+    }
+    if (sigma > 0.0 && fogIndoor < 1.0 && roomAt(wp).x > 0) {
+      // no fog inside buildings
+      sigma *= fogIndoor;
     }
     if (sigma <= 0.0) {
       continue;

@@ -398,6 +398,8 @@ vec3 waterOver(ivec2 px, inout vec3 p, vec3 n, vec3 albedo, vec3 light, float sh
   if (pointLightsEnabled == 1 && lightOn) {
     int base = clusterBase(px, viewZ);
     int count = clusterLightCount(base);
+    // lights in buildings stay there (rooms.glsl)
+    ivec2 room = count > 0 ? lightRoomAt(sw - vec3(0.0, ROOM_NORMAL_BIAS, 0.0)) : ivec2(-1, 0);
     for (int i = 0; i < count; ++i) {
       int li = int(texelFetch(clusterData, base + 1 + i).r);
       vec4 posRadius = texelFetch(lightData, li * 2);
@@ -406,7 +408,8 @@ vec3 waterOver(ivec2 px, inout vec3 p, vec3 n, vec3 albedo, vec3 light, float sh
       float r2 = posRadius.w * posRadius.w;
       if (d2 >= r2)
         continue;
-      vec3 color = texelFetch(lightData, li * 2 + 1).rgb;
+      vec4 colorCode = texelFetch(lightData, li * 2 + 1);
+      vec3 color = colorCode.rgb * roomShare(colorCode.w, room);
       float att = 1.0 - sqrt(d2 / r2);
       att *= att;
       vec3 ld = l * inversesqrt(max(d2, 1.0));

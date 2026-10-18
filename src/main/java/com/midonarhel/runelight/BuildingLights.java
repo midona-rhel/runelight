@@ -4,6 +4,7 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 import net.runelite.api.Client;
+import net.runelite.api.CollisionData;
 import net.runelite.api.GameState;
 import net.runelite.api.Perspective;
 import net.runelite.api.Scene;
@@ -65,6 +66,8 @@ class BuildingLights
 
 	private volatile BuildingDetector.Result result = new BuildingDetector.Result();
 	private volatile List<Light> lights = Collections.emptyList();
+	// rooms per tile for room-aware point lights and fog (RoomMap); null until a scene is built
+	private volatile RoomMap rooms;
 	private Scene builtFor;
 	private int builtBaseX, builtBaseY;
 
@@ -85,11 +88,17 @@ class BuildingLights
 		return lights;
 	}
 
+	RoomMap getRooms()
+	{
+		return rooms;
+	}
+
 	void rebuild()
 	{
 		builtFor = null;
 		result = new BuildingDetector.Result();
 		lights = Collections.emptyList();
+		rooms = null;
 		if (client.getGameState() != GameState.LOGGED_IN)
 		{
 			return;
@@ -103,6 +112,12 @@ class BuildingLights
 		long start = System.nanoTime();
 		BuildingDetector.Result r = BuildingDetector.detect(scene.getExtendedTileSettings(), scene.getRoofs());
 		lights = place(r, scene.getTileHeights(), RuneLightPlugin.SCENE_OFFSET);
+		RoomMap m = RoomMap.build(r, scene.getExtendedTileSettings(), scene.getTileHeights(), RuneLightPlugin.SCENE_OFFSET);
+		if (m != null)
+		{
+			m.updateOpenings(collisionFlags());
+		}
+		rooms = m;
 		result = r;
 		builtFor = scene;
 		builtBaseX = scene.getBaseX();
@@ -164,7 +179,24 @@ class BuildingLights
 			builtFor = null;
 			result = new BuildingDetector.Result();
 			lights = Collections.emptyList();
+			rooms = null;
 		}
+	}
+
+	private int[][][] collisionFlags()
+	{
+		WorldView wv = client.getTopLevelWorldView();
+		CollisionData[] maps = wv != null ? wv.getCollisionMaps() : null;
+		if (maps == null)
+		{
+			return null;
+		}
+		int[][][] flags = new int[maps.length][][];
+		for (int i = 0; i < maps.length; ++i)
+		{
+			flags[i] = maps[i] != null ? maps[i].getFlags() : null;
+		}
+		return flags;
 	}
 
 	/**
@@ -178,6 +210,15 @@ class BuildingLights
 		if (scene != null && (scene != builtFor || scene.getBaseX() != builtBaseX || scene.getBaseY() != builtBaseY))
 		{
 			rebuild();
+		}
+		else
+		{
+			// doors open and close
+			RoomMap m = rooms;
+			if (m != null)
+			{
+				m.updateOpenings(collisionFlags());
+			}
 		}
 	}
 
@@ -215,7 +256,7 @@ class BuildingLights
 			{
 				pool.add(new PointLight());
 			}
-			out.add(pool.get(used++).set(l.x, l.y, l.z, l.radius, RED, GREEN, BLUE, strength).indoor());
+			out.add(pool.get(used++).set(l.x, l.y, l.z, l.radius, RED, GREEN, BLUE, strength).indoor().onPlane(l.plane));
 		}
 	}
 

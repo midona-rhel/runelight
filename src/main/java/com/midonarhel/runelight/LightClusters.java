@@ -25,6 +25,8 @@ class LightClusters
 	static final int MAX_LIGHTS = 1024;
 	static final float NEAR = 50;
 	static final float FAR = 25600;
+	// the room map (RoomMap.texels) follows the lights in the light buffer, from this texel on (rooms.glsl)
+	static final int ROOM_BASE = MAX_LIGHTS * 2;
 
 	private static final int CLUSTER_COUNT = CLUSTERS_X * CLUSTERS_Y * CLUSTERS_Z;
 	// Fog columns, stored after the clusters: per screen tile, the lights that glow in the fog anywhere along its
@@ -38,6 +40,19 @@ class LightClusters
 
 	private int lightBuffer, lightTexture;
 	private int clusterBuffer, clusterTexture;
+	// the room map, uploaded when it changes and copied after the lights every frame on the GPU, so the light
+	// buffer can still be orphaned each frame without sending the map again
+	private int roomBuffer;
+	private RoomMap roomMap, uploadedRooms;
+	private boolean roomLights;
+	private int uploadedVersion = -1;
+	private int roomTexels;
+	private int maxTexels;
+	private FloatBuffer roomStaging;
+	private final FloatBuffer roomOff = BufferUtils.createFloatBuffer(4);
+	// the view the cluster bounds were computed for: they only change with the camera
+	private final float[] boundsViewProj = new float[16];
+	private boolean boundsValid;
 
 	private final FloatBuffer lightData = BufferUtils.createFloatBuffer(MAX_LIGHTS * 8);
 	private final short[] clusters = new short[TABLE_SIZE];
@@ -64,6 +79,8 @@ class LightClusters
 
 	void init()
 	{
+		maxTexels = glGetInteger(GL_MAX_TEXTURE_BUFFER_SIZE);
+		roomBuffer = glGenBuffers();
 		lightBuffer = glGenBuffers();
 		glBindBuffer(GL_TEXTURE_BUFFER, lightBuffer);
 		glBufferData(GL_TEXTURE_BUFFER, (long) MAX_LIGHTS * 8 * Float.BYTES, GL_STREAM_DRAW);
@@ -87,9 +104,13 @@ class LightClusters
 		if (lightBuffer != 0)
 		{
 			glDeleteTextures(new int[]{lightTexture, clusterTexture});
-			glDeleteBuffers(new int[]{lightBuffer, clusterBuffer});
-			lightBuffer = lightTexture = clusterBuffer = clusterTexture = 0;
+			glDeleteBuffers(new int[]{lightBuffer, clusterBuffer, roomBuffer});
+			lightBuffer = lightTexture = clusterBuffer = clusterTexture = roomBuffer = 0;
 		}
+		uploadedRooms = null;
+		uploadedVersion = -1;
+		roomTexels = 0;
+		boundsValid = false;
 	}
 
 	boolean isInitialized()
@@ -122,6 +143,15 @@ class LightClusters
 	}
 
 	/**
+	 * The rooms lights are kept in (null: lights reach everywhere, as without rooms).
+	 */
+	void setRooms(RoomMap rooms, boolean lightsUseRooms)
+	{
+		roomMap = rooms;
+		roomLights = lightsUseRooms;
+	}
+
+	/**
 	 * Cull lights into clusters and upload both tables.
 	 *
 	 * @param viewProj camera-relative world to clip, as used by the composite pass
@@ -145,7 +175,13 @@ class LightClusters
 		lightData.clear();
 		overflows = 0;
 		fogCandidates = 0;
-		computeBounds(viewProj);
+		if (!boundsValid || !java.util.Arrays.equals(viewProj, boundsViewProj))
+		{
+			computeBounds(viewProj);
+			System.arraycopy(viewProj, 0, boundsViewProj, 0, 16);
+			boundsValid = true;
+		}
+		RoomMap rooms = roomMap;
 
 		int n = Math.min(lights.size(), MAX_LIGHTS);
 		int kept = 0;
@@ -173,10 +209,18 @@ class LightClusters
 			int z1 = slice(w + l.radius);
 
 			int index = kept++;
+			float code = rooms != null && roomLights ? rooms.lightCode(l.x, l.y, l.z, l.plane) : l.roomCode;
+			// a light only in building rooms counts as indoors even when it isn't a building light
+			boolean indoor = l.indoor || RoomMap.indoor(code);
+			if (l.indoor && !RoomMap.indoor(code))
+			{
+				// building lights stay out of the fog and the weather whatever their tile says
+				code = Math.abs(code);
+			}
 			lightData.put(x).put(y).put(z).put(l.radius);
-			lightData.put(l.r * l.intensity).put(l.g * l.intensity).put(l.b * l.intensity).put(l.indoor ? 1 : 0);
+			lightData.put(l.r * l.intensity).put(l.g * l.intensity).put(l.b * l.intensity).put(code);
 
-			if (fogColumns && !l.indoor)
+			if (fogColumns && !indoor)
 			{
 				float fx = x - fogX, fz = z - fogZ, reach = fogRadius + l.radius;
 				if (fx * fx + fz * fz < reach * reach)
@@ -272,11 +316,54 @@ class LightClusters
 
 	private void upload()
 	{
+		RoomMap rooms = roomMap;
+		if (rooms != null && ROOM_BASE + rooms.texelCount() > maxTexels)
+		{
+			// the driver's buffer textures are too small for the map (GL 3.3 only promises 65536 texels)
+			rooms = null;
+		}
+		if (rooms != null && (rooms != uploadedRooms || rooms.getVersion() != uploadedVersion))
+		{
+			int floats = rooms.texelCount() * 4;
+			if (roomStaging == null || roomStaging.capacity() < floats)
+			{
+				roomStaging = BufferUtils.createFloatBuffer(floats);
+			}
+			roomStaging.clear();
+			rooms.texels(roomStaging);
+			roomStaging.flip();
+			glBindBuffer(GL_COPY_READ_BUFFER, roomBuffer);
+			glBufferData(GL_COPY_READ_BUFFER, roomStaging, GL_STATIC_DRAW);
+			glBindBuffer(GL_COPY_READ_BUFFER, 0);
+			uploadedRooms = rooms;
+			uploadedVersion = rooms.getVersion();
+			roomTexels = rooms.texelCount();
+		}
+		int texels = rooms != null ? roomTexels : RoomMap.HEADER_TEXELS;
+
 		glBindBuffer(GL_TEXTURE_BUFFER, lightBuffer);
-		glBufferData(GL_TEXTURE_BUFFER, (long) MAX_LIGHTS * 8 * Float.BYTES, GL_STREAM_DRAW);
+		glBufferData(GL_TEXTURE_BUFFER, (long) (ROOM_BASE + texels) * 4 * Float.BYTES, GL_STREAM_DRAW);
 		if (lightCount > 0)
 		{
 			glBufferSubData(GL_TEXTURE_BUFFER, 0, lightData);
+		}
+		if (rooms != null)
+		{
+			glBindBuffer(GL_COPY_READ_BUFFER, roomBuffer);
+			glCopyBufferSubData(GL_COPY_READ_BUFFER, GL_TEXTURE_BUFFER, 0, (long) ROOM_BASE * 4 * Float.BYTES,
+				(long) roomTexels * 4 * Float.BYTES);
+			glBindBuffer(GL_COPY_READ_BUFFER, 0);
+			// the header's w: whether the lights keep to their rooms, or only the fog uses the map
+			roomOff.clear();
+			roomOff.put(1).put(rooms.size).put(rooms.offset).put(roomLights ? 1 : 0).flip();
+			glBufferSubData(GL_TEXTURE_BUFFER, (long) ROOM_BASE * 4 * Float.BYTES, roomOff);
+		}
+		else
+		{
+			// header: no rooms, every light reaches every pixel
+			roomOff.clear();
+			roomOff.put(0).put(0).put(0).put(0).flip();
+			glBufferSubData(GL_TEXTURE_BUFFER, (long) ROOM_BASE * 4 * Float.BYTES, roomOff);
 		}
 
 		clusterData.clear();

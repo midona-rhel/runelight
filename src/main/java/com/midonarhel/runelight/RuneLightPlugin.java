@@ -965,7 +965,8 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 						+ "#define CLUSTERS_Z " + LightClusters.CLUSTERS_Z + "\n"
 						+ "#define CLUSTER_STRIDE " + (LightClusters.MAX_LIGHTS_PER_CLUSTER + 1) + "\n"
 						+ "#define CLUSTER_NEAR " + LightClusters.NEAR + "\n"
-						+ "#define CLUSTER_FAR " + LightClusters.FAR + "\n";
+						+ "#define CLUSTER_FAR " + LightClusters.FAR + "\n"
+						+ "#define ROOM_BASE " + LightClusters.ROOM_BASE + "\n";
 				case "colorblind_mode":
 					return "#define COLORBLIND_MODE " + config.colorBlindMode().ordinal() + "\n";
 			}
@@ -1131,7 +1132,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 	private void setFogProgram(int program)
 	{
 		volumetricFog.setProgram(program, COMPOSITE_TEXTURE_UNIT + 2, SHADOW_COMPARE_UNIT, LIGHT_DATA_UNIT,
-			CLUSTER_DATA_UNIT, FOG_NOISE_UNIT, WEATHER_FIELD_UNIT);
+			CLUSTER_DATA_UNIT, FOG_NOISE_UNIT, WEATHER_FIELD_UNIT, WATER_DATA_UNIT);
 	}
 
 	private static void bindSceneSamplers(int program)
@@ -2233,15 +2234,27 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		}
 
 		boolean points = config.pointLights();
-		if (points)
+		BuildingLights buildingRooms = buildingLights;
+		RoomMap rooms = buildingRooms != null && (config.roomLights() || config.noFogIndoors()) ? buildingRooms.getRooms() : null;
+		// the fog finds the rooms in the light buffer too, so it is filled for the fog even without point lights
+		boolean fogRooms = frameFog && config.noFogIndoors() && rooms != null;
+		if (points || fogRooms)
 		{
 			if (!lightClusters.isInitialized())
 			{
 				lightClusters.init();
 			}
 			cpuTimer.begin(CpuTimer.LIGHTS);
-			collectLights();
+			if (points)
+			{
+				collectLights();
+			}
+			else
+			{
+				frameLights.clear();
+			}
 			cpuTimer.end(CpuTimer.LIGHTS);
+			lightClusters.setRooms(rooms, config.roomLights());
 			cpuTimer.begin(CpuTimer.CLUSTERS);
 			// the fog integrates the lights along each pixel's ray from per-column lists
 			lightClusters.setFog(frameFog, volumetricFog.getCenterX() - frameCameraX,
@@ -2491,12 +2504,14 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		if (frameFog)
 		{
 			gpuTimer.begin(GpuTimer.FOG);
+			volumetricFog.indoorFactor = config.noFogIndoors() && lightClusters.isInitialized() ? VolumetricFog.INDOOR_DENSITY : 1;
+			volumetricFog.waterTexture = water.dataTexture(config);
 			volumetricFog.render(sceneTargets.getAoWidth(), sceneTargets.getAoHeight(), FOG_NOISE_UNIT, FOG_TEXTURE_UNIT,
 				frameViewProj, frameInvViewProj, frameViewport, glCapabilities.OpenGL45,
 				frameCameraX, frameCameraY, frameCameraZ, (System.currentTimeMillis() - startMillis) / 1000f,
 				// in a void the sun doesn't light the fog: it would glow over the black around the scene
 				frameOutdoors && !frameSkyVoid, proceduralSky(), frameSkyColor, dayCycle,
-				shadows ? shadowMap : null, config.pointLights());
+				shadows ? shadowMap : null, config.pointLights() && lightClusters.isInitialized());
 			glUseProgram(glCompositeProgram);
 			gpuTimer.begin(GpuTimer.COMPOSITE);
 		}

@@ -73,8 +73,10 @@ uniform int skyVoid;
 
 // point lights, culled into clusters on the CPU (LightClusters.java)
 uniform int pointLightsEnabled;
-uniform samplerBuffer lightData;     // per light: (camera-relative position, radius), (color * strength, 0)
+uniform samplerBuffer lightData;     // per light: (camera-relative position, radius), (color * strength, room code); then the rooms
 uniform usamplerBuffer clusterData;  // per cluster: count, then light indices
+
+#include "rooms.glsl"
 
 out vec4 FragColor;
 
@@ -189,10 +191,17 @@ vec3 pointLights(int base, vec3 p, vec3 n, float transmissive, out vec3 throughO
   vec3 through = vec3(0.0);
   vec3 sum = vec3(0.0);
   int count = clusterLightCount(base);
+  // lights only reach the room they are in, or the outdoors (rooms.glsl)
+  ivec2 room = count > 0 ? lightRoomAt(p + cameraPos + n * ROOM_NORMAL_BIAS) : ivec2(-1, 0);
   for (int i = 0; i < count; ++i) {
     int li = int(texelFetch(clusterData, base + 1 + i).r);
     vec4 posRadius = texelFetch(lightData, li * 2);
-    vec3 color = texelFetch(lightData, li * 2 + 1).rgb;
+    vec4 colorCode = texelFetch(lightData, li * 2 + 1);
+    float share = roomShare(colorCode.w, room);
+    if (share <= 0.0) {
+      continue;
+    }
+    vec3 color = colorCode.rgb * share;
 
     vec3 l = posRadius.xyz - p;
     float d2 = dot(l, l);

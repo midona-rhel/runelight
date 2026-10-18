@@ -1318,4 +1318,36 @@ public interface RuneLightConfig extends Config
 	{
 		return 30;
 	}
+
+	@ConfigSection(
+		name = "Rooms",
+		description = "Keep light and fog where they belong: lamps inside buildings, fog outside them",
+		position = 750
+	)
+	String roomsSection = "rooms";
+
+	@ConfigItem(
+		keyName = "roomLights",
+		name = "Lights stay in rooms",
+		description = "Lights inside a building only light its room, and lights outside don't shine in through the "
+			+ "walls; light spills a little out of open doorways.",
+		section = roomsSection,
+		position = 751
+	)
+	default boolean roomLights()
+	{
+		return true;
+	}
+
+	@ConfigItem(
+		keyName = "fogIndoors",
+		name = "No fog indoors",
+		description = "The volumetric fog stays out of buildings.",
+		section = roomsSection,
+		position = 752
+	)
+	default boolean noFogIndoors()
+	{
+		return true;
+	}
 }

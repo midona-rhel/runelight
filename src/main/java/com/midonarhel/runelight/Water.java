@@ -118,6 +118,14 @@ class Water
 	}
 
 	/**
+	 * The scene's water data texture when the water is drawn, else 0: the volumetric fog stops at the surface.
+	 */
+	int dataTexture(RuneLightConfig config)
+	{
+		return config.water() && hasData ? texData : 0;
+	}
+
+	/**
 	 * With the composite program in use: set this frame's uniforms and bind the textures.
 	 *
 	 * @param wind  x, z direction the wind blows toward, and its strength 0-1

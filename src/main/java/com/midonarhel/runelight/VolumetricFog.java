@@ -22,6 +22,8 @@ class VolumetricFog
 	private static final int NOISE_SIZE = 64;
 	private static final float EDGE_FADE_TILES = 7;
 	private static final float NEAR_FADE_TILES = 7;
+	// density left inside building rooms with "No fog indoors": a trace, so a doorway doesn't cut it off sharply
+	static final float INDOOR_DENSITY = 0.03f;
 
 	// Per-area overrides for an environment system: multipliers on the configured values, and a color tint
 	// on the fog's ambient light. 1 leaves the config as it is.
@@ -34,6 +36,11 @@ class VolumetricFog
 	WeatherField weatherField;
 	float weatherFog = 1;
 	private int uniFieldRect, uniFieldFog;
+	private int uniIndoor, uniWaterEnabled, uniWaterGrid;
+	private int waterUnit;
+	// density left inside building rooms (fog_frag.glsl), and the scene's water to stop the rays at
+	float indoorFactor = 1;
+	int waterTexture;
 
 	// the values the pass uses this frame, in world units
 	private float density;
@@ -62,8 +69,9 @@ class VolumetricFog
 	 * Take ownership of a freshly compiled fog program and look up its uniforms.
 	 */
 	void setProgram(int program, int sceneDepthUnit, int shadowCompareUnit, int lightDataUnit, int clusterDataUnit,
-		int noiseUnit, int weatherFieldUnit)
+		int noiseUnit, int weatherFieldUnit, int waterUnit)
 	{
+		this.waterUnit = waterUnit;
 		glDeleteProgram(this.program);
 		this.program = program;
 
@@ -106,6 +114,10 @@ class VolumetricFog
 		uniFieldRect = glGetUniformLocation(program, "weatherFieldRect");
 		uniFieldFog = glGetUniformLocation(program, "weatherFieldFog");
 		glUniform1i(glGetUniformLocation(program, "weatherField"), weatherFieldUnit);
+		uniIndoor = glGetUniformLocation(program, "fogIndoor");
+		uniWaterEnabled = glGetUniformLocation(program, "waterEnabled");
+		uniWaterGrid = glGetUniformLocation(program, "waterGrid");
+		glUniform1i(glGetUniformLocation(program, "waterData"), waterUnit);
 		glUseProgram(0);
 	}
 
@@ -249,10 +261,24 @@ class VolumetricFog
 			glUniform3f(uniFieldFog, 0, 0, 0);
 		}
 
+		glUniform1f(uniIndoor, indoorFactor);
+		glUniform1i(uniWaterEnabled, waterTexture != 0 ? 1 : 0);
+		if (waterTexture != 0)
+		{
+			glUniform2f(uniWaterGrid, RuneLightPlugin.SCENE_OFFSET, WaterMap.CORNERS);
+			glActiveTexture(GL_TEXTURE0 + waterUnit);
+			glBindTexture(GL_TEXTURE_2D, waterTexture);
+		}
+
 		glActiveTexture(GL_TEXTURE0 + noiseUnit);
 		glBindTexture(GL_TEXTURE_3D, texNoise);
 		glDrawArrays(GL_TRIANGLES, 0, 3);
 		glBindTexture(GL_TEXTURE_3D, 0);
+		if (waterTexture != 0)
+		{
+			glActiveTexture(GL_TEXTURE0 + waterUnit);
+			glBindTexture(GL_TEXTURE_2D, 0);
+		}
 
 		glActiveTexture(GL_TEXTURE0 + fogUnit);
 		glBindTexture(GL_TEXTURE_2D, texFog);

@@ -434,10 +434,16 @@ class SceneLights
 					continue;
 				}
 				float ground = Perspective.getTileHeight(client, lp, plane);
+				int orientation = npc.getCurrentOrientation();
+				float s = (float) Math.sin(orientation * JAU_TO_RAD);
+				float c = (float) Math.cos(orientation * JAU_TO_RAD);
+				float seed = (npc.getIndex() * 0.61803398875f) % 1f;
 				for (LightDefinition d : defs)
 				{
-					Placed p = place(d, lp.getX(), ground, lp.getY(), npc.getCurrentOrientation(), plane, npc.getIndex());
-					emit(out, d, p.x, p.y, p.z, plane, plane, p.seed, time, night, camX, camZ, maxDistance);
+					// as place(), without allocating every frame
+					float ox = d.offset[0], oz = d.offset[2];
+					emit(out, d, lp.getX() - c * ox - s * oz, ground - d.height - 1 - d.offset[1], lp.getY() - c * oz + s * ox,
+						plane, plane, seed, time, night, camX, camZ, maxDistance);
 				}
 			}
 		}
@@ -499,8 +505,11 @@ class SceneLights
 		{
 			// same flicker curve as 117 HD: a sum of sharpened cosines at unrelated frequencies
 			double t = Math.PI * 2 * ((time % 60) / 60 + seed);
-			double f = (Math.pow(Math.cos(11 * t), 3) + Math.pow(Math.cos(17 * t), 6) + Math.pow(Math.cos(23 * t), 2)
-				+ Math.pow(Math.cos(31 * t), 6) + Math.pow(Math.cos(71 * t), 4) + Math.pow(Math.cos(151 * t), 6) / 2) / 4.335;
+			// integer powers multiplied out: Math.pow is slow, and this runs per flickering light per frame
+			double c11 = Math.cos(11 * t), c17 = Math.cos(17 * t), c23 = Math.cos(23 * t);
+			double c31 = Math.cos(31 * t), c71 = Math.cos(71 * t), c151 = Math.cos(151 * t);
+			double c17s = c17 * c17 * c17, c31s = c31 * c31 * c31, c71s = c71 * c71, c151s = c151 * c151 * c151;
+			double f = (c11 * c11 * c11 + c17s * c17s + c23 * c23 + c31s * c31s + c71s * c71s + c151s * c151s / 2) / 4.335;
 			float lo = 1 - d.range / 100f, hi = 1 + d.range / 100f;
 			strength *= lo + (hi - lo) * (float) f;
 			radius *= 1.5f;
@@ -528,6 +537,6 @@ class SceneLights
 		{
 			pool.add(new PointLight());
 		}
-		out.add(pool.get(poolUsed++).set(x, y, z, radius, d.red, d.green, d.blue, strength));
+		out.add(pool.get(poolUsed++).set(x, y, z, radius, d.red, d.green, d.blue, strength).onPlane(lightPlane));
 	}
 }
