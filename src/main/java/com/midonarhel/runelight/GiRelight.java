@@ -19,6 +19,9 @@ final class GiRelight
 	static final float SUN_DISTANCE = 128;
 	// the open-sky normalization stays within this range, so a broken table can't blow the light up
 	static final float MIN_SCALE = 0.02f, MAX_SCALE = 64;
+	// sun and moon light bounced off what they fall on, relative to the light itself: above 1 because the voxels'
+	// albedos are the dim vertex and texture colors, and the bounce is what makes sunlit ground warm the shade
+	static final float SUN_BOUNCE = 1.4f;
 
 	/** What lights the probes this time. */
 	static final class Light
@@ -53,6 +56,10 @@ final class GiRelight
 			}
 			l.shadow0 = Math.max(0, Math.min(1, finite(table[row + 8])));
 			l.shadow1 = Math.max(0, Math.min(1, Float.isFinite(table[row + 12]) ? table[row + 12] : 1));
+			for (int c = 0; c < 3; ++c)
+			{
+				l.caster[c] *= SUN_BOUNCE;
+			}
 			System.arraycopy(casterDir, 0, l.dir, 0, 3);
 			l.bounce = bounce;
 			return l;

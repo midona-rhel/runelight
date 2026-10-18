@@ -59,6 +59,8 @@ class GlobalIllumination
 	static final float BLEND_SECONDS = 2, MAX_BLEND_SECONDS = 8;
 	// the composite eases between its plain ambient and the probes over this long
 	static final float WEIGHT_SECONDS = 1.5f;
+	// turned on in the config: shown this quickly once freshly lit probes are in, so the toggle reads as one
+	static final float TOGGLE_SECONDS = 0.25f;
 	// changed zones (doors, trees cut down) are rebuilt once they have stopped changing for this long, and at most
 	// this often
 	static final long REBUILD_DELAY_MILLIS = 2000;
@@ -123,6 +125,11 @@ class GlobalIllumination
 	private boolean shownInstance;
 	private float weight;
 	private long weightMillis;
+	// the config switch last frame, and whether the probes shown were lit before it was last turned on: they wait
+	// for a relight instead of showing light from whenever the global illumination was turned off
+	private boolean wasEnabled;
+	private boolean awaitingFresh;
+	private float easeSeconds = WEIGHT_SECONDS;
 
 	// relight scheduling
 	private boolean readbackWanted;
@@ -308,8 +315,29 @@ class GlobalIllumination
 		// coordinates have nothing to do with the last scene's
 		boolean fits = scene != null && shownInstance == scene.isInstance()
 			&& (!shownInstance || scene.getBaseX() == shownBaseX && scene.getBaseY() == shownBaseY);
-		boolean use = enabled && outdoors && shown >= 0 && fits;
-		weight = use ? Math.min(1, weight + dt / WEIGHT_SECONDS) : Math.max(0, weight - dt / WEIGHT_SECONDS);
+		if (enabled != wasEnabled)
+		{
+			wasEnabled = enabled;
+			if (!enabled)
+			{
+				// off at once: easing out made the switch look like it did nothing
+				weight = 0;
+			}
+			else if (shown >= 0)
+			{
+				awaitingFresh = true;
+				// relight now rather than when the schedule comes round
+				relit = false;
+				lastRelightMillis = 0;
+				easeSeconds = TOGGLE_SECONDS;
+			}
+		}
+		boolean use = enabled && outdoors && shown >= 0 && fits && !awaitingFresh;
+		weight = use ? Math.min(1, weight + dt / easeSeconds) : Math.max(0, weight - dt / easeSeconds);
+		if (weight >= 1 || weight <= 0)
+		{
+			easeSeconds = WEIGHT_SECONDS;
+		}
 		if (!enabled)
 		{
 			return;
@@ -347,6 +375,7 @@ class GlobalIllumination
 				uploadMeta(l.meta);
 				latest = from = shown = uploadTarget;
 				blending = false;
+				awaitingFresh = false;
 				shownGeneration = l.generation;
 				shownBaseX = l.baseX;
 				shownBaseY = l.baseY;
@@ -368,6 +397,14 @@ class GlobalIllumination
 			if (++uploadLayer == GiProbes.LAYERS)
 			{
 				uploading = null;
+				if (awaitingFresh)
+				{
+					// nothing worth blending from: the old light is from before the switch was turned on
+					awaitingFresh = false;
+					latest = from = shown = uploadTarget;
+					lastLitMillis = now;
+					return;
+				}
 				from = shown;
 				latest = uploadTarget;
 				shown = 3 - from - latest;

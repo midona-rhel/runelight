@@ -168,7 +168,12 @@ vec3 skyHorizon(float alt) {
 // Light colors. These are LINEAR (the composite lights in linear space, like 117 HD) and are multiplied with
 // the surface color, so 1.0 means "full surface color". The sun is much stronger than the ambient on purpose:
 // that contrast between sunlit and shaded faces is what makes sunlight read as sunlight.
-#define SUN_INTENSITY 2.6
+#define SUN_INTENSITY 2.9
+// Under a clear sky with the sun well up the sky's share of the light is smaller against the sun's, so sunlit and
+// shaded faces part more: the ambient light drops to this much, a little further in harsh sun. Rain, snow and haze
+// keep their soft, even light.
+#define CLEAR_AMBIENT 0.80
+#define HARSH_AMBIENT 0.08
 #define MOON_INTENSITY 0.45
 #define SKY_LIGHT 0.45
 
@@ -198,6 +203,8 @@ vec3 ambientLight(float alt) {
   vec3 a = mix(night, day, smoothstep(-10.0, 15.0, alt));
   // warmer, a little darker around sunrise and sunset
   float dusk = smoothstep(-8.0, 2.0, alt) * (1.0 - smoothstep(2.0, 20.0, alt));
+  float clearSun = smoothstep(8.0, 35.0, alt) * (1.0 - weatherOvercast.x) * (1.0 - weatherLight.y);
+  a *= mix(1.0, CLEAR_AMBIENT - HARSH_AMBIENT * clamp(weatherLight.x, 0.0, 1.0), clearSun);
   return overcastAmbient(a * mix(vec3(1.0), vec3(1.10, 0.80, 0.80), dusk))
     + LIGHTNING_COLOR * (LIGHTNING_AMBIENT * weatherOvercast.z);
 }
