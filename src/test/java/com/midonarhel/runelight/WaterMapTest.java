@@ -124,6 +124,36 @@ public class WaterMapTest
 	}
 
 	@Test
+	public void landCornersTakeTheWaterLevel()
+	{
+		int w = WaterMap.CORNERS * 2;
+		float[] t = new float[w * WaterMap.CORNERS * 4];
+		for (int cy = 0; cy < WaterMap.CORNERS; ++cy)
+		{
+			for (int cx = 0; cx < WaterMap.CORNERS; ++cx)
+			{
+				t[(cy * w + cx) * 4] = Float.NaN;
+			}
+		}
+		// two pools at different levels
+		t[(20 * w + 20) * 4] = -300;
+		t[(20 * w + 120) * 4] = -800;
+		WaterMap.spreadLevel(t, w);
+		assertEquals(-300, t[(22 * w + 21) * 4], 0);
+		assertEquals(-300, t[0], 0);
+		assertEquals(-800, t[(25 * w + 118) * 4], 0);
+		for (int cy = 0; cy < WaterMap.CORNERS; ++cy)
+		{
+			for (int cx = 0; cx < WaterMap.CORNERS; ++cx)
+			{
+				assertFalse(Float.isNaN(t[(cy * w + cx) * 4]));
+			}
+		}
+		// page 1 untouched
+		assertEquals(0, t[(20 * w + WaterMap.CORNERS + 20) * 4], 0);
+	}
+
+	@Test
 	public void murkyAreas()
 	{
 		assertEquals(WaterMap.CAVE, lake(WaterMap.MURKY_CAVE).type[90 * N + 90]);

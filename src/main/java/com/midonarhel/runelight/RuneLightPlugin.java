@@ -2363,7 +2363,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		sceneTargets.bindMaterial(MATERIAL_UNIT);
 		compositeMaterials.set(config);
 		weather.getWaterWind(waterWind);
-		water.bind(config, (System.currentTimeMillis() - startMillis) / 1000.0, waterWind, weather.waterRain(),
+		water.bind(config, waterWind, weather.waterRain(),
 			WATER_DATA_UNIT, WATER_NOISE_UNIT);
 
 		glBindFramebuffer(GL_FRAMEBUFFER, awtContext.getFramebuffer(false));
