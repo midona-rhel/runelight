@@ -39,6 +39,7 @@ import java.awt.image.BufferedImage;
 import java.awt.image.DataBufferInt;
 import java.nio.ByteBuffer;
 import java.nio.FloatBuffer;
+import java.util.Arrays;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.Map;
@@ -270,6 +271,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 	private int uniShadowEntityProj;
 	private int uniShadowBase;
 	private int uniShadowTexturesReady;
+	private int uniShadowEmissiveCasts;
 
 	// composite lighting uniforms
 	private int uniCompositeCameraPos;
@@ -1062,6 +1064,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		uniShadowEntityProj = glGetUniformLocation(glShadowProgram, "entityProj");
 		uniShadowBase = glGetUniformLocation(glShadowProgram, "base");
 		uniShadowTexturesReady = glGetUniformLocation(glShadowProgram, "texturesReady");
+		uniShadowEmissiveCasts = glGetUniformLocation(glShadowProgram, "emissiveCasts");
 		glUseProgram(glShadowProgram);
 		glUniform1i(glGetUniformLocation(glShadowProgram, "textures"), 1); // game texture array lives on unit 1
 		glUseProgram(0);
@@ -1804,13 +1807,18 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 
 		float radius = config.shadowDistance() * Perspective.LOCAL_TILE_SIZE;
 		float depthRange = radius + 4096;
-		shadowMap.update(dayCycle.casterDir, fx, fy, fz, frameCameraX, frameCameraY, frameCameraZ,
-			radius, depthRange, glCapabilities.OpenGL45);
+		final boolean cache = config.shadowCache();
+		if (!cache)
+		{
+			shadowMap.freeCache();
+			shadowMap.update(dayCycle.casterDir, fx, fy, fz, frameCameraX, frameCameraY, frameCameraZ,
+				radius, depthRange, glCapabilities.OpenGL45);
+			glBindFramebuffer(GL_FRAMEBUFFER, shadowMap.getFbo());
+			glViewport(0, 0, size, size);
+			glClearDepth(1.0);
+			glClear(GL_DEPTH_BUFFER_BIT);
+		}
 
-		glBindFramebuffer(GL_FRAMEBUFFER, shadowMap.getFbo());
-		glViewport(0, 0, size, size);
-		glClearDepth(1.0);
-		glClear(GL_DEPTH_BUFFER_BIT);
 		glEnable(GL_DEPTH_TEST);
 		glDepthFunc(GL_LESS);
 		glDepthMask(true);
@@ -1821,9 +1829,8 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		glPolygonOffset(1.0f, 1.0f);
 
 		glUseProgram(glShadowProgram);
-		glUniformMatrix4fv(uniShadowLightProj, false, shadowMap.lightProj);
 		glUniform1i(uniShadowTexturesReady, textureArrayId != -1 ? 1 : 0);
-		glUniform1i(glGetUniformLocation(glShadowProgram, "emissiveCasts"), config.emissiveMaterials() ? 0 : 1);
+		glUniform1i(uniShadowEmissiveCasts, config.emissiveMaterials() ? 0 : 1);
 		glUniformMatrix4fv(uniShadowEntityProj, false, IDENTITY);
 
 		// Zone and VAO draw through these shared uniform locations; point them at the shadow program
@@ -1833,42 +1840,23 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		uniEntityTint = -1;
 		try
 		{
-			// static scenery: zones around the focus, with margin for tall casters just outside the map
-			int offset = SCENE_OFFSET >> 3;
-			float reach = radius + 2048;
-			final boolean roofShadows = config.roofShadows();
-			for (int x = 0; x < ctx.sizeX; ++x)
+			if (cache)
 			{
-				float cx = ((x - offset) << 10) + 512;
-				if (Math.abs(cx - fx) > reach)
-				{
-					continue;
-				}
-				for (int z = 0; z < ctx.sizeZ; ++z)
-				{
-					float cz = ((z - offset) << 10) + 512;
-					if (Math.abs(cz - fz) > reach)
-					{
-						continue;
-					}
-					Zone zone = ctx.zones[x][z];
-					if (zone.initialized && zone.sizeO > 0)
-					{
-						if (roofShadows)
-						{
-							// every level and every roof, including ones hidden from the camera
-							zone.renderOpaque(x - offset, z - offset, ctx.minLevel, ctx.level, 3, Collections.emptySet());
-						}
-						else
-						{
-							zone.renderOpaque(x - offset, z - offset, ctx.minLevel, ctx.level, ctx.maxLevel, ctx.hideRoofIds);
-						}
-					}
-				}
+				renderStaticShadows(ctx, size, fx, fy, fz, radius, depthRange);
+				// this frame's map starts as a copy of the static one
+				shadowMap.useFront(frameCameraX, frameCameraY, frameCameraZ);
+				glViewport(0, 0, size, size);
+				glUniformMatrix4fv(uniShadowLightProj, false, shadowMap.lightProj);
+			}
+			else
+			{
+				glUniformMatrix4fv(uniShadowLightProj, false, shadowMap.lightProj);
+				shadowZones(ctx, fx, fz, radius, null, 0, Integer.MAX_VALUE);
 			}
 
 			// players, NPCs and other models drawn this frame
 			glUniform3i(uniShadowBase, 0, 0, 0);
+			glUniformMatrix4fv(uniShadowEntityProj, false, IDENTITY);
 			for (int i = 0; i < VAO.shadowDrawCount; ++i)
 			{
 				VAO.ShadowDraw d = VAO.shadowDraws.get(i);
@@ -1890,6 +1878,162 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		glDisable(GL_DEPTH_TEST);
 		glUseProgram(0);
 		checkGLErrors();
+	}
+
+	// Static shadow cache. The scenery is drawn around a focus snapped to this many world units, into a map this
+	// much larger, so it still covers the player until they walk out of the snapped cell.
+	private static final int SHADOW_CACHE_SNAP = 256;
+	// A new static map is drawn over this many frames while the old one is still used, so no frame pays for it all.
+	private static final int SHADOW_BUILD_FRAMES = 3;
+	// The light may turn until the shadow of a caster this tall (world units) has moved this many texels, which
+	// depends on how low the light is: shadows lengthen fast near the horizon.
+	private static final float SHADOW_CACHE_HEIGHT = 512;
+	private static final float SHADOW_CACHE_TEXELS = 0.5f;
+
+	private boolean shadowStaticDirty;
+	private int[] shadowBuildZones = new int[64];
+	private int shadowBuildCount, shadowBuildNext, shadowBuildPerFrame;
+
+	/**
+	 * Keep the static shadow map current: start a new one when the light has turned or the player has walked out of
+	 * the snapped cell, and draw this frame's share of it.
+	 */
+	private void renderStaticShadows(SceneContext ctx, int size, float fx, float fy, float fz, float radius,
+		float depthRange)
+	{
+		final boolean roofShadows = config.roofShadows();
+		int key = java.util.Objects.hash(System.identityHashCode(ctx), ctx.minLevel, ctx.level, ctx.maxLevel,
+			roofShadows, roofShadows ? 0 : ctx.hideRoofIds.hashCode(), config.emissiveMaterials(), textureArrayId != -1,
+			size, radius);
+		shadowMap.checkCacheKey(key);
+		if (shadowStaticDirty)
+		{
+			shadowStaticDirty = false;
+			shadowMap.invalidateCache();
+		}
+
+		ShadowMap.View front = shadowMap.frontView();
+		if (!shadowMap.isBuilding() && (front == null || shadowStale(front, fx, fy, fz, radius, size)))
+		{
+			float sx = Math.round(fx / SHADOW_CACHE_SNAP) * (float) SHADOW_CACHE_SNAP;
+			float sz = Math.round(fz / SHADOW_CACHE_SNAP) * (float) SHADOW_CACHE_SNAP;
+			shadowMap.startBuild(dayCycle.casterDir, sx, fy, sz, radius + SHADOW_CACHE_SNAP,
+				depthRange + SHADOW_CACHE_SNAP, glCapabilities.OpenGL45);
+			shadowBuildCount = 0;
+			shadowZones(ctx, sx, sz, radius + SHADOW_CACHE_SNAP, null, 0, 0);
+			shadowBuildNext = 0;
+			// the first map is needed at once
+			int frames = front == null ? 1 : SHADOW_BUILD_FRAMES;
+			shadowBuildPerFrame = (shadowBuildCount + frames - 1) / frames;
+		}
+		if (!shadowMap.isBuilding())
+		{
+			return;
+		}
+
+		ShadowMap.View v = shadowMap.buildingView();
+		glBindFramebuffer(GL_FRAMEBUFFER, shadowMap.getBuildFbo());
+		glViewport(0, 0, size, size);
+		glUniformMatrix4fv(uniShadowLightProj, false, v.proj);
+		int end = Math.min(shadowBuildNext + shadowBuildPerFrame, shadowBuildCount);
+		shadowZones(ctx, v.focusX, v.focusZ, v.radius, shadowBuildZones, shadowBuildNext, end);
+		shadowBuildNext = end;
+		if (shadowBuildNext >= shadowBuildCount)
+		{
+			shadowMap.finishBuild();
+		}
+	}
+
+	private boolean shadowStale(ShadowMap.View v, float fx, float fy, float fz, float radius, int size)
+	{
+		float half = SHADOW_CACHE_SNAP * 0.5f;
+		if (Math.abs(fx - v.focusX) > half || Math.abs(fz - v.focusZ) > half || Math.abs(fy - v.focusY) > SHADOW_CACHE_SNAP)
+		{
+			return true;
+		}
+		float[] d = dayCycle.casterDir;
+		// sine of the angle between the light now and when the map was drawn
+		float cx = d[1] * v.dir[2] - d[2] * v.dir[1];
+		float cy = d[2] * v.dir[0] - d[0] * v.dir[2];
+		float cz = d[0] * v.dir[1] - d[1] * v.dir[0];
+		float angle = (float) Math.sqrt(cx * cx + cy * cy + cz * cz);
+		if (d[0] * v.dir[0] + d[1] * v.dir[1] + d[2] * v.dir[2] < 0)
+		{
+			return true;
+		}
+		// a shadow of height h is h / tan(elevation) long; it moves h / sin^2(elevation) per radian
+		float sinElevation = Math.max(-d[1], 0.1f);
+		float texel = 2 * radius / size;
+		return angle > SHADOW_CACHE_TEXELS * texel * sinElevation * sinElevation / SHADOW_CACHE_HEIGHT;
+	}
+
+	/**
+	 * The static zones around a focus. With list null and to 0, only collects them into shadowBuildZones; with list
+	 * null and to MAX_VALUE, draws all of them; else draws list[from..to).
+	 */
+	private void shadowZones(SceneContext ctx, float fx, float fz, float radius, int[] list, int from, int to)
+	{
+		// zones around the focus, with margin for tall casters just outside the map
+		int offset = SCENE_OFFSET >> 3;
+		float reach = radius + 2048;
+		final boolean roofShadows = config.roofShadows();
+		if (list != null)
+		{
+			for (int i = from; i < to; ++i)
+			{
+				shadowZone(ctx, list[i] >> 16, list[i] & 0xFFFF, offset, roofShadows);
+			}
+			return;
+		}
+		boolean collect = to == 0;
+		for (int x = 0; x < ctx.sizeX; ++x)
+		{
+			float cx = ((x - offset) << 10) + 512;
+			if (Math.abs(cx - fx) > reach)
+			{
+				continue;
+			}
+			for (int z = 0; z < ctx.sizeZ; ++z)
+			{
+				float cz = ((z - offset) << 10) + 512;
+				if (Math.abs(cz - fz) > reach)
+				{
+					continue;
+				}
+				if (!collect)
+				{
+					shadowZone(ctx, x, z, offset, roofShadows);
+					continue;
+				}
+				Zone zone = ctx.zones[x][z];
+				if (zone.initialized && zone.sizeO > 0)
+				{
+					if (shadowBuildCount == shadowBuildZones.length)
+					{
+						shadowBuildZones = Arrays.copyOf(shadowBuildZones, shadowBuildCount * 2);
+					}
+					shadowBuildZones[shadowBuildCount++] = x << 16 | z;
+				}
+			}
+		}
+	}
+
+	private static void shadowZone(SceneContext ctx, int x, int z, int offset, boolean roofShadows)
+	{
+		Zone zone = ctx.zones[x][z];
+		if (!zone.initialized || zone.sizeO <= 0)
+		{
+			return;
+		}
+		if (roofShadows)
+		{
+			// every level and every roof, including ones hidden from the camera
+			zone.renderOpaque(x - offset, z - offset, ctx.minLevel, ctx.level, 3, Collections.emptySet());
+		}
+		else
+		{
+			zone.renderOpaque(x - offset, z - offset, ctx.minLevel, ctx.level, ctx.maxLevel, ctx.hideRoofIds);
+		}
 	}
 
 	/**
@@ -2526,6 +2670,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 				if (ctx == root)
 				{
 					weather.invalidateOcclusion();
+					shadowStaticDirty = true;
 				}
 
 				log.debug("Rebuilt zone wv={} x={} z={}", wv.getId(), x, z);
@@ -3237,6 +3382,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		ctx.zones = nextZones;
 		nextZones = null;
 		weather.invalidateOcclusion();
+		shadowStaticDirty = true;
 		water.swap();
 		clientUploader.water = mapUploader.water;
 
