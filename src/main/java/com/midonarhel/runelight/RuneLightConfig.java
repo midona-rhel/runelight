@@ -34,6 +34,7 @@ import static com.midonarhel.runelight.RuneLightPlugin.MAX_FOG_DEPTH;
 import com.midonarhel.runelight.config.AntiAliasingMode;
 import com.midonarhel.runelight.config.ColorBlindMode;
 import com.midonarhel.runelight.config.DebugView;
+import com.midonarhel.runelight.config.ShadowResolution;
 import com.midonarhel.runelight.config.UIScalingMode;
 
 @ConfigGroup(RuneLightConfig.GROUP)
@@ -289,6 +290,93 @@ public interface RuneLightConfig extends Config
 	default int aoRadius()
 	{
 		return 75;
+	}
+
+	@ConfigItem(
+		keyName = "sunLighting",
+		name = "Sun and moon lighting",
+		description = "Day and night cycle with directional light from the sun or moon. Off underground.",
+		section = lightingSection,
+		position = 54
+	)
+	default boolean sunLighting()
+	{
+		return true;
+	}
+
+	@ConfigItem(
+		keyName = "shadows",
+		name = "Shadows",
+		description = "Soft shadows from the sun or moon.",
+		section = lightingSection,
+		position = 55
+	)
+	default boolean shadows()
+	{
+		return true;
+	}
+
+	@Range(min = 8, max = 96)
+	@ConfigItem(
+		keyName = "shadowDistance",
+		name = "Shadow distance",
+		description = "How far from your character shadows are drawn, in tiles.",
+		section = lightingSection,
+		position = 56
+	)
+	default int shadowDistance()
+	{
+		return 32;
+	}
+
+	@ConfigItem(
+		keyName = "shadowResolution",
+		name = "Shadow resolution",
+		description = "Shadow map size. Higher is sharper and costs more.",
+		section = lightingSection,
+		position = 57
+	)
+	default ShadowResolution shadowResolution()
+	{
+		return ShadowResolution.RES_2048;
+	}
+
+	@ConfigItem(
+		keyName = "proceduralSky",
+		name = "Sky",
+		description = "Draw a sky that follows the time of day. Areas with their own skybox keep it.",
+		section = lightingSection,
+		position = 58
+	)
+	default boolean proceduralSky()
+	{
+		return true;
+	}
+
+	@Range(max = 120)
+	@ConfigItem(
+		keyName = "dayCycleMinutes",
+		name = "Day length",
+		description = "Real minutes per full day and night. 0 holds the time at the fixed hour.",
+		section = lightingSection,
+		position = 59
+	)
+	default int dayCycleMinutes()
+	{
+		return 12;
+	}
+
+	@Range(max = 23)
+	@ConfigItem(
+		keyName = "fixedHour",
+		name = "Fixed hour",
+		description = "Time of day to hold when day length is 0. 6 is sunrise, 12 midday.",
+		section = lightingSection,
+		position = 60
+	)
+	default int fixedHour()
+	{
+		return 12;
 	}
 
 	@ConfigSection(

@@ -5,7 +5,9 @@ public enum DebugView
 	FINAL("Final"),
 	DEPTH("Depth"),
 	NORMALS("Normals"),
-	AMBIENT_OCCLUSION("Ambient occlusion");
+	AMBIENT_OCCLUSION("Ambient occlusion"),
+	SHADOWS("Shadows"),
+	LIGHTING("Lighting");
 
 	private final String name;
 

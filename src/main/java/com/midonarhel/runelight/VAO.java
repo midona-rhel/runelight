@@ -139,6 +139,44 @@ class VAO
 		r.renderMethod = (byte) renderMode;
 	}
 
+	/**
+	 * Opaque, depth-writing draws recorded during the frame so the shadow pass can draw the same models from
+	 * the light. The vertex data stays valid until the buffers are mapped again next frame.
+	 */
+	static final class ShadowDraw
+	{
+		int vao;
+		int first;
+		int count;
+		float[] projection;
+	}
+
+	static boolean recordShadowDraws;
+	static final java.util.ArrayList<ShadowDraw> shadowDraws = new java.util.ArrayList<>();
+	static int shadowDrawCount;
+
+	static void clearShadowDraws()
+	{
+		for (int i = 0; i < shadowDrawCount; ++i)
+		{
+			shadowDraws.get(i).projection = null;
+		}
+		shadowDrawCount = 0;
+	}
+
+	private void recordShadowDraw(int first, int count, float[] projection)
+	{
+		if (shadowDrawCount == shadowDraws.size())
+		{
+			shadowDraws.add(new ShadowDraw());
+		}
+		ShadowDraw d = shadowDraws.get(shadowDrawCount++);
+		d.vao = vao;
+		d.first = first;
+		d.count = count;
+		d.projection = projection;
+	}
+
 	void draw()
 	{
 		assert !vbo.mapped;
@@ -177,6 +215,10 @@ class VAO
 			else
 			{
 				glDrawArrays(GL_TRIANGLES, start / (VERT_SIZE / 4), count / (VERT_SIZE / 4));
+				if (recordShadowDraws && count > 0)
+				{
+					recordShadowDraw(start / (VERT_SIZE / 4), count / (VERT_SIZE / 4), range.projection);
+				}
 			}
 
 			start = end;

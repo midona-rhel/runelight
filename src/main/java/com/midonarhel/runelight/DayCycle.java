@@ -1,0 +1,101 @@
+package com.midonarhel.runelight;
+
+/**
+ * Sun and moon positions over a repeating day.
+ *
+ * Directions are unit vectors pointing from the world toward the light, in game coordinates:
+ * x east, z north and y pointing DOWN, so "up" is -y.
+ *
+ * The visual sun follows a full arc that dips below the horizon so sunrise and sunset look right in the sky.
+ * The shadow casting direction uses the same azimuth but a clamped elevation, keeping shadows short.
+ * At night the moon, opposite the sun, casts instead.
+ */
+final class DayCycle
+{
+	// visual sun altitude = PEAK * sin(2 pi phase) + LIFT, in degrees. LIFT > 0 makes days a bit longer than nights.
+	private static final double PEAK_ALTITUDE = 70;
+	private static final double LIFT = 12;
+
+	// shadow caster elevation limits, degrees. 30 keeps shadows at most ~1.7x an object's height.
+	private static final double MIN_CAST_ELEVATION = 30;
+	private static final double MAX_SUN_CAST_ELEVATION = 68;
+	private static final double MAX_MOON_CAST_ELEVATION = 58;
+
+	// below this sun altitude the moon takes over as the shadow caster; both lights are near zero there
+	static final double CASTER_SWITCH_ALTITUDE = -3;
+
+	// phase at which the visual sun crosses the horizon going up
+	private static final double SUNRISE_PHASE = -Math.asin(LIFT / PEAK_ALTITUDE) / (2 * Math.PI);
+
+	final float[] sunDir = new float[3];
+	final float[] moonDir = new float[3];
+	final float[] casterDir = new float[3];
+	float sunAltitude;
+	boolean sunIsCaster;
+	double phase;
+
+	/**
+	 * @param cycleMinutes length of a full day in real minutes; 0 holds the time at fixedHour
+	 * @param fixedHour 0-24, 6 is sunrise and 12 is roughly noon
+	 */
+	void update(long nowMillis, int cycleMinutes, double fixedHour)
+	{
+		if (cycleMinutes > 0)
+		{
+			// start the cycle at 09:00 so the first thing you see is daylight
+			double cycleMs = cycleMinutes * 60_000.0;
+			phase = (nowMillis % (long) cycleMs) / cycleMs + phaseForHour(9);
+		}
+		else
+		{
+			phase = phaseForHour(fixedHour);
+		}
+		phase -= Math.floor(phase);
+
+		double alt = PEAK_ALTITUDE * Math.sin(2 * Math.PI * phase) + LIFT;
+		sunAltitude = (float) alt;
+		// south at the peak (phase 0.25), roughly east at sunrise and west at sunset
+		double azimuth = Math.PI / 2 + 2 * Math.PI * (phase - 0.25);
+
+		direction(sunDir, azimuth, Math.toRadians(alt));
+		direction(moonDir, azimuth + Math.PI, Math.toRadians(-alt));
+
+		sunIsCaster = alt > CASTER_SWITCH_ALTITUDE;
+		if (sunIsCaster)
+		{
+			direction(casterDir, azimuth, Math.toRadians(clamp(alt, MIN_CAST_ELEVATION, MAX_SUN_CAST_ELEVATION)));
+		}
+		else
+		{
+			direction(casterDir, azimuth + Math.PI, Math.toRadians(clamp(-alt, MIN_CAST_ELEVATION, MAX_MOON_CAST_ELEVATION)));
+		}
+	}
+
+	/**
+	 * Clock time for display, 0-24.
+	 */
+	double hour()
+	{
+		double h = (phase - SUNRISE_PHASE) * 24 + 6;
+		return h - Math.floor(h / 24) * 24;
+	}
+
+	private static double phaseForHour(double hour)
+	{
+		return (hour - 6) / 24 + SUNRISE_PHASE;
+	}
+
+	private static void direction(float[] out, double azimuth, double elevation)
+	{
+		double c = Math.cos(elevation);
+		// azimuth 0 = east (+x), pi/2 = south (-z)
+		out[0] = (float) (Math.cos(azimuth) * c);
+		out[1] = (float) -Math.sin(elevation);
+		out[2] = (float) (-Math.sin(azimuth) * c);
+	}
+
+	private static double clamp(double v, double lo, double hi)
+	{
+		return Math.max(lo, Math.min(hi, v));
+	}
+}
