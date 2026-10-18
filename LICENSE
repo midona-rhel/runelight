@@ -28,7 +28,9 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 src/main/resources/com/midonarhel/runelight/lights.json is converted from the light
 definitions of 117 HD (https://github.com/117HD/RLHD) by tools/import_117hd_lights.py,
-and is distributed under the following license:
+and src/main/resources/com/midonarhel/runelight/materials.json is derived from 117 HD's
+materials, model overrides and lights by tools/import_117hd_materials.py. Both are
+distributed under the following license:
 
 BSD 2-Clause License
 

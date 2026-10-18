@@ -519,6 +519,65 @@ public interface RuneLightConfig extends Config
 	}
 
 	@ConfigSection(
+		name = "Materials",
+		description = "Glowing and see-through surfaces",
+		position = 200
+	)
+	String materialsSection = "materials";
+
+	@ConfigItem(
+		keyName = "foliageTransmission",
+		name = "Light through leaves",
+		description = "Leaves, bushes and plants are lit through from behind by the sun, moon and lights, so tree "
+			+ "canopies glow around the lights inside them.",
+		section = materialsSection,
+		position = 201
+	)
+	default boolean foliageTransmission()
+	{
+		return true;
+	}
+
+	@Range(max = 300)
+	@ConfigItem(
+		keyName = "transmissionStrength",
+		name = "Leaf glow strength",
+		description = "How much light passes through leaves, in percent.",
+		section = materialsSection,
+		position = 202
+	)
+	default int transmissionStrength()
+	{
+		return 100;
+	}
+
+	@ConfigItem(
+		keyName = "emissiveMaterials",
+		name = "Glowing materials",
+		description = "Lava, fire, magic, spells and spirits like ghosts show their own color instead of being "
+			+ "shaded, shadowed or darkened by ambient occlusion.",
+		section = materialsSection,
+		position = 203
+	)
+	default boolean emissiveMaterials()
+	{
+		return true;
+	}
+
+	@Range(min = 50, max = 300)
+	@ConfigItem(
+		keyName = "emissiveStrength",
+		name = "Glow strength",
+		description = "Brightness of glowing materials, in percent.",
+		section = materialsSection,
+		position = 204
+	)
+	default int emissiveStrength()
+	{
+		return 100;
+	}
+
+	@ConfigSection(
 		name = "Development",
 		description = "Tools for working on the renderer",
 		position = 100,

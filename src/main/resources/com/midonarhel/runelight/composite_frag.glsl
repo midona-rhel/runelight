@@ -4,6 +4,7 @@
 
 #include "frame.glsl"
 #include "sky.glsl"
+#include "materials.glsl"
 #include cluster_config
 
 #define DEBUG_FINAL 0
@@ -13,6 +14,7 @@
 #define DEBUG_SHADOWS 4
 #define DEBUG_LIGHTING 5
 #define DEBUG_LIGHT_CLUSTERS 6
+#define DEBUG_MATERIALS 7
 
 #define TAU 6.28318530718
 
@@ -24,6 +26,7 @@
 
 uniform sampler2D sceneAo;  // half resolution
 uniform sampler2D sceneAlpha;  // transparent geometry, already lit, premultiplied
+uniform sampler2D sceneMaterial;  // r emissive, g transmissive
 uniform int debugView;
 uniform int aoEnabled;
 uniform float aoStrength;
@@ -205,7 +208,10 @@ int clusterLightCount(int base) {
   return int(texelFetch(clusterData, base).r);
 }
 
-vec3 pointLights(int base, vec3 p, vec3 n) {
+// returns the light on the front; light through thin foliage from behind goes to throughOut
+vec3 pointLights(int base, vec3 p, vec3 n, float transmissive, out vec3 throughOut) {
+  vec3 viewDir = normalize(-p);
+  vec3 through = vec3(0.0);
   vec3 sum = vec3(0.0);
   int count = clusterLightCount(base);
   for (int i = 0; i < count; ++i) {
@@ -222,9 +228,13 @@ vec3 pointLights(int base, vec3 p, vec3 n) {
     // 117 HD's falloff; we light in linear space like it does
     float att = 1.0 - sqrt(d2 / r2);
     att *= att;
-    float ndl = max(dot(n, l * inversesqrt(max(d2, 1.0))), 0.0);
-    sum += color * att * ndl * POINT_LIGHT_SCALE;
+    vec3 ld = l * inversesqrt(max(d2, 1.0));
+    float ndl = dot(n, ld);
+    sum += color * att * max(ndl, 0.0) * POINT_LIGHT_SCALE;
+    // thin foliage is also lit from behind: magic tree canopies glow around the lights inside them
+    through += color * att * transmission(ndl, dot(-ld, viewDir), transmissive) * POINT_LIGHT_SCALE;
   }
+  throughOut = through;
   return sum;
 }
 
@@ -271,6 +281,9 @@ void main() {
 
   vec3 n = decodeNormal(texelFetch(sceneNormal, px, 0).rgb);
   vec3 p = reconstructPosition(vec2(px) + 0.5, d);
+  vec2 material = texelFetch(sceneMaterial, px, 0).rg;
+  float emissive = material.r;
+  float transmissive = material.g;
 
   float ao = 1.0;
   if (aoEnabled == 1 && inside) {
@@ -281,13 +294,19 @@ void main() {
   float shadow = 1.0;
   vec3 light = vec3(ao);
   if (sunAndSky && lightingEnabled == 1 && inside) {
-    if (shadowsEnabled == 1) {
-      shadow = shadowFactor(p, n, ign(gl_FragCoord.xy));
+    float ndl = dot(n, casterDir);
+    if (shadowsEnabled == 1 && emissive < 1.0) {
+      // a leaf lit from behind looks up its shadow on the lit side, or it would shadow itself
+      shadow = shadowFactor(p, ndl < 0.0 && transmissive > 0.0 ? -n : n, ign(gl_FragCoord.xy));
     }
     vec3 caster = sunIsCaster == 1 ? sunLight(sunAltitude) : moonLight(sunAltitude);
     float up = max(-n.y, 0.0);
     light = (ambientLight(sunAltitude) + skyLight(sunAltitude) * up) * ao
-      + caster * max(dot(n, casterDir), 0.0) * shadow * mix(1.0, ao, AO_DIRECT);
+      + caster * max(ndl, 0.0) * shadow * mix(1.0, ao, AO_DIRECT);
+    if (transmissive > 0.0) {
+      // light through the leaf isn't occluded by the creases SSAO sees on its front
+      light += caster * transmission(ndl, dot(-casterDir, normalize(-p)), transmissive) * shadow;
+    }
   } else if (lightingEnabled == 1 && inside) {
     // Underground: no sun, and the game's own baked shading is removed, so a fixed soft key light from above
     // keeps shapes readable. Point lights do the rest.
@@ -296,13 +315,25 @@ void main() {
 
   int cluster = clusterBase(px, viewDepth(d));
   if (pointLightsEnabled == 1 && inside) {
-    light += pointLights(cluster, p, n) * mix(1.0, ao, AO_DIRECT);
+    vec3 through;
+    light += pointLights(cluster, p, n, transmissive, through) * mix(1.0, ao, AO_DIRECT);
+    // the canopy interior SSAO darkens is exactly where light inside a tree shines through
+    light += through;
   }
+  // emissive surfaces show their own color: no shading, shadows or AO, but fog below still applies
+  light = emissiveLight(light, emissive);
 
   if (debugView == DEBUG_LIGHT_CLUSTERS) {
     // lights evaluated per pixel: blue 0, green ~4, red 8+
     float c = pointLightsEnabled == 1 ? float(clusterLightCount(cluster)) / 8.0 : 0.0;
     FragColor = vec4(clamp(vec3(c * 2.0 - 1.0, 1.0 - abs(c * 2.0 - 1.0), 1.0 - c * 2.0), 0.0, 1.0), 1.0);
+    return;
+  }
+
+  if (debugView == DEBUG_MATERIALS) {
+    // emissive red, transmissive green, over the dimmed scene
+    vec3 tint = vec3(emissive, transmissive, 0.0);
+    FragColor = vec4(mix(color.rgb * 0.35, tint, max(emissive, transmissive) * 0.8), 1.0);
     return;
   }
 

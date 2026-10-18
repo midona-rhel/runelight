@@ -236,6 +236,9 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 	private int uniSceneSunIsCaster;
 	private int uniSceneSunAltitude;
 	private static final int ALPHA_LAYER_UNIT = RuneLightPlugin.COMPOSITE_TEXTURE_UNIT + 8;
+	private static final int MATERIAL_UNIT = RuneLightPlugin.COMPOSITE_TEXTURE_UNIT + 9;
+	private final SurfaceMaterials.Uniforms sceneMaterials = new SurfaceMaterials.Uniforms();
+	private final SurfaceMaterials.Uniforms compositeMaterials = new SurfaceMaterials.Uniforms();
 
 	static final Shader SHADOW_PROGRAM = new Shader()
 		.add(GL_VERTEX_SHADER, "shadow_vert.glsl")
@@ -478,6 +481,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 
 		sceneLights = new SceneLights(client);
 		sceneLights.load(gson);
+		SurfaceMaterials.load(gson);
 		eventBus.register(sceneLights);
 		clientThread.invoke(sceneLights::rebuild);
 		buildingLights = new BuildingLights(client);
@@ -976,6 +980,9 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		glUniform1i(glGetUniformLocation(c, "lightData"), LIGHT_DATA_UNIT);
 		glUniform1i(glGetUniformLocation(c, "clusterData"), CLUSTER_DATA_UNIT);
 		glUniform1i(glGetUniformLocation(c, "sceneAlpha"), ALPHA_LAYER_UNIT);
+		glUniform1i(glGetUniformLocation(c, "sceneMaterial"), MATERIAL_UNIT);
+		compositeMaterials.locate(c);
+		sceneMaterials.locate(glProgram);
 		uniCompositePointLights = glGetUniformLocation(c, "pointLightsEnabled");
 		glUseProgram(0);
 
@@ -1437,6 +1444,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		glUniform1i(uniDrawDistance, drawDistance * Perspective.LOCAL_TILE_SIZE);
 		glUniform1i(uniExpandedMapLoadingChunks, client.getExpandedMapLoading());
 		glUniform1f(uniColorblindIntensity, config.colorBlindIntensity());
+		sceneMaterials.set(config);
 
 		// Brightness happens to also be stored in the texture provider, so we use that
 		TextureProvider textureProvider = client.getTextureProvider();
@@ -1503,7 +1511,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		RenderThread rt = rts[0];
 		VAO o = rt.vaoO.get(size);
 		rt.modelUploader.uploadTempModel(skybox, 0, 0, 0, 0,
-			(int) cameraX, (int) cameraY, (int) cameraZ, o.vbo.vb);
+			(int) cameraX, (int) cameraY, (int) cameraZ, o.vbo.vb, 0);
 
 		float[] skyboxProjection = Mat4.translate(cameraX, cameraY, cameraZ);
 		o.addRange(skyboxProjection, scene, Renderable.RENDERMODE_UNSORTED_NO_DEPTH);
@@ -1623,6 +1631,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		glUseProgram(glShadowProgram);
 		glUniformMatrix4fv(uniShadowLightProj, false, shadowMap.lightProj);
 		glUniform1i(uniShadowTexturesReady, textureArrayId != -1 ? 1 : 0);
+		glUniform1i(glGetUniformLocation(glShadowProgram, "emissiveCasts"), config.emissiveMaterials() ? 0 : 1);
 		glUniformMatrix4fv(uniShadowEntityProj, false, IDENTITY);
 
 		// Zone and VAO draw through these shared uniform locations; point them at the shadow program
@@ -1867,6 +1876,8 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		glUniform1f(uniCompositeAoStrength, config.aoStrength() / 100f);
 		setLightingUniforms();
 		sceneTargets.bindAlphaLayer(ALPHA_LAYER_UNIT);
+		sceneTargets.bindMaterial(MATERIAL_UNIT);
+		compositeMaterials.set(config);
 		glDrawArrays(GL_TRIANGLES, 0, 3);
 
 		glBindVertexArray(0);
@@ -1877,6 +1888,8 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		ShadowMap.unbind(SHADOW_RAW_UNIT, SHADOW_COMPARE_UNIT);
 		LightClusters.unbind(LIGHT_DATA_UNIT, CLUSTER_DATA_UNIT);
 		glActiveTexture(GL_TEXTURE0 + ALPHA_LAYER_UNIT);
+		glBindTexture(GL_TEXTURE_2D, 0);
+		glActiveTexture(GL_TEXTURE0 + MATERIAL_UNIT);
 		glBindTexture(GL_TEXTURE_2D, 0);
 		glActiveTexture(GL_TEXTURE0);
 		glUseProgram(0);
@@ -2004,6 +2017,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		}
 
 		int size = m.getFaceCount() * 3 * VAO.VERT_SIZE;
+		int material = SurfaceMaterials.forObject(tileObject.getId(), r);
 		if (m.getFaceTransparencies() == null)
 		{
 			RenderThread rt = rts[renderThreadId + 1];
@@ -2014,7 +2028,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 			}
 
 			rt.modelUploader.uploadTempModel(m, orient, x, y, z,
-				ctx.cameraX, ctx.cameraY, ctx.cameraZ, o.vbo.vb);
+				ctx.cameraX, ctx.cameraY, ctx.cameraZ, o.vbo.vb, material);
 			o.addRange(ctx.projection, scene, 0);
 		}
 		else
@@ -2035,7 +2049,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 			try
 			{
 				sorter.uploadSortedModel(rt, worldProjection, m, orient, x, y, z,
-					ctx.cameraX, ctx.cameraY, ctx.cameraZ, o.vbo.vb, a.vbo.vb, false);
+					ctx.cameraX, ctx.cameraY, ctx.cameraZ, o.vbo.vb, a.vbo.vb, false, material);
 			}
 			catch (Exception ex)
 			{
@@ -2078,6 +2092,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		Renderable renderable = gameObject.getRenderable();
 		int size = m.getFaceCount() * 3 * VAO.VERT_SIZE;
 		int renderMode = renderable.getRenderMode();
+		int material = SurfaceMaterials.forRenderable(renderable, gameObject.getHash(), gameObject.getId());
 		if (renderMode == Renderable.RENDERMODE_SORTED_NO_DEPTH || m.getFaceTransparencies() != null || m.getTransparency() != 0)
 		{
 			RenderThread rt = rts[0];
@@ -2091,7 +2106,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 			{
 				uploader.uploadSortedModel(rt, worldProjection, m, orient, x, y, z,
 					ctx.cameraX, ctx.cameraY, ctx.cameraZ, o.vbo.vb, a.vbo.vb,
-					renderMode == Renderable.RENDERMODE_SORTED_NO_DEPTH);
+					renderMode == Renderable.RENDERMODE_SORTED_NO_DEPTH, material);
 			}
 			catch (Exception ex)
 			{
@@ -2117,7 +2132,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 			VAO o = rt.vaoO.get(size);
 			ModelUploader uploader = rt.modelUploader;
 			uploader.uploadTempModel(m, orient, x, y, z,
-				ctx.cameraX, ctx.cameraY, ctx.cameraZ, o.vbo.vb);
+				ctx.cameraX, ctx.cameraY, ctx.cameraZ, o.vbo.vb, material);
 			o.addRange(ctx.projection, scene, 0);
 		}
 	}
