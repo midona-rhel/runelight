@@ -2863,8 +2863,16 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 			}
 		}
 
-		// size the zones which require upload
+		// the water's bed depths and flow, needed to size and upload the zones; swapped in with them
 		Stopwatch sw = Stopwatch.createStarted();
+		WaterMap waterMap = config.water()
+			? WaterMap.build(scene, (x, y, plane) -> environmentManager.waterMurk(scene, x, y, plane)) : null;
+		mapUploader.water = waterMap;
+		water.sceneLoaded(waterMap);
+		log.debug("Water map time {}", sw);
+
+		// size the zones which require upload
+		sw = Stopwatch.createStarted();
 		int len = 0, lena = 0;
 		int reused = 0, newzones = 0;
 		for (int x = 0; x < NUM_ZONES; ++x)
@@ -2938,14 +2946,6 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		{
 			throw new RuntimeException(e);
 		}
-
-		// the water's bed depths and flow, needed by the upload; swapped in with the zones
-		sw = Stopwatch.createStarted();
-		WaterMap waterMap = config.water()
-			? WaterMap.build(scene, (x, y, plane) -> environmentManager.waterMurk(scene, x, y, plane)) : null;
-		mapUploader.water = waterMap;
-		water.sceneLoaded(waterMap);
-		log.debug("Water map time {}", sw);
 
 		// upload zones
 		sw = Stopwatch.createStarted();

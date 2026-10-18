@@ -45,6 +45,8 @@ final class WaterMap
 	// depth never depends on tiles more than a zone away
 	static final int MAX_LEVEL = 8;
 	private static final int[] DEPTH = {82, 165, 258, 335, 385, 412, 451, 506};
+	// at least this deep in the middle of a water tile, so a stream between two banks still holds water
+	static final int MIN_DEPTH = 56;
 
 	interface Areas
 	{
@@ -452,6 +454,26 @@ final class WaterMap
 		float s = bedOffset(ex, ey) + (bedOffset(ex + 1, ey) - bedOffset(ex, ey)) * fx;
 		float n = bedOffset(ex, ey + 1) + (bedOffset(ex + 1, ey + 1) - bedOffset(ex, ey + 1)) * fx;
 		return Math.round(s + (n - s) * fz);
+	}
+
+	/**
+	 * Whether bed tile (ex, ey) touches the shore at a corner, so its corners can't hold it deep enough and it is
+	 * uploaded with a sunken middle.
+	 */
+	boolean isShoreTile(int ex, int ey)
+	{
+		return depthLevel(ex, ey) == 0 || depthLevel(ex + 1, ey) == 0 || depthLevel(ex, ey + 1) == 0
+			|| depthLevel(ex + 1, ey + 1) == 0;
+	}
+
+	/**
+	 * How far the middle of bed tile (ex, ey) sinks: as deep as its corners on average, and at least
+	 * {@link #MIN_DEPTH}.
+	 */
+	int centerOffset(int ex, int ey)
+	{
+		int avg = bedOffset(ex, ey) + bedOffset(ex + 1, ey) + bedOffset(ex, ey + 1) + bedOffset(ex + 1, ey + 1) + 2 >> 2;
+		return Math.max(avg, MIN_DEPTH);
 	}
 
 	/**

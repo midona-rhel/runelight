@@ -62,6 +62,7 @@ class SceneUploader
 	private final float[] tileSlopes = new float[8];
 	// the scene's water, null when water is off; set before uploading (WaterMap)
 	WaterMap water;
+	private WaterMap sizeWater;
 	private final float[] bedSlopes = new float[8];
 	private boolean[] landVertex = new boolean[64];
 
@@ -78,6 +79,7 @@ class SceneUploader
 	void zoneSize(Scene scene, Zone zone, int mzx, int mzz)
 	{
 		Tile[][][] tiles = scene.getExtendedTiles();
+		sizeWater = water != null && scene.getWorldViewId() == WorldView.TOPLEVEL ? water : null;
 
 		for (int z = 3; z >= 0; --z)
 		{
@@ -237,6 +239,15 @@ class SceneUploader
 		if (paint != null)
 		{
 			z.sizeO += 2;
+			if (sizeWater != null)
+			{
+				Point p = t.getSceneLocation();
+				int ex = p.getX() + RuneLightPlugin.SCENE_OFFSET, ey = p.getY() + RuneLightPlugin.SCENE_OFFSET;
+				if (sizeWater.isBed(ex, ey, t.getRenderLevel(), paint.getTexture()) && sizeWater.isShoreTile(ex, ey))
+				{
+					z.sizeO += 2;
+				}
+			}
 		}
 
 		SceneTileModel model = t.getSceneTileModel();
@@ -742,6 +753,25 @@ class SceneUploader
 		final int h0 = bed[tileX][tileY], h1 = bed[tileX + 1][tileY], h2 = bed[tileX + 1][tileY + 1], h3 = bed[tileX][tileY + 1];
 		final int s = Perspective.LOCAL_TILE_SIZE;
 
+		if (water.isShoreTile(tileX, tileY))
+		{
+			// Around the shore the corners stay at the surface, which would leave a narrow stream no depth at all:
+			// sink the middle of the tile too, as a fan of four triangles around it.
+			final int hc = (h0 + h1 + h2 + h3 + 2 >> 2) - (water.bedOffset(tileX, tileY) + water.bedOffset(tileX + 1, tileY)
+				+ water.bedOffset(tileX + 1, tileY + 1) + water.bedOffset(tileX, tileY + 1) + 2 >> 2) + water.centerOffset(tileX, tileY);
+			final int cc = water.bedColor(tileX, tileY, x0 + 64, z0 + 64, 1);
+			GroundBlender.tileSlopes(bed, tileX, tileY, slope, bedSlopes);
+			GroundBlender.interpolateSlope(bedSlopes, 0.5f, 0.5f, slope);
+			final int nc = VertexShading.encodeNormal(slope[0], -1, slope[1]);
+			final int h = s >> 1;
+			// counterclockwise around the middle: sw, se, ne, nw
+			bedFan(vb, lx + h, hc, lz + h, cc, nc, lx, h0, lz, c0, n0, lx + s, h1, lz, c1, n1, tex);
+			bedFan(vb, lx + h, hc, lz + h, cc, nc, lx + s, h1, lz, c1, n1, lx + s, h2, lz + s, c2, n2, tex);
+			bedFan(vb, lx + h, hc, lz + h, cc, nc, lx + s, h2, lz + s, c2, n2, lx, h3, lz + s, c3, n3, tex);
+			bedFan(vb, lx + h, hc, lz + h, cc, nc, lx, h3, lz + s, c3, n3, lx, h0, lz, c0, n0, tex);
+			return 12;
+		}
+
 		vb.put22224(lx + s, h2, lz + s, 0, c2);
 		vb.put2222(tex, 256, 256, n2);
 		vb.put22224(lx, h3, lz + s, 0, c3);
@@ -756,6 +786,17 @@ class SceneUploader
 		vb.put22224(lx, h3, lz + s, 0, c3);
 		vb.put2222(tex, 0, 256, n3);
 		return 6;
+	}
+
+	private static void bedFan(GpuIntBuffer vb, int xc, int yc, int zc, int cc, int nc,
+		int xa, int ya, int za, int ca, int na, int xb, int yb, int zb, int cb, int nb, int tex)
+	{
+		vb.put22224(xc, yc, zc, 0, cc);
+		vb.put2222(tex, 128, 128, nc);
+		vb.put22224(xa, ya, za, 0, ca);
+		vb.put2222(tex, 0, 0, na);
+		vb.put22224(xb, yb, zb, 0, cb);
+		vb.put2222(tex, 0, 0, nb);
 	}
 
 	private void markLandVertices(SceneTileModel model)
@@ -786,7 +827,11 @@ class SceneUploader
 		int ox = x - lx, oz = z - lz;
 		boolean corner = (ox == 0 || ox == 128) && (oz == 0 || oz == 128);
 		int cx = ex + (ox >> 7), cy = ey + (oz >> 7);
-		int sink = corner ? water.bedOffset(cx, cy) : landVertex[v] ? 0 : water.bedOffset(ex, ey, ox, oz);
+		boolean edge = ox <= 0 || ox >= 128 || oz <= 0 || oz >= 128;
+		int sink = corner ? water.bedOffset(cx, cy)
+			: landVertex[v] ? 0
+			// inside the tile a vertex can go deeper than its corners without opening a crack to the next tile
+			: edge ? water.bedOffset(ex, ey, ox, oz) : Math.max(water.bedOffset(ex, ey, ox, oz), WaterMap.MIN_DEPTH);
 		int depth = corner ? water.depthLevel(cx, cy) : water.depthLevel(ex + Math.round(ox / 128f), ey + Math.round(oz / 128f));
 		GroundBlender.interpolateSlope(bedSlopes, ox / 128f, oz / 128f, slope);
 		vb.put22224(x - basex, y + sink, z - basez, 0, water.bedColor(ex, ey, (ex << 7) + ox, (ey << 7) + oz, depth));

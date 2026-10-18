@@ -100,6 +100,10 @@ public class WaterMapTest
 		assertEquals(WaterMap.depthForLevel(WaterMap.MAX_LEVEL), m.bedOffset(90, 90));
 		assertEquals(m.bedOffset(90, 90), m.bedHeights(0)[90][90]);
 		assertEquals(0, m.bedHeights(0)[10][10]);
+		// tiles on the shore sink in the middle instead
+		assertTrue(m.isShoreTile(80, 90));
+		assertFalse(m.isShoreTile(85, 90));
+		assertTrue(m.centerOffset(80, 90) >= WaterMap.MIN_DEPTH);
 		assertEquals(WaterMap.FRESH, m.type[90 * N + 90]);
 		assertEquals(WaterBodies.LAKE, m.bodies.bodyClass[m.bodies.body[90 * N + 90]]);
 	}
