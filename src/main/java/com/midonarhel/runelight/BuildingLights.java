@@ -215,7 +215,7 @@ class BuildingLights
 			{
 				pool.add(new PointLight());
 			}
-			out.add(pool.get(used++).set(l.x, l.y, l.z, l.radius, RED, GREEN, BLUE, strength));
+			out.add(pool.get(used++).set(l.x, l.y, l.z, l.radius, RED, GREEN, BLUE, strength).indoor());
 		}
 	}
 

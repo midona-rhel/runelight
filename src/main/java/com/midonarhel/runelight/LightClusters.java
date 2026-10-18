@@ -147,7 +147,7 @@ class LightClusters
 
 			int index = kept++;
 			lightData.put(x).put(y).put(z).put(l.radius);
-			lightData.put(l.r * l.intensity).put(l.g * l.intensity).put(l.b * l.intensity).put(0);
+			lightData.put(l.r * l.intensity).put(l.g * l.intensity).put(l.b * l.intensity).put(l.indoor ? 1 : 0);
 
 			for (int cz = z0; cz <= z1; ++cz)
 			{

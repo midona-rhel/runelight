@@ -105,10 +105,12 @@ vec3 pointGlow(ivec2 px, float z, vec3 p) {
     vec3 l = posRadius.xyz - p;
     float d2 = dot(l, l);
     float r2 = posRadius.w * posRadius.w;
-    if (d2 < r2) {
+    vec4 colorFlags = texelFetch(lightData, li * 2 + 1);
+    // w 1: an indoor light (building lights), which would glow in the fog outside through the walls
+    if (d2 < r2 && colorFlags.w < 0.5) {
       // steeper than the surface falloff: a soft halo around the light rather than a lit ball of fog
       float att = 1.0 - sqrt(d2 / r2);
-      sum += texelFetch(lightData, li * 2 + 1).rgb * (att * att * att);
+      sum += colorFlags.rgb * (att * att * att);
     }
   }
   return sum * FOG_POINT_LIGHT_SCALE;

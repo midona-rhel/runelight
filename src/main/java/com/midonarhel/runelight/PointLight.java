@@ -10,6 +10,8 @@ class PointLight
 	float radius;
 	float r, g, b;
 	float intensity;
+	// inside a building: lights its room but not the fog, which it would light through the walls
+	boolean indoor;
 
 	PointLight set(float x, float y, float z, float radius, float r, float g, float b, float intensity)
 	{
@@ -21,6 +23,13 @@ class PointLight
 		this.g = g;
 		this.b = b;
 		this.intensity = intensity;
+		this.indoor = false;
+		return this;
+	}
+
+	PointLight indoor()
+	{
+		indoor = true;
 		return this;
 	}
 }
