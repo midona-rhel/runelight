@@ -184,7 +184,7 @@ float fogAmount(vec3 world) {
 // Point lights: only the lights listed in this pixel's cluster are evaluated
 
 // lights.json strengths are 117 HD's, tuned for its linear lighting; this maps them to our gamma-space lighting
-#define POINT_LIGHT_SCALE 0.08
+#define POINT_LIGHT_SCALE 0.16
 
 int clusterBase(ivec2 px, float z) {
   vec2 rel = (vec2(px) + 0.5 - vec2(sceneViewport.xy)) / vec2(sceneViewport.zw);
@@ -213,9 +213,9 @@ vec3 pointLights(int base, vec3 p, vec3 n) {
     if (d2 >= r2) {
       continue;
     }
-    // falloff matching 117 HD, whose light data we use: (1 - d / r)^2
+    // 117 HD's falloff is (1 - d / r)^2 in linear color; after gamma encoding that looks close to (1 - d / r),
+    // which is what we use since we light in gamma space
     float att = 1.0 - sqrt(d2 / r2);
-    att *= att;
     // wrapped diffuse so faces turned slightly away still catch some light, which suits flat-shaded models
     float ndl = clamp(dot(n, l * inversesqrt(max(d2, 1.0))) * 0.75 + 0.25, 0.0, 1.0);
     sum += color * att * ndl * POINT_LIGHT_SCALE;
