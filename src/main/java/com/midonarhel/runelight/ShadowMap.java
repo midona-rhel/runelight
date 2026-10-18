@@ -42,6 +42,8 @@ class ShadowMap
 	private int front = -1;
 	private int building = -1;
 	private int cacheKey;
+	// static maps started so far, for the timings overlay
+	int builds;
 
 	void init(int size)
 	{
@@ -207,6 +209,7 @@ class ShadowMap
 			initCache();
 		}
 		building = front == 0 ? 1 : 0;
+		++builds;
 		View v = views[building];
 		System.arraycopy(dir, 0, v.dir, 0, 3);
 		v.focusX = fx;

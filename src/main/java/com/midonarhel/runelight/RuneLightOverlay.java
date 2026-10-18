@@ -15,6 +15,10 @@ class RuneLightOverlay extends OverlayPanel
 	private final Client client;
 	private final RuneLightPlugin plugin;
 	private final RuneLightConfig config;
+	// static shadow redraws per second, counted over a second
+	private int lastBuilds;
+	private long lastBuildsMillis;
+	private int buildsPerSecond;
 
 	@Inject
 	RuneLightOverlay(Client client, RuneLightPlugin plugin, RuneLightConfig config)
@@ -57,6 +61,18 @@ class RuneLightOverlay extends OverlayPanel
 				{
 					line("  " + CpuTimer.NAMES[s], ms(c.getMs(s)), Color.WHITE);
 				}
+			}
+			if (config.shadows() && config.shadowCache())
+			{
+				long now = System.currentTimeMillis();
+				if (now - lastBuildsMillis >= 1000)
+				{
+					int builds = plugin.getShadowMap().builds;
+					buildsPerSecond = (int) Math.round((builds - lastBuilds) * 1000.0 / Math.max(now - lastBuildsMillis, 1));
+					lastBuilds = builds;
+					lastBuildsMillis = now;
+				}
+				line("Shadow redraws", buildsPerSecond + " / s", Color.WHITE);
 			}
 			line("Point lights", Integer.toString(plugin.getPointLightCount()), Color.WHITE);
 			BuildingLights buildings = plugin.getBuildingLights();

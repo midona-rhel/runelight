@@ -2179,6 +2179,11 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		return buildingLights;
 	}
 
+	ShadowMap getShadowMap()
+	{
+		return shadowMap;
+	}
+
 	int getPointLightCount()
 	{
 		return lightClusters.getLightCount();
