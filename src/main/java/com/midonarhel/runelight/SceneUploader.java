@@ -968,10 +968,10 @@ class SceneUploader
 			{
 				height = Math.max(height, -vertexY[v]);
 			}
-			int phase = WindSway.phase(x + basex, z + basez);
+			int anchor = WindSway.anchor(x + basex, z + basez);
 			for (int v = 0; v < vertexCount; ++v)
 			{
-				swayCodes[v] = WindSway.vertexCode(material, vertexX[v], vertexY[v], vertexZ[v], height, phase);
+				swayCodes[v] = WindSway.vertexCode(material, vertexX[v], vertexY[v], vertexZ[v], height, anchor);
 			}
 		}
 
