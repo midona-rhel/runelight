@@ -4,6 +4,7 @@
 
 #include "frame.glsl"
 #include "sky.glsl"
+#include "environment.glsl"
 #include cluster_config
 
 #define DEBUG_FINAL 0
@@ -245,7 +246,8 @@ void main() {
   bool sky = isSky(d);
   bool inside = inViewport(px);
   bool sunAndSky = outdoors == 1;
-  vec3 fogColor = sunAndSky && proceduralSky == 1 ? skyHorizon(sunAltitude) : clientSkyColor;
+  vec3 fogColor = envFog(sunAndSky && proceduralSky == 1 ? skyHorizon(sunAltitude) : clientSkyColor, sunAndSky,
+    sunAltitude);
 
   if (debugView == DEBUG_DEPTH) {
     // log scale from the near plane out to ~100 tiles
@@ -263,7 +265,10 @@ void main() {
     if (inside && sunAndSky && proceduralSky == 1) {
       // a point on the near plane gives the view ray; the camera is at the origin of camera-relative space
       vec3 dir = normalize(reconstructPosition(vec2(px) + 0.5, 1.0));
-      color.rgb = skyColor(dir, sunDir, moonDir, sunAltitude, time);
+      color.rgb = envSky(skyColor(dir, sunDir, moonDir, sunAltitude, time), fogColor, -dir.y);
+    } else if (inside && envCave == 1 && proceduralSky == 1) {
+      // underground the void behind the scene takes the area's fog color, so fogged walls fade into it
+      color.rgb = fogColor;
     }
     FragColor = overTransparent(px, color);
     return;
@@ -286,12 +291,12 @@ void main() {
     }
     vec3 caster = sunIsCaster == 1 ? sunLight(sunAltitude) : moonLight(sunAltitude);
     float up = max(-n.y, 0.0);
-    light = (ambientLight(sunAltitude) + skyLight(sunAltitude) * up) * ao
-      + caster * max(dot(n, casterDir), 0.0) * shadow * mix(1.0, ao, AO_DIRECT);
+    light = (ambientLight(sunAltitude) + skyLight(sunAltitude) * up) * envAmbient * ao
+      + caster * envSun * max(dot(n, casterDir), 0.0) * shadow * mix(1.0, ao, AO_DIRECT);
   } else if (lightingEnabled == 1 && inside) {
     // Underground: no sun, and the game's own baked shading is removed, so a fixed soft key light from above
     // keeps shapes readable. Point lights do the rest.
-    light = caveLight(n) * ao;
+    light = envCaveLight(n) * ao;
   }
 
   int cluster = clusterBase(px, viewDepth(d));
@@ -320,6 +325,6 @@ void main() {
   }
 
   vec3 lit = shade(color.rgb, light);
-  lit = mix(lit, fogColor, fogAmount(p + cameraPos));
+  lit = mix(lit, fogColor, max(fogAmount(p + cameraPos), envFogAmount(p)));
   FragColor = overTransparent(px, vec4(lit, color.a));
 }

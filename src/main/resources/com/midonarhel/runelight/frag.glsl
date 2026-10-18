@@ -69,6 +69,7 @@ uniform int sunIsCaster;
 uniform float sunAltitude;
 
 #include "sky.glsl"
+#include "environment.glsl"
 
 #include "hsl_to_rgb.glsl"
 
@@ -133,12 +134,15 @@ void main() {
     vec3 light;
     if (outdoors == 1) {
       vec3 caster = sunIsCaster == 1 ? sunLight(sunAltitude) : moonLight(sunAltitude);
-      light = ambientLight(sunAltitude) + skyLight(sunAltitude) * max(-n.y, 0.0) + caster * max(dot(n, casterDir), 0.0);
+      light = (ambientLight(sunAltitude) + skyLight(sunAltitude) * max(-n.y, 0.0)) * envAmbient
+        + caster * envSun * max(dot(n, casterDir), 0.0);
     } else {
-      light = caveLight(n);
+      light = envCaveLight(n);
     }
-    vec3 fog = outdoors == 1 && proceduralSky == 1 ? skyHorizon(sunAltitude) : fogColor.rgb;
-    FragAlpha = vec4(mix(shade(c.rgb, light), fog, fFogAmount), c.a);
+    vec3 fog = envFog(outdoors == 1 && proceduralSky == 1 ? skyHorizon(sunAltitude) : fogColor.rgb, outdoors == 1,
+      sunAltitude);
+    float fogAmount = max(fFogAmount, envFogAmount(fWorldPos - vec3(cameraX, cameraY, cameraZ)));
+    FragAlpha = vec4(mix(shade(c.rgb, light), fog, fogAmount), c.a);
   }
 
 #ifdef FRAG_UVS

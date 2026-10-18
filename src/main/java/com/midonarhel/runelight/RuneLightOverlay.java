@@ -46,6 +46,10 @@ class RuneLightOverlay extends OverlayPanel
 			line("Point lights", Integer.toString(plugin.getPointLightCount()), Color.WHITE);
 			double h = plugin.getHourOfDay();
 			line("Time", String.format("%02d:%02d", (int) h, (int) (h * 60) % 60), Color.WHITE);
+			if (config.areaEnvironments())
+			{
+				environmentLines(plugin.environmentManager);
+			}
 			if (plugin.isHotReloading())
 			{
 				line("Shaders", "hot reload", Color.GREEN);
@@ -58,6 +62,18 @@ class RuneLightOverlay extends OverlayPanel
 		}
 
 		return super.render(graphics);
+	}
+
+	private void environmentLines(EnvironmentManager env)
+	{
+		boolean cave = !env.isOverworld();
+		line("Area", env.getEnvironment().toString(), cave ? Color.ORANGE : Color.CYAN);
+		EnvironmentManager.Environment biome = env.getBiome();
+		line("Biome", biome != null ? biome.toString() : "-", Color.WHITE);
+		String where = cave ? "cave" : env.getSheltered() > 0.5f ? "outside, sheltered" : "outside";
+		line("Where", where, Color.WHITE);
+		int[] wp = env.getWorldPoint();
+		line("Tile", wp[0] + ", " + wp[1] + ", " + wp[2], Color.WHITE);
 	}
 
 	private void line(String left, String right, Color color)

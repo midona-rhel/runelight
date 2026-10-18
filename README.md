@@ -35,3 +35,11 @@ Plugin config, Development section:
 
 Point light placements come from 117 HD's light definitions, converted with `tools/import_117hd_lights.py`
 (see the script for usage). Rerun it against a newer 117 HD checkout to pick up their additions.
+
+## Areas
+
+Which area the camera is in, whether it is under the open sky or underground, and each area's light tint, fog and
+sky haze come from `environments.json`, built by `tools/import_environments.py` from 117 HD's areas and
+environments with 3D Weather's biome regions as fallback (see the script for usage and what it leaves out).
+Rerun it against newer checkouts to pick up their additions. The biome looks (desert, swamp, snow, ...) are set in
+the script's `BIOMES` table.
