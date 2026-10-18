@@ -95,12 +95,8 @@ class Shader
 				throw new ShaderException(describe() + " failed to link:\n" + glGetProgramInfoLog(program));
 			}
 
-			glValidateProgram(program);
-
-			if (glGetProgrami(program, GL_VALIDATE_STATUS) == GL_FALSE)
-			{
-				throw new ShaderException(describe() + " failed to validate:\n" + glGetProgramInfoLog(program));
-			}
+			// No glValidateProgram: it checks the current GL state, not the program. Right after linking every
+			// sampler still points at unit 0, and Apple's driver rejects programs mixing sampler types there.
 
 			ok = true;
 		}

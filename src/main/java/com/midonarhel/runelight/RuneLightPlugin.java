@@ -155,7 +155,9 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 	@Named("developerMode")
 	private boolean developerMode;
 
-	private static final String STOCK_GPU_PLUGIN = "net.runelite.client.plugins.gpu.GpuPlugin";
+	private static final Set<String> OTHER_RENDERERS = Set.of(
+		"net.runelite.client.plugins.gpu.GpuPlugin",
+		"rs117.hd.HdPlugin");
 
 	// true once this plugin owns the client's draw callbacks; guards shutDown from clobbering another renderer
 	private boolean active;
@@ -405,10 +407,11 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 	@Override
 	protected void startUp()
 	{
-		if (stockGpuEnabled())
+		String other = otherRenderer();
+		if (other != null)
 		{
-			log.warn("The GPU plugin is enabled; RuneLight will not start");
-			chat("RuneLight can't run alongside the GPU plugin. Turn the GPU plugin off, then enable RuneLight again.");
+			log.warn("{} is enabled; RuneLight will not start", other);
+			chat("RuneLight can't run alongside " + other + ". Turn it off, then enable RuneLight again.");
 			SwingUtilities.invokeLater(() ->
 			{
 				try
@@ -979,16 +982,24 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		return shaderWatcher != null;
 	}
 
-	private boolean stockGpuEnabled()
+	/**
+	 * @return the name of another enabled renderer plugin (stock GPU, 117 HD, ...), or null
+	 */
+	private String otherRenderer()
 	{
 		for (Plugin p : pluginManager.getPlugins())
 		{
-			if (p.getClass().getName().equals(STOCK_GPU_PLUGIN))
+			if (p == this || !pluginManager.isPluginEnabled(p))
 			{
-				return pluginManager.isPluginEnabled(p);
+				continue;
+			}
+			if (p instanceof DrawCallbacks || OTHER_RENDERERS.contains(p.getClass().getName()))
+			{
+				PluginDescriptor d = p.getClass().getAnnotation(PluginDescriptor.class);
+				return d != null ? d.name() : p.getClass().getSimpleName();
 			}
 		}
-		return false;
+		return null;
 	}
 
 	private void chat(String message)
