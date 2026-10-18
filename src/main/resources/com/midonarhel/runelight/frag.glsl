@@ -75,6 +75,7 @@ uniform float sunAltitude;
 #include "sky.glsl"
 #include "materials.glsl"
 #include "environment.glsl"
+#include "edge_fade.glsl"
 
 #include "hsl_to_rgb.glsl"
 
@@ -164,6 +165,8 @@ void main() {
       sunAltitude);
     float fogAmount = max(fFogAmount, envFogAmount(fWorldPos - vec3(cameraX, cameraY, cameraZ)));
     FragAlpha = vec4(mix(shade(c.rgb, light), fog, fogAmount), c.a);
+    // transparent faces vanish toward the edge of the world, where the composite shows the sky behind them
+    FragAlpha.a *= 1.0 - edgeFadeAmount(fWorldPos);
   }
 
 #ifdef FRAG_UVS

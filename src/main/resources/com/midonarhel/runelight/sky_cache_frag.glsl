@@ -29,5 +29,9 @@ void main() {
     c = cloudLayer(dir, cameraPos, sunDir, moonDir, sunAltitude, SKY_TAU / cacheSize.x, cloudJitter(gl_FragCoord.xy),
       captureSteps);
   }
-  FragColor = vec4(base * c.a + cloudShoulder(c.rgb), c.a);
+  vec4 o = vec4(base * c.a + cloudShoulder(c.rgb), c.a);
+  // one NaN texel would spread through the mips into the whole sky light (and some drivers produce them where
+  // others don't): a broken texel shows the clear sky instead
+  bool bad = any(isnan(o)) || any(isinf(o));
+  FragColor = bad ? vec4(base, 1.0) : clamp(o, vec4(0.0), vec4(64.0, 64.0, 64.0, 1.0));
 }

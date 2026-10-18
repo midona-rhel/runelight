@@ -8,7 +8,9 @@ import static org.lwjgl.opengl.GL33C.*;
  * (sky_cache_frag.glsl, layout in atmosphere.glsl) every few in-game minutes, more often around sunrise and sunset
  * when the sky changes fastest, and as soon as the weather, the cloud cover or the camera's place under the clouds
  * changes noticeably. What is shown is the previous capture blended into the latest (sky_cache_blend_frag.glsl),
- * advancing with the game clock, so nothing pops.
+ * advancing with the game clock, so nothing pops. Each blend takes about as long as the captures come, so the
+ * sky moves on steadily instead of in steps, and the composite eases between the cache and the analytic sky light
+ * (skyCacheWeight) whenever the cache stops or starts being used, so the light never switches at once.
  *
  * A tiny irradiance map (sky_irradiance_frag.glsl), blended the same way, holds the light the sky sheds on a
  * surface facing each way, so the ground follows the clouds and the sky's colors. The composite can also draw the
@@ -60,8 +62,10 @@ class SkyCache
 	{
 		// with the clock standing still, clouds still drift: capture at least this often, real seconds
 		static final float MAX_SECONDS = 30;
-		// a capture blends in over at least this long, real seconds, whatever the clock does
+		// a capture blends in over at least this long, real seconds, whatever the clock does; at most this long when
+		// captures come further apart than that
 		static final float BLEND_SECONDS = 2;
+		static final float MAX_BLEND_SECONDS = 8;
 		// changes that capture early: cloud cover and overcast, how snowy the overcast is, sun altitude (degrees),
 		// camera altitude and cloud drift relative to the camera (world units)
 		static final float COVER_STEP = 0.04f;
@@ -78,6 +82,9 @@ class SkyCache
 		private float cover, overcast, snow, altitude, cameraAltitude;
 		private double driftX, driftZ;
 		private int settings;
+		// real time the latest capture blends over: the time between the last two captures, so a blend ends about
+		// when the next capture comes and the sky keeps moving at a steady pace rather than in steps
+		private long blendMillis = (long) (BLEND_SECONDS * 1000);
 
 		/**
 		 * In-game minutes between captures at this sun altitude: shorter while the sun is near the horizon.
@@ -121,6 +128,8 @@ class SkyCache
 		void captured(double gameMinutes, long millis, float cover, float overcast, float snow, float altitude,
 			float cameraAltitude, double driftX, double driftZ, int settings)
 		{
+			long gap = valid ? millis - this.millis : 0;
+			blendMillis = (long) (Math.max(BLEND_SECONDS, Math.min(MAX_BLEND_SECONDS, gap / 1000f)) * 1000);
 			valid = true;
 			this.gameMinutes = gameMinutes;
 			this.millis = millis;
@@ -136,7 +145,8 @@ class SkyCache
 
 		/**
 		 * How far the previous capture has blended into the latest, 0 to 1: by the game clock over the interval, or
-		 * in real time over BLEND_SECONDS, whichever is further.
+		 * in real time over about the time between captures, whichever is further. Linear: the blends follow one
+		 * another, and easing each in and out would make the sky's changes pulse.
 		 */
 		float blend(double gameMinutes, long millis, double interval)
 		{
@@ -146,9 +156,8 @@ class SkyCache
 			}
 			double byGame = Double.isNaN(gameMinutes) || Double.isNaN(this.gameMinutes) ? 0
 				: (gameMinutes - this.gameMinutes) / interval;
-			double byReal = (millis - this.millis) / (BLEND_SECONDS * 1000.0);
-			double t = Math.max(0, Math.min(1, Math.max(byGame, byReal)));
-			return (float) (t * t * (3 - 2 * t));
+			double byReal = (millis - this.millis) / (double) blendMillis;
+			return (float) Math.max(0, Math.min(1, Math.max(byGame, byReal)));
 		}
 
 		void invalidate()
@@ -177,7 +186,12 @@ class SkyCache
 	private int uniBlend;
 	private int uniIrradianceSize, uniIrradianceBlend, uniIrradianceLod, uniIrradianceSunDir, uniIrradianceSunAltitude,
 		uniIrradianceOvercast;
-	private int uniMode, uniHaze, uniStars;
+	private int uniMode, uniHaze, uniStars, uniWeight;
+	// how much of the composite's sky light comes from the cache, eased toward 1 while it is used and 0 when not
+	private float weight;
+	private long weightMillis;
+	// real seconds over which the sky light goes from the analytic one to the cache's and back
+	static final float WEIGHT_SECONDS = 1.5f;
 
 	private int width, height;
 	// capture in progress: next strip, -1 for none; strips in this capture; what the schedule records once it is done
@@ -299,6 +313,7 @@ class SkyCache
 		uniMode = glGetUniformLocation(program, "skyCacheMode");
 		uniHaze = glGetUniformLocation(program, "skyHaze");
 		uniStars = glGetUniformLocation(program, "starBrightness");
+		uniWeight = glGetUniformLocation(program, "skyCacheWeight");
 		glUseProgram(program);
 		glUniform1i(glGetUniformLocation(program, "skyCache"), unit);
 		glUniform1i(glGetUniformLocation(program, "skyIrradiance"), unit + 1);
@@ -306,14 +321,34 @@ class SkyCache
 	}
 
 	/**
-	 * With the composite in use: how it uses the cache (MODE_* bits, 0 when there is none), how hazy the air is
-	 * and how bright the stars are.
+	 * With the composite in use, once a frame: how it uses the cache (MODE_* bits, 0 when it was not updated this
+	 * frame), how hazy the air is and how bright the stars are. The sky light keeps coming partly from the last
+	 * capture while it eases back to the analytic one; {@link #bind} must have been called either way.
 	 */
 	void setCompositeUniforms(int mode, float haze, float stars)
 	{
-		glUniform1i(uniMode, shown >= 0 ? mode : 0);
+		long now = System.currentTimeMillis();
+		// a long frame (loading) must not jump it
+		float dt = Math.max(0, Math.min(0.1f, (now - weightMillis) / 1000f));
+		weightMillis = now;
+		boolean light = (mode & MODE_LIGHT) != 0 && shown >= 0;
+		weight = ease(weight, light ? 1 : 0, dt);
+		if (shown < 0)
+		{
+			weight = 0;
+		}
+		int m = (weight > 0 ? MODE_LIGHT : 0) | (shown >= 0 ? mode & MODE_VIEW : 0);
+		glUniform1i(uniMode, m);
+		glUniform1f(uniWeight, weight);
 		glUniform1f(uniHaze, haze);
 		glUniform1f(uniStars, stars);
+	}
+
+	/** Linear ease of the cache weight toward target over WEIGHT_SECONDS. */
+	static float ease(float weight, float target, float dt)
+	{
+		float step = dt / WEIGHT_SECONDS;
+		return weight < target ? Math.min(target, weight + step) : Math.max(target, weight - step);
 	}
 
 	/**
@@ -343,11 +378,23 @@ class SkyCache
 		{
 			init(w, h);
 		}
+		// whatever an earlier pass left enabled would blend into the captures (or with an uninitialized texture,
+		// NaN into them) or clip them
+		glDisable(GL_BLEND);
+		glDisable(GL_DEPTH_TEST);
+		glDisable(GL_CULL_FACE);
+		glDisable(GL_SCISSOR_TEST);
+		glColorMask(true, true, true, true);
 		long now = System.currentTimeMillis();
 		if (now - lastUpdateMillis > STALE_MILLIS)
 		{
-			shown = -1;
-			blending = false;
+			// After a pause the old capture is stale: capture at once. While the composite still shows it (a
+			// hitch), blend from it as usual; once the light has eased away from it, start over unseen.
+			if (weight <= 0)
+			{
+				shown = -1;
+				blending = false;
+			}
 			captureSlice = -1;
 			schedule.invalidate();
 		}
