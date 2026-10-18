@@ -71,3 +71,15 @@ Plugin config, Clouds section: one slab of clouds over the procedural sky, march
 the composite (nothing is spent where scenery covers the sky), with optional cloud shadows on the ground. Rain and
 snow close the sky up through `Weather.cloudCover()`. Tuning constants are `#define`s at the top of `clouds.glsl`;
 the noise texture and wind are in `Clouds.java`.
+
+## Water
+
+Plugin config, Water section. When a scene loads, `WaterMap.java` finds the water tiles (the game's water
+textures, as in 117 HD), groups them into bodies and classifies each (`WaterBodies.java`): small enclosed pools and
+moats are still, rivers flow toward where they leave the scene (downhill first) or into open water, the sea pushes
+toward its shores. Swamps and caves (from the area, `EnvironmentManager.waterMurk`) make water murky. Water terrain
+is uploaded as a lowered bed, deeper away from the shore. The surface is not geometry: the composite finds where
+each view ray crosses it and shades it in `water.glsl` (refraction, depth absorption, caustics, sky and rough
+screen-space reflections, glints, flow-mapped ripples, swell, shoreline foam, rain rings). Per-type looks are the
+tables at the top of `water.glsl`, the rest are its `#define`s. "Show water map" tints water by type and shows its
+flow as moving stripes.

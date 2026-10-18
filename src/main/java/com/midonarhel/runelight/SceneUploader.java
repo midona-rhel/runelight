@@ -60,6 +60,10 @@ class SceneUploader
 	private final GroundBlender groundBlender = new GroundBlender();
 	private final float[] slope = new float[2];
 	private final float[] tileSlopes = new float[8];
+	// the scene's water, null when water is off; set before uploading (WaterMap)
+	WaterMap water;
+	private final float[] bedSlopes = new float[8];
+	private boolean[] landVertex = new boolean[64];
 
 	SceneUploader(RenderCallbackManager renderCallbackManager)
 	{
@@ -472,6 +476,11 @@ class SceneUploader
 			return 0;
 		}
 
+		if (water != null && scene.getWorldViewId() == WorldView.TOPLEVEL && water.isBed(tileX, tileY, tileZ, tile.getTexture()))
+		{
+			return uploadBed(tileZ, tileX, tileY, vertexBuffer, lx, lz);
+		}
+
 		int swFlag = 0, seFlag = 0, neFlag = 0, nwFlag = 0;
 		if (GroundBlender.enabled && tile.getTexture() == -1)
 		{
@@ -520,7 +529,7 @@ class SceneUploader
 		final int hsl3 = nwColor;
 
 		int tex = tile.getTexture() + 1;
-		tex |= SurfaceMaterials.texture(tex - 1);
+		tex |= SurfaceMaterials.texture(tex - 1) | WaterMap.LAND_FLAG;
 
 		final int n0 = terrainNormal(tileHeights[tileZ], tileX, tileY);
 		final int n1 = terrainNormal(tileHeights[tileZ], tileX + 1, tileY);
@@ -620,6 +629,14 @@ class SceneUploader
 		// 117 HD: on shaped tiles with any texture (shores) the overlay faces keep their own colors
 		final boolean blendOverlay = triangleTextures == null && !groundBlender.unblended(tileZ, ex, ey);
 		final int shape = sceneTileModel.getShape();
+		// shore tiles: the water faces are lowered into the bed, the land faces and their vertices stay
+		final boolean bedTile = triangleTextures != null && water != null && scene.getWorldViewId() == WorldView.TOPLEVEL
+			&& water.hasBed(ex, ey, tileZ);
+		if (bedTile)
+		{
+			markLandVertices(sceneTileModel);
+			GroundBlender.tileSlopes(water.bedHeights(tileZ), ex, ey, slope, bedSlopes);
+		}
 
 		int cnt = 0;
 		for (int i = 0; i < faceCount; ++i)
@@ -639,6 +656,14 @@ class SceneUploader
 
 			cnt += 3;
 
+			if (bedTile && WaterMap.isWaterTexture(triangleTextures[i]))
+			{
+				putBedVertex(vertexBuffer, vertexX[vertex0], vertexY[vertex0], vertexZ[vertex0], vertex0, lx, lz, ex, ey);
+				putBedVertex(vertexBuffer, vertexX[vertex1], vertexY[vertex1], vertexZ[vertex1], vertex1, lx, lz, ex, ey);
+				putBedVertex(vertexBuffer, vertexX[vertex2], vertexY[vertex2], vertexZ[vertex2], vertex2, lx, lz, ex, ey);
+				continue;
+			}
+
 			// vertexes are stored in scene local, convert to tile local
 			int lx0 = vertexX[vertex0] - basex;
 			int ly0 = vertexY[vertex0];
@@ -653,7 +678,7 @@ class SceneUploader
 			int lz2 = vertexZ[vertex2] - basez;
 
 			int tex = triangleTextures != null ? triangleTextures[i] + 1 : 0;
-			final int texMaterial = SurfaceMaterials.texture(tex - 1);
+			final int texMaterial = SurfaceMaterials.texture(tex - 1) | WaterMap.LAND_FLAG;
 
 			int n0 = modelNormal(vertexX[vertex0] - lx, vertexZ[vertex0] - lz);
 			float s0x = slope[0], s0z = slope[1];
@@ -696,6 +721,76 @@ class SceneUploader
 		}
 
 		return cnt;
+	}
+
+	/**
+	 * A water tile as the bed under the water: lowered, no texture, bed colored, flagged for the composite.
+	 */
+	private int uploadBed(int tileZ, int tileX, int tileY, GpuIntBuffer vb, int lx, int lz)
+	{
+		final int[][] bed = water.bedHeights(tileZ);
+		final int x0 = tileX << 7, z0 = tileY << 7;
+		final int tex = WaterMap.BED_FLAG;
+		final int c0 = water.bedColor(tileX, tileY, x0, z0, water.depthLevel(tileX, tileY));
+		final int c1 = water.bedColor(tileX, tileY, x0 + 128, z0, water.depthLevel(tileX + 1, tileY));
+		final int c2 = water.bedColor(tileX, tileY, x0 + 128, z0 + 128, water.depthLevel(tileX + 1, tileY + 1));
+		final int c3 = water.bedColor(tileX, tileY, x0, z0 + 128, water.depthLevel(tileX, tileY + 1));
+		final int n0 = terrainNormal(bed, tileX, tileY);
+		final int n1 = terrainNormal(bed, tileX + 1, tileY);
+		final int n2 = terrainNormal(bed, tileX + 1, tileY + 1);
+		final int n3 = terrainNormal(bed, tileX, tileY + 1);
+		final int h0 = bed[tileX][tileY], h1 = bed[tileX + 1][tileY], h2 = bed[tileX + 1][tileY + 1], h3 = bed[tileX][tileY + 1];
+		final int s = Perspective.LOCAL_TILE_SIZE;
+
+		vb.put22224(lx + s, h2, lz + s, 0, c2);
+		vb.put2222(tex, 256, 256, n2);
+		vb.put22224(lx, h3, lz + s, 0, c3);
+		vb.put2222(tex, 0, 256, n3);
+		vb.put22224(lx + s, h1, lz, 0, c1);
+		vb.put2222(tex, 256, 0, n1);
+
+		vb.put22224(lx, h0, lz, 0, c0);
+		vb.put2222(tex, 0, 0, n0);
+		vb.put22224(lx + s, h1, lz, 0, c1);
+		vb.put2222(tex, 256, 0, n1);
+		vb.put22224(lx, h3, lz + s, 0, c3);
+		vb.put2222(tex, 0, 256, n3);
+		return 6;
+	}
+
+	private void markLandVertices(SceneTileModel model)
+	{
+		int[] vx = model.getVertexX();
+		if (landVertex.length < vx.length)
+		{
+			landVertex = new boolean[vx.length];
+		}
+		java.util.Arrays.fill(landVertex, 0, vx.length, false);
+		int[] tex = model.getTriangleTextureId();
+		int[] fa = model.getFaceX(), fb = model.getFaceY(), fc = model.getFaceZ();
+		for (int f = 0; f < fa.length; ++f)
+		{
+			if (!WaterMap.isWaterTexture(tex[f]))
+			{
+				landVertex[fa[f]] = landVertex[fb[f]] = landVertex[fc[f]] = true;
+			}
+		}
+	}
+
+	/**
+	 * One vertex of a water face of a shore tile model, lowered into the bed: corners take the corner depth,
+	 * other vertices interpolate it unless a land face shares them.
+	 */
+	private void putBedVertex(GpuIntBuffer vb, int x, int y, int z, int v, int lx, int lz, int ex, int ey)
+	{
+		int ox = x - lx, oz = z - lz;
+		boolean corner = (ox == 0 || ox == 128) && (oz == 0 || oz == 128);
+		int cx = ex + (ox >> 7), cy = ey + (oz >> 7);
+		int sink = corner ? water.bedOffset(cx, cy) : landVertex[v] ? 0 : water.bedOffset(ex, ey, ox, oz);
+		int depth = corner ? water.depthLevel(cx, cy) : water.depthLevel(ex + Math.round(ox / 128f), ey + Math.round(oz / 128f));
+		GroundBlender.interpolateSlope(bedSlopes, ox / 128f, oz / 128f, slope);
+		vb.put22224(x - basex, y + sink, z - basez, 0, water.bedColor(ex, ey, (ex << 7) + ox, (ey << 7) + oz, depth));
+		vb.put2222(WaterMap.BED_FLAG, 0, 0, VertexShading.encodeNormal(slope[0], -1, slope[1]));
 	}
 
 	/**

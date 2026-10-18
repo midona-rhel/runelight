@@ -10,6 +10,8 @@ in float fViewZ;
 in float fAlpha;
 flat in vec3 fColor;
 
+uniform sampler2D sceneMaterial;  // b: 1 on the water bed; rain on water makes rings there instead (water.glsl)
+
 out vec4 FragColor;
 
 // how far behind a surface a splash may sit and still show on it, as a fraction of view depth
@@ -23,7 +25,7 @@ void main() {
   if (fSplash == 1) {
     // only on a surface the camera actually sees here, so splashes on hidden roofs or behind walls don't show
     float tol = fViewZ * SPLASH_SURFACE_TOLERANCE + 8.0;
-    if (abs(scene - fViewZ) > tol) {
+    if (abs(scene - fViewZ) > tol || texelFetch(sceneMaterial, ivec2(gl_FragCoord.xy), 0).b > 0.75) {
       discard;
     }
     float r = length(fQuad);

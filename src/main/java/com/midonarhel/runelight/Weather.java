@@ -116,7 +116,7 @@ class Weather
 		int surfaceMode, fadeDistance, shadowsEnabled, lightProjRel;
 
 		void locate(int p, int sceneUnit, int occlusionUnit, int shadowCompareUnit, int alphaLayerUnit,
-			int lightDataUnit, int clusterDataUnit)
+			int lightDataUnit, int clusterDataUnit, int materialUnit)
 		{
 			program = p;
 			viewProj = glGetUniformLocation(p, "viewProj");
@@ -155,6 +155,7 @@ class Weather
 			glUniform1i(glGetUniformLocation(p, "sceneAlpha"), alphaLayerUnit);
 			glUniform1i(glGetUniformLocation(p, "lightData"), lightDataUnit);
 			glUniform1i(glGetUniformLocation(p, "clusterData"), clusterDataUnit);
+			glUniform1i(glGetUniformLocation(p, "sceneMaterial"), materialUnit);
 			glUseProgram(0);
 		}
 	}
@@ -225,13 +226,15 @@ class Weather
 	 * Replace the current programs, deleting the old ones.
 	 */
 	void setPrograms(Programs p, int sceneUnit, int occlusionUnit, int shadowCompareUnit, int alphaLayerUnit,
-		int lightDataUnit, int clusterDataUnit)
+		int lightDataUnit, int clusterDataUnit, int materialUnit)
 	{
 		freePrograms();
-		rain.locate(p.rain, sceneUnit, occlusionUnit, occlusionUnit + 1, alphaLayerUnit, lightDataUnit, clusterDataUnit);
-		snow.locate(p.snow, sceneUnit, occlusionUnit, occlusionUnit + 1, alphaLayerUnit, lightDataUnit, clusterDataUnit);
+		rain.locate(p.rain, sceneUnit, occlusionUnit, occlusionUnit + 1, alphaLayerUnit, lightDataUnit, clusterDataUnit,
+			materialUnit);
+		snow.locate(p.snow, sceneUnit, occlusionUnit, occlusionUnit + 1, alphaLayerUnit, lightDataUnit, clusterDataUnit,
+			materialUnit);
 		surface.locate(p.surface, sceneUnit, occlusionUnit, shadowCompareUnit, alphaLayerUnit, lightDataUnit,
-			clusterDataUnit);
+			clusterDataUnit, materialUnit);
 	}
 
 	void freePrograms()
@@ -281,6 +284,26 @@ class Weather
 	float cloudCover()
 	{
 		return openSky ? Math.min(1, cover) : 0;
+	}
+
+	/**
+	 * Wind over open water: the direction it blows toward (x, z, normalized) and its strength 0-1 with gusts.
+	 * Still underground.
+	 */
+	void getWaterWind(float[] out)
+	{
+		float len = (float) Math.hypot(windX, windZ);
+		out[0] = len > 1e-3f ? windX / len : 0.87f;
+		out[1] = len > 1e-3f ? windZ / len : 0.49f;
+		out[2] = openSky ? Math.min(1, wind + 0.5f * gust) : 0;
+	}
+
+	/**
+	 * Rain falling on open water, 0-1.
+	 */
+	float waterRain()
+	{
+		return openSky ? Math.min(1, rainEffective) : 0;
 	}
 
 	/**

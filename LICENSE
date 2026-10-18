@@ -32,7 +32,9 @@ src/main/resources/com/midonarhel/runelight/materials.json is derived from 117 H
 materials, model overrides and lights by tools/import_117hd_materials.py, and
 src/main/resources/com/midonarhel/runelight/environments.json is converted in part
 from the area and environment definitions of 117 HD by tools/import_environments.py.
-All are distributed under the following license:
+The water bed depths and water texture lists in
+src/main/java/com/midonarhel/runelight/WaterMap.java follow 117 HD's underwater terrain
+and water types. All are distributed under the following license:
 
 BSD 2-Clause License
 

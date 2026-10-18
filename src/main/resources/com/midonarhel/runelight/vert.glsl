@@ -74,7 +74,7 @@ out vec3 fNormal;       // smooth vertex normal, world space; only meaningful wh
 out float fNormalValid;
 out vec4 fBorderColor;  // color * border weight, border weight
 out vec3 fInnerColor;   // color * (1 - border weight)
-flat out int fMaterial;  // SurfaceMaterials bits: emissive level in 0-1, transmissive in 2
+flat out int fMaterial;  // SurfaceMaterials bits: emissive level in 0-1, transmissive in 2; water bed 3, land 4
 #ifdef ZBUF_DEBUG
 out float fDepth;
 #endif
@@ -128,7 +128,7 @@ void main() {
 
   // the texture id + 1 in the low bits, material bits above it (SurfaceMaterials.java)
   fTextureId = tex.x & 0x3ff;
-  fMaterial = tex.x >> 10 & 7;
+  fMaterial = tex.x >> 10 & 31;
   fUv = vec2(float(tex.y) / 256.f, float(tex.z) / 256.f);
   if (fTextureId > 0) {
     vec2 textureAnim = textureAnimations[min(fTextureId - 1, TEXTURE_COUNT - 1)];

@@ -940,4 +940,99 @@ public interface RuneLightConfig extends Config
 	{
 		return true;
 	}
+
+	@ConfigSection(
+		name = "Water",
+		description = "Water you can see into, with flowing ripples, reflections and shoreline foam",
+		position = 550
+	)
+	String waterSection = "water";
+
+	@ConfigItem(
+		keyName = "water",
+		name = "Water",
+		description = "Draw water as a surface over a lowered bed: clear water shows the bed, swamps and caves are murky,"
+			+ " rivers flow and the sea rolls toward the shore. Reloads the scene.",
+		section = waterSection,
+		position = 551
+	)
+	default boolean water()
+	{
+		return true;
+	}
+
+	@ConfigItem(
+		keyName = "waterReflections",
+		name = "World reflections",
+		description = "Rough reflections of the scene (trees, walls, the shore) in the water, besides the sky.",
+		section = waterSection,
+		position = 552
+	)
+	default boolean waterReflections()
+	{
+		return true;
+	}
+
+	@Range(min = 25, max = 300)
+	@ConfigItem(
+		keyName = "waterClarity",
+		name = "Clarity",
+		description = "How far you can see into the water, in percent.",
+		section = waterSection,
+		position = 553
+	)
+	default int waterClarity()
+	{
+		return 100;
+	}
+
+	@Range(max = 200)
+	@ConfigItem(
+		keyName = "waterWaves",
+		name = "Waves",
+		description = "Height of the waves and ripples, in percent.",
+		section = waterSection,
+		position = 554
+	)
+	default int waterWaves()
+	{
+		return 100;
+	}
+
+	@Range(max = 300)
+	@ConfigItem(
+		keyName = "waterFlowSpeed",
+		name = "Flow speed",
+		description = "How fast rivers and the sea move, in percent.",
+		section = waterSection,
+		position = 555
+	)
+	default int waterFlowSpeed()
+	{
+		return 100;
+	}
+
+	@ConfigItem(
+		keyName = "waterCaustics",
+		name = "Caustics",
+		description = "Rippling sunlight on the bed of clear, shallow water.",
+		section = waterSection,
+		position = 556
+	)
+	default boolean waterCaustics()
+	{
+		return true;
+	}
+
+	@ConfigItem(
+		keyName = "waterDebug",
+		name = "Show water map",
+		description = "Debug: tint water by type and show which way it flows.",
+		section = waterSection,
+		position = 557
+	)
+	default boolean waterDebug()
+	{
+		return false;
+	}
 }

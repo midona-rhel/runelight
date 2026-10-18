@@ -30,7 +30,7 @@
 
 uniform sampler2D sceneAo;  // half resolution
 uniform sampler2D sceneAlpha;  // transparent geometry, already lit, premultiplied
-uniform sampler2D sceneMaterial;  // r emissive, g transmissive
+uniform sampler2D sceneMaterial;  // r emissive, g transmissive, b water (frag.glsl)
 uniform int debugView;
 uniform int aoEnabled;
 uniform float aoStrength;
@@ -252,6 +252,10 @@ vec4 overTransparent(ivec2 px, vec4 base) {
 
 // ---------------------------------------------------------------------------------------------------------------
 
+#include "water.glsl"
+
+// ---------------------------------------------------------------------------------------------------------------
+
 void main() {
   ivec2 px = ivec2(gl_FragCoord.xy);
   vec4 color = texelFetch(sceneColor, px, 0);
@@ -293,7 +297,7 @@ void main() {
 
   vec3 n = decodeNormal(texelFetch(sceneNormal, px, 0).rgb);
   vec3 p = reconstructPosition(vec2(px) + 0.5, d);
-  vec2 material = texelFetch(sceneMaterial, px, 0).rg;
+  vec3 material = texelFetch(sceneMaterial, px, 0).rgb;
   float emissive = material.r;
   float transmissive = material.g;
 
@@ -365,6 +369,7 @@ void main() {
   }
 
   vec3 lit = shade(color.rgb, light);
+  lit = waterOver(px, p, n, color.rgb, light, shadow, lit, material.b, fogColor);
   lit = mix(lit, fogColor, max(fogAmount(p + cameraPos), envFogAmount(p)));
   FragColor = overTransparent(px, vec4(lit, color.a));
   FragColor.rgb = applyVolumetricFog(px, FragColor.rgb, d);

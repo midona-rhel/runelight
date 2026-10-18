@@ -300,6 +300,11 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 	private WeatherForecast weatherForecast = new WeatherForecast(System.currentTimeMillis() / 1000);
 	// two units: the occlusion map's raw and compare views
 	private static final int WEATHER_OCCLUSION_UNIT = RuneLightPlugin.COMPOSITE_TEXTURE_UNIT + 12;
+	// the water data and ripple noise, bound only while the composite draws, so they share the weather's units
+	private static final int WATER_DATA_UNIT = RuneLightPlugin.COMPOSITE_TEXTURE_UNIT + 12;
+	private static final int WATER_NOISE_UNIT = RuneLightPlugin.COMPOSITE_TEXTURE_UNIT + 13;
+	private final Water water = new Water();
+	private final float[] waterWind = new float[3];
 	// when the plugin started; the day cycle and sky animation count from here
 	private long startMillis = System.currentTimeMillis();
 
@@ -717,6 +722,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 				lightClusters.free();
 				volumetricFog.free();
 				clouds.free();
+				water.free();
 
 				if (textureArrayId != -1)
 				{
@@ -806,6 +812,17 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 				{
 					// blended colors are baked into the terrain vertices at upload
 					GroundBlender.enabled = config.groundBlending();
+					if (client.getGameState() == GameState.LOGGED_IN)
+					{
+						client.setGameState(GameState.LOADING);
+					}
+				});
+			}
+			else if (configChanged.getKey().equals("water"))
+			{
+				clientThread.invokeLater(() ->
+				{
+					// the bed is baked into the terrain at upload
 					if (client.getGameState() == GameState.LOGGED_IN)
 					{
 						client.setGameState(GameState.LOADING);
@@ -932,7 +949,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		glShadowProgram = SHADOW_PROGRAM.compile(template);
 		setFogProgram(VolumetricFog.PROGRAM.compile(template));
 		weather.setPrograms(weather.compile(template), COMPOSITE_TEXTURE_UNIT, WEATHER_OCCLUSION_UNIT, SHADOW_COMPARE_UNIT, ALPHA_LAYER_UNIT,
-			LIGHT_DATA_UNIT, CLUSTER_DATA_UNIT);
+			LIGHT_DATA_UNIT, CLUSTER_DATA_UNIT, MATERIAL_UNIT);
 
 		glBindVertexArray(0);
 
@@ -1022,6 +1039,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		glUseProgram(0);
 		volumetricFog.locateComposite(c, FOG_TEXTURE_UNIT);
 		clouds.locateComposite(c, CLOUD_NOISE_UNIT);
+		water.locateComposite(c, WATER_DATA_UNIT, WATER_NOISE_UNIT);
 		weather.getLightning().locateComposite(c);
 
 		uniShadowLightProj = glGetUniformLocation(glShadowProgram, "lightProj");
@@ -1119,7 +1137,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		glShadowProgram = shadow;
 		setFogProgram(fog);
 		weather.setPrograms(weatherPrograms, COMPOSITE_TEXTURE_UNIT, WEATHER_OCCLUSION_UNIT, SHADOW_COMPARE_UNIT, ALPHA_LAYER_UNIT,
-			LIGHT_DATA_UNIT, CLUSTER_DATA_UNIT);
+			LIGHT_DATA_UNIT, CLUSTER_DATA_UNIT, MATERIAL_UNIT);
 		initUniforms();
 
 		if (textureAnimations != null)
@@ -2047,10 +2065,14 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		bindClouds();
 		sceneTargets.bindMaterial(MATERIAL_UNIT);
 		compositeMaterials.set(config);
+		weather.getWaterWind(waterWind);
+		water.bind(config, (System.currentTimeMillis() - startMillis) / 1000.0, waterWind, weather.waterRain(),
+			WATER_DATA_UNIT, WATER_NOISE_UNIT);
 
 		glBindFramebuffer(GL_FRAMEBUFFER, awtContext.getFramebuffer(false));
 		glViewport(0, 0, width, height);
 		glDrawArrays(GL_TRIANGLES, 0, 3);
+		Water.unbind(WATER_DATA_UNIT, WATER_NOISE_UNIT);
 
 		if (weather.isActive() && config.debugView() == DebugView.FINAL)
 		{
@@ -2917,6 +2939,14 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 			throw new RuntimeException(e);
 		}
 
+		// the water's bed depths and flow, needed by the upload; swapped in with the zones
+		sw = Stopwatch.createStarted();
+		WaterMap waterMap = config.water()
+			? WaterMap.build(scene, (x, y, plane) -> environmentManager.waterMurk(scene, x, y, plane)) : null;
+		mapUploader.water = waterMap;
+		water.sceneLoaded(waterMap);
+		log.debug("Water map time {}", sw);
+
 		// upload zones
 		sw = Stopwatch.createStarted();
 		for (int x = 0; x < Constants.EXTENDED_SCENE_SIZE >> 3; ++x)
@@ -3096,6 +3126,8 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		ctx.zones = nextZones;
 		nextZones = null;
 		weather.invalidateOcclusion();
+		water.swap();
+		clientUploader.water = mapUploader.water;
 
 		// setup vaos
 		for (int x = 0; x < ctx.zones.length; ++x) // NOPMD: ForLoopCanBeForeach

@@ -12,8 +12,8 @@ class SceneTargets
 	static final int COLOR_FORMAT = GL_RGBA8;
 	static final int NORMAL_FORMAT = GL_RGB10_A2;
 	static final int DEPTH_FORMAT = GL_DEPTH_COMPONENT32F;
-	// surface material per pixel (emissive, transmissive), see materials.glsl
-	static final int MATERIAL_FORMAT = GL_RG8;
+	// surface material per pixel (emissive, transmissive, water), see materials.glsl and water.glsl
+	static final int MATERIAL_FORMAT = GL_RGBA8;
 
 	private int width, height, samples;
 
@@ -46,7 +46,7 @@ class SceneTargets
 		texNormal = texture(NORMAL_FORMAT, GL_RGBA, GL_UNSIGNED_INT_2_10_10_10_REV);
 		texDepth = texture(DEPTH_FORMAT, GL_DEPTH_COMPONENT, GL_FLOAT);
 		texAlpha = texture(COLOR_FORMAT, GL_RGBA, GL_UNSIGNED_BYTE);
-		texMaterial = texture(MATERIAL_FORMAT, GL_RG, GL_UNSIGNED_BYTE);
+		texMaterial = texture(MATERIAL_FORMAT, GL_RGBA, GL_UNSIGNED_BYTE);
 
 		fboResolve = glGenFramebuffers();
 		glBindFramebuffer(GL_FRAMEBUFFER, fboResolve);

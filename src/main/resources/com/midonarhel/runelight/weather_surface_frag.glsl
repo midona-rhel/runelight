@@ -13,6 +13,7 @@ uniform int shadowsEnabled;
 uniform sampler2DShadow shadowCompare;
 uniform mat4 lightProjRel;
 uniform sampler2D sceneAlpha;  // transparency layer: no snow or wet look under water
+uniform sampler2D sceneMaterial;  // b: 1 on the water bed (water.glsl), which the water surface covers
 
 out vec4 FragColor;
 
@@ -53,7 +54,8 @@ void main() {
   float up = max(-n.y, 0.0);
 
   // offset along the normal so a surface isn't covered by itself, mostly for walls right below an edge
-  float exposed = softExposure(p + n * 12.0) * fade * amount * (1.0 - texelFetch(sceneAlpha, px, 0).a);
+  float exposed = softExposure(p + n * 12.0) * fade * amount * (1.0 - texelFetch(sceneAlpha, px, 0).a)
+    * (1.0 - step(0.75, texelFetch(sceneMaterial, px, 0).b));
   if (exposed <= 0.0) {
     discard;
   }
