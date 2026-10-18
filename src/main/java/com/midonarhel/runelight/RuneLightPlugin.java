@@ -186,9 +186,43 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		.add(GL_VERTEX_SHADER, "composite_vert.glsl")
 		.add(GL_FRAGMENT_SHADER, "composite_frag.glsl");
 
+	static final Shader AO_PROGRAM = new Shader()
+		.add(GL_VERTEX_SHADER, "composite_vert.glsl")
+		.add(GL_FRAGMENT_SHADER, "ao_frag.glsl");
+
 	private int glCompositeProgram;
 	private int uniCompositeDebugView;
-	private int uniCompositeDepthZeroToOne;
+	private int uniCompositeAoEnabled;
+	private int uniCompositeAoStrength;
+	private final FrameUniforms compositeFrame = new FrameUniforms();
+
+	private int glAoProgram;
+	private int uniAoRadius;
+	private final FrameUniforms aoFrame = new FrameUniforms();
+
+	private static final int AO_TEXTURE_UNIT = RuneLightPlugin.COMPOSITE_TEXTURE_UNIT + 3;
+
+	/**
+	 * Camera data for the full-screen passes. The matrices are camera-relative (no translation) to keep
+	 * world position reconstruction precise far from the world origin.
+	 */
+	private static final class FrameUniforms
+	{
+		int viewProj, invViewProj, viewport, depthZeroToOne;
+
+		void locate(int program)
+		{
+			viewProj = glGetUniformLocation(program, "viewProj");
+			invViewProj = glGetUniformLocation(program, "invViewProj");
+			viewport = glGetUniformLocation(program, "sceneViewport");
+			depthZeroToOne = glGetUniformLocation(program, "depthZeroToOne");
+		}
+	}
+
+	private final float[] frameViewProj = Mat4.identity();
+	private float[] frameInvViewProj = Mat4.identity();
+	// scene viewport within the scene targets, in framebuffer pixels: x, y, width, height
+	private final int[] frameViewport = new int[4];
 
 	static int glProgram;
 	private int glUiProgram;
@@ -715,6 +749,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		glProgram = PROGRAM.compile(template);
 		glUiProgram = UI_PROGRAM.compile(template);
 		glCompositeProgram = COMPOSITE_PROGRAM.compile(template);
+		glAoProgram = AO_PROGRAM.compile(template);
 
 		glBindVertexArray(0);
 
@@ -748,11 +783,25 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		uniUiColorblindIntensity = glGetUniformLocation(glUiProgram, "colorblindIntensity");
 
 		uniCompositeDebugView = glGetUniformLocation(glCompositeProgram, "debugView");
-		uniCompositeDepthZeroToOne = glGetUniformLocation(glCompositeProgram, "depthZeroToOne");
+		uniCompositeAoEnabled = glGetUniformLocation(glCompositeProgram, "aoEnabled");
+		uniCompositeAoStrength = glGetUniformLocation(glCompositeProgram, "aoStrength");
+		compositeFrame.locate(glCompositeProgram);
+		bindSceneSamplers(glCompositeProgram);
 		glUseProgram(glCompositeProgram);
-		glUniform1i(glGetUniformLocation(glCompositeProgram, "sceneColor"), COMPOSITE_TEXTURE_UNIT);
-		glUniform1i(glGetUniformLocation(glCompositeProgram, "sceneNormal"), COMPOSITE_TEXTURE_UNIT + 1);
-		glUniform1i(glGetUniformLocation(glCompositeProgram, "sceneDepth"), COMPOSITE_TEXTURE_UNIT + 2);
+		glUniform1i(glGetUniformLocation(glCompositeProgram, "sceneAo"), AO_TEXTURE_UNIT);
+		glUseProgram(0);
+
+		uniAoRadius = glGetUniformLocation(glAoProgram, "aoRadius");
+		aoFrame.locate(glAoProgram);
+		bindSceneSamplers(glAoProgram);
+	}
+
+	private static void bindSceneSamplers(int program)
+	{
+		glUseProgram(program);
+		glUniform1i(glGetUniformLocation(program, "sceneColor"), COMPOSITE_TEXTURE_UNIT);
+		glUniform1i(glGetUniformLocation(program, "sceneNormal"), COMPOSITE_TEXTURE_UNIT + 1);
+		glUniform1i(glGetUniformLocation(program, "sceneDepth"), COMPOSITE_TEXTURE_UNIT + 2);
 		glUseProgram(0);
 	}
 
@@ -766,6 +815,9 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 
 		glDeleteProgram(glCompositeProgram);
 		glCompositeProgram = 0;
+
+		glDeleteProgram(glAoProgram);
+		glAoProgram = 0;
 	}
 
 	/**
@@ -776,23 +828,20 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 	{
 		glBindVertexArray(vaoUiHandle);
 		Template template = createTemplate();
-		int scene = 0, ui = 0, composite = 0;
+		int scene = 0, ui = 0, composite = 0, ao = 0;
 		try
 		{
 			scene = PROGRAM.compile(template);
 			ui = UI_PROGRAM.compile(template);
 			composite = COMPOSITE_PROGRAM.compile(template);
+			ao = AO_PROGRAM.compile(template);
 		}
 		catch (ShaderException ex)
 		{
-			if (scene != 0)
-			{
-				glDeleteProgram(scene);
-			}
-			if (ui != 0)
-			{
-				glDeleteProgram(ui);
-			}
+			// glDeleteProgram ignores 0
+			glDeleteProgram(scene);
+			glDeleteProgram(ui);
+			glDeleteProgram(composite);
 			String msg = ex.getMessage();
 			if (!msg.equals(shaderError))
 			{
@@ -811,6 +860,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		glProgram = scene;
 		glUiProgram = ui;
 		glCompositeProgram = composite;
+		glAoProgram = ao;
 		initUniforms();
 
 		if (textureAnimations != null)
@@ -1152,6 +1202,13 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		}
 
 		glDpiAwareViewport(renderWidthOff, renderCanvasHeight - renderViewportHeight - renderHeightOff, renderViewportWidth, renderViewportHeight);
+		{
+			final AffineTransform t = clientUI.getGraphicsConfiguration().getDefaultTransform();
+			frameViewport[0] = getScaledValue(t.getScaleX(), renderWidthOff);
+			frameViewport[1] = getScaledValue(t.getScaleY(), renderCanvasHeight - renderViewportHeight - renderHeightOff);
+			frameViewport[2] = getScaledValue(t.getScaleX(), renderViewportWidth);
+			frameViewport[3] = getScaledValue(t.getScaleY(), renderViewportHeight);
+		}
 
 		glUseProgram(glProgram);
 
@@ -1182,6 +1239,8 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		Mat4.mul(projectionMatrix, Mat4.projection(viewportWidth, viewportHeight, 50));
 		Mat4.mul(projectionMatrix, Mat4.rotateX(cameraPitch));
 		Mat4.mul(projectionMatrix, Mat4.rotateY(cameraYaw));
+		System.arraycopy(projectionMatrix, 0, frameViewProj, 0, 16);
+		frameInvViewProj = Mat4.inverse(frameViewProj);
 		Mat4.mul(projectionMatrix, Mat4.translate(-cameraX, -cameraY, -cameraZ));
 		glUniformMatrix4fv(uniWorldProj, false, projectionMatrix);
 
@@ -1268,6 +1327,14 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 	 * Draw the scene targets to the window. Effects that work on the whole frame (fog, AO, grading) go in
 	 * composite_frag.glsl.
 	 */
+	private void setFrameUniforms(FrameUniforms u)
+	{
+		glUniformMatrix4fv(u.viewProj, false, frameViewProj);
+		glUniformMatrix4fv(u.invViewProj, false, frameInvViewProj);
+		glUniform4i(u.viewport, frameViewport[0], frameViewport[1], frameViewport[2], frameViewport[3]);
+		glUniform1i(u.depthZeroToOne, glCapabilities.OpenGL45 ? 1 : 0);
+	}
+
 	private void compositeScene()
 	{
 		int width = lastStretchedCanvasWidth;
@@ -1279,20 +1346,38 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		width = getScaledValue(transform.getScaleX(), width);
 		height = getScaledValue(transform.getScaleY(), height);
 
+		final boolean ao = config.ambientOcclusion();
+
+		sceneTargets.bindTextures(COMPOSITE_TEXTURE_UNIT);
+		// fullscreen triangles are generated from gl_VertexID; core profile still needs some VAO bound
+		glBindVertexArray(vaoUiHandle);
+
+		if (ao)
+		{
+			glBindFramebuffer(GL_FRAMEBUFFER, sceneTargets.getAoFbo());
+			glViewport(0, 0, sceneTargets.getAoWidth(), sceneTargets.getAoHeight());
+			glUseProgram(glAoProgram);
+			setFrameUniforms(aoFrame);
+			glUniform1f(uniAoRadius, config.aoRadius() / 100f * Perspective.LOCAL_TILE_SIZE);
+			glDrawArrays(GL_TRIANGLES, 0, 3);
+			sceneTargets.bindAo(AO_TEXTURE_UNIT);
+		}
+
 		glBindFramebuffer(GL_FRAMEBUFFER, awtContext.getFramebuffer(false));
 		glViewport(0, 0, width, height);
 
 		glUseProgram(glCompositeProgram);
+		setFrameUniforms(compositeFrame);
 		glUniform1i(uniCompositeDebugView, config.debugView().ordinal());
-		glUniform1i(uniCompositeDepthZeroToOne, glCapabilities.OpenGL45 ? 1 : 0);
-		sceneTargets.bindTextures(COMPOSITE_TEXTURE_UNIT);
-
-		// fullscreen triangle generated from gl_VertexID; core profile still needs some VAO bound
-		glBindVertexArray(vaoUiHandle);
+		glUniform1i(uniCompositeAoEnabled, ao ? 1 : 0);
+		glUniform1f(uniCompositeAoStrength, config.aoStrength() / 100f);
 		glDrawArrays(GL_TRIANGLES, 0, 3);
-		glBindVertexArray(0);
 
+		glBindVertexArray(0);
 		sceneTargets.unbindTextures(COMPOSITE_TEXTURE_UNIT);
+		glActiveTexture(GL_TEXTURE0 + AO_TEXTURE_UNIT);
+		glBindTexture(GL_TEXTURE_2D, 0);
+		glActiveTexture(GL_TEXTURE0);
 		glUseProgram(0);
 
 		checkGLErrors();
@@ -1705,6 +1790,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		{
 			compositeScene();
 		}
+		gpuTimer.mark(GpuTimer.POST_END);
 
 		// Texture on UI
 		drawUi(overlayColor, canvasHeight, canvasWidth);

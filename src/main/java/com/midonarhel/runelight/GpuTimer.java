@@ -11,8 +11,9 @@ class GpuTimer
 {
 	static final int FRAME_START = 0;
 	static final int SCENE_END = 1;
-	static final int FRAME_END = 2;
-	private static final int MARKS = 3;
+	static final int POST_END = 2;
+	static final int FRAME_END = 3;
+	private static final int MARKS = 4;
 	private static final int SLOTS = 4;
 
 	private final int[][] queries = new int[SLOTS][MARKS];
@@ -22,6 +23,7 @@ class GpuTimer
 
 	// exponential moving averages, milliseconds
 	private double sceneMs;
+	private double postMs;
 	private double presentMs;
 
 	void init()
@@ -70,14 +72,16 @@ class GpuTimer
 		slot = (slot + 1) % SLOTS;
 		boolean[] is = issued[slot];
 		int[] q = queries[slot];
-		if (is[FRAME_START] && is[SCENE_END] && is[FRAME_END]
+		if (is[FRAME_START] && is[SCENE_END] && is[POST_END] && is[FRAME_END]
 			&& glGetQueryObjecti(q[FRAME_END], GL_QUERY_RESULT_AVAILABLE) == GL_TRUE)
 		{
 			long t0 = glGetQueryObjecti64(q[FRAME_START], GL_QUERY_RESULT);
 			long t1 = glGetQueryObjecti64(q[SCENE_END], GL_QUERY_RESULT);
-			long t2 = glGetQueryObjecti64(q[FRAME_END], GL_QUERY_RESULT);
+			long t2 = glGetQueryObjecti64(q[POST_END], GL_QUERY_RESULT);
+			long t3 = glGetQueryObjecti64(q[FRAME_END], GL_QUERY_RESULT);
 			sceneMs = smooth(sceneMs, (t1 - t0) / 1e6);
-			presentMs = smooth(presentMs, (t2 - t1) / 1e6);
+			postMs = smooth(postMs, (t2 - t1) / 1e6);
+			presentMs = smooth(presentMs, (t3 - t2) / 1e6);
 		}
 		java.util.Arrays.fill(is, false);
 	}
@@ -94,6 +98,11 @@ class GpuTimer
 	double getSceneMs()
 	{
 		return sceneMs;
+	}
+
+	double getPostMs()
+	{
+		return postMs;
 	}
 
 	double getPresentMs()

@@ -247,6 +247,51 @@ public interface RuneLightConfig extends Config
 	}
 
 	@ConfigSection(
+		name = "Lighting",
+		description = "Lighting and shading effects",
+		position = 50
+	)
+	String lightingSection = "lighting";
+
+	@ConfigItem(
+		keyName = "ambientOcclusion",
+		name = "Ambient occlusion",
+		description = "Soft shadowing in corners, creases and under objects (SSAO).",
+		section = lightingSection,
+		position = 51
+	)
+	default boolean ambientOcclusion()
+	{
+		return true;
+	}
+
+	@Range(max = 200)
+	@ConfigItem(
+		keyName = "aoStrength",
+		name = "AO strength",
+		description = "How dark occluded areas get, in percent.",
+		section = lightingSection,
+		position = 52
+	)
+	default int aoStrength()
+	{
+		return 100;
+	}
+
+	@Range(min = 10, max = 400)
+	@ConfigItem(
+		keyName = "aoRadius",
+		name = "AO radius",
+		description = "How far occlusion reaches, in percent of a tile.",
+		section = lightingSection,
+		position = 53
+	)
+	default int aoRadius()
+	{
+		return 75;
+	}
+
+	@ConfigSection(
 		name = "Development",
 		description = "Tools for working on the renderer",
 		position = 100,

@@ -4,7 +4,8 @@ public enum DebugView
 {
 	FINAL("Final"),
 	DEPTH("Depth"),
-	NORMALS("Normals");
+	NORMALS("Normals"),
+	AMBIENT_OCCLUSION("Ambient occlusion");
 
 	private final String name;
 

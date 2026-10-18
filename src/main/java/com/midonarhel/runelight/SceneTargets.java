@@ -22,6 +22,10 @@ class SceneTargets
 	private int fboResolve;
 	private int texColor, texNormal, texDepth;
 
+	// ambient occlusion at half resolution, upsampled depth-aware in the composite pass
+	private int fboAo, texAo;
+	private int aoWidth, aoHeight;
+
 	void init(int width, int height, int samples)
 	{
 		this.width = width;
@@ -39,6 +43,22 @@ class SceneTargets
 		glFramebufferTexture2D(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_TEXTURE_2D, texDepth, 0);
 		glDrawBuffers(new int[]{GL_COLOR_ATTACHMENT0, GL_COLOR_ATTACHMENT1});
 		check("resolve");
+
+		aoWidth = (width + 1) / 2;
+		aoHeight = (height + 1) / 2;
+		texAo = glGenTextures();
+		glBindTexture(GL_TEXTURE_2D, texAo);
+		glTexImage2D(GL_TEXTURE_2D, 0, GL_R8, aoWidth, aoHeight, 0, GL_RED, GL_UNSIGNED_BYTE, 0);
+		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+		glBindTexture(GL_TEXTURE_2D, 0);
+		fboAo = glGenFramebuffers();
+		glBindFramebuffer(GL_FRAMEBUFFER, fboAo);
+		glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, texAo, 0);
+		glDrawBuffers(GL_COLOR_ATTACHMENT0);
+		check("ao");
 
 		if (samples > 0)
 		{
@@ -64,6 +84,12 @@ class SceneTargets
 			glDeleteRenderbuffers(new int[]{rboColor, rboNormal, rboDepth});
 			fboMsaa = rboColor = rboNormal = rboDepth = 0;
 		}
+		if (fboAo != 0)
+		{
+			glDeleteFramebuffers(fboAo);
+			glDeleteTextures(texAo);
+			fboAo = texAo = 0;
+		}
 		if (fboResolve != 0)
 		{
 			glDeleteFramebuffers(fboResolve);
@@ -80,6 +106,28 @@ class SceneTargets
 	int getRenderFbo()
 	{
 		return samples > 0 ? fboMsaa : fboResolve;
+	}
+
+	int getAoFbo()
+	{
+		return fboAo;
+	}
+
+	int getAoWidth()
+	{
+		return aoWidth;
+	}
+
+	int getAoHeight()
+	{
+		return aoHeight;
+	}
+
+	void bindAo(int unit)
+	{
+		glActiveTexture(GL_TEXTURE0 + unit);
+		glBindTexture(GL_TEXTURE_2D, texAo);
+		glActiveTexture(GL_TEXTURE0);
 	}
 
 	/**

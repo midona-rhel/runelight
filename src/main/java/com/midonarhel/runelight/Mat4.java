@@ -158,4 +158,42 @@ public class Mat4
 		a[3 + 2 * 4] = ai0 * b02 + ai1 * b12 + ai2 * b22 + ai3 * b32;
 		a[3 + 3 * 4] = ai0 * b03 + ai1 * b13 + ai2 * b23 + ai3 * b33;
 	}
+
+	/**
+	 * Inverse of a column-major 4x4 matrix, computed in double precision.
+	 *
+	 * @return the inverse, or identity if the matrix is singular
+	 */
+	public static float[] inverse(float[] m)
+	{
+		double[] inv = new double[16];
+		inv[0] = (double) m[5] * m[10] * m[15] - (double) m[5] * m[11] * m[14] - (double) m[9] * m[6] * m[15] + (double) m[9] * m[7] * m[14] + (double) m[13] * m[6] * m[11] - (double) m[13] * m[7] * m[10];
+		inv[4] = -(double) m[4] * m[10] * m[15] + (double) m[4] * m[11] * m[14] + (double) m[8] * m[6] * m[15] - (double) m[8] * m[7] * m[14] - (double) m[12] * m[6] * m[11] + (double) m[12] * m[7] * m[10];
+		inv[8] = (double) m[4] * m[9] * m[15] - (double) m[4] * m[11] * m[13] - (double) m[8] * m[5] * m[15] + (double) m[8] * m[7] * m[13] + (double) m[12] * m[5] * m[11] - (double) m[12] * m[7] * m[9];
+		inv[12] = -(double) m[4] * m[9] * m[14] + (double) m[4] * m[10] * m[13] + (double) m[8] * m[5] * m[14] - (double) m[8] * m[6] * m[13] - (double) m[12] * m[5] * m[10] + (double) m[12] * m[6] * m[9];
+		inv[1] = -(double) m[1] * m[10] * m[15] + (double) m[1] * m[11] * m[14] + (double) m[9] * m[2] * m[15] - (double) m[9] * m[3] * m[14] - (double) m[13] * m[2] * m[11] + (double) m[13] * m[3] * m[10];
+		inv[5] = (double) m[0] * m[10] * m[15] - (double) m[0] * m[11] * m[14] - (double) m[8] * m[2] * m[15] + (double) m[8] * m[3] * m[14] + (double) m[12] * m[2] * m[11] - (double) m[12] * m[3] * m[10];
+		inv[9] = -(double) m[0] * m[9] * m[15] + (double) m[0] * m[11] * m[13] + (double) m[8] * m[1] * m[15] - (double) m[8] * m[3] * m[13] - (double) m[12] * m[1] * m[11] + (double) m[12] * m[3] * m[9];
+		inv[13] = (double) m[0] * m[9] * m[14] - (double) m[0] * m[10] * m[13] - (double) m[8] * m[1] * m[14] + (double) m[8] * m[2] * m[13] + (double) m[12] * m[1] * m[10] - (double) m[12] * m[2] * m[9];
+		inv[2] = (double) m[1] * m[6] * m[15] - (double) m[1] * m[7] * m[14] - (double) m[5] * m[2] * m[15] + (double) m[5] * m[3] * m[14] + (double) m[13] * m[2] * m[7] - (double) m[13] * m[3] * m[6];
+		inv[6] = -(double) m[0] * m[6] * m[15] + (double) m[0] * m[7] * m[14] + (double) m[4] * m[2] * m[15] - (double) m[4] * m[3] * m[14] - (double) m[12] * m[2] * m[7] + (double) m[12] * m[3] * m[6];
+		inv[10] = (double) m[0] * m[5] * m[15] - (double) m[0] * m[7] * m[13] - (double) m[4] * m[1] * m[15] + (double) m[4] * m[3] * m[13] + (double) m[12] * m[1] * m[7] - (double) m[12] * m[3] * m[5];
+		inv[14] = -(double) m[0] * m[5] * m[14] + (double) m[0] * m[6] * m[13] + (double) m[4] * m[1] * m[14] - (double) m[4] * m[2] * m[13] - (double) m[12] * m[1] * m[6] + (double) m[12] * m[2] * m[5];
+		inv[3] = -(double) m[1] * m[6] * m[11] + (double) m[1] * m[7] * m[10] + (double) m[5] * m[2] * m[11] - (double) m[5] * m[3] * m[10] - (double) m[9] * m[2] * m[7] + (double) m[9] * m[3] * m[6];
+		inv[7] = (double) m[0] * m[6] * m[11] - (double) m[0] * m[7] * m[10] - (double) m[4] * m[2] * m[11] + (double) m[4] * m[3] * m[10] + (double) m[8] * m[2] * m[7] - (double) m[8] * m[3] * m[6];
+		inv[11] = -(double) m[0] * m[5] * m[11] + (double) m[0] * m[7] * m[9] + (double) m[4] * m[1] * m[11] - (double) m[4] * m[3] * m[9] - (double) m[8] * m[1] * m[7] + (double) m[8] * m[3] * m[5];
+		inv[15] = (double) m[0] * m[5] * m[10] - (double) m[0] * m[6] * m[9] - (double) m[4] * m[1] * m[10] + (double) m[4] * m[2] * m[9] + (double) m[8] * m[1] * m[6] - (double) m[8] * m[2] * m[5];
+
+		double det = m[0] * inv[0] + m[1] * inv[4] + m[2] * inv[8] + m[3] * inv[12];
+		if (det == 0)
+		{
+			return identity();
+		}
+		float[] out = new float[16];
+		for (int i = 0; i < 16; ++i)
+		{
+			out[i] = (float) (inv[i] / det);
+		}
+		return out;
+	}
 }
