@@ -5,6 +5,7 @@
 
 #include "frame.glsl"
 #include "halfres.glsl"
+#include "gi.glsl"
 
 uniform float aoRadius;  // world units
 uniform int aoSamples;   // 0: only the geometry for the upsamples (AO off, fog on)
@@ -24,16 +25,18 @@ void main() {
   ivec2 px = ivec2(gl_FragCoord.xy) * 2;
   float d = texelFetch(sceneDepth, px, 0).r;
   if (isSky(d)) {
-    FragAo = vec4(1.0, 0.0, 0.0, 0.0);
+    FragAo = halfPackGeometry(1.0, 0.0, vec3(0.0, 0.0, 1.0), vec3(0.0), 0.0);
     return;
   }
   vec3 n = decodeNormal(texelFetch(sceneNormal, px, 0).rgb);
-  FragAo = vec4(1.0, NEAR / viewDepth(d), octEncode(n));
+  vec3 p = reconstructPosition(vec2(px) + 0.5, d);
+  float nearOverDepth = NEAR / viewDepth(d);
+  vec4 gi = giEnabled == 1 && inViewport(px) ? giIrradiance(p, n) : vec4(0.0);
+  FragAo = halfPackGeometry(1.0, nearOverDepth, n, gi.rgb, gi.a);
   if (aoSamples <= 0 || !inViewport(px)) {
     return;
   }
 
-  vec3 p = reconstructPosition(vec2(px) + 0.5, d);
   vec3 t = normalize(cross(n, abs(n.y) < 0.99 ? vec3(0.0, 1.0, 0.0) : vec3(1.0, 0.0, 0.0)));
   vec3 b = cross(n, t);
 
@@ -83,5 +86,5 @@ void main() {
     occlusion += range * smoothstep(AO_ANGLE_BIAS, AO_ANGLE_BIAS + 0.35, elevation);
   }
 
-  FragAo.r = 1.0 - occlusion / float(aoSamples);
+  FragAo = halfPackGeometry(1.0 - occlusion / float(aoSamples), nearOverDepth, n, gi.rgb, gi.a);
 }

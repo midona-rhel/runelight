@@ -108,7 +108,10 @@ class SceneUploader
 		int[][][] roofs = scene.getRoofs();
 		Set<Integer> roofIds = new HashSet<>();
 
-		var vb = zone.vboO != null ? new GpuIntBuffer(zone.vboO.vb) : null;
+		// the top level scene's opaque triangles are also kept for the global illumination's voxels
+		GiCapture.Buffer giBuffer = zone.vboO != null && scene.getWorldViewId() == WorldView.TOPLEVEL
+			? new GiCapture.Buffer(zone.vboO.vb) : null;
+		var vb = giBuffer != null ? giBuffer : zone.vboO != null ? new GpuIntBuffer(zone.vboO.vb) : null;
 		var ab = zone.vboA != null ? new GpuIntBuffer(zone.vboA.vb) : null;
 		zone.swayRangeCount = 0;
 
@@ -158,6 +161,13 @@ class SceneUploader
 				int pos = zone.vboO.vb.position();
 				zone.levelOffsets[level] = pos;
 			}
+		}
+
+		if (giBuffer != null)
+		{
+			giBuffer.capture.trim();
+			zone.giCapture = giBuffer.capture;
+			zone.giVoxels = null;
 		}
 	}
 

@@ -21,6 +21,7 @@
 #define DEBUG_LIGHTING 5
 #define DEBUG_LIGHT_CLUSTERS 6
 #define DEBUG_MATERIALS 7
+#define DEBUG_GI 8
 
 #define TAU 6.28318530718
 
@@ -79,13 +80,14 @@ out vec4 FragColor;
 // Ambient occlusion: 4x4 depth- and normal-aware upsample of the half resolution AO, which also blurs its noise.
 // The volumetric fog's upsample uses the same taps, so it is done in the same loop when the fog is on.
 
-float upsampleAoFog(ivec2 px, float z, vec3 n, out vec4 fog) {
+float upsampleAoFog(ivec2 px, float z, vec3 n, out vec4 fog, out vec4 gi) {
   vec2 hp = (vec2(px) + 0.5) * 0.5 - 0.5;
   ivec2 base = ivec2(floor(hp)) - 1;
   ivec2 maxAo = textureSize(sceneAo, 0) - 1;
   bool withFog = volumetricFog == 1;
   float sum = 0.0;
   float wsum = 0.0;
+  vec4 giSum = vec4(0.0);
   vec4 fogSum = vec4(0.0);
   float fogWsum = 0.0;
   for (int y = 0; y < 4; ++y) {
@@ -102,20 +104,35 @@ float upsampleAoFog(ivec2 px, float z, vec3 n, out vec4 fog) {
       if (g.g <= 0.0) {
         continue;
       }
-      vec3 qn = octDecode(g.ba);
+      vec3 qn = halfNormal(g);
       float w = spatial / (1.0 + abs(qz - z) / (z * 0.01 + 1.0));
       float nd = max(dot(n, qn), 0.0);
       nd *= nd;
       nd *= nd;
       w *= nd * nd;
 
-      sum += g.r * w;
+      sum += halfAo(g) * w;
+      giSum += halfGi(g) * w;
       wsum += w;
     }
   }
   fog = !withFog ? vec4(0.0, 0.0, 0.0, 1.0)
     : fogWsum > 1e-6 ? fogSum / fogWsum : texelFetch(sceneFog, clamp(ivec2(hp + 0.5), ivec2(0), maxAo), 0);
+  gi = wsum > 1e-4 ? giSum / wsum : vec4(0.0);
   return wsum > 1e-4 ? sum / wsum : 1.0;
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// Global illumination (GlobalIllumination.java, gi.glsl): the probes' indirect light, upsampled with the AO, stands
+// in for the plain ambient and sky light where the probes have it. giFloor keeps a share of the plain light, so
+// interiors stay readable however little light the probes find there.
+
+uniform float giWeight;  // 0..1: enabled, eased in and out, strength
+uniform float giFloor;
+
+vec3 giAmbient(vec3 ambient, vec4 gi) {
+  float w = gi.a * giWeight;
+  return w > 0.0 ? mix(ambient, max(gi.rgb, ambient * giFloor), w) : ambient;
 }
 
 // ---------------------------------------------------------------------------------------------------------------
@@ -324,10 +341,12 @@ void main() {
 
   float ao = 1.0;
   vec4 fog;
+  vec4 gi = vec4(0.0);
+  vec3 indirect = vec3(0.0);
   bool fogDone = false;
-  if (aoEnabled == 1 && inside) {
-    ao = upsampleAoFog(px, viewDepth(d), n, fog);
-    ao = clamp(1.0 - (1.0 - ao) * aoStrength, 0.0, 1.0);
+  if ((aoEnabled == 1 || giWeight > 0.0) && inside) {
+    ao = upsampleAoFog(px, viewDepth(d), n, fog, gi);
+    ao = aoEnabled == 1 ? clamp(1.0 - (1.0 - ao) * aoStrength, 0.0, 1.0) : 1.0;
     fogDone = volumetricFog == 1;
   }
 
@@ -347,7 +366,8 @@ void main() {
     shadow = overcastShadow(shadow);
     vec3 caster = sunIsCaster == 1 ? sunLight(sunAltitude) : moonLight(sunAltitude);
     float up = max(-n.y, 0.0);
-    light = (ambientLight(sunAltitude) + skyFill(n, sunAltitude, up)) * envAmbient * ao
+    indirect = giAmbient(ambientLight(sunAltitude) + skyFill(n, sunAltitude, up), gi) * envAmbient * ao;
+    light = indirect
       + caster * envSun * max(ndl, 0.0) * shadow * mix(1.0, ao, AO_DIRECT);
     if (transmissive > 0.0) {
       // light through the leaf isn't occluded by the creases SSAO sees on its front
@@ -357,6 +377,7 @@ void main() {
     // Underground: no sun, and the game's own baked shading is removed, so a fixed soft key light from above
     // keeps shapes readable. Point lights do the rest.
     light = envCaveLight(n) * ao;
+    indirect = light;
   }
 
   int cluster = clusterBase(px, viewDepth(d));
@@ -385,6 +406,11 @@ void main() {
 
   if (debugView == DEBUG_AO) {
     FragColor = vec4(vec3(ao), 1.0);
+    return;
+  }
+  if (debugView == DEBUG_GI) {
+    // the indirect light alone, as a white surface would show it
+    FragColor = vec4(linearToSrgb(clamp(indirect, 0.0, 1.0)), 1.0);
     return;
   }
   if (debugView == DEBUG_SHADOWS) {

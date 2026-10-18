@@ -1280,4 +1280,66 @@ public interface RuneLightConfig extends Config
 	{
 		return true;
 	}
+
+	@ConfigSection(
+		name = "Global illumination",
+		description = "Light from the sky and the sun bounces around the scene",
+		position = 700
+	)
+	String giSection = "globalIllumination";
+
+	@ConfigItem(
+		keyName = "globalIllumination",
+		name = "Global illumination",
+		description = "Light from the sky only reaches what can see the sky, and sunlight bounces off what it falls on: "
+			+ "interiors and overhangs darken, walls take the colors of the sky they face, sunlit ground warms the shade "
+			+ "beside it. Worked out in the background whenever a region loads.",
+		section = giSection,
+		position = 701
+	)
+	default boolean globalIllumination()
+	{
+		return true;
+	}
+
+	@Range(max = 100)
+	@ConfigItem(
+		keyName = "giStrength",
+		name = "Strength",
+		description = "How much of the ambient light comes from the global illumination rather than the plain sky "
+			+ "light, in percent.",
+		section = giSection,
+		position = 702
+	)
+	default int giStrength()
+	{
+		return 100;
+	}
+
+	@ConfigItem(
+		keyName = "giSunBounce",
+		name = "Sun bounce",
+		description = "Sunlight and moonlight bounce off sunlit surfaces into the shade, tinted by what they hit. "
+			+ "Off, only the sky lights the shade.",
+		section = giSection,
+		position = 703
+	)
+	default boolean giSunBounce()
+	{
+		return true;
+	}
+
+	@Range(max = 100)
+	@ConfigItem(
+		keyName = "giShadeFloor",
+		name = "Shade floor",
+		description = "Share of the plain ambient light kept where little light reaches, such as deep inside "
+			+ "buildings, in percent: higher keeps interiors easier to see.",
+		section = giSection,
+		position = 704
+	)
+	default int giShadeFloor()
+	{
+		return 30;
+	}
 }

@@ -133,3 +133,18 @@ downloads the map image (Explv's osrs_map_tiles, rendered from the game cache by
 cache dir, finds the water, and computes the flow; `tools/water/annotations.json` fixes rivers the automatic pass
 gets wrong (sources, outlets, still canals), and `tools/water/crop.py` renders map crops with a tile grid and the
 flow to check them. Needs numpy, scipy, scikit-image and Pillow.
+
+## Global illumination
+
+Plugin config, Global illumination section. When a region loads, the static scene's opaque triangles (captured as
+the zones upload, `GiCapture.java`) are voxelized into half-tile cubes on a worker thread (`GiVoxels.java`,
+`GiGrid.java`; per zone, so zones reused by the next load keep theirs). A probe grid covers the base scene, one
+column per tile with three layers (`GiProbes.java`); each probe traces 64 rays once and keeps what they hit. Probes
+in buildings (BuildingDetector rooms, below the roof line) are indoor and light only indoor pixels, so walls don't
+leak, while their rays still see out through doors. Relighting (`GiRelight.java`) takes the sky from the sky cache
+(`gi_sky_frag.glsl`, read back without stalling) plus the sun or moon on the hit voxels and the last light for
+further bounces, a few tens of milliseconds on the worker whenever the sky or the sun changes enough; new light
+blends in over a few seconds. The AO pass looks the probes up at half resolution (`gi.glsl`) and the composite
+uses the result instead of its plain ambient and sky light, keeping a floor of the latter (Shade floor). Debug view
+"Global illumination" shows the indirect light alone. Outside the base scene and underground the plain ambient
+light stays.

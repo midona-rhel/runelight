@@ -344,6 +344,20 @@ class SkyCache
 		glUniform1f(uniStars, stars);
 	}
 
+	// finished captures, for the global illumination, which relights with the sky
+	private int captures;
+
+	int getCaptures()
+	{
+		return captures;
+	}
+
+	/** How much of the sky light comes from the cache, as the composite last used it. */
+	float getLightWeight()
+	{
+		return shown >= 0 ? weight : 0;
+	}
+
 	/** Linear ease of the cache weight toward target over WEIGHT_SECONDS. */
 	static float ease(float weight, float target, float dt)
 	{
@@ -442,6 +456,7 @@ class SkyCache
 				schedule.captured(captureGameMinutes, captureMillis, captureCover, captureOvercast, captureSnow,
 					captureAltitude, captureCameraAltitude, captureDriftX, captureDriftZ, captureSettings);
 				changed = true;
+				captures++;
 			}
 		}
 		if (shown < 0)

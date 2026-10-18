@@ -9,7 +9,8 @@ public enum DebugView
 	SHADOWS("Shadows"),
 	LIGHTING("Lighting"),
 	LIGHT_CLUSTERS("Light clusters"),
-	MATERIALS("Materials");
+	MATERIALS("Materials"),
+	GLOBAL_ILLUMINATION("Global illumination");
 
 	private final String name;
 
