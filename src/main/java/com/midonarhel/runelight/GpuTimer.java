@@ -24,11 +24,12 @@ class GpuTimer
 	static final int COMPOSITE = 7;
 	static final int WEATHER = 8;
 	static final int UI = 9;
-	static final int STAGES = 10;
+	static final int GI = 10;
+	static final int STAGES = 11;
 
 	static final String[] NAMES = {
 		"scene", "MSAA resolve", "shadow map", "weather occlusion", "AO", "sky cache", "fog", "composite",
-		"weather", "UI"
+		"weather", "UI", "GI probes"
 	};
 
 	private static final int SLOTS = 4;
@@ -41,6 +42,8 @@ class GpuTimer
 	private int slot;
 	private boolean active;
 	private boolean initialized;
+	// off unless the timings are shown: the queries and their readback cost the CPU a little every frame
+	private boolean enabled = true;
 
 	private final double[] frame = new double[STAGES];
 	// exponential moving averages, milliseconds
@@ -75,11 +78,26 @@ class GpuTimer
 	}
 
 	/**
-	 * Start timing a pass, ending the previous one if it is still running.
+	 * Turn timing on or off; call between frames. Turning it off drops the frames still in flight.
+	 */
+	void setEnabled(boolean on)
+	{
+		if (on == enabled)
+		{
+			return;
+		}
+		end();
+		java.util.Arrays.fill(used, 0);
+		enabled = on;
+	}
+
+	/**
+	 * Start timing a pass, ending the previous one if it is still running. Begin right before the pass's GL
+	 * commands, after any CPU work that prepares them: the query counts the GPU waiting for those commands too.
 	 */
 	void begin(int stage)
 	{
-		if (!initialized)
+		if (!initialized || !enabled)
 		{
 			return;
 		}

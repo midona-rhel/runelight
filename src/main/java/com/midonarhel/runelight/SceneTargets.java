@@ -31,6 +31,8 @@ class SceneTargets
 	private static final int[] ALPHA_BUFFERS = {GL_NONE, GL_NONE, GL_COLOR_ATTACHMENT2, GL_NONE};
 	private static final int[] ALL_BUFFERS = {GL_COLOR_ATTACHMENT0, GL_COLOR_ATTACHMENT1, GL_COLOR_ATTACHMENT2, GL_COLOR_ATTACHMENT3};
 	private static final float[] TRANSPARENT = {0, 0, 0, 0};
+	private static final float[] FAR_DEPTH = {0};
+	private final float[] clearColor = {0, 0, 0, 0};
 
 	// ambient occlusion at half resolution, upsampled depth-aware in the composite pass
 	private int fboAo, texAo;
@@ -203,18 +205,23 @@ class SceneTargets
 	}
 
 	/**
-	 * Clear the transparency layer to nothing. Call with the render framebuffer bound, after the frame's clear,
-	 * which fills every attachment with the sky color (alpha 0).
+	 * Clear every target for a new frame, once each: color to the sky color with alpha 0 (geometry writes 1, so the
+	 * resolved alpha is how much of each pixel it covers), the rest to 0, depth to far (reverse-z). Call with the
+	 * render framebuffer bound.
 	 */
-	void clearAlphaLayer()
+	void clear(float r, float g, float b)
 	{
 		glDrawBuffers(ALL_BUFFERS);
-		glClearBufferfv(GL_COLOR, 2, TRANSPARENT);
-		// The frame's clear filled the normal and material targets with the sky color too. At 0, a pixel the
-		// geometry only partly covers resolves to that share of its values, which the composite divides back out
-		// by the color target's alpha, the coverage.
+		clearColor[0] = r;
+		clearColor[1] = g;
+		clearColor[2] = b;
+		glClearBufferfv(GL_COLOR, 0, clearColor);
+		// The normal and material at 0: a pixel the geometry only partly covers resolves to that share of its
+		// values, which the composite divides back out by the color target's alpha, the coverage.
 		glClearBufferfv(GL_COLOR, 1, TRANSPARENT);
+		glClearBufferfv(GL_COLOR, 2, TRANSPARENT);
 		glClearBufferfv(GL_COLOR, 3, TRANSPARENT);
+		glClearBufferfv(GL_DEPTH, 0, FAR_DEPTH);
 		glDrawBuffers(OPAQUE_BUFFERS);
 	}
 

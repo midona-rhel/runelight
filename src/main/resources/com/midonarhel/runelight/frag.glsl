@@ -144,7 +144,7 @@ void main() {
     n = dot(sn, n) < 0.0 ? -sn : sn;
   }
   FragNormal = vec4(n * 0.5 + 0.5, c.a);
-  // alpha 1 so the opaque pass blending writes the values unchanged
+  // alpha 1: the coverage the composite divides by (SceneTargets.clear); the opaque pass writes without blending
   // water: 1 bed (always under the water), 0 land terrain (never), 0.5 anything else (if below the surface)
   float water = (fMaterial & 8) != 0 ? 1.0 : (fMaterial & 16) != 0 ? 0.0 : 0.5;
   FragMaterial = vec4(materialEmissive(fMaterial), materialTransmissive(fMaterial), water, 1.0);

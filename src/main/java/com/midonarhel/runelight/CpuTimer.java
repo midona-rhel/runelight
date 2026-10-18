@@ -19,11 +19,16 @@ class CpuTimer
 	static final int SWAP = 7;
 	// from our swap to the next frame's scene: the client's game loop, other plugins and overlays
 	static final int OUTSIDE = 8;
-	static final int STAGES = 9;
+	// between our scene and our draw: the client drawing its interface and RuneLite's overlays into the canvas
+	static final int CLIENT_UI = 9;
+	// mapping the dynamic model buffers at the start of the scene
+	static final int BUFFER_MAP = 10;
+	static final int STAGES = 11;
 
 	static final String[] NAMES = {
 		"client scene", "environment", "weather", "light collection", "light clusters", "shadow submit",
-		"UI upload", "swap wait", "outside frame"
+		"UI upload", "swap wait", "outside frame", "client UI + overlays",
+		"buffer map"
 	};
 
 	private final long[] start = new long[STAGES];
@@ -57,5 +62,19 @@ class CpuTimer
 	double getMs(int stage)
 	{
 		return ms[stage];
+	}
+
+	/** The frame's time not in any step but the one outside it: the plugin's own untimed work. */
+	double untrackedMs(double cpuFrameMs)
+	{
+		double sum = 0;
+		for (int s = 0; s < STAGES; ++s)
+		{
+			if (s != OUTSIDE)
+			{
+				sum += ms[s];
+			}
+		}
+		return Math.max(cpuFrameMs - sum, 0);
 	}
 }

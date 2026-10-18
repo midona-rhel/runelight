@@ -37,7 +37,6 @@ import java.awt.Image;
 import java.awt.geom.AffineTransform;
 import java.awt.image.BufferedImage;
 import java.awt.image.DataBufferInt;
-import java.nio.ByteBuffer;
 import java.nio.FloatBuffer;
 import java.util.Arrays;
 import java.util.Collections;
@@ -388,6 +387,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 
 	private int interfaceTexture;
 	private int interfacePbo;
+	private final InterfaceUpload interfaceUpload = new InterfaceUpload();
 
 	private int vaoUiHandle;
 	private int vboUiHandle;
@@ -1431,6 +1431,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 
 	private void shutdownInterfaceTexture()
 	{
+		interfaceUpload.free();
 		glDeleteBuffers(interfacePbo);
 		glDeleteTextures(interfaceTexture);
 		interfaceTexture = -1;
@@ -1485,11 +1486,16 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 
 		if (scene.getWorldViewId() == WorldView.TOPLEVEL)
 		{
+			cpuTimer.end(CpuTimer.OUTSIDE);
+			frameCpuStart = System.nanoTime();
+			// mapping makes the client thread wait for the driver: timed apart from the client's own work
+			cpuTimer.begin(CpuTimer.BUFFER_MAP);
 			for (int i = 0; i < rts.length; ++i) // NOPMD: ForLoopCanBeForeach
 			{
 				rts[i].vaoO.map();
 				rts[i].vaoA.map();
 			}
+			cpuTimer.end(CpuTimer.BUFFER_MAP);
 
 			this.cameraYaw = client.getCameraYaw();
 			this.cameraPitch = client.getCameraPitch();
@@ -1506,9 +1512,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 	private void preSceneDrawToplevel(Scene scene,
 		float cameraX, float cameraY, float cameraZ, float cameraPitch, float cameraYaw)
 	{
-		cpuTimer.end(CpuTimer.OUTSIDE);
-		gpuTimer.begin(GpuTimer.SCENE);
-		frameCpuStart = System.nanoTime();
+		gpuTimer.setEnabled(config.showTimings());
 		captureFrameState(scene, cameraX, cameraY, cameraZ);
 		updateEdge(scene, cameraX, cameraZ);
 
@@ -1684,16 +1688,16 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		// Enable face culling
 		glEnable(GL_CULL_FACE);
 
-		// Enable blending
-		glEnable(GL_BLEND);
-		glBlendFuncSeparate(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA, GL_ONE, GL_ONE);
+		// No blending in the opaque pass: its faces all have alpha 1, so blending changed nothing, but it made every
+		// attachment read back what it overwrote. setAlphaPass turns it on for the transparency layer.
+		glDisable(GL_BLEND);
 
 		// Enable depth testing
 		glDepthFunc(GL_GREATER);
 		glEnable(GL_DEPTH_TEST);
 
+		gpuTimer.begin(GpuTimer.SCENE);
 		drawSkybox(scene, sky, cameraX, cameraY, cameraZ);
-		sceneTargets.clearAlphaLayer();
 
 		checkGLErrors();
 		cpuTimer.begin(CpuTimer.CLIENT_SCENE);
@@ -1704,16 +1708,11 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		Model skybox = scene.getSkybox();
 		if (skybox == null)
 		{
-			// alpha 0: geometry writes 1, so the resolved alpha is how much of each pixel it covers (composite)
-			glClearColor((sky >> 16 & 0xFF) / 255f, (sky >> 8 & 0xFF) / 255f, (sky & 0xFF) / 255f, 0f);
-			glClearDepth(0d);
-			glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+			sceneTargets.clear((sky >> 16 & 0xFF) / 255f, (sky >> 8 & 0xFF) / 255f, (sky & 0xFF) / 255f);
 			return;
 		}
 
-		glClearColor(0f, 0f, 0f, 0f);
-		glClearDepth(0d);
-		glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+		sceneTargets.clear(0f, 0f, 0f);
 
 		int size = skybox.getFaceCount() * 3 * VAO.VERT_SIZE;
 		RenderThread rt = rts[0];
@@ -1782,6 +1781,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		VAO.recordShadowDraws = false;
 		glBindFramebuffer(GL_DRAW_FRAMEBUFFER, awtContext.getFramebuffer(false));
 		sceneFboValid = true;
+		cpuTimer.begin(CpuTimer.CLIENT_UI);
 	}
 
 	/**
@@ -2223,11 +2223,13 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		sceneTargets.setAlphaPass(alpha);
 		if (alpha)
 		{
+			glEnable(GL_BLEND);
 			glBlendFuncSeparate(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA, GL_ONE, GL_ONE_MINUS_SRC_ALPHA);
 		}
 		else
 		{
-			glBlendFuncSeparate(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA, GL_ONE, GL_ONE);
+			// the opaque pass writes without blending (preSceneDrawToplevel)
+			glDisable(GL_BLEND);
 		}
 		glUniform1i(uniAlphaPass, alpha ? 1 : 0);
 	}
@@ -2494,7 +2496,9 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		sceneTargets.bindTextures(COMPOSITE_TEXTURE_UNIT);
 		// fullscreen triangles are generated from gl_VertexID; core profile still needs some VAO bound
 		glBindVertexArray(vaoUiHandle);
+		gpuTimer.begin(GpuTimer.GI);
 		final boolean gi = prepareGlobalIllumination();
+		gpuTimer.end();
 
 		// the AO pass also writes the half resolution depth and normals that the fog's upsample reads, and the
 		// shadows and the global illumination's light
@@ -2502,7 +2506,6 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		final boolean ground = config.weatherSurfaces() && weather.groundActive();
 		if (ao || frameFog || shadows || gi || ground)
 		{
-			gpuTimer.begin(GpuTimer.AO);
 			glBindFramebuffer(GL_FRAMEBUFFER, sceneTargets.getAoFbo());
 			glViewport(0, 0, sceneTargets.getAoWidth(), sceneTargets.getAoHeight());
 			glUseProgram(glAoProgram);
@@ -2534,7 +2537,9 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 			{
 				weatherGround.setAoOff();
 			}
+			gpuTimer.begin(GpuTimer.AO);
 			glDrawArrays(GL_TRIANGLES, 0, 3);
+			gpuTimer.end();
 			GlobalIllumination.unbind(GI_PROBE_UNIT);
 			// the sky cache takes the occlusion map's unit next, without its sampler objects
 			ShadowMap.unbind(WEATHER_OCCLUSION_UNIT, WEATHER_OCCLUSION_UNIT + 1);
@@ -2548,9 +2553,10 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		if (config.globalIllumination())
 		{
 			// the sky cache is bound now; the probes are relit with its light
+			gpuTimer.begin(GpuTimer.GI);
 			globalIllumination.afterSky(dayCycle, giOvercast, skyCache.getLightWeight(), config.giSunBounce());
 		}
-		gpuTimer.begin(GpuTimer.COMPOSITE);
+		gpuTimer.end();
 
 		glUseProgram(glCompositeProgram);
 		setFrameUniforms(compositeFrame);
@@ -2579,8 +2585,8 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 				// in a void the sun doesn't light the fog: it would glow over the black around the scene
 				frameOutdoors && !frameSkyVoid, proceduralSky(), frameSkyColor, dayCycle,
 				shadows ? shadowMap : null, config.pointLights() && lightClusters.isInitialized());
+			gpuTimer.end();
 			glUseProgram(glCompositeProgram);
-			gpuTimer.begin(GpuTimer.COMPOSITE);
 		}
 		volumetricFog.setCompositeEnabled(frameFog);
 		bindClouds();
@@ -2592,7 +2598,9 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 
 		glBindFramebuffer(GL_FRAMEBUFFER, awtContext.getFramebuffer(false));
 		glViewport(0, 0, width, height);
+		gpuTimer.begin(GpuTimer.COMPOSITE);
 		glDrawArrays(GL_TRIANGLES, 0, 3);
+		gpuTimer.end();
 		Water.unbind(WATER_DATA_UNIT, WATER_NOISE_UNIT);
 		// before the weather binds its occlusion map on the same unit
 		SkyCache.unbind(SKY_CACHE_UNIT);
@@ -2603,6 +2611,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 			weather.draw(frameViewProj, frameInvViewProj, frameViewport, glCapabilities.OpenGL45,
 				frameCameraX, frameCameraY, frameCameraZ, dayCycle, config.weatherSplashes(), WEATHER_OCCLUSION_UNIT,
 				config.pointLights() && config.weatherPointLights() && lightClusters.isInitialized(), frameDrawDistance);
+			gpuTimer.end();
 			glViewport(0, 0, width, height);
 		}
 
@@ -2985,34 +2994,15 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		}
 
 		final BufferProvider bufferProvider = client.getBufferProvider();
-		final int[] pixels = bufferProvider.getPixels();
-		final int width = bufferProvider.getWidth();
-		final int height = bufferProvider.getHeight();
-
-		glBindBuffer(GL_PIXEL_UNPACK_BUFFER, interfacePbo);
-		glBufferData(GL_PIXEL_UNPACK_BUFFER, (long) width * height * Integer.BYTES, GL_STREAM_DRAW);
-		ByteBuffer interfaceBuf = glMapBuffer(GL_PIXEL_UNPACK_BUFFER, GL_WRITE_ONLY);
-		if (interfaceBuf != null)
-		{
-			interfaceBuf
-				.asIntBuffer()
-				.put(pixels, 0, width * height);
-			glUnmapBuffer(GL_PIXEL_UNPACK_BUFFER);
-		}
-		else
-		{
-			glBindBuffer(GL_PIXEL_UNPACK_BUFFER, 0);
-			return;
-		}
-		glBindTexture(GL_TEXTURE_2D, interfaceTexture);
-		glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, width, height, GL_BGRA, GL_UNSIGNED_INT_8_8_8_8_REV, 0);
-		glBindBuffer(GL_PIXEL_UNPACK_BUFFER, 0);
-		glBindTexture(GL_TEXTURE_2D, 0);
+		// copied on worker threads while the composite is submitted; interfaceUpload.finish fills the texture
+		interfaceUpload.start(interfacePbo, bufferProvider.getPixels(), bufferProvider.getWidth(),
+			bufferProvider.getHeight());
 	}
 
 	@Override
 	public void draw(int overlayColor)
 	{
+		cpuTimer.end(CpuTimer.CLIENT_UI);
 		final GameState gameState = client.getGameState();
 		if (gameState == GameState.STARTING)
 		{
@@ -3045,13 +3035,14 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		final int canvasHeight = client.getCanvasHeight();
 		final int canvasWidth = client.getCanvasWidth();
 
-		gpuTimer.begin(GpuTimer.UI);
 		cpuTimer.begin(CpuTimer.UI_UPLOAD);
 		prepareInterfaceTexture(canvasWidth, canvasHeight);
 		cpuTimer.end(CpuTimer.UI_UPLOAD);
 
+		gpuTimer.begin(GpuTimer.UI);
 		glClearColor(0, 0, 0, 1);
 		glClear(GL_COLOR_BUFFER_BIT);
+		gpuTimer.end();
 
 		if (sceneFboValid && sceneTargets.isInitialized() && glCompositeProgram != 0)
 		{
@@ -3069,7 +3060,11 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 				glActiveTexture(GL_TEXTURE0);
 			}
 		}
+		cpuTimer.begin(CpuTimer.UI_UPLOAD);
+		interfaceUpload.await();
+		cpuTimer.end(CpuTimer.UI_UPLOAD);
 		gpuTimer.begin(GpuTimer.UI);
+		interfaceUpload.finish(interfaceTexture);
 
 		// Texture on UI
 		drawUi(overlayColor, canvasHeight, canvasWidth);
