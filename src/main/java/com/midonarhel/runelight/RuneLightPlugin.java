@@ -245,6 +245,9 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 	private static final int FOG_NOISE_UNIT = RuneLightPlugin.COMPOSITE_TEXTURE_UNIT + 11;
 
 	private final VolumetricFog volumetricFog = new VolumetricFog();
+	private final Clouds clouds = new Clouds();
+	// the composite has no 3D sampler, so the clouds' 2D noise shares the fog noise's unit on the 2D target
+	private static final int CLOUD_NOISE_UNIT = FOG_NOISE_UNIT;
 	private boolean frameFog;
 	// 117 HD fog depth that doubles the volumetric fog
 	private static final float AREA_FOG_DEPTH = 30;
@@ -710,6 +713,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 				weather.free();
 				lightClusters.free();
 				volumetricFog.free();
+				clouds.free();
 
 				if (textureArrayId != -1)
 				{
@@ -1014,6 +1018,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		uniCompositePointLights = glGetUniformLocation(c, "pointLightsEnabled");
 		glUseProgram(0);
 		volumetricFog.locateComposite(c, FOG_TEXTURE_UNIT);
+		clouds.locateComposite(c, CLOUD_NOISE_UNIT);
 
 		uniShadowLightProj = glGetUniformLocation(glShadowProgram, "lightProj");
 		uniShadowEntityProj = glGetUniformLocation(glShadowProgram, "entityProj");
@@ -1961,6 +1966,15 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		return dayCycle.hour();
 	}
 
+	private void bindClouds()
+	{
+		WorldView wv = client.getTopLevelWorldView();
+		long baseX = wv != null ? (long) wv.getBaseX() * Perspective.LOCAL_TILE_SIZE : 0;
+		long baseZ = wv != null ? (long) wv.getBaseY() * Perspective.LOCAL_TILE_SIZE : 0;
+		clouds.bind(config.clouds(), config.cloudShadows(), config.cloudCoverage(), config.cloudSpeed(),
+			weather.cloudCover(), baseX, baseZ, CLOUD_NOISE_UNIT);
+	}
+
 	private void compositeScene()
 	{
 		int width = lastStretchedCanvasWidth;
@@ -2009,6 +2023,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 			glUseProgram(glCompositeProgram);
 		}
 		volumetricFog.setCompositeEnabled(frameFog);
+		bindClouds();
 		sceneTargets.bindMaterial(MATERIAL_UNIT);
 		compositeMaterials.set(config);
 
@@ -2038,6 +2053,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		glBindTexture(GL_TEXTURE_2D, 0);
 		glActiveTexture(GL_TEXTURE0);
 		VolumetricFog.unbind(FOG_TEXTURE_UNIT);
+		Clouds.unbind(CLOUD_NOISE_UNIT);
 		glUseProgram(0);
 
 		checkGLErrors();

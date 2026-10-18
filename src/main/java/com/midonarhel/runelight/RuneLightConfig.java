@@ -607,7 +607,7 @@ public interface RuneLightConfig extends Config
 	)
 	default int volumetricFogDensity()
 	{
-		return 25;
+		return 15;
 	}
 
 	@Range(min = 25, max = 2000)
@@ -867,5 +867,62 @@ public interface RuneLightConfig extends Config
 	default int areaFogStrength()
 	{
 		return 100;
+	}
+
+	@ConfigSection(
+		name = "Clouds",
+		description = "Volumetric clouds in the sky that close up in rain and snow",
+		position = 500
+	)
+	String cloudsSection = "clouds";
+
+	@ConfigItem(
+		keyName = "clouds",
+		name = "Clouds",
+		description = "Clouds drifting across the procedural sky, lit by the sun and moon. Rain and snow cover the sky.",
+		section = cloudsSection,
+		position = 501
+	)
+	default boolean clouds()
+	{
+		return true;
+	}
+
+	@Range(max = 100)
+	@ConfigItem(
+		keyName = "cloudCoverage",
+		name = "Clear weather clouds",
+		description = "How much of the sky clouds cover without rain or snow, in percent.",
+		section = cloudsSection,
+		position = 502
+	)
+	default int cloudCoverage()
+	{
+		return 30;
+	}
+
+	@Range(max = 400)
+	@ConfigItem(
+		keyName = "cloudSpeed",
+		name = "Wind speed",
+		description = "How fast the clouds drift, in percent.",
+		section = cloudsSection,
+		position = 503
+	)
+	default int cloudSpeed()
+	{
+		return 100;
+	}
+
+	@ConfigItem(
+		keyName = "cloudShadows",
+		name = "Cloud shadows",
+		description = "Clouds shade the ground from the sun or moon as they pass over.",
+		section = cloudsSection,
+		position = 504
+	)
+	default boolean cloudShadows()
+	{
+		return true;
 	}
 }

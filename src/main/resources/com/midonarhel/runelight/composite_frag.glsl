@@ -8,6 +8,7 @@
 #include "environment.glsl"
 #include cluster_config
 #include "fog_apply.glsl"
+#include "clouds.glsl"
 
 #define DEBUG_FINAL 0
 #define DEBUG_DEPTH 1
@@ -276,7 +277,9 @@ void main() {
     if (inside && sunAndSky && proceduralSky == 1) {
       // a point on the near plane gives the view ray; the camera is at the origin of camera-relative space
       vec3 dir = normalize(reconstructPosition(vec2(px) + 0.5, 1.0));
-      color.rgb = envSky(skyColor(dir, sunDir, moonDir, sunAltitude, time), fogColor, -dir.y);
+      vec3 sky = cloudsOverSky(skyColor(dir, sunDir, moonDir, sunAltitude, time), vec2(px) + 0.5, dir, cameraPos,
+        casterDir, sunAltitude, ign(gl_FragCoord.xy));
+      color.rgb = envSky(sky, fogColor, -dir.y);
     } else if (inside && envCave == 1 && proceduralSky == 1) {
       // underground the void behind the scene takes the area's fog color, so fogged walls fade into it
       color.rgb = fogColor;
@@ -306,6 +309,7 @@ void main() {
       // a leaf lit from behind looks up its shadow on the lit side, or it would shadow itself
       shadow = shadowFactor(p, ndl < 0.0 && transmissive > 0.0 ? -n : n, ign(gl_FragCoord.xy));
     }
+    shadow *= cloudShadow(p + cameraPos, casterDir);
     shadow = overcastShadow(shadow);
     vec3 caster = sunIsCaster == 1 ? sunLight(sunAltitude) : moonLight(sunAltitude);
     float up = max(-n.y, 0.0);

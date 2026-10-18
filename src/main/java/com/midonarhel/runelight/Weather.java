@@ -163,8 +163,8 @@ class Weather
 	private long clockWraps;
 	// fog density multipliers: clear weather, and what full rain or snow adds
 	private static final float FOG_CLEAR = 0.6f;
-	private static final float FOG_RAIN = 1.6f;
-	private static final float FOG_SNOW = 1.0f;
+	private static final float FOG_RAIN = 1.0f;
+	private static final float FOG_SNOW = 0.7f;
 	private float accumulation;
 	private long lastMillis;
 	private final long startMillis = System.currentTimeMillis();
@@ -447,6 +447,8 @@ class Weather
 		glUniformMatrix4fv(uniLightProj, false, occlusion.lightProj);
 		glUniform1i(uniTexturesReady, texturesReady ? 1 : 0);
 		glUniformMatrix4fv(uniEntityProj, false, RuneLightPlugin.IDENTITY);
+		final int uniFoliageOpen = glGetUniformLocation(program, "foliageOpen");
+		glUniform1i(uniFoliageOpen, 1);
 
 		// Zone draws through the plugin's shared uniform location
 		final int savedBase = RuneLightPlugin.uniBase;
@@ -481,6 +483,7 @@ class Weather
 		finally
 		{
 			RuneLightPlugin.uniBase = savedBase;
+			glUniform1i(uniFoliageOpen, 0);
 		}
 
 		glBindVertexArray(0);

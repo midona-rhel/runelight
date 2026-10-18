@@ -34,9 +34,16 @@ float valueNoise(vec2 p) {
 
 // Exposure averaged over a few occlusion texels, so the edge under an eave is soft instead of stair-stepped
 float softExposure(vec3 p) {
-  float t = 24.0;
-  return 0.25 * (skyExposure(p + vec3(-t, 0.0, -t), EXPOSURE_BIAS) + skyExposure(p + vec3(t, 0.0, -t), EXPOSURE_BIAS)
-    + skyExposure(p + vec3(-t, 0.0, t), EXPOSURE_BIAS) + skyExposure(p + vec3(t, 0.0, t), EXPOSURE_BIAS));
+  // 3x3 tent over about a third of a tile each way
+  float t = 40.0;
+  float sum = 0.0;
+  for (int x = -1; x <= 1; ++x) {
+    for (int z = -1; z <= 1; ++z) {
+      float w = (x == 0 ? 2.0 : 1.0) * (z == 0 ? 2.0 : 1.0);
+      sum += w * skyExposure(p + vec3(float(x) * t, 0.0, float(z) * t), EXPOSURE_BIAS);
+    }
+  }
+  return sum / 16.0;
 }
 
 void main() {
