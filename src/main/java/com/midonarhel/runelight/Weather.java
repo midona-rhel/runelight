@@ -132,6 +132,10 @@ class Weather
 	private boolean active;
 	private float intensity;
 	private float fadeIn;
+	// fog density multipliers: clear weather, and what full rain or snow adds
+	private static final float FOG_CLEAR = 0.6f;
+	private static final float FOG_RAIN = 1.6f;
+	private static final float FOG_SNOW = 1.0f;
 	private float accumulation;
 	private long lastMillis;
 	private final long startMillis = System.currentTimeMillis();
@@ -201,6 +205,17 @@ class Weather
 	boolean isActive()
 	{
 		return active;
+	}
+
+	/**
+	 * How much the weather thickens fog, as a multiplier: thinner in clear weather, thicker as rain or snow
+	 * fades in.
+	 */
+	float fogMultiplier()
+	{
+		float k = active ? intensity * fadeIn : 0;
+		float extra = activeMode == WeatherMode.RAIN ? FOG_RAIN : activeMode == WeatherMode.SNOW ? FOG_SNOW : 0;
+		return FOG_CLEAR + extra * k;
 	}
 
 	/**

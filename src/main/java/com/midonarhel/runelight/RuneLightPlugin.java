@@ -245,6 +245,8 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 
 	private final VolumetricFog volumetricFog = new VolumetricFog();
 	private boolean frameFog;
+	// 117 HD fog depth that doubles the volumetric fog
+	private static final float AREA_FOG_DEPTH = 30;
 	// under the open sky rather than underground, from the area classification (or the game's sky color)
 	private boolean frameOpenSky;
 
@@ -1624,16 +1626,20 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		VAO.clearShadowDraws();
 		VAO.recordShadowDraws = frameShadows;
 
+		updateWeather(cameraX, cameraY, cameraZ);
+
 		frameFog = false;
 		Player player = client.getLocalPlayer();
 		LocalPoint lp = player != null ? player.getLocalLocation() : null;
 		if (config.volumetricFog() && lp != null && client.getGameState() == GameState.LOGGED_IN)
 		{
 			float ground = Perspective.getTileHeight(client, lp, client.getTopLevelWorldView().getPlane());
+			// thicker in rain and snow, and in areas 117 HD gives fog (its fogDepth: ~6 faint, 50 thick)
+			float areaFog = config.areaEnvironments() ? environmentManager.getFogDepth() * config.areaFogStrength() / 100f : 0;
+			volumetricFog.areaDensity = weather.fogMultiplier() * (1 + Math.min(areaFog / AREA_FOG_DEPTH, 2));
 			volumetricFog.updateParameters(config, lp.getX(), ground, lp.getY(), frameDrawDistance);
 			frameFog = true;
 		}
-		updateWeather(cameraX, cameraY, cameraZ);
 	}
 
 	private void updateWeather(float cameraX, float cameraY, float cameraZ)

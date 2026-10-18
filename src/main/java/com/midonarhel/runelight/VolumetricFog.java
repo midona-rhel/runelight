@@ -20,6 +20,8 @@ class VolumetricFog
 		.add(GL_FRAGMENT_SHADER, "fog_frag.glsl");
 
 	private static final int NOISE_SIZE = 32;
+	private static final float EDGE_FADE_TILES = 7;
+	private static final float NEAR_FADE_TILES = 7;
 
 	// Per-area overrides for an environment system: multipliers on the configured values, and a color tint
 	// on the fog's ambient light. 1 leaves the config as it is.
@@ -33,13 +35,14 @@ class VolumetricFog
 	private float groundY;
 	private float centerX, centerZ;
 	private float fadeStart, fadeEnd;
+	private float near;
 	private float sunScatter;
 	private float noiseAmount;
 
 	private int program;
 	private int uniCameraPos, uniTime, uniOutdoors, uniProceduralSky, uniClientSkyColor, uniCasterDir,
 		uniSunIsCaster, uniSunAltitude, uniShadowsEnabled, uniLightProjRel, uniShadowDepthRange,
-		uniPointLights, uniDensity, uniHeight, uniGroundY, uniCenter, uniFade, uniSunScatter, uniNoiseAmount,
+		uniPointLights, uniDensity, uniHeight, uniGroundY, uniCenter, uniFade, uniNear, uniSunScatter, uniNoiseAmount,
 		uniTint, uniViewProj, uniInvViewProj, uniViewport, uniDepthZeroToOne;
 
 	private int uniCompositeEnabled;
@@ -73,6 +76,7 @@ class VolumetricFog
 		uniGroundY = glGetUniformLocation(program, "fogGroundY");
 		uniCenter = glGetUniformLocation(program, "fogCenter");
 		uniFade = glGetUniformLocation(program, "fogFade");
+		uniNear = glGetUniformLocation(program, "fogNear");
 		uniSunScatter = glGetUniformLocation(program, "fogSunScatter");
 		uniNoiseAmount = glGetUniformLocation(program, "fogNoiseAmount");
 		uniTint = glGetUniformLocation(program, "fogTint");
@@ -126,8 +130,9 @@ class VolumetricFog
 		centerX = x;
 		centerZ = z;
 		fadeEnd = Math.min(config.volumetricFogDistance() * tile, drawDistance);
-		// a long, soft fade so there is no visible edge
-		fadeStart = fadeEnd * 0.35f;
+		// the outer EDGE_FADE_TILES thin out to nothing, and so do the first NEAR_FADE_TILES from the camera
+		fadeStart = Math.max(fadeEnd - EDGE_FADE_TILES * tile, 0);
+		near = NEAR_FADE_TILES * tile;
 		sunScatter = config.volumetricFogSunScattering() / 100f;
 		noiseAmount = config.volumetricFogNoise() / 100f;
 	}
@@ -188,6 +193,7 @@ class VolumetricFog
 		glUniform1f(uniGroundY, groundY);
 		glUniform2f(uniCenter, centerX, centerZ);
 		glUniform2f(uniFade, fadeStart, fadeEnd);
+		glUniform1f(uniNear, near);
 		glUniform1f(uniSunScatter, sunScatter);
 		glUniform1f(uniNoiseAmount, noiseAmount);
 		glUniform3fv(uniTint, areaTint);

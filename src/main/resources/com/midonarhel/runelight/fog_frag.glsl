@@ -34,6 +34,7 @@ uniform float fogHeight;     // world units for the density to drop to 1/e
 uniform float fogGroundY;    // world y the height is measured from; y points down
 uniform vec2 fogCenter;      // world x, z the fade is centered on: the player
 uniform vec2 fogFade;        // horizontal distance from the center where the fog starts and finishes fading out
+uniform float fogNear;       // distance from the camera over which the fog thickens from nothing
 uniform float fogSunScatter;
 uniform float fogNoiseAmount;
 uniform vec3 fogTint;        // multiplies the fog's ambient color; for per-area fog later
@@ -41,28 +42,34 @@ uniform vec3 fogTint;        // multiplies the fog's ambient color; for per-area
 out vec4 FragFog;
 
 #define FOG_STEPS 12
+// fog left right around the player, as a fraction of the full density
+#define FOG_NEAR_FLOOR 0.15
 // the layer is cut off where it has thinned to e^-FOG_TOP, so no steps are spent in clear air above it
 #define FOG_TOP 5.0
 // below the reference ground (valleys) density stops growing at e^FOG_BELOW
 #define FOG_BELOW 1.0
 // Ambient light in the fog: mostly the horizon color, so fog and sky meet in the same tone, plus some of the
 // scene's ambient light so nights stay cool blue instead of going black.
-#define FOG_HORIZON 0.60
-#define FOG_AMBIENT_FILL 0.25
-// sun or moon light scattered toward the camera at 100% sun scattering
-#define FOG_SUN_SCALE 0.15
+#define FOG_HORIZON 0.45
+#define FOG_AMBIENT_FILL 0.20
+// sun or moon light scattered toward the camera at 100% sun scattering; strong enough that shafts read against
+// the ambient glow
+#define FOG_SUN_SCALE 0.55
+// shafts carry the caster's color more saturated than the light itself: orange at sunset, blue under the moon
+#define FOG_SUN_SATURATION 1.5
 // underground: no sky, so a dim neutral glow, and thinner
 #define FOG_CAVE_COLOR vec3(0.030, 0.030, 0.036)
 #define FOG_CAVE_DENSITY 0.5
 // Henyey-Greenstein forward lobe mixed with isotropic: a glow toward the sun without the rest going dark
-#define FOG_PHASE_G 0.6
-#define FOG_PHASE_FORWARD 0.4
+#define FOG_PHASE_G 0.7
+#define FOG_PHASE_FORWARD 0.6
 // noise: world units per texture repeat horizontally and vertically, and drift in world units per second
 #define FOG_NOISE_SCALE 3072.0
 #define FOG_NOISE_SCALE_Y 1024.0
 #define FOG_WIND vec3(48.0, -4.0, 28.0)
-// point lights glowing in the fog: at most this many from each sample's cluster
-#define FOG_POINT_LIGHTS 4
+// point lights glowing in the fog: every light in the sample's cluster, up to the cluster's capacity. A smaller
+// cap picks different subsets in neighboring clusters and shows the cluster grid as squares.
+#define FOG_POINT_LIGHTS (CLUSTER_STRIDE - 1)
 #define FOG_POINT_LIGHT_SCALE 0.5
 
 float ign(vec2 p) {
@@ -161,6 +168,8 @@ void main() {
     vec3 horizon = proceduralSky == 1 ? skyHorizon(sunAltitude) : clientSkyColor;
     ambient = srgbToLinear(horizon) * FOG_HORIZON + ambientLight(sunAltitude) * FOG_AMBIENT_FILL;
     vec3 caster = sunIsCaster == 1 ? sunLight(sunAltitude) : moonLight(sunAltitude);
+    float luma = dot(caster, vec3(0.2126, 0.7152, 0.0722));
+    caster = max(mix(vec3(luma), caster, FOG_SUN_SATURATION), 0.0);
     sun = caster * phase(dot(dir, casterDir)) * (fogSunScatter * FOG_SUN_SCALE);
   } else {
     ambient = FOG_CAVE_COLOR;
@@ -190,7 +199,12 @@ void main() {
 
     float h = fogGroundY - wp.y;
     float sigma = density * exp(-max(h, -fogHeight * FOG_BELOW) / fogHeight);
-    sigma *= 1.0 - smoothstep(fogFade.x, fogFade.y, length(wp.xz - fogCenter));
+    // Thin around the player and right in front of the camera, thickening over fogNear, so the fog sits in the
+    // distance instead of over what you're looking at; and the outer edge thins to nothing.
+    float centerDist = length(wp.xz - fogCenter);
+    sigma *= 1.0 - smoothstep(fogFade.x, fogFade.y, centerDist);
+    sigma *= mix(FOG_NEAR_FLOOR, 1.0, smoothstep(0.0, fogNear, centerDist));
+    sigma *= smoothstep(0.0, fogNear, t);
     if (fogNoiseAmount > 0.0) {
       vec3 uvw = (wp + FOG_WIND * time) / vec3(FOG_NOISE_SCALE, FOG_NOISE_SCALE_Y, FOG_NOISE_SCALE);
       float n = texture(fogNoise, uvw).r;
