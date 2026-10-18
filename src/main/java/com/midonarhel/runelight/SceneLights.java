@@ -414,12 +414,12 @@ class SceneLights
 		{
 			for (Placed p : t.lights)
 			{
-				emit(out, p.def, p.x, p.y, p.z, p.plane, plane, p.seed, time, night, camX, camZ, maxDistance);
+				emitFixed(out, p, plane, time, night, camX, camZ, maxDistance);
 			}
 		}
 		for (Placed p : worldLights)
 		{
-			emit(out, p.def, p.x, p.y, p.z, p.plane, plane, p.seed, time, night, camX, camZ, maxDistance);
+			emitFixed(out, p, plane, time, night, camX, camZ, maxDistance);
 		}
 
 		if (!byNpc.isEmpty())
@@ -482,6 +482,17 @@ class SceneLights
 						(g.getStartCycle() * 0.618f) % 1f, time, night, camX, camZ, maxDistance);
 				}
 			}
+		}
+	}
+
+	private void emitFixed(List<PointLight> out, Placed p, int plane, float time, float night, float camX, float camZ,
+		float maxDistance)
+	{
+		int n = out.size();
+		emit(out, p.def, p.x, p.y, p.z, p.plane, plane, p.seed, time, night, camX, camZ, maxDistance);
+		if (out.size() > n)
+		{
+			out.get(n).fixed();
 		}
 	}
 

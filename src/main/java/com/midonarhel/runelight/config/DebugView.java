@@ -10,7 +10,8 @@ public enum DebugView
 	LIGHTING("Lighting"),
 	LIGHT_CLUSTERS("Light clusters"),
 	MATERIALS("Materials"),
-	GLOBAL_ILLUMINATION("Global illumination");
+	GLOBAL_ILLUMINATION("Global illumination"),
+	SKYLIGHT("Skylight");
 
 	private final String name;
 

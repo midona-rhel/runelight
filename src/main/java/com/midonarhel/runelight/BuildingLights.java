@@ -2,13 +2,21 @@ package com.midonarhel.runelight;
 
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.IdentityHashMap;
 import java.util.List;
+import java.util.Map;
 import net.runelite.api.Client;
 import net.runelite.api.CollisionData;
+import net.runelite.api.GameObject;
 import net.runelite.api.GameState;
+import net.runelite.api.Model;
 import net.runelite.api.Perspective;
+import net.runelite.api.Renderable;
 import net.runelite.api.Scene;
+import net.runelite.api.Tile;
 import net.runelite.api.WorldView;
+import net.runelite.api.events.GameObjectDespawned;
+import net.runelite.api.events.GameObjectSpawned;
 import net.runelite.api.events.GameStateChanged;
 import net.runelite.api.events.GameTick;
 import net.runelite.client.eventbus.Subscribe;
@@ -70,6 +78,13 @@ class BuildingLights
 	private volatile RoomMap rooms;
 	private Scene builtFor;
 	private int builtBaseX, builtBaseY;
+	// The walls (WallMap) the rooms are split along and the static lights are occluded by: rebuilt every tick from
+	// the collision maps, as doors open and close, plus the diagonal wall objects, followed through spawn events.
+	private volatile WallMap walls;
+	private final Map<GameObject, WallMap.Diagonal> diagonals = new IdentityHashMap<>();
+	private BuildingDetector.Result coarse;
+	private int wallScene;
+	private volatile boolean splitRooms = true;
 
 	private final List<PointLight> pool = new ArrayList<>();
 
@@ -93,12 +108,31 @@ class BuildingLights
 		return rooms;
 	}
 
+	/** The scene's walls, null before a scene is built; a new object whenever they change. */
+	WallMap getWalls()
+	{
+		return walls;
+	}
+
+	/** Whether rooms split along their interior walls; a change rebuilds the rooms on the next tick. */
+	void setSplitRooms(boolean split)
+	{
+		if (split != splitRooms)
+		{
+			splitRooms = split;
+			builtFor = null;
+		}
+	}
+
 	void rebuild()
 	{
 		builtFor = null;
 		result = new BuildingDetector.Result();
 		lights = Collections.emptyList();
 		rooms = null;
+		walls = null;
+		coarse = null;
+		diagonals.clear();
 		if (client.getGameState() != GameState.LOGGED_IN)
 		{
 			return;
@@ -111,13 +145,24 @@ class BuildingLights
 
 		long start = System.nanoTime();
 		BuildingDetector.Result r = BuildingDetector.detect(scene.getExtendedTileSettings(), scene.getRoofs());
+		coarse = r;
+		findDiagonals(scene);
+		int[][][] flags = collisionFlags();
+		byte[][][] settings = scene.getExtendedTileSettings();
+		WallMap w = WallMap.build(flags, diagonals.values(), settings != null && settings.length > 0 ? settings[0].length : 0,
+			RuneLightPlugin.SCENE_OFFSET, ++wallScene);
+		if (splitRooms)
+		{
+			r = BuildingDetector.split(r, settings, w);
+		}
 		lights = place(r, scene.getTileHeights(), RuneLightPlugin.SCENE_OFFSET);
-		RoomMap m = RoomMap.build(r, scene.getExtendedTileSettings(), scene.getTileHeights(), RuneLightPlugin.SCENE_OFFSET);
+		RoomMap m = RoomMap.build(r, settings, scene.getTileHeights(), RuneLightPlugin.SCENE_OFFSET);
 		if (m != null)
 		{
-			m.updateOpenings(collisionFlags());
+			m.updateOpenings(flags);
 		}
 		rooms = m;
+		walls = w;
 		result = r;
 		builtFor = scene;
 		builtBaseX = scene.getBaseX();
@@ -180,7 +225,68 @@ class BuildingLights
 			result = new BuildingDetector.Result();
 			lights = Collections.emptyList();
 			rooms = null;
+			walls = null;
+			coarse = null;
+			diagonals.clear();
 		}
+	}
+
+	private void findDiagonals(Scene scene)
+	{
+		Tile[][][] tiles = scene.getExtendedTiles();
+		for (Tile[][] plane : tiles)
+		{
+			for (Tile[] column : plane)
+			{
+				for (Tile tile : column)
+				{
+					GameObject[] objects = tile != null ? tile.getGameObjects() : null;
+					if (objects != null)
+					{
+						for (GameObject go : objects)
+						{
+							addDiagonal(go, tile);
+						}
+					}
+				}
+			}
+		}
+	}
+
+	private void addDiagonal(GameObject go, Tile tile)
+	{
+		if (go == null || tile == null || (go.getConfig() & 0x1F) != WallMap.TYPE_DIAGONAL_WALL)
+		{
+			return;
+		}
+		net.runelite.api.Point p = tile.getSceneLocation();
+		if (p == null)
+		{
+			return;
+		}
+		Renderable r = go.getRenderable();
+		Model model = r instanceof Model ? (Model) r : r != null ? r.getModel() : null;
+		int kind = model != null
+			? WallMap.diagonalOf(model.getVerticesX(), model.getVerticesZ(), model.getVerticesCount(), go.getModelOrientation(),
+				go.getConfig() >> 6 & 3)
+			: WallMap.diagonalOf(null, null, 0, 0, go.getConfig() >> 6 & 3);
+		int offset = RuneLightPlugin.SCENE_OFFSET;
+		diagonals.put(go, new WallMap.Diagonal(go.getPlane(), p.getX() + offset, p.getY() + offset, kind));
+	}
+
+	@Subscribe
+	public void onGameObjectSpawned(GameObjectSpawned e)
+	{
+		if (builtFor != null)
+		{
+			addDiagonal(e.getGameObject(), e.getTile());
+		}
+	}
+
+	@Subscribe
+	public void onGameObjectDespawned(GameObjectDespawned e)
+	{
+		diagonals.remove(e.getGameObject());
 	}
 
 	private int[][][] collisionFlags()
@@ -215,9 +321,29 @@ class BuildingLights
 		{
 			// doors open and close
 			RoomMap m = rooms;
-			if (m != null)
+			WallMap old = walls;
+			if (m != null && old != null && scene != null)
 			{
-				m.updateOpenings(collisionFlags());
+				int[][][] flags = collisionFlags();
+				WallMap w = WallMap.build(flags, diagonals.values(), old.size, old.offset, old.scene);
+				if (!w.sameWalls(old))
+				{
+					walls = w;
+					if (splitRooms && coarse != null)
+					{
+						// the building lights stay where they were; only which tiles each room has changes
+						byte[][][] settings = scene.getExtendedTileSettings();
+						RoomMap n = RoomMap.build(BuildingDetector.split(coarse, settings, w), settings, scene.getTileHeights(),
+							RuneLightPlugin.SCENE_OFFSET);
+						if (n != null)
+						{
+							n.updateOpenings(flags);
+							rooms = n;
+							return;
+						}
+					}
+				}
+				m.updateOpenings(flags);
 			}
 		}
 	}
@@ -256,7 +382,8 @@ class BuildingLights
 			{
 				pool.add(new PointLight());
 			}
-			out.add(pool.get(used++).set(l.x, l.y, l.z, l.radius, RED, GREEN, BLUE, strength).indoor().onPlane(l.plane));
+			out.add(pool.get(used++).set(l.x, l.y, l.z, l.radius, RED, GREEN, BLUE, strength).indoor().onPlane(l.plane)
+				.fixed());
 		}
 	}
 

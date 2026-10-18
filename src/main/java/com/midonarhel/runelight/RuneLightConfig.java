@@ -34,6 +34,7 @@ import static com.midonarhel.runelight.RuneLightPlugin.MAX_FOG_DEPTH;
 import com.midonarhel.runelight.config.AntiAliasingMode;
 import com.midonarhel.runelight.config.ColorBlindMode;
 import com.midonarhel.runelight.config.DebugView;
+import com.midonarhel.runelight.config.LightingModel;
 import com.midonarhel.runelight.config.Quality;
 import com.midonarhel.runelight.config.ShadowResolution;
 import com.midonarhel.runelight.config.SwayFps;
@@ -1362,6 +1363,80 @@ public interface RuneLightConfig extends Config
 		position = 752
 	)
 	default boolean noFogIndoors()
+	{
+		return true;
+	}
+
+	@ConfigSection(
+		name = "Skylight and light occlusion",
+		description = "Light from the sky and from lamps stops where the scenery and the walls block it",
+		position = 800
+	)
+	String lightOcclusionSection = "lightOcclusion";
+
+	@ConfigItem(
+		keyName = "lightingModel",
+		name = "Lighting model",
+		description = "Where the ambient light comes from. Skylight: how much sky each spot sees, from a top-down map "
+			+ "of the scenery; cheap, interiors and overhangs darken. Skylight + GI bounce: the same, plus sunlight "
+			+ "bounced into the shade by the global illumination's probes. GI probes: the probes alone. The probes "
+			+ "also need Global illumination on.",
+		section = lightOcclusionSection,
+		position = 801
+	)
+	default LightingModel lightingModel()
+	{
+		return LightingModel.SKYLIGHT;
+	}
+
+	@Range(max = 100)
+	@ConfigItem(
+		keyName = "skylightFloor",
+		name = "Skylight floor",
+		description = "Share of the ambient light kept where no sky is seen, such as deep inside buildings, in "
+			+ "percent: higher keeps interiors easier to see.",
+		section = lightOcclusionSection,
+		position = 802
+	)
+	default int skylightFloor()
+	{
+		return 30;
+	}
+
+	@ConfigItem(
+		keyName = "lightWallOcclusion",
+		name = "Walls block lights",
+		description = "Lamps, fires and other lights that stay put don't shine through walls, diagonal ones included; "
+			+ "they reach out through doorways and windows. Worked out in the background for each light.",
+		section = lightOcclusionSection,
+		position = 803
+	)
+	default boolean lightWallOcclusion()
+	{
+		return true;
+	}
+
+	@ConfigItem(
+		keyName = "lightRoofOcclusion",
+		name = "No light on roofs",
+		description = "Lights under a roof don't light the roof's top, or anything else open to the sky above them.",
+		section = lightOcclusionSection,
+		position = 804
+	)
+	default boolean lightRoofOcclusion()
+	{
+		return true;
+	}
+
+	@ConfigItem(
+		keyName = "roomsByWalls",
+		name = "Split rooms at walls",
+		description = "Buildings are split into rooms along their interior walls, so lights stay in their own room "
+			+ "and each room gets its own building light.",
+		section = lightOcclusionSection,
+		position = 805
+	)
+	default boolean roomsByWalls()
 	{
 		return true;
 	}

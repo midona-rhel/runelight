@@ -15,6 +15,9 @@ class PointLight
 	// logical plane, -1 unknown; and the rooms it reaches (RoomMap.lightCode), set when the frame's lights are culled
 	int plane = -1;
 	float roomCode = RoomMap.anyCode();
+	// stays where it is (scenery, world and building lights): its view past the walls is cast once (LightOcclusion)
+	boolean fixed;
+	LightOcclusion.Entry occlusion;
 
 	PointLight set(float x, float y, float z, float radius, float r, float g, float b, float intensity)
 	{
@@ -29,12 +32,20 @@ class PointLight
 		this.indoor = false;
 		this.plane = -1;
 		this.roomCode = RoomMap.anyCode();
+		this.fixed = false;
+		this.occlusion = null;
 		return this;
 	}
 
 	PointLight onPlane(int plane)
 	{
 		this.plane = plane;
+		return this;
+	}
+
+	PointLight fixed()
+	{
+		fixed = true;
 		return this;
 	}
 

@@ -120,6 +120,179 @@ final class BuildingDetector
 	}
 
 	/**
+	 * Split the rooms of a detection along their interior walls: each part of a room that can't be reached from the
+	 * rest without crossing a wall (WallMap edges, diagonal walls included) becomes a room of its own, and gets its
+	 * own lights. A tile a diagonal wall crosses is two halves while flooding and goes to the larger of their rooms.
+	 * Rooms whose tiles all stay connected come out unchanged.
+	 */
+	static Result split(Result coarse, byte[][][] settings, WallMap walls)
+	{
+		if (walls == null || coarse.rooms.isEmpty())
+		{
+			return coarse;
+		}
+		Result result = new Result();
+		result.usedRoofIds = coarse.usedRoofIds;
+		result.rejectedSmall = coarse.rejectedSmall;
+		result.rejectedHuge = coarse.rejectedHuge;
+		int size = walls.size;
+		// the coarse room (+1) of every tile on the plane being split
+		int[] owner = new int[size * size];
+		// component label per tile half, 0 unlabeled
+		int[] label = new int[size * size * 2];
+		int[] queue = new int[size * size * 2];
+		for (int ri = 0; ri < coarse.rooms.size(); ++ri)
+		{
+			Room room = coarse.rooms.get(ri);
+			int plane = room.plane;
+			for (int t : room.tiles)
+			{
+				int x = t >>> 16, y = t & 0xFFFF;
+				if (x < size && y < size)
+				{
+					owner[x * size + y] = ri + 1;
+				}
+			}
+			int labels = 0;
+			int[] counts = new int[8];
+			for (int t : room.tiles)
+			{
+				int x = t >>> 16, y = t & 0xFFFF;
+				if (x >= size || y >= size)
+				{
+					continue;
+				}
+				int halves = WallMap.split(walls.get(plane, x, y)) ? 2 : 1;
+				for (int h = 0; h < halves; ++h)
+				{
+					int node = (x * size + y) * 2 + h;
+					if (label[node] != 0)
+					{
+						continue;
+					}
+					if (++labels == counts.length)
+					{
+						counts = java.util.Arrays.copyOf(counts, labels * 2);
+					}
+					counts[labels] = flood(walls, plane, node, labels, ri + 1, owner, label, queue);
+				}
+			}
+			if (labels <= 1)
+			{
+				result.rooms.add(room);
+				clear(room, size, owner, label);
+				continue;
+			}
+			// tiles per label: a split tile goes to the larger of its halves' rooms
+			int[] tileCount = new int[labels + 1];
+			int[] tileLabel = new int[room.tiles.length];
+			for (int k = 0; k < room.tiles.length; ++k)
+			{
+				int t = room.tiles[k];
+				int x = t >>> 16, y = t & 0xFFFF;
+				if (x >= size || y >= size)
+				{
+					continue;
+				}
+				int node = (x * size + y) * 2;
+				int l = label[node];
+				if (WallMap.split(walls.get(plane, x, y)) && counts[label[node + 1]] > counts[l])
+				{
+					l = label[node + 1];
+				}
+				tileLabel[k] = l;
+				tileCount[l]++;
+			}
+			for (int l = 1; l <= labels; ++l)
+			{
+				if (tileCount[l] == 0)
+				{
+					continue;
+				}
+				Room part = new Room();
+				part.plane = plane;
+				part.roofId = room.roofId;
+				part.tiles = new int[tileCount[l]];
+				int n = 0;
+				for (int k = 0; k < room.tiles.length; ++k)
+				{
+					if (tileLabel[k] != l)
+					{
+						continue;
+					}
+					int t = room.tiles[k];
+					int x = t >>> 16, y = t & 0xFFFF;
+					part.tiles[n++] = t;
+					part.minX = Math.min(part.minX, x);
+					part.maxX = Math.max(part.maxX, x);
+					part.minY = Math.min(part.minY, y);
+					part.maxY = Math.max(part.maxY, y);
+				}
+				result.rooms.add(part);
+			}
+			clear(room, size, owner, label);
+		}
+		for (int i = 0; i < result.rooms.size(); ++i)
+		{
+			place(settings, result.rooms.get(i), i, result.anchors);
+		}
+		return result;
+	}
+
+	private static void clear(Room room, int size, int[] owner, int[] label)
+	{
+		for (int t : room.tiles)
+		{
+			int x = t >>> 16, y = t & 0xFFFF;
+			if (x < size && y < size)
+			{
+				int i = x * size + y;
+				owner[i] = 0;
+				label[i * 2] = 0;
+				label[i * 2 + 1] = 0;
+			}
+		}
+	}
+
+	/** Label every tile half reachable from start without crossing a wall or leaving the room; returns the count. */
+	private static int flood(WallMap walls, int plane, int start, int id, int room, int[] owner, int[] label, int[] queue)
+	{
+		int size = walls.size;
+		int head = 0, tail = 0;
+		queue[tail++] = start;
+		label[start] = id;
+		while (head < tail)
+		{
+			int node = queue[head++];
+			int tile = node >> 1, h = node & 1;
+			int x = tile / size, y = tile % size;
+			int b = walls.get(plane, x, y);
+			for (int d = 0; d < 4; ++d)
+			{
+				int side = d == 0 ? WallMap.EAST : d == 1 ? WallMap.WEST : d == 2 ? WallMap.NORTH : WallMap.SOUTH;
+				if (WallMap.half(b, side) != h || walls.edge(plane, x, y, side))
+				{
+					continue;
+				}
+				int nx = x + (d == 0 ? 1 : d == 1 ? -1 : 0);
+				int ny = y + (d == 2 ? 1 : d == 3 ? -1 : 0);
+				if (nx < 0 || ny < 0 || nx >= size || ny >= size || owner[nx * size + ny] != room)
+				{
+					continue;
+				}
+				int opposite = d == 0 ? WallMap.WEST : d == 1 ? WallMap.EAST : d == 2 ? WallMap.SOUTH : WallMap.NORTH;
+				int next = (nx * size + ny) * 2 + WallMap.half(walls.get(plane, nx, ny), opposite);
+				if (label[next] == 0)
+				{
+					label[next] = id;
+					queue[tail++] = next;
+				}
+			}
+		}
+		return tail;
+	}
+
+	/**
 	 * The map level holding the data of a logical plane at a tile.
 	 */
 	static int mapLevel(byte[][][] settings, int plane, int x, int y)

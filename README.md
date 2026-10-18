@@ -166,3 +166,17 @@ blends in over a few seconds. The AO pass looks the probes up at half resolution
 uses the result instead of its plain ambient and sky light, keeping a floor of the latter (Shade floor). Debug view
 "Global illumination" shows the indirect light alone. Outside the base scene and underground the plain ambient
 light stays.
+
+## Skylight and light occlusion
+
+Plugin config, Skylight and light occlusion section. Lighting model Skylight (default) replaces the probes with a
+top-down depth map of the scenery around the player (`SkyOcclusion.java`, the weather's occlusion map kept while
+needed): the AO pass reads it in a ring of directions around each pixel and turns the horizon's slope into how much
+sky the pixel sees (`skylight_ao.glsl`, in the half resolution shadow target's alpha), and the composite scales the
+ambient and sky light by it (`light_occlusion.glsl`). "Skylight + GI bounce" adds what the probes find beyond it.
+Debug view "Skylight" shows it.
+
+Walls (`WallMap.java`) come from the collision map's line-of-sight edges plus the diagonal wall objects; rooms split
+along them (`BuildingDetector.split`), and every light that stays put gets a quarter-tile visibility grid cast
+against them on a worker thread (`LightOcclusion.java`), recast when a door opens or closes, packed after the room
+map in the light buffer. Lights under a roof don't light surfaces open to the sky above them.
