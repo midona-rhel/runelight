@@ -28,6 +28,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import com.google.common.base.Stopwatch;
 import com.google.common.primitives.Ints;
+import com.google.gson.Gson;
 import com.google.inject.Provides;
 import java.awt.Canvas;
 import java.awt.Dimension;
@@ -72,6 +73,7 @@ import net.runelite.client.chat.ChatMessageManager;
 import net.runelite.client.chat.QueuedMessage;
 import net.runelite.client.callback.RenderCallbackManager;
 import net.runelite.client.config.ConfigManager;
+import net.runelite.client.eventbus.EventBus;
 import net.runelite.client.eventbus.Subscribe;
 import net.runelite.client.events.ConfigChanged;
 import net.runelite.client.plugins.Plugin;
@@ -144,6 +146,14 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 
 	@Inject
 	private ChatMessageManager chatMessageManager;
+
+	@Inject
+	private EventBus eventBus;
+
+	@Inject
+	private Gson gson;
+
+	private SceneLights sceneLights;
 
 	@Inject
 	private OverlayManager overlayManager;
@@ -448,6 +458,11 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		}
 		overlayManager.add(overlay);
 		glErrorChecks = config.glErrorChecks();
+
+		sceneLights = new SceneLights(client);
+		sceneLights.load(gson);
+		eventBus.register(sceneLights);
+		clientThread.invoke(sceneLights::rebuild);
 		startMillis = System.currentTimeMillis();
 
 		root = new SceneContext(NUM_ZONES, NUM_ZONES);
@@ -616,6 +631,11 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 	protected void shutDown()
 	{
 		overlayManager.remove(overlay);
+		if (sceneLights != null)
+		{
+			eventBus.unregister(sceneLights);
+			sceneLights = null;
+		}
 		if (shaderWatcher != null)
 		{
 			shaderWatcher.stop();
@@ -1648,11 +1668,20 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 	}
 
 	/**
-	 * Gather this frame's point lights. For now only the test light; scene lights come next.
+	 * Gather this frame's point lights: scene lights from lights.json, plus the optional test light.
 	 */
 	private void collectLights()
 	{
 		frameLights.clear();
+		SceneLights lights = sceneLights;
+		if (lights != null)
+		{
+			float time = (System.currentTimeMillis() - startMillis) / 1000f;
+			// 0 by day, 1 once the sun is well below the horizon
+			float t = Math.max(0, Math.min(1, (-2 - dayCycle.sunAltitude) / 8));
+			float night = frameOutdoors ? t * t * (3 - 2 * t) : 1;
+			lights.collect(frameLights, time, night, frameCameraX, frameCameraZ, frameDrawDistance);
+		}
 		if (config.testLight())
 		{
 			Player player = client.getLocalPlayer();
@@ -1662,9 +1691,15 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 				float ground = Perspective.getTileHeight(client, lp, client.getTopLevelWorldView().getPlane());
 				// a little above head height (y points down), warm like a torch, reaching about 5 tiles
 				frameLights.add(testLight.set(lp.getX(), ground - 250, lp.getY(), 5 * Perspective.LOCAL_TILE_SIZE,
-					1.0f, 0.72f, 0.42f, 1.6f));
+					1.0f, 0.72f, 0.42f, 15f));
 			}
 		}
+	}
+
+	int getLightDefinitionCount()
+	{
+		SceneLights lights = sceneLights;
+		return lights != null ? lights.getDefinitionCount() : 0;
 	}
 
 	int getPointLightCount()

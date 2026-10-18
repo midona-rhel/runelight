@@ -30,3 +30,8 @@ Plugin config, Development section:
 - Show GPU timings: GPU ms for the scene and for UI + present, measured with non-blocking timestamp queries.
 - Check GL errors: glGetError after each draw step. Slow, keep off when measuring.
 - Debug view: show the depth or normal buffer instead of the final image.
+
+## Lights
+
+Point light placements come from 117 HD's light definitions, converted with `tools/import_117hd_lights.py`
+(see the script for usage). Rerun it against a newer 117 HD checkout to pick up their additions.

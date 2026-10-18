@@ -53,7 +53,7 @@ uniform vec3 clientSkyColor;
 
 // point lights, culled into clusters on the CPU (LightClusters.java)
 uniform int pointLightsEnabled;
-uniform samplerBuffer lightData;     // per light: (camera-relative position, radius), (color * intensity, 0)
+uniform samplerBuffer lightData;     // per light: (camera-relative position, radius), (color * strength, 0)
 uniform usamplerBuffer clusterData;  // per cluster: count, then light indices
 
 out vec4 FragColor;
@@ -183,6 +183,9 @@ float fogAmount(vec3 world) {
 // ---------------------------------------------------------------------------------------------------------------
 // Point lights: only the lights listed in this pixel's cluster are evaluated
 
+// lights.json strengths are 117 HD's, tuned for its linear lighting; this maps them to our gamma-space lighting
+#define POINT_LIGHT_SCALE 0.08
+
 int clusterBase(ivec2 px, float z) {
   vec2 rel = (vec2(px) + 0.5 - vec2(sceneViewport.xy)) / vec2(sceneViewport.zw);
   int cx = clamp(int(rel.x * float(CLUSTERS_X)), 0, CLUSTERS_X - 1);
@@ -210,12 +213,12 @@ vec3 pointLights(int base, vec3 p, vec3 n) {
     if (d2 >= r2) {
       continue;
     }
-    // smooth falloff that reaches exactly zero at the radius, brighter close to the source
-    float f = d2 / r2;
-    float att = (1.0 - f) * (1.0 - f) / (1.0 + 8.0 * f);
+    // falloff matching 117 HD, whose light data we use: (1 - d / r)^2
+    float att = 1.0 - sqrt(d2 / r2);
+    att *= att;
     // wrapped diffuse so faces turned slightly away still catch some light, which suits flat-shaded models
     float ndl = clamp(dot(n, l * inversesqrt(max(d2, 1.0))) * 0.75 + 0.25, 0.0, 1.0);
-    sum += color * att * ndl;
+    sum += color * att * ndl * POINT_LIGHT_SCALE;
   }
   return sum;
 }

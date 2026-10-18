@@ -432,7 +432,7 @@ public interface RuneLightConfig extends Config
 	)
 	default boolean testLight()
 	{
-		return true;
+		return false;
 	}
 
 	@ConfigItem(
