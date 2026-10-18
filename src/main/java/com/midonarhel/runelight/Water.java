@@ -8,13 +8,25 @@ import static org.lwjgl.opengl.GL33C.*;
 
 /**
  * The water surface drawn by the composite pass (water.glsl): owns the scene's water data texture (from
- * {@link WaterMap}, uploaded when the scene swaps in), the tiling wave noise and the per-frame uniforms.
+ * {@link WaterMap}, uploaded when the scene swaps in), the tiling wave noise and caustics, and the per-frame uniforms.
  */
 class Water
 {
 	private static final int NOISE_SIZE = 256;
 	private static final long NOISE_SEED = 9157;
 	private static final double SLOPE_RANGE = 2.8;
+	// The caustic network (layer 1 of the noise texture): light through a tiling wave field of CAUSTIC_WAVES waves of
+	// 3 to 9 cycles focused CAUSTIC_FOCUS texels per unit of slope below it, traced with CAUSTIC_RAYS rays per texel
+	// per axis. Red and blue focus CAUSTIC_DISPERSION nearer and further than green (exaggerated dispersion, for
+	// colored fringes), alpha at CAUSTIC_SOFT of the distance (just under the surface: softer). Stored as intensity
+	// over CAUSTIC_RANGE times the mean (water.glsl decodes it).
+	private static final long CAUSTIC_SEED = 5;
+	private static final int CAUSTIC_WAVES = 28;
+	private static final float CAUSTIC_FOCUS = 7.5f;
+	private static final float CAUSTIC_DISPERSION = 0.07f;
+	private static final float CAUSTIC_SOFT = 0.55f;
+	private static final int CAUSTIC_RAYS = 3;
+	static final float CAUSTIC_RANGE = 6;
 	// the shader's time wraps after this many seconds; every periodic motion in water.glsl repeats within it
 	private static final double TIME_WRAP = 3840;
 	// how far the waves drift with the wind, world units per second (calm, full wind), before water.glsl's per-type
@@ -162,7 +174,7 @@ class Water
 		glActiveTexture(GL_TEXTURE0 + dataUnit);
 		glBindTexture(GL_TEXTURE_2D, texData);
 		glActiveTexture(GL_TEXTURE0 + noiseUnit);
-		glBindTexture(GL_TEXTURE_2D, texNoise);
+		glBindTexture(GL_TEXTURE_2D_ARRAY, texNoise);
 		glActiveTexture(GL_TEXTURE0);
 	}
 
@@ -192,7 +204,7 @@ class Water
 		glActiveTexture(GL_TEXTURE0 + dataUnit);
 		glBindTexture(GL_TEXTURE_2D, 0);
 		glActiveTexture(GL_TEXTURE0 + noiseUnit);
-		glBindTexture(GL_TEXTURE_2D, 0);
+		glBindTexture(GL_TEXTURE_2D_ARRAY, 0);
 		glActiveTexture(GL_TEXTURE0);
 	}
 
@@ -211,24 +223,26 @@ class Water
 		hasData = false;
 	}
 
+	// Layer 0 the waves, layer 1 the caustics: one sampler, the composite has none to spare
 	private static int createNoise()
 	{
-		byte[] data = noise(NOISE_SIZE, NOISE_SEED);
-		ByteBuffer buf = BufferUtils.createByteBuffer(data.length);
-		buf.put(data).flip();
+		byte[] waves = noise(NOISE_SIZE, NOISE_SEED);
+		byte[] caustics = caustics(NOISE_SIZE, CAUSTIC_SEED);
+		ByteBuffer buf = BufferUtils.createByteBuffer(waves.length + caustics.length);
+		buf.put(waves).put(caustics).flip();
 
 		int tex = glGenTextures();
-		glBindTexture(GL_TEXTURE_2D, tex);
+		glBindTexture(GL_TEXTURE_2D_ARRAY, tex);
 		glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
-		glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, NOISE_SIZE, NOISE_SIZE, 0, GL_RGBA, GL_UNSIGNED_BYTE, buf);
+		glTexImage3D(GL_TEXTURE_2D_ARRAY, 0, GL_RGBA8, NOISE_SIZE, NOISE_SIZE, 2, 0, GL_RGBA, GL_UNSIGNED_BYTE, buf);
 		glPixelStorei(GL_UNPACK_ALIGNMENT, 4);
 		// mipmaps calm the waves in the distance instead of letting them sparkle
-		glGenerateMipmap(GL_TEXTURE_2D);
-		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
-		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
-		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
-		glBindTexture(GL_TEXTURE_2D, 0);
+		glGenerateMipmap(GL_TEXTURE_2D_ARRAY);
+		glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
+		glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+		glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_WRAP_S, GL_REPEAT);
+		glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_WRAP_T, GL_REPEAT);
+		glBindTexture(GL_TEXTURE_2D_ARRAY, 0);
 		return tex;
 	}
 
@@ -264,6 +278,66 @@ class Water
 			out[i * 4 + 1] = (byte) Math.round((clamp(sy[i] / max) * 0.5f + 0.5f) * 255);
 			out[i * 4 + 2] = (byte) Math.round(h[i] * 255);
 			out[i * 4 + 3] = (byte) Math.round(fine[i] * 255);
+		}
+		return out;
+	}
+
+	/**
+	 * Tiling caustics, RGBA: light refracted through a tiling wave surface onto a plane below it, traced as rays from a
+	 * fine grid that land displaced by the surface slope and are splatted where they land. Where the surface focuses
+	 * them they pile up into the bright lines of a caustic network, the cells between them get less. rgb focus at
+	 * slightly different distances (dispersion), a closer (softer); each channel's mean is 1/CAUSTIC_RANGE.
+	 */
+	static byte[] caustics(int size, long seed)
+	{
+		Random rng = new Random(seed);
+		int m = size * CAUSTIC_RAYS;
+		float[] h = new float[m * m], gx = new float[m * m], gy = new float[m * m];
+		waves(rng, m, CAUSTIC_WAVES, 3, 9, 1f, h, gx, gy);
+		double sum = 0;
+		for (int i = 0; i < gx.length; ++i)
+		{
+			sum += gx[i] * gx[i] + gy[i] * gy[i];
+		}
+		// waves() gives slopes per ray; in texels per unit of RMS slope per axis
+		float unit = (float) (1 / Math.sqrt(sum / (2 * gx.length)));
+		float[] focus = {CAUSTIC_FOCUS * (1 - CAUSTIC_DISPERSION), CAUSTIC_FOCUS, CAUSTIC_FOCUS * (1 + CAUSTIC_DISPERSION),
+			CAUSTIC_FOCUS * CAUSTIC_SOFT};
+		int n = size * size;
+		float[][] light = new float[4][n];
+		for (int y = 0; y < m; ++y)
+		{
+			for (int x = 0; x < m; ++x)
+			{
+				int i = y * m + x;
+				float sx = gx[i] * unit, sy = gy[i] * unit;
+				for (int c = 0; c < 4; ++c)
+				{
+					// where the ray lands, in texels, then shared bilinearly between the four texels around it
+					float px = (x + 0.5f) / CAUSTIC_RAYS - focus[c] * sx - 0.5f;
+					float py = (y + 0.5f) / CAUSTIC_RAYS - focus[c] * sy - 0.5f;
+					int x0 = (int) Math.floor(px), y0 = (int) Math.floor(py);
+					float fx = px - x0, fy = py - y0;
+					int xa = Math.floorMod(x0, size), xb = Math.floorMod(x0 + 1, size);
+					int ya = Math.floorMod(y0, size) * size, yb = Math.floorMod(y0 + 1, size) * size;
+					float[] l = light[c];
+					l[ya + xa] += (1 - fx) * (1 - fy);
+					l[ya + xb] += fx * (1 - fy);
+					l[yb + xa] += (1 - fx) * fy;
+					l[yb + xb] += fx * fy;
+				}
+			}
+		}
+		byte[] out = new byte[n * 4];
+		// rays per texel: the mean
+		float scale = 1f / (CAUSTIC_RAYS * CAUSTIC_RAYS * CAUSTIC_RANGE);
+		for (int c = 0; c < 4; ++c)
+		{
+			float[] l = light[c];
+			for (int i = 0; i < n; ++i)
+			{
+				out[i * 4 + c] = (byte) Math.round(Math.min(l[i] * scale, 1f) * 255);
+			}
 		}
 		return out;
 	}

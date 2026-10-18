@@ -138,8 +138,63 @@ public class WaterBodiesTest
 		}
 		w.solve();
 		assertEquals(WaterBodies.POOL, w.bodyClass[0]);
-		assertEquals(-0.5f, w.flowX[at(20, 11)], 1e-6);
+		assertTrue(w.flowX[at(20, 11)] < -0.3f);
 		assertEquals(0, w.flowZ[at(20, 11)], 1e-6);
+	}
+
+	private static void mapFlow(WaterBodies w, int x0, int y0, int x1, int y1, float fx)
+	{
+		for (int y = y0; y <= y1; ++y)
+		{
+			for (int x = x0; x <= x1; ++x)
+			{
+				w.mapFlowX[at(x, y)] = fx;
+				w.mapFlowZ[at(x, y)] = 0;
+			}
+		}
+	}
+
+	@Test
+	public void channelRunsFastestInTheMiddle()
+	{
+		WaterBodies w = grid();
+		fill(w, 0, 20, N - 1, 26);
+		mapFlow(w, 0, 20, N - 1, 26, 0.5f);
+		w.solve();
+		float bank = speed(w, at(24, 20)), middle = speed(w, at(24, 23));
+		assertEquals(4, w.ridge[at(24, 20)], 1e-6);
+		assertTrue("bank " + bank + " middle " + middle, middle > bank * 1.8f);
+		// symmetric
+		assertEquals(bank, speed(w, at(24, 26)), 1e-6);
+		assertTrue(speed(w, at(24, 22)) > bank && speed(w, at(24, 22)) < middle);
+	}
+
+	@Test
+	public void narrowsRunFasterAndRougher()
+	{
+		WaterBodies w = grid();
+		// a wide reach, then three tiles wide, then wide again
+		fill(w, 0, 16, 15, 30);
+		fill(w, 16, 22, 31, 24);
+		fill(w, 32, 16, N - 1, 30);
+		mapFlow(w, 0, 16, N - 1, 30, 0.5f);
+		w.solve();
+		float wide = speed(w, at(8, 23)), narrow = speed(w, at(24, 23));
+		assertTrue("wide " + wide + " narrow " + narrow, narrow > wide * 2);
+		assertTrue(w.turbulence[at(24, 23)] > w.turbulence[at(8, 23)]);
+		assertEquals(0, w.turbulence[at(8, 23)], 1e-6);
+	}
+
+	@Test
+	public void crossSectionGrowsWithWidth()
+	{
+		float prev = 0;
+		for (float r = 1; r <= 12; r += 0.5f)
+		{
+			float a = WaterBodies.crossSection(r);
+			assertTrue(a > prev);
+			prev = a;
+		}
 	}
 
 	@Test

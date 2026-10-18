@@ -5,14 +5,18 @@
 // and back up, the water's own color filling in) and puts the surface on top: the sky's reflection, roughly the
 // world's, sharp sun, moon and lamp glints. The surface normal is two octaves of wave noise dragged along the flow map
 // in two phases, a capillary octave drifting with the wind and a slow swell; fast water gets foam streaks along the
-// current. The surface is glossy: it only roughens by the wave detail the mipmaps average away.
+// current. The surface is glossy: it only roughens by the wave detail the mipmaps average away. How fast the water
+// runs comes from the flow map shaped by the channel (WaterBodies.shapeFlow) and drives the drag, the foam, the
+// turbulence and the caustics on the bed: sharp in calm clear shallows, smeared along fast water.
 // Shading after 117 HD's water (BSD-2, see LICENSE): there is no hard waterline, the waves are lit like a surface,
 // and the sky reflection uses a flattened normal so steep waves don't reflect the ground.
 // Included by composite_frag.glsl after its lighting helpers (shadows, point light clusters, ign).
 
 uniform int waterEnabled;
-uniform sampler2D waterData;   // see WaterMap.texture: page 0 (height, flow x, flow z, type), page 1 (shore, energy)
-uniform sampler2D waterNoise;  // tiling waves: rg slope, b height, a an independent finer height
+uniform sampler2D waterData;   // see WaterMap.texture: page 0 (height, flow x, flow z, type), page 1 (shore, energy,
+                               // water share, turbulence)
+// layer 0 tiling waves: rg slope, b height, a an independent finer height; layer 1 caustics (Water.caustics)
+uniform sampler2DArray waterNoise;
 uniform vec2 waterGrid;        // x: extended tile of local tile 0, y: corners per side
 uniform float waterTime;       // seconds, wraps
 uniform vec3 waterWind;        // xy: direction the wind blows toward (x, z), z: strength 0-1, eased
@@ -144,9 +148,43 @@ const vec4 WATER_SURFACE[WATER_TYPES] = vec4[](
 // bed just above the waterline is darker where the water just left it
 #define WET_SAND 0.86
 #define WET_HEIGHT 12.0
-// caustics: a subtle dappling of the sunlight on the bed, a share of the direct light
-#define CAUSTICS 0.12
-#define CAUSTIC_SCALE 260.0
+// Speed field (WaterBodies.shapeFlow puts it in the flow: fast mid-channel, through narrows and over drops; page 1
+// alpha the turbulence there): within a tile the flow slows toward the bank to BANK_SLOW of it; turbulence adds
+// TURB_WAVES to the wave height, TURB_RIPPLES to the ripples and counts as TURB_FOAM of fast water for the foam
+#define BANK_SLOW 0.5
+#define TURB_WAVES 0.5
+#define TURB_RIPPLES 0.8
+#define TURB_FOAM 0.7
+// Caustics: the waves focus the direct light on the bed into a network of bright lines (Water.caustics), a real
+// refraction pattern with colored fringes. The network drifts and flows with the waves, bent by their slope; a second
+// copy at another scale moving at another speed breaks its lines up (a soft min: only down to CAUSTIC_FLOOR).
+// CAUSTICS: share of the direct light gathered into the lines, the brightest line at most CAUSTIC_MAX times it.
+#define CAUSTICS 0.8
+#define CAUSTIC_MAX 2.2
+#define CAUSTIC_RANGE 6.0
+#define CAUSTIC_SCALE 340.0
+#define CAUSTIC_BREAK_SCALE 0.71
+#define CAUSTIC_BREAK_SPEED 1.6
+#define CAUSTIC_FLOOR 1.2
+// mean of that blend (sharp, soft, and far off where the mipmaps have averaged the lines away), so the bed gets as
+// much light on the whole as without caustics; measured on Water.caustics
+#define CAUSTIC_MEAN vec3(0.59, 0.69, 0.92)
+// world units the network bends per unit of wave slope
+#define CAUSTIC_WARP 60.0
+// just under the surface the light hasn't focused yet: soft network, sharp from CAUSTIC_FOCUS.y down
+#define CAUSTIC_FOCUS vec2(10.0, 80.0)
+// fading to 1/e over CAUSTIC_DEPTH, faster by CAUSTIC_MURK per unit of the water's green extinction per tile; past
+// CAUSTIC_BLUR_DEPTH the deep bed sees them blurred
+#define CAUSTIC_DEPTH 420.0
+#define CAUSTIC_MURK 1.0
+#define CAUSTIC_BLUR_DEPTH vec2(160.0, 450.0)
+// fast water smears the network along the flow over CAUSTIC_SMEAR seconds of it, and dims it
+#define CAUSTIC_SMEAR 0.6
+#define CAUSTIC_FAST_DIM 0.45
+#define CAUSTIC_TURB_DIM 0.3
+// by moonlight, and on things standing in the water rather than the bed
+#define CAUSTIC_MOON 0.35
+#define CAUSTIC_OBJECTS 0.5
 // rain rings: cell size (world units), rings per cell per second
 #define RAIN_CELL 40.0
 #define RAIN_RATE 1.3
@@ -158,6 +196,10 @@ const vec4 WATER_SURFACE[WATER_TYPES] = vec4[](
 
 vec2 waterCell(vec2 worldXZ) {
   return clamp(worldXZ / WATER_TILE + waterGrid.x, vec2(0.0), vec2(waterGrid.y - 1.0));
+}
+
+vec4 waterNoiseAt(vec2 uv, float lod) {
+  return textureLod(waterNoise, vec3(uv, 0.0), lod);
 }
 
 // Explicit lod everywhere in here: the water is drawn in branches, where implicit derivatives are undefined (NVIDIA
@@ -191,8 +233,8 @@ vec2 waterScroll(vec2 velocity, float repeat) {
 // units)
 vec3 waterWaves2(vec2 xz, vec2 move, float la, float lb) {
   const mat2 ROT = mat2(0.8, 0.6, -0.6, 0.8);
-  vec4 a = textureLod(waterNoise, (xz - move) / WAVE_SCALE_A, la);
-  vec4 b = textureLod(waterNoise, ROT * (xz - move * 1.15) / WAVE_SCALE_B + 0.37, lb);
+  vec4 a = waterNoiseAt((xz - move) / WAVE_SCALE_A, la);
+  vec4 b = waterNoiseAt(ROT * (xz - move * 1.15) / WAVE_SCALE_B + 0.37, lb);
   // the small octave is turned: turn its slope back
   vec2 slope = (a.rg * 2.0 - 1.0) * WAVE_MIX_A + ((b.rg * 2.0 - 1.0) * ROT) * WAVE_MIX_B;
   return vec3(slope, a.a);
@@ -245,12 +287,35 @@ vec2 waterRainRings(vec2 xz) {
   return sum * 0.35;
 }
 
-// Soft dappled light on the bed: two drifting copies of the wave height, bright where both are high
-float waterCausticPattern(vec2 xz, float footprint) {
-  float lod = waterLod(footprint, CAUSTIC_SCALE * 0.7);
-  float a = textureLod(waterNoise, xz / CAUSTIC_SCALE + waterScroll(vec2(23.0, 11.0), CAUSTIC_SCALE), lod).b;
-  float b = textureLod(waterNoise, xz / (CAUSTIC_SCALE * 0.7) + 0.21 + waterScroll(vec2(-15.0, 19.0), CAUSTIC_SCALE * 0.7), lod).b;
-  return smoothstep(0.35, 0.95, a * b * 2.0);
+// One tap of the caustic network: rgb, mixed from the soft one by focus
+vec3 waterCausticTap(vec2 uv, float lod, float focus) {
+  vec4 c = textureLod(waterNoise, vec3(uv, 1.0), lod);
+  return mix(c.aaa, c.rgb, focus) * CAUSTIC_RANGE;
+}
+
+// The caustic network at xz, mean about 1: moved like the waves (m0 and m1 the two flow phases weighted w0 and 1 - w0,
+// equal on still water), smeared over `smear` world units along the flow, the breaking copy moving faster
+vec3 waterCaustic(vec2 xz, vec2 m0, vec2 m1, float w0, vec2 smear, float lod, float focus) {
+  const mat2 ROT = mat2(0.8, -0.6, 0.6, 0.8);
+  const float SB = CAUSTIC_SCALE * CAUSTIC_BREAK_SCALE;
+  bool phased = w0 < 1.0;
+  bool smeared = dot(smear, smear) > 16.0;
+  vec3 a = smeared
+    ? 0.5 * (waterCausticTap((xz - m0 - smear * 0.5) / CAUSTIC_SCALE, lod, focus)
+      + waterCausticTap((xz - m0 + smear * 0.5) / CAUSTIC_SCALE, lod, focus))
+    : waterCausticTap((xz - m0) / CAUSTIC_SCALE, lod, focus);
+  float b = waterCausticTap(ROT * (xz - m0 * CAUSTIC_BREAK_SPEED) / SB + 0.37, lod, focus).g;
+  if (phased) {
+    vec3 a1 = smeared
+      ? 0.5 * (waterCausticTap((xz - m1 - smear * 0.5) / CAUSTIC_SCALE, lod, focus)
+        + waterCausticTap((xz - m1 + smear * 0.5) / CAUSTIC_SCALE, lod, focus))
+      : waterCausticTap((xz - m1) / CAUSTIC_SCALE, lod, focus);
+    float b1 = waterCausticTap(ROT * (xz - m1 * CAUSTIC_BREAK_SPEED) / SB + 0.37, lod, focus).g;
+    a = a * w0 + a1 * (1.0 - w0);
+    b = b * w0 + b1 * (1.0 - w0);
+  }
+  float mean = mix(mix(CAUSTIC_MEAN.y, CAUSTIC_MEAN.x, focus), CAUSTIC_MEAN.z, smoothstep(1.0, 6.5, lod));
+  return min(a, vec3(max(b, CAUSTIC_FLOOR))) / mean;
 }
 
 // Where the reflected ray is at t: its pixel, and how far it is behind the depth buffer there (negative in front)
@@ -388,24 +453,32 @@ vec3 waterOver(ivec2 px, inout vec3 p, vec3 n, vec3 albedo, vec3 light, float sh
   float lc = waterLod(footprint, WAVE_SCALE_C);
 
   // ---- surface normal: two wave octaves carried by the flow, capillary ripples on the wind, the swell, rain rings
-  vec2 flow = surf0.gb * (WATER_TILE * waterSpeed * surf.z);
+  // the flow slows toward the bank within the tile (page 1 b: the share of water around)
+  vec2 flow = surf0.gb * (WATER_TILE * waterSpeed * surf.z) * mix(BANK_SLOW, 1.0, smoothstep(0.5, 1.0, page1.b));
   float flowSpeed = length(flow);
+  float turb = page1.a * step(0.5, surf.y);
+  // how fast the water runs for the foam and caustics: fast, or churned up
+  float fast = max(smoothstep(STREAK_SPEED, STREAK_SPEED_FULL, flowSpeed), turb * TURB_FOAM) * step(0.5, surf.y);
   flow *= min(1.0, FLOW_DRAG / max(flowSpeed * FLOW_CYCLE, 1e-3));
   // the wind's drift (integrated in Water.java, so a change in the wind changes the speed, never the position)
   vec2 base = waterDrift.xy * (surf.z * waterSpeed);
   vec3 waves = waterWaves2(sw.xz, base, la, lb);
   float foam = 0.0;
+  // the flow phases, also moving the caustics; one still phase without flow
+  vec2 m0 = base, m1 = base;
+  float w0 = 1.0;
   // blended in rather than switched, so there is no seam where the flow crosses the threshold
   float flowing = smoothstep(FLOW_MIN * 0.5, FLOW_MIN, flowSpeed);
   if (flowing > 0.0) {
     // Two copies dragged with the flow half a cycle apart, each fading out before it has been dragged too far,
     // so the waves move without ever stretching. The phase is offset across the water so the fades don't pulse
     // in step.
-    float jitter = textureLod(waterNoise, sw.xz / FLOW_JITTER_SCALE, 7.0).b * FLOW_JITTER;
+    float jitter = waterNoiseAt(sw.xz / FLOW_JITTER_SCALE, 7.0).b * FLOW_JITTER;
     float ph0 = fract(waterTime / FLOW_CYCLE + jitter);
     float ph1 = fract(ph0 + 0.5);
-    float w0 = 1.0 - abs(1.0 - 2.0 * ph0);
-    vec2 m0 = base + flow * (ph0 * FLOW_CYCLE), m1 = base + flow * (ph1 * FLOW_CYCLE);
+    w0 = 1.0 - abs(1.0 - 2.0 * ph0);
+    m0 = base + flow * (ph0 * FLOW_CYCLE);
+    m1 = base + flow * (ph1 * FLOW_CYCLE);
     vec2 o1 = vec2(173.0, 91.0);
     vec3 f0 = waterWaves2(sw.xz, m0, la, lb), f1 = waterWaves2(sw.xz + o1, m1, la, lb);
     vec3 flowed = f0 * w0 + f1 * (1.0 - w0);
@@ -414,25 +487,26 @@ vec3 waterOver(ivec2 px, inout vec3 p, vec3 n, vec3 albedo, vec3 light, float sh
     waves = mix(waves, flowed, flowing);
     // Current lines: each copy's finer height averaged with itself a little further upstream, which smears its
     // blobs into lines along the flow wherever it points; foam where both are high
-    float fast = smoothstep(STREAK_SPEED, STREAK_SPEED_FULL, flowSpeed) * step(0.5, surf.y);
     if (fast > 0.0) {
       vec2 smear = flow * STREAK_SMEAR;
-      float s0 = 0.5 * (f0.z + textureLod(waterNoise, (sw.xz - m0 - smear) / WAVE_SCALE_A, la).a);
-      float s1 = 0.5 * (f1.z + textureLod(waterNoise, (sw.xz + o1 - m1 - smear) / WAVE_SCALE_A, la).a);
+      float s0 = 0.5 * (f0.z + waterNoiseAt((sw.xz - m0 - smear) / WAVE_SCALE_A, la).a);
+      float s1 = 0.5 * (f1.z + waterNoiseAt((sw.xz + o1 - m1 - smear) / WAVE_SCALE_A, la).a);
       foam = smoothstep(STREAK_EDGE.x, STREAK_EDGE.y, s0 * w0 + s1 * (1.0 - w0)) * fast
         * (1.0 - smoothstep(2.0, 4.0, la));
     }
   }
-  float strength = WAVE_STRENGTH * surf.y * waterWaves * (0.7 + 0.5 * wind) * (0.75 + 0.35 * energy);
+  float strength = WAVE_STRENGTH * surf.y * waterWaves * (0.7 + 0.5 * wind) * (0.75 + 0.35 * energy)
+    * (1.0 + TURB_WAVES * turb);
   vec2 slope = waves.xy * strength;
   // capillary ripples: always on the wind, never dragged by the flow, livelier with wind
   {
     const mat2 ROT_C = mat2(0.28, -0.96, 0.96, 0.28);
-    vec4 cap = textureLod(waterNoise, ROT_C * (sw.xz - waterDrift.xy * CAPILLARY_DRIFT) / WAVE_SCALE_C + 0.61, lc);
-    slope += ((cap.rg * 2.0 - 1.0) * ROT_C) * (WAVE_MIX_C * WAVE_STRENGTH * surf.y * waterWaves * (0.5 + 0.8 * wind));
+    vec4 cap = waterNoiseAt(ROT_C * (sw.xz - waterDrift.xy * CAPILLARY_DRIFT) / WAVE_SCALE_C + 0.61, lc);
+    slope += ((cap.rg * 2.0 - 1.0) * ROT_C) * (WAVE_MIX_C * WAVE_STRENGTH * surf.y * waterWaves * (0.5 + 0.8 * wind)
+      * (1.0 + TURB_RIPPLES * turb));
   }
   // the swell: long soft undulations, so open water isn't flat; the sea's run longest and strongest
-  vec2 swell = textureLod(waterNoise, (sw.xz - waterDrift.zw) / SWELL_SCALE, waterLod(footprint, SWELL_SCALE)).rg * 2.0 - 1.0;
+  vec2 swell = waterNoiseAt((sw.xz - waterDrift.zw) / SWELL_SCALE, waterLod(footprint, SWELL_SCALE)).rg * 2.0 - 1.0;
   slope += swell * (SWELL_STRENGTH * surf.y * waterWaves * (0.2 + 0.8 * energy) * (0.6 + 0.8 * wind));
   if (waterRain > 0.01 && outdoors == 1)
     slope += waterRainRings(sw.xz) * surf.y;
@@ -444,7 +518,7 @@ vec3 waterOver(ivec2 px, inout vec3 p, vec3 n, vec3 albedo, vec3 light, float sh
 
   // The surface is as glossy as still water, roughened only by the wave slope the mipmaps averaged away within
   // this pixel (per axis variance), so close up the glints stay sharp and far off they widen instead of sparkling
-  float strengthC = WAVE_MIX_C * WAVE_STRENGTH * surf.y * waterWaves * (0.5 + 0.8 * wind);
+  float strengthC = WAVE_MIX_C * WAVE_STRENGTH * surf.y * waterWaves * (0.5 + 0.8 * wind) * (1.0 + TURB_RIPPLES * turb);
   float lostVar = NOISE_SLOPE * NOISE_SLOPE * (strength * strength * (WAVE_MIX_A * WAVE_MIX_A * waterLostSlope(la)
     + WAVE_MIX_B * WAVE_MIX_B * waterLostSlope(lb)) + strengthC * strengthC * waterLostSlope(lc));
   float m2 = 2.0 / (surf.w + 2.0) + 2.0 * lostVar;
@@ -530,9 +604,27 @@ vec3 waterOver(ivec2 px, inout vec3 p, vec3 n, vec3 albedo, vec3 light, float sh
       seen = waterBedAlbedo(seen, depth, type);
     vec3 bedLight = light;
     if (waterCaustics == 1 && outdoors == 1 && lightOn && surf.y > 0.5) {
-      float fade = smoothstep(6.0, 40.0, depth) * exp(-depth / 300.0);
-      bedLight += caster * (max(-n.y, 0.0) * shadow * CAUSTICS * fade
-        * waterCausticPattern(world.xz + slope * 60.0, footprint * dist / t));
+      // the direct light here (shadow has the clouds and overcast in it), faint by moonlight and on objects; the
+      // network forms a little way down, then fades with depth and murk, and in fast, churned water
+      float k = max(dot(n, casterDir), 0.0) * shadow * (sunIsCaster == 1 ? 1.0 : CAUSTIC_MOON) * (bed ? 1.0 : CAUSTIC_OBJECTS)
+        * CAUSTICS * smoothstep(0.0, CAUSTIC_FOCUS.x * 2.0, depth)
+        * exp(-depth * (1.0 / CAUSTIC_DEPTH + ext.g * CAUSTIC_MURK / WATER_TILE))
+        * (1.0 - CAUSTIC_FAST_DIM * fast) * (1.0 - CAUSTIC_TURB_DIM * turb);
+      if (k > 0.004) {
+        // the light reaching this point entered the water toward the sun, bent steeper by refraction
+        vec2 sunXZ = casterDir.xz;
+        float sinI = length(sunXZ);
+        float sinT = min(sinI / 1.33, 0.95);
+        vec2 entry = world.xz + sunXZ * (sinT * inversesqrt(1.0 - sinT * sinT) / max(sinI, 1e-4) * depth);
+        // sharp where the pixel is small, blurred in the deep and by fast water
+        float lod = waterLod(footprint * dist / t, CAUSTIC_SCALE) + 1.5 * smoothstep(CAUSTIC_BLUR_DEPTH.x, CAUSTIC_BLUR_DEPTH.y, depth)
+          + fast + turb;
+        vec2 smear = flow * (CAUSTIC_SMEAR * fast);
+        // eased in with the flow like the waves, so there is no seam where it starts
+        vec3 net = waterCaustic(entry + slope * CAUSTIC_WARP, mix(base, m0, flowing), mix(base, m1, flowing),
+          flowing > 0.0 ? w0 : 1.0, smear, lod, smoothstep(CAUSTIC_FOCUS.x, CAUSTIC_FOCUS.y, depth));
+        bedLight += caster * (k * clamp(net - 1.0, -1.0, CAUSTIC_MAX));
+      }
     }
     // sunlight reaching the bed went down through the water, what we see of it comes up along the view
     vec3 down = exp(-ext * (depth / WATER_TILE));
@@ -591,6 +683,8 @@ vec3 waterOver(ivec2 px, inout vec3 p, vec3 n, vec3 albedo, vec3 light, float sh
     vec2 dir = speed > 1e-3 ? surf0.gb / speed : vec2(0.0);
     float stripe = speed > 1e-3 ? step(0.5, fract(dot(sw.xz / 64.0, dir) - waterTime * speed * 2.0)) : 0.5;
     result = mix(DEBUG_TYPE[type], vec3(stripe), 0.35) * mix(0.6, 1.0, energy);
+    // turbulent water reddens
+    result = mix(result, vec3(1.0, 0.25, 0.1), turb * 0.6);
   }
 
   p = s;

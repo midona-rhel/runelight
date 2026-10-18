@@ -136,10 +136,12 @@ textures, as in 117 HD), groups them into bodies and classifies each (`WaterBodi
 comes from a world flow map (`WaterFlow.java`, resource `water_flow.dat`) computed offline from the world map
 image: rivers run from their sources to the sea or a lake, straits and ponds are still. Where the map knows nothing
 (new areas, water drawn in colors other than blue on the map) the scene is analysed on its own as a fallback. The sea
-pushes toward its shores. Swamps and caves (from the area, `EnvironmentManager.waterMurk`) make water murky. Water
+pushes toward its shores. How fast it runs is shaped by the scene's channel (`WaterBodies.shapeFlow`): fastest in
+the middle and slow at the banks, faster through narrows and over drops (a smaller cross-section, the bed being
+shallower near the shore), slower where a river widens into a lake. Swamps and caves (from the area, `EnvironmentManager.waterMurk`) make water murky. Water
 terrain is uploaded as a lowered bed, deeper away from the shore. The surface is not geometry: the composite finds
 where each view ray crosses it and shades it in `water.glsl` (refraction, depth absorption into a dark depth
-color, caustics, sky and a few taps of screen-space reflection, glints and sparkle, two octaves of flow-mapped wave
+color, caustic networks on the bed moving with the waves, sky and a few taps of screen-space reflection, glints and sparkle, two octaves of flow-mapped wave
 noise and a swell, rain rings), fading in from the waterline without a hard edge. Per-type looks are the tables at
 the top of `water.glsl`, the rest are its `#define`s. "Show water map" tints water by type and shows its flow as
 moving stripes.
