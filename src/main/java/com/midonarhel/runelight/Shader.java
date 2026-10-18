@@ -23,9 +23,9 @@
  * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
  * SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
-package com.midonarhel.lumen;
+package com.midonarhel.runelight;
 
-import com.midonarhel.lumen.template.Template;
+import com.midonarhel.runelight.template.Template;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.regex.Matcher;

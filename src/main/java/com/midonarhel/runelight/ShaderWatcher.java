@@ -1,4 +1,4 @@
-package com.midonarhel.lumen;
+package com.midonarhel.runelight;
 
 import java.io.IOException;
 import java.nio.file.Files;
@@ -32,17 +32,17 @@ class ShaderWatcher
 	}
 
 	/**
-	 * Find the shader source directory. Uses -Dlumen.shaderDir if set, otherwise the resources folder of the
+	 * Find the shader source directory. Uses -Drunelight.shaderDir if set, otherwise the resources folder of the
 	 * project when launched from the project root (gradle run / IntelliJ).
 	 *
 	 * @return a watcher, or null when no source directory is available (e.g. a Plugin Hub install)
 	 */
 	static ShaderWatcher create()
 	{
-		String prop = System.getProperty("lumen.shaderDir");
+		String prop = System.getProperty("runelight.shaderDir");
 		Path dir = prop != null
 			? Paths.get(prop)
-			: Paths.get(System.getProperty("user.dir"), "src", "main", "resources", "com", "midonarhel", "lumen");
+			: Paths.get(System.getProperty("user.dir"), "src", "main", "resources", "com", "midonarhel", "runelight");
 		dir = dir.toAbsolutePath().normalize();
 		if (!Files.isDirectory(dir) || !Files.isRegularFile(dir.resolve("frag.glsl")))
 		{
@@ -60,7 +60,7 @@ class ShaderWatcher
 	void start()
 	{
 		running = true;
-		thread = new Thread(this::run, "Lumen shader watcher");
+		thread = new Thread(this::run, "RuneLight shader watcher");
 		thread.setDaemon(true);
 		thread.start();
 		log.info("Shader hot reload watching {}", dir);

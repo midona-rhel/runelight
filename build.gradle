@@ -14,7 +14,7 @@ repositories {
 }
 
 def runeLiteVersion = 'latest.release'
-def pluginMainClass = 'com.midonarhel.lumen.LumenPluginTest'
+def pluginMainClass = 'com.midonarhel.runelight.RuneLightPluginTest'
 
 dependencies {
 	compileOnly group: 'net.runelite', name: 'client', version: runeLiteVersion

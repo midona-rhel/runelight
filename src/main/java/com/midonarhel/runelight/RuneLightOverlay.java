@@ -1,4 +1,4 @@
-package com.midonarhel.lumen;
+package com.midonarhel.runelight;
 
 import java.awt.Color;
 import java.awt.Dimension;
@@ -9,14 +9,14 @@ import net.runelite.client.ui.overlay.OverlayPanel;
 import net.runelite.client.ui.overlay.OverlayPosition;
 import net.runelite.client.ui.overlay.components.LineComponent;
 
-class LumenOverlay extends OverlayPanel
+class RuneLightOverlay extends OverlayPanel
 {
 	private final Client client;
-	private final LumenPlugin plugin;
-	private final LumenConfig config;
+	private final RuneLightPlugin plugin;
+	private final RuneLightConfig config;
 
 	@Inject
-	LumenOverlay(Client client, LumenPlugin plugin, LumenConfig config)
+	RuneLightOverlay(Client client, RuneLightPlugin plugin, RuneLightConfig config)
 	{
 		super(plugin);
 		this.client = client;

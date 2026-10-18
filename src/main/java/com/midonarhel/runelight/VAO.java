@@ -22,7 +22,7 @@
  * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
  * SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
-package com.midonarhel.lumen;
+package com.midonarhel.runelight;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -31,9 +31,9 @@ import java.util.Arrays;
 import java.util.List;
 import net.runelite.api.Renderable;
 import net.runelite.api.Scene;
-import static com.midonarhel.lumen.LumenPlugin.uniBase;
-import static com.midonarhel.lumen.LumenPlugin.uniEntityProj;
-import static com.midonarhel.lumen.LumenPlugin.uniEntityTint;
+import static com.midonarhel.runelight.RuneLightPlugin.uniBase;
+import static com.midonarhel.runelight.RuneLightPlugin.uniEntityProj;
+import static com.midonarhel.runelight.RuneLightPlugin.uniEntityTint;
 import static org.lwjgl.opengl.GL33C.*;
 
 class VAO

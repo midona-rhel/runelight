@@ -22,7 +22,7 @@
  * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
  * SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
-package com.midonarhel.lumen;
+package com.midonarhel.runelight;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -172,7 +172,7 @@ class SceneUploader
 		int[][][] roofs = scene.getRoofs();
 		Tile[][][] tiles = scene.getExtendedTiles();
 
-		int offset = scene.getWorldViewId() == WorldView.TOPLEVEL ? LumenPlugin.SCENE_OFFSET >> 3 : 0;
+		int offset = scene.getWorldViewId() == WorldView.TOPLEVEL ? RuneLightPlugin.SCENE_OFFSET >> 3 : 0;
 		this.basex = (mzx - offset) << 10;
 		this.basez = (mzz - offset) << 10;
 
@@ -444,8 +444,8 @@ class SceneUploader
 
 	private int upload(Scene scene, SceneTilePaint tile, int tileZ, int tileX, int tileY, GpuIntBuffer vertexBuffer, int lx, int lz)
 	{
-		tileX += scene.getWorldViewId() == WorldView.TOPLEVEL ? LumenPlugin.SCENE_OFFSET : 0;
-		tileY += scene.getWorldViewId() == WorldView.TOPLEVEL ? LumenPlugin.SCENE_OFFSET : 0;
+		tileX += scene.getWorldViewId() == WorldView.TOPLEVEL ? RuneLightPlugin.SCENE_OFFSET : 0;
+		tileY += scene.getWorldViewId() == WorldView.TOPLEVEL ? RuneLightPlugin.SCENE_OFFSET : 0;
 
 		final int[][][] tileHeights = scene.getTileHeights();
 		final int swHeight = tileHeights[tileZ][tileX][tileY];

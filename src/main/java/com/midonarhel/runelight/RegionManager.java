@@ -22,7 +22,7 @@
  * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
  * SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
-package com.midonarhel.lumen;
+package com.midonarhel.runelight;
 
 import java.io.IOException;
 import javax.inject.Inject;
@@ -30,17 +30,17 @@ import javax.inject.Singleton;
 import net.runelite.api.Constants;
 import net.runelite.api.Scene;
 import net.runelite.api.Tile;
-import com.midonarhel.lumen.regions.Regions;
+import com.midonarhel.runelight.regions.Regions;
 
 @Singleton
 class RegionManager
 {
-	private final LumenConfig gpuConfig;
+	private final RuneLightConfig gpuConfig;
 	private final Regions regions;
 
 	@Inject
 	RegionManager(
-		LumenConfig config
+		RuneLightConfig config
 	)
 	{
 		this.gpuConfig = config;
@@ -91,8 +91,8 @@ class RegionManager
 		int wy = cy * 8;
 		int sx = wx - scene.getBaseX();
 		int sy = wy - scene.getBaseY();
-		int cmsx = sx + LumenPlugin.SCENE_OFFSET;
-		int cmsy = sy + LumenPlugin.SCENE_OFFSET;
+		int cmsx = sx + RuneLightPlugin.SCENE_OFFSET;
+		int cmsy = sy + RuneLightPlugin.SCENE_OFFSET;
 		Tile[][][] tiles = scene.getExtendedTiles();
 		for (int x = 0; x < 8; ++x)
 		{

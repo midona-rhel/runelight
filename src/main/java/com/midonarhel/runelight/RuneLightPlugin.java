@@ -22,7 +22,7 @@
  * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
  * SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
-package com.midonarhel.lumen;
+package com.midonarhel.runelight;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -76,9 +76,9 @@ import net.runelite.client.plugins.Plugin;
 import net.runelite.client.plugins.PluginDescriptor;
 import net.runelite.client.plugins.PluginInstantiationException;
 import net.runelite.client.plugins.PluginManager;
-import com.midonarhel.lumen.config.AntiAliasingMode;
-import com.midonarhel.lumen.config.UIScalingMode;
-import com.midonarhel.lumen.template.Template;
+import com.midonarhel.runelight.config.AntiAliasingMode;
+import com.midonarhel.runelight.config.UIScalingMode;
+import com.midonarhel.runelight.template.Template;
 import net.runelite.client.ui.ClientUI;
 import net.runelite.client.ui.DrawManager;
 import net.runelite.client.ui.overlay.OverlayManager;
@@ -97,14 +97,14 @@ import org.lwjgl.system.Callback;
 import org.lwjgl.system.Configuration;
 
 @PluginDescriptor(
-	name = "Lumen",
+	name = "RuneLight",
 	description = "Lighting-focused GPU renderer",
 	tags = {"gpu", "lighting", "shadows", "fog", "renderer"},
 	loadInSafeMode = false
 )
-public class LumenPlugin extends Plugin implements DrawCallbacks
+public class RuneLightPlugin extends Plugin implements DrawCallbacks
 {
-	private static final Logger log = LoggerFactory.getLogger(LumenPlugin.class);
+	private static final Logger log = LoggerFactory.getLogger(RuneLightPlugin.class);
 
 	static final int MAX_DISTANCE = 184;
 	static final int MAX_FOG_DEPTH = 100;
@@ -123,7 +123,7 @@ public class LumenPlugin extends Plugin implements DrawCallbacks
 	private ClientThread clientThread;
 
 	@Inject
-	private LumenConfig config;
+	private RuneLightConfig config;
 
 	@Inject
 	private TextureManager textureManager;
@@ -147,7 +147,7 @@ public class LumenPlugin extends Plugin implements DrawCallbacks
 	private OverlayManager overlayManager;
 
 	@Inject
-	private LumenOverlay overlay;
+	private RuneLightOverlay overlay;
 
 	@Inject
 	@Named("developerMode")
@@ -315,8 +315,8 @@ public class LumenPlugin extends Plugin implements DrawCallbacks
 	{
 		if (stockGpuEnabled())
 		{
-			log.warn("The GPU plugin is enabled; Lumen will not start");
-			chat("Lumen can't run alongside the GPU plugin. Turn the GPU plugin off, then enable Lumen again.");
+			log.warn("The GPU plugin is enabled; RuneLight will not start");
+			chat("RuneLight can't run alongside the GPU plugin. Turn the GPU plugin off, then enable RuneLight again.");
 			SwingUtilities.invokeLater(() ->
 			{
 				try
@@ -569,15 +569,15 @@ public class LumenPlugin extends Plugin implements DrawCallbacks
 	}
 
 	@Provides
-	LumenConfig provideConfig(ConfigManager configManager)
+	RuneLightConfig provideConfig(ConfigManager configManager)
 	{
-		return configManager.getConfig(LumenConfig.class);
+		return configManager.getConfig(RuneLightConfig.class);
 	}
 
 	@Subscribe
 	public void onConfigChanged(ConfigChanged configChanged)
 	{
-		if (configChanged.getGroup().equals(LumenConfig.GROUP))
+		if (configChanged.getGroup().equals(RuneLightConfig.GROUP))
 		{
 			glErrorChecks = config.glErrorChecks();
 			if (configChanged.getKey().equals("unlockFps")
@@ -645,9 +645,9 @@ public class LumenPlugin extends Plugin implements DrawCallbacks
 		client.setUnlockedFps(unlockFps);
 
 		// Without unlocked fps, the client manages sync on its 20ms timer
-		LumenConfig.SyncMode syncMode = unlockFps
+		RuneLightConfig.SyncMode syncMode = unlockFps
 			? this.config.syncMode()
-			: LumenConfig.SyncMode.OFF;
+			: RuneLightConfig.SyncMode.OFF;
 
 		int swapInterval = 0;
 		switch (syncMode)
@@ -694,7 +694,7 @@ public class LumenPlugin extends Plugin implements DrawCallbacks
 		{
 			template.addDirectory(watcher.getDirectory());
 		}
-		template.addInclude(LumenPlugin.class);
+		template.addInclude(RuneLightPlugin.class);
 		return template;
 	}
 
@@ -828,7 +828,7 @@ public class LumenPlugin extends Plugin implements DrawCallbacks
 	{
 		chatMessageManager.queue(QueuedMessage.builder()
 			.type(ChatMessageType.GAMEMESSAGE)
-			.runeLiteFormattedMessage("[Lumen] " + message)
+			.runeLiteFormattedMessage("[RuneLight] " + message)
 			.build());
 	}
 

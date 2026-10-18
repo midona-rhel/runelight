@@ -22,23 +22,23 @@
  * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
  * SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
-package com.midonarhel.lumen;
+package com.midonarhel.runelight;
 
 import net.runelite.client.config.Config;
 import net.runelite.client.config.ConfigGroup;
 import net.runelite.client.config.ConfigSection;
 import net.runelite.client.config.ConfigItem;
 import net.runelite.client.config.Range;
-import static com.midonarhel.lumen.LumenPlugin.MAX_DISTANCE;
-import static com.midonarhel.lumen.LumenPlugin.MAX_FOG_DEPTH;
-import com.midonarhel.lumen.config.AntiAliasingMode;
-import com.midonarhel.lumen.config.ColorBlindMode;
-import com.midonarhel.lumen.config.UIScalingMode;
+import static com.midonarhel.runelight.RuneLightPlugin.MAX_DISTANCE;
+import static com.midonarhel.runelight.RuneLightPlugin.MAX_FOG_DEPTH;
+import com.midonarhel.runelight.config.AntiAliasingMode;
+import com.midonarhel.runelight.config.ColorBlindMode;
+import com.midonarhel.runelight.config.UIScalingMode;
 
-@ConfigGroup(LumenConfig.GROUP)
-public interface LumenConfig extends Config
+@ConfigGroup(RuneLightConfig.GROUP)
+public interface RuneLightConfig extends Config
 {
-	String GROUP = "lumen";
+	String GROUP = "runelight";
 
 	@Range(
 		max = MAX_DISTANCE

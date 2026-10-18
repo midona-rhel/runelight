@@ -1,4 +1,4 @@
-package com.midonarhel.lumen;
+package com.midonarhel.runelight;
 
 import static org.lwjgl.opengl.GL33C.*;
 

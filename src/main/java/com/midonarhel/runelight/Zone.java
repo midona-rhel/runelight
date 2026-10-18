@@ -22,7 +22,7 @@
  * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
  * SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
-package com.midonarhel.lumen;
+package com.midonarhel.runelight;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -39,9 +39,9 @@ import net.runelite.api.Model;
 import net.runelite.api.Perspective;
 import net.runelite.api.Scene;
 import net.runelite.api.WorldView;
-import static com.midonarhel.lumen.ModelUploader.MAX_DIAMETER;
-import static com.midonarhel.lumen.ModelUploader.MAX_VERTEX_COUNT;
-import static com.midonarhel.lumen.LumenPlugin.uniBase;
+import static com.midonarhel.runelight.ModelUploader.MAX_DIAMETER;
+import static com.midonarhel.runelight.ModelUploader.MAX_VERTEX_COUNT;
+import static com.midonarhel.runelight.RuneLightPlugin.uniBase;
 import org.lwjgl.BufferUtils;
 import static org.lwjgl.opengl.GL33C.*;
 
@@ -700,7 +700,7 @@ class Zone
 
 	void multizoneLocs(Scene scene, int zx, int zz, int cx, int cz, Zone[][] zones)
 	{
-		int offset = scene.getWorldViewId() == WorldView.TOPLEVEL ? LumenPlugin.SCENE_OFFSET >> 3 : 0;
+		int offset = scene.getWorldViewId() == WorldView.TOPLEVEL ? RuneLightPlugin.SCENE_OFFSET >> 3 : 0;
 		for (int i = 0; i < alphaModels.size(); ++i) // NOPMD: ForLoopCanBeForeach
 		{
 			AlphaModel m = alphaModels.get(i);
