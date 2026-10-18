@@ -30,6 +30,7 @@ class Clouds
 	{
 		int enabled, shadows, coverage, weather, offset, detail, type;
 		int base, field, fieldRect, fieldCells;
+		int eye, ground;
 	}
 
 	private final Locations composite = new Locations();
@@ -46,6 +47,10 @@ class Clouds
 	// the weather's cloud look (wispy, dark) and the wind that carries them
 	private float wisp, dark;
 	private Wind wind;
+	// where the clouds are seen from (clouds.glsl's cloudEye): the focal point relative to the camera, the drawn
+	// world's radius and the camera's height above the focal point, 0 for a level horizon; the focal point's y
+	private float eyeX, eyeZ, eyeRadius, eyeHeight, ground;
+	private double focalX, focalZ;
 
 	/**
 	 * The weather's look of the clouds and its wind; call before {@link #update}.
@@ -58,6 +63,23 @@ class Clouds
 		this.wisp = wisp;
 		this.dark = dark;
 		this.wind = wind;
+	}
+
+	/**
+	 * Where the clouds are seen from this frame: above the camera's focal point, so that the camera swinging around
+	 * the player and rising as it pitches leaves them in place. With {@code horizonAtEdge} the sky's horizon is put
+	 * where the drawn world (EdgeFade) ends. World coordinates of the scene, y down.
+	 */
+	void setEye(float cameraX, float cameraY, float cameraZ, float focalX, float focalY, float focalZ, float radius,
+		boolean horizonAtEdge)
+	{
+		this.focalX = focalX;
+		this.focalZ = focalZ;
+		eyeX = focalX - cameraX;
+		eyeZ = focalZ - cameraZ;
+		eyeRadius = radius;
+		eyeHeight = horizonAtEdge ? Math.max(focalY - cameraY, 0) : 0;
+		ground = focalY;
 	}
 
 	/**
@@ -81,6 +103,8 @@ class Clouds
 		l.field = glGetUniformLocation(program, "cloudField");
 		l.fieldRect = glGetUniformLocation(program, "cloudFieldRect");
 		l.fieldCells = glGetUniformLocation(program, "cloudFieldCells");
+		l.eye = glGetUniformLocation(program, "cloudEye");
+		l.ground = glGetUniformLocation(program, "cloudGround");
 		glUseProgram(program);
 		glUniform1i(glGetUniformLocation(program, "cloudNoise"), noiseUnit);
 		glUseProgram(0);
@@ -133,6 +157,8 @@ class Clouds
 		glUniform2f(l.type, wisp, dark);
 		glUniform2f(l.offset, offsetX, offsetZ);
 		glUniform1f(l.base, base);
+		glUniform4f(l.eye, eyeX, eyeZ, eyeRadius, eyeHeight);
+		glUniform1f(l.ground, ground);
 		if (field != null)
 		{
 			field.applyClouds(l.field, l.fieldRect, l.fieldCells);
@@ -177,6 +203,17 @@ class Clouds
 	float getCoverage()
 	{
 		return coverage;
+	}
+
+	/** Scene xz the clouds are seen from (setEye): the camera's focal point. */
+	double getEyeX()
+	{
+		return focalX;
+	}
+
+	double getEyeZ()
+	{
+		return focalZ;
 	}
 
 	/** World xz the clouds have drifted to, plus the scene origin: how far they have moved, in world units. */

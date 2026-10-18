@@ -2355,6 +2355,8 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		long baseX = wv != null ? (long) wv.getBaseX() * Perspective.LOCAL_TILE_SIZE : 0;
 		long baseZ = wv != null ? (long) wv.getBaseY() * Perspective.LOCAL_TILE_SIZE : 0;
 		clouds.setWeather(weather.cloudWisp(), weather.cloudDark(), weather.getWind());
+		clouds.setEye(frameCameraX, frameCameraY, frameCameraZ, client.getCameraFocalPointX(),
+			client.getCameraFocalPointY(), client.getCameraFocalPointZ(), edgeFade.radius, config.skyHorizonAtEdge());
 		clouds.update(config.clouds(), config.cloudShadows(), config.cloudCoverage(), config.cloudSpeed(),
 			config.cloudDetail(), weather.cloudCover(), baseX, baseZ, weather.getField());
 	}

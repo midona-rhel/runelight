@@ -413,11 +413,12 @@ class SkyCache
 			schedule.invalidate();
 		}
 		lastUpdateMillis = now;
-		double driftX = clouds.getOriginX() + cameraX, driftZ = clouds.getOriginZ() + cameraZ;
+		// the clouds are seen from above the focal point (Clouds.setEye) at a fixed height, whatever the camera does
+		double driftX = clouds.getOriginX() + clouds.getEyeX(), driftZ = clouds.getOriginZ() + clouds.getEyeZ();
 		float cover = clouds.isEnabled() ? clouds.getCoverage() : 0;
 		boolean changed = false;
 		if (captureSlice < 0 && schedule.due(gameMinutes, now, interval, cover, overcast[0], overcast[1],
-			day.sunAltitude, -cameraY, driftX, driftZ, settings))
+			day.sunAltitude, 0, driftX, driftZ, settings))
 		{
 			if (blending && !materialized)
 			{
@@ -435,7 +436,7 @@ class SkyCache
 			captureOvercast = overcast[0];
 			captureSnow = overcast[1];
 			captureAltitude = day.sunAltitude;
-			captureCameraAltitude = -cameraY;
+			captureCameraAltitude = 0;
 			captureDriftX = driftX;
 			captureDriftZ = driftZ;
 			captureSettings = settings;

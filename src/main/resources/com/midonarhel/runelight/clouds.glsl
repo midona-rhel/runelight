@@ -1,7 +1,14 @@
 // Volumetric clouds (Clouds.java): one slab of cloud between two altitudes over the whole world, drawn in the
 // composite's sky branch only, so they cost nothing where scenery covers the sky. A short march through the slab
 // samples a tiling 2D noise; the height inside the slab decides how much of the noise counts as cloud, which
-// gives flat bases and rounded tops (2.5D clouds in the spirit of Horizon Zero Dawn's height gradients).
+// gives flat bases and rounded tops (2.5D clouds in the spirit of Horizon Zero Dawn's height gradients). Each
+// cloud's dome is as tall as its noise is strong, so clouds are mounds of different heights rather than one
+// outline stacked up to the top of the slab, and the detail pattern slides with height, so their sides are
+// lumpy instead of extruded.
+// The slab is seen from a fixed eye above the camera's focal point, not from the camera: the camera swinging
+// around the player and rising as it pitches does not move the clouds. And the sky's horizon is put at the edge of
+// the drawn world (cloudSkyDir), so the clouds come down to the land instead of leaving a band of empty haze below
+// them that grows as the camera pitches down.
 // A coarser detail noise pushes the shapes around a little (domain warp) and gently erodes the edges, so clouds
 // aren't perfectly round blobs without turning grainy; whole regions of sky turn wispy. One light sample toward
 // the sun or moon with Beer's law, a powder term, and a broad plus a narrow forward lobe: silver linings where the
@@ -26,10 +33,16 @@ uniform sampler2D cloudNoise;
 uniform vec4 cloudField[CLOUD_FIELD_SIZE * CLOUD_FIELD_SIZE / 4];
 uniform vec4 cloudFieldRect;   // xy: world xz of the grid's corner (scene coordinates), zw: cells per world unit, 0 off
 uniform vec2 cloudFieldCells;  // cells used across x and z
+// xy: the camera's focal point minus the camera (xz), where the clouds are seen from; z: radius of the drawn world
+// around the focal point; w: the camera's height above the focal point, 0 to keep the sky's horizon level
+uniform vec4 cloudEye;
+uniform float cloudGround;     // world y of the focal point: the cloud shadows hang at a fixed height above it
 
-// slab altitudes in world units above y = 0 (y points down; hills reach a few thousand)
-#define CLOUD_BOTTOM 9000.0
-#define CLOUD_TOP 11000.0
+// slab altitudes in world units above the eye (cloudEye)
+#define CLOUD_BOTTOM 3500.0
+#define CLOUD_TOP 6000.0
+// the eye's height above the focal point, for the cloud shadows only
+#define CLOUD_EYE_HEIGHT 1000.0
 // world units covered by one repeat of the noise; blobs are about a quarter of it. Clouds.TILE must match.
 #define CLOUD_TILE 32768.0
 #define CLOUD_NOISE_SIZE 128.0
@@ -42,14 +55,14 @@ uniform vec2 cloudFieldCells;  // cells used across x and z
 #define CLOUD_STEP_BLUR 0.5
 // fakes the planet's curvature: clouds at the horizon are this far away (in slab heights over this) instead of
 // infinitely far, which also caps how long a ray at the horizon spends in the slab
-#define CLOUD_CURVE 0.08
+#define CLOUD_CURVE 0.12
 #define CLOUD_FADE 120000.0
 // A ray crossing the slab at a slant passes about 1 + CLOUD_SLANT * (distance across) / CLOUD_BLOB clouds' worth of
 // sky, so a share c of the sky covered overhead piles up toward the horizon, where most of what OSRS's camera sees of
 // the sky is. The cover along a ray is lowered to make up for it, so the share of the visible sky that is cloud
 // matches the cover at every angle; overcast skies close up at the horizon as they should (above CLOUD_SLANT_KEEP).
 #define CLOUD_BLOB 9000.0
-#define CLOUD_SLANT 1.0
+#define CLOUD_SLANT 1.25
 #define CLOUD_SLANT_KEEP vec2(0.55, 0.9)
 // cover varies by up to +-CLOUD_VARY / 2 over a few noise repeats, the full amount from a cover of CLOUD_VARY_FULL
 #define CLOUD_VARY 0.5
@@ -62,8 +75,10 @@ uniform vec2 cloudFieldCells;  // cells used across x and z
 #define CLOUD_THRESHOLD_OVERCAST -0.3
 // erosion takes cloud away; lowering the threshold by this much (at 100% roughness) keeps the coverage
 #define CLOUD_EROSION_BIAS 0.08
-// excess over the threshold from nothing to full density: soft edges
+// excess over the threshold from nothing to full density: soft edges; softer where steps are longer than
+// CLOUD_SOFT_STEP (near the horizon), so the steps don't comb the edges into streaks
 #define CLOUD_SOFT 0.12
+#define CLOUD_SOFT_STEP 600.0
 // detail noise frequency, a whole number so the wrapped wind offset stays seamless
 #define CLOUD_DETAIL_SCALE 3.0
 // how far the detail noise pushes the shapes around, world units: outlines a little less round
@@ -79,9 +94,20 @@ uniform vec2 cloudFieldCells;  // cells used across x and z
 #define CLOUD_WISP_LOW 0.55
 #define CLOUD_WISP_HIGH 0.9
 #define CLOUD_WISP_DENSITY 0.55
-// threshold rise toward the top for domes, varied by the puff noise; flatter for wispy clouds
-#define CLOUD_DOME 0.45
-#define CLOUD_WISP_DOME 2.2
+// Height profile: below CLOUD_BASE (height fraction) the threshold rises by up to CLOUD_BASE_RISE toward the
+// bottom, a soft flat base; above it rises with the square of the height, scaled to the excess the noise can reach
+// over the base threshold, so only the strongest cores reach the top and weaker ones make lower domes. The puff
+// noise varies the domes by +-CLOUD_DOME_VARY; wispy clouds are flatter.
+#define CLOUD_BASE 0.1
+#define CLOUD_BASE_RISE 0.06
+#define CLOUD_DOME 1.0
+#define CLOUD_DOME_VARY 0.35
+#define CLOUD_DOME_MIN_RANGE 0.1
+#define CLOUD_WISP_DOME 1.5
+// the detail pattern moves this far (in its repeats) from bottom to top: lumps at different heights
+#define CLOUD_RISE_SHIFT vec2(0.07, 0.05)
+// erosion near the base, of what it is above half the height: flat, even bases under lumpy tops
+#define CLOUD_BASE_EROSION 0.4
 // extinction per world unit at full density
 #define CLOUD_DENSITY 0.0015
 #define CLOUD_RAIN_DENSITY 2.0
@@ -101,9 +127,11 @@ uniform vec2 cloudFieldCells;  // cells used across x and z
 // light on puffs and in crevices from the detail noise: soft shading inside the clouds
 #define CLOUD_CREVICE 0.85
 #define CLOUD_PUFF 1.12
-// light left at the cloud base (the slab above shades it), and deep inside thick cores; rain clouds have deeper
-// cores, which keeps an overcast sky mottled instead of flat gray
+// light left at the cloud base (the slab above shades it), rising to full at the top with height to the power
+// CLOUD_BASE_SHADE_POWER, and deep inside thick cores; rain clouds have deeper cores, which keeps an overcast sky
+// mottled instead of flat gray
 #define CLOUD_BASE_SHADE 0.45
+#define CLOUD_BASE_SHADE_POWER 0.7
 #define CLOUD_CORE_SHADE 0.45
 #define CLOUD_CORE 0.4
 #define CLOUD_AMBIENT 0.9
@@ -117,7 +145,24 @@ uniform vec2 cloudFieldCells;  // cells used across x and z
 #define CLOUD_MOON_SWITCH -8.0
 // sunlight taken away under a cloud; shadows fade as the sky closes over, where it is all overcast light
 #define CLOUD_SHADOW_STRENGTH 0.55
-#define CLOUD_SHADOW_ALTITUDE (CLOUD_BOTTOM + (CLOUD_TOP - CLOUD_BOTTOM) * 0.3)
+#define CLOUD_SHADOW_ALTITUDE (CLOUD_EYE_HEIGHT + CLOUD_BOTTOM + (CLOUD_TOP - CLOUD_BOTTOM) * 0.3)
+
+// The direction the sky and clouds are looked up in for a view ray: its elevation measured from the edge of the
+// drawn world rather than from the level, so the horizon lies where the land ends. The edge is lower the higher the
+// camera is, and nearer behind the camera than in front; the zenith stays where it is.
+vec3 cloudSkyDir(vec3 dir) {
+  float l = length(dir.xz);
+  if (cloudEye.w <= 0.0 || cloudEye.z <= 0.0 || l < 1e-5) {
+    return dir;
+  }
+  vec2 h = dir.xz / l;
+  float oc = dot(h, cloudEye.xy);
+  float far = max(oc + sqrt(max(cloudEye.z * cloudEye.z - dot(cloudEye.xy, cloudEye.xy) + oc * oc, 0.0)), 1.0);
+  // sine of the angle the edge lies below the level
+  float below = cloudEye.w * inversesqrt(cloudEye.w * cloudEye.w + far * far);
+  float s = (-dir.y + below) / (1.0 + below);
+  return vec3(h.x * sqrt(max(1.0 - s * s, 0.0)), -s, h.y * sqrt(max(1.0 - s * s, 0.0)));
+}
 
 float cloudFieldCell(int i) {
   return cloudField[i >> 2][i & 3];
@@ -169,15 +214,18 @@ float cloudSlantCover(float c, float across) {
 // cw: cloudLocalCover; puff: 0..1, varies the domes
 float cloudThreshold(float hf, vec3 cw, float puff) {
   float base = mix(CLOUD_THRESHOLD_CLEAR, CLOUD_THRESHOLD_OVERCAST, cw.x) - CLOUD_EROSION_BIAS * cloudDetail;
-  float dome = (hf - 0.15) * (hf - 0.15) * CLOUD_DOME * (0.5 + puff) * mix(1.0, CLOUD_WISP_DOME, cw.y);
-  return base + (hf < 0.15 ? (0.15 - hf) * 0.6 : dome);
+  float range = max(1.0 - base, CLOUD_DOME_MIN_RANGE);
+  float u = clamp((hf - CLOUD_BASE) / (1.0 - CLOUD_BASE), 0.0, 1.0);
+  float dome = u * u * range * CLOUD_DOME * mix(1.0 - CLOUD_DOME_VARY, 1.0 + CLOUD_DOME_VARY, puff)
+    * mix(1.0, CLOUD_WISP_DOME, cw.y);
+  return base + (hf < CLOUD_BASE ? (CLOUD_BASE - hf) / CLOUD_BASE * CLOUD_BASE_RISE : dome);
 }
 
 // The full sample: how far the noise is above the threshold for cloud (below 0 is clear sky, CLOUD_SOFT and up
 // is full density, further up is deeper inside), with the warp it applied (world units) and the crevice shading.
 float cloudSample(vec2 xz, float hf, vec3 cw, float lod, out vec2 warp, out float crevice) {
   vec2 p = xz / CLOUD_TILE;
-  vec4 dn = textureLod(cloudNoise, p * CLOUD_DETAIL_SCALE, lod + log2(CLOUD_DETAIL_SCALE));
+  vec4 dn = textureLod(cloudNoise, p * CLOUD_DETAIL_SCALE + hf * CLOUD_RISE_SHIFT, lod + log2(CLOUD_DETAIL_SCALE));
   warp = (dn.rb - 0.5) * (CLOUD_WARP * min(cloudDetail, 1.5));
   p += warp / CLOUD_TILE;
   float e = textureLod(cloudNoise, p, lod).r - cloudThreshold(hf, cw, dn.g);
@@ -186,7 +234,7 @@ float cloudSample(vec2 xz, float hf, vec3 cw, float lod, out vec2 warp, out floa
     // erosion only takes away, and mostly at the edges: the outlines break up a little, the cores stay smooth
     float erosion = mix(1.0 - dn.g, dn.b, mix(CLOUD_RAGGED, 1.0, cw.y));
     float edge = mix(CLOUD_INNER, 1.0, 1.0 - smoothstep(0.0, CLOUD_EDGE, e));
-    e -= erosion * CLOUD_DETAIL * edge * cloudDetail;
+    e -= erosion * CLOUD_DETAIL * edge * cloudDetail * mix(CLOUD_BASE_EROSION, 1.0, smoothstep(0.0, 0.5, hf));
     crevice = mix(1.0, mix(CLOUD_CREVICE, CLOUD_PUFF, dn.g), min(cloudDetail, 1.0));
   }
   return e;
@@ -217,8 +265,9 @@ vec3 cloudSunLight(float alt) {
     * smoothstep(CLOUD_MOON_SWITCH, 4.0, alt));
 }
 
-// The clouds in front of the sky along dir. rgb: light scattered toward the camera (linear), a: transmittance.
-// camPos: world position of the camera; sunDir, moonDir: the visual sun and moon; alt: sun altitude, degrees;
+// The clouds in front of the sky along dir (a cloudSkyDir). rgb: light scattered toward the camera (linear),
+// a: transmittance. camPos: world position of the camera, which the clouds are seen from offset by cloudEye;
+// sunDir, moonDir: the visual sun and moon; alt: sun altitude, degrees;
 // pixelAngle: angle between neighbouring pixels' rays; noise: 0..1 per pixel, jitters the steps; steps: at most.
 vec4 cloudLayer(vec3 dir, vec3 camPos, vec3 sunDir, vec3 moonDir, float alt, float pixelAngle, float noise,
   int steps) {
@@ -228,16 +277,16 @@ vec4 cloudLayer(vec3 dir, vec3 camPos, vec3 sunDir, vec3 moonDir, float alt, flo
     return vec4(0.0, 0.0, 0.0, 1.0);
   }
   float k = max(s, 0.0) + CLOUD_CURVE;
-  float camAlt = -camPos.y;
-  float t0 = max(CLOUD_BOTTOM - camAlt, 0.0) / k;
-  float t1 = max(CLOUD_TOP - camAlt, 1.0) / k;
+  float t0 = CLOUD_BOTTOM / k;
+  float t1 = CLOUD_TOP / k;
   float fade = horizon * exp(-t0 / CLOUD_FADE);
-  vec2 origin = camPos.xz + cloudOffset;
+  vec2 eye = camPos.xz + cloudEye.xy;
+  vec2 origin = eye + cloudOffset;
   float across = (t1 - t0) * length(dir.xz);
   // the weather where the ray enters and leaves the slab, in between blended along it: tied to places in the sky
   // rather than to the ray, so clouds keep their size as the camera turns
-  vec3 cw0 = cloudLocalCover(origin + dir.xz * t0, camPos.xz + dir.xz * t0);
-  vec3 cw1 = cloudLocalCover(origin + dir.xz * t1, camPos.xz + dir.xz * t1);
+  vec3 cw0 = cloudLocalCover(origin + dir.xz * t0, eye + dir.xz * t0);
+  vec3 cw1 = cloudLocalCover(origin + dir.xz * t1, eye + dir.xz * t1);
   cw0.x = cloudSlantCover(cw0.x, across);
   cw1.x = cloudSlantCover(cw1.x, across);
   if (max(cw0.x, cw1.x) <= 0.0) {
@@ -267,6 +316,7 @@ vec4 cloudLayer(vec3 dir, vec3 camPos, vec3 sunDir, vec3 moonDir, float alt, flo
   float low = sunLit ? smoothstep(10.0, 0.0, alt) * smoothstep(-8.0, -2.0, alt) : 0.0;
 
   float ds = (t1 - t0) / float(n);
+  float soft = CLOUD_SOFT * max(1.0, across / float(n) / CLOUD_SOFT_STEP);
   vec3 scattered = vec3(0.0);
   float transmittance = 1.0;
   for (int i = 0; i < n; ++i) {
@@ -280,7 +330,7 @@ vec4 cloudLayer(vec3 dir, vec3 camPos, vec3 sunDir, vec3 moonDir, float alt, flo
       continue;
     }
     float rain = cw.z;
-    float d = min(e / (CLOUD_SOFT * (1.0 + cw.y)), 1.0) * mix(1.0, CLOUD_WISP_DENSITY, cw.y)
+    float d = min(e / (soft * (1.0 + cw.y)), 1.0) * mix(1.0, CLOUD_WISP_DENSITY, cw.y)
       * mix(1.0, CLOUD_RAIN_DENSITY, rain);
     float shade = mix(1.0, CLOUD_CORE_SHADE, smoothstep(0.0, CLOUD_CORE * (1.0 + rain), e));
     // toward the light from where the warped shape is; above the slab nothing is in the way
@@ -289,7 +339,7 @@ vec4 cloudLayer(vec3 dir, vec3 camPos, vec3 sunDir, vec3 moonDir, float alt, flo
     float dl = hfNear >= 1.0 ? 0.0 : cloudDensity(lxz + lightDir.xz * CLOUD_LIGHT_STEP, hfNear, cw, lod + 1.0);
     float od = (d * 0.5 + dl * mix(1.0, CLOUD_RAIN_DENSITY, rain)) * CLOUD_LIGHT_STEP * extinction;
     float powder = mix(1.0, 1.0 - exp(-2.0 * od), powderAmount);
-    float base = mix(mix(CLOUD_BASE_SHADE, 1.0, f), 1.0, low);
+    float base = mix(mix(CLOUD_BASE_SHADE, 1.0, pow(f, CLOUD_BASE_SHADE_POWER)), 1.0, low);
     float direct = (exp(-od) * broad + exp(-CLOUD_FORWARD_EXTINCTION * od) * forward) * powder * base * shade * crevice;
     vec3 lit = light * mix(1.0, CLOUD_RAIN_LIGHT, rain)
       * (direct + CLOUD_UNDERSIDE_TINT * (low * (1.0 - f) * CLOUD_UNDERSIDE * shade));
@@ -318,7 +368,7 @@ vec3 cloudsOverSky(vec3 sky, vec2 px, vec3 dir, vec3 camPos, vec3 lightDir, floa
     return sky;
   }
   float pixelAngle = length(normalize(reconstructPosition(px + vec2(0.0, 1.0), 1.0)) - dir);
-  vec4 c = cloudLayer(dir, camPos, lightDir, -lightDir, alt, pixelAngle, noise, CLOUD_STEPS);
+  vec4 c = cloudLayer(cloudSkyDir(dir), camPos, lightDir, -lightDir, alt, pixelAngle, noise, CLOUD_STEPS);
   if (c.a >= 1.0) {
     return sky;
   }
@@ -331,7 +381,7 @@ float cloudShadow(vec3 p, vec3 lightDir) {
   if (cloudsEnabled == 0 || cloudShadowsEnabled == 0 || cloudWeather >= 1.0 && cloudFieldRect.z == 0.0) {
     return 1.0;
   }
-  float t = max(CLOUD_SHADOW_ALTITUDE + p.y, 0.0) / max(-lightDir.y, 0.15);
+  float t = max(CLOUD_SHADOW_ALTITUDE - cloudGround + p.y, 0.0) / max(-lightDir.y, 0.15);
   vec2 world = p.xz + lightDir.xz * t;
   vec2 xz = world + cloudOffset;
   // the same warp as the clouds overhead, so the shadows have their shapes

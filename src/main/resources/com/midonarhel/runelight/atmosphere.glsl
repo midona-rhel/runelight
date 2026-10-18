@@ -125,9 +125,11 @@ float cloudJitter(vec2 px) {
 }
 
 // The procedural sky in sRGB: colors, sun glow, clouds, and the sun, moon and stars through the clouds.
-// px: pixel center in target coordinates.
+// px: pixel center in target coordinates. The whole sky dome is looked up along cloudSkyDir, so its horizon lies
+// at the edge of the drawn world, and the sun and moon stay where the clouds' lighting has them.
 vec3 atmosphereSkySteps(vec2 px, vec3 dir, vec3 camPos, vec3 sunDir, vec3 moonDir, float alt, float time, int steps) {
   float pixelAngle = length(normalize(reconstructPosition(px + vec2(0.0, 1.0), 1.0)) - dir);
+  dir = cloudSkyDir(dir);
   vec3 gradient = skyGradient(dir, alt);
   vec3 glowed = gradient + sunGlow(dir, sunDir, alt);
   vec3 lin;
@@ -139,7 +141,7 @@ vec3 atmosphereSkySteps(vec2 px, vec3 dir, vec3 camPos, vec3 sunDir, vec3 moonDi
     // the cache has neither the sun's glow, which moves, nor lightning, which flashes
     lin = c.rgb + (srgbToLinear(max(glowed, 0.0)) - srgbToLinear(max(gradient, 0.0))) * T;
     float k = max(-dir.y, 0.0) + CLOUD_CURVE;
-    float t = max((CLOUD_BOTTOM + CLOUD_TOP) * 0.5 + camPos.y, 0.0) / k;
+    float t = (CLOUD_BOTTOM + CLOUD_TOP) * 0.5 / k;
     lin += lightningCloudGlow(dir.xz * t) * (1.0 - T) * 0.5;
   } else {
     vec4 c = cloudsEnabled == 1
