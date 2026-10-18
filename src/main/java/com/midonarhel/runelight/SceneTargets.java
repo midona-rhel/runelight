@@ -34,7 +34,7 @@ class SceneTargets
 
 	// ambient occlusion at half resolution, upsampled depth-aware in the composite pass
 	private int fboAo, texAo;
-	// sun and moon shadows at half resolution, drawn by the AO pass and upsampled with it
+	// sun and moon shadows at half resolution, drawn by the AO pass and upsampled with it, and the weather's ground
 	private int texShadow;
 	private int aoWidth, aoHeight;
 
@@ -74,7 +74,8 @@ class SceneTargets
 		glBindTexture(GL_TEXTURE_2D, 0);
 		texShadow = glGenTextures();
 		glBindTexture(GL_TEXTURE_2D, texShadow);
-		glTexImage2D(GL_TEXTURE_2D, 0, GL_R8, aoWidth, aoHeight, 0, GL_RED, GL_UNSIGNED_BYTE, 0);
+		// r shadow; g and b the snow and wetness the composite's surfaces get (weather_ground_ao.glsl)
+		glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, aoWidth, aoHeight, 0, GL_RGBA, GL_UNSIGNED_BYTE, 0);
 		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
 		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
 		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);

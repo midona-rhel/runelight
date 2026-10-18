@@ -1,7 +1,7 @@
 package com.midonarhel.runelight;
 
 /**
- * Sun and moon positions over a repeating day.
+ * Sun and moon positions over a repeating day, following the game clock's time of day.
  *
  * Directions are unit vectors pointing from the world toward the light, in game coordinates:
  * x east, z north and y pointing DOWN, so "up" is -y.
@@ -35,22 +35,13 @@ final class DayCycle
 	double phase;
 
 	/**
-	 * @param elapsedMillis time since the cycle started; it starts at 09:00
+	 * @param gameMillis the game clock (GameClock)
 	 * @param cycleMinutes length of a full day in real minutes; 0 holds the time at fixedHour
 	 * @param fixedHour 0-24, 6 is sunrise and 12 is roughly noon
 	 */
-	void update(long elapsedMillis, int cycleMinutes, double fixedHour)
+	void update(long gameMillis, int cycleMinutes, double fixedHour)
 	{
-		if (cycleMinutes > 0)
-		{
-			// start the cycle at 09:00 so the first thing you see is daylight
-			double cycleMs = cycleMinutes * 60_000.0;
-			phase = (elapsedMillis % (long) cycleMs) / cycleMs + phaseForHour(9);
-		}
-		else
-		{
-			phase = phaseForHour(fixedHour);
-		}
+		phase = phaseForHour(cycleMinutes > 0 ? GameClock.hourOfDay(gameMillis) : fixedHour);
 		phase -= Math.floor(phase);
 
 		double alt = PEAK_ALTITUDE * Math.sin(2 * Math.PI * phase) + LIFT;

@@ -41,6 +41,44 @@ final class WeatherClimate
 		Map<String, Float> morning;
 		// biome -> season name (lower case) -> type id -> weight
 		Map<String, Map<String, Map<String, Float>>> biomes;
+		// biome -> its temperatures (Climate)
+		Map<String, Temperature> temperature;
+	}
+
+	/** A biome's temperatures: per season the mean and the half swing between night and afternoon, degrees C. */
+	static final class Temperature
+	{
+		float[] spring, summer, autumn, winter;
+		// half range of the slow wander over a couple of days
+		float noise = 2.5f;
+		// never thaws: always below zero, always snow on the ground
+		boolean frozen;
+
+		float[] season(Season s)
+		{
+			switch (s)
+			{
+				case SPRING:
+					return spring;
+				case SUMMER:
+					return summer;
+				case AUTUMN:
+					return autumn;
+				default:
+					return winter;
+			}
+		}
+	}
+
+	// a biome without temperatures: mild, a little frost in winter
+	private static final Temperature MILD = new Temperature();
+
+	static
+	{
+		MILD.spring = new float[]{9, 5};
+		MILD.summer = new float[]{17, 6};
+		MILD.autumn = new float[]{9, 4};
+		MILD.winter = new float[]{1, 4};
 	}
 
 	private static final class Tables
@@ -50,6 +88,7 @@ final class WeatherClimate
 		final Map<String, float[][]> odds = new HashMap<>();
 		final float[] morning;
 		final int catalogueVersion;
+		final Map<String, Temperature> temperature = new HashMap<>();
 
 		Tables(Data d)
 		{
@@ -100,6 +139,40 @@ final class WeatherClimate
 						}
 					}
 					odds.put(b.getKey(), bySeason);
+				}
+			}
+			if (d.temperature != null)
+			{
+				for (Map.Entry<String, Temperature> e : d.temperature.entrySet())
+				{
+					Temperature t = e.getValue();
+					if (t != null)
+					{
+						for (Season s : SEASONS)
+						{
+							float[] v = t.season(s);
+							if (v == null || v.length < 2)
+							{
+								// a season left out takes the mild default's
+								v = MILD.season(s);
+							}
+							switch (s)
+							{
+								case SPRING:
+									t.spring = v;
+									break;
+								case SUMMER:
+									t.summer = v;
+									break;
+								case AUTUMN:
+									t.autumn = v;
+									break;
+								default:
+									t.winter = v;
+							}
+						}
+						temperature.put(e.getKey(), t);
+					}
 				}
 			}
 			String def = d.defaultBiome != null ? d.defaultBiome : "GRASSLAND";
@@ -190,6 +263,18 @@ final class WeatherClimate
 			o = t.odds.get(t.defaultBiome);
 		}
 		return o[season.ordinal()];
+	}
+
+	/** The biome's temperatures; unknown biomes get the default biome's, and without any, mild ones. */
+	static Temperature temperature(String biome)
+	{
+		Tables t = tables();
+		Temperature r = biome != null ? t.temperature.get(biome) : null;
+		if (r == null)
+		{
+			r = t.temperature.get(t.defaultBiome);
+		}
+		return r != null ? r : MILD;
 	}
 
 	/** Multiplier on a type's odds in the morning slot. */
