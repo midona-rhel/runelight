@@ -822,19 +822,6 @@ public interface RuneLightConfig extends Config
 	}
 
 	@ConfigItem(
-		keyName = "weatherFarPrecipitation",
-		name = "Distant rain and snow",
-		description = "Rain and snow beyond the falling drops and flakes, as streaked curtains out to the draw distance"
-			+ " and under the clouds on the horizon.",
-		section = weatherSection,
-		position = 411
-	)
-	default boolean weatherFarPrecipitation()
-	{
-		return true;
-	}
-
-	@ConfigItem(
 		keyName = "weatherFieldMap",
 		name = "Show weather map",
 		description = "Development: a small map of the weather over the loaded scene in the timings overlay.",

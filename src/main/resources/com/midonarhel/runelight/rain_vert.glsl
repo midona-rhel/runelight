@@ -1,9 +1,9 @@
 #version 330
 
 // Rain: one instanced quad per drop or splash, no vertex buffer. Each instance derives its position from its id
-// and the time, wrapped inside a box that follows the player, so drops stay put in the world as the box moves.
-// Drops end on the highest scenery in their column (occlusion map), so they stop on roofs, hidden ones included,
-// and never fall inside buildings.
+// and the time, wrapped inside its layer's box (weather_common.glsl), so drops stay put in the world as the boxes
+// move with the camera. Drops end on the highest scenery in their column (occlusion map), so they stop on roofs,
+// hidden ones included, and never fall inside buildings.
 
 #include "frame.glsl"
 #include "sky.glsl"
@@ -18,12 +18,8 @@ uniform vec4 rainStyle;        // the weather's drops as multiples of the defaul
 uniform vec3 windOffset;       // world units the wind has carried everything so far (it varies, so not wind * time)
 uniform vec2 particleAmount;   // rain at the player, and the most anywhere in the box that the drop count follows
 
-// box around the player: half width, height above and depth below the player's ground, world units
-#define BOX_HALF 4096.0
-#define BOX_ABOVE 2560.0
-#define BOX_BELOW 768.0
 #define FALL_SPEED 2000.0      // world units per second
-#define DROP_LENGTH 70.0       // streak length at rest; grows a little with speed
+#define DROP_LENGTH 70.0       // streak length at rest, times the layer's size scale
 #define DROP_WIDTH 1.6         // world units; streaks are at least a pixel wide, thinner ones fade instead
 #define DROP_ALPHA 0.32
 #define NEAR_FADE 250.0        // drops this close to the camera fade out so they don't smear the view
@@ -31,7 +27,7 @@ uniform vec2 particleAmount;   // rain at the player, and the most anywhere in t
 #define LIT_ALPHA 0.8          // drops in bright point light show up to this much more
 #define RAIN_GUST 1.2          // wind multiplier at a full gust (Weather.RAIN_GUST)
 
-#define SPLASH_HALF 2560.0     // splashes fill a smaller area, where they can be seen
+#define SPLASH_HALF 2560.0     // splashes fill a smaller area around layerBox, where they can be seen
 #define SPLASH_PERIOD 0.42     // seconds each splash lives
 #define SPLASH_SIZE 14.0
 #define SPLASH_ALPHA 0.40
@@ -64,15 +60,15 @@ vec4 offsetPixels(vec4 clip, vec2 px) {
 }
 
 void drop(int id, vec2 corner) {
-  vec3 h = hash31(float(id) + 0.5);
-  float speedScale = 0.85 + 0.3 * hash11(float(id) * 1.37 + 3.1);
+  float seed = float(id) + layerSpan.w;
+  vec3 h = hash31(seed + 0.5);
+  float speedScale = 0.85 + 0.3 * hash11(seed * 1.37 + 3.1);
   vec3 travel = vec3(windOffset.x, FALL_SPEED * speedScale * fallTime, windOffset.z);
 
-  // head of the drop: random start plus travel, wrapped into the box around the player
-  vec3 size = vec3(BOX_HALF * 2.0, BOX_ABOVE + BOX_BELOW, BOX_HALF * 2.0);
-  vec3 center = focusPos + vec3(0.0, (BOX_BELOW - BOX_ABOVE) * 0.5, 0.0);
-  vec3 world = wrapAround(h * size + travel, center, size);
-  float share = rainShare(world.xz);
+  // head of the drop: random start plus travel, wrapped into the layer's box
+  vec3 world = layerPosition(h, travel);
+  float weight = layerWeight(world);
+  float share = weight > 0.0 ? rainShare(world.xz) : 0.0;
   if (share <= 0.0) {
     gl_Position = CULLED;
     return;
@@ -84,8 +80,9 @@ void drop(int id, vec2 corner) {
 
   // stop on whatever is above the ground: drops below the top surface of their column are hidden, and the
   // streak is cut where it enters the surface
-  float top = occluderTop(head) - cameraPos.y;
-  float len = DROP_LENGTH * speedScale * rainStyle.x;
+  float roofY = occluderTop(head);
+  float top = roofY - cameraPos.y;
+  float len = DROP_LENGTH * speedScale * rainStyle.x * layerSpan.z;
   vec3 dir = normalize(vel);
   vec3 tail = head - dir * len;
   if (tail.y >= top) {
@@ -109,19 +106,17 @@ void drop(int id, vec2 corner) {
   vec2 across = vec2(-along.y, along.x);
 
   vec4 c = corner.y < 0.5 ? c0 : c1;
-  float widthPx = DROP_WIDTH * rainStyle.z * pixelScale() / c.w;
+  float widthPx = DROP_WIDTH * rainStyle.z * layerSpan.z * pixelScale() / c.w;
   float drawn = max(widthPx, 1.0);
   gl_Position = offsetPixels(c, across * corner.x * drawn * 0.5);
 
-  // fade near the box sides so its edge is never seen, and near the camera
-  vec2 rel = abs(world.xz - focusPos.xz) / BOX_HALF;
-  float edge = 1.0 - smoothstep(0.75, 1.0, max(rel.x, rel.y));
+  // fade near the camera
   float near = smoothstep(NEAR_FADE, NEAR_FADE * 3.0, c.w);
   float count = float(dropCount);
   float added = clamp((count - float(id)) / (count * COUNT_FADE + 1.0), 0.0, 1.0);
-  vec3 points = weatherPointLights(head, c1, vec3(0.0));
+  vec3 points = weatherPointLights(head, c1, vec3(0.0), roofY);
   float lit = min(dot(points, vec3(0.2126, 0.7152, 0.0722)), 1.0);
-  fAlpha = DROP_ALPHA * rainStyle.w * amount * share * edge * near * added * min(widthPx / drawn * 1.6, 1.0) * (1.0 + LIT_ALPHA * lit);
+  fAlpha = DROP_ALPHA * rainStyle.w * amount * share * weight * near * added * min(widthPx / drawn * 1.6, 1.0) * (1.0 + LIT_ALPHA * lit);
   fQuad = vec2(corner.x, corner.y);
   fSplash = 0;
   fViewZ = c.w;
@@ -136,7 +131,7 @@ void splash(int id, vec2 corner) {
   float seed = float(id) * 17.0 + floor(cycle) * 131.0;
   // spread over a world-anchored box that wraps around the player, so a splash stays where it landed
   vec2 h = hash31(seed).xy;
-  vec2 lo = focusPos.xz - SPLASH_HALF;
+  vec2 lo = layerBox.xz - SPLASH_HALF;
   vec2 xz = lo + mod(h * SPLASH_HALF * 2.0 - lo, SPLASH_HALF * 2.0);
 
   // land on the top surface; only where it is the ground under open sky the camera can see (checked per pixel)
@@ -159,9 +154,12 @@ void splash(int id, vec2 corner) {
   vec2 q = vec2(corner.x, corner.y * 2.0 - 1.0);
   gl_Position = offsetPixels(c, q * vec2(r, r * 0.45));
 
-  vec3 points = weatherPointLights(p, c, vec3(0.0));
+  vec3 points = weatherPointLights(p, c, vec3(0.0), top);
   float lit = min(dot(points, vec3(0.2126, 0.7152, 0.0722)), 1.0);
-  fAlpha = SPLASH_ALPHA * amount * rainShare(xz) * (1.0 - f) * (1.0 - f) * (1.0 + LIT_ALPHA * lit);
+  // fade toward the sides of the splash area, which moves with the camera
+  vec2 rel = abs(xz - layerBox.xz) / SPLASH_HALF;
+  float edge = 1.0 - smoothstep(0.6, 1.0, max(rel.x, rel.y));
+  fAlpha = SPLASH_ALPHA * amount * rainShare(xz) * edge * (1.0 - f) * (1.0 - f) * (1.0 + LIT_ALPHA * lit);
   fQuad = q;
   fSplash = 1;
   fViewZ = c.w;

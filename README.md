@@ -75,9 +75,10 @@ Weather by region (`WeatherField.java`): every chunk of the loaded scene, expand
 the forecast for its own region's biome, eases toward it and builds up its own wet ground and snow cover. The
 chunks are blurred across region borders (`BLUR`) and sampled by world position as differences from the weather
 at the player, so where you stand nothing changes and elsewhere the clouds close up, the fog thickens and the
-ground gets wet or white by region. The rain and snow particles fill a box around the player wherever it falls in
-it; past the box, `weather_far_frag.glsl` draws streaked curtains of rain and drifting snow out to the draw
-distance and under the clouds on the horizon (`FAR_*` defines). "Show weather map" puts a small map of the field
+ground gets wet or white by region. The rain and snow particles fill everything the camera sees out to the draw
+distance wherever it falls, in layers of world-anchored boxes that double in size outward, each owning a band of
+distance from the camera with fewer, larger particles (`LAYER_*` in `Weather.java`), so the weather thins gradually
+into the distance and a change shows over the whole view at once. "Show weather map" puts a small map of the field
 in the overlay (green clear, gray cloud, blue rain, white snow, pale fog, player in red).
 
 ## Areas

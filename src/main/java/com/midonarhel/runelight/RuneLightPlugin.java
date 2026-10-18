@@ -1156,7 +1156,6 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 				glDeleteProgram(weatherPrograms.rain);
 				glDeleteProgram(weatherPrograms.snow);
 				glDeleteProgram(weatherPrograms.surface);
-				glDeleteProgram(weatherPrograms.far);
 				throw ex;
 			}
 		}
@@ -2379,8 +2378,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 			weather.draw(frameViewProj, frameInvViewProj, frameViewport, glCapabilities.OpenGL45,
 				frameCameraX, frameCameraY, frameCameraZ, dayCycle, frameShadows && shadowMap.isInitialized() ? shadowMap.lightProjRel : null,
 				config.weatherSplashes(), config.weatherSurfaces(), WEATHER_OCCLUSION_UNIT,
-				config.pointLights() && config.weatherPointLights() && lightClusters.isInitialized(),
-				config.weatherFarPrecipitation(), frameDrawDistance);
+				config.pointLights() && config.weatherPointLights() && lightClusters.isInitialized(), frameDrawDistance);
 			glViewport(0, 0, width, height);
 		}
 

@@ -23,9 +23,10 @@ import static org.lwjgl.opengl.GL33C.*;
  *
  * Away from the player the weather is WeatherField's: each chunk of the scene has its region's weather, which the
  * passes add to the player's as a difference. Wet ground and snow cover reach over the whole scene (past the
- * occlusion map everything counts as under the open sky), particles fill a box around the player wherever it rains
- * or snows in it, and beyond the box a cheap full screen pass draws rain and snow as streaked curtains hanging below
- * the clouds, as far as the scene and the sky reach.
+ * occlusion map everything counts as under the open sky). The particles fill everything the camera sees out to the
+ * draw distance, wherever it rains or snows: in layers of world-anchored boxes, each twice the size of the last and
+ * owning a band of distance from the camera, with fewer, larger particles the farther the band (weather_common.glsl).
+ * So a change of weather shows over the whole view at once, thinning gradually into the distance.
  */
 class Weather
 {
@@ -34,24 +35,40 @@ class Weather
 	private static final float OCCLUSION_RADIUS = 64 * 128;
 	// world units above and below the player's ground that the map captures
 	private static final float OCCLUSION_DEPTH_RANGE = 4096;
-	// redraw once the player is this far from the map center; particles reach ~20 tiles, so 24 keeps a margin
+	// redraw once the player is this far from the map center; past the map, particles fall to the ground (hidden by
+	// the scene) instead of stopping on roofs, which is too small to see there
 	private static final float OCCLUSION_RECENTER = 24 * 128;
 	// wet ground and snow cover reach over the whole scene; past the occlusion map surfaces count as exposed
 	private static final float SURFACE_FADE = 1e9f;
-	// half widths of the particle boxes around the player (BOX_HALF in rain_vert.glsl and snow_vert.glsl): the far
-	// rain and snow take over where the particles fade out
-	static final float RAIN_BOX_HALF = 4096;
-	static final float SNOW_BOX_HALF = 3584;
-	// how far from the camera the far rain and snow reach past the draw distance, world units: in the sky, under
-	// the clouds of regions past the edge of the scene
-	private static final float FAR_SKY_REACH = 48 * 128;
+	// Particle layers. The nearest owns distances up to LAYER_NEAR from the camera, each next one twice as far; a
+	// layer's box is that distance across each way, centered a little ahead of the camera (LAYER_AHEAD of its half
+	// width, as far as the camera looks sideways rather than down), so it covers its band of what the camera sees.
+	static final int MAX_LAYERS = 6;
+	static final float LAYER_NEAR = 1536;
+	private static final float LAYER_AHEAD = 0.4f;
+	// per layer outward: particle size (streak length and width, flake size), and the share of particles drawn
+	// relative to the layer before: the boxes grow 4 times in area (and taller), so density thins about 6 times per
+	// layer while the particles grow, and a typical view (layers 1-4) draws about as many as one box used to
+	static final float LAYER_SIZE_GROWTH = 1.6f;
+	static final float LAYER_COUNT_FALLOFF = 0.85f;
+	// layer crossfade, LAYER_CROSSFADE in weather_common.glsl
+	static final float LAYER_CROSSFADE = 0.35f;
+	// height of the nearest boxes above and depth below the player's ground, world units; farther boxes are taller
+	// (by LAYER_HEIGHT_GROWTH per layer, up to LAYER_HEIGHT_MAX) to reach over hills and to the sky behind them
+	private static final float RAIN_ABOVE = 2560, RAIN_BELOW = 768;
+	private static final float SNOW_ABOVE = 1792, SNOW_BELOW = 640;
+	private static final float LAYER_HEIGHT_GROWTH = 1.35f;
+	private static final float LAYER_HEIGHT_MAX = 6144;
+	// half width of the area where splashes land around the player (SPLASH_HALF in rain_vert.glsl)
+	private static final float SPLASH_HALF = 2560;
 	// straight up: the "light" looks straight down
 	private static final float[] UP = {0, -1, 0};
 
-	// instance counts at 100% intensity
-	static final int MAX_RAIN_DROPS = 61000;
+	// instance counts at 100% intensity: drops and flakes in the nearest layer (LAYER_COUNT_FALLOFF less in each
+	// next one), and splashes
+	static final int LAYER_RAIN_DROPS = 24000;
 	static final int MAX_RAIN_SPLASHES = 4400;
-	static final int MAX_SNOW_FLAKES = 30000;
+	static final int LAYER_SNOW_FLAKES = 12000;
 
 	// easing time constants, seconds: about three of them for a full change, so a new weather or region blends
 	// in over ~30-60 s
@@ -113,23 +130,18 @@ class Weather
 		.add(GL_VERTEX_SHADER, "composite_vert.glsl")
 		.add(GL_FRAGMENT_SHADER, "weather_surface_frag.glsl");
 
-	static final Shader FAR_PROGRAM = new Shader()
-		.add(GL_VERTEX_SHADER, "composite_vert.glsl")
-		.add(GL_FRAGMENT_SHADER, "weather_far_frag.glsl");
-
 	/**
 	 * Freshly compiled programs, so a hot reload can compile everything before replacing anything.
 	 */
 	static final class Programs
 	{
-		final int rain, snow, surface, far;
+		final int rain, snow, surface;
 
-		Programs(int rain, int snow, int surface, int far)
+		Programs(int rain, int snow, int surface)
 		{
 			this.rain = rain;
 			this.snow = snow;
 			this.surface = surface;
-			this.far = far;
 		}
 	}
 
@@ -144,7 +156,7 @@ class Weather
 		int cameraPos, focusPos, time, sunAltitude, casterDir, sunIsCaster, amount;
 		int dropCount, splashCount, wind, windOffset, gust, overcast, pointLights;
 		int surfaceMode, fadeDistance, shadowsEnabled, lightProjRel;
-		int particleAmount, farAmount, farNear, farReach;
+		int particleAmount, layerBox, layerSpan, layerBand, particleReach;
 		int light, rainStyle, flakeStyle, flakeColor, fallTime;
 		WeatherField.Locations field;
 		Wind.Locations windLocations;
@@ -161,9 +173,10 @@ class Weather
 			flakeColor = glGetUniformLocation(p, "flakeColor");
 			fallTime = glGetUniformLocation(p, "fallTime");
 			particleAmount = glGetUniformLocation(p, "particleAmount");
-			farAmount = glGetUniformLocation(p, "farAmount");
-			farNear = glGetUniformLocation(p, "farNear");
-			farReach = glGetUniformLocation(p, "farReach");
+			layerBox = glGetUniformLocation(p, "layerBox");
+			layerSpan = glGetUniformLocation(p, "layerSpan");
+			layerBand = glGetUniformLocation(p, "layerBand");
+			particleReach = glGetUniformLocation(p, "particleReach");
 			viewProj = glGetUniformLocation(p, "viewProj");
 			invViewProj = glGetUniformLocation(p, "invViewProj");
 			viewport = glGetUniformLocation(p, "sceneViewport");
@@ -208,7 +221,6 @@ class Weather
 	private final Uniforms rain = new Uniforms();
 	private final Uniforms snow = new Uniforms();
 	private final Uniforms surface = new Uniforms();
-	private final Uniforms far = new Uniforms();
 	private final WeatherField field = new WeatherField();
 
 	private final ShadowMap occlusion = new ShadowMap();
@@ -275,8 +287,7 @@ class Weather
 			r = RAIN_PROGRAM.compile(template);
 			s = SNOW_PROGRAM.compile(template);
 			f = SURFACE_PROGRAM.compile(template);
-			int d = FAR_PROGRAM.compile(template);
-			return new Programs(r, s, f, d);
+			return new Programs(r, s, f);
 		}
 		catch (ShaderException ex)
 		{
@@ -301,8 +312,6 @@ class Weather
 			materialUnit, fieldUnit);
 		surface.locate(p.surface, sceneUnit, occlusionUnit, shadowCompareUnit, alphaLayerUnit, lightDataUnit,
 			clusterDataUnit, materialUnit, fieldUnit);
-		far.locate(p.far, sceneUnit, occlusionUnit, occlusionUnit + 1, alphaLayerUnit, lightDataUnit, clusterDataUnit,
-			materialUnit, fieldUnit);
 	}
 
 	void freePrograms()
@@ -310,8 +319,7 @@ class Weather
 		glDeleteProgram(rain.program);
 		glDeleteProgram(snow.program);
 		glDeleteProgram(surface.program);
-		glDeleteProgram(far.program);
-		rain.program = snow.program = surface.program = far.program = 0;
+		rain.program = snow.program = surface.program = 0;
 	}
 
 	/**
@@ -957,13 +965,11 @@ class Weather
 	 *
 	 * @param shadowProjRel camera-relative light matrix, or null without shadows
 	 * @param pointLights light particles and snow cover with this frame's light clusters
-	 * @param farPrecipitation rain and snow beyond the particles
-	 * @param drawDistance world units
+	 * @param drawDistance world units from the player: how far the particles reach
 	 */
 	void draw(float[] viewProj, float[] invViewProj, int[] viewport, boolean zeroToOne,
 		float cameraX, float cameraY, float cameraZ, DayCycle day, float[] shadowProjRel,
-		boolean splashes, boolean surfaces, int occlusionUnit, boolean pointLights, boolean farPrecipitation,
-		float drawDistance)
+		boolean splashes, boolean surfaces, int occlusionUnit, boolean pointLights, float drawDistance)
 	{
 		if (!active || !occlusion.isInitialized() || rain.program == 0)
 		{
@@ -988,9 +994,9 @@ class Weather
 		// how much rain and snow there is anywhere the particles reach, and anywhere at all: the field adds its
 		// differences to the player's weather
 		boolean f = field.isEnabled();
-		float rainShown = f ? fieldPeak(WeatherField.RAIN, rainEffective, RAIN_BOX_HALF) : rainEffective;
-		float snowShown = f ? fieldPeak(WeatherField.SNOW, snowEffective, SNOW_BOX_HALF) : snowEffective;
-		float wetShown = f ? fieldPeak(WeatherField.WET, wetness, RAIN_BOX_HALF) : wetness;
+		float rainShown = f ? fieldPeak(WeatherField.RAIN, rainEffective, drawDistance) : rainEffective;
+		float snowShown = f ? fieldPeak(WeatherField.SNOW, snowEffective, drawDistance) : snowEffective;
+		float wetShown = f ? fieldPeak(WeatherField.WET, wetness, SPLASH_HALF) : wetness;
 
 		// surfaces first so falling weather draws over them
 		if (surfaces)
@@ -1006,48 +1012,47 @@ class Weather
 		}
 
 		glBlendFuncSeparate(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA, GL_ZERO, GL_ONE);
-		if (farPrecipitation && far.program != 0)
-		{
-			float rainFar = f ? rainEffective + field.max(WeatherField.RAIN) - field.getFocus(WeatherField.RAIN)
-				: rainEffective;
-			float snowFar = f ? snowEffective + field.max(WeatherField.SNOW) - field.getFocus(WeatherField.SNOW)
-				: snowEffective;
-			if (rainFar > PRECIP_EPSILON || snowFar > PRECIP_EPSILON)
-			{
-				glUseProgram(far.program);
-				setCommon(far, viewProj, invViewProj, viewport, zeroToOne, cameraX, cameraY, cameraZ, day, time);
-				glUniform2f(far.farAmount, rainEffective, snowEffective);
-				glUniform2f(far.farNear, RAIN_BOX_HALF, SNOW_BOX_HALF);
-				glUniform1f(far.farReach, drawDistance + FAR_SKY_REACH);
-				glUniform3f(far.windOffset, windOffsetX, 0, windOffsetZ);
-				glDrawArrays(GL_TRIANGLES, 0, 3);
-			}
-		}
+		// where the camera looks: the clip w row is the view axis, its horizontal part says how far the layers
+		// reach ahead of the camera rather than around it
+		float vx = viewProj[3], vy = viewProj[7], vz = viewProj[11];
+		float vl = (float) Math.sqrt(vx * vx + vy * vy + vz * vz);
+		float aheadX = vl > 0 ? vx / vl * LAYER_AHEAD : 0, aheadZ = vl > 0 ? vz / vl * LAYER_AHEAD : 0;
+		// the camera's height over the player's ground (y points down), and the farthest particle it can see
+		float height = focusY - cameraY;
+		float out = (float) Math.hypot(drawDistance + Math.hypot(cameraX - focusX, cameraZ - focusZ),
+			Math.max(height, 0));
 
-		int drops = Math.round(MAX_RAIN_DROPS * rainShown);
-		int splashCount = splashes ? Math.round(MAX_RAIN_SPLASHES * rainShown * Math.min(1, wetShown)) : 0;
-		if (drops + splashCount > 0)
+		if (rainShown > 0)
 		{
 			glUseProgram(rain.program);
 			setParticles(rain, Math.max(rainAmount, rainShown), viewProj, invViewProj, viewport, zeroToOne, cameraX,
 				cameraY, cameraZ, day, time, pointLights);
 			glUniform1f(rain.fallTime, rainFall);
 			glUniform2f(rain.particleAmount, rainEffective, rainShown);
-			glUniform1i(rain.dropCount, drops);
-			glUniform1i(rain.splashCount, splashCount);
-			// one quad per particle, everything else comes from gl_InstanceID
-			glDrawArraysInstanced(GL_TRIANGLES, 0, 6, drops + splashCount);
+			glUniform1f(rain.particleReach, drawDistance);
+			glUniform1i(rain.splashCount, 0);
+			drawLayers(rain, LAYER_RAIN_DROPS * rainShown, RAIN_ABOVE, RAIN_BELOW, out, height, cameraX, cameraZ,
+				aheadX, aheadZ);
+			int splashCount = splashes ? Math.round(MAX_RAIN_SPLASHES * rainShown * Math.min(1, wetShown)) : 0;
+			if (splashCount > 0)
+			{
+				// splashes are only seen up close: around the player, where the camera looks
+				glUniform4f(rain.layerBox, focusX, focusY, focusZ, SPLASH_HALF);
+				glUniform1i(rain.dropCount, 0);
+				glUniform1i(rain.splashCount, splashCount);
+				glDrawArraysInstanced(GL_TRIANGLES, 0, 6, splashCount);
+			}
 		}
-		int flakes = Math.round(MAX_SNOW_FLAKES * snowShown);
-		if (flakes > 0)
+		if (snowShown > 0)
 		{
 			glUseProgram(snow.program);
 			setParticles(snow, Math.max(snowAmount, snowShown), viewProj, invViewProj, viewport, zeroToOne, cameraX,
 				cameraY, cameraZ, day, time, pointLights);
 			glUniform1f(snow.fallTime, snowFall);
 			glUniform2f(snow.particleAmount, snowEffective, snowShown);
-			glUniform1i(snow.dropCount, flakes);
-			glDrawArraysInstanced(GL_TRIANGLES, 0, 6, flakes);
+			glUniform1f(snow.particleReach, drawDistance);
+			drawLayers(snow, LAYER_SNOW_FLAKES * snowShown, SNOW_ABOVE, SNOW_BELOW, out, height, cameraX, cameraZ,
+				aheadX, aheadZ);
 		}
 
 		glDisable(GL_BLEND);
@@ -1055,6 +1060,62 @@ class Weather
 		glBindVertexArray(0);
 		glUseProgram(0);
 		ShadowMap.unbind(occlusionUnit, occlusionUnit + 1);
+	}
+
+	/**
+	 * Draw the particle layers that reach what the camera sees, with the program in use: one instanced draw each,
+	 * one quad per particle, everything else from gl_InstanceID.
+	 *
+	 * @param nearest particles in the nearest layer at this frame's amount
+	 * @param out     how far from the camera the farthest visible particle is
+	 * @param height  the camera's height over the player's ground
+	 */
+	private void drawLayers(Uniforms u, float nearest, float above, float below, float out, float height,
+		float cameraX, float cameraZ, float aheadX, float aheadZ)
+	{
+		int last = lastLayer(out);
+		boolean first = true;
+		for (int k = 0; k <= last; ++k)
+		{
+			float band = layerReach(k);
+			float a = layerHeight(above, k);
+			int count = Math.round(nearest * (float) Math.pow(LAYER_COUNT_FALLOFF, k));
+			if (height - a >= band || count <= 0)
+			{
+				// every particle of the layer is past its band: the camera is too far above them
+				continue;
+			}
+			glUniform4f(u.layerBox, cameraX + aheadX * band, focusY, cameraZ + aheadZ * band, band);
+			glUniform4f(u.layerSpan, a, layerHeight(below, k), (float) Math.pow(LAYER_SIZE_GROWTH, k), k * 7919f);
+			// the nearest layer drawn takes everything closer too: the layers before it had nothing there
+			glUniform2f(u.layerBand, first ? 0 : layerReach(k - 1), band);
+			glUniform1i(u.dropCount, count);
+			glDrawArraysInstanced(GL_TRIANGLES, 0, 6, count);
+			first = false;
+		}
+	}
+
+	/** How far from the camera layer k's band reaches. */
+	static float layerReach(int k)
+	{
+		return LAYER_NEAR * (1 << k);
+	}
+
+	/** A layer's height above or depth below the ground, growing outward. */
+	static float layerHeight(float nearest, int k)
+	{
+		return Math.min(nearest * (float) Math.pow(LAYER_HEIGHT_GROWTH, k), Math.max(nearest, LAYER_HEIGHT_MAX));
+	}
+
+	/** The outermost layer needed for particles out to {@code out} from the camera, at full strength. */
+	static int lastLayer(float out)
+	{
+		int k = 0;
+		while (k < MAX_LAYERS - 1 && layerReach(k) * (1 - LAYER_CROSSFADE) < out)
+		{
+			++k;
+		}
+		return k;
 	}
 
 	/**

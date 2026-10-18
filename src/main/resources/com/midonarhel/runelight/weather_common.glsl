@@ -122,14 +122,18 @@ uniform usamplerBuffer clusterData;  // per cluster: count, then light indices
 // extra light seen through a particle when looking toward the light, at most this many times the plain light
 #define WEATHER_FORWARD_SCATTER 2.0
 #define WEATHER_FORWARD_POWER 6.0
+// world units a light may sit below the roof of a point's column and still light it (lamps on a roof's edge)
+#define WEATHER_ROOF_BIAS 48.0
 // Particles past this view depth (world units) skip the point lights, fading out over the last quarter: there a
 // streak is under a pixel wide and mostly faded, and every one of its six vertices would loop over the lights.
 #define WEATHER_PARTICLE_LIGHT_FAR 5120.0
 
 // Light from the point lights around a camera-relative point. clip: the point's clip position (w is view depth),
 // for the cluster lookup. n: surface normal, or zero for particles, which take light from every side and scatter
-// it forward toward the camera.
-vec3 weatherPointLights(vec3 p, vec4 clip, vec3 n) {
+// it forward toward the camera. roofY: world y (down) of the top of the scenery in the point's column, 1e9 for none.
+// Weather is outside: lights inside buildings never reach it, and neither does a light below the roof the point is
+// above (rain over a lit house).
+vec3 weatherPointLights(vec3 p, vec4 clip, vec3 n, float roofY) {
   if (pointLightsEnabled == 0 || clip.w <= 0.0) {
     return vec3(0.0);
   }
@@ -151,11 +155,17 @@ vec3 weatherPointLights(vec3 p, vec4 clip, vec3 n) {
     return vec3(0.0);
   }
   vec3 view = normalize(p);
+  float roof = roofY - cameraPos.y + WEATHER_ROOF_BIAS;
+  bool overRoof = p.y < roof;
   vec3 sum = vec3(0.0);
   int count = int(texelFetch(clusterData, base).r);
   for (int i = 0; i < count; ++i) {
     int li = int(texelFetch(clusterData, base + 1 + i).r);
     vec4 posRadius = texelFetch(lightData, li * 2);
+    vec4 colorIndoor = texelFetch(lightData, li * 2 + 1);
+    if (colorIndoor.w > 0.5 || overRoof && posRadius.y > roof) {
+      continue;
+    }
     vec3 l = posRadius.xyz - p;
     float d2 = dot(l, l);
     float r2 = posRadius.w * posRadius.w;
@@ -169,7 +179,7 @@ vec3 weatherPointLights(vec3 p, vec4 clip, vec3 n) {
     // drops between the camera and a light glow against it
     float k = particle ? 1.0 + WEATHER_FORWARD_SCATTER * pow(max(dot(ld, view), 0.0), WEATHER_FORWARD_POWER)
       : max(dot(n, ld), 0.0);
-    sum += texelFetch(lightData, li * 2 + 1).rgb * att * k;
+    sum += colorIndoor.rgb * att * k;
   }
   return sum * (WEATHER_POINT_LIGHT_SCALE * reach);
 }
@@ -190,10 +200,40 @@ vec3 hash31(float p) {
 }
 
 // Keep a world position inside a box of the given size around center, wrapping so particles stay put in the
-// world while the box follows the player
+// world while the box moves
 vec3 wrapAround(vec3 world, vec3 center, vec3 size) {
   vec3 lo = center - size * 0.5;
   return lo + mod(world - lo, size);
+}
+
+// Particles come in layers (Weather.java), one draw each: world-anchored boxes of fixed sizes, doubling from one
+// layer to the next, placed over the ground the camera sees. Each layer owns a band of distance from the camera,
+// crossfading into the next, so near the camera there are many small particles and far away fewer, larger ones,
+// about as many per pixel either way; the layers together fill everything visible out to the draw distance.
+uniform vec4 layerBox;     // xz: world center of the box, y: world y of the ground it hangs over, w: half width
+uniform vec4 layerSpan;    // x: height above the ground, y: depth below it, z: particle size scale, w: seed
+uniform vec2 layerBand;    // distance from the camera where the layer starts (0 for the nearest) and ends
+uniform float particleReach;  // world units from the player where the particles have faded out: the draw distance
+
+// share of each band over which a layer hands over to the next
+#define LAYER_CROSSFADE 0.35
+
+// A particle's world position in the current layer's box, from 0..1 randoms h and how far it has travelled
+vec3 layerPosition(vec3 h, vec3 travel) {
+  vec3 size = vec3(layerBox.w * 2.0, layerSpan.x + layerSpan.y, layerBox.w * 2.0);
+  vec3 center = vec3(layerBox.x, layerBox.y + (layerSpan.y - layerSpan.x) * 0.5, layerBox.z);
+  return wrapAround(h * size + travel, center, size);
+}
+
+// How much of a particle the current layer draws: its share of the distance band, faded at the box sides (only
+// ever behind the camera) and toward the draw distance
+float layerWeight(vec3 world) {
+  float d = distance(world, cameraPos);
+  float w = layerBand.x > 0.0 ? smoothstep(layerBand.x * (1.0 - LAYER_CROSSFADE), layerBand.x, d) : 1.0;
+  w *= 1.0 - smoothstep(layerBand.y * (1.0 - LAYER_CROSSFADE), layerBand.y, d);
+  vec2 rel = abs(world.xz - layerBox.xz) / layerBox.w;
+  w *= 1.0 - smoothstep(0.85, 1.0, max(rel.x, rel.y));
+  return w * (1.0 - smoothstep(particleReach * 0.8, particleReach, length(world.xz - focusPos.xz)));
 }
 
 // View depth of the opaque scene under a pixel, very large for sky

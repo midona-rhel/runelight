@@ -98,8 +98,9 @@ void main() {
   shadow = overcastShadow(shadow);
   vec3 caster = sunIsCaster == 1 ? sunLight(sunAltitude) : moonLight(sunAltitude);
   vec3 light = ambientLight(sunAltitude) + skyLight(sunAltitude) * up + caster * max(dot(n, casterDir), 0.0) * shadow;
-  // torches and lamps light the snow like the ground under it
-  light += weatherPointLights(p, viewProj * vec4(p, 1.0), n);
+  // torches and lamps outside light the snow like the ground under it; the snow is the top of its column, so
+  // lights below it (inside the house it lies on) don't
+  light += weatherPointLights(p, viewProj * vec4(p, 1.0), n, world.y);
   vec3 snow = shade(SNOW_ALBEDO, light);
   FragColor = vec4(snow * cover, 1.0 - cover);
 }
