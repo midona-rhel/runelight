@@ -245,6 +245,8 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 
 	private final VolumetricFog volumetricFog = new VolumetricFog();
 	private boolean frameFog;
+	// under the open sky rather than underground, from the area classification (or the game's sky color)
+	private boolean frameOpenSky;
 
 	static final Shader SHADOW_PROGRAM = new Shader()
 		.add(GL_VERTEX_SHADER, "shadow_vert.glsl")
@@ -282,6 +284,9 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 	private volatile double cpuFrameMs;
 
 	private final DayCycle dayCycle = new DayCycle();
+	final EnvironmentManager environmentManager = new EnvironmentManager();
+	private final EnvironmentUniforms sceneEnvUniforms = new EnvironmentUniforms();
+	private final EnvironmentUniforms compositeEnvUniforms = new EnvironmentUniforms();
 	private final ShadowMap shadowMap = new ShadowMap();
 	private final Weather weather = new Weather();
 	// two units: the occlusion map's raw and compare views
@@ -497,6 +502,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		eventBus.register(buildingLights);
 		clientThread.invoke(buildingLights::rebuild);
 		overlayManager.add(buildingOverlay);
+		environmentManager.load(gson);
 		startMillis = System.currentTimeMillis();
 
 		root = new SceneContext(NUM_ZONES, NUM_ZONES);
@@ -956,6 +962,8 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		uniSceneCasterDir = glGetUniformLocation(glProgram, "casterDir");
 		uniSceneSunIsCaster = glGetUniformLocation(glProgram, "sunIsCaster");
 		uniSceneSunAltitude = glGetUniformLocation(glProgram, "sunAltitude");
+		sceneEnvUniforms.locate(glProgram);
+		compositeEnvUniforms.locate(glCompositeProgram);
 		compositeFrame.locate(glCompositeProgram);
 		bindSceneSamplers(glCompositeProgram);
 		glUseProgram(glCompositeProgram);
@@ -1468,6 +1476,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		glUniform3fv(uniSceneCasterDir, dayCycle.casterDir);
 		glUniform1i(uniSceneSunIsCaster, dayCycle.sunIsCaster ? 1 : 0);
 		glUniform1f(uniSceneSunAltitude, dayCycle.sunAltitude);
+		setEnvironmentUniforms(sceneEnvUniforms);
 		glUniform4f(uniFogColor, (sky >> 16 & 0xFF) / 255f, (sky >> 8 & 0xFF) / 255f, (sky & 0xFF) / 255f, 1f);
 		glUniform1i(uniFogDepth, fogDepth);
 		glUniform1i(uniDrawDistance, drawDistance * Perspective.LOCAL_TILE_SIZE);
@@ -1606,9 +1615,8 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		frameFogDepth = config.fogDepth();
 		frameDrawDistance = getDrawDistance() * Perspective.LOCAL_TILE_SIZE;
 
-		// The game uses a black sky underground. Until areas are classified properly, treat that as indoors.
-		int r = frameSkyColor >> 16 & 0xFF, g = frameSkyColor >> 8 & 0xFF, b = frameSkyColor & 0xFF;
-		frameOutdoors = config.sunLighting() && r + g + b > 24;
+		frameOpenSky = updateEnvironment(scene);
+		frameOutdoors = config.sunLighting() && frameOpenSky;
 
 		dayCycle.update(System.currentTimeMillis() - startMillis, config.dayCycleMinutes(), config.fixedHour());
 
@@ -1645,11 +1653,36 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 			fz = lp.getY();
 			fy = Perspective.getTileHeight(client, lp, plane);
 		}
-		// the game's sky color is the only "has a sky" signal for now; a black sky means underground
-		int r = frameSkyColor >> 16 & 0xFF, g = frameSkyColor >> 8 & 0xFF, b = frameSkyColor & 0xFF;
-		boolean sky = r + g + b > 24 && client.getGameState() == GameState.LOGGED_IN;
+		boolean sky = frameOpenSky && client.getGameState() == GameState.LOGGED_IN;
 		weather.update(config.weatherMode(), config.weatherIntensity(), config.weatherBuildup(), sky,
 			fx, fy, fz, plane);
+	}
+
+	/**
+	 * Find the area the camera looks at and whether it is under the open sky. Without area data, the game's
+	 * black underground sky is the only hint.
+	 */
+	private boolean updateEnvironment(Scene scene)
+	{
+		if (!config.areaEnvironments())
+		{
+			int r = frameSkyColor >> 16 & 0xFF, g = frameSkyColor >> 8 & 0xFF, b = frameSkyColor & 0xFF;
+			return r + g + b > 24;
+		}
+		boolean loggedIn = client.getGameState() == GameState.LOGGED_IN;
+		environmentManager.update(loggedIn ? scene : null,
+			(int) client.getCameraFocalPointX(), (int) client.getCameraFocalPointZ(),
+			client.getTopLevelWorldView().getPlane(), frameSkyColor,
+			(System.currentTimeMillis() - startMillis) / 1000f);
+		return environmentManager.isOverworld();
+	}
+
+	private void setEnvironmentUniforms(EnvironmentUniforms u)
+	{
+		boolean on = config.areaEnvironments();
+		// the game's own skyboxes have their own colors; area fog would not match them, like in 117 HD
+		float fog = frameHasSkybox ? 0 : config.areaFogStrength() / 100f;
+		u.set(on ? environmentManager : null, config.areaLightStrength() / 100f, fog, getDrawDistance());
 	}
 
 	/**
@@ -1812,6 +1845,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		glUniform3fv(uniCompositeCasterDir, dayCycle.casterDir);
 		glUniform1i(uniCompositeSunIsCaster, dayCycle.sunIsCaster ? 1 : 0);
 		glUniform1f(uniCompositeSunAltitude, dayCycle.sunAltitude);
+		setEnvironmentUniforms(compositeEnvUniforms);
 
 		boolean shadows = frameShadows && shadowMap.isInitialized();
 		glUniform1i(uniCompositeShadowsEnabled, shadows ? 1 : 0);

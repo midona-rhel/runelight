@@ -785,4 +785,50 @@ public interface RuneLightConfig extends Config
 	{
 		return DebugView.FINAL;
 	}
+
+	@ConfigSection(
+		name = "Environment",
+		description = "Per-area ambience: inside or outside, caves, and each area's own light and fog",
+		position = 350
+	)
+	String environmentSection = "environment";
+
+	@ConfigItem(
+		keyName = "areaEnvironments",
+		name = "Area ambience",
+		description = "Recognise caves and dungeons by area and give areas their own light colors, fog and sky haze"
+			+ " (deserts, swamps, snow, the Wilderness, caves). Off: only the game's sky color decides what is underground.",
+		section = environmentSection,
+		position = 351
+	)
+	default boolean areaEnvironments()
+	{
+		return true;
+	}
+
+	@Range(max = 200)
+	@ConfigItem(
+		keyName = "areaLightStrength",
+		name = "Area light tint",
+		description = "How strongly areas tint and dim the ambient light and sun, in percent. 0 keeps the normal light everywhere.",
+		section = environmentSection,
+		position = 352
+	)
+	default int areaLightStrength()
+	{
+		return 100;
+	}
+
+	@Range(max = 200)
+	@ConfigItem(
+		keyName = "areaFogStrength",
+		name = "Area fog",
+		description = "Density of each area's distance fog and sky haze, in percent. 0 turns area fog off.",
+		section = environmentSection,
+		position = 353
+	)
+	default int areaFogStrength()
+	{
+		return 100;
+	}
 }

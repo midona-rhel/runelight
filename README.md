@@ -43,3 +43,10 @@ gradual buildup. Shelter comes from a top-down depth map of all static scenery a
 roof (also roofs hidden by the game or a plugin), redrawn only after the player walks ~24 tiles or the scenery
 changes. Tuning constants are `#define`s at the top of `rain_vert.glsl`, `snow_vert.glsl` and
 `weather_surface_frag.glsl`; counts and timings are at the top of `Weather.java`.
+## Areas
+
+Which area the camera is in, whether it is under the open sky or underground, and each area's light tint, fog and
+sky haze come from `environments.json`, built by `tools/import_environments.py` from 117 HD's areas and
+environments with 3D Weather's biome regions as fallback (see the script for usage and what it leaves out).
+Rerun it against newer checkouts to pick up their additions. The biome looks (desert, swamp, snow, ...) are set in
+the script's `BIOMES` table.
