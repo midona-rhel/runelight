@@ -36,6 +36,7 @@ import com.midonarhel.runelight.config.ColorBlindMode;
 import com.midonarhel.runelight.config.DebugView;
 import com.midonarhel.runelight.config.ShadowResolution;
 import com.midonarhel.runelight.config.UIScalingMode;
+import com.midonarhel.runelight.config.WeatherMode;
 
 @ConfigGroup(RuneLightConfig.GROUP)
 public interface RuneLightConfig extends Config
@@ -438,6 +439,74 @@ public interface RuneLightConfig extends Config
 		position = 61
 	)
 	default boolean pointLights()
+	{
+		return true;
+	}
+
+	@ConfigSection(
+		name = "Weather",
+		description = "Rain and snow",
+		position = 400
+	)
+	String weatherSection = "weather";
+
+	@ConfigItem(
+		keyName = "weatherMode",
+		name = "Weather",
+		description = "Rain or snow outdoors. Sheltered places, also under roofs the game hides, stay dry.",
+		section = weatherSection,
+		position = 401
+	)
+	default WeatherMode weatherMode()
+	{
+		return WeatherMode.OFF;
+	}
+
+	@Range(min = 1, max = 100)
+	@ConfigItem(
+		keyName = "weatherIntensity",
+		name = "Intensity",
+		description = "How heavy the rain or snow is, in percent.",
+		section = weatherSection,
+		position = 402
+	)
+	default int weatherIntensity()
+	{
+		return 60;
+	}
+
+	@ConfigItem(
+		keyName = "weatherSurfaces",
+		name = "Wet ground and snow cover",
+		description = "Surfaces under the open sky get darker and glossy in rain, or white in snow.",
+		section = weatherSection,
+		position = 403
+	)
+	default boolean weatherSurfaces()
+	{
+		return true;
+	}
+
+	@ConfigItem(
+		keyName = "weatherSplashes",
+		name = "Rain splashes",
+		description = "Small splashes where rain hits the ground.",
+		section = weatherSection,
+		position = 404
+	)
+	default boolean weatherSplashes()
+	{
+		return true;
+	}
+
+	@ConfigItem(
+		keyName = "weatherBuildup",
+		name = "Gradual buildup",
+		description = "Weather fades in when turned on, and the ground gets wet or white over time.",
+		section = weatherSection,
+		position = 405
+	)
+	default boolean weatherBuildup()
 	{
 		return true;
 	}

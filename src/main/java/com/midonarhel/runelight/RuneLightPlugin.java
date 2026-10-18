@@ -82,6 +82,7 @@ import net.runelite.client.plugins.PluginDescriptor;
 import net.runelite.client.plugins.PluginInstantiationException;
 import net.runelite.client.plugins.PluginManager;
 import com.midonarhel.runelight.config.AntiAliasingMode;
+import com.midonarhel.runelight.config.DebugView;
 import com.midonarhel.runelight.config.UIScalingMode;
 import com.midonarhel.runelight.template.Template;
 import net.runelite.client.ui.ClientUI;
@@ -270,6 +271,9 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 
 	private final DayCycle dayCycle = new DayCycle();
 	private final ShadowMap shadowMap = new ShadowMap();
+	private final Weather weather = new Weather();
+	// two units: the occlusion map's raw and compare views
+	private static final int WEATHER_OCCLUSION_UNIT = RuneLightPlugin.COMPOSITE_TEXTURE_UNIT + 12;
 	// when the plugin started; the day cycle and sky animation count from here
 	private long startMillis = System.currentTimeMillis();
 
@@ -669,6 +673,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 			{
 				gpuTimer.free();
 				shadowMap.free();
+				weather.free();
 				lightClusters.free();
 
 				if (textureArrayId != -1)
@@ -871,6 +876,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		glCompositeProgram = COMPOSITE_PROGRAM.compile(template);
 		glAoProgram = AO_PROGRAM.compile(template);
 		glShadowProgram = SHADOW_PROGRAM.compile(template);
+		weather.setPrograms(weather.compile(template), COMPOSITE_TEXTURE_UNIT, WEATHER_OCCLUSION_UNIT, SHADOW_COMPARE_UNIT, ALPHA_LAYER_UNIT);
 
 		glBindVertexArray(0);
 
@@ -986,6 +992,8 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 
 		glDeleteProgram(glShadowProgram);
 		glShadowProgram = 0;
+
+		weather.freePrograms();
 	}
 
 	/**
@@ -997,6 +1005,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		glBindVertexArray(vaoUiHandle);
 		Template template = createTemplate();
 		int scene = 0, ui = 0, composite = 0, ao = 0, shadow = 0;
+		Weather.Programs weatherPrograms;
 		try
 		{
 			scene = PROGRAM.compile(template);
@@ -1004,6 +1013,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 			composite = COMPOSITE_PROGRAM.compile(template);
 			ao = AO_PROGRAM.compile(template);
 			shadow = SHADOW_PROGRAM.compile(template);
+			weatherPrograms = weather.compile(template);
 		}
 		catch (ShaderException ex)
 		{
@@ -1012,6 +1022,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 			glDeleteProgram(ui);
 			glDeleteProgram(composite);
 			glDeleteProgram(ao);
+			glDeleteProgram(shadow);
 			String msg = ex.getMessage();
 			if (!msg.equals(shaderError))
 			{
@@ -1032,6 +1043,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		glCompositeProgram = composite;
 		glAoProgram = ao;
 		glShadowProgram = shadow;
+		weather.setPrograms(weatherPrograms, COMPOSITE_TEXTURE_UNIT, WEATHER_OCCLUSION_UNIT, SHADOW_COMPARE_UNIT, ALPHA_LAYER_UNIT);
 		initUniforms();
 
 		if (textureAnimations != null)
@@ -1512,6 +1524,16 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 			gpuTimer.begin(GpuTimer.SHADOW);
 			renderShadowMap();
 		}
+		if (weather.isActive())
+		{
+			// usually nothing: the map is only redrawn after the player moves far or the scenery changes
+			if (!frameShadows)
+			{
+				gpuTimer.begin(GpuTimer.SHADOW);
+			}
+			weather.renderOcclusion(root, glShadowProgram, uniShadowLightProj,
+				uniShadowEntityProj, uniShadowBase, uniShadowTexturesReady, textureArrayId != -1, glCapabilities.OpenGL45);
+		}
 		gpuTimer.end();
 		VAO.recordShadowDraws = false;
 		glBindFramebuffer(GL_DRAW_FRAMEBUFFER, awtContext.getFramebuffer(false));
@@ -1541,6 +1563,32 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		frameShadows = frameOutdoors && config.shadows() && client.getGameState() == GameState.LOGGED_IN;
 		VAO.clearShadowDraws();
 		VAO.recordShadowDraws = frameShadows;
+
+		updateWeather(cameraX, cameraY, cameraZ);
+	}
+
+	private void updateWeather(float cameraX, float cameraY, float cameraZ)
+	{
+		WorldView wv = client.getTopLevelWorldView();
+		if (wv == null)
+		{
+			return;
+		}
+		float fx = cameraX, fy = cameraY, fz = cameraZ;
+		int plane = wv.getPlane();
+		Player player = client.getLocalPlayer();
+		LocalPoint lp = player != null ? player.getLocalLocation() : null;
+		if (lp != null)
+		{
+			fx = lp.getX();
+			fz = lp.getY();
+			fy = Perspective.getTileHeight(client, lp, plane);
+		}
+		// the game's sky color is the only "has a sky" signal for now; a black sky means underground
+		int r = frameSkyColor >> 16 & 0xFF, g = frameSkyColor >> 8 & 0xFF, b = frameSkyColor & 0xFF;
+		boolean sky = r + g + b > 24 && client.getGameState() == GameState.LOGGED_IN;
+		weather.update(config.weatherMode(), config.weatherIntensity(), config.weatherBuildup(), sky,
+			fx, fy, fz, plane);
 	}
 
 	/**
@@ -1824,6 +1872,14 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		setLightingUniforms();
 		sceneTargets.bindAlphaLayer(ALPHA_LAYER_UNIT);
 		glDrawArrays(GL_TRIANGLES, 0, 3);
+
+		if (weather.isActive() && config.debugView() == DebugView.FINAL)
+		{
+			weather.draw(frameViewProj, frameInvViewProj, frameViewport, glCapabilities.OpenGL45,
+				frameCameraX, frameCameraY, frameCameraZ, dayCycle, frameShadows && shadowMap.isInitialized() ? shadowMap.lightProjRel : null,
+				config.weatherSplashes(), config.weatherSurfaces(), WEATHER_OCCLUSION_UNIT);
+			glViewport(0, 0, width, height);
+		}
 
 		glBindVertexArray(0);
 		sceneTargets.unbindTextures(COMPOSITE_TEXTURE_UNIT);
@@ -2161,6 +2217,10 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 				zone.unmap();
 				zone.initialized = true;
 				zone.dirty = true;
+				if (ctx == root)
+				{
+					weather.invalidateOcclusion();
+				}
 
 				log.debug("Rebuilt zone wv={} x={} z={}", wv.getId(), x, z);
 			}
@@ -2849,6 +2909,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 
 		ctx.zones = nextZones;
 		nextZones = null;
+		weather.invalidateOcclusion();
 
 		// setup vaos
 		for (int x = 0; x < ctx.zones.length; ++x) // NOPMD: ForLoopCanBeForeach
