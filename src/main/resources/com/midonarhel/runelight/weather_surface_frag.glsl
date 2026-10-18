@@ -8,7 +8,7 @@
 #include "weather_common.glsl"
 
 uniform int surfaceMode;       // 1 wet, 2 snow
-uniform float fadeDistance;    // world units from the player where the effect has faded out
+uniform float fadeDistance;    // world units from the player where the effect has faded out (past the scene)
 uniform int shadowsEnabled;
 uniform sampler2DShadow shadowCompare;
 uniform mat4 lightProjRel;
@@ -50,11 +50,18 @@ void main() {
   if (fade <= 0.0) {
     discard;
   }
+  // the player's wetness or snow cover plus the weather field's difference here: dry in a dry region
+  vec2 ground = weatherGroundDelta(world.xz);
+  float here = clamp(amount + (surfaceMode == 1 ? ground.x : ground.y), 0.0, 1.0);
+  if (here <= 0.0) {
+    discard;
+  }
   vec3 n = decodeNormal(texelFetch(sceneNormal, px, 0).rgb);
   float up = max(-n.y, 0.0);
 
-  // offset along the normal so a surface isn't covered by itself, mostly for walls right below an edge
-  float exposed = softExposure(p + n * 12.0) * fade * amount * (1.0 - texelFetch(sceneAlpha, px, 0).a)
+  // offset along the normal so a surface isn't covered by itself, mostly for walls right below an edge. Past the
+  // occlusion map nothing is known to cover a surface: it counts as exposed.
+  float exposed = softExposure(p + n * 12.0) * fade * here * (1.0 - texelFetch(sceneAlpha, px, 0).a)
     * (1.0 - step(0.75, texelFetch(sceneMaterial, px, 0).b));
   if (exposed <= 0.0) {
     discard;
@@ -73,7 +80,7 @@ void main() {
   // snow settles on upward faces, in patches that thin out on slopes
   // broad patches: small-scale noise reads as speckle at this distance
   float patches = valueNoise(world.xz / 192.0) * 0.65 + valueNoise(world.xz / 56.0) * 0.35;
-  float cover = smoothstep(0.25, 0.9, up) * smoothstep(0.15, 0.55, patches + amount * 0.45) * exposed;
+  float cover = smoothstep(0.25, 0.9, up) * smoothstep(0.15, 0.55, patches + here * 0.45) * exposed;
   if (cover <= 0.002) {
     discard;
   }

@@ -3,6 +3,7 @@ package com.midonarhel.runelight;
 import com.midonarhel.runelight.config.WeatherMode;
 import com.midonarhel.runelight.template.Template;
 import java.util.Collections;
+import net.runelite.api.Scene;
 import static org.lwjgl.opengl.GL33C.*;
 
 /**
@@ -17,6 +18,12 @@ import static org.lwjgl.opengl.GL33C.*;
  * player, drawn with every roof and every level, including roofs the game (or a roof hiding plugin) hides from the
  * camera. A point is under the open sky when nothing in its column is above it. The map is only redrawn when the
  * player walks away from its center, the scene loads or a zone changes, so it costs nothing on most frames.
+ *
+ * Away from the player the weather is WeatherField's: each chunk of the scene has its region's weather, which the
+ * passes add to the player's as a difference. Wet ground and snow cover reach over the whole scene (past the
+ * occlusion map everything counts as under the open sky), particles fill a box around the player wherever it rains
+ * or snows in it, and beyond the box a cheap full screen pass draws rain and snow as streaked curtains hanging below
+ * the clouds, as far as the scene and the sky reach.
  */
 class Weather
 {
@@ -27,8 +34,15 @@ class Weather
 	private static final float OCCLUSION_DEPTH_RANGE = 4096;
 	// redraw once the player is this far from the map center; particles reach ~20 tiles, so 24 keeps a margin
 	private static final float OCCLUSION_RECENTER = 24 * 128;
-	// wet ground and snow cover fade out before the edge of the map, where shelter is unknown
-	private static final float SURFACE_FADE = 62 * 128;
+	// wet ground and snow cover reach over the whole scene; past the occlusion map surfaces count as exposed
+	private static final float SURFACE_FADE = 1e9f;
+	// half widths of the particle boxes around the player (BOX_HALF in rain_vert.glsl and snow_vert.glsl): the far
+	// rain and snow take over where the particles fade out
+	static final float RAIN_BOX_HALF = 4096;
+	static final float SNOW_BOX_HALF = 3584;
+	// how far from the camera the far rain and snow reach past the draw distance, world units: in the sky, under
+	// the clouds of regions past the edge of the scene
+	private static final float FAR_SKY_REACH = 48 * 128;
 	// straight up: the "light" looks straight down
 	private static final float[] UP = {0, -1, 0};
 
@@ -39,32 +53,32 @@ class Weather
 
 	// easing time constants, seconds: about three of them for a full change, so a new weather or region blends
 	// in over ~30-60 s
-	private static final float CLOUD_SECONDS = 15;
-	private static final float PRECIP_SECONDS = 8;
-	private static final float FOG_SECONDS = 15;
+	static final float CLOUD_SECONDS = 15;
+	static final float PRECIP_SECONDS = 8;
+	static final float FOG_SECONDS = 15;
 	private static final float WIND_SECONDS = 8;
 	private static final float STORM_SECONDS = 10;
 	// rain or snow starts once the clouds are this far toward their target cover
-	private static final float PRECIP_GATE = 0.8f;
+	static final float PRECIP_GATE = 0.8f;
 	// below this, rain or snow has stopped
 	private static final float PRECIP_EPSILON = 0.003f;
 	// the intensity setting at which automatic weather has its own amounts
-	private static final float DEFAULT_INTENSITY = 0.6f;
+	static final float DEFAULT_INTENSITY = 0.6f;
 	// time constant, seconds, of the cloud cover following the intensity's swells: slower than the rain itself
 	private static final float COVER_SECONDS = 20;
 	// cloud cover at the lightest rain or snow, and what each unit of intensity adds
-	private static final float COVER_BASE = 0.35f;
-	private static final float COVER_SLOPE = 0.8f;
+	static final float COVER_BASE = 0.35f;
+	static final float COVER_SLOPE = 0.8f;
 	// varying intensity may peak this far over 100%, as a share of the instance counts
 	private static final float MAX_EFFECTIVE = 1.2f;
 	// wind multiplier at a full gust
 	private static final float RAIN_GUST = 1.2f;
 	private static final float SNOW_GUST = 1.5f;
-	private static final float WET_BUILD_SECONDS = 25;
-	private static final float SNOW_BUILD_SECONDS = 90;
+	static final float WET_BUILD_SECONDS = 25;
+	static final float SNOW_BUILD_SECONDS = 90;
 	// seconds for wet ground to dry, and for snow cover to melt (rain melts it three times as fast)
-	private static final float DRY_SECONDS = 120;
-	private static final float MELT_SECONDS = 180;
+	static final float DRY_SECONDS = 120;
+	static final float MELT_SECONDS = 180;
 	// manual rain and snow: fog added at full intensity over clear weather's
 	private static final float FOG_RAIN = 0.75f;
 	private static final float FOG_SNOW = 0.65f;
@@ -88,18 +102,23 @@ class Weather
 		.add(GL_VERTEX_SHADER, "composite_vert.glsl")
 		.add(GL_FRAGMENT_SHADER, "weather_surface_frag.glsl");
 
+	static final Shader FAR_PROGRAM = new Shader()
+		.add(GL_VERTEX_SHADER, "composite_vert.glsl")
+		.add(GL_FRAGMENT_SHADER, "weather_far_frag.glsl");
+
 	/**
 	 * Freshly compiled programs, so a hot reload can compile everything before replacing anything.
 	 */
 	static final class Programs
 	{
-		final int rain, snow, surface;
+		final int rain, snow, surface, far;
 
-		Programs(int rain, int snow, int surface)
+		Programs(int rain, int snow, int surface, int far)
 		{
 			this.rain = rain;
 			this.snow = snow;
 			this.surface = surface;
+			this.far = far;
 		}
 	}
 
@@ -114,11 +133,18 @@ class Weather
 		int cameraPos, focusPos, time, sunAltitude, casterDir, sunIsCaster, amount;
 		int dropCount, splashCount, wind, windOffset, gust, overcast, pointLights;
 		int surfaceMode, fadeDistance, shadowsEnabled, lightProjRel;
+		int particleAmount, farAmount, farNear, farReach;
+		WeatherField.Locations field;
 
 		void locate(int p, int sceneUnit, int occlusionUnit, int shadowCompareUnit, int alphaLayerUnit,
-			int lightDataUnit, int clusterDataUnit, int materialUnit)
+			int lightDataUnit, int clusterDataUnit, int materialUnit, int fieldUnit)
 		{
 			program = p;
+			field = WeatherField.locate(p, fieldUnit, fieldUnit + 1);
+			particleAmount = glGetUniformLocation(p, "particleAmount");
+			farAmount = glGetUniformLocation(p, "farAmount");
+			farNear = glGetUniformLocation(p, "farNear");
+			farReach = glGetUniformLocation(p, "farReach");
 			viewProj = glGetUniformLocation(p, "viewProj");
 			invViewProj = glGetUniformLocation(p, "invViewProj");
 			viewport = glGetUniformLocation(p, "sceneViewport");
@@ -163,6 +189,8 @@ class Weather
 	private final Uniforms rain = new Uniforms();
 	private final Uniforms snow = new Uniforms();
 	private final Uniforms surface = new Uniforms();
+	private final Uniforms far = new Uniforms();
+	private final WeatherField field = new WeatherField();
 
 	private final ShadowMap occlusion = new ShadowMap();
 	// particles have no vertex attributes; an empty VAO keeps drivers from fetching unrelated buffers
@@ -208,19 +236,21 @@ class Weather
 
 	Programs compile(Template template) throws ShaderException
 	{
-		int r = 0, s = 0;
+		int r = 0, s = 0, f = 0;
 		try
 		{
 			r = RAIN_PROGRAM.compile(template);
 			s = SNOW_PROGRAM.compile(template);
-			int f = SURFACE_PROGRAM.compile(template);
-			return new Programs(r, s, f);
+			f = SURFACE_PROGRAM.compile(template);
+			int d = FAR_PROGRAM.compile(template);
+			return new Programs(r, s, f, d);
 		}
 		catch (ShaderException ex)
 		{
 			// glDeleteProgram ignores 0
 			glDeleteProgram(r);
 			glDeleteProgram(s);
+			glDeleteProgram(f);
 			throw ex;
 		}
 	}
@@ -229,15 +259,17 @@ class Weather
 	 * Replace the current programs, deleting the old ones.
 	 */
 	void setPrograms(Programs p, int sceneUnit, int occlusionUnit, int shadowCompareUnit, int alphaLayerUnit,
-		int lightDataUnit, int clusterDataUnit, int materialUnit)
+		int lightDataUnit, int clusterDataUnit, int materialUnit, int fieldUnit)
 	{
 		freePrograms();
 		rain.locate(p.rain, sceneUnit, occlusionUnit, occlusionUnit + 1, alphaLayerUnit, lightDataUnit, clusterDataUnit,
-			materialUnit);
+			materialUnit, fieldUnit);
 		snow.locate(p.snow, sceneUnit, occlusionUnit, occlusionUnit + 1, alphaLayerUnit, lightDataUnit, clusterDataUnit,
-			materialUnit);
+			materialUnit, fieldUnit);
 		surface.locate(p.surface, sceneUnit, occlusionUnit, shadowCompareUnit, alphaLayerUnit, lightDataUnit,
-			clusterDataUnit, materialUnit);
+			clusterDataUnit, materialUnit, fieldUnit);
+		far.locate(p.far, sceneUnit, occlusionUnit, occlusionUnit + 1, alphaLayerUnit, lightDataUnit, clusterDataUnit,
+			materialUnit, fieldUnit);
 	}
 
 	void freePrograms()
@@ -245,7 +277,8 @@ class Weather
 		glDeleteProgram(rain.program);
 		glDeleteProgram(snow.program);
 		glDeleteProgram(surface.program);
-		rain.program = snow.program = surface.program = 0;
+		glDeleteProgram(far.program);
+		rain.program = snow.program = surface.program = far.program = 0;
 	}
 
 	/**
@@ -254,6 +287,7 @@ class Weather
 	void free()
 	{
 		occlusion.free();
+		field.free();
 		occlusionDirty = true;
 		if (vao != 0)
 		{
@@ -278,6 +312,11 @@ class Weather
 	Lightning getLightning()
 	{
 		return lightning;
+	}
+
+	WeatherField getField()
+	{
+		return field;
 	}
 
 	/**
@@ -515,7 +554,7 @@ class Weather
 		updateWind(t, varying, dt, now);
 		lightning.update(dt, outdoors ? storm : 0, lightningEnabled, fx, fz);
 
-		boolean anything = rainAmount > 0 || snowAmount > 0 || wetness > 0 || snowCover > 0;
+		boolean anything = rainAmount > 0 || snowAmount > 0 || wetness > 0 || snowCover > 0 || field.hasAnything();
 		active = anything && outdoors;
 		if (!anything)
 		{
@@ -544,6 +583,77 @@ class Weather
 		}
 		return true;
 	}
+
+	/**
+	 * Lay the weather field over the scene when it changes, and ease every chunk toward its region's weather. Call
+	 * before {@link #update}, with the same focus.
+	 *
+	 * @param scene    the top-level scene, or null when there is none
+	 * @param sizeX    zones across the scene, offset by {@code offset} from local coordinates
+	 * @param enabled  automatic weather with the field on; otherwise the field is uniform
+	 * @param areas    whether area data (biomes) is on; without it every chunk has the default biome
+	 * @param biome    the player's biome, for chunks whose place on the map is unknown (instances)
+	 * @param fx       player ground position, world units
+	 */
+	void updateField(Scene scene, int sizeX, int sizeZ, int offset, int plane, EnvironmentManager env, boolean areas,
+		String biome, boolean enabled, WeatherForecast forecast, int intensityPercent, boolean gradual, boolean climate,
+		double hour, float fx, float fz)
+	{
+		long now = System.currentTimeMillis();
+		float dt = fieldMillis == 0 ? 0 : Math.min((now - fieldMillis) / 1000f, 0.25f);
+		fieldMillis = now;
+		if (scene == null)
+		{
+			fieldScene = null;
+			return;
+		}
+		boolean relaid = false;
+		if (scene != fieldScene || scene.getBaseX() != fieldBaseX || scene.getBaseY() != fieldBaseY
+			|| sizeX != field.getSizeX() || sizeZ != field.getSizeZ() || areas != fieldAreas || plane != fieldPlane
+			|| !java.util.Objects.equals(biome, fieldBiome))
+		{
+			fieldBiome = biome;
+			relaid = true;
+			fieldScene = scene;
+			fieldBaseX = scene.getBaseX();
+			fieldBaseY = scene.getBaseY();
+			fieldAreas = areas;
+			fieldPlane = plane;
+			int n = sizeX * sizeZ;
+			long[] keys = new long[n];
+			String[] biomes = new String[n];
+			int[] wp = new int[3];
+			for (int z = 0; z < sizeZ; ++z)
+			{
+				for (int x = 0; x < sizeX; ++x)
+				{
+					// the chunk's middle tile
+					int sx = (x - offset) * 8 + 4, sy = (z - offset) * 8 + 4;
+					int i = z * sizeX + x;
+					boolean known = EnvironmentManager.toWorld(scene, sx, sy, plane, wp);
+					keys[i] = known ? WeatherField.chunkKey(wp[0], wp[1]) : Long.MIN_VALUE;
+					biomes[i] = !areas ? null : known ? env.weatherBiome(scene, sx, sy, plane, wp) : biome;
+				}
+			}
+			field.layout(sizeX, sizeZ, -offset * WeatherField.CELL, -offset * WeatherField.CELL, keys, biomes);
+		}
+		// a tenth of a second is plenty for weather that changes over minutes
+		fieldDt += dt;
+		if (fieldDt >= FIELD_SECONDS || relaid || enabled != field.isEnabled())
+		{
+			field.update(enabled, forecast::currentFor, intensityPercent / 100f, gradual, climate, hour, fieldDt);
+			fieldDt = 0;
+		}
+		field.focus(fx, fz);
+	}
+
+	private Scene fieldScene;
+	private int fieldBaseX, fieldBaseY, fieldPlane;
+	private boolean fieldAreas;
+	private String fieldBiome;
+	private float fieldDt;
+	private static final float FIELD_SECONDS = 0.1f;
+	private long fieldMillis;
 
 	/** Wet ground builds in rain and dries after it; snow cover builds in snow and melts after, faster in rain. */
 	private void accumulate(float dt)
@@ -711,15 +821,19 @@ class Weather
 
 	/**
 	 * Draw this frame's weather over the composited scene in the bound framebuffer. The scene textures, the
-	 * transparency layer, the shadow map (if any) and the light clusters (with pointLights) must still be bound on
-	 * the units given to setPrograms, as they are right after the composite.
+	 * transparency layer, the shadow map (if any), the light clusters (with pointLights) and the weather field
+	 * ({@link #bindField}) must still be bound on the units given to setPrograms, as they are right after the
+	 * composite.
 	 *
 	 * @param shadowProjRel camera-relative light matrix, or null without shadows
 	 * @param pointLights light particles and snow cover with this frame's light clusters
+	 * @param farPrecipitation rain and snow beyond the particles
+	 * @param drawDistance world units
 	 */
 	void draw(float[] viewProj, float[] invViewProj, int[] viewport, boolean zeroToOne,
 		float cameraX, float cameraY, float cameraZ, DayCycle day, float[] shadowProjRel,
-		boolean splashes, boolean surfaces, int occlusionUnit, boolean pointLights)
+		boolean splashes, boolean surfaces, int occlusionUnit, boolean pointLights, boolean farPrecipitation,
+		float drawDistance)
 	{
 		if (!active || !occlusion.isInitialized() || rain.program == 0)
 		{
@@ -741,35 +855,65 @@ class Weather
 		// only the game viewport; gl_FragCoord stays in whole-target pixels, as the scene textures expect
 		glViewport(viewport[0], viewport[1], viewport[2], viewport[3]);
 
+		// how much rain and snow there is anywhere the particles reach, and anywhere at all: the field adds its
+		// differences to the player's weather
+		boolean f = field.isEnabled();
+		float rainShown = f ? fieldPeak(WeatherField.RAIN, rainEffective, RAIN_BOX_HALF) : rainEffective;
+		float snowShown = f ? fieldPeak(WeatherField.SNOW, snowEffective, SNOW_BOX_HALF) : snowEffective;
+		float wetShown = f ? fieldPeak(WeatherField.WET, wetness, RAIN_BOX_HALF) : wetness;
+
 		// surfaces first so falling weather draws over them
 		if (surfaces)
 		{
 			float swell = 0.4f + 0.6f * Math.min(1, slowEffective);
-			drawSurface(1, wetness * swell, viewProj, invViewProj, viewport, zeroToOne, cameraX, cameraY, cameraZ,
-				day, time, shadowProjRel, pointLights);
-			drawSurface(2, snowCover * swell, viewProj, invViewProj, viewport, zeroToOne, cameraX, cameraY, cameraZ,
-				day, time, shadowProjRel, pointLights);
+			float wetAnywhere = f ? wetness + field.max(WeatherField.WET) - field.getFocus(WeatherField.WET) : wetness;
+			float snowAnywhere = f ? snowCover + field.max(WeatherField.SNOW_COVER)
+				- field.getFocus(WeatherField.SNOW_COVER) : snowCover;
+			drawSurface(1, wetness * swell, wetAnywhere, viewProj, invViewProj, viewport, zeroToOne, cameraX, cameraY,
+				cameraZ, day, time, shadowProjRel, pointLights);
+			drawSurface(2, snowCover * swell, snowAnywhere, viewProj, invViewProj, viewport, zeroToOne, cameraX,
+				cameraY, cameraZ, day, time, shadowProjRel, pointLights);
 		}
 
 		glBlendFuncSeparate(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA, GL_ZERO, GL_ONE);
-		int drops = Math.round(MAX_RAIN_DROPS * rainEffective);
-		int splashCount = splashes ? Math.round(MAX_RAIN_SPLASHES * rainEffective * wetness) : 0;
+		if (farPrecipitation && far.program != 0)
+		{
+			float rainFar = f ? rainEffective + field.max(WeatherField.RAIN) - field.getFocus(WeatherField.RAIN)
+				: rainEffective;
+			float snowFar = f ? snowEffective + field.max(WeatherField.SNOW) - field.getFocus(WeatherField.SNOW)
+				: snowEffective;
+			if (rainFar > PRECIP_EPSILON || snowFar > PRECIP_EPSILON)
+			{
+				glUseProgram(far.program);
+				setCommon(far, viewProj, invViewProj, viewport, zeroToOne, cameraX, cameraY, cameraZ, day, time);
+				glUniform2f(far.farAmount, rainEffective, snowEffective);
+				glUniform2f(far.farNear, RAIN_BOX_HALF, SNOW_BOX_HALF);
+				glUniform1f(far.farReach, drawDistance + FAR_SKY_REACH);
+				glUniform3f(far.windOffset, windOffsetX, 0, windOffsetZ);
+				glDrawArrays(GL_TRIANGLES, 0, 3);
+			}
+		}
+
+		int drops = Math.round(MAX_RAIN_DROPS * rainShown);
+		int splashCount = splashes ? Math.round(MAX_RAIN_SPLASHES * rainShown * Math.min(1, wetShown)) : 0;
 		if (drops + splashCount > 0)
 		{
 			glUseProgram(rain.program);
-			setParticles(rain, rainAmount, viewProj, invViewProj, viewport, zeroToOne, cameraX, cameraY, cameraZ, day,
-				time, pointLights);
+			setParticles(rain, Math.max(rainAmount, rainShown), viewProj, invViewProj, viewport, zeroToOne, cameraX,
+				cameraY, cameraZ, day, time, pointLights);
+			glUniform2f(rain.particleAmount, rainEffective, rainShown);
 			glUniform1i(rain.dropCount, drops);
 			glUniform1i(rain.splashCount, splashCount);
 			// one quad per particle, everything else comes from gl_InstanceID
 			glDrawArraysInstanced(GL_TRIANGLES, 0, 6, drops + splashCount);
 		}
-		int flakes = Math.round(MAX_SNOW_FLAKES * snowEffective);
+		int flakes = Math.round(MAX_SNOW_FLAKES * snowShown);
 		if (flakes > 0)
 		{
 			glUseProgram(snow.program);
-			setParticles(snow, snowAmount, viewProj, invViewProj, viewport, zeroToOne, cameraX, cameraY, cameraZ, day,
-				time, pointLights);
+			setParticles(snow, Math.max(snowAmount, snowShown), viewProj, invViewProj, viewport, zeroToOne, cameraX,
+				cameraY, cameraZ, day, time, pointLights);
+			glUniform2f(snow.particleAmount, snowEffective, snowShown);
 			glUniform1i(snow.dropCount, flakes);
 			glDrawArraysInstanced(GL_TRIANGLES, 0, 6, flakes);
 		}
@@ -781,11 +925,30 @@ class Weather
 		ShadowMap.unbind(occlusionUnit, occlusionUnit + 1);
 	}
 
-	private void drawSurface(int mode, float amount, float[] viewProj, float[] invViewProj, int[] viewport,
-		boolean zeroToOne, float cameraX, float cameraY, float cameraZ, DayCycle day, float time, float[] shadowProjRel,
-		boolean pointLights)
+	/**
+	 * The most of a channel anywhere within a particle box around the player: the player's own amount plus the
+	 * field's largest difference there, never less than the player's.
+	 */
+	private float fieldPeak(int channel, float local, float half)
 	{
-		if (amount <= 0)
+		float peak = local + field.max(channel, focusX, focusZ, half) - field.getFocus(channel);
+		return Math.max(local, Math.min(peak, MAX_EFFECTIVE));
+	}
+
+	/**
+	 * Upload the weather field if it changed and bind it on two units from {@code unit}, for the weather passes and
+	 * the fog.
+	 */
+	void bindField(int unit)
+	{
+		field.bind(unit, unit + 1);
+	}
+
+	private void drawSurface(int mode, float amount, float anywhere, float[] viewProj, float[] invViewProj,
+		int[] viewport, boolean zeroToOne, float cameraX, float cameraY, float cameraZ, DayCycle day, float time,
+		float[] shadowProjRel, boolean pointLights)
+	{
+		if (amount <= 0 && anywhere <= 0)
 		{
 			return;
 		}
@@ -834,6 +997,7 @@ class Weather
 		glUniform3fv(u.casterDir, day.casterDir);
 		glUniform1i(u.sunIsCaster, day.sunIsCaster ? 1 : 0);
 		setOvercastUniform(u.overcast);
+		field.apply(u.field);
 	}
 
 	/**

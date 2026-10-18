@@ -30,6 +30,7 @@ class Clouds
 	static final class Locations
 	{
 		int enabled, shadows, coverage, weather, offset, detail;
+		int base, field, fieldRect, fieldCells;
 	}
 
 	private final Locations composite = new Locations();
@@ -39,7 +40,8 @@ class Clouds
 
 	// this frame's values, from update()
 	private boolean enabled, shadows;
-	private float coverage, weather, detail;
+	private float coverage, weather, detail, base;
+	private WeatherField field;
 	private float offsetX, offsetZ;
 	private double originX, originZ;
 
@@ -59,6 +61,10 @@ class Clouds
 		l.weather = glGetUniformLocation(program, "cloudWeather");
 		l.offset = glGetUniformLocation(program, "cloudOffset");
 		l.detail = glGetUniformLocation(program, "cloudDetail");
+		l.base = glGetUniformLocation(program, "cloudBaseCoverage");
+		l.field = glGetUniformLocation(program, "cloudField");
+		l.fieldRect = glGetUniformLocation(program, "cloudFieldRect");
+		l.fieldCells = glGetUniformLocation(program, "cloudFieldCells");
 		glUseProgram(program);
 		glUniform1i(glGetUniformLocation(program, "cloudNoise"), noiseUnit);
 		glUseProgram(0);
@@ -69,10 +75,12 @@ class Clouds
 	 *
 	 * @param cloudCover Weather.cloudCover(), 0 clear to 1 overcast
 	 * @param baseX world x of the scene's origin, in world units, so clouds stay put when the scene reloads
+	 * @param field the weather over the scene: rain clouds over rainy regions, clear sky over clear ones
 	 */
 	void update(boolean enabled, boolean shadows, int coveragePercent, int speedPercent, int detailPercent,
-		float cloudCover, long baseX, long baseZ)
+		float cloudCover, long baseX, long baseZ, WeatherField field)
 	{
+		this.field = field;
 		long now = System.nanoTime();
 		float dt = lastNanos == 0 ? 0 : Math.min((now - lastNanos) / 1e9f, 0.25f);
 		lastNanos = now;
@@ -83,7 +91,7 @@ class Clouds
 		windX = (windX + WIND_X * speed * dt) % WRAP;
 		windZ = (windZ + WIND_Z * speed * dt) % WRAP;
 
-		float base = coveragePercent / 100f;
+		base = coveragePercent / 100f;
 		coverage = base + (1 - base) * cloudCover;
 		weather = cloudCover;
 		detail = detailPercent / 100f;
@@ -105,6 +113,15 @@ class Clouds
 		glUniform1f(l.weather, weather);
 		glUniform1f(l.detail, detail);
 		glUniform2f(l.offset, offsetX, offsetZ);
+		glUniform1f(l.base, base);
+		if (field != null)
+		{
+			field.applyClouds(l.field, l.fieldRect, l.fieldCells);
+		}
+		else
+		{
+			glUniform4f(l.fieldRect, 0, 0, 0, 0);
+		}
 	}
 
 	/**

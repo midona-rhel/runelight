@@ -13,6 +13,7 @@ uniform int dropCount;
 uniform int splashCount;
 uniform vec3 wind;             // world units per second, this frame; sets the slant
 uniform vec3 windOffset;       // world units the wind has carried everything so far (it varies, so not wind * time)
+uniform vec2 particleAmount;   // rain at the player, and the most anywhere in the box that the drop count follows
 
 // box around the player: half width, height above and depth below the player's ground, world units
 #define BOX_HALF 4096.0
@@ -36,6 +37,12 @@ flat out int fSplash;
 out float fViewZ;
 out float fAlpha;
 flat out vec3 fColor;
+
+// Share of the drops that fall here: the rain here (the player's plus the weather field's difference) over the
+// rain the drop count is for. The box can reach from a dry region into a rainy one.
+float rainShare(vec2 worldXZ) {
+  return clamp((particleAmount.x + weatherFieldDelta(worldXZ).g) / max(particleAmount.y, 1e-3), 0.0, 1.0);
+}
 
 // corners of the two triangles: (side, end)
 const vec2 CORNERS[6] = vec2[](
@@ -62,6 +69,11 @@ void drop(int id, vec2 corner) {
   vec3 size = vec3(BOX_HALF * 2.0, BOX_ABOVE + BOX_BELOW, BOX_HALF * 2.0);
   vec3 center = focusPos + vec3(0.0, (BOX_BELOW - BOX_ABOVE) * 0.5, 0.0);
   vec3 world = wrapAround(h * size + travel, center, size);
+  float share = rainShare(world.xz);
+  if (share <= 0.0) {
+    gl_Position = CULLED;
+    return;
+  }
   vec3 head = world - cameraPos;
 
   // stop on whatever is above the ground: drops below the top surface of their column are hidden, and the
@@ -103,7 +115,7 @@ void drop(int id, vec2 corner) {
   float added = clamp((count - float(id)) / (count * COUNT_FADE + 1.0), 0.0, 1.0);
   vec3 points = weatherPointLights(head, c1, vec3(0.0));
   float lit = min(dot(points, vec3(0.2126, 0.7152, 0.0722)), 1.0);
-  fAlpha = DROP_ALPHA * amount * edge * near * added * min(widthPx / drawn * 1.6, 1.0) * (1.0 + LIT_ALPHA * lit);
+  fAlpha = DROP_ALPHA * amount * share * edge * near * added * min(widthPx / drawn * 1.6, 1.0) * (1.0 + LIT_ALPHA * lit);
   fQuad = vec2(corner.x, corner.y);
   fSplash = 0;
   fViewZ = c.w;
@@ -143,7 +155,7 @@ void splash(int id, vec2 corner) {
 
   vec3 points = weatherPointLights(p, c, vec3(0.0));
   float lit = min(dot(points, vec3(0.2126, 0.7152, 0.0722)), 1.0);
-  fAlpha = SPLASH_ALPHA * amount * (1.0 - f) * (1.0 - f) * (1.0 + LIT_ALPHA * lit);
+  fAlpha = SPLASH_ALPHA * amount * rainShare(xz) * (1.0 - f) * (1.0 - f) * (1.0 + LIT_ALPHA * lit);
   fQuad = q;
   fSplash = 1;
   fViewZ = c.w;
