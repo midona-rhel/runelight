@@ -92,6 +92,9 @@ uniform usamplerBuffer clusterData;  // per cluster: count, then light indices
 // extra light seen through a particle when looking toward the light, at most this many times the plain light
 #define WEATHER_FORWARD_SCATTER 2.0
 #define WEATHER_FORWARD_POWER 6.0
+// Particles past this view depth (world units) skip the point lights, fading out over the last quarter: there a
+// streak is under a pixel wide and mostly faded, and every one of its six vertices would loop over the lights.
+#define WEATHER_PARTICLE_LIGHT_FAR 5120.0
 
 // Light from the point lights around a camera-relative point. clip: the point's clip position (w is view depth),
 // for the cluster lookup. n: surface normal, or zero for particles, which take light from every side and scatter
@@ -113,6 +116,10 @@ vec3 weatherPointLights(vec3 p, vec4 clip, vec3 n) {
   int base = ((cz * CLUSTERS_Y + cy) * CLUSTERS_X + cx) * CLUSTER_STRIDE;
 
   bool particle = dot(n, n) < 0.5;
+  float reach = particle ? 1.0 - smoothstep(WEATHER_PARTICLE_LIGHT_FAR * 0.75, WEATHER_PARTICLE_LIGHT_FAR, z) : 1.0;
+  if (reach <= 0.0) {
+    return vec3(0.0);
+  }
   vec3 view = normalize(p);
   vec3 sum = vec3(0.0);
   int count = int(texelFetch(clusterData, base).r);
@@ -134,7 +141,7 @@ vec3 weatherPointLights(vec3 p, vec4 clip, vec3 n) {
       : max(dot(n, ld), 0.0);
     sum += texelFetch(lightData, li * 2 + 1).rgb * att * k;
   }
-  return sum * WEATHER_POINT_LIGHT_SCALE;
+  return sum * (WEATHER_POINT_LIGHT_SCALE * reach);
 }
 
 
