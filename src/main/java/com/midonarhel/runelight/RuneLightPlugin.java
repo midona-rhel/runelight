@@ -236,6 +236,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 	private int uniSceneCasterDir;
 	private int uniSceneSunIsCaster;
 	private int uniSceneSunAltitude;
+	private int uniSceneOvercast;
 	private static final int ALPHA_LAYER_UNIT = RuneLightPlugin.COMPOSITE_TEXTURE_UNIT + 8;
 	private static final int MATERIAL_UNIT = RuneLightPlugin.COMPOSITE_TEXTURE_UNIT + 9;
 	private final SurfaceMaterials.Uniforms sceneMaterials = new SurfaceMaterials.Uniforms();
@@ -271,6 +272,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 	private int uniCompositeCasterDir;
 	private int uniCompositeSunIsCaster;
 	private int uniCompositeSunAltitude;
+	private int uniCompositeOvercast;
 	private int uniCompositeShadowsEnabled;
 	private int uniCompositeLightProjRel;
 	private int uniCompositeShadowRadius;
@@ -922,7 +924,8 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		glAoProgram = AO_PROGRAM.compile(template);
 		glShadowProgram = SHADOW_PROGRAM.compile(template);
 		setFogProgram(VolumetricFog.PROGRAM.compile(template));
-		weather.setPrograms(weather.compile(template), COMPOSITE_TEXTURE_UNIT, WEATHER_OCCLUSION_UNIT, SHADOW_COMPARE_UNIT, ALPHA_LAYER_UNIT);
+		weather.setPrograms(weather.compile(template), COMPOSITE_TEXTURE_UNIT, WEATHER_OCCLUSION_UNIT, SHADOW_COMPARE_UNIT, ALPHA_LAYER_UNIT,
+			LIGHT_DATA_UNIT, CLUSTER_DATA_UNIT);
 
 		glBindVertexArray(0);
 
@@ -964,6 +967,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		uniSceneCasterDir = glGetUniformLocation(glProgram, "casterDir");
 		uniSceneSunIsCaster = glGetUniformLocation(glProgram, "sunIsCaster");
 		uniSceneSunAltitude = glGetUniformLocation(glProgram, "sunAltitude");
+		uniSceneOvercast = glGetUniformLocation(glProgram, "weatherOvercast");
 		sceneEnvUniforms.locate(glProgram);
 		compositeEnvUniforms.locate(glCompositeProgram);
 		compositeFrame.locate(glCompositeProgram);
@@ -987,6 +991,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		uniCompositeCasterDir = glGetUniformLocation(c, "casterDir");
 		uniCompositeSunIsCaster = glGetUniformLocation(c, "sunIsCaster");
 		uniCompositeSunAltitude = glGetUniformLocation(c, "sunAltitude");
+		uniCompositeOvercast = glGetUniformLocation(c, "weatherOvercast");
 		uniCompositeShadowsEnabled = glGetUniformLocation(c, "shadowsEnabled");
 		uniCompositeLightProjRel = glGetUniformLocation(c, "lightProjRel");
 		uniCompositeShadowRadius = glGetUniformLocation(c, "shadowRadius");
@@ -1104,7 +1109,8 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		glAoProgram = ao;
 		glShadowProgram = shadow;
 		setFogProgram(fog);
-		weather.setPrograms(weatherPrograms, COMPOSITE_TEXTURE_UNIT, WEATHER_OCCLUSION_UNIT, SHADOW_COMPARE_UNIT, ALPHA_LAYER_UNIT);
+		weather.setPrograms(weatherPrograms, COMPOSITE_TEXTURE_UNIT, WEATHER_OCCLUSION_UNIT, SHADOW_COMPARE_UNIT, ALPHA_LAYER_UNIT,
+			LIGHT_DATA_UNIT, CLUSTER_DATA_UNIT);
 		initUniforms();
 
 		if (textureAnimations != null)
@@ -1478,6 +1484,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		glUniform3fv(uniSceneCasterDir, dayCycle.casterDir);
 		glUniform1i(uniSceneSunIsCaster, dayCycle.sunIsCaster ? 1 : 0);
 		glUniform1f(uniSceneSunAltitude, dayCycle.sunAltitude);
+		weather.setOvercastUniform(uniSceneOvercast);
 		setEnvironmentUniforms(sceneEnvUniforms);
 		glUniform4f(uniFogColor, (sky >> 16 & 0xFF) / 255f, (sky >> 8 & 0xFF) / 255f, (sky & 0xFF) / 255f, 1f);
 		glUniform1i(uniFogDepth, fogDepth);
@@ -1660,8 +1667,9 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 			fy = Perspective.getTileHeight(client, lp, plane);
 		}
 		boolean sky = frameOpenSky && client.getGameState() == GameState.LOGGED_IN;
-		weather.update(config.weatherMode(), config.weatherIntensity(), config.weatherBuildup(), sky,
-			fx, fy, fz, plane);
+		weather.update(config.weatherMode(), config.weatherIntensity(), config.weatherBuildup(),
+			config.weatherVarying(), config.weatherOvercast(), sky, fx, fy, fz, plane);
+		weather.getOvercast(volumetricFog.overcast);
 	}
 
 	/**
@@ -1851,6 +1859,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		glUniform3fv(uniCompositeCasterDir, dayCycle.casterDir);
 		glUniform1i(uniCompositeSunIsCaster, dayCycle.sunIsCaster ? 1 : 0);
 		glUniform1f(uniCompositeSunAltitude, dayCycle.sunAltitude);
+		weather.setOvercastUniform(uniCompositeOvercast);
 		setEnvironmentUniforms(compositeEnvUniforms);
 
 		boolean shadows = frameShadows && shadowMap.isInitialized();
@@ -2011,7 +2020,8 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		{
 			weather.draw(frameViewProj, frameInvViewProj, frameViewport, glCapabilities.OpenGL45,
 				frameCameraX, frameCameraY, frameCameraZ, dayCycle, frameShadows && shadowMap.isInitialized() ? shadowMap.lightProjRel : null,
-				config.weatherSplashes(), config.weatherSurfaces(), WEATHER_OCCLUSION_UNIT);
+				config.weatherSplashes(), config.weatherSurfaces(), WEATHER_OCCLUSION_UNIT,
+				config.pointLights() && config.weatherPointLights() && lightClusters.isInitialized());
 			glViewport(0, 0, width, height);
 		}
 

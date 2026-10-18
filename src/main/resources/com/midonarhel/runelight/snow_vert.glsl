@@ -9,7 +9,8 @@
 #include "weather_common.glsl"
 
 uniform int dropCount;
-uniform vec3 wind;             // world units per second
+uniform vec3 windOffset;       // world units the wind has carried everything so far
+uniform float gust;            // 0-1: gusts make the flakes sway wider
 
 #define BOX_HALF 1920.0
 #define BOX_ABOVE 1792.0
@@ -20,6 +21,9 @@ uniform vec3 wind;             // world units per second
 #define MIN_PIXELS 1.2
 #define FLAKE_ALPHA 0.85
 #define NEAR_FADE 200.0
+#define GUST_SWAY 1.0          // extra sway at full gust, as a multiple of SWAY
+#define COUNT_FADE 0.1         // as the flake count changes, the last tenth fade instead of popping
+#define LIT_ALPHA 0.3
 
 out vec2 fQuad;
 out float fViewZ;
@@ -41,11 +45,12 @@ void main() {
   vec3 r = hash31(float(id) * 3.17 + 11.0);
 
   float speed = FALL_SPEED * (0.7 + 0.6 * r.x);
-  vec3 drift = vec3(wind.x, speed, wind.z) * time;
+  vec3 drift = vec3(windOffset.x, speed * time, windOffset.z);
   // two sways at different rates so the flakes don't move in lockstep
   float ph = r.y * 6.2832;
-  drift.x += sin(time * (0.6 + 0.5 * r.z) + ph) * SWAY;
-  drift.z += cos(time * (0.5 + 0.4 * r.x) + ph * 1.7) * SWAY;
+  float sway = SWAY * (1.0 + GUST_SWAY * gust);
+  drift.x += sin(time * (0.6 + 0.5 * r.z) + ph) * sway;
+  drift.z += cos(time * (0.5 + 0.4 * r.x) + ph * 1.7) * sway;
 
   vec3 size = vec3(BOX_HALF * 2.0, BOX_ABOVE + BOX_BELOW, BOX_HALF * 2.0);
   vec3 center = focusPos + vec3(0.0, (BOX_BELOW - BOX_ABOVE) * 0.5, 0.0);
@@ -73,8 +78,12 @@ void main() {
   float near = smoothstep(NEAR_FADE, NEAR_FADE * 3.0, c.w);
   // flakes smaller than a pixel fade instead of shrinking
   float sub = min(radiusPx / drawn, 1.0);
-  fAlpha = FLAKE_ALPHA * amount * edge * near * smoothstep(0.0, 16.0, above) * sub * sub;
+  float count = float(dropCount);
+  float added = clamp((count - float(id)) / (count * COUNT_FADE + 1.0), 0.0, 1.0);
+  vec3 points = weatherPointLights(p, c, vec3(0.0));
+  float lit = min(dot(points, vec3(0.2126, 0.7152, 0.0722)), 1.0);
+  fAlpha = FLAKE_ALPHA * amount * edge * near * smoothstep(0.0, 16.0, above) * sub * sub * added * (1.0 + LIT_ALPHA * lit);
   fQuad = corner;
   fViewZ = c.w;
-  fColor = linearToSrgb(clamp(vec3(0.95, 0.97, 1.0) * weatherLight(), 0.0, 1.0));
+  fColor = linearToSrgb(clamp(vec3(0.95, 0.97, 1.0) * (weatherLight() + points), 0.0, 1.0));
 }

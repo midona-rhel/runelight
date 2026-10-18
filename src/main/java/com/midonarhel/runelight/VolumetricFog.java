@@ -28,6 +28,8 @@ class VolumetricFog
 	float areaDensity = 1;
 	float areaHeight = 1;
 	final float[] areaTint = {1, 1, 1};
+	// sky.glsl's weatherOvercast for this frame (Weather.java): cover, rain or snow
+	final float[] overcast = {0, 0};
 
 	// the values the pass uses this frame, in world units
 	private float density;
@@ -43,7 +45,7 @@ class VolumetricFog
 	private int uniCameraPos, uniTime, uniOutdoors, uniProceduralSky, uniClientSkyColor, uniCasterDir,
 		uniSunIsCaster, uniSunAltitude, uniShadowsEnabled, uniLightProjRel, uniShadowDepthRange,
 		uniPointLights, uniDensity, uniHeight, uniGroundY, uniCenter, uniFade, uniNear, uniSunScatter, uniNoiseAmount,
-		uniTint, uniViewProj, uniInvViewProj, uniViewport, uniDepthZeroToOne;
+		uniTint, uniViewProj, uniInvViewProj, uniViewport, uniDepthZeroToOne, uniOvercast;
 
 	private int uniCompositeEnabled;
 
@@ -67,6 +69,7 @@ class VolumetricFog
 		uniCasterDir = glGetUniformLocation(program, "casterDir");
 		uniSunIsCaster = glGetUniformLocation(program, "sunIsCaster");
 		uniSunAltitude = glGetUniformLocation(program, "sunAltitude");
+		uniOvercast = glGetUniformLocation(program, "weatherOvercast");
 		uniShadowsEnabled = glGetUniformLocation(program, "shadowsEnabled");
 		uniLightProjRel = glGetUniformLocation(program, "lightProjRel");
 		uniShadowDepthRange = glGetUniformLocation(program, "shadowDepthRange");
@@ -180,6 +183,7 @@ class VolumetricFog
 		glUniform3fv(uniCasterDir, day.casterDir);
 		glUniform1i(uniSunIsCaster, day.sunIsCaster ? 1 : 0);
 		glUniform1f(uniSunAltitude, day.sunAltitude);
+		glUniform2f(uniOvercast, overcast[0], overcast[1]);
 		glUniform1i(uniShadowsEnabled, shadows != null ? 1 : 0);
 		if (shadows != null)
 		{

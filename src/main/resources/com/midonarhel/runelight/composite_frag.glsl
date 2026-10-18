@@ -306,6 +306,7 @@ void main() {
       // a leaf lit from behind looks up its shadow on the lit side, or it would shadow itself
       shadow = shadowFactor(p, ndl < 0.0 && transmissive > 0.0 ? -n : n, ign(gl_FragCoord.xy));
     }
+    shadow = overcastShadow(shadow);
     vec3 caster = sunIsCaster == 1 ? sunLight(sunAltitude) : moonLight(sunAltitude);
     float up = max(-n.y, 0.0);
     light = (ambientLight(sunAltitude) + skyLight(sunAltitude) * up) * envAmbient * ao

@@ -11,7 +11,8 @@
 
 uniform int dropCount;
 uniform int splashCount;
-uniform vec3 wind;             // world units per second
+uniform vec3 wind;             // world units per second, this frame; sets the slant
+uniform vec3 windOffset;       // world units the wind has carried everything so far (it varies, so not wind * time)
 
 // box around the player: half width, height above and depth below the player's ground, world units
 #define BOX_HALF 2560.0
@@ -22,6 +23,8 @@ uniform vec3 wind;             // world units per second
 #define DROP_WIDTH 1.6         // world units; streaks are at least a pixel wide, thinner ones fade instead
 #define DROP_ALPHA 0.32
 #define NEAR_FADE 250.0        // drops this close to the camera fade out so they don't smear the view
+#define COUNT_FADE 0.1         // as the drop count changes, the last tenth of drops fade instead of popping
+#define LIT_ALPHA 0.8          // drops in bright point light show up to this much more
 
 #define SPLASH_HALF 1536.0     // splashes fill a smaller area, where they can be seen
 #define SPLASH_PERIOD 0.42     // seconds each splash lives
@@ -53,11 +56,12 @@ void drop(int id, vec2 corner) {
   vec3 h = hash31(float(id) + 0.5);
   float speedScale = 0.85 + 0.3 * hash11(float(id) * 1.37 + 3.1);
   vec3 vel = vec3(wind.x, FALL_SPEED * speedScale, wind.z);
+  vec3 travel = vec3(windOffset.x, FALL_SPEED * speedScale * time, windOffset.z);
 
   // head of the drop: random start plus travel, wrapped into the box around the player
   vec3 size = vec3(BOX_HALF * 2.0, BOX_ABOVE + BOX_BELOW, BOX_HALF * 2.0);
   vec3 center = focusPos + vec3(0.0, (BOX_BELOW - BOX_ABOVE) * 0.5, 0.0);
-  vec3 world = wrapAround(h * size + vel * time, center, size);
+  vec3 world = wrapAround(h * size + travel, center, size);
   vec3 head = world - cameraPos;
 
   // stop on whatever is above the ground: drops below the top surface of their column are hidden, and the
@@ -95,11 +99,15 @@ void drop(int id, vec2 corner) {
   vec2 rel = abs(world.xz - focusPos.xz) / BOX_HALF;
   float edge = 1.0 - smoothstep(0.75, 1.0, max(rel.x, rel.y));
   float near = smoothstep(NEAR_FADE, NEAR_FADE * 3.0, c.w);
-  fAlpha = DROP_ALPHA * amount * edge * near * min(widthPx / drawn * 1.6, 1.0);
+  float count = float(dropCount);
+  float added = clamp((count - float(id)) / (count * COUNT_FADE + 1.0), 0.0, 1.0);
+  vec3 points = weatherPointLights(head, c1, vec3(0.0));
+  float lit = min(dot(points, vec3(0.2126, 0.7152, 0.0722)), 1.0);
+  fAlpha = DROP_ALPHA * amount * edge * near * added * min(widthPx / drawn * 1.6, 1.0) * (1.0 + LIT_ALPHA * lit);
   fQuad = vec2(corner.x, corner.y);
   fSplash = 0;
   fViewZ = c.w;
-  fColor = linearToSrgb(clamp(vec3(0.62, 0.68, 0.78) * weatherLight(), 0.0, 1.0));
+  fColor = linearToSrgb(clamp(vec3(0.62, 0.68, 0.78) * (weatherLight() + points), 0.0, 1.0));
 }
 
 void splash(int id, vec2 corner) {
@@ -131,11 +139,13 @@ void splash(int id, vec2 corner) {
   vec2 q = vec2(corner.x, corner.y * 2.0 - 1.0);
   gl_Position = offsetPixels(c, q * vec2(r, r * 0.45));
 
-  fAlpha = SPLASH_ALPHA * amount * (1.0 - f) * (1.0 - f);
+  vec3 points = weatherPointLights(p, c, vec3(0.0));
+  float lit = min(dot(points, vec3(0.2126, 0.7152, 0.0722)), 1.0);
+  fAlpha = SPLASH_ALPHA * amount * (1.0 - f) * (1.0 - f) * (1.0 + LIT_ALPHA * lit);
   fQuad = q;
   fSplash = 1;
   fViewZ = c.w;
-  fColor = linearToSrgb(clamp(vec3(0.70, 0.75, 0.82) * weatherLight(), 0.0, 1.0));
+  fColor = linearToSrgb(clamp(vec3(0.70, 0.75, 0.82) * (weatherLight() + points), 0.0, 1.0));
 }
 
 void main() {

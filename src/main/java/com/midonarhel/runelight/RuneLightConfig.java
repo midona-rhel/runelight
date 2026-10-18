@@ -730,6 +730,43 @@ public interface RuneLightConfig extends Config
 		return true;
 	}
 
+	@ConfigItem(
+		keyName = "weatherVarying",
+		name = "Varying intensity",
+		description = "Rain and snow swell and ease off over time, with heavier bursts and gusts of wind.",
+		section = weatherSection,
+		position = 406
+	)
+	default boolean weatherVarying()
+	{
+		return true;
+	}
+
+	@Range(min = 0, max = 100)
+	@ConfigItem(
+		keyName = "weatherOvercast",
+		name = "Overcast sky",
+		description = "How much rain and snow gray the sky and soften the sun and moon, in percent.",
+		section = weatherSection,
+		position = 407
+	)
+	default int weatherOvercast()
+	{
+		return 100;
+	}
+
+	@ConfigItem(
+		keyName = "weatherPointLights",
+		name = "Lit by point lights",
+		description = "Rain, snow and snow cover catch the light of torches and lamps. Needs point lights.",
+		section = weatherSection,
+		position = 408
+	)
+	default boolean weatherPointLights()
+	{
+		return true;
+	}
+
 	@ConfigSection(
 		name = "Development",
 		description = "Tools for working on the renderer",

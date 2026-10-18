@@ -1,4 +1,6 @@
 // Shared by the rain, snow and weather surface passes. Include after frame.glsl and sky.glsl.
+
+#include cluster_config
 // World space is game units (128 per tile), y points down; positions here are camera-relative unless named world.
 
 // Top-down depth of all static scenery around the player, every roof included (Weather.java). Window depth grows
@@ -42,6 +44,61 @@ float occluderTop(vec3 p) {
 // bias: world units a point may sit below the top surface and still count, for the surface itself.
 float skyExposure(vec3 p, float bias) {
   return p.y + cameraPos.y <= occluderTop(p) + bias ? 1.0 : 0.0;
+}
+
+// Point lights, culled into clusters on the CPU (LightClusters.java); same tables and lookup as the composite
+uniform int pointLightsEnabled;
+uniform samplerBuffer lightData;     // per light: (camera-relative position, radius), (color * strength, 0)
+uniform usamplerBuffer clusterData;  // per cluster: count, then light indices
+
+// particles are lit at their center, once per vertex; global trim against the surface lighting
+#define WEATHER_POINT_LIGHT_SCALE 1.0
+// extra light seen through a particle when looking toward the light, at most this many times the plain light
+#define WEATHER_FORWARD_SCATTER 2.0
+#define WEATHER_FORWARD_POWER 6.0
+
+// Light from the point lights around a camera-relative point. clip: the point's clip position (w is view depth),
+// for the cluster lookup. n: surface normal, or zero for particles, which take light from every side and scatter
+// it forward toward the camera.
+vec3 weatherPointLights(vec3 p, vec4 clip, vec3 n) {
+  if (pointLightsEnabled == 0 || clip.w <= 0.0) {
+    return vec3(0.0);
+  }
+  vec2 rel = clip.xy / clip.w * 0.5 + 0.5;
+  if (any(lessThan(rel, vec2(0.0))) || any(greaterThan(rel, vec2(1.0)))) {
+    // off screen: its cluster isn't the one the lights were culled into
+    return vec3(0.0);
+  }
+  float z = clip.w;
+  int cx = clamp(int(rel.x * float(CLUSTERS_X)), 0, CLUSTERS_X - 1);
+  int cy = clamp(int(rel.y * float(CLUSTERS_Y)), 0, CLUSTERS_Y - 1);
+  int cz = z <= CLUSTER_NEAR ? 0
+    : clamp(int(floor(log(z / CLUSTER_NEAR) / log(CLUSTER_FAR / CLUSTER_NEAR) * float(CLUSTERS_Z))), 0, CLUSTERS_Z - 1);
+  int base = ((cz * CLUSTERS_Y + cy) * CLUSTERS_X + cx) * CLUSTER_STRIDE;
+
+  bool particle = dot(n, n) < 0.5;
+  vec3 view = normalize(p);
+  vec3 sum = vec3(0.0);
+  int count = int(texelFetch(clusterData, base).r);
+  for (int i = 0; i < count; ++i) {
+    int li = int(texelFetch(clusterData, base + 1 + i).r);
+    vec4 posRadius = texelFetch(lightData, li * 2);
+    vec3 l = posRadius.xyz - p;
+    float d2 = dot(l, l);
+    float r2 = posRadius.w * posRadius.w;
+    if (d2 >= r2) {
+      continue;
+    }
+    // 117 HD's falloff, as in the composite
+    float att = 1.0 - sqrt(d2 / r2);
+    att *= att;
+    vec3 ld = l * inversesqrt(max(d2, 1.0));
+    // drops between the camera and a light glow against it
+    float k = particle ? 1.0 + WEATHER_FORWARD_SCATTER * pow(max(dot(ld, view), 0.0), WEATHER_FORWARD_POWER)
+      : max(dot(n, ld), 0.0);
+    sum += texelFetch(lightData, li * 2 + 1).rgb * att * k;
+  }
+  return sum * WEATHER_POINT_LIGHT_SCALE;
 }
 
 // Light falling on weather: sky ambient plus a bit of the sun or moon, linear like the composite

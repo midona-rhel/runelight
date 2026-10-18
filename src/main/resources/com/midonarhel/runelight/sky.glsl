@@ -27,7 +27,7 @@ const vec3 HORIZON_COLOR[HORIZON_KEYS] = vec3[](
   vec3(0.663, 0.737, 0.827),
   vec3(0.576, 0.682, 0.796));
 
-vec3 skyZenith(float alt) {
+vec3 skyZenithClear(float alt) {
   if (alt <= ZENITH_ALT[0])
     return ZENITH_COLOR[0];
   for (int i = 1; i < ZENITH_KEYS; ++i) {
@@ -37,7 +37,7 @@ vec3 skyZenith(float alt) {
   return ZENITH_COLOR[ZENITH_KEYS - 1];
 }
 
-vec3 skyHorizon(float alt) {
+vec3 skyHorizonClear(float alt) {
   if (alt <= HORIZON_ALT[0])
     return HORIZON_COLOR[0];
   for (int i = 1; i < HORIZON_KEYS; ++i) {
@@ -45,6 +45,80 @@ vec3 skyHorizon(float alt) {
       return mix(HORIZON_COLOR[i - 1], HORIZON_COLOR[i], smoothstep(0.0, 1.0, (alt - HORIZON_ALT[i - 1]) / (HORIZON_ALT[i] - HORIZON_ALT[i - 1])));
   }
   return HORIZON_COLOR[HORIZON_KEYS - 1];
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// Overcast: rain and snow gray the sky, dim and soften the sun and moon and let the sky's fill light take over.
+// Everything that uses the sky palette or the light colors above goes through here, so the scene, the
+// transparency layer, the fog and the weather particles all agree. Neutral (clear) at weatherOvercast.x = 0.
+
+uniform vec2 weatherOvercast;  // x: 0 clear .. 1 fully overcast, y: 0 rain .. 1 snow (Weather.java)
+
+// the overcast sky's tint and brightness relative to the clear sky's luminance: dark slate in rain, soft white in snow
+#define OVERCAST_RAIN_TINT vec3(0.86, 0.93, 1.05)
+#define OVERCAST_SNOW_TINT vec3(0.98, 0.99, 1.02)
+#define OVERCAST_RAIN_SKY 0.62
+#define OVERCAST_SNOW_SKY 1.18
+// share of the clear sky's own color left at full cover, so sunsets and nights still read, muted
+#define OVERCAST_SKY_KEEP 0.22
+// how far zenith and horizon move toward one brightness: an overcast sky is nearly even
+#define OVERCAST_SKY_FLATTEN 0.7
+// sun or moon left at full cover, and how much of its color it keeps
+#define OVERCAST_DIRECT_RAIN 0.30
+#define OVERCAST_DIRECT_SNOW 0.42
+#define OVERCAST_DIRECT_SATURATION 0.45
+// ambient sky light at full cover: grayer, a little lower in rain, brighter in snow
+#define OVERCAST_AMBIENT_RAIN 0.95
+#define OVERCAST_AMBIENT_SNOW 1.30
+#define OVERCAST_AMBIENT_GRAY 0.6
+// shadows this much fainter at full cover: the light comes from the whole sky
+#define OVERCAST_SHADOW 0.55
+
+float overcastLuma(vec3 c) {
+  return dot(c, vec3(0.2126, 0.7152, 0.0722));
+}
+
+vec3 overcastSky(vec3 c, float alt) {
+  float o = weatherOvercast.x;
+  if (o <= 0.0)
+    return c;
+  float even = 0.5 * (overcastLuma(skyZenithClear(alt)) + overcastLuma(skyHorizonClear(alt)));
+  float l = mix(overcastLuma(c), even, OVERCAST_SKY_FLATTEN);
+  float s = weatherOvercast.y;
+  vec3 gray = l * mix(OVERCAST_RAIN_SKY, OVERCAST_SNOW_SKY, s) * mix(OVERCAST_RAIN_TINT, OVERCAST_SNOW_TINT, s);
+  return mix(c, mix(gray, c, OVERCAST_SKY_KEEP), o);
+}
+
+vec3 overcastDirect(vec3 c) {
+  float o = weatherOvercast.x;
+  vec3 muted = mix(vec3(overcastLuma(c)), c, OVERCAST_DIRECT_SATURATION);
+  return mix(c, muted * mix(OVERCAST_DIRECT_RAIN, OVERCAST_DIRECT_SNOW, weatherOvercast.y), o);
+}
+
+vec3 overcastAmbient(vec3 c) {
+  float o = weatherOvercast.x;
+  float s = weatherOvercast.y;
+  vec3 gray = overcastLuma(c) * mix(OVERCAST_RAIN_TINT, OVERCAST_SNOW_TINT, s);
+  vec3 a = mix(c, gray, OVERCAST_AMBIENT_GRAY) * mix(OVERCAST_AMBIENT_RAIN, OVERCAST_AMBIENT_SNOW, s);
+  return mix(c, a, o);
+}
+
+// sun or moon shadow term under cover
+float overcastShadow(float shadow) {
+  return mix(shadow, 1.0, weatherOvercast.x * OVERCAST_SHADOW);
+}
+
+// how much of the sun and moon discs, their glow and the stars still show
+float overcastClear() {
+  return 1.0 - smoothstep(0.15, 0.85, weatherOvercast.x);
+}
+
+vec3 skyZenith(float alt) {
+  return overcastSky(skyZenithClear(alt), alt);
+}
+
+vec3 skyHorizon(float alt) {
+  return overcastSky(skyHorizonClear(alt), alt);
 }
 
 // Light colors. These are LINEAR (the composite lights in linear space, like 117 HD) and are multiplied with
@@ -65,11 +139,11 @@ vec3 linearToSrgb(vec3 c) {
 vec3 sunLight(float alt) {
   vec3 warm = vec3(1.00, 0.42, 0.16);
   vec3 noon = vec3(1.00, 0.90, 0.76);
-  return mix(warm, noon, smoothstep(2.0, 28.0, alt)) * SUN_INTENSITY * smoothstep(-4.0, 10.0, alt);
+  return overcastDirect(mix(warm, noon, smoothstep(2.0, 28.0, alt)) * SUN_INTENSITY * smoothstep(-4.0, 10.0, alt));
 }
 
 vec3 moonLight(float alt) {
-  return vec3(0.42, 0.55, 1.00) * MOON_INTENSITY * smoothstep(-2.0, -14.0, alt);
+  return overcastDirect(vec3(0.42, 0.55, 1.00) * MOON_INTENSITY * smoothstep(-2.0, -14.0, alt));
 }
 
 // Light from the whole sky, cool blue by day; fills shadows
@@ -79,7 +153,7 @@ vec3 ambientLight(float alt) {
   vec3 a = mix(night, day, smoothstep(-10.0, 15.0, alt));
   // warmer, a little darker around sunrise and sunset
   float dusk = smoothstep(-8.0, 2.0, alt) * (1.0 - smoothstep(2.0, 20.0, alt));
-  return a * mix(vec3(1.0), vec3(1.10, 0.80, 0.80), dusk);
+  return overcastAmbient(a * mix(vec3(1.0), vec3(1.10, 0.80, 0.80), dusk));
 }
 
 // Extra light on upward-facing surfaces from the sky above them, tinted by the sky
@@ -122,14 +196,14 @@ vec3 skyColor(vec3 dir, vec3 sunDir, vec3 moonDir, float alt, float time) {
     : horizon * mix(1.0, 0.65, clamp(-elev * 4.0, 0.0, 1.0));
 
   // sun: wide warm glow plus a disc, visible a little below the horizon for sunsets
-  float sunVis = smoothstep(-6.0, 2.0, alt);
+  float sunVis = smoothstep(-6.0, 2.0, alt) * overcastClear();
   float mu = max(dot(dir, sunDir), 0.0);
   vec3 glowColor = mix(vec3(1.0, 0.55, 0.30), vec3(1.0, 0.85, 0.65), smoothstep(0.0, 25.0, alt));
   col += glowColor * (pow(mu, 10.0) * 0.30 + pow(mu, 120.0) * 0.50) * sunVis;
   col += vec3(1.0, 0.95, 0.85) * smoothstep(0.99985, 0.99992, mu) * sunVis;
 
   // night: moon disc with a faint halo, and stars above the horizon
-  float night = smoothstep(-4.0, -14.0, alt);
+  float night = smoothstep(-4.0, -14.0, alt) * overcastClear();
   float mm = max(dot(dir, moonDir), 0.0);
   col += vec3(0.85, 0.88, 1.00) * (smoothstep(0.99990, 0.99995, mm) + pow(mm, 60.0) * 0.08) * night;
 

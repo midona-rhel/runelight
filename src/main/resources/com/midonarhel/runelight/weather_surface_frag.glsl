@@ -84,8 +84,11 @@ void main() {
       shadow = texture(shadowCompare, s);
     }
   }
+  shadow = overcastShadow(shadow);
   vec3 caster = sunIsCaster == 1 ? sunLight(sunAltitude) : moonLight(sunAltitude);
   vec3 light = ambientLight(sunAltitude) + skyLight(sunAltitude) * up + caster * max(dot(n, casterDir), 0.0) * shadow;
+  // torches and lamps light the snow like the ground under it
+  light += weatherPointLights(p, viewProj * vec4(p, 1.0), n);
   vec3 snow = shade(SNOW_ALBEDO, light);
   FragColor = vec4(snow * cover, 1.0 - cover);
 }

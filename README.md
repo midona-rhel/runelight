@@ -42,7 +42,11 @@ Plugin config, Weather section: rain or snow with an intensity, wet ground / sno
 gradual buildup. Shelter comes from a top-down depth map of all static scenery around the player, drawn with every
 roof (also roofs hidden by the game or a plugin), redrawn only after the player walks ~24 tiles or the scenery
 changes. Tuning constants are `#define`s at the top of `rain_vert.glsl`, `snow_vert.glsl` and
-`weather_surface_frag.glsl`; counts and timings are at the top of `Weather.java`.
+`weather_surface_frag.glsl`; counts and timings are at the top of `Weather.java`. With varying intensity the
+rain or snow swells, eases off and gusts around the set intensity (`WeatherVariation.java`). The cloud cover follows
+it slowly and grays the sky and softens the sun and moon everywhere through `weatherOvercast` in `sky.glsl` (its
+`OVERCAST_*` defines). Drops, flakes, splashes and snow cover pick up nearby point lights through the light clusters
+(`weather_common.glsl`).
 ## Areas
 
 Which area the camera is in, whether it is under the open sky or underground, and each area's light tint, fog and
