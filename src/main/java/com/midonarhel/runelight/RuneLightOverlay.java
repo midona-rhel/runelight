@@ -99,6 +99,7 @@ class RuneLightOverlay extends OverlayPanel
 		line("Region", biome.charAt(0) + biome.substring(1).toLowerCase().replace('_', ' '), Color.WHITE);
 		line("Next", forecast.getNext() + " in " + String.format("%.1f min", forecast.getMinutesToNext()), Color.WHITE);
 		line("Cover / fog", String.format("%.2f / %.2f", weather.cloudCover(), weather.fogMultiplier()), Color.WHITE);
+		line("Fog height", String.format("%.2f", weather.fogHeightMultiplier()), Color.WHITE);
 	}
 
 	private void line(String left, String right, Color color)

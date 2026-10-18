@@ -70,4 +70,20 @@ the script's `BIOMES` table.
 Plugin config, Clouds section: one slab of clouds over the procedural sky, marched in 12 steps per sky pixel in
 the composite (nothing is spent where scenery covers the sky), with optional cloud shadows on the ground. Rain and
 snow close the sky up through `Weather.cloudCover()`. Tuning constants are `#define`s at the top of `clouds.glsl`;
-the noise texture and wind are in `Clouds.java`.
+the noise texture and wind are in `Clouds.java`. A detail noise warps the shapes and, with a fine noise, erodes
+ragged edges and mottles the insides (Cloud roughness); some stretches of sky turn wispy. The sun and moon show
+through thin cloud and hide behind thick cloud, with silver linings, and the stars (`atmosphere.glsl`) are faint
+dots that fade toward the horizon, in haze and behind clouds.
+
+The sky cache (`SkyCache.java`, `sky_cache_frag.glsl`) captures the sky and clouds into a small lat-long texture
+every few in-game minutes (more often at sunrise and sunset, and at once when the weather or the clouds overhead
+change) and blends each capture in over the game clock. The light from the sky on the ground comes from it
+(`sky_irradiance_frag.glsl`), so it follows the cloud cover and the sky's colors; optionally the sky itself is drawn
+from it, which is cheaper than marching the clouds for every sky pixel but softer.
+
+## Fog
+
+Volumetric fog (`VolumetricFog.java`, `fog_frag.glsl`) is the configured density times the weather's fog times the
+region's climate (`FogClimate.java`): mist at dawn that burns off by late morning and lies low, more of it and again
+at dusk and night in damp regions (swamps, forests, the tropics), almost none in deserts, which get a faint midday
+haze instead. Patches drift and change shape, and larger banks of fog drift over the ground (Fog banks).

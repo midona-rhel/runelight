@@ -193,20 +193,33 @@ float hash13(vec3 p) {
   return fract((p.x + p.y) * p.z);
 }
 
-// dir: normalized view ray, game coordinates (y down)
-vec3 skyColor(vec3 dir, vec3 sunDir, vec3 moonDir, float alt, float time) {
+// The sky's colors from the horizon to the zenith, without the sun, moon or stars. dir: normalized view ray, game
+// coordinates (y down)
+vec3 skyGradient(vec3 dir, float alt) {
   float elev = -dir.y;
   vec3 zenith = skyZenith(alt);
   vec3 horizon = skyHorizon(alt);
-  vec3 col = elev >= 0.0
+  return elev >= 0.0
     ? mix(horizon, zenith, pow(clamp(elev, 0.0, 1.0), 0.45))
     : horizon * mix(1.0, 0.65, clamp(-elev * 4.0, 0.0, 1.0));
+}
 
-  // sun: wide warm glow plus a disc, visible a little below the horizon for sunsets
+// Wide warm glow around the sun, added to skyGradient; visible a little below the horizon for sunsets
+vec3 sunGlow(vec3 dir, vec3 sunDir, float alt) {
   float sunVis = smoothstep(-6.0, 2.0, alt) * overcastClear();
   float mu = max(dot(dir, sunDir), 0.0);
   vec3 glowColor = mix(vec3(1.0, 0.55, 0.30), vec3(1.0, 0.85, 0.65), smoothstep(0.0, 25.0, alt));
-  col += glowColor * (pow(mu, 10.0) * 0.30 + pow(mu, 120.0) * 0.50) * sunVis;
+  return glowColor * (pow(mu, 10.0) * 0.30 + pow(mu, 120.0) * 0.50) * sunVis;
+}
+
+// dir: normalized view ray, game coordinates (y down)
+vec3 skyColor(vec3 dir, vec3 sunDir, vec3 moonDir, float alt, float time) {
+  float elev = -dir.y;
+  vec3 col = skyGradient(dir, alt) + sunGlow(dir, sunDir, alt);
+
+  // sun disc
+  float sunVis = smoothstep(-6.0, 2.0, alt) * overcastClear();
+  float mu = max(dot(dir, sunDir), 0.0);
   col += vec3(1.0, 0.95, 0.85) * smoothstep(0.99985, 0.99992, mu) * sunVis;
 
   // night: moon disc with a faint halo, and stars above the horizon

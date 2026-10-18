@@ -19,7 +19,7 @@ class VolumetricFog
 		.add(GL_VERTEX_SHADER, "composite_vert.glsl")
 		.add(GL_FRAGMENT_SHADER, "fog_frag.glsl");
 
-	private static final int NOISE_SIZE = 32;
+	private static final int NOISE_SIZE = 64;
 	private static final float EDGE_FADE_TILES = 7;
 	private static final float NEAR_FADE_TILES = 7;
 
@@ -40,11 +40,12 @@ class VolumetricFog
 	private float near;
 	private float sunScatter;
 	private float noiseAmount;
+	private float bankAmount;
 
 	private int program;
 	private int uniCameraPos, uniTime, uniOutdoors, uniProceduralSky, uniClientSkyColor, uniCasterDir,
 		uniSunIsCaster, uniSunAltitude, uniShadowsEnabled, uniLightProjRel, uniShadowDepthRange,
-		uniPointLights, uniDensity, uniHeight, uniGroundY, uniCenter, uniFade, uniNear, uniSunScatter, uniNoiseAmount,
+		uniPointLights, uniDensity, uniHeight, uniGroundY, uniCenter, uniFade, uniNear, uniSunScatter, uniNoiseAmount, uniBankAmount,
 		uniTint, uniViewProj, uniInvViewProj, uniViewport, uniDepthZeroToOne, uniOvercast;
 
 	private int uniCompositeEnabled;
@@ -82,6 +83,7 @@ class VolumetricFog
 		uniNear = glGetUniformLocation(program, "fogNear");
 		uniSunScatter = glGetUniformLocation(program, "fogSunScatter");
 		uniNoiseAmount = glGetUniformLocation(program, "fogNoiseAmount");
+		uniBankAmount = glGetUniformLocation(program, "fogBankAmount");
 		uniTint = glGetUniformLocation(program, "fogTint");
 		uniViewProj = glGetUniformLocation(program, "viewProj");
 		uniInvViewProj = glGetUniformLocation(program, "invViewProj");
@@ -138,6 +140,7 @@ class VolumetricFog
 		near = NEAR_FADE_TILES * tile;
 		sunScatter = config.volumetricFogSunScattering() / 100f;
 		noiseAmount = config.volumetricFogNoise() / 100f;
+		bankAmount = config.volumetricFogBanks() / 100f;
 	}
 
 	/**
@@ -200,6 +203,7 @@ class VolumetricFog
 		glUniform1f(uniNear, near);
 		glUniform1f(uniSunScatter, sunScatter);
 		glUniform1f(uniNoiseAmount, noiseAmount);
+		glUniform1f(uniBankAmount, bankAmount);
 		glUniform3fv(uniTint, areaTint);
 
 		glActiveTexture(GL_TEXTURE0 + noiseUnit);
@@ -269,13 +273,14 @@ class VolumetricFog
 	private static int createNoise()
 	{
 		byte[] data = noise(NOISE_SIZE, 1234);
+		// r: patches, g: banks
 		ByteBuffer buf = BufferUtils.createByteBuffer(data.length);
 		buf.put(data).flip();
 
 		int tex = glGenTextures();
 		glBindTexture(GL_TEXTURE_3D, tex);
 		glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
-		glTexImage3D(GL_TEXTURE_3D, 0, GL_R8, NOISE_SIZE, NOISE_SIZE, NOISE_SIZE, 0, GL_RED, GL_UNSIGNED_BYTE, buf);
+		glTexImage3D(GL_TEXTURE_3D, 0, GL_RG8, NOISE_SIZE, NOISE_SIZE, NOISE_SIZE, 0, GL_RG, GL_UNSIGNED_BYTE, buf);
 		glPixelStorei(GL_UNPACK_ALIGNMENT, 4);
 		glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
 		glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
@@ -287,62 +292,84 @@ class VolumetricFog
 	}
 
 	/**
-	 * Tiling fractal value noise, normalized to 0..255: smooth blobs at a quarter of the size plus finer detail.
-	 * Built once on the CPU so the shader needs a single filtered fetch per step.
+	 * Two tiling fractal value noises, interleaved and each normalized to 0..255, built once on the CPU so the shader
+	 * needs a single filtered fetch per step:
+	 * r: patches, blobs at an eighth of the size plus finer detail;
+	 * g: banks, a few large blobs per repeat that do not change with height, so whole stretches of ground lie under
+	 * thicker or thinner fog as they drift by.
 	 */
 	static byte[] noise(int size, long seed)
 	{
-		float[] out = new float[size * size * size];
 		Random rng = new Random(seed);
-		float amp = 1;
-		for (int cells = 4; cells <= 16; cells *= 2, amp *= 0.5f)
+		float[] patches = new float[size * size * size];
+		float[] banks = new float[size * size * size];
+		fractal(patches, size, rng, 8, 32, 8);
+		fractal(banks, size, rng, 2, 4, 1);
+		normalize(patches);
+		normalize(banks);
+		byte[] bytes = new byte[size * size * size * 2];
+		for (int i = 0; i < patches.length; ++i)
 		{
-			float[] lattice = new float[cells * cells * cells];
+			bytes[i * 2] = (byte) Math.round(patches[i] * 255);
+			bytes[i * 2 + 1] = (byte) Math.round(banks[i] * 255);
+		}
+		return bytes;
+	}
+
+	/** Octaves from minCells to maxCells per repeat across, with up to maxCellsY cells vertically. */
+	private static void fractal(float[] out, int size, Random rng, int minCells, int maxCells, int maxCellsY)
+	{
+		float amp = 1;
+		for (int cells = minCells; cells <= maxCells; cells *= 2, amp *= 0.5f)
+		{
+			int cellsY = Math.min(cells, maxCellsY);
+			float[] lattice = new float[cells * cellsY * cells];
 			for (int i = 0; i < lattice.length; ++i)
 			{
 				lattice[i] = rng.nextFloat();
 			}
-			float scale = (float) cells / size;
+			float scale = (float) cells / size, scaleY = (float) cellsY / size;
 			for (int z = 0; z < size; ++z)
 			{
 				for (int y = 0; y < size; ++y)
 				{
 					for (int x = 0; x < size; ++x)
 					{
-						out[(z * size + y) * size + x] += amp * sampleLattice(lattice, cells, x * scale, y * scale, z * scale);
+						out[(z * size + y) * size + x] += amp * sampleLattice(lattice, cells, cellsY, x * scale, y * scaleY, z * scale);
 					}
 				}
 			}
 		}
-
-		float min = Float.MAX_VALUE, max = -Float.MAX_VALUE;
-		for (float v : out)
-		{
-			min = Math.min(min, v);
-			max = Math.max(max, v);
-		}
-		byte[] bytes = new byte[out.length];
-		for (int i = 0; i < out.length; ++i)
-		{
-			bytes[i] = (byte) Math.round((out[i] - min) / (max - min) * 255);
-		}
-		return bytes;
 	}
 
-	private static float sampleLattice(float[] l, int n, float x, float y, float z)
+	private static void normalize(float[] v)
+	{
+		float min = Float.MAX_VALUE, max = -Float.MAX_VALUE;
+		for (float f : v)
+		{
+			min = Math.min(min, f);
+			max = Math.max(max, f);
+		}
+		for (int i = 0; i < v.length; ++i)
+		{
+			v[i] = (v[i] - min) / (max - min);
+		}
+	}
+
+	private static float sampleLattice(float[] l, int n, int ny, float x, float y, float z)
 	{
 		int x0 = (int) Math.floor(x), y0 = (int) Math.floor(y), z0 = (int) Math.floor(z);
 		float fx = smooth(x - x0), fy = smooth(y - y0), fz = smooth(z - z0);
-		float c00 = lerp(at(l, n, x0, y0, z0), at(l, n, x0 + 1, y0, z0), fx);
-		float c10 = lerp(at(l, n, x0, y0 + 1, z0), at(l, n, x0 + 1, y0 + 1, z0), fx);
-		float c01 = lerp(at(l, n, x0, y0, z0 + 1), at(l, n, x0 + 1, y0, z0 + 1), fx);
-		float c11 = lerp(at(l, n, x0, y0 + 1, z0 + 1), at(l, n, x0 + 1, y0 + 1, z0 + 1), fx);
+		float c00 = lerp(at(l, n, ny, x0, y0, z0), at(l, n, ny, x0 + 1, y0, z0), fx);
+		float c10 = lerp(at(l, n, ny, x0, y0 + 1, z0), at(l, n, ny, x0 + 1, y0 + 1, z0), fx);
+		float c01 = lerp(at(l, n, ny, x0, y0, z0 + 1), at(l, n, ny, x0 + 1, y0, z0 + 1), fx);
+		float c11 = lerp(at(l, n, ny, x0, y0 + 1, z0 + 1), at(l, n, ny, x0 + 1, y0 + 1, z0 + 1), fx);
 		return lerp(lerp(c00, c10, fy), lerp(c01, c11, fy), fz);
 	}
 
-	private static float at(float[] l, int n, int x, int y, int z)
+	private static float at(float[] l, int n, int ny, int x, int y, int z)
 	{
-		return l[((Math.floorMod(z, n) * n + Math.floorMod(y, n)) * n) + Math.floorMod(x, n)];
+		return l[((Math.floorMod(z, n) * ny + Math.floorMod(y, ny)) * n) + Math.floorMod(x, n)];
 	}
 
 	private static float smooth(float t)

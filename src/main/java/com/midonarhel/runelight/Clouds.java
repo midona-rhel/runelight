@@ -9,11 +9,13 @@ import static org.lwjgl.opengl.GL33C.*;
  * Volumetric clouds in the sky, drawn inline in the composite's sky branch (clouds.glsl), plus optional cloud
  * shadows on the ground. This class owns the tiling cloud noise texture and the per-frame cloud uniforms: how
  * much of the sky is covered (the configured clear-weather coverage, closing up as rain or snow comes in) and
- * the wind drift.
+ * the wind drift, for the composite and for the sky cache's captures (SkyCache.java).
  */
 class Clouds
 {
 	private static final int NOISE_SIZE = 128;
+	// share of ragged value noise in the cloud shape, the rest is round Worley puffs
+	private static final float SHAPE_VALUE = 0.65f;
 	// world units per repeat of the noise; must match CLOUD_TILE in clouds.glsl
 	private static final double TILE = 32768;
 	// the shader samples at 1/4, 1 and 3 times the tile frequency, so the offset can wrap every 4 tiles
@@ -24,65 +26,132 @@ class Clouds
 	// roughly along the rain's slant (Weather.draw)
 	private static final float WIND_X = 0.87f, WIND_Z = 0.49f;
 
-	private int uniEnabled, uniShadows, uniCoverage, uniWeather, uniOffset;
+	/** Uniform locations of one program that draws clouds: the composite, and the sky cache's capture. */
+	static final class Locations
+	{
+		int enabled, shadows, coverage, weather, offset, detail;
+	}
+
+	private final Locations composite = new Locations();
 	private int texNoise;
 	private double windX, windZ;
 	private long lastNanos;
+
+	// this frame's values, from update()
+	private boolean enabled, shadows;
+	private float coverage, weather, detail;
+	private float offsetX, offsetZ;
+	private double originX, originZ;
 
 	/**
 	 * Look up the composite program's cloud uniforms. Call with each newly compiled composite.
 	 */
 	void locateComposite(int program, int noiseUnit)
 	{
-		uniEnabled = glGetUniformLocation(program, "cloudsEnabled");
-		uniShadows = glGetUniformLocation(program, "cloudShadowsEnabled");
-		uniCoverage = glGetUniformLocation(program, "cloudCoverage");
-		uniWeather = glGetUniformLocation(program, "cloudWeather");
-		uniOffset = glGetUniformLocation(program, "cloudOffset");
+		locate(composite, program, noiseUnit);
+	}
+
+	static void locate(Locations l, int program, int noiseUnit)
+	{
+		l.enabled = glGetUniformLocation(program, "cloudsEnabled");
+		l.shadows = glGetUniformLocation(program, "cloudShadowsEnabled");
+		l.coverage = glGetUniformLocation(program, "cloudCoverage");
+		l.weather = glGetUniformLocation(program, "cloudWeather");
+		l.offset = glGetUniformLocation(program, "cloudOffset");
+		l.detail = glGetUniformLocation(program, "cloudDetail");
 		glUseProgram(program);
 		glUniform1i(glGetUniformLocation(program, "cloudNoise"), noiseUnit);
 		glUseProgram(0);
 	}
 
 	/**
-	 * With the composite program in use: advance the wind, set the uniforms and bind the noise to
-	 * {@code noiseUnit} (its 2D target).
+	 * Advance the wind and decide this frame's cloud values. Call once per frame, before {@link #apply}.
 	 *
 	 * @param cloudCover Weather.cloudCover(), 0 clear to 1 overcast
 	 * @param baseX world x of the scene's origin, in world units, so clouds stay put when the scene reloads
 	 */
-	void bind(boolean enabled, boolean shadows, int coveragePercent, int speedPercent, float cloudCover,
-		long baseX, long baseZ, int noiseUnit)
+	void update(boolean enabled, boolean shadows, int coveragePercent, int speedPercent, int detailPercent,
+		float cloudCover, long baseX, long baseZ)
 	{
 		long now = System.nanoTime();
 		float dt = lastNanos == 0 ? 0 : Math.min((now - lastNanos) / 1e9f, 0.25f);
 		lastNanos = now;
 
-		glUniform1i(uniEnabled, enabled ? 1 : 0);
-		if (!enabled)
-		{
-			return;
-		}
-		if (texNoise == 0)
-		{
-			texNoise = createNoise();
-		}
-
+		this.enabled = enabled;
+		this.shadows = shadows;
 		float speed = WIND_SPEED * speedPercent / 100f * (1 + (RAIN_WIND - 1) * cloudCover);
 		windX = (windX + WIND_X * speed * dt) % WRAP;
 		windZ = (windZ + WIND_Z * speed * dt) % WRAP;
 
 		float base = coveragePercent / 100f;
-		glUniform1i(uniShadows, shadows ? 1 : 0);
-		glUniform1f(uniCoverage, base + (1 - base) * cloudCover);
-		glUniform1f(uniWeather, cloudCover);
+		coverage = base + (1 - base) * cloudCover;
+		weather = cloudCover;
+		detail = detailPercent / 100f;
 		// the shader adds camera-relative scene positions; take the scene origin and the drift away from the noise
-		glUniform2f(uniOffset, (float) Math.floorMod(baseX, (long) WRAP) - (float) windX,
-			(float) Math.floorMod(baseZ, (long) WRAP) - (float) windZ);
+		offsetX = (float) Math.floorMod(baseX, (long) WRAP) - (float) windX;
+		offsetZ = (float) Math.floorMod(baseZ, (long) WRAP) - (float) windZ;
+		originX = baseX - windX;
+		originZ = baseZ - windZ;
+	}
 
+	/**
+	 * With a cloud drawing program in use: set this frame's uniforms.
+	 */
+	void apply(Locations l)
+	{
+		glUniform1i(l.enabled, enabled ? 1 : 0);
+		glUniform1i(l.shadows, shadows ? 1 : 0);
+		glUniform1f(l.coverage, coverage);
+		glUniform1f(l.weather, weather);
+		glUniform1f(l.detail, detail);
+		glUniform2f(l.offset, offsetX, offsetZ);
+	}
+
+	/**
+	 * Bind the noise to {@code noiseUnit} (its 2D target).
+	 */
+	void bindNoise(int noiseUnit)
+	{
+		if (texNoise == 0)
+		{
+			texNoise = createNoise();
+		}
 		glActiveTexture(GL_TEXTURE0 + noiseUnit);
 		glBindTexture(GL_TEXTURE_2D, texNoise);
 		glActiveTexture(GL_TEXTURE0);
+	}
+
+	/**
+	 * With the composite program in use: set its uniforms and bind the noise. {@link #update} first.
+	 */
+	void bindComposite(int noiseUnit)
+	{
+		apply(composite);
+		if (enabled)
+		{
+			bindNoise(noiseUnit);
+		}
+	}
+
+	boolean isEnabled()
+	{
+		return enabled;
+	}
+
+	float getCoverage()
+	{
+		return coverage;
+	}
+
+	/** World xz the clouds have drifted to, plus the scene origin: how far they have moved, in world units. */
+	double getOriginX()
+	{
+		return originX;
+	}
+
+	double getOriginZ()
+	{
+		return originZ;
 	}
 
 	static void unbind(int noiseUnit)
@@ -110,7 +179,7 @@ class Clouds
 		int tex = glGenTextures();
 		glBindTexture(GL_TEXTURE_2D, tex);
 		glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
-		glTexImage2D(GL_TEXTURE_2D, 0, GL_RG8, NOISE_SIZE, NOISE_SIZE, 0, GL_RG, GL_UNSIGNED_BYTE, buf);
+		glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, NOISE_SIZE, NOISE_SIZE, 0, GL_RGBA, GL_UNSIGNED_BYTE, buf);
 		glPixelStorei(GL_UNPACK_ALIGNMENT, 4);
 		// mipmaps keep distant clouds near the horizon from shimmering
 		glGenerateMipmap(GL_TEXTURE_2D);
@@ -123,34 +192,19 @@ class Clouds
 	}
 
 	/**
-	 * Two tiling noises, interleaved: r is the cloud shape, fractal value noise (soft masses) mixed with inverted
-	 * fractal Worley noise (round puffs) and equalized so that a threshold of 1 - c covers a share c of the sky;
-	 * g is the Worley noise alone, normalized, for eroding edges. Both start at 4 cells per repeat.
+	 * Four tiling noises, interleaved, all starting at a few cells per repeat:
+	 * r is the cloud shape, fractal value noise (ragged masses) mixed with inverted fractal Worley noise (puffs) and
+	 * equalized so that a threshold of 1 - c covers a share c of the sky;
+	 * g is the Worley noise alone, for billowy erosion of the edges;
+	 * b is finer fractal value noise, for ragged, wispy erosion;
+	 * a is very coarse value noise: where the sky has broken, wispy clouds rather than heaped ones.
 	 */
 	static byte[] noise(int size, long seed)
 	{
 		Random rng = new Random(seed);
-		float[] value = new float[size * size];
+		float[] value = fractalValue(size, rng, 4, 32);
 		float[] worley = new float[size * size];
 		float amp = 1;
-		for (int cells = 4; cells <= 32; cells *= 2, amp *= 0.5f)
-		{
-			float[] lattice = new float[cells * cells];
-			for (int i = 0; i < lattice.length; ++i)
-			{
-				lattice[i] = rng.nextFloat();
-			}
-			float scale = (float) cells / size;
-			for (int y = 0; y < size; ++y)
-			{
-				for (int x = 0; x < size; ++x)
-				{
-					value[y * size + x] += amp * sampleLattice(lattice, cells, x * scale, y * scale);
-				}
-			}
-		}
-
-		amp = 1;
 		for (int cells = 4; cells <= 16; cells *= 2, amp *= 0.5f)
 		{
 			// one feature point per cell, in cell units
@@ -181,22 +235,52 @@ class Clouds
 				}
 			}
 		}
+		float[] fine = fractalValue(size, rng, 8, 64);
+		float[] coarse = fractalValue(size, rng, 2, 4);
 
 		normalize(value);
 		normalize(worley);
+		normalize(fine);
+		equalize(coarse);
 		float[] shape = new float[value.length];
 		for (int i = 0; i < shape.length; ++i)
 		{
-			shape[i] = value[i] * 0.55f + worley[i] * 0.45f;
+			shape[i] = value[i] * SHAPE_VALUE + worley[i] * (1 - SHAPE_VALUE);
 		}
 		equalize(shape);
-		byte[] bytes = new byte[size * size * 2];
+		byte[] bytes = new byte[size * size * 4];
 		for (int i = 0; i < value.length; ++i)
 		{
-			bytes[i * 2] = (byte) Math.round(shape[i] * 255);
-			bytes[i * 2 + 1] = (byte) Math.round(worley[i] * 255);
+			bytes[i * 4] = (byte) Math.round(shape[i] * 255);
+			bytes[i * 4 + 1] = (byte) Math.round(worley[i] * 255);
+			bytes[i * 4 + 2] = (byte) Math.round(fine[i] * 255);
+			bytes[i * 4 + 3] = (byte) Math.round(coarse[i] * 255);
 		}
 		return bytes;
+	}
+
+	/** Tiling fractal value noise from minCells to maxCells per repeat, halving the amplitude each octave. */
+	private static float[] fractalValue(int size, Random rng, int minCells, int maxCells)
+	{
+		float[] out = new float[size * size];
+		float amp = 1;
+		for (int cells = minCells; cells <= maxCells; cells *= 2, amp *= 0.5f)
+		{
+			float[] lattice = new float[cells * cells];
+			for (int i = 0; i < lattice.length; ++i)
+			{
+				lattice[i] = rng.nextFloat();
+			}
+			float scale = (float) cells / size;
+			for (int y = 0; y < size; ++y)
+			{
+				for (int x = 0; x < size; ++x)
+				{
+					out[y * size + x] += amp * sampleLattice(lattice, cells, x * scale, y * scale);
+				}
+			}
+		}
+		return out;
 	}
 
 	/**

@@ -10,6 +10,7 @@
 #include "fog_apply.glsl"
 #include "lightning.glsl"
 #include "clouds.glsl"
+#include "atmosphere.glsl"
 
 #define DEBUG_FINAL 0
 #define DEBUG_DEPTH 1
@@ -278,8 +279,7 @@ void main() {
     if (inside && sunAndSky && proceduralSky == 1) {
       // a point on the near plane gives the view ray; the camera is at the origin of camera-relative space
       vec3 dir = normalize(reconstructPosition(vec2(px) + 0.5, 1.0));
-      vec3 sky = cloudsOverSky(skyColor(dir, sunDir, moonDir, sunAltitude, time), vec2(px) + 0.5, dir, cameraPos,
-        casterDir, sunAltitude, ign(gl_FragCoord.xy));
+      vec3 sky = atmosphereSky(vec2(px) + 0.5, dir, cameraPos, sunDir, moonDir, sunAltitude, time);
       sky = lightningOverSky(sky, dir, cameraPos);
       color.rgb = envSky(sky, fogColor, -dir.y);
     } else if (inside && envCave == 1 && proceduralSky == 1) {
@@ -315,7 +315,7 @@ void main() {
     shadow = overcastShadow(shadow);
     vec3 caster = sunIsCaster == 1 ? sunLight(sunAltitude) : moonLight(sunAltitude);
     float up = max(-n.y, 0.0);
-    light = (ambientLight(sunAltitude) + skyLight(sunAltitude) * up) * envAmbient * ao
+    light = (ambientLight(sunAltitude) + skyFill(n, sunAltitude) * up) * envAmbient * ao
       + caster * envSun * max(ndl, 0.0) * shadow * mix(1.0, ao, AO_DIRECT);
     if (transmissive > 0.0) {
       // light through the leaf isn't occluded by the creases SSAO sees on its front

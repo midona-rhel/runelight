@@ -184,6 +184,9 @@ class Weather
 	private float fog = WeatherType.CLEAR.fog;
 	private float areaFog = WeatherType.CLEAR.areaFog;
 	private float distanceFog = WeatherType.CLEAR.distanceFog;
+	// FogClimate: multiplier on the fog height (low mist, rising haze) and the region's humidity
+	private float fogHeight = 1;
+	private float humidity = 1;
 	private float storm;
 	private float snowiness;
 	// rain and snow with this moment's swell or lull, and their slow average that the cloud cover follows
@@ -285,11 +288,27 @@ class Weather
 
 	/**
 	 * How much the weather thickens the volumetric fog, as a multiplier: light in clear weather, thick in fog,
-	 * and a little heavier around dawn.
+	 * and with FogClimate, misty or dry by region and time of day.
 	 */
 	float fogMultiplier()
 	{
 		return openSky ? fog : FOG_CAVE;
+	}
+
+	/**
+	 * Multiplier on the volumetric fog height: mist lies low in the morning, heat haze rises.
+	 */
+	float fogHeightMultiplier()
+	{
+		return openSky ? fogHeight : 1;
+	}
+
+	/**
+	 * How hazy the air is, 0 to 1, for the stars: damp regions and fog hide the faint ones.
+	 */
+	float skyHaze()
+	{
+		return openSky ? FogClimate.haze(humidity, fog) : 0;
 	}
 
 	/**
@@ -340,11 +359,14 @@ class Weather
 	 * @param overcastPercent how much the cover grays the sky and softens the light
 	 * @param lightningEnabled whether storms strike
 	 * @param outdoors whether the area has a sky at all
-	 * @param hour clock time 0-24, for morning mist
+	 * @param hour clock time 0-24, for mist by the time of day
+	 * @param biome the region's 3D Weather biome or null, for {@link FogClimate}
+	 * @param climate whether fog follows the region and the time of day (FogClimate); otherwise only a little
+	 *                morning mist
 	 * @param fx player ground position, world units
 	 */
 	boolean update(WeatherMode mode, WeatherType auto, int intensityPercent, boolean gradual, boolean varying,
-		int overcastPercent, boolean lightningEnabled, boolean outdoors, double hour,
+		int overcastPercent, boolean lightningEnabled, boolean outdoors, double hour, String biome, boolean climate,
 		float fx, float fy, float fz, int plane)
 	{
 		long now = System.currentTimeMillis();
@@ -390,7 +412,21 @@ class Weather
 				targetFog = type.fog;
 				break;
 		}
-		targetFog *= 1 + type.morningMist * morning(hour);
+		float targetFogHeight = 1;
+		float targetHumidity = 1;
+		if (climate)
+		{
+			// replaces the plain morning mist: each region mists over at its own hours, or not at all
+			FogClimate.Profile p = FogClimate.profile(biome);
+			float calm = FogClimate.calm(type);
+			targetFog = FogClimate.total(targetFog, FogClimate.density(p, hour, calm, targetCover));
+			targetFogHeight = FogClimate.height(p, hour, calm, targetCover);
+			targetHumidity = p.humidity;
+		}
+		else
+		{
+			targetFog *= 1 + type.morningMist * morning(hour);
+		}
 
 		float precipitation = rainAmount + snowAmount;
 		float baseCover = targetCover;
@@ -409,6 +445,8 @@ class Weather
 			rainAmount = targetRain;
 			snowAmount = targetSnow;
 			fog = targetFog;
+			fogHeight = targetFogHeight;
+			humidity = targetHumidity;
 			areaFog = type.areaFog;
 			distanceFog = type.distanceFog;
 			wind = targetWind;
@@ -431,6 +469,8 @@ class Weather
 			rainAmount = settle(ease(rainAmount, targetRain, dt, PRECIP_SECONDS), targetRain);
 			snowAmount = settle(ease(snowAmount, targetSnow, dt, PRECIP_SECONDS), targetSnow);
 			fog = ease(fog, targetFog, dt, FOG_SECONDS);
+			fogHeight = ease(fogHeight, targetFogHeight, dt, FOG_SECONDS);
+			humidity = ease(humidity, targetHumidity, dt, FOG_SECONDS);
 			areaFog = ease(areaFog, type.areaFog, dt, FOG_SECONDS);
 			distanceFog = ease(distanceFog, type.distanceFog, dt, FOG_SECONDS);
 			wind = ease(wind, targetWind, dt, WIND_SECONDS);
