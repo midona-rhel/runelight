@@ -15,6 +15,11 @@
 #define DEBUG_LIGHT_CLUSTERS 6
 
 #define TAU 6.28318530718
+
+// underground lighting; y points down, so the key light comes from above with -y
+#define CAVE_AMBIENT 0.72
+#define CAVE_KEY 0.38
+#define CAVE_KEY_DIR normalize(vec3(-0.35, -1.0, 0.45))
 #define TILE_SIZE 128.0
 
 uniform sampler2D sceneAo;  // half resolution
@@ -273,6 +278,10 @@ void main() {
     }
     vec3 caster = sunIsCaster == 1 ? sunLight(sunAltitude) : moonLight(sunAltitude);
     light = ambientLight(sunAltitude) * ao + caster * max(dot(n, casterDir), 0.0) * shadow;
+  } else if (lightingEnabled == 1 && inside) {
+    // Underground: no sun, and the game's own baked shading is removed, so a fixed soft key light from above
+    // keeps shapes readable. Point lights do the rest.
+    light = vec3(CAVE_AMBIENT) * ao + vec3(CAVE_KEY) * max(dot(n, CAVE_KEY_DIR), 0.0);
   }
 
   int cluster = clusterBase(px, viewDepth(d));

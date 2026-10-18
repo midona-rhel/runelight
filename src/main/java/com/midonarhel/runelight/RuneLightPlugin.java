@@ -39,6 +39,7 @@ import java.awt.image.BufferedImage;
 import java.awt.image.DataBufferInt;
 import java.nio.ByteBuffer;
 import java.nio.FloatBuffer;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.Set;
@@ -459,6 +460,8 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		overlayManager.add(overlay);
 		glErrorChecks = config.glErrorChecks();
 
+		VertexShading.undoVanillaShading = config.removeBakedShading();
+
 		sceneLights = new SceneLights(client);
 		sceneLights.load(gson);
 		eventBus.register(sceneLights);
@@ -720,6 +723,18 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 				clientThread.invokeLater(() ->
 				{
 					client.setExpandedMapLoading(config.expandedMapLoadingZones());
+					if (client.getGameState() == GameState.LOGGED_IN)
+					{
+						client.setGameState(GameState.LOADING);
+					}
+				});
+			}
+			else if (configChanged.getKey().equals("removeBakedShading"))
+			{
+				clientThread.invokeLater(() ->
+				{
+					// colors are baked into the vertex data at upload, so reload the scene
+					VertexShading.undoVanillaShading = config.removeBakedShading();
 					if (client.getGameState() == GameState.LOGGED_IN)
 					{
 						client.setGameState(GameState.LOADING);
@@ -1567,6 +1582,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 			// static scenery: zones around the focus, with margin for tall casters just outside the map
 			int offset = SCENE_OFFSET >> 3;
 			float reach = radius + 2048;
+			final boolean roofShadows = config.roofShadows();
 			for (int x = 0; x < ctx.sizeX; ++x)
 			{
 				float cx = ((x - offset) << 10) + 512;
@@ -1584,7 +1600,15 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 					Zone zone = ctx.zones[x][z];
 					if (zone.initialized && zone.sizeO > 0)
 					{
-						zone.renderOpaque(x - offset, z - offset, ctx.minLevel, ctx.level, ctx.maxLevel, ctx.hideRoofIds);
+						if (roofShadows)
+						{
+							// every level and every roof, including ones hidden from the camera
+							zone.renderOpaque(x - offset, z - offset, ctx.minLevel, ctx.level, 3, Collections.emptySet());
+						}
+						else
+						{
+							zone.renderOpaque(x - offset, z - offset, ctx.minLevel, ctx.level, ctx.maxLevel, ctx.hideRoofIds);
+						}
 					}
 				}
 			}

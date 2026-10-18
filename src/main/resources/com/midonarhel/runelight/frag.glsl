@@ -41,6 +41,8 @@ flat in int fTextureId;
 in vec2 fUv;
 in float fFogAmount;
 in vec3 fWorldPos;
+in vec3 fNormal;
+in float fNormalValid;
 #ifdef ZBUF_DEBUG
 in float fDepth;
 #endif
@@ -104,11 +106,15 @@ void main() {
   vec3 mixedColor = mix(c.rgb, fogColor.rgb, fFogAmount);
   FragColor = vec4(mixedColor, c.a);
 
-  // Face normal from screen-space derivatives of the world position: flat per triangle, which matches
-  // OSRS's faceted look and needs no extra vertex data. Oriented to face the camera.
+  // The triangle's own normal from screen-space derivatives, facing the camera. Used for faces the game marks
+  // as flat shaded, and as the reference that orients the smooth vertex normal.
   vec3 n = normalize(cross(dFdx(fWorldPos), dFdy(fWorldPos)));
   if (dot(n, vec3(cameraX, cameraY, cameraZ) - fWorldPos) < 0.0)
     n = -n;
+  if (fNormalValid > 0.5 && dot(fNormal, fNormal) > 1e-8) {
+    vec3 sn = normalize(fNormal);
+    n = dot(sn, n) < 0.0 ? -sn : sn;
+  }
   FragNormal = vec4(n * 0.5 + 0.5, c.a);
 
 #ifdef FRAG_UVS

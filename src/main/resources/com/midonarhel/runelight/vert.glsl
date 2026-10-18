@@ -70,6 +70,8 @@ flat out int fTextureId;
 out vec2 fUv;
 out float fFogAmount;
 out vec3 fWorldPos;
+out vec3 fNormal;       // smooth vertex normal, world space; only meaningful when fNormalValid is 1
+out float fNormalValid;
 #ifdef ZBUF_DEBUG
 out float fDepth;
 #endif
@@ -92,6 +94,21 @@ void main() {
   vec4 worldPos = entityProj * vert;
   vec4 screenPos = worldProj * worldPos;
   fWorldPos = worldPos.xyz;
+
+  // octahedral normal in the last texture short, 0 for flat-shaded faces (see VertexShading.java)
+  int packedNormal = tex.w & 0xffff;
+  if (packedNormal != 0) {
+    vec2 o = vec2(float(packedNormal & 0xff), float(packedNormal >> 8 & 0xff));
+    o = (o - 1.0) / 254.0 * 2.0 - 1.0;
+    vec3 n = vec3(o, 1.0 - abs(o.x) - abs(o.y));
+    if (n.z < 0.0)
+      n.xy = (1.0 - abs(n.yx)) * vec2(n.x >= 0.0 ? 1.0 : -1.0, n.y >= 0.0 ? 1.0 : -1.0);
+    fNormal = mat3(entityProj) * n;
+    fNormalValid = 1.0;
+  } else {
+    fNormal = vec3(0.0);
+    fNormalValid = 0.0;
+  }
 #ifdef ZBUF_DEBUG
   fDepth = screenPos.z / screenPos.w;
 #endif

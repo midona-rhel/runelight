@@ -107,6 +107,12 @@ class ModelUploader
 		final byte modelTransparency = model.getTransparency();
 		final byte[] bias = model.getFaceBias();
 
+		final int[] normalsX = model.getVertexNormalsX();
+		final int[] normalsY = model.getVertexNormalsY();
+		final int[] normalsZ = model.getVertexNormalsZ();
+		final boolean hasNormals = VertexShading.hasNormals(normalsX, normalsY, normalsZ);
+		final short[] unlitColors = model.getUnlitFaceColors();
+
 		float orientSine = 0;
 		float orientCosine = 0;
 		int modelCameraX = cameraX - x;
@@ -124,6 +130,8 @@ class ModelUploader
 			modelCameraX = modelCameraZ * inverseSine + cameraX0 * inverseCosine >> 16;
 			modelCameraZ = modelCameraZ * inverseCosine - cameraX0 * inverseSine >> 16;
 		}
+		final float normalSin = orientSine;
+		final float normalCos = orientation != 0 ? orientCosine : 1;
 
 		float[] p = proj.project(x, y, z, rt.tmp);
 		int zero = (int) p[2];
@@ -223,10 +231,25 @@ class ModelUploader
 					int color2 = faceColors2[faceIdx];
 					int color3 = faceColors3[faceIdx];
 
-					if (color3 == -1)
+					boolean flat = color3 == -1;
+					if (faceTextures == null || faceTextures[faceIdx] == -1)
+					{
+						color1 = VertexShading.baseColor(color1, faceIdx, v1, unlitColors, normalsX, normalsY, normalsZ);
+						if (!flat)
+						{
+							color2 = VertexShading.baseColor(color2, faceIdx, v2, unlitColors, normalsX, normalsY, normalsZ);
+							color3 = VertexShading.baseColor(color3, faceIdx, v3, unlitColors, normalsX, normalsY, normalsZ);
+						}
+					}
+					if (flat)
 					{
 						color2 = color3 = color1;
 					}
+
+					boolean smooth = !flat && hasNormals;
+					int n1 = smooth ? VertexShading.vertexNormal(normalsX, normalsY, normalsZ, v1, normalSin, normalCos) : 0;
+					int n2 = smooth ? VertexShading.vertexNormal(normalsX, normalsY, normalsZ, v2, normalSin, normalCos) : 0;
+					int n3 = smooth ? VertexShading.vertexNormal(normalsX, normalsY, normalsZ, v3, normalSin, normalCos) : 0;
 
 					// HSL override is not applied to textured faces
 					if (faceTextures == null || faceTextures[faceIdx] == -1)
@@ -250,21 +273,21 @@ class ModelUploader
 					vertexBuffer[vbOff++] = Float.floatToIntBits(modelLocalZ[v1]);
 					vertexBuffer[vbOff++] = alphaBias | color1;
 					vertexBuffer[vbOff++] = ((su0 & 0xffff) << 16 | (texture & 0xffff));
-					vertexBuffer[vbOff++] = sv0 & 0xffff;
+					vertexBuffer[vbOff++] = (sv0 & 0xffff) | n1 << 16;
 
 					vertexBuffer[vbOff++] = Float.floatToIntBits(modelLocalX[v2]);
 					vertexBuffer[vbOff++] = Float.floatToIntBits(modelLocalY[v2]);
 					vertexBuffer[vbOff++] = Float.floatToIntBits(modelLocalZ[v2]);
 					vertexBuffer[vbOff++] = alphaBias | color2;
 					vertexBuffer[vbOff++] = ((su1 & 0xffff) << 16 | (texture & 0xffff));
-					vertexBuffer[vbOff++] = sv1 & 0xffff;
+					vertexBuffer[vbOff++] = (sv1 & 0xffff) | n2 << 16;
 
 					vertexBuffer[vbOff++] = Float.floatToIntBits(modelLocalX[v3]);
 					vertexBuffer[vbOff++] = Float.floatToIntBits(modelLocalY[v3]);
 					vertexBuffer[vbOff++] = Float.floatToIntBits(modelLocalZ[v3]);
 					vertexBuffer[vbOff++] = alphaBias | color3;
 					vertexBuffer[vbOff++] = ((su2 & 0xffff) << 16 | (texture & 0xffff));
-					vertexBuffer[vbOff++] = sv2 & 0xffff;
+					vertexBuffer[vbOff++] = (sv2 & 0xffff) | n3 << 16;
 				}
 			}
 		}
@@ -514,6 +537,12 @@ class ModelUploader
 		final byte overrideSat = model.getOverrideSaturation();
 		final byte overrideLum = model.getOverrideLuminance();
 
+		final int[] normalsX = model.getVertexNormalsX();
+		final int[] normalsY = model.getVertexNormalsY();
+		final int[] normalsZ = model.getVertexNormalsZ();
+		final boolean hasNormals = VertexShading.hasNormals(normalsX, normalsY, normalsZ);
+		final short[] unlitColors = model.getUnlitFaceColors();
+
 		float orientSine = 0;
 		float orientCosine = 0;
 		int modelCameraX = cameraX - x;
@@ -561,14 +590,35 @@ class ModelUploader
 			int color2 = color2s[face];
 			int color3 = color3s[face];
 
-			if (color3 == -1)
-			{
-				color2 = color3 = color1;
-			}
-			else if (color3 == -2)
+			boolean flat = color3 == -1;
+			if (color3 == -2)
 			{
 				continue;
 			}
+
+			int triangleA = indices1[face];
+			int triangleB = indices2[face];
+			int triangleC = indices3[face];
+
+			if (faceTextures == null || faceTextures[face] == -1)
+			{
+				color1 = VertexShading.baseColor(color1, face, triangleA, unlitColors, normalsX, normalsY, normalsZ);
+				if (!flat)
+				{
+					color2 = VertexShading.baseColor(color2, face, triangleB, unlitColors, normalsX, normalsY, normalsZ);
+					color3 = VertexShading.baseColor(color3, face, triangleC, unlitColors, normalsX, normalsY, normalsZ);
+				}
+			}
+			if (flat)
+			{
+				color2 = color3 = color1;
+			}
+
+			float normalCos = orientation != 0 ? orientCosine : 1;
+			boolean smooth = !flat && hasNormals;
+			int n1 = smooth ? VertexShading.vertexNormal(normalsX, normalsY, normalsZ, triangleA, orientSine, normalCos) : 0;
+			int n2 = smooth ? VertexShading.vertexNormal(normalsX, normalsY, normalsZ, triangleB, orientSine, normalCos) : 0;
+			int n3 = smooth ? VertexShading.vertexNormal(normalsX, normalsY, normalsZ, triangleC, orientSine, normalCos) : 0;
 
 			// HSL override is not applied to textured faces
 			if (faceTextures == null || faceTextures[face] == -1)
@@ -580,10 +630,6 @@ class ModelUploader
 					color3 = interpolateHSL(color3, overrideHue, overrideSat, overrideLum, overrideAmount);
 				}
 			}
-
-			int triangleA = indices1[face];
-			int triangleB = indices2[face];
-			int triangleC = indices3[face];
 
 			float vx1 = modelLocalX[triangleA];
 			float vy1 = modelLocalY[triangleA];
@@ -614,13 +660,13 @@ class ModelUploader
 			int texture = faceTextures != null ? faceTextures[face] + 1 : 0;
 
 			putfff4(buffer, vx1, vy1, vz1, alphaBias | color1);
-			put2222(buffer, texture, su0, sv0, 0);
+			put2222(buffer, texture, su0, sv0, n1);
 
 			putfff4(buffer, vx2, vy2, vz2, alphaBias | color2);
-			put2222(buffer, texture, su1, sv1, 0);
+			put2222(buffer, texture, su1, sv1, n2);
 
 			putfff4(buffer, vx3, vy3, vz3, alphaBias | color3);
-			put2222(buffer, texture, su2, sv2, 0);
+			put2222(buffer, texture, su2, sv2, n3);
 
 			len += 3;
 		}

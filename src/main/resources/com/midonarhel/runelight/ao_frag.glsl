@@ -10,6 +10,8 @@ uniform float aoRadius;  // world units
 out float FragAo;
 
 #define SAMPLES 12
+// sine of the minimum angle above the surface for an occluder to count; higher ignores more of the shallow folds
+#define AO_ANGLE_BIAS 0.30
 #define TAU 6.28318530718
 #define GOLDEN_ANGLE 2.39996322973
 
@@ -69,9 +71,17 @@ void main() {
 
     // positive when the visible surface is in front of the sample point
     float diff = clip.w - viewDepth(sd);
+    if (diff <= bias) {
+      continue;
+    }
     // ignore occluders far in front of the sample, e.g. a wall between the camera and the floor
     float range = smoothstep(0.0, 1.0, aoRadius / max(abs(diff), 1e-3));
-    occlusion += step(bias, diff) * range;
+    // Angle bias: an occluder that sits nearly in this surface's own tangent plane is just the neighboring
+    // face of a shallow fold in the same low-poly mesh, not something casting a contact shadow.
+    vec3 q = reconstructPosition(vec2(sp) + 0.5, sd);
+    vec3 h = q - p;
+    float elevation = dot(n, h) * inversesqrt(max(dot(h, h), 1.0));
+    occlusion += range * smoothstep(AO_ANGLE_BIAS, AO_ANGLE_BIAS + 0.35, elevation);
   }
 
   FragAo = 1.0 - occlusion / float(SAMPLES);

@@ -489,25 +489,46 @@ class SceneUploader
 
 		int tex = tile.getTexture() + 1;
 
+		final int n0 = terrainNormal(tileHeights[tileZ], tileX, tileY);
+		final int n1 = terrainNormal(tileHeights[tileZ], tileX + 1, tileY);
+		final int n2 = terrainNormal(tileHeights[tileZ], tileX + 1, tileY + 1);
+		final int n3 = terrainNormal(tileHeights[tileZ], tileX, tileY + 1);
+
 		vertexBuffer.put22224(lx2, ly2, lz2, hsl2);
-		vertexBuffer.put2222(tex, 256, 256, 0);
+		vertexBuffer.put2222(tex, 256, 256, n2);
 
 		vertexBuffer.put22224(lx3, ly3, lz3, hsl3);
-		vertexBuffer.put2222(tex, 0, 256, 0);
+		vertexBuffer.put2222(tex, 0, 256, n3);
 
 		vertexBuffer.put22224(lx1, ly1, lz1, hsl1);
-		vertexBuffer.put2222(tex, 256, 0, 0);
+		vertexBuffer.put2222(tex, 256, 0, n1);
 
 		vertexBuffer.put22224(lx0, ly0, lz0, hsl0);
-		vertexBuffer.put2222(tex, 0, 0, 0);
+		vertexBuffer.put2222(tex, 0, 0, n0);
 
 		vertexBuffer.put22224(lx1, ly1, lz1, hsl1);
-		vertexBuffer.put2222(tex, 256, 0, 0);
+		vertexBuffer.put2222(tex, 256, 0, n1);
 
 		vertexBuffer.put22224(lx3, ly3, lz3, hsl3);
-		vertexBuffer.put2222(tex, 0, 256, 0);
+		vertexBuffer.put2222(tex, 0, 256, n3);
 
 		return 6;
+	}
+
+	/**
+	 * Smooth terrain normal at a tile corner from the neighboring corner heights. y points down, so a flat
+	 * tile's normal is (0, -1, 0).
+	 */
+	private static int terrainNormal(int[][] heights, int x, int y)
+	{
+		int maxX = heights.length - 1, maxY = heights[0].length - 1;
+		int x0 = Math.max(x - 1, 0), x1 = Math.min(x + 1, maxX);
+		int y0 = Math.max(y - 1, 0), y1 = Math.min(y + 1, maxY);
+		x = Math.min(Math.max(x, 0), maxX);
+		y = Math.min(Math.max(y, 0), maxY);
+		float dhdx = (heights[x1][y] - heights[x0][y]) / (float) ((x1 - x0) * Perspective.LOCAL_TILE_SIZE);
+		float dhdz = (heights[x][y1] - heights[x][y0]) / (float) ((y1 - y0) * Perspective.LOCAL_TILE_SIZE);
+		return VertexShading.encodeNormal(dhdx, -1, dhdz);
 	}
 
 	private int upload(SceneTileModel sceneTileModel, int lx, int lz, GpuIntBuffer vertexBuffer)
@@ -596,6 +617,14 @@ class SceneUploader
 		final byte[] transparencies = model.getFaceTransparencies();
 		final byte[] bias = model.getFaceBias();
 
+		final int[] normalsX = model.getVertexNormalsX();
+		final int[] normalsY = model.getVertexNormalsY();
+		final int[] normalsZ = model.getVertexNormalsZ();
+		final boolean hasNormals = VertexShading.hasNormals(normalsX, normalsY, normalsZ);
+		final short[] unlitColors = model.getUnlitFaceColors();
+		final float normalSin = orient != 0 ? Perspective.SINEF[orient] : 0;
+		final float normalCos = orient != 0 ? Perspective.COSINEF[orient] : 1;
+
 		int orientSin = 0;
 		int orientCos = 0;
 		if (orient != 0)
@@ -635,11 +664,8 @@ class SceneUploader
 
 			boolean alpha = (transparencies != null && transparencies[face] != 0);
 
-			if (color3 == -1)
-			{
-				color2 = color3 = color1;
-			}
-			else if (color3 == -2)
+			boolean flat = color3 == -1;
+			if (color3 == -2)
 			{
 				continue;
 			}
@@ -647,6 +673,25 @@ class SceneUploader
 			int triangleA = indices1[face];
 			int triangleB = indices2[face];
 			int triangleC = indices3[face];
+
+			if (faceTextures == null || faceTextures[face] == -1)
+			{
+				color1 = VertexShading.baseColor(color1, face, triangleA, unlitColors, normalsX, normalsY, normalsZ);
+				if (!flat)
+				{
+					color2 = VertexShading.baseColor(color2, face, triangleB, unlitColors, normalsX, normalsY, normalsZ);
+					color3 = VertexShading.baseColor(color3, face, triangleC, unlitColors, normalsX, normalsY, normalsZ);
+				}
+			}
+			if (flat)
+			{
+				color2 = color3 = color1;
+			}
+
+			boolean smooth = !flat && hasNormals;
+			int n1 = smooth ? VertexShading.vertexNormal(normalsX, normalsY, normalsZ, triangleA, normalSin, normalCos) : 0;
+			int n2 = smooth ? VertexShading.vertexNormal(normalsX, normalsY, normalsZ, triangleB, normalSin, normalCos) : 0;
+			int n3 = smooth ? VertexShading.vertexNormal(normalsX, normalsY, normalsZ, triangleC, normalSin, normalCos) : 0;
 
 			int vx1 = modelLocalXI[triangleA];
 			int vy1 = modelLocalYI[triangleA];
@@ -678,13 +723,13 @@ class SceneUploader
 			GpuIntBuffer buf = alpha ? ab : vb;
 
 			buf.put22224(vx1, vy1, vz1, alphaBias | color1);
-			buf.put2222(texture, su0, sv0, 0);
+			buf.put2222(texture, su0, sv0, n1);
 
 			buf.put22224(vx2, vy2, vz2, alphaBias | color2);
-			buf.put2222(texture, su1, sv1, 0);
+			buf.put2222(texture, su1, sv1, n2);
 
 			buf.put22224(vx3, vy3, vz3, alphaBias | color3);
-			buf.put2222(texture, su2, sv2, 0);
+			buf.put2222(texture, su2, sv2, n3);
 
 			len += 3;
 		}

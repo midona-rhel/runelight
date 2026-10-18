@@ -380,6 +380,31 @@ public interface RuneLightConfig extends Config
 	}
 
 	@ConfigItem(
+		keyName = "removeBakedShading",
+		name = "Remove baked shading",
+		description = "The game bakes light from one fixed direction into model colors. Remove it so the sun, moon "
+			+ "and lights do the shading. Reloads the scene when changed.",
+		section = lightingSection,
+		position = 62
+	)
+	default boolean removeBakedShading()
+	{
+		return true;
+	}
+
+	@ConfigItem(
+		keyName = "roofShadows",
+		name = "Hidden roofs cast shadows",
+		description = "Roofs and upper floors keep casting shadows when the game hides them, so interiors stay shaded.",
+		section = lightingSection,
+		position = 63
+	)
+	default boolean roofShadows()
+	{
+		return true;
+	}
+
+	@ConfigItem(
 		keyName = "pointLights",
 		name = "Point lights",
 		description = "Lights from torches, fires and other sources. They do not cast shadows.",
