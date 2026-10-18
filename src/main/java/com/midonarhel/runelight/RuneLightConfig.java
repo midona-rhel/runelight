@@ -969,7 +969,7 @@ public interface RuneLightConfig extends Config
 
 	@ConfigSection(
 		name = "Water",
-		description = "Water you can see into, with flowing ripples, reflections and shoreline foam",
+		description = "Water you can see into, with waves that follow the rivers, reflections and glints",
 		position = 550
 	)
 	String waterSection = "water";
@@ -977,8 +977,8 @@ public interface RuneLightConfig extends Config
 	@ConfigItem(
 		keyName = "water",
 		name = "Water",
-		description = "Draw water as a surface over a lowered bed: clear water shows the bed, swamps and caves are murky,"
-			+ " rivers flow and the sea rolls toward the shore. Reloads the scene.",
+		description = "Draw water as a surface over a lowered bed: clear water shows the bed and darkens with depth,"
+			+ " swamps and caves are murky, rivers flow from their sources to the sea. Reloads the scene.",
 		section = waterSection,
 		position = 551
 	)
@@ -990,7 +990,8 @@ public interface RuneLightConfig extends Config
 	@ConfigItem(
 		keyName = "waterReflections",
 		name = "World reflections",
-		description = "Rough reflections of the scene (trees, walls, the shore) in the water, besides the sky.",
+		description = "Rough reflections of the scene (trees, walls, the shore) in the water, besides the sky."
+			+ " A few screen-space taps per water pixel.",
 		section = waterSection,
 		position = 552
 	)
@@ -1029,7 +1030,7 @@ public interface RuneLightConfig extends Config
 	@ConfigItem(
 		keyName = "waterWaves",
 		name = "Waves",
-		description = "Height of the waves and ripples, in percent.",
+		description = "Height of the waves and the swell, in percent.",
 		section = waterSection,
 		position = 554
 	)
@@ -1054,7 +1055,7 @@ public interface RuneLightConfig extends Config
 	@ConfigItem(
 		keyName = "waterCaustics",
 		name = "Caustics",
-		description = "Rippling sunlight on the bed of clear, shallow water.",
+		description = "Dappled sunlight on the bed of clear, shallow water.",
 		section = waterSection,
 		position = 556
 	)

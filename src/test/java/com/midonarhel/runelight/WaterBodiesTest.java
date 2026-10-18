@@ -123,6 +123,42 @@ public class WaterBodiesTest
 	}
 
 	@Test
+	public void worldFlowMapWins()
+	{
+		WaterBodies w = grid();
+		// enclosed and narrow: on its own a still pool, but the world map knows it is a stretch of river
+		fill(w, 10, 10, 30, 12);
+		for (int x = 10; x <= 30; ++x)
+		{
+			for (int y = 10; y <= 12; ++y)
+			{
+				w.mapFlowX[at(x, y)] = -0.5f;
+				w.mapFlowZ[at(x, y)] = 0;
+			}
+		}
+		w.solve();
+		assertEquals(WaterBodies.POOL, w.bodyClass[0]);
+		assertEquals(-0.5f, w.flowX[at(20, 11)], 1e-6);
+		assertEquals(0, w.flowZ[at(20, 11)], 1e-6);
+	}
+
+	@Test
+	public void seaKeepsItsPushUnderTheWorldMap()
+	{
+		WaterBodies w = grid();
+		fill(w, 0, 0, N - 1, 29);
+		// the map says the sea is still
+		for (int i = 0; i < N * 30; ++i)
+		{
+			w.mapFlowX[i] = 0;
+			w.mapFlowZ[i] = 0;
+		}
+		w.solve();
+		assertTrue(w.flowZ[at(24, 29)] > 0.05f);
+		assertTrue(speed(w, at(24, 10)) < 0.01f);
+	}
+
+	@Test
 	public void seaPushesTowardShore()
 	{
 		WaterBodies w = grid();

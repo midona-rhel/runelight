@@ -122,12 +122,17 @@ final class WaterMap
 
 	static WaterMap build(Scene scene, Areas areas)
 	{
+		return build(scene, areas, WaterFlow.world());
+	}
+
+	static WaterMap build(Scene scene, Areas areas, WaterFlow flowMap)
+	{
 		WaterMap m = new WaterMap();
-		m.load(scene, areas);
+		m.load(scene, areas, flowMap);
 		return m;
 	}
 
-	private void load(Scene scene, Areas areas)
+	private void load(Scene scene, Areas areas, WaterFlow flowMap)
 	{
 		Tile[][][] tiles = scene.getExtendedTiles();
 		int[][][] heights = scene.getTileHeights();
@@ -139,6 +144,8 @@ final class WaterMap
 		int[] murk = new int[SIZE * SIZE];
 		boolean[] landCorner = new boolean[CORNERS * CORNERS];
 		WaterBodies b = bodies;
+		float[] flow = new float[2];
+		int[] world = new int[3];
 
 		for (int x = 0; x < SIZE; ++x)
 		{
@@ -146,7 +153,7 @@ final class WaterMap
 			{
 				int i = y * SIZE + x;
 				Tile water = null;
-				int k = NONE;
+				int k = NONE, plane = 0;
 				boolean loaded = false;
 				// the lowest water at this spot; water stacked above it on other planes stays vanilla
 				search:
@@ -160,6 +167,7 @@ final class WaterMap
 						if (k != NONE)
 						{
 							water = t;
+							plane = z;
 							break search;
 						}
 					}
@@ -185,6 +193,11 @@ final class WaterMap
 				b.sea[i] = isSea(water);
 				int[][] h = heights[lvl];
 				b.surface[i] = (h[x][y] + h[x + 1][y] + h[x][y + 1] + h[x + 1][y + 1]) * 0.25f;
+				if (flowMap != null && mapFlow(scene, x, y, plane, flowMap, world, flow))
+				{
+					b.mapFlowX[i] = flow[0];
+					b.mapFlowZ[i] = flow[1];
+				}
 				murk[i] = areas == null ? CLEAR : areas.murk(x - RuneLightPlugin.SCENE_OFFSET, y - RuneLightPlugin.SCENE_OFFSET, lvl);
 				hasWater = true;
 
@@ -242,6 +255,52 @@ final class WaterMap
 		}
 
 		buildTexture(heights);
+	}
+
+	/**
+	 * The world flow map's flow at extended scene tile (ex, ey), turned into scene directions (instances are built
+	 * from rotated chunks of the real map), tiles per second x and z into flow.
+	 */
+	static boolean mapFlow(Scene scene, int ex, int ey, int plane, WaterFlow flowMap, int[] world, float[] flow)
+	{
+		int sx = ex - RuneLightPlugin.SCENE_OFFSET, sy = ey - RuneLightPlugin.SCENE_OFFSET;
+		if (!scene.isInstance())
+		{
+			return flowMap.flow(scene.getBaseX() + sx, scene.getBaseY() + sy, flow);
+		}
+		if (!EnvironmentManager.toWorld(scene, sx, sy, plane, world) || !flowMap.flow(world[0], world[1], flow))
+		{
+			return false;
+		}
+		int chunk = scene.getInstanceTemplateChunks()[plane][sx / 8][sy / 8];
+		rotateToScene(4 - (chunk >> 1 & 3) & 3, flow);
+		return true;
+	}
+
+	/**
+	 * Turn a world direction into the scene's for a template chunk placed with {@code rotation} as
+	 * {@link EnvironmentManager#toWorld} maps it.
+	 */
+	static void rotateToScene(int rotation, float[] v)
+	{
+		float wx = v[0], wy = v[1];
+		switch (rotation)
+		{
+			case 1:
+				v[0] = -wy;
+				v[1] = wx;
+				break;
+			case 2:
+				v[0] = -wx;
+				v[1] = -wy;
+				break;
+			case 3:
+				v[0] = wy;
+				v[1] = -wx;
+				break;
+			default:
+				break;
+		}
 	}
 
 	private static int tileKind(Tile t)

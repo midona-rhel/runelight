@@ -34,7 +34,10 @@ src/main/resources/com/midonarhel/runelight/environments.json is converted in pa
 from the area and environment definitions of 117 HD by tools/import_environments.py.
 The water bed depths and water texture lists in
 src/main/java/com/midonarhel/runelight/WaterMap.java follow 117 HD's underwater terrain
-and water types. All are distributed under the following license:
+and water types, and the water shading in
+src/main/resources/com/midonarhel/runelight/water.glsl follows 117 HD's water (depth
+color, lit wave normals, flattened sky reflection, no hard shoreline). All are
+distributed under the following license:
 
 BSD 2-Clause License
 

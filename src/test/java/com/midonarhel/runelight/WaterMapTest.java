@@ -82,7 +82,7 @@ public class WaterMapTest
 					return null;
 			}
 		});
-		return WaterMap.build(scene, (x, y, plane) -> murk);
+		return WaterMap.build(scene, (x, y, plane) -> murk, null);
 	}
 
 	@Test

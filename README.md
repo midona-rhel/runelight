@@ -91,11 +91,20 @@ haze instead. Patches drift and change shape, and larger banks of fog drift over
 ## Water
 
 Plugin config, Water section. When a scene loads, `WaterMap.java` finds the water tiles (the game's water
-textures, as in 117 HD), groups them into bodies and classifies each (`WaterBodies.java`): small enclosed pools and
-moats are still, rivers flow toward where they leave the scene (downhill first) or into open water, the sea pushes
-toward its shores. Swamps and caves (from the area, `EnvironmentManager.waterMurk`) make water murky. Water terrain
-is uploaded as a lowered bed, deeper away from the shore. The surface is not geometry: the composite finds where
-each view ray crosses it and shades it in `water.glsl` (refraction, depth absorption, caustics, sky and rough
-screen-space reflections, glints, flow-mapped ripples, swell, shoreline foam, rain rings). Per-type looks are the
-tables at the top of `water.glsl`, the rest are its `#define`s. "Show water map" tints water by type and shows its
-flow as moving stripes.
+textures, as in 117 HD), groups them into bodies and classifies each (`WaterBodies.java`). Which way the water flows
+comes from a world flow map (`WaterFlow.java`, resource `water_flow.dat`) computed offline from the world map
+image: rivers run from their sources to the sea or a lake, straits and ponds are still. Where the map knows nothing
+(new areas, water drawn in colors other than blue on the map) the scene is analysed on its own as a fallback. The sea
+pushes toward its shores. Swamps and caves (from the area, `EnvironmentManager.waterMurk`) make water murky. Water
+terrain is uploaded as a lowered bed, deeper away from the shore. The surface is not geometry: the composite finds
+where each view ray crosses it and shades it in `water.glsl` (refraction, depth absorption into a dark depth
+color, caustics, sky and a few taps of screen-space reflection, glints and sparkle, two octaves of flow-mapped wave
+noise and a swell, rain rings), fading in from the waterline without a hard edge. Per-type looks are the tables at
+the top of `water.glsl`, the rest are its `#define`s. "Show water map" tints water by type and shows its flow as
+moving stripes.
+
+The flow map: `tools/water/build_flow.py <cache dir> src/main/resources/com/midonarhel/runelight/water_flow.dat`
+downloads the map image (Explv's osrs_map_tiles, rendered from the game cache by RuneLite's map dumper) into the
+cache dir, finds the water, and computes the flow; `tools/water/annotations.json` fixes rivers the automatic pass
+gets wrong (sources, outlets, still canals), and `tools/water/crop.py` renders map crops with a tile grid and the
+flow to check them. Needs numpy, scipy, scikit-image and Pillow.
