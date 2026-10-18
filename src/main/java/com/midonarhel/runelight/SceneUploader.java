@@ -564,7 +564,7 @@ class SceneUploader
 
 		if (water != null && scene.getWorldViewId() == WorldView.TOPLEVEL && water.isBed(tileX, tileY, tileZ, tile.getTexture()))
 		{
-			return uploadBed(tileZ, tileX, tileY, vertexBuffer, lx, lz);
+			return uploadBed(tileZ, tileX, tileY, vertexBuffer, lx, lz, tileHeights[tileZ]);
 		}
 
 		int swFlag = 0, seFlag = 0, neFlag = 0, nwFlag = 0;
@@ -721,6 +721,7 @@ class SceneUploader
 		if (bedTile)
 		{
 			markLandVertices(sceneTileModel);
+			bedTileHeights = scene.getTileHeights()[tileZ];
 			GroundBlender.tileSlopes(water.bedHeights(tileZ), ex, ey, slope, bedSlopes);
 		}
 
@@ -812,15 +813,27 @@ class SceneUploader
 	/**
 	 * A water tile as the bed under the water: lowered, no texture, bed colored, flagged for the composite.
 	 */
-	private int uploadBed(int tileZ, int tileX, int tileY, GpuIntBuffer vb, int lx, int lz)
+	private int uploadBed(int tileZ, int tileX, int tileY, GpuIntBuffer vb, int lx, int lz, int[][] heights)
 	{
 		final int[][] bed = water.bedHeights(tileZ);
 		final int x0 = tileX << 7, z0 = tileY << 7;
 		final int tex = WaterMap.BED_FLAG;
-		final int c0 = water.bedColor(tileX, tileY, x0, z0, water.depthLevel(tileX, tileY));
-		final int c1 = water.bedColor(tileX, tileY, x0 + 128, z0, water.depthLevel(tileX + 1, tileY));
-		final int c2 = water.bedColor(tileX, tileY, x0 + 128, z0 + 128, water.depthLevel(tileX + 1, tileY + 1));
-		final int c3 = water.bedColor(tileX, tileY, x0, z0 + 128, water.depthLevel(tileX, tileY + 1));
+		// The bed carries the land's colors: those of the bank at its shore corners, their mix elsewhere. water.glsl
+		// turns it to the bed's own color with the depth under the surface, so above and near the waterline it is
+		// the bank it continues, without a tile-shaped edge.
+		final int[] dry = bedLandColors;
+		dry[0] = shoreColor(x0, heights[tileX][tileY], z0);
+		dry[1] = shoreColor(x0 + 128, heights[tileX + 1][tileY], z0);
+		dry[2] = shoreColor(x0 + 128, heights[tileX + 1][tileY + 1], z0 + 128);
+		dry[3] = shoreColor(x0, heights[tileX][tileY + 1], z0 + 128);
+		final int mix = mixHsl(dry, 4);
+		final int c0 = dry[0] >= 0 ? dry[0] : mix >= 0 ? mix : water.bedColor(tileX, tileY, x0, z0, water.depthLevel(tileX, tileY));
+		final int c1 = dry[1] >= 0 ? dry[1] : mix >= 0 ? mix
+			: water.bedColor(tileX, tileY, x0 + 128, z0, water.depthLevel(tileX + 1, tileY));
+		final int c2 = dry[2] >= 0 ? dry[2] : mix >= 0 ? mix
+			: water.bedColor(tileX, tileY, x0 + 128, z0 + 128, water.depthLevel(tileX + 1, tileY + 1));
+		final int c3 = dry[3] >= 0 ? dry[3] : mix >= 0 ? mix
+			: water.bedColor(tileX, tileY, x0, z0 + 128, water.depthLevel(tileX, tileY + 1));
 		final int n0 = terrainNormal(bed, tileX, tileY);
 		final int n1 = terrainNormal(bed, tileX + 1, tileY);
 		final int n2 = terrainNormal(bed, tileX + 1, tileY + 1);
@@ -834,7 +847,7 @@ class SceneUploader
 			// sink the middle of the tile too, as a fan of four triangles around it.
 			final int hc = (h0 + h1 + h2 + h3 + 2 >> 2) - (water.bedOffset(tileX, tileY) + water.bedOffset(tileX + 1, tileY)
 				+ water.bedOffset(tileX + 1, tileY + 1) + water.bedOffset(tileX, tileY + 1) + 2 >> 2) + water.centerOffset(tileX, tileY);
-			final int cc = water.bedColor(tileX, tileY, x0 + 64, z0 + 64, 1);
+			final int cc = mix >= 0 ? mix : water.bedColor(tileX, tileY, x0 + 64, z0 + 64, 1);
 			GroundBlender.tileSlopes(bed, tileX, tileY, slope, bedSlopes);
 			GroundBlender.interpolateSlope(bedSlopes, 0.5f, 0.5f, slope);
 			final int nc = VertexShading.encodeNormal(slope[0], -1, slope[1]);
@@ -861,6 +874,47 @@ class SceneUploader
 		vb.put22224(lx, h3, lz + s, 0, c3);
 		vb.put2222(tex, 0, 256, n3);
 		return 6;
+	}
+
+	private final int[] bedLandColors = new int[4];
+	// the unlowered heights of the level of the shore tile model being uploaded
+	private int[][] bedTileHeights;
+
+	/**
+	 * The land's (blended) color at the ground vertex at extended local position (x, height, z), or -1 where no
+	 * land touches it or there is no blending.
+	 */
+	private int shoreColor(int x, int height, int z)
+	{
+		if (!GroundBlender.enabled)
+		{
+			return -1;
+		}
+		int v = groundBlender.lookup(x, height, z);
+		return v != -1 && (v & GroundBlender.BLENDED) != 0 ? v & 0xffff : -1;
+	}
+
+	/**
+	 * The mean of the first n packed HSL colors that aren't -1, or -1 if all are.
+	 */
+	static int mixHsl(int[] c, int n)
+	{
+		int h = 0, sat = 0, l = 0, count = 0;
+		for (int i = 0; i < n; ++i)
+		{
+			if (c[i] >= 0)
+			{
+				h += c[i] >> 10 & 63;
+				sat += c[i] >> 7 & 7;
+				l += c[i] & 127;
+				++count;
+			}
+		}
+		if (count == 0)
+		{
+			return -1;
+		}
+		return (h + count / 2) / count << 10 | (sat + count / 2) / count << 7 | (l + count / 2) / count;
 	}
 
 	private static void bedFan(GpuIntBuffer vb, int xc, int yc, int zc, int cc, int nc,
@@ -909,7 +963,20 @@ class SceneUploader
 			: edge ? water.bedOffset(ex, ey, ox, oz) : Math.max(water.bedOffset(ex, ey, ox, oz), WaterMap.MIN_DEPTH);
 		int depth = corner ? water.depthLevel(cx, cy) : water.depthLevel(ex + Math.round(ox / 128f), ey + Math.round(oz / 128f));
 		GroundBlender.interpolateSlope(bedSlopes, ox / 128f, oz / 128f, slope);
-		vb.put22224(x - basex, y + sink, z - basez, 0, water.bedColor(ex, ey, (ex << 7) + ox, (ey << 7) + oz, depth));
+		// the land's color where land touches the vertex (corners on the bank, vertices shared with land faces),
+		// else that of the nearest corner, else the bed's (see uploadBed)
+		int off = RuneLightPlugin.SCENE_OFFSET << 7;
+		int color = shoreColor(x + off, y, z + off);
+		if (color < 0)
+		{
+			int nx = lx + (ox < 64 ? 0 : 128), nz = lz + (oz < 64 ? 0 : 128);
+			color = shoreColor(nx + off, bedTileHeights[ex + (ox < 64 ? 0 : 1)][ey + (oz < 64 ? 0 : 1)], nz + off);
+		}
+		if (color < 0)
+		{
+			color = water.bedColor(ex, ey, (ex << 7) + ox, (ey << 7) + oz, depth);
+		}
+		vb.put22224(x - basex, y + sink, z - basez, 0, color);
 		vb.put2222(WaterMap.BED_FLAG, 0, 0, VertexShading.encodeNormal(slope[0], -1, slope[1]));
 	}
 

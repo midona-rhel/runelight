@@ -64,7 +64,7 @@ class RuneLightOverlay extends OverlayPanel
 					line("  " + CpuTimer.NAMES[s], ms(c.getMs(s)), Color.WHITE);
 				}
 			}
-			if (config.shadows() && config.shadowCache())
+			if (config.shadows())
 			{
 				long now = System.currentTimeMillis();
 				if (now - lastBuildsMillis >= 1000)

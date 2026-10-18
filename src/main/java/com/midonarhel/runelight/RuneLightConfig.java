@@ -1211,30 +1211,6 @@ public interface RuneLightConfig extends Config
 		return Quality.HIGH;
 	}
 
-	@ConfigItem(
-		keyName = "shadowQuality",
-		name = "Soft shadow quality",
-		description = "Samples per pixel of the soft shadows. Lower is grainier at the edges of soft shadows.",
-		section = performanceSection,
-		position = 603
-	)
-	default Quality shadowQuality()
-	{
-		return Quality.HIGH;
-	}
-
-	@ConfigItem(
-		keyName = "shadowCache",
-		name = "Cache static shadows",
-		description = "Draw the scenery into the shadow map only when the sun has moved a little or you walked a few tiles, not every frame. Characters and animated objects still cast every frame.",
-		section = performanceSection,
-		position = 604
-	)
-	default boolean shadowCache()
-	{
-		return true;
-	}
-
 	@ConfigSection(
 		name = "Wind",
 		description = "Trees, bushes, grass and flowers sway with the wind",

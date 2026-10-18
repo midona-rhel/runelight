@@ -222,6 +222,15 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 	private int glAoProgram;
 	private int uniAoRadius;
 	private int uniAoSamples;
+	private int uniAoShadowsEnabled, uniAoLightProjRel, uniAoShadowRadius, uniAoShadowDepthRange, uniAoShadowMapSize,
+		uniAoCasterDir, uniAoSunIsCaster;
+	// the half resolution shadows the AO pass draws, for the composite
+	private static final int SCENE_SHADOW_UNIT = RuneLightPlugin.COMPOSITE_TEXTURE_UNIT + 18;
+	// Static scenery is drawn into a cached shadow map, redrawn only as the light turns or the player walks
+	// (renderStaticShadows). It looks the same as drawing it every frame, so it is no longer a setting.
+	private static final boolean SHADOW_CACHE = true;
+	// the game shows a black void around the scene (instances, player houses, dungeons): it stays dark
+	private boolean frameSkyVoid;
 	private final FrameUniforms aoFrame = new FrameUniforms();
 
 	private static final int AO_TEXTURE_UNIT = RuneLightPlugin.COMPOSITE_TEXTURE_UNIT + 3;
@@ -296,7 +305,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 	private int uniCompositeShadowRadius;
 	private int uniCompositeShadowDepthRange;
 	private int uniCompositeShadowMapSize;
-	private int uniCompositeShadowQuality;
+	private int uniCompositeSkyVoid;
 	private int uniCompositeUseFog;
 	private int uniCompositeFogDepth;
 	private int uniCompositeDrawDistance;
@@ -327,8 +336,9 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 	private final Water water = new Water();
 	private final float[] waterWind = new float[3];
 	private final GlobalIllumination globalIllumination = new GlobalIllumination();
-	// the probes and their column data for the AO pass, past the other units; the probe blend uses them before it
-	private static final int GI_PROBE_UNIT = RuneLightPlugin.COMPOSITE_TEXTURE_UNIT + 18;
+	// the probes and their column data for the AO pass (two units), past the other units; the probe blend uses them
+	// before it
+	private static final int GI_PROBE_UNIT = RuneLightPlugin.COMPOSITE_TEXTURE_UNIT + 20;
 	private final float[] giOvercast = new float[7];
 	// when the plugin started; the day cycle and sky animation count from here
 	private long startMillis = System.currentTimeMillis();
@@ -1042,6 +1052,18 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 
 		uniAoRadius = glGetUniformLocation(glAoProgram, "aoRadius");
 		uniAoSamples = glGetUniformLocation(glAoProgram, "aoSamples");
+		uniAoShadowsEnabled = glGetUniformLocation(glAoProgram, "shadowsEnabled");
+		uniAoLightProjRel = glGetUniformLocation(glAoProgram, "lightProjRel");
+		uniAoShadowRadius = glGetUniformLocation(glAoProgram, "shadowRadius");
+		uniAoShadowDepthRange = glGetUniformLocation(glAoProgram, "shadowDepthRange");
+		uniAoShadowMapSize = glGetUniformLocation(glAoProgram, "shadowMapSize");
+		uniAoCasterDir = glGetUniformLocation(glAoProgram, "casterDir");
+		uniAoSunIsCaster = glGetUniformLocation(glAoProgram, "sunIsCaster");
+		glUseProgram(glAoProgram);
+		glUniform1i(glGetUniformLocation(glAoProgram, "shadowRaw"), SHADOW_RAW_UNIT);
+		glUniform1i(glGetUniformLocation(glAoProgram, "shadowCompare"), SHADOW_COMPARE_UNIT);
+		glUniform1i(glGetUniformLocation(glAoProgram, "sceneMaterial"), MATERIAL_UNIT);
+		glUseProgram(0);
 		aoFrame.locate(glAoProgram);
 		bindSceneSamplers(glAoProgram);
 		globalIllumination.locateAo(glAoProgram, GI_PROBE_UNIT);
@@ -1065,7 +1087,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		uniCompositeShadowRadius = glGetUniformLocation(c, "shadowRadius");
 		uniCompositeShadowDepthRange = glGetUniformLocation(c, "shadowDepthRange");
 		uniCompositeShadowMapSize = glGetUniformLocation(c, "shadowMapSize");
-		uniCompositeShadowQuality = glGetUniformLocation(c, "shadowQuality");
+		uniCompositeSkyVoid = glGetUniformLocation(c, "skyVoid");
 		uniCompositeUseFog = glGetUniformLocation(c, "useFog");
 		uniCompositeFogDepth = glGetUniformLocation(c, "fogDepth");
 		uniCompositeDrawDistance = glGetUniformLocation(c, "drawDistance");
@@ -1073,7 +1095,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		uniCompositeExpandedChunks = glGetUniformLocation(c, "expandedMapLoadingChunks");
 		uniCompositeClientSkyColor = glGetUniformLocation(c, "clientSkyColor");
 		glUseProgram(c);
-		glUniform1i(glGetUniformLocation(c, "shadowRaw"), SHADOW_RAW_UNIT);
+		glUniform1i(glGetUniformLocation(c, "sceneShadow"), SCENE_SHADOW_UNIT);
 		glUniform1i(glGetUniformLocation(c, "shadowCompare"), SHADOW_COMPARE_UNIT);
 		glUniform1i(glGetUniformLocation(c, "lightData"), LIGHT_DATA_UNIT);
 		glUniform1i(glGetUniformLocation(c, "clusterData"), CLUSTER_DATA_UNIT);
@@ -1594,7 +1616,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		glUniform1i(uniUseFog, fogDepth > 0 ? 1 : 0);
 		glUniform1i(uniAlphaPass, 0);
 		glUniform1i(uniSceneOutdoors, frameOutdoors ? 1 : 0);
-		glUniform1i(uniSceneProceduralSky, config.proceduralSky() && !frameHasSkybox ? 1 : 0);
+		glUniform1i(uniSceneProceduralSky, proceduralSky() ? 1 : 0);
 		glUniform3fv(uniSceneCasterDir, dayCycle.casterDir);
 		glUniform1i(uniSceneSunIsCaster, dayCycle.sunIsCaster ? 1 : 0);
 		glUniform1f(uniSceneSunAltitude, dayCycle.sunAltitude);
@@ -1664,13 +1686,14 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		Model skybox = scene.getSkybox();
 		if (skybox == null)
 		{
-			glClearColor((sky >> 16 & 0xFF) / 255f, (sky >> 8 & 0xFF) / 255f, (sky & 0xFF) / 255f, 1f);
+			// alpha 0: geometry writes 1, so the resolved alpha is how much of each pixel it covers (composite)
+			glClearColor((sky >> 16 & 0xFF) / 255f, (sky >> 8 & 0xFF) / 255f, (sky & 0xFF) / 255f, 0f);
 			glClearDepth(0d);
 			glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 			return;
 		}
 
-		glClearColor(0f, 0f, 0f, 1f);
+		glClearColor(0f, 0f, 0f, 0f);
 		glClearDepth(0d);
 		glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
@@ -1742,6 +1765,12 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		frameCameraZ = cameraZ;
 		frameSkyColor = client.getSkyboxColor();
 		frameHasSkybox = scene.getSkybox() != null;
+		{
+			// the game's own sky color is black where nothing exists around the scene; areas may still call it
+			// open sky (a player house has daylight)
+			int r = frameSkyColor >> 16 & 0xFF, g = frameSkyColor >> 8 & 0xFF, b = frameSkyColor & 0xFF;
+			frameSkyVoid = !frameHasSkybox && r + g + b <= 24;
+		}
 		frameFogDepth = config.fogDepth();
 		frameDrawDistance = getDrawDistance() * Perspective.LOCAL_TILE_SIZE;
 
@@ -1803,6 +1832,12 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		// the client asks for the top level only, in its zone indices (as drawZoneOpaque gets them)
 		int offset = SCENE_OFFSET >> 3;
 		return edgeFade.zoneVisible((zx - offset) << 10, (zz - offset) << 10, minY, maxY);
+	}
+
+	/** Whether the composite draws the procedural sky: not over the game's own skybox, nor in a void. */
+	private boolean proceduralSky()
+	{
+		return config.proceduralSky() && !frameHasSkybox && !frameSkyVoid;
 	}
 
 	private void updateWeather(float cameraX, float cameraY, float cameraZ)
@@ -1905,7 +1940,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 
 		float radius = config.shadowDistance() * Perspective.LOCAL_TILE_SIZE;
 		float depthRange = radius + 4096;
-		final boolean cache = config.shadowCache();
+		final boolean cache = SHADOW_CACHE;
 		if (!cache)
 		{
 			shadowMap.freeCache();
@@ -1994,7 +2029,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 	// The light may turn until the shadow of a caster this tall (world units) has moved this many texels, which
 	// depends on how low the light is: shadows lengthen fast near the horizon.
 	private static final float SHADOW_CACHE_HEIGHT = 512;
-	private static final float SHADOW_CACHE_TEXELS = 0.5f;
+	private static final float SHADOW_CACHE_TEXELS = 1.0f;
 
 	private boolean shadowStaticDirty;
 	private int[] shadowBuildZones = new int[64];
@@ -2174,7 +2209,8 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		glUniform3f(uniCompositeCameraPos, frameCameraX, frameCameraY, frameCameraZ);
 		glUniform1f(uniCompositeTime, (System.currentTimeMillis() - startMillis) / 1000f);
 		glUniform1i(uniCompositeOutdoors, frameOutdoors ? 1 : 0);
-		glUniform1i(uniCompositeProceduralSky, config.proceduralSky() && !frameHasSkybox ? 1 : 0);
+		glUniform1i(uniCompositeProceduralSky, proceduralSky() ? 1 : 0);
+		glUniform1i(uniCompositeSkyVoid, frameSkyVoid ? 1 : 0);
 		glUniform1i(uniCompositeLightingEnabled, 1);
 		glUniform3fv(uniCompositeSunDir, dayCycle.sunDir);
 		glUniform3fv(uniCompositeMoonDir, dayCycle.moonDir);
@@ -2193,7 +2229,6 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 			glUniform1f(uniCompositeShadowRadius, shadowMap.getRadius());
 			glUniform1f(uniCompositeShadowDepthRange, shadowMap.getDepthRange());
 			glUniform1f(uniCompositeShadowMapSize, shadowMap.getSize());
-			glUniform1i(uniCompositeShadowQuality, config.shadowQuality().ordinal());
 			shadowMap.bindForSampling(SHADOW_RAW_UNIT, SHADOW_COMPARE_UNIT);
 		}
 
@@ -2399,8 +2434,9 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		final boolean gi = prepareGlobalIllumination();
 
 		// the AO pass also writes the half resolution depth and normals that the fog's upsample reads, and the
-		// global illumination's light
-		if (ao || frameFog || gi)
+		// shadows and the global illumination's light
+		final boolean shadows = frameShadows && shadowMap.isInitialized();
+		if (ao || frameFog || shadows || gi)
 		{
 			gpuTimer.begin(GpuTimer.AO);
 			glBindFramebuffer(GL_FRAMEBUFFER, sceneTargets.getAoFbo());
@@ -2409,12 +2445,25 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 			setFrameUniforms(aoFrame);
 			glUniform1f(uniAoRadius, config.aoRadius() / 100f * Perspective.LOCAL_TILE_SIZE);
 			glUniform1i(uniAoSamples, ao ? config.aoQuality().pick(6, 8, 12) : 0);
+			glUniform1i(uniAoShadowsEnabled, shadows ? 1 : 0);
+			if (shadows)
+			{
+				glUniformMatrix4fv(uniAoLightProjRel, false, shadowMap.lightProjRel);
+				glUniform1f(uniAoShadowRadius, shadowMap.getRadius());
+				glUniform1f(uniAoShadowDepthRange, shadowMap.getDepthRange());
+				glUniform1f(uniAoShadowMapSize, shadowMap.getSize());
+				glUniform3fv(uniAoCasterDir, dayCycle.casterDir);
+				glUniform1i(uniAoSunIsCaster, dayCycle.sunIsCaster ? 1 : 0);
+				shadowMap.bindForSampling(SHADOW_RAW_UNIT, SHADOW_COMPARE_UNIT);
+				sceneTargets.bindMaterial(MATERIAL_UNIT);
+			}
 			Scene giScene = client.getTopLevelWorldView().getScene();
 			globalIllumination.bindAo(GI_PROBE_UNIT, frameCameraX, frameCameraY, frameCameraZ, giScene.getBaseX(),
 				giScene.getBaseY());
 			glDrawArrays(GL_TRIANGLES, 0, 3);
 			GlobalIllumination.unbind(GI_PROBE_UNIT);
 			sceneTargets.bindAo(AO_TEXTURE_UNIT);
+			sceneTargets.bindShadow(SCENE_SHADOW_UNIT);
 		}
 
 		updateClouds();
@@ -2442,11 +2491,11 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		if (frameFog)
 		{
 			gpuTimer.begin(GpuTimer.FOG);
-			boolean shadows = frameShadows && shadowMap.isInitialized();
 			volumetricFog.render(sceneTargets.getAoWidth(), sceneTargets.getAoHeight(), FOG_NOISE_UNIT, FOG_TEXTURE_UNIT,
 				frameViewProj, frameInvViewProj, frameViewport, glCapabilities.OpenGL45,
 				frameCameraX, frameCameraY, frameCameraZ, (System.currentTimeMillis() - startMillis) / 1000f,
-				frameOutdoors, config.proceduralSky() && !frameHasSkybox, frameSkyColor, dayCycle,
+				// in a void the sun doesn't light the fog: it would glow over the black around the scene
+				frameOutdoors && !frameSkyVoid, proceduralSky(), frameSkyColor, dayCycle,
 				shadows ? shadowMap : null, config.pointLights());
 			glUseProgram(glCompositeProgram);
 			gpuTimer.begin(GpuTimer.COMPOSITE);
@@ -2479,6 +2528,8 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		glBindVertexArray(0);
 		sceneTargets.unbindTextures(COMPOSITE_TEXTURE_UNIT);
 		glActiveTexture(GL_TEXTURE0 + AO_TEXTURE_UNIT);
+		glBindTexture(GL_TEXTURE_2D, 0);
+		glActiveTexture(GL_TEXTURE0 + SCENE_SHADOW_UNIT);
 		glBindTexture(GL_TEXTURE_2D, 0);
 		glActiveTexture(GL_TEXTURE0);
 		ShadowMap.unbind(SHADOW_RAW_UNIT, SHADOW_COMPARE_UNIT);

@@ -54,13 +54,12 @@ uniform float sunAltitude;  // degrees
 
 // shadows
 uniform int shadowsEnabled;
-uniform sampler2D shadowRaw;
+uniform sampler2D sceneShadow;  // half resolution, from the AO pass (shadow_pcss.glsl); the water samples the map
 uniform sampler2DShadow shadowCompare;
 uniform mat4 lightProjRel;  // camera-relative world -> light clip
 uniform float shadowRadius;      // half extent of the shadow map, world units
 uniform float shadowDepthRange;
 uniform float shadowMapSize;
-uniform int shadowQuality;  // 0 low, 1 medium, 2 high (Performance)
 
 // fog, same parameters as the vanilla GPU plugin
 uniform int useFog;
@@ -68,6 +67,9 @@ uniform int fogDepth;       // tiles
 uniform int drawDistance;   // world units
 uniform int expandedMapLoadingChunks;
 uniform vec3 clientSkyColor;
+// 1 where the game shows a black void around the scene (instances, player houses): it stays dark, whatever the
+// procedural sky and the area say
+uniform int skyVoid;
 
 // point lights, culled into clusters on the CPU (LightClusters.java)
 uniform int pointLightsEnabled;
@@ -77,15 +79,17 @@ uniform usamplerBuffer clusterData;  // per cluster: count, then light indices
 out vec4 FragColor;
 
 // ---------------------------------------------------------------------------------------------------------------
-// Ambient occlusion: 4x4 depth- and normal-aware upsample of the half resolution AO, which also blurs its noise.
-// The volumetric fog's upsample uses the same taps, so it is done in the same loop when the fog is on.
+// Ambient occlusion and shadows: 4x4 depth- and normal-aware upsample of the half resolution pass, which also
+// averages away its ordered noise. The volumetric fog's upsample uses the same taps, so it is done in the same loop
+// when the fog is on.
 
-float upsampleAoFog(ivec2 px, float z, vec3 n, out vec4 fog, out vec4 gi) {
+float upsampleAoFog(ivec2 px, float z, vec3 n, out vec4 fog, out float shadow, out vec4 gi) {
   vec2 hp = (vec2(px) + 0.5) * 0.5 - 0.5;
   ivec2 base = ivec2(floor(hp)) - 1;
   ivec2 maxAo = textureSize(sceneAo, 0) - 1;
   bool withFog = volumetricFog == 1;
   float sum = 0.0;
+  float shadowSum = 0.0;
   float wsum = 0.0;
   vec4 giSum = vec4(0.0);
   vec4 fogSum = vec4(0.0);
@@ -112,12 +116,14 @@ float upsampleAoFog(ivec2 px, float z, vec3 n, out vec4 fog, out vec4 gi) {
       w *= nd * nd;
 
       sum += halfAo(g) * w;
+      shadowSum += texelFetch(sceneShadow, q, 0).r * w;
       giSum += halfGi(g) * w;
       wsum += w;
     }
   }
   fog = !withFog ? vec4(0.0, 0.0, 0.0, 1.0)
     : fogWsum > 1e-6 ? fogSum / fogWsum : texelFetch(sceneFog, clamp(ivec2(hp + 0.5), ivec2(0), maxAo), 0);
+  shadow = wsum > 1e-4 ? shadowSum / wsum : texelFetch(sceneShadow, clamp(ivec2(hp + 0.5), ivec2(0), maxAo), 0).r;
   gi = wsum > 1e-4 ? giSum / wsum : vec4(0.0);
   return wsum > 1e-4 ? sum / wsum : 1.0;
 }
@@ -136,82 +142,6 @@ vec3 giAmbient(vec3 ambient, vec4 gi) {
 }
 
 // ---------------------------------------------------------------------------------------------------------------
-// Shadows: PCSS. Blocker search for the average occluder depth, then a PCF kernel sized by the distance between
-// occluder and receiver, so contact shadows are sharp and long ones soften.
-
-const vec2 POISSON[16] = vec2[](
-  vec2(-0.94201624, -0.39906216), vec2(0.94558609, -0.76890725),
-  vec2(-0.09418410, -0.92938870), vec2(0.34495938, 0.29387760),
-  vec2(-0.91588581, 0.45771432), vec2(-0.81544232, -0.87912464),
-  vec2(-0.38277543, 0.27676845), vec2(0.97484398, 0.75648379),
-  vec2(0.44323325, -0.97511554), vec2(0.53742981, -0.47373420),
-  vec2(-0.26496911, -0.41893023), vec2(0.79197514, 0.19090188),
-  vec2(-0.24188840, 0.99706507), vec2(-0.81409955, 0.91437590),
-  vec2(0.19984126, 0.78641367), vec2(0.14383161, -0.14100790));
-
-// world units of penumbra per world unit between occluder and receiver: the light's apparent size
-#define SUN_SOFTNESS 0.08
-#define MOON_SOFTNESS 0.14
-#define BLOCKER_SEARCH_WORLD 160.0
-#define MAX_PENUMBRA_WORLD 112.0
-
-float ign(vec2 p) {
-  return fract(52.9829189 * fract(dot(p, vec2(0.06711056, 0.00583715))));
-}
-
-float shadowFactor(vec3 p, vec3 n, float noise) {
-  float texelWorld = 2.0 * shadowRadius / shadowMapSize;
-  // normal offset keeps surfaces from shadowing themselves
-  vec4 lc = lightProjRel * vec4(p + n * texelWorld * 1.5, 1.0);
-  vec2 uv = lc.xy * 0.5 + 0.5;
-  float z = depthZeroToOne == 1 ? lc.z : lc.z * 0.5 + 0.5;
-  if (any(lessThan(uv, vec2(0.0))) || any(greaterThan(uv, vec2(1.0))) || z >= 1.0) {
-    return 1.0;
-  }
-  float edgeFade = smoothstep(0.0, 0.08, min(min(uv.x, uv.y), min(1.0 - uv.x, 1.0 - uv.y)));
-
-  float a = noise * TAU;
-  mat2 rot = mat2(cos(a), sin(a), -sin(a), cos(a));
-  float worldToUv = 1.0 / (2.0 * shadowRadius);
-  float bias = 2.0 * texelWorld / (2.0 * shadowDepthRange);
-
-  int searchTaps = shadowQuality == 2 ? 12 : shadowQuality == 1 ? 8 : 6;
-  int filterTaps = shadowQuality == 2 ? 16 : shadowQuality == 1 ? 12 : 8;
-  float blockerSum = 0.0;
-  float blockers = 0.0;
-  for (int i = 0; i < searchTaps; ++i) {
-    float d = texture(shadowRaw, uv + rot * POISSON[i] * (BLOCKER_SEARCH_WORLD * worldToUv)).r;
-    if (d < z - bias) {
-      blockerSum += d;
-      blockers += 1.0;
-    }
-  }
-  if (blockers == 0.0) {
-    return 1.0;
-  }
-  // below high quality, a search that only finds blockers is taken as full shadow; on high the filter still runs
-  // for the small gaps (leaves) the search may have missed
-  if (shadowQuality < 2 && blockers == float(searchTaps)) {
-    return mix(1.0, 0.0, edgeFade);
-  }
-
-  float gapWorld = (z - blockerSum / blockers) * 2.0 * shadowDepthRange;
-  float softness = sunIsCaster == 1 ? SUN_SOFTNESS : MOON_SOFTNESS;
-  float penumbraWorld = clamp(gapWorld * softness, texelWorld, MAX_PENUMBRA_WORLD);
-  float penumbra = penumbraWorld * worldToUv;
-  // a kernel within a texel or two of hardware filtered compares needs no more than half the taps
-  if (penumbraWorld < texelWorld * 2.0) {
-    filterTaps = max(filterTaps / 2, 4);
-  }
-
-  float lit = 0.0;
-  for (int i = 0; i < filterTaps; ++i) {
-    lit += texture(shadowCompare, vec3(uv + rot * POISSON[i] * penumbra, z - bias));
-  }
-  return mix(1.0, lit / float(filterTaps), edgeFade);
-}
-
-// ---------------------------------------------------------------------------------------------------------------
 // Distance fog by the game's fog depth setting, from the same edge as the edge fade, as in vert.glsl
 
 float fogAmount(vec3 world) {
@@ -224,14 +154,14 @@ float fogAmount(vec3 world) {
 // The sky this pixel would show if nothing stood in front of it, in sRGB: what the world melts into at its edge.
 // steps: cloud march steps, fewer behind the scenery, where it shows only through the fade.
 vec3 skyBehind(vec2 px, vec3 dir, vec3 fogColor, bool sunAndSky, int steps) {
-  if (sunAndSky && proceduralSky == 1) {
+  if (sunAndSky && skyVoid == 0 && proceduralSky == 1) {
     vec3 sky = atmosphereSkySteps(px, dir, cameraPos, sunDir, moonDir, sunAltitude, time, steps);
     sky = lightningOverSky(sky, dir, cameraPos);
     return envSky(sky, fogColor, -dir.y);
   }
-  // what the sky branch of main() leaves there: the area's fog color underground, else the game's clear color
-  // (with the game's own skybox, the color its fog has)
-  return envCave == 1 && proceduralSky == 1 ? fogColor : clientSkyColor;
+  // what the sky branch of main() leaves there: the fog color in a void or underground, else the game's clear
+  // color (with the game's own skybox, the color its fog has)
+  return skyVoid == 1 || (envCave == 1 && proceduralSky == 1) ? fogColor : clientSkyColor;
 }
 
 // ---------------------------------------------------------------------------------------------------------------
@@ -297,19 +227,43 @@ vec4 overTransparent(ivec2 px, vec4 base) {
 
 // ---------------------------------------------------------------------------------------------------------------
 
+// The opaque target's alpha is how much of the pixel geometry covers (the MSAA samples resolved; SceneTargets
+// clears it to 0): at silhouettes against the sky the color, normal and material hold that share of the
+// geometry's, the rest is the clear values. Undone here, so the geometry is lit as itself and blended over the sky
+// by its coverage, and edges stay as smooth as the antialiasing made them. The resolved depth is one sample's, so
+// an edge pixel whose depth missed the geometry borrows a neighbor's.
+float borrowDepth(ivec2 px) {
+  float best = 0.0;
+  bool found = false;
+  ivec2 last = textureSize(sceneDepth, 0) - 1;
+  for (int y = -1; y <= 1; ++y) {
+    for (int x = -1; x <= 1; ++x) {
+      float q = texelFetch(sceneDepth, clamp(px + ivec2(x, y), ivec2(0), last), 0).r;
+      // reverse-z: the nearest has the largest depth
+      if (!isSky(q) && (!found || q > best)) {
+        best = q;
+        found = true;
+      }
+    }
+  }
+  return found ? best : -1.0;
+}
+
 void main() {
   ivec2 px = ivec2(gl_FragCoord.xy);
   vec4 color = texelFetch(sceneColor, px, 0);
   float d = texelFetch(sceneDepth, px, 0).r;
-  bool sky = isSky(d);
   bool inside = inViewport(px);
   bool sunAndSky = outdoors == 1;
-  vec3 fogColor = envFog(sunAndSky && proceduralSky == 1 ? skyHorizon(sunAltitude) : clientSkyColor, sunAndSky,
+  // the procedural sky shows; a black void or a cave shows the fog color instead
+  bool openSky = sunAndSky && skyVoid == 0 && proceduralSky == 1;
+  bool voidSky = skyVoid == 1 || (envCave == 1 && proceduralSky == 1);
+  vec3 fogColor = envFog(openSky ? skyHorizon(sunAltitude) : clientSkyColor, sunAndSky && skyVoid == 0,
     sunAltitude);
 
   if (debugView == DEBUG_DEPTH) {
     // log scale from the near plane out to ~100 tiles
-    float v = sky ? 1.0 : clamp(log(viewDepth(d) / NEAR) / log(12800.0 / NEAR), 0.0, 1.0);
+    float v = isSky(d) ? 1.0 : clamp(log(viewDepth(d) / NEAR) / log(12800.0 / NEAR), 0.0, 1.0);
     FragColor = vec4(vec3(v), 1.0);
     return;
   }
@@ -319,33 +273,53 @@ void main() {
     return;
   }
 
-  if (sky) {
-    if (inside && sunAndSky && proceduralSky == 1) {
-      // a point on the near plane gives the view ray; the camera is at the origin of camera-relative space
-      vec3 dir = normalize(reconstructPosition(vec2(px) + 0.5, 1.0));
-      color.rgb = skyBehind(vec2(px) + 0.5, dir, fogColor, true, CLOUD_STEPS);
-    } else if (inside && envCave == 1 && proceduralSky == 1) {
-      // underground the void behind the scene takes the area's fog color, so fogged walls fade into it
-      color.rgb = fogColor;
+  // where the composite draws the sky itself, geometry is blended over it by coverage
+  bool replaceSky = inside && (openSky || voidSky);
+  float cover = replaceSky ? clamp(color.a, 0.0, 1.0) : 1.0;
+  if (isSky(d) && replaceSky && cover > 0.004) {
+    d = borrowDepth(px);
+    if (d < 0.0) {
+      cover = 0.0;
+      d = 0.0;
     }
-    FragColor = overTransparent(px, color);
-    FragColor.rgb = applyVolumetricFog(px, FragColor.rgb, d);
+  }
+  vec3 behind = vec3(0.0);
+  if (replaceSky && (cover < 0.996 || isSky(d))) {
+    // a point on the near plane gives the view ray; the camera is at the origin of camera-relative space
+    vec3 dir = normalize(reconstructPosition(vec2(px) + 0.5, 1.0));
+    behind = openSky ? skyBehind(vec2(px) + 0.5, dir, fogColor, true, CLOUD_STEPS) : fogColor;
+  }
+
+  if (isSky(d) || cover <= 0.004) {
+    if (replaceSky) {
+      color.rgb = behind;
+    }
+    // the color target's alpha is coverage; the window wants opaque
+    FragColor = overTransparent(px, vec4(color.rgb, 1.0));
+    // 0 is sky in both depth conventions
+    FragColor.rgb = applyVolumetricFog(px, FragColor.rgb, 0.0);
     return;
   }
 
-  vec3 n = decodeNormal(texelFetch(sceneNormal, px, 0).rgb);
+  // the geometry's own share of an edge pixel
+  float inv = 1.0 / max(cover, 1.0 / 255.0);
+  if (cover < 0.996) {
+    color.rgb = clamp((color.rgb - (1.0 - cover) * clientSkyColor) * inv, 0.0, 1.0);
+  }
+  vec3 n = decodeNormal(cover < 0.996 ? texelFetch(sceneNormal, px, 0).rgb * inv : texelFetch(sceneNormal, px, 0).rgb);
   vec3 p = reconstructPosition(vec2(px) + 0.5, d);
-  vec3 material = texelFetch(sceneMaterial, px, 0).rgb;
+  vec3 material = texelFetch(sceneMaterial, px, 0).rgb * (cover < 0.996 ? inv : 1.0);
   float emissive = material.r;
   float transmissive = material.g;
 
   float ao = 1.0;
+  float halfShadow = 1.0;
   vec4 fog;
   vec4 gi = vec4(0.0);
   vec3 indirect = vec3(0.0);
   bool fogDone = false;
-  if ((aoEnabled == 1 || giWeight > 0.0) && inside) {
-    ao = upsampleAoFog(px, viewDepth(d), n, fog, gi);
+  if ((aoEnabled == 1 || shadowsEnabled == 1 || volumetricFog == 1 || giWeight > 0.0) && inside) {
+    ao = upsampleAoFog(px, viewDepth(d), n, fog, halfShadow, gi);
     ao = aoEnabled == 1 ? clamp(1.0 - (1.0 - ao) * aoStrength, 0.0, 1.0) : 1.0;
     fogDone = volumetricFog == 1;
   }
@@ -356,9 +330,8 @@ void main() {
     float ndl = dot(n, casterDir);
     // faces turned away from the light get none of it, so their shadow only matters to water and the debug view
     bool needShadow = ndl > 0.0 || transmissive > 0.0 || material.b >= 0.25 || debugView == DEBUG_SHADOWS;
-    if (shadowsEnabled == 1 && emissive < 1.0 && needShadow) {
-      // a leaf lit from behind looks up its shadow on the lit side, or it would shadow itself
-      shadow = shadowFactor(p, ndl < 0.0 && transmissive > 0.0 ? -n : n, ign(gl_FragCoord.xy));
+    if (shadowsEnabled == 1 && emissive < 1.0) {
+      shadow = halfShadow;
     }
     if (needShadow) {
       shadow *= cloudShadow(p + cameraPos, casterDir);
@@ -430,6 +403,8 @@ void main() {
   if (edge > 0.002) {
     lit = mix(lit, skyBehind(vec2(px) + 0.5, normalize(p), fogColor, sunAndSky, EDGE_SKY_STEPS), edge);
   }
-  FragColor = overTransparent(px, vec4(lit, color.a));
+  // over the sky by the geometry's coverage
+  lit = mix(behind, lit, cover);
+  FragColor = overTransparent(px, vec4(lit, 1.0));
   FragColor.rgb = fogDone ? applyFogSample(FragColor.rgb, fog) : applyVolumetricFog(px, FragColor.rgb, d);
 }
