@@ -6,6 +6,9 @@ import org.junit.Test;
 
 public class FogClimateTest
 {
+	private static final WeatherType CLEAR = WeatherTestData.type("CLEAR");
+	private static final WeatherType STORM = WeatherTestData.type("THUNDERSTORM");
+	private static final WeatherType FOG = WeatherTestData.type("FOG");
 	private static final String[] BIOMES = {"GRASSLAND", "FOREST", "SWAMP", "TROPICAL", "DESERT", "BARRENS", "ARCTIC",
 		"MOUNTAIN", "WILDERNESS"};
 
@@ -19,22 +22,22 @@ public class FogClimateTest
 	@Test
 	public void desertMorningHasNoMist()
 	{
-		float f = fog("DESERT", 6.5, WeatherType.CLEAR);
+		float f = fog("DESERT", 6.5, CLEAR);
 		assertTrue("desert dawn " + f, f < 0.08f);
 		// thinner than a clear midday elsewhere
-		assertTrue(f < fog("GRASSLAND", 12, WeatherType.CLEAR) * 0.5f);
+		assertTrue(f < fog("GRASSLAND", 12, CLEAR) * 0.5f);
 	}
 
 	@Test
 	public void swampMorningIsThick()
 	{
-		float f = fog("SWAMP", 6.5, WeatherType.CLEAR);
+		float f = fog("SWAMP", 6.5, CLEAR);
 		assertTrue("swamp dawn " + f, f > 1.0f);
 		// and lies low
 		float h = FogClimate.height(FogClimate.profile("SWAMP"), 6.5, 1, 0);
 		assertTrue("swamp dawn height " + h, h < 0.7f);
 		// burns off by late morning
-		assertTrue(fog("SWAMP", 11, WeatherType.CLEAR) < f * 0.3f);
+		assertTrue(fog("SWAMP", 11, CLEAR) < f * 0.3f);
 	}
 
 	@Test
@@ -42,7 +45,7 @@ public class FogClimateTest
 	{
 		for (String b : BIOMES)
 		{
-			float f = fog(b, 12.5, WeatherType.CLEAR);
+			float f = fog(b, 12.5, CLEAR);
 			assertTrue(b + " midday " + f, f <= 0.25f);
 		}
 	}
@@ -50,23 +53,23 @@ public class FogClimateTest
 	@Test
 	public void humidRegionsMistMoreAtDawnThanDryOnes()
 	{
-		float swamp = fog("SWAMP", 6.5, WeatherType.CLEAR);
-		float forest = fog("FOREST", 6.5, WeatherType.CLEAR);
-		float grass = fog("GRASSLAND", 6.5, WeatherType.CLEAR);
-		float barrens = fog("BARRENS", 6.5, WeatherType.CLEAR);
+		float swamp = fog("SWAMP", 6.5, CLEAR);
+		float forest = fog("FOREST", 6.5, CLEAR);
+		float grass = fog("GRASSLAND", 6.5, CLEAR);
+		float barrens = fog("BARRENS", 6.5, CLEAR);
 		assertTrue(swamp > forest && forest > grass && grass > barrens);
 		// dusk and night mist in the swamp, little on the grassland
-		assertTrue(fog("SWAMP", 20, WeatherType.CLEAR) > 2 * fog("GRASSLAND", 20, WeatherType.CLEAR));
-		assertTrue(fog("SWAMP", 2, WeatherType.CLEAR) > fog("SWAMP", 13, WeatherType.CLEAR) * 2);
+		assertTrue(fog("SWAMP", 20, CLEAR) > 2 * fog("GRASSLAND", 20, CLEAR));
+		assertTrue(fog("SWAMP", 2, CLEAR) > fog("SWAMP", 13, CLEAR) * 2);
 	}
 
 	@Test
 	public void windAndRainDisperseMist()
 	{
-		assertEquals(0, FogClimate.calm(WeatherType.STORM), 1e-6);
-		assertEquals(1, FogClimate.calm(WeatherType.CLEAR), 1e-6);
-		float stormDawn = FogClimate.density(FogClimate.profile("SWAMP"), 6.5, FogClimate.calm(WeatherType.STORM), 1);
-		float stormNoon = FogClimate.density(FogClimate.profile("SWAMP"), 12.5, FogClimate.calm(WeatherType.STORM), 1);
+		assertEquals(0, FogClimate.calm(STORM), 1e-6);
+		assertEquals(1, FogClimate.calm(CLEAR), 1e-6);
+		float stormDawn = FogClimate.density(FogClimate.profile("SWAMP"), 6.5, FogClimate.calm(STORM), 1);
+		float stormNoon = FogClimate.density(FogClimate.profile("SWAMP"), 12.5, FogClimate.calm(STORM), 1);
 		assertEquals(stormNoon, stormDawn, 1e-6);
 	}
 
@@ -83,7 +86,7 @@ public class FogClimateTest
 	@Test
 	public void foggyWeatherIsCappedSoftly()
 	{
-		float f = fog("SWAMP", 6.5, WeatherType.FOG);
+		float f = fog("SWAMP", 6.5, FOG);
 		assertTrue(f < FogClimate.FOG_CAP && f > FogClimate.FOG_KNEE);
 		// below the knee nothing changes
 		assertEquals(1.5f, FogClimate.total(1.5f, 1), 1e-6);

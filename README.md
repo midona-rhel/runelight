@@ -49,13 +49,27 @@ it slowly and grays the sky and softens the sun and moon everywhere through `wea
 (`weather_common.glsl`).
 
 Automatic weather (the default mode) picks a new weather per biome every third of a game day (8 game hours, 4
-minutes at the default day length): clear, partly cloudy, cloudy, fog, rain, storm, snow or blizzard, from each
-biome's odds as a Markov chain so consecutive weathers connect (`WeatherForecast.java`, odds and affinities at
-the top). Each weather is a set of targets in `WeatherType.java` (cover, rain, snow, wind, fog, area fog, distance
-fog, morning mist, storm) that `Weather.java` eases toward, so slot changes and walking into another biome blend
-over about a minute. Storms strike lightning (`Lightning.java`): the flash goes through `weatherOvercast.z`
-(`LIGHTNING_*` in `sky.glsl`), the bolt and cloud glow are in `lightning.glsl`. With GPU timings shown, the
-overlay lists the weather, region, next weather and minutes to it.
+minutes at the default day length) from about 25 types: clear, sunny, harsh sun, hazy, high thin clouds, partly
+cloudy, overcast, drizzle, rain, spring showers, summer rain, autumn rain, thunderstorm, tropical downpour, mist,
+fog, freezing fog, sleet, light snow, snowfall, heavy snow, blizzard, sandstorm, ash fall and gale. Each type is a
+row of `weather_types.json` (cloud cover and look, rain/snow amounts and drop/flake style, showers, wind and
+gustiness, fog and its tint, sun strength, haze, warmth and sky saturation, lightning, buildup rates, frost;
+fields and defaults in `WeatherType.java`) that `Weather.java` eases toward, so slot changes and walking into
+another biome blend over about a minute. The odds per biome and season are in `weather_climate.json`; seasons
+(spring, summer, autumn, winter) last "Days per season" game days each and blend into the next over the last
+quarter. Consecutive slots form a Markov chain whose transition weights come from how alike two types look
+(`WeatherForecast.java`), so clear skies cloud over before it storms. In the dev client both JSON files are read
+from `src/main/resources` and reloaded on save. The light changes go through `weatherLight` in `sky.glsl`
+(`HAZE_*`, `WARM_TINT`, `HARSH_SHADOW`). Storms strike lightning (`Lightning.java`): the flash goes through
+`weatherOvercast.z` (`LIGHTNING_*` in `sky.glsl`), the bolt and cloud glow are in `lightning.glsl`. "Force
+weather" holds any one type for testing. With GPU timings shown, the overlay lists the weather, season, wind,
+region and the next weather.
+
+The wind (`Wind.java`, `wind.glsl`) eases toward the weather's mean and gustiness, wanders slowly in direction, and
+sends gust fronts across the world with it, so a gust visibly passes over: drops slant harder and flakes swirl
+where one is. It drives the rain's slant, the snow's drift, the clouds and the water. Shaders that sway with it
+include `wind.glsl` (uniforms `windDir`, `windStrength`, `windGust`, `windTime`, `windFront`, `windGustiness`,
+and `windGustAt(worldXZ)`); `Wind.apply` sets them, on the scene and shadow programs every frame.
 
 Weather by region (`WeatherField.java`): every chunk of the loaded scene, expanded map loading included, takes
 the forecast for its own region's biome, eases toward it and builds up its own wet ground and snow cover. The

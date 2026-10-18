@@ -7,10 +7,13 @@
 #include "frame.glsl"
 #include "sky.glsl"
 #include "weather_common.glsl"
+#include "wind.glsl"
 
 uniform int dropCount;
 uniform vec3 windOffset;       // world units the wind has carried everything so far
-uniform float gust;            // 0-1: gusts make the flakes sway wider
+uniform float fallTime;        // seconds of fall at the weather's flake speed so far (it varies, so not time)
+uniform vec4 flakeStyle;       // the weather's flakes as multiples of the defaults: size, fall speed, sway, (wind drift)
+uniform vec3 flakeColor;       // sRGB: white snow, tan dust, gray ash
 uniform vec2 particleAmount;   // snow at the player, and the most anywhere in the box that the flake count follows
 
 #define BOX_HALF 3584.0
@@ -46,16 +49,15 @@ void main() {
   vec3 r = hash31(float(id) * 3.17 + 11.0);
 
   float speed = FALL_SPEED * (0.7 + 0.6 * r.x);
-  vec3 drift = vec3(windOffset.x, speed * time, windOffset.z);
-  // two sways at different rates so the flakes don't move in lockstep
-  float ph = r.y * 6.2832;
-  float sway = SWAY * (1.0 + GUST_SWAY * gust);
-  drift.x += sin(time * (0.6 + 0.5 * r.z) + ph) * sway;
-  drift.z += cos(time * (0.5 + 0.4 * r.x) + ph * 1.7) * sway;
-
+  vec3 drift = vec3(windOffset.x, speed * fallTime, windOffset.z);
   vec3 size = vec3(BOX_HALF * 2.0, BOX_ABOVE + BOX_BELOW, BOX_HALF * 2.0);
   vec3 center = focusPos + vec3(0.0, (BOX_BELOW - BOX_ABOVE) * 0.5, 0.0);
   vec3 world = wrapAround(h * size + drift, center, size);
+  // two sways at different rates so the flakes don't move in lockstep, wider where a gust is passing
+  float ph = r.y * 6.2832;
+  float sway = SWAY * flakeStyle.z * (1.0 + GUST_SWAY * windGustAt(world.xz));
+  world.x += sin(time * (0.6 + 0.5 * r.z) + ph) * sway;
+  world.z += cos(time * (0.5 + 0.4 * r.x) + ph * 1.7) * sway;
   // the share of the flakes that fall here: the box can reach from a clear region into a snowy one
   float share = clamp((particleAmount.x + weatherFieldDelta(world.xz).b) / max(particleAmount.y, 1e-3), 0.0, 1.0);
   if (share <= 0.0) {
@@ -76,7 +78,7 @@ void main() {
     gl_Position = CULLED;
     return;
   }
-  float radiusPx = FLAKE_SIZE * (0.6 + 0.8 * r.z) * pixelScale() / c.w;
+  float radiusPx = FLAKE_SIZE * flakeStyle.x * (0.6 + 0.8 * r.z) * pixelScale() / c.w;
   float drawn = max(radiusPx, MIN_PIXELS);
   gl_Position = c + vec4(corner * drawn / (vec2(sceneViewport.zw) * 0.5) * c.w, 0.0, 0.0);
 
@@ -92,5 +94,5 @@ void main() {
   fAlpha = FLAKE_ALPHA * amount * share * edge * near * smoothstep(0.0, 16.0, above) * sub * sub * added * (1.0 + LIT_ALPHA * lit);
   fQuad = corner;
   fViewZ = c.w;
-  fColor = weatherParticleColor(vec3(0.95, 0.97, 1.0), points);
+  fColor = weatherParticleColor(flakeColor, points);
 }

@@ -15,6 +15,7 @@ uniform vec2 farAmount;        // rain, snow at the player (Weather's amounts wi
 uniform vec2 farNear;          // half widths of the rain and snow particle boxes around the player, world units
 uniform float farReach;        // world units from the camera the veil reaches
 uniform vec3 windOffset;       // world units the wind has carried everything so far
+uniform vec3 flakeColor;       // the snow pass's flake color: white snow, tan dust, gray ash (sRGB)
 
 out vec4 FragColor;
 
@@ -31,7 +32,8 @@ out vec4 FragColor;
 #define FAR_CEILING 9000.0
 #define FAR_CEILING_FADE 0.6
 #define FAR_RAIN_COLOR vec3(0.60, 0.64, 0.72)
-#define FAR_SNOW_COLOR vec3(0.90, 0.92, 0.96)
+// the snow veil is the flakes' color, a little dimmer
+#define FAR_SNOW_SHADE 0.95
 // curtains: world units per blob of the noise that breaks the veil up, and the band of it from thin to thick
 #define FAR_SHAFT_SCALE 2500.0
 #define FAR_SHAFT_LOW 0.3
@@ -158,6 +160,6 @@ void main() {
 
   float a = 1.0 - (1.0 - aRain) * (1.0 - aSnow);
   vec3 color = (weatherParticleColor(FAR_RAIN_COLOR, vec3(0.0)) * aRain
-    + weatherParticleColor(FAR_SNOW_COLOR, vec3(0.0)) * aSnow) / max(aRain + aSnow, 1e-4);
+    + weatherParticleColor(flakeColor * FAR_SNOW_SHADE, vec3(0.0)) * aSnow) / max(aRain + aSnow, 1e-4);
   FragColor = vec4(color, min(a, FAR_MAX_ALPHA));
 }

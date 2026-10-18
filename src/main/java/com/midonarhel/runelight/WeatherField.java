@@ -32,6 +32,8 @@ final class WeatherField
 
 	// channels of the eased state
 	static final int COVER = 0, RAIN = 1, SNOW = 2, FOG = 3, WET = 4, SNOW_COVER = 5, CHANNELS = 6;
+	// targets past the channels: the type's buildup rates and frost (not eased, not uploaded)
+	static final int WET_RATE = CHANNELS, SNOW_RATE = CHANNELS + 1, FROST = CHANNELS + 2, TARGETS = CHANNELS + 3;
 
 	// biome name of cells without a sky
 	static final String NO_SKY = "CAVE";
@@ -51,7 +53,7 @@ final class WeatherField
 	private WeatherType[] types = new WeatherType[0];
 	// [channel][cell], cell = z * sizeX + x
 	private float[][] state = new float[CHANNELS][0];
-	private final float[] target = new float[CHANNELS];
+	private final float[] target = new float[TARGETS];
 	// this update's targets and weather per biome
 	private final Map<String, float[]> byBiome = new HashMap<>();
 	private final Map<String, WeatherType> typeByBiome = new HashMap<>();
@@ -160,19 +162,20 @@ final class WeatherField
 				if (t == null)
 				{
 					WeatherType type = typeFor.apply(b);
-					t = new float[CHANNELS];
+					t = new float[TARGETS];
 					targets(type, b, scale, climate, hour, t);
 					byBiome.put(key, t);
 					typeByBiome.put(key, type);
 				}
 				types[i] = typeByBiome.get(key);
-				System.arraycopy(t, 0, target, 0, FOG + 1);
+				System.arraycopy(t, 0, target, 0, TARGETS);
 			}
 			else
 			{
 				types[i] = null;
-				target[COVER] = target[RAIN] = target[SNOW] = 0;
-				target[FOG] = WeatherType.CLEAR.fog;
+				target[COVER] = target[RAIN] = target[SNOW] = target[FROST] = 0;
+				target[FOG] = WeatherType.clear().fog;
+				target[WET_RATE] = target[SNOW_RATE] = 1;
 			}
 			if (snap || !hasState[i])
 			{
@@ -181,7 +184,8 @@ final class WeatherField
 					state[c][i] = target[c];
 				}
 				state[WET][i] = target[RAIN] > 0 ? 1 : snap && gradual ? state[WET][i] : 0;
-				state[SNOW_COVER][i] = target[SNOW] > 0 ? 1 : snap && gradual ? state[SNOW_COVER][i] : 0;
+				float kept = snap && gradual ? state[SNOW_COVER][i] : 0;
+				state[SNOW_COVER][i] = target[SNOW] > 0 && target[SNOW_RATE] > 0 ? 1 : Math.max(kept, target[FROST]);
 				hasState[i] = true;
 			}
 			else
@@ -195,16 +199,18 @@ final class WeatherField
 	}
 
 	/**
-	 * A cell's targets for a weather, as Weather.update sets them for the player in automatic mode.
+	 * A cell's targets for a weather, as Weather.update sets them for the player in automatic mode, with showers
+	 * as their average. {@code out} holds {@link #TARGETS}.
 	 */
 	static void targets(WeatherType type, String biome, float scale, boolean climate, double hour, float[] out)
 	{
-		float rain = type.rain * scale / Weather.DEFAULT_INTENSITY;
-		float snow = type.snow * scale / Weather.DEFAULT_INTENSITY;
+		float showers = 1 - type.showers * (1 - Weather.SHOWER_SHARE);
+		float rain = type.rain * scale / Weather.DEFAULT_INTENSITY * showers;
+		float snow = type.snow * scale / Weather.DEFAULT_INTENSITY * showers;
 		float cover = type.cover;
-		if (rain + snow > 0)
+		if (rain + snow > 0 && type.coverSwell > 0)
 		{
-			cover = Math.max(cover, Math.min(1, Weather.COVER_BASE + Weather.COVER_SLOPE * (rain + snow)));
+			cover = Math.max(cover, type.coverSwell * Math.min(1, Weather.COVER_BASE + Weather.COVER_SLOPE * (rain + snow)));
 		}
 		float fog = type.fog;
 		if (climate)
@@ -220,9 +226,18 @@ final class WeatherField
 		out[RAIN] = rain;
 		out[SNOW] = snow;
 		out[FOG] = fog;
+		if (out.length >= TARGETS)
+		{
+			out[WET_RATE] = type.wetRate;
+			out[SNOW_RATE] = type.snowRate;
+			out[FROST] = type.frost;
+		}
 	}
 
-	/** One cell's easing, with Weather's time constants: clouds build before rain starts, wet ground dries. */
+	/**
+	 * One cell's easing, with Weather's time constants: clouds build before rain starts, wet ground dries, snow
+	 * cover builds at the type's rate (none for dust and ash) and frost holds a thin cover.
+	 */
 	static void step(float[][] s, int i, float[] t, float dt)
 	{
 		float tr = t[RAIN], ts = t[SNOW];
@@ -235,11 +250,26 @@ final class WeatherField
 		s[SNOW][i] = settle(Weather.ease(s[SNOW][i], ts, dt, Weather.PRECIP_SECONDS), ts);
 		s[FOG][i] = Weather.ease(s[FOG][i], t[FOG], dt, Weather.FOG_SECONDS);
 		float rain = s[RAIN][i], snow = s[SNOW][i];
-		s[WET][i] = rain > 0.02f ? Math.min(1, s[WET][i] + dt / Weather.WET_BUILD_SECONDS * Math.min(1, rain * 2))
+		float wetRate = t.length >= TARGETS ? t[WET_RATE] : 1;
+		float snowRate = t.length >= TARGETS ? t[SNOW_RATE] : 1;
+		float frost = t.length >= TARGETS ? t[FROST] : 0;
+		s[WET][i] = rain > 0.02f
+			? Math.min(1, s[WET][i] + dt / Weather.WET_BUILD_SECONDS * Math.min(1, rain * 2) * wetRate)
 			: Math.max(0, s[WET][i] - dt / Weather.DRY_SECONDS);
-		s[SNOW_COVER][i] = snow > 0.02f
-			? Math.min(1, s[SNOW_COVER][i] + dt / Weather.SNOW_BUILD_SECONDS * Math.min(1, snow * 2))
-			: Math.max(0, s[SNOW_COVER][i] - dt / Weather.MELT_SECONDS * (rain > 0.02f ? 3 : 1));
+		float c = s[SNOW_COVER][i];
+		if (snow > 0.02f && snowRate > 0.01f)
+		{
+			c = Math.min(1, c + dt / Weather.SNOW_BUILD_SECONDS * Math.min(1, snow * 2) * snowRate);
+		}
+		else if (c < frost - 0.01f)
+		{
+			c = Math.min(frost, c + dt / (Weather.SNOW_BUILD_SECONDS * 2));
+		}
+		else
+		{
+			c = Math.max(Math.min(frost, c), c - dt / Weather.MELT_SECONDS * (rain > 0.02f ? 3 : 1));
+		}
+		s[SNOW_COVER][i] = c;
 	}
 
 	private static float settle(float v, float target)

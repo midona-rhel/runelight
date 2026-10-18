@@ -1,0 +1,179 @@
+{
+	"CLEAR": {
+		"name": "Clear"
+	},
+	"SUNNY": {
+		"name": "Sunny",
+		"cover": 0.1, "wind": 0.3,
+		"distanceFog": 0.55, "morningMist": 0.6,
+		"sun": 1.08, "warmth": 0.1, "skySaturation": 0.1
+	},
+	"HARSH_SUN": {
+		"name": "Harsh sun",
+		"cover": 0.0, "wind": 0.12, "gustiness": 0.2,
+		"fog": 0.12, "areaFog": 0.3, "distanceFog": 0.7, "morningMist": 0.2,
+		"sun": 1.3, "haze": 0.12, "warmth": -0.15, "skySaturation": 0.2,
+		"persistence": 2.5
+	},
+	"HAZY": {
+		"name": "Hazy",
+		"cover": 0.15, "cloudWisp": 0.6, "cloudDark": -0.4, "wind": 0.15, "gustiness": 0.2,
+		"fog": 0.35, "areaFog": 0.6, "distanceFog": 1.0, "morningMist": 0.5,
+		"sun": 0.9, "haze": 0.55, "warmth": 0.25, "skySaturation": -0.3
+	},
+	"HIGH_CLOUDS": {
+		"name": "High thin clouds",
+		"cover": 0.45, "cloudWisp": 1.0, "cloudDark": -0.8, "wind": 0.35,
+		"distanceFog": 0.65, "morningMist": 0.7,
+		"sun": 0.92, "haze": 0.15
+	},
+	"PARTLY_CLOUDY": {
+		"name": "Partly cloudy",
+		"cover": 0.3, "wind": 0.35,
+		"fog": 0.2, "areaFog": 0.5, "distanceFog": 0.7
+	},
+	"OVERCAST": {
+		"name": "Overcast",
+		"cover": 0.8, "wind": 0.45,
+		"fog": 0.35, "areaFog": 0.7, "distanceFog": 0.85, "morningMist": 0.6,
+		"haze": 0.1, "skySaturation": -0.1
+	},
+	"DRIZZLE": {
+		"name": "Drizzle",
+		"cover": 0.85, "cloudDark": -0.2, "rain": 0.25,
+		"dropLength": 0.55, "dropSpeed": 0.7, "dropWidth": 0.7, "dropAlpha": 0.8, "slant": 0.6,
+		"wind": 0.3, "gustiness": 0.25,
+		"fog": 0.7, "areaFog": 0.8, "distanceFog": 1.0, "morningMist": 0.4,
+		"haze": 0.2, "wetRate": 0.6
+	},
+	"RAIN": {
+		"name": "Rain",
+		"cover": 0.85, "rain": 0.55,
+		"wind": 0.55, "gustiness": 0.5,
+		"fog": 0.9, "areaFog": 0.8, "distanceFog": 1.1, "morningMist": 0.2
+	},
+	"SPRING_SHOWERS": {
+		"name": "Spring showers",
+		"cover": 0.55, "cloudDark": -0.2, "rain": 0.45, "showers": 1.0,
+		"wind": 0.6, "gustiness": 0.6,
+		"fog": 0.5, "areaFog": 0.6, "distanceFog": 0.8, "morningMist": 0.4,
+		"sun": 1.05, "skySaturation": 0.1,
+		"persistence": 2.5
+	},
+	"SUMMER_RAIN": {
+		"name": "Summer rain",
+		"cover": 0.9, "rain": 0.85, "showers": 0.5,
+		"dropLength": 1.2, "dropSpeed": 1.1, "dropWidth": 1.2,
+		"wind": 0.4, "gustiness": 0.5,
+		"fog": 0.7, "areaFog": 0.7, "distanceFog": 1.0, "morningMist": 0.3,
+		"warmth": 0.15,
+		"persistence": 1.6
+	},
+	"AUTUMN_RAIN": {
+		"name": "Autumn rain",
+		"cover": 1.0, "cloudDark": 0.3, "rain": 0.6, "slant": 1.3,
+		"wind": 0.75, "gustiness": 0.7,
+		"fog": 1.0, "areaFog": 0.9, "distanceFog": 1.2, "morningMist": 0.2,
+		"warmth": -0.1, "skySaturation": -0.2
+	},
+	"THUNDERSTORM": {
+		"name": "Thunderstorm",
+		"cover": 1.0, "cloudDark": 0.4, "rain": 1.0,
+		"dropLength": 1.2, "dropWidth": 1.2, "slant": 1.3,
+		"wind": 1.0, "gustiness": 0.9,
+		"fog": 1.1, "areaFog": 0.9, "distanceFog": 1.25, "morningMist": 0.0,
+		"lightning": 1.0, "persistence": 1.2
+	},
+	"MONSOON": {
+		"name": "Tropical downpour",
+		"cover": 1.0, "cloudDark": 0.5, "rain": 1.3,
+		"dropLength": 1.4, "dropSpeed": 1.15, "dropWidth": 1.4, "dropAlpha": 1.15, "slant": 1.6,
+		"wind": 0.8, "gustiness": 0.8,
+		"fog": 1.4, "areaFog": 1.0, "distanceFog": 1.4, "morningMist": 0.0,
+		"warmth": 0.1, "lightning": 0.75, "wetRate": 2.0, "persistence": 1.4
+	},
+	"MIST": {
+		"name": "Mist",
+		"cover": 0.35, "cloudWisp": 0.4, "wind": 0.08, "gustiness": 0.1,
+		"fog": 1.4, "areaFog": 0.9, "distanceFog": 1.2, "morningMist": 0.7,
+		"sun": 0.9, "haze": 0.35, "skySaturation": -0.2,
+		"persistence": 2.0
+	},
+	"FOG": {
+		"name": "Fog",
+		"cover": 0.45, "wind": 0.05, "gustiness": 0.1,
+		"fog": 2.2, "areaFog": 1.0, "distanceFog": 1.5, "morningMist": 0.5,
+		"sun": 0.75, "haze": 0.5, "skySaturation": -0.3
+	},
+	"FREEZING_FOG": {
+		"name": "Freezing fog",
+		"cover": 0.55, "wind": 0.05, "gustiness": 0.1, "skyWhite": 1.0,
+		"fog": 2.0, "areaFog": 1.0, "distanceFog": 1.5, "morningMist": 0.5,
+		"fogTint": [0.95, 0.98, 1.05],
+		"sun": 0.7, "haze": 0.5, "warmth": -0.4, "skySaturation": -0.3,
+		"frost": 0.7
+	},
+	"SLEET": {
+		"name": "Sleet",
+		"cover": 0.9, "rain": 0.35, "snow": 0.3,
+		"dropLength": 0.7, "dropSpeed": 0.9, "flakeSize": 0.7, "flakeSpeed": 2.2, "flakeSway": 0.5,
+		"wind": 0.6, "gustiness": 0.6,
+		"fog": 0.9, "areaFog": 0.8, "distanceFog": 1.1, "morningMist": 0.2,
+		"warmth": -0.2, "snowRate": 0.3
+	},
+	"LIGHT_SNOW": {
+		"name": "Light snow",
+		"cover": 0.65, "cloudDark": -0.3, "snow": 0.25, "flakeSize": 0.8,
+		"wind": 0.25, "gustiness": 0.3,
+		"fog": 0.5, "areaFog": 0.7, "distanceFog": 0.9, "morningMist": 0.3,
+		"warmth": -0.15
+	},
+	"SNOW": {
+		"name": "Snowfall",
+		"cover": 0.8, "snow": 0.5,
+		"wind": 0.4, "gustiness": 0.4,
+		"fog": 0.8, "areaFog": 0.8, "distanceFog": 1.1, "morningMist": 0.2,
+		"warmth": -0.2
+	},
+	"HEAVY_SNOW": {
+		"name": "Heavy snow",
+		"cover": 0.95, "snow": 0.85, "flakeSize": 1.2,
+		"wind": 0.5, "gustiness": 0.5,
+		"fog": 1.2, "areaFog": 0.9, "distanceFog": 1.35, "morningMist": 0.1,
+		"warmth": -0.25, "snowRate": 1.5
+	},
+	"BLIZZARD": {
+		"name": "Blizzard",
+		"cover": 1.0, "snow": 1.0, "flakeSpeed": 1.4, "flakeWind": 2.0,
+		"wind": 1.0, "gustiness": 0.95,
+		"fog": 1.8, "areaFog": 1.0, "distanceFog": 1.6, "morningMist": 0.0,
+		"warmth": -0.3, "snowRate": 1.6, "persistence": 1.6
+	},
+	"SANDSTORM": {
+		"name": "Sandstorm",
+		"cover": 0.25, "cloudDark": -0.5, "snow": 0.45, "coverSwell": 0.0, "skyWhite": 0.0,
+		"flakeSize": 0.45, "flakeSpeed": 0.5, "flakeSway": 0.3, "flakeWind": 4.0, "flakeColor": [0.80, 0.66, 0.45],
+		"wind": 1.0, "gustiness": 0.9,
+		"fog": 1.6, "areaFog": 1.0, "distanceFog": 1.6, "morningMist": 0.0,
+		"fogTint": [1.3, 1.0, 0.65],
+		"sun": 0.65, "haze": 0.8, "warmth": 0.8, "skySaturation": -0.5,
+		"snowRate": 0.0, "persistence": 1.6
+	},
+	"ASH_FALL": {
+		"name": "Ash fall",
+		"cover": 0.75, "cloudDark": 0.6, "snow": 0.35, "coverSwell": 0.0, "skyWhite": 0.0,
+		"flakeSize": 0.8, "flakeSpeed": 0.55, "flakeColor": [0.33, 0.31, 0.30],
+		"wind": 0.2, "gustiness": 0.3,
+		"fog": 1.0, "areaFog": 0.9, "distanceFog": 1.3, "morningMist": 0.1,
+		"fogTint": [0.9, 0.82, 0.75],
+		"sun": 0.7, "haze": 0.4, "warmth": 0.45, "skySaturation": -0.4,
+		"snowRate": 0.0, "persistence": 1.6
+	},
+	"GALE": {
+		"name": "Gale",
+		"cover": 0.4, "wind": 1.0, "gustiness": 1.0,
+		"fog": 0.15, "areaFog": 0.3, "distanceFog": 0.6, "morningMist": 0.0,
+		"sun": 1.05, "skySaturation": 0.1,
+		"persistence": 1.6
+	}
+}

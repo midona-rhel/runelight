@@ -28,8 +28,8 @@ class VolumetricFog
 	float areaDensity = 1;
 	float areaHeight = 1;
 	final float[] areaTint = {1, 1, 1};
-	// sky.glsl's weatherOvercast for this frame (Weather.java): cover, rain or snow, lightning flash
-	final float[] overcast = {0, 0, 0};
+	// sky.glsl's weatherOvercast for this frame (Weather.java): cover, rain or snow, lightning flash; then weatherLight
+	final float[] overcast = {0, 0, 0, 0, 0, 0, 0};
 	// the weather field, for fog by region, and the weather's fog multiplier at the player it is relative to
 	WeatherField weatherField;
 	float weatherFog = 1;
@@ -51,7 +51,7 @@ class VolumetricFog
 	private int uniCameraPos, uniTime, uniOutdoors, uniProceduralSky, uniClientSkyColor, uniCasterDir,
 		uniSunIsCaster, uniSunAltitude, uniShadowsEnabled, uniLightProjRel, uniShadowDepthRange,
 		uniPointLights, uniDensity, uniHeight, uniGroundY, uniCenter, uniFade, uniNear, uniSunScatter, uniNoiseAmount, uniBankAmount,
-		uniTint, uniSteps, uniViewProj, uniInvViewProj, uniViewport, uniDepthZeroToOne, uniOvercast;
+		uniTint, uniSteps, uniViewProj, uniInvViewProj, uniViewport, uniDepthZeroToOne, uniOvercast, uniLight;
 
 	private int uniCompositeEnabled;
 
@@ -76,6 +76,7 @@ class VolumetricFog
 		uniSunIsCaster = glGetUniformLocation(program, "sunIsCaster");
 		uniSunAltitude = glGetUniformLocation(program, "sunAltitude");
 		uniOvercast = glGetUniformLocation(program, "weatherOvercast");
+		uniLight = glGetUniformLocation(program, "weatherLight");
 		uniShadowsEnabled = glGetUniformLocation(program, "shadowsEnabled");
 		uniLightProjRel = glGetUniformLocation(program, "lightProjRel");
 		uniShadowDepthRange = glGetUniformLocation(program, "shadowDepthRange");
@@ -214,6 +215,8 @@ class VolumetricFog
 		glUniform1i(uniSunIsCaster, day.sunIsCaster ? 1 : 0);
 		glUniform1f(uniSunAltitude, day.sunAltitude);
 		glUniform3f(uniOvercast, overcast[0], overcast[1], overcast[2]);
+		// sky.glsl's weatherLight follows weatherOvercast (Weather.getOvercast)
+		glUniform4f(uniLight, overcast[3], overcast[4], overcast[5], overcast[6]);
 		glUniform1i(uniShadowsEnabled, shadows != null ? 1 : 0);
 		if (shadows != null)
 		{

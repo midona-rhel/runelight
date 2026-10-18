@@ -54,6 +54,25 @@ vec3 skyHorizonClear(float alt) {
 // Lightning flashes (weatherOvercast.z) go through the same functions, so everything flashes together.
 
 uniform vec3 weatherOvercast;  // x: 0 clear .. 1 fully overcast, y: 0 rain .. 1 snow, z: lightning flash 0..1 (Weather.java)
+// The weather's light (WeatherType): x sun strength - 1 (harsh sun above 0), y haze 0..1 (a milky sky, softer
+// light and shadows), z warmth -1 cold .. 1 amber (dust, ash, heat), w sky saturation offset. All 0 is neutral.
+uniform vec4 weatherLight;
+
+// haze: share of the sky turned milky at full haze, its color, the sun and moon light it takes away, how much it
+// softens shadows and lifts the ambient light (scattered sunlight), and how much of the sun's disc it hides
+#define HAZE_SKY 0.6
+#define HAZE_COLOR vec3(0.88, 0.87, 0.84)
+#define HAZE_BRIGHTNESS 1.12
+#define HAZE_DIRECT 0.35
+#define HAZE_SHADOW 0.35
+#define HAZE_AMBIENT 0.25
+#define HAZE_DISC 0.6
+// warmth tints at +1 and -1, on the direct light fully and on the ambient and sky by WARMTH_FILL
+#define WARM_TINT vec3(1.12, 0.96, 0.76)
+#define COOL_TINT vec3(0.88, 0.96, 1.12)
+#define WARMTH_FILL 0.5
+// harsh sun: shadows this much deeper per unit of extra strength, for crisp contrast
+#define HARSH_SHADOW 0.6
 
 // a lightning flash: cool white, added to the sky (sRGB) and to the ambient light (linear) at a full flash
 #define LIGHTNING_COLOR vec3(0.80, 0.86, 1.00)
@@ -84,7 +103,23 @@ float overcastLuma(vec3 c) {
   return dot(c, vec3(0.2126, 0.7152, 0.0722));
 }
 
+vec3 weatherTint(float amount) {
+  float w = weatherLight.z * amount;
+  return w >= 0.0 ? mix(vec3(1.0), WARM_TINT, w) : mix(vec3(1.0), COOL_TINT, -w);
+}
+
+// The weather's sky before cloud cover: more or less saturated, milky in haze, tinted by warmth
+vec3 weatherSky(vec3 c) {
+  if (weatherLight == vec4(0.0))
+    return c;
+  float l = overcastLuma(c);
+  c = max(mix(vec3(l), c, 1.0 + weatherLight.w), 0.0);
+  vec3 haze = l * HAZE_BRIGHTNESS * HAZE_COLOR;
+  return mix(c, haze, weatherLight.y * HAZE_SKY) * weatherTint(WARMTH_FILL);
+}
+
 vec3 overcastSky(vec3 c, float alt) {
+  c = weatherSky(c);
   float o = weatherOvercast.x;
   if (o <= 0.0)
     return c;
@@ -96,6 +131,7 @@ vec3 overcastSky(vec3 c, float alt) {
 }
 
 vec3 overcastDirect(vec3 c) {
+  c *= (1.0 - HAZE_DIRECT * weatherLight.y) * weatherTint(1.0);
   float o = weatherOvercast.x;
   vec3 muted = mix(vec3(overcastLuma(c)), c, OVERCAST_DIRECT_SATURATION);
   return mix(c, muted * mix(OVERCAST_DIRECT_RAIN, OVERCAST_DIRECT_SNOW, weatherOvercast.y), o);
@@ -106,17 +142,19 @@ vec3 overcastAmbient(vec3 c) {
   float s = weatherOvercast.y;
   vec3 gray = overcastLuma(c) * mix(OVERCAST_RAIN_TINT, OVERCAST_SNOW_TINT, s);
   vec3 a = mix(c, gray, OVERCAST_AMBIENT_GRAY) * mix(OVERCAST_AMBIENT_RAIN, OVERCAST_AMBIENT_SNOW, s);
-  return mix(c, a, o);
+  return mix(c, a, o) * (1.0 + HAZE_AMBIENT * weatherLight.y) * weatherTint(WARMTH_FILL);
 }
 
 // sun or moon shadow term under cover
 float overcastShadow(float shadow) {
-  return mix(shadow, 1.0, weatherOvercast.x * OVERCAST_SHADOW);
+  float soft = clamp(weatherOvercast.x * OVERCAST_SHADOW + weatherLight.y * HAZE_SHADOW, 0.0, 1.0);
+  shadow = mix(shadow, 1.0, soft);
+  return clamp(shadow - max(weatherLight.x, 0.0) * HARSH_SHADOW * (1.0 - shadow), 0.0, 1.0);
 }
 
 // how much of the sun and moon discs, their glow and the stars still show
 float overcastClear() {
-  return 1.0 - smoothstep(0.15, 0.85, weatherOvercast.x);
+  return (1.0 - smoothstep(0.15, 0.85, weatherOvercast.x)) * (1.0 - HAZE_DISC * weatherLight.y);
 }
 
 vec3 skyZenith(float alt) {
@@ -145,7 +183,8 @@ vec3 linearToSrgb(vec3 c) {
 vec3 sunLight(float alt) {
   vec3 warm = vec3(1.00, 0.42, 0.16);
   vec3 noon = vec3(1.00, 0.90, 0.76);
-  return overcastDirect(mix(warm, noon, smoothstep(2.0, 28.0, alt)) * SUN_INTENSITY * smoothstep(-4.0, 10.0, alt));
+  return overcastDirect(mix(warm, noon, smoothstep(2.0, 28.0, alt)) * SUN_INTENSITY * smoothstep(-4.0, 10.0, alt))
+    * (1.0 + weatherLight.x);
 }
 
 vec3 moonLight(float alt) {

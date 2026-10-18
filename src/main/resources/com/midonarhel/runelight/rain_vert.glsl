@@ -8,10 +8,13 @@
 #include "frame.glsl"
 #include "sky.glsl"
 #include "weather_common.glsl"
+#include "wind.glsl"
 
 uniform int dropCount;
 uniform int splashCount;
-uniform vec3 wind;             // world units per second, this frame; sets the slant
+uniform vec3 wind;             // steady wind on the drops, world units per second; with the gust where a drop is, its slant
+uniform float fallTime;        // seconds of fall at the weather's drop speed so far (it varies, so not time)
+uniform vec4 rainStyle;        // the weather's drops as multiples of the defaults: length, speed, width, opacity
 uniform vec3 windOffset;       // world units the wind has carried everything so far (it varies, so not wind * time)
 uniform vec2 particleAmount;   // rain at the player, and the most anywhere in the box that the drop count follows
 
@@ -26,6 +29,7 @@ uniform vec2 particleAmount;   // rain at the player, and the most anywhere in t
 #define NEAR_FADE 250.0        // drops this close to the camera fade out so they don't smear the view
 #define COUNT_FADE 0.1         // as the drop count changes, the last tenth of drops fade instead of popping
 #define LIT_ALPHA 0.8          // drops in bright point light show up to this much more
+#define RAIN_GUST 1.2          // wind multiplier at a full gust (Weather.RAIN_GUST)
 
 #define SPLASH_HALF 2560.0     // splashes fill a smaller area, where they can be seen
 #define SPLASH_PERIOD 0.42     // seconds each splash lives
@@ -62,8 +66,7 @@ vec4 offsetPixels(vec4 clip, vec2 px) {
 void drop(int id, vec2 corner) {
   vec3 h = hash31(float(id) + 0.5);
   float speedScale = 0.85 + 0.3 * hash11(float(id) * 1.37 + 3.1);
-  vec3 vel = vec3(wind.x, FALL_SPEED * speedScale, wind.z);
-  vec3 travel = vec3(windOffset.x, FALL_SPEED * speedScale * time, windOffset.z);
+  vec3 travel = vec3(windOffset.x, FALL_SPEED * speedScale * fallTime, windOffset.z);
 
   // head of the drop: random start plus travel, wrapped into the box around the player
   vec3 size = vec3(BOX_HALF * 2.0, BOX_ABOVE + BOX_BELOW, BOX_HALF * 2.0);
@@ -75,11 +78,14 @@ void drop(int id, vec2 corner) {
     return;
   }
   vec3 head = world - cameraPos;
+  // slanted harder where a gust is passing
+  float gustHere = 1.0 + RAIN_GUST * windGustAt(world.xz);
+  vec3 vel = vec3(wind.x * gustHere, FALL_SPEED * speedScale * rainStyle.y, wind.z * gustHere);
 
   // stop on whatever is above the ground: drops below the top surface of their column are hidden, and the
   // streak is cut where it enters the surface
   float top = occluderTop(head) - cameraPos.y;
-  float len = DROP_LENGTH * speedScale;
+  float len = DROP_LENGTH * speedScale * rainStyle.x;
   vec3 dir = normalize(vel);
   vec3 tail = head - dir * len;
   if (tail.y >= top) {
@@ -103,7 +109,7 @@ void drop(int id, vec2 corner) {
   vec2 across = vec2(-along.y, along.x);
 
   vec4 c = corner.y < 0.5 ? c0 : c1;
-  float widthPx = DROP_WIDTH * pixelScale() / c.w;
+  float widthPx = DROP_WIDTH * rainStyle.z * pixelScale() / c.w;
   float drawn = max(widthPx, 1.0);
   gl_Position = offsetPixels(c, across * corner.x * drawn * 0.5);
 
@@ -115,7 +121,7 @@ void drop(int id, vec2 corner) {
   float added = clamp((count - float(id)) / (count * COUNT_FADE + 1.0), 0.0, 1.0);
   vec3 points = weatherPointLights(head, c1, vec3(0.0));
   float lit = min(dot(points, vec3(0.2126, 0.7152, 0.0722)), 1.0);
-  fAlpha = DROP_ALPHA * amount * share * edge * near * added * min(widthPx / drawn * 1.6, 1.0) * (1.0 + LIT_ALPHA * lit);
+  fAlpha = DROP_ALPHA * rainStyle.w * amount * share * edge * near * added * min(widthPx / drawn * 1.6, 1.0) * (1.0 + LIT_ALPHA * lit);
   fQuad = vec2(corner.x, corner.y);
   fSplash = 0;
   fViewZ = c.w;

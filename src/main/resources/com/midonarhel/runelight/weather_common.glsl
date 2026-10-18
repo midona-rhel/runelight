@@ -101,7 +101,7 @@ float smoothExposure(vec3 p, float bias) {
 }
 
 // Light falling on weather: sky ambient plus a bit of the sun or moon, linear like the composite
-vec3 weatherLight() {
+vec3 weatherParticleLight() {
   vec3 caster = sunIsCaster == 1 ? sunLight(sunAltitude) : moonLight(sunAltitude);
   return ambientLight(sunAltitude) + skyLight(sunAltitude) + caster * 0.35;
 }
@@ -109,7 +109,7 @@ vec3 weatherLight() {
 // Particle color: the weather's light plus point lights, with the composite's soft shoulder instead of a hard
 // clip, so lights still show on drops by day
 vec3 weatherParticleColor(vec3 srgb, vec3 points) {
-  return shade(srgb, weatherLight() + points * WEATHER_PARTICLE_POINT_BOOST);
+  return shade(srgb, weatherParticleLight() + points * WEATHER_PARTICLE_POINT_BOOST);
 }
 
 // Point lights, culled into clusters on the CPU (LightClusters.java); same tables and lookup as the composite

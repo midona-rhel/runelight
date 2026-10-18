@@ -78,7 +78,7 @@ final class FogClimate
 	 */
 	static float calm(WeatherType type)
 	{
-		return Math.min(1, type.morningMist / WeatherType.CLEAR.morningMist);
+		return Math.min(1, type.morningMist / WeatherType.clear().morningMist);
 	}
 
 	/** Dawn mist, 0 to 1: forms before sunrise (06:00), peaks around 06:30 and has burned off by 10:30. */
@@ -156,7 +156,7 @@ final class FogClimate
 	 */
 	static float haze(float humidity, float fog)
 	{
-		return Math.max(0, Math.min(0.85f, 0.25f * humidity + 0.3f * (fog - WeatherType.CLEAR.fog)));
+		return Math.max(0, Math.min(0.85f, 0.25f * humidity + 0.3f * (fog - WeatherType.clear().fog)));
 	}
 
 	private static double wrap(double hour)

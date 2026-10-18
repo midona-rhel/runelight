@@ -17,6 +17,7 @@ uniform float cloudBaseCoverage;  // the configured clear weather coverage
 uniform float cloudWeather;    // Weather.cloudCover() at the player: rain clouds are denser, darker and grayer
 uniform vec2 cloudOffset;      // world xz of the noise origin: scene base plus wind drift, wrapped
 uniform float cloudDetail;     // roughness: 0 smooth and round, 1 normal, 2 very broken
+uniform vec2 cloudType;        // the weather's look (WeatherType): x how wispy and high 0..1, y darkness offset -1..1
 // tiling: r cloud shape, equalized (1 - c covers a share c); g Worley puffs; b fine value noise; a coarse character
 uniform sampler2D cloudNoise;
 // The weather field's cloud cover over the scene, as differences from the player's (WeatherField.java): a grid of
@@ -132,7 +133,10 @@ vec3 cloudLocalCover(vec2 xz, vec2 world) {
   vec4 macro = textureLod(cloudNoise, xz / (4.0 * CLOUD_TILE), 2.0);
   float cov = clamp(coverage + (macro.r - 0.5) * 0.5 * (1.0 - weather), 0.0, 1.0);
   float wisp = smoothstep(CLOUD_WISP_LOW, CLOUD_WISP_HIGH, macro.a) * (1.0 - weather) * min(cloudDetail, 1.0);
-  return vec3(cov, wisp, weather);
+  wisp = max(wisp, cloudType.x);
+  // how dark: the cover, brightened or darkened by the weather's look (high thin cloud stays white)
+  float dark = clamp(weather * (1.0 + cloudType.y), 0.0, 1.0);
+  return vec3(cov, wisp, dark);
 }
 
 // Noise value needed for cloud at height fraction hf: rises toward the top for domes, a little at the base.
@@ -217,7 +221,8 @@ vec4 cloudLayer(vec3 dir, vec3 camPos, vec3 sunDir, vec3 moonDir, float alt, flo
   float lod = log2(max(footprint * CLOUD_NOISE_SIZE / CLOUD_TILE, 1e-3));
 
   float rain = cw.z;
-  float extinction = CLOUD_DENSITY * mix(1.0, CLOUD_RAIN_DENSITY, rain);
+  // high thin clouds are thinner too
+  float extinction = CLOUD_DENSITY * mix(1.0, CLOUD_RAIN_DENSITY, rain) * mix(1.0, CLOUD_WISP_DENSITY, cloudType.x);
   bool sunLit = alt > CLOUD_MOON_SWITCH;
   vec3 lightDir = sunLit ? sunDir : moonDir;
   vec3 light = (sunLit ? cloudSunLight(alt) * CLOUD_SUN
@@ -306,5 +311,6 @@ float cloudShadow(vec3 p, vec3 lightDir) {
   xz += (dn.rb - 0.5) * (CLOUD_WARP * min(cloudDetail, 1.5));
   vec3 cw = cloudLocalCover(xz, world);
   float d = cloudDensity(xz, 0.3, cw, 1.5);
-  return 1.0 - d * CLOUD_SHADOW_STRENGTH * (1.0 - cw.z);
+  // thin high cloud casts faint shadows
+  return 1.0 - d * CLOUD_SHADOW_STRENGTH * (1.0 - cw.z) * (1.0 - 0.6 * cloudType.x);
 }

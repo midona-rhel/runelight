@@ -128,17 +128,28 @@ class RuneLightOverlay extends OverlayPanel
 	private void weatherLines()
 	{
 		WeatherMode mode = config.weatherMode();
-		if (mode != WeatherMode.AUTOMATIC)
-		{
-			line("Weather", mode == WeatherMode.OFF ? "off" : mode + " (manual)", Color.WHITE);
-			return;
-		}
 		WeatherForecast forecast = plugin.getWeatherForecast();
 		Weather weather = plugin.getWeather();
-		line("Weather", forecast.getCurrent().toString(), Color.CYAN);
+		if (mode == WeatherMode.AUTOMATIC)
+		{
+			line("Weather", forecast.getCurrent().toString(), Color.CYAN);
+		}
+		else
+		{
+			line("Weather", mode == WeatherMode.OFF ? "off" : weather.getType() + " (forced)", Color.WHITE);
+		}
+		line("Season", forecast.getSeason() + String.format(" (day %d/%d)", forecast.getSeasonDay(),
+			forecast.getSeasonDays()), Color.WHITE);
+		Wind wind = weather.getWind();
+		line("Wind", String.format("%s %.2f, gust %.2f", wind.fromCompass(), wind.getStrength(), wind.getGust()),
+			Color.WHITE);
 		String biome = forecast.getBiome();
 		line("Region", biome.charAt(0) + biome.substring(1).toLowerCase().replace('_', ' '), Color.WHITE);
 		line("Next", forecast.getNext() + " in " + String.format("%.1f min", forecast.getMinutesToNext()), Color.WHITE);
+		if (mode != WeatherMode.AUTOMATIC)
+		{
+			return;
+		}
 		WeatherField field = weather.getField();
 		if (field.isEnabled())
 		{
@@ -151,16 +162,17 @@ class RuneLightOverlay extends OverlayPanel
 	/** The two most common weathers over the loaded scene, by share of its chunks. */
 	private static String sceneWeather(WeatherField field)
 	{
-		int[] counts = new int[WeatherType.values().length];
+		WeatherType[] types = WeatherType.all();
+		int[] counts = new int[types.length];
 		int total = 0;
 		for (int z = 0; z < field.getSizeZ(); ++z)
 		{
 			for (int x = 0; x < field.getSizeX(); ++x)
 			{
 				WeatherType t = field.type(x, z);
-				if (t != null)
+				if (t != null && t.index < counts.length)
 				{
-					counts[t.ordinal()]++;
+					counts[t.index]++;
 					total++;
 				}
 			}
@@ -188,7 +200,7 @@ class RuneLightOverlay extends OverlayPanel
 			{
 				sb.append(", ");
 			}
-			sb.append(WeatherType.values()[best]).append(' ').append(100 * counts[best] / total).append('%');
+			sb.append(types[best]).append(' ').append(100 * counts[best] / total).append('%');
 			counts[best] = 0;
 		}
 		return sb.toString();

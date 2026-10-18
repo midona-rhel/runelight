@@ -21,11 +21,6 @@ public class WeatherVariationTest
 			double t = i * DT;
 			float v = WeatherVariation.intensity(t);
 			assertTrue(v >= WeatherVariation.MIN - 1e-6f && v <= WeatherVariation.MAX + 1e-6f);
-			float g = WeatherVariation.gust(t);
-			assertTrue(g >= 0 && g <= 1);
-			float w = WeatherVariation.windScale(t);
-			assertTrue(w >= 0.6f - 1e-6f && w <= 1.4f + 1e-6f);
-			assertTrue(Math.abs(WeatherVariation.windTurn(t)) <= WeatherVariation.WIND_TURN + 1e-6f);
 			lo = Math.min(lo, v);
 			hi = Math.max(hi, v);
 			boolean b = WeatherVariation.burst(t) > 0.5f;
@@ -44,16 +39,14 @@ public class WeatherVariationTest
 	@Test
 	public void smooth()
 	{
-		float maxStep = 0, maxGustStep = 0;
+		float maxStep = 0;
 		for (int i = 0; i < FRAMES; ++i)
 		{
 			double t = i * DT;
 			maxStep = Math.max(maxStep, Math.abs(WeatherVariation.intensity(t + DT) - WeatherVariation.intensity(t)));
-			maxGustStep = Math.max(maxGustStep, Math.abs(WeatherVariation.gust(t + DT) - WeatherVariation.gust(t)));
 		}
 		// a full swing takes seconds at least, never a jump between frames
 		assertTrue("intensity step " + maxStep, maxStep < 0.01f);
-		assertTrue("gust step " + maxGustStep, maxGustStep < 0.02f);
 	}
 
 	@Test

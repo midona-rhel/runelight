@@ -241,6 +241,7 @@ class SkyCache
 		uniSunAltitude = glGetUniformLocation(captureProgram, "sunAltitude");
 		uniCacheSize = glGetUniformLocation(captureProgram, "cacheSize");
 		uniOvercast = glGetUniformLocation(captureProgram, "weatherOvercast");
+		uniLight = glGetUniformLocation(captureProgram, "weatherLight");
 		uniSteps = glGetUniformLocation(captureProgram, "captureSteps");
 		Clouds.locate(captureClouds, captureProgram, cloudNoiseUnit);
 
@@ -254,6 +255,7 @@ class SkyCache
 		uniIrradianceSunDir = glGetUniformLocation(irradianceProgram, "sunDir");
 		uniIrradianceSunAltitude = glGetUniformLocation(irradianceProgram, "sunAltitude");
 		uniIrradianceOvercast = glGetUniformLocation(irradianceProgram, "weatherOvercast");
+		uniIrradianceLight = glGetUniformLocation(irradianceProgram, "weatherLight");
 		glUseProgram(irradianceProgram);
 		glUniform1i(glGetUniformLocation(irradianceProgram, "radiance"), fromUnit);
 		glUniform1i(glGetUniformLocation(irradianceProgram, "radianceTo"), fromUnit + 1);
@@ -488,11 +490,27 @@ class SkyCache
 		glUniform1i(uniSteps, steps);
 		// no lightning: it flashes far faster than captures come
 		glUniform3f(uniOvercast, overcast[0], overcast[1], 0);
+		setLight(uniLight, overcast);
 		clouds.apply(captureClouds);
 		glDrawArrays(GL_TRIANGLES, 0, 3);
 		if (strip)
 		{
 			glDisable(GL_SCISSOR_TEST);
+		}
+	}
+
+	// sky.glsl's weatherLight, after weatherOvercast in the same array when there (Weather.getOvercast)
+	private int uniLight = -1, uniIrradianceLight = -1;
+
+	private static void setLight(int location, float[] overcast)
+	{
+		if (overcast.length >= 7)
+		{
+			glUniform4f(location, overcast[3], overcast[4], overcast[5], overcast[6]);
+		}
+		else
+		{
+			glUniform4f(location, 0, 0, 0, 0);
 		}
 	}
 
@@ -528,6 +546,7 @@ class SkyCache
 		glUniform3fv(uniIrradianceSunDir, day.sunDir);
 		glUniform1f(uniIrradianceSunAltitude, day.sunAltitude);
 		glUniform3f(uniIrradianceOvercast, overcast[0], overcast[1], 0);
+		setLight(uniIrradianceLight, overcast);
 		glActiveTexture(GL_TEXTURE0 + unit);
 		glBindTexture(GL_TEXTURE_2D, textures[a]);
 		glActiveTexture(GL_TEXTURE0 + unit + 1);

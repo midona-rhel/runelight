@@ -1,9 +1,9 @@
 package com.midonarhel.runelight;
 
 /**
- * How rain and snow change over time: slow swells and lulls over a minute or two, now and then a short heavier
- * burst, and wind that wanders and gusts. Everything is smooth deterministic noise of the time in seconds, so it
- * needs no state and never jumps.
+ * How rain and snow change over time: slow swells and lulls over a minute or two, and now and then a short heavier
+ * burst. Everything is smooth deterministic noise of the time in seconds, so it needs no state and never jumps. The
+ * wind is Wind.java's, which uses the same noise.
  */
 final class WeatherVariation
 {
@@ -15,15 +15,10 @@ final class WeatherVariation
 	static final float MIN = LULL;
 	static final float MAX = SWELL + BURST;
 
-	// seconds per noise lattice step: two octaves of swells, then bursts and gusts
+	// seconds per noise lattice step: two octaves of swells, then bursts
 	private static final double SWELL_SLOW = 80;
 	private static final double SWELL_FAST = 31;
 	private static final double BURST_PERIOD = 9;
-	private static final double GUST_PERIOD = 8;
-	private static final double WIND_PERIOD = 45;
-	private static final double WIND_TURN_PERIOD = 150;
-	// radians the wind direction wanders either way
-	static final float WIND_TURN = 0.6f;
 
 	private WeatherVariation()
 	{
@@ -53,30 +48,6 @@ final class WeatherVariation
 	static float burst(double t)
 	{
 		return smoothstep(0.72f, 0.92f, noise(t / BURST_PERIOD, 3));
-	}
-
-	/**
-	 * Gust strength 0 to 1; bursts come with wind too.
-	 */
-	static float gust(double t)
-	{
-		return Math.max(smoothstep(0.6f, 0.9f, noise(t / GUST_PERIOD, 4)), 0.7f * burst(t));
-	}
-
-	/**
-	 * Steady wind strength multiplier, 0.6 to 1.4, before gusts.
-	 */
-	static float windScale(double t)
-	{
-		return 0.6f + 0.8f * noise(t / WIND_PERIOD, 5);
-	}
-
-	/**
-	 * Wind direction offset in radians, within +-WIND_TURN.
-	 */
-	static float windTurn(double t)
-	{
-		return (noise(t / WIND_TURN_PERIOD, 6) * 2 - 1) * WIND_TURN;
 	}
 
 	/**

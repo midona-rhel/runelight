@@ -20,16 +20,15 @@ class Clouds
 	private static final double TILE = 32768;
 	// the shader samples at 1/4, 1 and 3 times the tile frequency, so the offset can wrap every 4 tiles
 	private static final double WRAP = TILE * 4;
-	// world units per second at 100% speed, about two tiles; rain and snow blow twice as fast
-	private static final float WIND_SPEED = 256;
-	private static final float RAIN_WIND = 2;
-	// roughly along the rain's slant (Weather.draw)
-	private static final float WIND_X = 0.87f, WIND_Z = 0.49f;
+	// world units per second at 100% speed: in calm air, and added per unit of the wind's (eased, gustless) mean,
+	// so a gale drives them about three times as fast as a calm day; the wind's direction (Wind.java)
+	private static final float WIND_SPEED_CALM = 160;
+	private static final float WIND_SPEED = 320;
 
 	/** Uniform locations of one program that draws clouds: the composite, and the sky cache's capture. */
 	static final class Locations
 	{
-		int enabled, shadows, coverage, weather, offset, detail;
+		int enabled, shadows, coverage, weather, offset, detail, type;
 		int base, field, fieldRect, fieldCells;
 	}
 
@@ -44,6 +43,22 @@ class Clouds
 	private WeatherField field;
 	private float offsetX, offsetZ;
 	private double originX, originZ;
+	// the weather's cloud look (wispy, dark) and the wind that carries them
+	private float wisp, dark;
+	private Wind wind;
+
+	/**
+	 * The weather's look of the clouds and its wind; call before {@link #update}.
+	 *
+	 * @param wisp how wispy and high, 0..1
+	 * @param dark darkness offset, -1 bright .. 1 storm dark
+	 */
+	void setWeather(float wisp, float dark, Wind wind)
+	{
+		this.wisp = wisp;
+		this.dark = dark;
+		this.wind = wind;
+	}
 
 	/**
 	 * Look up the composite program's cloud uniforms. Call with each newly compiled composite.
@@ -61,6 +76,7 @@ class Clouds
 		l.weather = glGetUniformLocation(program, "cloudWeather");
 		l.offset = glGetUniformLocation(program, "cloudOffset");
 		l.detail = glGetUniformLocation(program, "cloudDetail");
+		l.type = glGetUniformLocation(program, "cloudType");
 		l.base = glGetUniformLocation(program, "cloudBaseCoverage");
 		l.field = glGetUniformLocation(program, "cloudField");
 		l.fieldRect = glGetUniformLocation(program, "cloudFieldRect");
@@ -87,9 +103,11 @@ class Clouds
 
 		this.enabled = enabled;
 		this.shadows = shadows;
-		float speed = WIND_SPEED * speedPercent / 100f * (1 + (RAIN_WIND - 1) * cloudCover);
-		windX = (windX + WIND_X * speed * dt) % WRAP;
-		windZ = (windZ + WIND_Z * speed * dt) % WRAP;
+		float mean = wind != null ? wind.getMean() : 0.25f;
+		float dx = wind != null ? wind.getDirX() : 0.87f, dz = wind != null ? wind.getDirZ() : 0.49f;
+		float speed = (WIND_SPEED_CALM + WIND_SPEED * mean) * speedPercent / 100f;
+		windX = (windX + dx * speed * dt) % WRAP;
+		windZ = (windZ + dz * speed * dt) % WRAP;
 
 		base = coveragePercent / 100f;
 		coverage = base + (1 - base) * cloudCover;
@@ -112,6 +130,7 @@ class Clouds
 		glUniform1f(l.coverage, coverage);
 		glUniform1f(l.weather, weather);
 		glUniform1f(l.detail, detail);
+		glUniform2f(l.type, wisp, dark);
 		glUniform2f(l.offset, offsetX, offsetZ);
 		glUniform1f(l.base, base);
 		if (field != null)

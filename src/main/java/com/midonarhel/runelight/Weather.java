@@ -10,9 +10,11 @@ import static org.lwjgl.opengl.GL33C.*;
  * Weather: how cloudy, foggy, windy and stormy it is, and rain and snow as falling particles, rain splashes, and
  * wet or snow covered surfaces, each drawn in its own small pass over the composited scene.
  *
- * Everything follows a few values (cover, rain, snow, wind, fog, storm) that ease toward the targets of the
- * current weather: the automatic forecast's WeatherType, or the manual rain or snow setting. A change of weather or
- * of region therefore always blends; clouds build before rain starts and stay until it has stopped.
+ * Everything follows a few values (cover, rain, snow, wind, fog, storm, the light's strength, haze and tint, the
+ * look of the clouds and the particles) that ease toward the current weather's: the automatic forecast's
+ * WeatherType, or the one forced in the settings. A change of weather or of region therefore always blends; clouds
+ * build before rain starts and stay until it has stopped. The wind (Wind.java) is simulated here too and drives the
+ * rain's slant, the snow's drift, the clouds and the water.
  *
  * Shelter comes from an "occlusion map": a top-down orthographic depth map of all static scenery around the
  * player, drawn with every roof and every level, including roofs the game (or a roof hiding plugin) hides from the
@@ -74,14 +76,23 @@ class Weather
 	// wind multiplier at a full gust
 	private static final float RAIN_GUST = 1.2f;
 	private static final float SNOW_GUST = 1.5f;
+	// horizontal speed of rain and snow, world units per second: at the lightest fall, plus per unit of intensity,
+	// times DRIFT_CALM + DRIFT_WIND * wind strength (and the type's slant or flake wind)
+	private static final float RAIN_DRIFT = 120, RAIN_DRIFT_HEAVY = 140;
+	private static final float SNOW_DRIFT = 35, SNOW_DRIFT_HEAVY = 50;
+	private static final float DRIFT_CALM = 0.3f, DRIFT_WIND = 1.2f;
+	// showers: seconds per noise step of the rain coming and going, and the cover left between showers
+	private static final double SHOWER_PERIOD = 40;
+	private static final float SHOWER_BREAK_COVER = 0.55f;
+	// on average, showers rain this share of the time (for the weather field, which has no swells)
+	static final float SHOWER_SHARE = 0.6f;
+	// frost builds this much slower than snow cover
+	private static final float FROST_SLOWER = 2;
 	static final float WET_BUILD_SECONDS = 25;
 	static final float SNOW_BUILD_SECONDS = 90;
 	// seconds for wet ground to dry, and for snow cover to melt (rain melts it three times as fast)
 	static final float DRY_SECONDS = 120;
 	static final float MELT_SECONDS = 180;
-	// manual rain and snow: fog added at full intensity over clear weather's
-	private static final float FOG_RAIN = 0.75f;
-	private static final float FOG_SNOW = 0.65f;
 	// fog multiplier underground, where there is no weather
 	private static final float FOG_CAVE = 0.6f;
 	// hours around which morning mist peaks, and its half width
@@ -134,13 +145,21 @@ class Weather
 		int dropCount, splashCount, wind, windOffset, gust, overcast, pointLights;
 		int surfaceMode, fadeDistance, shadowsEnabled, lightProjRel;
 		int particleAmount, farAmount, farNear, farReach;
+		int light, rainStyle, flakeStyle, flakeColor, fallTime;
 		WeatherField.Locations field;
+		Wind.Locations windLocations;
 
 		void locate(int p, int sceneUnit, int occlusionUnit, int shadowCompareUnit, int alphaLayerUnit,
 			int lightDataUnit, int clusterDataUnit, int materialUnit, int fieldUnit)
 		{
 			program = p;
 			field = WeatherField.locate(p, fieldUnit, fieldUnit + 1);
+			windLocations = Wind.locate(p);
+			light = glGetUniformLocation(p, "weatherLight");
+			rainStyle = glGetUniformLocation(p, "rainStyle");
+			flakeStyle = glGetUniformLocation(p, "flakeStyle");
+			flakeColor = glGetUniformLocation(p, "flakeColor");
+			fallTime = glGetUniformLocation(p, "fallTime");
 			particleAmount = glGetUniformLocation(p, "particleAmount");
 			farAmount = glGetUniformLocation(p, "farAmount");
 			farNear = glGetUniformLocation(p, "farNear");
@@ -209,10 +228,20 @@ class Weather
 	// snowy the overcast looks (0 rain gray, 1 snow white)
 	private float cover;
 	private float rainAmount, snowAmount;
-	private float wind = WeatherType.CLEAR.wind;
-	private float fog = WeatherType.CLEAR.fog;
-	private float areaFog = WeatherType.CLEAR.areaFog;
-	private float distanceFog = WeatherType.CLEAR.distanceFog;
+	private float fog = WeatherType.clear().fog;
+	private float areaFog = WeatherType.clear().areaFog;
+	private float distanceFog = WeatherType.clear().distanceFog;
+	// the type's look, eased: clouds (wisp, dark), light (sun - 1, haze, warmth, sky saturation), fog tint, rain
+	// drops (length, speed, width, alpha, slant), flakes (size, speed, sway, wind, then color), buildup (wet rate,
+	// snow rate, frost, cover swell)
+	private float cloudWisp, cloudDark;
+	private final float[] light = new float[4];
+	private final float[] fogTint = {1, 1, 1};
+	private final float[] rainStyle = {1, 1, 1, 1, 1};
+	private final float[] flakeStyle = {1, 1, 1, 1, 0.95f, 0.97f, 1.0f};
+	private final float[] buildup = {1, 1, 0, 1};
+	private final float[] scratch = new float[8];
+	private WeatherType type = WeatherType.clear();
 	// FogClimate: multiplier on the fog height (low mist, rising haze) and the region's humidity
 	private float fogHeight = 1;
 	private float humidity = 1;
@@ -225,12 +254,16 @@ class Weather
 	// wind this frame and how far it has carried the particles, world units; reset when the particle clock wraps
 	private float windX, windZ;
 	private float windOffsetX, windOffsetZ;
+	// seconds of fall at the drops' and the flakes' own speed so far: their speed eases with the weather, so the
+	// particles take the integral, like the wind's distance
+	private float rainFall, snowFall;
 	private long clockWraps;
 	// 0-1 buildup of wet ground and of snow cover
 	private float wetness, snowCover;
 	private final Lightning lightning = new Lightning();
 	private long lastMillis;
 	private final long startMillis = System.currentTimeMillis();
+	private final Wind windSim = new Wind(startMillis / 1000);
 	private float focusX, focusY, focusZ;
 	private int focusPlane;
 
@@ -334,11 +367,51 @@ class Weather
 	 */
 	void getWaterWind(float[] out)
 	{
-		float len = (float) Math.hypot(windX, windZ);
-		out[0] = len > 1e-3f ? windX / len : 0.87f;
-		out[1] = len > 1e-3f ? windZ / len : 0.49f;
-		out[2] = openSky ? Math.min(1, wind + 0.5f * gust) : 0;
+		out[0] = windSim.getDirX();
+		out[1] = windSim.getDirZ();
+		out[2] = openSky ? Math.min(1, windSim.getStrength() + 0.5f * windSim.getGust()) : 0;
 	}
+
+	/**
+	 * The wind, for anything that moves with it (Wind.apply sets a program's wind uniforms).
+	 */
+	Wind getWind()
+	{
+		return windSim;
+	}
+
+	/**
+	 * Whether the air is still here: underground the wind uniforms read calm.
+	 */
+	boolean isWindStill()
+	{
+		return !openSky;
+	}
+
+	/** The weather the player's weather is heading for. */
+	WeatherType getType()
+	{
+		return type;
+	}
+
+	/** clouds.glsl's cloudType: how wispy and high (0..1) and the darkness offset (-1..1). */
+	float cloudWisp()
+	{
+		return openSky ? cloudWisp : 0;
+	}
+
+	float cloudDark()
+	{
+		return openSky ? cloudDark : 0;
+	}
+
+	/** Multiplier on the fog's color (dust, ash), 1 1 1 underground. */
+	float[] getFogTint()
+	{
+		return openSky ? fogTint : NEUTRAL_TINT;
+	}
+
+	private static final float[] NEUTRAL_TINT = {1, 1, 1};
 
 	/**
 	 * Rain falling on open water, 0-1.
@@ -392,13 +465,30 @@ class Weather
 
 	/**
 	 * sky.glsl's weatherOvercast: cover times the overcast setting, how snowy (white) rather than rainy (slate)
-	 * the overcast is, and the lightning flash.
+	 * the overcast is, and the lightning flash; with room for seven, also weatherLight (see {@link #getLight}).
 	 */
 	void getOvercast(float[] out)
 	{
 		out[0] = cloudCover() * overcastStrength;
 		out[1] = snowiness;
 		out[2] = openSky ? lightning.getFlash() : 0;
+		if (out.length >= 7)
+		{
+			getLight(out, 3);
+		}
+	}
+
+	/**
+	 * sky.glsl's weatherLight from {@code offset}: sun strength - 1, haze, warmth, sky saturation offset, all 0 in
+	 * neutral weather and underground. The overcast setting scales it like the cover.
+	 */
+	void getLight(float[] out, int offset)
+	{
+		float k = openSky ? Math.max(overcastStrength, 0.0f) : 0;
+		for (int i = 0; i < 4; ++i)
+		{
+			out[offset + i] = light[i] * Math.min(k, 1);
+		}
 	}
 
 	/**
@@ -410,15 +500,24 @@ class Weather
 	}
 
 	/**
-	 * Ease the weather toward this frame's targets, advance the buildup, the variation and the lightning, and
-	 * decide whether rain or snow is drawn. Underground the weather goes on but nothing is drawn, and the
+	 * Set the weatherLight uniform of the program in use.
+	 */
+	void setLightUniform(int location)
+	{
+		getLight(scratch, 0);
+		glUniform4f(location, scratch[0], scratch[1], scratch[2], scratch[3]);
+	}
+
+	/**
+	 * Ease the weather toward this frame's targets, advance the buildup, the variation, the wind and the lightning,
+	 * and decide whether rain or snow is drawn. Underground the weather goes on but nothing is drawn, and the
 	 * occlusion map is freed once nothing is left to draw.
 	 *
-	 * @param mode Automatic follows {@code auto}; Off is clear weather; Rain and Snow are manual
+	 * @param mode Automatic follows {@code auto}; Off is clear weather; any other holds that weather
 	 * @param auto the forecast's weather for the region, used in Automatic mode
 	 * @param gradual false applies every change at once
 	 * @param varying whether intensity and wind wander over time
-	 * @param overcastPercent how much the cover grays the sky and softens the light
+	 * @param overcastPercent how much the cover grays the sky and changes the light
 	 * @param lightningEnabled whether storms strike
 	 * @param outdoors whether the area has a sky at all
 	 * @param hour clock time 0-24, for mist by the time of day
@@ -440,39 +539,20 @@ class Weather
 		float scale = intensityPercent / 100f;
 
 		// this frame's targets
-		WeatherType type;
-		float targetCover, targetRain = 0, targetSnow = 0, targetFog;
-		switch (mode)
+		WeatherType type = resolve(mode, auto);
+		this.type = type;
+		float targetCover = mode == WeatherMode.OFF ? 0 : type.cover;
+		float targetRain = type.rain * scale / DEFAULT_INTENSITY;
+		float targetSnow = type.snow * scale / DEFAULT_INTENSITY;
+		float targetFog = type.fog;
+		if (type.showers > 0 && varying)
 		{
-			case RAIN:
-			case SNOW:
-			{
-				boolean rain = mode == WeatherMode.RAIN;
-				type = rain ? WeatherType.RAIN : WeatherType.SNOW;
-				targetCover = Math.min(1, COVER_BASE + COVER_SLOPE * scale);
-				if (rain)
-				{
-					targetRain = scale;
-				}
-				else
-				{
-					targetSnow = scale;
-				}
-				targetFog = WeatherType.CLEAR.fog + (rain ? FOG_RAIN : FOG_SNOW) * Math.min(1, scale);
-				break;
-			}
-			case AUTOMATIC:
-				type = auto != null ? auto : WeatherType.CLEAR;
-				targetCover = type.cover;
-				targetRain = type.rain * scale / DEFAULT_INTENSITY;
-				targetSnow = type.snow * scale / DEFAULT_INTENSITY;
-				targetFog = type.fog;
-				break;
-			default:
-				type = WeatherType.CLEAR;
-				targetCover = 0;
-				targetFog = type.fog;
-				break;
+			// showers come and go: rain, then a break of sun
+			float on = showers(t);
+			float k = 1 - type.showers * (1 - on);
+			targetRain *= k;
+			targetSnow *= k;
+			targetCover *= 1 - type.showers * (1 - on) * (1 - SHOWER_BREAK_COVER);
 		}
 		float targetFogHeight = 1;
 		float targetHumidity = 1;
@@ -492,12 +572,11 @@ class Weather
 
 		float precipitation = rainAmount + snowAmount;
 		float baseCover = targetCover;
-		// clouds swell with heavy spells, and stay while anything still falls
-		if (precipitation > 0 || targetRain + targetSnow > 0)
+		// clouds swell with heavy spells, and stay while anything still falls (not for dust or ash)
+		if (type.coverSwell > 0 && (precipitation > 0 || targetRain + targetSnow > 0))
 		{
-			targetCover = Math.max(targetCover, Math.min(1, COVER_BASE + COVER_SLOPE * slowEffective));
+			targetCover = Math.max(targetCover, type.coverSwell * Math.min(1, COVER_BASE + COVER_SLOPE * slowEffective));
 		}
-		float targetWind = mode == WeatherMode.AUTOMATIC ? type.wind : 0.5f;
 
 		if (!initialized || !gradual)
 		{
@@ -511,14 +590,12 @@ class Weather
 			humidity = targetHumidity;
 			areaFog = type.areaFog;
 			distanceFog = type.distanceFog;
-			wind = targetWind;
-			storm = type.storm;
-			if (targetRain + targetSnow > 0)
-			{
-				snowiness = targetSnow > targetRain ? 1 : 0;
-			}
+			storm = type.lightning;
+			snowiness = type.whiteness(targetRain, targetSnow, snowiness);
+			setLook(type, 1);
 			wetness = targetRain > 0 ? 1 : gradual ? wetness : 0;
-			snowCover = targetSnow > 0 ? 1 : gradual ? snowCover : 0;
+			snowCover = targetSnow > 0 && type.whitens() ? 1 : type.frost > 0 ? Math.max(type.frost, gradual ? snowCover : 0)
+				: gradual ? snowCover : 0;
 		}
 		else
 		{
@@ -535,23 +612,24 @@ class Weather
 			humidity = ease(humidity, targetHumidity, dt, FOG_SECONDS);
 			areaFog = ease(areaFog, type.areaFog, dt, FOG_SECONDS);
 			distanceFog = ease(distanceFog, type.distanceFog, dt, FOG_SECONDS);
-			wind = ease(wind, targetWind, dt, WIND_SECONDS);
-			storm = ease(storm, type.storm, dt, STORM_SECONDS);
-			if (rainAmount + snowAmount > PRECIP_EPSILON)
+			storm = ease(storm, type.lightning, dt, STORM_SECONDS);
+			if (type.skyWhite >= 0 || rainAmount + snowAmount > PRECIP_EPSILON)
 			{
-				snowiness = ease(snowiness, snowAmount / (rainAmount + snowAmount), dt, PRECIP_SECONDS);
+				snowiness = ease(snowiness, type.whiteness(rainAmount, snowAmount, snowiness), dt, PRECIP_SECONDS);
 			}
+			setLook(type, 1 - (float) Math.exp(-dt / CLOUD_SECONDS));
 			accumulate(dt);
 		}
 
 		float variation = varying ? WeatherVariation.intensity(t) : 1;
-		gust = varying ? WeatherVariation.gust(t) * Math.min(1, 0.5f + wind) : 0;
 		rainEffective = Math.min(rainAmount * variation, MAX_EFFECTIVE);
 		snowEffective = Math.min(snowAmount * variation, MAX_EFFECTIVE);
 		float effective = rainEffective + snowEffective;
 		slowEffective = !gradual ? effective
 			: slowEffective + (effective - slowEffective) * (1 - (float) Math.exp(-dt / COVER_SECONDS));
-		updateWind(t, varying, dt, now);
+		windSim.update(t, dt, type.wind, type.gustiness, varying, gradual, fx, fz);
+		gust = windSim.getGust();
+		updateWind(dt, now);
 		lightning.update(dt, outdoors ? storm : 0, lightningEnabled, fx, fz);
 
 		boolean anything = rainAmount > 0 || snowAmount > 0 || wetness > 0 || snowCover > 0 || field.hasAnything();
@@ -582,6 +660,51 @@ class Weather
 			occlusionDirty = true;
 		}
 		return true;
+	}
+
+	/** The weather a mode asks for: the forecast's, clear for Off, or the forced type. */
+	static WeatherType resolve(WeatherMode mode, WeatherType auto)
+	{
+		switch (mode)
+		{
+			case AUTOMATIC:
+				return auto != null ? auto : WeatherType.clear();
+			case OFF:
+				return WeatherType.clear();
+			default:
+				WeatherType t = WeatherType.get(mode.name());
+				return t != null ? t : WeatherType.clear();
+		}
+	}
+
+	/** 0 between showers to 1 in one: smooth noise, on about SHOWER_SHARE of the time. */
+	static float showers(double t)
+	{
+		float n = WeatherVariation.noise(t / SHOWER_PERIOD, 13);
+		float lo = 1 - SHOWER_SHARE - 0.1f, hi = 1 - SHOWER_SHARE + 0.1f;
+		float x = Math.max(0, Math.min(1, (n - lo) / (hi - lo)));
+		return x * x * (3 - 2 * x);
+	}
+
+	/** Move the type's look (clouds, light, fog tint, drops, flakes, buildup) a share k of the way to it. */
+	private void setLook(WeatherType t, float k)
+	{
+		cloudWisp += (t.cloudWisp - cloudWisp) * k;
+		cloudDark += (t.cloudDark - cloudDark) * k;
+		toward(light, k, t.sun - 1, t.haze, t.warmth, t.skySaturation);
+		toward(fogTint, k, t.fogTint[0], t.fogTint[1], t.fogTint[2]);
+		toward(rainStyle, k, t.dropLength, t.dropSpeed, t.dropWidth, t.dropAlpha, t.slant);
+		toward(flakeStyle, k, t.flakeSize, t.flakeSpeed, t.flakeSway, t.flakeWind, t.flakeColor[0], t.flakeColor[1],
+			t.flakeColor[2]);
+		toward(buildup, k, t.wetRate, t.snowRate, t.frost, t.coverSwell);
+	}
+
+	private static void toward(float[] v, float k, float... target)
+	{
+		for (int i = 0; i < v.length; ++i)
+		{
+			v[i] += (target[i] - v[i]) * k;
+		}
 	}
 
 	/**
@@ -655,24 +778,33 @@ class Weather
 	private static final float FIELD_SECONDS = 0.1f;
 	private long fieldMillis;
 
-	/** Wet ground builds in rain and dries after it; snow cover builds in snow and melts after, faster in rain. */
+	/**
+	 * Wet ground builds in rain and dries after it; snow cover builds in snow and melts after, faster in rain. Frost
+	 * (freezing fog) holds a thin cover without snow. The type's rates scale both.
+	 */
 	private void accumulate(float dt)
 	{
+		float wetRate = buildup[0], snowRate = buildup[1], frost = buildup[2];
 		if (rainAmount > 0.02f)
 		{
-			wetness = Math.min(1, wetness + dt / WET_BUILD_SECONDS * Math.min(1, rainAmount * 2));
+			wetness = Math.min(1, wetness + dt / WET_BUILD_SECONDS * Math.min(1, rainAmount * 2) * wetRate);
 		}
 		else
 		{
 			wetness = Math.max(0, wetness - dt / DRY_SECONDS);
 		}
-		if (snowAmount > 0.02f)
+		if (snowAmount > 0.02f && snowRate > 0.01f)
 		{
-			snowCover = Math.min(1, snowCover + dt / SNOW_BUILD_SECONDS * Math.min(1, snowAmount * 2));
+			snowCover = Math.min(1, snowCover + dt / SNOW_BUILD_SECONDS * Math.min(1, snowAmount * 2) * snowRate);
+		}
+		else if (snowCover < frost - 0.01f)
+		{
+			snowCover = Math.min(frost, snowCover + dt / (SNOW_BUILD_SECONDS * FROST_SLOWER));
 		}
 		else
 		{
-			snowCover = Math.max(0, snowCover - dt / MELT_SECONDS * (rainAmount > 0.02f ? 3 : 1));
+			snowCover = Math.max(Math.min(frost, snowCover),
+				snowCover - dt / MELT_SECONDS * (rainAmount > 0.02f ? 3 : 1));
 		}
 	}
 
@@ -697,29 +829,23 @@ class Weather
 	}
 
 	/**
-	 * This frame's wind, and how far it has carried the particles. Particles take the distance rather than the
-	 * velocity times the time, so a change in wind bends their path instead of moving all of them at once.
+	 * This frame's wind on the rain and snow, and how far it has carried the particles. Particles take the distance
+	 * rather than the velocity times the time, so a change in wind bends their path instead of moving all of them
+	 * at once. The velocity is the steady wind; gusts (at the player) only add to the distance, and the particle
+	 * shaders bend each drop by the gust where it is.
 	 */
-	private void updateWind(double t, boolean varying, float dt, long now)
+	private void updateWind(float dt, long now)
 	{
 		// rain and snow share one wind, weighted by how much of each falls; a little slant, stronger in heavy
 		// rain and strong wind
 		float total = rainEffective + snowEffective;
 		float r = total > 0 ? rainEffective / total : 1 - snowiness;
-		float strength = 0.6f + 0.8f * wind;
-		float x = (r * (90 + 160 * rainEffective) + (1 - r) * (30 + 50 * snowEffective)) * strength;
-		float z = (r * (50 + 80 * rainEffective) + (1 - r) * 20) * strength;
-		if (varying)
-		{
-			float scale = WeatherVariation.windScale(t) * (1 + (r * RAIN_GUST + (1 - r) * SNOW_GUST) * gust);
-			float turn = WeatherVariation.windTurn(t);
-			float c = (float) Math.cos(turn), s = (float) Math.sin(turn);
-			float rx = (x * c - z * s) * scale;
-			z = (x * s + z * c) * scale;
-			x = rx;
-		}
-		windX = x;
-		windZ = z;
+		float strength = DRIFT_CALM + DRIFT_WIND * windSim.getStrength();
+		float rain = (RAIN_DRIFT + RAIN_DRIFT_HEAVY * rainEffective) * rainStyle[4];
+		float snow = (SNOW_DRIFT + SNOW_DRIFT_HEAVY * snowEffective) * flakeStyle[3];
+		float speed = (r * rain + (1 - r) * snow) * strength;
+		windX = windSim.getDirX() * speed;
+		windZ = windSim.getDirZ() * speed;
 
 		long wraps = (now - startMillis) / CLOCK_WRAP_MILLIS;
 		if (wraps != clockWraps)
@@ -727,9 +853,13 @@ class Weather
 			// the particle clock wrapped and every particle moved anyway; start the distance over with it
 			clockWraps = wraps;
 			windOffsetX = windOffsetZ = 0;
+			rainFall = snowFall = 0;
 		}
-		windOffsetX += windX * dt;
-		windOffsetZ += windZ * dt;
+		rainFall += rainStyle[1] * dt;
+		snowFall += flakeStyle[1] * dt;
+		float g = 1 + (r * RAIN_GUST + (1 - r) * SNOW_GUST) * gust;
+		windOffsetX += windX * g * dt;
+		windOffsetZ += windZ * g * dt;
 	}
 
 	/**
@@ -901,6 +1031,7 @@ class Weather
 			glUseProgram(rain.program);
 			setParticles(rain, Math.max(rainAmount, rainShown), viewProj, invViewProj, viewport, zeroToOne, cameraX,
 				cameraY, cameraZ, day, time, pointLights);
+			glUniform1f(rain.fallTime, rainFall);
 			glUniform2f(rain.particleAmount, rainEffective, rainShown);
 			glUniform1i(rain.dropCount, drops);
 			glUniform1i(rain.splashCount, splashCount);
@@ -913,6 +1044,7 @@ class Weather
 			glUseProgram(snow.program);
 			setParticles(snow, Math.max(snowAmount, snowShown), viewProj, invViewProj, viewport, zeroToOne, cameraX,
 				cameraY, cameraZ, day, time, pointLights);
+			glUniform1f(snow.fallTime, snowFall);
 			glUniform2f(snow.particleAmount, snowEffective, snowShown);
 			glUniform1i(snow.dropCount, flakes);
 			glDrawArraysInstanced(GL_TRIANGLES, 0, 6, flakes);
@@ -997,7 +1129,12 @@ class Weather
 		glUniform3fv(u.casterDir, day.casterDir);
 		glUniform1i(u.sunIsCaster, day.sunIsCaster ? 1 : 0);
 		setOvercastUniform(u.overcast);
+		setLightUniform(u.light);
 		field.apply(u.field);
+		windSim.apply(u.windLocations, !openSky);
+		glUniform4f(u.rainStyle, rainStyle[0], rainStyle[1], rainStyle[2], rainStyle[3]);
+		glUniform4f(u.flakeStyle, flakeStyle[0], flakeStyle[1], flakeStyle[2], flakeStyle[3]);
+		glUniform3f(u.flakeColor, flakeStyle[4], flakeStyle[5], flakeStyle[6]);
 	}
 
 	/**

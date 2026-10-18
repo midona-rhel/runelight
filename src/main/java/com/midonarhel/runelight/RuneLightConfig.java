@@ -697,10 +697,10 @@ public interface RuneLightConfig extends Config
 
 	@ConfigItem(
 		keyName = "weatherMode",
-		name = "Weather",
-		description = "Automatic: each region's weather changes every 8 game hours by its biome (deserts mostly clear,"
-			+ " swamps foggy and wet, mountains snowy). Off keeps it clear; Rain and Snow hold that weather."
-			+ " Sheltered places, also under roofs the game hides, stay dry.",
+		name = "Force weather",
+		description = "Automatic: each region's weather changes every 8 game hours by its biome and the season (deserts"
+			+ " sunny with sandstorms, swamps foggy and wet, mountains snowy in winter). Off keeps it clear; any other"
+			+ " choice holds that weather everywhere. Sheltered places, also under roofs the game hides, stay dry.",
 		section = weatherSection,
 		position = 401
 	)
@@ -844,6 +844,20 @@ public interface RuneLightConfig extends Config
 	default boolean weatherFieldMap()
 	{
 		return false;
+	}
+
+	@Range(min = 1, max = 60)
+	@ConfigItem(
+		keyName = "weatherSeasonDays",
+		name = "Days per season",
+		description = "Game days each season lasts (spring, summer, autumn, winter). Seasons change the odds of each"
+			+ " weather: summer rain and heat, autumn rain and wind, snow in winter.",
+		section = weatherSection,
+		position = 413
+	)
+	default int weatherSeasonDays()
+	{
+		return 7;
 	}
 
 	@ConfigSection(

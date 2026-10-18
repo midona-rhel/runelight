@@ -10,7 +10,9 @@ public class WeatherFieldTest
 	private static final int N = 23;
 	private static final float EPS = 1.5f / 255;
 	// west half rains, east half is clear
-	private static final Function<String, WeatherType> TYPES = b -> "WET".equals(b) ? WeatherType.RAIN : WeatherType.CLEAR;
+	private static final WeatherType RAIN = WeatherTestData.type("RAIN");
+	private static final WeatherType CLEAR = WeatherTestData.type("CLEAR");
+	private static final Function<String, WeatherType> TYPES = b -> "WET".equals(b) ? RAIN : CLEAR;
 
 	private static WeatherField field(int split, int shift, boolean gradual)
 	{
@@ -46,8 +48,8 @@ public class WeatherFieldTest
 	public void insideARegionItsOwnWeather()
 	{
 		WeatherField f = field(12, 0, true);
-		float[] t = new float[WeatherField.CHANNELS];
-		WeatherField.targets(WeatherType.RAIN, "WET", 0.6f, false, 12, t);
+		float[] t = new float[WeatherField.TARGETS];
+		WeatherField.targets(RAIN, "WET", 0.6f, false, 12, t);
 		float ox = f.getOriginX(), oz = f.getOriginZ();
 		// at least the blur away from the border
 		assertEquals(t[WeatherField.RAIN], f.sample(WeatherField.RAIN, ox + center(3), oz + center(10)), EPS);
@@ -180,8 +182,59 @@ public class WeatherFieldTest
 		String[] biomes = new String[N * N];
 		java.util.Arrays.fill(biomes, WeatherField.NO_SKY);
 		f.layout(N, N, 0, 0, keys, biomes);
-		f.update(true, b -> WeatherType.STORM, 1, true, true, 6, 0);
+		f.update(true, b -> WeatherTestData.type("THUNDERSTORM"), 1, true, true, 6, 0);
 		assertTrue(!f.hasAnything());
 		assertEquals(0, f.max(WeatherField.RAIN), 0);
+	}
+
+	@Test
+	public void buildupFollowsTheType()
+	{
+		float[][] s = new float[WeatherField.CHANNELS][1];
+		float[] t = new float[WeatherField.TARGETS];
+		// dust and ash fall in the snow pass but never whiten the ground
+		for (String id : new String[]{"SANDSTORM", "ASH_FALL"})
+		{
+			s[WeatherField.SNOW_COVER][0] = 0;
+			s[WeatherField.COVER][0] = 1;
+			WeatherField.targets(WeatherTestData.type(id), null, 0.6f, false, 12, t);
+			assertTrue(t[WeatherField.SNOW] > 0);
+			for (int i = 0; i < 4 * 600; ++i)
+			{
+				WeatherField.step(s, 0, t, 0.25f);
+			}
+			assertTrue(s[WeatherField.SNOW][0] > 0.2f);
+			assertEquals(id, 0, s[WeatherField.SNOW_COVER][0], 0);
+			assertEquals(0, s[WeatherField.WET][0], 0);
+		}
+		// freezing fog leaves frost, and only that much
+		WeatherType frost = WeatherTestData.type("FREEZING_FOG");
+		WeatherField.targets(frost, null, 0.6f, false, 12, t);
+		s[WeatherField.SNOW_COVER][0] = 0;
+		for (int i = 0; i < 4 * 1200; ++i)
+		{
+			WeatherField.step(s, 0, t, 0.25f);
+		}
+		assertEquals(frost.frost, s[WeatherField.SNOW_COVER][0], 0.02f);
+		// a monsoon soaks the ground faster than drizzle
+		float[] wet = new float[2];
+		String[] ids = {"DRIZZLE", "MONSOON"};
+		for (int k = 0; k < 2; ++k)
+		{
+			java.util.Arrays.fill(s[WeatherField.WET], 0);
+			s[WeatherField.COVER][0] = 1;
+			s[WeatherField.RAIN][0] = 0.01f;
+			WeatherField.targets(WeatherTestData.type(ids[k]), null, 0.6f, false, 12, t);
+			for (int i = 0; i < 4 * 10; ++i)
+			{
+				WeatherField.step(s, 0, t, 0.25f);
+			}
+			wet[k] = s[WeatherField.WET][0];
+		}
+		assertTrue(wet[1] > 2 * wet[0]);
+		// showers rain less on average than their peak
+		WeatherType showers = WeatherTestData.type("SPRING_SHOWERS");
+		WeatherField.targets(showers, null, 0.6f, false, 12, t);
+		assertTrue(t[WeatherField.RAIN] < showers.rain * 0.8f);
 	}
 }

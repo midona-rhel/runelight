@@ -1,139 +1,184 @@
 package com.midonarhel.runelight;
 
+import com.midonarhel.runelight.WeatherClimate.Season;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.Objects;
 
 /**
  * Automatic weather: every third of a game day (8 in-game hours) each biome gets a new weather, drawn from that
- * biome's odds. The idea of per-biome forecasts comes from 3D Weather; the odds and the chain here are our own.
+ * biome's odds for the season (WeatherClimate). The idea of per-biome forecasts comes from 3D Weather; the odds, the
+ * seasons and the chain here are our own.
  *
  * Everything is a pure function of the slot number and the biome, so it needs no saved state, is the same every
  * time it is asked and can show the next slot ahead of time. Consecutive slots form a Markov chain (each weather
- * leans toward itself and its neighbours: clear to partly cloudy, rain to storm), restarted from the biome's plain
- * odds every EPOCH slots so finding a slot's weather is never more than EPOCH steps.
+ * leans toward itself and toward weathers like it, so clear skies cloud over before it storms), restarted from the
+ * biome's plain odds every EPOCH slots so finding a slot's weather is never more than EPOCH steps.
+ *
+ * Seasons follow each other every few game days (a setting); toward the end of a season its odds blend into the
+ * next one's, so the weather shifts gradually.
  */
 final class WeatherForecast
 {
 	static final int SLOTS_PER_DAY = 3;
 	// slots per chain; at most this many transitions to find any slot's weather
 	static final int EPOCH = 12;
+	static final int DEFAULT_SEASON_DAYS = 7;
+	// share of a season, at its end, over which its odds blend into the next season's
+	static final float SEASON_BLEND = 0.25f;
 	// the day cycle starts at 09:00 (DayCycle)
 	private static final double START_HOUR = 9;
 	// with the day held at a fixed hour, weather still turns over as if a day took this long
 	private static final int FALLBACK_CYCLE_MINUTES = 12;
-	// fog is this much likelier in the slot that ends in the morning (00:00 to 08:00): morning mists
-	private static final float MORNING_FOG = 2.0f;
 
-	private static final WeatherType[] TYPES = WeatherType.values();
-	private static final int N = TYPES.length;
+	// transition weights between unlike weathers: alike ones up to NEAR, unrelated ones down to FAR, by the
+	// distance between their looks (see features); SIMILARITY is the squared distance at which they are ~1
+	private static final float NEAR = 1.8f;
+	private static final float FAR = 0.15f;
+	private static final float SIMILARITY = 1.0f;
 
-	// weight of going from a weather (row) to another (column), on top of the biome's odds. The diagonal is
-	// persistence; neighbours are likelier than jumps, so clear skies cloud over before it storms. Storms and
-	// blizzards persist less: they blow over.
-	private static final float[][] AFFINITY = new float[N][N];
+	private static float[][] affinity = new float[0][0];
+	private static int affinityVersion = -1;
 
-	static
+	/**
+	 * Weight of going from a weather (row) to another (column), on top of the biome's odds. The diagonal is each
+	 * type's persistence; alike weathers are likelier than jumps.
+	 */
+	static synchronized float[][] affinity()
 	{
-		for (int i = 0; i < N; ++i)
+		if (affinityVersion != WeatherType.version() || affinity.length != WeatherType.count())
 		{
-			for (int j = 0; j < N; ++j)
+			WeatherType[] types = WeatherType.all();
+			int n = types.length;
+			float[][] f = new float[n][];
+			for (int i = 0; i < n; ++i)
 			{
-				AFFINITY[i][j] = i == j ? 3f : 1f;
+				f[i] = features(types[i]);
 			}
+			float[][] a = new float[n][n];
+			for (int i = 0; i < n; ++i)
+			{
+				for (int j = 0; j < n; ++j)
+				{
+					if (i == j)
+					{
+						a[i][j] = types[i].persistence;
+						continue;
+					}
+					float d2 = 0;
+					for (int k = 0; k < f[i].length; ++k)
+					{
+						float d = f[i][k] - f[j][k];
+						d2 += d * d;
+					}
+					a[i][j] = FAR + (NEAR - FAR) * (float) Math.exp(-d2 / SIMILARITY);
+				}
+			}
+			affinity = a;
+			affinityVersion = WeatherType.version();
 		}
-		near(WeatherType.CLEAR, WeatherType.PARTLY_CLOUDY);
-		near(WeatherType.PARTLY_CLOUDY, WeatherType.CLOUDY);
-		near(WeatherType.CLOUDY, WeatherType.RAIN);
-		near(WeatherType.RAIN, WeatherType.STORM);
-		near(WeatherType.CLOUDY, WeatherType.SNOW);
-		near(WeatherType.SNOW, WeatherType.BLIZZARD);
-		near(WeatherType.FOG, WeatherType.CLEAR);
-		near(WeatherType.FOG, WeatherType.PARTLY_CLOUDY);
-		near(WeatherType.FOG, WeatherType.CLOUDY);
-		far(WeatherType.CLEAR, WeatherType.STORM);
-		far(WeatherType.CLEAR, WeatherType.BLIZZARD);
-		far(WeatherType.FOG, WeatherType.STORM);
-		far(WeatherType.FOG, WeatherType.BLIZZARD);
-		AFFINITY[WeatherType.STORM.ordinal()][WeatherType.STORM.ordinal()] = 1.2f;
-		AFFINITY[WeatherType.BLIZZARD.ordinal()][WeatherType.BLIZZARD.ordinal()] = 1.6f;
+		return affinity;
 	}
 
-	private static void near(WeatherType a, WeatherType b)
+	/** What a weather looks like, for how alike two are: clouds, rain, snow, dust or ash, storm, fog, wind, haze. */
+	private static float[] features(WeatherType t)
 	{
-		AFFINITY[a.ordinal()][b.ordinal()] = AFFINITY[b.ordinal()][a.ordinal()] = 1.8f;
+		float snow = Math.min(t.snow, 1.2f);
+		return new float[]{
+			t.cover,
+			Math.min(t.rain, 1.2f),
+			t.whitens() ? snow : 0,
+			// dust and ash are nothing like snow
+			t.whitens() ? 0 : 2 * snow,
+			t.lightning,
+			Math.min(t.fog / 2.2f, 1),
+			0.7f * Math.min(t.wind, 1.2f),
+			0.7f * t.haze,
+		};
 	}
 
-	private static void far(WeatherType a, WeatherType b)
+	/** Season of a slot; seasons last {@code seasonDays} game days. */
+	static Season season(long slot, int seasonDays)
 	{
-		AFFINITY[a.ordinal()][b.ordinal()] = AFFINITY[b.ordinal()][a.ordinal()] = 0.15f;
+		long length = (long) SLOTS_PER_DAY * Math.max(seasonDays, 1);
+		return WeatherClimate.SEASONS[(int) Math.floorMod(Math.floorDiv(slot, length), WeatherClimate.SEASONS.length)];
 	}
 
-	// odds per biome, in WeatherType order: clear, partly cloudy, cloudy, fog, rain, storm, snow, blizzard.
-	// A zero stays zero whatever the chain does: deserts never see snow.
-	private static final Map<String, float[]> ODDS = new HashMap<>();
-	static final String DEFAULT_BIOME = "GRASSLAND";
-
-	static
+	/** How far into its season a slot is, 0 at its start to 1 at its end. */
+	static float seasonProgress(long slot, int seasonDays)
 	{
-		ODDS.put("GRASSLAND", new float[]{30, 22, 15, 8, 15, 5, 2, 0});
-		ODDS.put("FOREST", new float[]{22, 20, 16, 12, 18, 6, 2, 0});
-		ODDS.put("DESERT", new float[]{64, 22, 9, 0, 2, 5, 0, 0});
-		ODDS.put("BARRENS", new float[]{40, 25, 15, 4, 8, 6, 0, 0});
-		ODDS.put("SWAMP", new float[]{8, 10, 18, 32, 24, 6, 2, 0});
-		ODDS.put("ARCTIC", new float[]{10, 12, 16, 10, 0, 0, 36, 16});
-		ODDS.put("MOUNTAIN", new float[]{18, 16, 18, 12, 6, 4, 18, 8});
-		ODDS.put("WILDERNESS", new float[]{8, 12, 28, 14, 18, 14, 4, 2});
-		ODDS.put("TROPICAL", new float[]{24, 18, 12, 4, 26, 16, 0, 0});
+		long length = (long) SLOTS_PER_DAY * Math.max(seasonDays, 1);
+		return (Math.floorMod(slot, length) + 0.5f) / length;
 	}
 
-	/** The biome's odds, or the default biome's for unknown or missing ones. */
-	static float[] odds(String biome)
+	/** The biome's odds in a slot: its season's, blending into the next season's toward the end. */
+	static float[] odds(String biome, long slot, int seasonDays)
 	{
-		float[] o = biome != null ? ODDS.get(biome) : null;
-		return o != null ? o : ODDS.get(DEFAULT_BIOME);
+		Season s = season(slot, seasonDays);
+		float[] a = WeatherClimate.odds(biome, s);
+		float t = smoothstep(1 - SEASON_BLEND, 1, seasonProgress(slot, seasonDays));
+		if (t <= 0)
+		{
+			return a;
+		}
+		float[] b = WeatherClimate.odds(biome, WeatherClimate.SEASONS[(s.ordinal() + 1) % WeatherClimate.SEASONS.length]);
+		float[] o = new float[a.length];
+		// as shares, so a season with bigger weights does not dominate the blend
+		float sa = sum(a), sb = sum(b);
+		for (int i = 0; i < o.length; ++i)
+		{
+			o[i] = a[i] / sa * (1 - t) + b[i] / sb * t;
+		}
+		return o;
 	}
 
 	/** Whether a biome has a sky at all (caves and the like have no weather). */
 	static boolean hasWeather(String biome)
 	{
-		return biome == null || ODDS.containsKey(biome);
+		return biome == null || WeatherClimate.knows(biome);
+	}
+
+	static WeatherType at(long slot, String biome)
+	{
+		return at(slot, biome, DEFAULT_SEASON_DAYS);
 	}
 
 	/**
 	 * The weather of a biome in a slot. Slots count thirds of a game day; slot % 3 == 0 runs from midnight to
 	 * 08:00.
 	 */
-	static WeatherType at(long slot, String biome)
+	static WeatherType at(long slot, String biome, int seasonDays)
 	{
-		float[] odds = odds(biome);
 		long seed = biomeSeed(biome);
 		long start = Math.floorDiv(slot, EPOCH) * EPOCH;
 		// the chain starts from a plain draw for the slot before the epoch, so every slot, the first included,
 		// is a transition from something
-		WeatherType w = draw(weighted(odds, null, start - 1), uniform(start - 1, seed));
+		WeatherType w = draw(weighted(odds(biome, start - 1, seasonDays), null, start - 1), uniform(start - 1, seed));
 		for (long s = start; s <= slot; ++s)
 		{
-			w = draw(weighted(odds, w, s), uniform(s, seed));
+			w = draw(weighted(odds(biome, s, seasonDays), w, s), uniform(s, seed));
 		}
 		return w;
 	}
 
-	/** Weights of the next weather after prev (null: plain odds), with the morning fog bonus for slot. */
+	/** Weights of the next weather after prev (null: plain odds), with the morning bonus for slot. */
 	static float[] weighted(float[] odds, WeatherType prev, long slot)
 	{
-		float[] w = new float[N];
+		WeatherType[] types = WeatherType.all();
+		float[][] aff = affinity();
+		int n = Math.min(types.length, odds.length);
+		float[] w = new float[n];
 		boolean morning = Math.floorMod(slot, SLOTS_PER_DAY) == 0;
-		for (int j = 0; j < N; ++j)
+		for (int j = 0; j < n; ++j)
 		{
 			float v = odds[j];
-			if (prev != null)
+			if (prev != null && prev.index < aff.length)
 			{
-				v *= AFFINITY[prev.ordinal()][j];
+				v *= aff[prev.index][j];
 			}
-			if (morning && TYPES[j] == WeatherType.FOG)
+			if (morning)
 			{
-				v *= MORNING_FOG;
+				v *= WeatherClimate.morning(types[j]);
 			}
 			w[j] = v;
 		}
@@ -142,34 +187,46 @@ final class WeatherForecast
 
 	static WeatherType draw(float[] weights, double u)
 	{
-		float total = 0;
-		for (float v : weights)
-		{
-			total += v;
-		}
-		double x = u * total;
-		for (int j = 0; j < N; ++j)
+		WeatherType[] types = WeatherType.all();
+		double x = u * sum(weights);
+		for (int j = 0; j < weights.length; ++j)
 		{
 			x -= weights[j];
 			if (x < 0 && weights[j] > 0)
 			{
-				return TYPES[j];
+				return types[j];
 			}
 		}
 		// rounding at the top end: the last weather with any weight
-		for (int j = N - 1; j >= 0; --j)
+		for (int j = weights.length - 1; j >= 0; --j)
 		{
 			if (weights[j] > 0)
 			{
-				return TYPES[j];
+				return types[j];
 			}
 		}
-		return WeatherType.CLEAR;
+		return WeatherType.clear();
+	}
+
+	private static float sum(float[] v)
+	{
+		float total = 0;
+		for (float x : v)
+		{
+			total += x;
+		}
+		return total;
+	}
+
+	private static float smoothstep(float e0, float e1, float x)
+	{
+		float t = Math.max(0, Math.min(1, (x - e0) / (e1 - e0)));
+		return t * t * (3 - 2 * t);
 	}
 
 	private static long biomeSeed(String biome)
 	{
-		String b = biome != null && ODDS.containsKey(biome) ? biome : DEFAULT_BIOME;
+		String b = WeatherClimate.knows(biome) ? biome : WeatherClimate.defaultBiome();
 		long h = 1125899906842597L;
 		for (int i = 0; i < b.length(); ++i)
 		{
@@ -202,13 +259,15 @@ final class WeatherForecast
 	// ---------------------------------------------------------------------------------------------------------
 	// The forecast for this frame
 
-	// added to every slot so each session has its own run of weather; a multiple of SLOTS_PER_DAY keeps the
-	// morning slots in the morning
+	// added to every slot so each session has its own run of weather (and starts in its own season); a multiple
+	// of SLOTS_PER_DAY keeps the morning slots in the morning
 	private final long sessionBase;
 	private String biome;
 	private long slot = Long.MIN_VALUE;
-	private WeatherType current = WeatherType.CLEAR;
-	private WeatherType next = WeatherType.CLEAR;
+	private int seasonDays = DEFAULT_SEASON_DAYS;
+	private int catalogue = -1;
+	private WeatherType current = WeatherType.clear();
+	private WeatherType next = WeatherType.clear();
 	private float minutesToNext;
 
 	WeatherForecast(long sessionSeed)
@@ -216,22 +275,33 @@ final class WeatherForecast
 		this.sessionBase = Math.floorMod(sessionSeed, 1L << 40) * SLOTS_PER_DAY;
 	}
 
+	void update(String biome, long elapsedMillis, int cycleMinutes)
+	{
+		update(biome, elapsedMillis, cycleMinutes, seasonDays);
+	}
+
 	/**
 	 * @param biome the 3D Weather biome name, or null when unknown
 	 * @param elapsedMillis the day cycle's clock
+	 * @param seasonDays game days per season
 	 */
-	void update(String biome, long elapsedMillis, int cycleMinutes)
+	void update(String biome, long elapsedMillis, int cycleMinutes, int seasonDays)
 	{
 		double slots = gameDays(elapsedMillis, cycleMinutes) * SLOTS_PER_DAY;
 		long s = sessionBase + (long) Math.floor(slots);
 		int minutes = cycleMinutes > 0 ? cycleMinutes : FALLBACK_CYCLE_MINUTES;
 		minutesToNext = (float) ((Math.floor(slots) + 1 - slots) * minutes / SLOTS_PER_DAY);
-		if (s != slot || !Objects.equals(biome, this.biome))
+		seasonDays = Math.max(seasonDays, 1);
+		if (s != slot || !Objects.equals(biome, this.biome) || seasonDays != this.seasonDays
+			|| catalogue != WeatherType.version())
 		{
 			slot = s;
 			this.biome = biome;
-			current = at(s, biome);
-			next = at(s + 1, biome);
+			this.seasonDays = seasonDays;
+			catalogue = WeatherType.version();
+			current = at(s, biome, seasonDays);
+			next = at(s + 1, biome, seasonDays);
+			byBiome.clear();
 		}
 	}
 
@@ -247,7 +317,7 @@ final class WeatherForecast
 			byBiome.clear();
 			byBiomeSlot = slot;
 		}
-		return byBiome.computeIfAbsent(biome != null ? biome : "", k -> at(slot, biome));
+		return byBiome.computeIfAbsent(biome != null ? biome : "", k -> at(slot, biome, seasonDays));
 	}
 
 	WeatherType getCurrent()
@@ -265,8 +335,24 @@ final class WeatherForecast
 		return minutesToNext;
 	}
 
+	Season getSeason()
+	{
+		return season(slot, seasonDays);
+	}
+
+	/** Game day of the season, from 1. */
+	int getSeasonDay()
+	{
+		return (int) (Math.floorMod(slot, (long) SLOTS_PER_DAY * seasonDays) / SLOTS_PER_DAY) + 1;
+	}
+
+	int getSeasonDays()
+	{
+		return seasonDays;
+	}
+
 	String getBiome()
 	{
-		return biome != null ? biome : DEFAULT_BIOME;
+		return biome != null ? biome : WeatherClimate.defaultBiome();
 	}
 }
