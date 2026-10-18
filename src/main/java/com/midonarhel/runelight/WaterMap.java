@@ -620,7 +620,11 @@ final class WaterMap
 						{
 							continue;
 						}
-						height += heights[level[i]][cx][cy];
+						// the tile's lowest corner (y down: the largest): vanilla water tiles at a bank climb it with
+						// their outer corners, so the corner heights there are the bank, not the water level, and objects
+						// near the shore (piers, posts) would count as under water
+						int[][] h = heights[level[i]];
+						height += Math.max(Math.max(h[x][y], h[x + 1][y]), Math.max(h[x][y + 1], h[x + 1][y + 1]));
 						fx += b.flowX[i];
 						fz += b.flowZ[i];
 						shore += b.shore[i];
