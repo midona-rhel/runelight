@@ -43,6 +43,8 @@ in float fFogAmount;
 in vec3 fWorldPos;
 in vec3 fNormal;
 in float fNormalValid;
+in vec4 fBorderColor;
+in vec3 fInnerColor;
 #ifdef ZBUF_DEBUG
 in float fDepth;
 #endif
@@ -108,6 +110,15 @@ void main() {
     // pick interpolated hsl or rgb depending on smooth banding setting
     vec3 hsl = vec3(int(fHsl) >> 10 & 63, int(fHsl) >> 7 & 7, int(fHsl) & 127);
     vec3 rgb = mix(fColor.rgb, hslToRgb(hsl), smoothBanding);
+    // Ground blending, 117 HD's overlay mix: where a triangle has vertices both on and off an overlay/underlay
+    // border, interpolate each group's colors separately and switch between them over the middle half of the
+    // way, so paths keep a soft but defined edge instead of smearing across the neighboring tile.
+    float w = fBorderColor.a;
+    if (w > 0.001 && w < 0.999 && smoothBanding < 0.5) {
+      vec3 borderRgb = fBorderColor.rgb / w;
+      vec3 innerRgb = fInnerColor / (1.0 - w);
+      rgb = mix(innerRgb, borderRgb, clamp(w * 2.0 - 1.0, 0.0, 1.0));
+    }
     c = vec4(rgb, fColor.a);
   }
 
