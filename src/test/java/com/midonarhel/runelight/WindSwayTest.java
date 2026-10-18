@@ -16,25 +16,36 @@ public class WindSwayTest
 		return (mode | (modifier + 3) << 3 | (invert ? 1 << 6 : 0)) << WindSway.MODEL_SHIFT;
 	}
 
-	// the shader's rule: still below 512
+	// the shader's rule: still below 128
 	private static boolean still(int code)
 	{
-		return code < 512;
+		return code < 128;
 	}
 
 	@Test
 	public void baseStaysTopMoves()
 	{
 		int m = material(WindSway.OBJECT, 0, false);
-		assertEquals(0, WindSway.vertexCode(m, 10, 0, 10, 100, 5));
-		assertEquals(0, WindSway.vertexCode(m, 10, 20, 10, 100, 5)); // below the origin
-		int top = WindSway.vertexCode(m, 10, -100, 10, 100, 5);
-		assertTrue(top >= 512 && top < 32768);
-		assertEquals(100, WindSway.bendUnits(top), 4);
-		assertEquals(5, top & 15);
-		assertEquals(2, top >> WindSway.FLUTTER_SHIFT & 3);
-		// higher vertices bend further
-		assertTrue(WindSway.vertexCode(m, 0, -50, 0, 100, 0) >> WindSway.BEND_SHIFT < top >> WindSway.BEND_SHIFT);
+		int anchor = WindSway.anchor(5 * 128 + 40, 3 * 128);
+		assertEquals(0, WindSway.vertexCode(m, 10, 0, 10, 300, anchor));
+		assertEquals(0, WindSway.vertexCode(m, 10, 20, 10, 300, anchor)); // below the origin
+		int top = WindSway.vertexCode(m, 10, -300, 10, 300, anchor);
+		assertTrue(top >= 128 && top < 32768);
+		assertEquals(300, WindSway.bendUnits(top), 6);
+		assertEquals(anchor, top & 63);
+		// a bend curve, not a shear: half way up bends a third as far (0.5^1.5)
+		assertEquals(300 * Math.pow(0.5, 1.5), WindSway.bendUnits(WindSway.vertexCode(m, 0, -150, 0, 300, anchor)), 4);
+	}
+
+	@Test
+	public void sameHeightSameBend()
+	{
+		// every vertex at one height of an object moves exactly alike, wherever it is across the object
+		int m = material(WindSway.TREE, 0, false);
+		int anchor = WindSway.anchor(1000, 2000);
+		int a = WindSway.vertexCode(m, 0, -700, 0, 1000, anchor);
+		assertEquals(a, WindSway.vertexCode(m, 200, -700, 0, 1000, anchor));
+		assertEquals(a, WindSway.vertexCode(m, -30, -700, 180, 1000, anchor));
 	}
 
 	@Test
@@ -44,11 +55,16 @@ public class WindSwayTest
 		float h = 1000;
 		// low on the tree nothing moves, even out at the branches
 		assertEquals(0, WindSway.vertexCode(m, 200, -200, 0, h, 0));
-		// the trunk axis at mid height stays, the canopy around it moves
-		assertEquals(0, WindSway.vertexCode(m, 10, -500, 10, h, 0));
-		assertTrue(WindSway.vertexCode(m, 200, -500, 0, h, 0) >= 512);
-		// the top of the trunk follows the canopy
-		assertEquals(1000, WindSway.bendUnits(WindSway.vertexCode(m, 0, -1000, 0, h, 0)), 40);
+		assertTrue(WindSway.vertexCode(m, 200, -500, 0, h, 0) >= 128);
+		// the top moves the full height, the bend grows smoothly up the tree
+		assertEquals(1000, WindSway.bendUnits(WindSway.vertexCode(m, 0, -1000, 0, h, 0)), 10);
+		float prev = 0;
+		for (int y = 300; y <= 1000; y += 50)
+		{
+			float b = WindSway.bendUnits(WindSway.vertexCode(m, 0, -y, 0, h, 0));
+			assertTrue(b >= prev);
+			prev = b;
+		}
 	}
 
 	@Test
@@ -56,12 +72,20 @@ public class WindSwayTest
 	{
 		float strong = WindSway.bendUnits(WindSway.vertexCode(material(WindSway.OBJECT, 3, false), 0, -400, 0, 400, 0));
 		float weak = WindSway.bendUnits(WindSway.vertexCode(material(WindSway.OBJECT, -3, false), 0, -400, 0, 400, 0));
-		assertEquals(800, strong, 30);
-		assertEquals(100, weak, 8);
+		assertEquals(800, strong, 10);
+		assertEquals(100, weak, 4);
 		// banners hang from the top: that stays and the bottom moves
 		int banner = material(WindSway.OBJECT_NO_GROUND, 0, true);
 		assertEquals(0, WindSway.vertexCode(banner, 0, -400, 0, 400, 0));
-		assertTrue(WindSway.vertexCode(banner, 0, 0, 0, 400, 0) >= 512);
+		assertTrue(WindSway.vertexCode(banner, 0, 0, 0, 400, 0) >= 128);
+	}
+
+	@Test
+	public void smallPlantsBendFurther()
+	{
+		// a 64 unit tuft bends like a 128 unit plant
+		int m = material(WindSway.OBJECT, 0, false);
+		assertEquals(128, WindSway.bendUnits(WindSway.vertexCode(m, 0, -64, 0, 64, 0)), 3);
 	}
 
 	@Test
@@ -69,7 +93,6 @@ public class WindSwayTest
 	{
 		int c = WindSway.vertexCode(material(WindSway.JIGGLE, 0, false), 0, -300, 0, 300, 0);
 		assertTrue((c & WindSway.JIGGLE_BIT) != 0);
-		assertEquals(3, c >> WindSway.FLUTTER_SHIFT & 3);
 		assertEquals(0, WindSway.vertexCode(material(WindSway.VERTEX, 0, false), 0, -300, 0, 300, 0) & WindSway.JIGGLE_BIT);
 	}
 
@@ -83,9 +106,60 @@ public class WindSwayTest
 		assertTrue(still(1));
 		assertTrue(still(0));
 		// the largest code still fits a positive short
-		int max = WindSway.vertexCode(material(WindSway.OBJECT, 3, false), 0, -9000, 0, 9000, 15);
-		assertEquals(63, max >> WindSway.BEND_SHIFT);
+		int max = WindSway.vertexCode(material(WindSway.TREE, 3, false), 0, -9000, 0, 9000, 63);
+		assertEquals(255, max >> WindSway.BEND_SHIFT);
 		assertTrue(max <= Short.MAX_VALUE);
+	}
+
+	// sway.glsl's anchor tile: the tile congruent to the code's residue nearest the vertex
+	private static int[] shaderAnchor(int code, float wx, float wz)
+	{
+		float rx = code & 7, rz = code >> 3 & 7;
+		float kx = wx / 128f - 0.5f, kz = wz / 128f - 0.5f;
+		float m = WindSway.ANCHOR_MOD;
+		return new int[]{
+			(int) (rx + m * Math.floor((kx - rx) / m + 0.5f)),
+			(int) (rz + m * Math.floor((kz - rz) / m + 0.5f))};
+	}
+
+	@Test
+	public void shaderFindsTheAnchor()
+	{
+		int m = material(WindSway.OBJECT, 0, false);
+		// objects anywhere in the scene, negative coordinates included (the extended scene)
+		for (int ox : new int[]{-1000, -129, -1, 0, 64, 127, 128, 5000, 23000})
+		{
+			for (int oz : new int[]{-700, 0, 300, 9999})
+			{
+				int code = WindSway.vertexCode(m, 0, -100, 0, 100, WindSway.anchor(ox, oz));
+				int tx = Math.floorDiv(ox, 128), tz = Math.floorDiv(oz, 128);
+				// every vertex up to 3.5 tiles out finds the same anchor tile
+				for (int dx = -440; dx <= 440; dx += 40)
+				{
+					for (int dz = -440; dz <= 440; dz += 40)
+					{
+						assertArrayEquals(new int[]{tx, tz}, shaderAnchor(code, ox + dx, oz + dz));
+					}
+				}
+			}
+		}
+	}
+
+	@Test
+	public void anchorsDiffer()
+	{
+		Set<Integer> seen = new HashSet<>();
+		for (int x = 0; x < 8; ++x)
+		{
+			for (int z = 0; z < 8; ++z)
+			{
+				int a = WindSway.anchor(x * 128 + 64, z * 128 + 64);
+				assertTrue(a >= 0 && a < 64);
+				seen.add(a);
+			}
+		}
+		assertEquals(64, seen.size());
+		assertNotEquals(WindSway.anchor(64, 64), WindSway.anchor(192, 64));
 	}
 
 	@Test
@@ -96,23 +170,6 @@ public class WindSwayTest
 		assertTrue(!WindSway.sways(SurfaceMaterials.TRANSMISSIVE | SurfaceMaterials.EMISSIVE_FULL | SurfaceMaterials.FIRE));
 		// SurfaceMaterials ignores the wind bits
 		assertEquals(SurfaceMaterials.face(0, -1, 0), SurfaceMaterials.face(m, -1, 0));
-	}
-
-	@Test
-	public void phasesScatter()
-	{
-		Set<Integer> seen = new HashSet<>();
-		for (int x = 0; x < 8; ++x)
-		{
-			for (int z = 0; z < 8; ++z)
-			{
-				int p = WindSway.phase(x * 128 + 64, z * 128 + 64);
-				assertTrue(p >= 0 && p < 16);
-				seen.add(p);
-			}
-		}
-		assertTrue(seen.size() >= 12);
-		assertNotEquals(WindSway.phase(64, 64), WindSway.phase(192, 64));
 	}
 
 	@Test

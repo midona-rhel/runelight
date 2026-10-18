@@ -17,11 +17,12 @@ import static org.lwjgl.opengl.GL33C.glUniform2f;
  *
  * Each vertex of a swaying object carries a code in the fourth position short of the static vertex format, which
  * otherwise only ground vertices use (GroundBlender's -1). sway.glsl turns it into a displacement:
- *   bits 0-3   the object's phase, so neighbours don't move in lockstep
- *   bits 4-5   flutter 0-3: how much the vertex also shakes on its own
- *   bit  6     jiggle: no bend, the flutter runs along the surface (ivy on walls)
- *   bits 9-14  bend weight: world units of height above the part that stays put, square-root coded
- * The code stays positive (the short is read as a float) and below 512 means still, so the 1 that dynamic models
+ *   bits 0-2   the object's anchor tile x modulo 8, bits 3-5 z: the shader finds the anchor tile from it, and
+ *              takes the object's phase, gust and rolling wave from there, so the whole object moves as one
+ *   bit  6     jiggle: a small rustle up and down instead of a bend (ivy on walls)
+ *   bits 7-14  bend weight: world units the vertex moves per unit of bend, square-root coded. It follows a bend
+ *              curve of the vertex's height within its object: 0 at the base, growing faster toward the top
+ * The code stays positive (the short is read as a float) and below 128 means still, so the 1 that dynamic models
  * read as w (their position has 3 floats) is still too. Animated objects, drawn in that dynamic format, don't
  * sway: they already move on their own.
  *
@@ -40,20 +41,19 @@ final class WindSway
 	// 117 HD's windDisplacementModifier -3 to 3
 	private static final float[] MODIFIERS = {0.25f, 0.5f, 0.75f, 1, 1.25f, 1.5f, 2, 2};
 
-	// vertex code; MAX_HEIGHT must match WIND_MAX_HEIGHT in sway.glsl
-	static final int MAX_HEIGHT = 4096;
-	static final int BEND_SHIFT = 9;
-	static final int BEND_MAX = 63;
-	static final int FLUTTER_SHIFT = 4;
+	// vertex code; MAX_HEIGHT and ANCHOR_MOD must match sway.glsl
+	static final int MAX_HEIGHT = 2048;
+	static final int ANCHOR_MOD = 8;
+	static final int BEND_SHIFT = 7;
+	static final int BEND_MAX = 255;
 	static final int JIGGLE_BIT = 1 << 6;
 
-	// trees (117 HD's hemisphere blend): the canopy moves, the trunk stays. Below this share of the height
-	// nothing moves; near the trunk axis (in world units) only the top does.
-	private static final float TREE_BASE = 0.3f;
-	private static final float TREE_TRUNK = 50, TREE_TRUNK_BLEND = 10;
-
-	// how fast windTime runs: calm air rocks slowly, a storm fast (the shader multiplies it into its frequencies)
-	private static final float TIME_CALM = 0.6f, TIME_WIND = 1.2f, TIME_GUST = 0.8f;
+	// bend curves, weight = height share ^ power: plants bend along their length, trees stiffer low down
+	private static final float PLANT_POWER = 1.5f, TREE_POWER = 2f;
+	// trees: below this share of the height nothing moves; above it the trunk and canopy bend as one
+	private static final float TREE_BASE = 0.25f;
+	// small plants bend further for their size: below this height (world units) the bend grows with its square root
+	private static final float SMALL = 256;
 
 	private static byte[] objects = new byte[0];
 
@@ -141,14 +141,11 @@ final class WindSway
 	}
 
 	/**
-	 * Phase 0-15 of an object at (x, z), scattered so that neighbours differ.
+	 * The anchor code of an object at scene local (x, z): its tile modulo {@link #ANCHOR_MOD} on each axis.
 	 */
-	static int phase(int x, int z)
+	static int anchor(int x, int z)
 	{
-		int h = (x >> 6) * 73856093 ^ (z >> 6) * 19349663;
-		h ^= h >>> 13;
-		h *= 0x5bd1e995;
-		return (h ^ h >>> 15) & 15;
+		return (x >> 7 & ANCHOR_MOD - 1) | (z >> 7 & ANCHOR_MOD - 1) << 3;
 	}
 
 	/**
@@ -157,9 +154,9 @@ final class WindSway
 	 * @param material the material int with the object's wind code from {@link #forObject}
 	 * @param x        model-space position, y up negative, the origin on the ground
 	 * @param height   the model's height above its origin (positive)
-	 * @param phase    from {@link #phase}
+	 * @param anchor   from {@link #anchor}
 	 */
-	static int vertexCode(int material, float x, float y, float z, float height, int phase)
+	static int vertexCode(int material, float x, float y, float z, float height, int anchor)
 	{
 		int model = material >> MODEL_SHIFT;
 		int mode = model & MODE_MASK;
@@ -173,37 +170,30 @@ final class WindSway
 			// hanging things (banners, vines) are fixed at the top
 			frac = 1 - frac;
 		}
-		float weight = frac;
-		int flutter;
+		float curve;
 		int jiggle = 0;
-		switch (mode)
+		if (mode == TREE)
 		{
-			case TREE:
-			{
-				float trunk = clamp((Math.abs(x) + Math.abs(z) - TREE_TRUNK) / TREE_TRUNK_BLEND, 0, 1);
-				float top = clamp((frac - 0.5f) / 0.2f, 0, 1);
-				weight *= smoothstep(TREE_BASE - 0.05f, TREE_BASE + 0.05f, frac) * (trunk + (1 - trunk) * top);
-				flutter = 1;
-				break;
-			}
-			case VERTEX:
-				flutter = 3;
-				break;
-			case JIGGLE:
-				flutter = 3;
-				jiggle = JIGGLE_BIT;
-				break;
-			default:
-				flutter = 2;
-				break;
+			// the trunk stays at the base; no dependence on the distance from the trunk axis, so the canopy keeps
+			// its shape and moves as a block
+			curve = (float) Math.pow(clamp((frac - TREE_BASE) / (1 - TREE_BASE), 0, 1), TREE_POWER);
 		}
-		float units = weight * height * MODIFIERS[model >> 3 & 7];
+		else
+		{
+			curve = (float) Math.pow(frac, PLANT_POWER);
+			if (mode == JIGGLE)
+			{
+				jiggle = JIGGLE_BIT;
+			}
+		}
+		float size = height < SMALL ? (float) Math.sqrt(SMALL * height) : height;
+		float units = curve * size * MODIFIERS[model >> 3 & 7];
 		int bend = Math.round((float) Math.sqrt(Math.min(units, MAX_HEIGHT) / MAX_HEIGHT) * BEND_MAX);
 		if (bend == 0)
 		{
 			return 0;
 		}
-		return bend << BEND_SHIFT | jiggle | flutter << FLUTTER_SHIFT | phase & 15;
+		return bend << BEND_SHIFT | jiggle | anchor & 63;
 	}
 
 	/**
@@ -241,11 +231,5 @@ final class WindSway
 	private static float clamp(float v, float lo, float hi)
 	{
 		return v < lo ? lo : v > hi ? hi : v;
-	}
-
-	private static float smoothstep(float a, float b, float x)
-	{
-		float t = clamp((x - a) / (b - a), 0, 1);
-		return t * t * (3 - 2 * t);
 	}
 }

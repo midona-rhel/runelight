@@ -68,7 +68,8 @@ final class WaterMap
 	private int baseX, baseY;
 
 	// RGBA float texture, two pages of CORNERS x CORNERS side by side, row by row:
-	// page 0 (surface height, flow x, flow z in tiles/s, type of the tile whose sw corner this is),
+	// page 0 (surface height, on land the nearest water's; flow x, flow z in tiles/s; type of the tile whose sw corner
+	// this is),
 	// page 1 (distance to shore in tiles, wave energy 0-1, share of the corner's tiles that are water, 0)
 	float[] texture;
 	boolean hasWater;
@@ -646,7 +647,8 @@ final class WaterMap
 				}
 				else
 				{
-					height = heights[0][cx][cy];
+					// filled in below
+					height = Float.NaN;
 				}
 				int tile = cx < SIZE && cy < SIZE ? type[cy * SIZE + cx] : 0;
 
@@ -661,6 +663,58 @@ final class WaterMap
 				t[p1 + 2] = count / 4f;
 			}
 		}
+		spreadLevel(t, w);
 		texture = t;
+	}
+
+	/**
+	 * Gives every land corner the surface height of the nearest water corner (NaN marks land in page 0's height).
+	 * The shader filters the heights between corners and follows the view ray across cells to find the surface: a
+	 * land corner carrying the land's height would ramp the surface up the bank near every shore, and the crossing
+	 * would jump between the ramp and the water as the view moves.
+	 */
+	static void spreadLevel(float[] t, int w)
+	{
+		int[] queue = new int[CORNERS * CORNERS];
+		int head = 0, tail = 0;
+		for (int i = 0; i < CORNERS * CORNERS; ++i)
+		{
+			int cx = i % CORNERS, cy = i / CORNERS;
+			if (!Float.isNaN(t[(cy * w + cx) * 4]))
+			{
+				queue[tail++] = i;
+			}
+		}
+		if (tail == 0)
+		{
+			for (int cy = 0; cy < CORNERS; ++cy)
+			{
+				for (int cx = 0; cx < CORNERS; ++cx)
+				{
+					t[(cy * w + cx) * 4] = 0;
+				}
+			}
+			return;
+		}
+		while (head < tail)
+		{
+			int i = queue[head++];
+			int cx = i % CORNERS, cy = i / CORNERS;
+			float h = t[(cy * w + cx) * 4];
+			for (int d = 0; d < 4; ++d)
+			{
+				int nx = cx + (d == 0 ? 1 : d == 1 ? -1 : 0), ny = cy + (d == 2 ? 1 : d == 3 ? -1 : 0);
+				if (nx < 0 || ny < 0 || nx >= CORNERS || ny >= CORNERS)
+				{
+					continue;
+				}
+				int p = (ny * w + nx) * 4;
+				if (Float.isNaN(t[p]))
+				{
+					t[p] = h;
+					queue[tail++] = ny * CORNERS + nx;
+				}
+			}
+		}
 	}
 }

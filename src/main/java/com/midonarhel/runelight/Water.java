@@ -17,13 +17,29 @@ class Water
 	private static final double SLOPE_RANGE = 2.8;
 	// the shader's time wraps after this many seconds; every periodic motion in water.glsl repeats within it
 	private static final double TIME_WRAP = 3840;
+	// how far the waves drift with the wind, world units per second (calm, full wind), before water.glsl's per-type
+	// and config speed; the swell's own drift
+	private static final double DRIFT_CALM = 5, DRIFT_WIND = 18;
+	private static final double SWELL_CALM = 4, SWELL_WIND = 10;
+	// the drift distances wrap at a whole number of every repeat they are used with in water.glsl (wave scale 420 at
+	// any per-type speed of 0.35 or 0.45 and any whole config percent; swell scale 1650): no jump at the wrap
+	private static final double DRIFT_WRAP = 420 * 100 * 20, SWELL_WRAP = 1650 * 400;
+	// seconds over which the water follows a change in the wind's strength: it jumps under roofs and in gusts
+	private static final double STRENGTH_EASE = 1.5;
 
 	private int texData, texNoise;
+	// the water's own clock: System.nanoTime is monotonic and fine grained everywhere, where currentTimeMillis can
+	// tick in 15.6 ms steps on Windows (the waves stutter) and jumps when the system clock is adjusted
+	private final long startNanos = System.nanoTime();
+	// The waves' drift, integrated each frame. Velocity times the time since start would move every wave a long way
+	// whenever the wind changes the least bit, which it does all the time: the water jumped about.
+	private long lastNanos;
+	private double driftX, driftZ, swellX, swellZ, strength;
 	private boolean hasData;
 	private WaterMap pending;
 	private boolean pendingSet;
 
-	private int uniEnabled, uniGrid, uniTime, uniWind, uniRain, uniReflections, uniClarity, uniWaves, uniSpeed,
+	private int uniEnabled, uniGrid, uniTime, uniWind, uniDrift, uniRain, uniReflections, uniClarity, uniWaves, uniSpeed,
 		uniCaustics, uniDebug;
 
 	/**
@@ -35,6 +51,7 @@ class Water
 		uniGrid = glGetUniformLocation(program, "waterGrid");
 		uniTime = glGetUniformLocation(program, "waterTime");
 		uniWind = glGetUniformLocation(program, "waterWind");
+		uniDrift = glGetUniformLocation(program, "waterDrift");
 		uniRain = glGetUniformLocation(program, "waterRain");
 		uniReflections = glGetUniformLocation(program, "waterReflections");
 		uniClarity = glGetUniformLocation(program, "waterClarity");
@@ -94,7 +111,9 @@ class Water
 		}
 		FloatBuffer buf = BufferUtils.createFloatBuffer(map.texture.length);
 		buf.put(map.texture).flip();
-		glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA16F, WaterMap.CORNERS * 2, WaterMap.CORNERS, 0, GL_RGBA, GL_FLOAT, buf);
+		// full floats: heights reach thousands of units, where half floats step by 2 to 4, and the shader takes the
+		// type from this texture too
+		glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA32F, WaterMap.CORNERS * 2, WaterMap.CORNERS, 0, GL_RGBA, GL_FLOAT, buf);
 		glBindTexture(GL_TEXTURE_2D, 0);
 	}
 
@@ -104,7 +123,7 @@ class Water
 	 * @param wind  x, z direction the wind blows toward, and its strength 0-1
 	 * @param rain  0-1 rain falling on open water
 	 */
-	void bind(RuneLightConfig config, double seconds, float[] wind, float rain, int dataUnit, int noiseUnit)
+	void bind(RuneLightConfig config, float[] wind, float rain, int dataUnit, int noiseUnit)
 	{
 		boolean enabled = config.water() && hasData;
 		glUniform1i(uniEnabled, enabled ? 1 : 0);
@@ -118,8 +137,12 @@ class Water
 		}
 
 		glUniform2f(uniGrid, RuneLightPlugin.SCENE_OFFSET, WaterMap.CORNERS);
-		glUniform1f(uniTime, (float) (seconds % TIME_WRAP));
-		glUniform3f(uniWind, wind[0], wind[1], wind[2]);
+		long now = System.nanoTime();
+		glUniform1f(uniTime, (float) (((now - startNanos) / 1e9) % TIME_WRAP));
+		advance(wind, lastNanos == 0 ? 0 : (now - lastNanos) / 1e9);
+		lastNanos = now;
+		glUniform3f(uniWind, wind[0], wind[1], (float) strength);
+		glUniform4f(uniDrift, (float) driftX, (float) driftZ, (float) swellX, (float) swellZ);
 		glUniform1f(uniRain, rain);
 		glUniform1i(uniReflections, config.waterReflections() ? 1 : 0);
 		glUniform1f(uniClarity, config.waterClarity() / 100f);
@@ -133,6 +156,27 @@ class Water
 		glActiveTexture(GL_TEXTURE0 + noiseUnit);
 		glBindTexture(GL_TEXTURE_2D, texNoise);
 		glActiveTexture(GL_TEXTURE0);
+	}
+
+	/**
+	 * Move the drift on by dt seconds of the given wind (direction x, z and strength).
+	 */
+	void advance(float[] wind, double dt)
+	{
+		// a stall (loading, a breakpoint) doesn't throw the waves across the lake
+		dt = Math.max(0, Math.min(dt, 0.25));
+		strength += (wind[2] - strength) * (1 - Math.exp(-dt / STRENGTH_EASE));
+		double v = (DRIFT_CALM + (DRIFT_WIND - DRIFT_CALM) * strength) * dt;
+		driftX = (driftX + wind[0] * v) % DRIFT_WRAP;
+		driftZ = (driftZ + wind[1] * v) % DRIFT_WRAP;
+		double sv = (SWELL_CALM + SWELL_WIND * strength) * dt;
+		swellX = (swellX + wind[0] * sv) % SWELL_WRAP;
+		swellZ = (swellZ + wind[1] * sv) % SWELL_WRAP;
+	}
+
+	double[] drift()
+	{
+		return new double[]{driftX, driftZ, swellX, swellZ, strength};
 	}
 
 	static void unbind(int dataUnit, int noiseUnit)
