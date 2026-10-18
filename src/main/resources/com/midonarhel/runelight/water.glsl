@@ -236,8 +236,13 @@ vec3 waterOver(ivec2 px, inout vec3 p, vec3 n, vec3 albedo, vec3 light, float sh
     return lit;  // under the surface
   float t = (surf0.r - cameraPos.y) / v.y;
   vec2 c = waterCell(cameraPos.xz + v.xz * t);
-  surf0 = waterPage0(c);
-  t = (surf0.r - cameraPos.y) / v.y;
+  if (waterTypeAt(c) != 0) {
+    // only refine on water: a land cell's corners carry the land height, which would lift the surface onto the bank
+    surf0 = waterPage0(c);
+    t = (surf0.r - cameraPos.y) / v.y;
+  } else {
+    c = cBed;
+  }
   float path = dist - t;
   // vertical depth of this pixel below the surface
   float depth = path * v.y;

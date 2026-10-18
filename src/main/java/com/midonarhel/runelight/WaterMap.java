@@ -603,8 +603,9 @@ final class WaterMap
 		{
 			for (int cx = 0; cx < CORNERS; ++cx)
 			{
-				// average over the water tiles touching this corner
+				// over the water tiles touching this corner
 				float height = 0, fx = 0, fz = 0, shore = 0, energy = 0;
+				int lowest = 0;
 				int count = 0;
 				for (int dx = -1; dx <= 0; ++dx)
 				{
@@ -624,7 +625,10 @@ final class WaterMap
 						// their outer corners, so the corner heights there are the bank, not the water level, and objects
 						// near the shore (piers, posts) would count as under water
 						int[][] h = heights[level[i]];
-						height += Math.max(Math.max(h[x][y], h[x + 1][y]), Math.max(h[x][y + 1], h[x + 1][y + 1]));
+						int low = Math.max(Math.max(h[x][y], h[x + 1][y]), Math.max(h[x][y + 1], h[x + 1][y + 1]));
+						// the lowest of the touching tiles' levels, not their average: where water steps down (falls,
+						// rapids) the surface must not ramp up over the rocks between the two levels
+						lowest = count == 0 ? low : Math.max(lowest, low);
 						fx += b.flowX[i];
 						fz += b.flowZ[i];
 						shore += b.shore[i];
@@ -634,7 +638,7 @@ final class WaterMap
 				}
 				if (count > 0)
 				{
-					height /= count;
+					height = lowest;
 					fx /= count;
 					fz /= count;
 					shore /= count;
