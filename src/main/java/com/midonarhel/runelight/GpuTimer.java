@@ -3,39 +3,59 @@ package com.midonarhel.runelight;
 import static org.lwjgl.opengl.GL33C.*;
 
 /**
- * Non-blocking GPU timing per frame stage. Each frame gets a slot of GL_TIME_ELAPSED queries, one per stage;
- * a slot is only read back when it comes around again several frames later, and only if the driver says the
- * result is ready, so measuring never stalls the pipeline.
+ * Non-blocking GPU timing per frame pass. Each frame gets a slot of GL_TIME_ELAPSED queries; a slot is only read
+ * back when it comes around again several frames later, and only if the driver says the results are ready, so
+ * measuring never stalls the pipeline.
  *
- * Uses elapsed-time queries rather than timestamps: Apple's OpenGL driver returns 0 for GL_TIMESTAMP.
- * Stages are sequential, never nested, as elapsed queries of one kind cannot overlap.
+ * Uses elapsed-time queries rather than timestamps: Apple's OpenGL driver returns 0 for GL_TIMESTAMP. Elapsed
+ * queries of one kind cannot overlap, so passes are timed one after another, never nested: {@link #begin} ends
+ * whatever pass was running. A pass may be begun several times a frame (the UI is uploaded early and drawn late);
+ * its pieces are added up.
  */
 class GpuTimer
 {
 	static final int SCENE = 0;
-	static final int SHADOW = 1;
-	static final int POST = 2;
-	static final int PRESENT = 3;
-	private static final int STAGES = 4;
-	private static final int SLOTS = 4;
+	static final int RESOLVE = 1;
+	static final int SHADOW = 2;
+	static final int OCCLUSION = 3;
+	static final int AO = 4;
+	static final int SKY = 5;
+	static final int FOG = 6;
+	static final int COMPOSITE = 7;
+	static final int WEATHER = 8;
+	static final int UI = 9;
+	static final int STAGES = 10;
 
-	private final int[][] queries = new int[SLOTS][STAGES];
-	private final boolean[][] ended = new boolean[SLOTS][STAGES];
+	static final String[] NAMES = {
+		"scene", "MSAA resolve", "shadow map", "weather occlusion", "AO", "sky cache", "fog", "composite",
+		"weather", "UI"
+	};
+
+	private static final int SLOTS = 4;
+	// queries per frame; more begins than this in one frame are not timed
+	private static final int ENTRIES = 24;
+
+	private final int[][] queries = new int[SLOTS][ENTRIES];
+	private final int[][] stageOf = new int[SLOTS][ENTRIES];
+	private final int[] used = new int[SLOTS];
 	private int slot;
-	private int active = -1;
+	private boolean active;
 	private boolean initialized;
 
+	private final double[] frame = new double[STAGES];
 	// exponential moving averages, milliseconds
 	private final double[] ms = new double[STAGES];
+	private double totalMs;
 
 	void init()
 	{
 		for (int s = 0; s < SLOTS; ++s)
 		{
 			glGenQueries(queries[s]);
+			used[s] = 0;
 		}
 		slot = 0;
-		active = -1;
+		active = false;
 		initialized = true;
 	}
 
@@ -49,13 +69,13 @@ class GpuTimer
 		for (int s = 0; s < SLOTS; ++s)
 		{
 			glDeleteQueries(queries[s]);
-			java.util.Arrays.fill(ended[s], false);
+			used[s] = 0;
 		}
 		initialized = false;
 	}
 
 	/**
-	 * Start timing a stage, ending the previous one if it is still running.
+	 * Start timing a pass, ending the previous one if it is still running.
 	 */
 	void begin(int stage)
 	{
@@ -64,19 +84,25 @@ class GpuTimer
 			return;
 		}
 		end();
-		glBeginQuery(GL_TIME_ELAPSED, queries[slot][stage]);
-		active = stage;
+		int n = used[slot];
+		if (n == ENTRIES)
+		{
+			return;
+		}
+		glBeginQuery(GL_TIME_ELAPSED, queries[slot][n]);
+		stageOf[slot][n] = stage;
+		used[slot] = n + 1;
+		active = true;
 	}
 
 	void end()
 	{
-		if (active < 0)
+		if (!active)
 		{
 			return;
 		}
 		glEndQuery(GL_TIME_ELAPSED);
-		ended[slot][active] = true;
-		active = -1;
+		active = false;
 	}
 
 	/**
@@ -90,19 +116,35 @@ class GpuTimer
 		}
 		end();
 		slot = (slot + 1) % SLOTS;
-		for (int stage = 0; stage < STAGES; ++stage)
+		int n = used[slot];
+		if (n == 0)
 		{
-			if (!ended[slot][stage])
-			{
-				continue;
-			}
-			int q = queries[slot][stage];
-			if (glGetQueryObjecti(q, GL_QUERY_RESULT_AVAILABLE) == GL_TRUE)
-			{
-				ms[stage] = smooth(ms[stage], glGetQueryObjecti64(q, GL_QUERY_RESULT) / 1e6);
-			}
-			ended[slot][stage] = false;
+			return;
 		}
+		used[slot] = 0;
+		// the last query of a frame finishes last; if it is not ready, drop the frame rather than wait
+		if (glGetQueryObjecti(queries[slot][n - 1], GL_QUERY_RESULT_AVAILABLE) != GL_TRUE)
+		{
+			return;
+		}
+		java.util.Arrays.fill(frame, 0);
+		for (int i = 0; i < n; ++i)
+		{
+			int q = queries[slot][i];
+			if (glGetQueryObjecti(q, GL_QUERY_RESULT_AVAILABLE) != GL_TRUE)
+			{
+				return;
+			}
+			frame[stageOf[slot][i]] += glGetQueryObjecti64(q, GL_QUERY_RESULT) / 1e6;
+		}
+		double total = 0;
+		for (int s = 0; s < STAGES; ++s)
+		{
+			// passes that did not run this frame decay toward 0, so turning something off shows
+			ms[s] = smooth(ms[s], frame[s]);
+			total += frame[s];
+		}
+		totalMs = smooth(totalMs, total);
 	}
 
 	private static double smooth(double avg, double v)
@@ -111,26 +153,16 @@ class GpuTimer
 		{
 			return avg;
 		}
-		return avg == 0 ? v : avg * 0.9 + v * 0.1;
+		return avg == 0 ? v : avg * 0.95 + v * 0.05;
 	}
 
-	double getSceneMs()
+	double getMs(int stage)
 	{
-		return ms[SCENE];
+		return ms[stage];
 	}
 
-	double getShadowMs()
+	double getTotalMs()
 	{
-		return ms[SHADOW];
-	}
-
-	double getPostMs()
-	{
-		return ms[POST];
-	}
-
-	double getPresentMs()
-	{
-		return ms[PRESENT];
+		return totalMs;
 	}
 }

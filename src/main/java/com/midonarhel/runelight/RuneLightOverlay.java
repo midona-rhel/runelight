@@ -38,12 +38,26 @@ class RuneLightOverlay extends OverlayPanel
 		if (config.showTimings())
 		{
 			GpuTimer t = plugin.gpuTimer;
+			CpuTimer c = plugin.cpuTimer;
 			line("FPS", Integer.toString(client.getFPS()), Color.WHITE);
-			line("CPU frame", ms(plugin.getCpuFrameMs()), Color.WHITE);
-			line("GPU scene", ms(t.getSceneMs()), Color.WHITE);
-			line("GPU shadows", ms(t.getShadowMs()), Color.WHITE);
-			line("GPU post", ms(t.getPostMs()), Color.WHITE);
-			line("GPU UI", ms(t.getPresentMs()), Color.WHITE);
+			line("Frame", ms(plugin.getSwapIntervalMs()), Color.WHITE);
+			line("GPU total", ms(t.getTotalMs()), Color.CYAN);
+			for (int s = 0; s < GpuTimer.STAGES; ++s)
+			{
+				// passes that are off stay out of the way
+				if (t.getMs(s) >= 0.005)
+				{
+					line("  " + GpuTimer.NAMES[s], ms(t.getMs(s)), Color.WHITE);
+				}
+			}
+			line("CPU frame", ms(plugin.getCpuFrameMs()), Color.CYAN);
+			for (int s = 0; s < CpuTimer.STAGES; ++s)
+			{
+				if (c.getMs(s) >= 0.005)
+				{
+					line("  " + CpuTimer.NAMES[s], ms(c.getMs(s)), Color.WHITE);
+				}
+			}
 			line("Point lights", Integer.toString(plugin.getPointLightCount()), Color.WHITE);
 			BuildingLights buildings = plugin.getBuildingLights();
 			if (buildings != null)

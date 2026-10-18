@@ -1,0 +1,61 @@
+package com.midonarhel.runelight;
+
+/**
+ * CPU time of the plugin's own per-frame steps and of the parts of the frame it doesn't control, averaged.
+ * Steps may be begun several times a frame (only on the client thread); their times add up. Not nested: begin
+ * and end the same step, never two at once unless they are different steps.
+ */
+class CpuTimer
+{
+	// the client's scene traversal between our pre and post scene callbacks, including our draw callbacks
+	static final int CLIENT_SCENE = 0;
+	static final int ENVIRONMENT = 1;
+	static final int WEATHER = 2;
+	static final int LIGHTS = 3;
+	static final int CLUSTERS = 4;
+	static final int SHADOW_SUBMIT = 5;
+	static final int UI_UPLOAD = 6;
+	// waiting in swapBuffers: large when the GPU (or vsync) is the limit
+	static final int SWAP = 7;
+	// from our swap to the next frame's scene: the client's game loop, other plugins and overlays
+	static final int OUTSIDE = 8;
+	static final int STAGES = 9;
+
+	static final String[] NAMES = {
+		"client scene", "environment", "weather", "light collection", "light clusters", "shadow submit",
+		"UI upload", "swap wait", "outside frame"
+	};
+
+	private final long[] start = new long[STAGES];
+	private final double[] frame = new double[STAGES];
+	private final double[] ms = new double[STAGES];
+
+	void begin(int stage)
+	{
+		start[stage] = System.nanoTime();
+	}
+
+	void end(int stage)
+	{
+		if (start[stage] != 0)
+		{
+			frame[stage] += (System.nanoTime() - start[stage]) / 1e6;
+			start[stage] = 0;
+		}
+	}
+
+	/** Fold this frame's times into the averages. */
+	void endFrame()
+	{
+		for (int s = 0; s < STAGES; ++s)
+		{
+			ms[s] = ms[s] == 0 ? frame[s] : ms[s] * 0.95 + frame[s] * 0.05;
+			frame[s] = 0;
+		}
+	}
+
+	double getMs(int stage)
+	{
+		return ms[stage];
+	}
+}

@@ -186,6 +186,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 	private float[] textureAnimations;
 
 	final GpuTimer gpuTimer = new GpuTimer();
+	final CpuTimer cpuTimer = new CpuTimer();
 
 	private Canvas canvas;
 	private AWTContext awtContext;
@@ -294,6 +295,8 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 
 	private long frameCpuStart;
 	private volatile double cpuFrameMs;
+	private long lastSwapNanos;
+	private volatile double swapIntervalMs;
 
 	private final DayCycle dayCycle = new DayCycle();
 	final EnvironmentManager environmentManager = new EnvironmentManager();
@@ -1412,6 +1415,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 	private void preSceneDrawToplevel(Scene scene,
 		float cameraX, float cameraY, float cameraZ, float cameraPitch, float cameraYaw)
 	{
+		cpuTimer.end(CpuTimer.OUTSIDE);
 		gpuTimer.begin(GpuTimer.SCENE);
 		frameCpuStart = System.nanoTime();
 		captureFrameState(scene, cameraX, cameraY, cameraZ);
@@ -1587,6 +1591,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		sceneTargets.clearAlphaLayer();
 
 		checkGLErrors();
+		cpuTimer.begin(CpuTimer.CLIENT_SCENE);
 	}
 
 	private void drawSkybox(Scene scene, int sky, float cameraX, float cameraY, float cameraZ)
@@ -1637,20 +1642,21 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		glDisable(GL_BLEND);
 		glDisable(GL_CULL_FACE);
 		glDisable(GL_DEPTH_TEST);
+		cpuTimer.end(CpuTimer.CLIENT_SCENE);
 
+		gpuTimer.begin(GpuTimer.RESOLVE);
 		sceneTargets.resolve();
 		if (frameShadows)
 		{
 			gpuTimer.begin(GpuTimer.SHADOW);
+			cpuTimer.begin(CpuTimer.SHADOW_SUBMIT);
 			renderShadowMap();
+			cpuTimer.end(CpuTimer.SHADOW_SUBMIT);
 		}
 		if (weather.isActive())
 		{
 			// usually nothing: the map is only redrawn after the player moves far or the scenery changes
-			if (!frameShadows)
-			{
-				gpuTimer.begin(GpuTimer.SHADOW);
-			}
+			gpuTimer.begin(GpuTimer.OCCLUSION);
 			weather.renderOcclusion(root, glShadowProgram, uniShadowLightProj,
 				uniShadowEntityProj, uniShadowBase, uniShadowTexturesReady, textureArrayId != -1, glCapabilities.OpenGL45);
 		}
@@ -1674,7 +1680,9 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		frameFogDepth = config.fogDepth();
 		frameDrawDistance = getDrawDistance() * Perspective.LOCAL_TILE_SIZE;
 
+		cpuTimer.begin(CpuTimer.ENVIRONMENT);
 		frameOpenSky = updateEnvironment(scene);
+		cpuTimer.end(CpuTimer.ENVIRONMENT);
 		frameOutdoors = config.sunLighting() && frameOpenSky;
 
 		dayCycle.update(System.currentTimeMillis() - startMillis, config.dayCycleMinutes(), config.fixedHour());
@@ -1683,7 +1691,9 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		VAO.clearShadowDraws();
 		VAO.recordShadowDraws = frameShadows;
 
+		cpuTimer.begin(CpuTimer.WEATHER);
 		updateWeather(cameraX, cameraY, cameraZ);
+		cpuTimer.end(CpuTimer.WEATHER);
 
 		frameFog = false;
 		Player player = client.getLocalPlayer();
@@ -1937,8 +1947,12 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 			{
 				lightClusters.init();
 			}
+			cpuTimer.begin(CpuTimer.LIGHTS);
 			collectLights();
+			cpuTimer.end(CpuTimer.LIGHTS);
+			cpuTimer.begin(CpuTimer.CLUSTERS);
 			lightClusters.update(frameLights, frameViewProj, frameCameraX, frameCameraY, frameCameraZ);
+			cpuTimer.end(CpuTimer.CLUSTERS);
 			lightClusters.bind(LIGHT_DATA_UNIT, CLUSTER_DATA_UNIT);
 		}
 		glUniform1i(uniCompositePointLights, points ? 1 : 0);
@@ -2023,6 +2037,11 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		return cpuFrameMs;
 	}
 
+	double getSwapIntervalMs()
+	{
+		return swapIntervalMs;
+	}
+
 	double getHourOfDay()
 	{
 		return dayCycle.hour();
@@ -2090,6 +2109,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 
 		if (ao)
 		{
+			gpuTimer.begin(GpuTimer.AO);
 			glBindFramebuffer(GL_FRAMEBUFFER, sceneTargets.getAoFbo());
 			glViewport(0, 0, sceneTargets.getAoWidth(), sceneTargets.getAoHeight());
 			glUseProgram(glAoProgram);
@@ -2100,7 +2120,9 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		}
 
 		updateClouds();
+		gpuTimer.begin(GpuTimer.SKY);
 		int skyCacheMode = updateSkyCache();
+		gpuTimer.begin(GpuTimer.COMPOSITE);
 
 		glUseProgram(glCompositeProgram);
 		setFrameUniforms(compositeFrame);
@@ -2114,6 +2136,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		// after setLightingUniforms, which binds the shadow map and light clusters the fog also samples
 		if (frameFog)
 		{
+			gpuTimer.begin(GpuTimer.FOG);
 			boolean shadows = frameShadows && shadowMap.isInitialized();
 			volumetricFog.render(sceneTargets.getAoWidth(), sceneTargets.getAoHeight(), FOG_NOISE_UNIT, FOG_TEXTURE_UNIT,
 				frameViewProj, frameInvViewProj, frameViewport, glCapabilities.OpenGL45,
@@ -2121,6 +2144,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 				frameOutdoors, config.proceduralSky() && !frameHasSkybox, frameSkyColor, dayCycle,
 				shadows ? shadowMap : null, config.pointLights());
 			glUseProgram(glCompositeProgram);
+			gpuTimer.begin(GpuTimer.COMPOSITE);
 		}
 		volumetricFog.setCompositeEnabled(frameFog);
 		bindClouds();
@@ -2139,6 +2163,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 
 		if (weather.isActive() && config.debugView() == DebugView.FINAL)
 		{
+			gpuTimer.begin(GpuTimer.WEATHER);
 			weather.draw(frameViewProj, frameInvViewProj, frameViewport, glCapabilities.OpenGL45,
 				frameCameraX, frameCameraY, frameCameraZ, dayCycle, frameShadows && shadowMap.isInitialized() ? shadowMap.lightProjRel : null,
 				config.weatherSplashes(), config.weatherSurfaces(), WEATHER_OCCLUSION_UNIT,
@@ -2571,22 +2596,25 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		final int canvasHeight = client.getCanvasHeight();
 		final int canvasWidth = client.getCanvasWidth();
 
+		gpuTimer.begin(GpuTimer.UI);
+		cpuTimer.begin(CpuTimer.UI_UPLOAD);
 		prepareInterfaceTexture(canvasWidth, canvasHeight);
+		cpuTimer.end(CpuTimer.UI_UPLOAD);
 
 		glClearColor(0, 0, 0, 1);
 		glClear(GL_COLOR_BUFFER_BIT);
 
 		if (sceneFboValid && sceneTargets.isInitialized())
 		{
-			gpuTimer.begin(GpuTimer.POST);
 			compositeScene();
 		}
-		gpuTimer.begin(GpuTimer.PRESENT);
+		gpuTimer.begin(GpuTimer.UI);
 
 		// Texture on UI
 		drawUi(overlayColor, canvasHeight, canvasWidth);
 
 		gpuTimer.end();
+		cpuTimer.begin(CpuTimer.SWAP);
 		try
 		{
 			awtContext.swapBuffers();
@@ -2617,6 +2645,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 			return;
 		}
 
+		cpuTimer.end(CpuTimer.SWAP);
 		gpuTimer.endFrame();
 		if (frameCpuStart != 0)
 		{
@@ -2625,6 +2654,15 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 			cpuFrameMs = cpuFrameMs == 0 ? ms : cpuFrameMs * 0.9 + ms * 0.1;
 			frameCpuStart = 0;
 		}
+		long now = System.nanoTime();
+		if (lastSwapNanos != 0)
+		{
+			double ms = (now - lastSwapNanos) / 1e6;
+			swapIntervalMs = swapIntervalMs == 0 ? ms : swapIntervalMs * 0.95 + ms * 0.05;
+		}
+		lastSwapNanos = now;
+		cpuTimer.endFrame();
+		cpuTimer.begin(CpuTimer.OUTSIDE);
 		drawManager.processDrawComplete(this::screenshot);
 
 		glBindFramebuffer(GL_FRAMEBUFFER, awtContext.getFramebuffer(false));
