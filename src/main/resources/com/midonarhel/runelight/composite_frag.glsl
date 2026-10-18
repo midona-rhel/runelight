@@ -16,9 +16,12 @@
 
 #define TAU 6.28318530718
 
-// underground lighting; y points down, so the key light comes from above with -y
-#define CAVE_AMBIENT 0.72
-#define CAVE_KEY 0.38
+// linear value above which highlights are compressed toward 1
+#define SHOULDER 0.75
+
+// underground lighting (linear); y points down, so the key light comes from above with -y
+#define CAVE_AMBIENT 0.50
+#define CAVE_KEY 0.40
 #define CAVE_KEY_DIR normalize(vec3(-0.35, -1.0, 0.45))
 #define TILE_SIZE 128.0
 
@@ -189,7 +192,7 @@ float fogAmount(vec3 world) {
 // Point lights: only the lights listed in this pixel's cluster are evaluated
 
 // lights.json strengths are 117 HD's, tuned for its linear lighting; this maps them to our gamma-space lighting
-#define POINT_LIGHT_SCALE 0.16
+#define POINT_LIGHT_SCALE 0.30
 
 int clusterBase(ivec2 px, float z) {
   vec2 rel = (vec2(px) + 0.5 - vec2(sceneViewport.xy)) / vec2(sceneViewport.zw);
@@ -218,9 +221,9 @@ vec3 pointLights(int base, vec3 p, vec3 n) {
     if (d2 >= r2) {
       continue;
     }
-    // 117 HD's falloff is (1 - d / r)^2 in linear color; after gamma encoding that looks close to (1 - d / r),
-    // which is what we use since we light in gamma space
+    // 117 HD's falloff; we light in linear space like it does
     float att = 1.0 - sqrt(d2 / r2);
+    att *= att;
     // wrapped diffuse so faces turned slightly away still catch some light, which suits flat-shaded models
     float ndl = clamp(dot(n, l * inversesqrt(max(d2, 1.0))) * 0.75 + 0.25, 0.0, 1.0);
     sum += color * att * ndl * POINT_LIGHT_SCALE;
@@ -277,7 +280,9 @@ void main() {
       shadow = shadowFactor(p, n, ign(gl_FragCoord.xy));
     }
     vec3 caster = sunIsCaster == 1 ? sunLight(sunAltitude) : moonLight(sunAltitude);
-    light = ambientLight(sunAltitude) * ao + caster * max(dot(n, casterDir), 0.0) * shadow;
+    float up = max(-n.y, 0.0);
+    light = (ambientLight(sunAltitude) + skyLight(sunAltitude) * up) * ao
+      + caster * max(dot(n, casterDir), 0.0) * shadow;
   } else if (lightingEnabled == 1 && inside) {
     // Underground: no sun, and the game's own baked shading is removed, so a fixed soft key light from above
     // keeps shapes readable. Point lights do the rest.
@@ -305,11 +310,14 @@ void main() {
     return;
   }
   if (debugView == DEBUG_LIGHTING) {
-    FragColor = vec4(light * 0.5, 1.0);
+    FragColor = vec4(linearToSrgb(clamp(light * 0.35, 0.0, 1.0)), 1.0);
     return;
   }
 
-  vec3 lit = color.rgb * light;
+  // light in linear space, then a soft shoulder so bright sunlit colors roll off instead of clipping
+  vec3 linear = srgbToLinear(color.rgb) * light;
+  linear = mix(linear, 1.0 - (1.0 - SHOULDER) * exp(-(linear - SHOULDER) / (1.0 - SHOULDER)), step(SHOULDER, linear));
+  vec3 lit = linearToSrgb(clamp(linear, 0.0, 1.0));
   lit = mix(lit, fogColor, fogAmount(p + cameraPos));
   FragColor = vec4(lit, color.a);
 }

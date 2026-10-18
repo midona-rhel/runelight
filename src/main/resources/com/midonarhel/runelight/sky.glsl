@@ -47,27 +47,44 @@ vec3 skyHorizon(float alt) {
   return HORIZON_COLOR[HORIZON_KEYS - 1];
 }
 
-// Direct light from the sun (day) or moon (night). Only one casts at a time; both are ~0 at the switch.
-#define SUN_INTENSITY 0.50
-#define MOON_INTENSITY 0.30
+// Light colors. These are LINEAR (the composite lights in linear space, like 117 HD) and are multiplied with
+// the surface color, so 1.0 means "full surface color". The sun is much stronger than the ambient on purpose:
+// that contrast between sunlit and shaded faces is what makes sunlight read as sunlight.
+#define SUN_INTENSITY 2.6
+#define MOON_INTENSITY 0.45
+#define SKY_LIGHT 0.45
+
+vec3 srgbToLinear(vec3 c) {
+  return mix(c / 12.92, pow((c + 0.055) / 1.055, vec3(2.4)), step(vec3(0.04045), c));
+}
+
+vec3 linearToSrgb(vec3 c) {
+  return mix(c * 12.92, 1.055 * pow(c, vec3(1.0 / 2.4)) - 0.055, step(vec3(0.0031308), c));
+}
 
 vec3 sunLight(float alt) {
-  vec3 warm = vec3(1.00, 0.55, 0.30);
-  vec3 noon = vec3(1.00, 0.96, 0.88);
-  return mix(warm, noon, smoothstep(2.0, 25.0, alt)) * SUN_INTENSITY * smoothstep(-4.0, 10.0, alt);
+  vec3 warm = vec3(1.00, 0.42, 0.16);
+  vec3 noon = vec3(1.00, 0.90, 0.76);
+  return mix(warm, noon, smoothstep(2.0, 28.0, alt)) * SUN_INTENSITY * smoothstep(-4.0, 10.0, alt);
 }
 
 vec3 moonLight(float alt) {
-  return vec3(0.56, 0.66, 1.00) * MOON_INTENSITY * smoothstep(-2.0, -14.0, alt);
+  return vec3(0.42, 0.55, 1.00) * MOON_INTENSITY * smoothstep(-2.0, -14.0, alt);
 }
 
+// Light from the whole sky, cool blue by day; fills shadows
 vec3 ambientLight(float alt) {
-  vec3 day = vec3(0.60, 0.62, 0.66);
-  vec3 night = vec3(0.36, 0.44, 0.66);
+  vec3 day = vec3(0.30, 0.38, 0.58);
+  vec3 night = vec3(0.10, 0.14, 0.30);
   vec3 a = mix(night, day, smoothstep(-10.0, 15.0, alt));
-  // warmer at sunrise and sunset
+  // warmer, a little darker around sunrise and sunset
   float dusk = smoothstep(-8.0, 2.0, alt) * (1.0 - smoothstep(2.0, 20.0, alt));
-  return a * mix(vec3(1.0), vec3(1.08, 0.88, 0.80), dusk);
+  return a * mix(vec3(1.0), vec3(1.10, 0.80, 0.80), dusk);
+}
+
+// Extra light on upward-facing surfaces from the sky above them, tinted by the sky
+vec3 skyLight(float alt) {
+  return srgbToLinear(skyZenith(alt)) * SKY_LIGHT;
 }
 
 float hash13(vec3 p) {
