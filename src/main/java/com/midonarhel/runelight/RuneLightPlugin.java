@@ -255,6 +255,8 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 	private int uniSceneWeatherLight, uniCompositeWeatherLight;
 	// the wind for foliage sway, on the scene and shadow programs
 	private Wind.Locations sceneWind, shadowWind;
+	private long lastSwayTick;
+	private boolean swayTick = true;
 	private static final int ALPHA_LAYER_UNIT = RuneLightPlugin.COMPOSITE_TEXTURE_UNIT + 8;
 	private static final int MATERIAL_UNIT = RuneLightPlugin.COMPOSITE_TEXTURE_UNIT + 9;
 	private final SurfaceMaterials.Uniforms sceneMaterials = new SurfaceMaterials.Uniforms();
@@ -1629,7 +1631,16 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		glUniform1f(uniSceneSunAltitude, dayCycle.sunAltitude);
 		weather.setOvercastUniform(uniSceneOvercast);
 		weather.setLightUniform(uniSceneWeatherLight);
-		weather.getWind().apply(sceneWind, weather.isWindStill());
+		// plants can be held to a low animation rate like the game's own animations: the wind uniforms then only
+		// change on those ticks (the scene and shadow programs keep the last values in between)
+		long swayNow = System.nanoTime();
+		int swayFps = config.windSwayFps().getFps();
+		swayTick = swayFps <= 0 || swayNow - lastSwayTick >= 1_000_000_000L / swayFps;
+		if (swayTick)
+		{
+			lastSwayTick = swayNow;
+			weather.getWind().apply(sceneWind, weather.isWindStill());
+		}
 		setEnvironmentUniforms(sceneEnvUniforms);
 		glUniform4f(uniFogColor, (sky >> 16 & 0xFF) / 255f, (sky >> 8 & 0xFF) / 255f, (sky & 0xFF) / 255f, 1f);
 		glUniform1i(uniFogDepth, fogDepth);
@@ -1984,7 +1995,10 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		glPolygonOffset(1.0f, 1.0f);
 
 		glUseProgram(glShadowProgram);
-		weather.getWind().apply(shadowWind, weather.isWindStill());
+		if (swayTick)
+		{
+			weather.getWind().apply(shadowWind, weather.isWindStill());
+		}
 		glUniform1i(uniShadowTexturesReady, textureArrayId != -1 ? 1 : 0);
 		glUniform1i(uniShadowEmissiveCasts, config.emissiveMaterials() ? 0 : 1);
 		glUniformMatrix4fv(uniShadowEntityProj, false, IDENTITY);

@@ -36,6 +36,7 @@ import com.midonarhel.runelight.config.ColorBlindMode;
 import com.midonarhel.runelight.config.DebugView;
 import com.midonarhel.runelight.config.Quality;
 import com.midonarhel.runelight.config.ShadowResolution;
+import com.midonarhel.runelight.config.SwayFps;
 import com.midonarhel.runelight.config.UIScalingMode;
 import com.midonarhel.runelight.config.WeatherMode;
 
@@ -1257,6 +1258,18 @@ public interface RuneLightConfig extends Config
 	default boolean windSwayShadows()
 	{
 		return true;
+	}
+
+	@ConfigItem(
+		keyName = "windSwayFps",
+		name = "Sway frame rate",
+		description = "Animate swaying plants at a low frame rate like the game's own animations, or smoothly every frame.",
+		section = windSection,
+		position = 654
+	)
+	default SwayFps windSwayFps()
+	{
+		return SwayFps.SMOOTH;
 	}
 
 	@ConfigSection(
