@@ -248,6 +248,11 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 	private final Clouds clouds = new Clouds();
 	// the composite has no 3D sampler, so the clouds' 2D noise shares the fog noise's unit on the 2D target
 	private static final int CLOUD_NOISE_UNIT = FOG_NOISE_UNIT;
+	private final SkyCache skyCache = new SkyCache();
+	// The composite samples the sky cache and its irradiance on the weather occlusion map's two units: the composite
+	// draws before the weather passes bind the map there. The cache's own passes use them before either.
+	private static final int SKY_CACHE_UNIT = RuneLightPlugin.COMPOSITE_TEXTURE_UNIT + 12;
+	private final float[] skyCacheOvercast = new float[3];
 	private boolean frameFog;
 	// 117 HD fog depth that doubles the volumetric fog
 	private static final float AREA_FOG_DEPTH = 30;
@@ -300,9 +305,10 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 	private WeatherForecast weatherForecast = new WeatherForecast(System.currentTimeMillis() / 1000);
 	// two units: the occlusion map's raw and compare views
 	private static final int WEATHER_OCCLUSION_UNIT = RuneLightPlugin.COMPOSITE_TEXTURE_UNIT + 12;
-	// the water data and ripple noise, bound only while the composite draws, so they share the weather's units
-	private static final int WATER_DATA_UNIT = RuneLightPlugin.COMPOSITE_TEXTURE_UNIT + 12;
-	private static final int WATER_NOISE_UNIT = RuneLightPlugin.COMPOSITE_TEXTURE_UNIT + 13;
+	// the water data and ripple noise: 16 and 17, past the composite's other units (the per-stage limit of 16 counts
+	// samplers a program uses, not unit numbers; units go up to the combined limit, 80 on macOS)
+	private static final int WATER_DATA_UNIT = RuneLightPlugin.COMPOSITE_TEXTURE_UNIT + 14;
+	private static final int WATER_NOISE_UNIT = RuneLightPlugin.COMPOSITE_TEXTURE_UNIT + 15;
 	private final Water water = new Water();
 	private final float[] waterWind = new float[3];
 	// when the plugin started; the day cycle and sky animation count from here
@@ -723,6 +729,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 				volumetricFog.free();
 				clouds.free();
 				water.free();
+				skyCache.free();
 
 				if (textureArrayId != -1)
 				{
@@ -950,6 +957,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		setFogProgram(VolumetricFog.PROGRAM.compile(template));
 		weather.setPrograms(weather.compile(template), COMPOSITE_TEXTURE_UNIT, WEATHER_OCCLUSION_UNIT, SHADOW_COMPARE_UNIT, ALPHA_LAYER_UNIT,
 			LIGHT_DATA_UNIT, CLUSTER_DATA_UNIT, MATERIAL_UNIT);
+		skyCache.setPrograms(skyCache.compile(template), CLOUD_NOISE_UNIT, SKY_CACHE_UNIT);
 
 		glBindVertexArray(0);
 
@@ -1040,6 +1048,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		volumetricFog.locateComposite(c, FOG_TEXTURE_UNIT);
 		clouds.locateComposite(c, CLOUD_NOISE_UNIT);
 		water.locateComposite(c, WATER_DATA_UNIT, WATER_NOISE_UNIT);
+		skyCache.locateComposite(c, SKY_CACHE_UNIT);
 		weather.getLightning().locateComposite(c);
 
 		uniShadowLightProj = glGetUniformLocation(glShadowProgram, "lightProj");
@@ -1084,6 +1093,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		glShadowProgram = 0;
 
 		weather.freePrograms();
+		skyCache.freePrograms();
 	}
 
 	/**
@@ -1096,6 +1106,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		Template template = createTemplate();
 		int scene = 0, ui = 0, composite = 0, ao = 0, shadow = 0, fog = 0;
 		Weather.Programs weatherPrograms;
+		SkyCache.Programs skyCachePrograms;
 		try
 		{
 			scene = PROGRAM.compile(template);
@@ -1105,6 +1116,17 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 			shadow = SHADOW_PROGRAM.compile(template);
 			fog = VolumetricFog.PROGRAM.compile(template);
 			weatherPrograms = weather.compile(template);
+			try
+			{
+				skyCachePrograms = skyCache.compile(template);
+			}
+			catch (ShaderException ex)
+			{
+				glDeleteProgram(weatherPrograms.rain);
+				glDeleteProgram(weatherPrograms.snow);
+				glDeleteProgram(weatherPrograms.surface);
+				throw ex;
+			}
 		}
 		catch (ShaderException ex)
 		{
@@ -1138,6 +1160,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		setFogProgram(fog);
 		weather.setPrograms(weatherPrograms, COMPOSITE_TEXTURE_UNIT, WEATHER_OCCLUSION_UNIT, SHADOW_COMPARE_UNIT, ALPHA_LAYER_UNIT,
 			LIGHT_DATA_UNIT, CLUSTER_DATA_UNIT, MATERIAL_UNIT);
+		skyCache.setPrograms(skyCachePrograms, CLOUD_NOISE_UNIT, SKY_CACHE_UNIT);
 		initUniforms();
 
 		if (textureAnimations != null)
@@ -1672,6 +1695,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 			float areaFog = config.areaEnvironments() ? environmentManager.getFogDepth() * config.areaFogStrength() / 100f : 0;
 			volumetricFog.areaDensity = weather.fogMultiplier()
 				* (1 + weather.areaFogWeight() * Math.min(areaFog / AREA_FOG_DEPTH, 2));
+			volumetricFog.areaHeight = weather.fogHeightMultiplier();
 			volumetricFog.updateParameters(config, lp.getX(), ground, lp.getY(), frameDrawDistance);
 			frameFog = true;
 		}
@@ -1696,11 +1720,11 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		}
 		boolean sky = frameOpenSky && client.getGameState() == GameState.LOGGED_IN;
 		EnvironmentManager.Environment biome = config.areaEnvironments() ? environmentManager.getBiome() : null;
-		weatherForecast.update(biome != null && !biome.cave ? biome.name : null, System.currentTimeMillis() - startMillis,
-			config.dayCycleMinutes());
+		String biomeName = biome != null && !biome.cave ? biome.name : null;
+		weatherForecast.update(biomeName, System.currentTimeMillis() - startMillis, config.dayCycleMinutes());
 		weather.update(config.weatherMode(), weatherForecast.getCurrent(), config.weatherIntensity(),
 			config.weatherBuildup(), config.weatherVarying(), config.weatherOvercast(), config.weatherLightning(), sky,
-			dayCycle.hour(), fx, fy, fz, plane);
+			dayCycle.hour(), biomeName, config.fogClimate(), fx, fy, fz, plane);
 		weather.getOvercast(volumetricFog.overcast);
 	}
 
@@ -2004,14 +2028,47 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		return dayCycle.hour();
 	}
 
-	private void bindClouds()
+	private void updateClouds()
 	{
 		WorldView wv = client.getTopLevelWorldView();
 		long baseX = wv != null ? (long) wv.getBaseX() * Perspective.LOCAL_TILE_SIZE : 0;
 		long baseZ = wv != null ? (long) wv.getBaseY() * Perspective.LOCAL_TILE_SIZE : 0;
-		clouds.bind(config.clouds(), config.cloudShadows(), config.cloudCoverage(), config.cloudSpeed(),
-			weather.cloudCover(), baseX, baseZ, CLOUD_NOISE_UNIT);
+		clouds.update(config.clouds(), config.cloudShadows(), config.cloudCoverage(), config.cloudSpeed(),
+			config.cloudDetail(), weather.cloudCover(), baseX, baseZ);
+	}
+
+	private void bindClouds()
+	{
+		clouds.bindComposite(CLOUD_NOISE_UNIT);
 		weather.getLightning().bind(frameCameraX, frameCameraZ);
+	}
+
+	/**
+	 * Capture or blend the sky cache when the composite will use it, and return how it uses it (SkyCache.MODE_*).
+	 */
+	private int updateSkyCache()
+	{
+		boolean procedural = config.proceduralSky() && !frameHasSkybox;
+		int mode = (config.skyCache() ? SkyCache.MODE_LIGHT : 0)
+			| (config.skyCacheView() && procedural ? SkyCache.MODE_VIEW : 0);
+		if (mode == 0 || !frameOutdoors || client.getGameState() != GameState.LOGGED_IN)
+		{
+			return 0;
+		}
+		int cycle = config.dayCycleMinutes();
+		double gameMinutes = cycle > 0 ? (System.currentTimeMillis() - startMillis) / (cycle * 60_000.0) * 24 * 60
+			: Double.NaN;
+		weather.getOvercast(skyCacheOvercast);
+		int settings = java.util.Objects.hash(config.clouds(), config.cloudCoverage(), config.cloudDetail(), cycle,
+			config.fixedHour(), config.weatherOvercast());
+		if (config.clouds())
+		{
+			clouds.bindNoise(CLOUD_NOISE_UNIT);
+		}
+		skyCache.update(clouds, gameMinutes, config.skyCacheMinutes(), frameCameraX, frameCameraY, frameCameraZ,
+			dayCycle, skyCacheOvercast, settings, (mode & SkyCache.MODE_VIEW) != 0, SKY_CACHE_UNIT);
+		skyCache.bind(SKY_CACHE_UNIT);
+		return mode;
 	}
 
 	private void compositeScene()
@@ -2042,8 +2099,12 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 			sceneTargets.bindAo(AO_TEXTURE_UNIT);
 		}
 
+		updateClouds();
+		int skyCacheMode = updateSkyCache();
+
 		glUseProgram(glCompositeProgram);
 		setFrameUniforms(compositeFrame);
+		skyCache.setCompositeUniforms(skyCacheMode, weather.skyHaze(), config.starBrightness() / 100f);
 		glUniform1i(uniCompositeDebugView, config.debugView().ordinal());
 		glUniform1i(uniCompositeAoEnabled, ao ? 1 : 0);
 		glUniform1f(uniCompositeAoStrength, config.aoStrength() / 100f);
@@ -2073,6 +2134,8 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		glViewport(0, 0, width, height);
 		glDrawArrays(GL_TRIANGLES, 0, 3);
 		Water.unbind(WATER_DATA_UNIT, WATER_NOISE_UNIT);
+		// before the weather binds its occlusion map on the same unit
+		SkyCache.unbind(SKY_CACHE_UNIT);
 
 		if (weather.isActive() && config.debugView() == DebugView.FINAL)
 		{

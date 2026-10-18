@@ -27,7 +27,8 @@ enum WeatherType
 	final float fog, areaFog;
 	// multiplier on the area's distance fog and sky haze (environment.glsl)
 	final float distanceFog;
-	// extra fog around dawn, as a share of fog: morning mist in calm weather
+	// extra fog around dawn, as a share of fog: morning mist in calm weather. With FogClimate, how calm the weather
+	// is for mist to form at all (relative to clear weather)
 	final float morningMist;
 	// 1 when lightning strikes
 	final float storm;

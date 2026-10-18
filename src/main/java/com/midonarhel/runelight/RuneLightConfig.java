@@ -662,6 +662,31 @@ public interface RuneLightConfig extends Config
 		return 50;
 	}
 
+	@Range(max = 100)
+	@ConfigItem(
+		keyName = "volumetricFogBanks",
+		name = "Fog banks",
+		description = "How much the fog gathers in large drifting banks, thicker over some stretches of ground than others, in percent.",
+		section = fogSection,
+		position = 257
+	)
+	default int volumetricFogBanks()
+	{
+		return 50;
+	}
+
+	@ConfigItem(
+		keyName = "fogClimate",
+		name = "Fog by region and time",
+		description = "Mist at dawn and dusk in damp regions such as swamps and forests, barely any in deserts, little at midday.",
+		section = fogSection,
+		position = 258
+	)
+	default boolean fogClimate()
+	{
+		return true;
+	}
+
 	@ConfigSection(
 		name = "Weather",
 		description = "Automatic regional weather, rain, snow and storms",
@@ -988,6 +1013,19 @@ public interface RuneLightConfig extends Config
 
 	@Range(max = 200)
 	@ConfigItem(
+		keyName = "cloudDetail",
+		name = "Cloud roughness",
+		description = "How ragged and broken the clouds are instead of smooth and round, in percent.",
+		section = cloudsSection,
+		position = 505
+	)
+	default int cloudDetail()
+	{
+		return 100;
+	}
+
+	@Range(max = 200)
+	@ConfigItem(
 		keyName = "waterWaves",
 		name = "Waves",
 		description = "Height of the waves and ripples, in percent.",
@@ -1034,5 +1072,55 @@ public interface RuneLightConfig extends Config
 	default boolean waterDebug()
 	{
 		return false;
+	}
+
+	@ConfigItem(
+		keyName = "skyCache",
+		name = "Sky light from the sky",
+		description = "Light from the sky follows the clouds and the colors of the sky. The sky is captured every few in-game minutes and blended.",
+		section = cloudsSection,
+		position = 506
+	)
+	default boolean skyCache()
+	{
+		return true;
+	}
+
+	@Range(min = 1, max = 60)
+	@ConfigItem(
+		keyName = "skyCacheMinutes",
+		name = "Sky capture interval",
+		description = "In-game minutes between captures of the sky. Changes of weather and drifting clouds capture it sooner.",
+		section = cloudsSection,
+		position = 507
+	)
+	default int skyCacheMinutes()
+	{
+		return 5;
+	}
+
+	@ConfigItem(
+		keyName = "skyCacheView",
+		name = "Draw sky from capture",
+		description = "Draw the sky and clouds from the captured sky instead of every frame: faster, but softer clouds that move in steps.",
+		section = cloudsSection,
+		position = 508
+	)
+	default boolean skyCacheView()
+	{
+		return false;
+	}
+
+	@Range(max = 200)
+	@ConfigItem(
+		keyName = "starBrightness",
+		name = "Star brightness",
+		description = "How bright the stars are, in percent.",
+		section = cloudsSection,
+		position = 509
+	)
+	default int starBrightness()
+	{
+		return 100;
 	}
 }

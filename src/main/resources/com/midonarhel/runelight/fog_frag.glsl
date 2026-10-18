@@ -27,7 +27,7 @@ uniform int pointLightsEnabled;
 uniform samplerBuffer lightData;
 uniform usamplerBuffer clusterData;
 
-uniform sampler3D fogNoise;  // tiling value noise, 0..1
+uniform sampler3D fogNoise;  // tiling value noise, 0..1: r patches, g banks (constant with height)
 
 uniform float fogDensity;    // extinction per world unit at the ground
 uniform float fogHeight;     // world units for the density to drop to 1/e
@@ -37,6 +37,7 @@ uniform vec2 fogFade;        // horizontal distance from the center where the fo
 uniform float fogNear;       // distance from the camera over which the fog thickens from nothing
 uniform float fogSunScatter;
 uniform float fogNoiseAmount;
+uniform float fogBankAmount;
 uniform vec3 fogTint;        // multiplies the fog's ambient color; for per-area fog later
 
 out vec4 FragFog;
@@ -65,10 +66,14 @@ out vec4 FragFog;
 // Henyey-Greenstein forward lobe mixed with isotropic: a glow toward the sun without the rest going dark
 #define FOG_PHASE_G 0.7
 #define FOG_PHASE_FORWARD 0.6
-// noise: world units per texture repeat horizontally and vertically, and drift in world units per second
-#define FOG_NOISE_SCALE 3072.0
+// noise: world units per texture repeat horizontally and vertically, and drift in world units per second. The
+// slow vertical drift moves the patches through the 3D noise, so they change shape as they go.
+#define FOG_NOISE_SCALE 8192.0
 #define FOG_NOISE_SCALE_Y 1024.0
 #define FOG_WIND vec3(48.0, -4.0, 28.0)
+// banks: the band of the bank noise that goes from thin to thick; narrower is more contrast
+#define FOG_BANK_LOW 0.2
+#define FOG_BANK_HIGH 0.8
 // point lights glowing in the fog: every light in the sample's cluster, up to the cluster's capacity. A smaller
 // cap picks different subsets in neighboring clusters and shows the cluster grid as squares.
 #define FOG_POINT_LIGHTS (CLUSTER_STRIDE - 1)
@@ -214,10 +219,12 @@ void main() {
     sigma *= 1.0 - smoothstep(fogFade.x, fogFade.y, centerDist);
     sigma *= mix(FOG_NEAR_FLOOR, 1.0, smoothstep(0.0, fogNear, centerDist));
     sigma *= smoothstep(0.0, fogNear, t);
-    if (fogNoiseAmount > 0.0) {
+    if (fogNoiseAmount > 0.0 || fogBankAmount > 0.0) {
       vec3 uvw = (wp + FOG_WIND * time) / vec3(FOG_NOISE_SCALE, FOG_NOISE_SCALE_Y, FOG_NOISE_SCALE);
-      float n = texture(fogNoise, uvw).r;
-      sigma *= max(mix(1.0, n * 2.0, fogNoiseAmount), 0.0);
+      vec2 n = texture(fogNoise, uvw).rg;
+      // both average about 1, so they move fog around without changing how much there is
+      sigma *= max(mix(1.0, n.r * 2.0, fogNoiseAmount), 0.0);
+      sigma *= mix(1.0, smoothstep(FOG_BANK_LOW, FOG_BANK_HIGH, n.g) * 2.0, fogBankAmount);
     }
     if (sigma <= 0.0) {
       continue;
