@@ -4,7 +4,7 @@
 	},
 	"SUNNY": {
 		"name": "Sunny",
-		"cover": 0.1, "wind": 0.3,
+		"cover": 0.05, "wind": 0.3,
 		"distanceFog": 0.55, "morningMist": 0.6,
 		"sun": 1.08, "warmth": 0.1, "skySaturation": 0.1
 	},

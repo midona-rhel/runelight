@@ -970,15 +970,15 @@ public interface RuneLightConfig extends Config
 
 	@Range(max = 100)
 	@ConfigItem(
-		keyName = "cloudCoverage",
+		keyName = "clearWeatherClouds",
 		name = "Clear weather clouds",
-		description = "How much of the sky clouds cover without rain or snow, in percent.",
+		description = "How much of the sky clouds cover in clear weather, in percent; cloudier weather adds to it.",
 		section = cloudsSection,
 		position = 502
 	)
 	default int cloudCoverage()
 	{
-		return 30;
+		return 8;
 	}
 
 	@Range(max = 400)

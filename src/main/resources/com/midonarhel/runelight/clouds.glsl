@@ -37,15 +37,28 @@ uniform vec2 cloudFieldCells;  // cells used across x and z
 // few looking up, more toward the horizon, where a ray crosses far more of the slab and too few steps show as
 // grain. The noise is also blurred to CLOUD_STEP_BLUR of a step, which the steps could not resolve anyway.
 #define CLOUD_STEPS 16
-#define CLOUD_MIN_STEPS 6
+#define CLOUD_MIN_STEPS 10
 #define CLOUD_STEP_LENGTH 900.0
 #define CLOUD_STEP_BLUR 0.5
 // fakes the planet's curvature: clouds at the horizon are this far away (in slab heights over this) instead of
 // infinitely far, which also caps how long a ray at the horizon spends in the slab
 #define CLOUD_CURVE 0.08
 #define CLOUD_FADE 120000.0
+// A ray crossing the slab at a slant passes about 1 + CLOUD_SLANT * (distance across) / CLOUD_BLOB clouds' worth of
+// sky, so a share c of the sky covered overhead piles up toward the horizon, where most of what OSRS's camera sees of
+// the sky is. The cover along a ray is lowered to make up for it, so the share of the visible sky that is cloud
+// matches the cover at every angle; overcast skies close up at the horizon as they should (above CLOUD_SLANT_KEEP).
+#define CLOUD_BLOB 9000.0
+#define CLOUD_SLANT 1.0
+#define CLOUD_SLANT_KEEP vec2(0.55, 0.9)
+// cover varies by up to +-CLOUD_VARY / 2 over a few noise repeats, the full amount from a cover of CLOUD_VARY_FULL
+#define CLOUD_VARY 0.5
+#define CLOUD_VARY_FULL 0.3
+// past the weather field's edge its differences fade out over this many of its cells: far-off sky has the
+// player's weather, instead of each edge cell's weather stretched to the horizon in its direction
+#define CLOUD_FIELD_EDGE_FADE 4.0
 // noise value needed for cloud with no coverage, and when fully overcast (below 0 so the erosion leaves no gaps)
-#define CLOUD_THRESHOLD_CLEAR 1.0
+#define CLOUD_THRESHOLD_CLEAR 0.96
 #define CLOUD_THRESHOLD_OVERCAST -0.3
 // erosion takes cloud away; lowering the threshold by this much (at 100% roughness) keeps the coverage
 #define CLOUD_EROSION_BIAS 0.08
@@ -115,13 +128,18 @@ float cloudFieldDelta(vec2 xz) {
   if (cloudFieldRect.z == 0.0) {
     return 0.0;
   }
-  vec2 c = clamp((xz - cloudFieldRect.xy) * cloudFieldRect.zw - 0.5, vec2(0.0), cloudFieldCells - 1.0);
+  vec2 u = (xz - cloudFieldRect.xy) * cloudFieldRect.zw - 0.5;
+  vec2 c = clamp(u, vec2(0.0), cloudFieldCells - 1.0);
+  float outside = length(u - c);
+  if (outside >= CLOUD_FIELD_EDGE_FADE) {
+    return 0.0;
+  }
   ivec2 i0 = ivec2(c);
   ivec2 i1 = min(i0 + 1, ivec2(cloudFieldCells) - 1);
   vec2 f = c - vec2(i0);
   float a = mix(cloudFieldCell(i0.y * CLOUD_FIELD_SIZE + i0.x), cloudFieldCell(i0.y * CLOUD_FIELD_SIZE + i1.x), f.x);
   float b = mix(cloudFieldCell(i1.y * CLOUD_FIELD_SIZE + i0.x), cloudFieldCell(i1.y * CLOUD_FIELD_SIZE + i1.x), f.x);
-  return mix(a, b, f.y);
+  return mix(a, b, f.y) * (1.0 - smoothstep(0.0, CLOUD_FIELD_EDGE_FADE, outside));
 }
 
 // The weather under a stretch of sky: x coverage, y how wispy, z how rainy (cloudWeather there). xz: noise
@@ -131,12 +149,20 @@ vec3 cloudLocalCover(vec2 xz, vec2 world) {
   float weather = clamp(cloudWeather + cloudFieldDelta(world), 0.0, 1.0);
   float coverage = cloudCoverage + (1.0 - cloudBaseCoverage) * (weather - cloudWeather);
   vec4 macro = textureLod(cloudNoise, xz / (4.0 * CLOUD_TILE), 2.0);
-  float cov = clamp(coverage + (macro.r - 0.5) * 0.5 * (1.0 - weather), 0.0, 1.0);
+  // thin skies vary less, so clear weather stays clear everywhere
+  float vary = CLOUD_VARY * min(coverage / CLOUD_VARY_FULL, 1.0) * (1.0 - weather);
+  float cov = clamp(coverage + (macro.r - 0.5) * vary, 0.0, 1.0);
   float wisp = smoothstep(CLOUD_WISP_LOW, CLOUD_WISP_HIGH, macro.a) * (1.0 - weather) * min(cloudDetail, 1.0);
   wisp = max(wisp, cloudType.x);
   // how dark: the cover, brightened or darkened by the weather's look (high thin cloud stays white)
   float dark = clamp(weather * (1.0 + cloudType.y), 0.0, 1.0);
   return vec3(cov, wisp, dark);
+}
+
+// The cover a ray crossing `across` world units of the slab uses, so that it shows a share c of cloud (CLOUD_SLANT)
+float cloudSlantCover(float c, float across) {
+  float thin = 1.0 - pow(max(1.0 - c, 0.0), 1.0 / (1.0 + CLOUD_SLANT * across / CLOUD_BLOB));
+  return mix(thin, c, smoothstep(CLOUD_SLANT_KEEP.x, CLOUD_SLANT_KEEP.y, c));
 }
 
 // Noise value needed for cloud at height fraction hf: rises toward the top for domes, a little at the base.
@@ -207,28 +233,29 @@ vec4 cloudLayer(vec3 dir, vec3 camPos, vec3 sunDir, vec3 moonDir, float alt, flo
   float t1 = max(CLOUD_TOP - camAlt, 1.0) / k;
   float fade = horizon * exp(-t0 / CLOUD_FADE);
   vec2 origin = camPos.xz + cloudOffset;
-  vec2 mid = dir.xz * (t0 + t1) * 0.5;
-  vec3 cw = cloudLocalCover(origin + mid, camPos.xz + mid);
-  if (cw.x <= 0.0) {
+  float across = (t1 - t0) * length(dir.xz);
+  // the weather where the ray enters and leaves the slab, in between blended along it: tied to places in the sky
+  // rather than to the ray, so clouds keep their size as the camera turns
+  vec3 cw0 = cloudLocalCover(origin + dir.xz * t0, camPos.xz + dir.xz * t0);
+  vec3 cw1 = cloudLocalCover(origin + dir.xz * t1, camPos.xz + dir.xz * t1);
+  cw0.x = cloudSlantCover(cw0.x, across);
+  cw1.x = cloudSlantCover(cw1.x, across);
+  if (max(cw0.x, cw1.x) <= 0.0) {
     return vec4(0.0, 0.0, 0.0, 1.0);
   }
 
-  float across = (t1 - t0) * length(dir.xz);
   int n = int(clamp(ceil(across / CLOUD_STEP_LENGTH), float(CLOUD_MIN_STEPS), float(steps)));
   // mip level from a pixel's footprint on the slab, stretched toward the horizon (geometric mean of both axes), or
   // from the step length; below 0 when a texel covers several pixels, so the detail fetches stay sharp
   float footprint = max((t0 + t1) * 0.5 * pixelAngle / sqrt(k), across / float(n) * CLOUD_STEP_BLUR);
   float lod = log2(max(footprint * CLOUD_NOISE_SIZE / CLOUD_TILE, 1e-3));
 
-  float rain = cw.z;
   // high thin clouds are thinner too
-  float extinction = CLOUD_DENSITY * mix(1.0, CLOUD_RAIN_DENSITY, rain) * mix(1.0, CLOUD_WISP_DENSITY, cloudType.x);
+  float extinction = CLOUD_DENSITY * mix(1.0, CLOUD_WISP_DENSITY, cloudType.x);
   bool sunLit = alt > CLOUD_MOON_SWITCH;
   vec3 lightDir = sunLit ? sunDir : moonDir;
-  vec3 light = (sunLit ? cloudSunLight(alt) * CLOUD_SUN
-    : moonLight(alt) * (CLOUD_MOON * smoothstep(CLOUD_MOON_SWITCH, CLOUD_MOON_SWITCH - 3.0, alt)))
-    * mix(1.0, CLOUD_RAIN_LIGHT, rain);
-  float core = CLOUD_CORE * (1.0 + rain);
+  vec3 light = sunLit ? cloudSunLight(alt) * CLOUD_SUN
+    : moonLight(alt) * (CLOUD_MOON * smoothstep(CLOUD_MOON_SWITCH, CLOUD_MOON_SWITCH - 3.0, alt));
   vec3 zenith = srgbToLinear(skyZenith(alt));
   vec3 horizonColor = srgbToLinear(skyHorizon(alt));
   float mu = dot(dir, lightDir);
@@ -238,8 +265,6 @@ vec4 cloudLayer(vec3 dir, vec3 camPos, vec3 sunDir, vec3 moonDir, float alt, flo
   float powderAmount = CLOUD_POWDER * (0.5 - 0.5 * mu);
   float lightUp = max(-lightDir.y, 0.1);
   float low = sunLit ? smoothstep(10.0, 0.0, alt) * smoothstep(-8.0, -2.0, alt) : 0.0;
-  float wispDensity = mix(1.0, CLOUD_WISP_DENSITY, cw.y);
-  float soft = CLOUD_SOFT * (1.0 + cw.y);
 
   float ds = (t1 - t0) / float(n);
   vec3 scattered = vec3(0.0);
@@ -247,24 +272,27 @@ vec4 cloudLayer(vec3 dir, vec3 camPos, vec3 sunDir, vec3 moonDir, float alt, flo
   for (int i = 0; i < n; ++i) {
     float f = (float(i) + noise) / float(n);
     vec2 xz = origin + dir.xz * mix(t0, t1, f);
+    vec3 cw = mix(cw0, cw1, f);
     vec2 warp;
     float crevice;
     float e = cloudSample(xz, f, cw, lod, warp, crevice);
     if (e <= 0.0) {
       continue;
     }
-    float d = min(e / soft, 1.0) * wispDensity;
-    float shade = mix(1.0, CLOUD_CORE_SHADE, smoothstep(0.0, core, e));
+    float rain = cw.z;
+    float d = min(e / (CLOUD_SOFT * (1.0 + cw.y)), 1.0) * mix(1.0, CLOUD_WISP_DENSITY, cw.y)
+      * mix(1.0, CLOUD_RAIN_DENSITY, rain);
+    float shade = mix(1.0, CLOUD_CORE_SHADE, smoothstep(0.0, CLOUD_CORE * (1.0 + rain), e));
     // toward the light from where the warped shape is; above the slab nothing is in the way
     vec2 lxz = xz + warp;
     float hfNear = f + CLOUD_LIGHT_STEP * lightUp / (CLOUD_TOP - CLOUD_BOTTOM);
     float dl = hfNear >= 1.0 ? 0.0 : cloudDensity(lxz + lightDir.xz * CLOUD_LIGHT_STEP, hfNear, cw, lod + 1.0);
-    float od = (d * 0.5 + dl) * CLOUD_LIGHT_STEP * extinction;
+    float od = (d * 0.5 + dl * mix(1.0, CLOUD_RAIN_DENSITY, rain)) * CLOUD_LIGHT_STEP * extinction;
     float powder = mix(1.0, 1.0 - exp(-2.0 * od), powderAmount);
     float base = mix(mix(CLOUD_BASE_SHADE, 1.0, f), 1.0, low);
     float direct = (exp(-od) * broad + exp(-CLOUD_FORWARD_EXTINCTION * od) * forward) * powder * base * shade * crevice;
-    vec3 lit = light * direct
-      + light * CLOUD_UNDERSIDE_TINT * (low * (1.0 - f) * CLOUD_UNDERSIDE * shade);
+    vec3 lit = light * mix(1.0, CLOUD_RAIN_LIGHT, rain)
+      * (direct + CLOUD_UNDERSIDE_TINT * (low * (1.0 - f) * CLOUD_UNDERSIDE * shade));
 
     // sky light: the zenith's color on top, the horizon's underneath, gray and dim in rain
     vec3 ambient = mix(horizonColor, zenith, f) * mix(0.55, 1.0, f) * mix(1.0, shade, 0.6) * CLOUD_AMBIENT
