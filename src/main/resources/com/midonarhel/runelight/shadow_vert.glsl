@@ -11,11 +11,13 @@ uniform mat4 entityProj;
 uniform ivec3 base;
 
 flat out int fTextureId;
+flat out int fEmissive;
 out vec2 fUv;
 
 void main() {
   vec4 worldPos = entityProj * vec4(vertf + base, 1.0);
   gl_Position = lightProj * worldPos;
-  fTextureId = tex.x;
+  fTextureId = tex.x & 0x3ff;  // material bits above, see SurfaceMaterials.java
+  fEmissive = tex.x >> 10 & 3;
   fUv = vec2(float(tex.y) / 256.0, float(tex.z) / 256.0);
 }

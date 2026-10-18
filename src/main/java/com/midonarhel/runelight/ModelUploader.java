@@ -87,7 +87,7 @@ class ModelUploader
 	private final VertexShading.Normals computedNormals = new VertexShading.Normals();
 
 	int uploadSortedModel(RuneLightPlugin.RenderThread rt, Projection proj, Model model, int orientation, int x, int y, int z,
-		int cameraX, int cameraY, int cameraZ, IntBuffer opaqueBuffer, IntBuffer alphaBuffer, boolean prioritySort)
+		int cameraX, int cameraY, int cameraZ, IntBuffer opaqueBuffer, IntBuffer alphaBuffer, boolean prioritySort, int material)
 	{
 		final int vertexCount = model.getVerticesCount();
 		final float[] verticesX = model.getVerticesX();
@@ -285,6 +285,7 @@ class ModelUploader
 					alphaBias |= faceTransparency(modelTransparency, transparencies != null ? transparencies[faceIdx] & 0xff : 0) << 24;
 					alphaBias |= bias != null ? (bias[faceIdx] & 0xff) << 16 : 0;
 					int texture = faceTextures != null ? faceTextures[faceIdx] + 1 : 0;
+					texture |= SurfaceMaterials.face(material, texture - 1, color1);
 
 					int vbOff = faceIdx * FACE_SIZE;
 					vertexBuffer[vbOff++] = Float.floatToIntBits(modelLocalX[v1]);
@@ -528,7 +529,7 @@ class ModelUploader
 
 	// temp draw
 	int uploadTempModel(Model model, int orientation, int x, int y, int z,
-		int cameraX, int cameraY, int cameraZ, IntBuffer buffer)
+		int cameraX, int cameraY, int cameraZ, IntBuffer buffer, int material)
 	{
 		final int triangleCount = model.getFaceCount();
 		final int vertexCount = model.getVerticesCount();
@@ -693,6 +694,7 @@ class ModelUploader
 			alphaBias |= transparencies != null ? (transparencies[face] & 0xff) << 24 : 0;
 			alphaBias |= bias != null ? (bias[face] & 0xff) << 16 : 0;
 			int texture = faceTextures != null ? faceTextures[face] + 1 : 0;
+			texture |= SurfaceMaterials.face(material, texture - 1, color1);
 
 			putfff4(buffer, vx1, vy1, vz1, alphaBias | color1);
 			put2222(buffer, texture, su0, sv0, n1);

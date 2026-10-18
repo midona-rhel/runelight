@@ -406,18 +406,19 @@ class SceneUploader
 	private void uploadZoneRenderable(Renderable r, Zone zone, int orient, int x, int y, int z, int lx, int lz, int ux, int uz, int id, GpuIntBuffer vb, GpuIntBuffer ab)
 	{
 		int pos = zone.vboA != null ? zone.vboA.vb.position() : 0;
+		int material = SurfaceMaterials.forObject(id, r);
 		Model model = null;
 		if (r instanceof Model)
 		{
 			model = (Model) r;
-			uploadStaticModel(model, orient, x - basex, y, z - basez, vb, ab);
+			uploadStaticModel(model, orient, x - basex, y, z - basez, material, vb, ab);
 		}
 		else if (r instanceof DynamicObject)
 		{
 			model = ((DynamicObject) r).getModelZbuf();
 			if (model != null)
 			{
-				uploadStaticModel(model, orient, x - basex, y, z - basez, vb, ab);
+				uploadStaticModel(model, orient, x - basex, y, z - basez, material, vb, ab);
 			}
 		}
 		int endpos = zone.vboA != null ? zone.vboA.vb.position() : 0;
@@ -488,6 +489,7 @@ class SceneUploader
 		final int hsl3 = nwColor;
 
 		int tex = tile.getTexture() + 1;
+		tex |= SurfaceMaterials.texture(tex - 1);
 
 		final int n0 = terrainNormal(tileHeights[tileZ], tileX, tileY);
 		final int n1 = terrainNormal(tileHeights[tileZ], tileX + 1, tileY);
@@ -581,6 +583,7 @@ class SceneUploader
 			int lz2 = vertexZ[vertex2] - basez;
 
 			int tex = triangleTextures != null ? triangleTextures[i] + 1 : 0;
+			tex |= SurfaceMaterials.texture(tex - 1);
 			vertexBuffer.put22224(lx0, ly0, lz0, hsl0);
 			vertexBuffer.put2222(tex, (int) ((vertexX[vertex0] - lx) * 2f), (int) ((vertexZ[vertex0] - lz) * 2f), 0);
 
@@ -598,7 +601,7 @@ class SceneUploader
 	private final int[] flatNormals = new int[3];
 	private final VertexShading.Normals computedNormals = new VertexShading.Normals();
 
-	private int uploadStaticModel(Model model, int orient, int x, int y, int z, GpuIntBuffer vb, GpuIntBuffer ab)
+	private int uploadStaticModel(Model model, int orient, int x, int y, int z, int material, GpuIntBuffer vb, GpuIntBuffer ab)
 	{
 		final int vertexCount = model.getVerticesCount();
 		final int triangleCount = model.getFaceCount();
@@ -740,6 +743,7 @@ class SceneUploader
 			alphaBias |= transparencies != null ? (transparencies[face] & 0xff) << 24 : 0;
 			alphaBias |= bias != null ? (bias[face] & 0xff) << 16 : 0;
 			int texture = faceTextures != null ? faceTextures[face] + 1 : 0;
+			texture |= SurfaceMaterials.face(material, texture - 1, color1);
 			GpuIntBuffer buf = alpha ? ab : vb;
 
 			buf.put22224(vx1, vy1, vz1, alphaBias | color1);

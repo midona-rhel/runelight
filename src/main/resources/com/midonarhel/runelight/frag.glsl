@@ -43,6 +43,7 @@ in float fFogAmount;
 in vec3 fWorldPos;
 in vec3 fNormal;
 in float fNormalValid;
+flat in int fMaterial;
 #ifdef ZBUF_DEBUG
 in float fDepth;
 #endif
@@ -58,6 +59,7 @@ layout(std140) uniform uniforms {
 layout(location = 0) out vec4 FragColor;
 layout(location = 1) out vec4 FragNormal;
 layout(location = 2) out vec4 FragAlpha;  // transparency layer, see SceneTargets
+layout(location = 3) out vec4 FragMaterial;  // emissive, transmissive; see materials.glsl
 
 // Transparent faces are drawn in a separate pass into their own layer and lit right here, because the composite
 // pass only sees the opaque surface behind them. Same lighting as the composite, without shadows.
@@ -69,6 +71,7 @@ uniform int sunIsCaster;
 uniform float sunAltitude;
 
 #include "sky.glsl"
+#include "materials.glsl"
 
 #include "hsl_to_rgb.glsl"
 
@@ -128,15 +131,21 @@ void main() {
     n = dot(sn, n) < 0.0 ? -sn : sn;
   }
   FragNormal = vec4(n * 0.5 + 0.5, c.a);
+  // alpha 1 so the opaque pass blending writes the values unchanged
+  FragMaterial = vec4(materialEmissive(fMaterial), materialTransmissive(fMaterial), 0.0, 1.0);
 
   if (alphaPass == 1) {
     vec3 light;
     if (outdoors == 1) {
       vec3 caster = sunIsCaster == 1 ? sunLight(sunAltitude) : moonLight(sunAltitude);
-      light = ambientLight(sunAltitude) + skyLight(sunAltitude) * max(-n.y, 0.0) + caster * max(dot(n, casterDir), 0.0);
+      float ndl = dot(n, casterDir);
+      vec3 viewDir = normalize(vec3(cameraX, cameraY, cameraZ) - fWorldPos);
+      light = ambientLight(sunAltitude) + skyLight(sunAltitude) * max(-n.y, 0.0)
+        + caster * (max(ndl, 0.0) + transmission(ndl, dot(-casterDir, viewDir), materialTransmissive(fMaterial)));
     } else {
       light = caveLight(n);
     }
+    light = emissiveLight(light, materialEmissive(fMaterial));
     vec3 fog = outdoors == 1 && proceduralSky == 1 ? skyHorizon(sunAltitude) : fogColor.rgb;
     FragAlpha = vec4(mix(shade(c.rgb, light), fog, fFogAmount), c.a);
   }

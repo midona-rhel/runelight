@@ -8,7 +8,8 @@ public enum DebugView
 	AMBIENT_OCCLUSION("Ambient occlusion"),
 	SHADOWS("Shadows"),
 	LIGHTING("Lighting"),
-	LIGHT_CLUSTERS("Light clusters");
+	LIGHT_CLUSTERS("Light clusters"),
+	MATERIALS("Materials");
 
 	private final String name;
 

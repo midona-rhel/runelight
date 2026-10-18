@@ -12,21 +12,24 @@ class SceneTargets
 	static final int COLOR_FORMAT = GL_RGBA8;
 	static final int NORMAL_FORMAT = GL_RGB10_A2;
 	static final int DEPTH_FORMAT = GL_DEPTH_COMPONENT32F;
+	// surface material per pixel (emissive, transmissive), see materials.glsl
+	static final int MATERIAL_FORMAT = GL_RG8;
 
 	private int width, height, samples;
 
 	// what the scene draws into: fboMsaa when multisampled, else fboResolve
 	private int fboMsaa;
-	private int rboColor, rboNormal, rboDepth, rboAlpha;
+	private int rboColor, rboNormal, rboDepth, rboAlpha, rboMaterial;
 
 	private int fboResolve;
 	private int texColor, texNormal, texDepth;
 	// transparent geometry, lit as it is drawn, premultiplied; blended over the lit opaque scene by the composite
 	private int texAlpha;
+	private int texMaterial;
 
-	private static final int[] OPAQUE_BUFFERS = {GL_COLOR_ATTACHMENT0, GL_COLOR_ATTACHMENT1};
-	private static final int[] ALPHA_BUFFERS = {GL_NONE, GL_NONE, GL_COLOR_ATTACHMENT2};
-	private static final int[] ALL_BUFFERS = {GL_COLOR_ATTACHMENT0, GL_COLOR_ATTACHMENT1, GL_COLOR_ATTACHMENT2};
+	private static final int[] OPAQUE_BUFFERS = {GL_COLOR_ATTACHMENT0, GL_COLOR_ATTACHMENT1, GL_NONE, GL_COLOR_ATTACHMENT3};
+	private static final int[] ALPHA_BUFFERS = {GL_NONE, GL_NONE, GL_COLOR_ATTACHMENT2, GL_NONE};
+	private static final int[] ALL_BUFFERS = {GL_COLOR_ATTACHMENT0, GL_COLOR_ATTACHMENT1, GL_COLOR_ATTACHMENT2, GL_COLOR_ATTACHMENT3};
 	private static final float[] TRANSPARENT = {0, 0, 0, 0};
 
 	// ambient occlusion at half resolution, upsampled depth-aware in the composite pass
@@ -43,6 +46,7 @@ class SceneTargets
 		texNormal = texture(NORMAL_FORMAT, GL_RGBA, GL_UNSIGNED_INT_2_10_10_10_REV);
 		texDepth = texture(DEPTH_FORMAT, GL_DEPTH_COMPONENT, GL_FLOAT);
 		texAlpha = texture(COLOR_FORMAT, GL_RGBA, GL_UNSIGNED_BYTE);
+		texMaterial = texture(MATERIAL_FORMAT, GL_RG, GL_UNSIGNED_BYTE);
 
 		fboResolve = glGenFramebuffers();
 		glBindFramebuffer(GL_FRAMEBUFFER, fboResolve);
@@ -50,6 +54,7 @@ class SceneTargets
 		glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT1, GL_TEXTURE_2D, texNormal, 0);
 		glFramebufferTexture2D(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_TEXTURE_2D, texDepth, 0);
 		glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT2, GL_TEXTURE_2D, texAlpha, 0);
+		glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT3, GL_TEXTURE_2D, texMaterial, 0);
 		glDrawBuffers(OPAQUE_BUFFERS);
 		check("resolve");
 
@@ -77,10 +82,12 @@ class SceneTargets
 			rboNormal = renderbuffer(NORMAL_FORMAT);
 			rboDepth = renderbuffer(DEPTH_FORMAT);
 			rboAlpha = renderbuffer(COLOR_FORMAT);
+			rboMaterial = renderbuffer(MATERIAL_FORMAT);
 			glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_RENDERBUFFER, rboColor);
 			glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT1, GL_RENDERBUFFER, rboNormal);
 			glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_RENDERBUFFER, rboDepth);
 			glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT2, GL_RENDERBUFFER, rboAlpha);
+			glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT3, GL_RENDERBUFFER, rboMaterial);
 			glDrawBuffers(OPAQUE_BUFFERS);
 			check("msaa");
 			glBindRenderbuffer(GL_RENDERBUFFER, 0);
@@ -92,8 +99,8 @@ class SceneTargets
 		if (fboMsaa != 0)
 		{
 			glDeleteFramebuffers(fboMsaa);
-			glDeleteRenderbuffers(new int[]{rboColor, rboNormal, rboDepth, rboAlpha});
-			fboMsaa = rboColor = rboNormal = rboDepth = rboAlpha = 0;
+			glDeleteRenderbuffers(new int[]{rboColor, rboNormal, rboDepth, rboAlpha, rboMaterial});
+			fboMsaa = rboColor = rboNormal = rboDepth = rboAlpha = rboMaterial = 0;
 		}
 		if (fboAo != 0)
 		{
@@ -104,8 +111,8 @@ class SceneTargets
 		if (fboResolve != 0)
 		{
 			glDeleteFramebuffers(fboResolve);
-			glDeleteTextures(new int[]{texColor, texNormal, texDepth, texAlpha});
-			fboResolve = texColor = texNormal = texDepth = texAlpha = 0;
+			glDeleteTextures(new int[]{texColor, texNormal, texDepth, texAlpha, texMaterial});
+			fboResolve = texColor = texNormal = texDepth = texAlpha = texMaterial = 0;
 		}
 	}
 
@@ -165,6 +172,10 @@ class SceneTargets
 		glDrawBuffers(GL_COLOR_ATTACHMENT2);
 		glBlitFramebuffer(0, 0, width, height, 0, 0, width, height, GL_COLOR_BUFFER_BIT, GL_NEAREST);
 
+		glReadBuffer(GL_COLOR_ATTACHMENT3);
+		glDrawBuffers(GL_COLOR_ATTACHMENT3);
+		glBlitFramebuffer(0, 0, width, height, 0, 0, width, height, GL_COLOR_BUFFER_BIT, GL_NEAREST);
+
 		glReadBuffer(GL_COLOR_ATTACHMENT0);
 		glDrawBuffers(OPAQUE_BUFFERS);
 	}
@@ -177,6 +188,8 @@ class SceneTargets
 	{
 		glDrawBuffers(ALL_BUFFERS);
 		glClearBufferfv(GL_COLOR, 2, TRANSPARENT);
+		// the frame's clear filled the material target with the sky color too
+		glClearBufferfv(GL_COLOR, 3, TRANSPARENT);
 		glDrawBuffers(OPAQUE_BUFFERS);
 	}
 
@@ -186,6 +199,13 @@ class SceneTargets
 	void setAlphaPass(boolean alpha)
 	{
 		glDrawBuffers(alpha ? ALPHA_BUFFERS : OPAQUE_BUFFERS);
+	}
+
+	void bindMaterial(int unit)
+	{
+		glActiveTexture(GL_TEXTURE0 + unit);
+		glBindTexture(GL_TEXTURE_2D, texMaterial);
+		glActiveTexture(GL_TEXTURE0);
 	}
 
 	void bindAlphaLayer(int unit)
