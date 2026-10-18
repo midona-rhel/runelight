@@ -83,6 +83,8 @@ class ModelUploader
 		v = new float[3];
 	}
 
+	private final int[] flatNormals = new int[3];
+
 	int uploadSortedModel(RuneLightPlugin.RenderThread rt, Projection proj, Model model, int orientation, int x, int y, int z,
 		int cameraX, int cameraY, int cameraZ, IntBuffer opaqueBuffer, IntBuffer alphaBuffer, boolean prioritySort)
 	{
@@ -250,6 +252,18 @@ class ModelUploader
 					int n1 = smooth ? VertexShading.vertexNormal(normalsX, normalsY, normalsZ, v1, normalSin, normalCos) : 0;
 					int n2 = smooth ? VertexShading.vertexNormal(normalsX, normalsY, normalsZ, v2, normalSin, normalCos) : 0;
 					int n3 = smooth ? VertexShading.vertexNormal(normalsX, normalsY, normalsZ, v3, normalSin, normalCos) : 0;
+					if (flat && hasNormals && VertexShading.smoothFlatFaces
+						&& VertexShading.flatFaceNormals(verticesX, verticesY, verticesZ, normalsX, normalsY, normalsZ, v1, v2, v3, normalSin, normalCos, flatNormals))
+					{
+						n1 = flatNormals[0];
+						n2 = flatNormals[1];
+						n3 = flatNormals[2];
+						// one color over the rounded surface: the per-face lit colors would still show the facets
+						if (unlitColors != null && (faceTextures == null || faceTextures[faceIdx] == -1))
+						{
+							color1 = color2 = color3 = unlitColors[faceIdx] & 0xffff;
+						}
+					}
 
 					// HSL override is not applied to textured faces
 					if (faceTextures == null || faceTextures[faceIdx] == -1)
@@ -619,6 +633,18 @@ class ModelUploader
 			int n1 = smooth ? VertexShading.vertexNormal(normalsX, normalsY, normalsZ, triangleA, orientSine, normalCos) : 0;
 			int n2 = smooth ? VertexShading.vertexNormal(normalsX, normalsY, normalsZ, triangleB, orientSine, normalCos) : 0;
 			int n3 = smooth ? VertexShading.vertexNormal(normalsX, normalsY, normalsZ, triangleC, orientSine, normalCos) : 0;
+			if (flat && hasNormals && VertexShading.smoothFlatFaces
+				&& VertexShading.flatFaceNormals(verticesX, verticesY, verticesZ, normalsX, normalsY, normalsZ, triangleA, triangleB, triangleC, orientSine, normalCos, flatNormals))
+			{
+				n1 = flatNormals[0];
+				n2 = flatNormals[1];
+				n3 = flatNormals[2];
+				// one color over the rounded surface: the per-face lit colors would still show the facets
+				if (unlitColors != null && (faceTextures == null || faceTextures[face] == -1))
+				{
+					color1 = color2 = color3 = unlitColors[face] & 0xffff;
+				}
+			}
 
 			// HSL override is not applied to textured faces
 			if (faceTextures == null || faceTextures[face] == -1)

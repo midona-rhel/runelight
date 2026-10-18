@@ -11,7 +11,7 @@ out float FragAo;
 
 #define SAMPLES 12
 // sine of the minimum angle above the surface for an occluder to count; higher ignores more of the shallow folds
-#define AO_ANGLE_BIAS 0.15
+#define AO_ANGLE_BIAS 0.10
 #define TAU 6.28318530718
 #define GOLDEN_ANGLE 2.39996322973
 

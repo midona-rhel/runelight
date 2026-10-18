@@ -17,7 +17,7 @@
 #define TAU 6.28318530718
 
 // how much AO also darkens direct sun and point light; physically 0, but contact shading reads better with some
-#define AO_DIRECT 0.6
+#define AO_DIRECT 1.0
 
 // linear value above which highlights are compressed toward 1
 #define SHOULDER 0.75

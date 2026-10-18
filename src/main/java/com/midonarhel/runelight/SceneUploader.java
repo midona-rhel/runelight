@@ -595,6 +595,8 @@ class SceneUploader
 	}
 
 	// scene upload
+	private final int[] flatNormals = new int[3];
+
 	private int uploadStaticModel(Model model, int orient, int x, int y, int z, GpuIntBuffer vb, GpuIntBuffer ab)
 	{
 		final int vertexCount = model.getVerticesCount();
@@ -622,6 +624,7 @@ class SceneUploader
 		final int[] normalsZ = model.getVertexNormalsZ();
 		final boolean hasNormals = VertexShading.hasNormals(normalsX, normalsY, normalsZ);
 		final short[] unlitColors = model.getUnlitFaceColors();
+		final int[] flatNormals = this.flatNormals;
 		final float normalSin = orient != 0 ? Perspective.SINEF[orient] : 0;
 		final float normalCos = orient != 0 ? Perspective.COSINEF[orient] : 1;
 
@@ -692,6 +695,18 @@ class SceneUploader
 			int n1 = smooth ? VertexShading.vertexNormal(normalsX, normalsY, normalsZ, triangleA, normalSin, normalCos) : 0;
 			int n2 = smooth ? VertexShading.vertexNormal(normalsX, normalsY, normalsZ, triangleB, normalSin, normalCos) : 0;
 			int n3 = smooth ? VertexShading.vertexNormal(normalsX, normalsY, normalsZ, triangleC, normalSin, normalCos) : 0;
+			if (flat && hasNormals && VertexShading.smoothFlatFaces
+				&& VertexShading.flatFaceNormals(vertexX, vertexY, vertexZ, normalsX, normalsY, normalsZ, triangleA, triangleB, triangleC, normalSin, normalCos, flatNormals))
+			{
+				n1 = flatNormals[0];
+				n2 = flatNormals[1];
+				n3 = flatNormals[2];
+				// one color over the rounded surface: the per-face lit colors would still show the facets
+				if (unlitColors != null && (faceTextures == null || faceTextures[face] == -1))
+				{
+					color1 = color2 = color3 = unlitColors[face] & 0xffff;
+				}
+			}
 
 			int vx1 = modelLocalXI[triangleA];
 			int vy1 = modelLocalYI[triangleA];

@@ -72,6 +72,73 @@ final class VertexShading
 		return encodeNormal(x, y, z);
 	}
 
+	// Flat-shaded faces whose vertex normals are within this angle of the face normal are shaded smoothly, so
+	// low-poly round shapes (tree trunks, rocks) read as round while real corners (crates, walls) stay sharp.
+	static boolean smoothFlatFaces = true;
+	private static final float SMOOTH_COS = 0.643f; // cos(50 degrees): 5-sided and rounder prisms smooth, cubes don't
+
+	/**
+	 * Normals for a face the game marks as flat shaded: the smooth vertex normal where the fold is gentle,
+	 * otherwise the face's own normal. Positions and normals are in unrotated model space.
+	 *
+	 * @param out receives the three encoded normals
+	 * @return true if any vertex was smoothed
+	 */
+	static boolean flatFaceNormals(float[] vx, float[] vy, float[] vz, int[] nx, int[] ny, int[] nz,
+		int a, int b, int c, float orientSine, float orientCosine, int[] out)
+	{
+		float ux = vx[b] - vx[a], uy = vy[b] - vy[a], uz = vz[b] - vz[a];
+		float wx = vx[c] - vx[a], wy = vy[c] - vy[a], wz = vz[c] - vz[a];
+		float fx = uy * wz - uz * wy, fy = uz * wx - ux * wz, fz = ux * wy - uy * wx;
+		float fl = (float) Math.sqrt(fx * fx + fy * fy + fz * fz);
+		if (fl < 1e-6f)
+		{
+			out[0] = out[1] = out[2] = 0;
+			return false;
+		}
+		fx /= fl;
+		fy /= fl;
+		fz /= fl;
+		// winding is not reliable for the sign; agree with the vertex normals
+		float sx = nx[a] + nx[b] + nx[c], sy = ny[a] + ny[b] + ny[c], sz = nz[a] + nz[b] + nz[c];
+		if (fx * sx + fy * sy + fz * sz < 0)
+		{
+			fx = -fx;
+			fy = -fy;
+			fz = -fz;
+		}
+
+		// all three corners must be gentle, or a box side would get a gradient from one leaning corner normal
+		int[] idx = {a, b, c};
+		for (int v : idx)
+		{
+			float x = nx[v], y = ny[v], z = nz[v];
+			float l = (float) Math.sqrt(x * x + y * y + z * z);
+			if (l < 1e-6f || (x * fx + y * fy + z * fz) / l <= SMOOTH_COS)
+			{
+				int face = rotatedNormal(fx, fy, fz, orientSine, orientCosine);
+				out[0] = out[1] = out[2] = face;
+				return false;
+			}
+		}
+		for (int i = 0; i < 3; ++i)
+		{
+			out[i] = vertexNormal(nx, ny, nz, idx[i], orientSine, orientCosine);
+		}
+		return true;
+	}
+
+	private static int rotatedNormal(float x, float y, float z, float orientSine, float orientCosine)
+	{
+		if (orientSine != 0 || orientCosine != 1)
+		{
+			float x0 = x;
+			x = z * orientSine + x0 * orientCosine;
+			z = z * orientCosine - x0 * orientSine;
+		}
+		return encodeNormal(x, y, z);
+	}
+
 	static boolean hasNormals(int[] nx, int[] ny, int[] nz)
 	{
 		return nx != null && ny != null && nz != null;

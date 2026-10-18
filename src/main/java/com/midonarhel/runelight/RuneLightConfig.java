@@ -393,6 +393,19 @@ public interface RuneLightConfig extends Config
 	}
 
 	@ConfigItem(
+		keyName = "smoothShapes",
+		name = "Smooth low-poly shapes",
+		description = "Shade gently folded faces smoothly, so round shapes like tree trunks and rocks look round "
+			+ "while sharp corners stay sharp. Reloads the scene when changed.",
+		section = lightingSection,
+		position = 62
+	)
+	default boolean smoothShapes()
+	{
+		return true;
+	}
+
+	@ConfigItem(
 		keyName = "unlitColors",
 		name = "Unlit colors (experimental)",
 		description = "Use the models' unlit colors instead of correcting the baked shading. Flattens color "

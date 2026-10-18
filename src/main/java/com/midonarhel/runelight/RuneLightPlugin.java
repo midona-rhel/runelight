@@ -462,6 +462,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 
 		VertexShading.undoVanillaShading = config.removeBakedShading();
 		VertexShading.unlitColors = config.unlitColors();
+		VertexShading.smoothFlatFaces = config.smoothShapes();
 
 		sceneLights = new SceneLights(client);
 		sceneLights.load(gson);
@@ -730,13 +731,15 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 					}
 				});
 			}
-			else if (configChanged.getKey().equals("removeBakedShading") || configChanged.getKey().equals("unlitColors"))
+			else if (configChanged.getKey().equals("removeBakedShading") || configChanged.getKey().equals("unlitColors")
+				|| configChanged.getKey().equals("smoothShapes"))
 			{
 				clientThread.invokeLater(() ->
 				{
 					// colors are baked into the vertex data at upload, so reload the scene
 					VertexShading.undoVanillaShading = config.removeBakedShading();
 					VertexShading.unlitColors = config.unlitColors();
+					VertexShading.smoothFlatFaces = config.smoothShapes();
 					if (client.getGameState() == GameState.LOGGED_IN)
 					{
 						client.setGameState(GameState.LOADING);
