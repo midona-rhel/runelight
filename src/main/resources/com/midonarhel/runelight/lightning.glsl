@@ -7,8 +7,8 @@ uniform vec4 lightningBolt;  // xy: strike xz relative to the camera, world unit
 // light added inside the clouds near the strike at a full flash (linear), and how far it spreads, world units
 #define LIGHTNING_CLOUD_GLOW 2.5
 #define LIGHTNING_GLOW_RADIUS 7000.0
-// the bolt runs from the cloud base (clouds.glsl's CLOUD_BOTTOM) to this far below the camera's altitude
-#define BOLT_TOP 9000.0
+// the bolt runs from the cloud base (clouds.glsl's CLOUD_BOTTOM, above the camera) to this far below the camera
+#define BOLT_RISE 3500.0
 #define BOLT_DROP 2500.0
 // core width in world units (never under about a pixel), and how much wider its glow is
 #define BOLT_WIDTH 16.0
@@ -64,7 +64,7 @@ vec3 lightningOverSky(vec3 sky, vec3 dir, vec3 camPos) {
   // y points down: altitude is -y
   float camAlt = -camPos.y;
   float bottom = camAlt - BOLT_DROP;
-  float h = (camAlt - p.y - bottom) / (BOLT_TOP - bottom);
+  float h = (camAlt - p.y - bottom) / (BOLT_RISE + BOLT_DROP);
   if (h < 0.0 || h > 1.0) {
     return sky;
   }

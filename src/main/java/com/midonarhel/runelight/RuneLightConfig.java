@@ -1184,6 +1184,18 @@ public interface RuneLightConfig extends Config
 		return 100;
 	}
 
+	@ConfigItem(
+		keyName = "skyHorizonAtEdge",
+		name = "Horizon at world edge",
+		description = "Put the sky's horizon where the drawn world ends, so the clouds come down to the land at any camera angle.",
+		section = cloudsSection,
+		position = 510
+	)
+	default boolean skyHorizonAtEdge()
+	{
+		return true;
+	}
+
 	@ConfigSection(
 		name = "Performance",
 		description = "Trade some quality for frame rate. High matches the full look.",
