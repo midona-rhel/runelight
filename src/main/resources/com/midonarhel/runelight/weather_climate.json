@@ -1,6 +1,17 @@
 {
 	"defaultBiome": "GRASSLAND",
 	"morning": {"MIST": 2.0, "FOG": 2.0, "FREEZING_FOG": 2.0},
+	"temperature": {
+		"GRASSLAND": {"spring": [9, 5], "summer": [18, 6], "autumn": [9, 4], "winter": [-1, 4], "noise": 3},
+		"FOREST": {"spring": [8, 4], "summer": [16, 5], "autumn": [8, 3], "winter": [-2, 3], "noise": 3},
+		"DESERT": {"spring": [24, 9], "summer": [34, 10], "autumn": [24, 9], "winter": [14, 9], "noise": 2.5},
+		"BARRENS": {"spring": [8, 6], "summer": [17, 7], "autumn": [7, 5], "winter": [-2, 5], "noise": 3},
+		"SWAMP": {"spring": [11, 3], "summer": [19, 3], "autumn": [10, 3], "winter": [2, 3], "noise": 2.5},
+		"ARCTIC": {"spring": [-12, 4], "summer": [-6, 3], "autumn": [-12, 4], "winter": [-22, 4], "noise": 3, "frozen": true},
+		"MOUNTAIN": {"spring": [-6, 5], "summer": [-2, 5], "autumn": [-6, 5], "winter": [-14, 5], "noise": 3, "frozen": true},
+		"WILDERNESS": {"spring": [6, 4], "summer": [14, 5], "autumn": [6, 4], "winter": [-3, 4], "noise": 3.5},
+		"TROPICAL": {"spring": [26, 4], "summer": [28, 4], "autumn": [26, 4], "winter": [24, 4], "noise": 1.5}
+	},
 	"biomes": {
 		"GRASSLAND": {
 			"spring": {"CLEAR": 10, "SUNNY": 14, "PARTLY_CLOUDY": 16, "HIGH_CLOUDS": 6, "OVERCAST": 8, "SPRING_SHOWERS": 16, "DRIZZLE": 8, "RAIN": 6, "THUNDERSTORM": 2, "MIST": 8, "FOG": 4, "GALE": 2},

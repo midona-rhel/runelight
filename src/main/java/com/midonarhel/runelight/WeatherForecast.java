@@ -11,7 +11,8 @@ import java.util.Objects;
  * seasons and the chain here are our own.
  *
  * Everything is a pure function of the slot number and the biome, so it needs no saved state, is the same every
- * time it is asked and can show the next slot ahead of time. Consecutive slots form a Markov chain (each weather
+ * time it is asked and can show the next slot ahead of time. Slots count from the game clock's epoch (GameClock), so
+ * every client sees the same weather at the same time, whenever it started. Consecutive slots form a Markov chain (each weather
  * leans toward itself and toward weathers like it, so clear skies cloud over before it storms), restarted from the
  * biome's plain odds every EPOCH slots so finding a slot's weather is never more than EPOCH steps.
  *
@@ -26,10 +27,7 @@ final class WeatherForecast
 	static final int DEFAULT_SEASON_DAYS = 7;
 	// share of a season, at its end, over which its odds blend into the next season's
 	static final float SEASON_BLEND = 0.25f;
-	// the day cycle starts at 09:00 (DayCycle)
-	private static final double START_HOUR = 9;
-	// with the day held at a fixed hour, weather still turns over as if a day took this long
-	private static final int FALLBACK_CYCLE_MINUTES = 12;
+	static final long SLOT_MILLIS = GameClock.DAY / SLOTS_PER_DAY;
 
 	// transition weights between unlike weathers: alike ones up to NEAR, unrelated ones down to FAR, by the
 	// distance between their looks (see features); SIMILARITY is the squared distance at which they are ~1
@@ -246,22 +244,15 @@ final class WeatherForecast
 		return (z >>> 11) / (double) (1L << 53);
 	}
 
-	/**
-	 * Game days since the day cycle started, counting the 09:00 start, so a slot boundary falls on 00:00, 08:00
-	 * and 16:00 of the clock.
-	 */
-	static double gameDays(long elapsedMillis, int cycleMinutes)
+	/** The slot a moment of the game clock falls in; slot % 3 == 0 runs from midnight to 08:00. */
+	static long slot(long gameMillis)
 	{
-		int minutes = cycleMinutes > 0 ? cycleMinutes : FALLBACK_CYCLE_MINUTES;
-		return elapsedMillis / (minutes * 60_000.0) + START_HOUR / 24;
+		return Math.floorDiv(gameMillis, SLOT_MILLIS);
 	}
 
 	// ---------------------------------------------------------------------------------------------------------
 	// The forecast for this frame
 
-	// added to every slot so each session has its own run of weather (and starts in its own season); a multiple
-	// of SLOTS_PER_DAY keeps the morning slots in the morning
-	private final long sessionBase;
 	private String biome;
 	private long slot = Long.MIN_VALUE;
 	private int seasonDays = DEFAULT_SEASON_DAYS;
@@ -270,27 +261,16 @@ final class WeatherForecast
 	private WeatherType next = WeatherType.clear();
 	private float minutesToNext;
 
-	WeatherForecast(long sessionSeed)
-	{
-		this.sessionBase = Math.floorMod(sessionSeed, 1L << 40) * SLOTS_PER_DAY;
-	}
-
-	void update(String biome, long elapsedMillis, int cycleMinutes)
-	{
-		update(biome, elapsedMillis, cycleMinutes, seasonDays);
-	}
-
 	/**
-	 * @param biome the 3D Weather biome name, or null when unknown
-	 * @param elapsedMillis the day cycle's clock
+	 * @param biome      the 3D Weather biome name, or null when unknown
+	 * @param gameMillis the game clock (GameClock)
+	 * @param dayMinutes real minutes per game day, for the time to the next slot
 	 * @param seasonDays game days per season
 	 */
-	void update(String biome, long elapsedMillis, int cycleMinutes, int seasonDays)
+	void update(String biome, long gameMillis, int dayMinutes, int seasonDays)
 	{
-		double slots = gameDays(elapsedMillis, cycleMinutes) * SLOTS_PER_DAY;
-		long s = sessionBase + (long) Math.floor(slots);
-		int minutes = cycleMinutes > 0 ? cycleMinutes : FALLBACK_CYCLE_MINUTES;
-		minutesToNext = (float) ((Math.floor(slots) + 1 - slots) * minutes / SLOTS_PER_DAY);
+		long s = slot(gameMillis);
+		minutesToNext = (float) (((s + 1) * SLOT_MILLIS - gameMillis) * GameClock.realPerGame(dayMinutes) / 60_000.0);
 		seasonDays = Math.max(seasonDays, 1);
 		if (s != slot || !Objects.equals(biome, this.biome) || seasonDays != this.seasonDays
 			|| catalogue != WeatherType.version())
@@ -333,6 +313,11 @@ final class WeatherForecast
 	float getMinutesToNext()
 	{
 		return minutesToNext;
+	}
+
+	long getSlot()
+	{
+		return slot;
 	}
 
 	Season getSeason()

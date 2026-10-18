@@ -7,8 +7,10 @@ import net.runelite.api.Scene;
 import static org.lwjgl.opengl.GL33C.*;
 
 /**
- * Weather: how cloudy, foggy, windy and stormy it is, and rain and snow as falling particles, rain splashes, and
- * wet or snow covered surfaces, each drawn in its own small pass over the composited scene.
+ * Weather: how cloudy, foggy, windy and stormy it is, and rain and snow as falling particles and rain splashes, each
+ * drawn in its own small pass over the composited scene. Wet ground and snow cover are part of the surfaces
+ * themselves: the AO pass finds how much of each a pixel gets (weather_ground_ao.glsl) and the composite lights them
+ * like everything else (weather_ground.glsl).
  *
  * Everything follows a few values (cover, rain, snow, wind, fog, storm, the light's strength, haze and tint, the
  * look of the clouds and the particles) that ease toward the current weather's: the automatic forecast's
@@ -22,7 +24,10 @@ import static org.lwjgl.opengl.GL33C.*;
  * player walks away from its center, the scene loads or a zone changes, so it costs nothing on most frames.
  *
  * Away from the player the weather is WeatherField's: each chunk of the scene has its region's weather, which the
- * passes add to the player's as a difference. Wet ground and snow cover reach over the whole scene (past the
+ * passes add to the player's as a difference. In automatic weather the player's own rain, snow, cover and ground are
+ * the field's at the player, so walking into a region where it has been snowing for days shows it snowing, at full
+ * strength, on deep snow; only a change of the weather itself blends. The ground comes from Climate, which keeps
+ * each region's snow until it thaws. Wet ground and snow cover reach over the whole scene (past the
  * occlusion map everything counts as under the open sky). The particles fill everything the camera sees out to the
  * draw distance, wherever it rains or snows: in layers of world-anchored boxes, each twice the size of the last and
  * owning a band of distance from the camera, with fewer, larger particles the farther the band (weather_common.glsl).
@@ -38,8 +43,6 @@ class Weather
 	// redraw once the player is this far from the map center; past the map, particles fall to the ground (hidden by
 	// the scene) instead of stopping on roofs, which is too small to see there
 	private static final float OCCLUSION_RECENTER = 24 * 128;
-	// wet ground and snow cover reach over the whole scene; past the occlusion map surfaces count as exposed
-	private static final float SURFACE_FADE = 1e9f;
 	// Particle layers. The nearest owns distances up to LAYER_NEAR from the camera, each next one twice as far; a
 	// layer's box is that distance across each way, centered a little ahead of the camera (LAYER_AHEAD of its half
 	// width, as far as the camera looks sideways rather than down), so it covers its band of what the camera sees.
@@ -126,27 +129,22 @@ class Weather
 		.add(GL_VERTEX_SHADER, "snow_vert.glsl")
 		.add(GL_FRAGMENT_SHADER, "snow_frag.glsl");
 
-	static final Shader SURFACE_PROGRAM = new Shader()
-		.add(GL_VERTEX_SHADER, "composite_vert.glsl")
-		.add(GL_FRAGMENT_SHADER, "weather_surface_frag.glsl");
-
 	/**
 	 * Freshly compiled programs, so a hot reload can compile everything before replacing anything.
 	 */
 	static final class Programs
 	{
-		final int rain, snow, surface;
+		final int rain, snow;
 
-		Programs(int rain, int snow, int surface)
+		Programs(int rain, int snow)
 		{
 			this.rain = rain;
 			this.snow = snow;
-			this.surface = surface;
 		}
 	}
 
 	/**
-	 * Uniform locations of one weather program. All three share weather_common.glsl and frame.glsl.
+	 * Uniform locations of one weather program. Both share weather_common.glsl and frame.glsl.
 	 */
 	private static final class Uniforms
 	{
@@ -155,7 +153,6 @@ class Weather
 		int occlusionProjRel, occlusionCenterY, occlusionDepthRange;
 		int cameraPos, focusPos, time, sunAltitude, casterDir, sunIsCaster, amount;
 		int dropCount, splashCount, wind, windOffset, gust, overcast, pointLights;
-		int surfaceMode, fadeDistance, shadowsEnabled, lightProjRel;
 		int particleAmount, layerBox, layerSpan, layerBand, particleReach;
 		int light, rainStyle, flakeStyle, flakeColor, fallTime;
 		WeatherField.Locations field;
@@ -198,10 +195,6 @@ class Weather
 			gust = glGetUniformLocation(p, "gust");
 			overcast = glGetUniformLocation(p, "weatherOvercast");
 			pointLights = glGetUniformLocation(p, "pointLightsEnabled");
-			surfaceMode = glGetUniformLocation(p, "surfaceMode");
-			fadeDistance = glGetUniformLocation(p, "fadeDistance");
-			shadowsEnabled = glGetUniformLocation(p, "shadowsEnabled");
-			lightProjRel = glGetUniformLocation(p, "lightProjRel");
 
 			glUseProgram(p);
 			glUniform1i(glGetUniformLocation(p, "sceneColor"), sceneUnit);
@@ -220,7 +213,6 @@ class Weather
 
 	private final Uniforms rain = new Uniforms();
 	private final Uniforms snow = new Uniforms();
-	private final Uniforms surface = new Uniforms();
 	private final WeatherField field = new WeatherField();
 
 	private final ShadowMap occlusion = new ShadowMap();
@@ -274,27 +266,29 @@ class Weather
 	private float wetness, snowCover;
 	private final Lightning lightning = new Lightning();
 	private long lastMillis;
-	private final long startMillis = System.currentTimeMillis();
-	private final Wind windSim = new Wind(startMillis / 1000);
+	// the prevailing wind is the same for everyone; it wanders with the clock (GameClock), not the session
+	private final Wind windSim = new Wind(1);
+	// automatic weather: the ground from Climate rather than built up here
+	private boolean groundFromClimate;
+	private String lastBiome;
+	private float climateWet, climateSnow;
 	private float focusX, focusY, focusZ;
 	private int focusPlane;
 
 	Programs compile(Template template) throws ShaderException
 	{
-		int r = 0, s = 0, f = 0;
+		int r = 0, s = 0;
 		try
 		{
 			r = RAIN_PROGRAM.compile(template);
 			s = SNOW_PROGRAM.compile(template);
-			f = SURFACE_PROGRAM.compile(template);
-			return new Programs(r, s, f);
+			return new Programs(r, s);
 		}
 		catch (ShaderException ex)
 		{
 			// glDeleteProgram ignores 0
 			glDeleteProgram(r);
 			glDeleteProgram(s);
-			glDeleteProgram(f);
 			throw ex;
 		}
 	}
@@ -310,16 +304,13 @@ class Weather
 			materialUnit, fieldUnit);
 		snow.locate(p.snow, sceneUnit, occlusionUnit, occlusionUnit + 1, alphaLayerUnit, lightDataUnit, clusterDataUnit,
 			materialUnit, fieldUnit);
-		surface.locate(p.surface, sceneUnit, occlusionUnit, shadowCompareUnit, alphaLayerUnit, lightDataUnit,
-			clusterDataUnit, materialUnit, fieldUnit);
 	}
 
 	void freePrograms()
 	{
 		glDeleteProgram(rain.program);
 		glDeleteProgram(snow.program);
-		glDeleteProgram(surface.program);
-		rain.program = snow.program = surface.program = 0;
+		rain.program = snow.program = 0;
 	}
 
 	/**
@@ -543,7 +534,9 @@ class Weather
 		lastMillis = now;
 		openSky = outdoors;
 		overcastStrength = overcastPercent / 100f;
-		double t = (now - startMillis) / 1000.0;
+		// real seconds since the clock's epoch: showers, swells and the wind's wander are the same whenever the
+		// client started
+		double t = GameClock.realSeconds(now);
 		float scale = intensityPercent / 100f;
 
 		// this frame's targets
@@ -553,11 +546,13 @@ class Weather
 		float targetRain = type.rain * scale / DEFAULT_INTENSITY;
 		float targetSnow = type.snow * scale / DEFAULT_INTENSITY;
 		float targetFog = type.fog;
+		float showerK = 1;
 		if (type.showers > 0 && varying)
 		{
 			// showers come and go: rain, then a break of sun
 			float on = showers(t);
 			float k = 1 - type.showers * (1 - on);
+			showerK = k;
 			targetRain *= k;
 			targetSnow *= k;
 			targetCover *= 1 - type.showers * (1 - on) * (1 - SHOWER_BREAK_COVER);
@@ -586,7 +581,10 @@ class Weather
 			targetCover = Math.max(targetCover, type.coverSwell * Math.min(1, COVER_BASE + COVER_SLOPE * slowEffective));
 		}
 
-		if (!initialized || !gradual)
+		// walking into another region shows its weather as it is, at once; only a change of the weather blends
+		boolean entered = initialized && mode == WeatherMode.AUTOMATIC && !java.util.Objects.equals(biome, lastBiome);
+		lastBiome = biome;
+		if (!initialized || !gradual || entered)
 		{
 			// at login or without gradual changes, start in the weather as it is
 			initialized = true;
@@ -629,6 +627,24 @@ class Weather
 			accumulate(dt);
 		}
 
+		if (groundFromClimate && mode == WeatherMode.AUTOMATIC)
+		{
+			wetness = climateWet;
+			snowCover = climateSnow;
+		}
+		if (field.isEnabled() && outdoors)
+		{
+			// the field at the player: its cells start in their weather as it is and only ease when it changes,
+			// and it blends across region borders, so entering a region shows its weather at once
+			float average = 1 - type.showers * (1 - SHOWER_SHARE);
+			float k = showerK / Math.max(average, 0.05f);
+			cover = Math.min(1, field.getFocus(WeatherField.COVER));
+			rainAmount = settle(field.getFocus(WeatherField.RAIN) * k, 0);
+			snowAmount = settle(field.getFocus(WeatherField.SNOW) * k, 0);
+			wetness = field.getFocus(WeatherField.WET);
+			snowCover = field.getFocus(WeatherField.SNOW_COVER);
+		}
+
 		float variation = varying ? WeatherVariation.intensity(t) : 1;
 		rainEffective = Math.min(rainAmount * variation, MAX_EFFECTIVE);
 		snowEffective = Math.min(snowAmount * variation, MAX_EFFECTIVE);
@@ -668,6 +684,28 @@ class Weather
 			occlusionDirty = true;
 		}
 		return true;
+	}
+
+	/**
+	 * The ground for automatic weather (Climate's, for the player's region): wet and snow cover 0-1, used as they
+	 * are instead of building up here. Off for the manual modes, which build their own.
+	 */
+	void setGround(boolean fromClimate, float wet, float snow)
+	{
+		groundFromClimate = fromClimate;
+		climateWet = wet;
+		climateSnow = snow;
+	}
+
+	/** wet ground and snow cover at the player, 0-1 */
+	float getWetness()
+	{
+		return wetness;
+	}
+
+	float getSnowCover()
+	{
+		return snowCover;
 	}
 
 	/** The weather a mode asks for: the forecast's, clear for Off, or the forced type. */
@@ -727,7 +765,7 @@ class Weather
 	 * @param fx       player ground position, world units
 	 */
 	void updateField(Scene scene, int sizeX, int sizeZ, int offset, int plane, EnvironmentManager env, boolean areas,
-		String biome, boolean enabled, WeatherForecast forecast, int intensityPercent, boolean gradual, boolean climate,
+		String biome, boolean enabled, Climate regions, int intensityPercent, boolean gradual, boolean climate,
 		double hour, float fx, float fz)
 	{
 		long now = System.currentTimeMillis();
@@ -772,7 +810,8 @@ class Weather
 		fieldDt += dt;
 		if (fieldDt >= FIELD_SECONDS || relaid || enabled != field.isEnabled())
 		{
-			field.update(enabled, forecast::currentFor, intensityPercent / 100f, gradual, climate, hour, fieldDt);
+			field.update(enabled, regions::type, regions::ground, intensityPercent / 100f, gradual, climate, hour,
+				fieldDt);
 			fieldDt = 0;
 		}
 		field.focus(fx, fz);
@@ -855,7 +894,7 @@ class Weather
 		windX = windSim.getDirX() * speed;
 		windZ = windSim.getDirZ() * speed;
 
-		long wraps = (now - startMillis) / CLOCK_WRAP_MILLIS;
+		long wraps = (now - GameClock.EPOCH_MILLIS) / CLOCK_WRAP_MILLIS;
 		if (wraps != clockWraps)
 		{
 			// the particle clock wrapped and every particle moved anyway; start the distance over with it
@@ -958,18 +997,16 @@ class Weather
 	}
 
 	/**
-	 * Draw this frame's weather over the composited scene in the bound framebuffer. The scene textures, the
-	 * transparency layer, the shadow map (if any), the light clusters (with pointLights) and the weather field
-	 * ({@link #bindField}) must still be bound on the units given to setPrograms, as they are right after the
-	 * composite.
+	 * Draw this frame's falling weather over the composited scene in the bound framebuffer. The scene textures, the
+	 * transparency layer, the light clusters (with pointLights) and the weather field ({@link #bindField}) must
+	 * still be bound on the units given to setPrograms, as they are right after the composite.
 	 *
-	 * @param shadowProjRel camera-relative light matrix, or null without shadows
-	 * @param pointLights light particles and snow cover with this frame's light clusters
+	 * @param pointLights light particles with this frame's light clusters
 	 * @param drawDistance world units from the player: how far the particles reach
 	 */
 	void draw(float[] viewProj, float[] invViewProj, int[] viewport, boolean zeroToOne,
-		float cameraX, float cameraY, float cameraZ, DayCycle day, float[] shadowProjRel,
-		boolean splashes, boolean surfaces, int occlusionUnit, boolean pointLights, float drawDistance)
+		float cameraX, float cameraY, float cameraZ, DayCycle day, boolean splashes, int occlusionUnit,
+		boolean pointLights, float drawDistance)
 	{
 		if (!active || !occlusion.isInitialized() || rain.program == 0)
 		{
@@ -986,7 +1023,7 @@ class Weather
 		glDisable(GL_CULL_FACE);
 		glEnable(GL_BLEND);
 
-		float time = ((System.currentTimeMillis() - startMillis) % CLOCK_WRAP_MILLIS) / 1000f;
+		float time = ((System.currentTimeMillis() - GameClock.EPOCH_MILLIS) % CLOCK_WRAP_MILLIS) / 1000f;
 
 		// only the game viewport; gl_FragCoord stays in whole-target pixels, as the scene textures expect
 		glViewport(viewport[0], viewport[1], viewport[2], viewport[3]);
@@ -997,19 +1034,6 @@ class Weather
 		float rainShown = f ? fieldPeak(WeatherField.RAIN, rainEffective, drawDistance) : rainEffective;
 		float snowShown = f ? fieldPeak(WeatherField.SNOW, snowEffective, drawDistance) : snowEffective;
 		float wetShown = f ? fieldPeak(WeatherField.WET, wetness, SPLASH_HALF) : wetness;
-
-		// surfaces first so falling weather draws over them
-		if (surfaces)
-		{
-			float swell = 0.4f + 0.6f * Math.min(1, slowEffective);
-			float wetAnywhere = f ? wetness + field.max(WeatherField.WET) - field.getFocus(WeatherField.WET) : wetness;
-			float snowAnywhere = f ? snowCover + field.max(WeatherField.SNOW_COVER)
-				- field.getFocus(WeatherField.SNOW_COVER) : snowCover;
-			drawSurface(1, wetness * swell, wetAnywhere, viewProj, invViewProj, viewport, zeroToOne, cameraX, cameraY,
-				cameraZ, day, time, shadowProjRel, pointLights);
-			drawSurface(2, snowCover * swell, snowAnywhere, viewProj, invViewProj, viewport, zeroToOne, cameraX,
-				cameraY, cameraZ, day, time, shadowProjRel, pointLights);
-		}
 
 		glBlendFuncSeparate(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA, GL_ZERO, GL_ONE);
 		// where the camera looks: the clip w row is the view axis, its horizontal part says how far the layers
@@ -1129,36 +1153,42 @@ class Weather
 	}
 
 	/**
+	 * Whether the AO pass shades wet ground and snow cover this frame: there is some anywhere in the scene and the
+	 * occlusion map is there to tell what is sheltered.
+	 */
+	boolean groundActive()
+	{
+		if (!active || !occlusion.isInitialized() || occlusionDirty)
+		{
+			return false;
+		}
+		boolean f = field.isEnabled();
+		float wet = f ? wetness + field.max(WeatherField.WET) - field.getFocus(WeatherField.WET) : wetness;
+		float snowy = f ? snowCover + field.max(WeatherField.SNOW_COVER) - field.getFocus(WeatherField.SNOW_COVER)
+			: snowCover;
+		return wet > 0.002f || snowy > 0.002f;
+	}
+
+	/**
+	 * With the AO program in use: bind the occlusion map on {@code occlusionUnit} and the next unit and the weather
+	 * field on {@code fieldUnit} and the next, and set weather_ground_ao.glsl's uniforms. {@link #groundActive}
+	 * first; {@link ShadowMap#unbind} the occlusion units after the pass, they have sampler objects bound.
+	 */
+	void bindGround(WeatherGround g, int occlusionUnit, int fieldUnit, float cameraX, float cameraY, float cameraZ)
+	{
+		relativeTo(occlusion.lightProj, cameraX, cameraY, cameraZ, occlusionProjRel);
+		occlusion.bindForSampling(occlusionUnit, occlusionUnit + 1);
+		field.bind(fieldUnit, fieldUnit + 1);
+		g.setAo(occlusionProjRel, OCCLUSION_DEPTH_RANGE, field, cameraX, cameraZ, wetness, snowCover);
+	}
+
+	/**
 	 * Upload the weather field if it changed and bind it on two units from {@code unit}, for the weather passes and
 	 * the fog.
 	 */
 	void bindField(int unit)
 	{
 		field.bind(unit, unit + 1);
-	}
-
-	private void drawSurface(int mode, float amount, float anywhere, float[] viewProj, float[] invViewProj,
-		int[] viewport, boolean zeroToOne, float cameraX, float cameraY, float cameraZ, DayCycle day, float time,
-		float[] shadowProjRel, boolean pointLights)
-	{
-		if (amount <= 0 && anywhere <= 0)
-		{
-			return;
-		}
-		glUseProgram(surface.program);
-		setCommon(surface, viewProj, invViewProj, viewport, zeroToOne, cameraX, cameraY, cameraZ, day, time);
-		glUniform1f(surface.amount, amount);
-		glUniform1i(surface.surfaceMode, mode);
-		glUniform1f(surface.fadeDistance, SURFACE_FADE);
-		glUniform1i(surface.pointLights, pointLights ? 1 : 0);
-		glUniform1i(surface.shadowsEnabled, shadowProjRel != null ? 1 : 0);
-		if (shadowProjRel != null)
-		{
-			glUniformMatrix4fv(surface.lightProjRel, false, shadowProjRel);
-		}
-		// out = weather color + scene * weather alpha: darkens for wetness, covers for snow
-		glBlendFuncSeparate(GL_ONE, GL_SRC_ALPHA, GL_ZERO, GL_ONE);
-		glDrawArrays(GL_TRIANGLES, 0, 3);
 	}
 
 	private void setParticles(Uniforms u, float kindAmount, float[] viewProj, float[] invViewProj, int[] viewport,

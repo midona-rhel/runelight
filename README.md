@@ -42,11 +42,26 @@ Plugin config, Weather section: rain or snow with an intensity, wet ground / sno
 gradual buildup. Shelter comes from a top-down depth map of all static scenery around the player, drawn with every
 roof (also roofs hidden by the game or a plugin), redrawn only after the player walks ~24 tiles or the scenery
 changes. Tuning constants are `#define`s at the top of `rain_vert.glsl`, `snow_vert.glsl` and
-`weather_surface_frag.glsl`; counts and timings are at the top of `Weather.java`. With varying intensity the
+`weather_ground.glsl`; counts and timings are at the top of `Weather.java`. With varying intensity the
 rain or snow swells, eases off and gusts around the set intensity (`WeatherVariation.java`). The cloud cover follows
 it slowly and grays the sky and softens the sun and moon everywhere through `weatherOvercast` in `sky.glsl` (its
-`OVERCAST_*` defines). Drops, flakes, splashes and snow cover pick up nearby point lights through the light clusters
-(`weather_common.glsl`).
+`OVERCAST_*` defines). Drops, flakes and splashes pick up nearby point lights through the light clusters
+(`weather_common.glsl`). Wet ground and snow cover are part of the surfaces: the half resolution AO pass works out
+how much of each a pixel gets (`weather_ground_ao.glsl`: the region's ground times how open to the sky it is) into
+the shadow target's spare channels, and the composite changes the albedo and normal before lighting
+(`weather_ground.glsl`), so snow takes the AO, shadows, GI and point lights like any other surface. Snow lies in
+patches: a fixed world-space noise thresholded against the depth, so patches grow from their cores as it deepens and
+melt back the same way, upward faces first and sheltered spots last.
+
+Time (`GameClock.java`) is a function of the real clock from a fixed epoch: with the default 24 minute day one game
+hour per real minute, seasons of "Days per season" game days. The time of day, the season, the forecast and the
+wind's wander are the same whenever and wherever the client runs. Each region has a temperature (`Climate.java`:
+the biome's per-season mean and day/night swing from `weather_climate.json`'s `temperature`, damped by cloud, cooled
+by whatever falls, the type's own `temperature` offset, and a slow wander; arctic and mountain regions never thaw).
+Rain and snow follow it: a forecast rain falls as snow in a frost and as sleet around zero. Snow depth and wet ground
+run as an hourly simulation per region from a couple of seasons back, so they are the same for everyone at the same
+moment: snow piles up while it snows and only melts above zero (faster when warmer, in rain or sun), wet ground dries
+with warmth and sun. The overlay shows the temperature, snow depth and wetness.
 
 Automatic weather (the default mode) picks a new weather per biome every third of a game day (8 game hours, 4
 minutes at the default day length) from about 25 types: clear, sunny, harsh sun, hazy, high thin clouds, partly
@@ -55,7 +70,7 @@ fog, freezing fog, sleet, light snow, snowfall, heavy snow, blizzard, sandstorm,
 row of `weather_types.json` (cloud cover and look, rain/snow amounts and drop/flake style, showers, wind and
 gustiness, fog and its tint, sun strength, haze, warmth and sky saturation, lightning, buildup rates, frost;
 fields and defaults in `WeatherType.java`) that `Weather.java` eases toward, so slot changes and walking into
-another biome blend over about a minute. The odds per biome and season are in `weather_climate.json`; seasons
+another biome show its weather as it is. The odds per biome and season are in `weather_climate.json`; seasons
 (spring, summer, autumn, winter) last "Days per season" game days each and blend into the next over the last
 quarter. Consecutive slots form a Markov chain whose transition weights come from how alike two types look
 (`WeatherForecast.java`), so clear skies cloud over before it storms. In the dev client both JSON files are read
@@ -72,7 +87,8 @@ include `wind.glsl` (uniforms `windDir`, `windStrength`, `windGust`, `windTime`,
 and `windGustAt(worldXZ)`); `Wind.apply` sets them, on the scene and shadow programs every frame.
 
 Weather by region (`WeatherField.java`): every chunk of the loaded scene, expanded map loading included, takes
-the forecast for its own region's biome, eases toward it and builds up its own wet ground and snow cover. The
+the forecast for its own region's biome (as the temperature lets it fall), eases toward it when it changes and takes
+its region's ground from the climate. The
 chunks are blurred across region borders (`BLUR`) and sampled by world position as differences from the weather
 at the player, so where you stand nothing changes and elsewhere the clouds close up, the fog thickens and the
 ground gets wet or white by region. The rain and snow particles fill everything the camera sees out to the draw

@@ -97,9 +97,9 @@ public class WeatherFieldTest
 			}
 		}
 		// and the forecast for a biome only depends on the slot
-		WeatherForecast fa = new WeatherForecast(42), fb = new WeatherForecast(42);
-		fa.update("SWAMP", 1_000_000, 12);
-		fb.update("DESERT", 1_000_000, 12);
+		WeatherForecast fa = new WeatherForecast(), fb = new WeatherForecast();
+		fa.update("SWAMP", 1_000_000_000, 12, 7);
+		fb.update("DESERT", 1_000_000_000, 12, 7);
 		for (String biome : new String[]{null, "SWAMP", "ARCTIC", "DESERT"})
 		{
 			assertEquals(fa.currentFor(biome), fb.currentFor(biome));
@@ -236,5 +236,33 @@ public class WeatherFieldTest
 		WeatherType showers = WeatherTestData.type("SPRING_SHOWERS");
 		WeatherField.targets(showers, null, 0.6f, false, 12, t);
 		assertTrue(t[WeatherField.RAIN] < showers.rain * 0.8f);
+	}
+
+	@Test
+	public void groundComesFromTheClimate()
+	{
+		// a region that has had snow for days shows it from the first update, and holds it whatever the weather
+		// above does: the climate decides when it thaws
+		WeatherField f = new WeatherField();
+		layout(f, 12, 0);
+		java.util.function.Function<String, float[]> ground = b -> "WET".equals(b) ? new float[]{0.3f, 0.8f}
+			: new float[]{0, 0};
+		f.update(true, b -> CLEAR, ground, 0.6f, true, false, 12, 0);
+		float x = f.getOriginX() + center(3), z = f.getOriginZ() + center(10);
+		assertEquals(0.8f, f.sample(WeatherField.SNOW_COVER, x, z), EPS);
+		assertEquals(0.3f, f.sample(WeatherField.WET, x, z), EPS);
+		assertEquals(0, f.sample(WeatherField.SNOW_COVER, f.getOriginX() + center(20), z), EPS);
+		for (int i = 0; i < 400; ++i)
+		{
+			f.update(true, b -> CLEAR, ground, 0.6f, true, false, 12, 0.25f);
+		}
+		assertEquals(0.8f, f.sample(WeatherField.SNOW_COVER, x, z), EPS);
+		// and falling weather starts at full strength in a newly seen region
+		WeatherField g = new WeatherField();
+		layout(g, 12, 0);
+		g.update(true, TYPES, ground, 0.6f, true, false, 12, 0);
+		float[] t = new float[WeatherField.TARGETS];
+		WeatherField.targets(RAIN, "WET", 0.6f, false, 12, t);
+		assertEquals(t[WeatherField.RAIN], g.cell(WeatherField.RAIN, 3, 10), 1e-6f);
 	}
 }

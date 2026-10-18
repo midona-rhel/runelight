@@ -130,9 +130,10 @@ class RuneLightOverlay extends OverlayPanel
 		WeatherMode mode = config.weatherMode();
 		WeatherForecast forecast = plugin.getWeatherForecast();
 		Weather weather = plugin.getWeather();
+		Climate.Region region = plugin.getClimateRegion();
 		if (mode == WeatherMode.AUTOMATIC)
 		{
-			line("Weather", forecast.getCurrent().toString(), Color.CYAN);
+			line("Weather", (region != null ? region.type : forecast.getCurrent()).toString(), Color.CYAN);
 		}
 		else
 		{
@@ -146,6 +147,11 @@ class RuneLightOverlay extends OverlayPanel
 		String biome = forecast.getBiome();
 		line("Region", biome.charAt(0) + biome.substring(1).toLowerCase().replace('_', ' '), Color.WHITE);
 		line("Next", forecast.getNext() + " in " + String.format("%.1f min", forecast.getMinutesToNext()), Color.WHITE);
+		if (region != null)
+		{
+			line("Temperature", String.format("%.1f C", region.temperature), region.temperature < 0 ? Color.CYAN : Color.WHITE);
+			line("Snow / wet", String.format("%.1f cm / %.2f", region.snowCm, region.wet), Color.WHITE);
+		}
 		if (mode != WeatherMode.AUTOMATIC)
 		{
 			return;

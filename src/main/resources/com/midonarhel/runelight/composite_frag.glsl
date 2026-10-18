@@ -12,6 +12,7 @@
 #include "clouds.glsl"
 #include "atmosphere.glsl"
 #include "edge_fade.glsl"
+#include "weather_ground.glsl"
 
 #define DEBUG_FINAL 0
 #define DEBUG_DEPTH 1
@@ -92,6 +93,7 @@ float upsampleAoFog(ivec2 px, float z, vec3 n, out vec4 fog, out float shadow, o
   float shadowSum = 0.0;
   float wsum = 0.0;
   vec4 giSum = vec4(0.0);
+  vec2 groundSum = vec2(0.0);
   vec4 fogSum = vec4(0.0);
   float fogWsum = 0.0;
   for (int y = 0; y < 4; ++y) {
@@ -116,7 +118,9 @@ float upsampleAoFog(ivec2 px, float z, vec3 n, out vec4 fog, out float shadow, o
       w *= nd * nd;
 
       sum += halfAo(g) * w;
-      shadowSum += texelFetch(sceneShadow, q, 0).r * w;
+      vec4 sh = texelFetch(sceneShadow, q, 0);
+      shadowSum += sh.r * w;
+      groundSum += sh.gb * w;
       giSum += halfGi(g) * w;
       wsum += w;
     }
@@ -125,6 +129,7 @@ float upsampleAoFog(ivec2 px, float z, vec3 n, out vec4 fog, out float shadow, o
     : fogWsum > 1e-6 ? fogSum / fogWsum : texelFetch(sceneFog, clamp(ivec2(hp + 0.5), ivec2(0), maxAo), 0);
   shadow = wsum > 1e-4 ? shadowSum / wsum : texelFetch(sceneShadow, clamp(ivec2(hp + 0.5), ivec2(0), maxAo), 0).r;
   gi = wsum > 1e-4 ? giSum / wsum : vec4(0.0);
+  groundUpsampled = wsum > 1e-4 ? groundSum / wsum : texelFetch(sceneShadow, clamp(ivec2(hp + 0.5), ivec2(0), maxAo), 0).gb;
   return wsum > 1e-4 ? sum / wsum : 1.0;
 }
 
@@ -318,11 +323,15 @@ void main() {
   vec4 gi = vec4(0.0);
   vec3 indirect = vec3(0.0);
   bool fogDone = false;
-  if ((aoEnabled == 1 || shadowsEnabled == 1 || volumetricFog == 1 || giWeight > 0.0) && inside) {
+  if ((aoEnabled == 1 || shadowsEnabled == 1 || volumetricFog == 1 || giWeight > 0.0 || weatherGroundOn == 1)
+    && inside) {
     ao = upsampleAoFog(px, viewDepth(d), n, fog, halfShadow, gi);
     ao = aoEnabled == 1 ? clamp(1.0 - (1.0 - ao) * aoStrength, 0.0, 1.0) : 1.0;
     fogDone = volumetricFog == 1;
   }
+  // snow and wet ground change the surface itself, before it is lit
+  float wet = inside && weatherGroundOn == 1 ? weatherGroundSurface(color.rgb, n, p + cameraPos, emissive, material.b,
+    texelFetch(sceneAlpha, px, 0).a) : 0.0;
 
   float shadow = 1.0;
   vec3 light = vec3(ao);
@@ -396,6 +405,7 @@ void main() {
   }
 
   vec3 lit = shade(color.rgb, light);
+  lit = weatherWetSheen(lit, p, n, wet, ao, skyHorizon(sunAltitude));
   lit = waterOver(px, p, n, color.rgb, light, shadow, lit, material.b, fogColor);
   lit = mix(lit, fogColor, max(fogAmount(p + cameraPos), envFogAmount(p)));
   // the world fades into the sky behind it toward the draw distance, so where the culling stops never shows

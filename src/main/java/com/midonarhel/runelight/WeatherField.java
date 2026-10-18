@@ -57,6 +57,7 @@ final class WeatherField
 	// this update's targets and weather per biome
 	private final Map<String, float[]> byBiome = new HashMap<>();
 	private final Map<String, WeatherType> typeByBiome = new HashMap<>();
+	private final Map<String, float[]> groundByBiome = new HashMap<>();
 	private float[] blurTmp = new float[0];
 	// cells with weather of their own; new cells start in their weather as it is on the next update
 	private boolean[] hasState = new boolean[0];
@@ -147,10 +148,21 @@ final class WeatherField
 	void update(boolean enabled, Function<String, WeatherType> typeFor, float scale, boolean gradual, boolean climate,
 		double hour, float dt)
 	{
+		update(enabled, typeFor, null, scale, gradual, climate, hour, dt);
+	}
+
+	/**
+	 * @param groundFor wet ground and snow cover of a biome (Climate), which the cells then hold as they are; null
+	 *                  eases them here from the weather instead
+	 */
+	void update(boolean enabled, Function<String, WeatherType> typeFor, Function<String, float[]> groundFor, float scale,
+		boolean gradual, boolean climate, double hour, float dt)
+	{
 		this.enabled = enabled;
 		int n = sizeX * sizeZ;
 		boolean snap = !initialized || !gradual;
 		byBiome.clear();
+		groundByBiome.clear();
 		anything = false;
 		for (int i = 0; i < n; ++i)
 		{
@@ -191,6 +203,14 @@ final class WeatherField
 			else
 			{
 				step(state, i, target, dt);
+			}
+			if (groundFor != null)
+			{
+				// the ground has a history of its own (Climate): snow stays until it thaws
+				String gb = biomes[i];
+				float[] g = sky[i] ? groundByBiome.computeIfAbsent(gb == null ? "" : gb, k -> groundFor.apply(gb)) : null;
+				state[WET][i] = g != null ? g[0] : 0;
+				state[SNOW_COVER][i] = g != null ? g[1] : 0;
 			}
 			anything |= state[RAIN][i] > 0 || state[SNOW][i] > 0 || state[WET][i] > 0 || state[SNOW_COVER][i] > 0;
 		}

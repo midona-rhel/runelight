@@ -374,13 +374,14 @@ public interface RuneLightConfig extends Config
 	@ConfigItem(
 		keyName = "dayCycleMinutes",
 		name = "Day length",
-		description = "Real minutes per full day and night. 0 holds the time at the fixed hour.",
+		description = "Real minutes per full day and night; the time follows the real clock, so it is the same whenever"
+			+ " you play. 0 holds the time at the fixed hour (the weather goes on at 24 minutes a day).",
 		section = lightingSection,
 		position = 59
 	)
 	default int dayCycleMinutes()
 	{
-		return 12;
+		return 24;
 	}
 
 	@Range(max = 23)
@@ -741,7 +742,8 @@ public interface RuneLightConfig extends Config
 	@ConfigItem(
 		keyName = "weatherSurfaces",
 		name = "Wet ground and snow cover",
-		description = "Surfaces under the open sky get darker and glossy in rain, or white in snow.",
+		description = "Surfaces under the open sky get darker and glossy in rain, and snow settles on them in the cold"
+			+ " and stays until it thaws.",
 		section = weatherSection,
 		position = 403
 	)

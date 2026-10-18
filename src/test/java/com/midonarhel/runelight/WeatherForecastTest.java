@@ -173,9 +173,9 @@ public class WeatherForecastTest
 			}
 		}
 		// the forecast of the next slot is what that slot then gets
-		WeatherForecast f = new WeatherForecast(1234);
-		WeatherForecast g = new WeatherForecast(1234);
-		for (long ms = 0; ms < 10 * 3_600_000L; ms += 37_000)
+		WeatherForecast f = new WeatherForecast();
+		WeatherForecast g = new WeatherForecast();
+		for (long ms = 0; ms < 10 * GameClock.DAY; ms += 37 * 60_000)
 		{
 			f.update("SWAMP", ms, 12, 3);
 			g.update("SWAMP", ms, 12, 3);
@@ -183,7 +183,7 @@ public class WeatherForecastTest
 			WeatherType next = f.getNext();
 			float minutes = f.getMinutesToNext();
 			assertTrue(minutes > 0 && minutes <= 4.0001f);
-			f.update("SWAMP", ms + (long) Math.ceil(minutes * 60_000) + 1, 12, 3);
+			f.update("SWAMP", ms + (long) Math.ceil(minutes * 60_000 / GameClock.realPerGame(12)) + 100, 12, 3);
 			assertEquals(next, f.getCurrent());
 			f.update("SWAMP", ms, 12, 3);
 		}
@@ -196,15 +196,20 @@ public class WeatherForecastTest
 	@Test
 	public void slotsFollowTheDay()
 	{
-		// the cycle starts at 09:00, so the first change is at 16:00: 7 game hours, 3.5 minutes of a 12 minute day
-		WeatherForecast f = new WeatherForecast(0);
-		f.update(null, 0, 12);
-		assertEquals(3.5f, f.getMinutesToNext(), 1e-4f);
-		f.update(null, 0, 24);
-		assertEquals(7f, f.getMinutesToNext(), 1e-4f);
+		// game time 0 is midnight, so the first change is at 08:00: 4 minutes of a 12 minute day, 8 of a 24 minute one
+		WeatherForecast f = new WeatherForecast();
+		f.update(null, 0, 12, 7);
+		assertEquals(4f, f.getMinutesToNext(), 1e-4f);
+		f.update(null, 0, 24, 7);
+		assertEquals(8f, f.getMinutesToNext(), 1e-4f);
+		f.update(null, 6 * GameClock.HOUR, 24, 7);
+		assertEquals(2f, f.getMinutesToNext(), 1e-4f);
 		// a third of a day per slot
-		assertEquals(0, (long) Math.floor(WeatherForecast.gameDays(0, 12) * 3) - 1);
-		assertEquals(2, (long) Math.floor(WeatherForecast.gameDays(4 * 60_000 + 3 * 30_000, 12) * 3));
+		assertEquals(0, WeatherForecast.slot(0));
+		assertEquals(0, WeatherForecast.slot(8 * GameClock.HOUR - 1));
+		assertEquals(1, WeatherForecast.slot(8 * GameClock.HOUR));
+		assertEquals(-1, WeatherForecast.slot(-1));
+		assertEquals(3_000_000_000L, WeatherForecast.slot(1_000_000_000L * GameClock.DAY));
 	}
 
 	@Test
@@ -229,8 +234,8 @@ public class WeatherForecastTest
 		assertEquals(Season.SPRING, WeatherForecast.season(0, days));
 		assertEquals(Season.WINTER, WeatherForecast.season(-1, days));
 		// the forecast reports the day of its season
-		WeatherForecast f = new WeatherForecast(0);
-		long day = 12 * 60_000;
+		WeatherForecast f = new WeatherForecast();
+		long day = GameClock.DAY;
 		f.update(null, 0, 12, days);
 		Season first = f.getSeason();
 		int firstDay = f.getSeasonDay();

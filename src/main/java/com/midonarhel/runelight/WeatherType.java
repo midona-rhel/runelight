@@ -71,6 +71,9 @@ final class WeatherType
 	// wet ground and snow cover buildup rates (multipliers), and the snow cover frost reaches without snowfall
 	float wetRate = 1, snowRate = 1;
 	float frost;
+	// degrees C this weather adds to the region's temperature (harsh sun warms, a blizzard chills), on top of the
+	// cooling of whatever falls and the clouds damping the day's swing (Climate)
+	float temperature;
 	// weight of staying in this weather from one forecast slot to the next, against 1 for unrelated weather
 	float persistence = 3;
 
@@ -84,6 +87,34 @@ final class WeatherType
 	boolean whitens()
 	{
 		return snow > 0 && snowRate > 0;
+	}
+
+	/** Whether rain or snow falls, which the temperature decides between (not dust or ash). */
+	boolean precipitates()
+	{
+		return rain > 0 || whitens();
+	}
+
+	/** A copy of every field, for a variant with its rain and snow redistributed (Climate). */
+	WeatherType copy()
+	{
+		WeatherType c = new WeatherType();
+		try
+		{
+			for (java.lang.reflect.Field f : WeatherType.class.getDeclaredFields())
+			{
+				if (!java.lang.reflect.Modifier.isStatic(f.getModifiers()))
+				{
+					f.setAccessible(true);
+					f.set(c, f.get(this));
+				}
+			}
+		}
+		catch (IllegalAccessException ex)
+		{
+			throw new IllegalStateException(ex);
+		}
+		return c;
 	}
 
 	/** How white the overcast is for this weather with these amounts falling. */
