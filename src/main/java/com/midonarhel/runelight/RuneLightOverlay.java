@@ -1,5 +1,6 @@
 package com.midonarhel.runelight;
 
+import com.midonarhel.runelight.config.WeatherMode;
 import java.awt.Color;
 import java.awt.Dimension;
 import java.awt.Graphics2D;
@@ -56,6 +57,7 @@ class RuneLightOverlay extends OverlayPanel
 			{
 				environmentLines(plugin.environmentManager);
 			}
+			weatherLines();
 			if (plugin.isHotReloading())
 			{
 				line("Shaders", "hot reload", Color.GREEN);
@@ -80,6 +82,23 @@ class RuneLightOverlay extends OverlayPanel
 		line("Where", where, Color.WHITE);
 		int[] wp = env.getWorldPoint();
 		line("Tile", wp[0] + ", " + wp[1] + ", " + wp[2], Color.WHITE);
+	}
+
+	private void weatherLines()
+	{
+		WeatherMode mode = config.weatherMode();
+		if (mode != WeatherMode.AUTOMATIC)
+		{
+			line("Weather", mode == WeatherMode.OFF ? "off" : mode + " (manual)", Color.WHITE);
+			return;
+		}
+		WeatherForecast forecast = plugin.getWeatherForecast();
+		Weather weather = plugin.getWeather();
+		line("Weather", forecast.getCurrent().toString(), Color.CYAN);
+		String biome = forecast.getBiome();
+		line("Region", biome.charAt(0) + biome.substring(1).toLowerCase().replace('_', ' '), Color.WHITE);
+		line("Next", forecast.getNext() + " in " + String.format("%.1f min", forecast.getMinutesToNext()), Color.WHITE);
+		line("Cover / fog", String.format("%.2f / %.2f", weather.cloudCover(), weather.fogMultiplier()), Color.WHITE);
 	}
 
 	private void line(String left, String right, Color color)

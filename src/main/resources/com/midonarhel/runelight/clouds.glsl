@@ -4,7 +4,7 @@
 // gives flat bases and rounded tops (2.5D clouds in the spirit of Horizon Zero Dawn's height gradients). One
 // light sample per step with Beer's law, a powder term and a forward scattering lobe for silver linings.
 // The same coverage, looked up along the light, gives cheap cloud shadows on the ground.
-// Needs frame.glsl and sky.glsl.
+// Needs frame.glsl, sky.glsl and lightning.glsl.
 
 uniform int cloudsEnabled;
 uniform int cloudShadowsEnabled;
@@ -149,6 +149,7 @@ vec4 cloudLayer(vec3 dir, vec3 camPos, vec3 lightDir, float alt, float pixelAngl
     // sky light: the zenith's color on top, the horizon's underneath, gray and dim in rain
     vec3 ambient = mix(horizonColor, zenith, f) * mix(0.55, 1.0, f) * mix(1.0, shade, 0.6) * CLOUD_AMBIENT;
     ambient = mix(ambient, vec3(dot(ambient, vec3(0.2126, 0.7152, 0.0722))), rain * CLOUD_RAIN_GRAY);
+    ambient += lightningCloudGlow(xz - origin);
 
     float stepT = exp(-d * extinction * ds);
     scattered += transmittance * (light * direct + ambient) * (1.0 - stepT);

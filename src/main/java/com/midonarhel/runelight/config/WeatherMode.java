@@ -2,6 +2,7 @@ package com.midonarhel.runelight.config;
 
 public enum WeatherMode
 {
+	AUTOMATIC("Automatic"),
 	OFF("Off"),
 	RAIN("Rain"),
 	SNOW("Snow");

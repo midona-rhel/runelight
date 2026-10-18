@@ -8,6 +8,7 @@
 #include "environment.glsl"
 #include cluster_config
 #include "fog_apply.glsl"
+#include "lightning.glsl"
 #include "clouds.glsl"
 
 #define DEBUG_FINAL 0
@@ -279,6 +280,7 @@ void main() {
       vec3 dir = normalize(reconstructPosition(vec2(px) + 0.5, 1.0));
       vec3 sky = cloudsOverSky(skyColor(dir, sunDir, moonDir, sunAltitude, time), vec2(px) + 0.5, dir, cameraPos,
         casterDir, sunAltitude, ign(gl_FragCoord.xy));
+      sky = lightningOverSky(sky, dir, cameraPos);
       color.rgb = envSky(sky, fogColor, -dir.y);
     } else if (inside && envCave == 1 && proceduralSky == 1) {
       // underground the void behind the scene takes the area's fog color, so fogged walls fade into it

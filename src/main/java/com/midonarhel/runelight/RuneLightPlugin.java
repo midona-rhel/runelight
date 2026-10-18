@@ -296,6 +296,8 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 	private final EnvironmentUniforms compositeEnvUniforms = new EnvironmentUniforms();
 	private final ShadowMap shadowMap = new ShadowMap();
 	private final Weather weather = new Weather();
+	// automatic weather's forecast, its own run of weather each time the plugin starts
+	private WeatherForecast weatherForecast = new WeatherForecast(System.currentTimeMillis() / 1000);
 	// two units: the occlusion map's raw and compare views
 	private static final int WEATHER_OCCLUSION_UNIT = RuneLightPlugin.COMPOSITE_TEXTURE_UNIT + 12;
 	// when the plugin started; the day cycle and sky animation count from here
@@ -511,6 +513,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		overlayManager.add(buildingOverlay);
 		environmentManager.load(gson);
 		startMillis = System.currentTimeMillis();
+		weatherForecast = new WeatherForecast(startMillis / 1000);
 
 		root = new SceneContext(NUM_ZONES, NUM_ZONES);
 		subs = new SceneContext[MAX_WORLDVIEWS];
@@ -1019,6 +1022,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		glUseProgram(0);
 		volumetricFog.locateComposite(c, FOG_TEXTURE_UNIT);
 		clouds.locateComposite(c, CLOUD_NOISE_UNIT);
+		weather.getLightning().locateComposite(c);
 
 		uniShadowLightProj = glGetUniformLocation(glShadowProgram, "lightProj");
 		uniShadowEntityProj = glGetUniformLocation(glShadowProgram, "entityProj");
@@ -1648,7 +1652,8 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 			float ground = Perspective.getTileHeight(client, lp, client.getTopLevelWorldView().getPlane());
 			// thicker in rain and snow, and in areas 117 HD gives fog (its fogDepth: ~6 faint, 50 thick)
 			float areaFog = config.areaEnvironments() ? environmentManager.getFogDepth() * config.areaFogStrength() / 100f : 0;
-			volumetricFog.areaDensity = weather.fogMultiplier() * (1 + Math.min(areaFog / AREA_FOG_DEPTH, 2));
+			volumetricFog.areaDensity = weather.fogMultiplier()
+				* (1 + weather.areaFogWeight() * Math.min(areaFog / AREA_FOG_DEPTH, 2));
 			volumetricFog.updateParameters(config, lp.getX(), ground, lp.getY(), frameDrawDistance);
 			frameFog = true;
 		}
@@ -1672,8 +1677,12 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 			fy = Perspective.getTileHeight(client, lp, plane);
 		}
 		boolean sky = frameOpenSky && client.getGameState() == GameState.LOGGED_IN;
-		weather.update(config.weatherMode(), config.weatherIntensity(), config.weatherBuildup(),
-			config.weatherVarying(), config.weatherOvercast(), sky, fx, fy, fz, plane);
+		EnvironmentManager.Environment biome = config.areaEnvironments() ? environmentManager.getBiome() : null;
+		weatherForecast.update(biome != null && !biome.cave ? biome.name : null, System.currentTimeMillis() - startMillis,
+			config.dayCycleMinutes());
+		weather.update(config.weatherMode(), weatherForecast.getCurrent(), config.weatherIntensity(),
+			config.weatherBuildup(), config.weatherVarying(), config.weatherOvercast(), config.weatherLightning(), sky,
+			dayCycle.hour(), fx, fy, fz, plane);
 		weather.getOvercast(volumetricFog.overcast);
 	}
 
@@ -1701,7 +1710,8 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		boolean on = config.areaEnvironments();
 		// the game's own skyboxes have their own colors; area fog would not match them, like in 117 HD
 		float fog = frameHasSkybox ? 0 : config.areaFogStrength() / 100f;
-		u.set(on ? environmentManager : null, config.areaLightStrength() / 100f, fog, getDrawDistance());
+		u.set(on ? environmentManager : null, config.areaLightStrength() / 100f, fog * weather.distanceFogScale(),
+			getDrawDistance());
 	}
 
 	/**
@@ -1946,6 +1956,16 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		return lights != null ? lights.getDefinitionCount() : 0;
 	}
 
+	Weather getWeather()
+	{
+		return weather;
+	}
+
+	WeatherForecast getWeatherForecast()
+	{
+		return weatherForecast;
+	}
+
 	BuildingLights getBuildingLights()
 	{
 		return buildingLights;
@@ -1973,6 +1993,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		long baseZ = wv != null ? (long) wv.getBaseY() * Perspective.LOCAL_TILE_SIZE : 0;
 		clouds.bind(config.clouds(), config.cloudShadows(), config.cloudCoverage(), config.cloudSpeed(),
 			weather.cloudCover(), baseX, baseZ, CLOUD_NOISE_UNIT);
+		weather.getLightning().bind(frameCameraX, frameCameraZ);
 	}
 
 	private void compositeScene()

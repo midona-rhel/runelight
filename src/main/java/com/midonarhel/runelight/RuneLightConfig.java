@@ -664,7 +664,7 @@ public interface RuneLightConfig extends Config
 
 	@ConfigSection(
 		name = "Weather",
-		description = "Rain and snow",
+		description = "Automatic regional weather, rain, snow and storms",
 		position = 400
 	)
 	String weatherSection = "weather";
@@ -672,20 +672,23 @@ public interface RuneLightConfig extends Config
 	@ConfigItem(
 		keyName = "weatherMode",
 		name = "Weather",
-		description = "Rain or snow outdoors. Sheltered places, also under roofs the game hides, stay dry.",
+		description = "Automatic: each region's weather changes every 8 game hours by its biome (deserts mostly clear,"
+			+ " swamps foggy and wet, mountains snowy). Off keeps it clear; Rain and Snow hold that weather."
+			+ " Sheltered places, also under roofs the game hides, stay dry.",
 		section = weatherSection,
 		position = 401
 	)
 	default WeatherMode weatherMode()
 	{
-		return WeatherMode.OFF;
+		return WeatherMode.AUTOMATIC;
 	}
 
 	@Range(min = 1, max = 100)
 	@ConfigItem(
 		keyName = "weatherIntensity",
 		name = "Intensity",
-		description = "How heavy the rain or snow is, in percent.",
+		description = "How heavy the rain or snow is, in percent. In automatic weather, 60 is each weather's own"
+			+ " amount.",
 		section = weatherSection,
 		position = 402
 	)
@@ -721,7 +724,7 @@ public interface RuneLightConfig extends Config
 	@ConfigItem(
 		keyName = "weatherBuildup",
 		name = "Gradual buildup",
-		description = "Weather fades in when turned on, and the ground gets wet or white over time.",
+		description = "Weather changes blend over a minute and the ground gets wet or white over time.",
 		section = weatherSection,
 		position = 405
 	)
@@ -763,6 +766,18 @@ public interface RuneLightConfig extends Config
 		position = 408
 	)
 	default boolean weatherPointLights()
+	{
+		return true;
+	}
+
+	@ConfigItem(
+		keyName = "weatherLightning",
+		name = "Lightning",
+		description = "Occasional lightning in storms that briefly lights the sky and the scene.",
+		section = weatherSection,
+		position = 409
+	)
+	default boolean weatherLightning()
 	{
 		return true;
 	}

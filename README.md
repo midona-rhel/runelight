@@ -47,6 +47,16 @@ rain or snow swells, eases off and gusts around the set intensity (`WeatherVaria
 it slowly and grays the sky and softens the sun and moon everywhere through `weatherOvercast` in `sky.glsl` (its
 `OVERCAST_*` defines). Drops, flakes, splashes and snow cover pick up nearby point lights through the light clusters
 (`weather_common.glsl`).
+
+Automatic weather (the default mode) picks a new weather per biome every third of a game day (8 game hours, 4
+minutes at the default day length): clear, partly cloudy, cloudy, fog, rain, storm, snow or blizzard, from each
+biome's odds as a Markov chain so consecutive weathers connect (`WeatherForecast.java`, odds and affinities at
+the top). Each weather is a set of targets in `WeatherType.java` (cover, rain, snow, wind, fog, area fog, distance
+fog, morning mist, storm) that `Weather.java` eases toward, so slot changes and walking into another biome blend
+over about a minute. Storms strike lightning (`Lightning.java`): the flash goes through `weatherOvercast.z`
+(`LIGHTNING_*` in `sky.glsl`), the bolt and cloud glow are in `lightning.glsl`. With GPU timings shown, the
+overlay lists the weather, region, next weather and minutes to it.
+
 ## Areas
 
 Which area the camera is in, whether it is under the open sky or underground, and each area's light tint, fog and

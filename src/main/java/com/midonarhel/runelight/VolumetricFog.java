@@ -28,8 +28,8 @@ class VolumetricFog
 	float areaDensity = 1;
 	float areaHeight = 1;
 	final float[] areaTint = {1, 1, 1};
-	// sky.glsl's weatherOvercast for this frame (Weather.java): cover, rain or snow
-	final float[] overcast = {0, 0};
+	// sky.glsl's weatherOvercast for this frame (Weather.java): cover, rain or snow, lightning flash
+	final float[] overcast = {0, 0, 0};
 
 	// the values the pass uses this frame, in world units
 	private float density;
@@ -183,7 +183,7 @@ class VolumetricFog
 		glUniform3fv(uniCasterDir, day.casterDir);
 		glUniform1i(uniSunIsCaster, day.sunIsCaster ? 1 : 0);
 		glUniform1f(uniSunAltitude, day.sunAltitude);
-		glUniform2f(uniOvercast, overcast[0], overcast[1]);
+		glUniform3f(uniOvercast, overcast[0], overcast[1], overcast[2]);
 		glUniform1i(uniShadowsEnabled, shadows != null ? 1 : 0);
 		if (shadows != null)
 		{

@@ -51,8 +51,14 @@ vec3 skyHorizonClear(float alt) {
 // Overcast: rain and snow gray the sky, dim and soften the sun and moon and let the sky's fill light take over.
 // Everything that uses the sky palette or the light colors above goes through here, so the scene, the
 // transparency layer, the fog and the weather particles all agree. Neutral (clear) at weatherOvercast.x = 0.
+// Lightning flashes (weatherOvercast.z) go through the same functions, so everything flashes together.
 
-uniform vec2 weatherOvercast;  // x: 0 clear .. 1 fully overcast, y: 0 rain .. 1 snow (Weather.java)
+uniform vec3 weatherOvercast;  // x: 0 clear .. 1 fully overcast, y: 0 rain .. 1 snow, z: lightning flash 0..1 (Weather.java)
+
+// a lightning flash: cool white, added to the sky (sRGB) and to the ambient light (linear) at a full flash
+#define LIGHTNING_COLOR vec3(0.80, 0.86, 1.00)
+#define LIGHTNING_SKY 0.45
+#define LIGHTNING_AMBIENT 1.0
 
 // the overcast sky's tint and brightness relative to the clear sky's luminance: dark slate in rain, soft white in snow
 #define OVERCAST_RAIN_TINT vec3(0.86, 0.93, 1.05)
@@ -114,11 +120,11 @@ float overcastClear() {
 }
 
 vec3 skyZenith(float alt) {
-  return overcastSky(skyZenithClear(alt), alt);
+  return overcastSky(skyZenithClear(alt), alt) + LIGHTNING_COLOR * (LIGHTNING_SKY * weatherOvercast.z);
 }
 
 vec3 skyHorizon(float alt) {
-  return overcastSky(skyHorizonClear(alt), alt);
+  return overcastSky(skyHorizonClear(alt), alt) + LIGHTNING_COLOR * (LIGHTNING_SKY * 0.8 * weatherOvercast.z);
 }
 
 // Light colors. These are LINEAR (the composite lights in linear space, like 117 HD) and are multiplied with
@@ -153,7 +159,8 @@ vec3 ambientLight(float alt) {
   vec3 a = mix(night, day, smoothstep(-10.0, 15.0, alt));
   // warmer, a little darker around sunrise and sunset
   float dusk = smoothstep(-8.0, 2.0, alt) * (1.0 - smoothstep(2.0, 20.0, alt));
-  return overcastAmbient(a * mix(vec3(1.0), vec3(1.10, 0.80, 0.80), dusk));
+  return overcastAmbient(a * mix(vec3(1.0), vec3(1.10, 0.80, 0.80), dusk))
+    + LIGHTNING_COLOR * (LIGHTNING_AMBIENT * weatherOvercast.z);
 }
 
 // Extra light on upward-facing surfaces from the sky above them, tinted by the sky
