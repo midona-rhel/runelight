@@ -1,45 +1,50 @@
 // Sky and light colors, all driven by the visual sun altitude in degrees (below 0 is night).
 // Colors are in the game's sRGB-ish space. Keyframes are easy to tune live: edit and save.
 
-#define SKY_KEYS 8
-const float SKY_ALT[SKY_KEYS] = float[](-30.0, -12.0, -6.0, 0.0, 6.0, 15.0, 35.0, 90.0);
-const vec3 SKY_ZENITH[SKY_KEYS] = vec3[](
-  vec3(0.004, 0.006, 0.020),
-  vec3(0.020, 0.040, 0.100),
-  vec3(0.100, 0.140, 0.280),
-  vec3(0.280, 0.300, 0.480),
-  vec3(0.320, 0.460, 0.700),
-  vec3(0.300, 0.520, 0.820),
-  vec3(0.280, 0.520, 0.860),
-  vec3(0.260, 0.500, 0.850));
-const vec3 SKY_HORIZON[SKY_KEYS] = vec3[](
-  vec3(0.010, 0.015, 0.035),
-  vec3(0.060, 0.080, 0.160),
-  vec3(0.400, 0.250, 0.250),
-  vec3(0.950, 0.520, 0.300),
-  vec3(0.950, 0.720, 0.500),
-  vec3(0.720, 0.800, 0.900),
-  vec3(0.650, 0.780, 0.920),
-  vec3(0.620, 0.760, 0.920));
+// Stylized palette: sunrise and sunset go red-orange at the horizon with purple above it, nights are cool blue.
+#define ZENITH_KEYS 8
+const float ZENITH_ALT[ZENITH_KEYS] = float[](-30.0, -12.0, -6.0, -2.0, 0.0, 6.0, 20.0, 90.0);
+const vec3 ZENITH_COLOR[ZENITH_KEYS] = vec3[](
+  vec3(0.020, 0.024, 0.102),
+  vec3(0.071, 0.102, 0.247),
+  vec3(0.169, 0.137, 0.314),
+  vec3(0.290, 0.180, 0.361),
+  vec3(0.369, 0.290, 0.478),
+  vec3(0.435, 0.561, 0.769),
+  vec3(0.361, 0.576, 0.812),
+  vec3(0.310, 0.525, 0.753));
 
-vec3 skyKey(const vec3 keys[SKY_KEYS], float alt) {
-  if (alt <= SKY_ALT[0])
-    return keys[0];
-  for (int i = 1; i < SKY_KEYS; ++i) {
-    if (alt <= SKY_ALT[i]) {
-      float t = (alt - SKY_ALT[i - 1]) / (SKY_ALT[i] - SKY_ALT[i - 1]);
-      return mix(keys[i - 1], keys[i], smoothstep(0.0, 1.0, t));
-    }
-  }
-  return keys[SKY_KEYS - 1];
-}
+#define HORIZON_KEYS 9
+const float HORIZON_ALT[HORIZON_KEYS] = float[](-30.0, -12.0, -6.0, -2.0, 0.0, 4.0, 12.0, 25.0, 90.0);
+const vec3 HORIZON_COLOR[HORIZON_KEYS] = vec3[](
+  vec3(0.043, 0.039, 0.102),
+  vec3(0.102, 0.082, 0.188),
+  vec3(0.247, 0.129, 0.251),
+  vec3(0.627, 0.267, 0.180),
+  vec3(0.890, 0.443, 0.227),
+  vec3(0.949, 0.631, 0.369),
+  vec3(0.851, 0.722, 0.604),
+  vec3(0.663, 0.737, 0.827),
+  vec3(0.576, 0.682, 0.796));
 
 vec3 skyZenith(float alt) {
-  return skyKey(SKY_ZENITH, alt);
+  if (alt <= ZENITH_ALT[0])
+    return ZENITH_COLOR[0];
+  for (int i = 1; i < ZENITH_KEYS; ++i) {
+    if (alt <= ZENITH_ALT[i])
+      return mix(ZENITH_COLOR[i - 1], ZENITH_COLOR[i], smoothstep(0.0, 1.0, (alt - ZENITH_ALT[i - 1]) / (ZENITH_ALT[i] - ZENITH_ALT[i - 1])));
+  }
+  return ZENITH_COLOR[ZENITH_KEYS - 1];
 }
 
 vec3 skyHorizon(float alt) {
-  return skyKey(SKY_HORIZON, alt);
+  if (alt <= HORIZON_ALT[0])
+    return HORIZON_COLOR[0];
+  for (int i = 1; i < HORIZON_KEYS; ++i) {
+    if (alt <= HORIZON_ALT[i])
+      return mix(HORIZON_COLOR[i - 1], HORIZON_COLOR[i], smoothstep(0.0, 1.0, (alt - HORIZON_ALT[i - 1]) / (HORIZON_ALT[i] - HORIZON_ALT[i - 1])));
+  }
+  return HORIZON_COLOR[HORIZON_KEYS - 1];
 }
 
 // Direct light from the sun (day) or moon (night). Only one casts at a time; both are ~0 at the switch.
@@ -53,12 +58,12 @@ vec3 sunLight(float alt) {
 }
 
 vec3 moonLight(float alt) {
-  return vec3(0.55, 0.65, 1.00) * MOON_INTENSITY * smoothstep(-2.0, -14.0, alt);
+  return vec3(0.56, 0.66, 1.00) * MOON_INTENSITY * smoothstep(-2.0, -14.0, alt);
 }
 
 vec3 ambientLight(float alt) {
   vec3 day = vec3(0.60, 0.62, 0.66);
-  vec3 night = vec3(0.44, 0.48, 0.60);
+  vec3 night = vec3(0.36, 0.44, 0.66);
   vec3 a = mix(night, day, smoothstep(-10.0, 15.0, alt));
   // warmer at sunrise and sunset
   float dusk = smoothstep(-8.0, 2.0, alt) * (1.0 - smoothstep(2.0, 20.0, alt));
