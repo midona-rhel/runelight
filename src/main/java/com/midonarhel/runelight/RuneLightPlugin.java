@@ -1691,7 +1691,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 				float ground = Perspective.getTileHeight(client, lp, client.getTopLevelWorldView().getPlane());
 				// a little above head height (y points down), warm like a torch, reaching about 5 tiles
 				frameLights.add(testLight.set(lp.getX(), ground - 250, lp.getY(), 5 * Perspective.LOCAL_TILE_SIZE,
-					1.0f, 0.72f, 0.42f, 15f));
+					1.0f, 0.72f, 0.42f, 6f));
 			}
 		}
 	}
