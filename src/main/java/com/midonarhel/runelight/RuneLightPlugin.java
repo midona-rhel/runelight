@@ -232,6 +232,11 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 	private int uniSceneSunIsCaster;
 	private int uniSceneSunAltitude;
 	private static final int ALPHA_LAYER_UNIT = RuneLightPlugin.COMPOSITE_TEXTURE_UNIT + 8;
+	private static final int FOG_TEXTURE_UNIT = RuneLightPlugin.COMPOSITE_TEXTURE_UNIT + 9;
+	private static final int FOG_NOISE_UNIT = RuneLightPlugin.COMPOSITE_TEXTURE_UNIT + 10;
+
+	private final VolumetricFog volumetricFog = new VolumetricFog();
+	private boolean frameFog;
 
 	static final Shader SHADOW_PROGRAM = new Shader()
 		.add(GL_VERTEX_SHADER, "shadow_vert.glsl")
@@ -670,6 +675,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 				gpuTimer.free();
 				shadowMap.free();
 				lightClusters.free();
+				volumetricFog.free();
 
 				if (textureArrayId != -1)
 				{
@@ -871,6 +877,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		glCompositeProgram = COMPOSITE_PROGRAM.compile(template);
 		glAoProgram = AO_PROGRAM.compile(template);
 		glShadowProgram = SHADOW_PROGRAM.compile(template);
+		setFogProgram(VolumetricFog.PROGRAM.compile(template));
 
 		glBindVertexArray(0);
 
@@ -951,6 +958,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		glUniform1i(glGetUniformLocation(c, "sceneAlpha"), ALPHA_LAYER_UNIT);
 		uniCompositePointLights = glGetUniformLocation(c, "pointLightsEnabled");
 		glUseProgram(0);
+		volumetricFog.locateComposite(c, FOG_TEXTURE_UNIT);
 
 		uniShadowLightProj = glGetUniformLocation(glShadowProgram, "lightProj");
 		uniShadowEntityProj = glGetUniformLocation(glShadowProgram, "entityProj");
@@ -959,6 +967,12 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		glUseProgram(glShadowProgram);
 		glUniform1i(glGetUniformLocation(glShadowProgram, "textures"), 1); // game texture array lives on unit 1
 		glUseProgram(0);
+	}
+
+	private void setFogProgram(int program)
+	{
+		volumetricFog.setProgram(program, COMPOSITE_TEXTURE_UNIT + 2, SHADOW_COMPARE_UNIT, LIGHT_DATA_UNIT,
+			CLUSTER_DATA_UNIT, FOG_NOISE_UNIT);
 	}
 
 	private static void bindSceneSamplers(int program)
@@ -996,7 +1010,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 	{
 		glBindVertexArray(vaoUiHandle);
 		Template template = createTemplate();
-		int scene = 0, ui = 0, composite = 0, ao = 0, shadow = 0;
+		int scene = 0, ui = 0, composite = 0, ao = 0, shadow = 0, fog = 0;
 		try
 		{
 			scene = PROGRAM.compile(template);
@@ -1004,6 +1018,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 			composite = COMPOSITE_PROGRAM.compile(template);
 			ao = AO_PROGRAM.compile(template);
 			shadow = SHADOW_PROGRAM.compile(template);
+			fog = VolumetricFog.PROGRAM.compile(template);
 		}
 		catch (ShaderException ex)
 		{
@@ -1012,6 +1027,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 			glDeleteProgram(ui);
 			glDeleteProgram(composite);
 			glDeleteProgram(ao);
+			glDeleteProgram(shadow);
 			String msg = ex.getMessage();
 			if (!msg.equals(shaderError))
 			{
@@ -1032,6 +1048,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		glCompositeProgram = composite;
 		glAoProgram = ao;
 		glShadowProgram = shadow;
+		setFogProgram(fog);
 		initUniforms();
 
 		if (textureAnimations != null)
@@ -1541,6 +1558,16 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		frameShadows = frameOutdoors && config.shadows() && client.getGameState() == GameState.LOGGED_IN;
 		VAO.clearShadowDraws();
 		VAO.recordShadowDraws = frameShadows;
+
+		frameFog = false;
+		Player player = client.getLocalPlayer();
+		LocalPoint lp = player != null ? player.getLocalLocation() : null;
+		if (config.volumetricFog() && lp != null && client.getGameState() == GameState.LOGGED_IN)
+		{
+			float ground = Perspective.getTileHeight(client, lp, client.getTopLevelWorldView().getPlane());
+			volumetricFog.updateParameters(config, lp.getX(), ground, lp.getY(), frameDrawDistance);
+			frameFog = true;
+		}
 	}
 
 	/**
@@ -1813,9 +1840,6 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 			sceneTargets.bindAo(AO_TEXTURE_UNIT);
 		}
 
-		glBindFramebuffer(GL_FRAMEBUFFER, awtContext.getFramebuffer(false));
-		glViewport(0, 0, width, height);
-
 		glUseProgram(glCompositeProgram);
 		setFrameUniforms(compositeFrame);
 		glUniform1i(uniCompositeDebugView, config.debugView().ordinal());
@@ -1823,6 +1847,22 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		glUniform1f(uniCompositeAoStrength, config.aoStrength() / 100f);
 		setLightingUniforms();
 		sceneTargets.bindAlphaLayer(ALPHA_LAYER_UNIT);
+
+		// after setLightingUniforms, which binds the shadow map and light clusters the fog also samples
+		if (frameFog)
+		{
+			boolean shadows = frameShadows && shadowMap.isInitialized();
+			volumetricFog.render(sceneTargets.getAoWidth(), sceneTargets.getAoHeight(), FOG_NOISE_UNIT, FOG_TEXTURE_UNIT,
+				frameViewProj, frameInvViewProj, frameViewport, glCapabilities.OpenGL45,
+				frameCameraX, frameCameraY, frameCameraZ, (System.currentTimeMillis() - startMillis) / 1000f,
+				frameOutdoors, config.proceduralSky() && !frameHasSkybox, frameSkyColor, dayCycle,
+				shadows ? shadowMap : null, config.pointLights());
+			glUseProgram(glCompositeProgram);
+		}
+		volumetricFog.setCompositeEnabled(frameFog);
+
+		glBindFramebuffer(GL_FRAMEBUFFER, awtContext.getFramebuffer(false));
+		glViewport(0, 0, width, height);
 		glDrawArrays(GL_TRIANGLES, 0, 3);
 
 		glBindVertexArray(0);
@@ -1835,6 +1875,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		glActiveTexture(GL_TEXTURE0 + ALPHA_LAYER_UNIT);
 		glBindTexture(GL_TEXTURE_2D, 0);
 		glActiveTexture(GL_TEXTURE0);
+		VolumetricFog.unbind(FOG_TEXTURE_UNIT);
 		glUseProgram(0);
 
 		checkGLErrors();

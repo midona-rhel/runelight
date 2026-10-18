@@ -5,6 +5,7 @@
 #include "frame.glsl"
 #include "sky.glsl"
 #include cluster_config
+#include "fog_apply.glsl"
 
 #define DEBUG_FINAL 0
 #define DEBUG_DEPTH 1
@@ -266,6 +267,7 @@ void main() {
       color.rgb = skyColor(dir, sunDir, moonDir, sunAltitude, time);
     }
     FragColor = overTransparent(px, color);
+    FragColor.rgb = applyVolumetricFog(px, FragColor.rgb, d);
     return;
   }
 
@@ -322,4 +324,5 @@ void main() {
   vec3 lit = shade(color.rgb, light);
   lit = mix(lit, fogColor, fogAmount(p + cameraPos));
   FragColor = overTransparent(px, vec4(lit, color.a));
+  FragColor.rgb = applyVolumetricFog(px, FragColor.rgb, d);
 }
