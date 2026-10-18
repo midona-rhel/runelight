@@ -207,6 +207,13 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 	private static final int AO_TEXTURE_UNIT = RuneLightPlugin.COMPOSITE_TEXTURE_UNIT + 3;
 	private static final int SHADOW_RAW_UNIT = RuneLightPlugin.COMPOSITE_TEXTURE_UNIT + 4;
 	private static final int SHADOW_COMPARE_UNIT = RuneLightPlugin.COMPOSITE_TEXTURE_UNIT + 5;
+	private static final int LIGHT_DATA_UNIT = RuneLightPlugin.COMPOSITE_TEXTURE_UNIT + 6;
+	private static final int CLUSTER_DATA_UNIT = RuneLightPlugin.COMPOSITE_TEXTURE_UNIT + 7;
+
+	private final LightClusters lightClusters = new LightClusters();
+	private final java.util.ArrayList<PointLight> frameLights = new java.util.ArrayList<>();
+	private final PointLight testLight = new PointLight();
+	private int uniCompositePointLights;
 
 	static final Shader SHADOW_PROGRAM = new Shader()
 		.add(GL_VERTEX_SHADER, "shadow_vert.glsl")
@@ -630,6 +637,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 			{
 				gpuTimer.free();
 				shadowMap.free();
+				lightClusters.free();
 
 				if (textureArrayId != -1)
 				{
@@ -784,6 +792,13 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 					return "#define TEXTURE_COUNT " + TextureManager.TEXTURE_COUNT + "\n";
 				case "sampling_mode":
 					return "#define SAMPLING_MODE " + config.uiScalingMode().ordinal() + "\n";
+				case "cluster_config":
+					return "#define CLUSTERS_X " + LightClusters.CLUSTERS_X + "\n"
+						+ "#define CLUSTERS_Y " + LightClusters.CLUSTERS_Y + "\n"
+						+ "#define CLUSTERS_Z " + LightClusters.CLUSTERS_Z + "\n"
+						+ "#define CLUSTER_STRIDE " + (LightClusters.MAX_LIGHTS_PER_CLUSTER + 1) + "\n"
+						+ "#define CLUSTER_NEAR " + LightClusters.NEAR + "\n"
+						+ "#define CLUSTER_FAR " + LightClusters.FAR + "\n";
 				case "colorblind_mode":
 					return "#define COLORBLIND_MODE " + config.colorBlindMode().ordinal() + "\n";
 			}
@@ -878,6 +893,9 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		glUseProgram(c);
 		glUniform1i(glGetUniformLocation(c, "shadowRaw"), SHADOW_RAW_UNIT);
 		glUniform1i(glGetUniformLocation(c, "shadowCompare"), SHADOW_COMPARE_UNIT);
+		glUniform1i(glGetUniformLocation(c, "lightData"), LIGHT_DATA_UNIT);
+		glUniform1i(glGetUniformLocation(c, "clusterData"), CLUSTER_DATA_UNIT);
+		uniCompositePointLights = glGetUniformLocation(c, "pointLightsEnabled");
 		glUseProgram(0);
 
 		uniShadowLightProj = glGetUniformLocation(glShadowProgram, "lightProj");
@@ -1608,12 +1626,50 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 			shadowMap.bindForSampling(SHADOW_RAW_UNIT, SHADOW_COMPARE_UNIT);
 		}
 
+		boolean points = config.pointLights();
+		if (points)
+		{
+			if (!lightClusters.isInitialized())
+			{
+				lightClusters.init();
+			}
+			collectLights();
+			lightClusters.update(frameLights, frameViewProj, frameCameraX, frameCameraY, frameCameraZ);
+			lightClusters.bind(LIGHT_DATA_UNIT, CLUSTER_DATA_UNIT);
+		}
+		glUniform1i(uniCompositePointLights, points ? 1 : 0);
+
 		glUniform1i(uniCompositeUseFog, frameFogDepth > 0 ? 1 : 0);
 		glUniform1i(uniCompositeFogDepth, frameFogDepth);
 		glUniform1i(uniCompositeDrawDistance, frameDrawDistance);
 		glUniform1i(uniCompositeExpandedChunks, client.getExpandedMapLoading());
 		glUniform3f(uniCompositeClientSkyColor,
 			(frameSkyColor >> 16 & 0xFF) / 255f, (frameSkyColor >> 8 & 0xFF) / 255f, (frameSkyColor & 0xFF) / 255f);
+	}
+
+	/**
+	 * Gather this frame's point lights. For now only the test light; scene lights come next.
+	 */
+	private void collectLights()
+	{
+		frameLights.clear();
+		if (config.testLight())
+		{
+			Player player = client.getLocalPlayer();
+			LocalPoint lp = player != null ? player.getLocalLocation() : null;
+			if (lp != null)
+			{
+				float ground = Perspective.getTileHeight(client, lp, client.getTopLevelWorldView().getPlane());
+				// a little above head height (y points down), warm like a torch, reaching about 5 tiles
+				frameLights.add(testLight.set(lp.getX(), ground - 250, lp.getY(), 5 * Perspective.LOCAL_TILE_SIZE,
+					1.0f, 0.72f, 0.42f, 1.6f));
+			}
+		}
+	}
+
+	int getPointLightCount()
+	{
+		return lightClusters.getLightCount();
 	}
 
 	double getCpuFrameMs()
@@ -1671,6 +1727,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		glBindTexture(GL_TEXTURE_2D, 0);
 		glActiveTexture(GL_TEXTURE0);
 		ShadowMap.unbind(SHADOW_RAW_UNIT, SHADOW_COMPARE_UNIT);
+		LightClusters.unbind(LIGHT_DATA_UNIT, CLUSTER_DATA_UNIT);
 		glUseProgram(0);
 
 		checkGLErrors();

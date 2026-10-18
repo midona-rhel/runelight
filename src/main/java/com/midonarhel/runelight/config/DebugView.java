@@ -7,7 +7,8 @@ public enum DebugView
 	NORMALS("Normals"),
 	AMBIENT_OCCLUSION("Ambient occlusion"),
 	SHADOWS("Shadows"),
-	LIGHTING("Lighting");
+	LIGHTING("Lighting"),
+	LIGHT_CLUSTERS("Light clusters");
 
 	private final String name;
 

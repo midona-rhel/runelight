@@ -379,6 +379,18 @@ public interface RuneLightConfig extends Config
 		return 12;
 	}
 
+	@ConfigItem(
+		keyName = "pointLights",
+		name = "Point lights",
+		description = "Lights from torches, fires and other sources. They do not cast shadows.",
+		section = lightingSection,
+		position = 61
+	)
+	default boolean pointLights()
+	{
+		return true;
+	}
+
 	@ConfigSection(
 		name = "Development",
 		description = "Tools for working on the renderer",
@@ -409,6 +421,18 @@ public interface RuneLightConfig extends Config
 	default boolean glErrorChecks()
 	{
 		return false;
+	}
+
+	@ConfigItem(
+		keyName = "testLight",
+		name = "Test light on player",
+		description = "A warm point light carried by your character, for checking point lighting.",
+		section = developmentSection,
+		position = 104
+	)
+	default boolean testLight()
+	{
+		return true;
 	}
 
 	@ConfigItem(

@@ -4,6 +4,7 @@
 
 #include "frame.glsl"
 #include "sky.glsl"
+#include cluster_config
 
 #define DEBUG_FINAL 0
 #define DEBUG_DEPTH 1
@@ -11,6 +12,7 @@
 #define DEBUG_AO 3
 #define DEBUG_SHADOWS 4
 #define DEBUG_LIGHTING 5
+#define DEBUG_LIGHT_CLUSTERS 6
 
 #define TAU 6.28318530718
 #define TILE_SIZE 128.0
@@ -48,6 +50,11 @@ uniform int fogDepth;       // tiles
 uniform int drawDistance;   // world units
 uniform int expandedMapLoadingChunks;
 uniform vec3 clientSkyColor;
+
+// point lights, culled into clusters on the CPU (LightClusters.java)
+uniform int pointLightsEnabled;
+uniform samplerBuffer lightData;     // per light: (camera-relative position, radius), (color * intensity, 0)
+uniform usamplerBuffer clusterData;  // per cluster: count, then light indices
 
 out vec4 FragColor;
 
@@ -174,6 +181,46 @@ float fogAmount(vec3 world) {
 }
 
 // ---------------------------------------------------------------------------------------------------------------
+// Point lights: only the lights listed in this pixel's cluster are evaluated
+
+int clusterBase(ivec2 px, float z) {
+  vec2 rel = (vec2(px) + 0.5 - vec2(sceneViewport.xy)) / vec2(sceneViewport.zw);
+  int cx = clamp(int(rel.x * float(CLUSTERS_X)), 0, CLUSTERS_X - 1);
+  int cy = clamp(int(rel.y * float(CLUSTERS_Y)), 0, CLUSTERS_Y - 1);
+  int cz = z <= CLUSTER_NEAR ? 0
+    : clamp(int(floor(log(z / CLUSTER_NEAR) / log(CLUSTER_FAR / CLUSTER_NEAR) * float(CLUSTERS_Z))), 0, CLUSTERS_Z - 1);
+  return ((cz * CLUSTERS_Y + cy) * CLUSTERS_X + cx) * CLUSTER_STRIDE;
+}
+
+int clusterLightCount(int base) {
+  return int(texelFetch(clusterData, base).r);
+}
+
+vec3 pointLights(int base, vec3 p, vec3 n) {
+  vec3 sum = vec3(0.0);
+  int count = clusterLightCount(base);
+  for (int i = 0; i < count; ++i) {
+    int li = int(texelFetch(clusterData, base + 1 + i).r);
+    vec4 posRadius = texelFetch(lightData, li * 2);
+    vec3 color = texelFetch(lightData, li * 2 + 1).rgb;
+
+    vec3 l = posRadius.xyz - p;
+    float d2 = dot(l, l);
+    float r2 = posRadius.w * posRadius.w;
+    if (d2 >= r2) {
+      continue;
+    }
+    // smooth falloff that reaches exactly zero at the radius, brighter close to the source
+    float f = d2 / r2;
+    float att = (1.0 - f) * (1.0 - f) / (1.0 + 8.0 * f);
+    // wrapped diffuse so faces turned slightly away still catch some light, which suits flat-shaded models
+    float ndl = clamp(dot(n, l * inversesqrt(max(d2, 1.0))) * 0.75 + 0.25, 0.0, 1.0);
+    sum += color * att * ndl;
+  }
+  return sum;
+}
+
+// ---------------------------------------------------------------------------------------------------------------
 
 void main() {
   ivec2 px = ivec2(gl_FragCoord.xy);
@@ -223,6 +270,18 @@ void main() {
     }
     vec3 caster = sunIsCaster == 1 ? sunLight(sunAltitude) : moonLight(sunAltitude);
     light = ambientLight(sunAltitude) * ao + caster * max(dot(n, casterDir), 0.0) * shadow;
+  }
+
+  int cluster = clusterBase(px, viewDepth(d));
+  if (pointLightsEnabled == 1 && inside) {
+    light += pointLights(cluster, p, n);
+  }
+
+  if (debugView == DEBUG_LIGHT_CLUSTERS) {
+    // lights evaluated per pixel: blue 0, green ~4, red 8+
+    float c = pointLightsEnabled == 1 ? float(clusterLightCount(cluster)) / 8.0 : 0.0;
+    FragColor = vec4(clamp(vec3(c * 2.0 - 1.0, 1.0 - abs(c * 2.0 - 1.0), 1.0 - c * 2.0), 0.0, 1.0), 1.0);
+    return;
   }
 
   if (debugView == DEBUG_AO) {

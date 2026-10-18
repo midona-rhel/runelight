@@ -43,6 +43,7 @@ class RuneLightOverlay extends OverlayPanel
 			line("GPU shadows", ms(t.getShadowMs()), Color.WHITE);
 			line("GPU post", ms(t.getPostMs()), Color.WHITE);
 			line("GPU UI", ms(t.getPresentMs()), Color.WHITE);
+			line("Point lights", Integer.toString(plugin.getPointLightCount()), Color.WHITE);
 			double h = plugin.getHourOfDay();
 			line("Time", String.format("%02d:%02d", (int) h, (int) (h * 60) % 60), Color.WHITE);
 			if (plugin.isHotReloading())
