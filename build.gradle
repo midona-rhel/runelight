@@ -38,5 +38,9 @@ tasks.register('run', JavaExec) {
 	workingDir = projectDir
 
 	jvmArgs '-ea'
+	if (System.getProperty('os.name').toLowerCase().contains('mac')) {
+		// RuneLite's macOS fullscreen support uses this internal API; the official launcher opens it the same way
+		jvmArgs '--add-exports=java.desktop/com.apple.eawt=ALL-UNNAMED', '--add-opens=java.desktop/com.apple.eawt=ALL-UNNAMED'
+	}
 	args '--developer-mode'
 }
