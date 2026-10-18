@@ -578,6 +578,90 @@ public interface RuneLightConfig extends Config
 	}
 
 	@ConfigSection(
+		name = "Fog",
+		description = "Volumetric fog",
+		position = 250
+	)
+	String fogSection = "fog";
+
+	@ConfigItem(
+		keyName = "volumetricFog",
+		name = "Volumetric fog",
+		description = "Light fog around your character that thins out with distance, lit by the sun, moon and lights.",
+		section = fogSection,
+		position = 251
+	)
+	default boolean volumetricFog()
+	{
+		return true;
+	}
+
+	@Range(max = 200)
+	@ConfigItem(
+		keyName = "volumetricFogDensity",
+		name = "Fog density",
+		description = "How thick the fog is near the ground, in percent.",
+		section = fogSection,
+		position = 252
+	)
+	default int volumetricFogDensity()
+	{
+		return 25;
+	}
+
+	@Range(min = 25, max = 2000)
+	@ConfigItem(
+		keyName = "volumetricFogHeight",
+		name = "Fog height",
+		description = "How high the fog reaches before it thins out, in percent of a tile.",
+		section = fogSection,
+		position = 253
+	)
+	default int volumetricFogHeight()
+	{
+		return 300;
+	}
+
+	@Range(min = 8, max = 184)
+	@ConfigItem(
+		keyName = "volumetricFogDistance",
+		name = "Fog distance",
+		description = "How far from your character the fog reaches before it has faded out, in tiles.",
+		section = fogSection,
+		position = 254
+	)
+	default int volumetricFogDistance()
+	{
+		return 40;
+	}
+
+	@Range(max = 300)
+	@ConfigItem(
+		keyName = "volumetricFogSunScattering",
+		name = "Fog sun scattering",
+		description = "How brightly the fog glows in sunlight and moonlight, including light shafts, in percent.",
+		section = fogSection,
+		position = 255
+	)
+	default int volumetricFogSunScattering()
+	{
+		return 100;
+	}
+
+	@Range(max = 100)
+	@ConfigItem(
+		keyName = "volumetricFogNoise",
+		name = "Fog patchiness",
+		description = "How much the fog drifts in patches instead of being even, in percent.",
+		section = fogSection,
+		position = 256
+	)
+	default int volumetricFogNoise()
+	{
+		return 50;
+	}
+
+	@ConfigSection(
 		name = "Development",
 		description = "Tools for working on the renderer",
 		position = 100,
