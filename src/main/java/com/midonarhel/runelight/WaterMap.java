@@ -70,7 +70,7 @@ final class WaterMap
 	// RGBA float texture, two pages of CORNERS x CORNERS side by side, row by row:
 	// page 0 (surface height, on land the nearest water's; flow x, flow z in tiles/s; type of the tile whose sw corner
 	// this is),
-	// page 1 (distance to shore in tiles, wave energy 0-1, share of the corner's tiles that are water, 0)
+	// page 1 (distance to shore in tiles, wave energy 0-1, share of the corner's tiles that are water, turbulence 0-1)
 	float[] texture;
 	boolean hasWater;
 
@@ -454,8 +454,8 @@ final class WaterMap
 	}
 
 	// bed colors, packed HSL: sand under clear water, mud in swamps, dark stone in caves
-	private static final int SAND = 8 << 10 | 3 << 7 | 40;
-	private static final int PALE_SAND = 8 << 10 | 2 << 7 | 46;
+	private static final int SAND = 8 << 10 | 2 << 7 | 40;
+	private static final int PALE_SAND = 8 << 10 | 1 << 7 | 46;
 	private static final int MUD = 9 << 10 | 3 << 7 | 16;
 	private static final int STONE = 6 << 10 | 1 << 7 | 22;
 
@@ -605,7 +605,7 @@ final class WaterMap
 			for (int cx = 0; cx < CORNERS; ++cx)
 			{
 				// over the water tiles touching this corner
-				float height = 0, fx = 0, fz = 0, shore = 0, energy = 0;
+				float height = 0, fx = 0, fz = 0, shore = 0, energy = 0, turbulence = 0;
 				int lowest = 0;
 				int count = 0;
 				for (int dx = -1; dx <= 0; ++dx)
@@ -634,6 +634,7 @@ final class WaterMap
 						fz += b.flowZ[i];
 						shore += b.shore[i];
 						energy += b.energy[i];
+						turbulence += b.turbulence[i];
 						++count;
 					}
 				}
@@ -644,6 +645,7 @@ final class WaterMap
 					fz /= count;
 					shore /= count;
 					energy /= count;
+					turbulence /= count;
 				}
 				else
 				{
@@ -661,6 +663,7 @@ final class WaterMap
 				t[p1] = Math.min(shore, 32);
 				t[p1 + 1] = energy;
 				t[p1 + 2] = count / 4f;
+				t[p1 + 3] = turbulence;
 			}
 		}
 		spreadLevel(t, w);

@@ -10,6 +10,11 @@ import java.util.Arrays;
  * flow is used as is; elsewhere it is guessed from the scene alone: a body that runs off the scene edge or opens into
  * wide water flows toward that outlet (rivers into the sea or a lake, a river crossing the scene downhill), and small
  * enclosed pools and moats stay still. Either way the sea pushes gently toward its shores.
+ *
+ * The map and the guess give the direction and how much water a channel carries; how fast it runs at each tile comes
+ * from the scene's own shape ({@link #shapeFlow}): fastest in the middle of a channel and slow at its banks, faster
+ * where the channel narrows (the same water through a smaller cross-section, the bed being shallower near the shore
+ * too) and over drops, slower where it widens into a lake.
  */
 final class WaterBodies
 {
@@ -36,6 +41,19 @@ final class WaterBodies
 	static final float ONSHORE_SPEED = 0.18f;
 	// surface height difference (world units) per tile at which a river runs twice as fast (rapids, falls)
 	private static final float STEEP = 24f;
+	// Speed across a channel: parabolic from PROFILE_BANK of the middle's at the bank to the middle, scaled so the
+	// channel's mean is unchanged
+	private static final float PROFILE_BANK = 0.3f;
+	// Speed along a channel: the cross-section of a channel REFERENCE_RIDGE tiles from bank to middle runs at the
+	// given speed, others by (that cross-section / theirs) ^ CONTINUITY, within CONTINUITY_MIN to CONTINUITY_MAX (a
+	// lake would bring the water to a stop, a ditch would shoot it out)
+	private static final float REFERENCE_RIDGE = 2.5f;
+	private static final float CONTINUITY = 0.6f;
+	private static final float CONTINUITY_MIN = 0.3f, CONTINUITY_MAX = 1.8f;
+	// fastest any water runs, tiles per second
+	private static final float MAX_SPEED = 1.6f;
+	// tiles per second below which water counts as still for the shaping and the turbulence
+	private static final float STILL = 0.02f;
 	// heights within this of the lowest exit count as equally low (world units)
 	private static final int EXIT_TOLERANCE = 16;
 	private static final int SMOOTH_PASSES = 2;
@@ -57,6 +75,10 @@ final class WaterBodies
 	final int[] shore;
 	final float[] flowX, flowZ;
 	final float[] energy;
+	// how rough the water runs 0-1: where it speeds up through a narrows or over a drop
+	final float[] turbulence;
+	// distance to shore of the middle of the channel each tile is in, tiles
+	final float[] ridge;
 	// the sea's push toward its shores, added to the flow after smoothing
 	private final float[] pushX, pushZ;
 	// per body
@@ -86,6 +108,8 @@ final class WaterBodies
 		flowX = new float[n];
 		flowZ = new float[n];
 		energy = new float[n];
+		turbulence = new float[n];
+		ridge = new float[n];
 		queue = new int[n];
 		dist = new int[n];
 	}
@@ -112,6 +136,7 @@ final class WaterBodies
 			}
 		}
 		smoothFlow();
+		shapeFlow();
 		for (int i = 0; i < water.length; ++i)
 		{
 			flowX[i] += pushX[i];
@@ -344,12 +369,6 @@ final class WaterBodies
 			{
 				continue;
 			}
-			// narrow runs faster
-			speed *= clamp(1.3f - 0.15f * shore[i], 0.7f, 1.3f);
-			// and so does water running downhill
-			float drop = Math.abs(surfaceAt(x + (gx < 0 ? 1 : -1), y, i) - surface[i])
-				+ Math.abs(surfaceAt(x, y + (gz < 0 ? 1 : -1), i) - surface[i]);
-			speed *= 1 + Math.min(drop / STEEP, 2);
 			flowX[i] = -gx / len * speed;
 			flowZ[i] = -gz / len * speed;
 		}
@@ -421,7 +440,7 @@ final class WaterBodies
 
 	private float surfaceAt(int x, int y, int fallback)
 	{
-		if (x < 0 || y < 0 || x >= size || y >= size || !water[y * size + x])
+		if (x < 0 || y < 0 || x >= size || y >= size || !water[y * size + x] || body[y * size + x] != body[fallback])
 		{
 			return surface[fallback];
 		}
@@ -550,6 +569,132 @@ final class WaterBodies
 			System.arraycopy(sx, 0, flowX, 0, sx.length);
 			System.arraycopy(sz, 0, flowZ, 0, sz.length);
 		}
+	}
+
+	/**
+	 * Speed up or slow down each flowing tile by the shape of its channel: across it a parabolic profile by the
+	 * distance to the bank relative to the channel's half width, along it the cross-section (continuity: the same
+	 * water through a narrower or shallower channel runs faster), and over drops in the surface. Also how turbulent
+	 * the water runs there.
+	 */
+	private void shapeFlow()
+	{
+		ridges();
+		float refArea = crossSection(REFERENCE_RIDGE);
+		for (int i = 0; i < water.length; ++i)
+		{
+			turbulence[i] = 0;
+			float fx = flowX[i], fz = flowZ[i];
+			float speed = (float) Math.sqrt(fx * fx + fz * fz);
+			if (body[i] < 0 || speed < STILL)
+			{
+				continue;
+			}
+			float r = ridge[i];
+			// 0 at the bank, 1 in the middle
+			float s = clamp((shore[i] - 0.5f) / Math.max(r - 0.5f, 0.5f), 0, 1);
+			float profile = (PROFILE_BANK + (1 - PROFILE_BANK) * s * (2 - s)) / (PROFILE_BANK + (1 - PROFILE_BANK) * 2 / 3f);
+			float continuity = clamp((float) Math.pow(refArea / crossSection(r), CONTINUITY), CONTINUITY_MIN, CONTINUITY_MAX);
+			float steep = Math.min(drop(i, fx / speed, fz / speed) / STEEP, 2);
+			float shaped = Math.min(speed * profile * continuity * (1 + steep), MAX_SPEED);
+			flowX[i] = fx / speed * shaped;
+			flowZ[i] = fz / speed * shaped;
+			// rough where the water is squeezed or falls
+			turbulence[i] = clamp(0.6f * (continuity - 1) + 0.8f * steep, 0, 1) * smoothstep(STILL, 0.2f, speed);
+		}
+	}
+
+	/**
+	 * The distance to shore of the middle of the channel each water tile is in: carried down from the farthest tiles
+	 * toward the banks, averaging where channels meet.
+	 */
+	private void ridges()
+	{
+		// tiles by distance to shore, farthest first (counting sort)
+		int[] count = new int[MAX_DISTANCE + 2];
+		for (int i = 0; i < water.length; ++i)
+		{
+			if (body[i] >= 0)
+			{
+				++count[shore[i]];
+			}
+		}
+		int[] start = new int[MAX_DISTANCE + 2];
+		for (int d = MAX_DISTANCE - 1; d >= 0; --d)
+		{
+			start[d] = start[d + 1] + count[d + 1];
+		}
+		int tiles = start[0] + count[0];
+		for (int i = 0; i < water.length; ++i)
+		{
+			if (body[i] >= 0)
+			{
+				queue[start[shore[i]]++] = i;
+			}
+		}
+		for (int k = 0; k < tiles; ++k)
+		{
+			int i = queue[k];
+			int x = i % size, y = i / size;
+			float sum = 0;
+			int n = 0;
+			for (int d = 0; d < 4; ++d)
+			{
+				int nx = x + (d == 0 ? -1 : d == 1 ? 1 : 0), ny = y + (d == 2 ? -1 : d == 3 ? 1 : 0);
+				if (nx < 0 || ny < 0 || nx >= size || ny >= size)
+				{
+					continue;
+				}
+				int j = ny * size + nx;
+				if (body[j] == body[i] && shore[j] > shore[i])
+				{
+					sum += ridge[j];
+					++n;
+				}
+			}
+			ridge[i] = n > 0 ? Math.max(shore[i], sum / n) : shore[i];
+		}
+	}
+
+	/**
+	 * Cross-section of a channel whose middle is {@code ridge} tiles from the bank, in tiles times world units of
+	 * depth: the bed deepens away from the shore like {@link WaterMap}'s.
+	 */
+	static float crossSection(float ridge)
+	{
+		float area = 0;
+		int whole = (int) ridge;
+		for (int d = 1; d <= whole; ++d)
+		{
+			area += 2 * bedDepth(d);
+		}
+		return area + 2 * (ridge - whole) * bedDepth(whole + 1);
+	}
+
+	// the bed's depth across a tile d tiles from the shore: between its corners' depth levels d - 1 and d
+	private static float bedDepth(int d)
+	{
+		return Math.max((WaterMap.depthForLevel(d - 1) + WaterMap.depthForLevel(Math.min(d, WaterMap.MAX_LEVEL))) * 0.5f,
+			WaterMap.MIN_DEPTH);
+	}
+
+	/**
+	 * How far the surface falls (world units) from the tile upstream of i to the one downstream, over the larger of
+	 * the two steps: water speeds up toward a lip and below it.
+	 */
+	private float drop(int i, float dx, float dz)
+	{
+		int x = i % size, y = i / size;
+		// the neighbours the flow points at, diagonals included past 22.5 degrees
+		int sx = Math.abs(dx) > 0.38f ? (int) Math.signum(dx) : 0, sz = Math.abs(dz) > 0.38f ? (int) Math.signum(dz) : 0;
+		if (sx == 0 && sz == 0)
+		{
+			return 0;
+		}
+		// y down: the surface downstream is larger where it falls
+		float down = surfaceAt(x + sx, y + sz, i) - surface[i];
+		float up = surface[i] - surfaceAt(x - sx, y - sz, i);
+		return Math.max(0, Math.max(down, up));
 	}
 
 	private void energies()

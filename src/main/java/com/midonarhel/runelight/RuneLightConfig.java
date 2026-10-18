@@ -1112,7 +1112,7 @@ public interface RuneLightConfig extends Config
 	@ConfigItem(
 		keyName = "waterCaustics",
 		name = "Caustics",
-		description = "Dappled sunlight on the bed of clear, shallow water.",
+		description = "Networks of focused sunlight on the bed of clear, shallow water.",
 		section = waterSection,
 		position = 556
 	)

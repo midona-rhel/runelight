@@ -7,9 +7,10 @@ plugin's water_flow.dat resource (read by WaterFlow.java).
    water are closed over so a river stays one piece; specks smaller than an icon are dropped.
 2. Open water: tiles at least OPEN_RADIUS from any shore. Large connected open areas (the sea, big lakes) are
    sinks: rivers run into them.
-3. Everywhere: water runs down the geodesic distance to the nearest sink, smoothed; narrow channels run faster,
-   wide ones slower, and the shallows along a sea or lake shore stay still (the plugin pushes them toward the shore
-   itself). Water with no sink (ponds) is still, and so are channels between two different sinks (straits, rivers
+3. Everywhere: water runs down the geodesic distance to the nearest sink, smoothed, at one speed across the channel;
+   the shallows along a sea or lake shore stay still (the plugin pushes them toward the shore itself). How fast each
+   tile runs is left to the plugin (WaterBodies.shapeFlow), which knows the scene's real banks and bed depth: fast in
+   the middle and slow at the banks, faster through narrows and over drops, slower where the channel widens. Water with no sink (ponds) is still, and so are channels between two different sinks (straits, rivers
    between two lakes), which would otherwise run in from both ends.
 4. Annotations (annotations.json, made by reading grid crops of the map, see crop.py) override that inside their
    box: a river runs from its sources to its outlets (geodesic distance to the outlets minus distance from the
@@ -42,7 +43,7 @@ MIN_SPECK = 10         # smaller water specks are map icons
 OPEN_RADIUS = 5        # tiles from shore for open water
 SINK_AREA = 400        # open area (tiles) of a sea or lake rivers run into
 SHALLOWS = 6           # geodesic tiles from open water before a channel runs at full speed
-RIVER_SPEED = 0.55     # tiles per second in a channel
+RIVER_SPEED = 0.55     # tiles per second in a channel (WaterBodies.REFERENCE_RIDGE wide; the plugin shapes it)
 EXTEND = 3             # tiles past the mapped water that still get its flow (the map and the scene differ a bit)
 SMOOTH = 1.6           # flow smoothing, tiles
 UNKNOWN = -128
@@ -127,14 +128,14 @@ def build(cache, debug=None):
     labels, n = ndimage.label(water, structure=np.ones((3, 3)))
     for lab, sl in enumerate(ndimage.find_objects(labels), start=1):
         if sl is not None:
-            auto_flow(sl, labels, lab, domain, sinks, olab, shore, fx, fy, conflicts)
+            auto_flow(sl, labels, lab, domain, sinks, olab, fx, fy, conflicts)
     conflicts.sort(reverse=True)
     for cells, sw, ne in conflicts:
         print("still: channel between two sinks, %d tiles, %s - %s" % (cells, sw, ne))
 
     ann = load_annotations()
     for river in ann["rivers"]:
-        annotated_flow(river, water, sinks, shore, fx, fy)
+        annotated_flow(river, water, sinks, fx, fy)
     for s in ann["still"]:
         rows, cols = box_slice(s["box"])
         fx[rows, cols] = 0
@@ -157,7 +158,7 @@ def box_slice(box):
     return worldmap.tile_slice(min(x0, x1), min(y0, y1), max(x0, x1), max(y0, y1))
 
 
-def auto_flow(sl, labels, lab, domain, sinks, olab, shore, fx, fy, conflicts):
+def auto_flow(sl, labels, lab, domain, sinks, olab, fx, fy, conflicts):
     """Flow of one connected piece of water toward the nearest sea or large lake."""
     # one tile of margin so sinks around the component's own tiles are seen
     sl = tuple(slice(max(s.start - 1, 0), s.stop + 1) for s in sl)
@@ -186,10 +187,10 @@ def auto_flow(sl, labels, lab, domain, sinks, olab, shore, fx, fy, conflicts):
                 conflicts.append((cells, worldmap.world(r1, c0), worldmap.world(r0, c1)))
             grow = ndimage.binary_dilation(chan == c, structure=np.ones((3, 3)), iterations=SHALLOWS)
             ramp = np.where(grow, 0, ramp)
-    apply(sl, dom, d_sink, ramp, shore, fx, fy)
+    apply(sl, dom, d_sink, ramp, fx, fy)
 
 
-def annotated_flow(river, water, sinks, shore, fx, fy):
+def annotated_flow(river, water, sinks, fx, fy):
     """Inside the river's box, water runs from its sources to its outlets, whatever the sinks say."""
     sl = box_slice(river["box"])
     dom = water[sl] & ~sinks[sl]
@@ -219,10 +220,10 @@ def annotated_flow(river, water, sinks, shore, fx, fy):
     reach = dom & np.isfinite(phi)
     fx[sl] = np.where(reach, 0, fx[sl])
     fy[sl] = np.where(reach, 0, fy[sl])
-    apply(sl, reach, phi, ramp, shore, fx, fy)
+    apply(sl, reach, phi, ramp, fx, fy)
 
 
-def apply(sl, dom, phi, ramp, shore, fx, fy):
+def apply(sl, dom, phi, ramp, fx, fy):
     reach = dom & np.isfinite(phi)
     gx, gy = gradient(np.where(reach, phi, np.nan))
     # map rows run south: north is -row
@@ -232,8 +233,8 @@ def apply(sl, dom, phi, ramp, shore, fx, fy):
     vx = np.where(ok, vx / np.maximum(length, 1e-6), 0)
     vy = np.where(ok, vy / np.maximum(length, 1e-6), 0)
     vx, vy = smooth(vx, vy, ok)
-    # narrow channels run faster than wide ones
-    speed = RIVER_SPEED * np.clip(2.5 / np.maximum(shore[sl], 1), 0.12, 1.4) * ramp
+    # one speed across the channel: the plugin shapes it by the scene's banks and depth
+    speed = RIVER_SPEED * ramp
     fx[sl] = np.where(ok, vx * speed, fx[sl])
     fy[sl] = np.where(ok, vy * speed, fy[sl])
 

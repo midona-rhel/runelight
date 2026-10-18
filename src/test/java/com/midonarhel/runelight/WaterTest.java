@@ -97,4 +97,31 @@ public class WaterTest
 		w.advance(new float[]{1, 0, 1}, 30);
 		assertTrue(w.drift()[0] - prev[0] < 18 * 0.25 + 1e-6);
 	}
+
+	@Test
+	public void causticsKeepTheLightAndFocusIt()
+	{
+		byte[] t = Water.caustics(SIZE, 5);
+		for (int c = 0; c < 4; ++c)
+		{
+			double sum = 0;
+			int bright = 0, dark = 0;
+			for (int y = 0; y < SIZE; ++y)
+			{
+				for (int x = 0; x < SIZE; ++x)
+				{
+					float v = at(t, x, y, c) / 255f * Water.CAUSTIC_RANGE;
+					sum += v;
+					bright += v > 2.5f ? 1 : 0;
+					dark += v < 0.6f ? 1 : 0;
+				}
+			}
+			double mean = sum / (SIZE * SIZE);
+			// the light all lands somewhere (a little lost to the brightest lines' clamp)
+			assertTrue("mean " + mean, mean > 0.85 && mean < 1.01);
+			// lines and cells, not a flat wash
+			assertTrue("bright " + bright, bright > SIZE * SIZE / 50);
+			assertTrue("dark " + dark, dark > SIZE * SIZE / 5);
+		}
+	}
 }
