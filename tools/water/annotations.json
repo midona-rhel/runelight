@@ -1,0 +1,58 @@
+{
+  "rivers": [
+    {
+      "name": "River Lum",
+      "note": "rises at a dead end south of the Wilderness, runs south past Lumbridge into the sea east of the Lumbridge swamp",
+      "box": [3080, 3140, 3270, 3540],
+      "sources": [[3123, 3528]],
+      "outlets": [[3252, 3150]]
+    },
+    {
+      "name": "River Elid",
+      "note": "dead end north of the Shantay Pass, runs south past Nardah into the sea at Sophanem",
+      "box": [3250, 2730, 3400, 3140],
+      "sources": [[3366, 3130]],
+      "outlets": [[3268, 2738]]
+    },
+    {
+      "name": "River Salve, lower reach",
+      "note": "the Salve widens south of Paterdomus and runs on south to the sea; both ends touch open water so it needs saying",
+      "box": [3388, 3190, 3432, 3342],
+      "sources": [[3410, 3338]],
+      "outlets": [[3415, 3197]],
+      "speed": 0.6
+    },
+    {
+      "name": "Ardougne river",
+      "note": "out of the lake west of the Fishing Guild, between East and West Ardougne, past Yanille into the marsh to the south-west; the marsh is not blue on the map, so by default that end looked like a dead end and the river ran backwards",
+      "box": [2280, 3040, 2608, 3432],
+      "sources": [[2505, 3428]],
+      "outlets": [[2314, 3063]]
+    },
+    {
+      "name": "Karamja river",
+      "note": "opens to the sea on three sides; run it from the north inlet south and split to the east and west coasts rather than meeting head on in the jungle",
+      "box": [2755, 2935, 2960, 3110],
+      "sources": [[2897, 3104]],
+      "outlets": [[2950, 2946], [2768, 2961]]
+    },
+    {
+      "name": "Hosidius river",
+      "note": "leaves the Piscarilius canals and splits to the bay west of Hosidius and the south coast",
+      "box": [1595, 3480, 1760, 3694],
+      "sources": [[1737, 3688]],
+      "outlets": [[1603, 3562], [1700, 3492]]
+    },
+    {
+      "name": "Lake Molch outflow",
+      "note": "from Lake Molch west to the Shayzien bay",
+      "box": [1280, 3495, 1372, 3532],
+      "sources": [[1366, 3508]],
+      "outlets": [[1290, 3518]]
+    }
+  ],
+  "still": [
+    {"name": "Piscarilius harbour canals", "box": [1712, 3696, 1850, 3832]},
+    {"name": "Aldarin canals", "box": [1195, 3212, 1272, 3302]}
+  ]
+}

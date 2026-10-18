@@ -6,9 +6,10 @@ import java.util.Arrays;
  * Connected bodies of water in a square tile grid, what kind each is, and how its water flows. Pure tile logic,
  * filled in by {@link WaterMap} from the scene and tested on synthetic grids.
  *
- * Flow follows the map rather than being simulated: a body that runs off the scene edge or opens into wide water
- * flows toward that outlet (rivers into the sea or a lake, a river crossing the scene downhill), the sea pushes
- * gently toward its shores, and small enclosed pools and moats stay still.
+ * Flow follows the map rather than being simulated. Where the world flow map ({@link WaterFlow}) knows a tile, its
+ * flow is used as is; elsewhere it is guessed from the scene alone: a body that runs off the scene edge or opens into
+ * wide water flows toward that outlet (rivers into the sea or a lake, a river crossing the scene downhill), and small
+ * enclosed pools and moats stay still. Either way the sea pushes gently toward its shores.
  */
 final class WaterBodies
 {
@@ -47,6 +48,8 @@ final class WaterBodies
 	final boolean[] sea;
 	// tiles the scene doesn't have (not loaded): neither land nor water, the water may go on there
 	final boolean[] unknown;
+	// flow from the world flow map in tiles per second, NaN where it has none
+	final float[] mapFlowX, mapFlowZ;
 
 	// per tile: body label (-1 none), distance to the nearest land in tiles (1 next to land), flow in tiles per
 	// second, wave energy 0-1
@@ -54,6 +57,8 @@ final class WaterBodies
 	final int[] shore;
 	final float[] flowX, flowZ;
 	final float[] energy;
+	// the sea's push toward its shores, added to the flow after smoothing
+	private final float[] pushX, pushZ;
 	// per body
 	int bodies;
 	int[] bodyClass = new int[0];
@@ -70,6 +75,12 @@ final class WaterBodies
 		surface = new float[n];
 		sea = new boolean[n];
 		unknown = new boolean[n];
+		mapFlowX = new float[n];
+		mapFlowZ = new float[n];
+		Arrays.fill(mapFlowX, Float.NaN);
+		Arrays.fill(mapFlowZ, Float.NaN);
+		pushX = new float[n];
+		pushZ = new float[n];
 		body = new int[n];
 		shore = new int[n];
 		flowX = new float[n];
@@ -86,11 +97,26 @@ final class WaterBodies
 		classify();
 		Arrays.fill(flowX, 0);
 		Arrays.fill(flowZ, 0);
+		Arrays.fill(pushX, 0);
+		Arrays.fill(pushZ, 0);
 		for (int b = 0; b < bodies; ++b)
 		{
 			flow(b);
 		}
+		for (int i = 0; i < water.length; ++i)
+		{
+			if (water[i] && hasMapFlow(i))
+			{
+				flowX[i] = mapFlowX[i];
+				flowZ[i] = mapFlowZ[i];
+			}
+		}
 		smoothFlow();
+		for (int i = 0; i < water.length; ++i)
+		{
+			flowX[i] += pushX[i];
+			flowZ[i] += pushZ[i];
+		}
 		energies();
 	}
 
@@ -347,10 +373,15 @@ final class WaterBodies
 					continue;
 				}
 				float s = ONSHORE_SPEED * (1 - (here - 1) / (float) OPEN_OCEAN);
-				flowX[i] -= gx / len * s;
-				flowZ[i] -= gz / len * s;
+				pushX[i] = -gx / len * s;
+				pushZ[i] = -gz / len * s;
 			}
 		}
+	}
+
+	boolean hasMapFlow(int i)
+	{
+		return !Float.isNaN(mapFlowX[i]);
 	}
 
 	private int step(int b, int x, int y, int d, int tail)
@@ -484,6 +515,13 @@ final class WaterBodies
 			for (int i = 0; i < water.length; ++i)
 			{
 				int b = body[i];
+				if (b >= 0 && hasMapFlow(i))
+				{
+					// already smooth, and right: it only steers the guessed tiles next to it
+					sx[i] = flowX[i];
+					sz[i] = flowZ[i];
+					continue;
+				}
 				if (b < 0 || bodyClass[b] == POOL)
 				{
 					sx[i] = sz[i] = 0;

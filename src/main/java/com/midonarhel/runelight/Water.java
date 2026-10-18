@@ -8,11 +8,13 @@ import static org.lwjgl.opengl.GL33C.*;
 
 /**
  * The water surface drawn by the composite pass (water.glsl): owns the scene's water data texture (from
- * {@link WaterMap}, uploaded when the scene swaps in), the tiling ripple noise and the per-frame uniforms.
+ * {@link WaterMap}, uploaded when the scene swaps in), the tiling wave noise and the per-frame uniforms.
  */
 class Water
 {
 	private static final int NOISE_SIZE = 256;
+	private static final long NOISE_SEED = 9157;
+	private static final double SLOPE_RANGE = 2.8;
 	// the shader's time wraps after this many seconds; every periodic motion in water.glsl repeats within it
 	private static final double TIME_WRAP = 3840;
 
@@ -159,7 +161,7 @@ class Water
 
 	private static int createNoise()
 	{
-		byte[] data = noise(NOISE_SIZE, 9157);
+		byte[] data = noise(NOISE_SIZE, NOISE_SEED);
 		ByteBuffer buf = BufferUtils.createByteBuffer(data.length);
 		buf.put(data).flip();
 
@@ -168,7 +170,7 @@ class Water
 		glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
 		glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, NOISE_SIZE, NOISE_SIZE, 0, GL_RGBA, GL_UNSIGNED_BYTE, buf);
 		glPixelStorei(GL_UNPACK_ALIGNMENT, 4);
-		// mipmaps calm the ripples in the distance instead of letting them sparkle
+		// mipmaps calm the waves in the distance instead of letting them sparkle
 		glGenerateMipmap(GL_TEXTURE_2D);
 		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
 		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
@@ -179,88 +181,92 @@ class Water
 	}
 
 	/**
-	 * Tiling ripple noise, RGBA: rg the slope of a smooth fractal height field (0.5 is flat, scaled so the steepest
-	 * slope reaches 0 or 1), b that height, a an independent cellular noise for foam and sparkle.
+	 * Tiling wave noise, RGBA: rg the slope of a wave height field (0.5 is flat, scaled so slopes of SLOPE_RANGE
+	 * standard deviations reach 0 or 1), b that height, a an independent finer height (sparkle on crests).
+	 *
+	 * The heights are sums of sine waves with whole numbers of cycles across the texture, so they tile, in random
+	 * directions with amplitude falling with frequency like wind waves. Slopes come out exactly from the same sums,
+	 * so the normals are smooth at every scale and the mipmaps fade them evenly into calm water.
 	 */
 	static byte[] noise(int size, long seed)
 	{
 		Random rng = new Random(seed);
-		float[] h = new float[size * size];
-		float amp = 1;
-		for (int cells = 4; cells <= 32; cells *= 2, amp *= 0.55f)
+		int n = size * size;
+		float[] h = new float[n], sx = new float[n], sy = new float[n], fine = new float[n];
+		waves(rng, size, 56, 2, 22, 1.7f, h, sx, sy);
+		waves(rng, size, 40, 6, 40, 1.4f, fine, null, null);
+
+		// slopes scaled by their spread rather than the rare steepest one, so the texture's range is well used
+		double sum = 0;
+		for (int i = 0; i < n; ++i)
 		{
-			float[] lattice = new float[cells * cells];
-			for (int i = 0; i < lattice.length; ++i)
-			{
-				lattice[i] = rng.nextFloat();
-			}
-			float scale = (float) cells / size;
-			for (int y = 0; y < size; ++y)
-			{
-				for (int x = 0; x < size; ++x)
-				{
-					h[y * size + x] += amp * sample(lattice, cells, x * scale, y * scale);
-				}
-			}
+			sum += sx[i] * sx[i] + sy[i] * sy[i];
 		}
+		float max = (float) (SLOPE_RANGE * Math.sqrt(sum / (2 * n))) + 1e-6f;
 		normalize(h);
-
-		float[] sx = new float[h.length], sy = new float[h.length];
-		float max = 1e-6f;
-		for (int y = 0; y < size; ++y)
+		normalize(fine);
+		byte[] out = new byte[n * 4];
+		for (int i = 0; i < n; ++i)
 		{
-			for (int x = 0; x < size; ++x)
-			{
-				int i = y * size + x;
-				sx[i] = h[y * size + (x + 1) % size] - h[y * size + (x + size - 1) % size];
-				sy[i] = h[((y + 1) % size) * size + x] - h[((y + size - 1) % size) * size + x];
-				max = Math.max(max, Math.max(Math.abs(sx[i]), Math.abs(sy[i])));
-			}
-		}
-
-		// foam: inverted cellular noise, bubbly clumps
-		float[] foam = new float[h.length];
-		amp = 1;
-		for (int cells = 8; cells <= 32; cells *= 2, amp *= 0.5f)
-		{
-			float[] fx = new float[cells * cells], fy = new float[cells * cells];
-			for (int i = 0; i < fx.length; ++i)
-			{
-				fx[i] = rng.nextFloat();
-				fy[i] = rng.nextFloat();
-			}
-			float scale = (float) cells / size;
-			for (int y = 0; y < size; ++y)
-			{
-				for (int x = 0; x < size; ++x)
-				{
-					float px = (x + 0.5f) * scale, py = (y + 0.5f) * scale;
-					int cx = (int) Math.floor(px), cy = (int) Math.floor(py);
-					float best = Float.MAX_VALUE;
-					for (int oy = -1; oy <= 1; ++oy)
-					{
-						for (int ox = -1; ox <= 1; ++ox)
-						{
-							int i = Math.floorMod(cy + oy, cells) * cells + Math.floorMod(cx + ox, cells);
-							float dx = cx + ox + fx[i] - px, dy = cy + oy + fy[i] - py;
-							best = Math.min(best, dx * dx + dy * dy);
-						}
-					}
-					foam[y * size + x] += amp * (1 - Math.min((float) Math.sqrt(best), 1));
-				}
-			}
-		}
-		normalize(foam);
-
-		byte[] out = new byte[h.length * 4];
-		for (int i = 0; i < h.length; ++i)
-		{
-			out[i * 4] = (byte) Math.round((sx[i] / max * 0.5f + 0.5f) * 255);
-			out[i * 4 + 1] = (byte) Math.round((sy[i] / max * 0.5f + 0.5f) * 255);
+			out[i * 4] = (byte) Math.round((clamp(sx[i] / max) * 0.5f + 0.5f) * 255);
+			out[i * 4 + 1] = (byte) Math.round((clamp(sy[i] / max) * 0.5f + 0.5f) * 255);
 			out[i * 4 + 2] = (byte) Math.round(h[i] * 255);
-			out[i * 4 + 3] = (byte) Math.round(foam[i] * 255);
+			out[i * 4 + 3] = (byte) Math.round(fine[i] * 255);
 		}
 		return out;
+	}
+
+	/**
+	 * Add {@code count} sine waves of kMin to kMax cycles across the texture, amplitude falling as k^-falloff, to h, and
+	 * their x and y slopes (per texel) to sx and sy when given.
+	 */
+	static void waves(Random rng, int size, int count, int kMin, int kMax, float falloff, float[] h, float[] sx, float[] sy)
+	{
+		float[] sinX = new float[size], cosX = new float[size], sinY = new float[size], cosY = new float[size];
+		for (int w = 0; w < count; ++w)
+		{
+			// log-uniform frequency, uniform direction, snapped to whole cycles so it tiles
+			double k = kMin * Math.pow((double) kMax / kMin, rng.nextDouble());
+			double angle = rng.nextDouble() * Math.PI * 2;
+			int kx = (int) Math.round(k * Math.cos(angle)), ky = (int) Math.round(k * Math.sin(angle));
+			if (kx == 0 && ky == 0)
+			{
+				continue;
+			}
+			double len = Math.sqrt(kx * kx + ky * ky);
+			float amp = (float) Math.pow(len, -falloff);
+			double phase = rng.nextDouble() * Math.PI * 2;
+			for (int i = 0; i < size; ++i)
+			{
+				double ax = Math.PI * 2 * kx * i / size + phase, ay = Math.PI * 2 * ky * i / size;
+				sinX[i] = (float) Math.sin(ax);
+				cosX[i] = (float) Math.cos(ax);
+				sinY[i] = (float) Math.sin(ay);
+				cosY[i] = (float) Math.cos(ay);
+			}
+			float gx = (float) (amp * Math.PI * 2 * kx / size), gy = (float) (amp * Math.PI * 2 * ky / size);
+			for (int y = 0; y < size; ++y)
+			{
+				for (int x = 0; x < size; ++x)
+				{
+					int i = y * size + x;
+					// sin(a + b) and cos(a + b) from the row and column tables
+					float s = sinX[x] * cosY[y] + cosX[x] * sinY[y];
+					h[i] += amp * s;
+					if (sx != null)
+					{
+						float c = cosX[x] * cosY[y] - sinX[x] * sinY[y];
+						sx[i] += gx * c;
+						sy[i] += gy * c;
+					}
+				}
+			}
+		}
+	}
+
+	private static float clamp(float v)
+	{
+		return Math.max(-1, Math.min(1, v));
 	}
 
 	private static void normalize(float[] v)
@@ -275,29 +281,5 @@ class Water
 		{
 			v[i] = (v[i] - min) / (max - min);
 		}
-	}
-
-	private static float sample(float[] l, int n, float x, float y)
-	{
-		int x0 = (int) Math.floor(x), y0 = (int) Math.floor(y);
-		float fx = quintic(x - x0), fy = quintic(y - y0);
-		float a = lerp(at(l, n, x0, y0), at(l, n, x0 + 1, y0), fx);
-		float b = lerp(at(l, n, x0, y0 + 1), at(l, n, x0 + 1, y0 + 1), fx);
-		return lerp(a, b, fy);
-	}
-
-	private static float at(float[] l, int n, int x, int y)
-	{
-		return l[Math.floorMod(y, n) * n + Math.floorMod(x, n)];
-	}
-
-	private static float quintic(float t)
-	{
-		return t * t * t * (t * (t * 6 - 15) + 10);
-	}
-
-	private static float lerp(float a, float b, float t)
-	{
-		return a + (b - a) * t;
 	}
 }
