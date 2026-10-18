@@ -25,8 +25,11 @@ class LightClusters
 	static final int MAX_LIGHTS = 1024;
 	static final float NEAR = 50;
 	static final float FAR = 25600;
-	// the room map (RoomMap.texels) follows the lights in the light buffer, from this texel on (rooms.glsl)
-	static final int ROOM_BASE = MAX_LIGHTS * 2;
+	// a third texel per light after the two per light: its occlusion grid and whether it is covered
+	// (LightOcclusion.texel, light_occlusion.glsl)
+	static final int LIGHT_EXTRA_BASE = MAX_LIGHTS * 2;
+	// the room map (RoomMap.texels) follows, from this texel on (rooms.glsl), then the occlusion grids' atlas
+	static final int ROOM_BASE = MAX_LIGHTS * 3;
 
 	private static final int CLUSTER_COUNT = CLUSTERS_X * CLUSTERS_Y * CLUSTERS_Z;
 	// Fog columns, stored after the clusters: per screen tile, the lights that glow in the fog anywhere along its
@@ -50,6 +53,13 @@ class LightClusters
 	private int maxTexels;
 	private FloatBuffer roomStaging;
 	private final FloatBuffer roomOff = BufferUtils.createFloatBuffer(4);
+	// the static lights' occlusion grids (LightOcclusion), uploaded when they change and copied after the rooms
+	private int occlusionBuffer;
+	private LightOcclusion.Atlas atlas, uploadedAtlas;
+	private boolean roofLights;
+	private int atlasStart;
+	private FloatBuffer gridStaging;
+	private final FloatBuffer extraData = BufferUtils.createFloatBuffer(MAX_LIGHTS * 4);
 	// the view the cluster bounds were computed for: they only change with the camera
 	private final float[] boundsViewProj = new float[16];
 	private boolean boundsValid;
@@ -81,9 +91,10 @@ class LightClusters
 	{
 		maxTexels = glGetInteger(GL_MAX_TEXTURE_BUFFER_SIZE);
 		roomBuffer = glGenBuffers();
+		occlusionBuffer = glGenBuffers();
 		lightBuffer = glGenBuffers();
 		glBindBuffer(GL_TEXTURE_BUFFER, lightBuffer);
-		glBufferData(GL_TEXTURE_BUFFER, (long) MAX_LIGHTS * 8 * Float.BYTES, GL_STREAM_DRAW);
+		glBufferData(GL_TEXTURE_BUFFER, (long) ROOM_BASE * 4 * Float.BYTES, GL_STREAM_DRAW);
 		lightTexture = glGenTextures();
 		glBindTexture(GL_TEXTURE_BUFFER, lightTexture);
 		glTexBuffer(GL_TEXTURE_BUFFER, GL_RGBA32F, lightBuffer);
@@ -104,10 +115,11 @@ class LightClusters
 		if (lightBuffer != 0)
 		{
 			glDeleteTextures(new int[]{lightTexture, clusterTexture});
-			glDeleteBuffers(new int[]{lightBuffer, clusterBuffer, roomBuffer});
-			lightBuffer = lightTexture = clusterBuffer = clusterTexture = roomBuffer = 0;
+			glDeleteBuffers(new int[]{lightBuffer, clusterBuffer, roomBuffer, occlusionBuffer});
+			lightBuffer = lightTexture = clusterBuffer = clusterTexture = roomBuffer = occlusionBuffer = 0;
 		}
 		uploadedRooms = null;
+		uploadedAtlas = null;
 		uploadedVersion = -1;
 		roomTexels = 0;
 		boundsValid = false;
@@ -152,6 +164,16 @@ class LightClusters
 	}
 
 	/**
+	 * The static lights' occlusion grids (null: none), and whether lights under a roof leave what is open to the sky
+	 * above them dark.
+	 */
+	void setOcclusion(LightOcclusion.Atlas atlas, boolean roofLights)
+	{
+		this.atlas = atlas;
+		this.roofLights = roofLights;
+	}
+
+	/**
 	 * Cull lights into clusters and upload both tables.
 	 *
 	 * @param viewProj camera-relative world to clip, as used by the composite pass
@@ -173,6 +195,7 @@ class LightClusters
 			clusters[i] = 0;
 		}
 		lightData.clear();
+		extraData.clear();
 		overflows = 0;
 		fogCandidates = 0;
 		if (!boundsValid || !java.util.Arrays.equals(viewProj, boundsViewProj))
@@ -182,6 +205,14 @@ class LightClusters
 			boundsValid = true;
 		}
 		RoomMap rooms = roomMap;
+		// the atlas follows the room map as upload() will lay it out
+		atlasStart = ROOM_BASE + (rooms != null && (maxTexels == 0 || ROOM_BASE + rooms.texelCount() <= maxTexels)
+			? rooms.texelCount() : RoomMap.HEADER_TEXELS);
+		LightOcclusion.Atlas grids = atlas;
+		if (grids != null && maxTexels != 0 && atlasStart + grids.texelCount > maxTexels)
+		{
+			grids = null;
+		}
 
 		int n = Math.min(lights.size(), MAX_LIGHTS);
 		int kept = 0;
@@ -219,6 +250,8 @@ class LightClusters
 			}
 			lightData.put(x).put(y).put(z).put(l.radius);
 			lightData.put(l.r * l.intensity).put(l.g * l.intensity).put(l.b * l.intensity).put(code);
+			LightOcclusion.texel(l.occlusion, grids, atlasStart,
+				roofLights && rooms != null && rooms.covered(l.x, l.z, l.plane), extraData);
 
 			if (fogColumns && !indoor)
 			{
@@ -255,6 +288,8 @@ class LightClusters
 		}
 		lightCount = kept;
 		lightData.flip();
+		extraData.flip();
+		atlas = grids;
 		fillFogColumns();
 	}
 
@@ -340,12 +375,35 @@ class LightClusters
 			roomTexels = rooms.texelCount();
 		}
 		int texels = rooms != null ? roomTexels : RoomMap.HEADER_TEXELS;
+		LightOcclusion.Atlas grids = atlas;
+		if (grids != null && grids != uploadedAtlas && grids.texelCount > 0)
+		{
+			if (gridStaging == null || gridStaging.capacity() < grids.texelCount * 4)
+			{
+				gridStaging = BufferUtils.createFloatBuffer(grids.texelCount * 4);
+			}
+			gridStaging.clear();
+			gridStaging.put(grids.texels, 0, grids.texelCount * 4).flip();
+			glBindBuffer(GL_COPY_READ_BUFFER, occlusionBuffer);
+			glBufferData(GL_COPY_READ_BUFFER, gridStaging, GL_STATIC_DRAW);
+			glBindBuffer(GL_COPY_READ_BUFFER, 0);
+			uploadedAtlas = grids;
+		}
+		int gridTexels = grids != null && grids == uploadedAtlas ? grids.texelCount : 0;
 
 		glBindBuffer(GL_TEXTURE_BUFFER, lightBuffer);
-		glBufferData(GL_TEXTURE_BUFFER, (long) (ROOM_BASE + texels) * 4 * Float.BYTES, GL_STREAM_DRAW);
+		glBufferData(GL_TEXTURE_BUFFER, (long) (ROOM_BASE + texels + gridTexels) * 4 * Float.BYTES, GL_STREAM_DRAW);
 		if (lightCount > 0)
 		{
 			glBufferSubData(GL_TEXTURE_BUFFER, 0, lightData);
+			glBufferSubData(GL_TEXTURE_BUFFER, (long) LIGHT_EXTRA_BASE * 4 * Float.BYTES, extraData);
+		}
+		if (gridTexels > 0)
+		{
+			glBindBuffer(GL_COPY_READ_BUFFER, occlusionBuffer);
+			glCopyBufferSubData(GL_COPY_READ_BUFFER, GL_TEXTURE_BUFFER, 0, (long) (ROOM_BASE + texels) * 4 * Float.BYTES,
+				(long) gridTexels * 4 * Float.BYTES);
+			glBindBuffer(GL_COPY_READ_BUFFER, 0);
 		}
 		if (rooms != null)
 		{

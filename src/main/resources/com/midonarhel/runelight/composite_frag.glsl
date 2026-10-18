@@ -23,6 +23,7 @@
 #define DEBUG_LIGHT_CLUSTERS 6
 #define DEBUG_MATERIALS 7
 #define DEBUG_GI 8
+#define DEBUG_SKYLIGHT 9
 
 #define TAU 6.28318530718
 
@@ -78,6 +79,7 @@ uniform samplerBuffer lightData;     // per light: (camera-relative position, ra
 uniform usamplerBuffer clusterData;  // per cluster: count, then light indices
 
 #include "rooms.glsl"
+#include "light_occlusion.glsl"
 
 out vec4 FragColor;
 
@@ -96,6 +98,7 @@ float upsampleAoFog(ivec2 px, float z, vec3 n, out vec4 fog, out float shadow, o
   float wsum = 0.0;
   vec4 giSum = vec4(0.0);
   vec2 groundSum = vec2(0.0);
+  float skySum = 0.0;
   vec4 fogSum = vec4(0.0);
   float fogWsum = 0.0;
   for (int y = 0; y < 4; ++y) {
@@ -123,6 +126,7 @@ float upsampleAoFog(ivec2 px, float z, vec3 n, out vec4 fog, out float shadow, o
       vec4 sh = texelFetch(sceneShadow, q, 0);
       shadowSum += sh.r * w;
       groundSum += sh.gb * w;
+      skySum += sh.a * w;
       giSum += halfGi(g) * w;
       wsum += w;
     }
@@ -132,6 +136,7 @@ float upsampleAoFog(ivec2 px, float z, vec3 n, out vec4 fog, out float shadow, o
   shadow = wsum > 1e-4 ? shadowSum / wsum : texelFetch(sceneShadow, clamp(ivec2(hp + 0.5), ivec2(0), maxAo), 0).r;
   gi = wsum > 1e-4 ? giSum / wsum : vec4(0.0);
   groundUpsampled = wsum > 1e-4 ? groundSum / wsum : texelFetch(sceneShadow, clamp(ivec2(hp + 0.5), ivec2(0), maxAo), 0).gb;
+  skyUpsampled = wsum > 1e-4 ? skySum / wsum : texelFetch(sceneShadow, clamp(ivec2(hp + 0.5), ivec2(0), maxAo), 0).a;
   return wsum > 1e-4 ? sum / wsum : 1.0;
 }
 
@@ -206,7 +211,7 @@ vec3 pointLights(int base, vec3 p, vec3 n, float transmissive, out vec3 throughO
     if (share <= 0.0) {
       continue;
     }
-    vec3 color = colorCode.rgb * share;
+    vec3 color = colorCode.rgb * share * lightOcclusion(li, posRadius.xyz, p, n);
 
     vec3 l = posRadius.xyz - p;
     float d2 = dot(l, l);
@@ -332,8 +337,8 @@ void main() {
   vec4 gi = vec4(0.0);
   vec3 indirect = vec3(0.0);
   bool fogDone = false;
-  if ((aoEnabled == 1 || shadowsEnabled == 1 || volumetricFog == 1 || giWeight > 0.0 || weatherGroundOn == 1)
-    && inside) {
+  if ((aoEnabled == 1 || shadowsEnabled == 1 || volumetricFog == 1 || giWeight > 0.0 || weatherGroundOn == 1
+    || skylightOn == 1) && inside) {
     ao = upsampleAoFog(px, viewDepth(d), n, fog, halfShadow, gi);
     ao = aoEnabled == 1 ? clamp(1.0 - (1.0 - ao) * aoStrength, 0.0, 1.0) : 1.0;
     fogDone = volumetricFog == 1;
@@ -357,7 +362,9 @@ void main() {
     shadow = overcastShadow(shadow);
     vec3 caster = sunIsCaster == 1 ? sunLight(sunAltitude) : moonLight(sunAltitude);
     float up = max(-n.y, 0.0);
-    indirect = giAmbient(ambientLight(sunAltitude) + skyFill(n, sunAltitude, up), gi) * envAmbient * ao;
+    vec3 plain = ambientLight(sunAltitude) + skyFill(n, sunAltitude, up);
+    indirect = (skylightMode == 0 ? giAmbient(plain, gi) : skylightAmbient(plain, gi.rgb, gi.a * giWeight))
+      * envAmbient * ao;
     light = indirect
       + caster * envSun * max(ndl, 0.0) * shadow * mix(1.0, ao, AO_DIRECT);
     if (transmissive > 0.0) {
@@ -402,6 +409,11 @@ void main() {
   if (debugView == DEBUG_GI) {
     // the indirect light alone, as a white surface would show it
     FragColor = vec4(linearToSrgb(clamp(indirect, 0.0, 1.0)), 1.0);
+    return;
+  }
+  if (debugView == DEBUG_SKYLIGHT) {
+    // sky visibility, red where it isn't worked out
+    FragColor = vec4(skylightOn == 1 ? vec3(skyUpsampled) : vec3(0.5, 0.0, 0.0), 1.0);
     return;
   }
   if (debugView == DEBUG_SHADOWS) {

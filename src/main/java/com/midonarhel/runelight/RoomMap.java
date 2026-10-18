@@ -35,6 +35,8 @@ final class RoomMap
 	final short[] rooms;
 	final short[] porch;
 	final float[] floors;
+	// under a roof by the map's flags, whether or not a room was found there: lights there are covered (rooms.glsl)
+	final boolean[] roofed;
 	private int version;
 
 	private RoomMap(int size, int offset)
@@ -44,6 +46,7 @@ final class RoomMap
 		rooms = new short[PLANES * size * size];
 		porch = new short[PLANES * size * size];
 		floors = new float[PLANES * size * size];
+		roofed = new boolean[PLANES * size * size];
 	}
 
 	int index(int plane, int x, int y)
@@ -94,6 +97,12 @@ final class RoomMap
 				for (int y = 0; y < size; ++y)
 				{
 					m.floors[m.index(plane, x, y)] = floorHeight(settings, heights, plane, x, y);
+					if (plane < settings.length && x < settings[0].length && y < settings[0][x].length)
+					{
+						int level = BuildingDetector.mapLevel(settings, plane, x, y);
+						m.roofed[m.index(plane, x, y)] = level < settings.length
+							&& (settings[level][x][y] & BuildingDetector.TILE_FLAG_UNDER_ROOF) != 0;
+					}
 				}
 			}
 		}
@@ -234,6 +243,22 @@ final class RoomMap
 			}
 		}
 		return code(a, b);
+	}
+
+	/**
+	 * Whether a light at local world position (x, z) on a logical plane is under a roof or inside a room: such a
+	 * light doesn't light the tops of things open to the sky above it (light_occlusion.glsl).
+	 */
+	boolean covered(float x, float z, int plane)
+	{
+		int tx = (int) Math.floor(x / TILE) + offset;
+		int ty = (int) Math.floor(z / TILE) + offset;
+		if (plane < 0 || plane >= PLANES || tx < 0 || ty < 0 || tx >= size || ty >= size)
+		{
+			return false;
+		}
+		int i = index(plane, tx, ty);
+		return roofed[i] || rooms[i] != 0;
 	}
 
 	static float code(int a, int b)

@@ -10,6 +10,7 @@
 #include "shadow_pcss.glsl"
 #include "gi.glsl"
 #include "weather_ground_ao.glsl"
+#include "skylight_ao.glsl"
 
 uniform float aoRadius;  // world units
 uniform int aoSamples;   // 0: only the geometry for the upsamples (AO off, fog on)
@@ -18,7 +19,8 @@ uniform vec3 casterDir;  // toward the light that casts shadows
 uniform sampler2D sceneMaterial;  // r emissive, g transmissive (frag.glsl)
 
 layout(location = 0) out vec4 FragAo;  // see halfres.glsl
-layout(location = 1) out vec4 FragShadow;  // r: lit share, 1 unshadowed; g snow, b wetness (weather_ground_ao.glsl)
+layout(location = 1) out vec4 FragShadow;  // r: lit share, 1 unshadowed; g snow, b wetness (weather_ground_ao.glsl);
+                                           // a sky visibility (skylight_ao.glsl)
 // sine of the minimum angle above the surface for an occluder to count; higher ignores more of the shallow folds
 #define AO_ANGLE_BIAS 0.10
 #define TAU 6.28318530718
@@ -48,6 +50,7 @@ void main() {
   vec4 gi = giEnabled == 1 ? giIrradiance(p, n) : vec4(0.0);
   FragAo = halfPackGeometry(1.0, nearOverDepth, n, gi.rgb, gi.a);
   float noise = bayer4(gl_FragCoord.xy);
+  FragShadow.a = skylightVisibility(p, n, noise);
   if (shadowsEnabled == 1) {
     vec2 m = texelFetch(sceneMaterial, px, 0).rg / cover;
     // emissive surfaces show no shading; a leaf lit from behind looks up its shadow on the lit side
