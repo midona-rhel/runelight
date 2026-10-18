@@ -219,6 +219,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 
 	private int glAoProgram;
 	private int uniAoRadius;
+	private int uniAoSamples;
 	private final FrameUniforms aoFrame = new FrameUniforms();
 
 	private static final int AO_TEXTURE_UNIT = RuneLightPlugin.COMPOSITE_TEXTURE_UNIT + 3;
@@ -287,6 +288,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 	private int uniCompositeShadowRadius;
 	private int uniCompositeShadowDepthRange;
 	private int uniCompositeShadowMapSize;
+	private int uniCompositeShadowQuality;
 	private int uniCompositeUseFog;
 	private int uniCompositeFogDepth;
 	private int uniCompositeDrawDistance;
@@ -1012,6 +1014,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		glUseProgram(0);
 
 		uniAoRadius = glGetUniformLocation(glAoProgram, "aoRadius");
+		uniAoSamples = glGetUniformLocation(glAoProgram, "aoSamples");
 		aoFrame.locate(glAoProgram);
 		bindSceneSamplers(glAoProgram);
 
@@ -1032,6 +1035,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		uniCompositeShadowRadius = glGetUniformLocation(c, "shadowRadius");
 		uniCompositeShadowDepthRange = glGetUniformLocation(c, "shadowDepthRange");
 		uniCompositeShadowMapSize = glGetUniformLocation(c, "shadowMapSize");
+		uniCompositeShadowQuality = glGetUniformLocation(c, "shadowQuality");
 		uniCompositeUseFog = glGetUniformLocation(c, "useFog");
 		uniCompositeFogDepth = glGetUniformLocation(c, "fogDepth");
 		uniCompositeDrawDistance = glGetUniformLocation(c, "drawDistance");
@@ -1937,6 +1941,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 			glUniform1f(uniCompositeShadowRadius, shadowMap.getRadius());
 			glUniform1f(uniCompositeShadowDepthRange, shadowMap.getDepthRange());
 			glUniform1f(uniCompositeShadowMapSize, shadowMap.getSize());
+			glUniform1i(uniCompositeShadowQuality, config.shadowQuality().ordinal());
 			shadowMap.bindForSampling(SHADOW_RAW_UNIT, SHADOW_COMPARE_UNIT);
 		}
 
@@ -2110,7 +2115,8 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		// fullscreen triangles are generated from gl_VertexID; core profile still needs some VAO bound
 		glBindVertexArray(vaoUiHandle);
 
-		if (ao)
+		// the AO pass also writes the half resolution depth and normals that the fog's upsample reads
+		if (ao || frameFog)
 		{
 			gpuTimer.begin(GpuTimer.AO);
 			glBindFramebuffer(GL_FRAMEBUFFER, sceneTargets.getAoFbo());
@@ -2118,6 +2124,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 			glUseProgram(glAoProgram);
 			setFrameUniforms(aoFrame);
 			glUniform1f(uniAoRadius, config.aoRadius() / 100f * Perspective.LOCAL_TILE_SIZE);
+			glUniform1i(uniAoSamples, ao ? config.aoQuality().pick(6, 8, 12) : 0);
 			glDrawArrays(GL_TRIANGLES, 0, 3);
 			sceneTargets.bindAo(AO_TEXTURE_UNIT);
 		}

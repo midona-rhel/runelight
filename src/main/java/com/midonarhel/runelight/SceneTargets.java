@@ -62,7 +62,8 @@ class SceneTargets
 		aoHeight = (height + 1) / 2;
 		texAo = glGenTextures();
 		glBindTexture(GL_TEXTURE_2D, texAo);
-		glTexImage2D(GL_TEXTURE_2D, 0, GL_R8, aoWidth, aoHeight, 0, GL_RED, GL_UNSIGNED_BYTE, 0);
+		// AO plus the half resolution depth and normal the composite's upsamples read (halfres.glsl)
+		glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA16F, aoWidth, aoHeight, 0, GL_RGBA, GL_HALF_FLOAT, 0);
 		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
 		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
 		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);

@@ -4,12 +4,12 @@
 // tested against the depth buffer. Noisy by design; the composite pass blurs it depth-aware while upsampling.
 
 #include "frame.glsl"
+#include "halfres.glsl"
 
 uniform float aoRadius;  // world units
+uniform int aoSamples;   // 0: only the geometry for the upsamples (AO off, fog on)
 
-out float FragAo;
-
-#define SAMPLES 12
+out vec4 FragAo;  // see halfres.glsl
 // sine of the minimum angle above the surface for an occluder to count; higher ignores more of the shallow folds
 #define AO_ANGLE_BIAS 0.10
 #define TAU 6.28318530718
@@ -22,19 +22,18 @@ float ign(vec2 p) {
 
 void main() {
   ivec2 px = ivec2(gl_FragCoord.xy) * 2;
-  if (!inViewport(px)) {
-    FragAo = 1.0;
-    return;
-  }
-
   float d = texelFetch(sceneDepth, px, 0).r;
   if (isSky(d)) {
-    FragAo = 1.0;
+    FragAo = vec4(1.0, 0.0, 0.0, 0.0);
+    return;
+  }
+  vec3 n = decodeNormal(texelFetch(sceneNormal, px, 0).rgb);
+  FragAo = vec4(1.0, NEAR / viewDepth(d), octEncode(n));
+  if (aoSamples <= 0 || !inViewport(px)) {
     return;
   }
 
   vec3 p = reconstructPosition(vec2(px) + 0.5, d);
-  vec3 n = decodeNormal(texelFetch(sceneNormal, px, 0).rgb);
   vec3 t = normalize(cross(n, abs(n.y) < 0.99 ? vec3(0.0, 1.0, 0.0) : vec3(1.0, 0.0, 0.0)));
   vec3 b = cross(n, t);
 
@@ -42,9 +41,9 @@ void main() {
   float bias = aoRadius * 0.04;
   float occlusion = 0.0;
 
-  for (int i = 0; i < SAMPLES; ++i) {
+  for (int i = 0; i < aoSamples; ++i) {
     // cosine-weighted direction on a rotated golden-angle spiral
-    float f = (float(i) + 0.5) / float(SAMPLES);
+    float f = (float(i) + 0.5) / float(aoSamples);
     float r = sqrt(f);
     float phi = float(i) * GOLDEN_ANGLE + noise * TAU;
     vec3 dir = t * (r * cos(phi)) + b * (r * sin(phi)) + n * sqrt(1.0 - f);
@@ -84,5 +83,5 @@ void main() {
     occlusion += range * smoothstep(AO_ANGLE_BIAS, AO_ANGLE_BIAS + 0.35, elevation);
   }
 
-  FragAo = 1.0 - occlusion / float(SAMPLES);
+  FragAo.r = 1.0 - occlusion / float(aoSamples);
 }

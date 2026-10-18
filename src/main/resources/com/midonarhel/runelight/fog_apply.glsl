@@ -1,12 +1,24 @@
 // Volumetric fog in the composite: depth-aware upsample of the half resolution fog pass (fog_frag.glsl), which
 // also blurs its per-pixel step jitter, then the scene seen through it. Needs frame.glsl and sky.glsl.
+// The composite's AO upsample takes the same taps and does the fog in the same loop (upsampleAoFog).
+
+#include "halfres.glsl"
 
 uniform int volumetricFog;
 uniform sampler2D sceneFog;  // half resolution: rgb light scattered toward the camera (linear), a transmittance
 
 // relative view depth difference at which a fog texel's weight has halved
 #define FOG_UPSAMPLE_DEPTH 0.03
-#define FOG_SKY_DEPTH 1e7
+#define FOG_SKY_DEPTH HALF_SKY_DEPTH
+
+// 4x4 Gaussian over the half resolution texels around px
+float upsampleSpatial(vec2 o) {
+  return exp(-dot(o, o) * 0.5);
+}
+
+float fogDepthWeight(float qz, float z) {
+  return 1.0 / (1.0 + abs(qz - z) / (z * FOG_UPSAMPLE_DEPTH + 1.0));
+}
 
 vec4 upsampleFog(ivec2 px, float z) {
   vec2 hp = (vec2(px) + 0.5) * 0.5 - 0.5;
@@ -17,13 +29,8 @@ vec4 upsampleFog(ivec2 px, float z) {
   for (int y = 0; y < 4; ++y) {
     for (int x = 0; x < 4; ++x) {
       ivec2 q = clamp(base + ivec2(x, y), ivec2(0), maxFog);
-      float qd = texelFetch(sceneDepth, q * 2, 0).r;
-      float qz = isSky(qd) ? FOG_SKY_DEPTH : viewDepth(qd);
-
-      vec2 o = vec2(q) - hp;
-      float w = exp(-dot(o, o) * 0.5);
-      w *= 1.0 / (1.0 + abs(qz - z) / (z * FOG_UPSAMPLE_DEPTH + 1.0));
-
+      float qz = halfViewDepth(texelFetch(sceneAo, q, 0));
+      float w = upsampleSpatial(vec2(q) - hp) * fogDepthWeight(qz, z);
       sum += texelFetch(sceneFog, q, 0) * w;
       wsum += w;
     }
@@ -31,11 +38,14 @@ vec4 upsampleFog(ivec2 px, float z) {
   return wsum > 1e-6 ? sum / wsum : texelFetch(sceneFog, clamp(ivec2(hp + 0.5), ivec2(0), maxFog), 0);
 }
 
-// srgb: the final color of this pixel, including distance fog and transparent surfaces
+// srgb: the final color of this pixel, including distance fog and transparent surfaces; fog: upsampled
+vec3 applyFogSample(vec3 srgb, vec4 fog) {
+  return linearToSrgb(clamp(srgbToLinear(srgb) * fog.a + fog.rgb, 0.0, 1.0));
+}
+
 vec3 applyVolumetricFog(ivec2 px, vec3 srgb, float d) {
   if (volumetricFog == 0) {
     return srgb;
   }
-  vec4 fog = upsampleFog(px, isSky(d) ? FOG_SKY_DEPTH : viewDepth(d));
-  return linearToSrgb(clamp(srgbToLinear(srgb) * fog.a + fog.rgb, 0.0, 1.0));
+  return applyFogSample(srgb, upsampleFog(px, isSky(d) ? FOG_SKY_DEPTH : viewDepth(d)));
 }

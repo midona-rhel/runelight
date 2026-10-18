@@ -29,7 +29,6 @@
 
 #define TILE_SIZE 128.0
 
-uniform sampler2D sceneAo;  // half resolution
 uniform sampler2D sceneAlpha;  // transparent geometry, already lit, premultiplied
 uniform sampler2D sceneMaterial;  // r emissive, g transmissive, b water (frag.glsl)
 uniform int debugView;
@@ -57,6 +56,7 @@ uniform mat4 lightProjRel;  // camera-relative world -> light clip
 uniform float shadowRadius;      // half extent of the shadow map, world units
 uniform float shadowDepthRange;
 uniform float shadowMapSize;
+uniform int shadowQuality;  // 0 low, 1 medium, 2 high (Performance)
 
 // fog, same parameters as the vanilla GPU plugin
 uniform int useFog;
@@ -73,34 +73,45 @@ uniform usamplerBuffer clusterData;  // per cluster: count, then light indices
 out vec4 FragColor;
 
 // ---------------------------------------------------------------------------------------------------------------
-// Ambient occlusion: 4x4 depth- and normal-aware upsample of the half resolution AO, which also blurs its noise
+// Ambient occlusion: 4x4 depth- and normal-aware upsample of the half resolution AO, which also blurs its noise.
+// The volumetric fog's upsample uses the same taps, so it is done in the same loop when the fog is on.
 
-float upsampleAo(ivec2 px, float z, vec3 n) {
+float upsampleAoFog(ivec2 px, float z, vec3 n, out vec4 fog) {
   vec2 hp = (vec2(px) + 0.5) * 0.5 - 0.5;
   ivec2 base = ivec2(floor(hp)) - 1;
   ivec2 maxAo = textureSize(sceneAo, 0) - 1;
+  bool withFog = volumetricFog == 1;
   float sum = 0.0;
   float wsum = 0.0;
+  vec4 fogSum = vec4(0.0);
+  float fogWsum = 0.0;
   for (int y = 0; y < 4; ++y) {
     for (int x = 0; x < 4; ++x) {
       ivec2 q = clamp(base + ivec2(x, y), ivec2(0), maxAo);
-      ivec2 fq = q * 2;
-      float qd = texelFetch(sceneDepth, fq, 0).r;
-      if (isSky(qd)) {
+      vec4 g = texelFetch(sceneAo, q, 0);
+      float qz = halfViewDepth(g);
+      float spatial = upsampleSpatial(vec2(q) - hp);
+      if (withFog) {
+        float fw = spatial * fogDepthWeight(qz, z);
+        fogSum += texelFetch(sceneFog, q, 0) * fw;
+        fogWsum += fw;
+      }
+      if (g.g <= 0.0) {
         continue;
       }
-      float qz = viewDepth(qd);
-      vec3 qn = decodeNormal(texelFetch(sceneNormal, fq, 0).rgb);
+      vec3 qn = octDecode(g.ba);
+      float w = spatial / (1.0 + abs(qz - z) / (z * 0.01 + 1.0));
+      float nd = max(dot(n, qn), 0.0);
+      nd *= nd;
+      nd *= nd;
+      w *= nd * nd;
 
-      vec2 o = vec2(q) - hp;
-      float w = exp(-dot(o, o) * 0.5);
-      w *= 1.0 / (1.0 + abs(qz - z) / (z * 0.01 + 1.0));
-      w *= pow(max(dot(n, qn), 0.0), 8.0);
-
-      sum += texelFetch(sceneAo, q, 0).r * w;
+      sum += g.r * w;
       wsum += w;
     }
   }
+  fog = !withFog ? vec4(0.0, 0.0, 0.0, 1.0)
+    : fogWsum > 1e-6 ? fogSum / fogWsum : texelFetch(sceneFog, clamp(ivec2(hp + 0.5), ivec2(0), maxAo), 0);
   return wsum > 1e-4 ? sum / wsum : 1.0;
 }
 
@@ -144,9 +155,11 @@ float shadowFactor(vec3 p, vec3 n, float noise) {
   float worldToUv = 1.0 / (2.0 * shadowRadius);
   float bias = 2.0 * texelWorld / (2.0 * shadowDepthRange);
 
+  int searchTaps = shadowQuality == 2 ? 12 : shadowQuality == 1 ? 8 : 6;
+  int filterTaps = shadowQuality == 2 ? 16 : shadowQuality == 1 ? 12 : 8;
   float blockerSum = 0.0;
   float blockers = 0.0;
-  for (int i = 0; i < 12; ++i) {
+  for (int i = 0; i < searchTaps; ++i) {
     float d = texture(shadowRaw, uv + rot * POISSON[i] * (BLOCKER_SEARCH_WORLD * worldToUv)).r;
     if (d < z - bias) {
       blockerSum += d;
@@ -156,16 +169,26 @@ float shadowFactor(vec3 p, vec3 n, float noise) {
   if (blockers == 0.0) {
     return 1.0;
   }
+  // below high quality, a search that only finds blockers is taken as full shadow; on high the filter still runs
+  // for the small gaps (leaves) the search may have missed
+  if (shadowQuality < 2 && blockers == float(searchTaps)) {
+    return mix(1.0, 0.0, edgeFade);
+  }
 
   float gapWorld = (z - blockerSum / blockers) * 2.0 * shadowDepthRange;
   float softness = sunIsCaster == 1 ? SUN_SOFTNESS : MOON_SOFTNESS;
-  float penumbra = clamp(gapWorld * softness, texelWorld, MAX_PENUMBRA_WORLD) * worldToUv;
+  float penumbraWorld = clamp(gapWorld * softness, texelWorld, MAX_PENUMBRA_WORLD);
+  float penumbra = penumbraWorld * worldToUv;
+  // a kernel within a texel or two of hardware filtered compares needs no more than half the taps
+  if (penumbraWorld < texelWorld * 2.0) {
+    filterTaps = max(filterTaps / 2, 4);
+  }
 
   float lit = 0.0;
-  for (int i = 0; i < 16; ++i) {
+  for (int i = 0; i < filterTaps; ++i) {
     lit += texture(shadowCompare, vec3(uv + rot * POISSON[i] * penumbra, z - bias));
   }
-  return mix(1.0, lit / 16.0, edgeFade);
+  return mix(1.0, lit / float(filterTaps), edgeFade);
 }
 
 // ---------------------------------------------------------------------------------------------------------------
@@ -302,20 +325,27 @@ void main() {
   float transmissive = material.g;
 
   float ao = 1.0;
+  vec4 fog;
+  bool fogDone = false;
   if (aoEnabled == 1 && inside) {
-    ao = upsampleAo(px, viewDepth(d), n);
+    ao = upsampleAoFog(px, viewDepth(d), n, fog);
     ao = clamp(1.0 - (1.0 - ao) * aoStrength, 0.0, 1.0);
+    fogDone = volumetricFog == 1;
   }
 
   float shadow = 1.0;
   vec3 light = vec3(ao);
   if (sunAndSky && lightingEnabled == 1 && inside) {
     float ndl = dot(n, casterDir);
-    if (shadowsEnabled == 1 && emissive < 1.0) {
+    // faces turned away from the light get none of it, so their shadow only matters to water and the debug view
+    bool needShadow = ndl > 0.0 || transmissive > 0.0 || material.b >= 0.25 || debugView == DEBUG_SHADOWS;
+    if (shadowsEnabled == 1 && emissive < 1.0 && needShadow) {
       // a leaf lit from behind looks up its shadow on the lit side, or it would shadow itself
       shadow = shadowFactor(p, ndl < 0.0 && transmissive > 0.0 ? -n : n, ign(gl_FragCoord.xy));
     }
-    shadow *= cloudShadow(p + cameraPos, casterDir);
+    if (needShadow) {
+      shadow *= cloudShadow(p + cameraPos, casterDir);
+    }
     shadow = overcastShadow(shadow);
     vec3 caster = sunIsCaster == 1 ? sunLight(sunAltitude) : moonLight(sunAltitude);
     float up = max(-n.y, 0.0);
@@ -372,5 +402,5 @@ void main() {
   lit = waterOver(px, p, n, color.rgb, light, shadow, lit, material.b, fogColor);
   lit = mix(lit, fogColor, max(fogAmount(p + cameraPos), envFogAmount(p)));
   FragColor = overTransparent(px, vec4(lit, color.a));
-  FragColor.rgb = applyVolumetricFog(px, FragColor.rgb, d);
+  FragColor.rgb = fogDone ? applyFogSample(FragColor.rgb, fog) : applyVolumetricFog(px, FragColor.rgb, d);
 }
