@@ -99,9 +99,7 @@ out vec4 FragFog;
 #define FOG_POINT_LIGHT_SCALE 0.35
 #define FOG_GLOW_CORE 0.2
 
-float ign(vec2 p) {
-  return fract(52.9829189 * fract(dot(p, vec2(0.06711056, 0.00583715))));
-}
+#include "bayer.glsl"
 
 // normalized so isotropic scattering is 1
 float phase(float cosTheta) {
@@ -242,7 +240,8 @@ void main() {
 
   int steps = clamp(fogSteps, 1, FOG_MAX_STEPS);
   float dt = (t1 - t0) / float(steps);
-  float jitter = ign(gl_FragCoord.xy);
+  // ordered, so the upsample averages it away (bayer.glsl)
+  float jitter = bayer4(gl_FragCoord.xy);
   vec3 scatter = vec3(0.0);
   float trans = 1.0;
   float weight[FOG_MAX_STEPS];

@@ -2,42 +2,60 @@
 
 // Screen-space ambient occlusion at half resolution. Normal-oriented hemisphere samples in world space,
 // tested against the depth buffer. Noisy by design; the composite pass blurs it depth-aware while upsampling.
+// The sun and moon shadows are drawn here too (shadow_pcss.glsl), at half resolution, and upsampled the same way.
 
 #include "frame.glsl"
 #include "halfres.glsl"
+#include "bayer.glsl"
+#include "shadow_pcss.glsl"
 
 uniform float aoRadius;  // world units
 uniform int aoSamples;   // 0: only the geometry for the upsamples (AO off, fog on)
+uniform int shadowsEnabled;
+uniform vec3 casterDir;  // toward the light that casts shadows
+uniform sampler2D sceneMaterial;  // r emissive, g transmissive (frag.glsl)
 
-out vec4 FragAo;  // see halfres.glsl
+layout(location = 0) out vec4 FragAo;  // see halfres.glsl
+layout(location = 1) out vec4 FragShadow;  // r: lit share, 1 unshadowed
 // sine of the minimum angle above the surface for an occluder to count; higher ignores more of the shallow folds
 #define AO_ANGLE_BIAS 0.10
 #define TAU 6.28318530718
 #define GOLDEN_ANGLE 2.39996322973
-
-// interleaved gradient noise: cheap per-pixel rotation that the 4x4 upsample blur averages out
-float ign(vec2 p) {
-  return fract(52.9829189 * fract(dot(p, vec2(0.06711056, 0.00583715))));
-}
 
 void main() {
   ivec2 px = ivec2(gl_FragCoord.xy) * 2;
   float d = texelFetch(sceneDepth, px, 0).r;
   if (isSky(d)) {
     FragAo = vec4(1.0, 0.0, 0.0, 0.0);
+    FragShadow = vec4(1.0);
     return;
   }
-  vec3 n = decodeNormal(texelFetch(sceneNormal, px, 0).rgb);
+  // a pixel partly covering the sky holds that share of its normal and material, the rest cleared to 0
+  // (the color target's alpha is that share: SceneTargets clears it to 0, geometry writes 1)
+  float cover = max(texelFetch(sceneColor, px, 0).a, 1.0 / 255.0);
+  vec3 n = decodeNormal(texelFetch(sceneNormal, px, 0).rgb / cover);
   FragAo = vec4(1.0, NEAR / viewDepth(d), octEncode(n));
-  if (aoSamples <= 0 || !inViewport(px)) {
+  FragShadow = vec4(1.0);
+  if (!inViewport(px)) {
     return;
   }
 
   vec3 p = reconstructPosition(vec2(px) + 0.5, d);
+  float noise = bayer4(gl_FragCoord.xy);
+  if (shadowsEnabled == 1) {
+    vec2 m = texelFetch(sceneMaterial, px, 0).rg / cover;
+    // emissive surfaces show no shading; a leaf lit from behind looks up its shadow on the lit side
+    if (m.r < 0.999) {
+      FragShadow.r = shadowFactor(p, dot(n, casterDir) < 0.0 && m.g > 0.0 ? -n : n, noise);
+    }
+  }
+  if (aoSamples <= 0) {
+    return;
+  }
+
   vec3 t = normalize(cross(n, abs(n.y) < 0.99 ? vec3(0.0, 1.0, 0.0) : vec3(1.0, 0.0, 0.0)));
   vec3 b = cross(n, t);
 
-  float noise = ign(gl_FragCoord.xy);
   float bias = aoRadius * 0.04;
   float occlusion = 0.0;
 

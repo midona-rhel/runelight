@@ -34,6 +34,8 @@ class SceneTargets
 
 	// ambient occlusion at half resolution, upsampled depth-aware in the composite pass
 	private int fboAo, texAo;
+	// sun and moon shadows at half resolution, drawn by the AO pass and upsampled with it
+	private int texShadow;
 	private int aoWidth, aoHeight;
 
 	void init(int width, int height, int samples)
@@ -69,10 +71,19 @@ class SceneTargets
 		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
 		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
 		glBindTexture(GL_TEXTURE_2D, 0);
+		texShadow = glGenTextures();
+		glBindTexture(GL_TEXTURE_2D, texShadow);
+		glTexImage2D(GL_TEXTURE_2D, 0, GL_R8, aoWidth, aoHeight, 0, GL_RED, GL_UNSIGNED_BYTE, 0);
+		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+		glBindTexture(GL_TEXTURE_2D, 0);
 		fboAo = glGenFramebuffers();
 		glBindFramebuffer(GL_FRAMEBUFFER, fboAo);
 		glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, texAo, 0);
-		glDrawBuffers(GL_COLOR_ATTACHMENT0);
+		glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT1, GL_TEXTURE_2D, texShadow, 0);
+		glDrawBuffers(new int[]{GL_COLOR_ATTACHMENT0, GL_COLOR_ATTACHMENT1});
 		check("ao");
 
 		if (samples > 0)
@@ -106,8 +117,8 @@ class SceneTargets
 		if (fboAo != 0)
 		{
 			glDeleteFramebuffers(fboAo);
-			glDeleteTextures(texAo);
-			fboAo = texAo = 0;
+			glDeleteTextures(new int[]{texAo, texShadow});
+			fboAo = texAo = texShadow = 0;
 		}
 		if (fboResolve != 0)
 		{
@@ -140,6 +151,14 @@ class SceneTargets
 	int getAoHeight()
 	{
 		return aoHeight;
+	}
+
+	/** The half resolution shadows, for the composite. */
+	void bindShadow(int unit)
+	{
+		glActiveTexture(GL_TEXTURE0 + unit);
+		glBindTexture(GL_TEXTURE_2D, texShadow);
+		glActiveTexture(GL_TEXTURE0);
 	}
 
 	void bindAo(int unit)
@@ -183,13 +202,16 @@ class SceneTargets
 
 	/**
 	 * Clear the transparency layer to nothing. Call with the render framebuffer bound, after the frame's clear,
-	 * which fills every attachment with the sky color.
+	 * which fills every attachment with the sky color (alpha 0).
 	 */
 	void clearAlphaLayer()
 	{
 		glDrawBuffers(ALL_BUFFERS);
 		glClearBufferfv(GL_COLOR, 2, TRANSPARENT);
-		// the frame's clear filled the material target with the sky color too
+		// The frame's clear filled the normal and material targets with the sky color too. At 0, a pixel the
+		// geometry only partly covers resolves to that share of its values, which the composite divides back out
+		// by the color target's alpha, the coverage.
+		glClearBufferfv(GL_COLOR, 1, TRANSPARENT);
 		glClearBufferfv(GL_COLOR, 3, TRANSPARENT);
 		glDrawBuffers(OPAQUE_BUFFERS);
 	}

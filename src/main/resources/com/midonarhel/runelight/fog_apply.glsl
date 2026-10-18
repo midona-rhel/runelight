@@ -11,9 +11,12 @@ uniform sampler2D sceneFog;  // half resolution: rgb light scattered toward the 
 #define FOG_UPSAMPLE_DEPTH 0.03
 #define FOG_SKY_DEPTH HALF_SKY_DEPTH
 
-// 4x4 Gaussian over the half resolution texels around px
+// Nearly flat over the 4x4 half resolution texels around px: the half resolution passes jitter by a 4x4 ordered
+// pattern (bayer.glsl), which flat weights average away exactly; a Gaussian left a fine grain of it
+#define UPSAMPLE_TAPER 0.15
 float upsampleSpatial(vec2 o) {
-  return exp(-dot(o, o) * 0.5);
+  vec2 w = 1.0 - UPSAMPLE_TAPER * abs(o);
+  return w.x * w.y;
 }
 
 float fogDepthWeight(float qz, float z) {
