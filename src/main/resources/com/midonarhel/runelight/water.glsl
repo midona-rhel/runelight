@@ -76,7 +76,7 @@ layout(location = 1) out uvec4 WaterShadedOut;
 // Caustics: 117 HD's, carried by the flow, worked out by the water pass (water_frag.glsl) as their value above the
 // mean in units of the brightest lines'. The bed gains CAUSTICS times the direct light per unit (between
 // CAUSTIC_RANGE); fainter by moonlight.
-#define CAUSTICS 1.6
+#define CAUSTICS 1.0
 #define CAUSTIC_RANGE vec2(-0.7, 3.0)
 #define CAUSTIC_MOON 0.35
 // near the waterline the caustics only brighten: their dark between the lines comes in over this depth

@@ -10,7 +10,7 @@ uniform vec2 waterGrid;             // x: extended tile of local tile 0, y: corn
 
 #define WATER_TILE 128.0
 // the caustics fade out between these depths (world units) and aren't worked out below them
-#define CAUSTIC_FADE vec2(96.0, 288.0)
+#define CAUSTIC_FADE vec2(48.0, 208.0)
 // how far the surface target's distance reaches (water_frag.glsl)
 #define WATER_REACH 20480.0
 // waterTime wraps after this many seconds (Water.java); every motion repeats a whole number of times in it
@@ -62,10 +62,10 @@ const vec4 WATER_LOOK[WATER_TYPES] = vec4[](
 // how much of the depth color is left in the deep (117 HD goes to black: the deep stays the type's color here)
 const vec3 WATER_FADE[WATER_TYPES] = vec3[](
   vec3(1.0),
-  vec3(150.0, 500.0, 0.55),
-  vec3(150.0, 520.0, 0.50),
-  vec3(130.0, 460.0, 0.42),
-  vec3(170.0, 560.0, 0.55),
+  vec3(150.0, 500.0, 0.38),
+  vec3(150.0, 520.0, 0.35),
+  vec3(130.0, 460.0, 0.29),
+  vec3(170.0, 560.0, 0.38),
   vec3(40.0, 160.0, 0.45),
   vec3(60.0, 220.0, 0.35));
 // how fast each type's flow runs, as a share of the flow map's
