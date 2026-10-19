@@ -56,8 +56,8 @@ layout(location = 0) out uvec4 WaterOut;  // 64 bits packed, see water.glsl's wa
 #define FAST_WAVES 1.8
 #define FAST_FLOW 90.0
 // toward the shore the waves flatten to SHORE_WAVES of their height, over SHORE_CALM tiles out
-#define SHORE_WAVES 0.2
-#define SHORE_CALM 1.5
+#define SHORE_WAVES 0.05
+#define SHORE_CALM 3.0
 // The surface's fine detail: 117 HD's normal map (layer 3 of waterNoise) at this strength, and its seconds per repeat
 // of each size
 #define NORMAL_STRENGTH 0.05
