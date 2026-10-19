@@ -68,6 +68,9 @@ layout(location = 0) out uvec4 WaterOut;  // 64 bits packed, see water.glsl's wa
 #define NORMAL_STREAK 3.0
 // the foam on rapids: the large ripple cells' rims (layer 2), world units per repeat
 #define CELL_SCALE_B 520.0
+// on still water the foam is two copies of the cells drifting across each other, one cell every FOAM_STILL_PERIOD
+// seconds and a little slower
+#define FOAM_STILL_PERIOD 40.0
 // turbulence (rapids) adds to the ripples, and lays soft foam over them where it is strong
 #define TURB_WAVES 0.6
 #define TURB_FOAM vec2(0.35, 0.9)
@@ -264,6 +267,12 @@ void main() {
   if (churn > 0.0 || contact > 0.0) {
     float h = textureLod(waterNoise, vec3((xz - m0) / CELL_SCALE_B, 2.0), lodFoam).b * w0
       + textureLod(waterNoise, vec3((xz + vec2(173.0, 91.0) - m1) / CELL_SCALE_B, 2.0), lodFoam).b * (1.0 - w0);
+    if (flowing < 1.0) {
+      vec2 uv = (xz - base) / CELL_SCALE_B;
+      float still = 0.5 * (textureLod(waterNoise, vec3(uv + vec2(waterCycle(FOAM_STILL_PERIOD), 0.0), 2.0), lodFoam).b
+        + textureLod(waterNoise, vec3(uv.yx + vec2(0.37, -waterCycle(FOAM_STILL_PERIOD * 1.37)), 2.0), lodFoam).b);
+      h = mix(still, h, flowing);
+    }
     float rim = 1.0 - smoothstep(0.15, 0.55, h);
     foam = max(rim * churn * FOAM, contact * (rim * CONTACT_FOAM + CONTACT_FILM));
   }
