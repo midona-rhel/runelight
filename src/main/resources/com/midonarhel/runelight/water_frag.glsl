@@ -42,13 +42,13 @@ layout(location = 0) out uvec4 WaterOut;  // 64 bits packed, see water.glsl's wa
 // WAVE_SHRINK as long, WAVE_FADE as high, and a little less choppy. Each runs both ways at WAVE_SPEED wavelengths a
 // second, which makes them heave in place rather than slide. WAVE_HEIGHT: world units of the first.
 #define WAVE_DIR vec2(0.70710678, 0.70710678)
-#define WAVE_OCTAVES 4
-#define WAVE_LONGEST 2.6
+#define WAVE_OCTAVES 3
+#define WAVE_LONGEST 4.5
 #define WAVE_SHRINK 0.53
 #define WAVE_FADE 0.3
-#define WAVE_CHOP 4.0
+#define WAVE_CHOP 2.2
 #define WAVE_SPEED 0.11
-#define WAVE_HEIGHT 26.0
+#define WAVE_HEIGHT 12.0
 // along the wind the waves are this much longer than across it
 #define WAVE_STRETCH 1.35
 // still water (no flow) runs its waves and its detail this many times slower, and drifts less with the wind
