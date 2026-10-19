@@ -886,8 +886,16 @@ class SceneUploader
 	private int shoreColor(int x, int height, int z)
 	{
 		int v = groundBlender.lookup(x, height, z);
-		return v != -1 && (v & GroundBlender.BLENDED) != 0 ? v & 0xffff : -1;
+		if (v == -1 || (v & GroundBlender.BLENDED) == 0)
+		{
+			return -1;
+		}
+		// Near-black ground colors (wall bases, black tiles, ground hidden under objects) carried onto the bed
+		// showed under the water as dark squares, the refraction wobbling their edges: the bed keeps its own there.
+		return (v & 127) < MIN_SHORE_LIGHTNESS ? -1 : v & 0xffff;
 	}
+
+	private static final int MIN_SHORE_LIGHTNESS = 12;
 
 	/**
 	 * The mean of the first n packed HSL colors that aren't -1, or -1 if all are.

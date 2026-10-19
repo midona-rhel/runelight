@@ -43,10 +43,6 @@ uniform int waterDebug;
 #define OBJECT_DEPTH 8.0
 #define OBJECT_FADE 150.0
 #define BED_SKY 0.8
-// The sun's shadow on the bed: under the first BED_FLAT_DEPTH units it is the surface's soft one, BED_SHADOW_LIFT of
-// the way to unshadowed (the water scatters light into the shade). The bed's own, sharp and dark, drew the dappled
-// shade of trees as near-black blotches on the water.
-#define BED_SHADOW_LIFT 0.35
 // How much of the surface covers what is under it: the type's base opacity once the water is SURFACE_DEPTH deep
 // (clear over the shallows), at least FRESNEL_BASE rising to all of it at a slant as (1 - cos)^FRESNEL_POWER, and at
 // least OPACITY_SLANT of 1 - the view's elevation. 117 HD's is the base opacity everywhere and a straight line from
@@ -382,20 +378,16 @@ vec3 waterOver(ivec2 px, inout vec3 p, vec3 n, vec3 albedo, vec3 light, vec3 ind
     } else if (lightOn) {
       bedLight += (envCaveLight(vec3(0.0, -1.0, 0.0)) - indirect) * (BED_SCATTER * smoothstep(0.0, BED_FLAT_DEPTH, under0));
     }
-    float bedShadow = shadow;
     if (bed && outdoors == 1 && lightOn) {
-      float sink = smoothstep(0.0, BED_FLAT_DEPTH, under0);
-      bedShadow = mix(shadow, mix(surfShadow, 1.0, BED_SHADOW_LIFT), sink);
-      // light holds caster * shadow * (n . l); swap in the flattened normal and the soft shadow
-      float ndl = max(dot(n, casterDir), 0.0);
-      bedLight += caster * (bedShadow * mix(ndl, max(-casterDir.y, 0.0), BED_FLAT * sink) - shadow * ndl);
+      float flatten = BED_FLAT * smoothstep(0.0, BED_FLAT_DEPTH, under0);
+      bedLight += caster * (shadow * flatten * (max(-casterDir.y, 0.0) - max(dot(n, casterDir), 0.0)));
       bedLight = max(bedLight, vec3(0.0));
     }
     if (waterCaustics == 1 && outdoors == 1 && lightOn && look.x < 0.7) {
       // the direct light reaching the bed (shadow has the clouds and overcast in it), faint by moonlight and on
       // objects, gone by CAUSTIC_DEPTH
       float fade = max(1.0 - under0 / (CAUSTIC_DEPTH * waterClarity), 0.0);
-      float k = (bed ? max(-casterDir.y, 0.0) : max(dot(n, casterDir), 0.0)) * bedShadow * (sunIsCaster == 1 ? 1.0 : CAUSTIC_MOON)
+      float k = (bed ? max(-casterDir.y, 0.0) : max(dot(n, casterDir), 0.0)) * shadow * (sunIsCaster == 1 ? 1.0 : CAUSTIC_MOON)
         * (bed ? 1.0 : CAUSTIC_OBJECTS) * CAUSTICS * smoothstep(0.0, 6.0, under0) * fade * fade;
       bedLight += caster * (k * clamp(causticValue, CAUSTIC_RANGE.x, CAUSTIC_RANGE.y));
     }
