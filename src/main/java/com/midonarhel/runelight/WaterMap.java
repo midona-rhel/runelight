@@ -241,11 +241,26 @@ final class WaterMap
 
 		// a body takes the murk most of its tiles have, so it doesn't change color halfway across
 		int[][] votes = new int[b.bodies][3];
+		// and fresh water or swamp water by what most of its tiles are drawn with: a river with a few tiles of the
+		// swamp texture would show them as dark squares
+		int[][] kinds = new int[b.bodies][2];
 		for (int i = 0; i < kind.length; ++i)
 		{
 			if (b.body[i] >= 0)
 			{
 				votes[b.body[i]][murk[i]]++;
+				if (kind[i] == FRESH || kind[i] == SWAMP)
+				{
+					kinds[b.body[i]][kind[i] == SWAMP ? 1 : 0]++;
+				}
+			}
+		}
+		for (int i = 0; i < kind.length; ++i)
+		{
+			if (b.body[i] >= 0 && (kind[i] == FRESH || kind[i] == SWAMP))
+			{
+				int[] k = kinds[b.body[i]];
+				kind[i] = k[1] > k[0] ? SWAMP : FRESH;
 			}
 		}
 		for (int i = 0; i < kind.length; ++i)

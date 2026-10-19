@@ -12,7 +12,7 @@ import static org.lwjgl.opengl.GL33C.*;
  *
  * Why its own target rather than the scene's: the composite lights the scene and needs both what is under the
  * water (the bed's depth, color and normal in the scene targets) and the surface in front of it, and it has no
- * sampler to spare, so the surface goes into one RG32UI texture that takes the water data's unit there. The pass
+ * sampler to spare, so the surface goes into one RGBA16UI texture (64 bits) that takes the water data's unit there. The pass
  * runs after the MSAA resolve against the resolved depth, so it is drawn once per pixel; it has its own depth buffer
  * so the waves hide each other, and drops what is behind the scene in its fragment shader.
  *
@@ -51,7 +51,8 @@ class WaterSurface
 
 	private int program;
 	private int uniViewProj, uniCamera, uniFocus, uniGridN, uniGrid, uniTime, uniWind, uniDrift, uniWaves, uniSpeed, uniDisplace,
-		uniFade, uniRain, uniOutdoors, uniDebug, uniSkyDepth;
+		uniFade, uniRain, uniOutdoors, uniDebug, uniSkyDepth, uniCausticsOn, uniCasterDir, uniInvViewProj, uniViewport,
+		uniZeroToOne;
 
 	private int vao, vboTiles, ebo;
 	private Mesh mesh;
@@ -206,6 +207,11 @@ class WaterSurface
 		uniOutdoors = glGetUniformLocation(program, "waterOutdoors");
 		uniDebug = glGetUniformLocation(program, "waterDebug");
 		uniSkyDepth = glGetUniformLocation(program, "waterSkyDepth");
+		uniCausticsOn = glGetUniformLocation(program, "waterCausticsOn");
+		uniCasterDir = glGetUniformLocation(program, "waterCasterDir");
+		uniInvViewProj = glGetUniformLocation(program, "waterInvViewProj");
+		uniViewport = glGetUniformLocation(program, "waterViewport");
+		uniZeroToOne = glGetUniformLocation(program, "waterZeroToOne");
 		glUseProgram(program);
 		glUniform1i(glGetUniformLocation(program, "sceneDepth"), depthUnit);
 		glUniform1i(glGetUniformLocation(program, "waterData"), dataUnit);
@@ -273,7 +279,7 @@ class WaterSurface
 		height = h;
 		texSurface = glGenTextures();
 		glBindTexture(GL_TEXTURE_2D, texSurface);
-		glTexImage2D(GL_TEXTURE_2D, 0, GL_RG32UI, w, h, 0, GL_RG_INTEGER, GL_UNSIGNED_INT, (ByteBuffer) null);
+		glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA16UI, w, h, 0, GL_RGBA_INTEGER, GL_UNSIGNED_SHORT, (ByteBuffer) null);
 		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
 		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
 		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
@@ -340,6 +346,11 @@ class WaterSurface
 		glUniform1i(uniOutdoors, params.outdoors ? 1 : 0);
 		glUniform1i(uniDebug, params.debug ? 1 : 0);
 		glUniform1f(uniSkyDepth, params.skyDepth);
+		glUniform1i(uniCausticsOn, params.caustics ? 1 : 0);
+		glUniform3fv(uniCasterDir, params.casterDir);
+		glUniformMatrix4fv(uniInvViewProj, false, params.invViewProj);
+		glUniform4i(uniViewport, viewport[0], viewport[1], viewport[2], viewport[3]);
+		glUniform1i(uniZeroToOne, params.zeroToOne ? 1 : 0);
 
 		glBindVertexArray(vao);
 		glBindBuffer(GL_ARRAY_BUFFER, vboTiles);

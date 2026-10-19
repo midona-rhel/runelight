@@ -131,6 +131,11 @@ void waterFlowPhases(vec2 xz, vec2 flow, vec2 base, out vec2 m0, out vec2 m1, ou
   m1 = base + drag * (ph1 * FLOW_CYCLE);
 }
 
+// A scroll of a whole number of repeats per wrap of waterTime, about one per `period` seconds
+float waterCycle(float period) {
+  return fract(floor(WATER_TIME_WRAP / period + 0.5) * (waterTime / WATER_TIME_WRAP));
+}
+
 // A whole number of cycles per wrap of waterTime: the phase of a wave of angular frequency omega at waterTime
 float waterWavePhase(float omega) {
   float cycles = floor(omega * WATER_TIME_WRAP / WATER_TAU + 0.5);

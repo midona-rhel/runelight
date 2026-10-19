@@ -125,4 +125,29 @@ public class WaterTest
 		assertEquals(255, at(s, 8, 6, 2));
 		assertEquals(255, at(s, 7, 5, 3));
 	}
+
+	@Test
+	public void cellsTileAndAreRoundBumps()
+	{
+		byte[] t = Water.cells(SIZE, 41);
+		int inside = 0, wrap = 0;
+		double sum = 0;
+		for (int i = 0; i < SIZE; ++i)
+		{
+			for (int x = 1; x < SIZE; ++x)
+			{
+				inside = Math.max(inside, Math.abs(at(t, x, i, 2) - at(t, x - 1, i, 2)));
+			}
+			wrap = Math.max(wrap, Math.abs(at(t, 0, i, 2) - at(t, -1, i, 2)));
+			wrap = Math.max(wrap, Math.abs(at(t, i, 0, 2) - at(t, i, -1, 2)));
+		}
+		for (int i = 0; i < SIZE * SIZE; ++i)
+		{
+			sum += (t[i * 4] & 0xFF) - 127.5;
+		}
+		assertTrue("wrap step " + wrap + " inside " + inside, wrap <= inside);
+		// smooth: no texel jumps like a Voronoi crease would make
+		assertTrue("inside " + inside, inside < 40);
+		assertTrue("mean slope " + sum / (SIZE * SIZE), Math.abs(sum / (SIZE * SIZE)) < 4);
+	}
 }

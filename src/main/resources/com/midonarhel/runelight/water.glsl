@@ -1,19 +1,19 @@
 // Water, shaded by the composite over the lowered water bed (WaterMap.java, Water.java, WaterSurface.java).
 //
 // The surface is real geometry: the water pass (water_vert.glsl, water_frag.glsl) draws it, moved by the swell and the
-// chop, wherever it is in front of the opaque scene, and leaves how far away it is along the view ray and its normal,
-// type, foam and speed in waterSurface. The bed and anything else under the water are ordinary pixels of the scene
-// buffers; here they are seen through that surface: refracted, lit by the caustics, fading into the type's depth
-// color over a short depth, then the surface over them as 117 HD draws it (BSD-2, see LICENSE): its own color lit,
-// mostly the sky's reflection, at least half opaque and more so at a slant. Objects standing in the water are
-// covered by the real surface, so the waterline follows the waves. Soft broad highlights from the sun and moon,
-// mild glitter, lamp glints in their rooms.
+// chop, wherever it is in front of the opaque scene, and leaves how far away it is, its normal, type and foam, the
+// water's depth by the shore and the caustics on the bed below in waterSurface. The bed and anything else under the
+// water are ordinary pixels of the scene buffers; here they are seen through that surface: refracted, lit by the
+// caustics, fading into the type's depth color over a short depth, then the surface over them after 117 HD (BSD-2,
+// see LICENSE): its own color lit and the sky's reflection, which the ripples carried by the current move about.
+// Objects standing in the water are covered by the real surface, so the waterline follows the waves. Soft broad
+// highlights from the sun and moon, mild glitter, lamp glints in their rooms.
 // Included by composite_frag.glsl after its lighting helpers (shadows, point light clusters).
 
 #include "water_common.glsl"
 
 uniform int waterEnabled;
-uniform usampler2D waterSurface;  // r: floatBitsToUint(distance to the surface), 0 none; g: packed (waterUnpack)
+uniform usampler2D waterSurface;  // RGBA16UI, 64 bits packed by water_frag.glsl (waterUnpack); 0 no water
 uniform int waterReflections;     // a few screen-space taps for the world in the reflection
 uniform float waterClarity;       // multiplier on how deep the bed stays visible
 uniform int waterCaustics;
@@ -27,8 +27,15 @@ uniform int waterDebug;
 // how far the bed seen through the water shifts per unit of surface slope, world units, once the water is deep
 #define REFRACT 300.0
 #define REFRACT_DEPTH 70.0
-// vertical depth over which the surface fades in from the waterline
+// vertical depth over which the surface fades in from the waterline; within 1 / WATERLINE_DEPTH of the depth the
+// shore distance gives, the bed's own depth sets the water's color
 #define SOFT_EDGE 10.0
+#define WATERLINE_DEPTH 4.0
+// The bed is lit under the water as if it were flat (by BED_FLAT, past the first BED_FLAT_DEPTH units): the light
+// down there is scattered anyway, and the steep sides of the pits in shore tiles lit by their own normals showed as
+// dark and bright squares
+#define BED_FLAT 0.85
+#define BED_FLAT_DEPTH 16.0
 // How much of the surface covers what is under it: the type's base opacity once the water is SURFACE_DEPTH deep
 // (clear over the shallows), at least FRESNEL_BASE rising to all of it at a slant as (1 - cos)^FRESNEL_POWER, and at
 // least OPACITY_SLANT of 1 - the view's elevation. 117 HD's is the base opacity everywhere and a straight line from
@@ -37,8 +44,9 @@ uniform int waterDebug;
 #define FRESNEL_BASE 0.15
 #define FRESNEL_POWER 2.0
 #define OPACITY_SLANT 0.4
-// the sky is reflected off a flattened normal (117 HD): the waves barely move it
-#define SKY_TILT 0.2
+// The sky is reflected off a normal whose slope is SKY_TILT of the waves': the ripples carried by the current move the
+// sky's gradient and clouds about, which is what shows the flow. 117 HD flattens it to 0.2.
+#define SKY_TILT 0.75
 // Highlights. Sheen: a broad soft lobe of the sun or moon on the waves (Blinn-Phong exponent, strength). Glitter:
 // its reflection on the waves' slopes exaggerated GLITTER_SLOPE times (117 HD reflects the disk that way), a soft
 // path toward the camera of GLITTER_ROUGH width.
@@ -52,16 +60,10 @@ uniform int waterDebug;
 #define LAMP_ACROSS 0.06
 // what is seen through a wave face turned toward the camera is a little brighter, turned away darker
 #define WAVE_SHADE 0.6
-// 117 HD's caustics: their map (Water.java), two copies scrolling apart and the darker one kept, colored fringes
-// from the channels being offset (baked into the texture). World units per repeat; seconds per cycle of each copy.
-#define CAUSTIC_SCALE 298.67
-#define CAUSTIC_PERIOD vec2(17.0, 23.0)
-// The kept copy's values: about CAUSTIC_MEAN on average, CAUSTIC_LINE on the brightest 1% (measured on the map).
-// The light on the bed gains CAUSTICS times the direct light per unit above the mean, so the lines brighten it and
-// the cells between them darken it a little (down to CAUSTIC_RANGE.x, up to .y); none at CAUSTIC_DEPTH. 117 HD
-// multiplies the bed by 1 + 16 times the value, which brightens all of it.
-#define CAUSTIC_MEAN 0.145
-#define CAUSTIC_LINE 0.30
+// Caustics: 117 HD's, carried by the flow, worked out by the water pass (water_frag.glsl) as their value above the
+// mean in units of the brightest lines'. The light on the bed gains CAUSTICS times the direct light per unit, so the
+// lines brighten it and the cells between them darken it a little (down to CAUSTIC_RANGE.x, up to .y); none at
+// CAUSTIC_DEPTH. 117 HD multiplies the bed by 1 + 16 times the value, which brightens all of it.
 #define CAUSTIC_RANGE vec2(-0.7, 3.0)
 // by moonlight, and on things standing in the water rather than the bed
 #define CAUSTICS 1.6
@@ -74,32 +76,28 @@ uniform int waterDebug;
 #define SSR_GROWTH 2.0
 #define SSR_REFINE 3
 
-// The water pass's packed surface: normal x, z (11 bits each), type (3), foam (4), speed (3)
-void waterUnpack(uint g, out vec3 nrm, out int type, out float foam, out float fast) {
-  float nx = float(g & 2047u) / 2047.0 * 2.0 - 1.0;
-  float nz = float(g >> 11 & 2047u) / 2047.0 * 2.0 - 1.0;
+// how far the surface target's distance reaches (water_frag.glsl)
+#define WATER_REACH 20480.0
+
+// The water pass's packed surface (water_frag.glsl): the distance to it, its normal, type, foam, the water's depth
+// going by the shore (smooth across tiles), and the caustics on the bed below
+void waterUnpack(uvec4 w, out float t, out vec3 nrm, out int type, out float foam, out float shoreDepth,
+  out vec3 caustic) {
+  uint a = w.r | w.g << 16, b = w.b | w.a << 16;
+  float nx = float(a & 1023u) / 1023.0 * 2.0 - 1.0;
+  float nz = float(a >> 10 & 1023u) / 1023.0 * 2.0 - 1.0;
   nrm = vec3(nx, -sqrt(max(1.0 - nx * nx - nz * nz, 0.0)), nz);
-  type = clamp(int(g >> 22 & 7u), 1, WATER_TYPES - 1);
-  foam = float(g >> 25 & 15u) / 15.0;
-  fast = float(g >> 29 & 7u) / 7.0;
+  type = clamp(int(a >> 20 & 7u), 1, WATER_TYPES - 1);
+  foam = float(a >> 23 & 7u) / 7.0;
+  float d = float(a >> 26 & 63u) / 63.0;
+  shoreDepth = d * d * 512.0;
+  t = float(b & 65535u) / 65535.0 * WATER_REACH;
+  float g = float(b >> 16 & 255u) / 255.0 * 4.0 - 1.0;
+  caustic = g + vec3(float(b >> 24 & 15u) / 15.0 - 0.5, 0.0, float(b >> 28 & 15u) / 15.0 - 0.5);
 }
 
 float waterLod(float footprint, float repeat) {
   return log2(max(footprint * 256.0 / repeat, 1.0));
-}
-
-// A scroll of a whole number of repeats per wrap of waterTime, about one per `period` seconds
-float waterCycle(float period) {
-  return fract(floor(WATER_TIME_WRAP / period + 0.5) * (waterTime / WATER_TIME_WRAP));
-}
-
-// The caustics at world xz: 0 to 1 per channel
-vec3 waterCaustic(vec2 xz, float lod) {
-  const vec2 DIR = vec2(1.0, -2.0);
-  vec2 uv = xz / CAUSTIC_SCALE;
-  vec3 a = textureLod(waterNoise, vec3(uv + waterCycle(CAUSTIC_PERIOD.x) * DIR, 1.0), lod).rgb;
-  vec3 b = textureLod(waterNoise, vec3(uv * 1.5 - waterCycle(CAUSTIC_PERIOD.y) * DIR, 1.0), lod).rgb;
-  return min(a, b);
 }
 
 // A glint off the water: Ward's anisotropic lobe around the normal, `along` the RMS slope toward the camera, `across`
@@ -161,7 +159,7 @@ vec4 waterTraceReflection(vec3 s, vec3 r, vec3 approxLight) {
         }
       }
       // water reflecting water shows the sky instead
-      if (texelFetch(sceneMaterial, ip, 0).b > 0.75 || texelFetch(waterSurface, ip, 0).r != 0u)
+      if (texelFetch(sceneMaterial, ip, 0).b > 0.75 || texelFetch(waterSurface, ip, 0).b != 0u)
         break;
       vec2 edge = smoothstep(vec2(1.0), vec2(0.75), abs(ndc));
       float reach = 1.0 - smoothstep(stepLen * 1.5, stepLen * 2.5, behind);
@@ -203,10 +201,14 @@ vec3 waterOver(ivec2 px, inout vec3 p, vec3 n, vec3 albedo, vec3 light, float sh
   // land terrain is never under water: the surface runs on under the banks, hidden, and never over land
   if (waterEnabled == 0 || mask < 0.25)
     return lit;
-  uvec2 ws = texelFetch(waterSurface, px, 0).rg;
-  if (ws.r == 0u)
+  uvec4 ws = texelFetch(waterSurface, px, 0);
+  if (ws.b == 0u)
     return lit;
-  float t = uintBitsToFloat(ws.r);
+  float t;
+  vec3 nrm, causticValue;
+  int type;
+  float foam, shoreDepth;
+  waterUnpack(ws, t, nrm, type, foam, shoreDepth, causticValue);
   float dist = length(p);
   if (t >= dist)
     return lit;
@@ -218,17 +220,18 @@ vec3 waterOver(ivec2 px, inout vec3 p, vec3 n, vec3 albedo, vec3 light, float sh
 
   if (waterDebug == 1) {
     p = s;
-    return vec3(float(ws.g & 255u), float(ws.g >> 8 & 255u), float(ws.g >> 16 & 255u)) / 255.0;
+    uint a = ws.r | ws.g << 16;
+    return vec3(float(a & 255u), float(a >> 8 & 255u), float(a >> 16 & 255u)) / 255.0;
   }
 
-  vec3 nrm;
-  int type;
-  float foam, fast;
-  waterUnpack(ws.g, nrm, type, foam, fast);
   vec4 look = WATER_LOOK[type];
-  // vertical depth of this pixel below the surface (y down), and how far the view travels under it
+  // vertical depth of this pixel below the surface (y down)
   float depth = p.y - s.y;
   float under0 = max(depth, 0.0);
+  // The depth the water's color goes by: the shore distance's, smooth across tiles, so the pit the bed sinks into in
+  // the middle of every shore tile doesn't show as a dark square; only right at the waterline the bed's own depth
+  // fades the water in.
+  float colorDepth = min(shoreDepth, under0 * WATERLINE_DEPTH + 4.0);
   vec2 slope = nrm.xz / nrm.y;
   vec3 toCamera = -v;
   float viewZ = (viewProj * vec4(s, 1.0)).w;
@@ -251,8 +254,14 @@ vec3 waterOver(ivec2 px, inout vec3 p, vec3 n, vec3 albedo, vec3 light, float sh
       vec2 uv = lc4.xy * 0.5 + 0.5;
       float z = depthZeroToOne == 1 ? lc4.z : lc4.z * 0.5 + 0.5;
       float bias = 4.0 * (2.0 * shadowRadius / shadowMapSize) / (2.0 * shadowDepthRange);
-      if (all(greaterThan(uv, vec2(0.0))) && all(lessThan(uv, vec2(1.0))) && z < 1.0)
-        surfShadow = textureLod(shadowCompare, vec3(uv, z - bias), 0.0);
+      // four filtered taps a texel and a half apart: one tap drew the shadow map's texels as hard dark squares
+      if (all(greaterThan(uv, vec2(0.0))) && all(lessThan(uv, vec2(1.0))) && z < 1.0) {
+        vec2 o = vec2(1.5 / shadowMapSize, 0.5 / shadowMapSize);
+        surfShadow = 0.25 * (textureLod(shadowCompare, vec3(uv + o, z - bias), 0.0)
+          + textureLod(shadowCompare, vec3(uv - o, z - bias), 0.0)
+          + textureLod(shadowCompare, vec3(uv + o.yx * vec2(-1.0, 1.0) * 3.0, z - bias), 0.0)
+          + textureLod(shadowCompare, vec3(uv - o.yx * vec2(-1.0, 1.0) * 3.0, z - bias), 0.0));
+      }
     }
     surfShadow = overcastShadow(surfShadow * cloudShadow(sw, casterDir));
     waterLight = (ambientLight(sunAltitude) + skyLight(sunAltitude) * max(-nrm.y, 0.0)) * envAmbient
@@ -292,7 +301,6 @@ vec3 waterOver(ivec2 px, inout vec3 p, vec3 n, vec3 albedo, vec3 light, float sh
   {
     vec3 seen = albedo;
     bool seenBed = bed;
-    vec3 seenP = p;
     // the bed wobbles under the waves: strongest where the water is deep enough to bend the view far
     vec3 pr = p + vec3(slope.x, 0.0, slope.y) * (REFRACT * smoothstep(0.0, REFRACT_DEPTH, under0));
     vec4 clip = viewProj * vec4(pr, 1.0);
@@ -306,32 +314,26 @@ vec3 waterOver(ivec2 px, inout vec3 p, vec3 n, vec3 albedo, vec3 light, float sh
         if (!isSky(dr) && mr >= 0.25 && q.y > s.y + 2.0) {
           seen = texelFetch(sceneColor, rp, 0).rgb;
           seenBed = mr > 0.75;
-          seenP = q;
         }
       }
     }
     if (seenBed)
       seen = waterBedAlbedo(seen, under0);
     vec3 bedLight = light;
+    if (bed && outdoors == 1 && lightOn) {
+      float flatten = BED_FLAT * smoothstep(0.0, BED_FLAT_DEPTH, under0);
+      bedLight += caster * (shadow * flatten * (max(-casterDir.y, 0.0) - max(dot(n, casterDir), 0.0)));
+      bedLight = max(bedLight, vec3(0.0));
+    }
     if (waterCaustics == 1 && outdoors == 1 && lightOn && look.x < 0.7) {
       // the direct light reaching the bed (shadow has the clouds and overcast in it), faint by moonlight and on
       // objects, gone by CAUSTIC_DEPTH
       float fade = max(1.0 - under0 / (CAUSTIC_DEPTH * waterClarity), 0.0);
-      float k = max(dot(n, casterDir), 0.0) * shadow * (sunIsCaster == 1 ? 1.0 : CAUSTIC_MOON)
-        * (bed ? 1.0 : CAUSTIC_OBJECTS) * CAUSTICS * smoothstep(0.0, 6.0, under0) * fade * fade
-        * (1.0 - 0.5 * fast);
-      if (k > 0.004) {
-        // the light reaching this point entered the water toward the sun, bent steeper by refraction
-        vec2 sunXZ = casterDir.xz;
-        float sinI = length(sunXZ);
-        float sinT = min(sinI / 1.33, 0.95);
-        vec2 entry = seenP.xz + cameraPos.xz + sunXZ * (sinT * inversesqrt(1.0 - sinT * sinT) / max(sinI, 1e-4) * under0);
-        float lod = waterLod(footprint * dist / t, CAUSTIC_SCALE);
-        vec3 c = (waterCaustic(entry, lod) - CAUSTIC_MEAN) / (CAUSTIC_LINE - CAUSTIC_MEAN);
-        bedLight += caster * (k * clamp(c, CAUSTIC_RANGE.x, CAUSTIC_RANGE.y));
-      }
+      float k = (bed ? max(-casterDir.y, 0.0) : max(dot(n, casterDir), 0.0)) * shadow * (sunIsCaster == 1 ? 1.0 : CAUSTIC_MOON)
+        * (bed ? 1.0 : CAUSTIC_OBJECTS) * CAUSTICS * smoothstep(0.0, 6.0, under0) * fade * fade;
+      bedLight += caster * (k * clamp(causticValue, CAUSTIC_RANGE.x, CAUSTIC_RANGE.y));
     }
-    under = shade(seen, bedLight) * waterDepthTint(type, under0);
+    under = shade(seen, bedLight) * waterDepthTint(type, colorDepth);
     under *= max(1.0 + WAVE_SHADE * dot(slope, v.xz) / max(length(v.xz), 0.25), 0.0);
   }
 
@@ -346,6 +348,9 @@ vec3 waterOver(ivec2 px, inout vec3 p, vec3 n, vec3 albedo, vec3 light, float sh
   if (outdoors == 1 && proceduralSky == 1) {
     float elev = -r.y;
     vec3 sc = mix(skyHorizon(sunAltitude), skyZenith(sunAltitude), pow(clamp(elev, 0.0, 1.0), 0.45));
+    // the sky as drawn this frame, clouds and all, when the sky cache has it: the current moves them about
+    if ((skyCacheMode & 2) != 0)
+      sc = linearToSrgb(clamp(textureLod(skyCache, skyCacheUv(cloudSkyDir(r)), 0.0).rgb, 0.0, 1.0));
     reflection = srgbToLinear(envSky(sc, fogColor, elev));
   } else {
     reflection = srgbToLinear(fogColor) * (outdoors == 1 ? 1.0 : 0.5);
@@ -359,7 +364,7 @@ vec3 waterOver(ivec2 px, inout vec3 p, vec3 n, vec3 albedo, vec3 light, float sh
   }
   vec3 surface = mix(shade(WATER_SURFACE_COLOR[type], waterLight), linearToSrgb(clamp(reflection * fresnel, 0.0, 1.0)),
     look.y);
-  float alpha = max(look.x * smoothstep(0.0, SURFACE_DEPTH, under0), max(fresnel, (1.0 + toCamera.y) * OPACITY_SLANT));
+  float alpha = max(look.x * smoothstep(0.0, SURFACE_DEPTH, colorDepth), max(fresnel, (1.0 + toCamera.y) * OPACITY_SLANT));
   vec3 color = mix(under, surface, alpha);
   // foam lies on the surface
   color = mix(color, shade(WATER_FOAM_COLOR[type], waterLight), foam);

@@ -143,9 +143,10 @@ terrain is uploaded as a lowered bed, deeper away from the shore. The surface is
 `water_vert.glsl`, `water_frag.glsl`): a grid over the water tiles and the land around them, built at scene load,
 fine near the focal point and moved there by a Gerstner swell and flow-carried chop ("Moving surface"), drawn after
 the MSAA resolve into its own target (distance, normal, type, foam). The composite shades it in `water.glsl` after
-117 HD's water: the bed refracted and lit by 117 HD's caustics, fading into the type's depth color over a short
-depth, the surface's own color and the sky over it, soft highlights and a mild glitter path, lamp glints in their
-rooms, a few taps of screen-space reflection. Objects in the water are covered by the real surface, so the waterline
+117 HD's water: the bed refracted and lit by 117 HD's caustics (carried by the flow), fading into the type's depth
+color over a short depth (by the shore distance, smooth across tiles), the surface's own color and the sky and its
+clouds reflected in soft round ripple cells that the current carries along, soft highlights and a mild glitter path,
+lamp glints in their rooms, a few taps of screen-space reflection. Objects in the water are covered by the real surface, so the waterline
 moves with the waves. Per-type looks are the tables in `water_common.glsl`, the rest are `#define`s in the three
 water shaders. "Show water map" tints water by type and shows its flow as moving stripes.
 

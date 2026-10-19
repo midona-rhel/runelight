@@ -2565,8 +2565,9 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		weather.getWaterWind(waterWind);
 		gpuTimer.begin(GpuTimer.WATER);
 		water.drawSurface(config, waterWind, weather.waterRain(), frameOutdoors, sceneTargets.getWidth(),
-			sceneTargets.getHeight(), frameViewport, frameViewProj, frameCameraX, frameCameraY, frameCameraZ,
-			edgeFade.focalX, edgeFade.focalZ, edgeFade.radius, glCapabilities.OpenGL45, WATER_DATA_UNIT, WATER_NOISE_UNIT);
+			sceneTargets.getHeight(), frameViewport, frameViewProj, frameInvViewProj, frameCameraX, frameCameraY,
+			frameCameraZ, edgeFade.focalX, edgeFade.focalZ, edgeFade.radius, dayCycle.casterDir, glCapabilities.OpenGL45,
+			WATER_DATA_UNIT, WATER_NOISE_UNIT);
 		gpuTimer.end();
 		// fullscreen triangles are generated from gl_VertexID; core profile still needs some VAO bound
 		glBindVertexArray(vaoUiHandle);

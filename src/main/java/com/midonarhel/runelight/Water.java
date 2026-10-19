@@ -24,6 +24,11 @@ class Water
 	// diagonally (their aberration of 0.005 per repeat): colored fringes for one tap per copy
 	private static final String CAUSTICS_MAP = "water_caustics.jpg";
 	private static final float CAUSTIC_ABERRATION = 1.28f;
+	// The ripple cells (layer 2): a jittered grid of CELLS x CELLS points, each the top of a round dome reaching
+	// CELL_RADIUS of the grid spacing, the domes added up into soft rounded cells
+	private static final long CELL_SEED = 41;
+	static final int CELLS = 6;
+	private static final float CELL_RADIUS = 0.85f;
 	// the shader's time wraps after this many seconds; every periodic motion in the water shaders repeats within it
 	private static final double TIME_WRAP = 3840;
 	// how far the waves drift with the wind, world units per second (calm, full wind), before the shaders' per-type
@@ -42,7 +47,8 @@ class Water
 	static final class Frame
 	{
 		float time, windX, windZ, strength, driftX, driftZ, swellX, swellZ, waves, speed, displace, rain, skyDepth;
-		boolean outdoors, debug;
+		boolean outdoors, debug, caustics, zeroToOne;
+		float[] casterDir, invViewProj;
 	}
 
 	private int texData, texNoise;
@@ -174,11 +180,12 @@ class Water
 	 * @param rain  0-1 rain falling on open water
 	 * @param focusX where the camera looks (the drawn world's middle, EdgeFade): the waves move around it
 	 * @param reach  radius of the drawn world around it, world units
+	 * @param casterDir      toward the light that casts shadows (the caustics follow it)
 	 * @param depthZeroToOne whether glClipControl maps depth to 0-1 (frame.glsl)
 	 */
 	void drawSurface(RuneLightConfig config, float[] wind, float rain, boolean outdoors, int width, int height,
-		int[] viewport, float[] viewProj, float camX, float camY, float camZ, float focusX, float focusZ, float reach,
-		boolean depthZeroToOne, int dataUnit, int noiseUnit)
+		int[] viewport, float[] viewProj, float[] invViewProj, float camX, float camY, float camZ, float focusX,
+		float focusZ, float reach, float[] casterDir, boolean depthZeroToOne, int dataUnit, int noiseUnit)
 	{
 		if (!config.water() || !hasData)
 		{
@@ -208,6 +215,10 @@ class Water
 		f.debug = config.waterDebug();
 		// the sky's depth: 0 with glClipControl, the middle of the range without
 		f.skyDepth = depthZeroToOne ? 0 : 0.5f;
+		f.zeroToOne = depthZeroToOne;
+		f.caustics = config.waterCaustics() && outdoors;
+		f.casterDir = casterDir;
+		f.invViewProj = invViewProj;
 
 		glActiveTexture(GL_TEXTURE0 + dataUnit);
 		glBindTexture(GL_TEXTURE_2D, texData);
@@ -287,18 +298,19 @@ class Water
 		hasData = false;
 	}
 
-	// Layer 0 the waves, layer 1 the caustics: one sampler, the composite has none to spare
+	// Layer 0 the waves, layer 1 the caustics, layer 2 the ripple cells: one sampler, the composite has none to spare
 	private static int createNoise()
 	{
 		byte[] waves = noise(NOISE_SIZE, NOISE_SEED);
 		byte[] caustics = caustics(NOISE_SIZE);
-		ByteBuffer buf = BufferUtils.createByteBuffer(waves.length + caustics.length);
-		buf.put(waves).put(caustics).flip();
+		byte[] cells = cells(NOISE_SIZE, CELL_SEED);
+		ByteBuffer buf = BufferUtils.createByteBuffer(waves.length + caustics.length + cells.length);
+		buf.put(waves).put(caustics).put(cells).flip();
 
 		int tex = glGenTextures();
 		glBindTexture(GL_TEXTURE_2D_ARRAY, tex);
 		glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
-		glTexImage3D(GL_TEXTURE_2D_ARRAY, 0, GL_RGBA8, NOISE_SIZE, NOISE_SIZE, 2, 0, GL_RGBA, GL_UNSIGNED_BYTE, buf);
+		glTexImage3D(GL_TEXTURE_2D_ARRAY, 0, GL_RGBA8, NOISE_SIZE, NOISE_SIZE, 3, 0, GL_RGBA, GL_UNSIGNED_BYTE, buf);
 		glPixelStorei(GL_UNPACK_ALIGNMENT, 4);
 		// mipmaps calm the waves in the distance instead of letting them sparkle
 		glGenerateMipmap(GL_TEXTURE_2D_ARRAY);
@@ -374,6 +386,73 @@ class Water
 			java.util.Arrays.fill(map, 0.2f);
 		}
 		return aberrate(map, size, CAUSTIC_ABERRATION);
+	}
+
+	/**
+	 * Tiling round ripple cells, RGBA: rg the slope (0.5 flat, slopes of SLOPE_RANGE standard deviations at 0 or 1),
+	 * b the height (1 on the highest crown, 0 the lowest hollow), a unused. The domes of the jittered points around a
+	 * texel add up, so cells are round and run into each other smoothly: reflecting the sky, they read as rounded
+	 * ripples rather than streaks, without the hard creases of a Voronoi pattern.
+	 */
+	static byte[] cells(int size, long seed)
+	{
+		Random rng = new Random(seed);
+		float[] px = new float[CELLS * CELLS], py = new float[CELLS * CELLS];
+		float spacing = (float) size / CELLS;
+		for (int j = 0; j < CELLS; ++j)
+		{
+			for (int i = 0; i < CELLS; ++i)
+			{
+				px[j * CELLS + i] = (i + 0.2f + 0.6f * rng.nextFloat()) * spacing;
+				py[j * CELLS + i] = (j + 0.2f + 0.6f * rng.nextFloat()) * spacing;
+			}
+		}
+		float r = CELL_RADIUS * spacing;
+		int n = size * size;
+		float[] h = new float[n];
+		for (int y = 0; y < size; ++y)
+		{
+			for (int x = 0; x < size; ++x)
+			{
+				float sum = 0;
+				for (int k = 0; k < px.length; ++k)
+				{
+					// the nearest copy of the point across the wrap
+					float dx = Math.abs(x + 0.5f - px[k]), dy = Math.abs(y + 0.5f - py[k]);
+					dx = Math.min(dx, size - dx);
+					dy = Math.min(dy, size - dy);
+					float d2 = (dx * dx + dy * dy) / (r * r);
+					if (d2 < 1)
+					{
+						sum += (1 - d2) * (1 - d2) * (1 - d2);
+					}
+				}
+				h[y * size + x] = sum;
+			}
+		}
+		normalize(h);
+		float[] sx = new float[n], sy = new float[n];
+		double sum = 0;
+		for (int y = 0; y < size; ++y)
+		{
+			for (int x = 0; x < size; ++x)
+			{
+				int i = y * size + x;
+				sx[i] = (h[y * size + (x + 1) % size] - h[y * size + (x + size - 1) % size]) * 0.5f;
+				sy[i] = (h[((y + 1) % size) * size + x] - h[((y + size - 1) % size) * size + x]) * 0.5f;
+				sum += sx[i] * sx[i] + sy[i] * sy[i];
+			}
+		}
+		float max = (float) (SLOPE_RANGE * Math.sqrt(sum / (2 * n))) + 1e-6f;
+		byte[] out = new byte[n * 4];
+		for (int i = 0; i < n; ++i)
+		{
+			out[i * 4] = (byte) Math.round((clamp(sx[i] / max) * 0.5f + 0.5f) * 255);
+			out[i * 4 + 1] = (byte) Math.round((clamp(sy[i] / max) * 0.5f + 0.5f) * 255);
+			out[i * 4 + 2] = (byte) Math.round(h[i] * 255);
+			out[i * 4 + 3] = (byte) 255;
+		}
+		return out;
 	}
 
 	static byte[] aberrate(float[] map, int size, float shift)
