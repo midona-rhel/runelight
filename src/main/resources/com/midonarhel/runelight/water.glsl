@@ -63,14 +63,14 @@ uniform int waterDebug;
 #define GLITTER_SLOPE 1.6
 #define GLITTER_ROUGH 0.1
 #define GLITTER 0.3
-#define LAMP_SPECULAR 0.2
+#define LAMP_SPECULAR 0.4
 // the most a lamp's glint adds (linear): a lamp next to the water left a pale blotch on it
-#define LAMP_MAX 0.35
+#define LAMP_MAX 2.0
 // the moon's glitter and sheen are this much of the sun's, and the surface's shadow (radius in shadow map texels)
 #define MOON_SPECULAR 0.35
 #define SURFACE_SHADOW_SOFT 3.0
-#define LAMP_ALONG 0.14
-#define LAMP_ACROSS 0.06
+#define LAMP_ALONG 0.08
+#define LAMP_ACROSS 0.035
 // what is seen through a wave face turned toward the camera is a little brighter, turned away darker
 #define WAVE_SHADE 0.6
 // Caustics: 117 HD's, carried by the flow, worked out by the water pass (water_frag.glsl) as their value above the
@@ -88,16 +88,8 @@ uniform int waterDebug;
 #define SSR_FIRST_STEP 96.0
 #define SSR_GROWTH 2.0
 #define SSR_REFINE 3
-// its blur (pixels, plus per world unit along the ray), the darkest a reflected object gets as a share of the sky's
-// reflection, the distance along the ray over which it fades out, and how much of the sky it replaces at most
-#define SSR_BLUR 4.0
-#define SSR_BLUR_GROWTH 0.012
-#define SSR_FLOOR 0.6
-#define SSR_FADE vec2(500.0, 1600.0)
-#define SSR_STRENGTH 0.65
-// the world is reflected off a calmer normal than the sky (slopes times this): wobbling reflections of posts and reeds
-// broke up into dark blobs
-#define SSR_TILT 0.35
+// the world is reflected off a calmer normal than the sky (slopes times this)
+#define SSR_TILT 0.6
 
 // how far the surface target's distance reaches (water_frag.glsl)
 #define WATER_REACH 20480.0
@@ -154,12 +146,10 @@ float waterRayBehind(vec3 s, vec3 r, float t, out ivec2 ip, out vec2 ndc) {
 }
 
 // The world as seen in the reflection: a few growing steps along the reflected ray against the depth buffer, from a
-// start jittered per pixel (so the hits don't line up into stair steps), then halving steps onto the crossing. The
-// hit is blurred over SSR_BLUR taps around it, wider further along the ray, each tap that isn't the world (sky,
-// water) counting as the sky; the world's colors are lit by `light` (the light on the surface, lamps and all: what
-// stands in the water is lit about the same) and kept no darker than SSR_FLOOR of the sky, so dark posts and reeds
-// tint the reflection instead of cutting black blocks out of it. a: how much to trust it, fading with distance.
-vec4 waterTraceReflection(vec3 s, vec3 r, vec3 light, vec3 sky, vec2 px) {
+// start jittered per pixel (so the hits don't line up into stair steps), then halving steps onto the crossing; the
+// hit's color lit by `light` (the light on the surface: what stands in the water is lit about the same), sharp.
+// a: how much to trust it.
+vec4 waterTraceReflection(vec3 s, vec3 r, vec3 light, vec2 px) {
   float stepLen = SSR_FIRST_STEP;
   float prev = 0.0;
   float t = stepLen * (0.5 + hash13(vec3(px, 7.0)));
@@ -184,25 +174,14 @@ vec4 waterTraceReflection(vec3 s, vec3 r, vec3 light, vec3 sky, vec2 px) {
           lo = mid;
         }
       }
-      // the blur: a cross of taps SSR_BLUR pixels and more apart, growing along the ray
-      float radius = SSR_BLUR + hi * SSR_BLUR_GROWTH;
-      vec3 sum = vec3(0.0);
-      float world = 0.0;
-      ivec2 last = textureSize(sceneColor, 0) - 1;
-      for (int k = 0; k < 5; ++k) {
-        ivec2 o = k == 0 ? ivec2(0) : ivec2(radius * vec2(k == 1 ? 1.0 : k == 2 ? -1.0 : 0.3, k == 3 ? 1.0 : k == 4 ? -1.0 : 0.3));
-        ivec2 q = clamp(ip + o, ivec2(0), last);
-        // water reflecting water, and the sky, show the sky
-        bool isWorld = !isSky(texelFetch(sceneDepth, q, 0).r) && texelFetch(sceneMaterial, q, 0).b <= 0.75
-          && texelFetch(waterSurface, q, 0).b == 0u;
-        vec3 c = isWorld ? max(srgbToLinear(texelFetch(sceneColor, q, 0).rgb) * light, sky * SSR_FLOOR) : sky;
-        sum += c;
-        world += isWorld ? 1.0 : 0.0;
-      }
+      // one sharp tap: the ripples bending the ray are what soften it; water reflecting water, and the sky, show the sky
+      bool isWorld = !isSky(texelFetch(sceneDepth, ip, 0).r) && texelFetch(sceneMaterial, ip, 0).b <= 0.75
+        && texelFetch(waterSurface, ip, 0).b == 0u;
+      if (!isWorld)
+        return vec4(0.0);
       vec2 edge = smoothstep(vec2(1.0), vec2(0.75), abs(ndc));
       float reach = 1.0 - smoothstep(stepLen * 1.5, stepLen * 2.5, behind);
-      float near = 1.0 - smoothstep(SSR_FADE.x, SSR_FADE.y, hi);
-      return vec4(sum / 5.0, edge.x * edge.y * reach * near * (world / 5.0) * SSR_STRENGTH);
+      return vec4(srgbToLinear(texelFetch(sceneColor, ip, 0).rgb) * light, edge.x * edge.y * reach);
     }
     prev = t;
     stepLen *= SSR_GROWTH;
@@ -332,7 +311,8 @@ vec3 waterOver(ivec2 px, inout vec3 p, vec3 n, vec3 albedo, vec3 light, vec3 ind
       float att = 1.0 - sqrt(d2 / r2);
       att *= att;
       vec3 ld = l * inversesqrt(max(d2, 1.0));
-      waterLight += color * att * max(-ld.y, 0.2) * 0.5;
+      // lamps show on water as glints; the surface itself takes little of their light, or they spread as wide soft pools
+      waterLight += color * att * max(-ld.y, 0.2) * 0.15;
       lampSpec += color * (att * waterGlint(nrm, ld, toCamera, tAlong, tAcross, LAMP_ALONG, LAMP_ACROSS));
     }
   }
@@ -418,8 +398,7 @@ vec3 waterOver(ivec2 px, inout vec3 p, vec3 n, vec3 albedo, vec3 light, vec3 ind
     reflection = srgbToLinear(fogColor) * (outdoors == 1 ? 1.0 : 0.5);
   }
   if (waterReflections == 1) {
-    vec4 hit = waterTraceReflection(s, reflect(v, normalize(nrm * vec3(SSR_TILT, 1.0, SSR_TILT))), waterLight, reflection,
-      vec2(px));
+    vec4 hit = waterTraceReflection(s, reflect(v, normalize(nrm * vec3(SSR_TILT, 1.0, SSR_TILT))), waterLight, vec2(px));
     reflection = mix(reflection, hit.rgb, hit.a);
   }
   vec3 surface = mix(shade(WATER_SURFACE_COLOR[type], waterLight), linearToSrgb(clamp(reflection * fresnel, 0.0, 1.0)),
