@@ -42,12 +42,12 @@ layout(location = 0) out uvec4 WaterOut;  // 64 bits packed, see water.glsl's wa
 // shapes change as they move and never line up into stripes or a grid. WAVE_STRENGTH: their slope.
 #define WAVE_DIR vec2(0.70710678, 0.70710678)
 #define WAVE_OCTAVES 4
-#define WAVE_LONGEST 3.0
+#define WAVE_LONGEST 1.4
 #define WAVE_SHRINK 0.47
-#define WAVE_FADE 0.6
+#define WAVE_FADE 0.7
 #define WAVE_SPEED 0.12
 #define WAVE_WARP 0.35
-#define WAVE_STRENGTH 0.22
+#define WAVE_STRENGTH 0.34
 // still water (no flow) runs its waves and its detail this many times slower, and drifts less with the wind
 #define STILL_SLOW 1.25
 #define STILL_DRIFT 0.4
