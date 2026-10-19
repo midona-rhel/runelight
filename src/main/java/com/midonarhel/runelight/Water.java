@@ -138,12 +138,13 @@ class Water
 	/**
 	 * The surface pass's program, newly compiled (0 to drop it).
 	 */
-	void setSurfaceProgram(int program, int depthUnit, int dataUnit, int noiseUnit, int contactUnit)
+	void setSurfaceProgram(int program, int depthUnit, int dataUnit, int noiseUnit, int contactUnit, int waveUnitA,
+		int waveUnitB)
 	{
 		surface.freeProgram();
 		if (program != 0)
 		{
-			surface.setProgram(program, depthUnit, dataUnit, noiseUnit, contactUnit);
+			surface.setProgram(program, depthUnit, dataUnit, noiseUnit, contactUnit, waveUnitA, waveUnitB);
 		}
 	}
 

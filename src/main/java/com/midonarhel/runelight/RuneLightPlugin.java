@@ -349,6 +349,9 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 	private static final int WATER_NOISE_UNIT = RuneLightPlugin.COMPOSITE_TEXTURE_UNIT + 15;
 	// the water surface pass's map of things standing in the water (WaterMap.contact)
 	private static final int WATER_CONTACT_UNIT = RuneLightPlugin.COMPOSITE_TEXTURE_UNIT + 13;
+	// the surface pass's wave maps either side of now (WaterSurface.bake)
+	private static final int WATER_WAVES_UNIT_A = RuneLightPlugin.COMPOSITE_TEXTURE_UNIT + 17;
+	private static final int WATER_WAVES_UNIT_B = RuneLightPlugin.COMPOSITE_TEXTURE_UNIT + 19;
 	// two units: the weather field (WeatherField) and its ground, for the fog and the weather passes
 	private static final int WEATHER_FIELD_UNIT = RuneLightPlugin.COMPOSITE_TEXTURE_UNIT + 16;
 	private final Water water = new Water();
@@ -1024,7 +1027,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		glShadowProgram = SHADOW_PROGRAM.compile(template);
 		setFogProgram(VolumetricFog.PROGRAM.compile(template));
 		water.setSurfaceProgram(WaterSurface.PROGRAM.compile(template), COMPOSITE_TEXTURE_UNIT + 2, WATER_DATA_UNIT,
-			WATER_NOISE_UNIT, WATER_CONTACT_UNIT);
+			WATER_NOISE_UNIT, WATER_CONTACT_UNIT, WATER_WAVES_UNIT_A, WATER_WAVES_UNIT_B);
 		weather.setPrograms(weather.compile(template), COMPOSITE_TEXTURE_UNIT, WEATHER_OCCLUSION_UNIT, SHADOW_COMPARE_UNIT, ALPHA_LAYER_UNIT,
 			LIGHT_DATA_UNIT, CLUSTER_DATA_UNIT, MATERIAL_UNIT, WEATHER_FIELD_UNIT);
 		skyCache.setPrograms(skyCache.compile(template), CLOUD_NOISE_UNIT, SKY_CACHE_UNIT);
@@ -1294,7 +1297,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		glShadowProgram = shadow;
 		setFogProgram(fog);
 		water.setSurfaceProgram(waterSurface, COMPOSITE_TEXTURE_UNIT + 2, WATER_DATA_UNIT, WATER_NOISE_UNIT,
-			WATER_CONTACT_UNIT);
+			WATER_CONTACT_UNIT, WATER_WAVES_UNIT_A, WATER_WAVES_UNIT_B);
 		weather.setPrograms(weatherPrograms, COMPOSITE_TEXTURE_UNIT, WEATHER_OCCLUSION_UNIT, SHADOW_COMPARE_UNIT, ALPHA_LAYER_UNIT,
 			LIGHT_DATA_UNIT, CLUSTER_DATA_UNIT, MATERIAL_UNIT, WEATHER_FIELD_UNIT);
 		skyCache.setPrograms(skyCachePrograms, CLOUD_NOISE_UNIT, SKY_CACHE_UNIT);

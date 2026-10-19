@@ -4,9 +4,9 @@
 // how far away the surface is along the view ray, its normal, type and foam, how deep the water is there and the
 // caustics on the bed below, for the composite to shade (water.glsl).
 //
-// The normal: two trains of wind waves with 117 HD's water normal map for detail, carried along the flow map in two
-// phases so the current shows in the sky it reflects (still water runs slower), and rain rings. The caustics are
-// 117 HD's, carried along by the same flow and drawn out along fast water.
+// The normal: a choppy sea of sine octaves carried along the flow map in two phases (still water runs slower), worked
+// out with the foam a few steps a second into world-space wave maps (waterBake, WaterSurface.bake) and blended here,
+// and rain rings. The caustics are 117 HD's, carried along by the same flow and drawn out along fast water.
 
 #include "water_common.glsl"
 
@@ -27,6 +27,11 @@ uniform mat4 waterInvViewProj; // clip -> camera-relative world
 uniform ivec4 waterViewport;   // the scene's viewport in the targets
 uniform int waterZeroToOne;    // 1 with glClipControl
 uniform vec3 waterCamera;
+uniform int waterBake;          // 1: working out the waves into the wave map (WaterSurface.bake)
+uniform sampler2D waterWavesA;  // the wave maps either side of now: slope xy, foam
+uniform sampler2D waterWavesB;
+uniform float waterWaveBlend;   // how far now is from A toward B
+uniform vec2 waterFocus;        // where the camera looks, world (the wave maps reach WAVE_MAP_REACH tiles from it)
 
 in vec3 vRel;
 in vec2 vXZ;
@@ -35,6 +40,7 @@ flat in int vType;
 flat in int vSlot;
 
 layout(location = 0) out uvec4 WaterOut;  // 64 bits packed, see water.glsl's waterUnpack
+layout(location = 1) out vec4 WaveOut;    // the wave map: slope xy, foam
 
 // The waves: the standard choppy sea of sine octaves. Each octave is a grid of sine waves warped by noise (so it
 // never tiles or lines up), folded to 1 - |sin| and raised to WAVE_CHOP: sharp crests over broad rounded troughs.
@@ -260,16 +266,8 @@ uint pack01(float v, float bits) {
   return uint(clamp(v, 0.0, 1.0) * bits + 0.5);
 }
 
-void main() {
-  // behind the opaque scene: not seen (reverse-z, larger is nearer); in front of the sky past the drawn scene: the
-  // composite only shades water over what is under it
-  ivec2 px = ivec2(gl_FragCoord.xy);
-  float sceneZ = texelFetch(sceneDepth, px, 0).r;
-  if (gl_FragCoord.z < sceneZ || sceneZ <= waterSkyDepth)
-    discard;
-
-  int type = vType;
-  vec2 xz = vXZ;
+// The waves' slope at xz and the foam on them (the wave map's, WaterSurface.bake), for water of this type and flow
+void waterWaveField(vec2 xz, int type, vec2 flow, out vec2 slope, out float foam) {
   float speed = WATER_FLOW_SPEED[type];
   vec4 look = WATER_LOOK[type];
   float wind = waterWind.z;
@@ -278,11 +276,10 @@ void main() {
   vec4 data = waterPage1(waterData, xz / WATER_TILE + waterGrid.x);
   float energy = data.g;
   float turb = data.a * step(0.5, speed);
-  vec2 flow = vFlow;
   float flowSpeed = length(flow);
 
-  // mips picked from the derivatives once, here, where they are defined; every tap below is explicit
-  float footprint = max(length(dFdx(xz)), length(dFdy(xz)));
+  // the map's texels: waves down to half a texel's worth are kept (the map's mipmaps calm them further off)
+  float footprint = max(length(dFdx(xz)), length(dFdy(xz))) * 0.5;
   float lodFoam = waterLod(footprint, CELL_SCALE_B);
 
   // still water drifts with the wind, slowly; running water carries its ripples in two phases (water_common.glsl)
@@ -292,7 +289,6 @@ void main() {
   vec2 m0 = base, m1 = base;
   float w0 = 1.0;
   float flowing = smoothstep(FLOW_MIN * 0.5, FLOW_MIN, flowSpeed);
-  vec2 slope;
   if (flowing > 0.0) {
     waterFlowPhases(xz, flow, base, m0, m1, w0);
     vec2 o1 = vec2(173.0, 91.0);
@@ -328,16 +324,8 @@ void main() {
         * waterWaves);
     }
   }
-  vec3 rain = vec3(0.0);
-  if (waterRain > 0.01 && waterOutdoors == 1) {
-    rain = rainRings(xz);
-    slope += rain.xy * look.w;
-  }
-  // the surface's normal points up (-y); slope is d up / d x, d up / d z
-  vec3 nrm = normalize(vec3(-slope.x, -1.0, -slope.y));
-
   // soft foam on rapids and around things standing in the water: the large cells' rims, carried with the flow
-  float foam = 0.0;
+  foam = 0.0;
   float churn = smoothstep(TURB_FOAM.x, TURB_FOAM.y, turb);
   if (churn > 0.0 || contact > 0.0) {
     float h = textureLod(waterNoise, vec3((xz - m0) / CELL_SCALE_B, 2.0), lodFoam).b * w0
@@ -351,6 +339,61 @@ void main() {
     float rim = 1.0 - smoothstep(0.15, 0.55, h);
     foam = max(rim * churn * FOAM, contact * (rim * CONTACT_FOAM + CONTACT_FILM));
   }
+}
+
+void main() {
+  if (waterBake == 1) {
+    vec2 slope;
+    float foam;
+    waterWaveField(vXZ, vType, vFlow, slope, foam);
+    WaveOut = vec4(slope, foam, 1.0);
+    return;
+  }
+  // behind the opaque scene: not seen (reverse-z, larger is nearer); in front of the sky past the drawn scene: the
+  // composite only shades water over what is under it
+  ivec2 px = ivec2(gl_FragCoord.xy);
+  float sceneZ = texelFetch(sceneDepth, px, 0).r;
+  if (gl_FragCoord.z < sceneZ || sceneZ <= waterSkyDepth)
+    discard;
+
+  int type = vType;
+  vec2 xz = vXZ;
+  float speed = WATER_FLOW_SPEED[type];
+  vec4 look = WATER_LOOK[type];
+  float wind = waterWind.z;
+  // page 1 here (shore distance in tiles, wave energy, water share, turbulence), filtered between the corners in the
+  // fragment: through the vertices it bent along each quad's diagonal, which showed as straight edges in the color
+  vec4 data = waterPage1(waterData, xz / WATER_TILE + waterGrid.x);
+  float energy = data.g;
+  float turb = data.a * step(0.5, speed);
+  vec2 flow = vFlow;
+  float flowSpeed = length(flow);
+
+  // mips picked from the derivatives once, here, where they are defined; every tap below is explicit
+  float footprint = max(length(dFdx(xz)), length(dFdy(xz)));
+
+  // the waves and foam from the wave maps (waterWaveField, a few steps a second, blended), none past their reach
+  vec2 wuv = xz / (WATER_TILE * WAVE_MAP_TILES);
+  vec4 wave = mix(texture(waterWavesA, wuv), texture(waterWavesB, wuv), waterWaveBlend)
+    * (1.0 - smoothstep(WAVE_MAP_REACH - 8.0, WAVE_MAP_REACH, length(xz - waterFocus) / WATER_TILE));
+  vec2 slope = wave.xy;
+  float foam = wave.z;
+  // the flow's phases for the caustics
+  bool ocean = type == 2 || type == 3 || type == 4;
+  vec2 base = waterDrift.xy * (speed * waterSpeed * (ocean ? OCEAN_STILL_DRIFT : STILL_DRIFT));
+  vec2 m0 = base, m1 = base;
+  float w0 = 1.0;
+  float flowing = smoothstep(FLOW_MIN * 0.5, FLOW_MIN, flowSpeed);
+  if (flowing > 0.0)
+    waterFlowPhases(xz, flow, base, m0, m1, w0);
+  vec3 rain = vec3(0.0);
+  if (waterRain > 0.01 && waterOutdoors == 1) {
+    rain = rainRings(xz);
+    slope += rain.xy * look.w;
+  }
+  // the surface's normal points up (-y); slope is d up / d x, d up / d z
+  vec3 nrm = normalize(vec3(-slope.x, -1.0, -slope.y));
+
   foam = max(foam, rain.z * RAIN_FOAM);
 
   // ---- the caustics on the bed below, carried by the flow

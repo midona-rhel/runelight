@@ -13,6 +13,7 @@ uniform mat4 waterViewProj;   // camera-relative world -> clip
 uniform vec3 waterCamera;     // camera position, world
 uniform sampler2D waterData;  // WaterMap.texture
 uniform float waterSpeed;     // multiplier on flow
+uniform int waterBake;        // 1: into the wave map (WAVE_MAP_TILES tiles wrapping) rather than onto the screen
 
 out vec3 vRel;        // camera-relative position, moved
 out vec2 vXZ;         // world xz: the waves are evaluated there
@@ -38,5 +39,11 @@ void main() {
   vFlow = flow;
   vType = type;
   vSlot = int(tile.w);
-  gl_Position = waterViewProj * vec4(vRel, 1.0);
+  if (waterBake == 1) {
+    // the tile's place in the wrapping map; whole tiles, so none straddles its edge
+    vec2 t = mod(vec2(tile.xy) - waterGrid.x, WAVE_MAP_TILES) + cell;
+    gl_Position = vec4(t / WAVE_MAP_TILES * 2.0 - 1.0, 0.0, 1.0);
+  } else {
+    gl_Position = waterViewProj * vec4(vRel, 1.0);
+  }
 }

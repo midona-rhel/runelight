@@ -30,10 +30,11 @@ uniform int waterSlotType[WATER_SLOTS];  // each look's water type (Water.java)
 
 layout(location = 1) out uvec4 WaterShadedOut;
 
-// vertical depth over which the surface fades in from the waterline; within 1 / WATERLINE_DEPTH of the depth the
-// shore distance gives, the bed's own depth sets the water's color
-#define SOFT_EDGE 12.0
-#define WATERLINE_DEPTH 4.0
+// Vertical depth over which the water's color and surface fade in from the waterline over the bed and its caustics,
+// so the water has no hard edge; within 1 / WATERLINE_DEPTH of the depth the shore distance gives, the bed's own depth
+// sets the water's color
+#define SOFT_EDGE 48.0
+#define WATERLINE_DEPTH 2.0
 // How much of the surface covers what is under it: the type's base opacity once the water is SURFACE_DEPTH deep
 // (clear over the shallows), at least FRESNEL_BASE rising to all of it at a slant as (1 - cos)^FRESNEL_POWER, and at
 // least OPACITY_SLANT of 1 - the view's elevation
@@ -431,22 +432,24 @@ vec3 waterOver(ivec2 px, inout vec3 p, vec3 albedo, float shadow, vec3 lit, floa
   float colorDepth = min(shoreDepth, depth * WATERLINE_DEPTH + 4.0);
 
   // the bed, lit by the composite and wet, with the caustics, fading into the depth color
-  vec3 under = srgbToLinear(lit * WET_SAND);
+  vec3 caustics = vec3(0.0);
   if (waterCaustics == 1 && outdoors == 1 && lightingEnabled == 1 && WATER_LOOK[type].x < 0.7) {
     vec3 caster = (sunIsCaster == 1 ? sunLight(sunAltitude) : moonLight(sunAltitude)) * envSun;
     float k = max(-casterDir.y, 0.0) * shadow * CAUSTICS * (sunIsCaster == 1 ? 1.0 : CAUSTIC_MOON)
       * smoothstep(0.0, 6.0, depth);
-    under += srgbToLinear(albedo) * caster * (k * clamp(caustic, CAUSTIC_RANGE.x, CAUSTIC_RANGE.y));
+    caustics = srgbToLinear(albedo) * caster * (k * clamp(caustic, CAUSTIC_RANGE.x, CAUSTIC_RANGE.y));
   }
-  under = max(under, vec3(0.0)) * srgbToLinear(waterDepthTint(type, colorDepth));
+  vec3 under = max(srgbToLinear(lit * WET_SAND) + caustics, vec3(0.0)) * srgbToLinear(waterDepthTint(type, colorDepth));
   // what is seen through a wave face turned toward the camera is a little brighter, turned away darker
   vec3 v = p / dist;
   vec2 slope = nrm.xz / nrm.y;
   under *= max(1.0 + WAVE_SHADE * dot(slope, v.xz) / max(length(v.xz), 0.25), 0.0);
   float alpha = max(WATER_LOOK[type].x * smoothstep(0.0, SURFACE_DEPTH, colorDepth), surface.a);
-  vec3 color = mix(under, surface.rgb, alpha) + spec;
-  // over the waterline the surface fades in: no hard edge where it meets the bank or a leg in the water
-  vec3 result = mix(lit, linearToSrgb(clamp(waterShoulder(color), 0.0, 1.0)), smoothstep(0.0, 1.0, depth / SOFT_EDGE));
+  vec3 color = waterShoulder(mix(under, surface.rgb, alpha) + spec);
+  // over the waterline the water fades in over the bed and its caustics: no hard edge where it meets the bank or a
+  // leg in the water
+  vec3 bed = max(srgbToLinear(lit) + caustics, vec3(0.0));
+  vec3 result = linearToSrgb(clamp(mix(bed, color, smoothstep(0.0, 1.0, depth / SOFT_EDGE)), 0.0, 1.0));
   p = s;
   return result;
 }

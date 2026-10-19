@@ -135,6 +135,12 @@ float nominalDepth(float shore) {
   return shore > 0.0 ? max(d, BED_MIN * min(shore, 1.0)) : 0.0;
 }
 
+// The waves are worked out at a few steps a second into world-space maps of WAVE_MAP_TILES tiles, wrapping, which the
+// surface pass blends between (WaterSurface.bake): beyond WAVE_MAP_REACH tiles from where the camera looks there are
+// none
+#define WAVE_MAP_TILES 128.0
+#define WAVE_MAP_REACH 60.0
+
 // A scroll of a whole number of repeats per wrap of waterTime, about one per `period` seconds
 float waterCycle(float period) {
   return fract(floor(WATER_TIME_WRAP / period + 0.5) * (waterTime / WATER_TIME_WRAP));

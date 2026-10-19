@@ -71,8 +71,23 @@ class WaterSurface
 	private int program;
 	private int uniViewProj, uniCamera, uniFocus, uniGrid, uniTime, uniWind, uniDrift, uniWaves, uniSpeed,
 		uniRain, uniOutdoors, uniDebug, uniSkyDepth, uniCausticsOn, uniCasterDir, uniInvViewProj, uniViewport,
-		uniZeroToOne;
+		uniZeroToOne, uniBake, uniWaveBlend;
 
+	// The wave maps: the waves and foam worked out at STEPS_PER_SECOND into world-space maps of WAVE_MAP_TILES
+	// tiles a side (wrapping, WAVE_MAP_TEXELS texels a tile), each over two frames, half the chunks each; the surface
+	// pass blends the last two finished ones. Three, so one is being worked out while two are shown.
+	static final int WAVE_MAP_TILES = 128;
+	static final int WAVE_MAP_REACH = 60;
+	private static final int WAVE_MAP_TEXELS = 8;
+	private static final float STEPS_PER_SECOND = 20f;
+	private final int[] waveTex = new int[3], waveFbo = new int[3];
+	// the newest finished map's step (its texture: the step mod 3), how many halves of the next are done, and the step
+	// shown this frame (blended toward the one after)
+	private long builtStep = Long.MIN_VALUE, shownStep;
+	private int halvesDone;
+	private float lastTime = Float.NaN;
+
+	private int waveUnitA, waveUnitB;
 	private int vao, vboTiles, ebo;
 	private Mesh mesh;
 	private int fbo, texSurface, rboDepth, width, height;
@@ -183,7 +198,8 @@ class WaterSurface
 		return (float) Math.sqrt(dx * dx + dz * dz);
 	}
 
-	void setProgram(int program, int depthUnit, int dataUnit, int noiseUnit, int contactUnit)
+	void setProgram(int program, int depthUnit, int dataUnit, int noiseUnit, int contactUnit, int waveUnitA,
+		int waveUnitB)
 	{
 		this.program = program;
 		uniViewProj = glGetUniformLocation(program, "waterViewProj");
@@ -204,11 +220,17 @@ class WaterSurface
 		uniInvViewProj = glGetUniformLocation(program, "waterInvViewProj");
 		uniViewport = glGetUniformLocation(program, "waterViewport");
 		uniZeroToOne = glGetUniformLocation(program, "waterZeroToOne");
+		uniBake = glGetUniformLocation(program, "waterBake");
+		uniWaveBlend = glGetUniformLocation(program, "waterWaveBlend");
 		glUseProgram(program);
 		glUniform1i(glGetUniformLocation(program, "sceneDepth"), depthUnit);
 		glUniform1i(glGetUniformLocation(program, "waterData"), dataUnit);
 		glUniform1i(glGetUniformLocation(program, "waterNoise"), noiseUnit);
 		glUniform1i(glGetUniformLocation(program, "waterContact"), contactUnit);
+		glUniform1i(glGetUniformLocation(program, "waterWavesA"), waveUnitA);
+		glUniform1i(glGetUniformLocation(program, "waterWavesB"), waveUnitB);
+		this.waveUnitA = waveUnitA;
+		this.waveUnitB = waveUnitB;
 		glUseProgram(0);
 	}
 
@@ -224,6 +246,8 @@ class WaterSurface
 	void upload(Mesh m)
 	{
 		mesh = m;
+		// the maps are of the old scene's tiles
+		builtStep = Long.MIN_VALUE;
 		if (m == null)
 		{
 			return;
@@ -365,21 +389,15 @@ class WaterSurface
 		float focusZ, float reach, Water.Frame params)
 	{
 		ensureTarget(w, h);
-		glBindFramebuffer(GL_FRAMEBUFFER, fbo);
-		// clears follow the write masks
-		glDepthMask(true);
-		glClearBufferuiv(GL_COLOR, 0, CLEAR);
-		glClearBufferfv(GL_DEPTH, 0, FAR_DEPTH);
 		if (!hasMesh())
 		{
+			glBindFramebuffer(GL_FRAMEBUFFER, fbo);
+			glClearBufferuiv(GL_COLOR, 0, CLEAR);
 			return;
 		}
-		glViewport(viewport[0], viewport[1], viewport[2], viewport[3]);
 		boolean cull = glIsEnabled(GL_CULL_FACE);
 		glDisable(GL_CULL_FACE);
 		glDisable(GL_BLEND);
-		glEnable(GL_DEPTH_TEST);
-		glDepthFunc(GL_GREATER);
 
 		glUseProgram(program);
 		glUniformMatrix4fv(uniViewProj, false, viewProj);
@@ -400,15 +418,150 @@ class WaterSurface
 		glUniformMatrix4fv(uniInvViewProj, false, params.invViewProj);
 		glUniform4i(uniViewport, viewport[0], viewport[1], viewport[2], viewport[3]);
 		glUniform1i(uniZeroToOne, params.zeroToOne ? 1 : 0);
-
 		glBindVertexArray(vao);
 		glBindBuffer(GL_ARRAY_BUFFER, vboTiles);
+
+		float blend = bakeWaves(params, focusX, focusZ);
+		glUniform1i(uniBake, 0);
+		glUniform1f(uniTime, params.time);
+		glUniform1f(uniWaveBlend, blend);
+		glActiveTexture(GL_TEXTURE0 + waveUnitA);
+		glBindTexture(GL_TEXTURE_2D, waveTex[(int) Math.floorMod(shownStep, 3L)]);
+		glActiveTexture(GL_TEXTURE0 + waveUnitB);
+		glBindTexture(GL_TEXTURE_2D, waveTex[(int) Math.floorMod(shownStep + 1, 3L)]);
+		glActiveTexture(GL_TEXTURE0);
+
+		glBindFramebuffer(GL_FRAMEBUFFER, fbo);
+		// clears follow the write masks
+		glDepthMask(true);
+		glClearBufferuiv(GL_COLOR, 0, CLEAR);
+		glClearBufferfv(GL_DEPTH, 0, FAR_DEPTH);
+		glViewport(viewport[0], viewport[1], viewport[2], viewport[3]);
+		glEnable(GL_DEPTH_TEST);
+		glDepthFunc(GL_GREATER);
+		drawChunks(focusX, focusZ, reach, -1);
+		glBindBuffer(GL_ARRAY_BUFFER, 0);
+		glBindVertexArray(0);
+		glDisable(GL_DEPTH_TEST);
+		glActiveTexture(GL_TEXTURE0 + waveUnitA);
+		glBindTexture(GL_TEXTURE_2D, 0);
+		glActiveTexture(GL_TEXTURE0 + waveUnitB);
+		glBindTexture(GL_TEXTURE_2D, 0);
+		glActiveTexture(GL_TEXTURE0);
+		if (cull)
+		{
+			glEnable(GL_CULL_FACE);
+		}
+	}
+
+	/**
+	 * Work on the wave maps for this frame (with the program in use, its uniforms set, the VAO and tile buffer bound):
+	 * half of the next step's chunks, or all that is left when it is due. Returns how far now is from the shown step's
+	 * map toward the next's. Leaves the framebuffer and viewport changed.
+	 */
+	private float bakeWaves(Water.Frame params, float focusX, float focusZ)
+	{
+		ensureWaveMaps();
+		float t = params.time;
+		// waterTime wraps: start over
+		if (Float.isNaN(lastTime) || t < lastTime)
+		{
+			builtStep = Long.MIN_VALUE;
+		}
+		lastTime = t;
+		long now = (long) Math.floor(t * STEPS_PER_SECOND);
+		shownStep = now;
+		// shown: the maps of steps now and now + 1; the one after is worked out a half at a time while there is time
+		if (builtStep == Long.MIN_VALUE || builtStep < now)
+		{
+			// nothing yet, or far behind: both, whole
+			halvesDone = 0;
+			bakeStep(now, 2, params, focusX, focusZ);
+			halvesDone = 0;
+			bakeStep(now + 1, 2, params, focusX, focusZ);
+			builtStep = now + 1;
+			halvesDone = 0;
+		}
+		else if (builtStep <= now + 1)
+		{
+			// now + 1 is due: whatever is left of it at once
+			bakeStep(builtStep + 1, builtStep == now ? 2 : 1, params, focusX, focusZ);
+			if (halvesDone == 2)
+			{
+				++builtStep;
+				halvesDone = 0;
+			}
+		}
+		return t * STEPS_PER_SECOND - now;
+	}
+
+	/**
+	 * Work out up to `halves` more halves (by chunk parity) of the map for step into its texture; once whole, its
+	 * mipmaps.
+	 */
+	private void bakeStep(long step, int halves, Water.Frame params, float focusX, float focusZ)
+	{
+		int i = (int) Math.floorMod(step, 3L);
+		glBindFramebuffer(GL_FRAMEBUFFER, waveFbo[i]);
+		glViewport(0, 0, WAVE_MAP_TILES * WAVE_MAP_TEXELS, WAVE_MAP_TILES * WAVE_MAP_TEXELS);
+		glUniform1i(uniBake, 1);
+		glUniform1f(uniTime, (float) (step / STEPS_PER_SECOND));
+		for (int h = 0; h < halves && halvesDone < 2; ++h)
+		{
+			drawChunks(focusX, focusZ, WAVE_MAP_REACH * 128f, halvesDone++);
+		}
+		if (halvesDone == 2)
+		{
+			glBindTexture(GL_TEXTURE_2D, waveTex[i]);
+			glGenerateMipmap(GL_TEXTURE_2D);
+			glBindTexture(GL_TEXTURE_2D, 0);
+		}
+	}
+
+	private void ensureWaveMaps()
+	{
+		if (waveTex[0] != 0)
+		{
+			return;
+		}
+		int size = WAVE_MAP_TILES * WAVE_MAP_TEXELS;
+		for (int i = 0; i < 3; ++i)
+		{
+			waveTex[i] = glGenTextures();
+			glBindTexture(GL_TEXTURE_2D, waveTex[i]);
+			glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA16F, size, size, 0, GL_RGBA, GL_HALF_FLOAT, (ByteBuffer) null);
+			glGenerateMipmap(GL_TEXTURE_2D);
+			glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
+			glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+			glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
+			glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
+			waveFbo[i] = glGenFramebuffers();
+			glBindFramebuffer(GL_FRAMEBUFFER, waveFbo[i]);
+			glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, waveTex[i], 0);
+			// the program's output 1 is the wave map
+			glDrawBuffers(new int[]{GL_NONE, GL_COLOR_ATTACHMENT0});
+			int status = glCheckFramebufferStatus(GL_FRAMEBUFFER);
+			if (status != GL_FRAMEBUFFER_COMPLETE)
+			{
+				throw new IllegalStateException("wave map framebuffer incomplete: " + status);
+			}
+			glClearBufferfv(GL_COLOR, 1, new float[4]);
+		}
+		glBindTexture(GL_TEXTURE_2D, 0);
+	}
+
+	/**
+	 * Draw the chunks within reach of the focus, all of them (half -1) or those of one parity (0 or 1).
+	 */
+	private void drawChunks(float focusX, float focusZ, float reach, int half)
+	{
 		Mesh m = mesh;
 		// consecutive chunks in reach go in one draw: their instances are contiguous
 		int runStart = -1, runEnd = 0;
 		for (int c = 0; c <= m.chunks; ++c)
 		{
-			boolean drawn = c < m.chunks && chunkDistance(focusX, focusZ, m.chunkX[c], m.chunkY[c]) <= reach;
+			boolean drawn = c < m.chunks && chunkDistance(focusX, focusZ, m.chunkX[c], m.chunkY[c]) <= reach
+				&& (half < 0 || (m.chunkX[c] / CHUNK + m.chunkY[c] / CHUNK & 1) == half);
 			if (runStart >= 0 && (!drawn || c == m.chunks))
 			{
 				glVertexAttribIPointer(0, 4, GL_UNSIGNED_BYTE, 4, runStart * 4L);
@@ -423,13 +576,6 @@ class WaterSurface
 				}
 				runEnd = m.chunkStart[c] + m.chunkCount[c];
 			}
-		}
-		glBindBuffer(GL_ARRAY_BUFFER, 0);
-		glBindVertexArray(0);
-		glDisable(GL_DEPTH_TEST);
-		if (cull)
-		{
-			glEnable(GL_CULL_FACE);
 		}
 	}
 
@@ -448,6 +594,16 @@ class WaterSurface
 	{
 		freeTarget();
 		freeShaded();
+		for (int i = 0; i < 3; ++i)
+		{
+			if (waveFbo[i] != 0)
+			{
+				glDeleteFramebuffers(waveFbo[i]);
+				glDeleteTextures(waveTex[i]);
+				waveFbo[i] = waveTex[i] = 0;
+			}
+		}
+		builtStep = Long.MIN_VALUE;
 		if (vao != 0)
 		{
 			glDeleteVertexArrays(vao);
