@@ -63,14 +63,14 @@ uniform int waterDebug;
 #define GLITTER_SLOPE 1.6
 #define GLITTER_ROUGH 0.1
 #define GLITTER 0.3
-#define LAMP_SPECULAR 0.4
+#define LAMP_SPECULAR 0.8
 // the most a lamp's glint adds (linear): a lamp next to the water left a pale blotch on it
 #define LAMP_MAX 2.0
 // the moon's glitter and sheen are this much of the sun's, and the surface's shadow (radius in shadow map texels)
 #define MOON_SPECULAR 0.35
 #define SURFACE_SHADOW_SOFT 3.0
-#define LAMP_ALONG 0.08
-#define LAMP_ACROSS 0.035
+#define LAMP_ALONG 0.03
+#define LAMP_ACROSS 0.012
 // what is seen through a wave face turned toward the camera is a little brighter, turned away darker
 #define WAVE_SHADE 0.6
 // Caustics: 117 HD's, carried by the flow, worked out by the water pass (water_frag.glsl) as their value above the
