@@ -40,7 +40,7 @@ layout(location = 1) out uvec4 WaterShadedOut;
 // least OPACITY_SLANT of 1 - the view's elevation
 #define SURFACE_DEPTH 64.0
 #define FRESNEL_BASE 0.2
-#define FRESNEL_POWER 2.0
+#define FRESNEL_POWER 3.5
 #define OPACITY_SLANT 0.4
 // what is seen through a wave face turned toward the camera is a little brighter, turned away darker
 #define WAVE_SHADE 0.6
@@ -52,6 +52,9 @@ layout(location = 1) out uvec4 WaterShadedOut;
 // the sky cache no brighter than SKY_CLOUD_MAX times the sky there.
 #define SKY_TILT 3.5
 #define CLOUD_TILT 1.0
+// how fast the reflected sky goes from the horizon's color to the zenith's as the reflection rises (an exponent on
+// the elevation): low keeps the horizon to a narrow bright band, so the wave faces that catch it stand out
+#define SKY_GRADIENT 0.22
 // how much of the clouds' own color shows over the sky's, and the spread of the taps that soften them (radians)
 #define CLOUD_SHARE 0.55
 #define CLOUD_BLUR 0.008
@@ -319,7 +322,7 @@ void waterShadeHalf(ivec2 hpx) {
   vec3 reflection;
   if (outdoors == 1 && proceduralSky == 1) {
     float elev = -r.y;
-    vec3 sc = mix(skyHorizon(sunAltitude), skyZenith(sunAltitude), pow(clamp(elev, 0.0, 1.0), 0.45));
+    vec3 sc = mix(skyHorizon(sunAltitude), skyZenith(sunAltitude), pow(clamp(elev, 0.0, 1.0), SKY_GRADIENT));
     // The sky as drawn this frame, clouds and all, when the sky cache has it. Looked up along a reflection off the
     // waves at their own slope (CLOUD_TILT): along the steep one each wave face caught its own scrap of cloud, and
     // the clouds broke up into white blobs. The steep one's gradient still shades it, so the waves show.
@@ -327,7 +330,7 @@ void waterShadeHalf(ivec2 hpx) {
       vec3 rc = reflect(v, normalize(nrm * vec3(CLOUD_TILT, 1.0, CLOUD_TILT)));
       rc.y = min(rc.y, -0.02);
       rc = normalize(rc);
-      vec3 gentle = mix(skyHorizon(sunAltitude), skyZenith(sunAltitude), pow(clamp(-rc.y, 0.0, 1.0), 0.45));
+      vec3 gentle = mix(skyHorizon(sunAltitude), skyZenith(sunAltitude), pow(clamp(-rc.y, 0.0, 1.0), SKY_GRADIENT));
       // four taps a little apart: the cache's clouds are marched with dithered steps, which the water showed as grain
       vec3 cd = cloudSkyDir(rc);
       vec3 ax = normalize(cross(cd, vec3(0.0, 1.0, 0.0)));
