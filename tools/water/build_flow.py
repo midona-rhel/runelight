@@ -46,7 +46,8 @@ SHALLOWS = 6           # geodesic tiles from open water before a channel runs at
 RIVER_SPEED = 0.55     # tiles per second in a channel (WaterBodies.REFERENCE_RIDGE wide; the plugin shapes it)
 EXTEND = 3             # tiles past the mapped water that still get its flow (the map and the scene differ a bit)
 SMOOTH = 1.6           # flow smoothing, tiles
-MIN_RIVER = 24         # a channel reaching less far than this from open water is an inlet or cove: still
+MIN_RIVER = 20         # tiles: a channel reaching less far than this from open water is an inlet or cove: still
+LAKE_WIDTH = 5         # tiles from shore: wider water inside a river system is a pool or lake and barely moves
 UNKNOWN = -128
 
 
@@ -129,7 +130,7 @@ def build(cache, debug=None):
     labels, n = ndimage.label(water, structure=np.ones((3, 3)))
     for lab, sl in enumerate(ndimage.find_objects(labels), start=1):
         if sl is not None:
-            auto_flow(sl, labels, lab, domain, sinks, olab, fx, fy, conflicts)
+            auto_flow(sl, labels, lab, domain, sinks, olab, shore, fx, fy, conflicts)
     conflicts.sort(reverse=True)
     for cells, sw, ne in conflicts:
         print("still: channel between two sinks, %d tiles, %s - %s" % (cells, sw, ne))
@@ -159,7 +160,7 @@ def box_slice(box):
     return worldmap.tile_slice(min(x0, x1), min(y0, y1), max(x0, x1), max(y0, y1))
 
 
-def auto_flow(sl, labels, lab, domain, sinks, olab, fx, fy, conflicts):
+def auto_flow(sl, labels, lab, domain, sinks, olab, shore, fx, fy, conflicts):
     """Flow of one connected piece of water toward the nearest sea or large lake."""
     # one tile of margin so sinks around the component's own tiles are seen
     sl = tuple(slice(max(s.start - 1, 0), s.stop + 1) for s in sl)
@@ -180,21 +181,28 @@ def auto_flow(sl, labels, lab, domain, sinks, olab, fx, fy, conflicts):
     seed_lab, _ = ndimage.label(seed, structure=np.ones((3, 3)))
     sink_of = np.where(origin >= 0, seed_lab.ravel()[np.maximum(origin, 0)], 0)
     chan, _ = ndimage.label(dom & (d_sink > SHALLOWS), structure=np.ones((3, 3)))
+    # Only rivers flow: a channel long enough (MIN_RIVER), open to the sea or a big lake at exactly one place, so
+    # its far end is a real source (a dead end inland, a spring, a pond or small lake it drains). Everything else in
+    # this piece of water (coastal shallows, coves, straits, channels around islands) stays still.
+    valid = np.zeros_like(dom)
     for c, csl in enumerate(ndimage.find_objects(chan), start=1):
         here = chan[csl] == c
         ends = np.unique(sink_of[csl][here])
-        if np.nanmax(np.where(here, d_sink[csl], 0)) < MIN_RIVER:
-            grow = ndimage.binary_dilation(chan == c, structure=np.ones((3, 3)), iterations=SHALLOWS)
-            ramp = np.where(grow, 0, ramp)
-            continue
-        if len(ends[ends != 0]) > 1:
+        ends = ends[ends != 0]
+        if len(ends) > 1:
             cells = int(here.sum())
             if cells >= 40:
                 r0, c0 = sl[0].start + csl[0].start, sl[1].start + csl[1].start
                 r1, c1 = sl[0].start + csl[0].stop - 1, sl[1].start + csl[1].stop - 1
                 conflicts.append((cells, worldmap.world(r1, c0), worldmap.world(r0, c1)))
-            grow = ndimage.binary_dilation(chan == c, structure=np.ones((3, 3)), iterations=SHALLOWS)
-            ramp = np.where(grow, 0, ramp)
+            continue
+        if len(ends) == 0 or np.nanmax(np.where(here, d_sink[csl], 0)) < MIN_RIVER:
+            continue
+        # the channel plus its mouth, so the current runs out into the shallows and fades there
+        valid |= ndimage.binary_dilation(chan == c, structure=np.ones((3, 3)), iterations=SHALLOWS) & dom
+    # wide water inside a river system (a pond or small lake it drains) barely moves; the narrow channel runs
+    narrow = np.clip((LAKE_WIDTH - shore[sl]) / 2.0, 0.15, 1.0)
+    ramp = np.where(valid, ramp * narrow, 0)
     apply(sl, dom, d_sink, ramp, fx, fy)
 
 
