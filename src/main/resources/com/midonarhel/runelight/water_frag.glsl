@@ -48,10 +48,9 @@ layout(location = 0) out uvec4 WaterOut;  // 64 bits packed, see water.glsl's wa
 #define WAVE_SPEED 0.12
 #define WAVE_WARP 0.35
 // each size's swells are WAVE_STRETCH times longer along their crests than across: ridges, not round bubbles
-#define WAVE_STRETCH 1.6
-// how sharp the crests come to a point (smaller sharper), and their steepness against the troughs'
-#define WAVE_CREST_SOFT 0.03
-#define WAVE_CREST 0.6
+#define WAVE_STRETCH 2.2
+// how far the crests pinch (see crestWaves): 0 round swells, about 0.5 the sharpest without folding over
+#define WAVE_CREST 0.35
 #define WAVE_STRENGTH 0.34
 // still water (no flow) runs its waves and its detail this many times slower, and drifts less with the wind
 #define STILL_SLOW 1.25
@@ -149,15 +148,15 @@ vec2 crestWaves(vec2 q, vec2 dir, float footprint, float slow, float size) {
     vec2 w = q + warp;
     vec2 p = vec2(dot(w, d), dot(w, c) / WAVE_STRETCH) / len - vec2(waterTime * WAVE_SPEED * WATER_TILE / len / slow, 0.0)
       + float(i) * 13.7;
-    vec3 n = waveNoise(p);
+    // Crests as on real waves (Gerstner): the water moves toward the crest along the wave's direction, so crests
+    // pinch narrow and steep while troughs spread broad and flat. Done by looking the height up WAVE_CREST of a
+    // wavelength further along where the water stands high; its slope along the way grows by how much that squeezes.
+    vec3 n0 = waveNoise(p);
+    vec2 pc = p + vec2(WAVE_CREST * (n0.z - 0.5), 0.0);
+    vec3 n = waveNoise(pc);
+    n.x *= max(1.0 + WAVE_CREST * n0.x, 0.2);
     // its gradient back in world directions
     n.xy = d * n.x + c * (n.y / WAVE_STRETCH);
-    // Sharp crests: folded where the noise crosses its middle (a crease, just softened against shimmer), and squared,
-    // so the crest stands steep and narrow over broad, gentle troughs
-    float m = 2.0 * n.z - 1.0;
-    float am = sqrt(m * m + WAVE_CREST_SOFT);
-    float h = 1.0 - am;
-    n.xy *= 2.0 * h * (-2.0 * m / am) * WAVE_CREST;
     // finer than a few pixels: faded, it only shimmers
     float vis = smoothstep(4.0, 10.0, len / max(footprint, 1e-3));
     slope += n.xy * (amp * vis);
