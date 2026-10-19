@@ -299,7 +299,9 @@ final class GroundBlender
 		{
 			// near-black, used under walls and such; only where no proper color touches the vertex
 			lowPriority = color <= 2;
-			if (VertexShading.undoVanillaShading)
+			// the land drawn without blending keeps vanilla's colors as they are (SceneUploader): so does the bed's
+			// shore taken from here
+			if (VertexShading.undoVanillaShading && enabled)
 			{
 				color = undoShading(color, dhdx, dhdz);
 			}

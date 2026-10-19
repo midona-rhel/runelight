@@ -520,7 +520,7 @@ final class WaterMap
 
 	/**
 	 * The color each underlay is drawn with on the land around, learned from the plain ground tiles there (vanilla's
-	 * baked lighting undone): a water tile is an overlay on an underlay, which is the ground under the water.
+	 * baked lighting undone where the land's is): a water tile is an overlay on an underlay, which is the ground under the water.
 	 */
 	private static final class UnderlayColors
 	{
@@ -551,7 +551,8 @@ final class WaterMap
 			float dhdz = (heights[x][y + 1] + heights[x + 1][y + 1] - heights[x][y] - heights[x + 1][y]) / 256f;
 			for (int c : new int[]{paint.getSwColor(), paint.getSeColor(), paint.getNeColor(), paint.getNwColor()})
 			{
-				if (VertexShading.undoVanillaShading)
+				// as the land around is drawn: vanilla's lighting undone only with ground blending (SceneUploader)
+				if (VertexShading.undoVanillaShading && GroundBlender.enabled)
 				{
 					c = GroundBlender.undoShading(c, dhdx, dhdz);
 				}
