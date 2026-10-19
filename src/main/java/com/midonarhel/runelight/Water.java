@@ -23,11 +23,6 @@ class Water
 	// 117 HD's caustics map (layer 1 of the noise texture), its red, green and blue taken this many texels apart
 	// diagonally (their aberration of 0.005 per repeat): colored fringes for one tap per copy
 	private static final String CAUSTICS_MAP = "water_caustics.jpg";
-	// The waves' warp noise (layer 3): value noise on a lattice of WARP_CELLS cells across, wrapping
-	static final int WARP_CELLS = 64;
-	private static final long WARP_SEED = 2203;
-	// the noise's gradient, per cell, stored across the byte's range up to this
-	static final float WARP_GRADIENT = 3f;
 	private static final float CAUSTIC_ABERRATION = 1.28f;
 	// The ripple cells (layer 2): a jittered grid of CELLS x CELLS points, each the top of a round dome reaching
 	// CELL_RADIUS of the grid spacing, the domes added up into soft rounded cells
@@ -419,21 +414,19 @@ class Water
 	}
 
 	// Layer 0 the old wave noise (its height jitters the flow phases and patches the swell), layer 1 the caustics,
-	// layer 2 the ripple cells (foam on rapids), layer 3 the waves' warp noise: one sampler, the composite has none to
-	// spare
+	// layer 2 the ripple cells (foam on rapids): one sampler, the composite has none to spare
 	private static int createNoise()
 	{
 		byte[] waves = noise(NOISE_SIZE, NOISE_SEED);
 		byte[] caustics = caustics(NOISE_SIZE);
 		byte[] cells = cells(NOISE_SIZE, CELL_SEED);
-		byte[] normals = warpNoise(NOISE_SIZE);
-		ByteBuffer buf = BufferUtils.createByteBuffer(waves.length + caustics.length + cells.length + normals.length);
-		buf.put(waves).put(caustics).put(cells).put(normals).flip();
+		ByteBuffer buf = BufferUtils.createByteBuffer(waves.length + caustics.length + cells.length);
+		buf.put(waves).put(caustics).put(cells).flip();
 
 		int tex = glGenTextures();
 		glBindTexture(GL_TEXTURE_2D_ARRAY, tex);
 		glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
-		glTexImage3D(GL_TEXTURE_2D_ARRAY, 0, GL_RGBA8, NOISE_SIZE, NOISE_SIZE, 4, 0, GL_RGBA, GL_UNSIGNED_BYTE, buf);
+		glTexImage3D(GL_TEXTURE_2D_ARRAY, 0, GL_RGBA8, NOISE_SIZE, NOISE_SIZE, 3, 0, GL_RGBA, GL_UNSIGNED_BYTE, buf);
 		glPixelStorei(GL_UNPACK_ALIGNMENT, 4);
 		// mipmaps calm the waves in the distance instead of letting them sparkle
 		glGenerateMipmap(GL_TEXTURE_2D_ARRAY);
@@ -516,46 +509,6 @@ class Water
 		return aberrate(map, size, CAUSTIC_ABERRATION);
 	}
 
-	/**
-	 * Value noise for the waves' warp (water_frag.glsl's waveNoiseD), RGBA: r the value (0 to 1), g and b its gradient
-	 * along x and y per lattice cell (0.5 flat, WARP_GRADIENT at the ends), a unused. A lattice of WARP_CELLS cells
-	 * across with random values at its corners, smoothstep between them; it wraps.
-	 */
-	static byte[] warpNoise(int size)
-	{
-		Random rng = new Random(WARP_SEED);
-		float[] lattice = new float[WARP_CELLS * WARP_CELLS];
-		for (int i = 0; i < lattice.length; ++i)
-		{
-			lattice[i] = rng.nextFloat();
-		}
-		byte[] out = new byte[size * size * 4];
-		for (int y = 0; y < size; ++y)
-		{
-			float fy = (float) y * WARP_CELLS / size;
-			int y0 = (int) fy;
-			float ty = fy - y0, uy = ty * ty * (3 - 2 * ty), dy = 6 * ty * (1 - ty);
-			for (int x = 0; x < size; ++x)
-			{
-				float fx = (float) x * WARP_CELLS / size;
-				int x0 = (int) fx;
-				float tx = fx - x0, ux = tx * tx * (3 - 2 * tx), dx = 6 * tx * (1 - tx);
-				float a = lattice[(y0 % WARP_CELLS) * WARP_CELLS + x0 % WARP_CELLS];
-				float b = lattice[(y0 % WARP_CELLS) * WARP_CELLS + (x0 + 1) % WARP_CELLS];
-				float c = lattice[((y0 + 1) % WARP_CELLS) * WARP_CELLS + x0 % WARP_CELLS];
-				float d = lattice[((y0 + 1) % WARP_CELLS) * WARP_CELLS + (x0 + 1) % WARP_CELLS];
-				float k1 = b - a, k2 = c - a, k3 = a - b - c + d;
-				float v = a + k1 * ux + k2 * uy + k3 * ux * uy;
-				float gx = dx * (k1 + k3 * uy), gy = dy * (k2 + k3 * ux);
-				int o = (y * size + x) * 4;
-				out[o] = (byte) Math.round(v * 255);
-				out[o + 1] = (byte) Math.round(Math.max(0, Math.min(1, 0.5f + gx / (2 * WARP_GRADIENT))) * 255);
-				out[o + 2] = (byte) Math.round(Math.max(0, Math.min(1, 0.5f + gy / (2 * WARP_GRADIENT))) * 255);
-				out[o + 3] = (byte) 255;
-			}
-		}
-		return out;
-	}
 
 	/**
 	 * Tiling round ripple cells, RGBA: rg the slope (0.5 flat, slopes of SLOPE_RANGE standard deviations at 0 or 1),
