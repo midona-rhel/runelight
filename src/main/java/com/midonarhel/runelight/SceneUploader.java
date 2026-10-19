@@ -877,22 +877,26 @@ class SceneUploader
 		return 6;
 	}
 
-	// how much of the nearby bank's color a bed corner keeps, by its distance in corners from the nearest bank corner
-	private static final float[] BANK_SHARE = {1f, 0.7f, 0.35f};
+	// how much of the nearby bank's color a bed corner keeps, by its distance in corners from the nearest bank corner:
+	// the bank's color runs on down into the bed, giving way to the bed's own only well out from the shore
+	private static final float[] BANK_SHARE = {1f, 0.9f, 0.75f, 0.55f, 0.3f};
+	private static final int BANK_REACH = BANK_SHARE.length - 1;
 
 	/**
 	 * The bed's color at corner (cx, cy) of bed tile (tileX, tileY), extended coordinates: the bank's where the
-	 * corner is on it, else the bed's own blended toward the mean color of the bank corners within two corners, the
-	 * more the nearer the closest of them is.
+	 * corner is on it, else the bed's own blended toward the color of the bank corners within BANK_REACH corners
+	 * (the nearer the more, darkened with depth as the bed's own is), the more the nearer the closest of them is.
 	 */
 	private int bedCornerColor(int tileX, int tileY, int cx, int cy, int[][] heights)
 	{
-		int own = water.bedColor(tileX, tileY, cx << 7, cy << 7, water.depthLevel(cx, cy));
-		int hue = 0, sat = 0, light = 0, n = 0, nearest = 3;
+		int depth = water.depthLevel(cx, cy);
+		int own = water.bedColor(tileX, tileY, cx << 7, cy << 7, depth);
+		float hue = 0, sat = 0, light = 0, wsum = 0;
+		int nearest = BANK_REACH + 1, firstHue = -1;
 		int maxX = heights.length - 1, maxY = heights[0].length - 1;
-		for (int dy = -2; dy <= 2; ++dy)
+		for (int dy = -BANK_REACH; dy <= BANK_REACH; ++dy)
 		{
-			for (int dx = -2; dx <= 2; ++dx)
+			for (int dx = -BANK_REACH; dx <= BANK_REACH; ++dx)
 			{
 				int x = cx + dx, y = cy + dy;
 				if (x < 0 || y < 0 || x > maxX || y > maxY)
@@ -910,17 +914,26 @@ class SceneUploader
 					return c;
 				}
 				nearest = Math.min(nearest, d);
-				hue += c >> 10 & 63;
-				sat += c >> 7 & 7;
-				light += c & 127;
-				++n;
+				// hues averaged around the first one seen, so they don't wrap
+				int h = c >> 10 & 63;
+				if (firstHue < 0)
+				{
+					firstHue = h;
+				}
+				h = firstHue + ((h - firstHue + 32 & 63) - 32);
+				float w = 1f / (d * d);
+				hue += h * w;
+				sat += (c >> 7 & 7) * w;
+				light += (c & 127) * w;
+				wsum += w;
 			}
 		}
-		if (n == 0)
+		if (wsum == 0)
 		{
 			return own;
 		}
-		int bank = (hue + n / 2) / n << 10 | (sat + n / 2) / n << 7 | (light + n / 2) / n;
+		int l = Math.max(4, Math.round(light / wsum) - depth * WaterMap.DEPTH_DARKEN);
+		int bank = (Math.round(hue / wsum) & 63) << 10 | Math.round(sat / wsum) << 7 | l;
 		return lerpHsl(own, bank, BANK_SHARE[nearest]);
 	}
 

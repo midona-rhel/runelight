@@ -669,6 +669,9 @@ final class WaterMap
 	 * Bed color for a vertex of bed tile (ex, ey) at world-unit position (wx, wz) relative to the extended scene,
 	 * with depth level {@code depthLevel}: a little darker deeper down and a little uneven.
 	 */
+	// the bed's lightness lost per depth level
+	static final int DEPTH_DARKEN = 2;
+
 	int bedColor(int ex, int ey, int wx, int wz, int depth)
 	{
 		int hsl = bedHsl[clampTile(ey) * SIZE + clampTile(ex)];
@@ -678,7 +681,7 @@ final class WaterMap
 		h ^= h >>> 29;
 		h *= 0xBF58476D1CE4E5B9L;
 		int jitter = (int) (h >>> 60) - 8; // -8..7
-		int l = (hsl & 127) + jitter / 2 - depth * 2;
+		int l = (hsl & 127) + jitter / 2 - depth * DEPTH_DARKEN;
 		return hsl & ~127 | Math.max(4, Math.min(100, l));
 	}
 
