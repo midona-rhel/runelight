@@ -987,10 +987,11 @@ class SceneUploader
 		}
 		// Near-black ground colors (wall bases, black tiles, ground hidden under objects) carried onto the bed
 		// showed under the water as dark squares, the refraction wobbling their edges: the bed keeps its own there.
+		// Only those: dark mud banks are a real color, and leaving them out left the bed lighter than its bank.
 		return (v & 127) < MIN_SHORE_LIGHTNESS ? -1 : v & 0xffff;
 	}
 
-	private static final int MIN_SHORE_LIGHTNESS = 12;
+	private static final int MIN_SHORE_LIGHTNESS = 3;
 
 	/**
 	 * The mean of the first n packed HSL colors that aren't -1, or -1 if all are.

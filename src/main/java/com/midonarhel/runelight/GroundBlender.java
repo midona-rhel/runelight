@@ -227,7 +227,8 @@ final class GroundBlender
 				return;
 			}
 			boolean overlay = overlayIds != null && overlayIds[level][ex][ey] != 0;
-			boolean blend = !unblended(level, ex, ey);
+			// without blending every tile is drawn in its own colors, so every one is a color the water bed may take
+			boolean blend = !enabled || !unblended(level, ex, ey);
 			addCorner(h, ex, ey, paint.getSwColor(), overlay, blend);
 			addCorner(h, ex + 1, ey, paint.getSeColor(), overlay, blend);
 			addCorner(h, ex + 1, ey + 1, paint.getNeColor(), overlay, blend);
@@ -264,7 +265,7 @@ final class GroundBlender
 				continue;
 			}
 			boolean overlay = isOverlayFace(shape, face);
-			boolean blend = !overlay || blendOverlay;
+			boolean blend = !enabled || !overlay || blendOverlay;
 			addModelVertex(vertexX, vertexY, vertexZ, faceX[face], colorA[face], overlay, blend, baseX, baseZ);
 			addModelVertex(vertexX, vertexY, vertexZ, faceY[face], colorB[face], overlay, blend, baseX, baseZ);
 			addModelVertex(vertexX, vertexY, vertexZ, faceZ[face], colorC[face], overlay, blend, baseX, baseZ);
