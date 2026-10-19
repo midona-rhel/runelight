@@ -160,14 +160,14 @@ float waterRayBehind(vec3 s, vec3 r, float t, out ivec2 ip, out vec2 ndc) {
   return isSky(dq) ? -1e9 : clip.w - viewDepth(dq);
 }
 
-// The world as seen in the reflection: a few growing steps along the reflected ray against the depth buffer, from a
-// start jittered per pixel (so the hits don't line up into stair steps), then halving steps onto the crossing; the
+// The world as seen in the reflection: a few growing steps along the reflected ray against the depth buffer, then
+// halving steps onto the crossing (no jitter: at half resolution it showed as grain); the
 // hit's color lit by `light` (the light on the surface: what stands in the water is lit about the same), sharp.
 // a: how much to trust it.
 vec4 waterTraceReflection(vec3 s, vec3 r, vec3 light, vec2 px) {
   float stepLen = SSR_FIRST_STEP;
   float prev = 0.0;
-  float t = stepLen * (0.5 + hash13(vec3(px, 7.0)));
+  float t = stepLen;
   ivec2 ip;
   vec2 ndc;
   for (int i = 0; i < SSR_STEPS; ++i) {
