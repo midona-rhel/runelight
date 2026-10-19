@@ -90,7 +90,7 @@ out vec4 FragColor;
 
 float upsampleAoFog(ivec2 px, float z, vec3 n, out vec4 fog, out float shadow, out vec4 gi) {
   vec2 hp = (vec2(px) + 0.5) * 0.5 - 0.5;
-  ivec2 base = ivec2(floor(hp)) - 1;
+  ivec2 base = ivec2(floor(hp));
   ivec2 maxAo = textureSize(sceneAo, 0) - 1;
   bool withFog = volumetricFog == 1;
   float sum = 0.0;
@@ -101,12 +101,15 @@ float upsampleAoFog(ivec2 px, float z, vec3 n, out vec4 fog, out float shadow, o
   float skySum = 0.0;
   vec4 fogSum = vec4(0.0);
   float fogWsum = 0.0;
-  for (int y = 0; y < 4; ++y) {
-    for (int x = 0; x < 4; ++x) {
+  // the 2x2 half-res texels around the pixel, bilinear weights refined by depth and normal: a 4x4 footprint read
+  // 48 texels a pixel and cost over a millisecond for no visible difference
+  for (int y = 0; y < 2; ++y) {
+    for (int x = 0; x < 2; ++x) {
       ivec2 q = clamp(base + ivec2(x, y), ivec2(0), maxAo);
       vec4 g = texelFetch(sceneAo, q, 0);
       float qz = halfViewDepth(g);
-      float spatial = upsampleSpatial(vec2(q) - hp);
+      vec2 bl = max(1.0 - abs(vec2(q) - hp), 0.0);
+      float spatial = bl.x * bl.y + 1e-3;
       if (withFog) {
         float fw = spatial * fogDepthWeight(qz, z);
         fogSum += texelFetch(sceneFog, q, 0) * fw;
