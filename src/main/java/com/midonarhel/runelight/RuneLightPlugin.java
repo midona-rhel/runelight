@@ -213,6 +213,10 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		.add(GL_VERTEX_SHADER, "composite_vert.glsl")
 		.add(GL_FRAGMENT_SHADER, "ao_frag.glsl");
 
+	static final Shader DENOISE_PROGRAM = new Shader()
+		.add(GL_VERTEX_SHADER, "composite_vert.glsl")
+		.add(GL_FRAGMENT_SHADER, "denoise_frag.glsl");
+
 	private int glCompositeProgram;
 	private int uniCompositeDebugView;
 	private int uniCompositeAoEnabled;
@@ -220,6 +224,8 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 	private final FrameUniforms compositeFrame = new FrameUniforms();
 
 	private int glAoProgram;
+	private int glDenoiseProgram;
+	private int uniDenoiseAxis;
 	private int uniAoRadius;
 	private int uniAoSamples;
 	private int uniAoShadowsEnabled, uniAoLightProjRel, uniAoShadowRadius, uniAoShadowDepthRange, uniAoShadowMapSize,
@@ -1012,6 +1018,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		glUiProgram = UI_PROGRAM.compile(template);
 		glCompositeProgram = COMPOSITE_PROGRAM.compile(template);
 		glAoProgram = AO_PROGRAM.compile(template);
+		glDenoiseProgram = DENOISE_PROGRAM.compile(template);
 		glShadowProgram = SHADOW_PROGRAM.compile(template);
 		setFogProgram(VolumetricFog.PROGRAM.compile(template));
 		water.setSurfaceProgram(WaterSurface.PROGRAM.compile(template), COMPOSITE_TEXTURE_UNIT + 2, WATER_DATA_UNIT,
@@ -1074,6 +1081,11 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		glUniform1i(glGetUniformLocation(glCompositeProgram, "sceneAo"), AO_TEXTURE_UNIT);
 		glUseProgram(0);
 
+		uniDenoiseAxis = glGetUniformLocation(glDenoiseProgram, "denoiseAxis");
+		glUseProgram(glDenoiseProgram);
+		glUniform1i(glGetUniformLocation(glDenoiseProgram, "sceneAo"), AO_TEXTURE_UNIT);
+		glUniform1i(glGetUniformLocation(glDenoiseProgram, "sceneShadow"), SCENE_SHADOW_UNIT);
+		glUseProgram(0);
 		uniAoRadius = glGetUniformLocation(glAoProgram, "aoRadius");
 		uniAoSamples = glGetUniformLocation(glAoProgram, "aoSamples");
 		uniAoShadowsEnabled = glGetUniformLocation(glAoProgram, "shadowsEnabled");
@@ -1186,6 +1198,9 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		glDeleteProgram(glAoProgram);
 		glAoProgram = 0;
 
+		glDeleteProgram(glDenoiseProgram);
+		glDenoiseProgram = 0;
+
 		glDeleteProgram(glShadowProgram);
 		glShadowProgram = 0;
 
@@ -1203,7 +1218,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 	{
 		glBindVertexArray(vaoUiHandle);
 		Template template = createTemplate();
-		int scene = 0, ui = 0, composite = 0, ao = 0, shadow = 0, fog = 0, waterSurface = 0;
+		int scene = 0, ui = 0, composite = 0, ao = 0, denoise = 0, shadow = 0, fog = 0, waterSurface = 0;
 		Weather.Programs weatherPrograms;
 		SkyCache.Programs skyCachePrograms;
 		GlobalIllumination.Programs giPrograms;
@@ -1213,6 +1228,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 			ui = UI_PROGRAM.compile(template);
 			composite = COMPOSITE_PROGRAM.compile(template);
 			ao = AO_PROGRAM.compile(template);
+			denoise = DENOISE_PROGRAM.compile(template);
 			shadow = SHADOW_PROGRAM.compile(template);
 			fog = VolumetricFog.PROGRAM.compile(template);
 			waterSurface = WaterSurface.PROGRAM.compile(template);
@@ -1248,6 +1264,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 			glDeleteProgram(ui);
 			glDeleteProgram(composite);
 			glDeleteProgram(ao);
+			glDeleteProgram(denoise);
 			glDeleteProgram(shadow);
 			glDeleteProgram(fog);
 			glDeleteProgram(waterSurface);
@@ -1270,6 +1287,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		glUiProgram = ui;
 		glCompositeProgram = composite;
 		glAoProgram = ao;
+		glDenoiseProgram = denoise;
 		glShadowProgram = shadow;
 		setFogProgram(fog);
 		water.setSurfaceProgram(waterSurface, COMPOSITE_TEXTURE_UNIT + 2, WATER_DATA_UNIT, WATER_NOISE_UNIT);
@@ -2621,6 +2639,12 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 			frameSkylight = skyOcclusion.bindAo(SKY_OCCLUSION_UNIT, frameCameraX, frameCameraY, frameCameraZ);
 			gpuTimer.begin(GpuTimer.AO);
 			glDrawArrays(GL_TRIANGLES, 0, 3);
+			// the AO and the shadows are dithered: smoothed at half resolution before the composite upsamples them
+			if (glDenoiseProgram != 0)
+			{
+				glUseProgram(glDenoiseProgram);
+				sceneTargets.denoise(uniDenoiseAxis, AO_TEXTURE_UNIT, SCENE_SHADOW_UNIT);
+			}
 			gpuTimer.end();
 			GlobalIllumination.unbind(GI_PROBE_UNIT);
 			SkyOcclusion.unbind(SKY_OCCLUSION_UNIT);

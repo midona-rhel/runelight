@@ -39,6 +39,8 @@ class SceneTargets
 	// sun and moon shadows at half resolution, drawn by the AO pass and upsampled with it, and the weather's ground
 	private int texShadow;
 	private int aoWidth, aoHeight;
+	// the same two again, for the first of the denoise's two passes (denoise)
+	private int fboAoTemp, texAoTemp, texShadowTemp;
 
 	void init(int width, int height, int samples)
 	{
@@ -89,6 +91,14 @@ class SceneTargets
 		glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT1, GL_TEXTURE_2D, texShadow, 0);
 		glDrawBuffers(new int[]{GL_COLOR_ATTACHMENT0, GL_COLOR_ATTACHMENT1});
 		check("ao");
+		texAoTemp = halfTexture(GL_RGBA32F, GL_FLOAT);
+		texShadowTemp = halfTexture(GL_RGBA8, GL_UNSIGNED_BYTE);
+		fboAoTemp = glGenFramebuffers();
+		glBindFramebuffer(GL_FRAMEBUFFER, fboAoTemp);
+		glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, texAoTemp, 0);
+		glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT1, GL_TEXTURE_2D, texShadowTemp, 0);
+		glDrawBuffers(new int[]{GL_COLOR_ATTACHMENT0, GL_COLOR_ATTACHMENT1});
+		check("ao temp");
 
 		if (samples > 0)
 		{
@@ -120,9 +130,9 @@ class SceneTargets
 		}
 		if (fboAo != 0)
 		{
-			glDeleteFramebuffers(fboAo);
-			glDeleteTextures(new int[]{texAo, texShadow});
-			fboAo = texAo = texShadow = 0;
+			glDeleteFramebuffers(new int[]{fboAo, fboAoTemp});
+			glDeleteTextures(new int[]{texAo, texShadow, texAoTemp, texShadowTemp});
+			fboAo = texAo = texShadow = fboAoTemp = texAoTemp = texShadowTemp = 0;
 		}
 		if (fboResolve != 0)
 		{
@@ -165,6 +175,47 @@ class SceneTargets
 	int getAoHeight()
 	{
 		return aoHeight;
+	}
+
+	private int halfTexture(int format, int type)
+	{
+		int t = glGenTextures();
+		glBindTexture(GL_TEXTURE_2D, t);
+		glTexImage2D(GL_TEXTURE_2D, 0, format, aoWidth, aoHeight, 0, GL_RGBA, type, 0);
+		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+		glBindTexture(GL_TEXTURE_2D, 0);
+		return t;
+	}
+
+	/**
+	 * Smooth the AO pass's dithered AO and shadow (denoise_frag.glsl): across into the temporary targets, then down
+	 * back into the AO targets. The denoise program in use, its axis uniform at axisUniform, its sceneAo and
+	 * sceneShadow samplers on aoUnit and shadowUnit; a fullscreen triangle's VAO bound. Leaves the AO framebuffer
+	 * bound and the units holding the temporary targets.
+	 */
+	void denoise(int axisUniform, int aoUnit, int shadowUnit)
+	{
+		glViewport(0, 0, aoWidth, aoHeight);
+		glBindFramebuffer(GL_FRAMEBUFFER, fboAoTemp);
+		bind(aoUnit, texAo);
+		bind(shadowUnit, texShadow);
+		glUniform2i(axisUniform, 1, 0);
+		glDrawArrays(GL_TRIANGLES, 0, 3);
+		glBindFramebuffer(GL_FRAMEBUFFER, fboAo);
+		bind(aoUnit, texAoTemp);
+		bind(shadowUnit, texShadowTemp);
+		glUniform2i(axisUniform, 0, 1);
+		glDrawArrays(GL_TRIANGLES, 0, 3);
+	}
+
+	private static void bind(int unit, int texture)
+	{
+		glActiveTexture(GL_TEXTURE0 + unit);
+		glBindTexture(GL_TEXTURE_2D, texture);
+		glActiveTexture(GL_TEXTURE0);
 	}
 
 	/** The half resolution shadows, for the composite. */
