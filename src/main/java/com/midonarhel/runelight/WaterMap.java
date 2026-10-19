@@ -666,24 +666,55 @@ final class WaterMap
 		return bedHeights[lvl];
 	}
 
-	/**
-	 * Bed color for a vertex of bed tile (ex, ey) at world-unit position (wx, wz) relative to the extended scene,
-	 * with depth level {@code depthLevel}: a little darker deeper down and a little uneven.
-	 */
 	// the bed's lightness lost per depth level
 	static final int DEPTH_DARKEN = 2;
 
-	int bedColor(int ex, int ey, int wx, int wz, int depth)
+	/**
+	 * The bed's own color at corner (cx, cy), extended coordinates, with depth level {@code depth}: the mean of the
+	 * water tiles' around it, so neighboring tiles of different ground agree on it; a little darker deeper down and a
+	 * little uneven.
+	 */
+	int bedColor(int cx, int cy, int depth)
 	{
-		int hsl = bedHsl[clampTile(ey) * SIZE + clampTile(ex)];
+		int hue = 0, sat = 0, light = 0, n = 0, first = -1;
+		for (int y = cy - 1; y <= cy; ++y)
+		{
+			for (int x = cx - 1; x <= cx; ++x)
+			{
+				int i = clampTile(y) * SIZE + clampTile(x);
+				if (level[i] < 0)
+				{
+					continue;
+				}
+				int c = bedHsl[i];
+				// hues averaged around the first one, so they don't wrap
+				int hc = c >> 10 & 63;
+				if (first < 0)
+				{
+					first = hc;
+				}
+				hue += first + ((hc - first + 32 & 63) - 32);
+				sat += c >> 7 & 7;
+				light += c & 127;
+				++n;
+			}
+		}
+		if (n == 0)
+		{
+			int c = bedHsl[clampTile(cy) * SIZE + clampTile(cx)];
+			hue = c >> 10 & 63;
+			sat = c >> 7 & 7;
+			light = c & 127;
+			n = 1;
+		}
 		// stable across scene loads: hash the position on the real map
-		long gx = (long) baseX * 128 + wx, gz = (long) baseY * 128 + wz;
+		long gx = (long) (baseX + cx) * 128, gz = (long) (baseY + cy) * 128;
 		long h = gx * 0x9E3779B97F4A7C15L ^ gz * 0xC2B2AE3D27D4EB4FL;
 		h ^= h >>> 29;
 		h *= 0xBF58476D1CE4E5B9L;
 		int jitter = (int) (h >>> 60) - 8; // -8..7
-		int l = (hsl & 127) + jitter / 2 - depth * DEPTH_DARKEN;
-		return hsl & ~127 | Math.max(4, Math.min(100, l));
+		int l = Math.round((float) light / n) + jitter / 2 - depth * DEPTH_DARKEN;
+		return (Math.round((float) hue / n) & 63) << 10 | Math.round((float) sat / n) << 7 | Math.max(4, Math.min(100, l));
 	}
 
 	private int cornerLevel(int cx, int cy)

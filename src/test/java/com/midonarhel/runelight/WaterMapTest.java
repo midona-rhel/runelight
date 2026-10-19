@@ -172,8 +172,8 @@ public class WaterMapTest
 		assertEquals(WaterMap.SWAMP, lake(WaterMap.MURKY_SWAMP).type[90 * N + 90]);
 		// the bed is mud in a swamp, sand otherwise
 		WaterMap clear = lake(WaterMap.CLEAR), swamp = lake(WaterMap.MURKY_SWAMP);
-		int sand = clear.bedColor(85, 85, 85 * 128, 85 * 128, 0);
-		int mud = swamp.bedColor(85, 85, 85 * 128, 85 * 128, 0);
+		int sand = clear.bedColor(85, 85, 0);
+		int mud = swamp.bedColor(85, 85, 0);
 		assertTrue((sand & 127) > (mud & 127));
 	}
 }

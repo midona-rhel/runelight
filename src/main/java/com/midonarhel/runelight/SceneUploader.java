@@ -843,10 +843,10 @@ class SceneUploader
 		// The bed's color at each corner: the bank's where the corner is on it, grading into the bed's own over the
 		// next two corners out (bedCornerColor). Per corner, never a whole tile: tiles in the bank's color showed under
 		// the water as dark squares, and sand right up to a dark bank as a bright band along the shore.
-		final int c0 = bedCornerColor(tileX, tileY, tileX, tileY, heights);
-		final int c1 = bedCornerColor(tileX, tileY, tileX + 1, tileY, heights);
-		final int c2 = bedCornerColor(tileX, tileY, tileX + 1, tileY + 1, heights);
-		final int c3 = bedCornerColor(tileX, tileY, tileX, tileY + 1, heights);
+		final int c0 = bedCornerColor(tileX, tileY, heights);
+		final int c1 = bedCornerColor(tileX + 1, tileY, heights);
+		final int c2 = bedCornerColor(tileX + 1, tileY + 1, heights);
+		final int c3 = bedCornerColor(tileX, tileY + 1, heights);
 		final int n0 = terrainNormal(bed, tileX, tileY);
 		final int n1 = terrainNormal(bed, tileX + 1, tileY);
 		final int n2 = terrainNormal(bed, tileX + 1, tileY + 1);
@@ -895,14 +895,14 @@ class SceneUploader
 	private static final int BANK_REACH = BANK_SHARE.length - 1;
 
 	/**
-	 * The bed's color at corner (cx, cy) of bed tile (tileX, tileY), extended coordinates: the bank's where the
+	 * The bed's color at corner (cx, cy), extended coordinates: the bank's where the
 	 * corner is on it, else the bed's own blended toward the color of the bank corners within BANK_REACH corners
 	 * (the nearer the more, darkened with depth as the bed's own is), the more the nearer the closest of them is.
 	 */
-	private int bedCornerColor(int tileX, int tileY, int cx, int cy, int[][] heights)
+	private int bedCornerColor(int cx, int cy, int[][] heights)
 	{
 		int depth = water.depthLevel(cx, cy);
-		int own = water.bedColor(tileX, tileY, cx << 7, cy << 7, depth);
+		int own = water.bedColor(cx, cy, depth);
 		float hue = 0, sat = 0, light = 0, wsum = 0;
 		int nearest = BANK_REACH + 1, firstHue = -1;
 		int maxX = heights.length - 1, maxY = heights[0].length - 1;
@@ -1075,8 +1075,8 @@ class SceneUploader
 		{
 			float fx = Math.min(Math.max(ox / 128f, 0), 1), fz = Math.min(Math.max(oz / 128f, 0), 1);
 			int[][] h = bedTileHeights;
-			color = lerpHsl(lerpHsl(bedCornerColor(ex, ey, ex, ey, h), bedCornerColor(ex, ey, ex + 1, ey, h), fx),
-				lerpHsl(bedCornerColor(ex, ey, ex, ey + 1, h), bedCornerColor(ex, ey, ex + 1, ey + 1, h), fx), fz);
+			color = lerpHsl(lerpHsl(bedCornerColor(ex, ey, h), bedCornerColor(ex + 1, ey, h), fx),
+				lerpHsl(bedCornerColor(ex, ey + 1, h), bedCornerColor(ex + 1, ey + 1, h), fx), fz);
 		}
 		vb.put22224(x - basex, y + sink, z - basez, 0, color);
 		vb.put2222(WaterMap.BED_FLAG, 0, 0, VertexShading.encodeNormal(slope[0], -1, slope[1]));
