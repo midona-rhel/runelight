@@ -29,7 +29,7 @@ uniform int waterDebug;
 #define REFRACT_DEPTH 70.0
 // vertical depth over which the surface fades in from the waterline; within 1 / WATERLINE_DEPTH of the depth the
 // shore distance gives, the bed's own depth sets the water's color
-#define SOFT_EDGE 10.0
+#define SOFT_EDGE 32.0
 #define WATERLINE_DEPTH 4.0
 // The bed is lit under the water as if it were flat (by BED_FLAT, past the first BED_FLAT_DEPTH units): the light
 // down there is scattered anyway, and the steep sides of the pits in shore tiles lit by their own normals showed as
@@ -382,7 +382,7 @@ vec3 waterOver(ivec2 px, inout vec3 p, vec3 n, vec3 albedo, vec3 light, float sh
   }
   // over the waterline the surface fades in: no hard edge where it meets the bank or a leg in the water
   vec3 result = linearToSrgb(clamp(waterShoulder(srgbToLinear(color) + spec), 0.0, 1.0));
-  result = mix(lit, result, smoothstep(0.0, SOFT_EDGE, depth + 2.0));
+  result = mix(lit, result, smoothstep(0.0, 1.0, depth / SOFT_EDGE));
 
   p = s;
   return result;
