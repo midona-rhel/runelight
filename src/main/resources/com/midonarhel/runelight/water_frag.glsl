@@ -37,8 +37,8 @@ flat in int vSlot;
 
 layout(location = 0) out uvec4 WaterOut;  // 64 bits packed, see water.glsl's waterUnpack
 
-// The waves: the wind waves of layer 0 (Water.noise, running along +x), turned to WAVE_DIR and, smaller, to
-// WAVE_DIR turned by WAVE_TURN radians; world units per repeat of each, seconds per repeat as they run, their share,
+// The waves: the wind waves of layer 0 (Water.noise, running along +x), turned to WAVE_DIR on still water and to the
+// flow on running water and, smaller, to that turned by WAVE_TURN radians; world units per repeat of each, seconds per repeat as they run, their share,
 // and the slope per unit of the texture's
 #define WAVE_DIR vec2(0.6, 0.8)
 #define WAVE_TURN 0.3
@@ -108,13 +108,9 @@ float waterLod(float footprint, float repeat) {
   return log2(max(footprint * 256.0 / repeat, 1.0));
 }
 
-// The slope of the waves at xz, moved along by `move`, `slow` times slower, `size` times as long: two trains of wind waves running along
-// their directions, and 117 HD's normal map (BSD-2, see LICENSE) in three sizes (6, 10 and 14 tiles a repeat) for
-// fine detail, each scrolling on its own, the first one turned (their slope: the sum of the sideways parts over the
-// sum of the upward parts), drawn out along the crests. lods: the waves' two, then the normal map's three.
-vec2 ripples(vec2 xz, vec2 move, vec4 lods, float lodC, float slow, float size) {
-  vec2 q = xz - move;
-  vec2 da = normalize(WAVE_DIR);
+// One direction's two trains of wind waves (see ripples): the first along da, the second turned WAVE_TURN from it,
+// each scrolling along its own direction. Their slope.
+vec2 waveTrains(vec2 q, vec2 da, vec4 lods, float slow, float size) {
   vec2 db = vec2(da.x * cos(WAVE_TURN) - da.y * sin(WAVE_TURN), da.x * sin(WAVE_TURN) + da.y * cos(WAVE_TURN));
   vec2 ua = vec2(dot(q, da), dot(q, vec2(-da.y, da.x))) / (WAVE_SCALE.x * size) - vec2(waterCycle(WAVE_PERIOD.x * slow), 0.0);
   vec2 ub = vec2(dot(q, db), dot(q, vec2(-db.y, db.x))) / (WAVE_SCALE.y * size) - vec2(waterCycle(WAVE_PERIOD.y * slow), 0.0);
@@ -122,16 +118,33 @@ vec2 ripples(vec2 xz, vec2 move, vec4 lods, float lodC, float slow, float size) 
   vec2 sa = textureLod(waterNoise, vec3(ua, 0.0), lods.x + bias).rg * 2.0 - 1.0;
   vec2 sb = textureLod(waterNoise, vec3(ub, 0.0), lods.y + bias).rg * 2.0 - 1.0;
   // back from each train's own axes to the world's
-  vec2 waves = (da * sa.x + vec2(-da.y, da.x) * sa.y) * WAVE_MIX.x + (db * sb.x + vec2(-db.y, db.x) * sb.y) * WAVE_MIX.y;
+  return (da * sa.x + vec2(-da.y, da.x) * sa.y) * WAVE_MIX.x + (db * sb.x + vec2(-db.y, db.x) * sb.y) * WAVE_MIX.y;
+}
 
-  // along the crests (across da) the detail is NORMAL_STREAK times longer, and its slope that much gentler
+// The slope of the waves at xz, moved along by `move`, `slow` times slower, `size` times as long, running along dir:
+// the wave trains, and 117 HD's normal map (BSD-2, see LICENSE) in three sizes (6, 10 and 14 tiles a repeat) for
+// fine detail, each scrolling on its own, the first one turned (their slope: the sum of the sideways parts over the
+// sum of the upward parts), drawn out `streak` times along the crests. lods: the waves' two, then the normal map's
+// three. The trains are blended from the two nearest of eight fixed directions: turning their own coordinates to
+// follow a winding flow would swirl them, more the further from the origin; the weights keep their strength.
+vec2 ripples(vec2 xz, vec2 move, vec4 lods, float lodC, float slow, float size, vec2 dir, float streak) {
+  vec2 q = xz - move;
+  float sector = atan(dir.y, dir.x) / (WATER_TAU / 8.0);
+  float s0 = floor(sector);
+  float f = (sector - s0) * (WATER_TAU / 4.0);
+  vec2 d0 = vec2(cos(s0 * WATER_TAU / 8.0), sin(s0 * WATER_TAU / 8.0));
+  vec2 d1 = vec2(cos((s0 + 1.0) * WATER_TAU / 8.0), sin((s0 + 1.0) * WATER_TAU / 8.0));
+  vec2 waves = waveTrains(q, d0, lods, slow, size) * cos(f) + waveTrains(q, d1, lods, slow, size) * sin(f);
+  vec2 da = f < WATER_TAU / 8.0 ? d0 : d1;
+
+  // along the crests (across da) the detail is `streak` times longer, and its slope that much gentler
   vec2 across = vec2(-da.y, da.x);
-  vec2 p = -(da * dot(q, da) + across * (dot(q, across) / NORMAL_STREAK)) / NORMAL_TILE;
+  vec2 p = -(da * dot(q, da) + across * (dot(q, across) / streak)) / NORMAL_TILE;
   vec3 a = textureLod(waterNoise, vec3((p / 3.0).yx - waterCycle(NORMAL_PERIOD.x * slow), 3.0), lods.z).rgb;
   vec3 b = textureLod(waterNoise, vec3(p / 5.0 + waterCycle(NORMAL_PERIOD.y * slow), 3.0), lods.w).rgb;
   vec3 c = textureLod(waterNoise, vec3(p / 7.0 + waterCycle(NORMAL_PERIOD.z * slow), 3.0), lodC).rgb;
   vec2 side = (a.rg + b.rg + c.rg) * 2.0 - 3.0;
-  side = da * dot(side, da) + across * (dot(side, across) / NORMAL_STREAK);
+  side = da * dot(side, da) + across * (dot(side, across) / streak);
   return waves * WAVE_STRENGTH + side * NORMAL_STRENGTH / max(a.b + b.b + c.b, 0.5);
 }
 
@@ -218,13 +231,16 @@ void main() {
   if (flowing > 0.0) {
     waterFlowPhases(xz, flow, base, m0, m1, w0);
     vec2 o1 = vec2(173.0, 91.0);
-    vec2 flowed = ripples(xz, m0, lods, lodC, 1.0, FLOW_WAVE_SIZE) * w0
-      + ripples(xz + o1, m1, lods, lodC, 1.0, FLOW_WAVE_SIZE) * (1.0 - w0);
+    // running water's waves run with it; the detail isn't drawn out, the drag streaks it
+    vec2 dir = flow / flowSpeed;
+    vec2 flowed = ripples(xz, m0, lods, lodC, 1.0, FLOW_WAVE_SIZE, dir, 1.0) * w0
+      + ripples(xz + o1, m1, lods, lodC, 1.0, FLOW_WAVE_SIZE, dir, 1.0) * (1.0 - w0);
     // blending two copies averages their slopes down: give some back
     flowed *= 1.0 + 0.4 * (1.0 - abs(2.0 * w0 - 1.0));
-    slope = flowing < 1.0 ? mix(ripples(xz, base, lods, lodC, STILL_SLOW, 1.0), flowed, flowing) : flowed;
+    slope = flowing < 1.0
+      ? mix(ripples(xz, base, lods, lodC, STILL_SLOW, 1.0, WAVE_DIR, NORMAL_STREAK), flowed, flowing) : flowed;
   } else {
-    slope = ripples(xz, base, lods, lodC, STILL_SLOW, 1.0);
+    slope = ripples(xz, base, lods, lodC, STILL_SLOW, 1.0, WAVE_DIR, NORMAL_STREAK);
   }
   float contact = textureLod(waterContact, (xz / WATER_TILE + waterGrid.x) / (waterGrid.y - 1.0), 0.0).r;
   contact *= contact;
