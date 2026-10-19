@@ -43,12 +43,12 @@ layout(location = 0) out uvec4 WaterOut;  // 64 bits packed, see water.glsl's wa
 // and the slope per unit of the texture's
 #define WAVE_DIR vec2(0.6, 0.8)
 #define WAVE_TURN 0.3
-#define WAVE_SCALE vec2(950.0, 420.0)
+#define WAVE_SCALE vec2(700.0, 320.0)
 #define WAVE_PERIOD vec2(60.0, 34.0)
 #define WAVE_MIX vec2(0.65, 0.35)
 #define WAVE_STRENGTH 0.13
 // still water (no flow) runs its waves and its detail this many times slower, and drifts less with the wind
-#define STILL_SLOW 3.0
+#define STILL_SLOW 1.75
 #define STILL_DRIFT 0.4
 // the sea's still water less so
 #define OCEAN_STILL_SLOW 1.5

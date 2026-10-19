@@ -30,8 +30,11 @@ uniform int waterSlotType[WATER_SLOTS];  // each look's water type (Water.java)
 
 layout(location = 1) out uvec4 WaterShadedOut;
 
-// vertical depth over which the surface fades in from the waterline
+// vertical depth over which the surface fades in from the waterline; within 1 / WATERLINE_DEPTH of the depth the
+// shore distance gives, the bed's own depth sets the water's color (the bed sinks in a pit in the middle of every
+// shore tile, which must not show)
 #define SOFT_EDGE 12.0
+#define WATERLINE_DEPTH 4.0
 // How much of the surface covers what is under it: the type's base opacity once the water is SURFACE_DEPTH deep
 // (clear over the shallows), at least FRESNEL_BASE rising to all of it at a slant as (1 - cos)^FRESNEL_POWER, and at
 // least OPACITY_SLANT of 1 - the view's elevation
@@ -427,8 +430,9 @@ vec3 waterOver(ivec2 px, inout vec3 p, vec3 albedo, float shadow, vec3 lit, floa
   int type = waterTypeOf(slot);
   vec4 look = WATER_LOOK[type];
   // The depth the water's color goes by: the shore distance's, smooth across tiles, so the pit the bed sinks into in
-  // the middle of every shore tile doesn't show as a dark square; where the bed is shallower than that, its own.
-  float colorDepth = min(shoreDepth, depth);
+  // the middle of every shore tile doesn't show as a dark square; only right at the waterline the bed's own depth
+  // fades the water in.
+  float colorDepth = min(shoreDepth, depth * WATERLINE_DEPTH + 4.0);
 
   // the bed, lit by the composite and wet, with the caustics, fading into the depth color
   vec3 under = srgbToLinear(lit * WET_SAND);
