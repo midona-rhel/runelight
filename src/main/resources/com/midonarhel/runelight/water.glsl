@@ -362,8 +362,9 @@ void waterShadeHalf(ivec2 hpx) {
   }
 
   // the surface (117 HD): its own color lit, mostly the sky's reflection; foam over it, folded in as waterOver would
-  // lay it over the whole (a mix over a mix is one mix)
-  vec3 surface = mix(srgbToLinear(WATER_SURFACE_COLOR[type]) * surfaceLight, reflection * fresnel, look.y);
+  // lay it over the whole (a mix over a mix is one mix). The Fresnel is how much of it covers what is under it, once:
+  // the reflection times it again left looking down hardly any sky, the water all but invisible.
+  vec3 surface = mix(srgbToLinear(WATER_SURFACE_COLOR[type]) * surfaceLight, reflection, look.y);
   float cover = max(fresnel, (1.0 + toCamera.y) * OPACITY_SLANT);
   vec3 foamColor = srgbToLinear(WATER_FOAM_COLOR[type]) * surfaceLight;
   float covered = cover + foam * (1.0 - cover);
@@ -425,9 +426,10 @@ vec3 waterOver(ivec2 px, inout vec3 p, vec3 albedo, float shadow, vec3 lit, floa
   }
 
   int type = waterTypeOf(slot);
-  // The depth the water's color goes by: the shore distance's, smooth across tiles, so the pit the bed sinks into in
-  // the middle of every shore tile doesn't show as a dark square; where the bed is shallower than that, its own.
-  float colorDepth = min(shoreDepth, depth);
+  // The depth the water's color goes by: the shore distance's, smooth across tiles. Not the bed's own: its corners
+  // are joined by flat triangles, and on the open sea, where the game's seabed rises and falls, its depth showed as
+  // big straight-edged facets of clearer and murkier water. The waterline is SOFT_EDGE's.
+  float colorDepth = shoreDepth;
 
   // the bed, lit by the composite and wet, with the caustics while it still shows, giving way to the water's color in
   // the same light (the bed's: its lit color over its albedo), darker the deeper
