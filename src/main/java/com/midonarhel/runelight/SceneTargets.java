@@ -142,6 +142,16 @@ class SceneTargets
 		return samples > 0 ? fboMsaa : fboResolve;
 	}
 
+	int getWidth()
+	{
+		return width;
+	}
+
+	int getHeight()
+	{
+		return height;
+	}
+
 	int getAoFbo()
 	{
 		return fboAo;

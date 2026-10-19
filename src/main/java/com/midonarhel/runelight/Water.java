@@ -1,43 +1,49 @@
 package com.midonarhel.runelight;
 
+import java.awt.image.BufferedImage;
+import java.io.IOException;
+import java.io.InputStream;
 import java.nio.ByteBuffer;
 import java.nio.FloatBuffer;
 import java.util.Random;
+import javax.imageio.ImageIO;
 import org.lwjgl.BufferUtils;
 import static org.lwjgl.opengl.GL33C.*;
 
 /**
- * The water surface drawn by the composite pass (water.glsl): owns the scene's water data texture (from
- * {@link WaterMap}, uploaded when the scene swaps in), the tiling wave noise and caustics, and the per-frame uniforms.
+ * The scene's water: owns the water data texture (from {@link WaterMap}, uploaded when the scene swaps in), the
+ * surface mesh and its pass ({@link WaterSurface}), the tiling wave noise and caustics, and the per-frame motion. The
+ * composite shades the water (water.glsl) from the surface pass's target.
  */
 class Water
 {
 	private static final int NOISE_SIZE = 256;
 	private static final long NOISE_SEED = 9157;
 	private static final double SLOPE_RANGE = 2.8;
-	// The caustic network (layer 1 of the noise texture): light through a tiling wave field of CAUSTIC_WAVES waves of
-	// 3 to 9 cycles focused CAUSTIC_FOCUS texels per unit of slope below it, traced with CAUSTIC_RAYS rays per texel
-	// per axis. Red and blue focus CAUSTIC_DISPERSION nearer and further than green (exaggerated dispersion, for
-	// colored fringes), alpha at CAUSTIC_SOFT of the distance (just under the surface: softer). Stored as intensity
-	// over CAUSTIC_RANGE times the mean (water.glsl decodes it).
-	private static final long CAUSTIC_SEED = 5;
-	private static final int CAUSTIC_WAVES = 28;
-	private static final float CAUSTIC_FOCUS = 7.5f;
-	private static final float CAUSTIC_DISPERSION = 0.07f;
-	private static final float CAUSTIC_SOFT = 0.55f;
-	private static final int CAUSTIC_RAYS = 3;
-	static final float CAUSTIC_RANGE = 6;
-	// the shader's time wraps after this many seconds; every periodic motion in water.glsl repeats within it
+	// 117 HD's caustics map (layer 1 of the noise texture), its red, green and blue taken this many texels apart
+	// diagonally (their aberration of 0.005 per repeat): colored fringes for one tap per copy
+	private static final String CAUSTICS_MAP = "water_caustics.jpg";
+	private static final float CAUSTIC_ABERRATION = 1.28f;
+	// the shader's time wraps after this many seconds; every periodic motion in the water shaders repeats within it
 	private static final double TIME_WRAP = 3840;
-	// how far the waves drift with the wind, world units per second (calm, full wind), before water.glsl's per-type
+	// how far the waves drift with the wind, world units per second (calm, full wind), before the shaders' per-type
 	// and config speed; the swell's own drift
 	private static final double DRIFT_CALM = 5, DRIFT_WIND = 18;
 	private static final double SWELL_CALM = 4, SWELL_WIND = 10;
-	// the drift distances wrap at a whole number of every repeat they are used with in water.glsl (wave scale 420 at
+	// the drift distances wrap at a whole number of every repeat they are used with in the shaders (wave scale 560 at
 	// any per-type speed of 0.35 or 0.45 and any whole config percent; swell scale 1650): no jump at the wrap
-	private static final double DRIFT_WRAP = 420 * 100 * 20, SWELL_WRAP = 1650 * 400;
+	private static final double DRIFT_WRAP = 560 * 100 * 20, SWELL_WRAP = 1650 * 400;
 	// seconds over which the water follows a change in the wind's strength: it jumps under roofs and in gusts
 	private static final double STRENGTH_EASE = 1.5;
+
+	/**
+	 * This frame's motion and settings for the surface pass.
+	 */
+	static final class Frame
+	{
+		float time, windX, windZ, strength, driftX, driftZ, swellX, swellZ, waves, speed, displace, rain, skyDepth;
+		boolean outdoors, debug;
+	}
 
 	private int texData, texNoise;
 	// the water's own clock: System.nanoTime is monotonic and fine grained everywhere, where currentTimeMillis can
@@ -49,41 +55,60 @@ class Water
 	private double driftX, driftZ, swellX, swellZ, strength;
 	private boolean hasData;
 	private WaterMap pending;
+	private WaterSurface.Mesh pendingMesh;
 	private boolean pendingSet;
+	private final WaterSurface surface = new WaterSurface();
+	private final Frame frame = new Frame();
 
-	private int uniEnabled, uniGrid, uniTime, uniWind, uniDrift, uniRain, uniReflections, uniClarity, uniWaves, uniSpeed,
-		uniCaustics, uniDebug;
+	private int uniEnabled, uniTime, uniReflections, uniClarity, uniCaustics, uniDebug;
 
 	/**
 	 * Look up the composite program's water uniforms. Call with each newly compiled composite.
 	 */
-	void locateComposite(int program, int dataUnit, int noiseUnit)
+	void locateComposite(int program, int surfaceUnit, int noiseUnit)
 	{
 		uniEnabled = glGetUniformLocation(program, "waterEnabled");
-		uniGrid = glGetUniformLocation(program, "waterGrid");
 		uniTime = glGetUniformLocation(program, "waterTime");
-		uniWind = glGetUniformLocation(program, "waterWind");
-		uniDrift = glGetUniformLocation(program, "waterDrift");
-		uniRain = glGetUniformLocation(program, "waterRain");
 		uniReflections = glGetUniformLocation(program, "waterReflections");
 		uniClarity = glGetUniformLocation(program, "waterClarity");
-		uniWaves = glGetUniformLocation(program, "waterWaves");
-		uniSpeed = glGetUniformLocation(program, "waterSpeed");
 		uniCaustics = glGetUniformLocation(program, "waterCaustics");
 		uniDebug = glGetUniformLocation(program, "waterDebug");
 		glUseProgram(program);
-		glUniform1i(glGetUniformLocation(program, "waterData"), dataUnit);
+		glUniform1i(glGetUniformLocation(program, "waterSurface"), surfaceUnit);
 		glUniform1i(glGetUniformLocation(program, "waterNoise"), noiseUnit);
 		glUseProgram(0);
 	}
 
 	/**
-	 * The water of a scene being loaded (any thread); null for none. Takes effect at {@link #swap}.
+	 * The surface pass's program, newly compiled (0 to drop it).
 	 */
-	synchronized void sceneLoaded(WaterMap map)
+	void setSurfaceProgram(int program, int depthUnit, int dataUnit, int noiseUnit)
 	{
-		pending = map;
-		pendingSet = true;
+		surface.freeProgram();
+		if (program != 0)
+		{
+			surface.setProgram(program, depthUnit, dataUnit, noiseUnit);
+		}
+	}
+
+	void freeSurfaceProgram()
+	{
+		surface.freeProgram();
+	}
+
+	/**
+	 * The water of a scene being loaded (any thread); null for none. Takes effect at {@link #swap}. Builds its
+	 * surface mesh here, off the GL thread.
+	 */
+	void sceneLoaded(WaterMap map)
+	{
+		WaterSurface.Mesh mesh = WaterSurface.build(map);
+		synchronized (this)
+		{
+			pending = map;
+			pendingMesh = mesh;
+			pendingSet = true;
+		}
 	}
 
 	/**
@@ -92,6 +117,7 @@ class Water
 	void swap()
 	{
 		WaterMap map;
+		WaterSurface.Mesh mesh;
 		synchronized (this)
 		{
 			if (!pendingSet)
@@ -99,11 +125,14 @@ class Water
 				return;
 			}
 			map = pending;
+			mesh = pendingMesh;
 			pending = null;
+			pendingMesh = null;
 			pendingSet = false;
 		}
 
 		hasData = map != null && map.hasWater && map.texture != null;
+		surface.upload(hasData ? mesh : null);
 		if (!hasData)
 		{
 			return;
@@ -138,16 +167,20 @@ class Water
 	}
 
 	/**
-	 * With the composite program in use: set this frame's uniforms and bind the textures.
+	 * Move the water on to this frame and draw its surface into the surface target (see {@link WaterSurface#draw}),
+	 * before the composite. Leaves the framebuffer and VAO bindings changed.
 	 *
 	 * @param wind  x, z direction the wind blows toward, and its strength 0-1
 	 * @param rain  0-1 rain falling on open water
+	 * @param focusX where the camera looks (the drawn world's middle, EdgeFade): the waves move around it
+	 * @param reach  radius of the drawn world around it, world units
+	 * @param depthZeroToOne whether glClipControl maps depth to 0-1 (frame.glsl)
 	 */
-	void bind(RuneLightConfig config, float[] wind, float rain, int dataUnit, int noiseUnit)
+	void drawSurface(RuneLightConfig config, float[] wind, float rain, boolean outdoors, int width, int height,
+		int[] viewport, float[] viewProj, float camX, float camY, float camZ, float focusX, float focusZ, float reach,
+		boolean depthZeroToOne, int dataUnit, int noiseUnit)
 	{
-		boolean enabled = config.water() && hasData;
-		glUniform1i(uniEnabled, enabled ? 1 : 0);
-		if (!enabled)
+		if (!config.water() || !hasData)
 		{
 			return;
 		}
@@ -155,24 +188,54 @@ class Water
 		{
 			texNoise = createNoise();
 		}
-
-		glUniform2f(uniGrid, RuneLightPlugin.SCENE_OFFSET, WaterMap.CORNERS);
 		long now = System.nanoTime();
-		glUniform1f(uniTime, (float) (((now - startNanos) / 1e9) % TIME_WRAP));
 		advance(wind, lastNanos == 0 ? 0 : (now - lastNanos) / 1e9);
 		lastNanos = now;
-		glUniform3f(uniWind, wind[0], wind[1], (float) strength);
-		glUniform4f(uniDrift, (float) driftX, (float) driftZ, (float) swellX, (float) swellZ);
-		glUniform1f(uniRain, rain);
-		glUniform1i(uniReflections, config.waterReflections() ? 1 : 0);
-		glUniform1f(uniClarity, config.waterClarity() / 100f);
-		glUniform1f(uniWaves, config.waterWaves() / 100f);
-		glUniform1f(uniSpeed, config.waterFlowSpeed() / 100f);
-		glUniform1i(uniCaustics, config.waterCaustics() ? 1 : 0);
-		glUniform1i(uniDebug, config.waterDebug() ? 1 : 0);
+		Frame f = frame;
+		f.time = (float) (((now - startNanos) / 1e9) % TIME_WRAP);
+		f.windX = wind[0];
+		f.windZ = wind[1];
+		f.strength = (float) strength;
+		f.driftX = (float) driftX;
+		f.driftZ = (float) driftZ;
+		f.swellX = (float) swellX;
+		f.swellZ = (float) swellZ;
+		f.waves = config.waterWaves() / 100f;
+		f.speed = config.waterFlowSpeed() / 100f;
+		f.displace = config.waterMovingSurface() ? 1 : 0;
+		f.rain = rain;
+		f.outdoors = outdoors;
+		f.debug = config.waterDebug();
+		// the sky's depth: 0 with glClipControl, the middle of the range without
+		f.skyDepth = depthZeroToOne ? 0 : 0.5f;
 
 		glActiveTexture(GL_TEXTURE0 + dataUnit);
 		glBindTexture(GL_TEXTURE_2D, texData);
+		glActiveTexture(GL_TEXTURE0 + noiseUnit);
+		glBindTexture(GL_TEXTURE_2D_ARRAY, texNoise);
+		glActiveTexture(GL_TEXTURE0);
+		surface.draw(width, height, viewport, viewProj, camX, camY, camZ, focusX, focusZ, reach, f);
+	}
+
+	/**
+	 * With the composite program in use: set this frame's uniforms and bind the surface and the noise.
+	 */
+	void bind(RuneLightConfig config, int surfaceUnit, int noiseUnit)
+	{
+		boolean enabled = config.water() && hasData && surface.texture() != 0 && texNoise != 0;
+		glUniform1i(uniEnabled, enabled ? 1 : 0);
+		if (!enabled)
+		{
+			return;
+		}
+		glUniform1f(uniTime, frame.time);
+		glUniform1i(uniReflections, config.waterReflections() ? 1 : 0);
+		glUniform1f(uniClarity, config.waterClarity() / 100f);
+		glUniform1i(uniCaustics, config.waterCaustics() ? 1 : 0);
+		glUniform1i(uniDebug, config.waterDebug() ? 1 : 0);
+
+		glActiveTexture(GL_TEXTURE0 + surfaceUnit);
+		glBindTexture(GL_TEXTURE_2D, surface.texture());
 		glActiveTexture(GL_TEXTURE0 + noiseUnit);
 		glBindTexture(GL_TEXTURE_2D_ARRAY, texNoise);
 		glActiveTexture(GL_TEXTURE0);
@@ -210,6 +273,7 @@ class Water
 
 	void free()
 	{
+		surface.free();
 		if (texData != 0)
 		{
 			glDeleteTextures(texData);
@@ -227,7 +291,7 @@ class Water
 	private static int createNoise()
 	{
 		byte[] waves = noise(NOISE_SIZE, NOISE_SEED);
-		byte[] caustics = caustics(NOISE_SIZE, CAUSTIC_SEED);
+		byte[] caustics = caustics(NOISE_SIZE);
 		ByteBuffer buf = BufferUtils.createByteBuffer(waves.length + caustics.length);
 		buf.put(waves).put(caustics).flip();
 
@@ -283,60 +347,54 @@ class Water
 	}
 
 	/**
-	 * Tiling caustics, RGBA: light refracted through a tiling wave surface onto a plane below it, traced as rays from a
-	 * fine grid that land displaced by the surface slope and are splatted where they land. Where the surface focuses
-	 * them they pile up into the bright lines of a caustic network, the cells between them get less. rgb focus at
-	 * slightly different distances (dispersion), a closer (softer); each channel's mean is 1/CAUSTIC_RANGE.
+	 * 117 HD's caustics map as RGBA: red, green and blue each the map shifted by {@link #CAUSTIC_ABERRATION} texels
+	 * along a different diagonal (as their shader samples it per channel), alpha the map itself. A flat mid gray if it
+	 * can't be read.
 	 */
-	static byte[] caustics(int size, long seed)
+	static byte[] caustics(int size)
 	{
-		Random rng = new Random(seed);
-		int m = size * CAUSTIC_RAYS;
-		float[] h = new float[m * m], gx = new float[m * m], gy = new float[m * m];
-		waves(rng, m, CAUSTIC_WAVES, 3, 9, 1f, h, gx, gy);
-		double sum = 0;
-		for (int i = 0; i < gx.length; ++i)
+		float[] map = new float[size * size];
+		try (InputStream in = Water.class.getResourceAsStream(CAUSTICS_MAP))
 		{
-			sum += gx[i] * gx[i] + gy[i] * gy[i];
-		}
-		// waves() gives slopes per ray; in texels per unit of RMS slope per axis
-		float unit = (float) (1 / Math.sqrt(sum / (2 * gx.length)));
-		float[] focus = {CAUSTIC_FOCUS * (1 - CAUSTIC_DISPERSION), CAUSTIC_FOCUS, CAUSTIC_FOCUS * (1 + CAUSTIC_DISPERSION),
-			CAUSTIC_FOCUS * CAUSTIC_SOFT};
-		int n = size * size;
-		float[][] light = new float[4][n];
-		for (int y = 0; y < m; ++y)
-		{
-			for (int x = 0; x < m; ++x)
+			BufferedImage img = in != null ? ImageIO.read(in) : null;
+			if (img == null || img.getWidth() != size || img.getHeight() != size)
 			{
-				int i = y * m + x;
-				float sx = gx[i] * unit, sy = gy[i] * unit;
-				for (int c = 0; c < 4; ++c)
+				throw new IOException("unexpected caustics map");
+			}
+			for (int y = 0; y < size; ++y)
+			{
+				for (int x = 0; x < size; ++x)
 				{
-					// where the ray lands, in texels, then shared bilinearly between the four texels around it
-					float px = (x + 0.5f) / CAUSTIC_RAYS - focus[c] * sx - 0.5f;
-					float py = (y + 0.5f) / CAUSTIC_RAYS - focus[c] * sy - 0.5f;
-					int x0 = (int) Math.floor(px), y0 = (int) Math.floor(py);
-					float fx = px - x0, fy = py - y0;
-					int xa = Math.floorMod(x0, size), xb = Math.floorMod(x0 + 1, size);
-					int ya = Math.floorMod(y0, size) * size, yb = Math.floorMod(y0 + 1, size) * size;
-					float[] l = light[c];
-					l[ya + xa] += (1 - fx) * (1 - fy);
-					l[ya + xb] += fx * (1 - fy);
-					l[yb + xa] += (1 - fx) * fy;
-					l[yb + xb] += fx * fy;
+					map[y * size + x] = (img.getRGB(x, y) >> 8 & 0xFF) / 255f;
 				}
 			}
 		}
-		byte[] out = new byte[n * 4];
-		// rays per texel: the mean
-		float scale = 1f / (CAUSTIC_RAYS * CAUSTIC_RAYS * CAUSTIC_RANGE);
+		catch (IOException ex)
+		{
+			java.util.Arrays.fill(map, 0.2f);
+		}
+		return aberrate(map, size, CAUSTIC_ABERRATION);
+	}
+
+	static byte[] aberrate(float[] map, int size, float shift)
+	{
+		final float[][] offsets = {{shift, shift}, {shift, -shift}, {-shift, -shift}, {0, 0}};
+		byte[] out = new byte[size * size * 4];
 		for (int c = 0; c < 4; ++c)
 		{
-			float[] l = light[c];
-			for (int i = 0; i < n; ++i)
+			float ox = offsets[c][0], oy = offsets[c][1];
+			int x0 = (int) Math.floor(ox), y0 = (int) Math.floor(oy);
+			float fx = ox - x0, fy = oy - y0;
+			for (int y = 0; y < size; ++y)
 			{
-				out[i * 4 + c] = (byte) Math.round(Math.min(l[i] * scale, 1f) * 255);
+				int ya = Math.floorMod(y + y0, size) * size, yb = Math.floorMod(y + y0 + 1, size) * size;
+				for (int x = 0; x < size; ++x)
+				{
+					int xa = Math.floorMod(x + x0, size), xb = Math.floorMod(x + x0 + 1, size);
+					float v = (map[ya + xa] * (1 - fx) + map[ya + xb] * fx) * (1 - fy)
+						+ (map[yb + xa] * (1 - fx) + map[yb + xb] * fx) * fy;
+					out[(y * size + x) * 4 + c] = (byte) Math.round(Math.min(Math.max(v, 0f), 1f) * 255);
+				}
 			}
 		}
 		return out;

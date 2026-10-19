@@ -139,12 +139,15 @@ image: rivers run from their sources to the sea or a lake, straits and ponds are
 pushes toward its shores. How fast it runs is shaped by the scene's channel (`WaterBodies.shapeFlow`): fastest in
 the middle and slow at the banks, faster through narrows and over drops (a smaller cross-section, the bed being
 shallower near the shore), slower where a river widens into a lake. Swamps and caves (from the area, `EnvironmentManager.waterMurk`) make water murky. Water
-terrain is uploaded as a lowered bed, deeper away from the shore. The surface is not geometry: the composite finds
-where each view ray crosses it and shades it in `water.glsl` (refraction, depth absorption into a dark depth
-color, caustic networks on the bed moving with the waves, sky and a few taps of screen-space reflection, glints and sparkle, two octaves of flow-mapped wave
-noise and a swell, rain rings), fading in from the waterline without a hard edge. Per-type looks are the tables at
-the top of `water.glsl`, the rest are its `#define`s. "Show water map" tints water by type and shows its flow as
-moving stripes.
+terrain is uploaded as a lowered bed, deeper away from the shore. The surface is geometry (`WaterSurface.java`,
+`water_vert.glsl`, `water_frag.glsl`): a grid over the water tiles and the land around them, built at scene load,
+fine near the focal point and moved there by a Gerstner swell and flow-carried chop ("Moving surface"), drawn after
+the MSAA resolve into its own target (distance, normal, type, foam). The composite shades it in `water.glsl` after
+117 HD's water: the bed refracted and lit by 117 HD's caustics, fading into the type's depth color over a short
+depth, the surface's own color and the sky over it, soft highlights and a mild glitter path, lamp glints in their
+rooms, a few taps of screen-space reflection. Objects in the water are covered by the real surface, so the waterline
+moves with the waves. Per-type looks are the tables in `water_common.glsl`, the rest are `#define`s in the three
+water shaders. "Show water map" tints water by type and shows its flow as moving stripes.
 
 The flow map: `tools/water/build_flow.py <cache dir> src/main/resources/com/midonarhel/runelight/water_flow.dat`
 downloads the map image (Explv's osrs_map_tiles, rendered from the game cache by RuneLite's map dumper) into the

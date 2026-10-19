@@ -1013,6 +1013,8 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		glAoProgram = AO_PROGRAM.compile(template);
 		glShadowProgram = SHADOW_PROGRAM.compile(template);
 		setFogProgram(VolumetricFog.PROGRAM.compile(template));
+		water.setSurfaceProgram(WaterSurface.PROGRAM.compile(template), COMPOSITE_TEXTURE_UNIT + 2, WATER_DATA_UNIT,
+			WATER_NOISE_UNIT);
 		weather.setPrograms(weather.compile(template), COMPOSITE_TEXTURE_UNIT, WEATHER_OCCLUSION_UNIT, SHADOW_COMPARE_UNIT, ALPHA_LAYER_UNIT,
 			LIGHT_DATA_UNIT, CLUSTER_DATA_UNIT, MATERIAL_UNIT, WEATHER_FIELD_UNIT);
 		skyCache.setPrograms(skyCache.compile(template), CLOUD_NOISE_UNIT, SKY_CACHE_UNIT);
@@ -1187,6 +1189,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		glShadowProgram = 0;
 
 		weather.freePrograms();
+		water.freeSurfaceProgram();
 		skyCache.freePrograms();
 		globalIllumination.freePrograms();
 	}
@@ -1199,7 +1202,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 	{
 		glBindVertexArray(vaoUiHandle);
 		Template template = createTemplate();
-		int scene = 0, ui = 0, composite = 0, ao = 0, shadow = 0, fog = 0;
+		int scene = 0, ui = 0, composite = 0, ao = 0, shadow = 0, fog = 0, waterSurface = 0;
 		Weather.Programs weatherPrograms;
 		SkyCache.Programs skyCachePrograms;
 		GlobalIllumination.Programs giPrograms;
@@ -1211,6 +1214,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 			ao = AO_PROGRAM.compile(template);
 			shadow = SHADOW_PROGRAM.compile(template);
 			fog = VolumetricFog.PROGRAM.compile(template);
+			waterSurface = WaterSurface.PROGRAM.compile(template);
 			weatherPrograms = weather.compile(template);
 			try
 			{
@@ -1245,6 +1249,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 			glDeleteProgram(ao);
 			glDeleteProgram(shadow);
 			glDeleteProgram(fog);
+			glDeleteProgram(waterSurface);
 			String msg = ex.getMessage();
 			if (!msg.equals(shaderError))
 			{
@@ -1266,6 +1271,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		glAoProgram = ao;
 		glShadowProgram = shadow;
 		setFogProgram(fog);
+		water.setSurfaceProgram(waterSurface, COMPOSITE_TEXTURE_UNIT + 2, WATER_DATA_UNIT, WATER_NOISE_UNIT);
 		weather.setPrograms(weatherPrograms, COMPOSITE_TEXTURE_UNIT, WEATHER_OCCLUSION_UNIT, SHADOW_COMPARE_UNIT, ALPHA_LAYER_UNIT,
 			LIGHT_DATA_UNIT, CLUSTER_DATA_UNIT, MATERIAL_UNIT, WEATHER_FIELD_UNIT);
 		skyCache.setPrograms(skyCachePrograms, CLOUD_NOISE_UNIT, SKY_CACHE_UNIT);
@@ -2555,6 +2561,13 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		final boolean ao = config.ambientOcclusion();
 
 		sceneTargets.bindTextures(COMPOSITE_TEXTURE_UNIT);
+		// the water surface into its own target, against the resolved depth, before the composite reads it
+		weather.getWaterWind(waterWind);
+		gpuTimer.begin(GpuTimer.WATER);
+		water.drawSurface(config, waterWind, weather.waterRain(), frameOutdoors, sceneTargets.getWidth(),
+			sceneTargets.getHeight(), frameViewport, frameViewProj, frameCameraX, frameCameraY, frameCameraZ,
+			edgeFade.focalX, edgeFade.focalZ, edgeFade.radius, glCapabilities.OpenGL45, WATER_DATA_UNIT, WATER_NOISE_UNIT);
+		gpuTimer.end();
 		// fullscreen triangles are generated from gl_VertexID; core profile still needs some VAO bound
 		glBindVertexArray(vaoUiHandle);
 		gpuTimer.begin(GpuTimer.GI);
@@ -2657,9 +2670,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		bindClouds();
 		sceneTargets.bindMaterial(MATERIAL_UNIT);
 		compositeMaterials.set(config);
-		weather.getWaterWind(waterWind);
-		water.bind(config, waterWind, weather.waterRain(),
-			WATER_DATA_UNIT, WATER_NOISE_UNIT);
+		water.bind(config, WATER_DATA_UNIT, WATER_NOISE_UNIT);
 
 		glBindFramebuffer(GL_FRAMEBUFFER, awtContext.getFramebuffer(false));
 		glViewport(0, 0, width, height);

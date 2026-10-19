@@ -99,29 +99,30 @@ public class WaterTest
 	}
 
 	@Test
-	public void causticsKeepTheLightAndFocusIt()
+	public void causticsAreTheMapWithShiftedChannels()
 	{
-		byte[] t = Water.caustics(SIZE, 5);
-		for (int c = 0; c < 4; ++c)
+		// the map loads (256 x 256), alpha is the map, red is it shifted diagonally by the aberration
+		byte[] t = Water.caustics(256);
+		double mean = 0;
+		int bright = 0;
+		for (int i = 0; i < 256 * 256; ++i)
 		{
-			double sum = 0;
-			int bright = 0, dark = 0;
-			for (int y = 0; y < SIZE; ++y)
-			{
-				for (int x = 0; x < SIZE; ++x)
-				{
-					float v = at(t, x, y, c) / 255f * Water.CAUSTIC_RANGE;
-					sum += v;
-					bright += v > 2.5f ? 1 : 0;
-					dark += v < 0.6f ? 1 : 0;
-				}
-			}
-			double mean = sum / (SIZE * SIZE);
-			// the light all lands somewhere (a little lost to the brightest lines' clamp)
-			assertTrue("mean " + mean, mean > 0.85 && mean < 1.01);
-			// lines and cells, not a flat wash
-			assertTrue("bright " + bright, bright > SIZE * SIZE / 50);
-			assertTrue("dark " + dark, dark > SIZE * SIZE / 5);
+			int a = t[i * 4 + 3] & 0xFF;
+			mean += a;
+			bright += a > 150 ? 1 : 0;
 		}
+		mean /= 256 * 256;
+		// thin bright lines over dark cells, not the gray fallback
+		assertTrue("mean " + mean, mean > 30 && mean < 80);
+		assertTrue("bright " + bright, bright > 256 && bright < 256 * 256 / 10);
+
+		float[] map = new float[SIZE * SIZE];
+		map[5 * SIZE + 7] = 1;
+		byte[] s = Water.aberrate(map, SIZE, 1);
+		// a whole texel: red at (x + 1, y + 1) shows the spot one texel up and left of it
+		assertEquals(255, at(s, 6, 4, 0));
+		assertEquals(255, at(s, 6, 6, 1));
+		assertEquals(255, at(s, 8, 6, 2));
+		assertEquals(255, at(s, 7, 5, 3));
 	}
 }

@@ -39,8 +39,10 @@ from the area and environment definitions of 117 HD by tools/import_environments
 The water bed depths and water texture lists in
 src/main/java/com/midonarhel/runelight/WaterMap.java follow 117 HD's underwater terrain
 and water types, and the water shading in
-src/main/resources/com/midonarhel/runelight/water.glsl follows 117 HD's water (depth
-color, lit wave normals, flattened sky reflection, no hard shoreline). All are
+src/main/resources/com/midonarhel/runelight/water.glsl and water_common.glsl follow 117 HD's
+water (water type colors, depth color fade, opacity and fresnel, flattened sky reflection,
+caustics), and src/main/resources/com/midonarhel/runelight/water_caustics.jpg is 117 HD's
+caustics map. All are
 distributed under the following license:
 
 BSD 2-Clause License

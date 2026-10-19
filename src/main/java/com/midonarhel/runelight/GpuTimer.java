@@ -25,11 +25,12 @@ class GpuTimer
 	static final int WEATHER = 8;
 	static final int UI = 9;
 	static final int GI = 10;
-	static final int STAGES = 11;
+	static final int WATER = 11;
+	static final int STAGES = 12;
 
 	static final String[] NAMES = {
 		"scene", "MSAA resolve", "shadow map", "weather occlusion", "AO", "sky cache", "fog", "composite",
-		"weather", "UI", "GI probes"
+		"weather", "UI", "GI probes", "water"
 	};
 
 	private static final int SLOTS = 4;

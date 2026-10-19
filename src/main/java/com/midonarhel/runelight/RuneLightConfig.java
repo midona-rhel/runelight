@@ -1113,11 +1113,24 @@ public interface RuneLightConfig extends Config
 	@ConfigItem(
 		keyName = "waterCaustics",
 		name = "Caustics",
-		description = "Networks of focused sunlight on the bed of clear, shallow water.",
+		description = "Rippling sunlight on the bed of clear, shallow water (117 HD's caustics).",
 		section = waterSection,
 		position = 556
 	)
 	default boolean waterCaustics()
+	{
+		return true;
+	}
+
+	@ConfigItem(
+		keyName = "waterMovingSurface",
+		name = "Moving surface",
+		description = "The water surface rises and falls with the swell and the chop near you, so the waterline moves"
+			+ " on banks and on anything standing in the water. Off: a flat surface with the same waves in its shading.",
+		section = waterSection,
+		position = 558
+	)
+	default boolean waterMovingSurface()
 	{
 		return true;
 	}

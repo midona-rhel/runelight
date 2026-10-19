@@ -1,321 +1,119 @@
-// Water surfaces, drawn by the composite over the lowered water bed (WaterMap.java, Water.java).
+// Water, shaded by the composite over the lowered water bed (WaterMap.java, Water.java, WaterSurface.java).
 //
-// The bed and anything else under the water are ordinary pixels of the scene buffers. For those, this finds where
-// the view ray crosses the water surface, then shades what is seen through it (refracted, absorbed on the way down
-// and back up, the water's own color filling in) and puts the surface on top: the sky's reflection, roughly the
-// world's, sharp sun, moon and lamp glints. The surface normal is two octaves of wave noise dragged along the flow map
-// in two phases, a capillary octave drifting with the wind and a slow swell; fast water gets foam streaks along the
-// current. The surface is glossy: it only roughens by the wave detail the mipmaps average away. How fast the water
-// runs comes from the flow map shaped by the channel (WaterBodies.shapeFlow) and drives the drag, the foam, the
-// turbulence and the caustics on the bed: sharp in calm clear shallows, smeared along fast water.
-// Shading after 117 HD's water (BSD-2, see LICENSE): there is no hard waterline, the waves are lit like a surface,
-// and the sky reflection uses a flattened normal so steep waves don't reflect the ground.
-// Included by composite_frag.glsl after its lighting helpers (shadows, point light clusters, ign).
+// The surface is real geometry: the water pass (water_vert.glsl, water_frag.glsl) draws it, moved by the swell and the
+// chop, wherever it is in front of the opaque scene, and leaves how far away it is along the view ray and its normal,
+// type, foam and speed in waterSurface. The bed and anything else under the water are ordinary pixels of the scene
+// buffers; here they are seen through that surface: refracted, lit by the caustics, fading into the type's depth
+// color over a short depth, then the surface over them as 117 HD draws it (BSD-2, see LICENSE): its own color lit,
+// mostly the sky's reflection, at least half opaque and more so at a slant. Objects standing in the water are
+// covered by the real surface, so the waterline follows the waves. Soft broad highlights from the sun and moon,
+// mild glitter, lamp glints in their rooms.
+// Included by composite_frag.glsl after its lighting helpers (shadows, point light clusters).
+
+#include "water_common.glsl"
 
 uniform int waterEnabled;
-uniform sampler2D waterData;   // see WaterMap.texture: page 0 (height, flow x, flow z, type), page 1 (shore, energy,
-                               // water share, turbulence)
-// layer 0 tiling waves: rg slope, b height, a an independent finer height; layer 1 caustics (Water.caustics)
-uniform sampler2DArray waterNoise;
-uniform vec2 waterGrid;        // x: extended tile of local tile 0, y: corners per side
-uniform float waterTime;       // seconds, wraps
-uniform vec3 waterWind;        // xy: direction the wind blows toward (x, z), z: strength 0-1, eased
-uniform vec4 waterDrift;       // world units the waves (xy) and the swell (zw) have drifted with the wind
-uniform float waterRain;       // 0-1
-uniform int waterReflections;  // a few screen-space taps for the world in the reflection
-uniform float waterClarity;    // multiplier on how far light gets through
-uniform float waterWaves;      // multiplier on wave height
-uniform float waterSpeed;      // multiplier on flow
+uniform usampler2D waterSurface;  // r: floatBitsToUint(distance to the surface), 0 none; g: packed (waterUnpack)
+uniform int waterReflections;     // a few screen-space taps for the world in the reflection
+uniform float waterClarity;       // multiplier on how deep the bed stays visible
 uniform int waterCaustics;
 uniform int waterDebug;
 
-#define WATER_TILE 128.0
-// waterTime wraps after this many seconds (Water.java); every motion below repeats a whole number of times in it
-#define WATER_TIME_WRAP 3840.0
-
-// Water types (WaterMap.java): none, fresh, ocean, dark ocean, pale ocean, swamp, cave
-#define WATER_TYPES 7
-// extinction per tile of water the light passes, linear rgb: red goes first, murky water swallows everything
-const vec3 WATER_EXTINCTION[WATER_TYPES] = vec3[](
-  vec3(1.0),
-  vec3(0.58, 0.22, 0.15),
-  vec3(0.70, 0.24, 0.15),
-  vec3(0.90, 0.40, 0.30),
-  vec3(0.50, 0.17, 0.12),
-  vec3(3.20, 2.40, 3.40),
-  vec3(2.20, 1.40, 1.20));
-// light scattered back out of deep water per unit of light falling on it (linear): the color the middle of a
-// lake goes to. Kept dark so deep water reads deep rather than milky.
-const vec3 WATER_DEEP[WATER_TYPES] = vec3[](
-  vec3(0.0),
-  vec3(0.003, 0.020, 0.036),
-  vec3(0.002, 0.016, 0.042),
-  vec3(0.003, 0.010, 0.018),
-  vec3(0.007, 0.042, 0.062),
-  vec3(0.010, 0.013, 0.004),
-  vec3(0.002, 0.008, 0.009));
-// The bed's vertices carry the bank's colors (SceneUploader.uploadBed). Clear water keeps them: the shallows are a
-// film over the very sand or grass of the bank, so they can't come out a different color than the beach. Murky
-// water turns them into its own bed (sRGB: mud, dark stone) with depth, by WATER_BED_OWN.
-const vec3 WATER_BED[WATER_TYPES] = vec3[](
-  vec3(0.0),
-  vec3(0.0),
-  vec3(0.0),
-  vec3(0.0),
-  vec3(0.0),
-  vec3(0.301, 0.287, 0.156),
-  vec3(0.329, 0.300, 0.252));
-const float WATER_BED_OWN[WATER_TYPES] = float[](0.0, 0.0, 0.0, 0.0, 0.0, 0.7, 0.5);
-// depths (world units) over which murky water's own bed takes over, and the bed darkens further down
-#define BED_BLEND_NEAR 4.0
-#define BED_BLEND_FAR 56.0
-#define BED_DARKEN 0.3
-#define BED_DARKEN_DEPTH 400.0
-// Under water the bank's color goes wet: on top of WET_SAND, a little darker, cooler and less saturated over
-// BED_WET_DEPTH. Gentle: the water's absorption does the rest.
+// Under water the bank's color goes wet: a little darker, cooler and less saturated over BED_WET_DEPTH
+#define WET_SAND 0.86
 #define BED_WET_TINT vec3(0.90, 0.95, 1.0)
 #define BED_DESATURATE 0.25
 #define BED_WET_DEPTH 48.0
-// reflectivity, wave strength, flow speed, specular gloss (Blinn-Phong exponent of a still surface)
-const vec4 WATER_SURFACE[WATER_TYPES] = vec4[](
-  vec4(0.0),
-  vec4(1.00, 0.85, 1.00, 2400.0),
-  vec4(1.00, 1.00, 1.00, 2400.0),
-  vec4(0.95, 1.00, 1.00, 2000.0),
-  vec4(1.00, 0.85, 1.00, 2400.0),
-  vec4(0.55, 0.22, 0.35, 300.0),
-  vec4(0.65, 0.30, 0.45, 500.0));
-
-// world units per repeat of the two wave octaves, the capillary ripples and the swell; the smaller octaves are
-// turned so they never line up
-#define WAVE_SCALE_A 560.0
-#define WAVE_SCALE_B 190.0
-#define WAVE_SCALE_C 64.0
-#define SWELL_SCALE 1650.0
-// share of the slope from each octave
-#define WAVE_MIX_A 0.58
-#define WAVE_MIX_B 0.36
-#define WAVE_MIX_C 0.24
-// the capillary ripples run ahead of the wind's drift by this factor
-#define CAPILLARY_DRIFT 1.6
-// normal tilt per unit of noise slope: waves, and the swell on open water (scaled by wave energy)
-#define WAVE_STRENGTH 0.62
-#define SWELL_STRENGTH 0.2
-// what is seen through a wave face turned toward the camera is brighter, turned away darker: makes the waves read
-// even where nothing bright is reflected
-#define WAVE_SHADE 1.4
-// seconds per flow map phase: waves are dragged at most this long before fading to a fresh copy
-#define FLOW_CYCLE 2.4
-// the furthest the waves are dragged in one phase, world units: fast rapids would otherwise stretch them into
-// streaks that snap back at every fade
-#define FLOW_DRAG 360.0
-// flow (world units per second) below which water just drifts with the wind, without flow map phases; between
-// half of it and it the two blend
-#define FLOW_MIN 6.0
-// the flow phases are offset across the water by up to this many cycles, over this many world units, so the fades
-// don't pulse in step. Kept gentle: a phase that changes quickly across the water drags neighbouring waves apart.
-#define FLOW_JITTER 0.5
-#define FLOW_JITTER_SCALE 6144.0
-// Current lines on faster water: the octave's finer height, smeared over STREAK_SMEAR seconds of the flow so the
-// lines lie along the current, as foam from STREAK_SPEED to STREAK_SPEED_FULL world units per second
-#define STREAK_SMEAR 2.4
-#define STREAK_SPEED 24.0
-#define STREAK_SPEED_FULL 90.0
-#define STREAK_FOAM 0.45
-#define STREAK_EDGE vec2(0.58, 0.74)
-// how far the bed seen through the water shifts per unit of normal tilt, world units, once the water is deep
-#define REFRACT 260.0
+// how far the bed seen through the water shifts per unit of surface slope, world units, once the water is deep
+#define REFRACT 300.0
 #define REFRACT_DEPTH 70.0
-// Fresnel at normal incidence, for the glints; the reflection never drops below REFLECT_MIN, a little more than
-// physical so the sky shows on water seen from above; the sky reflection's normal keeps SKY_TILT of the tilt
-#define WATER_F0 0.02
-#define REFLECT_MIN 0.07
-#define SKY_TILT 0.8
-// the noise's waves have 2 to 22 cycles per repeat; a mip level keeps about GLOSS_KEEP / 2^lod of them, and the
-// slope it averages away roughens the surface instead of vanishing (RMS slope per axis of the noise: NOISE_SLOPE)
-#define GLOSS_KEEP 50.0
-#define NOISE_SLOPE 0.36
-// glints: sun and moon, stretched along the view like a reflection on moving water (STREAK times longer toward the
-// camera than across); sparkle on wave crests; point lights as streaks of LAMP_ALONG by LAMP_ACROSS slope
-#define SPECULAR 1.0
-#define SUN_STREAK 1.6
-#define SPARKLE 0.6
-#define LAMP_SPECULAR 0.5
-#define LAMP_ALONG 0.10
-#define LAMP_ACROSS 0.03
-// vertical depth over which the surface fades in from the waterline: no hard edge
-#define SOFT_EDGE 22.0
-// bed just above the waterline is darker where the water just left it
-#define WET_SAND 0.86
-#define WET_HEIGHT 12.0
-// Speed field (WaterBodies.shapeFlow puts it in the flow: fast mid-channel, through narrows and over drops; page 1
-// alpha the turbulence there): within a tile the flow slows toward the bank to BANK_SLOW of it; turbulence adds
-// TURB_WAVES to the wave height, TURB_RIPPLES to the ripples and counts as TURB_FOAM of fast water for the foam
-#define BANK_SLOW 0.5
-#define TURB_WAVES 0.5
-#define TURB_RIPPLES 0.8
-#define TURB_FOAM 0.7
-// Caustics: the waves focus the direct light on the bed into a network of bright lines (Water.caustics), a real
-// refraction pattern with colored fringes. The network drifts and flows with the waves, bent by their slope; a second
-// copy at another scale moving at another speed breaks its lines up (a soft min: only down to CAUSTIC_FLOOR).
-// CAUSTICS: share of the direct light gathered into the lines, the brightest line at most CAUSTIC_MAX times it.
-#define CAUSTICS 0.8
-#define CAUSTIC_MAX 2.2
-#define CAUSTIC_RANGE 6.0
-#define CAUSTIC_SCALE 340.0
-#define CAUSTIC_BREAK_SCALE 0.71
-#define CAUSTIC_BREAK_SPEED 1.6
-#define CAUSTIC_FLOOR 1.2
-// mean of that blend (sharp, soft, and far off where the mipmaps have averaged the lines away), so the bed gets as
-// much light on the whole as without caustics; measured on Water.caustics
-#define CAUSTIC_MEAN vec3(0.59, 0.69, 0.92)
-// world units the network bends per unit of wave slope
-#define CAUSTIC_WARP 60.0
-// just under the surface the light hasn't focused yet: soft network, sharp from CAUSTIC_FOCUS.y down
-#define CAUSTIC_FOCUS vec2(10.0, 80.0)
-// fading to 1/e over CAUSTIC_DEPTH, faster by CAUSTIC_MURK per unit of the water's green extinction per tile; past
-// CAUSTIC_BLUR_DEPTH the deep bed sees them blurred
-#define CAUSTIC_DEPTH 420.0
-#define CAUSTIC_MURK 1.0
-#define CAUSTIC_BLUR_DEPTH vec2(160.0, 450.0)
-// fast water smears the network along the flow over CAUSTIC_SMEAR seconds of it, and dims it
-#define CAUSTIC_SMEAR 0.6
-#define CAUSTIC_FAST_DIM 0.45
-#define CAUSTIC_TURB_DIM 0.3
+// vertical depth over which the surface fades in from the waterline
+#define SOFT_EDGE 10.0
+// How much of the surface covers what is under it: the type's base opacity once the water is SURFACE_DEPTH deep
+// (clear over the shallows), at least FRESNEL_BASE rising to all of it at a slant as (1 - cos)^FRESNEL_POWER, and at
+// least OPACITY_SLANT of 1 - the view's elevation. 117 HD's is the base opacity everywhere and a straight line from
+// 0.4 (FRESNEL_POWER 1): the water hid the bed, the caustics and the depth colour at the game's usual camera angles.
+#define SURFACE_DEPTH 64.0
+#define FRESNEL_BASE 0.15
+#define FRESNEL_POWER 2.0
+#define OPACITY_SLANT 0.4
+// the sky is reflected off a flattened normal (117 HD): the waves barely move it
+#define SKY_TILT 0.2
+// Highlights. Sheen: a broad soft lobe of the sun or moon on the waves (Blinn-Phong exponent, strength). Glitter:
+// its reflection on the waves' slopes exaggerated GLITTER_SLOPE times (117 HD reflects the disk that way), a soft
+// path toward the camera of GLITTER_ROUGH width.
+#define SHEEN_GLOSS 60.0
+#define SHEEN 0.10
+#define GLITTER_SLOPE 1.6
+#define GLITTER_ROUGH 0.1
+#define GLITTER 0.3
+#define LAMP_SPECULAR 0.4
+#define LAMP_ALONG 0.14
+#define LAMP_ACROSS 0.06
+// what is seen through a wave face turned toward the camera is a little brighter, turned away darker
+#define WAVE_SHADE 0.6
+// 117 HD's caustics: their map (Water.java), two copies scrolling apart and the darker one kept, colored fringes
+// from the channels being offset (baked into the texture). World units per repeat; seconds per cycle of each copy.
+#define CAUSTIC_SCALE 298.67
+#define CAUSTIC_PERIOD vec2(17.0, 23.0)
+// The kept copy's values: about CAUSTIC_MEAN on average, CAUSTIC_LINE on the brightest 1% (measured on the map).
+// The light on the bed gains CAUSTICS times the direct light per unit above the mean, so the lines brighten it and
+// the cells between them darken it a little (down to CAUSTIC_RANGE.x, up to .y); none at CAUSTIC_DEPTH. 117 HD
+// multiplies the bed by 1 + 16 times the value, which brightens all of it.
+#define CAUSTIC_MEAN 0.145
+#define CAUSTIC_LINE 0.30
+#define CAUSTIC_RANGE vec2(-0.7, 3.0)
 // by moonlight, and on things standing in the water rather than the bed
+#define CAUSTICS 1.6
+#define CAUSTIC_DEPTH 512.0
 #define CAUSTIC_MOON 0.35
 #define CAUSTIC_OBJECTS 0.5
-// rain rings: cell size (world units), rings per cell per second
-#define RAIN_CELL 40.0
-#define RAIN_RATE 1.3
 // screen-space reflection: taps along the reflected ray, growing, then halving steps onto the hit
 #define SSR_STEPS 4
 #define SSR_FIRST_STEP 96.0
 #define SSR_GROWTH 2.0
 #define SSR_REFINE 3
 
-vec2 waterCell(vec2 worldXZ) {
-  return clamp(worldXZ / WATER_TILE + waterGrid.x, vec2(0.0), vec2(waterGrid.y - 1.0));
+// The water pass's packed surface: normal x, z (11 bits each), type (3), foam (4), speed (3)
+void waterUnpack(uint g, out vec3 nrm, out int type, out float foam, out float fast) {
+  float nx = float(g & 2047u) / 2047.0 * 2.0 - 1.0;
+  float nz = float(g >> 11 & 2047u) / 2047.0 * 2.0 - 1.0;
+  nrm = vec3(nx, -sqrt(max(1.0 - nx * nx - nz * nz, 0.0)), nz);
+  type = clamp(int(g >> 22 & 7u), 1, WATER_TYPES - 1);
+  foam = float(g >> 25 & 15u) / 15.0;
+  fast = float(g >> 29 & 7u) / 7.0;
 }
 
-vec4 waterNoiseAt(vec2 uv, float lod) {
-  return textureLod(waterNoise, vec3(uv, 0.0), lod);
-}
-
-// Explicit lod everywhere in here: the water is drawn in branches, where implicit derivatives are undefined (NVIDIA
-// and AMD do return garbage there)
-vec4 waterPage0(vec2 c) {
-  return textureLod(waterData, (c + 0.5) / vec2(2.0 * waterGrid.y, waterGrid.y), 0.0);
-}
-
-vec4 waterPage1(vec2 c) {
-  return textureLod(waterData, (c + vec2(waterGrid.y, 0.0) + 0.5) / vec2(2.0 * waterGrid.y, waterGrid.y), 0.0);
-}
-
-int waterTypeAt(vec2 c) {
-  ivec2 t = clamp(ivec2(floor(c)), ivec2(0), ivec2(int(waterGrid.y) - 2));
-  return clamp(int(texelFetch(waterData, t, 0).a + 0.5), 0, WATER_TYPES - 1);
-}
-
-// Mip level for noise repeating every `repeat` world units, seen with `footprint` world units per pixel. Picked by
-// hand: the water is drawn in branches, where texture() can't take derivatives from its neighbors.
 float waterLod(float footprint, float repeat) {
   return log2(max(footprint * 256.0 / repeat, 1.0));
 }
 
-// A drift (world units per second) the scrolling noise repeats exactly with when the time wraps
-vec2 waterScroll(vec2 velocity, float repeat) {
-  vec2 cycles = floor(velocity / repeat * WATER_TIME_WRAP + 0.5);
-  return fract(cycles * (waterTime / WATER_TIME_WRAP));
+// A scroll of a whole number of repeats per wrap of waterTime, about one per `period` seconds
+float waterCycle(float period) {
+  return fract(floor(WATER_TIME_WRAP / period + 0.5) * (waterTime / WATER_TIME_WRAP));
 }
 
-// Wave slope and the finer height (sparkle, current lines) of the two octaves at xz, moved along by `move` (world
-// units)
-vec3 waterWaves2(vec2 xz, vec2 move, float la, float lb) {
-  const mat2 ROT = mat2(0.8, 0.6, -0.6, 0.8);
-  vec4 a = waterNoiseAt((xz - move) / WAVE_SCALE_A, la);
-  vec4 b = waterNoiseAt(ROT * (xz - move * 1.15) / WAVE_SCALE_B + 0.37, lb);
-  // the small octave is turned: turn its slope back
-  vec2 slope = (a.rg * 2.0 - 1.0) * WAVE_MIX_A + ((b.rg * 2.0 - 1.0) * ROT) * WAVE_MIX_B;
-  return vec3(slope, a.a);
-}
-
-// Share of an octave's slope variance its mip at `lod` has averaged away: the slope power of the noise's waves falls
-// as k^-1.4 over 2 to 22 cycles, and the mip keeps those below GLOSS_KEEP / 2^lod
-float waterLostSlope(float lod) {
-  float kc = GLOSS_KEEP * exp2(-lod);
-  return clamp((pow(kc, -1.4) - 0.0132) / (0.3789 - 0.0132), 0.0, 1.0);
+// The caustics at world xz: 0 to 1 per channel
+vec3 waterCaustic(vec2 xz, float lod) {
+  const vec2 DIR = vec2(1.0, -2.0);
+  vec2 uv = xz / CAUSTIC_SCALE;
+  vec3 a = textureLod(waterNoise, vec3(uv + waterCycle(CAUSTIC_PERIOD.x) * DIR, 1.0), lod).rgb;
+  vec3 b = textureLod(waterNoise, vec3(uv * 1.5 - waterCycle(CAUSTIC_PERIOD.y) * DIR, 1.0), lod).rgb;
+  return min(a, b);
 }
 
 // A glint off the water: Ward's anisotropic lobe around the normal, `along` the RMS slope toward the camera, `across`
-// sideways. Reflections of lights on rippled water are streaks pointing at the viewer; the waves' own normals break
-// them up.
+// sideways. Reflections of lights on rippled water are streaks pointing at the viewer.
 float waterGlint(vec3 nrm, vec3 toLight, vec3 toCamera, vec3 tAlong, vec3 tAcross, float along, float across) {
   vec3 h = toLight + toCamera;
   h *= inversesqrt(max(dot(h, h), 1e-8));
   float nh = dot(nrm, h);
   if (nh <= 0.0)
     return 0.0;
-  // the half vector's slope away from the normal
   vec3 hs = h / nh - nrm;
   float ea = dot(hs, tAlong) / along, ec = dot(hs, tAcross) / across;
-  float fh = WATER_F0 + (1.0 - WATER_F0) * pow(1.0 - clamp(dot(h, toCamera), 0.0, 1.0), 5.0);
+  float fh = 0.02 + 0.98 * pow(1.0 - clamp(dot(h, toCamera), 0.0, 1.0), 5.0);
   return exp(-(ea * ea + ec * ec)) / (3.14159 * along * across) * fh * clamp(dot(nrm, toLight) * 4.0, 0.0, 1.0);
-}
-
-// Rings from raindrops: one ring at a time per cell, in two offset layers, as many cells active as it rains
-vec2 waterRainRings(vec2 xz) {
-  vec2 sum = vec2(0.0);
-  for (int layer = 0; layer < 2; ++layer) {
-    vec2 g = xz / RAIN_CELL + float(layer) * vec2(0.5, 0.31);
-    vec2 cell = floor(g);
-    float h = hash13(vec3(cell, float(layer) * 7.0));
-    float t = waterTime * RAIN_RATE + h * 7.0;
-    float drop = floor(t);
-    float phase = fract(t);
-    // a new spot and a new chance to fall every drop
-    float h2 = hash13(vec3(cell + drop * 0.123, float(layer) + 3.0));
-    if (h2 > waterRain)
-      continue;
-    vec2 center = vec2(hash13(vec3(cell, drop)), hash13(vec3(cell.yx, drop + 1.0))) * 0.5 + 0.25;
-    vec2 dv = fract(g) - center;
-    float dist = length(dv);
-    float ring = (dist - phase * 0.3) / 0.035;
-    float wave = sin(ring * 3.14159) * exp(-ring * ring * 0.5) * (1.0 - phase) * (1.0 - phase);
-    sum += dv / max(dist, 1e-3) * wave;
-  }
-  return sum * 0.35;
-}
-
-// One tap of the caustic network: rgb, mixed from the soft one by focus
-vec3 waterCausticTap(vec2 uv, float lod, float focus) {
-  vec4 c = textureLod(waterNoise, vec3(uv, 1.0), lod);
-  return mix(c.aaa, c.rgb, focus) * CAUSTIC_RANGE;
-}
-
-// The caustic network at xz, mean about 1: moved like the waves (m0 and m1 the two flow phases weighted w0 and 1 - w0,
-// equal on still water), smeared over `smear` world units along the flow, the breaking copy moving faster
-vec3 waterCaustic(vec2 xz, vec2 m0, vec2 m1, float w0, vec2 smear, float lod, float focus) {
-  const mat2 ROT = mat2(0.8, -0.6, 0.6, 0.8);
-  const float SB = CAUSTIC_SCALE * CAUSTIC_BREAK_SCALE;
-  bool phased = w0 < 1.0;
-  bool smeared = dot(smear, smear) > 16.0;
-  vec3 a = smeared
-    ? 0.5 * (waterCausticTap((xz - m0 - smear * 0.5) / CAUSTIC_SCALE, lod, focus)
-      + waterCausticTap((xz - m0 + smear * 0.5) / CAUSTIC_SCALE, lod, focus))
-    : waterCausticTap((xz - m0) / CAUSTIC_SCALE, lod, focus);
-  float b = waterCausticTap(ROT * (xz - m0 * CAUSTIC_BREAK_SPEED) / SB + 0.37, lod, focus).g;
-  if (phased) {
-    vec3 a1 = smeared
-      ? 0.5 * (waterCausticTap((xz - m1 - smear * 0.5) / CAUSTIC_SCALE, lod, focus)
-        + waterCausticTap((xz - m1 + smear * 0.5) / CAUSTIC_SCALE, lod, focus))
-      : waterCausticTap((xz - m1) / CAUSTIC_SCALE, lod, focus);
-    float b1 = waterCausticTap(ROT * (xz - m1 * CAUSTIC_BREAK_SPEED) / SB + 0.37, lod, focus).g;
-    a = a * w0 + a1 * (1.0 - w0);
-    b = b * w0 + b1 * (1.0 - w0);
-  }
-  float mean = mix(mix(CAUSTIC_MEAN.y, CAUSTIC_MEAN.x, focus), CAUSTIC_MEAN.z, smoothstep(1.0, 6.5, lod));
-  return min(a, vec3(max(b, CAUSTIC_FLOOR))) / mean;
 }
 
 // Where the reflected ray is at t: its pixel, and how far it is behind the depth buffer there (negative in front)
@@ -336,7 +134,7 @@ float waterRayBehind(vec3 s, vec3 r, float t, out ivec2 ip, out vec2 ndc) {
 
 // The world as seen in the reflection: a few growing steps along the reflected ray against the depth buffer, then
 // halving steps onto the crossing, the hit taking its own color under a rough guess of its light. a: how much to
-// trust it. No per-pixel jitter: the same ray finds the same hit every frame.
+// trust it.
 vec4 waterTraceReflection(vec3 s, vec3 r, vec3 approxLight) {
   float stepLen = SSR_FIRST_STEP;
   float prev = 0.0;
@@ -363,10 +161,9 @@ vec4 waterTraceReflection(vec3 s, vec3 r, vec3 approxLight) {
         }
       }
       // water reflecting water shows the sky instead
-      if (texelFetch(sceneMaterial, ip, 0).b > 0.75)
+      if (texelFetch(sceneMaterial, ip, 0).b > 0.75 || texelFetch(waterSurface, ip, 0).r != 0u)
         break;
       vec2 edge = smoothstep(vec2(1.0), vec2(0.75), abs(ndc));
-      // a hit only just within reach of the step fades rather than popping
       float reach = 1.0 - smoothstep(stepLen * 1.5, stepLen * 2.5, behind);
       return vec4(srgbToLinear(texelFetch(sceneColor, ip, 0).rgb) * approxLight, edge.x * edge.y * reach);
     }
@@ -377,14 +174,20 @@ vec4 waterTraceReflection(vec3 s, vec3 r, vec3 approxLight) {
   return vec4(0.0);
 }
 
-// What the bed looks like `depth` under the surface: the bank's color (land, sRGB) gone wet, murky water's own bed
-// further down, darker with depth
-vec3 waterBedAlbedo(vec3 land, float depth, int type) {
+// The bank's color (sRGB) gone wet `depth` under the surface
+vec3 waterBedAlbedo(vec3 land, float depth) {
   float k = smoothstep(0.0, BED_WET_DEPTH, depth);
-  vec3 bed = mix(land, vec3(dot(land, vec3(0.299, 0.587, 0.114))), BED_DESATURATE * k)
-    * mix(vec3(1.0), BED_WET_TINT, k) * WET_SAND;
-  bed = mix(bed, WATER_BED[type], WATER_BED_OWN[type] * smoothstep(BED_BLEND_NEAR, BED_BLEND_FAR, depth));
-  return bed * (1.0 - BED_DARKEN * smoothstep(40.0, BED_DARKEN_DEPTH, depth));
+  vec3 bed = mix(land, vec3(dot(land, vec3(0.299, 0.587, 0.114))), BED_DESATURATE * k);
+  return bed * mix(vec3(1.0), BED_WET_TINT, k) * WET_SAND;
+}
+
+// 117 HD's fade of what is under the water (sRGB multiplier): into the depth color over the first stretch, then darker
+vec3 waterDepthTint(int type, float depth) {
+  vec3 fade = WATER_FADE[type];
+  fade.xy *= waterClarity;
+  vec3 dc = WATER_DEPTH_COLOR[type];
+  return depth < fade.x ? mix(vec3(1.0), dc, depth / fade.x)
+    : dc * mix(1.0, fade.z, clamp((depth - fade.x) / (fade.y - fade.x), 0.0, 1.0));
 }
 
 vec3 waterShoulder(vec3 c) {
@@ -397,136 +200,45 @@ vec3 waterShoulder(vec3 c) {
 // Returns the color with the water over it, or lit unchanged; moves p to the water surface for the fog.
 vec3 waterOver(ivec2 px, inout vec3 p, vec3 n, vec3 albedo, vec3 light, float shadow, vec3 lit, float mask,
   vec3 fogColor) {
-  // land terrain is never under water: everything but the bed and objects standing in water stops here
+  // land terrain is never under water: the surface runs on under the banks, hidden, and never over land
   if (waterEnabled == 0 || mask < 0.25)
     return lit;
-  bool bed = mask > 0.75;
-  vec3 world = p + cameraPos;
-  vec2 cBed = waterCell(world.xz);
-  int t0 = waterTypeAt(cBed);
-  if (t0 == 0 && !bed)
+  uvec2 ws = texelFetch(waterSurface, px, 0).rg;
+  if (ws.r == 0u)
     return lit;
-
-  // where the view ray meets the surface: the surface height above the pixel, then once more at the crossing so
-  // water on a slope lines up
+  float t = uintBitsToFloat(ws.r);
   float dist = length(p);
+  if (t >= dist)
+    return lit;
   vec3 v = p / dist;
-  if (v.y < 1e-3)
-    return lit;
-  vec4 surf0 = waterPage0(cBed);
-  if (cameraPos.y >= surf0.r)
-    return lit;  // under the surface
-  float t = (surf0.r - cameraPos.y) / v.y;
-  vec2 c = cBed;
-  // Follow the ray to where it crosses the surface: always the same two steps, so the crossing moves smoothly with
-  // the view. Land corners carry the nearest water's level (WaterMap.spreadLevel), so the surface never climbs a bank
-  // and level water settles on the first step.
-  for (int i = 0; i < 2; ++i) {
-    c = waterCell(cameraPos.xz + v.xz * t);
-    surf0 = waterPage0(c);
-    t = (surf0.r - cameraPos.y) / v.y;
-  }
-  if (t <= 0.0)
-    return lit;
-  float path = dist - t;
-  // vertical depth of this pixel below the surface
-  float depth = path * v.y;
-  if (depth <= 0.0) {
-    // above the water: the bed right at the waterline is wet
-    return bed ? lit * mix(WET_SAND, 1.0, smoothstep(0.0, WET_HEIGHT, -depth)) : lit;
-  }
-
-  int type = waterTypeAt(c);
-  if (type == 0)
-    type = t0 != 0 ? t0 : 1;
-  vec4 surf = WATER_SURFACE[type];
   vec3 s = v * t;  // camera-relative surface point
   vec3 sw = s + cameraPos;
-  vec4 page1 = waterPage1(c);
-  float energy = page1.g;
-  float wind = waterWind.z;
+  vec3 world = p + cameraPos;
+  bool bed = mask > 0.75;
+
+  if (waterDebug == 1) {
+    p = s;
+    return vec3(float(ws.g & 255u), float(ws.g >> 8 & 255u), float(ws.g >> 16 & 255u)) / 255.0;
+  }
+
+  vec3 nrm;
+  int type;
+  float foam, fast;
+  waterUnpack(ws.g, nrm, type, foam, fast);
+  vec4 look = WATER_LOOK[type];
+  // vertical depth of this pixel below the surface (y down), and how far the view travels under it
+  float depth = p.y - s.y;
+  float under0 = max(depth, 0.0);
+  vec2 slope = nrm.xz / nrm.y;
+  vec3 toCamera = -v;
   float viewZ = (viewProj * vec4(s, 1.0)).w;
   // world units one pixel covers on the surface, stretched where it is seen at a slant
   float pixelNear = length(reconstructPosition(vec2(px) + vec2(1.5, 0.5), 1.0) - reconstructPosition(vec2(px) + 0.5, 1.0));
-  float footprint = pixelNear * viewZ / viewDepth(1.0) * inversesqrt(max(v.y, 0.05));
-  float la = waterLod(footprint, WAVE_SCALE_A), lb = waterLod(footprint, WAVE_SCALE_B);
-  float lc = waterLod(footprint, WAVE_SCALE_C);
-
-  // ---- surface normal: two wave octaves carried by the flow, capillary ripples on the wind, the swell, rain rings
-  // the flow slows toward the bank within the tile (page 1 b: the share of water around)
-  vec2 flow = surf0.gb * (WATER_TILE * waterSpeed * surf.z) * mix(BANK_SLOW, 1.0, smoothstep(0.5, 1.0, page1.b));
-  float flowSpeed = length(flow);
-  float turb = page1.a * step(0.5, surf.y);
-  // how fast the water runs for the foam and caustics: fast, or churned up
-  float fast = max(smoothstep(STREAK_SPEED, STREAK_SPEED_FULL, flowSpeed), turb * TURB_FOAM) * step(0.5, surf.y);
-  flow *= min(1.0, FLOW_DRAG / max(flowSpeed * FLOW_CYCLE, 1e-3));
-  // the wind's drift (integrated in Water.java, so a change in the wind changes the speed, never the position)
-  vec2 base = waterDrift.xy * (surf.z * waterSpeed);
-  vec3 waves = waterWaves2(sw.xz, base, la, lb);
-  float foam = 0.0;
-  // the flow phases, also moving the caustics; one still phase without flow
-  vec2 m0 = base, m1 = base;
-  float w0 = 1.0;
-  // blended in rather than switched, so there is no seam where the flow crosses the threshold
-  float flowing = smoothstep(FLOW_MIN * 0.5, FLOW_MIN, flowSpeed);
-  if (flowing > 0.0) {
-    // Two copies dragged with the flow half a cycle apart, each fading out before it has been dragged too far,
-    // so the waves move without ever stretching. The phase is offset across the water so the fades don't pulse
-    // in step.
-    float jitter = waterNoiseAt(sw.xz / FLOW_JITTER_SCALE, 7.0).b * FLOW_JITTER;
-    float ph0 = fract(waterTime / FLOW_CYCLE + jitter);
-    float ph1 = fract(ph0 + 0.5);
-    w0 = 1.0 - abs(1.0 - 2.0 * ph0);
-    m0 = base + flow * (ph0 * FLOW_CYCLE);
-    m1 = base + flow * (ph1 * FLOW_CYCLE);
-    vec2 o1 = vec2(173.0, 91.0);
-    vec3 f0 = waterWaves2(sw.xz, m0, la, lb), f1 = waterWaves2(sw.xz + o1, m1, la, lb);
-    vec3 flowed = f0 * w0 + f1 * (1.0 - w0);
-    // blending two copies averages their slopes down: give some back
-    flowed.xy *= 1.0 + 0.4 * (1.0 - abs(2.0 * w0 - 1.0));
-    waves = mix(waves, flowed, flowing);
-    // Current lines: each copy's finer height averaged with itself a little further upstream, which smears its
-    // blobs into lines along the flow wherever it points; foam where both are high
-    if (fast > 0.0) {
-      vec2 smear = flow * STREAK_SMEAR;
-      float s0 = 0.5 * (f0.z + waterNoiseAt((sw.xz - m0 - smear) / WAVE_SCALE_A, la).a);
-      float s1 = 0.5 * (f1.z + waterNoiseAt((sw.xz + o1 - m1 - smear) / WAVE_SCALE_A, la).a);
-      foam = smoothstep(STREAK_EDGE.x, STREAK_EDGE.y, s0 * w0 + s1 * (1.0 - w0)) * fast
-        * (1.0 - smoothstep(2.0, 4.0, la));
-    }
-  }
-  float strength = WAVE_STRENGTH * surf.y * waterWaves * (0.7 + 0.5 * wind) * (0.75 + 0.35 * energy)
-    * (1.0 + TURB_WAVES * turb);
-  vec2 slope = waves.xy * strength;
-  // capillary ripples: always on the wind, never dragged by the flow, livelier with wind
-  {
-    const mat2 ROT_C = mat2(0.28, -0.96, 0.96, 0.28);
-    vec4 cap = waterNoiseAt(ROT_C * (sw.xz - waterDrift.xy * CAPILLARY_DRIFT) / WAVE_SCALE_C + 0.61, lc);
-    slope += ((cap.rg * 2.0 - 1.0) * ROT_C) * (WAVE_MIX_C * WAVE_STRENGTH * surf.y * waterWaves * (0.5 + 0.8 * wind)
-      * (1.0 + TURB_RIPPLES * turb));
-  }
-  // the swell: long soft undulations, so open water isn't flat; the sea's run longest and strongest
-  vec2 swell = waterNoiseAt((sw.xz - waterDrift.zw) / SWELL_SCALE, waterLod(footprint, SWELL_SCALE)).rg * 2.0 - 1.0;
-  slope += swell * (SWELL_STRENGTH * surf.y * waterWaves * (0.2 + 0.8 * energy) * (0.6 + 0.8 * wind));
-  if (waterRain > 0.01 && outdoors == 1)
-    slope += waterRainRings(sw.xz) * surf.y;
-  vec3 nrm = normalize(vec3(-slope.x, -1.0, -slope.y));
-  vec3 toCamera = -v;
-  // horizontal directions along the view (away from the camera) and across it, for the glint streaks
+  float footprint = pixelNear * viewZ / viewDepth(1.0) * inversesqrt(max(abs(v.y), 0.05));
   vec2 fwd = v.xz * inversesqrt(max(dot(v.xz, v.xz), 1e-6));
   vec3 tAlong = vec3(fwd.x, 0.0, fwd.y), tAcross = vec3(-fwd.y, 0.0, fwd.x);
 
-  // The surface is as glossy as still water, roughened only by the wave slope the mipmaps averaged away within
-  // this pixel (per axis variance), so close up the glints stay sharp and far off they widen instead of sparkling
-  float strengthC = WAVE_MIX_C * WAVE_STRENGTH * surf.y * waterWaves * (0.5 + 0.8 * wind) * (1.0 + TURB_RIPPLES * turb);
-  float lostVar = NOISE_SLOPE * NOISE_SLOPE * (strength * strength * (WAVE_MIX_A * WAVE_MIX_A * waterLostSlope(la)
-    + WAVE_MIX_B * WAVE_MIX_B * waterLostSlope(lb)) + strengthC * strengthC * waterLostSlope(lc));
-  float m2 = 2.0 / (surf.w + 2.0) + 2.0 * lostVar;
-  float rough = sqrt(0.5 * m2);  // RMS slope per axis
-  // foam is rough
-  rough = mix(rough, 0.25, foam);
-
-  // ---- light falling on the water
+  // ---- light falling on the surface
   bool lightOn = lightingEnabled == 1;
   vec3 caster = vec3(0.0);
   float surfShadow = 1.0;
@@ -543,7 +255,6 @@ vec3 waterOver(ivec2 px, inout vec3 p, vec3 n, vec3 albedo, vec3 light, float sh
         surfShadow = textureLod(shadowCompare, vec3(uv, z - bias), 0.0);
     }
     surfShadow = overcastShadow(surfShadow * cloudShadow(sw, casterDir));
-    // the waves are lit like 117 HD's water surface: the light falling on each face is what scatters back out
     waterLight = (ambientLight(sunAltitude) + skyLight(sunAltitude) * max(-nrm.y, 0.0)) * envAmbient
       + caster * max(dot(nrm, casterDir), 0.0) * surfShadow;
   } else if (lightOn) {
@@ -558,8 +269,6 @@ vec3 waterOver(ivec2 px, inout vec3 p, vec3 n, vec3 albedo, vec3 light, float sh
     int count = clusterLightCount(cbase);
     // lights in buildings stay there (rooms.glsl)
     ivec2 room = count > 0 ? lightRoomAt(sw - vec3(0.0, ROOM_NORMAL_BIAS, 0.0)) : ivec2(-1, 0);
-    // a lamp's reflection is a streak toward the camera; rougher water (far off, foam) smears it wider
-    float along = sqrt(LAMP_ALONG * LAMP_ALONG + rough * rough), across = sqrt(LAMP_ACROSS * LAMP_ACROSS + rough * rough);
     for (int i = 0; i < count; ++i) {
       int li = int(texelFetch(clusterData, cbase + 1 + i).r);
       vec4 posRadius = texelFetch(lightData, li * 2);
@@ -574,71 +283,63 @@ vec3 waterOver(ivec2 px, inout vec3 p, vec3 n, vec3 albedo, vec3 light, float sh
       att *= att;
       vec3 ld = l * inversesqrt(max(d2, 1.0));
       waterLight += color * att * max(-ld.y, 0.2) * 0.5;
-      lampSpec += color * (att * waterGlint(nrm, ld, toCamera, tAlong, tAcross, along, across));
+      lampSpec += color * (att * waterGlint(nrm, ld, toCamera, tAlong, tAcross, LAMP_ALONG, LAMP_ACROSS));
     }
   }
 
-  // ---- what is seen through the surface: refracted, absorbed down to the bed and back up, the water's own color
-  // filling in what was absorbed
-  vec3 ext = WATER_EXTINCTION[type] / waterClarity;
+  // ---- what is seen through the surface: refracted, lit with the caustics, fading into the depth color
   vec3 under;
   {
     vec3 seen = albedo;
     bool seenBed = bed;
+    vec3 seenP = p;
     // the bed wobbles under the waves: strongest where the water is deep enough to bend the view far
-    vec3 pr = p + vec3(slope.x, 0.0, slope.y) * (REFRACT * smoothstep(0.0, REFRACT_DEPTH, depth));
+    vec3 pr = p + vec3(slope.x, 0.0, slope.y) * (REFRACT * smoothstep(0.0, REFRACT_DEPTH, under0));
     vec4 clip = viewProj * vec4(pr, 1.0);
     if (clip.w > NEAR) {
       ivec2 rp = ivec2((clip.xy / clip.w * 0.5 + 0.5) * vec2(sceneViewport.zw) + vec2(sceneViewport.xy));
       if (inViewport(rp)) {
         float dr = texelFetch(sceneDepth, rp, 0).r;
         float mr = texelFetch(sceneMaterial, rp, 0).b;
-        // only take the offset pixel if it is under this water too, or things above it would show in it
-        if (!isSky(dr) && mr >= 0.25 && reconstructPosition(vec2(rp) + 0.5, dr).y > s.y + 2.0) {
+        // only take the offset pixel if it is under the water too, or things above it would show in it
+        vec3 q = reconstructPosition(vec2(rp) + 0.5, dr);
+        if (!isSky(dr) && mr >= 0.25 && q.y > s.y + 2.0) {
           seen = texelFetch(sceneColor, rp, 0).rgb;
           seenBed = mr > 0.75;
+          seenP = q;
         }
       }
     }
     if (seenBed)
-      seen = waterBedAlbedo(seen, depth, type);
+      seen = waterBedAlbedo(seen, under0);
     vec3 bedLight = light;
-    if (waterCaustics == 1 && outdoors == 1 && lightOn && surf.y > 0.5) {
-      // the direct light here (shadow has the clouds and overcast in it), faint by moonlight and on objects; the
-      // network forms a little way down, then fades with depth and murk, and in fast, churned water
-      float k = max(dot(n, casterDir), 0.0) * shadow * (sunIsCaster == 1 ? 1.0 : CAUSTIC_MOON) * (bed ? 1.0 : CAUSTIC_OBJECTS)
-        * CAUSTICS * smoothstep(0.0, CAUSTIC_FOCUS.x * 2.0, depth)
-        * exp(-depth * (1.0 / CAUSTIC_DEPTH + ext.g * CAUSTIC_MURK / WATER_TILE))
-        * (1.0 - CAUSTIC_FAST_DIM * fast) * (1.0 - CAUSTIC_TURB_DIM * turb);
+    if (waterCaustics == 1 && outdoors == 1 && lightOn && look.x < 0.7) {
+      // the direct light reaching the bed (shadow has the clouds and overcast in it), faint by moonlight and on
+      // objects, gone by CAUSTIC_DEPTH
+      float fade = max(1.0 - under0 / (CAUSTIC_DEPTH * waterClarity), 0.0);
+      float k = max(dot(n, casterDir), 0.0) * shadow * (sunIsCaster == 1 ? 1.0 : CAUSTIC_MOON)
+        * (bed ? 1.0 : CAUSTIC_OBJECTS) * CAUSTICS * smoothstep(0.0, 6.0, under0) * fade * fade
+        * (1.0 - 0.5 * fast);
       if (k > 0.004) {
         // the light reaching this point entered the water toward the sun, bent steeper by refraction
         vec2 sunXZ = casterDir.xz;
         float sinI = length(sunXZ);
         float sinT = min(sinI / 1.33, 0.95);
-        vec2 entry = world.xz + sunXZ * (sinT * inversesqrt(1.0 - sinT * sinT) / max(sinI, 1e-4) * depth);
-        // sharp where the pixel is small, blurred in the deep and by fast water
-        float lod = waterLod(footprint * dist / t, CAUSTIC_SCALE) + 1.5 * smoothstep(CAUSTIC_BLUR_DEPTH.x, CAUSTIC_BLUR_DEPTH.y, depth)
-          + fast + turb;
-        vec2 smear = flow * (CAUSTIC_SMEAR * fast);
-        // eased in with the flow like the waves, so there is no seam where it starts
-        vec3 net = waterCaustic(entry + slope * CAUSTIC_WARP, mix(base, m0, flowing), mix(base, m1, flowing),
-          flowing > 0.0 ? w0 : 1.0, smear, lod, smoothstep(CAUSTIC_FOCUS.x, CAUSTIC_FOCUS.y, depth));
-        bedLight += caster * (k * clamp(net - 1.0, -1.0, CAUSTIC_MAX));
+        vec2 entry = seenP.xz + cameraPos.xz + sunXZ * (sinT * inversesqrt(1.0 - sinT * sinT) / max(sinI, 1e-4) * under0);
+        float lod = waterLod(footprint * dist / t, CAUSTIC_SCALE);
+        vec3 c = (waterCaustic(entry, lod) - CAUSTIC_MEAN) / (CAUSTIC_LINE - CAUSTIC_MEAN);
+        bedLight += caster * (k * clamp(c, CAUSTIC_RANGE.x, CAUSTIC_RANGE.y));
       }
     }
-    // sunlight reaching the bed went down through the water, what we see of it comes up along the view
-    vec3 down = exp(-ext * (depth / WATER_TILE));
-    vec3 up = exp(-ext * (path / WATER_TILE));
-    under = srgbToLinear(seen) * bedLight * down * up + WATER_DEEP[type] * waterLight * (1.0 - up);
+    under = shade(seen, bedLight) * waterDepthTint(type, under0);
     under *= max(1.0 + WAVE_SHADE * dot(slope, v.xz) / max(length(v.xz), 0.25), 0.0);
   }
 
-  // ---- reflection: the sky (or the gloom underground), and roughly the world
-  float cosV = max(dot(nrm, toCamera), 0.0);
-  float fresnel = (REFLECT_MIN + (1.0 - REFLECT_MIN) * pow(1.0 - cosV, 5.0)) * surf.x;
-  // a calmer normal for what is reflected, so steep little waves don't reflect the ground below the horizon
-  vec3 calm = normalize(vec3(nrm.x * SKY_TILT, nrm.y, nrm.z * SKY_TILT));
-  vec3 r = reflect(v, calm);
+  // ---- the surface (117 HD): its own color lit, mostly the sky's reflection, at least its base opacity
+  float vn = clamp(dot(toCamera, nrm), 0.0, 1.0);
+  float fresnel = mix(FRESNEL_BASE, 1.0, pow(1.0 - vn, FRESNEL_POWER));
+  vec3 skyN = normalize(nrm * vec3(SKY_TILT, 1.0, SKY_TILT));
+  vec3 r = reflect(v, skyN);
   r.y = min(r.y, -0.02);
   r = normalize(r);
   vec3 reflection;
@@ -653,39 +354,30 @@ vec3 waterOver(ivec2 px, inout vec3 p, vec3 n, vec3 albedo, vec3 light, float sh
     vec3 approx = outdoors == 1
       ? (ambientLight(sunAltitude) + skyLight(sunAltitude) * 0.5) * envAmbient + caster * 0.5
       : envCaveLight(vec3(0.0, -1.0, 0.0));
-    vec4 hit = waterTraceReflection(s, r, approx);
+    vec4 hit = waterTraceReflection(s, reflect(v, normalize(nrm * vec3(0.6, 1.0, 0.6))), approx);
     reflection = mix(reflection, hit.rgb, hit.a);
   }
-  vec3 color = mix(under, reflection, fresnel);
-  // foam lies on the surface: lit like a white, rough face
-  color = mix(color, waterLight * 0.8, foam * STREAK_FOAM);
+  vec3 surface = mix(shade(WATER_SURFACE_COLOR[type], waterLight), linearToSrgb(clamp(reflection * fresnel, 0.0, 1.0)),
+    look.y);
+  float alpha = max(look.x * smoothstep(0.0, SURFACE_DEPTH, under0), max(fresnel, (1.0 + toCamera.y) * OPACITY_SLANT));
+  vec3 color = mix(under, surface, alpha);
+  // foam lies on the surface
+  color = mix(color, shade(WATER_FOAM_COLOR[type], waterLight), foam);
 
-  // ---- glints: the sun or moon as a sharp streak, and sparkle where the finer waves crest
+  // ---- highlights: a broad soft sheen and a mild glitter path from the sun or moon, lamp glints
+  vec3 spec = lampSpec * LAMP_SPECULAR;
   if (outdoors == 1 && lightOn) {
-    float spec = waterGlint(nrm, casterDir, toCamera, tAlong, tAcross, rough * SUN_STREAK, rough);
-    // the sparkle is per-pixel detail: gone before the finer waves get smaller than a pixel
-    float crest = smoothstep(0.72, 0.95, waves.z) * (1.0 - smoothstep(0.0, 1.5, lb)) * strength / WAVE_STRENGTH;
-    if (crest > 0.0)
-      spec += crest * SPARKLE * waterGlint(nrm, casterDir, toCamera, tAlong, tAcross, rough * 2.5, rough * 1.5);
-    color += caster * (spec * surfShadow * SPECULAR * surf.x);
+    vec3 h = normalize(casterDir + toCamera);
+    float sheen = pow(max(dot(nrm, h), 0.0), SHEEN_GLOSS) * (SHEEN_GLOSS + 8.0) / 25.0 * SHEEN * fresnel;
+    vec3 steep = normalize(vec3(nrm.x * GLITTER_SLOPE, nrm.y, nrm.z * GLITTER_SLOPE));
+    // far off the waves are finer than a pixel: the path widens instead of sparkling
+    float rough = GLITTER_ROUGH + 0.02 * waterLod(footprint, 190.0);
+    float glitter = waterGlint(steep, casterDir, toCamera, tAlong, tAcross, rough * 1.6, rough) * GLITTER;
+    spec += caster * ((sheen + glitter) * surfShadow * look.z * (1.0 - foam));
   }
-  color += lampSpec * (LAMP_SPECULAR * surf.x);
-
-  // ---- fade in from the waterline: the bed just under the surface shows through, darkened like wet ground
-  vec3 result = mix(srgbToLinear(bed ? lit * WET_SAND : lit), color, smoothstep(0.0, SOFT_EDGE, depth));
-  result = linearToSrgb(clamp(waterShoulder(result), 0.0, 1.0));
-
-  if (waterDebug == 1) {
-    // type color, flow as stripes that move with it
-    const vec3 DEBUG_TYPE[WATER_TYPES] = vec3[](vec3(0.0), vec3(0.2, 0.6, 1.0), vec3(0.0, 0.2, 0.9),
-      vec3(0.3, 0.3, 0.6), vec3(0.6, 0.9, 1.0), vec3(0.4, 0.6, 0.1), vec3(0.4, 0.3, 0.3));
-    float speed = length(surf0.gb);
-    vec2 dir = speed > 1e-3 ? surf0.gb / speed : vec2(0.0);
-    float stripe = speed > 1e-3 ? step(0.5, fract(dot(sw.xz / 64.0, dir) - waterTime * speed * 2.0)) : 0.5;
-    result = mix(DEBUG_TYPE[type], vec3(stripe), 0.35) * mix(0.6, 1.0, energy);
-    // turbulent water reddens
-    result = mix(result, vec3(1.0, 0.25, 0.1), turb * 0.6);
-  }
+  // over the waterline the surface fades in: no hard edge where it meets the bank or a leg in the water
+  vec3 result = linearToSrgb(clamp(waterShoulder(srgbToLinear(color) + spec), 0.0, 1.0));
+  result = mix(lit, result, smoothstep(0.0, SOFT_EDGE, depth + 2.0));
 
   p = s;
   return result;
