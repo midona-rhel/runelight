@@ -39,7 +39,7 @@ layout(location = 1) out uvec4 WaterShadedOut;
 // (clear over the shallows), at least FRESNEL_BASE rising to all of it at a slant as (1 - cos)^FRESNEL_POWER, and at
 // least OPACITY_SLANT of 1 - the view's elevation
 #define SURFACE_DEPTH 64.0
-#define FRESNEL_BASE 0.25
+#define FRESNEL_BASE 0.2
 #define FRESNEL_POWER 2.0
 #define OPACITY_SLANT 0.4
 // what is seen through a wave face turned toward the camera is a little brighter, turned away darker
@@ -50,11 +50,11 @@ layout(location = 1) out uvec4 WaterShadedOut;
 // face catches a different part of the sky, the bright horizon toward the camera, the darker zenith away, which is
 // what shows the waves from above (the waves themselves are too gentle to move the reflection much). Cloud tops in
 // the sky cache no brighter than SKY_CLOUD_MAX times the sky there.
-#define SKY_TILT 4.5
+#define SKY_TILT 3.5
 #define CLOUD_TILT 1.0
 // how much of the clouds' own color shows over the sky's, and the spread of the taps that soften them (radians)
 #define CLOUD_SHARE 0.55
-#define CLOUD_BLUR 0.02
+#define CLOUD_BLUR 0.008
 #define SKY_CLOUD_MAX 1.1
 // Highlights. Sheen: a faint tight lobe of the sun or moon on the waves (Blinn-Phong exponent, strength). Glitter:
 // its reflection off the waves as if they were GLITTER_SLOPE times taller, so many small slopes face the sun, each
@@ -62,8 +62,8 @@ layout(location = 1) out uvec4 WaterShadedOut;
 // MOON_SPECULAR of the sun's.
 #define SHEEN_GLOSS 300.0
 #define SHEEN 0.04
-#define GLITTER_SLOPE 5.0
-#define GLITTER_ROUGH 0.006
+#define GLITTER_SLOPE 3.0
+#define GLITTER_ROUGH 0.01
 #define GLITTER 0.9
 #define MOON_SPECULAR 0.35
 // lamps: their streak's width along and across, strength, and the most one adds (linear)

@@ -54,7 +54,7 @@ layout(location = 0) out uvec4 WaterOut;  // 64 bits packed, see water.glsl's wa
 #define FAST_FLOW 90.0
 // The surface's fine detail: 117 HD's normal map (layer 3 of waterNoise) at this strength, and its seconds per repeat
 // of each size
-#define NORMAL_STRENGTH 0.035
+#define NORMAL_STRENGTH 0.05
 #define NORMAL_PERIOD vec3(42.0, 36.0, 32.0)
 // world units per size step: 117 HD's 128 (a tile) looked too fine at the game's camera distances
 #define NORMAL_TILE 256.0
