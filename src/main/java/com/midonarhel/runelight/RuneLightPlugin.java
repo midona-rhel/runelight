@@ -1021,8 +1021,8 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		glDenoiseProgram = DENOISE_PROGRAM.compile(template);
 		glShadowProgram = SHADOW_PROGRAM.compile(template);
 		setFogProgram(VolumetricFog.PROGRAM.compile(template));
-		water.setSurfaceProgram(WaterSurface.PROGRAM.compile(template), COMPOSITE_TEXTURE_UNIT + 2, MATERIAL_UNIT,
-			WATER_DATA_UNIT, WATER_NOISE_UNIT);
+		water.setSurfaceProgram(WaterSurface.PROGRAM.compile(template), COMPOSITE_TEXTURE_UNIT + 2, WATER_DATA_UNIT,
+			WATER_NOISE_UNIT);
 		weather.setPrograms(weather.compile(template), COMPOSITE_TEXTURE_UNIT, WEATHER_OCCLUSION_UNIT, SHADOW_COMPARE_UNIT, ALPHA_LAYER_UNIT,
 			LIGHT_DATA_UNIT, CLUSTER_DATA_UNIT, MATERIAL_UNIT, WEATHER_FIELD_UNIT);
 		skyCache.setPrograms(skyCache.compile(template), CLOUD_NOISE_UNIT, SKY_CACHE_UNIT);
@@ -1291,7 +1291,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		glDenoiseProgram = denoise;
 		glShadowProgram = shadow;
 		setFogProgram(fog);
-		water.setSurfaceProgram(waterSurface, COMPOSITE_TEXTURE_UNIT + 2, MATERIAL_UNIT, WATER_DATA_UNIT, WATER_NOISE_UNIT);
+		water.setSurfaceProgram(waterSurface, COMPOSITE_TEXTURE_UNIT + 2, WATER_DATA_UNIT, WATER_NOISE_UNIT);
 		weather.setPrograms(weatherPrograms, COMPOSITE_TEXTURE_UNIT, WEATHER_OCCLUSION_UNIT, SHADOW_COMPARE_UNIT, ALPHA_LAYER_UNIT,
 			LIGHT_DATA_UNIT, CLUSTER_DATA_UNIT, MATERIAL_UNIT, WEATHER_FIELD_UNIT);
 		skyCache.setPrograms(skyCachePrograms, CLOUD_NOISE_UNIT, SKY_CACHE_UNIT);
@@ -2584,7 +2584,6 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		final boolean ao = config.ambientOcclusion();
 
 		sceneTargets.bindTextures(COMPOSITE_TEXTURE_UNIT);
-		sceneTargets.bindMaterial(MATERIAL_UNIT);
 		// the water surface into its own target, against the resolved depth, before the composite reads it
 		weather.getWaterWind(waterWind);
 		gpuTimer.begin(GpuTimer.WATER);
@@ -2624,6 +2623,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 				glUniform1i(uniAoSunIsCaster, dayCycle.sunIsCaster ? 1 : 0);
 				shadowMap.bindForSampling(SHADOW_RAW_UNIT, SHADOW_COMPARE_UNIT);
 			}
+			sceneTargets.bindMaterial(MATERIAL_UNIT);
 			water.bindAo(config, WATER_DATA_UNIT);
 			WorldView giView = client.getTopLevelWorldView();
 			Scene giScene = giView != null ? giView.getScene() : null;
