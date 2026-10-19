@@ -67,18 +67,12 @@ class Water
 	private final WaterSurface surface = new WaterSurface();
 	private final Frame frame = new Frame();
 
-	private int uniEnabled, uniTime, uniReflections, uniClarity, uniCaustics, uniDebug, uniPass, uniSlotColor,
-		uniSlotType;
+	private int uniEnabled, uniTime, uniReflections, uniClarity, uniCaustics, uniDebug, uniPass, uniSlotType;
 
 	// A tile's look (WaterSurface.build): its water type and the game's water texture, as a key; up to SLOTS of them a
-	// scene (water.glsl's WATER_SLOTS), whose colors and types the composite gets as uniforms
+	// scene (water.glsl's WATER_SLOTS), whose types the composite gets as uniforms
 	static final int SLOTS = 32;
-	private final float[] slotColors = new float[SLOTS * 3];
 	private final int[] slotTypes = new int[SLOTS];
-	// linear, when the game's texture isn't loaded (yet), by type: fresh, ocean, dark ocean, pale ocean, swamp, cave
-	private static final float[][] FALLBACK_COLOR = {
-		{0, 0, 0}, {0.030f, 0.085f, 0.140f}, {0.025f, 0.070f, 0.135f}, {0.018f, 0.050f, 0.100f},
-		{0.045f, 0.120f, 0.165f}, {0.025f, 0.045f, 0.015f}, {0.012f, 0.025f, 0.030f}};
 
 	static int slotKey(int texture, int type)
 	{
@@ -108,7 +102,6 @@ class Water
 		uniCaustics = glGetUniformLocation(program, "waterCaustics");
 		uniDebug = glGetUniformLocation(program, "waterDebug");
 		uniPass = glGetUniformLocation(program, "waterPass");
-		uniSlotColor = glGetUniformLocation(program, "waterSlotColor");
 		uniSlotType = glGetUniformLocation(program, "waterSlotType");
 		glUseProgram(program);
 		glUniform1i(glGetUniformLocation(program, "waterSurface"), surfaceUnit);
@@ -274,19 +267,10 @@ class Water
 		glUniform1i(uniCaustics, config.waterCaustics() ? 1 : 0);
 		glUniform1i(uniDebug, config.waterDebug() ? 1 : 0);
 		WaterSurface.Mesh m = surface.mesh();
-		float[] albedo = GiVoxels.textureAlbedo;
 		for (int i = 0; i < m.slots; ++i)
 		{
-			int type = slotType(m.slotKeys[i]);
-			int tex = slotTexture(m.slotKeys[i]);
-			slotTypes[i] = type;
-			boolean known = albedo != null && tex >= 0 && tex * 3 + 2 < albedo.length && albedo[tex * 3] >= 0;
-			for (int c = 0; c < 3; ++c)
-			{
-				slotColors[i * 3 + c] = known ? albedo[tex * 3 + c] : FALLBACK_COLOR[Math.min(type, 6)][c];
-			}
+			slotTypes[i] = slotType(m.slotKeys[i]);
 		}
-		glUniform3fv(uniSlotColor, slotColors);
 		glUniform1iv(uniSlotType, slotTypes);
 
 		glActiveTexture(GL_TEXTURE0 + surfaceUnit);

@@ -4,16 +4,14 @@
 // the opaque scene, and leaves how far away it is, its normal, look and foam, the water's depth by the shore and the
 // caustics on the bed below in waterSurface.
 //
-// The look starts from the game's own water: the body of the water is the color of the tile's water texture (its
-// mean, Water.java), lit like everything else, so every lake, river and swamp keeps the color the game gives it. It
-// is mostly opaque: the bed only shows in the shallows, fading into the body color over a short depth, with the
-// caustics on it. Over that, the surface: the sky by Fresnel (faint looking down, strong at a slant), sharp
-// reflections of the world, the sun's and moon's glints and lamps' streaks, and foam.
+// Looking down the water is clear over the shallows and colored by its depth, its surface tinted and lit, the waves
+// shading what is seen through it; at a slant the surface turns into the sky, clouds and all, by Fresnel, with sharp
+// reflections of the world. Sharp glints from the sun and moon, lamps' streaks, foam.
 //
 // Two passes of the composite program. The first (waterPass 1) runs at half resolution over the water only and
-// works out the surface and the lit body color (waterShadeHalf), into waterShaded. The second, the full resolution
-// composite, lights the bed as any ground and only blends: the bed into the body color by its own depth under the
-// surface, then the surface over it (waterOver), using the full resolution surface for the edges.
+// works out the surface (waterShadeHalf), into waterShaded. The second, the full resolution composite, lights the bed
+// as any ground and only blends: the bed tinted by its depth under the surface, then the surface over it (waterOver),
+// using the full resolution surface for the edges.
 // Included by composite_frag.glsl after its lighting helpers (shadows, point light clusters).
 
 #include "water_common.glsl"
@@ -22,14 +20,13 @@
 
 uniform int waterEnabled;
 uniform usampler2D waterSurface;  // RGBA16UI, 64 bits packed by water_frag.glsl (waterUnpack); 0 no water
-uniform usampler2D waterShaded;   // RGBA32UI, half resolution: the surface and the body (waterShadeHalf)
+uniform usampler2D waterShaded;   // RGBA32UI, half resolution: the shaded surface (waterShadeHalf)
 uniform int waterPass;            // 1 while the half resolution water pass runs
 uniform int waterReflections;     // a few screen-space taps for the world in the reflection
 uniform float waterClarity;       // multiplier on how deep the bed stays visible
 uniform int waterCaustics;
 uniform int waterDebug;
-uniform vec3 waterSlotColor[WATER_SLOTS];  // linear: the mean color of each look's game water texture
-uniform int waterSlotType[WATER_SLOTS];    // each look's water type
+uniform int waterSlotType[WATER_SLOTS];  // each look's water type (Water.java)
 
 layout(location = 1) out uvec4 WaterShadedOut;
 
@@ -38,46 +35,40 @@ layout(location = 1) out uvec4 WaterShadedOut;
 // shore tile, which must not show)
 #define SOFT_EDGE 12.0
 #define WATERLINE_DEPTH 4.0
-// the body: world units of depth over which the bed fades into the body color (to 1 - 1/e), per type before the
-// clarity setting, and how the body is lit: the sky above it, the sun through it, lamps around it
-const float WATER_BODY_DEPTH[WATER_TYPES] = float[](1.0, 70.0, 55.0, 45.0, 90.0, 22.0, 35.0);
-#define BODY_SKY 0.5
-#define BODY_SUN 0.25
-#define BODY_LAMP 0.35
-// the game's water textures average out pale and grayish: their color, more saturated and darker, is the body's
-#define BODY_SATURATION 1.8
-// the waves shade the body, as on 117 HD's water: its light follows a normal this much steeper than the waves'
-#define BODY_WAVE_SHADE 3.0
-#define BODY_DARKEN 0.55
-// the bed seen through the shallows goes dark and takes the body's hue over BED_TINT_DEPTH, down to BED_DARKEN of its
-// light: lit like dry land it was brighter than the water around it
-#define BED_TINT_DEPTH 24.0
-#define BED_DARKEN 0.5
-// the surface: Fresnel from FRESNEL_BASE looking straight down to all of it at a slant, (1 - cos)^FRESNEL_POWER
-// (Schlick's), times the type's sky share (WATER_LOOK.y): looking down the water's own color, the sky at a slant
-#define FRESNEL_BASE 0.03
-#define FRESNEL_POWER 5.0
+// How much of the surface covers what is under it: the type's base opacity once the water is SURFACE_DEPTH deep
+// (clear over the shallows), at least FRESNEL_BASE rising to all of it at a slant as (1 - cos)^FRESNEL_POWER, and at
+// least OPACITY_SLANT of 1 - the view's elevation
+#define SURFACE_DEPTH 64.0
+#define FRESNEL_BASE 0.15
+#define FRESNEL_POWER 2.0
+#define OPACITY_SLANT 0.4
+// what is seen through a wave face turned toward the camera is a little brighter, turned away darker
+#define WAVE_SHADE 0.6
+// under the water the bank's color goes wet: a little darker
+#define WET_SAND 0.86
 // The sky is reflected off a normal whose slope is SKY_TILT of the waves': the ripples carried by the current move the
 // sky's gradient and clouds about. Cloud tops in the sky cache no brighter than SKY_CLOUD_MAX times the sky there.
 #define SKY_TILT 1.0
 #define SKY_CLOUD_MAX 1.25
-// Highlights. Sheen: a broad soft lobe of the sun or moon on the waves (Blinn-Phong exponent, strength). Glitter:
-// its reflection on the waves' slopes exaggerated GLITTER_SLOPE times, a soft path toward the camera of GLITTER_ROUGH
-// width. The moon's are MOON_SPECULAR of the sun's.
-#define SHEEN_GLOSS 60.0
-#define SHEEN 0.10
-#define GLITTER_SLOPE 1.6
-#define GLITTER_ROUGH 0.1
-#define GLITTER 0.3
+// Highlights. Sheen: a faint tight lobe of the sun or moon on the waves (Blinn-Phong exponent, strength). Glitter:
+// its reflection on the waves' slopes exaggerated GLITTER_SLOPE times, narrow (GLITTER_ROUGH) so the waves break it
+// into sharp glints instead of one soft blob. The moon's are MOON_SPECULAR of the sun's.
+#define SHEEN_GLOSS 300.0
+#define SHEEN 0.04
+#define GLITTER_SLOPE 2.5
+#define GLITTER_ROUGH 0.035
+#define GLITTER 0.5
 #define MOON_SPECULAR 0.35
 // lamps: their streak's width along and across, strength, and the most one adds (linear)
 #define LAMP_ALONG 0.03
 #define LAMP_ACROSS 0.012
 #define LAMP_SPECULAR 0.8
 #define LAMP_MAX 2.0
+// how much of a lamp's light the surface itself takes
+#define LAMP_SURFACE 0.15
 // Caustics: 117 HD's, carried by the flow, worked out by the water pass (water_frag.glsl) as their value above the
 // mean in units of the brightest lines'. The bed gains CAUSTICS times the direct light per unit (between
-// CAUSTIC_RANGE), only where it still shows through the body; fainter by moonlight.
+// CAUSTIC_RANGE); fainter by moonlight.
 #define CAUSTICS 1.6
 #define CAUSTIC_RANGE vec2(-0.7, 3.0)
 #define CAUSTIC_MOON 0.35
@@ -118,10 +109,19 @@ float waterDecLight(uint u) {
   return exp2(float(u) / 65535.0 * 6.0) - 1.0;
 }
 
-uvec4 waterPackShaded(vec3 surface, float cover, vec3 body) {
+uvec4 waterPackShaded(vec3 surface, float cover, vec3 spec) {
   return uvec4(waterEncLight(surface.r) | waterEncLight(surface.g) << 16,
     waterEncLight(surface.b) | uint(clamp(cover, 0.0, 1.0) * 65535.0 + 0.5) << 16,
-    waterEncLight(body.r) | waterEncLight(body.g) << 16, waterEncLight(body.b) | 1u << 16);
+    waterEncLight(spec.r) | waterEncLight(spec.g) << 16, waterEncLight(spec.b) | 1u << 16);
+}
+
+// 117 HD's fade of what is under the water (sRGB multiplier): into the depth color over the first stretch, then darker
+vec3 waterDepthTint(int type, float depth) {
+  vec3 fade = WATER_FADE[type];
+  fade.xy *= waterClarity;
+  vec3 dc = WATER_DEPTH_COLOR[type];
+  return depth < fade.x ? mix(vec3(1.0), dc, depth / fade.x)
+    : dc * mix(1.0, fade.z, clamp((depth - fade.x) / (fade.y - fade.x), 0.0, 1.0));
 }
 
 int waterTypeOf(int slot) {
@@ -213,9 +213,9 @@ vec3 waterShoulder(vec3 c) {
 
 // ---------------------------------------------------------------------------------------------------------------
 // The half resolution pass: for the half resolution pixel hpx, the nearest water surface among the four full
-// resolution pixels it covers, shaded: the surface (linear, premultiplied: what it adds) and how much of what is under
-// it it hides, and the body's lit color (linear). Packed as halves: surface rg, surface b and coverage, body rg,
-// body b. 0 where there is no water.
+// resolution pixels it covers, shaded: the surface's color (linear, foam in it), how much of what is under it the
+// surface hides at least (Fresnel, the slant, foam; waterOver adds the depth's share), and the highlights on top
+// (linear), packed by waterPackShaded. 0 where there is no water.
 void waterShadeHalf(ivec2 hpx) {
   WaterShadedOut = uvec4(0u);
   if (waterEnabled == 0)
@@ -257,11 +257,10 @@ void waterShadeHalf(ivec2 hpx) {
     return;
   }
 
-  // ---- light on the surface and in the body
+  // ---- light on the surface
   bool lightOn = lightingEnabled == 1;
   vec3 caster = vec3(0.0);
   vec3 surfaceLight = vec3(1.0);
-  vec3 bodyLight = vec3(1.0);
   float shadow = 1.0;
   if (outdoors == 1 && lightOn) {
     caster = (sunIsCaster == 1 ? sunLight(sunAltitude) : moonLight(sunAltitude)) * envSun;
@@ -272,10 +271,8 @@ void waterShadeHalf(ivec2 hpx) {
     vec3 ambient = ambientLight(sunAltitude) * envAmbient;
     vec3 sky = skyLight(sunAltitude) * envAmbient;
     surfaceLight = ambient + sky * max(-nrm.y, 0.0) + caster * max(dot(nrm, casterDir), 0.0) * shadow;
-    vec3 wn = normalize(vec3(nrm.x * BODY_WAVE_SHADE, nrm.y, nrm.z * BODY_WAVE_SHADE));
-    bodyLight = ambient + sky * (BODY_SKY * max(-wn.y, 0.0)) + caster * (max(dot(wn, casterDir), 0.0) * BODY_SUN * shadow);
   } else if (lightOn) {
-    surfaceLight = bodyLight = envCaveLight(vec3(0.0, -1.0, 0.0));
+    surfaceLight = envCaveLight(vec3(0.0, -1.0, 0.0));
   }
 
   vec2 fwd = v.xz * inversesqrt(max(dot(v.xz, v.xz), 1e-6));
@@ -299,17 +296,13 @@ void waterShadeHalf(ivec2 hpx) {
       float att = 1.0 - sqrt(d2 / r2);
       att *= att;
       vec3 ld = l * inversesqrt(max(d2, 1.0));
-      bodyLight += color * (att * max(-ld.y, 0.2) * BODY_LAMP);
+      surfaceLight += color * (att * max(-ld.y, 0.2) * LAMP_SURFACE);
       lampSpec += color * (att * waterGlint(nrm, ld, toCamera, tAlong, tAcross, LAMP_ALONG, LAMP_ACROSS));
     }
   }
-  vec3 base = waterSlotColor[slot];
-  base = max(mix(vec3(dot(base, vec3(0.2126, 0.7152, 0.0722))), base, BODY_SATURATION), 0.0) * BODY_DARKEN;
-  vec3 body = base * bodyLight;
-
   // ---- what the surface reflects: the sky, and the world where the reflected ray finds it
   float vn = clamp(dot(toCamera, nrm), 0.0, 1.0);
-  float fresnel = mix(FRESNEL_BASE, 1.0, pow(1.0 - vn, FRESNEL_POWER)) * look.y;
+  float fresnel = mix(FRESNEL_BASE, 1.0, pow(1.0 - vn, FRESNEL_POWER));
   vec3 skyN = normalize(nrm * vec3(SKY_TILT, 1.0, SKY_TILT));
   vec3 r = reflect(v, skyN);
   r.y = min(r.y, -0.02);
@@ -335,7 +328,7 @@ void waterShadeHalf(ivec2 hpx) {
     reflection = mix(reflection, hit.rgb, hit.a);
   }
 
-  // ---- highlights: a broad soft sheen and a glitter path from the sun or moon, lamp streaks
+  // ---- highlights: a faint sheen and sharp glints from the sun or moon, lamp streaks
   vec3 spec = min(lampSpec * LAMP_SPECULAR, vec3(LAMP_MAX));
   if (outdoors == 1 && lightOn) {
     vec3 h = normalize(casterDir + toCamera);
@@ -345,11 +338,14 @@ void waterShadeHalf(ivec2 hpx) {
     spec += caster * ((sheen + glitter) * shadow * look.z * (1.0 - foam) * (sunIsCaster == 1 ? 1.0 : MOON_SPECULAR));
   }
 
-  // the surface over the body: the reflection by Fresnel, the foam over it, the highlights on top
+  // the surface (117 HD): its own color lit, mostly the sky's reflection; foam over it, folded in as waterOver would
+  // lay it over the whole (a mix over a mix is one mix)
+  vec3 surface = mix(srgbToLinear(WATER_SURFACE_COLOR[type]) * surfaceLight, reflection * fresnel, look.y);
+  float cover = max(fresnel, (1.0 + toCamera.y) * OPACITY_SLANT);
   vec3 foamColor = srgbToLinear(WATER_FOAM_COLOR[type]) * surfaceLight;
-  vec3 surface = mix(reflection * fresnel, foamColor, foam) + spec;
-  float cover = mix(fresnel, 1.0, foam);
-  WaterShadedOut = waterPackShaded(surface, cover, body);
+  float covered = cover + foam * (1.0 - cover);
+  surface = (surface * (cover * (1.0 - foam)) + foamColor * foam) / max(covered, 1e-4);
+  WaterShadedOut = waterPackShaded(surface, covered, spec);
 }
 
 // ---------------------------------------------------------------------------------------------------------------
@@ -382,7 +378,7 @@ vec3 waterOver(ivec2 px, inout vec3 p, vec3 albedo, float shadow, vec3 lit, floa
   vec2 f = hp - vec2(h0);
   ivec2 last = textureSize(waterShaded, 0) - 1;
   vec4 surface = vec4(0.0);
-  vec3 body = vec3(0.0);
+  vec3 spec = vec3(0.0);
   float wsum = 0.0;
   for (int i = 0; i < 4; ++i) {
     ivec2 o = ivec2(i & 1, i >> 1);
@@ -393,38 +389,40 @@ vec3 waterOver(ivec2 px, inout vec3 p, vec3 albedo, float shadow, vec3 lit, floa
     float k = bw.x * bw.y + 1e-4;
     surface += vec4(waterDecLight(w.x & 65535u), waterDecLight(w.x >> 16), waterDecLight(w.y & 65535u),
       float(w.y >> 16) / 65535.0) * k;
-    body += vec3(waterDecLight(w.z & 65535u), waterDecLight(w.z >> 16), waterDecLight(w.w & 65535u)) * k;
+    spec += vec3(waterDecLight(w.z & 65535u), waterDecLight(w.z >> 16), waterDecLight(w.w & 65535u)) * k;
     wsum += k;
   }
   if (wsum <= 0.0)
     return lit;
   surface /= wsum;
-  body /= wsum;
+  spec /= wsum;
   if (waterDebug == 1) {
     p = s;
     return linearToSrgb(clamp(surface.rgb, 0.0, 1.0));
   }
 
   int type = waterTypeOf(slot);
-  // The depth the body's color goes by: the shore distance's, smooth across tiles, so the pit the bed sinks into in
+  vec4 look = WATER_LOOK[type];
+  // The depth the water's color goes by: the shore distance's, smooth across tiles, so the pit the bed sinks into in
   // the middle of every shore tile doesn't show as a dark square; only right at the waterline the bed's own depth
   // fades the water in.
   float colorDepth = min(shoreDepth, depth * WATERLINE_DEPTH + 4.0);
-  float bodyAmount = 1.0 - exp(-colorDepth / (WATER_BODY_DEPTH[type] * waterClarity));
 
-  // the bed, lit by the composite, with the caustics where it still shows through
-  vec3 under = srgbToLinear(lit);
-  if (waterCaustics == 1 && outdoors == 1 && lightingEnabled == 1) {
+  // the bed, lit by the composite and wet, with the caustics, fading into the depth color
+  vec3 under = srgbToLinear(lit * WET_SAND);
+  if (waterCaustics == 1 && outdoors == 1 && lightingEnabled == 1 && look.x < 0.7) {
     vec3 caster = (sunIsCaster == 1 ? sunLight(sunAltitude) : moonLight(sunAltitude)) * envSun;
     float k = max(-casterDir.y, 0.0) * shadow * CAUSTICS * (sunIsCaster == 1 ? 1.0 : CAUSTIC_MOON)
-      * smoothstep(0.0, 6.0, depth) * (1.0 - bodyAmount);
+      * smoothstep(0.0, 6.0, depth);
     under += srgbToLinear(albedo) * caster * (k * clamp(caustic, CAUSTIC_RANGE.x, CAUSTIC_RANGE.y));
   }
-  vec3 hue = body / max(max(body.r, max(body.g, body.b)), 1e-4);
-  float sunk = smoothstep(0.0, BED_TINT_DEPTH, depth);
-  under = max(under, vec3(0.0)) * mix(vec3(1.0), hue * BED_DARKEN, sunk);
-  under = mix(under, body, bodyAmount);
-  vec3 color = under * (1.0 - surface.a) + surface.rgb;
+  under = max(under, vec3(0.0)) * srgbToLinear(waterDepthTint(type, colorDepth));
+  // what is seen through a wave face turned toward the camera is a little brighter, turned away darker
+  vec3 v = p / dist;
+  vec2 slope = nrm.xz / nrm.y;
+  under *= max(1.0 + WAVE_SHADE * dot(slope, v.xz) / max(length(v.xz), 0.25), 0.0);
+  float alpha = max(look.x * smoothstep(0.0, SURFACE_DEPTH, colorDepth), surface.a);
+  vec3 color = mix(under, surface.rgb, alpha) + spec;
   // over the waterline the surface fades in: no hard edge where it meets the bank or a leg in the water
   vec3 result = mix(lit, linearToSrgb(clamp(waterShoulder(color), 0.0, 1.0)), smoothstep(0.0, 1.0, depth / SOFT_EDGE));
   p = s;
