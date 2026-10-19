@@ -157,11 +157,11 @@ float overcastClear() {
   return (1.0 - smoothstep(0.15, 0.85, weatherOvercast.x)) * (1.0 - HAZE_DISC * weatherLight.y);
 }
 
-vec3 skyZenith(float alt) {
+vec3 skyZenithAt(float alt) {
   return overcastSky(skyZenithClear(alt), alt) + LIGHTNING_COLOR * (LIGHTNING_SKY * weatherOvercast.z);
 }
 
-vec3 skyHorizon(float alt) {
+vec3 skyHorizonAt(float alt) {
   return overcastSky(skyHorizonClear(alt), alt) + LIGHTNING_COLOR * (LIGHTNING_SKY * 0.8 * weatherOvercast.z);
 }
 
@@ -185,19 +185,19 @@ vec3 linearToSrgb(vec3 c) {
   return mix(c * 12.92, 1.055 * pow(c, vec3(1.0 / 2.4)) - 0.055, step(vec3(0.0031308), c));
 }
 
-vec3 sunLight(float alt) {
+vec3 sunLightAt(float alt) {
   vec3 warm = vec3(1.00, 0.42, 0.16);
   vec3 noon = vec3(1.00, 0.90, 0.76);
   return overcastDirect(mix(warm, noon, smoothstep(2.0, 28.0, alt)) * SUN_INTENSITY * smoothstep(-4.0, 10.0, alt))
     * (1.0 + weatherLight.x);
 }
 
-vec3 moonLight(float alt) {
+vec3 moonLightAt(float alt) {
   return overcastDirect(vec3(0.42, 0.55, 1.00) * MOON_INTENSITY * smoothstep(-2.0, -14.0, alt));
 }
 
 // Light from the whole sky, cool blue by day; fills shadows
-vec3 ambientLight(float alt) {
+vec3 ambientLightAt(float alt) {
   vec3 day = vec3(0.30, 0.38, 0.58);
   vec3 night = vec3(0.10, 0.14, 0.30);
   vec3 a = mix(night, day, smoothstep(-10.0, 15.0, alt));
@@ -210,9 +210,29 @@ vec3 ambientLight(float alt) {
 }
 
 // Extra light on upward-facing surfaces from the sky above them, tinted by the sky
-vec3 skyLight(float alt) {
-  return srgbToLinear(skyZenith(alt)) * SKY_LIGHT;
+vec3 skyLightAt(float alt) {
+  return srgbToLinear(skyZenithAt(alt)) * SKY_LIGHT;
 }
+
+// The colors above at a sun altitude. The composite uses them at every pixel, always at this frame's altitude: there
+// composite_vert.glsl works them out once and hands them over (SKY_FRAME_CONSTANTS), instead of every pixel walking
+// the palette and the overcast mixing again, which cost over a millisecond.
+#ifdef SKY_FRAME_CONSTANTS
+flat in vec3 skyFrame[6];
+vec3 skyZenith(float alt) { return skyFrame[0]; }
+vec3 skyHorizon(float alt) { return skyFrame[1]; }
+vec3 sunLight(float alt) { return skyFrame[2]; }
+vec3 moonLight(float alt) { return skyFrame[3]; }
+vec3 ambientLight(float alt) { return skyFrame[4]; }
+vec3 skyLight(float alt) { return skyFrame[5]; }
+#else
+vec3 skyZenith(float alt) { return skyZenithAt(alt); }
+vec3 skyHorizon(float alt) { return skyHorizonAt(alt); }
+vec3 sunLight(float alt) { return sunLightAt(alt); }
+vec3 moonLight(float alt) { return moonLightAt(alt); }
+vec3 ambientLight(float alt) { return ambientLightAt(alt); }
+vec3 skyLight(float alt) { return skyLightAt(alt); }
+#endif
 
 // Underground: no sun, so a fixed soft key light from above keeps shapes readable. y points down.
 #define CAVE_AMBIENT 0.50

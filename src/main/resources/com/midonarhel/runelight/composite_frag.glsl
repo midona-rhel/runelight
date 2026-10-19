@@ -3,6 +3,7 @@
 // Runs once per pixel over the finished scene: sky, lighting, shadows, AO and fog.
 
 #include "frame.glsl"
+#define SKY_FRAME_CONSTANTS
 #include "sky.glsl"
 #include "materials.glsl"
 #include "environment.glsl"
