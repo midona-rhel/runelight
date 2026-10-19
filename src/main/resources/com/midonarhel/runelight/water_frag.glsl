@@ -11,6 +11,7 @@
 #include "water_common.glsl"
 
 uniform sampler2D sceneDepth;  // the opaque scene, resolved
+uniform sampler2D waterContact; // WaterMap.contact: how close something standing in the water is, 4 texels a tile
 uniform vec3 waterWind;
 uniform vec4 waterDrift;
 uniform float waterRain;
@@ -79,6 +80,11 @@ layout(location = 0) out uvec4 WaterOut;  // 64 bits packed, see water.glsl's wa
 #define CAUSTIC_STRETCH 0.45
 // the furthest the distance target reaches (16 bits): past it water is clamped there
 #define WATER_REACH 20480.0
+// around things standing in the water (WaterMap.contact): the rapids' foam, up to CONTACT_FOAM of it over a faint
+// CONTACT_FILM, and waves up to 1 + CONTACT_WAVES as rough
+#define CONTACT_FOAM 0.6
+#define CONTACT_FILM 0.2
+#define CONTACT_WAVES 1.2
 // rain rings: cell size (world units), rings per cell per second
 #define RAIN_CELL 72.0
 #define RAIN_RATE 1.3
@@ -220,8 +226,10 @@ void main() {
   } else {
     slope = ripples(xz, base, lods, lodC, STILL_SLOW, 1.0);
   }
+  float contact = textureLod(waterContact, (xz / WATER_TILE + waterGrid.x) / (waterGrid.y - 1.0), 0.0).r;
+  contact *= contact;
   slope *= look.w * waterWaves * (0.7 + 0.5 * wind) * (0.75 + 0.35 * energy) * (1.0 + TURB_WAVES * turb)
-    * mix(STILL_WAVES, FAST_WAVES, smoothstep(FLOW_MIN * 0.5, FAST_FLOW, flowSpeed));
+    * mix(STILL_WAVES, FAST_WAVES, smoothstep(FLOW_MIN * 0.5, FAST_FLOW, flowSpeed)) * (1.0 + CONTACT_WAVES * contact);
   vec3 rain = vec3(0.0);
   if (waterRain > 0.01 && waterOutdoors == 1) {
     rain = rainRings(xz);
@@ -230,13 +238,14 @@ void main() {
   // the surface's normal points up (-y); slope is d up / d x, d up / d z
   vec3 nrm = normalize(vec3(-slope.x, -1.0, -slope.y));
 
-  // soft foam only on rapids: the large cells' rims, carried with the flow
+  // soft foam on rapids and around things standing in the water: the large cells' rims, carried with the flow
   float foam = 0.0;
   float churn = smoothstep(TURB_FOAM.x, TURB_FOAM.y, turb);
-  if (churn > 0.0) {
+  if (churn > 0.0 || contact > 0.0) {
     float h = textureLod(waterNoise, vec3((xz - m0) / CELL_SCALE_B, 2.0), lodFoam).b * w0
       + textureLod(waterNoise, vec3((xz + vec2(173.0, 91.0) - m1) / CELL_SCALE_B, 2.0), lodFoam).b * (1.0 - w0);
-    foam = (1.0 - smoothstep(0.15, 0.55, h)) * churn * FOAM;
+    float rim = 1.0 - smoothstep(0.15, 0.55, h);
+    foam = max(rim * churn * FOAM, contact * (rim * CONTACT_FOAM + CONTACT_FILM));
   }
   foam = max(foam, rain.z * RAIN_FOAM);
 

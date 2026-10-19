@@ -1,10 +1,17 @@
 package com.midonarhel.runelight;
 
 import net.runelite.api.Constants;
+import net.runelite.api.DecorativeObject;
+import net.runelite.api.DynamicObject;
+import net.runelite.api.GameObject;
+import net.runelite.api.Model;
+import net.runelite.api.Perspective;
+import net.runelite.api.Renderable;
 import net.runelite.api.Scene;
 import net.runelite.api.SceneTileModel;
 import net.runelite.api.SceneTilePaint;
 import net.runelite.api.Tile;
+import net.runelite.api.WallObject;
 
 /**
  * The water of one top-level scene, worked out on the CPU when the scene loads.
@@ -77,6 +84,17 @@ final class WaterMap
 	// page 1 (distance to shore in tiles, wave energy 0-1, share of the corner's tiles that are water, turbulence 0-1)
 	float[] texture;
 	boolean hasWater;
+
+	// Things standing in the water (posts, rocks, hulls): where they cross the surface, on a grid of CONTACT_RES cells
+	// a tile, spread out over CONTACT_REACH cells as a closeness 0-255 (255 where one crosses); null with none. The
+	// water foams and roughens around them (water_frag.glsl), and the flow slows and churns at corners near them.
+	static final int CONTACT_RES = 4;
+	static final int CONTACT_SIZE = SIZE * CONTACT_RES;
+	static final int CONTACT_REACH = 5;
+	// at a corner right by one the flow keeps 1 - CONTACT_SLOW of itself and churns at least CONTACT_TURB
+	private static final float CONTACT_SLOW = 0.6f;
+	private static final float CONTACT_TURB = 0.5f;
+	byte[] contact;
 
 	/**
 	 * Water type for a vanilla texture id, before the area and body decide: FRESH, SWAMP or a sea type, or NONE.
@@ -298,6 +316,7 @@ final class WaterMap
 			bedHeights[z] = bed;
 		}
 
+		findContacts(tiles, heights);
 		buildTexture(heights);
 	}
 
@@ -520,7 +539,8 @@ final class WaterMap
 
 	/**
 	 * The color each underlay is drawn with on the land around, learned from the plain ground tiles there (vanilla's
-	 * baked lighting undone where the land's is): a water tile is an overlay on an underlay, which is the ground under the water.
+	 * baked lighting undone where the land's is): a water tile is an overlay on an underlay, which is the ground under
+	 * the water.
 	 */
 	private static final class UnderlayColors
 	{
@@ -744,6 +764,195 @@ final class WaterMap
 		return depthLevel[cy * CORNERS + cx];
 	}
 
+	/**
+	 * Find where the scene's objects cross the water's surface into {@link #contact}.
+	 */
+	private void findContacts(Tile[][][] tiles, int[][][] heights)
+	{
+		WaterBodies b = bodies;
+		// each water tile's surface: its lowest corner (y down), as buildTexture takes it
+		float[] surfaceY = new float[SIZE * SIZE];
+		java.util.Arrays.fill(surfaceY, Float.NaN);
+		for (int i = 0; i < surfaceY.length; ++i)
+		{
+			if (b.water[i])
+			{
+				int x = i % SIZE, y = i / SIZE;
+				int[][] h = heights[level[i]];
+				surfaceY[i] = Math.max(Math.max(h[x][y], h[x + 1][y]), Math.max(h[x][y + 1], h[x + 1][y + 1]));
+			}
+		}
+		boolean[] marked = new boolean[CONTACT_SIZE * CONTACT_SIZE];
+		boolean any = false;
+		for (Tile[][] plane : tiles)
+		{
+			for (int x = 0; x < SIZE; ++x)
+			{
+				for (int y = 0; y < SIZE; ++y)
+				{
+					Tile t = plane[x][y];
+					if (t == null || !nearWater(x, y))
+					{
+						continue;
+					}
+					GameObject[] objects = t.getGameObjects();
+					for (int k = 0; objects != null && k < objects.length; ++k)
+					{
+						GameObject o = objects[k];
+						if (o != null && o.getSceneMinLocation().equals(t.getSceneLocation()))
+						{
+							any |= crossings(o.getRenderable(), o.getModelOrientation(), o.getX(), o.getZ(), o.getY(), surfaceY,
+								marked);
+						}
+					}
+					WallObject w = t.getWallObject();
+					if (w != null)
+					{
+						any |= crossings(w.getRenderable1(), 0, w.getX(), w.getZ(), w.getY(), surfaceY, marked);
+						any |= crossings(w.getRenderable2(), 0, w.getX(), w.getZ(), w.getY(), surfaceY, marked);
+					}
+					DecorativeObject d = t.getDecorativeObject();
+					if (d != null)
+					{
+						any |= crossings(d.getRenderable(), 0, d.getX() + d.getXOffset(), d.getZ(), d.getY() + d.getYOffset(),
+							surfaceY, marked);
+						any |= crossings(d.getRenderable2(), 0, d.getX() + d.getXOffset2(), d.getZ(),
+							d.getY() + d.getYOffset2(), surfaceY, marked);
+					}
+				}
+			}
+		}
+		if (!any)
+		{
+			return;
+		}
+		// each crossing raises the closeness of the cells within CONTACT_REACH of it
+		byte[] c = new byte[marked.length];
+		for (int cy = 0; cy < CONTACT_SIZE; ++cy)
+		{
+			for (int cx = 0; cx < CONTACT_SIZE; ++cx)
+			{
+				if (!marked[cy * CONTACT_SIZE + cx])
+				{
+					continue;
+				}
+				for (int dy = -CONTACT_REACH; dy <= CONTACT_REACH; ++dy)
+				{
+					for (int dx = -CONTACT_REACH; dx <= CONTACT_REACH; ++dx)
+					{
+						int x = cx + dx, y = cy + dy;
+						float near = 1 - (float) Math.sqrt(dx * dx + dy * dy) / CONTACT_REACH;
+						if (near <= 0 || x < 0 || y < 0 || x >= CONTACT_SIZE || y >= CONTACT_SIZE)
+						{
+							continue;
+						}
+						int j = y * CONTACT_SIZE + x;
+						c[j] = (byte) Math.max(c[j] & 255, Math.round(near * 255));
+					}
+				}
+			}
+		}
+		contact = c;
+	}
+
+	private boolean nearWater(int x, int y)
+	{
+		for (int dy = -1; dy <= 1; ++dy)
+		{
+			for (int dx = -1; dx <= 1; ++dx)
+			{
+				int tx = x + dx, ty = y + dy;
+				if (tx >= 0 && ty >= 0 && tx < SIZE && ty < SIZE && bodies.water[ty * SIZE + tx])
+				{
+					return true;
+				}
+			}
+		}
+		return false;
+	}
+
+	/**
+	 * Mark where the faces of an object's model cross the water's surface: the model as the scene uploader places it
+	 * (scene local x, height and z, turned by orient), its faces over water tiles cut at their surface level.
+	 */
+	private static boolean crossings(Renderable r, int orient, int x, int height, int z, float[] surfaceY,
+		boolean[] marked)
+	{
+		Model m = r instanceof Model ? (Model) r
+			: r instanceof DynamicObject ? ((DynamicObject) r).getModelZbuf() : null;
+		if (m == null)
+		{
+			return false;
+		}
+		float[] vx = m.getVerticesX(), vy = m.getVerticesY(), vz = m.getVerticesZ();
+		int[] f1 = m.getFaceIndices1(), f2 = m.getFaceIndices2(), f3 = m.getFaceIndices3();
+		int[] colors = m.getFaceColors3();
+		float sin = orient != 0 ? Perspective.SINE[orient] / 65536f : 0;
+		float cos = orient != 0 ? Perspective.COSINE[orient] / 65536f : 1;
+		float ox = x + (RuneLightPlugin.SCENE_OFFSET << 7), oz = z + (RuneLightPlugin.SCENE_OFFSET << 7);
+		float[] px = new float[3], py = new float[3], pz = new float[3];
+		float[] cx = new float[2], cz = new float[2];
+		boolean any = false;
+		for (int f = 0; f < m.getFaceCount(); ++f)
+		{
+			if (colors[f] == -2)
+			{
+				continue;
+			}
+			int[] v = {f1[f], f2[f], f3[f]};
+			for (int k = 0; k < 3; ++k)
+			{
+				px[k] = vz[v[k]] * sin + vx[v[k]] * cos + ox;
+				pz[k] = vz[v[k]] * cos - vx[v[k]] * sin + oz;
+				py[k] = vy[v[k]] + height;
+			}
+			int tx = (int) ((px[0] + px[1] + px[2]) / 3) >> 7, ty = (int) ((pz[0] + pz[1] + pz[2]) / 3) >> 7;
+			if (tx < 0 || ty < 0 || tx >= SIZE || ty >= SIZE || Float.isNaN(surfaceY[ty * SIZE + tx]))
+			{
+				continue;
+			}
+			float s = surfaceY[ty * SIZE + tx];
+			int n = 0;
+			for (int k = 0; k < 3 && n < 2; ++k)
+			{
+				int k2 = (k + 1) % 3;
+				float da = py[k] - s, db = py[k2] - s;
+				if (da == db || da * db > 0)
+				{
+					continue;
+				}
+				float t = da / (da - db);
+				cx[n] = px[k] + (px[k2] - px[k]) * t;
+				cz[n] = pz[k] + (pz[k2] - pz[k]) * t;
+				++n;
+			}
+			if (n == 0)
+			{
+				continue;
+			}
+			if (n == 1)
+			{
+				cx[1] = cx[0];
+				cz[1] = cz[0];
+			}
+			// along the cut, half a cell at a time
+			float cell = 128f / CONTACT_RES;
+			int steps = 1 + (int) (Math.hypot(cx[1] - cx[0], cz[1] - cz[0]) / (cell * 0.5f));
+			for (int i = 0; i <= steps; ++i)
+			{
+				float t = (float) i / steps;
+				int gx = (int) ((cx[0] + (cx[1] - cx[0]) * t) / cell);
+				int gz = (int) ((cz[0] + (cz[1] - cz[0]) * t) / cell);
+				if (gx >= 0 && gz >= 0 && gx < CONTACT_SIZE && gz < CONTACT_SIZE)
+				{
+					marked[gz * CONTACT_SIZE + gx] = true;
+					any = true;
+				}
+			}
+		}
+		return any;
+	}
+
 	private static int clampTile(int v)
 	{
 		return Math.max(0, Math.min(SIZE - 1, v));
@@ -819,6 +1028,16 @@ final class WaterMap
 					shore /= count;
 					energy /= count;
 					turbulence /= count;
+					if (contact != null)
+					{
+						// slower and churning right by things standing in the water
+						int ccx = Math.min(cx * CONTACT_RES, CONTACT_SIZE - 1);
+						int ccy = Math.min(cy * CONTACT_RES, CONTACT_SIZE - 1);
+						float near = (contact[ccy * CONTACT_SIZE + ccx] & 255) / 255f;
+						fx *= 1 - CONTACT_SLOW * near;
+						fz *= 1 - CONTACT_SLOW * near;
+						turbulence = Math.max(turbulence, CONTACT_TURB * near);
+					}
 				}
 				else
 				{

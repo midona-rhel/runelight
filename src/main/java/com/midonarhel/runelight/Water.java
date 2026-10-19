@@ -52,7 +52,7 @@ class Water
 		float[] casterDir, invViewProj;
 	}
 
-	private int texData, texNoise;
+	private int texData, texNoise, texContact;
 	// the water's own clock: System.nanoTime is monotonic and fine grained everywhere, where currentTimeMillis can
 	// tick in 15.6 ms steps on Windows (the waves stutter) and jumps when the system clock is adjusted
 	private final long startNanos = System.nanoTime();
@@ -138,12 +138,12 @@ class Water
 	/**
 	 * The surface pass's program, newly compiled (0 to drop it).
 	 */
-	void setSurfaceProgram(int program, int depthUnit, int dataUnit, int noiseUnit)
+	void setSurfaceProgram(int program, int depthUnit, int dataUnit, int noiseUnit, int contactUnit)
 	{
 		surface.freeProgram();
 		if (program != 0)
 		{
-			surface.setProgram(program, depthUnit, dataUnit, noiseUnit);
+			surface.setProgram(program, depthUnit, dataUnit, noiseUnit, contactUnit);
 		}
 	}
 
@@ -211,6 +211,30 @@ class Water
 		// full floats: heights reach thousands of units, where half floats step by 2 to 4, and the shader takes the
 		// type from this texture too
 		glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA32F, WaterMap.CORNERS * 2, WaterMap.CORNERS, 0, GL_RGBA, GL_FLOAT, buf);
+
+		// where things stand in the water (WaterMap.contact); one empty texel with none
+		if (texContact == 0)
+		{
+			texContact = glGenTextures();
+			glBindTexture(GL_TEXTURE_2D, texContact);
+			glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+			glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+			glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+			glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+		}
+		else
+		{
+			glBindTexture(GL_TEXTURE_2D, texContact);
+		}
+		int size = map.contact != null ? WaterMap.CONTACT_SIZE : 1;
+		ByteBuffer contact = BufferUtils.createByteBuffer(size * size);
+		if (map.contact != null)
+		{
+			contact.put(map.contact).flip();
+		}
+		glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
+		glTexImage2D(GL_TEXTURE_2D, 0, GL_R8, size, size, 0, GL_RED, GL_UNSIGNED_BYTE, contact);
+		glPixelStorei(GL_UNPACK_ALIGNMENT, 4);
 		glBindTexture(GL_TEXTURE_2D, 0);
 	}
 
@@ -235,7 +259,7 @@ class Water
 	 */
 	void drawSurface(RuneLightConfig config, float[] wind, float rain, boolean outdoors, int width, int height,
 		int[] viewport, float[] viewProj, float[] invViewProj, float camX, float camY, float camZ, float focusX,
-		float focusZ, float reach, float[] casterDir, boolean depthZeroToOne, int dataUnit, int noiseUnit)
+		float focusZ, float reach, float[] casterDir, boolean depthZeroToOne, int dataUnit, int noiseUnit, int contactUnit)
 	{
 		if (!config.water() || !hasData)
 		{
@@ -271,6 +295,8 @@ class Water
 		glBindTexture(GL_TEXTURE_2D, texData);
 		glActiveTexture(GL_TEXTURE0 + noiseUnit);
 		glBindTexture(GL_TEXTURE_2D_ARRAY, texNoise);
+		glActiveTexture(GL_TEXTURE0 + contactUnit);
+		glBindTexture(GL_TEXTURE_2D, texContact);
 		glActiveTexture(GL_TEXTURE0);
 		surface.draw(width, height, viewport, viewProj, camX, camY, camZ, focusX, focusZ, reach, f);
 	}
@@ -373,6 +399,11 @@ class Water
 		{
 			glDeleteTextures(texData);
 			texData = 0;
+		}
+		if (texContact != 0)
+		{
+			glDeleteTextures(texContact);
+			texContact = 0;
 		}
 		if (texNoise != 0)
 		{
