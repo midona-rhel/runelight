@@ -46,6 +46,10 @@ layout(location = 1) out uvec4 WaterShadedOut;
 #define WAVE_SHADE 0.6
 // under the water the bank's color goes wet: a little darker
 #define WET_SAND 0.86
+// and cooler and less saturated over BED_WET_DEPTH, as 117 HD's look had it
+#define BED_WET_TINT vec3(0.90, 0.95, 1.0)
+#define BED_DESATURATE 0.25
+#define BED_WET_DEPTH 48.0
 // The sky is reflected off a normal SKY_TILT times as steep as the waves', and the Fresnel goes by it too: each wave
 // face catches a different part of the sky, the bright horizon toward the camera, the darker zenith away, which is
 // what shows the waves from above (the waves themselves are too gentle to move the reflection much). Cloud tops in
@@ -435,7 +439,9 @@ vec3 waterOver(ivec2 px, inout vec3 p, vec3 albedo, float shadow, vec3 lit, floa
   float colorDepth = min(shoreDepth, depth * WATERLINE_DEPTH + 4.0);
 
   // the bed, lit by the composite and wet, with the caustics, fading into the depth color
-  vec3 under = srgbToLinear(lit * WET_SAND);
+  float wetness = smoothstep(0.0, BED_WET_DEPTH, depth);
+  vec3 wet = mix(lit, vec3(dot(lit, vec3(0.299, 0.587, 0.114))), BED_DESATURATE * wetness);
+  vec3 under = srgbToLinear(wet * mix(vec3(1.0), BED_WET_TINT, wetness) * WET_SAND);
   if (waterCaustics == 1 && outdoors == 1 && lightingEnabled == 1 && look.x < 0.7) {
     vec3 caster = (sunIsCaster == 1 ? sunLight(sunAltitude) : moonLight(sunAltitude)) * envSun;
     float k = max(-casterDir.y, 0.0) * shadow * CAUSTICS * (sunIsCaster == 1 ? 1.0 : CAUSTIC_MOON)
