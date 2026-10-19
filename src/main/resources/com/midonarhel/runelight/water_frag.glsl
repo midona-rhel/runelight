@@ -35,8 +35,9 @@ flat in int vSlot;
 
 layout(location = 0) out uvec4 WaterOut;  // 64 bits packed, see water.glsl's waterUnpack
 
-// The surface's normal map (layer 3 of waterNoise): 117 HD's strength and its seconds per repeat of each size
-#define NORMAL_STRENGTH 0.09
+// The surface's normal map (layer 3 of waterNoise): twice 117 HD's strength (theirs barely showed), and its seconds
+// per repeat of each size
+#define NORMAL_STRENGTH 0.18
 #define NORMAL_PERIOD vec3(42.0, 36.0, 32.0)
 // world units per size step: 117 HD's 128 (a tile) looked too fine at the game's camera distances
 #define NORMAL_TILE 256.0

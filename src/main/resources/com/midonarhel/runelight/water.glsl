@@ -36,21 +36,28 @@ layout(location = 1) out uvec4 WaterShadedOut;
 // vertical depth over which the surface fades in from the waterline; within 1 / WATERLINE_DEPTH of the depth the
 // shore distance gives, the bed's own depth sets the water's color (the bed sinks in a pit in the middle of every
 // shore tile, which must not show)
-#define SOFT_EDGE 24.0
+#define SOFT_EDGE 12.0
 #define WATERLINE_DEPTH 4.0
 // the body: world units of depth over which the bed fades into the body color (to 1 - 1/e), per type before the
 // clarity setting, and how the body is lit: the sky above it, the sun through it, lamps around it
 const float WATER_BODY_DEPTH[WATER_TYPES] = float[](1.0, 70.0, 55.0, 45.0, 90.0, 22.0, 35.0);
 #define BODY_SKY 0.5
-#define BODY_SUN 0.35
+#define BODY_SUN 0.25
 #define BODY_LAMP 0.35
+// the game's water textures average out pale and grayish: their color, more saturated and darker, is the body's
+#define BODY_SATURATION 1.8
+#define BODY_DARKEN 0.55
+// the bed seen through the shallows goes dark and takes the body's hue over BED_TINT_DEPTH, down to BED_DARKEN of its
+// light: lit like dry land it was brighter than the water around it
+#define BED_TINT_DEPTH 24.0
+#define BED_DARKEN 0.5
 // the surface: Fresnel from FRESNEL_BASE looking straight down to all of it at a slant, (1 - cos)^FRESNEL_POWER,
 // times the type's sky share (WATER_LOOK.y)
-#define FRESNEL_BASE 0.06
-#define FRESNEL_POWER 4.0
+#define FRESNEL_BASE 0.2
+#define FRESNEL_POWER 3.0
 // The sky is reflected off a normal whose slope is SKY_TILT of the waves': the ripples carried by the current move the
 // sky's gradient and clouds about. Cloud tops in the sky cache no brighter than SKY_CLOUD_MAX times the sky there.
-#define SKY_TILT 0.75
+#define SKY_TILT 1.0
 #define SKY_CLOUD_MAX 1.25
 // Highlights. Sheen: a broad soft lobe of the sun or moon on the waves (Blinn-Phong exponent, strength). Glitter:
 // its reflection on the waves' slopes exaggerated GLITTER_SLOPE times, a soft path toward the camera of GLITTER_ROUGH
@@ -293,7 +300,9 @@ void waterShadeHalf(ivec2 hpx) {
       lampSpec += color * (att * waterGlint(nrm, ld, toCamera, tAlong, tAcross, LAMP_ALONG, LAMP_ACROSS));
     }
   }
-  vec3 body = waterSlotColor[slot] * bodyLight;
+  vec3 base = waterSlotColor[slot];
+  base = max(mix(vec3(dot(base, vec3(0.2126, 0.7152, 0.0722))), base, BODY_SATURATION), 0.0) * BODY_DARKEN;
+  vec3 body = base * bodyLight;
 
   // ---- what the surface reflects: the sky, and the world where the reflected ray finds it
   float vn = clamp(dot(toCamera, nrm), 0.0, 1.0);
@@ -408,7 +417,10 @@ vec3 waterOver(ivec2 px, inout vec3 p, vec3 albedo, float shadow, vec3 lit, floa
       * smoothstep(0.0, 6.0, depth) * (1.0 - bodyAmount);
     under += srgbToLinear(albedo) * caster * (k * clamp(caustic, CAUSTIC_RANGE.x, CAUSTIC_RANGE.y));
   }
-  under = mix(max(under, vec3(0.0)), body, bodyAmount);
+  vec3 hue = body / max(max(body.r, max(body.g, body.b)), 1e-4);
+  float sunk = smoothstep(0.0, BED_TINT_DEPTH, depth);
+  under = max(under, vec3(0.0)) * mix(vec3(1.0), hue * BED_DARKEN, sunk);
+  under = mix(under, body, bodyAmount);
   vec3 color = under * (1.0 - surface.a) + surface.rgb;
   // over the waterline the surface fades in: no hard edge where it meets the bank or a leg in the water
   vec3 result = mix(lit, linearToSrgb(clamp(waterShoulder(color), 0.0, 1.0)), smoothstep(0.0, 1.0, depth / SOFT_EDGE));
