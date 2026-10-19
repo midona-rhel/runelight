@@ -71,6 +71,8 @@ class SceneUploader
 	WaterMap water;
 	private WaterMap sizeWater;
 	private boolean[] landVertex = new boolean[64];
+	// the color a shore tile model's land faces give each vertex, -1 where none does (see markLandVertices)
+	private int[] landColor = new int[64];
 
 	SceneUploader(RenderCallbackManager renderCallbackManager)
 	{
@@ -736,8 +738,16 @@ class SceneUploader
 		}
 
 		int cnt = 0;
+		// on shore tiles the land faces first, so the water faces' vertices on the bank take the very color the land
+		// has there (landColor)
+		for (int pass = 0; pass < (bedTile ? 2 : 1); ++pass)
 		for (int i = 0; i < faceCount; ++i)
 		{
+			final boolean bedFace = bedTile && WaterMap.isWaterTexture(triangleTextures[i]);
+			if (bedFace != (pass == 1))
+			{
+				continue;
+			}
 			final int vertex0 = faceX[i];
 			final int vertex1 = faceY[i];
 			final int vertex2 = faceZ[i];
@@ -753,7 +763,7 @@ class SceneUploader
 
 			cnt += 3;
 
-			if (bedTile && WaterMap.isWaterTexture(triangleTextures[i]))
+			if (bedFace)
 			{
 				putBedVertex(vertexBuffer, vertexX[vertex0], vertexY[vertex0], vertexZ[vertex0], vertex0, lx, lz, ex, ey);
 				putBedVertex(vertexBuffer, vertexX[vertex1], vertexY[vertex1], vertexZ[vertex1], vertex1, lx, lz, ex, ey);
@@ -805,6 +815,12 @@ class SceneUploader
 				f0 = borderFlag(b0);
 				f1 = borderFlag(b1);
 				f2 = borderFlag(b2);
+			}
+			if (bedTile)
+			{
+				landColor[vertex0] = hsl0;
+				landColor[vertex1] = hsl1;
+				landColor[vertex2] = hsl2;
 			}
 
 			vertexBuffer.put22224(lx0, ly0, lz0, f0, hsl0);
@@ -1020,8 +1036,10 @@ class SceneUploader
 		if (landVertex.length < vx.length)
 		{
 			landVertex = new boolean[vx.length];
+			landColor = new int[vx.length];
 		}
 		java.util.Arrays.fill(landVertex, 0, vx.length, false);
+		java.util.Arrays.fill(landColor, 0, vx.length, -1);
 		int[] tex = model.getTriangleTextureId();
 		int[] fa = model.getFaceX(), fb = model.getFaceY(), fc = model.getFaceZ();
 		for (int f = 0; f < fa.length; ++f)
@@ -1052,7 +1070,11 @@ class SceneUploader
 		// the land's color where the vertex stays on the bank (land touches it, nothing sinks it), else the tile's
 		// corner colors blended across it (see uploadBed)
 		int off = RuneLightPlugin.SCENE_OFFSET << 7;
-		int color = sink == 0 ? shoreColor(x + off, y, z + off) : -1;
+		int color = sink == 0 ? landColor[v] : -1;
+		if (sink == 0 && color < 0)
+		{
+			color = shoreColor(x + off, y, z + off);
+		}
 		if (color < 0)
 		{
 			float fx = Math.min(Math.max(ox / 128f, 0), 1), fz = Math.min(Math.max(oz / 128f, 0), 1);
