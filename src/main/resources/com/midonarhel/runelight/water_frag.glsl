@@ -50,7 +50,7 @@ layout(location = 0) out uvec4 WaterOut;  // 64 bits packed, see water.glsl's wa
 // each size's swells are WAVE_STRETCH times longer along their crests than across: ridges, not round bubbles
 #define WAVE_STRETCH 1.6
 // how sharp the crests come to a point (smaller sharper), and their steepness against the troughs'
-#define WAVE_CREST_SOFT 0.01
+#define WAVE_CREST_SOFT 0.08
 #define WAVE_CREST 0.6
 #define WAVE_STRENGTH 0.34
 // still water (no flow) runs its waves and its detail this many times slower, and drifts less with the wind
