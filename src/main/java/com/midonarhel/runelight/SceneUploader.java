@@ -130,10 +130,8 @@ class SceneUploader
 			}
 		}
 
-		if (GroundBlender.enabled)
-		{
-			groundBlender.build(scene, mzx, mzz);
-		}
+		// built with blending off too: the water bed takes the bank's colors from it either way (shoreColor)
+		groundBlender.build(scene, mzx, mzz);
 
 		zone.rids = new int[4][roofIds.size()];
 		zone.roofStart = new int[4][roofIds.size()];
@@ -882,14 +880,11 @@ class SceneUploader
 
 	/**
 	 * The land's (blended) color at the ground vertex at extended local position (x, height, z), or -1 where no
-	 * land touches it or there is no blending.
+	 * land touches it. Whether or not the land itself is blended: without it the bed took its own sandy color right
+	 * up to the waterline, a pale band all along the shore.
 	 */
 	private int shoreColor(int x, int height, int z)
 	{
-		if (!GroundBlender.enabled)
-		{
-			return -1;
-		}
 		int v = groundBlender.lookup(x, height, z);
 		return v != -1 && (v & GroundBlender.BLENDED) != 0 ? v & 0xffff : -1;
 	}
