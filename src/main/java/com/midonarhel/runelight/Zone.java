@@ -509,7 +509,7 @@ class Zone
 		char bufferIdx = 0;
 		for (int f = 0; f < faceCount; ++f)
 		{
-			if (color3[f] == -2 || transparencies[f] == 0)
+			if (color3[f] == -2 || transparencies[f] == 0 || skipped[f])
 			{
 				continue;
 			}
