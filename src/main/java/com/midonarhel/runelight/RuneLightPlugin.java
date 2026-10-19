@@ -2350,8 +2350,11 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 			// the fog integrates the lights along each pixel's ray from per-column lists
 			lightClusters.setFog(frameFog, volumetricFog.getCenterX() - frameCameraX,
 				volumetricFog.getCenterZ() - frameCameraZ, volumetricFog.getRadius());
-			lightClusters.update(frameLights, frameViewProj, frameCameraX, frameCameraY, frameCameraZ);
+			lightClusters.cull(frameLights, frameViewProj, frameCameraX, frameCameraY, frameCameraZ);
 			cpuTimer.end(CpuTimer.CLUSTERS);
+			cpuTimer.begin(CpuTimer.LIGHT_UPLOAD);
+			lightClusters.upload();
+			cpuTimer.end(CpuTimer.LIGHT_UPLOAD);
 			lightClusters.bind(LIGHT_DATA_UNIT, CLUSTER_DATA_UNIT);
 		}
 		glUniform1i(uniCompositePointLights, points ? 1 : 0);

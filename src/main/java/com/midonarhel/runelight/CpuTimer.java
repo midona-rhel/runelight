@@ -23,12 +23,14 @@ class CpuTimer
 	static final int CLIENT_UI = 9;
 	// mapping the dynamic model buffers at the start of the scene
 	static final int BUFFER_MAP = 10;
-	static final int STAGES = 11;
+	// sending the light and cluster tables to the GPU (part of light clusters before)
+	static final int LIGHT_UPLOAD = 11;
+	static final int STAGES = 12;
 
 	static final String[] NAMES = {
 		"client scene", "environment", "weather", "light collection", "light clusters", "shadow submit",
 		"UI upload", "swap wait", "outside frame", "client UI + overlays",
-		"buffer map"
+		"buffer map", "light upload"
 	};
 
 	private final long[] start = new long[STAGES];

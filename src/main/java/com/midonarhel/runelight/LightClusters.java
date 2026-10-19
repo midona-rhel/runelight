@@ -349,7 +349,7 @@ class LightClusters
 		return clusters;
 	}
 
-	private void upload()
+	void upload()
 	{
 		RoomMap rooms = roomMap;
 		if (rooms != null && ROOM_BASE + rooms.texelCount() > maxTexels)
