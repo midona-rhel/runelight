@@ -743,9 +743,8 @@ public interface RuneLightConfig extends Config
 
 	@ConfigItem(
 		keyName = "weatherSurfaces",
-		name = "Wet ground and snow cover",
-		description = "Surfaces under the open sky get darker and glossy in rain, and snow settles on them in the cold"
-			+ " and stays until it thaws.",
+		name = "Wet ground",
+		description = "Surfaces under the open sky get darker and glossy in rain.",
 		section = weatherSection,
 		position = 403
 	)
