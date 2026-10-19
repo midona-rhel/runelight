@@ -46,15 +46,17 @@ const float WATER_BODY_DEPTH[WATER_TYPES] = float[](1.0, 70.0, 55.0, 45.0, 90.0,
 #define BODY_LAMP 0.35
 // the game's water textures average out pale and grayish: their color, more saturated and darker, is the body's
 #define BODY_SATURATION 1.8
+// the waves shade the body, as on 117 HD's water: its light follows a normal this much steeper than the waves'
+#define BODY_WAVE_SHADE 3.0
 #define BODY_DARKEN 0.55
 // the bed seen through the shallows goes dark and takes the body's hue over BED_TINT_DEPTH, down to BED_DARKEN of its
 // light: lit like dry land it was brighter than the water around it
 #define BED_TINT_DEPTH 24.0
 #define BED_DARKEN 0.5
-// the surface: Fresnel from FRESNEL_BASE looking straight down to all of it at a slant, (1 - cos)^FRESNEL_POWER,
-// times the type's sky share (WATER_LOOK.y)
-#define FRESNEL_BASE 0.2
-#define FRESNEL_POWER 3.0
+// the surface: Fresnel from FRESNEL_BASE looking straight down to all of it at a slant, (1 - cos)^FRESNEL_POWER
+// (Schlick's), times the type's sky share (WATER_LOOK.y): looking down the water's own color, the sky at a slant
+#define FRESNEL_BASE 0.03
+#define FRESNEL_POWER 5.0
 // The sky is reflected off a normal whose slope is SKY_TILT of the waves': the ripples carried by the current move the
 // sky's gradient and clouds about. Cloud tops in the sky cache no brighter than SKY_CLOUD_MAX times the sky there.
 #define SKY_TILT 1.0
@@ -270,7 +272,8 @@ void waterShadeHalf(ivec2 hpx) {
     vec3 ambient = ambientLight(sunAltitude) * envAmbient;
     vec3 sky = skyLight(sunAltitude) * envAmbient;
     surfaceLight = ambient + sky * max(-nrm.y, 0.0) + caster * max(dot(nrm, casterDir), 0.0) * shadow;
-    bodyLight = ambient + sky * BODY_SKY + caster * (max(-casterDir.y, 0.0) * BODY_SUN * shadow);
+    vec3 wn = normalize(vec3(nrm.x * BODY_WAVE_SHADE, nrm.y, nrm.z * BODY_WAVE_SHADE));
+    bodyLight = ambient + sky * (BODY_SKY * max(-wn.y, 0.0)) + caster * (max(dot(wn, casterDir), 0.0) * BODY_SUN * shadow);
   } else if (lightOn) {
     surfaceLight = bodyLight = envCaveLight(vec3(0.0, -1.0, 0.0));
   }
