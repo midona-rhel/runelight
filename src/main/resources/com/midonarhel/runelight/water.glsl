@@ -46,9 +46,11 @@ layout(location = 1) out uvec4 WaterShadedOut;
 #define WAVE_SHADE 0.6
 // under the water the bank's color goes wet: a little darker
 #define WET_SAND 0.86
-// The sky is reflected off a normal whose slope is SKY_TILT of the waves': the ripples carried by the current move the
-// sky's gradient and clouds about. Cloud tops in the sky cache no brighter than SKY_CLOUD_MAX times the sky there.
-#define SKY_TILT 1.0
+// The sky is reflected off a normal SKY_TILT times as steep as the waves', and the Fresnel goes by it too: each wave
+// face catches a different part of the sky, the bright horizon toward the camera, the darker zenith away, which is
+// what shows the waves from above (the waves themselves are too gentle to move the reflection much). Cloud tops in
+// the sky cache no brighter than SKY_CLOUD_MAX times the sky there.
+#define SKY_TILT 3.0
 #define SKY_CLOUD_MAX 1.25
 // Highlights. Sheen: a faint tight lobe of the sun or moon on the waves (Blinn-Phong exponent, strength). Glitter:
 // its reflection on the waves' slopes exaggerated GLITTER_SLOPE times, narrow (GLITTER_ROUGH) so the waves break it
@@ -301,9 +303,9 @@ void waterShadeHalf(ivec2 hpx) {
     }
   }
   // ---- what the surface reflects: the sky, and the world where the reflected ray finds it
-  float vn = clamp(dot(toCamera, nrm), 0.0, 1.0);
-  float fresnel = mix(FRESNEL_BASE, 1.0, pow(1.0 - vn, FRESNEL_POWER));
   vec3 skyN = normalize(nrm * vec3(SKY_TILT, 1.0, SKY_TILT));
+  float vn = clamp(dot(toCamera, skyN), 0.0, 1.0);
+  float fresnel = mix(FRESNEL_BASE, 1.0, pow(1.0 - vn, FRESNEL_POWER));
   vec3 r = reflect(v, skyN);
   r.y = min(r.y, -0.02);
   r = normalize(r);
