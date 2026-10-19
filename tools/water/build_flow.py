@@ -47,6 +47,8 @@ RIVER_SPEED = 0.55     # tiles per second in a channel (WaterBodies.REFERENCE_RI
 EXTEND = 3             # tiles past the mapped water that still get its flow (the map and the scene differ a bit)
 SMOOTH = 1.6           # flow smoothing, tiles
 MIN_RIVER = 20         # tiles: a channel reaching less far than this from open water is an inlet or cove: still
+MIN_INLAND = 14        # tiles in a straight line from the sea a river's source must lie
+RIVER_WIDTH = 3.0      # median tiles to the bank: wider water is a lagoon or bay, not a river
 LAKE_WIDTH = 5         # tiles from shore: wider water inside a river system is a pool or lake and barely moves
 UNKNOWN = -128
 
@@ -123,6 +125,8 @@ def build(cache, debug=None):
     sink_label[0] = False
     sinks = sink_label[olab] & open_
     domain = water & ~sinks
+    # straight-line distance to the sea or a big lake, to tell real inland sources from coves
+    sea_dist = ndimage.distance_transform_edt(~sinks)
 
     fx = np.zeros(water.shape, np.float32)
     fy = np.zeros(water.shape, np.float32)
@@ -130,7 +134,7 @@ def build(cache, debug=None):
     labels, n = ndimage.label(water, structure=np.ones((3, 3)))
     for lab, sl in enumerate(ndimage.find_objects(labels), start=1):
         if sl is not None:
-            auto_flow(sl, labels, lab, domain, sinks, olab, shore, fx, fy, conflicts)
+            auto_flow(sl, labels, lab, domain, sinks, olab, shore, sea_dist, fx, fy, conflicts)
     conflicts.sort(reverse=True)
     for cells, sw, ne in conflicts:
         print("still: channel between two sinks, %d tiles, %s - %s" % (cells, sw, ne))
@@ -160,7 +164,7 @@ def box_slice(box):
     return worldmap.tile_slice(min(x0, x1), min(y0, y1), max(x0, x1), max(y0, y1))
 
 
-def auto_flow(sl, labels, lab, domain, sinks, olab, shore, fx, fy, conflicts):
+def auto_flow(sl, labels, lab, domain, sinks, olab, shore, sea_dist, fx, fy, conflicts):
     """Flow of one connected piece of water toward the nearest sea or large lake."""
     # one tile of margin so sinks around the component's own tiles are seen
     sl = tuple(slice(max(s.start - 1, 0), s.stop + 1) for s in sl)
@@ -196,7 +200,13 @@ def auto_flow(sl, labels, lab, domain, sinks, olab, shore, fx, fy, conflicts):
                 r1, c1 = sl[0].start + csl[0].stop - 1, sl[1].start + csl[1].stop - 1
                 conflicts.append((cells, worldmap.world(r1, c0), worldmap.world(r0, c1)))
             continue
-        if len(ends) == 0 or np.nanmax(np.where(here, d_sink[csl], 0)) < MIN_RIVER:
+        dmax = np.nanmax(np.where(here, d_sink[csl], 0))
+        if len(ends) == 0 or dmax < MIN_RIVER:
+            continue
+        # the source must lie inland, not just at the far end of a winding lagoon or cove a few tiles from the
+        # sea, and a river is narrow water, not a lagoon or a bay
+        src = np.unravel_index(np.argmax(np.where(here, d_sink[csl], -1)), here.shape)
+        if sea_dist[sl][csl][src] < MIN_INLAND or np.median(shore[sl][csl][here]) > RIVER_WIDTH:
             continue
         # the channel plus its mouth, so the current runs out into the shallows and fades there
         valid |= ndimage.binary_dilation(chan == c, structure=np.ones((3, 3)), iterations=SHALLOWS) & dom

@@ -320,6 +320,28 @@
      3582
     ]
    ]
+  },
+  {
+   "name": "Seers bay stream (user review)",
+   "note": "runs west along the north of the bay into its western arm",
+   "box": [
+    2640,
+    3575,
+    2745,
+    3615
+   ],
+   "sources": [
+    [
+     2733,
+     3587
+    ]
+   ],
+   "outlets": [
+    [
+     2648,
+     3598
+    ]
+   ]
   }
  ],
  "still": [
@@ -411,6 +433,150 @@
     2722,
     2808,
     2745
+   ]
+  },
+  {
+   "name": "Zeah north-west coast (user review)",
+   "box": [
+    1370,
+    3775,
+    1480,
+    3955
+   ]
+  },
+  {
+   "name": "Varlamore canal city (user review)",
+   "box": [
+    1225,
+    3195,
+    1345,
+    3315
+   ]
+  },
+  {
+   "name": "island south-west of Varlamore (user review)",
+   "box": [
+    1280,
+    2840,
+    1480,
+    2960
+   ]
+  },
+  {
+   "name": "small island far south-west (user review)",
+   "box": [
+    1140,
+    2720,
+    1260,
+    2830
+   ]
+  },
+  {
+   "name": "Lunar Isle (user review)",
+   "box": [
+    2055,
+    3845,
+    2175,
+    3965
+   ]
+  },
+  {
+   "name": "Rellekka coast (user review)",
+   "box": [
+    2690,
+    3780,
+    2760,
+    3850
+   ]
+  },
+  {
+   "name": "Kandarin coast pool (user review)",
+   "box": [
+    2715,
+    3190,
+    2760,
+    3225
+   ]
+  },
+  {
+   "name": "Kandarin coast inlet (user review)",
+   "box": [
+    2625,
+    3135,
+    2660,
+    3170
+   ]
+  },
+  {
+   "name": "Karamja north-west inlet (user review)",
+   "box": [
+    2935,
+    3025,
+    2985,
+    3065
+   ]
+  },
+  {
+   "name": "island south of Karamja (user review)",
+   "box": [
+    2745,
+    2720,
+    2800,
+    2770
+   ]
+  },
+  {
+   "name": "Morytania north coast (user review)",
+   "box": [
+    3335,
+    3870,
+    3395,
+    3920
+   ]
+  },
+  {
+   "name": "Morytania coast pool (user review)",
+   "box": [
+    3345,
+    3550,
+    3370,
+    3580
+   ]
+  },
+  {
+   "name": "Morytania east coast (user review)",
+   "box": [
+    3690,
+    3375,
+    3710,
+    3400
+   ]
+  },
+  {
+   "name": "Al Kharid coast (user review)",
+   "box": [
+    3035,
+    2980,
+    3065,
+    3005
+   ]
+  },
+  {
+   "name": "Kharidian coast inlet (user review)",
+   "box": [
+    3465,
+    2970,
+    3500,
+    3010
+   ]
+  },
+  {
+   "name": "Kharidian east island (user review)",
+   "box": [
+    3680,
+    2955,
+    3720,
+    3000
    ]
   }
  ]
