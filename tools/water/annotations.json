@@ -474,9 +474,9 @@
   {
    "name": "Lunar Isle (user review)",
    "box": [
-    2055,
-    3845,
-    2175,
+    2040,
+    3815,
+    2180,
     3965
    ]
   },
@@ -519,10 +519,10 @@
   {
    "name": "island south of Karamja (user review)",
    "box": [
-    2745,
-    2720,
-    2800,
-    2770
+    2735,
+    2705,
+    2810,
+    2780
    ]
   },
   {
@@ -577,6 +577,24 @@
     2955,
     3720,
     3000
+   ]
+  },
+  {
+   "name": "Kourend west coast (user review)",
+   "box": [
+    1405,
+    3505,
+    1455,
+    3550
+   ]
+  },
+  {
+   "name": "Kharidian desert east coast (user review)",
+   "box": [
+    3395,
+    2665,
+    3565,
+    2890
    ]
   }
  ]

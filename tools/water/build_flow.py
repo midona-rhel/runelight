@@ -47,6 +47,7 @@ RIVER_SPEED = 0.55     # tiles per second in a channel (WaterBodies.REFERENCE_RI
 EXTEND = 3             # tiles past the mapped water that still get its flow (the map and the scene differ a bit)
 SMOOTH = 1.6           # flow smoothing, tiles
 MIN_RIVER = 20         # tiles: a channel reaching less far than this from open water is an inlet or cove: still
+MIN_RIVER_TILES = 60   # moving water in a piece smaller than this many tiles is a speck, not a river
 MIN_INLAND = 14        # tiles in a straight line from the sea a river's source must lie
 RIVER_WIDTH = 3.0      # median tiles to the bank: wider water is a lagoon or bay, not a river
 LAKE_WIDTH = 5         # tiles from shore: wider water inside a river system is a pool or lake and barely moves
@@ -146,6 +147,14 @@ def build(cache, debug=None):
         rows, cols = box_slice(s["box"])
         fx[rows, cols] = 0
         fy[rows, cols] = 0
+
+    # specks of moving water too small to be a river (left over at cove mouths and around annotations) stay still
+    moving = water & (np.hypot(fx, fy) > 1e-4)
+    mlab, mn = ndimage.label(moving, structure=np.ones((3, 3)))
+    msize = ndimage.sum_labels(moving, mlab, np.arange(mn + 1))
+    speck = moving & (msize[mlab] < MIN_RIVER_TILES)
+    fx[speck] = 0
+    fy[speck] = 0
 
     # tiles near the mapped water take the flow of the nearest water tile
     dist, (ir, ic) = ndimage.distance_transform_edt(~water, return_indices=True)
