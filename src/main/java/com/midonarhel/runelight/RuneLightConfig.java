@@ -39,6 +39,7 @@ import com.midonarhel.runelight.config.Quality;
 import com.midonarhel.runelight.config.ShadowResolution;
 import com.midonarhel.runelight.config.SwayFps;
 import com.midonarhel.runelight.config.UIScalingMode;
+import com.midonarhel.runelight.config.WaterDebug;
 import com.midonarhel.runelight.config.WeatherMode;
 
 @ConfigGroup(RuneLightConfig.GROUP)
@@ -1122,15 +1123,15 @@ public interface RuneLightConfig extends Config
 	}
 
 	@ConfigItem(
-		keyName = "waterDebug",
-		name = "Show water map",
-		description = "Debug: tint water by type and show which way it flows.",
+		keyName = "waterDebugView",
+		name = "Water debug",
+		description = "Debug: tint water by type and show which way it flows, or show its waves as a relief.",
 		section = waterSection,
 		position = 557
 	)
-	default boolean waterDebug()
+	default WaterDebug waterDebug()
 	{
-		return false;
+		return WaterDebug.OFF;
 	}
 
 	@ConfigItem(

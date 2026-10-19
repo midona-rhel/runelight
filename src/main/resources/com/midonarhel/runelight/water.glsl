@@ -257,7 +257,7 @@ void waterShadeHalf(ivec2 hpx) {
   vec3 toCamera = -v;
   float viewZ = (viewProj * vec4(s, 1.0)).w;
 
-  if (waterDebug == 1) {
+  if (waterDebug != 0) {
     uint a = ws.r | ws.g << 16;
     vec3 c = srgbToLinear(vec3(float(a & 255u), float(a >> 8 & 255u), float(a >> 16 & 255u)) / 255.0);
     WaterShadedOut = waterPackShaded(c, 1.0, vec3(0.0));
@@ -419,7 +419,7 @@ vec3 waterOver(ivec2 px, inout vec3 p, vec3 albedo, float shadow, vec3 lit, floa
     return lit;
   surface /= wsum;
   spec /= wsum;
-  if (waterDebug == 1) {
+  if (waterDebug != 0) {
     p = s;
     return linearToSrgb(clamp(surface.rgb, 0.0, 1.0));
   }

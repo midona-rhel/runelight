@@ -48,7 +48,9 @@ class Water
 	static final class Frame
 	{
 		float time, windX, windZ, strength, driftX, driftZ, waves, speed, rain, skyDepth;
-		boolean outdoors, debug, caustics, zeroToOne;
+		boolean outdoors, caustics, zeroToOne;
+		// 0 off, then WaterDebug's views
+		int debug;
 		float[] casterDir, invViewProj;
 	}
 
@@ -283,7 +285,7 @@ class Water
 		f.speed = config.waterFlowSpeed() / 100f;
 		f.rain = rain;
 		f.outdoors = outdoors;
-		f.debug = config.waterDebug();
+		f.debug = config.waterDebug().ordinal();
 		// the sky's depth: 0 with glClipControl, the middle of the range without
 		f.skyDepth = depthZeroToOne ? 0 : 0.5f;
 		f.zeroToOne = depthZeroToOne;
@@ -317,7 +319,7 @@ class Water
 		glUniform1i(uniReflections, config.waterReflections() ? 1 : 0);
 		glUniform1f(uniClarity, config.waterClarity() / 100f);
 		glUniform1i(uniCaustics, config.waterCaustics() ? 1 : 0);
-		glUniform1i(uniDebug, config.waterDebug() ? 1 : 0);
+		glUniform1i(uniDebug, config.waterDebug().ordinal());
 		WaterSurface.Mesh m = surface.mesh();
 		for (int i = 0; i < m.slots; ++i)
 		{

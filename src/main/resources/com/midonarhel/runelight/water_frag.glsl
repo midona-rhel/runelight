@@ -19,7 +19,7 @@ uniform float waterRain;
 uniform float waterWaves;
 uniform float waterSpeed;
 uniform int waterOutdoors;
-uniform int waterDebug;
+uniform int waterDebug;         // 1 types and flow, 2 the waves as a relief (WaterDebug)
 uniform float waterSkyDepth;   // the sky's depth in sceneDepth (frame.glsl's isSky)
 uniform int waterCausticsOn;
 uniform vec3 waterCasterDir;   // toward the light that casts shadows
@@ -335,7 +335,12 @@ void main() {
   }
 
   uvec2 packed;
-  if (waterDebug == 1) {
+  if (waterDebug == 2) {
+    // the waves as a relief lit from one side, crests light on one face and dark on the other; foam red
+    vec3 c = vec3(clamp(0.5 + 2.5 * dot(slope, vec2(0.7071, 0.7071)), 0.0, 1.0));
+    c = mix(c, vec3(1.0, 0.2, 0.1), foam);
+    packed.x = pack01(c.r, 255.0) | pack01(c.g, 255.0) << 8 | pack01(c.b, 255.0) << 16;
+  } else if (waterDebug == 1) {
     // type color, flow as stripes that move with it, turbulent water reddens
     const vec3 DEBUG_TYPE[WATER_TYPES] = vec3[](vec3(0.0), vec3(0.2, 0.6, 1.0), vec3(0.0, 0.2, 0.9),
       vec3(0.3, 0.3, 0.6), vec3(0.6, 0.9, 1.0), vec3(0.4, 0.6, 0.1), vec3(0.4, 0.3, 0.3));

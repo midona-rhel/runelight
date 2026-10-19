@@ -393,7 +393,7 @@ class WaterSurface
 		glUniform1f(uniSpeed, params.speed);
 		glUniform1f(uniRain, params.rain);
 		glUniform1i(uniOutdoors, params.outdoors ? 1 : 0);
-		glUniform1i(uniDebug, params.debug ? 1 : 0);
+		glUniform1i(uniDebug, params.debug);
 		glUniform1f(uniSkyDepth, params.skyDepth);
 		glUniform1i(uniCausticsOn, params.caustics ? 1 : 0);
 		glUniform3fv(uniCasterDir, params.casterDir);

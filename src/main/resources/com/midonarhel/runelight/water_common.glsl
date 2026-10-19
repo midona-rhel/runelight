@@ -62,10 +62,10 @@ const vec4 WATER_LOOK[WATER_TYPES] = vec4[](
 // how much of the depth color is left in the deep (117 HD goes to black: the deep stays the type's color here)
 const vec3 WATER_FADE[WATER_TYPES] = vec3[](
   vec3(1.0),
-  vec3(150.0, 500.0, 0.38),
-  vec3(150.0, 520.0, 0.35),
-  vec3(130.0, 460.0, 0.29),
-  vec3(170.0, 560.0, 0.38),
+  vec3(150.0, 500.0, 0.55),
+  vec3(150.0, 520.0, 0.50),
+  vec3(130.0, 460.0, 0.42),
+  vec3(170.0, 560.0, 0.55),
   vec3(40.0, 160.0, 0.45),
   vec3(60.0, 220.0, 0.35));
 // how fast each type's flow runs, as a share of the flow map's
