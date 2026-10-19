@@ -120,13 +120,15 @@ uvec4 waterPackShaded(vec3 surface, float cover, vec3 spec) {
     waterEncLight(spec.r) | waterEncLight(spec.g) << 16, waterEncLight(spec.b) | 1u << 16);
 }
 
-// How much of the water's color tints the bed, and of its surface's base opacity covers it, `depth` world units
-// down: half at one tile, three quarters at two, 0.8 at three, all of it from four (straight lines between), sooner
-// in murky types and with less clarity. The caustics go the other way: all of them at the surface, none from four.
+// How much of the water's color covers the bed `depth` world units down: half at one WATER_STEP, three quarters at
+// two, 0.8 at three, all of it from four (straight lines between), sooner in murky types and with less clarity. The
+// caustics go the other way: all of them at the surface, none from four steps.
 const float WATER_AMOUNT[5] = float[](0.0, 0.5, 0.75, 0.8, 1.0);
+// world units per step of the curve
+#define WATER_STEP 64.0
 
 float waterAmount(int type, float depth) {
-  float tiles = clamp(depth / WATER_TILE * WATER_MURK[type] / max(waterClarity, 0.05), 0.0, 3.999);
+  float tiles = clamp(depth / WATER_STEP * WATER_MURK[type] / max(waterClarity, 0.05), 0.0, 3.999);
   int i = int(tiles);
   return mix(WATER_AMOUNT[i], WATER_AMOUNT[i + 1], tiles - float(i));
 }
@@ -439,8 +441,10 @@ vec3 waterOver(ivec2 px, inout vec3 p, vec3 albedo, float shadow, vec3 lit, floa
       * smoothstep(0.0, 6.0, depth) * (1.0 - amount);
     under += srgbToLinear(albedo) * caster * (k * clamp(caustic, CAUSTIC_RANGE.x, CAUSTIC_RANGE.y));
   }
-  vec3 light = clamp(srgbToLinear(lit) / max(srgbToLinear(albedo), vec3(0.03)), 0.0, 4.0);
-  vec3 body = srgbToLinear(WATER_DEPTH_COLOR[type]) * light * mix(1.0, WATER_DEEP[type], amount);
+  // the light's brightness only: the warm sun would turn the blue green
+  float light = clamp(dot(srgbToLinear(lit) / max(srgbToLinear(albedo), vec3(0.03)), vec3(0.2126, 0.7152, 0.0722)),
+    0.0, 4.0);
+  vec3 body = srgbToLinear(WATER_DEPTH_COLOR[type]) * (light * mix(1.0, WATER_DEEP[type], amount));
   under = mix(max(under, vec3(0.0)), body, amount);
   // what is seen through a wave face turned toward the camera is a little brighter, turned away darker
   vec3 v = p / dist;
