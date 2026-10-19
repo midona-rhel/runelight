@@ -720,8 +720,8 @@ class SceneUploader
 
 		final int faceCount = faceX.length;
 
-		// With blending, smooth normals like plain tiles have, so a shaped tile (path edge, shore) shades the same
-		// as its neighbors instead of showing its triangles. Its heights are bilinear in the tile's corner heights.
+		// Smooth normals like plain tiles have, so a shaped tile (path edge, shore) shades the same as its neighbors
+		// instead of showing its triangles. Its heights are bilinear in the tile's corner heights.
 		final boolean blending = GroundBlender.enabled;
 		GroundBlender.tileSlopes(scene.getTileHeights()[tileZ], ex, ey, slope, tileSlopes);
 		GroundBlender.tileSlopes(surfaceHeights(scene, tileZ), ex, ey, slope, surfaceSlopes);
@@ -792,10 +792,6 @@ class SceneUploader
 			int n1 = modelNormal(vertexX[vertex1] - lx, vertexZ[vertex1] - lz);
 			float s1x = slope[0], s1z = slope[1];
 			int n2 = modelNormal(vertexX[vertex2] - lx, vertexZ[vertex2] - lz);
-			if (!blending)
-			{
-				n0 = n1 = n2 = 0;
-			}
 
 			int f0 = 0, f1 = 0, f2 = 0;
 			if (blending && tex == 0)
