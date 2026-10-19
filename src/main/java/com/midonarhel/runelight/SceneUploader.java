@@ -65,10 +65,11 @@ class SceneUploader
 	private final GroundBlender groundBlender = new GroundBlender();
 	private final float[] slope = new float[2];
 	private final float[] tileSlopes = new float[8];
+	// the corner slopes of the surface as drawn, the water bed sunk in (tileSlopes: as vanilla lit it)
+	private final float[] surfaceSlopes = new float[8];
 	// the scene's water, null when water is off; set before uploading (WaterMap)
 	WaterMap water;
 	private WaterMap sizeWater;
-	private final float[] bedSlopes = new float[8];
 	private boolean[] landVertex = new boolean[64];
 
 	SceneUploader(RenderCallbackManager renderCallbackManager)
@@ -615,10 +616,11 @@ class SceneUploader
 		int tex = tile.getTexture() + 1;
 		tex |= SurfaceMaterials.texture(tex - 1) | WaterMap.LAND_FLAG;
 
-		final int n0 = terrainNormal(tileHeights[tileZ], tileX, tileY);
-		final int n1 = terrainNormal(tileHeights[tileZ], tileX + 1, tileY);
-		final int n2 = terrainNormal(tileHeights[tileZ], tileX + 1, tileY + 1);
-		final int n3 = terrainNormal(tileHeights[tileZ], tileX, tileY + 1);
+		final int[][] surface = surfaceHeights(scene, tileZ);
+		final int n0 = terrainNormal(surface, tileX, tileY);
+		final int n1 = terrainNormal(surface, tileX + 1, tileY);
+		final int n2 = terrainNormal(surface, tileX + 1, tileY + 1);
+		final int n3 = terrainNormal(surface, tileX, tileY + 1);
 
 		vertexBuffer.put22224(lx2, ly2, lz2, neFlag, hsl2);
 		vertexBuffer.put2222(tex, 256, 256, n2);
@@ -645,6 +647,16 @@ class SceneUploader
 	 * Smooth terrain normal at a tile corner from the neighboring corner heights. y points down, so a flat
 	 * tile's normal is (0, -1, 0).
 	 */
+	/**
+	 * The heights the ground of level z is drawn at, which its normals go by: with the water bed sunk in, so the
+	 * bank's normals lean into the bed as the bed's own do and they shade alike where they meet.
+	 */
+	private int[][] surfaceHeights(Scene scene, int z)
+	{
+		int[][] bed = water != null && scene.getWorldViewId() == WorldView.TOPLEVEL ? water.bedHeights(z) : null;
+		return bed != null ? bed : scene.getTileHeights()[z];
+	}
+
 	private static int terrainNormal(int[][] heights, int x, int y)
 	{
 		int maxX = heights.length - 1, maxY = heights[0].length - 1;
@@ -710,6 +722,7 @@ class SceneUploader
 		// as its neighbors instead of showing its triangles. Its heights are bilinear in the tile's corner heights.
 		final boolean blending = GroundBlender.enabled;
 		GroundBlender.tileSlopes(scene.getTileHeights()[tileZ], ex, ey, slope, tileSlopes);
+		GroundBlender.tileSlopes(surfaceHeights(scene, tileZ), ex, ey, slope, surfaceSlopes);
 		// 117 HD: on shaped tiles with any texture (shores) the overlay faces keep their own colors
 		final boolean blendOverlay = triangleTextures == null && !groundBlender.unblended(tileZ, ex, ey);
 		final int shape = sceneTileModel.getShape();
@@ -720,7 +733,6 @@ class SceneUploader
 		{
 			markLandVertices(sceneTileModel);
 			bedTileHeights = scene.getTileHeights()[tileZ];
-			GroundBlender.tileSlopes(water.bedHeights(tileZ), ex, ey, slope, bedSlopes);
 		}
 
 		int cnt = 0;
@@ -837,8 +849,8 @@ class SceneUploader
 			final int hc = (h0 + h1 + h2 + h3 + 2 >> 2) - (water.bedOffset(tileX, tileY) + water.bedOffset(tileX + 1, tileY)
 				+ water.bedOffset(tileX + 1, tileY + 1) + water.bedOffset(tileX, tileY + 1) + 2 >> 2) + water.centerOffset(tileX, tileY);
 			final int cc = lerpHsl(lerpHsl(c0, c1, 0.5f), lerpHsl(c3, c2, 0.5f), 0.5f);
-			GroundBlender.tileSlopes(bed, tileX, tileY, slope, bedSlopes);
-			GroundBlender.interpolateSlope(bedSlopes, 0.5f, 0.5f, slope);
+			GroundBlender.tileSlopes(bed, tileX, tileY, slope, surfaceSlopes);
+			GroundBlender.interpolateSlope(surfaceSlopes, 0.5f, 0.5f, slope);
 			final int nc = VertexShading.encodeNormal(slope[0], -1, slope[1]);
 			final int h = s >> 1;
 			// counterclockwise around the middle: sw, se, ne, nw
@@ -1023,7 +1035,7 @@ class SceneUploader
 			// inside the tile a vertex can go deeper than its corners without opening a crack to the next tile
 			: edge ? water.bedOffset(ex, ey, ox, oz) : Math.max(water.bedOffset(ex, ey, ox, oz), WaterMap.MIN_DEPTH);
 		int depth = corner ? water.depthLevel(cx, cy) : water.depthLevel(ex + Math.round(ox / 128f), ey + Math.round(oz / 128f));
-		GroundBlender.interpolateSlope(bedSlopes, ox / 128f, oz / 128f, slope);
+		GroundBlender.interpolateSlope(surfaceSlopes, ox / 128f, oz / 128f, slope);
 		// the land's color where the vertex stays on the bank (land touches it, nothing sinks it), else the tile's
 		// corner colors blended across it (see uploadBed)
 		int off = RuneLightPlugin.SCENE_OFFSET << 7;
@@ -1041,12 +1053,14 @@ class SceneUploader
 
 	/**
 	 * Smooth terrain normal at tile-local position (x, z) of the tile whose corner slopes are in
-	 * {@link #tileSlopes}. Leaves the slope in {@link #slope}.
+	 * {@link #surfaceSlopes}. Leaves vanilla's slope there (for undoing its lighting) in {@link #slope}.
 	 */
 	private int modelNormal(int x, int z)
 	{
+		GroundBlender.interpolateSlope(surfaceSlopes, x / 128f, z / 128f, slope);
+		int n = VertexShading.encodeNormal(slope[0], -1, slope[1]);
 		GroundBlender.interpolateSlope(tileSlopes, x / 128f, z / 128f, slope);
-		return VertexShading.encodeNormal(slope[0], -1, slope[1]);
+		return n;
 	}
 
 	// scene upload
