@@ -39,8 +39,8 @@ layout(location = 1) out uvec4 WaterShadedOut;
 // (clear over the shallows), at least FRESNEL_BASE rising to all of it at a slant as (1 - cos)^FRESNEL_POWER, and at
 // least OPACITY_SLANT of 1 - the view's elevation
 #define SURFACE_DEPTH 64.0
-#define FRESNEL_BASE 0.2
-#define FRESNEL_POWER 3.5
+#define FRESNEL_BASE 0.15
+#define FRESNEL_POWER 2.0
 #define OPACITY_SLANT 0.4
 // what is seen through a wave face turned toward the camera is a little brighter, turned away darker
 #define WAVE_SHADE 0.6
@@ -50,11 +50,11 @@ layout(location = 1) out uvec4 WaterShadedOut;
 // face catches a different part of the sky, the bright horizon toward the camera, the darker zenith away, which is
 // what shows the waves from above (the waves themselves are too gentle to move the reflection much). Cloud tops in
 // the sky cache no brighter than SKY_CLOUD_MAX times the sky there.
-#define SKY_TILT 2.0
+#define SKY_TILT 1.5
 #define CLOUD_TILT 1.0
 // how fast the reflected sky goes from the horizon's color to the zenith's as the reflection rises (an exponent on
 // the elevation): low keeps the horizon to a narrow bright band, so the wave faces that catch it stand out
-#define SKY_GRADIENT 0.22
+#define SKY_GRADIENT 0.45
 // how much of the clouds' own color shows over the sky's, and the spread of the taps that soften them (radians)
 #define CLOUD_SHARE 0.55
 #define CLOUD_BLUR 0.008
@@ -369,9 +369,7 @@ void waterShadeHalf(ivec2 hpx) {
 
   // the surface (117 HD): its own color lit, mostly the sky's reflection; foam over it, folded in as waterOver would
   // lay it over the whole (a mix over a mix is one mix)
-  // The Fresnel is how much of the surface covers what is under it, once: the reflection times it again left hardly
-  // any sky in the waves
-  vec3 surface = mix(srgbToLinear(WATER_SURFACE_COLOR[type]) * surfaceLight, reflection, look.y);
+  vec3 surface = mix(srgbToLinear(WATER_SURFACE_COLOR[type]) * surfaceLight, reflection * fresnel, look.y);
   float cover = max(fresnel, (1.0 + toCamera.y) * OPACITY_SLANT);
   vec3 foamColor = srgbToLinear(WATER_FOAM_COLOR[type]) * surfaceLight;
   float covered = cover + foam * (1.0 - cover);
