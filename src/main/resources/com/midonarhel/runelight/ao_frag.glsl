@@ -26,8 +26,9 @@ layout(location = 1) out vec4 FragShadow;  // r: lit share, 1 unshadowed; g snow
                                            // a sky visibility (skylight_ao.glsl)
 // sine of the minimum angle above the surface for an occluder to count; higher ignores more of the shallow folds
 #define AO_ANGLE_BIAS 0.10
-// under water the AO fades out over this depth, and isn't worked out below it
-#define AO_WATER_DEPTH 128.0
+// none under water: it fades out over this depth below the surface (no hard line at the waterline), and isn't worked
+// out below it
+#define AO_WATER_DEPTH 8.0
 #define TAU 6.28318530718
 #define GOLDEN_ANGLE 2.39996322973
 

@@ -121,9 +121,9 @@ uvec4 waterPackShaded(vec3 surface, float cover, vec3 spec) {
 }
 
 // How much of the water's color covers the bed, and of its surface's base opacity covers it, `depth` world units
-// down: half at one tile, three quarters at two, 0.8 at three, all of it from four (straight lines between), sooner
-// in murky types and with less clarity
-const float WATER_AMOUNT[5] = float[](0.0, 0.5, 0.75, 0.8, 1.0);
+// down: 0.35 at one tile, 0.7 at two, 0.8 at three, all of it from four (straight lines between), sooner in murky
+// types and with less clarity
+const float WATER_AMOUNT[5] = float[](0.0, 0.35, 0.7, 0.8, 1.0);
 
 float waterAmount(int type, float depth) {
   float tiles = clamp(depth / WATER_TILE * WATER_MURK[type] / max(waterClarity, 0.05), 0.0, 3.999);
