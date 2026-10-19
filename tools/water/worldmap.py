@@ -45,6 +45,27 @@ def full_image(cache):
     return np.load(npy, mmap_mode="r")
 
 
+def is_water(a):
+    """Water pixels of an (..., 3) RGB array: the water textures are drawn blue; land, roads, sand and swamp ground
+    are not."""
+    a = a.astype(np.int16)
+    red, green, blue = a[..., 0], a[..., 1], a[..., 2]
+    return (blue - red >= 30) & (blue - green >= 20) & (blue >= 90)
+
+
+def water_pixels(cache, rows, cols):
+    """Water pixels of the tiles in the tile slices rows, cols (4 x 4 per tile); off the map is not water."""
+    full = full_image(cache)
+    h, w = full.shape[0] // PX, full.shape[1] // PX
+    out = np.zeros(((rows.stop - rows.start) * PX, (cols.stop - cols.start) * PX), bool)
+    r0, r1 = max(rows.start, 0), min(rows.stop, h)
+    c0, c1 = max(cols.start, 0), min(cols.stop, w)
+    if r0 < r1 and c0 < c1:
+        out[(r0 - rows.start) * PX:(r1 - rows.start) * PX, (c0 - cols.start) * PX:(c1 - cols.start) * PX] = \
+            is_water(full[r0 * PX:r1 * PX, c0 * PX:c1 * PX])
+    return out
+
+
 def water_votes(cache):
     """Per tile (row = YTOP - y, col = x - X0): how many of its 16 pixels have the map's water colors."""
     npy = os.path.join(cache, "votes.npy")
@@ -54,10 +75,7 @@ def water_votes(cache):
     h, w, _ = full.shape
     votes = np.zeros((h // PX, w // PX), np.uint8)
     for r in range(0, h, 4096):
-        a = full[r:r + 4096].astype(np.int16)
-        red, green, blue = a[..., 0], a[..., 1], a[..., 2]
-        # the water textures are drawn blue; land, roads, sand and swamp ground are not
-        water = (blue - red >= 30) & (blue - green >= 20) & (blue >= 90)
+        water = is_water(full[r:r + 4096])
         rows = water.shape[0] // PX
         votes[r // PX:r // PX + rows] = water.reshape(rows, PX, w // PX, PX).sum(axis=(1, 3))
     np.save(npy, votes)

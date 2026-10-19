@@ -3,8 +3,12 @@ package com.midonarhel.runelight;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
+import java.io.ByteArrayInputStream;
+import java.io.ByteArrayOutputStream;
+import java.io.DataOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
+import java.util.zip.Deflater;
 import org.junit.Test;
 
 /**
@@ -54,7 +58,8 @@ public class WaterFlowTest
 	@Test
 	public void riverElidRunsSouthThroughTheDesert() throws IOException
 	{
-		runs(flow(), 3368, 3003, 0, -1);
+		// the middle of the channel at Nardah (the banks run slower)
+		runs(flow(), 3372, 3003, 0, -1);
 	}
 
 	@Test
@@ -68,7 +73,111 @@ public class WaterFlowTest
 	@Test
 	public void riverSalveRunsSouth() throws IOException
 	{
-		runs(flow(), 3397, 3439, 0, -1);
+		runs(flow(), 3401, 3439, 0, -1);
+	}
+
+	@Test
+	public void lunarIsleStreamRunsSouthEastToTheSouthCoast() throws IOException
+	{
+		WaterFlow f = flow();
+		assertTrue(f.shaped());
+		runs(f, 2116, 3870, 1, -1);
+		runs(f, 2128, 3850, 0, -1);
+	}
+
+	private static double speed(WaterFlow f, int x, int y)
+	{
+		float[] v = at(f, x, y);
+		return Math.hypot(v[0], v[1]);
+	}
+
+	@Test
+	public void pondsBesideRiversAreCalm() throws IOException
+	{
+		WaterFlow f = flow();
+		// the round pond off the Lunar Isle stream, away from where the stream passes through it
+		assertTrue(speed(f, 2101, 3889) < 0.05);
+		// the pond beside the Ardougne river in East Ardougne, while the river next to it runs
+		assertTrue(speed(f, 2595, 3270) < 0.02);
+		assertTrue(speed(f, 2588, 3274) > 0.3);
+	}
+
+	@Test
+	public void lunarIsleCoastIsCalm() throws IOException
+	{
+		// the stream runs out into the sea, not along the coast
+		assertTrue(speed(flow(), 2140, 3843) < 0.02);
+	}
+
+	/**
+	 * A file of one region (3200, 3200) whose samples hold their own grid position: east = sample x, north = sample y
+	 * (hundredths), unknown on the region's last sample column.
+	 */
+	private static WaterFlow synthetic(int version) throws IOException
+	{
+		int sub = version == 3 ? 2 : 1, side = 64 * sub;
+		byte[] raw = new byte[side * side * 2];
+		for (int y = 0; y < side; ++y)
+		{
+			for (int x = 0; x < side; ++x)
+			{
+				int i = (y * side + x) * 2;
+				raw[i] = x == side - 1 ? (byte) -128 : (byte) (x % 100);
+				raw[i + 1] = (byte) (y % 100);
+			}
+		}
+		Deflater d = new Deflater();
+		d.setInput(raw);
+		d.finish();
+		byte[] buf = new byte[raw.length * 2];
+		int len = d.deflate(buf);
+		d.end();
+		ByteArrayOutputStream bytes = new ByteArrayOutputStream();
+		DataOutputStream out = new DataOutputStream(bytes);
+		out.writeBytes("RLWF");
+		out.writeShort(version);
+		out.writeShort(1);
+		out.writeShort(50 << 8 | 50);
+		out.writeInt(len);
+		out.write(buf, 0, len);
+		return WaterFlow.read(new ByteArrayInputStream(bytes.toByteArray()));
+	}
+
+	@Test
+	public void subTileSamples() throws IOException
+	{
+		WaterFlow f = synthetic(3);
+		assertTrue(f.shaped());
+		float[] v = new float[2];
+		// tile (3210, 3205) is samples x 20-21, y 10-11
+		assertTrue(f.flow(3210, 3205, v));
+		assertEquals(0.205f, v[0], 1e-6);
+		assertEquals(0.105f, v[1], 1e-6);
+		// its sw corner: samples x 19-20, y 9-10
+		assertTrue(f.corner(3210, 3205, v));
+		assertEquals(0.195f, v[0], 1e-6);
+		assertEquals(0.095f, v[1], 1e-6);
+		// the region's last tile column: its east samples are unknown, the west ones count
+		assertTrue(f.flow(3263, 3205, v));
+		assertEquals(0.26f, v[0], 1e-6);
+		// the region's sw corner: only the sample inside it is known
+		assertTrue(f.corner(3200, 3200, v));
+		assertEquals(0, v[0], 1e-6);
+		assertFalse(f.flow(3264, 3205, v));
+	}
+
+	@Test
+	public void readsVersion2() throws IOException
+	{
+		WaterFlow f = synthetic(2);
+		assertFalse(f.shaped());
+		float[] v = new float[2];
+		assertTrue(f.flow(3210, 3205, v));
+		assertEquals(0.10f, v[0], 1e-6);
+		assertEquals(0.05f, v[1], 1e-6);
+		assertTrue(f.corner(3210, 3205, v));
+		assertEquals(0.095f, v[0], 1e-6);
+		assertEquals(0.045f, v[1], 1e-6);
 	}
 
 	@Test

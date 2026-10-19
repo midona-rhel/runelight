@@ -14,7 +14,9 @@ import java.util.Arrays;
  * The map and the guess give the direction and how much water a channel carries; how fast it runs at each tile comes
  * from the scene's own shape ({@link #shapeFlow}): fastest in the middle of a channel and slow at its banks, faster
  * where the channel narrows (the same water through a smaller cross-section, the bed being shallower near the shore
- * too) and over drops, slower where it widens into a lake.
+ * too) and over drops, slower where it widens into a lake. A shaped world flow map ({@link #mapShaped}) already has
+ * all of that but the drops, worked out from the map at a finer scale than the scene's tiles, so its tiles only get
+ * those.
  */
 final class WaterBodies
 {
@@ -52,6 +54,8 @@ final class WaterBodies
 	private static final float CONTINUITY_MIN = 0.3f, CONTINUITY_MAX = 1.8f;
 	// fastest any water runs, tiles per second
 	private static final float MAX_SPEED = 1.6f;
+	// speed of the middle of a typical channel in a shaped world flow map: faster is a narrows, which runs rough
+	private static final float SHAPED_MIDDLE = 0.75f;
 	// tiles per second below which water counts as still for the shaping and the turbulence
 	private static final float STILL = 0.02f;
 	// heights within this of the lowest exit count as equally low (world units)
@@ -68,6 +72,8 @@ final class WaterBodies
 	final boolean[] unknown;
 	// flow from the world flow map in tiles per second, NaN where it has none
 	final float[] mapFlowX, mapFlowZ;
+	// whether the map's speeds already follow the channel's shape (WaterFlow.shaped): only drops are added to them
+	boolean mapShaped;
 
 	// per tile: body label (-1 none), distance to the nearest land in tiles (1 next to land), flow in tiles per
 	// second, wave energy 0-1
@@ -79,6 +85,8 @@ final class WaterBodies
 	final float[] turbulence;
 	// distance to shore of the middle of the channel each tile is in, tiles
 	final float[] ridge;
+	// how much faster than the map's flow each tile with map flow runs after shaping (1 where still)
+	final float[] gain;
 	// the sea's push toward its shores, added to the flow after smoothing
 	private final float[] pushX, pushZ;
 	// per body
@@ -110,6 +118,7 @@ final class WaterBodies
 		energy = new float[n];
 		turbulence = new float[n];
 		ridge = new float[n];
+		gain = new float[n];
 		queue = new int[n];
 		dist = new int[n];
 	}
@@ -584,10 +593,22 @@ final class WaterBodies
 		for (int i = 0; i < water.length; ++i)
 		{
 			turbulence[i] = 0;
+			gain[i] = 1;
 			float fx = flowX[i], fz = flowZ[i];
 			float speed = (float) Math.sqrt(fx * fx + fz * fz);
 			if (body[i] < 0 || speed < STILL)
 			{
+				continue;
+			}
+			if (mapShaped && hasMapFlow(i))
+			{
+				// the map knows the channel at a finer scale than the scene's tiles: only the drops are the scene's
+				float steep = Math.min(drop(i, fx / speed, fz / speed) / STEEP, 2);
+				float shaped = Math.min(speed * (1 + steep), MAX_SPEED);
+				gain[i] = shaped / speed;
+				flowX[i] = fx * gain[i];
+				flowZ[i] = fz * gain[i];
+				turbulence[i] = clamp(0.6f * (speed / SHAPED_MIDDLE - 1) + 0.8f * steep, 0, 1) * smoothstep(STILL, 0.2f, speed);
 				continue;
 			}
 			float r = ridge[i];
@@ -597,6 +618,7 @@ final class WaterBodies
 			float continuity = clamp((float) Math.pow(refArea / crossSection(r), CONTINUITY), CONTINUITY_MIN, CONTINUITY_MAX);
 			float steep = Math.min(drop(i, fx / speed, fz / speed) / STEEP, 2);
 			float shaped = Math.min(speed * profile * continuity * (1 + steep), MAX_SPEED);
+			gain[i] = shaped / speed;
 			flowX[i] = fx / speed * shaped;
 			flowZ[i] = fz / speed * shaped;
 			// rough where the water is squeezed or falls

@@ -345,10 +345,10 @@
   },
   {
    "name": "Lunar Isle stream (user review)",
-   "note": "from the well in the middle of the island south-east to the south coast; the western arm joins it",
+   "note": "from the well in the middle of the island south-east to the south coast, where it runs out under the bridge at 2128, 3856; the western arm joins it",
    "box": [
     2058,
-    3846,
+    3840,
     2146,
     3900
    ],
@@ -364,8 +364,8 @@
    ],
    "outlets": [
     [
-     2140,
-     3852
+     2128,
+     3845
     ]
    ]
   }

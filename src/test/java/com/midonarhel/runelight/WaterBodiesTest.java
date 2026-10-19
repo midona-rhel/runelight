@@ -186,6 +186,25 @@ public class WaterBodiesTest
 	}
 
 	@Test
+	public void shapedMapFlowKeepsItsSpeeds()
+	{
+		WaterBodies w = grid();
+		// a wide reach, then three tiles wide: the map's speeds already say how fast each part runs
+		fill(w, 0, 16, 15, 30);
+		fill(w, 16, 22, 31, 24);
+		mapFlow(w, 0, 16, 15, 30, 0.2f);
+		mapFlow(w, 16, 22, 31, 24, 1.1f);
+		w.mapShaped = true;
+		w.solve();
+		assertEquals(0.2f, speed(w, at(8, 23)), 1e-6);
+		assertEquals(1.1f, speed(w, at(24, 23)), 1e-6);
+		assertEquals(1, w.gain[at(24, 23)], 1e-6);
+		// the narrows still run rough, the wide reach doesn't
+		assertTrue(w.turbulence[at(24, 23)] > 0.2f);
+		assertEquals(0, w.turbulence[at(8, 23)], 1e-6);
+	}
+
+	@Test
 	public void crossSectionGrowsWithWidth()
 	{
 		float prev = 0;

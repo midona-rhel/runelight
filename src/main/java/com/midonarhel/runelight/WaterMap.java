@@ -62,6 +62,9 @@ final class WaterMap
 	private final short[] bedHsl = new short[SIZE * SIZE];
 	// per corner: depth level (0 at the shore)
 	final byte[] depthLevel = new byte[CORNERS * CORNERS];
+	// per corner: the world flow map's flow right at the corner (finer than its tiles' average), NaN where unknown
+	private final float[] cornerFlowX = new float[CORNERS * CORNERS];
+	private final float[] cornerFlowZ = new float[CORNERS * CORNERS];
 	// per level, the terrain heights with the bed lowered, for bed normals
 	private final int[][][] bedHeights = new int[Constants.MAX_Z][][];
 	final WaterBodies bodies = new WaterBodies(SIZE);
@@ -147,6 +150,24 @@ final class WaterMap
 		WaterBodies b = bodies;
 		float[] flow = new float[2];
 		int[] world = new int[3];
+		b.mapShaped = flowMap != null && flowMap.shaped();
+		java.util.Arrays.fill(cornerFlowX, Float.NaN);
+		java.util.Arrays.fill(cornerFlowZ, Float.NaN);
+		// instances are built from rotated chunks: their corners keep the tiles' average
+		if (flowMap != null && !scene.isInstance())
+		{
+			for (int cy = 0; cy < CORNERS; ++cy)
+			{
+				for (int cx = 0; cx < CORNERS; ++cx)
+				{
+					if (flowMap.corner(baseX + cx, baseY + cy, flow))
+					{
+						cornerFlowX[cy * CORNERS + cx] = flow[0];
+						cornerFlowZ[cy * CORNERS + cx] = flow[1];
+					}
+				}
+			}
+		}
 
 		for (int x = 0; x < SIZE; ++x)
 		{
@@ -606,6 +627,9 @@ final class WaterMap
 			{
 				// over the water tiles touching this corner
 				float height = 0, fx = 0, fz = 0, shore = 0, energy = 0, turbulence = 0;
+				// the map's flow of the tiles here and how much the scene sped it up, for the corner's own map flow
+				float mx = 0, mz = 0, gain = 0;
+				int mapped = 0;
 				int lowest = 0;
 				int count = 0;
 				for (int dx = -1; dx <= 0; ++dx)
@@ -632,6 +656,13 @@ final class WaterMap
 						lowest = count == 0 ? low : Math.max(lowest, low);
 						fx += b.flowX[i];
 						fz += b.flowZ[i];
+						if (b.hasMapFlow(i))
+						{
+							mx += b.mapFlowX[i];
+							mz += b.mapFlowZ[i];
+							gain += b.gain[i];
+							++mapped;
+						}
 						shore += b.shore[i];
 						energy += b.energy[i];
 						turbulence += b.turbulence[i];
@@ -643,6 +674,13 @@ final class WaterMap
 					height = lowest;
 					fx /= count;
 					fz /= count;
+					int c = cy * CORNERS + cx;
+					if (mapped == count && !Float.isNaN(cornerFlowX[c]))
+					{
+						// the map's detail between its tiles: what the corner's own samples say beyond their tiles' mean
+						fx += (cornerFlowX[c] - mx / count) * gain / count;
+						fz += (cornerFlowZ[c] - mz / count) * gain / count;
+					}
 					shore /= count;
 					energy /= count;
 					turbulence /= count;

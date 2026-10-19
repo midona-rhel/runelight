@@ -22,23 +22,37 @@ def render(cache, x0, y0, x1, y1, scale=4, grid=16, flow=None):
     im = Image.fromarray(a).resize((w, h), Image.NEAREST if scale >= px else Image.BOX)
     d = ImageDraw.Draw(im)
     if flow is not None:
-        fx = flow["fx"][rows, cols].astype(np.float32)
-        fy = flow["fy"][rows, cols].astype(np.float32)
-        step = max(3, 16 // scale)
-        water = flow["water"][rows, cols]
-        for r in range(step // 2, fx.shape[0], step):
-            for c in range(step // 2, fx.shape[1], step):
-                vx, vy = fx[r, c], fy[r, c]
-                if vx == -128 or not water[r, c]:
+        sub = int(flow["sub"]) if "sub" in flow else 1
+        srows = slice(rows.start * sub, rows.stop * sub)
+        scols = slice(cols.start * sub, cols.stop * sub)
+        fx = flow["fx"][srows, scols].astype(np.float32)
+        fy = flow["fy"][srows, scols].astype(np.float32)
+        # arrows only on the map's water (the file also carries flow a few tiles onto the banks)
+        k = px // sub
+        wpx = worldmap.is_water(a)
+        water = wpx.reshape(wpx.shape[0] // k, k, wpx.shape[1] // k, k).sum(axis=(1, 3)) >= 2
+        # an arrow every `step` tiles, at the sample nearest the middle of the tile
+        step = max(1, 16 // scale)
+        for r in range(step // 2, rows.stop - rows.start, step):
+            for c in range(step // 2, cols.stop - cols.start, step):
+                sr, sc = r * sub + sub // 2, c * sub + sub // 2
+                vx, vy = fx[sr, sc], fy[sr, sc]
+                if vx == -128 or not water[sr, sc]:
                     continue
-                cx, cy = (c + 0.5) * scale, (r + 0.5) * scale
+                cx, cy = (sc + 0.5) * scale / sub, (sr + 0.5) * scale / sub
                 if vx == 0 and vy == 0:
                     d.rectangle([cx - 1, cy - 1, cx + 1, cy + 1], fill=(255, 255, 255))
                     continue
                 n = (vx * vx + vy * vy) ** 0.5
-                L = step * scale * 0.8 * min(1.0, 0.3 + n / 80)
+                if n < 5:
+                    # barely moving (under a tile per 20 s): a pale blue dot
+                    d.rectangle([cx - 1, cy - 1, cx + 1, cy + 1], fill=(150, 200, 255))
+                    continue
+                # slow water short and pale, fast water long and red
+                t = min(1.0, n / 100)
+                L = step * scale * 0.9 * (0.35 + 0.65 * t)
                 ex, ey = cx + vx / n * L, cy - vy / n * L
-                d.line([(cx, cy), (ex, ey)], fill=(255, 30, 30), width=2)
+                d.line([(cx, cy), (ex, ey)], fill=(255, int(220 * (1 - t)) + 30, int(220 * (1 - t)) + 30), width=2)
                 d.ellipse([ex - 1.5, ey - 1.5, ex + 1.5, ey + 1.5], fill=(255, 255, 0))
     for x in range((x0 + grid - 1) // grid * grid, x1 + 1, grid):
         p = (x - x0) * scale
