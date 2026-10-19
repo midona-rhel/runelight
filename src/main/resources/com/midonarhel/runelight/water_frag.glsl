@@ -234,7 +234,8 @@ void main() {
   // ---- the caustics on the bed below, carried by the flow
   float caustic = 0.0;
   vec2 causticRB = vec2(0.0);
-  if (waterCausticsOn == 1 && look.x < 0.7) {
+  // none where the water's own color hides the bed: from four tiles down (water.glsl's waterAmount)
+  if (waterCausticsOn == 1 && vDepth * WATER_MURK[type] < 4.0 * WATER_TILE) {
     vec2 ndc = (vec2(px) + 0.5 - vec2(waterViewport.xy)) / vec2(waterViewport.zw) * 2.0 - 1.0;
     vec4 h = waterInvViewProj * vec4(ndc, waterZeroToOne == 1 ? sceneZ : sceneZ * 2.0 - 1.0, 1.0);
     vec3 bed = h.xyz / h.w;
