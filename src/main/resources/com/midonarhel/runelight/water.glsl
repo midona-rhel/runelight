@@ -57,8 +57,8 @@ layout(location = 1) out uvec4 WaterShadedOut;
 // into sharp glints instead of one soft blob. The moon's are MOON_SPECULAR of the sun's.
 #define SHEEN_GLOSS 300.0
 #define SHEEN 0.04
-#define GLITTER_SLOPE 2.5
-#define GLITTER_ROUGH 0.035
+#define GLITTER_SLOPE 1.5
+#define GLITTER_ROUGH 0.015
 #define GLITTER 0.5
 #define MOON_SPECULAR 0.35
 // lamps: their streak's width along and across, strength, and the most one adds (linear)
