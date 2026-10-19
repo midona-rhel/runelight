@@ -11,6 +11,7 @@
 #include "water_common.glsl"
 
 uniform sampler2D sceneDepth;  // the opaque scene, resolved
+uniform sampler2D waterData;    // WaterMap.texture (water_vert.glsl)
 uniform sampler2D waterContact; // WaterMap.contact: how close something standing in the water is, 4 texels a tile
 uniform vec3 waterWind;
 uniform vec4 waterDrift;
@@ -49,6 +50,17 @@ layout(location = 0) out uvec4 WaterOut;  // 64 bits packed, see water.glsl's wa
 // still water (no flow) runs its waves and its detail this many times slower, and drifts less with the wind
 #define STILL_SLOW 3.0
 #define STILL_DRIFT 0.4
+// the sea's still water less so
+#define OCEAN_STILL_SLOW 1.5
+#define OCEAN_STILL_DRIFT 1.0
+// The sea's swell at the shore: long low waves rolling in toward it, their crests along it, SWELL_LENGTH tiles apart
+// and SWELL_PERIOD seconds each, at most SWELL_SLOPE steep, from SWELL_REACH.y tiles out strengthening to
+// SWELL_REACH.x and dying on the beach; stronger and weaker along the shore every SWELL_PATCH world units or so
+#define SWELL_LENGTH 1.6
+#define SWELL_PERIOD 7.0
+#define SWELL_SLOPE 0.18
+#define SWELL_REACH vec2(1.2, 4.0)
+#define SWELL_PATCH 2400.0
 // the waves' size on still and on running water (as steep either way): more of them, denser, the smaller
 #define STILL_WAVE_SIZE 0.55
 #define FLOW_WAVE_SIZE 0.6
@@ -230,7 +242,9 @@ void main() {
   float lodFoam = waterLod(footprint, CELL_SCALE_B);
 
   // still water drifts with the wind, slowly; running water carries its ripples in two phases (water_common.glsl)
-  vec2 base = waterDrift.xy * (speed * waterSpeed * STILL_DRIFT);
+  bool ocean = type == 2 || type == 3 || type == 4;
+  float stillSlow = ocean ? OCEAN_STILL_SLOW : STILL_SLOW;
+  vec2 base = waterDrift.xy * (speed * waterSpeed * (ocean ? OCEAN_STILL_DRIFT : STILL_DRIFT));
   vec2 m0 = base, m1 = base;
   float w0 = 1.0;
   float flowing = smoothstep(FLOW_MIN * 0.5, FLOW_MIN, flowSpeed);
@@ -245,15 +259,29 @@ void main() {
     // blending two copies averages their slopes down: give some back
     flowed *= 1.0 + 0.4 * (1.0 - abs(2.0 * w0 - 1.0));
     slope = flowing < 1.0
-      ? mix(ripples(xz, base, lods, lodC, STILL_SLOW, STILL_WAVE_SIZE, WAVE_DIR, NORMAL_STREAK), flowed, flowing) : flowed;
+      ? mix(ripples(xz, base, lods, lodC, stillSlow, STILL_WAVE_SIZE, WAVE_DIR, NORMAL_STREAK), flowed, flowing) : flowed;
   } else {
-    slope = ripples(xz, base, lods, lodC, STILL_SLOW, STILL_WAVE_SIZE, WAVE_DIR, NORMAL_STREAK);
+    slope = ripples(xz, base, lods, lodC, stillSlow, STILL_WAVE_SIZE, WAVE_DIR, NORMAL_STREAK);
   }
   float contact = textureLod(waterContact, (xz / WATER_TILE + waterGrid.x) / (waterGrid.y - 1.0), 0.0).r;
   contact *= contact;
   slope *= look.w * waterWaves * (0.7 + 0.5 * wind) * (0.75 + 0.35 * energy) * (1.0 + TURB_WAVES * turb)
     * mix(STILL_WAVES, FAST_WAVES, smoothstep(FLOW_MIN * 0.5, FAST_FLOW, flowSpeed)) * (1.0 + CONTACT_WAVES * contact)
     * mix(SHORE_WAVES, 1.0, smoothstep(0.0, SHORE_CALM, vData.r) * smoothstep(0.5, 1.0, vData.b));
+  if (ocean && flowing < 1.0) {
+    // the swell, across the shore distance's gradient (half a tile either way: smooth across the corners)
+    vec2 c = xz / WATER_TILE + waterGrid.x;
+    float shore = vData.r;
+    float reach = smoothstep(0.15, 0.7, shore) * (1.0 - smoothstep(SWELL_REACH.x, SWELL_REACH.y, shore));
+    if (reach > 0.0) {
+      vec2 g = vec2(waterPage1(waterData, c + vec2(0.5, 0.0)).r - waterPage1(waterData, c - vec2(0.5, 0.0)).r,
+        waterPage1(waterData, c + vec2(0.0, 0.5)).r - waterPage1(waterData, c - vec2(0.0, 0.5)).r);
+      float patch = textureLod(waterNoise, vec3(xz / SWELL_PATCH, 0.0), 8.0).b;
+      float phase = WATER_TAU * (shore / SWELL_LENGTH + waterCycle(SWELL_PERIOD));
+      slope += g / max(length(g), 1e-3) * (SWELL_SLOPE * cos(phase) * reach * (1.0 - flowing) * (0.4 + 1.2 * patch)
+        * waterWaves);
+    }
+  }
   vec3 rain = vec3(0.0);
   if (waterRain > 0.01 && waterOutdoors == 1) {
     rain = rainRings(xz);
