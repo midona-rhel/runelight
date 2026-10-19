@@ -44,12 +44,12 @@ layout(location = 0) out uvec4 WaterOut;  // 64 bits packed, see water.glsl's wa
 // second, longer ones faster; ones shorter than WAVE_MIN_PX pixels fade out rather than shimmer. WAVE_STRENGTH: the
 // slope of the whole.
 #define WAVE_DIR vec2(0.70710678, 0.70710678)
-#define WAVE_COUNT 12
+#define WAVE_COUNT 9
 #define WAVE_LONGEST 3.5
 #define WAVE_SHRINK 0.8
-#define WAVE_FADE 0.7
+#define WAVE_FADE 0.8
 #define WAVE_SPREAD 0.9
-#define WAVE_DRAG 0.3
+#define WAVE_DRAG 0.5
 #define WAVE_SPEED 0.9
 #define WAVE_MIN_PX 6.0
 #define WAVE_STRENGTH 0.32
@@ -132,7 +132,8 @@ vec2 crestWaves(vec2 q, vec2 dir, float footprint, float slow, float size) {
   float len = WAVE_LONGEST, amp = 1.0, total = 0.0;
   vec2 slope = vec2(0.0);
   for (int i = 0; i < WAVE_COUNT; ++i) {
-    float a = sin(float(i) * 2.3999632) * WAVE_SPREAD;
+    // directions scattered without a pattern (no two neighbours close, none repeating)
+    float a = (fract(float(i) * 0.6180340 + 0.31) * 2.0 - 1.0) * WAVE_SPREAD;
     vec2 d = vec2(dir.x * cos(a) - dir.y * sin(a), dir.x * sin(a) + dir.y * cos(a));
     float k = WATER_TAU / len;
     // a whole number of cycles per wrap of waterTime, so the waves never jump
@@ -158,11 +159,14 @@ vec2 ripples(vec2 xz, vec2 move, float footprint, float slow, float size, vec2 d
   float sector = atan(dir.y, dir.x) / (WATER_TAU / 8.0);
   float s0 = floor(sector);
   float f = (sector - s0) * (WATER_TAU / 4.0);
-  vec2 d0 = vec2(cos(s0 * WATER_TAU / 8.0), sin(s0 * WATER_TAU / 8.0));
-  vec2 waves = crestWaves(q, d0, footprint, slow, size) * cos(f);
-  if (f > 1e-3) {
-    vec2 d1 = vec2(cos((s0 + 1.0) * WATER_TAU / 8.0), sin((s0 + 1.0) * WATER_TAU / 8.0));
-    waves += crestWaves(q, d1, footprint, slow, size) * sin(f);
+  vec2 waves = vec2(0.0);
+  // only the directions that count (a flow along one of the eight, or still water, takes one)
+  if (cos(f) > 1e-3) {
+    waves += crestWaves(q, vec2(cos(s0 * WATER_TAU / 8.0), sin(s0 * WATER_TAU / 8.0)), footprint, slow, size) * cos(f);
+  }
+  if (sin(f) > 1e-3) {
+    waves += crestWaves(q, vec2(cos((s0 + 1.0) * WATER_TAU / 8.0), sin((s0 + 1.0) * WATER_TAU / 8.0)), footprint, slow,
+      size) * sin(f);
   }
   return waves;
 }
