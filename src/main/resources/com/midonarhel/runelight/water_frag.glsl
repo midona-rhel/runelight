@@ -36,22 +36,21 @@ flat in int vSlot;
 
 layout(location = 0) out uvec4 WaterOut;  // 64 bits packed, see water.glsl's waterUnpack
 
-// The waves: broad, gentle swells rather than crests (the look of calm open water in a stylised game): smooth noise,
-// not tiling, WAVE_OCTAVES sizes from WAVE_LONGEST tiles across, each WAVE_SHRINK as large and WAVE_FADE as steep,
-// each drifting its own way at WAVE_SPEED tiles a second and bent by the one before (domain warp, WAVE_WARP), so the
-// shapes change as they move and never line up into stripes or a grid. WAVE_STRENGTH: their slope.
+// The waves: the standard choppy sea of sine octaves. Each octave is a grid of sine waves warped by noise (so it
+// never tiles or lines up), folded to 1 - |sin| and raised to WAVE_CHOP: sharp crests over broad rounded troughs.
+// WAVE_OCTAVES of them, the first WAVE_LONGEST tiles from crest to crest, each next turned (about 37 degrees) and
+// WAVE_SHRINK as long, WAVE_FADE as high, and a little less choppy. Each runs both ways at WAVE_SPEED wavelengths a
+// second, which makes them heave in place rather than slide. WAVE_HEIGHT: world units of the first.
 #define WAVE_DIR vec2(0.70710678, 0.70710678)
 #define WAVE_OCTAVES 4
-#define WAVE_LONGEST 2.0
-#define WAVE_SHRINK 0.47
-#define WAVE_FADE 0.7
-#define WAVE_SPEED 0.12
-#define WAVE_WARP 0.35
-// each size's swells are WAVE_STRETCH times longer along their crests than across: ridges, not round bubbles
-#define WAVE_STRETCH 2.2
-// how far the crests pinch (see crestWaves): 0 round swells, about 0.5 the sharpest without folding over
-#define WAVE_CREST 0.6
-#define WAVE_STRENGTH 0.34
+#define WAVE_LONGEST 2.6
+#define WAVE_SHRINK 0.53
+#define WAVE_FADE 0.3
+#define WAVE_CHOP 4.0
+#define WAVE_SPEED 0.11
+#define WAVE_HEIGHT 26.0
+// along the wind the waves are this much longer than across it
+#define WAVE_STRETCH 1.35
 // still water (no flow) runs its waves and its detail this many times slower, and drifts less with the wind
 #define STILL_SLOW 1.25
 #define STILL_DRIFT 0.4
@@ -124,48 +123,56 @@ float waterLod(float footprint, float repeat) {
   return log2(max(footprint * 256.0 / repeat, 1.0));
 }
 
-// Value noise, not tiling (hashed lattice), and its gradient: xy the gradient, z the value 0 to 1
-vec3 waveNoise(vec2 p) {
+// Value noise, not tiling (hashed lattice): -1 to 1
+float waveNoise(vec2 p) {
   vec2 i = floor(p), f = fract(p);
-  vec2 u = f * f * f * (f * (f * 6.0 - 15.0) + 10.0);
-  vec2 du = 30.0 * f * f * (f * (f - 2.0) + 1.0);
+  vec2 u = f * f * (3.0 - 2.0 * f);
   float a = waterHash(vec3(i, 7.0)), b = waterHash(vec3(i + vec2(1.0, 0.0), 7.0));
   float c = waterHash(vec3(i + vec2(0.0, 1.0), 7.0)), d = waterHash(vec3(i + vec2(1.0, 1.0), 7.0));
-  float k1 = b - a, k2 = c - a, k3 = a - b - c + d;
-  return vec3(du * vec2(k1 + k3 * u.y, k2 + k3 * u.x), a + k1 * u.x + k2 * u.y + k3 * u.x * u.y);
+  return mix(mix(a, b, u.x), mix(c, d, u.x), u.y) * 2.0 - 1.0;
 }
 
-// The waves' slope at q (world units), drifting along dir, `slow` times slower and `size` times as large
-vec2 crestWaves(vec2 q, vec2 dir, float footprint, float slow, float size) {
-  float len = WAVE_LONGEST * WATER_TILE * size, amp = 1.0, total = 0.0;
-  vec2 slope = vec2(0.0), warp = vec2(0.0);
+// One octave of choppy waves at uv (radians of its sines)
+float seaOctave(vec2 uv, float chop) {
+  uv += waveNoise(uv);
+  vec2 wv = 1.0 - abs(sin(uv));
+  vec2 swv = abs(cos(uv));
+  wv = mix(wv, swv, wv);
+  return pow(1.0 - pow(wv.x * wv.y, 0.65), chop);
+}
+
+// The sea's height (WAVE_HEIGHT units) at p (tiles, x along the wind), the octaves finer than about four pixels left
+// out (pixel: tiles a pixel covers)
+float seaHeight(vec2 p, float t, float pixel) {
+  float len = WAVE_LONGEST, amp = 1.0, chop = WAVE_CHOP, h = 0.0;
+  vec2 uv = p * vec2(1.0 / WAVE_STRETCH, 1.0) * (WATER_TAU / WAVE_LONGEST);
+  // a turn of about 37 degrees (the matrix scales by 2)
+  const mat2 TURN = mat2(0.8, 0.6, -0.6, 0.8);
+  float tt = t * WATER_TAU * WAVE_SPEED;
   for (int i = 0; i < WAVE_OCTAVES; ++i) {
-    // each its own way, near the wind's
-    float a = (float(i) - 1.5) * 0.7;
-    vec2 d = vec2(dir.x * cos(a) - dir.y * sin(a), dir.x * sin(a) + dir.y * cos(a));
-    // in the wave's own frame: along d (across its crests) and along the crests, stretched
-    vec2 c = vec2(-d.y, d.x);
-    vec2 w = q + warp;
-    vec2 p = vec2(dot(w, d), dot(w, c) / WAVE_STRETCH) / len - vec2(waterTime * WAVE_SPEED * WATER_TILE / len / slow, 0.0)
-      + float(i) * 13.7;
-    // Crests as on real waves (Gerstner): the water moves toward the crest along the wave's direction, so crests
-    // pinch narrow and steep while troughs spread broad and flat. Done by looking the height up WAVE_CREST of a
-    // wavelength further along where the water stands high; its slope along the way grows by how much that squeezes.
-    vec3 n0 = waveNoise(p);
-    vec2 pc = p + vec2(WAVE_CREST * (n0.z - 0.5), 0.0);
-    vec3 n = waveNoise(pc);
-    n.x *= max(1.0 + WAVE_CREST * n0.x, 0.05);
-    // its gradient back in world directions
-    n.xy = d * n.x + c * (n.y / WAVE_STRETCH);
-    // finer than a few pixels: faded, it only shimmers
-    float vis = smoothstep(4.0, 10.0, len / max(footprint, 1e-3));
-    slope += n.xy * (amp * vis);
-    warp += n.xy * (WAVE_WARP * len);
-    total += amp;
+    float vis = smoothstep(4.0, 8.0, len / max(pixel, 1e-4));
+    if (vis <= 0.0)
+      break;
+    h += (seaOctave(uv + tt, chop) + seaOctave(uv - tt, chop)) * (amp * vis);
+    uv = TURN * uv / WAVE_SHRINK;
     len *= WAVE_SHRINK;
     amp *= WAVE_FADE;
+    chop = mix(chop, 1.0, 0.2);
   }
-  return slope * (WAVE_STRENGTH / total);
+  return h * 0.5;
+}
+
+// The waves' slope at q (world units) with the wind along dir, `slow` times slower and `size` times as large
+vec2 crestWaves(vec2 q, vec2 dir, float footprint, float slow, float size) {
+  float tile = WATER_TILE * size;
+  vec2 p = vec2(dot(q, dir), dot(q, vec2(-dir.y, dir.x))) / tile;
+  float pixel = footprint / tile;
+  float t = waterTime / slow;
+  float e = 0.02;
+  float h = seaHeight(p, t, pixel);
+  vec2 g = vec2(seaHeight(p + vec2(e, 0.0), t, pixel) - h, seaHeight(p + vec2(0.0, e), t, pixel) - h)
+    * (WAVE_HEIGHT / (e * tile));
+  return dir * g.x + vec2(-dir.y, dir.x) * g.y;
 }
 
 // The waves at xz moved along by `move`, running along dir: blended from the two nearest of eight fixed directions,
@@ -300,7 +307,7 @@ void main() {
       float patch = textureLod(waterNoise, vec3(xz / SWELL_PATCH, 0.0), 8.0).b;
       // the crests wander off the shore distance's lines (tiles, so straight), never ruled straight along a bank
       float phase = WATER_TAU * (shore / SWELL_LENGTH + waterCycle(SWELL_PERIOD)
-        + 0.9 * waveNoise(xz / (SWELL_LENGTH * WATER_TILE * 1.3)).z);
+        + 0.45 * waveNoise(xz / (SWELL_LENGTH * WATER_TILE * 1.3)));
       slope += g / max(length(g), 1e-3) * (SWELL_SLOPE * cos(phase) * reach * (1.0 - flowing) * (0.4 + 1.2 * patch)
         * waterWaves);
     }
