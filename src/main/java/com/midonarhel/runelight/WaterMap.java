@@ -91,6 +91,8 @@ final class WaterMap
 	static final int CONTACT_RES = 4;
 	static final int CONTACT_SIZE = SIZE * CONTACT_RES;
 	static final int CONTACT_REACH = 3;
+	// world units (one a few millimetres) above the surface that a model may end and still count as in the water
+	private static final float CONTACT_TOLERANCE = 2f;
 	// at a corner right by one the flow keeps 1 - CONTACT_SLOW of itself and churns at least CONTACT_TURB (rougher
 	// waves, short of the rapids' foam)
 	private static final float CONTACT_SLOW = 0.6f;
@@ -850,7 +852,8 @@ final class WaterMap
 			{
 				continue;
 			}
-			float s = surfaceY[ty * SIZE + tx];
+			// cut a hair above the surface (y down), so what ends right at it counts as standing in it
+			float s = surfaceY[ty * SIZE + tx] - CONTACT_TOLERANCE;
 			int n = 0;
 			for (int k = 0; k < 3 && n < 2; ++k)
 			{

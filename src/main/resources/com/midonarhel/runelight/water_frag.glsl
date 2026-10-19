@@ -90,6 +90,11 @@ layout(location = 1) out vec4 WaveOut;    // the wave map: slope xy, foam
 #define TURB_WAVES 0.6
 #define TURB_FOAM vec2(0.35, 0.9)
 #define FOAM 0.45
+// running water foams along its banks: from BANK_FOAM_FLOW.x world units a second, fully at .y, as much as BANK_FOAM
+// of the rapids' churn, fading out between BANK_FOAM_REACH's tiles from the shore
+#define BANK_FOAM_FLOW vec2(25.0, 80.0)
+#define BANK_FOAM 0.7
+#define BANK_FOAM_REACH vec2(0.4, 1.3)
 // caustics (water.glsl has the strength): world units per repeat, seconds per cycle of each copy on still water;
 // mean and line values of the kept copy; drawn out along water faster than CAUSTIC_STRETCH_SPEED by up to
 // CAUSTIC_STRETCH seconds of the flow
@@ -326,7 +331,11 @@ void waterWaveField(vec2 xz, int type, vec2 flow, out vec2 slope, out float foam
   }
   // soft foam on rapids and around things standing in the water: the large cells' rims, carried with the flow
   foam = 0.0;
-  float churn = smoothstep(TURB_FOAM.x, TURB_FOAM.y, turb);
+  // fast water foams a little along its banks: by the flow before it slows toward them (water_vert.glsl)
+  float fast = length(waterPage0(waterData, xz / WATER_TILE + waterGrid.x).gb) * WATER_TILE * waterSpeed * speed;
+  float bankFoam = smoothstep(BANK_FOAM_FLOW.x, BANK_FOAM_FLOW.y, fast)
+    * (1.0 - smoothstep(BANK_FOAM_REACH.x, BANK_FOAM_REACH.y, data.r));
+  float churn = max(smoothstep(TURB_FOAM.x, TURB_FOAM.y, turb), bankFoam * BANK_FOAM);
   if (churn > 0.0 || contact > 0.0) {
     float h = textureLod(waterNoise, vec3((xz - m0) / CELL_SCALE_B, 2.0), lodFoam).b * w0
       + textureLod(waterNoise, vec3((xz + vec2(173.0, 91.0) - m1) / CELL_SCALE_B, 2.0), lodFoam).b * (1.0 - w0);
