@@ -41,7 +41,7 @@ layout(location = 0) out uvec4 WaterOut;  // 64 bits packed, see water.glsl's wa
 // and the slope per unit of the texture's
 #define WAVE_DIR vec2(0.6, 0.8)
 #define WAVE_TURN 0.3
-#define WAVE_SCALE vec2(1500.0, 640.0)
+#define WAVE_SCALE vec2(950.0, 420.0)
 #define WAVE_PERIOD vec2(60.0, 34.0)
 #define WAVE_MIX vec2(0.65, 0.35)
 #define WAVE_STRENGTH 0.13

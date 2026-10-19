@@ -80,8 +80,9 @@ const float WATER_FLOW_SPEED[WATER_TYPES] = float[](0.0, 1.0, 1.0, 1.0, 1.0, 0.3
 // the flow phases are offset across the water by up to this many cycles over this many world units
 #define FLOW_JITTER 0.5
 #define FLOW_JITTER_SCALE 6144.0
-// within a tile the flow slows toward the bank to BANK_SLOW of it
-#define BANK_SLOW 0.5
+// the flow slows toward the bank to BANK_SLOW of it at the shore, over BANK_REACH tiles out
+#define BANK_SLOW 0.15
+#define BANK_REACH 2.5
 
 vec2 waterCorner(vec2 worldXZ) {
   return clamp(worldXZ / WATER_TILE + waterGrid.x, vec2(0.0), vec2(waterGrid.y - 1.0));

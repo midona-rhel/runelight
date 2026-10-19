@@ -44,8 +44,9 @@ void main() {
 
   vec4 p0 = waterPage0(waterData, c);
   vec4 p1 = waterPage1(waterData, c);
-  // the flow slows toward the bank within the tile
-  vec2 flow = p0.gb * (WATER_TILE * waterSpeed * WATER_FLOW_SPEED[type]) * mix(BANK_SLOW, 1.0, smoothstep(0.5, 1.0, p1.b));
+  // the flow slows toward the bank
+  vec2 flow = p0.gb * (WATER_TILE * waterSpeed * WATER_FLOW_SPEED[type])
+    * mix(BANK_SLOW, 1.0, smoothstep(0.0, BANK_REACH, p1.r) * smoothstep(0.5, 1.0, p1.b));
 
   vRel = vec3(xz.x, p0.r, xz.y) - waterCamera;
   vXZ = xz;
