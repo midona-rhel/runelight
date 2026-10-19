@@ -48,6 +48,8 @@ layout(location = 0) out uvec4 WaterOut;  // 64 bits packed, see water.glsl's wa
 // still water (no flow) runs its waves and its detail this many times slower, and drifts less with the wind
 #define STILL_SLOW 3.0
 #define STILL_DRIFT 0.4
+// on running water the waves are this much the size of still water's (as steep), so a stream shows more of them
+#define FLOW_WAVE_SIZE 0.6
 // the waves' height by the flow: STILL_WAVES on still water, rising to FAST_WAVES at FAST_FLOW world units a second
 #define STILL_WAVES 0.6
 #define FAST_WAVES 1.8
@@ -100,18 +102,19 @@ float waterLod(float footprint, float repeat) {
   return log2(max(footprint * 256.0 / repeat, 1.0));
 }
 
-// The slope of the waves at xz, moved along by `move`, `slow` times slower: two trains of wind waves running along
+// The slope of the waves at xz, moved along by `move`, `slow` times slower, `size` times as long: two trains of wind waves running along
 // their directions, and 117 HD's normal map (BSD-2, see LICENSE) in three sizes (6, 10 and 14 tiles a repeat) for
 // fine detail, each scrolling on its own, the first one turned (their slope: the sum of the sideways parts over the
 // sum of the upward parts), drawn out along the crests. lods: the waves' two, then the normal map's three.
-vec2 ripples(vec2 xz, vec2 move, vec4 lods, float lodC, float slow) {
+vec2 ripples(vec2 xz, vec2 move, vec4 lods, float lodC, float slow, float size) {
   vec2 q = xz - move;
   vec2 da = normalize(WAVE_DIR);
   vec2 db = vec2(da.x * cos(WAVE_TURN) - da.y * sin(WAVE_TURN), da.x * sin(WAVE_TURN) + da.y * cos(WAVE_TURN));
-  vec2 ua = vec2(dot(q, da), dot(q, vec2(-da.y, da.x))) / WAVE_SCALE.x - vec2(waterCycle(WAVE_PERIOD.x * slow), 0.0);
-  vec2 ub = vec2(dot(q, db), dot(q, vec2(-db.y, db.x))) / WAVE_SCALE.y - vec2(waterCycle(WAVE_PERIOD.y * slow), 0.0);
-  vec2 sa = textureLod(waterNoise, vec3(ua, 0.0), lods.x).rg * 2.0 - 1.0;
-  vec2 sb = textureLod(waterNoise, vec3(ub, 0.0), lods.y).rg * 2.0 - 1.0;
+  vec2 ua = vec2(dot(q, da), dot(q, vec2(-da.y, da.x))) / (WAVE_SCALE.x * size) - vec2(waterCycle(WAVE_PERIOD.x * slow), 0.0);
+  vec2 ub = vec2(dot(q, db), dot(q, vec2(-db.y, db.x))) / (WAVE_SCALE.y * size) - vec2(waterCycle(WAVE_PERIOD.y * slow), 0.0);
+  float bias = -log2(size);
+  vec2 sa = textureLod(waterNoise, vec3(ua, 0.0), lods.x + bias).rg * 2.0 - 1.0;
+  vec2 sb = textureLod(waterNoise, vec3(ub, 0.0), lods.y + bias).rg * 2.0 - 1.0;
   // back from each train's own axes to the world's
   vec2 waves = (da * sa.x + vec2(-da.y, da.x) * sa.y) * WAVE_MIX.x + (db * sb.x + vec2(-db.y, db.x) * sb.y) * WAVE_MIX.y;
 
@@ -209,12 +212,13 @@ void main() {
   if (flowing > 0.0) {
     waterFlowPhases(xz, flow, base, m0, m1, w0);
     vec2 o1 = vec2(173.0, 91.0);
-    vec2 flowed = ripples(xz, m0, lods, lodC, 1.0) * w0 + ripples(xz + o1, m1, lods, lodC, 1.0) * (1.0 - w0);
+    vec2 flowed = ripples(xz, m0, lods, lodC, 1.0, FLOW_WAVE_SIZE) * w0
+      + ripples(xz + o1, m1, lods, lodC, 1.0, FLOW_WAVE_SIZE) * (1.0 - w0);
     // blending two copies averages their slopes down: give some back
     flowed *= 1.0 + 0.4 * (1.0 - abs(2.0 * w0 - 1.0));
-    slope = flowing < 1.0 ? mix(ripples(xz, base, lods, lodC, STILL_SLOW), flowed, flowing) : flowed;
+    slope = flowing < 1.0 ? mix(ripples(xz, base, lods, lodC, STILL_SLOW, 1.0), flowed, flowing) : flowed;
   } else {
-    slope = ripples(xz, base, lods, lodC, STILL_SLOW);
+    slope = ripples(xz, base, lods, lodC, STILL_SLOW, 1.0);
   }
   slope *= look.w * waterWaves * (0.7 + 0.5 * wind) * (0.75 + 0.35 * energy) * (1.0 + TURB_WAVES * turb)
     * mix(STILL_WAVES, FAST_WAVES, smoothstep(FLOW_MIN * 0.5, FAST_FLOW, flowSpeed));
