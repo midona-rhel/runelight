@@ -39,12 +39,12 @@ layout(location = 0) out uvec4 WaterOut;  // 64 bits packed, see water.glsl's wa
 // The waves, worked out rather than looked up, so nothing tiles: WAVE_COUNT trains of sharp-crested waves (exp(sin):
 // narrow crests, broad troughs, as wind waves have), the longest WAVE_LONGEST tiles from crest to crest, each next
 // WAVE_SHRINK as long and WAVE_FADE as high, turned from their direction (WAVE_DIR on still water, the flow on running
-// water) by up to WAVE_SPREAD radians either way. Each is dragged by WAVE_DRAG of the slopes of the ones before, so
+// water) by up to WAVE_SPREAD radians either way, the longest least. Each is dragged by WAVE_DRAG of the slopes of the ones before, so
 // they bend around each other and never line up. They run as deep-water waves do, a one-tile wave WAVE_SPEED tiles a
 // second, longer ones faster; ones shorter than WAVE_MIN_PX pixels fade out rather than shimmer. WAVE_STRENGTH: the
 // slope of the whole.
 #define WAVE_DIR vec2(0.70710678, 0.70710678)
-#define WAVE_COUNT 9
+#define WAVE_COUNT 8
 #define WAVE_LONGEST 3.5
 #define WAVE_SHRINK 0.8
 #define WAVE_FADE 0.8
@@ -132,8 +132,10 @@ vec2 crestWaves(vec2 q, vec2 dir, float footprint, float slow, float size) {
   float len = WAVE_LONGEST, amp = 1.0, total = 0.0;
   vec2 slope = vec2(0.0);
   for (int i = 0; i < WAVE_COUNT; ++i) {
-    // directions scattered without a pattern (no two neighbours close, none repeating)
-    float a = (fract(float(i) * 0.6180340 + 0.31) * 2.0 - 1.0) * WAVE_SPREAD;
+    // directions scattered without a pattern: the long waves close to the direction (long crests across it, no
+    // diamond grid where two cross), the short ones spread wider
+    float a = (fract(float(i) * 0.6180340 + 0.31) * 2.0 - 1.0) * WAVE_SPREAD
+      * (0.2 + 0.8 * float(i) / float(WAVE_COUNT - 1));
     vec2 d = vec2(dir.x * cos(a) - dir.y * sin(a), dir.x * sin(a) + dir.y * cos(a));
     float k = WATER_TAU / len;
     // a whole number of cycles per wrap of waterTime, so the waves never jump
