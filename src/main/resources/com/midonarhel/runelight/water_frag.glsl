@@ -55,6 +55,9 @@ layout(location = 0) out uvec4 WaterOut;  // 64 bits packed, see water.glsl's wa
 #define STILL_WAVES 0.6
 #define FAST_WAVES 1.8
 #define FAST_FLOW 90.0
+// toward the shore the waves flatten to SHORE_WAVES of their height, over SHORE_CALM tiles out
+#define SHORE_WAVES 0.2
+#define SHORE_CALM 1.5
 // The surface's fine detail: 117 HD's normal map (layer 3 of waterNoise) at this strength, and its seconds per repeat
 // of each size
 #define NORMAL_STRENGTH 0.05
@@ -245,7 +248,8 @@ void main() {
   float contact = textureLod(waterContact, (xz / WATER_TILE + waterGrid.x) / (waterGrid.y - 1.0), 0.0).r;
   contact *= contact;
   slope *= look.w * waterWaves * (0.7 + 0.5 * wind) * (0.75 + 0.35 * energy) * (1.0 + TURB_WAVES * turb)
-    * mix(STILL_WAVES, FAST_WAVES, smoothstep(FLOW_MIN * 0.5, FAST_FLOW, flowSpeed)) * (1.0 + CONTACT_WAVES * contact);
+    * mix(STILL_WAVES, FAST_WAVES, smoothstep(FLOW_MIN * 0.5, FAST_FLOW, flowSpeed)) * (1.0 + CONTACT_WAVES * contact)
+    * mix(SHORE_WAVES, 1.0, smoothstep(0.0, SHORE_CALM, vData.r) * smoothstep(0.5, 1.0, vData.b));
   vec3 rain = vec3(0.0);
   if (waterRain > 0.01 && waterOutdoors == 1) {
     rain = rainRings(xz);
