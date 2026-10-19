@@ -51,6 +51,7 @@ layout(location = 1) out uvec4 WaterShadedOut;
 // what shows the waves from above (the waves themselves are too gentle to move the reflection much). Cloud tops in
 // the sky cache no brighter than SKY_CLOUD_MAX times the sky there.
 #define SKY_TILT 3.0
+#define CLOUD_TILT 1.0
 #define SKY_CLOUD_MAX 1.25
 // Highlights. Sheen: a faint tight lobe of the sun or moon on the waves (Blinn-Phong exponent, strength). Glitter:
 // its reflection on the waves' slopes exaggerated GLITTER_SLOPE times, narrow (GLITTER_ROUGH) so the waves break it
@@ -315,9 +316,16 @@ void waterShadeHalf(ivec2 hpx) {
   if (outdoors == 1 && proceduralSky == 1) {
     float elev = -r.y;
     vec3 sc = mix(skyHorizon(sunAltitude), skyZenith(sunAltitude), pow(clamp(elev, 0.0, 1.0), 0.45));
-    // the sky as drawn this frame, clouds and all, when the sky cache has it: the current moves them about
+    // The sky as drawn this frame, clouds and all, when the sky cache has it. Looked up along a reflection off the
+    // waves at their own slope (CLOUD_TILT): along the steep one each wave face caught its own scrap of cloud, and
+    // the clouds broke up into white blobs. The steep one's gradient still shades it, so the waves show.
     if ((skyCacheMode & 2) != 0) {
-      vec3 cached = textureLod(skyCache, skyCacheUv(cloudSkyDir(r)), 0.0).rgb;
+      vec3 rc = reflect(v, normalize(nrm * vec3(CLOUD_TILT, 1.0, CLOUD_TILT)));
+      rc.y = min(rc.y, -0.02);
+      rc = normalize(rc);
+      vec3 gentle = mix(skyHorizon(sunAltitude), skyZenith(sunAltitude), pow(clamp(-rc.y, 0.0, 1.0), 0.45));
+      vec3 cached = textureLod(skyCache, skyCacheUv(cloudSkyDir(rc)), 0.0).rgb;
+      cached *= srgbToLinear(sc) / max(srgbToLinear(gentle), vec3(1e-4));
       sc = linearToSrgb(clamp(min(cached, srgbToLinear(sc) * SKY_CLOUD_MAX), 0.0, 1.0));
     }
     reflection = srgbToLinear(envSky(sc, fogColor, elev));
