@@ -23,8 +23,11 @@ class Water
 	// 117 HD's caustics map (layer 1 of the noise texture), its red, green and blue taken this many texels apart
 	// diagonally (their aberration of 0.005 per repeat): colored fringes for one tap per copy
 	private static final String CAUSTICS_MAP = "water_caustics.jpg";
-	// 117 HD's water normal map (layer 3)
-	private static final String NORMAL_MAP = "water_normal.png";
+	// The waves' warp noise (layer 3): value noise on a lattice of WARP_CELLS cells across, wrapping
+	static final int WARP_CELLS = 64;
+	private static final long WARP_SEED = 2203;
+	// the noise's gradient, per cell, stored across the byte's range up to this
+	static final float WARP_GRADIENT = 3f;
 	private static final float CAUSTIC_ABERRATION = 1.28f;
 	// The ripple cells (layer 2): a jittered grid of CELLS x CELLS points, each the top of a round dome reaching
 	// CELL_RADIUS of the grid spacing, the domes added up into soft rounded cells
@@ -415,14 +418,15 @@ class Water
 		hasData = false;
 	}
 
-	// Layer 0 the waves, layer 1 the caustics, layer 2 the ripple cells (foam on rapids), layer 3 117 HD's water normal
-	// map: one sampler, the composite has none to spare
+	// Layer 0 the old wave noise (its height jitters the flow phases and patches the swell), layer 1 the caustics,
+	// layer 2 the ripple cells (foam on rapids), layer 3 the waves' warp noise: one sampler, the composite has none to
+	// spare
 	private static int createNoise()
 	{
 		byte[] waves = noise(NOISE_SIZE, NOISE_SEED);
 		byte[] caustics = caustics(NOISE_SIZE);
 		byte[] cells = cells(NOISE_SIZE, CELL_SEED);
-		byte[] normals = normalMap(NOISE_SIZE);
+		byte[] normals = warpNoise(NOISE_SIZE);
 		ByteBuffer buf = BufferUtils.createByteBuffer(waves.length + caustics.length + cells.length + normals.length);
 		buf.put(waves).put(caustics).put(cells).put(normals).flip();
 
@@ -513,52 +517,41 @@ class Water
 	}
 
 	/**
-	 * 117 HD's water normal map (BSD-2, see LICENSE), RGBA: rg the normal's x and z (0.5 flat), b its up, a unused.
-	 * The map is 128 texels across; it is sampled bilinearly, wrapping, up to the array's size. Flat if it is missing.
+	 * Value noise for the waves' warp (water_frag.glsl's waveNoiseD), RGBA: r the value (0 to 1), g and b its gradient
+	 * along x and y per lattice cell (0.5 flat, WARP_GRADIENT at the ends), a unused. A lattice of WARP_CELLS cells
+	 * across with random values at its corners, smoothstep between them; it wraps.
 	 */
-	static byte[] normalMap(int size)
+	static byte[] warpNoise(int size)
 	{
-		byte[] out = new byte[size * size * 4];
-		try (InputStream in = Water.class.getResourceAsStream(NORMAL_MAP))
+		Random rng = new Random(WARP_SEED);
+		float[] lattice = new float[WARP_CELLS * WARP_CELLS];
+		for (int i = 0; i < lattice.length; ++i)
 		{
-			BufferedImage img = in != null ? ImageIO.read(in) : null;
-			if (img == null)
-			{
-				throw new IOException("missing water normal map");
-			}
-			int w = img.getWidth(), h = img.getHeight();
-			for (int y = 0; y < size; ++y)
-			{
-				float fy = (y + 0.5f) * h / size - 0.5f;
-				int y0 = (int) Math.floor(fy);
-				float ty = fy - y0;
-				for (int x = 0; x < size; ++x)
-				{
-					float fx = (x + 0.5f) * w / size - 0.5f;
-					int x0 = (int) Math.floor(fx);
-					float tx = fx - x0;
-					int a = img.getRGB(Math.floorMod(x0, w), Math.floorMod(y0, h));
-					int b = img.getRGB(Math.floorMod(x0 + 1, w), Math.floorMod(y0, h));
-					int c = img.getRGB(Math.floorMod(x0, w), Math.floorMod(y0 + 1, h));
-					int d = img.getRGB(Math.floorMod(x0 + 1, w), Math.floorMod(y0 + 1, h));
-					int o = (y * size + x) * 4;
-					for (int ch = 0; ch < 3; ++ch)
-					{
-						int sh = 16 - ch * 8;
-						float top = (a >> sh & 0xFF) * (1 - tx) + (b >> sh & 0xFF) * tx;
-						float bottom = (c >> sh & 0xFF) * (1 - tx) + (d >> sh & 0xFF) * tx;
-						out[o + ch] = (byte) Math.round(top * (1 - ty) + bottom * ty);
-					}
-					out[o + 3] = (byte) 255;
-				}
-			}
+			lattice[i] = rng.nextFloat();
 		}
-		catch (IOException ex)
+		byte[] out = new byte[size * size * 4];
+		for (int y = 0; y < size; ++y)
 		{
-			for (int i = 0; i < out.length; i += 4)
+			float fy = (float) y * WARP_CELLS / size;
+			int y0 = (int) fy;
+			float ty = fy - y0, uy = ty * ty * (3 - 2 * ty), dy = 6 * ty * (1 - ty);
+			for (int x = 0; x < size; ++x)
 			{
-				out[i] = out[i + 1] = (byte) 128;
-				out[i + 2] = out[i + 3] = (byte) 255;
+				float fx = (float) x * WARP_CELLS / size;
+				int x0 = (int) fx;
+				float tx = fx - x0, ux = tx * tx * (3 - 2 * tx), dx = 6 * tx * (1 - tx);
+				float a = lattice[(y0 % WARP_CELLS) * WARP_CELLS + x0 % WARP_CELLS];
+				float b = lattice[(y0 % WARP_CELLS) * WARP_CELLS + (x0 + 1) % WARP_CELLS];
+				float c = lattice[((y0 + 1) % WARP_CELLS) * WARP_CELLS + x0 % WARP_CELLS];
+				float d = lattice[((y0 + 1) % WARP_CELLS) * WARP_CELLS + (x0 + 1) % WARP_CELLS];
+				float k1 = b - a, k2 = c - a, k3 = a - b - c + d;
+				float v = a + k1 * ux + k2 * uy + k3 * ux * uy;
+				float gx = dx * (k1 + k3 * uy), gy = dy * (k2 + k3 * ux);
+				int o = (y * size + x) * 4;
+				out[o] = (byte) Math.round(v * 255);
+				out[o + 1] = (byte) Math.round(Math.max(0, Math.min(1, 0.5f + gx / (2 * WARP_GRADIENT))) * 255);
+				out[o + 2] = (byte) Math.round(Math.max(0, Math.min(1, 0.5f + gy / (2 * WARP_GRADIENT))) * 255);
+				out[o + 3] = (byte) 255;
 			}
 		}
 		return out;

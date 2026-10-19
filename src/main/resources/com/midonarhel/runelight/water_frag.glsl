@@ -132,16 +132,13 @@ float waveNoise(vec2 p) {
   return mix(mix(a, b, u.x), mix(c, d, u.x), u.y) * 2.0 - 1.0;
 }
 
-// Value noise with its gradient: x the value -1 to 1, yz its gradient
+// Value noise with its gradient, one lattice cell per unit of p: x the value -1 to 1, yz its gradient. Looked up from
+// layer 3 (Water.warpNoise, WARP_CELLS cells across, wrapping): it only warps the waves, so its repeat doesn't show.
+#define WARP_CELLS 64.0
+#define WARP_GRADIENT 3.0
 vec3 waveNoiseD(vec2 p) {
-  vec2 i = floor(p), f = fract(p);
-  vec2 u = f * f * (3.0 - 2.0 * f);
-  vec2 du = 6.0 * f * (1.0 - f);
-  float a = waterHash(vec3(i, 7.0)), b = waterHash(vec3(i + vec2(1.0, 0.0), 7.0));
-  float c = waterHash(vec3(i + vec2(0.0, 1.0), 7.0)), d = waterHash(vec3(i + vec2(1.0, 1.0), 7.0));
-  float k1 = b - a, k2 = c - a, k3 = a - b - c + d;
-  return vec3(a + k1 * u.x + k2 * u.y + k3 * u.x * u.y, du * vec2(k1 + k3 * u.y, k2 + k3 * u.x)) * 2.0
-    - vec3(1.0, 0.0, 0.0);
+  vec3 t = textureLod(waterNoise, vec3(p / WARP_CELLS, 3.0), 0.0).rgb * 2.0 - 1.0;
+  return vec3(t.x, t.yz * (2.0 * WARP_GRADIENT));
 }
 
 // The gradient (by uv) of one octave of choppy waves at uv (radians of its sines): a grid of sines warped by noise,
