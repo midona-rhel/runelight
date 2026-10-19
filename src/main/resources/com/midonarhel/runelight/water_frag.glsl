@@ -82,12 +82,15 @@ layout(location = 0) out uvec4 WaterOut;  // 64 bits packed, see water.glsl's wa
 #define WATER_REACH 20480.0
 // Things breaking the surface (posts, rocks, hulls, legs; not the bed or the bank): foam and rougher water in a ring
 // OBJECT_REACH world units out from where they meet it, found in the scene OBJECT_TAPS times around each pixel (at
-// most OBJECT_MAX_PX pixels out); a point of one within OBJECT_BAND of the surface counts
+// most OBJECT_MAX_PX pixels out, turned per pixel so the few taps don't step); a point of one within OBJECT_BAND of
+// the surface counts. Plants (transmissive) don't. The foam is the rapids' foam, at most OBJECT_FOAM of it, the
+// rest a faint even film, so it isn't blotchy.
 #define OBJECT_REACH 40.0
 #define OBJECT_TAPS 6
 #define OBJECT_MAX_PX 24.0
 #define OBJECT_BAND 48.0
-#define OBJECT_FOAM 0.8
+#define OBJECT_FOAM 0.45
+#define OBJECT_FILM 0.35
 #define OBJECT_WAVES 1.5
 // rain rings: cell size (world units), rings per cell per second
 #define RAIN_CELL 72.0
@@ -196,11 +199,13 @@ float objectContact(ivec2 px, float footprint, float surfaceY) {
   float r = clamp(OBJECT_REACH / max(footprint, 1e-3), 1.0, OBJECT_MAX_PX);
   ivec2 last = textureSize(sceneDepth, 0) - 1;
   float hit = 0.0;
+  // interleaved gradient noise: the ring turned differently at every pixel
+  float turn = fract(52.9829189 * fract(dot(vec2(px), vec2(0.06711056, 0.00583715))));
   for (int i = 0; i < OBJECT_TAPS; ++i) {
-    float a = float(i) * (WATER_TAU / float(OBJECT_TAPS));
+    float a = (float(i) + turn) * (WATER_TAU / float(OBJECT_TAPS));
     ivec2 q = clamp(px + ivec2(round(vec2(cos(a), sin(a)) * r)), ivec2(0), last);
-    float m = texelFetch(sceneMaterial, q, 0).b;
-    if (m < 0.25 || m > 0.75)
+    vec3 m = texelFetch(sceneMaterial, q, 0).rgb;
+    if (m.b < 0.25 || m.b > 0.75 || m.g > 0.0)
       continue;
     hit += 1.0 - smoothstep(0.0, OBJECT_BAND, abs(scenePoint(q, texelFetch(sceneDepth, q, 0).r).y - surfaceY));
   }
@@ -266,11 +271,12 @@ void main() {
 
   // soft foam on rapids and around things in the water: the large cells' rims, carried with the flow
   float foam = 0.0;
-  float churn = max(smoothstep(TURB_FOAM.x, TURB_FOAM.y, turb), contact * OBJECT_FOAM / FOAM);
-  if (churn > 0.0) {
+  float churn = smoothstep(TURB_FOAM.x, TURB_FOAM.y, turb);
+  if (churn > 0.0 || contact > 0.0) {
     float h = textureLod(waterNoise, vec3((xz - m0) / CELL_SCALE_B, 2.0), lodFoam).b * w0
       + textureLod(waterNoise, vec3((xz + vec2(173.0, 91.0) - m1) / CELL_SCALE_B, 2.0), lodFoam).b * (1.0 - w0);
-    foam = (1.0 - smoothstep(0.15, 0.55, h)) * churn * FOAM;
+    float rim = 1.0 - smoothstep(0.15, 0.55, h);
+    foam = max(rim * churn * FOAM, contact * (rim * OBJECT_FOAM + OBJECT_FILM));
   }
   foam = max(foam, rain.z * RAIN_FOAM);
 
