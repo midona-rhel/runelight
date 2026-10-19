@@ -48,7 +48,10 @@ layout(location = 0) out uvec4 WaterOut;  // 64 bits packed, see water.glsl's wa
 #define WAVE_SPEED 0.12
 #define WAVE_WARP 0.35
 // each size's swells are WAVE_STRETCH times longer along their crests than across: ridges, not round bubbles
-#define WAVE_STRETCH 2.6
+#define WAVE_STRETCH 1.6
+// how sharp the crests come to a point (smaller sharper), and their steepness against the troughs'
+#define WAVE_CREST_SOFT 0.01
+#define WAVE_CREST 0.6
 #define WAVE_STRENGTH 0.34
 // still water (no flow) runs its waves and its detail this many times slower, and drifts less with the wind
 #define STILL_SLOW 1.25
@@ -149,6 +152,12 @@ vec2 crestWaves(vec2 q, vec2 dir, float footprint, float slow, float size) {
     vec3 n = waveNoise(p);
     // its gradient back in world directions
     n.xy = d * n.x + c * (n.y / WAVE_STRETCH);
+    // Sharp crests: folded where the noise crosses its middle (a crease, just softened against shimmer), and squared,
+    // so the crest stands steep and narrow over broad, gentle troughs
+    float m = 2.0 * n.z - 1.0;
+    float am = sqrt(m * m + WAVE_CREST_SOFT);
+    float h = 1.0 - am;
+    n.xy *= 2.0 * h * (-2.0 * m / am) * WAVE_CREST;
     // finer than a few pixels: faded, it only shimmers
     float vis = smoothstep(4.0, 10.0, len / max(footprint, 1e-3));
     slope += n.xy * (amp * vis);
