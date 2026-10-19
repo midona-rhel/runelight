@@ -36,7 +36,9 @@ layout(location = 0) out uvec4 WaterOut;  // 64 bits packed, see water.glsl's wa
 
 // The surface's normal map (layer 3 of waterNoise): 117 HD's strength and its seconds per repeat of each size
 #define NORMAL_STRENGTH 0.09
-#define NORMAL_PERIOD vec3(28.0, 24.0, 21.0)
+#define NORMAL_PERIOD vec3(42.0, 36.0, 32.0)
+// world units per size step: 117 HD's 128 (a tile) looked too fine at the game's camera distances
+#define NORMAL_TILE 256.0
 // the foam on rapids: the large ripple cells' rims (layer 2), world units per repeat
 #define CELL_SCALE_B 520.0
 // turbulence (rapids) adds to the ripples, and lays soft foam over them where it is strong
@@ -55,8 +57,17 @@ layout(location = 0) out uvec4 WaterOut;  // 64 bits packed, see water.glsl's wa
 // the furthest the distance target reaches (16 bits): past it water is clamped there
 #define WATER_REACH 20480.0
 // rain rings: cell size (world units), rings per cell per second
-#define RAIN_CELL 40.0
+#define RAIN_CELL 72.0
 #define RAIN_RATE 1.3
+// how far a ring spreads (cells) and how wide its crest is; the splash's size (cells) and how long it lasts (share of
+// a cycle); the rings' slope, how white their crest shows, and how white the water goes at most
+#define RAIN_SPREAD 0.32
+#define RAIN_RING 0.05
+#define RAIN_SPLASH_SIZE 0.07
+#define RAIN_SPLASH_TIME 0.12
+#define RAIN_SLOPE 0.45
+#define RAIN_CREST 0.35
+#define RAIN_FOAM 0.8
 
 float waterHash(vec3 p) {
   p = fract(p * 0.1031);
@@ -68,11 +79,11 @@ float waterLod(float footprint, float repeat) {
   return log2(max(footprint * 256.0 / repeat, 1.0));
 }
 
-// 117 HD's surface (BSD-2, see LICENSE): its water normal map in three sizes (3, 5 and 7 tiles a repeat), each
+// 117 HD's surface (BSD-2, see LICENSE): its water normal map in three sizes (6, 10 and 14 tiles a repeat), each
 // scrolling on its own, the first one turned, all moved along by `move`. Their normals add up: the slope is the
 // sum of the sideways parts over the sum of the upward parts, at NORMAL_STRENGTH like 117 HD's
 vec2 ripples(vec2 xz, vec2 move, vec4 lods) {
-  vec2 p = -(xz - move) / 128.0;
+  vec2 p = -(xz - move) / NORMAL_TILE;
   vec3 a = textureLod(waterNoise, vec3((p / 3.0).yx - waterCycle(NORMAL_PERIOD.x), 3.0), lods.x).rgb;
   vec3 b = textureLod(waterNoise, vec3(p / 5.0 + waterCycle(NORMAL_PERIOD.y), 3.0), lods.y).rgb;
   vec3 c = textureLod(waterNoise, vec3(p / 7.0 + waterCycle(NORMAL_PERIOD.z), 3.0), lods.z).rgb;
@@ -97,9 +108,10 @@ vec3 causticMoved(vec2 xz, vec2 move, vec2 smear, float lod) {
   return 0.5 * (causticAt(uv - s, lod) + causticAt(uv + s, lod));
 }
 
-// Rings from raindrops: one ring at a time per cell, in two offset layers, as many cells active as it rains
-vec2 rainRings(vec2 xz) {
-  vec2 sum = vec2(0.0);
+// Raindrops landing: one at a time per cell, in two offset layers, as many cells active as it rains. Each lands as
+// a small white splash, then a ring spreads from it. xy: the rings' slope, z: how white (the splash, the ring's crest)
+vec3 rainRings(vec2 xz) {
+  vec3 sum = vec3(0.0);
   for (int layer = 0; layer < 2; ++layer) {
     vec2 g = xz / RAIN_CELL + float(layer) * vec2(0.5, 0.31);
     vec2 cell = floor(g);
@@ -113,11 +125,15 @@ vec2 rainRings(vec2 xz) {
     vec2 center = vec2(waterHash(vec3(cell, drop)), waterHash(vec3(cell.yx, drop + 1.0))) * 0.5 + 0.25;
     vec2 dv = fract(g) - center;
     float dist = length(dv);
-    float ring = (dist - phase * 0.3) / 0.035;
-    float wave = sin(ring * 3.14159) * exp(-ring * ring * 0.5) * (1.0 - phase) * (1.0 - phase);
-    sum += dv / max(dist, 1e-3) * wave;
+    float ring = (dist - phase * RAIN_SPREAD) / RAIN_RING;
+    float fade = (1.0 - phase) * (1.0 - phase);
+    float wave = sin(ring * 3.14159) * exp(-ring * ring * 0.5) * fade;
+    sum.xy += dv / max(dist, 1e-3) * wave;
+    // the splash where it lands, gone in a moment, then the crest of the ring
+    float splash = (1.0 - smoothstep(0.0, RAIN_SPLASH_TIME, phase)) * (1.0 - smoothstep(0.02, RAIN_SPLASH_SIZE, dist));
+    sum.z += max(splash, max(wave, 0.0) * fade * RAIN_CREST);
   }
-  return sum * 0.35;
+  return vec3(sum.xy * RAIN_SLOPE, min(sum.z, 1.0));
 }
 
 uint pack01(float v, float bits) {
@@ -144,8 +160,8 @@ void main() {
 
   // mips picked from the derivatives once, here, where they are defined; every tap below is explicit
   float footprint = max(length(dFdx(xz)), length(dFdy(xz)));
-  vec4 lods = vec4(waterLod(footprint, 384.0), waterLod(footprint, 640.0), waterLod(footprint, 896.0),
-    waterLod(footprint, CELL_SCALE_B));
+  vec4 lods = vec4(waterLod(footprint, NORMAL_TILE * 3.0), waterLod(footprint, NORMAL_TILE * 5.0),
+    waterLod(footprint, NORMAL_TILE * 7.0), waterLod(footprint, CELL_SCALE_B));
 
   // still water drifts with the wind; running water carries its ripples in two phases (water_common.glsl)
   vec2 base = waterDrift.xy * (speed * waterSpeed);
@@ -164,8 +180,11 @@ void main() {
     slope = ripples(xz, base, lods);
   }
   slope *= look.w * waterWaves * (0.7 + 0.5 * wind) * (0.75 + 0.35 * energy) * (1.0 + TURB_WAVES * turb);
-  if (waterRain > 0.01 && waterOutdoors == 1)
-    slope += rainRings(xz) * look.w;
+  vec3 rain = vec3(0.0);
+  if (waterRain > 0.01 && waterOutdoors == 1) {
+    rain = rainRings(xz);
+    slope += rain.xy * look.w;
+  }
   // the surface's normal points up (-y); slope is d up / d x, d up / d z
   vec3 nrm = normalize(vec3(-slope.x, -1.0, -slope.y));
 
@@ -177,6 +196,7 @@ void main() {
       + textureLod(waterNoise, vec3((xz + vec2(173.0, 91.0) - m1) / CELL_SCALE_B, 2.0), lods.w).b * (1.0 - w0);
     foam = (1.0 - smoothstep(0.15, 0.55, h)) * churn * FOAM;
   }
+  foam = max(foam, rain.z * RAIN_FOAM);
 
   // ---- the caustics on the bed below, carried by the flow
   float caustic = 0.0;

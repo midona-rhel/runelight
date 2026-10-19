@@ -36,9 +36,9 @@ class Water
 	// how far the waves drift with the wind, world units per second (calm, full wind), before the shaders' per-type
 	// and config speed
 	private static final double DRIFT_CALM = 5, DRIFT_WIND = 18;
-	// the drift wraps at a whole number of every repeat it is used with in the shaders (the normal map's 384, 640 and
-	// 896, least common multiple 13440, at any per-type speed of 0.35 or 0.45 and any whole config percent)
-	private static final double DRIFT_WRAP = 13440.0 * 100 * 20;
+	// the drift wraps at a whole number of every repeat it is used with in the shaders (the normal map's 768, 1280 and
+	// 1792, least common multiple 26880, at any per-type speed of 0.35 or 0.45 and any whole config percent)
+	private static final double DRIFT_WRAP = 26880.0 * 100 * 20;
 	// seconds over which the water follows a change in the wind's strength: it jumps under roofs and in gusts
 	private static final double STRENGTH_EASE = 1.5;
 
