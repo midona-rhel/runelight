@@ -44,11 +44,12 @@ layout(location = 0) out uvec4 WaterOut;  // 64 bits packed, see water.glsl's wa
 // second, longer ones faster; ones shorter than WAVE_MIN_PX pixels fade to a third rather than shimmer. WAVE_STRENGTH: the
 // slope of the whole.
 #define WAVE_DIR vec2(0.70710678, 0.70710678)
-#define WAVE_COUNT 8
-#define WAVE_LONGEST 3.5
-#define WAVE_SHRINK 0.8
-#define WAVE_FADE 0.8
-#define WAVE_SPREAD 0.9
+#define WAVE_COUNT 10
+#define WAVE_GROUP 4.0
+#define WAVE_LONGEST 2.5
+#define WAVE_SHRINK 0.78
+#define WAVE_FADE 0.85
+#define WAVE_SPREAD 1.4
 #define WAVE_DRAG 0.5
 #define WAVE_SPEED 0.65
 #define WAVE_MIN_PX 4.0
@@ -127,15 +128,23 @@ float waterLod(float footprint, float repeat) {
 
 // The waves' slope at q (world units) running along dir (see WAVE_COUNT), `slow` times slower and `size` times as
 // long; footprint: world units a pixel covers.
+// Smooth value noise, not tiling (hashed lattice): 0 to 1
+float waveNoise(vec2 p) {
+  vec2 i = floor(p), f = fract(p);
+  f = f * f * (3.0 - 2.0 * f);
+  float a = waterHash(vec3(i, 7.0)), b = waterHash(vec3(i + vec2(1.0, 0.0), 7.0));
+  float c = waterHash(vec3(i + vec2(0.0, 1.0), 7.0)), d = waterHash(vec3(i + vec2(1.0, 1.0), 7.0));
+  return mix(mix(a, b, f.x), mix(c, d, f.x), f.y);
+}
+
 vec2 crestWaves(vec2 q, vec2 dir, float footprint, float slow, float size) {
   vec2 p = q / (WATER_TILE * size);
   float len = WAVE_LONGEST, amp = 1.0, total = 0.0;
   vec2 slope = vec2(0.0);
   for (int i = 0; i < WAVE_COUNT; ++i) {
-    // directions scattered without a pattern: the long waves close to the direction (long crests across it, no
-    // diamond grid where two cross), the short ones spread wider
+    // directions scattered without a pattern: the long waves closer to the direction, the short ones spread wider
     float a = (fract(float(i) * 0.6180340 + 0.31) * 2.0 - 1.0) * WAVE_SPREAD
-      * (0.2 + 0.8 * float(i) / float(WAVE_COUNT - 1));
+      * (0.35 + 0.65 * float(i) / float(WAVE_COUNT - 1));
     vec2 d = vec2(dir.x * cos(a) - dir.y * sin(a), dir.x * sin(a) + dir.y * cos(a));
     float k = WATER_TAU / len;
     // a whole number of cycles per wrap of waterTime, so the waves never jump
@@ -143,11 +152,15 @@ vec2 crestWaves(vec2 q, vec2 dir, float footprint, float slow, float size) {
     float x = dot(d, p) * k - waterTime * omega + float(i) * 1.7;
     float e = exp(sin(x) - 1.0);
     float dx = e * cos(x);
+    // Each train comes in groups: its height swells and dies away across the water over WAVE_GROUP of its own
+    // lengths, the groups drifting along with it, so no train runs on unbroken and nothing repeats
+    vec2 g = p / (len * WAVE_GROUP) - d * (waterTime * omega / k / (len * WAVE_GROUP) * 0.5) + float(i) * 17.31;
+    float group = smoothstep(0.2, 0.8, waveNoise(g));
     // too small to see each: still there in part, as the roughness that breaks up the reflection far off
     float vis = mix(0.35, 1.0, smoothstep(WAVE_MIN_PX, WAVE_MIN_PX * 2.0, len * WATER_TILE * size / max(footprint, 1e-3)));
-    slope += d * (dx * amp * vis);
-    p -= d * (dx * amp * WAVE_DRAG / k);
-    total += amp;
+    slope += d * (dx * amp * vis * group);
+    p -= d * (dx * amp * group * WAVE_DRAG / k);
+    total += amp * 0.5;
     len *= WAVE_SHRINK;
     amp *= WAVE_FADE;
   }
