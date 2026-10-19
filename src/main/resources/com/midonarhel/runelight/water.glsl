@@ -57,12 +57,13 @@ layout(location = 1) out uvec4 WaterShadedOut;
 #define CLOUD_BLUR 0.02
 #define SKY_CLOUD_MAX 1.1
 // Highlights. Sheen: a faint tight lobe of the sun or moon on the waves (Blinn-Phong exponent, strength). Glitter:
-// its reflection on the waves' slopes exaggerated GLITTER_SLOPE times, narrow (GLITTER_ROUGH) so the waves break it
-// into sharp glints instead of one soft blob. The moon's are MOON_SPECULAR of the sun's.
+// its reflection off the waves as if they were GLITTER_SLOPE times taller, so many small slopes face the sun, each
+// catching it in a narrow lobe (GLITTER_ROUGH): many pinpoint glints instead of a wide smear. The moon's are
+// MOON_SPECULAR of the sun's.
 #define SHEEN_GLOSS 300.0
 #define SHEEN 0.04
-#define GLITTER_SLOPE 1.5
-#define GLITTER_ROUGH 0.015
+#define GLITTER_SLOPE 5.0
+#define GLITTER_ROUGH 0.006
 #define GLITTER 0.5
 #define MOON_SPECULAR 0.35
 // lamps: their streak's width along and across, strength, and the most one adds (linear)
