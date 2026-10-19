@@ -3,6 +3,8 @@ package com.midonarhel.runelight;
 import java.nio.ByteBuffer;
 import java.nio.ShortBuffer;
 import org.lwjgl.BufferUtils;
+import org.lwjgl.opengl.EXTTextureFilterAnisotropic;
+import org.lwjgl.opengl.GL;
 import static org.lwjgl.opengl.GL33C.*;
 
 /**
@@ -76,9 +78,9 @@ class WaterSurface
 	// The wave maps: the waves and foam worked out at STEPS_PER_SECOND into world-space maps of WAVE_MAP_TILES
 	// tiles a side (wrapping, WAVE_MAP_TEXELS texels a tile), each over two frames, half the chunks each; the surface
 	// pass blends the last two finished ones. Three, so one is being worked out while two are shown.
-	static final int WAVE_MAP_TILES = 128;
-	static final int WAVE_MAP_REACH = 60;
-	private static final int WAVE_MAP_TEXELS = 8;
+	static final int WAVE_MAP_TILES = 96;
+	static final int WAVE_MAP_REACH = 46;
+	private static final int WAVE_MAP_TEXELS = 12;
 	private static final float STEPS_PER_SECOND = 20f;
 	private final int[] waveTex = new int[3], waveFbo = new int[3];
 	// the newest finished map's step (its texture: the step mod 3), how many halves of the next are done, and the step
@@ -535,6 +537,12 @@ class WaterSurface
 			glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
 			glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
 			glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
+			// seen at a slant the map would blur its waves away along the view
+			if (GL.getCapabilities().GL_EXT_texture_filter_anisotropic)
+			{
+				glTexParameterf(GL_TEXTURE_2D, EXTTextureFilterAnisotropic.GL_TEXTURE_MAX_ANISOTROPY_EXT,
+					Math.min(8f, glGetFloat(EXTTextureFilterAnisotropic.GL_MAX_TEXTURE_MAX_ANISOTROPY_EXT)));
+			}
 			waveFbo[i] = glGenFramebuffers();
 			glBindFramebuffer(GL_FRAMEBUFFER, waveFbo[i]);
 			glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, waveTex[i], 0);

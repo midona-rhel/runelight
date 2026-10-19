@@ -60,10 +60,10 @@ const vec4 WATER_LOOK[WATER_TYPES] = vec4[](
 // how much of the depth color is left in the deep (117 HD goes to black: the deep stays the type's color here)
 const vec3 WATER_FADE[WATER_TYPES] = vec3[](
   vec3(1.0),
-  vec3(150.0, 500.0, 0.55),
-  vec3(150.0, 520.0, 0.50),
-  vec3(130.0, 460.0, 0.42),
-  vec3(170.0, 560.0, 0.55),
+  vec3(240.0, 640.0, 0.55),
+  vec3(240.0, 660.0, 0.50),
+  vec3(210.0, 600.0, 0.42),
+  vec3(270.0, 700.0, 0.55),
   vec3(40.0, 160.0, 0.45),
   vec3(60.0, 220.0, 0.35));
 // how fast each type's flow runs, as a share of the flow map's
@@ -138,8 +138,8 @@ float nominalDepth(float shore) {
 // The waves are worked out at a few steps a second into world-space maps of WAVE_MAP_TILES tiles, wrapping, which the
 // surface pass blends between (WaterSurface.bake): beyond WAVE_MAP_REACH tiles from where the camera looks there are
 // none
-#define WAVE_MAP_TILES 128.0
-#define WAVE_MAP_REACH 60.0
+#define WAVE_MAP_TILES 96.0
+#define WAVE_MAP_REACH 46.0
 
 // A scroll of a whole number of repeats per wrap of waterTime, about one per `period` seconds
 float waterCycle(float period) {

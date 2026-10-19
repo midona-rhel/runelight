@@ -34,7 +34,7 @@ layout(location = 1) out uvec4 WaterShadedOut;
 // so the water has no hard edge; within 1 / WATERLINE_DEPTH of the depth the shore distance gives, the bed's own depth
 // sets the water's color
 #define SOFT_EDGE 48.0
-#define WATERLINE_DEPTH 2.0
+#define WATERLINE_DEPTH 1.0
 // How much of the surface covers what is under it: the type's base opacity once the water is SURFACE_DEPTH deep
 // (clear over the shallows), at least FRESNEL_BASE rising to all of it at a slant as (1 - cos)^FRESNEL_POWER, and at
 // least OPACITY_SLANT of 1 - the view's elevation
@@ -79,7 +79,12 @@ layout(location = 1) out uvec4 WaterShadedOut;
 // Caustics: 117 HD's, carried by the flow, worked out by the water pass (water_frag.glsl) as their value above the
 // mean in units of the brightest lines'. The bed gains CAUSTICS times the direct light per unit (between
 // CAUSTIC_RANGE); fainter by moonlight.
-#define CAUSTICS 1.6
+#define CAUSTICS 1.1
+// the caustics come in over CAUSTIC_EDGE below the waterline, their dark between the lines over CAUSTIC_DARK, and
+// fade out between CAUSTIC_FADE's depths
+#define CAUSTIC_EDGE 32.0
+#define CAUSTIC_DARK 128.0
+#define CAUSTIC_FADE vec2(64.0, 200.0)
 #define CAUSTIC_RANGE vec2(-0.7, 3.0)
 #define CAUSTIC_MOON 0.35
 // screen-space reflection: taps along the reflected ray, growing, then halving steps onto the hit; the world is
@@ -436,8 +441,9 @@ vec3 waterOver(ivec2 px, inout vec3 p, vec3 albedo, float shadow, vec3 lit, floa
   if (waterCaustics == 1 && outdoors == 1 && lightingEnabled == 1 && WATER_LOOK[type].x < 0.7) {
     vec3 caster = (sunIsCaster == 1 ? sunLight(sunAltitude) : moonLight(sunAltitude)) * envSun;
     float k = max(-casterDir.y, 0.0) * shadow * CAUSTICS * (sunIsCaster == 1 ? 1.0 : CAUSTIC_MOON)
-      * smoothstep(0.0, 6.0, depth);
-    caustics = srgbToLinear(albedo) * caster * (k * clamp(caustic, CAUSTIC_RANGE.x, CAUSTIC_RANGE.y));
+      * smoothstep(0.0, CAUSTIC_EDGE, depth) * (1.0 - smoothstep(CAUSTIC_FADE.x, CAUSTIC_FADE.y, depth));
+    float dark = CAUSTIC_RANGE.x * smoothstep(0.0, CAUSTIC_DARK, depth);
+    caustics = srgbToLinear(albedo) * caster * (k * clamp(caustic, dark, CAUSTIC_RANGE.y));
   }
   vec3 under = max(srgbToLinear(lit * WET_SAND) + caustics, vec3(0.0)) * srgbToLinear(waterDepthTint(type, colorDepth));
   // what is seen through a wave face turned toward the camera is a little brighter, turned away darker

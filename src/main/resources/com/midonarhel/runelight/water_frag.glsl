@@ -374,7 +374,8 @@ void main() {
 
   // the waves and foam from the wave maps (waterWaveField, a few steps a second, blended), none past their reach
   vec2 wuv = xz / (WATER_TILE * WAVE_MAP_TILES);
-  vec4 wave = mix(texture(waterWavesA, wuv), texture(waterWavesB, wuv), waterWaveBlend)
+  // a little sharper than the mipmaps would pick: they average the slopes away
+  vec4 wave = mix(texture(waterWavesA, wuv, -0.5), texture(waterWavesB, wuv, -0.5), waterWaveBlend)
     * (1.0 - smoothstep(WAVE_MAP_REACH - 8.0, WAVE_MAP_REACH, length(xz - waterFocus) / WATER_TILE));
   vec2 slope = wave.xy;
   float foam = wave.z;
