@@ -342,6 +342,28 @@
      3598
     ]
    ]
+  },
+  {
+   "name": "Lunar Isle stream (user review)",
+   "note": "from the middle of the island west to the coast",
+   "box": [
+    2058,
+    3862,
+    2112,
+    3900
+   ],
+   "sources": [
+    [
+     2090,
+     3893
+    ]
+   ],
+   "outlets": [
+    [
+     2064,
+     3872
+    ]
+   ]
   }
  ],
  "still": [
@@ -472,12 +494,12 @@
    ]
   },
   {
-   "name": "Lunar Isle (user review)",
+   "name": "Lunar Isle east harbour (user review)",
    "box": [
-    2040,
-    3815,
-    2180,
-    3965
+    2110,
+    3848,
+    2160,
+    3900
    ]
   },
   {
@@ -514,15 +536,6 @@
     3025,
     2985,
     3065
-   ]
-  },
-  {
-   "name": "island south of Karamja (user review)",
-   "box": [
-    2735,
-    2705,
-    2810,
-    2780
    ]
   },
   {
@@ -577,15 +590,6 @@
     2955,
     3720,
     3000
-   ]
-  },
-  {
-   "name": "Kourend west coast (user review)",
-   "box": [
-    1405,
-    3505,
-    1455,
-    3550
    ]
   },
   {
