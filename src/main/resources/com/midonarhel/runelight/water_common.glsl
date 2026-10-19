@@ -9,6 +9,8 @@ uniform float waterTime;            // seconds, wraps
 uniform vec2 waterGrid;             // x: extended tile of local tile 0, y: corners per side
 
 #define WATER_TILE 128.0
+// how far the surface target's distance reaches (water_frag.glsl)
+#define WATER_REACH 20480.0
 // waterTime wraps after this many seconds (Water.java); every motion repeats a whole number of times in it
 #define WATER_TIME_WRAP 3840.0
 #define WATER_TAU 6.28318530718
@@ -26,7 +28,7 @@ const vec3 WATER_SURFACE_COLOR[WATER_TYPES] = vec3[](
   vec3(0.533, 0.600, 0.678),
   vec3(0.190, 0.280, 0.150),
   vec3(0.050, 0.100, 0.140));
-// sRGB: the water's own color, which covers the bed with depth, times WATER_DEEP where the water is deepest
+// sRGB: what the bed turns into a little way down, before it goes dark further down
 const vec3 WATER_DEPTH_COLOR[WATER_TYPES] = vec3[](
   vec3(0.0),
   vec3(0.000, 0.459, 0.557),
@@ -54,10 +56,16 @@ const vec4 WATER_LOOK[WATER_TYPES] = vec4[](
   vec4(0.25, 0.80, 0.50, 1.00),
   vec4(0.80, 0.30, 0.10, 0.45),
   vec4(0.75, 0.10, 0.20, 0.70));
-// how much of the depth color is left at the deepest (117 HD goes to black)
-const float WATER_DEEP[WATER_TYPES] = float[](1.0, 0.55, 0.50, 0.42, 0.55, 0.45, 0.35);
-// how much faster than clear water each type's color covers the bed with depth (water.glsl's waterAmount)
-const float WATER_MURK[WATER_TYPES] = float[](1.0, 1.0, 1.0, 1.15, 0.9, 3.5, 2.5);
+// Depths (world units, before the clarity setting) over which the bed fades into the depth color, then darker, and
+// how much of the depth color is left in the deep (117 HD goes to black: the deep stays the type's color here)
+const vec3 WATER_FADE[WATER_TYPES] = vec3[](
+  vec3(1.0),
+  vec3(150.0, 500.0, 0.55),
+  vec3(150.0, 520.0, 0.50),
+  vec3(130.0, 460.0, 0.42),
+  vec3(170.0, 560.0, 0.55),
+  vec3(40.0, 160.0, 0.45),
+  vec3(60.0, 220.0, 0.35));
 // how fast each type's flow runs, as a share of the flow map's
 const float WATER_FLOW_SPEED[WATER_TYPES] = float[](0.0, 1.0, 1.0, 1.0, 1.0, 0.35, 0.45);
 
@@ -99,6 +107,18 @@ void waterFlowPhases(vec2 xz, vec2 flow, vec2 base, out vec2 m0, out vec2 m1, ou
   w0 = 1.0 - abs(1.0 - 2.0 * ph0);
   m0 = base + drag * (ph0 * FLOW_CYCLE);
   m1 = base + drag * (ph1 * FLOW_CYCLE);
+}
+
+// How far under the water surface the scene at px lies (p: camera-relative), from the surface pass's target
+// (water_frag.glsl); 0 above it or with no water there
+float waterDepthUnder(usampler2D surface, ivec2 px, vec3 p) {
+  uint b = texelFetch(surface, px, 0).b;
+  if (b == 0u) {
+    return 0.0;
+  }
+  float dist = length(p);
+  float t = float(b) / 65535.0 * WATER_REACH;
+  return t < dist ? max(p.y * (1.0 - t / dist), 0.0) : 0.0;
 }
 
 // A scroll of a whole number of repeats per wrap of waterTime, about one per `period` seconds

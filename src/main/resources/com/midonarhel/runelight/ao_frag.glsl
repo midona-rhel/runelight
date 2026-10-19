@@ -11,18 +11,23 @@
 #include "gi.glsl"
 #include "weather_ground_ao.glsl"
 #include "skylight_ao.glsl"
+#include "water_common.glsl"
 
 uniform float aoRadius;  // world units
 uniform int aoSamples;   // 0: only the geometry for the upsamples (AO off, fog on)
 uniform int shadowsEnabled;
 uniform vec3 casterDir;  // toward the light that casts shadows
-uniform sampler2D sceneMaterial;  // r emissive, g transmissive (frag.glsl)
+uniform sampler2D sceneMaterial;  // r emissive, g transmissive, b water (frag.glsl)
+uniform usampler2D waterAoSurface;  // the water surface pass's target (water_frag.glsl)
+uniform int waterAoOn;
 
 layout(location = 0) out vec4 FragAo;  // see halfres.glsl
 layout(location = 1) out vec4 FragShadow;  // r: lit share, 1 unshadowed; g snow, b wetness (weather_ground_ao.glsl);
                                            // a sky visibility (skylight_ao.glsl)
 // sine of the minimum angle above the surface for an occluder to count; higher ignores more of the shallow folds
 #define AO_ANGLE_BIAS 0.10
+// under water the AO fades out over this depth, and isn't worked out below it
+#define AO_WATER_DEPTH 128.0
 #define TAU 6.28318530718
 #define GOLDEN_ANGLE 2.39996322973
 
@@ -60,6 +65,14 @@ void main() {
   }
   if (aoSamples <= 0) {
     return;
+  }
+  // land terrain is never under water: the surface runs on under the banks, hidden (water.glsl)
+  float keep = 1.0;
+  if (waterAoOn == 1 && texelFetch(sceneMaterial, px, 0).b / cover >= 0.25) {
+    keep = 1.0 - smoothstep(0.0, AO_WATER_DEPTH, waterDepthUnder(waterAoSurface, px, p));
+    if (keep <= 0.0) {
+      return;
+    }
   }
 
   vec3 t = normalize(cross(n, abs(n.y) < 0.99 ? vec3(0.0, 1.0, 0.0) : vec3(1.0, 0.0, 0.0)));
@@ -110,5 +123,5 @@ void main() {
     occlusion += range * smoothstep(AO_ANGLE_BIAS, AO_ANGLE_BIAS + 0.35, elevation);
   }
 
-  FragAo = halfPackGeometry(1.0 - occlusion / float(aoSamples), nearOverDepth, n, gi.rgb, gi.a);
+  FragAo = halfPackGeometry(1.0 - occlusion * keep / float(aoSamples), nearOverDepth, n, gi.rgb, gi.a);
 }

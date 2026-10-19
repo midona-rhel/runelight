@@ -67,7 +67,7 @@ class Water
 	private final WaterSurface surface = new WaterSurface();
 	private final Frame frame = new Frame();
 
-	private int uniEnabled, uniTime, uniReflections, uniClarity, uniCaustics, uniDebug, uniPass, uniSlotType;
+	private int uniEnabled, uniTime, uniReflections, uniClarity, uniCaustics, uniDebug, uniPass, uniSlotType, uniAoOn;
 
 	// A tile's look (WaterSurface.build): its water type and the game's water texture, as a key; up to SLOTS of them a
 	// scene (water.glsl's WATER_SLOTS), whose types the composite gets as uniforms
@@ -107,6 +107,32 @@ class Water
 		glUniform1i(glGetUniformLocation(program, "waterSurface"), surfaceUnit);
 		glUniform1i(glGetUniformLocation(program, "waterShaded"), shadedUnit);
 		glUseProgram(0);
+	}
+
+	/**
+	 * Look up the AO program's water uniforms. Call with each newly compiled AO program.
+	 */
+	void locateAo(int program, int surfaceUnit)
+	{
+		uniAoOn = glGetUniformLocation(program, "waterAoOn");
+		glUseProgram(program);
+		glUniform1i(glGetUniformLocation(program, "waterAoSurface"), surfaceUnit);
+		glUseProgram(0);
+	}
+
+	/**
+	 * With the AO program in use, after {@link #drawSurface}: the surface bound so the AO fades out under the water.
+	 */
+	void bindAo(RuneLightConfig config, int surfaceUnit)
+	{
+		boolean enabled = enabled(config);
+		glUniform1i(uniAoOn, enabled ? 1 : 0);
+		if (enabled)
+		{
+			glActiveTexture(GL_TEXTURE0 + surfaceUnit);
+			glBindTexture(GL_TEXTURE_2D, surface.texture());
+			glActiveTexture(GL_TEXTURE0);
+		}
 	}
 
 	/**

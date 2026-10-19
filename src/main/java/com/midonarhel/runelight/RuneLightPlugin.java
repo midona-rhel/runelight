@@ -1106,6 +1106,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		globalIllumination.locateComposite(glCompositeProgram);
 		weatherGround.locate(glAoProgram, glCompositeProgram, WEATHER_OCCLUSION_UNIT, WEATHER_FIELD_UNIT);
 		skyOcclusion.locateAo(glAoProgram, SKY_OCCLUSION_UNIT);
+		water.locateAo(glAoProgram, WATER_DATA_UNIT);
 
 		int c = glCompositeProgram;
 		uniCompositeCameraPos = glGetUniformLocation(c, "cameraPos");
@@ -2621,8 +2622,9 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 				glUniform3fv(uniAoCasterDir, dayCycle.casterDir);
 				glUniform1i(uniAoSunIsCaster, dayCycle.sunIsCaster ? 1 : 0);
 				shadowMap.bindForSampling(SHADOW_RAW_UNIT, SHADOW_COMPARE_UNIT);
-				sceneTargets.bindMaterial(MATERIAL_UNIT);
 			}
+			sceneTargets.bindMaterial(MATERIAL_UNIT);
+			water.bindAo(config, WATER_DATA_UNIT);
 			WorldView giView = client.getTopLevelWorldView();
 			Scene giScene = giView != null ? giView.getScene() : null;
 			globalIllumination.bindAo(GI_PROBE_UNIT, frameCameraX, frameCameraY, frameCameraZ,
