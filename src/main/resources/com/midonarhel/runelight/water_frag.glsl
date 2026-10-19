@@ -50,7 +50,7 @@ layout(location = 0) out uvec4 WaterOut;  // 64 bits packed, see water.glsl's wa
 // each size's swells are WAVE_STRETCH times longer along their crests than across: ridges, not round bubbles
 #define WAVE_STRETCH 2.2
 // how far the crests pinch (see crestWaves): 0 round swells, about 0.5 the sharpest without folding over
-#define WAVE_CREST 0.35
+#define WAVE_CREST 0.6
 #define WAVE_STRENGTH 0.34
 // still water (no flow) runs its waves and its detail this many times slower, and drifts less with the wind
 #define STILL_SLOW 1.25
@@ -63,7 +63,7 @@ layout(location = 0) out uvec4 WaterOut;  // 64 bits packed, see water.glsl's wa
 // SWELL_REACH.x and dying on the beach; stronger and weaker along the shore every SWELL_PATCH world units or so
 #define SWELL_LENGTH 1.6
 #define SWELL_PERIOD 7.0
-#define SWELL_SLOPE 0.18
+#define SWELL_SLOPE 0.09
 #define SWELL_REACH vec2(1.2, 4.0)
 #define SWELL_PATCH 2400.0
 // the waves' size on still and on running water (as steep either way): more of them, denser, the smaller
@@ -154,7 +154,7 @@ vec2 crestWaves(vec2 q, vec2 dir, float footprint, float slow, float size) {
     vec3 n0 = waveNoise(p);
     vec2 pc = p + vec2(WAVE_CREST * (n0.z - 0.5), 0.0);
     vec3 n = waveNoise(pc);
-    n.x *= max(1.0 + WAVE_CREST * n0.x, 0.2);
+    n.x *= max(1.0 + WAVE_CREST * n0.x, 0.05);
     // its gradient back in world directions
     n.xy = d * n.x + c * (n.y / WAVE_STRETCH);
     // finer than a few pixels: faded, it only shimmers
@@ -298,7 +298,9 @@ void main() {
       vec2 g = vec2(waterPage1(waterData, c + vec2(0.5, 0.0)).r - waterPage1(waterData, c - vec2(0.5, 0.0)).r,
         waterPage1(waterData, c + vec2(0.0, 0.5)).r - waterPage1(waterData, c - vec2(0.0, 0.5)).r);
       float patch = textureLod(waterNoise, vec3(xz / SWELL_PATCH, 0.0), 8.0).b;
-      float phase = WATER_TAU * (shore / SWELL_LENGTH + waterCycle(SWELL_PERIOD));
+      // the crests wander off the shore distance's lines (tiles, so straight), never ruled straight along a bank
+      float phase = WATER_TAU * (shore / SWELL_LENGTH + waterCycle(SWELL_PERIOD)
+        + 0.9 * waveNoise(xz / (SWELL_LENGTH * WATER_TILE * 1.3)).z);
       slope += g / max(length(g), 1e-3) * (SWELL_SLOPE * cos(phase) * reach * (1.0 - flowing) * (0.4 + 1.2 * patch)
         * waterWaves);
     }
