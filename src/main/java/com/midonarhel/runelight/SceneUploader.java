@@ -62,7 +62,14 @@ class SceneUploader
 
 	private final RenderCallbackManager renderCallbackManager;
 	private int basex, basez, rid, level;
-	// static objects ending at the game's water level are taken down to the sunk bed (WaterMap.sink)
+	// Static objects standing in the water: the game's end them at its water level, which the bed was sunk below, so
+	// their faces with an edge within WATERLINE of their ground level (model y 0) are extruded down to the bed, along
+	// their own texture, when the object reaches at least STANDING_HEIGHT above it (lily pads and the like lie on it).
+	// Their see-through faces lying at that level are the game's ripples, which the water draws itself (contact).
+	private static final int WATERLINE = 3;
+	private static final int STANDING_HEIGHT = 24;
+	// how far the object's ground may be from the water's level (the game places it by the tile's height at its middle)
+	private static final int WATER_HEIGHT_SLACK = 16;
 	private boolean sinkWater;
 	private final boolean[] atWaterLevel = new boolean[ModelUploader.MAX_VERTEX_COUNT];
 	// faces of the last static model left out as the game's ripples; Zone.addAlphaModel has to skip them as well
@@ -463,6 +470,7 @@ class SceneUploader
 
 		byte[] transparencies = m.getFaceTransparencies();
 		int faceCount = m.getFaceCount();
+		z.sizeO += standingSize(m, transparencies);
 		if (transparencies != null)
 		{
 			for (int face = 0; face < faceCount; ++face)
@@ -480,6 +488,34 @@ class SceneUploader
 			return;
 		}
 		z.sizeO += faceCount;
+	}
+
+	// at most the triangles uploadStaticModel extrudes to the bed for a static object standing in the water
+	private static int standingSize(Model m, byte[] transparencies)
+	{
+		float[] vy = m.getVerticesY();
+		boolean standing = false;
+		for (int v = 0; v < m.getVerticesCount() && !standing; ++v)
+		{
+			standing = (int) vy[v] <= -STANDING_HEIGHT;
+		}
+		if (!standing)
+		{
+			return 0;
+		}
+		int[] i1 = m.getFaceIndices1(), i2 = m.getFaceIndices2(), i3 = m.getFaceIndices3();
+		int n = 0;
+		for (int f = 0; f < m.getFaceCount(); ++f)
+		{
+			if (transparencies != null && transparencies[f] != 0)
+			{
+				continue;
+			}
+			int at = (Math.abs((int) vy[i1[f]]) <= WATERLINE ? 1 : 0) + (Math.abs((int) vy[i2[f]]) <= WATERLINE ? 1 : 0)
+				+ (Math.abs((int) vy[i3[f]]) <= WATERLINE ? 1 : 0);
+			n += at == 2 ? 2 : 0;
+		}
+		return n;
 	}
 
 	private static final class SwayObject
@@ -1151,13 +1187,12 @@ class SceneUploader
 			}
 		}
 
-		// the model's top (y down), for which things in the water stand on the bed (WaterMap.sink)
-		int top = Integer.MAX_VALUE;
-		if (sinkWater)
+		boolean standing = false;
+		if (sinkWater && !sway)
 		{
-			for (int v = 0; v < vertexCount; ++v)
+			for (int v = 0; v < vertexCount && !standing; ++v)
 			{
-				top = Math.min(top, (int) vertexY[v] + y);
+				standing = (int) vertexY[v] <= -STANDING_HEIGHT;
 			}
 		}
 		for (int v = 0; v < vertexCount; ++v)
@@ -1178,8 +1213,8 @@ class SceneUploader
 			vz += z;
 
 			modelLocalXI[v] = vx;
-			atWaterLevel[v] = sinkWater && water.atSurface(vx + basex, vy, vz + basez);
-			modelLocalYI[v] = atWaterLevel[v] ? water.sink(vx + basex, vy, vz + basez, top) : vy;
+			atWaterLevel[v] = sinkWater && Math.abs((int) vertexY[v]) <= WATERLINE && water.atWaterLevel(vx + basex, vy, vz + basez, WATER_HEIGHT_SLACK);
+			modelLocalYI[v] = vy;
 			modelLocalZI[v] = vz;
 		}
 
@@ -1281,8 +1316,73 @@ class SceneUploader
 			buf.put2222(texture, su2, sv2, n3);
 
 			len += 3;
+
+			if (standing && !alpha)
+			{
+				// the edge at the waterline, in the face's order
+				int e = atWaterLevel[triangleA] ? (atWaterLevel[triangleB] ? 0 : atWaterLevel[triangleC] ? 2 : -1)
+					: atWaterLevel[triangleB] && atWaterLevel[triangleC] ? 1 : -1;
+				if (e >= 0 && !(atWaterLevel[triangleA] && atWaterLevel[triangleB] && atWaterLevel[triangleC]))
+				{
+					fx[0] = vx1; fy[0] = vy1; fz[0] = vz1; fc[0] = color1; fn[0] = n1; fu[0] = su0; fv[0] = sv0;
+					fx[1] = vx2; fy[1] = vy2; fz[1] = vz2; fc[1] = color2; fn[1] = n2; fu[1] = su1; fv[1] = sv1;
+					fx[2] = vx3; fy[2] = vy3; fz[2] = vz3; fc[2] = color3; fn[2] = n3; fu[2] = su2; fv[2] = sv2;
+					len += extrude(e, (e + 1) % 3, texture, alphaBias, vb);
+				}
+			}
 		}
 
 		return len;
 	}
+
+	private final int[] fx = new int[3], fy = new int[3], fz = new int[3], fc = new int[3], fn = new int[3];
+	private final int[] fu = new int[3], fv = new int[3];
+
+	/**
+	 * Extrudes the edge a -> b of the face in fx..fv down to the bed under it: two triangles facing as the face does,
+	 * their texture carried on over the face's plane.
+	 */
+	private int extrude(int a, int b, int texture, int alphaBias, GpuIntBuffer buf)
+	{
+		int ba = water.bedHeight(fx[a] + basex, fz[a] + basez);
+		int bb = water.bedHeight(fx[b] + basex, fz[b] + basez);
+		if (ba <= fy[a] + 1 && bb <= fy[b] + 1)
+		{
+			return 0;
+		}
+		ba = Math.max(ba, fy[a]);
+		bb = Math.max(bb, fy[b]);
+		// the face's texture mapping, affine over its plane: the extruded corners' projected onto it
+		float e1x = fx[1] - fx[0], e1y = fy[1] - fy[0], e1z = fz[1] - fz[0];
+		float e2x = fx[2] - fx[0], e2y = fy[2] - fy[0], e2z = fz[2] - fz[0];
+		float d00 = e1x * e1x + e1y * e1y + e1z * e1z, d01 = e1x * e2x + e1y * e2y + e1z * e2z;
+		float d11 = e2x * e2x + e2y * e2y + e2z * e2z, den = d00 * d11 - d01 * d01;
+		int[] uv = extrudedUv;
+		for (int k = 0; k < 2; ++k)
+		{
+			int c = k == 0 ? a : b;
+			float wx = fx[c] - fx[0], wy = (k == 0 ? ba : bb) - fy[0], wz = fz[c] - fz[0];
+			float d20 = wx * e1x + wy * e1y + wz * e1z, d21 = wx * e2x + wy * e2y + wz * e2z;
+			float s = den != 0 ? (d11 * d20 - d01 * d21) / den : 0, t = den != 0 ? (d00 * d21 - d01 * d20) / den : 0;
+			uv[k * 2] = Math.round(fu[0] + s * (fu[1] - fu[0]) + t * (fu[2] - fu[0]));
+			uv[k * 2 + 1] = Math.round(fv[0] + s * (fv[1] - fv[0]) + t * (fv[2] - fv[0]));
+		}
+		// (b, a, a') and (b, a', b'): below the edge, so the order is reversed to face the same way
+		buf.put22224(fx[b], fy[b], fz[b], 0, alphaBias | fc[b]);
+		buf.put2222(texture, fu[b], fv[b], fn[b]);
+		buf.put22224(fx[a], fy[a], fz[a], 0, alphaBias | fc[a]);
+		buf.put2222(texture, fu[a], fv[a], fn[a]);
+		buf.put22224(fx[a], ba, fz[a], 0, alphaBias | fc[a]);
+		buf.put2222(texture, uv[0], uv[1], fn[a]);
+
+		buf.put22224(fx[b], fy[b], fz[b], 0, alphaBias | fc[b]);
+		buf.put2222(texture, fu[b], fv[b], fn[b]);
+		buf.put22224(fx[a], ba, fz[a], 0, alphaBias | fc[a]);
+		buf.put2222(texture, uv[0], uv[1], fn[a]);
+		buf.put22224(fx[b], bb, fz[b], 0, alphaBias | fc[b]);
+		buf.put2222(texture, uv[2], uv[3], fn[b]);
+		return 6;
+	}
+
+	private final int[] extrudedUv = new int[4];
 }

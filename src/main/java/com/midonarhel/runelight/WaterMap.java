@@ -54,6 +54,8 @@ final class WaterMap
 	private static final int[] DEPTH = {82, 165, 258, 335, 385, 412, 451, 506};
 	// at least this deep in the middle of a water tile, so a stream between two banks still holds water
 	static final int MIN_DEPTH = 56;
+	// tiles around a water tile whose murk and fresh or swamp water it takes the most common of
+	private static final int CLASS_REACH = 16;
 
 	interface Areas
 	{
@@ -75,6 +77,8 @@ final class WaterMap
 	private final float[] cornerFlowZ = new float[CORNERS * CORNERS];
 	// per level, the terrain heights with the bed lowered, for bed normals
 	private final int[][][] bedHeights = new int[Constants.MAX_Z][][];
+	// the scene's own terrain heights
+	private int[][][] tileHeights;
 	final WaterBodies bodies = new WaterBodies(SIZE);
 	private int baseX, baseY;
 
@@ -93,16 +97,11 @@ final class WaterMap
 	static final int CONTACT_REACH = 3;
 	// world units (one a few millimetres) above the surface that a model may end and still count as in the water
 	private static final float CONTACT_TOLERANCE = 2f;
-	// world units from the game's water level a static object's vertex may end and still be taken down to the bed
-	private static final int SINK_TOLERANCE = 3;
-	private static final int SINK_MIN_HEIGHT = 24;
 	// at a corner right by one the flow keeps 1 - CONTACT_SLOW of itself and churns at least CONTACT_TURB (rougher
 	// waves, short of the rapids' foam)
 	private static final float CONTACT_SLOW = 0.6f;
 	private static final float CONTACT_TURB = 0.25f;
 	byte[] contact;
-	// each water tile's surface height (its lowest corner, as the texture takes it; y down), NaN off the water
-	private float[] surfaceLevel;
 
 	/**
 	 * Water type for a vanilla texture id, before the area and body decide: FRESH, SWAMP or a sea type, or NONE.
@@ -167,6 +166,7 @@ final class WaterMap
 	{
 		Tile[][][] tiles = scene.getExtendedTiles();
 		int[][][] heights = scene.getTileHeights();
+		tileHeights = heights;
 		baseX = scene.getBaseX() - RuneLightPlugin.SCENE_OFFSET;
 		baseY = scene.getBaseY() - RuneLightPlugin.SCENE_OFFSET;
 
@@ -267,28 +267,41 @@ final class WaterMap
 		depthLevels(landCorner, CORNERS, MAX_LEVEL, depthLevel);
 		b.solve();
 
-		// a body takes the murk most of its tiles have, so it doesn't change color halfway across
-		int[][] votes = new int[b.bodies][3];
-		// and fresh water or swamp water by what most of its tiles are drawn with: a river with a few tiles of the
-		// swamp texture would show them as dark squares
-		int[][] kinds = new int[b.bodies][2];
-		for (int i = 0; i < kind.length; ++i)
+		// A tile takes the murk, and fresh or swamp water, that most of its body's tiles within CLASS_REACH tiles have:
+		// a river with a few tiles of the swamp texture doesn't show them as dark squares, and as it is counted over
+		// the world around the tile rather than the whole body, the river doesn't turn to swamp just because the
+		// loaded map takes in more of the swamp it runs into.
+		int[] bodyMurk = new int[kind.length];
+		int[] bodyKind = new int[kind.length];
+		int[] v = new int[3];
+		for (int y = 0; y < SIZE; ++y)
 		{
-			if (b.body[i] >= 0)
+			for (int x = 0; x < SIZE; ++x)
 			{
-				votes[b.body[i]][murk[i]]++;
-				if (kind[i] == FRESH || kind[i] == SWAMP)
+				int i = y * SIZE + x, body = b.body[i];
+				if (body < 0)
 				{
-					kinds[b.body[i]][kind[i] == SWAMP ? 1 : 0]++;
+					continue;
 				}
-			}
-		}
-		for (int i = 0; i < kind.length; ++i)
-		{
-			if (b.body[i] >= 0 && (kind[i] == FRESH || kind[i] == SWAMP))
-			{
-				int[] k = kinds[b.body[i]];
-				kind[i] = k[1] > k[0] ? SWAMP : FRESH;
+				v[0] = v[1] = v[2] = 0;
+				int fresh = 0, swamp = 0;
+				for (int ny = Math.max(0, y - CLASS_REACH); ny <= Math.min(SIZE - 1, y + CLASS_REACH); ++ny)
+				{
+					for (int nx = Math.max(0, x - CLASS_REACH); nx <= Math.min(SIZE - 1, x + CLASS_REACH); ++nx)
+					{
+						int n = ny * SIZE + nx;
+						if (b.body[n] != body)
+						{
+							continue;
+						}
+						v[murk[n]]++;
+						fresh += kind[n] == FRESH ? 1 : 0;
+						swamp += kind[n] == SWAMP ? 1 : 0;
+					}
+				}
+				bodyMurk[i] = v[MURKY_CAVE] > v[CLEAR] && v[MURKY_CAVE] >= v[MURKY_SWAMP] ? MURKY_CAVE
+					: v[MURKY_SWAMP] > v[CLEAR] ? MURKY_SWAMP : CLEAR;
+				bodyKind[i] = kind[i] == FRESH || kind[i] == SWAMP ? (swamp > fresh ? SWAMP : FRESH) : kind[i];
 			}
 		}
 		for (int i = 0; i < kind.length; ++i)
@@ -298,10 +311,8 @@ final class WaterMap
 			{
 				continue;
 			}
-			int[] v = votes[body];
-			int bodyMurk = v[MURKY_CAVE] > v[CLEAR] && v[MURKY_CAVE] >= v[MURKY_SWAMP] ? MURKY_CAVE
-				: v[MURKY_SWAMP] > v[CLEAR] ? MURKY_SWAMP : CLEAR;
-			type[i] = (byte) finalType(kind[i], bodyMurk, b.bodyClass[body]);
+			kind[i] = bodyKind[i];
+			type[i] = (byte) finalType(kind[i], bodyMurk[i], b.bodyClass[body]);
 			bedHsl[i] = (short) bedColor(kind[i], murk[i]);
 		}
 
@@ -717,7 +728,6 @@ final class WaterMap
 		WaterBodies b = bodies;
 		// each water tile's surface: its lowest corner (y down), as buildTexture takes it
 		float[] surfaceY = new float[SIZE * SIZE];
-		surfaceLevel = surfaceY;
 		java.util.Arrays.fill(surfaceY, Float.NaN);
 		for (int i = 0; i < surfaceY.length; ++i)
 		{
@@ -802,46 +812,34 @@ final class WaterMap
 	}
 
 	/**
-	 * Whether scene local (x, height, z) is on a water tile within SINK_TOLERANCE of the game's water level there.
+	 * Whether scene local (x, height, z) is over a water tile, within `tolerance` of the game's water level there (not,
+	 * say, on a bridge over it).
 	 */
-	boolean atSurface(int x, int height, int z)
+	boolean atWaterLevel(int x, int height, int z, int tolerance)
 	{
-		int i = tileAt(x, z);
-		return i >= 0 && !Float.isNaN(surfaceLevel[i]) && Math.abs(height - surfaceLevel[i]) <= SINK_TOLERANCE;
+		int off = RuneLightPlugin.SCENE_OFFSET << 7;
+		int ex = x + off, ez = z + off, tx = ex >> 7, tz = ez >> 7;
+		if (tx < 0 || tz < 0 || tx >= SIZE || tz >= SIZE || level[tz * SIZE + tx] < 0)
+		{
+			return false;
+		}
+		int[][] h = tileHeights[level[tz * SIZE + tx]];
+		float fx = (ex & 127) / 128f, fz = (ez & 127) / 128f;
+		float s = (h[tx][tz] * (1 - fx) + h[tx + 1][tz] * fx) * (1 - fz) + (h[tx][tz + 1] * (1 - fx) + h[tx + 1][tz + 1] * fx) * fz;
+		return Math.abs(height - s) <= tolerance;
 	}
 
 	/**
-	 * Where a vertex of a static object at the game's water level (atSurface) belongs: the object ends there, and the
-	 * bed was sunk below it; if the object reaches at least SINK_MIN_HEIGHT above the water (top: its highest point, y
-	 * down; lily pads and the like lie on it) the vertex goes down to the bed under it, so the object stands on the bed
-	 * rather than floats.
+	 * The sunk bed's height (y down) at scene local (x, z) over a water tile (atWaterLevel).
 	 */
-	int sink(int x, int height, int z, int top)
+	int bedHeight(int x, int z)
 	{
-		int i = tileAt(x, z);
-		if (i < 0 || top > surfaceLevel[i] - SINK_MIN_HEIGHT)
-		{
-			return height;
-		}
 		int off = RuneLightPlugin.SCENE_OFFSET << 7;
 		int ex = x + off, ez = z + off, tx = ex >> 7, tz = ez >> 7;
-		int[][] bed = bedHeights[level[i]];
+		int[][] bed = bedHeights[level[tz * SIZE + tx]];
 		float fx = (ex & 127) / 128f, fz = (ez & 127) / 128f;
-		float b = (bed[tx][tz] * (1 - fx) + bed[tx + 1][tz] * fx) * (1 - fz)
-			+ (bed[tx][tz + 1] * (1 - fx) + bed[tx + 1][tz + 1] * fx) * fz;
-		return Math.max(height, Math.round(b));
-	}
-
-	// the tile index of scene local (x, z), or -1 off the map or with no water found
-	private int tileAt(int x, int z)
-	{
-		if (surfaceLevel == null)
-		{
-			return -1;
-		}
-		int off = RuneLightPlugin.SCENE_OFFSET << 7;
-		int tx = x + off >> 7, tz = z + off >> 7;
-		return tx < 0 || tz < 0 || tx >= SIZE || tz >= SIZE ? -1 : tz * SIZE + tx;
+		return Math.round((bed[tx][tz] * (1 - fx) + bed[tx + 1][tz] * fx) * (1 - fz)
+			+ (bed[tx][tz + 1] * (1 - fx) + bed[tx + 1][tz + 1] * fx) * fz);
 	}
 
 	private boolean nearWater(int x, int y)
