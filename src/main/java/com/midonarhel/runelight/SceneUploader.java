@@ -65,6 +65,8 @@ class SceneUploader
 	// static objects ending at the game's water level are taken down to the sunk bed (WaterMap.sink)
 	private boolean sinkWater;
 	private final boolean[] atWaterLevel = new boolean[ModelUploader.MAX_VERTEX_COUNT];
+	// faces of the last static model left out as the game's ripples; Zone.addAlphaModel has to skip them as well
+	private final boolean[] rippleFace = new boolean[ModelUploader.MAX_FACE_COUNT];
 	private final GroundBlender groundBlender = new GroundBlender();
 	private final float[] slope = new float[2];
 	private final float[] tileSlopes = new float[8];
@@ -542,7 +544,7 @@ class SceneUploader
 			zone.addAlphaModel(zone.glVaoA, model, pos, endpos,
 				x - basex, y, z - basez,
 				lx, lz, ux, uz,
-				rid, level, id);
+				rid, level, id, rippleFace);
 		}
 	}
 
@@ -1184,6 +1186,7 @@ class SceneUploader
 		int len = 0;
 		for (int face = 0; face < triangleCount; ++face)
 		{
+			rippleFace[face] = false;
 			int color1 = color1s[face];
 			int color2 = color2s[face];
 			int color3 = color3s[face];
@@ -1203,6 +1206,7 @@ class SceneUploader
 			// draws its own, WaterMap.contact)
 			if (alpha && atWaterLevel[triangleA] && atWaterLevel[triangleB] && atWaterLevel[triangleC])
 			{
+				rippleFace[face] = true;
 				continue;
 			}
 

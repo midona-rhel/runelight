@@ -432,7 +432,7 @@ class Zone
 
 	static final Queue<AlphaModel> modelCache = new ArrayDeque<>();
 
-	void addAlphaModel(int vao, Model model, int startpos, int endpos, int x, int y, int z, int lx, int lz, int ux, int uz, int rid, int level, int id)
+	void addAlphaModel(int vao, Model model, int startpos, int endpos, int x, int y, int z, int lx, int lz, int ux, int uz, int rid, int level, int id, boolean[] skipped)
 	{
 		AlphaModel m = new AlphaModel();
 		m.id = id;
@@ -471,7 +471,7 @@ class Zone
 
 		for (int f = 0; f < faceCount; ++f)
 		{
-			if (color3[f] == -2 || transparencies[f] == 0)
+			if (color3[f] == -2 || transparencies[f] == 0 || skipped[f])
 			{
 				continue;
 			}
