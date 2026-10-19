@@ -42,14 +42,14 @@ layout(location = 0) out uvec4 WaterOut;  // 64 bits packed, see water.glsl's wa
 #define WAVE_DIR vec2(0.6, 0.8)
 #define WAVE_TURN 0.3
 #define WAVE_SCALE vec2(700.0, 320.0)
-#define WAVE_PERIOD vec2(60.0, 34.0)
+#define WAVE_PERIOD vec2(24.0, 14.0)
 #define WAVE_MIX vec2(0.65, 0.35)
 #define WAVE_STRENGTH 0.13
 // still water (no flow) runs its waves and its detail this many times slower, and drifts less with the wind
-#define STILL_SLOW 1.75
+#define STILL_SLOW 1.25
 #define STILL_DRIFT 0.4
 // the sea's still water less so
-#define OCEAN_STILL_SLOW 1.5
+#define OCEAN_STILL_SLOW 1.0
 #define OCEAN_STILL_DRIFT 1.0
 // The sea's swell at the shore: long low waves rolling in toward it, their crests along it, SWELL_LENGTH tiles apart
 // and SWELL_PERIOD seconds each, at most SWELL_SLOPE steep, from SWELL_REACH.y tiles out strengthening to
@@ -71,10 +71,10 @@ layout(location = 0) out uvec4 WaterOut;  // 64 bits packed, see water.glsl's wa
 #define SHORE_CALM 3.0
 // The surface's fine detail: 117 HD's normal map (layer 3 of waterNoise) at this strength, and its seconds per repeat
 // of each size
-#define NORMAL_STRENGTH 0.05
-#define NORMAL_PERIOD vec3(42.0, 36.0, 32.0)
+#define NORMAL_STRENGTH 0.08
+#define NORMAL_PERIOD vec3(16.0, 14.0, 12.0)
 // world units per size step: 117 HD's 128 (a tile) looked too fine at the game's camera distances
-#define NORMAL_TILE 256.0
+#define NORMAL_TILE 128.0
 // the detail is drawn out along the waves' crests this many times, so it reads as streaks on them rather than noise
 #define NORMAL_STREAK 1.8
 // the foam on rapids: the large ripple cells' rims (layer 2), world units per repeat

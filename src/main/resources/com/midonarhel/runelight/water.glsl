@@ -45,7 +45,7 @@ layout(location = 1) out uvec4 WaterShadedOut;
 // face catches a different part of the sky, the bright horizon toward the camera, the darker zenith away, which is
 // what shows the waves from above (the waves themselves are too gentle to move the reflection much). Cloud tops in
 // the sky cache no brighter than SKY_CLOUD_MAX times the sky there.
-#define SKY_TILT 3.5
+#define SKY_TILT 5.0
 #define CLOUD_TILT 1.0
 // how fast the reflected sky goes from the horizon's color to the zenith's as the reflection rises (an exponent on
 // the elevation): low keeps the horizon to a narrow bright band, so the wave faces that catch it stand out
