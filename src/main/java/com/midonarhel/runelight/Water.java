@@ -36,8 +36,8 @@ class Water
 	// how far the waves drift with the wind, world units per second (calm, full wind), before the shaders' per-type
 	// and config speed
 	private static final double DRIFT_CALM = 5, DRIFT_WIND = 18;
-	// the drift wraps at a whole number of every repeat it is used with in the shaders (the normal map's 768, 1280 and
-	// 1792, least common multiple 26880, at any per-type speed of 0.35 or 0.45 and any whole config percent)
+	// the drift wraps at a whole number of the normal map's repeats (768, 1280 and 1792, least common multiple 26880,
+	// at any per-type speed of 0.35 or 0.45 and any whole config percent), after weeks of play at the wind's speed
 	private static final double DRIFT_WRAP = 26880.0 * 100 * 20;
 	// seconds over which the water follows a change in the wind's strength: it jumps under roofs and in gusts
 	private static final double STRENGTH_EASE = 1.5;
@@ -382,12 +382,17 @@ class Water
 		return tex;
 	}
 
+	// how far the wave layer's waves turn from its direction (+x) either way, radians: wave trains rather than an
+	// even noise
+	static final float WAVE_SPREAD = 0.55f;
+
 	/**
 	 * Tiling wave noise, RGBA: rg the slope of a wave height field (0.5 is flat, scaled so slopes of SLOPE_RANGE
 	 * standard deviations reach 0 or 1), b that height, a an independent finer height (sparkle on crests).
 	 *
-	 * The heights are sums of sine waves with whole numbers of cycles across the texture, so they tile, in random
-	 * directions with amplitude falling with frequency like wind waves. Slopes come out exactly from the same sums,
+	 * The heights are sums of sine waves with whole numbers of cycles across the texture, so they tile, running
+	 * within WAVE_SPREAD of +x with amplitude falling with frequency like wind waves (the water shader turns them to
+	 * its wave direction). Slopes come out exactly from the same sums,
 	 * so the normals are smooth at every scale and the mipmaps fade them evenly into calm water.
 	 */
 	static byte[] noise(int size, long seed)
@@ -395,8 +400,8 @@ class Water
 		Random rng = new Random(seed);
 		int n = size * size;
 		float[] h = new float[n], sx = new float[n], sy = new float[n], fine = new float[n];
-		waves(rng, size, 56, 2, 22, 1.7f, h, sx, sy);
-		waves(rng, size, 40, 6, 40, 1.4f, fine, null, null);
+		waves(rng, size, 56, 2, 22, 1.7f, WAVE_SPREAD, h, sx, sy);
+		waves(rng, size, 40, 6, 40, 1.4f, (float) Math.PI, fine, null, null);
 
 		// slopes scaled by their spread rather than the rare steepest one, so the texture's range is well used
 		double sum = 0;
@@ -595,14 +600,16 @@ class Water
 	 * Add {@code count} sine waves of kMin to kMax cycles across the texture, amplitude falling as k^-falloff, to h, and
 	 * their x and y slopes (per texel) to sx and sy when given.
 	 */
-	static void waves(Random rng, int size, int count, int kMin, int kMax, float falloff, float[] h, float[] sx, float[] sy)
+	static void waves(Random rng, int size, int count, int kMin, int kMax, float falloff, float spread, float[] h, float[] sx,
+		float[] sy)
 	{
 		float[] sinX = new float[size], cosX = new float[size], sinY = new float[size], cosY = new float[size];
 		for (int w = 0; w < count; ++w)
 		{
-			// log-uniform frequency, uniform direction, snapped to whole cycles so it tiles
+			// log-uniform frequency, a direction within spread of +x either way (pi: any), snapped to whole cycles so
+			// it tiles
 			double k = kMin * Math.pow((double) kMax / kMin, rng.nextDouble());
-			double angle = rng.nextDouble() * Math.PI * 2;
+			double angle = (rng.nextDouble() * 2 - 1) * spread;
 			int kx = (int) Math.round(k * Math.cos(angle)), ky = (int) Math.round(k * Math.sin(angle));
 			if (kx == 0 && ky == 0)
 			{
