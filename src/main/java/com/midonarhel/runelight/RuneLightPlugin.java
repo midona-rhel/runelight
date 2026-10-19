@@ -336,8 +336,9 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 	private long frameGameMillis;
 	// two units: the occlusion map's raw and compare views
 	private static final int WEATHER_OCCLUSION_UNIT = RuneLightPlugin.COMPOSITE_TEXTURE_UNIT + 12;
-	// the water data and ripple noise: 16 and 17, past the composite's other units (the per-stage limit of 16 counts
-	// samplers a program uses, not unit numbers; units go up to the combined limit, 80 on macOS)
+	// the water: data and noise for its surface pass, then the surface and its half resolution shading for the
+	// composite; 16 and 17, past the composite's other units (the per-stage limit of 16 counts samplers a program
+	// uses, not unit numbers; units go up to the combined limit, 80 on macOS)
 	private static final int WATER_DATA_UNIT = RuneLightPlugin.COMPOSITE_TEXTURE_UNIT + 14;
 	private static final int WATER_NOISE_UNIT = RuneLightPlugin.COMPOSITE_TEXTURE_UNIT + 15;
 	// two units: the weather field (WeatherField) and its ground, for the fog and the weather passes
@@ -2674,7 +2675,11 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		bindClouds();
 		sceneTargets.bindMaterial(MATERIAL_UNIT);
 		compositeMaterials.set(config);
-		water.bind(config, WATER_DATA_UNIT, WATER_NOISE_UNIT);
+		water.bind(config, WATER_DATA_UNIT);
+		// the water's half resolution shading, with everything bound for the composite (water.glsl)
+		gpuTimer.begin(GpuTimer.WATER);
+		water.shadeHalf(config, sceneTargets.getWidth(), sceneTargets.getHeight(), WATER_NOISE_UNIT);
+		gpuTimer.end();
 
 		glBindFramebuffer(GL_FRAMEBUFFER, awtContext.getFramebuffer(false));
 		glViewport(0, 0, width, height);

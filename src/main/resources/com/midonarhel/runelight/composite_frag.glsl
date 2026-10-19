@@ -82,7 +82,7 @@ uniform usamplerBuffer clusterData;  // per cluster: count, then light indices
 #include "rooms.glsl"
 #include "light_occlusion.glsl"
 
-out vec4 FragColor;
+layout(location = 0) out vec4 FragColor;
 
 // ---------------------------------------------------------------------------------------------------------------
 // Ambient occlusion and shadows: 4x4 depth- and normal-aware upsample of the half resolution pass, which also
@@ -273,6 +273,11 @@ float borrowDepth(ivec2 px) {
 }
 
 void main() {
+  // the half resolution water pass (water.glsl) shares this program and everything bound for it
+  if (waterPass == 1) {
+    waterShadeHalf(ivec2(gl_FragCoord.xy));
+    return;
+  }
   ivec2 px = ivec2(gl_FragCoord.xy);
   vec4 color = texelFetch(sceneColor, px, 0);
   float d = texelFetch(sceneDepth, px, 0).r;
@@ -431,7 +436,7 @@ void main() {
 
   vec3 lit = shade(color.rgb, light);
   lit = weatherWetSheen(lit, p, n, wet, ao, skyHorizon(sunAltitude));
-  lit = waterOver(px, p, n, color.rgb, light, indirect, shadow, lit, material.b, fogColor);
+  lit = waterOver(px, p, color.rgb, shadow, lit, material.b);
   lit = mix(lit, fogColor, max(fogAmount(p + cameraPos), envFogAmount(p)));
   // the world fades into the sky behind it toward the draw distance, so where the culling stops never shows
   float edge = inside ? edgeFadeAmount(p + cameraPos) : 0.0;

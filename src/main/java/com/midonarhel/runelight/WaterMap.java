@@ -56,8 +56,9 @@ final class WaterMap
 		int murk(int sceneX, int sceneY, int plane);
 	}
 
-	// per tile: final water type, render level of the water tile (-1 none), the bed color
+	// per tile: final water type, render level of the water tile (-1 none), the game's water texture, the bed color
 	final byte[] type = new byte[SIZE * SIZE];
+	final short[] waterTexture = new short[SIZE * SIZE];
 	final byte[] level = new byte[SIZE * SIZE];
 	private final short[] bedHsl = new short[SIZE * SIZE];
 	// per corner: depth level (0 at the shore)
@@ -210,6 +211,7 @@ final class WaterMap
 
 				int lvl = water.getRenderLevel();
 				level[i] = (byte) lvl;
+				waterTexture[i] = (short) tileTexture(water);
 				kind[i] = k;
 				b.water[i] = true;
 				b.sea[i] = isSea(water);
@@ -360,6 +362,28 @@ final class WaterMap
 			}
 		}
 		return NONE;
+	}
+
+	/** The tile's water texture (its first, on a shore tile), or -1. */
+	private static int tileTexture(Tile t)
+	{
+		SceneTilePaint paint = t.getSceneTilePaint();
+		if (paint != null)
+		{
+			return isWaterTexture(paint.getTexture()) ? paint.getTexture() : -1;
+		}
+		SceneTileModel model = t.getSceneTileModel();
+		if (model != null && model.getTriangleTextureId() != null)
+		{
+			for (int tex : model.getTriangleTextureId())
+			{
+				if (isWaterTexture(tex))
+				{
+					return tex;
+				}
+			}
+		}
+		return -1;
 	}
 
 	private static boolean isSea(Tile t)

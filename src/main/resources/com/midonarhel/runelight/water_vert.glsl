@@ -7,7 +7,7 @@
 
 #include "water_common.glsl"
 
-layout(location = 0) in uvec4 tile;  // extended tile x, y, water type, unused
+layout(location = 0) in uvec4 tile;  // extended tile x, y, water type, look slot (Water.java)
 
 uniform mat4 waterViewProj;   // camera-relative world -> clip
 uniform vec3 waterCamera;     // camera position, world
@@ -20,6 +20,7 @@ out vec2 vFlow;       // world units per second
 out vec4 vData;       // shore distance (tiles), wave energy, water share, turbulence
 out float vDepth;     // how deep the bed lies here by the distance to the shore, smooth across tiles
 flat out int vType;
+flat out int vSlot;
 
 // WaterMap.DEPTH: bed depth per tile from the shore; a water tile is at least WaterMap.MIN_DEPTH deep in its middle
 const float BED_DEPTH[9] = float[](0.0, 82.0, 165.0, 258.0, 335.0, 385.0, 412.0, 451.0, 506.0);
@@ -52,5 +53,6 @@ void main() {
   vData = p1;
   vDepth = nominalDepth(p1.r);
   vType = type;
+  vSlot = int(tile.w);
   gl_Position = waterViewProj * vec4(vRel, 1.0);
 }

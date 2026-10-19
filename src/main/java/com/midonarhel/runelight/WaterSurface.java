@@ -29,7 +29,7 @@ class WaterSurface
 	static final int CHUNK = 8;
 
 	/**
-	 * The instances of one scene: 4 bytes per tile (extended x, y, water type, 0), by chunk.
+	 * The instances of one scene: 4 bytes per tile (extended x, y, water type, look slot), by chunk.
 	 */
 	static final class Mesh
 	{
@@ -38,16 +38,46 @@ class WaterSurface
 		// per chunk with tiles: its first instance, instance count, and its bounds in extended tiles
 		int[] chunkStart, chunkCount, chunkX, chunkY;
 		int chunks;
+		// the looks (Water.slotKey) the tiles use, by slot; more than Water.SLOTS share the last
+		final int[] slotKeys = new int[Water.SLOTS];
+		int slots;
+
+		int slot(int key)
+		{
+			for (int i = 0; i < slots; ++i)
+			{
+				if (slotKeys[i] == key)
+				{
+					return i;
+				}
+			}
+			if (slots < slotKeys.length)
+			{
+				slotKeys[slots] = key;
+				return slots++;
+			}
+			// out of slots: the first with the same type
+			for (int i = 0; i < slots; ++i)
+			{
+				if (Water.slotType(slotKeys[i]) == Water.slotType(key))
+				{
+					return i;
+				}
+			}
+			return slots - 1;
+		}
 	}
 
 	private int program;
-	private int uniViewProj, uniCamera, uniFocus, uniGrid, uniTime, uniWind, uniDrift, uniWaves, uniSpeed, 
+	private int uniViewProj, uniCamera, uniFocus, uniGrid, uniTime, uniWind, uniDrift, uniWaves, uniSpeed,
 		uniRain, uniOutdoors, uniDebug, uniSkyDepth, uniCausticsOn, uniCasterDir, uniInvViewProj, uniViewport,
 		uniZeroToOne;
 
 	private int vao, vboTiles, ebo;
 	private Mesh mesh;
 	private int fbo, texSurface, rboDepth, width, height;
+	// the composite's half resolution water pass (water.glsl's waterShadeHalf): RGBA32UI, its fragment output 1
+	private int shadedFbo, texShaded, shadedWidth, shadedHeight;
 
 	private static final int[] CLEAR = {0, 0, 0, 0};
 	private static final float[] FAR_DEPTH = {0};
@@ -62,31 +92,24 @@ class WaterSurface
 			return null;
 		}
 		final int size = WaterMap.SIZE;
-		// a tile's water type, or for the land around the water a neighbor's (4-neighbors first); 0 none
-		byte[] type = new byte[size * size];
-		for (int y = 0; y < size; ++y)
+		// a tile's look: its water type and the game's water texture (Water.slotKey), or for the land around the
+		// water a neighbor's (4-neighbors first); -1 none
+		int[] key = new int[size * size];
+		java.util.Arrays.fill(key, -1);
+		for (int i = 0; i < key.length; ++i)
 		{
-			for (int x = 0; x < size; ++x)
+			if (map.level[i] >= 0)
 			{
-				int i = y * size + x;
-				if (map.level[i] >= 0)
-				{
-					type[i] = (byte) Math.max(WaterMap.FRESH, map.type[i]);
-				}
+				key[i] = Water.slotKey(map.waterTexture[i], Math.max(WaterMap.FRESH, map.type[i]));
 			}
 		}
-		byte[] out = new byte[size * size];
+		int[] out = new int[size * size];
 		for (int y = 0; y < size; ++y)
 		{
 			for (int x = 0; x < size; ++x)
 			{
 				int i = y * size + x;
-				if (type[i] != 0)
-				{
-					out[i] = type[i];
-					continue;
-				}
-				out[i] = neighborType(type, size, x, y);
+				out[i] = key[i] >= 0 ? key[i] : neighborKey(key, size, x, y);
 			}
 		}
 
@@ -106,15 +129,16 @@ class WaterSurface
 				{
 					for (int x = cx * CHUNK; x < Math.min(size, cx * CHUNK + CHUNK); ++x)
 					{
-						byte t = out[y * size + x];
-						if (t == 0)
+						int k = out[y * size + x];
+						if (k < 0)
 						{
 							continue;
 						}
 						int o = m.count++ * 4;
 						m.tiles[o] = (byte) x;
 						m.tiles[o + 1] = (byte) y;
-						m.tiles[o + 2] = t;
+						m.tiles[o + 2] = (byte) Water.slotType(k);
+						m.tiles[o + 3] = (byte) m.slot(k);
 					}
 				}
 				if (m.count > start)
@@ -130,23 +154,20 @@ class WaterSurface
 		return m.count == 0 ? null : m;
 	}
 
-	private static byte neighborType(byte[] type, int size, int x, int y)
+	private static int neighborKey(int[] key, int size, int x, int y)
 	{
 		final int[][] order = {{1, 0}, {-1, 0}, {0, 1}, {0, -1}, {1, 1}, {-1, 1}, {1, -1}, {-1, -1}};
 		for (int[] d : order)
 		{
 			int nx = x + d[0], ny = y + d[1];
-			if (nx >= 0 && ny >= 0 && nx < size && ny < size && type[ny * size + nx] != 0)
+			if (nx >= 0 && ny >= 0 && nx < size && ny < size && key[ny * size + nx] >= 0)
 			{
-				return type[ny * size + nx];
+				return key[ny * size + nx];
 			}
 		}
-		return 0;
+		return -1;
 	}
 
-	/**
-	 * Indices of an n x n grid of quads over (n + 1)^2 vertices, row by row.
-	 */
 	// one quad per tile: corners 0 sw, 1 se, 2 nw, 3 ne (water_vert.glsl)
 	static final short[] QUAD = {0, 2, 1, 1, 2, 3};
 
@@ -236,6 +257,65 @@ class WaterSurface
 	int texture()
 	{
 		return texSurface;
+	}
+
+	Mesh mesh()
+	{
+		return mesh;
+	}
+
+	int shadedTexture()
+	{
+		return texShaded;
+	}
+
+	/**
+	 * Bind the half resolution shaded target for drawing, sized for scene targets of w x h, with its viewport.
+	 */
+	void bindShadedTarget(int w, int h)
+	{
+		int sw = (w + 1) / 2, sh = (h + 1) / 2;
+		if (shadedFbo == 0 || sw != shadedWidth || sh != shadedHeight)
+		{
+			freeShaded();
+			shadedWidth = sw;
+			shadedHeight = sh;
+			texShaded = glGenTextures();
+			glBindTexture(GL_TEXTURE_2D, texShaded);
+			glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA32UI, sw, sh, 0, GL_RGBA_INTEGER, GL_UNSIGNED_INT, (ByteBuffer) null);
+			glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+			glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+			glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+			glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+			glBindTexture(GL_TEXTURE_2D, 0);
+			shadedFbo = glGenFramebuffers();
+			glBindFramebuffer(GL_FRAMEBUFFER, shadedFbo);
+			glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, texShaded, 0);
+			// the composite's output 0 is the scene color, which this pass doesn't write
+			glDrawBuffers(new int[]{GL_NONE, GL_COLOR_ATTACHMENT0});
+			int status = glCheckFramebufferStatus(GL_FRAMEBUFFER);
+			if (status != GL_FRAMEBUFFER_COMPLETE)
+			{
+				throw new IllegalStateException("water shaded framebuffer incomplete: " + status);
+			}
+		}
+		glBindFramebuffer(GL_FRAMEBUFFER, shadedFbo);
+		glViewport(0, 0, sw, sh);
+		glDisable(GL_BLEND);
+	}
+
+	private void freeShaded()
+	{
+		if (shadedFbo != 0)
+		{
+			glDeleteFramebuffers(shadedFbo);
+			shadedFbo = 0;
+		}
+		if (texShaded != 0)
+		{
+			glDeleteTextures(texShaded);
+			texShaded = 0;
+		}
 	}
 
 	private void ensureTarget(int w, int h)
@@ -366,6 +446,7 @@ class WaterSurface
 	void free()
 	{
 		freeTarget();
+		freeShaded();
 		if (vao != 0)
 		{
 			glDeleteVertexArrays(vao);

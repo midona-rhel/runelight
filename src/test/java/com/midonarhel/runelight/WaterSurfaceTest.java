@@ -100,4 +100,21 @@ public class WaterSurfaceTest
 		// beyond the north east corner
 		assertEquals(500, WaterSurface.chunkDistance(16 * 128 + 300, 24 * 128 + 400, cx, cy), 1e-3);
 	}
+
+	@Test
+	public void lookSlotsKeepTypeAndTexture()
+	{
+		int k = Water.slotKey(208, WaterMap.OCEAN_DARK);
+		assertEquals(208, Water.slotTexture(k));
+		assertEquals(WaterMap.OCEAN_DARK, Water.slotType(k));
+		assertEquals(-1, Water.slotTexture(Water.slotKey(-1, WaterMap.FRESH)));
+		// past the limit a look shares the first slot of its type
+		WaterSurface.Mesh m = new WaterSurface.Mesh();
+		for (int i = 0; i < Water.SLOTS; ++i)
+		{
+			assertEquals(i, m.slot(Water.slotKey(i, i % 2 == 0 ? WaterMap.FRESH : WaterMap.OCEAN)));
+		}
+		assertEquals(1, m.slot(Water.slotKey(500, WaterMap.OCEAN)));
+		assertEquals(5, m.slot(Water.slotKey(5, WaterMap.OCEAN)));
+	}
 }

@@ -31,6 +31,7 @@ in vec2 vFlow;
 in vec4 vData;       // shore distance (tiles), wave energy, water share, turbulence
 in float vDepth;     // how deep the water is here going by its distance from the shore, smooth across tiles
 flat in int vType;
+flat in int vSlot;
 
 layout(location = 0) out uvec4 WaterOut;  // 64 bits packed, see water.glsl's waterUnpack
 
@@ -235,8 +236,9 @@ void main() {
     c = mix(c, vec3(1.0, 0.25, 0.1), turb * 0.6);
     packed.x = pack01(c.r, 255.0) | pack01(c.g, 255.0) << 8 | pack01(c.b, 255.0) << 16;
   } else {
-    // normal x, z (10 bits each), type (3), foam (3), depth (6, square root)
-    packed.x = pack01(nrm.x * 0.5 + 0.5, 1023.0) | pack01(nrm.z * 0.5 + 0.5, 1023.0) << 10 | uint(type) << 20
+    // normal x, z (9 bits each), look slot (5: type and the game's texture, Water.java), foam (3), depth (6, square
+    // root)
+    packed.x = pack01(nrm.x * 0.5 + 0.5, 511.0) | pack01(nrm.z * 0.5 + 0.5, 511.0) << 9 | uint(vSlot & 31) << 18
       | pack01(foam, 7.0) << 23 | pack01(sqrt(vDepth / 512.0), 63.0) << 26;
   }
   // distance (16 bits), caustics: green -1 to 3 (8 bits), red and blue -0.5 to 0.5 from it (4 bits each)
