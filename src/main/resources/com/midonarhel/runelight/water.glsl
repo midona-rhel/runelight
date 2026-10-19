@@ -51,6 +51,7 @@ layout(location = 1) out uvec4 WaterShadedOut;
 // what shows the waves from above (the waves themselves are too gentle to move the reflection much). Cloud tops in
 // the sky cache no brighter than SKY_CLOUD_MAX times the sky there.
 #define SKY_TILT 1.5
+#define WAVE_SKY_TILT 7.0
 #define CLOUD_TILT 1.0
 // how fast the reflected sky goes from the horizon's color to the zenith's as the reflection rises (an exponent on
 // the elevation): low keeps the horizon to a narrow bright band, so the wave faces that catch it stand out
@@ -317,7 +318,12 @@ void waterShadeHalf(ivec2 hpx) {
   vec3 skyN = normalize(nrm * vec3(SKY_TILT, 1.0, SKY_TILT));
   float vn = clamp(dot(toCamera, skyN), 0.0, 1.0);
   float fresnel = mix(FRESNEL_BASE, 1.0, pow(1.0 - vn, FRESNEL_POWER));
-  vec3 r = reflect(v, skyN);
+  // The sky in the waves: as for the sun's glints, each wave taken WAVE_SKY_TILT times as steep, so the faces turned
+  // away from the camera reach past the Fresnel's limit and show the sky, the ones turned toward it the water. How
+  // much the surface covers what is under it stays the calm surface's (fresnel), so the water's color holds.
+  vec3 waveN = normalize(nrm * vec3(WAVE_SKY_TILT, 1.0, WAVE_SKY_TILT));
+  float waveSky = mix(FRESNEL_BASE, 1.0, pow(1.0 - clamp(dot(toCamera, waveN), 0.0, 1.0), FRESNEL_POWER));
+  vec3 r = reflect(v, waveN);
   r.y = min(r.y, -0.02);
   r = normalize(r);
   vec3 fogColor = envFog(outdoors == 1 && proceduralSky == 1 ? skyHorizon(sunAltitude) : clientSkyColor,
@@ -369,7 +375,7 @@ void waterShadeHalf(ivec2 hpx) {
 
   // the surface (117 HD): its own color lit, mostly the sky's reflection; foam over it, folded in as waterOver would
   // lay it over the whole (a mix over a mix is one mix)
-  vec3 surface = mix(srgbToLinear(WATER_SURFACE_COLOR[type]) * surfaceLight, reflection * fresnel, look.y);
+  vec3 surface = mix(srgbToLinear(WATER_SURFACE_COLOR[type]) * surfaceLight, reflection * waveSky, look.y);
   float cover = max(fresnel, (1.0 + toCamera.y) * OPACITY_SLANT);
   vec3 foamColor = srgbToLinear(WATER_FOAM_COLOR[type]) * surfaceLight;
   float covered = cover + foam * (1.0 - cover);
