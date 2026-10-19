@@ -36,24 +36,18 @@ flat in int vSlot;
 
 layout(location = 0) out uvec4 WaterOut;  // 64 bits packed, see water.glsl's waterUnpack
 
-// The waves, worked out rather than looked up, so nothing tiles: WAVE_COUNT trains of sharp-crested waves (exp(sin):
-// narrow crests, broad troughs, as wind waves have), the longest WAVE_LONGEST tiles from crest to crest, each next
-// WAVE_SHRINK as long and WAVE_FADE as high, turned from their direction (WAVE_DIR on still water, the flow on running
-// water) by up to WAVE_SPREAD radians either way, the longest least. Each is dragged by WAVE_DRAG of the slopes of the ones before, so
-// they bend around each other and never line up. They run as deep-water waves do, a one-tile wave WAVE_SPEED tiles a
-// second, longer ones faster; ones shorter than WAVE_MIN_PX pixels fade to a third rather than shimmer. WAVE_STRENGTH: the
-// slope of the whole.
+// The waves: broad, gentle swells rather than crests (the look of calm open water in a stylised game): smooth noise,
+// not tiling, WAVE_OCTAVES sizes from WAVE_LONGEST tiles across, each WAVE_SHRINK as large and WAVE_FADE as steep,
+// each drifting its own way at WAVE_SPEED tiles a second and bent by the one before (domain warp, WAVE_WARP), so the
+// shapes change as they move and never line up into stripes or a grid. WAVE_STRENGTH: their slope.
 #define WAVE_DIR vec2(0.70710678, 0.70710678)
-#define WAVE_COUNT 10
-#define WAVE_GROUP 4.0
-#define WAVE_LONGEST 2.5
-#define WAVE_SHRINK 0.78
-#define WAVE_FADE 0.85
-#define WAVE_SPREAD 1.4
-#define WAVE_DRAG 0.5
-#define WAVE_SPEED 0.65
-#define WAVE_MIN_PX 4.0
-#define WAVE_STRENGTH 0.75
+#define WAVE_OCTAVES 4
+#define WAVE_LONGEST 3.0
+#define WAVE_SHRINK 0.47
+#define WAVE_FADE 0.6
+#define WAVE_SPEED 0.12
+#define WAVE_WARP 0.35
+#define WAVE_STRENGTH 0.22
 // still water (no flow) runs its waves and its detail this many times slower, and drifts less with the wind
 #define STILL_SLOW 1.25
 #define STILL_DRIFT 0.4
@@ -126,41 +120,32 @@ float waterLod(float footprint, float repeat) {
   return log2(max(footprint * 256.0 / repeat, 1.0));
 }
 
-// The waves' slope at q (world units) running along dir (see WAVE_COUNT), `slow` times slower and `size` times as
-// long; footprint: world units a pixel covers.
-// Smooth value noise, not tiling (hashed lattice): 0 to 1
-float waveNoise(vec2 p) {
+// Value noise, not tiling (hashed lattice), and its gradient: xy the gradient, z the value 0 to 1
+vec3 waveNoise(vec2 p) {
   vec2 i = floor(p), f = fract(p);
-  f = f * f * (3.0 - 2.0 * f);
+  vec2 u = f * f * f * (f * (f * 6.0 - 15.0) + 10.0);
+  vec2 du = 30.0 * f * f * (f * (f - 2.0) + 1.0);
   float a = waterHash(vec3(i, 7.0)), b = waterHash(vec3(i + vec2(1.0, 0.0), 7.0));
   float c = waterHash(vec3(i + vec2(0.0, 1.0), 7.0)), d = waterHash(vec3(i + vec2(1.0, 1.0), 7.0));
-  return mix(mix(a, b, f.x), mix(c, d, f.x), f.y);
+  float k1 = b - a, k2 = c - a, k3 = a - b - c + d;
+  return vec3(du * vec2(k1 + k3 * u.y, k2 + k3 * u.x), a + k1 * u.x + k2 * u.y + k3 * u.x * u.y);
 }
 
+// The waves' slope at q (world units), drifting along dir, `slow` times slower and `size` times as large
 vec2 crestWaves(vec2 q, vec2 dir, float footprint, float slow, float size) {
-  vec2 p = q / (WATER_TILE * size);
-  float len = WAVE_LONGEST, amp = 1.0, total = 0.0;
-  vec2 slope = vec2(0.0);
-  for (int i = 0; i < WAVE_COUNT; ++i) {
-    // directions scattered without a pattern: the long waves closer to the direction, the short ones spread wider
-    float a = (fract(float(i) * 0.6180340 + 0.31) * 2.0 - 1.0) * WAVE_SPREAD
-      * (0.35 + 0.65 * float(i) / float(WAVE_COUNT - 1));
+  float len = WAVE_LONGEST * WATER_TILE * size, amp = 1.0, total = 0.0;
+  vec2 slope = vec2(0.0), warp = vec2(0.0);
+  for (int i = 0; i < WAVE_OCTAVES; ++i) {
+    // each its own way, near the wind's
+    float a = (float(i) - 1.5) * 0.7;
     vec2 d = vec2(dir.x * cos(a) - dir.y * sin(a), dir.x * sin(a) + dir.y * cos(a));
-    float k = WATER_TAU / len;
-    // a whole number of cycles per wrap of waterTime, so the waves never jump
-    float omega = WATER_TAU * floor(WATER_TIME_WRAP * WAVE_SPEED / sqrt(len) / slow + 0.5) / WATER_TIME_WRAP;
-    float x = dot(d, p) * k - waterTime * omega + float(i) * 1.7;
-    float e = exp(sin(x) - 1.0);
-    float dx = e * cos(x);
-    // Each train comes in groups: its height swells and dies away across the water over WAVE_GROUP of its own
-    // lengths, the groups drifting along with it, so no train runs on unbroken and nothing repeats
-    vec2 g = p / (len * WAVE_GROUP) - d * (waterTime * omega / k / (len * WAVE_GROUP) * 0.5) + float(i) * 17.31;
-    float group = smoothstep(0.2, 0.8, waveNoise(g));
-    // too small to see each: still there in part, as the roughness that breaks up the reflection far off
-    float vis = mix(0.35, 1.0, smoothstep(WAVE_MIN_PX, WAVE_MIN_PX * 2.0, len * WATER_TILE * size / max(footprint, 1e-3)));
-    slope += d * (dx * amp * vis * group);
-    p -= d * (dx * amp * group * WAVE_DRAG / k);
-    total += amp * 0.5;
+    vec2 p = (q + warp) / len - d * (waterTime * WAVE_SPEED * WATER_TILE / len / slow) + float(i) * 13.7;
+    vec3 n = waveNoise(p);
+    // finer than a few pixels: faded, it only shimmers
+    float vis = smoothstep(4.0, 10.0, len / max(footprint, 1e-3));
+    slope += n.xy * (amp * vis);
+    warp += n.xy * (WAVE_WARP * len);
+    total += amp;
     len *= WAVE_SHRINK;
     amp *= WAVE_FADE;
   }
