@@ -85,7 +85,7 @@ layout(location = 1) out uvec4 WaterShadedOut;
 #define SSR_FIRST_STEP 96.0
 #define SSR_GROWTH 2.0
 #define SSR_REFINE 3
-#define SSR_TILT 0.6
+#define SSR_TILT 1.4
 
 
 // The water pass's packed surface (water_frag.glsl): the distance to it, its normal, look slot, foam, the water's
