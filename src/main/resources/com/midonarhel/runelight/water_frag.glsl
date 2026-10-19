@@ -48,7 +48,7 @@ layout(location = 0) out uvec4 WaterOut;  // 64 bits packed, see water.glsl's wa
 #define WAVE_FADE 0.3
 #define WAVE_CHOP 2.2
 #define WAVE_SPEED 0.11
-#define WAVE_HEIGHT 12.0
+#define WAVE_HEIGHT 7.0
 // along the wind the waves are this much longer than across it
 #define WAVE_STRETCH 1.35
 // still water (no flow) runs its waves and its detail this many times slower, and drifts less with the wind
