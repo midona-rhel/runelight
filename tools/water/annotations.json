@@ -345,23 +345,27 @@
   },
   {
    "name": "Lunar Isle stream (user review)",
-   "note": "from the middle of the island west to the coast",
+   "note": "from the well in the middle of the island south-east to the south coast; the western arm joins it",
    "box": [
     2058,
-    3862,
-    2112,
+    3846,
+    2146,
     3900
    ],
    "sources": [
     [
-     2090,
-     3893
+     2088,
+     3895
+    ],
+    [
+     2064,
+     3872
     ]
    ],
    "outlets": [
     [
-     2064,
-     3872
+     2140,
+     3852
     ]
    ]
   }
@@ -496,8 +500,8 @@
   {
    "name": "Lunar Isle east harbour (user review)",
    "box": [
-    2110,
-    3848,
+    2122,
+    3876,
     2160,
     3900
    ]
