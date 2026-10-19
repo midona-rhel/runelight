@@ -49,7 +49,8 @@ layout(location = 0) out uvec4 WaterOut;  // 64 bits packed, see water.glsl's wa
 // still water (no flow) runs its waves and its detail this many times slower, and drifts less with the wind
 #define STILL_SLOW 3.0
 #define STILL_DRIFT 0.4
-// on running water the waves are this much the size of still water's (as steep), so a stream shows more of them
+// the waves' size on still and on running water (as steep either way): more of them, denser, the smaller
+#define STILL_WAVE_SIZE 0.55
 #define FLOW_WAVE_SIZE 0.6
 // the waves' height by the flow: STILL_WAVES on still water, rising to FAST_WAVES at FAST_FLOW world units a second
 #define STILL_WAVES 0.6
@@ -65,7 +66,7 @@ layout(location = 0) out uvec4 WaterOut;  // 64 bits packed, see water.glsl's wa
 // world units per size step: 117 HD's 128 (a tile) looked too fine at the game's camera distances
 #define NORMAL_TILE 256.0
 // the detail is drawn out along the waves' crests this many times, so it reads as streaks on them rather than noise
-#define NORMAL_STREAK 3.0
+#define NORMAL_STREAK 1.8
 // the foam on rapids: the large ripple cells' rims (layer 2), world units per repeat
 #define CELL_SCALE_B 520.0
 // on still water the foam is two copies of the cells drifting across each other, one cell every FOAM_STILL_PERIOD
@@ -244,9 +245,9 @@ void main() {
     // blending two copies averages their slopes down: give some back
     flowed *= 1.0 + 0.4 * (1.0 - abs(2.0 * w0 - 1.0));
     slope = flowing < 1.0
-      ? mix(ripples(xz, base, lods, lodC, STILL_SLOW, 1.0, WAVE_DIR, NORMAL_STREAK), flowed, flowing) : flowed;
+      ? mix(ripples(xz, base, lods, lodC, STILL_SLOW, STILL_WAVE_SIZE, WAVE_DIR, NORMAL_STREAK), flowed, flowing) : flowed;
   } else {
-    slope = ripples(xz, base, lods, lodC, STILL_SLOW, 1.0, WAVE_DIR, NORMAL_STREAK);
+    slope = ripples(xz, base, lods, lodC, STILL_SLOW, STILL_WAVE_SIZE, WAVE_DIR, NORMAL_STREAK);
   }
   float contact = textureLod(waterContact, (xz / WATER_TILE + waterGrid.x) / (waterGrid.y - 1.0), 0.0).r;
   contact *= contact;
