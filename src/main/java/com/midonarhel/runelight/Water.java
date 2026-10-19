@@ -410,7 +410,7 @@ class Water
 
 	// how far the wave layer's waves turn from its direction (+x) either way, radians: wave trains rather than an
 	// even noise
-	static final float WAVE_SPREAD = 0.55f;
+	static final float WAVE_SPREAD = 0.3f;
 
 	/**
 	 * Tiling wave noise, RGBA: rg the slope of a wave height field (0.5 is flat, scaled so slopes of SLOPE_RANGE

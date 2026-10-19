@@ -40,7 +40,7 @@ layout(location = 0) out uvec4 WaterOut;  // 64 bits packed, see water.glsl's wa
 // WAVE_DIR turned by WAVE_TURN radians; world units per repeat of each, seconds per repeat as they run, their share,
 // and the slope per unit of the texture's
 #define WAVE_DIR vec2(0.6, 0.8)
-#define WAVE_TURN 0.45
+#define WAVE_TURN 0.3
 #define WAVE_SCALE vec2(1500.0, 640.0)
 #define WAVE_PERIOD vec2(60.0, 34.0)
 #define WAVE_MIX vec2(0.65, 0.35)
@@ -58,6 +58,8 @@ layout(location = 0) out uvec4 WaterOut;  // 64 bits packed, see water.glsl's wa
 #define NORMAL_PERIOD vec3(42.0, 36.0, 32.0)
 // world units per size step: 117 HD's 128 (a tile) looked too fine at the game's camera distances
 #define NORMAL_TILE 256.0
+// the detail is drawn out along the waves' crests this many times, so it reads as streaks on them rather than noise
+#define NORMAL_STREAK 3.0
 // the foam on rapids: the large ripple cells' rims (layer 2), world units per repeat
 #define CELL_SCALE_B 520.0
 // turbulence (rapids) adds to the ripples, and lays soft foam over them where it is strong
@@ -101,7 +103,7 @@ float waterLod(float footprint, float repeat) {
 // The slope of the waves at xz, moved along by `move`, `slow` times slower: two trains of wind waves running along
 // their directions, and 117 HD's normal map (BSD-2, see LICENSE) in three sizes (6, 10 and 14 tiles a repeat) for
 // fine detail, each scrolling on its own, the first one turned (their slope: the sum of the sideways parts over the
-// sum of the upward parts). lods: the waves' two, then the normal map's three.
+// sum of the upward parts), drawn out along the crests. lods: the waves' two, then the normal map's three.
 vec2 ripples(vec2 xz, vec2 move, vec4 lods, float lodC, float slow) {
   vec2 q = xz - move;
   vec2 da = normalize(WAVE_DIR);
@@ -113,11 +115,14 @@ vec2 ripples(vec2 xz, vec2 move, vec4 lods, float lodC, float slow) {
   // back from each train's own axes to the world's
   vec2 waves = (da * sa.x + vec2(-da.y, da.x) * sa.y) * WAVE_MIX.x + (db * sb.x + vec2(-db.y, db.x) * sb.y) * WAVE_MIX.y;
 
-  vec2 p = -q / NORMAL_TILE;
+  // along the crests (across da) the detail is NORMAL_STREAK times longer, and its slope that much gentler
+  vec2 across = vec2(-da.y, da.x);
+  vec2 p = -(da * dot(q, da) + across * (dot(q, across) / NORMAL_STREAK)) / NORMAL_TILE;
   vec3 a = textureLod(waterNoise, vec3((p / 3.0).yx - waterCycle(NORMAL_PERIOD.x * slow), 3.0), lods.z).rgb;
   vec3 b = textureLod(waterNoise, vec3(p / 5.0 + waterCycle(NORMAL_PERIOD.y * slow), 3.0), lods.w).rgb;
   vec3 c = textureLod(waterNoise, vec3(p / 7.0 + waterCycle(NORMAL_PERIOD.z * slow), 3.0), lodC).rgb;
   vec2 side = (a.rg + b.rg + c.rg) * 2.0 - 3.0;
+  side = da * dot(side, da) + across * (dot(side, across) / NORMAL_STREAK);
   return waves * WAVE_STRENGTH + side * NORMAL_STRENGTH / max(a.b + b.b + c.b, 0.5);
 }
 
@@ -239,21 +244,23 @@ void main() {
     vec4 h = waterInvViewProj * vec4(ndc, waterZeroToOne == 1 ? sceneZ : sceneZ * 2.0 - 1.0, 1.0);
     vec3 bed = h.xyz / h.w;
     float depth = max(bed.y - vRel.y, 0.0);
-    // the light reaching the bed entered the water toward the light, bent steeper by refraction
-    vec2 sunXZ = waterCasterDir.xz;
-    float sinI = length(sunXZ);
-    float sinT = min(sinI / 1.33, 0.95);
-    vec2 at = bed.xz + waterCamera.xz + sunXZ * (sinT * inversesqrt(1.0 - sinT * sinT) / max(sinI, 1e-4) * depth);
-    float lod = waterLod(footprint * (1.0 + depth / max(length(vRel), 1.0)), CAUSTIC_SCALE);
-    vec2 dir = flowSpeed > 1e-3 ? flow / flowSpeed : vec2(0.0);
-    vec2 smear = dir * (smoothstep(CAUSTIC_STRETCH_SPEED.x, CAUSTIC_STRETCH_SPEED.y, flowSpeed)
-      * CAUSTIC_STRETCH * min(flowSpeed, FLOW_DRAG / FLOW_CYCLE));
-    vec3 c = causticMoved(at, mix(vec2(0.0), m0 - base, flowing), smear, lod);
-    if (flowing > 0.0)
-      c = c * w0 + causticMoved(at + vec2(97.0, 211.0), m1 - base, smear, lod) * (1.0 - w0);
-    c = (c - CAUSTIC_MEAN) / (CAUSTIC_LINE - CAUSTIC_MEAN);
-    caustic = c.g;
-    causticRB = c.rb - c.g;
+    if (depth < CAUSTIC_FADE.y) {
+      // the light reaching the bed entered the water toward the light, bent steeper by refraction
+      vec2 sunXZ = waterCasterDir.xz;
+      float sinI = length(sunXZ);
+      float sinT = min(sinI / 1.33, 0.95);
+      vec2 at = bed.xz + waterCamera.xz + sunXZ * (sinT * inversesqrt(1.0 - sinT * sinT) / max(sinI, 1e-4) * depth);
+      float lod = waterLod(footprint * (1.0 + depth / max(length(vRel), 1.0)), CAUSTIC_SCALE);
+      vec2 dir = flowSpeed > 1e-3 ? flow / flowSpeed : vec2(0.0);
+      vec2 smear = dir * (smoothstep(CAUSTIC_STRETCH_SPEED.x, CAUSTIC_STRETCH_SPEED.y, flowSpeed)
+        * CAUSTIC_STRETCH * min(flowSpeed, FLOW_DRAG / FLOW_CYCLE));
+      vec3 c = causticMoved(at, mix(vec2(0.0), m0 - base, flowing), smear, lod);
+      if (flowing > 0.0)
+        c = c * w0 + causticMoved(at + vec2(97.0, 211.0), m1 - base, smear, lod) * (1.0 - w0);
+      c = (c - CAUSTIC_MEAN) / (CAUSTIC_LINE - CAUSTIC_MEAN);
+      caustic = c.g;
+      causticRB = c.rb - c.g;
+    }
   }
 
   uvec2 packed;
