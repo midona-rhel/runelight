@@ -183,7 +183,7 @@ class WaterSurface
 		return (float) Math.sqrt(dx * dx + dz * dz);
 	}
 
-	void setProgram(int program, int depthUnit, int dataUnit, int noiseUnit)
+	void setProgram(int program, int depthUnit, int materialUnit, int dataUnit, int noiseUnit)
 	{
 		this.program = program;
 		uniViewProj = glGetUniformLocation(program, "waterViewProj");
@@ -206,6 +206,7 @@ class WaterSurface
 		uniZeroToOne = glGetUniformLocation(program, "waterZeroToOne");
 		glUseProgram(program);
 		glUniform1i(glGetUniformLocation(program, "sceneDepth"), depthUnit);
+		glUniform1i(glGetUniformLocation(program, "sceneMaterial"), materialUnit);
 		glUniform1i(glGetUniformLocation(program, "waterData"), dataUnit);
 		glUniform1i(glGetUniformLocation(program, "waterNoise"), noiseUnit);
 		glUseProgram(0);

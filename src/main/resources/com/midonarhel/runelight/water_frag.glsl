@@ -11,6 +11,7 @@
 #include "water_common.glsl"
 
 uniform sampler2D sceneDepth;  // the opaque scene, resolved
+uniform sampler2D sceneMaterial;  // its material: b 1 the bed, 0 land, 0.5 anything else (frag.glsl)
 uniform vec3 waterWind;
 uniform vec4 waterDrift;
 uniform float waterRain;
@@ -79,6 +80,15 @@ layout(location = 0) out uvec4 WaterOut;  // 64 bits packed, see water.glsl's wa
 #define CAUSTIC_STRETCH 0.45
 // the furthest the distance target reaches (16 bits): past it water is clamped there
 #define WATER_REACH 20480.0
+// Things breaking the surface (posts, rocks, hulls, legs; not the bed or the bank): foam and rougher water in a ring
+// OBJECT_REACH world units out from where they meet it, found in the scene OBJECT_TAPS times around each pixel (at
+// most OBJECT_MAX_PX pixels out); a point of one within OBJECT_BAND of the surface counts
+#define OBJECT_REACH 40.0
+#define OBJECT_TAPS 6
+#define OBJECT_MAX_PX 24.0
+#define OBJECT_BAND 48.0
+#define OBJECT_FOAM 0.8
+#define OBJECT_WAVES 1.5
 // rain rings: cell size (world units), rings per cell per second
 #define RAIN_CELL 72.0
 #define RAIN_RATE 1.3
@@ -174,6 +184,29 @@ vec3 rainRings(vec2 xz) {
   return vec3(sum.xy * RAIN_SLOPE, min(sum.z, 1.0));
 }
 
+// The camera-relative point of the opaque scene at pixel q with depth z
+vec3 scenePoint(ivec2 q, float z) {
+  vec2 ndc = (vec2(q) + 0.5 - vec2(waterViewport.xy)) / vec2(waterViewport.zw) * 2.0 - 1.0;
+  vec4 h = waterInvViewProj * vec4(ndc, waterZeroToOne == 1 ? z : z * 2.0 - 1.0, 1.0);
+  return h.xyz / h.w;
+}
+
+// How much of a ring around pixel px is something breaking the surface at height surfaceY (see OBJECT_REACH)
+float objectContact(ivec2 px, float footprint, float surfaceY) {
+  float r = clamp(OBJECT_REACH / max(footprint, 1e-3), 1.0, OBJECT_MAX_PX);
+  ivec2 last = textureSize(sceneDepth, 0) - 1;
+  float hit = 0.0;
+  for (int i = 0; i < OBJECT_TAPS; ++i) {
+    float a = float(i) * (WATER_TAU / float(OBJECT_TAPS));
+    ivec2 q = clamp(px + ivec2(round(vec2(cos(a), sin(a)) * r)), ivec2(0), last);
+    float m = texelFetch(sceneMaterial, q, 0).b;
+    if (m < 0.25 || m > 0.75)
+      continue;
+    hit += 1.0 - smoothstep(0.0, OBJECT_BAND, abs(scenePoint(q, texelFetch(sceneDepth, q, 0).r).y - surfaceY));
+  }
+  return hit / float(OBJECT_TAPS);
+}
+
 uint pack01(float v, float bits) {
   return uint(clamp(v, 0.0, 1.0) * bits + 0.5);
 }
@@ -220,8 +253,9 @@ void main() {
   } else {
     slope = ripples(xz, base, lods, lodC, STILL_SLOW, 1.0);
   }
+  float contact = objectContact(px, footprint, vRel.y);
   slope *= look.w * waterWaves * (0.7 + 0.5 * wind) * (0.75 + 0.35 * energy) * (1.0 + TURB_WAVES * turb)
-    * mix(STILL_WAVES, FAST_WAVES, smoothstep(FLOW_MIN * 0.5, FAST_FLOW, flowSpeed));
+    * mix(STILL_WAVES, FAST_WAVES, smoothstep(FLOW_MIN * 0.5, FAST_FLOW, flowSpeed)) * (1.0 + OBJECT_WAVES * contact);
   vec3 rain = vec3(0.0);
   if (waterRain > 0.01 && waterOutdoors == 1) {
     rain = rainRings(xz);
@@ -230,9 +264,9 @@ void main() {
   // the surface's normal points up (-y); slope is d up / d x, d up / d z
   vec3 nrm = normalize(vec3(-slope.x, -1.0, -slope.y));
 
-  // soft foam only on rapids: the large cells' rims, carried with the flow
+  // soft foam on rapids and around things in the water: the large cells' rims, carried with the flow
   float foam = 0.0;
-  float churn = smoothstep(TURB_FOAM.x, TURB_FOAM.y, turb);
+  float churn = max(smoothstep(TURB_FOAM.x, TURB_FOAM.y, turb), contact * OBJECT_FOAM / FOAM);
   if (churn > 0.0) {
     float h = textureLod(waterNoise, vec3((xz - m0) / CELL_SCALE_B, 2.0), lodFoam).b * w0
       + textureLod(waterNoise, vec3((xz + vec2(173.0, 91.0) - m1) / CELL_SCALE_B, 2.0), lodFoam).b * (1.0 - w0);
@@ -244,9 +278,7 @@ void main() {
   float caustic = 0.0;
   vec2 causticRB = vec2(0.0);
   if (waterCausticsOn == 1 && look.x < 0.7) {
-    vec2 ndc = (vec2(px) + 0.5 - vec2(waterViewport.xy)) / vec2(waterViewport.zw) * 2.0 - 1.0;
-    vec4 h = waterInvViewProj * vec4(ndc, waterZeroToOne == 1 ? sceneZ : sceneZ * 2.0 - 1.0, 1.0);
-    vec3 bed = h.xyz / h.w;
+    vec3 bed = scenePoint(px, sceneZ);
     float depth = max(bed.y - vRel.y, 0.0);
     if (depth < CAUSTIC_FADE.y) {
       // the light reaching the bed entered the water toward the light, bent steeper by refraction
