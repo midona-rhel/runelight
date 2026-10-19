@@ -427,7 +427,7 @@ void main() {
 
   vec3 lit = shade(color.rgb, light);
   lit = weatherWetSheen(lit, p, n, wet, ao, skyHorizon(sunAltitude));
-  lit = waterOver(px, p, n, color.rgb, light, shadow, lit, material.b, fogColor);
+  lit = waterOver(px, p, n, color.rgb, light, indirect, shadow, lit, material.b, fogColor);
   lit = mix(lit, fogColor, max(fogAmount(p + cameraPos), envFogAmount(p)));
   // the world fades into the sky behind it toward the draw distance, so where the culling stops never shows
   float edge = inside ? edgeFadeAmount(p + cameraPos) : 0.0;
