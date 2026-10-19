@@ -46,6 +46,7 @@ SHALLOWS = 6           # geodesic tiles from open water before a channel runs at
 RIVER_SPEED = 0.55     # tiles per second in a channel (WaterBodies.REFERENCE_RIDGE wide; the plugin shapes it)
 EXTEND = 3             # tiles past the mapped water that still get its flow (the map and the scene differ a bit)
 SMOOTH = 1.6           # flow smoothing, tiles
+MIN_RIVER = 24         # a channel reaching less far than this from open water is an inlet or cove: still
 UNKNOWN = -128
 
 
@@ -173,12 +174,19 @@ def auto_flow(sl, labels, lab, domain, sinks, olab, fx, fy, conflicts):
     ramp = np.clip((d_sink - SHALLOWS * 0.5) / SHALLOWS, 0, 1)
     # Channels whose ends run into different sinks (a strait between two seas, a river between two lakes) would
     # flow in from both ends and meet in the middle: keep them still unless an annotation says which way they run.
-    seed_sink = ndimage.maximum_filter(np.where(sinks[sl], olab[sl], 0), size=3)
-    sink_of = np.where(origin >= 0, seed_sink.ravel()[np.maximum(origin, 0)], 0)
+    # Which stretch of shore each tile drains to: channels that reach open water at two separate places (a strait,
+    # a channel around an island, a river with both ends on the same sea) would split in the middle and run out
+    # both ways with a hard edge where they part. Short inlets and coves aren't rivers either.
+    seed_lab, _ = ndimage.label(seed, structure=np.ones((3, 3)))
+    sink_of = np.where(origin >= 0, seed_lab.ravel()[np.maximum(origin, 0)], 0)
     chan, _ = ndimage.label(dom & (d_sink > SHALLOWS), structure=np.ones((3, 3)))
     for c, csl in enumerate(ndimage.find_objects(chan), start=1):
         here = chan[csl] == c
         ends = np.unique(sink_of[csl][here])
+        if np.nanmax(np.where(here, d_sink[csl], 0)) < MIN_RIVER:
+            grow = ndimage.binary_dilation(chan == c, structure=np.ones((3, 3)), iterations=SHALLOWS)
+            ramp = np.where(grow, 0, ramp)
+            continue
         if len(ends[ends != 0]) > 1:
             cells = int(here.sum())
             if cells >= 40:
