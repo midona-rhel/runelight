@@ -36,15 +36,23 @@ flat in int vSlot;
 
 layout(location = 0) out uvec4 WaterOut;  // 64 bits packed, see water.glsl's waterUnpack
 
-// The waves: the wind waves of layer 0 (Water.noise, running along +x), turned to WAVE_DIR on still water and to the
-// flow on running water and, smaller, to that turned by WAVE_TURN radians; world units per repeat of each, seconds per repeat as they run, their share,
-// and the slope per unit of the texture's
-#define WAVE_DIR vec2(0.6, 0.8)
-#define WAVE_TURN 0.3
-#define WAVE_SCALE vec2(700.0, 320.0)
-#define WAVE_PERIOD vec2(24.0, 14.0)
-#define WAVE_MIX vec2(0.65, 0.35)
-#define WAVE_STRENGTH 0.13
+// The waves, worked out rather than looked up, so nothing tiles: WAVE_COUNT trains of sharp-crested waves (exp(sin):
+// narrow crests, broad troughs, as wind waves have), the longest WAVE_LONGEST tiles from crest to crest, each next
+// WAVE_SHRINK as long and WAVE_FADE as high, turned from their direction (WAVE_DIR on still water, the flow on running
+// water) by up to WAVE_SPREAD radians either way. Each is dragged by WAVE_DRAG of the slopes of the ones before, so
+// they bend around each other and never line up. They run as deep-water waves do, a one-tile wave WAVE_SPEED tiles a
+// second, longer ones faster; ones shorter than WAVE_MIN_PX pixels fade out rather than shimmer. WAVE_STRENGTH: the
+// slope of the whole.
+#define WAVE_DIR vec2(0.70710678, 0.70710678)
+#define WAVE_COUNT 12
+#define WAVE_LONGEST 3.5
+#define WAVE_SHRINK 0.8
+#define WAVE_FADE 0.7
+#define WAVE_SPREAD 0.9
+#define WAVE_DRAG 0.3
+#define WAVE_SPEED 0.9
+#define WAVE_MIN_PX 6.0
+#define WAVE_STRENGTH 0.32
 // still water (no flow) runs its waves and its detail this many times slower, and drifts less with the wind
 #define STILL_SLOW 1.25
 #define STILL_DRIFT 0.4
@@ -69,14 +77,6 @@ layout(location = 0) out uvec4 WaterOut;  // 64 bits packed, see water.glsl's wa
 // toward the shore the waves flatten to SHORE_WAVES of their height, over SHORE_CALM tiles out
 #define SHORE_WAVES 0.05
 #define SHORE_CALM 3.0
-// The surface's fine detail: 117 HD's normal map (layer 3 of waterNoise) at this strength, and its seconds per repeat
-// of each size
-#define NORMAL_STRENGTH 0.08
-#define NORMAL_PERIOD vec3(16.0, 14.0, 12.0)
-// world units per size step: 117 HD's 128 (a tile) looked too fine at the game's camera distances
-#define NORMAL_TILE 128.0
-// the detail is drawn out along the waves' crests this many times, so it reads as streaks on them rather than noise
-#define NORMAL_STREAK 1.8
 // the foam on rapids: the large ripple cells' rims (layer 2), world units per repeat
 #define CELL_SCALE_B 520.0
 // on still water the foam is two copies of the cells drifting across each other, one cell every FOAM_STILL_PERIOD
@@ -125,44 +125,46 @@ float waterLod(float footprint, float repeat) {
   return log2(max(footprint * 256.0 / repeat, 1.0));
 }
 
-// One direction's two trains of wind waves (see ripples): the first along da, the second turned WAVE_TURN from it,
-// each scrolling along its own direction. Their slope.
-vec2 waveTrains(vec2 q, vec2 da, vec4 lods, float slow, float size) {
-  vec2 db = vec2(da.x * cos(WAVE_TURN) - da.y * sin(WAVE_TURN), da.x * sin(WAVE_TURN) + da.y * cos(WAVE_TURN));
-  vec2 ua = vec2(dot(q, da), dot(q, vec2(-da.y, da.x))) / (WAVE_SCALE.x * size) - vec2(waterCycle(WAVE_PERIOD.x * slow), 0.0);
-  vec2 ub = vec2(dot(q, db), dot(q, vec2(-db.y, db.x))) / (WAVE_SCALE.y * size) - vec2(waterCycle(WAVE_PERIOD.y * slow), 0.0);
-  float bias = -log2(size);
-  vec2 sa = textureLod(waterNoise, vec3(ua, 0.0), lods.x + bias).rg * 2.0 - 1.0;
-  vec2 sb = textureLod(waterNoise, vec3(ub, 0.0), lods.y + bias).rg * 2.0 - 1.0;
-  // back from each train's own axes to the world's
-  return (da * sa.x + vec2(-da.y, da.x) * sa.y) * WAVE_MIX.x + (db * sb.x + vec2(-db.y, db.x) * sb.y) * WAVE_MIX.y;
+// The waves' slope at q (world units) running along dir (see WAVE_COUNT), `slow` times slower and `size` times as
+// long; footprint: world units a pixel covers.
+vec2 crestWaves(vec2 q, vec2 dir, float footprint, float slow, float size) {
+  vec2 p = q / (WATER_TILE * size);
+  float len = WAVE_LONGEST, amp = 1.0, total = 0.0;
+  vec2 slope = vec2(0.0);
+  for (int i = 0; i < WAVE_COUNT; ++i) {
+    float a = sin(float(i) * 2.3999632) * WAVE_SPREAD;
+    vec2 d = vec2(dir.x * cos(a) - dir.y * sin(a), dir.x * sin(a) + dir.y * cos(a));
+    float k = WATER_TAU / len;
+    // a whole number of cycles per wrap of waterTime, so the waves never jump
+    float omega = WATER_TAU * floor(WATER_TIME_WRAP * WAVE_SPEED / sqrt(len) / slow + 0.5) / WATER_TIME_WRAP;
+    float x = dot(d, p) * k - waterTime * omega + float(i) * 1.7;
+    float e = exp(sin(x) - 1.0);
+    float dx = e * cos(x);
+    float vis = smoothstep(WAVE_MIN_PX, WAVE_MIN_PX * 2.0, len * WATER_TILE * size / max(footprint, 1e-3));
+    slope += d * (dx * amp * vis);
+    p -= d * (dx * amp * WAVE_DRAG / k);
+    total += amp;
+    len *= WAVE_SHRINK;
+    amp *= WAVE_FADE;
+  }
+  return slope * (WAVE_STRENGTH / total);
 }
 
-// The slope of the waves at xz, moved along by `move`, `slow` times slower, `size` times as long, running along dir:
-// the wave trains, and 117 HD's normal map (BSD-2, see LICENSE) in three sizes (6, 10 and 14 tiles a repeat) for
-// fine detail, each scrolling on its own, the first one turned (their slope: the sum of the sideways parts over the
-// sum of the upward parts), drawn out `streak` times along the crests. lods: the waves' two, then the normal map's
-// three. The trains are blended from the two nearest of eight fixed directions: turning their own coordinates to
-// follow a winding flow would swirl them, more the further from the origin; the weights keep their strength.
-vec2 ripples(vec2 xz, vec2 move, vec4 lods, float lodC, float slow, float size, vec2 dir, float streak) {
+// The waves at xz moved along by `move`, running along dir: blended from the two nearest of eight fixed directions,
+// as turning their coordinates to follow a winding flow would swirl them, more the further from the origin; the
+// weights keep their strength.
+vec2 ripples(vec2 xz, vec2 move, float footprint, float slow, float size, vec2 dir) {
   vec2 q = xz - move;
   float sector = atan(dir.y, dir.x) / (WATER_TAU / 8.0);
   float s0 = floor(sector);
   float f = (sector - s0) * (WATER_TAU / 4.0);
   vec2 d0 = vec2(cos(s0 * WATER_TAU / 8.0), sin(s0 * WATER_TAU / 8.0));
-  vec2 d1 = vec2(cos((s0 + 1.0) * WATER_TAU / 8.0), sin((s0 + 1.0) * WATER_TAU / 8.0));
-  vec2 waves = waveTrains(q, d0, lods, slow, size) * cos(f) + waveTrains(q, d1, lods, slow, size) * sin(f);
-  vec2 da = f < WATER_TAU / 8.0 ? d0 : d1;
-
-  // along the crests (across da) the detail is `streak` times longer, and its slope that much gentler
-  vec2 across = vec2(-da.y, da.x);
-  vec2 p = -(da * dot(q, da) + across * (dot(q, across) / streak)) / NORMAL_TILE;
-  vec3 a = textureLod(waterNoise, vec3((p / 3.0).yx - waterCycle(NORMAL_PERIOD.x * slow), 3.0), lods.z).rgb;
-  vec3 b = textureLod(waterNoise, vec3(p / 5.0 + waterCycle(NORMAL_PERIOD.y * slow), 3.0), lods.w).rgb;
-  vec3 c = textureLod(waterNoise, vec3(p / 7.0 + waterCycle(NORMAL_PERIOD.z * slow), 3.0), lodC).rgb;
-  vec2 side = (a.rg + b.rg + c.rg) * 2.0 - 3.0;
-  side = da * dot(side, da) + across * (dot(side, across) / streak);
-  return waves * WAVE_STRENGTH + side * NORMAL_STRENGTH / max(a.b + b.b + c.b, 0.5);
+  vec2 waves = crestWaves(q, d0, footprint, slow, size) * cos(f);
+  if (f > 1e-3) {
+    vec2 d1 = vec2(cos((s0 + 1.0) * WATER_TAU / 8.0), sin((s0 + 1.0) * WATER_TAU / 8.0));
+    waves += crestWaves(q, d1, footprint, slow, size) * sin(f);
+  }
+  return waves;
 }
 
 // 117 HD's caustics at uv: two copies scrolling apart, the darker kept
@@ -237,9 +239,6 @@ void main() {
 
   // mips picked from the derivatives once, here, where they are defined; every tap below is explicit
   float footprint = max(length(dFdx(xz)), length(dFdy(xz)));
-  vec4 lods = vec4(waterLod(footprint, WAVE_SCALE.x), waterLod(footprint, WAVE_SCALE.y),
-    waterLod(footprint, NORMAL_TILE * 3.0), waterLod(footprint, NORMAL_TILE * 5.0));
-  float lodC = waterLod(footprint, NORMAL_TILE * 7.0);
   float lodFoam = waterLod(footprint, CELL_SCALE_B);
 
   // still water drifts with the wind, slowly; running water carries its ripples in two phases (water_common.glsl)
@@ -253,16 +252,16 @@ void main() {
   if (flowing > 0.0) {
     waterFlowPhases(xz, flow, base, m0, m1, w0);
     vec2 o1 = vec2(173.0, 91.0);
-    // running water's waves run with it; the detail isn't drawn out, the drag streaks it
+    // running water's waves run with it
     vec2 dir = flow / flowSpeed;
-    vec2 flowed = ripples(xz, m0, lods, lodC, 1.0, FLOW_WAVE_SIZE, dir, 1.0) * w0
-      + ripples(xz + o1, m1, lods, lodC, 1.0, FLOW_WAVE_SIZE, dir, 1.0) * (1.0 - w0);
+    vec2 flowed = ripples(xz, m0, footprint, 1.0, FLOW_WAVE_SIZE, dir) * w0
+      + ripples(xz + o1, m1, footprint, 1.0, FLOW_WAVE_SIZE, dir) * (1.0 - w0);
     // blending two copies averages their slopes down: give some back
     flowed *= 1.0 + 0.4 * (1.0 - abs(2.0 * w0 - 1.0));
     slope = flowing < 1.0
-      ? mix(ripples(xz, base, lods, lodC, stillSlow, STILL_WAVE_SIZE, WAVE_DIR, NORMAL_STREAK), flowed, flowing) : flowed;
+      ? mix(ripples(xz, base, footprint, stillSlow, STILL_WAVE_SIZE, WAVE_DIR), flowed, flowing) : flowed;
   } else {
-    slope = ripples(xz, base, lods, lodC, stillSlow, STILL_WAVE_SIZE, WAVE_DIR, NORMAL_STREAK);
+    slope = ripples(xz, base, footprint, stillSlow, STILL_WAVE_SIZE, WAVE_DIR);
   }
   float contact = textureLod(waterContact, (xz / WATER_TILE + waterGrid.x) / (waterGrid.y - 1.0), 0.0).r;
   contact *= contact;
