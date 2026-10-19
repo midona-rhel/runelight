@@ -47,6 +47,8 @@ layout(location = 0) out uvec4 WaterOut;  // 64 bits packed, see water.glsl's wa
 #define WAVE_FADE 0.7
 #define WAVE_SPEED 0.12
 #define WAVE_WARP 0.35
+// each size's swells are WAVE_STRETCH times longer along their crests than across: ridges, not round bubbles
+#define WAVE_STRETCH 2.6
 #define WAVE_STRENGTH 0.34
 // still water (no flow) runs its waves and its detail this many times slower, and drifts less with the wind
 #define STILL_SLOW 1.25
@@ -139,8 +141,14 @@ vec2 crestWaves(vec2 q, vec2 dir, float footprint, float slow, float size) {
     // each its own way, near the wind's
     float a = (float(i) - 1.5) * 0.7;
     vec2 d = vec2(dir.x * cos(a) - dir.y * sin(a), dir.x * sin(a) + dir.y * cos(a));
-    vec2 p = (q + warp) / len - d * (waterTime * WAVE_SPEED * WATER_TILE / len / slow) + float(i) * 13.7;
+    // in the wave's own frame: along d (across its crests) and along the crests, stretched
+    vec2 c = vec2(-d.y, d.x);
+    vec2 w = q + warp;
+    vec2 p = vec2(dot(w, d), dot(w, c) / WAVE_STRETCH) / len - vec2(waterTime * WAVE_SPEED * WATER_TILE / len / slow, 0.0)
+      + float(i) * 13.7;
     vec3 n = waveNoise(p);
+    // its gradient back in world directions
+    n.xy = d * n.x + c * (n.y / WAVE_STRETCH);
     // finer than a few pixels: faded, it only shimmers
     float vis = smoothstep(4.0, 10.0, len / max(footprint, 1e-3));
     slope += n.xy * (amp * vis);
