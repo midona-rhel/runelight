@@ -43,12 +43,12 @@ layout(location = 0) out uvec4 WaterOut;  // 64 bits packed, see water.glsl's wa
 // second, which makes them heave in place rather than slide. WAVE_HEIGHT: world units of the first.
 #define WAVE_DIR vec2(0.70710678, 0.70710678)
 #define WAVE_OCTAVES 3
-#define WAVE_LONGEST 4.5
+#define WAVE_LONGEST 5.5
 #define WAVE_SHRINK 0.53
 #define WAVE_FADE 0.3
-#define WAVE_CHOP 2.2
+#define WAVE_CHOP 1.7
 #define WAVE_SPEED 0.11
-#define WAVE_HEIGHT 7.0
+#define WAVE_HEIGHT 5.5
 // along the wind the waves are this much longer than across it
 #define WAVE_STRETCH 1.35
 // still water (no flow) runs its waves and its detail this many times slower, and drifts less with the wind
@@ -132,46 +132,62 @@ float waveNoise(vec2 p) {
   return mix(mix(a, b, u.x), mix(c, d, u.x), u.y) * 2.0 - 1.0;
 }
 
-// One octave of choppy waves at uv (radians of its sines)
-float seaOctave(vec2 uv, float chop) {
-  uv += waveNoise(uv);
-  vec2 wv = 1.0 - abs(sin(uv));
-  vec2 swv = abs(cos(uv));
-  wv = mix(wv, swv, wv);
-  return pow(1.0 - pow(wv.x * wv.y, 0.65), chop);
+// Value noise with its gradient: x the value -1 to 1, yz its gradient
+vec3 waveNoiseD(vec2 p) {
+  vec2 i = floor(p), f = fract(p);
+  vec2 u = f * f * (3.0 - 2.0 * f);
+  vec2 du = 6.0 * f * (1.0 - f);
+  float a = waterHash(vec3(i, 7.0)), b = waterHash(vec3(i + vec2(1.0, 0.0), 7.0));
+  float c = waterHash(vec3(i + vec2(0.0, 1.0), 7.0)), d = waterHash(vec3(i + vec2(1.0, 1.0), 7.0));
+  float k1 = b - a, k2 = c - a, k3 = a - b - c + d;
+  return vec3(a + k1 * u.x + k2 * u.y + k3 * u.x * u.y, du * vec2(k1 + k3 * u.y, k2 + k3 * u.x)) * 2.0
+    - vec3(1.0, 0.0, 0.0);
 }
 
-// The sea's height (WAVE_HEIGHT units) at p (tiles, x along the wind), the octaves finer than about four pixels left
-// out (pixel: tiles a pixel covers)
-float seaHeight(vec2 p, float t, float pixel) {
-  float len = WAVE_LONGEST, amp = 1.0, chop = WAVE_CHOP, h = 0.0;
-  vec2 uv = p * vec2(1.0 / WAVE_STRETCH, 1.0) * (WATER_TAU / WAVE_LONGEST);
-  // a turn of about 37 degrees (the matrix scales by 2)
-  const mat2 TURN = mat2(0.8, 0.6, -0.6, 0.8);
-  float tt = t * WATER_TAU * WAVE_SPEED;
-  for (int i = 0; i < WAVE_OCTAVES; ++i) {
-    float vis = smoothstep(4.0, 8.0, len / max(pixel, 1e-4));
-    if (vis <= 0.0)
-      break;
-    h += (seaOctave(uv + tt, chop) + seaOctave(uv - tt, chop)) * (amp * vis);
-    uv = TURN * uv / WAVE_SHRINK;
-    len *= WAVE_SHRINK;
-    amp *= WAVE_FADE;
-    chop = mix(chop, 1.0, 0.2);
-  }
-  return h * 0.5;
+// The gradient (by uv) of one octave of choppy waves at uv (radians of its sines): a grid of sines warped by noise,
+// folded to 1 - |sin| blended toward |cos|, their product raised so the crests come to a point. Worked out exactly
+// rather than by looking the height up three times.
+vec2 seaOctaveGrad(vec2 uv, vec3 n, float chop) {
+  vec2 w = uv + n.x;
+  vec2 s = sin(w), c = cos(w);
+  vec2 wv = 1.0 - abs(s), dwv = -sign(s) * c;
+  vec2 swv = abs(c), dswv = -sign(c) * s;
+  vec2 m = wv + (swv - wv) * wv;
+  vec2 dm = dwv * (1.0 + swv - 2.0 * wv) + dswv * wv;
+  float P = max(m.x * m.y, 1e-4);
+  vec2 dP = vec2(dm.x * m.y, m.x * dm.y);
+  float R = max(1.0 - pow(P, 0.65), 1e-4);
+  vec2 g = -chop * pow(R, chop - 1.0) * 0.65 * pow(P, -0.35) * dP;
+  // through the warp: w = uv + n(uv) on both axes
+  return g.x * vec2(1.0 + n.y, n.z) + g.y * vec2(n.y, 1.0 + n.z);
 }
 
-// The waves' slope at q (world units) with the wind along dir, `slow` times slower and `size` times as large
+// The waves' slope at q (world units) with the wind along dir, `slow` times slower and `size` times as large:
+// WAVE_OCTAVES octaves, each running both ways so they heave in place, the ones finer than a few pixels left out
 vec2 crestWaves(vec2 q, vec2 dir, float footprint, float slow, float size) {
   float tile = WATER_TILE * size;
   vec2 p = vec2(dot(q, dir), dot(q, vec2(-dir.y, dir.x))) / tile;
   float pixel = footprint / tile;
-  float t = waterTime / slow;
-  float e = 0.02;
-  float h = seaHeight(p, t, pixel);
-  vec2 g = vec2(seaHeight(p + vec2(e, 0.0), t, pixel) - h, seaHeight(p + vec2(0.0, e), t, pixel) - h)
-    * (WAVE_HEIGHT / (e * tile));
+  float tt = waterTime / slow * WATER_TAU * WAVE_SPEED;
+  // uv = M p; each octave turned about 37 degrees and WAVE_SHRINK as long
+  mat2 M = mat2(1.0 / WAVE_STRETCH, 0.0, 0.0, 1.0) * (WATER_TAU / WAVE_LONGEST);
+  const mat2 TURN = mat2(0.8, 0.6, -0.6, 0.8);
+  float len = WAVE_LONGEST, amp = 1.0, chop = WAVE_CHOP;
+  vec2 g = vec2(0.0);
+  for (int i = 0; i < WAVE_OCTAVES; ++i) {
+    float vis = smoothstep(4.0, 8.0, len / max(pixel, 1e-4));
+    if (vis <= 0.0)
+      break;
+    vec2 uv = M * p;
+    vec2 ua = uv + tt, ub = uv - tt;
+    vec2 gu = seaOctaveGrad(ua, waveNoiseD(ua), chop) + seaOctaveGrad(ub, waveNoiseD(ub), chop);
+    g += transpose(M) * gu * (amp * vis);
+    M = TURN * M / WAVE_SHRINK;
+    len *= WAVE_SHRINK;
+    amp *= WAVE_FADE;
+    chop = mix(chop, 1.0, 0.2);
+  }
+  g *= 0.5 * WAVE_HEIGHT / tile;
   return dir * g.x + vec2(-dir.y, dir.x) * g.y;
 }
 
