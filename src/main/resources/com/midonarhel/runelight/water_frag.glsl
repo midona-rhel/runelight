@@ -48,9 +48,13 @@ layout(location = 0) out uvec4 WaterOut;  // 64 bits packed, see water.glsl's wa
 // still water (no flow) runs its waves and its detail this many times slower, and drifts less with the wind
 #define STILL_SLOW 3.0
 #define STILL_DRIFT 0.4
+// the waves' height by the flow: STILL_WAVES on still water, rising to FAST_WAVES at FAST_FLOW world units a second
+#define STILL_WAVES 0.6
+#define FAST_WAVES 1.8
+#define FAST_FLOW 90.0
 // The surface's fine detail: 117 HD's normal map (layer 3 of waterNoise) at this strength, and its seconds per repeat
 // of each size
-#define NORMAL_STRENGTH 0.07
+#define NORMAL_STRENGTH 0.035
 #define NORMAL_PERIOD vec3(42.0, 36.0, 32.0)
 // world units per size step: 117 HD's 128 (a tile) looked too fine at the game's camera distances
 #define NORMAL_TILE 256.0
@@ -207,7 +211,8 @@ void main() {
   } else {
     slope = ripples(xz, base, lods, lodC, STILL_SLOW);
   }
-  slope *= look.w * waterWaves * (0.7 + 0.5 * wind) * (0.75 + 0.35 * energy) * (1.0 + TURB_WAVES * turb);
+  slope *= look.w * waterWaves * (0.7 + 0.5 * wind) * (0.75 + 0.35 * energy) * (1.0 + TURB_WAVES * turb)
+    * mix(STILL_WAVES, FAST_WAVES, smoothstep(FLOW_MIN * 0.5, FAST_FLOW, flowSpeed));
   vec3 rain = vec3(0.0);
   if (waterRain > 0.01 && waterOutdoors == 1) {
     rain = rainRings(xz);

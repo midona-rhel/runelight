@@ -52,7 +52,10 @@ layout(location = 1) out uvec4 WaterShadedOut;
 // the sky cache no brighter than SKY_CLOUD_MAX times the sky there.
 #define SKY_TILT 3.0
 #define CLOUD_TILT 1.0
-#define SKY_CLOUD_MAX 1.25
+// how much of the clouds' own color shows over the sky's, and the spread of the taps that soften them (radians)
+#define CLOUD_SHARE 0.55
+#define CLOUD_BLUR 0.02
+#define SKY_CLOUD_MAX 1.1
 // Highlights. Sheen: a faint tight lobe of the sun or moon on the waves (Blinn-Phong exponent, strength). Glitter:
 // its reflection on the waves' slopes exaggerated GLITTER_SLOPE times, narrow (GLITTER_ROUGH) so the waves break it
 // into sharp glints instead of one soft blob. The moon's are MOON_SPECULAR of the sun's.
@@ -324,8 +327,17 @@ void waterShadeHalf(ivec2 hpx) {
       rc.y = min(rc.y, -0.02);
       rc = normalize(rc);
       vec3 gentle = mix(skyHorizon(sunAltitude), skyZenith(sunAltitude), pow(clamp(-rc.y, 0.0, 1.0), 0.45));
-      vec3 cached = textureLod(skyCache, skyCacheUv(cloudSkyDir(rc)), 0.0).rgb;
+      // four taps a little apart: the cache's clouds are marched with dithered steps, which the water showed as grain
+      vec3 cd = cloudSkyDir(rc);
+      vec3 ax = normalize(cross(cd, vec3(0.0, 1.0, 0.0)));
+      vec3 ay = cross(cd, ax);
+      vec3 cached = 0.25 * (textureLod(skyCache, skyCacheUv(normalize(cd + ax * CLOUD_BLUR)), 0.0).rgb
+        + textureLod(skyCache, skyCacheUv(normalize(cd - ax * CLOUD_BLUR)), 0.0).rgb
+        + textureLod(skyCache, skyCacheUv(normalize(cd + ay * CLOUD_BLUR)), 0.0).rgb
+        + textureLod(skyCache, skyCacheUv(normalize(cd - ay * CLOUD_BLUR)), 0.0).rgb);
       cached *= srgbToLinear(sc) / max(srgbToLinear(gentle), vec3(1e-4));
+      // the clouds only partly: white on the dark water they stood out as blotches
+      cached = mix(srgbToLinear(sc), cached, CLOUD_SHARE);
       sc = linearToSrgb(clamp(min(cached, srgbToLinear(sc) * SKY_CLOUD_MAX), 0.0, 1.0));
     }
     reflection = srgbToLinear(envSky(sc, fogColor, elev));
