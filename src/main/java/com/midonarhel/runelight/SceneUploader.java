@@ -62,6 +62,9 @@ class SceneUploader
 
 	private final RenderCallbackManager renderCallbackManager;
 	private int basex, basez, rid, level;
+	// static objects ending at the game's water level are taken down to the sunk bed (WaterMap.sink)
+	private boolean sinkWater;
+	private final boolean[] atWaterLevel = new boolean[ModelUploader.MAX_VERTEX_COUNT];
 	private final GroundBlender groundBlender = new GroundBlender();
 	private final float[] slope = new float[2];
 	private final float[] tileSlopes = new float[8];
@@ -205,6 +208,7 @@ class SceneUploader
 		Tile[][][] tiles = scene.getExtendedTiles();
 
 		int offset = scene.getWorldViewId() == WorldView.TOPLEVEL ? RuneLightPlugin.SCENE_OFFSET >> 3 : 0;
+		sinkWater = water != null && scene.getWorldViewId() == WorldView.TOPLEVEL;
 		this.basex = (mzx - offset) << 10;
 		this.basez = (mzz - offset) << 10;
 
@@ -1145,6 +1149,15 @@ class SceneUploader
 			}
 		}
 
+		// the model's top (y down), for which things in the water stand on the bed (WaterMap.sink)
+		int top = Integer.MAX_VALUE;
+		if (sinkWater)
+		{
+			for (int v = 0; v < vertexCount; ++v)
+			{
+				top = Math.min(top, (int) vertexY[v] + y);
+			}
+		}
 		for (int v = 0; v < vertexCount; ++v)
 		{
 			int vx = (int) vertexX[v];
@@ -1163,7 +1176,8 @@ class SceneUploader
 			vz += z;
 
 			modelLocalXI[v] = vx;
-			modelLocalYI[v] = vy;
+			atWaterLevel[v] = sinkWater && water.atSurface(vx + basex, vy, vz + basez);
+			modelLocalYI[v] = atWaterLevel[v] ? water.sink(vx + basex, vy, vz + basez, top) : vy;
 			modelLocalZI[v] = vz;
 		}
 
@@ -1185,6 +1199,12 @@ class SceneUploader
 			int triangleA = indices1[face];
 			int triangleB = indices2[face];
 			int triangleC = indices3[face];
+			// the game's ripples around things in the water: see-through faces lying at its water level (the water
+			// draws its own, WaterMap.contact)
+			if (alpha && atWaterLevel[triangleA] && atWaterLevel[triangleB] && atWaterLevel[triangleC])
+			{
+				continue;
+			}
 
 			if (faceTextures == null || faceTextures[face] == -1)
 			{

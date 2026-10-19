@@ -93,11 +93,16 @@ final class WaterMap
 	static final int CONTACT_REACH = 3;
 	// world units (one a few millimetres) above the surface that a model may end and still count as in the water
 	private static final float CONTACT_TOLERANCE = 2f;
+	// world units from the game's water level a static object's vertex may end and still be taken down to the bed
+	private static final int SINK_TOLERANCE = 3;
+	private static final int SINK_MIN_HEIGHT = 24;
 	// at a corner right by one the flow keeps 1 - CONTACT_SLOW of itself and churns at least CONTACT_TURB (rougher
 	// waves, short of the rapids' foam)
 	private static final float CONTACT_SLOW = 0.6f;
 	private static final float CONTACT_TURB = 0.25f;
 	byte[] contact;
+	// each water tile's surface height (its lowest corner, as the texture takes it; y down), NaN off the water
+	private float[] surfaceLevel;
 
 	/**
 	 * Water type for a vanilla texture id, before the area and body decide: FRESH, SWAMP or a sea type, or NONE.
@@ -712,6 +717,7 @@ final class WaterMap
 		WaterBodies b = bodies;
 		// each water tile's surface: its lowest corner (y down), as buildTexture takes it
 		float[] surfaceY = new float[SIZE * SIZE];
+		surfaceLevel = surfaceY;
 		java.util.Arrays.fill(surfaceY, Float.NaN);
 		for (int i = 0; i < surfaceY.length; ++i)
 		{
@@ -793,6 +799,49 @@ final class WaterMap
 			}
 		}
 		contact = c;
+	}
+
+	/**
+	 * Whether scene local (x, height, z) is on a water tile within SINK_TOLERANCE of the game's water level there.
+	 */
+	boolean atSurface(int x, int height, int z)
+	{
+		int i = tileAt(x, z);
+		return i >= 0 && !Float.isNaN(surfaceLevel[i]) && Math.abs(height - surfaceLevel[i]) <= SINK_TOLERANCE;
+	}
+
+	/**
+	 * Where a vertex of a static object at the game's water level (atSurface) belongs: the object ends there, and the
+	 * bed was sunk below it; if the object reaches at least SINK_MIN_HEIGHT above the water (top: its highest point, y
+	 * down; lily pads and the like lie on it) the vertex goes down to the bed under it, so the object stands on the bed
+	 * rather than floats.
+	 */
+	int sink(int x, int height, int z, int top)
+	{
+		int i = tileAt(x, z);
+		if (i < 0 || top > surfaceLevel[i] - SINK_MIN_HEIGHT)
+		{
+			return height;
+		}
+		int off = RuneLightPlugin.SCENE_OFFSET << 7;
+		int ex = x + off, ez = z + off, tx = ex >> 7, tz = ez >> 7;
+		int[][] bed = bedHeights[level[i]];
+		float fx = (ex & 127) / 128f, fz = (ez & 127) / 128f;
+		float b = (bed[tx][tz] * (1 - fx) + bed[tx + 1][tz] * fx) * (1 - fz)
+			+ (bed[tx][tz + 1] * (1 - fx) + bed[tx + 1][tz + 1] * fx) * fz;
+		return Math.max(height, Math.round(b));
+	}
+
+	// the tile index of scene local (x, z), or -1 off the map or with no water found
+	private int tileAt(int x, int z)
+	{
+		if (surfaceLevel == null)
+		{
+			return -1;
+		}
+		int off = RuneLightPlugin.SCENE_OFFSET << 7;
+		int tx = x + off >> 7, tz = z + off >> 7;
+		return tx < 0 || tz < 0 || tx >= SIZE || tz >= SIZE ? -1 : tz * SIZE + tx;
 	}
 
 	private boolean nearWater(int x, int y)
