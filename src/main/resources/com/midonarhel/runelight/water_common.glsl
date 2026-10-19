@@ -26,7 +26,7 @@ const vec3 WATER_SURFACE_COLOR[WATER_TYPES] = vec3[](
   vec3(0.533, 0.600, 0.678),
   vec3(0.190, 0.280, 0.150),
   vec3(0.050, 0.100, 0.140));
-// sRGB: what the bed turns into a little way down, before it goes dark further down
+// sRGB multiplier: the bed's tint under the water, times WATER_DEEP where the water is deepest
 const vec3 WATER_DEPTH_COLOR[WATER_TYPES] = vec3[](
   vec3(0.0),
   vec3(0.000, 0.459, 0.557),
@@ -54,6 +54,8 @@ const vec4 WATER_LOOK[WATER_TYPES] = vec4[](
   vec4(0.25, 0.80, 0.50, 1.00),
   vec4(0.80, 0.30, 0.10, 0.45),
   vec4(0.75, 0.10, 0.20, 0.70));
+// how much of the depth color is left at the deepest (117 HD goes to black)
+const float WATER_DEEP[WATER_TYPES] = float[](1.0, 0.55, 0.50, 0.42, 0.55, 0.45, 0.35);
 // how much faster than clear water each type's color covers the bed with depth (water.glsl's waterAmount)
 const float WATER_MURK[WATER_TYPES] = float[](1.0, 1.0, 1.0, 1.15, 0.9, 3.5, 2.5);
 // how fast each type's flow runs, as a share of the flow map's
