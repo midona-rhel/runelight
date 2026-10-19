@@ -82,9 +82,9 @@ layout(location = 0) out uvec4 WaterOut;  // 64 bits packed, see water.glsl's wa
 #define WATER_REACH 20480.0
 // around things standing in the water (WaterMap.contact): the rapids' foam, up to CONTACT_FOAM of it over a faint
 // CONTACT_FILM, and waves up to 1 + CONTACT_WAVES as rough
-#define CONTACT_FOAM 0.6
-#define CONTACT_FILM 0.2
-#define CONTACT_WAVES 1.2
+#define CONTACT_FOAM 0.3
+#define CONTACT_FILM 0.06
+#define CONTACT_WAVES 0.8
 // rain rings: cell size (world units), rings per cell per second
 #define RAIN_CELL 72.0
 #define RAIN_RATE 1.3

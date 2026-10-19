@@ -90,10 +90,11 @@ final class WaterMap
 	// water foams and roughens around them (water_frag.glsl), and the flow slows and churns at corners near them.
 	static final int CONTACT_RES = 4;
 	static final int CONTACT_SIZE = SIZE * CONTACT_RES;
-	static final int CONTACT_REACH = 5;
-	// at a corner right by one the flow keeps 1 - CONTACT_SLOW of itself and churns at least CONTACT_TURB
+	static final int CONTACT_REACH = 3;
+	// at a corner right by one the flow keeps 1 - CONTACT_SLOW of itself and churns at least CONTACT_TURB (rougher
+	// waves, short of the rapids' foam)
 	private static final float CONTACT_SLOW = 0.6f;
-	private static final float CONTACT_TURB = 0.5f;
+	private static final float CONTACT_TURB = 0.25f;
 	byte[] contact;
 
 	/**
@@ -801,22 +802,22 @@ final class WaterMap
 						GameObject o = objects[k];
 						if (o != null && o.getSceneMinLocation().equals(t.getSceneLocation()))
 						{
-							any |= crossings(o.getRenderable(), o.getModelOrientation(), o.getX(), o.getZ(), o.getY(), surfaceY,
+							any |= crossings(o.getId(), o.getRenderable(), o.getModelOrientation(), o.getX(), o.getZ(), o.getY(), surfaceY,
 								marked);
 						}
 					}
 					WallObject w = t.getWallObject();
 					if (w != null)
 					{
-						any |= crossings(w.getRenderable1(), 0, w.getX(), w.getZ(), w.getY(), surfaceY, marked);
-						any |= crossings(w.getRenderable2(), 0, w.getX(), w.getZ(), w.getY(), surfaceY, marked);
+						any |= crossings(w.getId(), w.getRenderable1(), 0, w.getX(), w.getZ(), w.getY(), surfaceY, marked);
+						any |= crossings(w.getId(), w.getRenderable2(), 0, w.getX(), w.getZ(), w.getY(), surfaceY, marked);
 					}
 					DecorativeObject d = t.getDecorativeObject();
 					if (d != null)
 					{
-						any |= crossings(d.getRenderable(), 0, d.getX() + d.getXOffset(), d.getZ(), d.getY() + d.getYOffset(),
+						any |= crossings(d.getId(), d.getRenderable(), 0, d.getX() + d.getXOffset(), d.getZ(), d.getY() + d.getYOffset(),
 							surfaceY, marked);
-						any |= crossings(d.getRenderable2(), 0, d.getX() + d.getXOffset2(), d.getZ(),
+						any |= crossings(d.getId(), d.getRenderable2(), 0, d.getX() + d.getXOffset2(), d.getZ(),
 							d.getY() + d.getYOffset2(), surfaceY, marked);
 					}
 				}
@@ -873,14 +874,15 @@ final class WaterMap
 
 	/**
 	 * Mark where the faces of an object's model cross the water's surface: the model as the scene uploader places it
-	 * (scene local x, height and z, turned by orient), its faces over water tiles cut at their surface level.
+	 * (scene local x, height and z, turned by orient), its faces over water tiles cut at their surface level. Plants
+	 * swaying in the wind (reeds) are left out.
 	 */
-	private static boolean crossings(Renderable r, int orient, int x, int height, int z, float[] surfaceY,
+	private static boolean crossings(int id, Renderable r, int orient, int x, int height, int z, float[] surfaceY,
 		boolean[] marked)
 	{
 		Model m = r instanceof Model ? (Model) r
 			: r instanceof DynamicObject ? ((DynamicObject) r).getModelZbuf() : null;
-		if (m == null)
+		if (m == null || WindSway.sways(WindSway.forObject(id, r)))
 		{
 			return false;
 		}
