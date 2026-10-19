@@ -78,11 +78,9 @@ layout(location = 1) out uvec4 WaterShadedOut;
 // Caustics: 117 HD's, carried by the flow, worked out by the water pass (water_frag.glsl) as their value above the
 // mean in units of the brightest lines'. The bed gains CAUSTICS times the direct light per unit (between
 // CAUSTIC_RANGE); fainter by moonlight.
-#define CAUSTICS 1.0
+#define CAUSTICS 1.6
 #define CAUSTIC_RANGE vec2(-0.7, 3.0)
 #define CAUSTIC_MOON 0.35
-// near the waterline the caustics only brighten: their dark between the lines comes in over this depth
-#define CAUSTIC_DARK_DEPTH 64.0
 // screen-space reflection: taps along the reflected ray, growing, then halving steps onto the hit; the world is
 // reflected off a calmer normal than the sky (slopes times SSR_TILT)
 #define SSR_STEPS 4
@@ -438,9 +436,7 @@ vec3 waterOver(ivec2 px, inout vec3 p, vec3 albedo, float shadow, vec3 lit, floa
     vec3 caster = (sunIsCaster == 1 ? sunLight(sunAltitude) : moonLight(sunAltitude)) * envSun;
     float k = max(-casterDir.y, 0.0) * shadow * CAUSTICS * (sunIsCaster == 1 ? 1.0 : CAUSTIC_MOON)
       * smoothstep(0.0, 6.0, depth);
-    k *= 1.0 - smoothstep(CAUSTIC_FADE.x, CAUSTIC_FADE.y, depth);
-    float lo = CAUSTIC_RANGE.x * smoothstep(0.0, CAUSTIC_DARK_DEPTH, depth);
-    under += srgbToLinear(albedo) * caster * (k * clamp(caustic, lo, CAUSTIC_RANGE.y));
+    under += srgbToLinear(albedo) * caster * (k * clamp(caustic, CAUSTIC_RANGE.x, CAUSTIC_RANGE.y));
   }
   under = max(under, vec3(0.0)) * srgbToLinear(waterDepthTint(type, colorDepth));
   // what is seen through a wave face turned toward the camera is a little brighter, turned away darker

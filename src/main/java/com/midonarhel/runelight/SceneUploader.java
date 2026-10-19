@@ -889,9 +889,8 @@ class SceneUploader
 		return 6;
 	}
 
-	// how much of the nearby bank's color a bed corner keeps, by its distance in corners from the nearest bank corner:
-	// the bank's color runs on down into the bed, giving way to the bed's own only well out from the shore
-	private static final float[] BANK_SHARE = {1f, 0.9f, 0.75f, 0.55f, 0.3f};
+	// how much of the nearby bank's color a bed corner keeps, by its distance in corners from the nearest bank corner
+	private static final float[] BANK_SHARE = {1f, 0.7f, 0.35f};
 	private static final int BANK_REACH = BANK_SHARE.length - 1;
 
 	/**
@@ -901,10 +900,8 @@ class SceneUploader
 	 */
 	private int bedCornerColor(int cx, int cy, int[][] heights)
 	{
-		int depth = water.depthLevel(cx, cy);
-		int own = water.bedColor(cx, cy, depth);
-		float hue = 0, sat = 0, light = 0, wsum = 0;
-		int nearest = BANK_REACH + 1, firstHue = -1;
+		int own = water.bedColor(cx, cy, water.depthLevel(cx, cy));
+		int hue = 0, sat = 0, light = 0, count = 0, nearest = BANK_REACH + 1;
 		int maxX = heights.length - 1, maxY = heights[0].length - 1;
 		for (int dy = -BANK_REACH; dy <= BANK_REACH; ++dy)
 		{
@@ -926,26 +923,17 @@ class SceneUploader
 					return c;
 				}
 				nearest = Math.min(nearest, d);
-				// hues averaged around the first one seen, so they don't wrap
-				int h = c >> 10 & 63;
-				if (firstHue < 0)
-				{
-					firstHue = h;
-				}
-				h = firstHue + ((h - firstHue + 32 & 63) - 32);
-				float w = 1f / (d * d);
-				hue += h * w;
-				sat += (c >> 7 & 7) * w;
-				light += (c & 127) * w;
-				wsum += w;
+				hue += c >> 10 & 63;
+				sat += c >> 7 & 7;
+				light += c & 127;
+				++count;
 			}
 		}
-		if (wsum == 0)
+		if (count == 0)
 		{
 			return own;
 		}
-		int l = Math.max(4, Math.round(light / wsum) - depth * WaterMap.DEPTH_DARKEN);
-		int bank = (Math.round(hue / wsum) & 63) << 10 | Math.round(sat / wsum) << 7 | l;
+		int bank = (hue + count / 2) / count << 10 | (sat + count / 2) / count << 7 | (light + count / 2) / count;
 		return lerpHsl(own, bank, BANK_SHARE[nearest]);
 	}
 

@@ -165,8 +165,6 @@ final class WaterMap
 
 		java.util.Arrays.fill(level, (byte) -1);
 		int[] kind = new int[SIZE * SIZE];
-		short[] underlay = new short[SIZE * SIZE];
-		UnderlayColors ground = new UnderlayColors(scene);
 		int[] murk = new int[SIZE * SIZE];
 		boolean[] landCorner = new boolean[CORNERS * CORNERS];
 		WaterBodies b = bodies;
@@ -222,7 +220,6 @@ final class WaterMap
 					if (loaded)
 					{
 						landCorners(landCorner, x, y);
-						ground.add(tiles[0][x][y], 0, x, y, heights[0]);
 					}
 					else
 					{
@@ -235,7 +232,6 @@ final class WaterMap
 				level[i] = (byte) lvl;
 				waterTexture[i] = (short) tileTexture(water);
 				kind[i] = k;
-				underlay[i] = ground.id(plane, x, y);
 				b.water[i] = true;
 				b.sea[i] = isSea(water);
 				int[][] h = heights[lvl];
@@ -299,8 +295,7 @@ final class WaterMap
 			int bodyMurk = v[MURKY_CAVE] > v[CLEAR] && v[MURKY_CAVE] >= v[MURKY_SWAMP] ? MURKY_CAVE
 				: v[MURKY_SWAMP] > v[CLEAR] ? MURKY_SWAMP : CLEAR;
 			type[i] = (byte) finalType(kind[i], bodyMurk, b.bodyClass[body]);
-			int own = ground.color(underlay[i]);
-			bedHsl[i] = (short) (own >= 0 && murk[i] == CLEAR && kind[i] != SWAMP ? own : bedColor(kind[i], murk[i]));
+			bedHsl[i] = (short) bedColor(kind[i], murk[i]);
 		}
 
 		for (int z = 0; z < bedHeights.length; ++z)
@@ -538,64 +533,6 @@ final class WaterMap
 		return bodyClass == WaterBodies.OCEAN ? OCEAN : FRESH;
 	}
 
-	/**
-	 * The color each underlay is drawn with on the land around, learned from the plain ground tiles there (vanilla's
-	 * baked lighting undone where the land's is): a water tile is an overlay on an underlay, which is the ground under
-	 * the water.
-	 */
-	private static final class UnderlayColors
-	{
-		private final short[][][] ids;
-		// underlay ids are a few hundred at most
-		private static final int IDS = 1 << 12;
-		private final int[] h = new int[IDS], s = new int[IDS], l = new int[IDS], n = new int[IDS];
-
-		UnderlayColors(Scene scene)
-		{
-			ids = scene.getUnderlayIds();
-		}
-
-		short id(int plane, int x, int y)
-		{
-			return ids == null ? 0 : ids[plane][x][y];
-		}
-
-		void add(Tile t, int plane, int x, int y, int[][] heights)
-		{
-			int id = id(plane, x, y) & 0xffff;
-			SceneTilePaint paint = t == null ? null : t.getSceneTilePaint();
-			if (id == 0 || id >= IDS || paint == null || paint.getTexture() != -1 || paint.getNeColor() == 12345678)
-			{
-				return;
-			}
-			float dhdx = (heights[x + 1][y] + heights[x + 1][y + 1] - heights[x][y] - heights[x][y + 1]) / 256f;
-			float dhdz = (heights[x][y + 1] + heights[x + 1][y + 1] - heights[x][y] - heights[x + 1][y]) / 256f;
-			for (int c : new int[]{paint.getSwColor(), paint.getSeColor(), paint.getNeColor(), paint.getNwColor()})
-			{
-				// as the land around is drawn: vanilla's lighting undone only with ground blending (SceneUploader)
-				if (VertexShading.undoVanillaShading && GroundBlender.enabled)
-				{
-					c = GroundBlender.undoShading(c, dhdx, dhdz);
-				}
-				h[id] += c >> 10 & 63;
-				s[id] += c >> 7 & 7;
-				l[id] += c & 127;
-				n[id]++;
-			}
-		}
-
-		/** The underlay's mean color, packed HSL, or -1 where none of its ground was seen. */
-		int color(short id)
-		{
-			int i = id & 0xffff, c;
-			if (i == 0 || i >= IDS || (c = n[i]) == 0)
-			{
-				return -1;
-			}
-			return (h[i] + c / 2) / c << 10 | (s[i] + c / 2) / c << 7 | (l[i] + c / 2) / c;
-		}
-	}
-
 	// bed colors, packed HSL: sand under clear water, mud in swamps, dark stone in caves
 	private static final int SAND = 8 << 10 | 2 << 7 | 40;
 	private static final int PALE_SAND = 8 << 10 | 1 << 7 | 46;
@@ -688,7 +625,7 @@ final class WaterMap
 	}
 
 	// the bed's lightness lost per depth level
-	static final int DEPTH_DARKEN = 2;
+	private static final int DEPTH_DARKEN = 2;
 
 	/**
 	 * The bed's own color at corner (cx, cy), extended coordinates, with depth level {@code depth}: the mean of the

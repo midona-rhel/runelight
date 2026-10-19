@@ -9,8 +9,6 @@ uniform float waterTime;            // seconds, wraps
 uniform vec2 waterGrid;             // x: extended tile of local tile 0, y: corners per side
 
 #define WATER_TILE 128.0
-// the caustics fade out between these depths (world units) and aren't worked out below them
-#define CAUSTIC_FADE vec2(48.0, 208.0)
 // how far the surface target's distance reaches (water_frag.glsl)
 #define WATER_REACH 20480.0
 // waterTime wraps after this many seconds (Water.java); every motion repeats a whole number of times in it

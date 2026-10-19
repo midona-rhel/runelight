@@ -361,23 +361,21 @@ void main() {
     vec4 h = waterInvViewProj * vec4(ndc, waterZeroToOne == 1 ? sceneZ : sceneZ * 2.0 - 1.0, 1.0);
     vec3 bed = h.xyz / h.w;
     float depth = max(bed.y - vRel.y, 0.0);
-    if (depth < CAUSTIC_FADE.y) {
-      // the light reaching the bed entered the water toward the light, bent steeper by refraction
-      vec2 sunXZ = waterCasterDir.xz;
-      float sinI = length(sunXZ);
-      float sinT = min(sinI / 1.33, 0.95);
-      vec2 at = bed.xz + waterCamera.xz + sunXZ * (sinT * inversesqrt(1.0 - sinT * sinT) / max(sinI, 1e-4) * depth);
-      float lod = waterLod(footprint * (1.0 + depth / max(length(vRel), 1.0)), CAUSTIC_SCALE);
-      vec2 dir = flowSpeed > 1e-3 ? flow / flowSpeed : vec2(0.0);
-      vec2 smear = dir * (smoothstep(CAUSTIC_STRETCH_SPEED.x, CAUSTIC_STRETCH_SPEED.y, flowSpeed)
-        * CAUSTIC_STRETCH * min(flowSpeed, FLOW_DRAG / FLOW_CYCLE));
-      vec3 c = causticMoved(at, mix(vec2(0.0), m0 - base, flowing), smear, lod);
-      if (flowing > 0.0)
-        c = c * w0 + causticMoved(at + vec2(97.0, 211.0), m1 - base, smear, lod) * (1.0 - w0);
-      c = (c - CAUSTIC_MEAN) / (CAUSTIC_LINE - CAUSTIC_MEAN);
-      caustic = c.g;
-      causticRB = c.rb - c.g;
-    }
+    // the light reaching the bed entered the water toward the light, bent steeper by refraction
+    vec2 sunXZ = waterCasterDir.xz;
+    float sinI = length(sunXZ);
+    float sinT = min(sinI / 1.33, 0.95);
+    vec2 at = bed.xz + waterCamera.xz + sunXZ * (sinT * inversesqrt(1.0 - sinT * sinT) / max(sinI, 1e-4) * depth);
+    float lod = waterLod(footprint * (1.0 + depth / max(length(vRel), 1.0)), CAUSTIC_SCALE);
+    vec2 dir = flowSpeed > 1e-3 ? flow / flowSpeed : vec2(0.0);
+    vec2 smear = dir * (smoothstep(CAUSTIC_STRETCH_SPEED.x, CAUSTIC_STRETCH_SPEED.y, flowSpeed)
+      * CAUSTIC_STRETCH * min(flowSpeed, FLOW_DRAG / FLOW_CYCLE));
+    vec3 c = causticMoved(at, mix(vec2(0.0), m0 - base, flowing), smear, lod);
+    if (flowing > 0.0)
+      c = c * w0 + causticMoved(at + vec2(97.0, 211.0), m1 - base, smear, lod) * (1.0 - w0);
+    c = (c - CAUSTIC_MEAN) / (CAUSTIC_LINE - CAUSTIC_MEAN);
+    caustic = c.g;
+    causticRB = c.rb - c.g;
   }
 
   uvec2 packed;
