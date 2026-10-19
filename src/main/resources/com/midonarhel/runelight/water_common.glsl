@@ -118,6 +118,19 @@ float waterDepthUnder(usampler2D surface, ivec2 px, vec3 p) {
   return t < dist ? max(p.y * (1.0 - t / dist), 0.0) : 0.0;
 }
 
+// WaterMap.DEPTH: bed depth per tile from the shore; a water tile is at least WaterMap.MIN_DEPTH deep in its middle
+const float BED_DEPTH[9] = float[](0.0, 82.0, 165.0, 258.0, 335.0, 385.0, 412.0, 451.0, 506.0);
+#define BED_MIN 56.0
+
+// The bed's depth going by the shore distance alone (tiles, the average of the water tiles around the corner, 0 on
+// land): the bed itself sinks in a pit in the middle of every tile at the shore, which the water's color must not show
+float nominalDepth(float shore) {
+  float level = clamp(shore - 0.5, 0.0, 7.999);
+  int i = int(level);
+  float d = mix(BED_DEPTH[i], BED_DEPTH[i + 1], level - float(i));
+  return shore > 0.0 ? max(d, BED_MIN * min(shore, 1.0)) : 0.0;
+}
+
 // A scroll of a whole number of repeats per wrap of waterTime, about one per `period` seconds
 float waterCycle(float period) {
   return fract(floor(WATER_TIME_WRAP / period + 0.5) * (waterTime / WATER_TIME_WRAP));

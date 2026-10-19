@@ -31,8 +31,6 @@ uniform vec3 waterCamera;
 in vec3 vRel;
 in vec2 vXZ;
 in vec2 vFlow;
-in vec4 vData;       // shore distance (tiles), wave energy, water share, turbulence
-in float vDepth;     // how deep the water is here going by its distance from the shore, smooth across tiles
 flat in int vType;
 flat in int vSlot;
 
@@ -229,8 +227,11 @@ void main() {
   float speed = WATER_FLOW_SPEED[type];
   vec4 look = WATER_LOOK[type];
   float wind = waterWind.z;
-  float energy = vData.g;
-  float turb = vData.a * step(0.5, speed);
+  // page 1 here (shore distance in tiles, wave energy, water share, turbulence), filtered between the corners in the
+  // fragment: through the vertices it bent along each quad's diagonal, which showed as straight edges in the color
+  vec4 data = waterPage1(waterData, xz / WATER_TILE + waterGrid.x);
+  float energy = data.g;
+  float turb = data.a * step(0.5, speed);
   vec2 flow = vFlow;
   float flowSpeed = length(flow);
 
@@ -267,11 +268,11 @@ void main() {
   contact *= contact;
   slope *= look.w * waterWaves * (0.7 + 0.5 * wind) * (0.75 + 0.35 * energy) * (1.0 + TURB_WAVES * turb)
     * mix(STILL_WAVES, FAST_WAVES, smoothstep(FLOW_MIN * 0.5, FAST_FLOW, flowSpeed)) * (1.0 + CONTACT_WAVES * contact)
-    * mix(SHORE_WAVES, 1.0, smoothstep(0.0, SHORE_CALM, vData.r) * smoothstep(0.5, 1.0, vData.b));
+    * mix(SHORE_WAVES, 1.0, smoothstep(0.0, SHORE_CALM, data.r) * smoothstep(0.5, 1.0, data.b));
   if (ocean && flowing < 1.0) {
     // the swell, across the shore distance's gradient (half a tile either way: smooth across the corners)
     vec2 c = xz / WATER_TILE + waterGrid.x;
-    float shore = vData.r;
+    float shore = data.r;
     float reach = smoothstep(0.15, 0.7, shore) * (1.0 - smoothstep(SWELL_REACH.x, SWELL_REACH.y, shore));
     if (reach > 0.0) {
       vec2 g = vec2(waterPage1(waterData, c + vec2(0.5, 0.0)).r - waterPage1(waterData, c - vec2(0.5, 0.0)).r,
@@ -354,7 +355,7 @@ void main() {
     // normal x, z (9 bits each), look slot (5: type and the game's texture, Water.java), foam (3), depth (6, square
     // root)
     packed.x = pack01(nrm.x * 0.5 + 0.5, 511.0) | pack01(nrm.z * 0.5 + 0.5, 511.0) << 9 | uint(vSlot & 31) << 18
-      | pack01(foam, 7.0) << 23 | pack01(sqrt(vDepth / 512.0), 63.0) << 26;
+      | pack01(foam, 7.0) << 23 | pack01(sqrt(nominalDepth(data.r) / 512.0), 63.0) << 26;
   }
   // distance (16 bits), caustics: green -1 to 3 (8 bits), red and blue -0.5 to 0.5 from it (4 bits each)
   packed.y = pack01(length(vRel) / WATER_REACH, 65535.0) | pack01((caustic + 1.0) / 4.0, 255.0) << 16

@@ -17,23 +17,8 @@ uniform float waterSpeed;     // multiplier on flow
 out vec3 vRel;        // camera-relative position, moved
 out vec2 vXZ;         // world xz: the waves are evaluated there
 out vec2 vFlow;       // world units per second
-out vec4 vData;       // shore distance (tiles), wave energy, water share, turbulence
-out float vDepth;     // how deep the bed lies here by the distance to the shore, smooth across tiles
 flat out int vType;
 flat out int vSlot;
-
-// WaterMap.DEPTH: bed depth per tile from the shore; a water tile is at least WaterMap.MIN_DEPTH deep in its middle
-const float BED_DEPTH[9] = float[](0.0, 82.0, 165.0, 258.0, 335.0, 385.0, 412.0, 451.0, 506.0);
-#define BED_MIN 56.0
-
-// The bed's depth going by the shore distance alone (tiles, the average of the water tiles around the corner, 0 on
-// land): the bed itself sinks in a pit in the middle of every tile at the shore, which the water's color must not show
-float nominalDepth(float shore) {
-  float level = clamp(shore - 0.5, 0.0, 7.999);
-  int i = int(level);
-  float d = mix(BED_DEPTH[i], BED_DEPTH[i + 1], level - float(i));
-  return shore > 0.0 ? max(d, BED_MIN * min(shore, 1.0)) : 0.0;
-}
 
 void main() {
   // corners 0 sw, 1 se, 2 nw, 3 ne (WaterSurface.QUAD)
@@ -51,8 +36,6 @@ void main() {
   vRel = vec3(xz.x, p0.r, xz.y) - waterCamera;
   vXZ = xz;
   vFlow = flow;
-  vData = p1;
-  vDepth = nominalDepth(p1.r);
   vType = type;
   vSlot = int(tile.w);
   gl_Position = waterViewProj * vec4(vRel, 1.0);
