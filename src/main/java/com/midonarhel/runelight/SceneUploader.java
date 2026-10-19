@@ -824,14 +824,13 @@ class SceneUploader
 		dry[1] = shoreColor(x0 + 128, heights[tileX + 1][tileY], z0);
 		dry[2] = shoreColor(x0 + 128, heights[tileX + 1][tileY + 1], z0 + 128);
 		dry[3] = shoreColor(x0, heights[tileX][tileY + 1], z0 + 128);
-		final int mix = mixHsl(dry, 4);
-		final int c0 = dry[0] >= 0 ? dry[0] : mix >= 0 ? mix : water.bedColor(tileX, tileY, x0, z0, water.depthLevel(tileX, tileY));
-		final int c1 = dry[1] >= 0 ? dry[1] : mix >= 0 ? mix
-			: water.bedColor(tileX, tileY, x0 + 128, z0, water.depthLevel(tileX + 1, tileY));
-		final int c2 = dry[2] >= 0 ? dry[2] : mix >= 0 ? mix
+		// only the corners on the bank take its color; the rest is the bed's own, or a whole tile by the shore went
+		// the bank's color and showed under the water as a dark square
+		final int c0 = dry[0] >= 0 ? dry[0] : water.bedColor(tileX, tileY, x0, z0, water.depthLevel(tileX, tileY));
+		final int c1 = dry[1] >= 0 ? dry[1] : water.bedColor(tileX, tileY, x0 + 128, z0, water.depthLevel(tileX + 1, tileY));
+		final int c2 = dry[2] >= 0 ? dry[2]
 			: water.bedColor(tileX, tileY, x0 + 128, z0 + 128, water.depthLevel(tileX + 1, tileY + 1));
-		final int c3 = dry[3] >= 0 ? dry[3] : mix >= 0 ? mix
-			: water.bedColor(tileX, tileY, x0, z0 + 128, water.depthLevel(tileX, tileY + 1));
+		final int c3 = dry[3] >= 0 ? dry[3] : water.bedColor(tileX, tileY, x0, z0 + 128, water.depthLevel(tileX, tileY + 1));
 		final int n0 = terrainNormal(bed, tileX, tileY);
 		final int n1 = terrainNormal(bed, tileX + 1, tileY);
 		final int n2 = terrainNormal(bed, tileX + 1, tileY + 1);
@@ -845,7 +844,7 @@ class SceneUploader
 			// sink the middle of the tile too, as a fan of four triangles around it.
 			final int hc = (h0 + h1 + h2 + h3 + 2 >> 2) - (water.bedOffset(tileX, tileY) + water.bedOffset(tileX + 1, tileY)
 				+ water.bedOffset(tileX + 1, tileY + 1) + water.bedOffset(tileX, tileY + 1) + 2 >> 2) + water.centerOffset(tileX, tileY);
-			final int cc = mix >= 0 ? mix : water.bedColor(tileX, tileY, x0 + 64, z0 + 64, 1);
+			final int cc = water.bedColor(tileX, tileY, x0 + 64, z0 + 64, 1);
 			GroundBlender.tileSlopes(bed, tileX, tileY, slope, bedSlopes);
 			GroundBlender.interpolateSlope(bedSlopes, 0.5f, 0.5f, slope);
 			final int nc = VertexShading.encodeNormal(slope[0], -1, slope[1]);
@@ -966,15 +965,10 @@ class SceneUploader
 			: edge ? water.bedOffset(ex, ey, ox, oz) : Math.max(water.bedOffset(ex, ey, ox, oz), WaterMap.MIN_DEPTH);
 		int depth = corner ? water.depthLevel(cx, cy) : water.depthLevel(ex + Math.round(ox / 128f), ey + Math.round(oz / 128f));
 		GroundBlender.interpolateSlope(bedSlopes, ox / 128f, oz / 128f, slope);
-		// the land's color where land touches the vertex (corners on the bank, vertices shared with land faces),
-		// else that of the nearest corner, else the bed's (see uploadBed)
+		// the land's color where the vertex stays on the bank (land touches it, nothing sinks it), else the bed's
+		// (see uploadBed)
 		int off = RuneLightPlugin.SCENE_OFFSET << 7;
-		int color = shoreColor(x + off, y, z + off);
-		if (color < 0)
-		{
-			int nx = lx + (ox < 64 ? 0 : 128), nz = lz + (oz < 64 ? 0 : 128);
-			color = shoreColor(nx + off, bedTileHeights[ex + (ox < 64 ? 0 : 1)][ey + (oz < 64 ? 0 : 1)], nz + off);
-		}
+		int color = sink == 0 ? shoreColor(x + off, y, z + off) : -1;
 		if (color < 0)
 		{
 			color = water.bedColor(ex, ey, (ex << 7) + ox, (ey << 7) + oz, depth);
