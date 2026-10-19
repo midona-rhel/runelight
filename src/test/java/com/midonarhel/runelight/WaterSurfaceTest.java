@@ -72,25 +72,21 @@ public class WaterSurfaceTest
 	}
 
 	@Test
-	public void gridIndicesCoverEveryQuadOnce()
+	public void quadCoversTheTileWoundAlike()
 	{
-		for (int n : new int[]{WaterSurface.NEAR_GRID, WaterSurface.FAR_GRID})
+		short[] idx = WaterSurface.QUAD;
+		assertEquals(6, idx.length);
+		// twice the signed area of both triangles, corners 0 sw, 1 se, 2 nw, 3 ne: the whole tile, wound alike
+		double area = 0;
+		for (int k = 0; k < idx.length; k += 3)
 		{
-			short[] idx = WaterSurface.gridIndices(n);
-			assertEquals(n * n * 6, idx.length);
-			// twice the signed area of every triangle in the grid's own units adds up to the whole tile, all wound alike
-			double area = 0;
-			for (int k = 0; k < idx.length; k += 3)
-			{
-				int a = idx[k], b = idx[k + 1], c = idx[k + 2];
-				int ax = a % (n + 1), az = a / (n + 1), bx = b % (n + 1), bz = b / (n + 1), cx = c % (n + 1), cz = c / (n + 1);
-				double cross = (bx - ax) * (cz - az) - (bz - az) * (cx - ax);
-				assertTrue(cross < 0);
-				area -= cross;
-				assertTrue(Math.max(a, Math.max(b, c)) < (n + 1) * (n + 1));
-			}
-			assertEquals(2.0 * n * n, area, 1e-9);
+			int a = idx[k], b = idx[k + 1], c = idx[k + 2];
+			int ax = a % 2, az = a / 2, bx = b % 2, bz = b / 2, cx = c % 2, cz = c / 2;
+			double cross = (bx - ax) * (cz - az) - (bz - az) * (cx - ax);
+			assertTrue(cross < 0);
+			area -= cross;
 		}
+		assertEquals(2.0, area, 1e-9);
 	}
 
 	@Test
@@ -103,13 +99,5 @@ public class WaterSurfaceTest
 		assertEquals(300, WaterSurface.chunkDistance(8 * 128 - 300, 16 * 128 + 500, cx, cy), 1e-3);
 		// beyond the north east corner
 		assertEquals(500, WaterSurface.chunkDistance(16 * 128 + 300, 24 * 128 + 400, cx, cy), 1e-3);
-	}
-
-	@Test
-	public void movementIsGoneBeforeTheCoarseGrid()
-	{
-		// the fine and coarse grids only meet where neither moves: no cracks
-		assertTrue(WaterSurface.FADE_END <= WaterSurface.NEAR_DISTANCE);
-		assertTrue(WaterSurface.FADE_START < WaterSurface.FADE_END);
 	}
 }

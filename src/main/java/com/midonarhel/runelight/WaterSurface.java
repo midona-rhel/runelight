@@ -17,10 +17,8 @@ import static org.lwjgl.opengl.GL33C.*;
  * so the waves hide each other, and drops what is behind the scene in its fragment shader.
  *
  * The mesh: one instance per tile (the scene's water tiles and the land tiles around them, where the surface runs on
- * under the banks), built when the scene loads, grouped by chunks of {@link #CHUNK} tiles. Chunks near the camera are
- * drawn as {@link #NEAR_GRID} x {@link #NEAR_GRID} quads per tile and moved by the waves; further off one quad per
- * tile, flat. The movement fades out before the coarse chunks start, and the edges of the fine and the coarse grid
- * follow the same straight line between two corners, so there are no cracks between them.
+ * under the banks), built when the scene loads, grouped by chunks of {@link #CHUNK} tiles. Each tile is one flat quad
+ * at the water map's corner heights; the waves are all in its normal.
  */
 class WaterSurface
 {
@@ -29,13 +27,6 @@ class WaterSurface
 		.add(GL_FRAGMENT_SHADER, "water_frag.glsl");
 
 	static final int CHUNK = 8;
-	static final int NEAR_GRID = 4;
-	static final int FAR_GRID = 1;
-	// chunks closer than this to the focal point (world units, horizontally, to their nearest point) get the fine grid;
-	// the waves fade out over FADE, before it. Around the focal point rather than the camera: zoomed out, the camera
-	// is far behind the player, whose surroundings should still move.
-	static final float NEAR_DISTANCE = 26 * 128;
-	static final float FADE_START = 14 * 128, FADE_END = 22 * 128;
 
 	/**
 	 * The instances of one scene: 4 bytes per tile (extended x, y, water type, 0), by chunk.
@@ -50,8 +41,8 @@ class WaterSurface
 	}
 
 	private int program;
-	private int uniViewProj, uniCamera, uniFocus, uniGridN, uniGrid, uniTime, uniWind, uniDrift, uniWaves, uniSpeed, uniDisplace,
-		uniFade, uniRain, uniOutdoors, uniDebug, uniSkyDepth, uniCausticsOn, uniCasterDir, uniInvViewProj, uniViewport,
+	private int uniViewProj, uniCamera, uniFocus, uniGrid, uniTime, uniWind, uniDrift, uniWaves, uniSpeed, 
+		uniRain, uniOutdoors, uniDebug, uniSkyDepth, uniCausticsOn, uniCasterDir, uniInvViewProj, uniViewport,
 		uniZeroToOne;
 
 	private int vao, vboTiles, ebo;
@@ -156,25 +147,8 @@ class WaterSurface
 	/**
 	 * Indices of an n x n grid of quads over (n + 1)^2 vertices, row by row.
 	 */
-	static short[] gridIndices(int n)
-	{
-		short[] idx = new short[n * n * 6];
-		int k = 0;
-		for (int z = 0; z < n; ++z)
-		{
-			for (int x = 0; x < n; ++x)
-			{
-				int a = z * (n + 1) + x, b = a + 1, c = a + n + 1, d = c + 1;
-				idx[k++] = (short) a;
-				idx[k++] = (short) c;
-				idx[k++] = (short) b;
-				idx[k++] = (short) b;
-				idx[k++] = (short) c;
-				idx[k++] = (short) d;
-			}
-		}
-		return idx;
-	}
+	// one quad per tile: corners 0 sw, 1 se, 2 nw, 3 ne (water_vert.glsl)
+	static final short[] QUAD = {0, 2, 1, 1, 2, 3};
 
 	/**
 	 * Horizontal distance from (px, pz) to a chunk's square, world units, with the chunk at extended tile (cx, cy).
@@ -194,15 +168,12 @@ class WaterSurface
 		uniViewProj = glGetUniformLocation(program, "waterViewProj");
 		uniCamera = glGetUniformLocation(program, "waterCamera");
 		uniFocus = glGetUniformLocation(program, "waterFocus");
-		uniGridN = glGetUniformLocation(program, "gridN");
 		uniGrid = glGetUniformLocation(program, "waterGrid");
 		uniTime = glGetUniformLocation(program, "waterTime");
 		uniWind = glGetUniformLocation(program, "waterWind");
 		uniDrift = glGetUniformLocation(program, "waterDrift");
 		uniWaves = glGetUniformLocation(program, "waterWaves");
 		uniSpeed = glGetUniformLocation(program, "waterSpeed");
-		uniDisplace = glGetUniformLocation(program, "waterDisplace");
-		uniFade = glGetUniformLocation(program, "waterFade");
 		uniRain = glGetUniformLocation(program, "waterRain");
 		uniOutdoors = glGetUniformLocation(program, "waterOutdoors");
 		uniDebug = glGetUniformLocation(program, "waterDebug");
@@ -241,9 +212,8 @@ class WaterSurface
 			vboTiles = glGenBuffers();
 			ebo = glGenBuffers();
 			glBindVertexArray(vao);
-			short[] near = gridIndices(NEAR_GRID), far = gridIndices(FAR_GRID);
-			ShortBuffer idx = BufferUtils.createShortBuffer(near.length + far.length);
-			idx.put(near).put(far).flip();
+			ShortBuffer idx = BufferUtils.createShortBuffer(6);
+			idx.put(QUAD).flip();
 			glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, ebo);
 			glBufferData(GL_ELEMENT_ARRAY_BUFFER, idx, GL_STATIC_DRAW);
 			glBindBuffer(GL_ARRAY_BUFFER, vboTiles);
@@ -337,11 +307,9 @@ class WaterSurface
 		glUniform2f(uniGrid, RuneLightPlugin.SCENE_OFFSET, WaterMap.CORNERS);
 		glUniform1f(uniTime, params.time);
 		glUniform3f(uniWind, params.windX, params.windZ, params.strength);
-		glUniform4f(uniDrift, params.driftX, params.driftZ, params.swellX, params.swellZ);
+		glUniform4f(uniDrift, params.driftX, params.driftZ, 0, 0);
 		glUniform1f(uniWaves, params.waves);
 		glUniform1f(uniSpeed, params.speed);
-		glUniform1f(uniDisplace, params.displace);
-		glUniform2f(uniFade, FADE_START, FADE_END);
 		glUniform1f(uniRain, params.rain);
 		glUniform1i(uniOutdoors, params.outdoors ? 1 : 0);
 		glUniform1i(uniDebug, params.debug ? 1 : 0);
@@ -355,31 +323,22 @@ class WaterSurface
 		glBindVertexArray(vao);
 		glBindBuffer(GL_ARRAY_BUFFER, vboTiles);
 		Mesh m = mesh;
-		int nearCount = NEAR_GRID * NEAR_GRID * 6, farCount = FAR_GRID * FAR_GRID * 6;
-		// consecutive chunks of the same grid go in one draw: their instances are contiguous
-		int runStart = -1, runEnd = 0, runGrid = 0;
+		// consecutive chunks in reach go in one draw: their instances are contiguous
+		int runStart = -1, runEnd = 0;
 		for (int c = 0; c <= m.chunks; ++c)
 		{
-			int grid = 0;
-			if (c < m.chunks)
-			{
-				float d = chunkDistance(focusX, focusZ, m.chunkX[c], m.chunkY[c]);
-				grid = d > reach ? 0 : d < NEAR_DISTANCE ? NEAR_GRID : FAR_GRID;
-			}
-			if (runStart >= 0 && (grid != runGrid || c == m.chunks))
+			boolean drawn = c < m.chunks && chunkDistance(focusX, focusZ, m.chunkX[c], m.chunkY[c]) <= reach;
+			if (runStart >= 0 && (!drawn || c == m.chunks))
 			{
 				glVertexAttribIPointer(0, 4, GL_UNSIGNED_BYTE, 4, runStart * 4L);
-				glUniform1i(uniGridN, runGrid);
-				glDrawElementsInstanced(GL_TRIANGLES, runGrid == NEAR_GRID ? nearCount : farCount, GL_UNSIGNED_SHORT,
-					runGrid == NEAR_GRID ? 0L : nearCount * 2L, runEnd - runStart);
+				glDrawElementsInstanced(GL_TRIANGLES, 6, GL_UNSIGNED_SHORT, 0L, runEnd - runStart);
 				runStart = -1;
 			}
-			if (grid != 0)
+			if (drawn)
 			{
 				if (runStart < 0)
 				{
 					runStart = m.chunkStart[c];
-					runGrid = grid;
 				}
 				runEnd = m.chunkStart[c] + m.chunkCount[c];
 			}

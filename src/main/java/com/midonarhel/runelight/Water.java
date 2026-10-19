@@ -23,6 +23,8 @@ class Water
 	// 117 HD's caustics map (layer 1 of the noise texture), its red, green and blue taken this many texels apart
 	// diagonally (their aberration of 0.005 per repeat): colored fringes for one tap per copy
 	private static final String CAUSTICS_MAP = "water_caustics.jpg";
+	// 117 HD's water normal map (layer 3)
+	private static final String NORMAL_MAP = "water_normal.png";
 	private static final float CAUSTIC_ABERRATION = 1.28f;
 	// The ripple cells (layer 2): a jittered grid of CELLS x CELLS points, each the top of a round dome reaching
 	// CELL_RADIUS of the grid spacing, the domes added up into soft rounded cells
@@ -32,12 +34,11 @@ class Water
 	// the shader's time wraps after this many seconds; every periodic motion in the water shaders repeats within it
 	private static final double TIME_WRAP = 3840;
 	// how far the waves drift with the wind, world units per second (calm, full wind), before the shaders' per-type
-	// and config speed; the swell's own drift
+	// and config speed
 	private static final double DRIFT_CALM = 5, DRIFT_WIND = 18;
-	private static final double SWELL_CALM = 4, SWELL_WIND = 10;
-	// the drift distances wrap at a whole number of every repeat they are used with in the shaders (wave scale 560 at
-	// any per-type speed of 0.35 or 0.45 and any whole config percent; swell scale 1650): no jump at the wrap
-	private static final double DRIFT_WRAP = 560 * 100 * 20, SWELL_WRAP = 1650 * 400;
+	// the drift wraps at a whole number of every repeat it is used with in the shaders (the normal map's 384, 640 and
+	// 896, least common multiple 13440, at any per-type speed of 0.35 or 0.45 and any whole config percent)
+	private static final double DRIFT_WRAP = 13440.0 * 100 * 20;
 	// seconds over which the water follows a change in the wind's strength: it jumps under roofs and in gusts
 	private static final double STRENGTH_EASE = 1.5;
 
@@ -46,7 +47,7 @@ class Water
 	 */
 	static final class Frame
 	{
-		float time, windX, windZ, strength, driftX, driftZ, swellX, swellZ, waves, speed, displace, rain, skyDepth;
+		float time, windX, windZ, strength, driftX, driftZ, waves, speed, rain, skyDepth;
 		boolean outdoors, debug, caustics, zeroToOne;
 		float[] casterDir, invViewProj;
 	}
@@ -58,7 +59,7 @@ class Water
 	// The waves' drift, integrated each frame. Velocity times the time since start would move every wave a long way
 	// whenever the wind changes the least bit, which it does all the time: the water jumped about.
 	private long lastNanos;
-	private double driftX, driftZ, swellX, swellZ, strength;
+	private double driftX, driftZ, strength;
 	private boolean hasData;
 	private WaterMap pending;
 	private WaterSurface.Mesh pendingMesh;
@@ -205,11 +206,8 @@ class Water
 		f.strength = (float) strength;
 		f.driftX = (float) driftX;
 		f.driftZ = (float) driftZ;
-		f.swellX = (float) swellX;
-		f.swellZ = (float) swellZ;
 		f.waves = config.waterWaves() / 100f;
 		f.speed = config.waterFlowSpeed() / 100f;
-		f.displace = config.waterMovingSurface() ? 1 : 0;
 		f.rain = rain;
 		f.outdoors = outdoors;
 		f.debug = config.waterDebug();
@@ -263,14 +261,11 @@ class Water
 		double v = (DRIFT_CALM + (DRIFT_WIND - DRIFT_CALM) * strength) * dt;
 		driftX = (driftX + wind[0] * v) % DRIFT_WRAP;
 		driftZ = (driftZ + wind[1] * v) % DRIFT_WRAP;
-		double sv = (SWELL_CALM + SWELL_WIND * strength) * dt;
-		swellX = (swellX + wind[0] * sv) % SWELL_WRAP;
-		swellZ = (swellZ + wind[1] * sv) % SWELL_WRAP;
 	}
 
 	double[] drift()
 	{
-		return new double[]{driftX, driftZ, swellX, swellZ, strength};
+		return new double[]{driftX, driftZ, strength};
 	}
 
 	static void unbind(int dataUnit, int noiseUnit)
@@ -298,19 +293,21 @@ class Water
 		hasData = false;
 	}
 
-	// Layer 0 the waves, layer 1 the caustics, layer 2 the ripple cells: one sampler, the composite has none to spare
+	// Layer 0 the waves, layer 1 the caustics, layer 2 the ripple cells (foam on rapids), layer 3 117 HD's water normal
+	// map: one sampler, the composite has none to spare
 	private static int createNoise()
 	{
 		byte[] waves = noise(NOISE_SIZE, NOISE_SEED);
 		byte[] caustics = caustics(NOISE_SIZE);
 		byte[] cells = cells(NOISE_SIZE, CELL_SEED);
-		ByteBuffer buf = BufferUtils.createByteBuffer(waves.length + caustics.length + cells.length);
-		buf.put(waves).put(caustics).put(cells).flip();
+		byte[] normals = normalMap(NOISE_SIZE);
+		ByteBuffer buf = BufferUtils.createByteBuffer(waves.length + caustics.length + cells.length + normals.length);
+		buf.put(waves).put(caustics).put(cells).put(normals).flip();
 
 		int tex = glGenTextures();
 		glBindTexture(GL_TEXTURE_2D_ARRAY, tex);
 		glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
-		glTexImage3D(GL_TEXTURE_2D_ARRAY, 0, GL_RGBA8, NOISE_SIZE, NOISE_SIZE, 3, 0, GL_RGBA, GL_UNSIGNED_BYTE, buf);
+		glTexImage3D(GL_TEXTURE_2D_ARRAY, 0, GL_RGBA8, NOISE_SIZE, NOISE_SIZE, 4, 0, GL_RGBA, GL_UNSIGNED_BYTE, buf);
 		glPixelStorei(GL_UNPACK_ALIGNMENT, 4);
 		// mipmaps calm the waves in the distance instead of letting them sparkle
 		glGenerateMipmap(GL_TEXTURE_2D_ARRAY);
@@ -386,6 +383,58 @@ class Water
 			java.util.Arrays.fill(map, 0.2f);
 		}
 		return aberrate(map, size, CAUSTIC_ABERRATION);
+	}
+
+	/**
+	 * 117 HD's water normal map (BSD-2, see LICENSE), RGBA: rg the normal's x and z (0.5 flat), b its up, a unused.
+	 * The map is 128 texels across; it is sampled bilinearly, wrapping, up to the array's size. Flat if it is missing.
+	 */
+	static byte[] normalMap(int size)
+	{
+		byte[] out = new byte[size * size * 4];
+		try (InputStream in = Water.class.getResourceAsStream(NORMAL_MAP))
+		{
+			BufferedImage img = in != null ? ImageIO.read(in) : null;
+			if (img == null)
+			{
+				throw new IOException("missing water normal map");
+			}
+			int w = img.getWidth(), h = img.getHeight();
+			for (int y = 0; y < size; ++y)
+			{
+				float fy = (y + 0.5f) * h / size - 0.5f;
+				int y0 = (int) Math.floor(fy);
+				float ty = fy - y0;
+				for (int x = 0; x < size; ++x)
+				{
+					float fx = (x + 0.5f) * w / size - 0.5f;
+					int x0 = (int) Math.floor(fx);
+					float tx = fx - x0;
+					int a = img.getRGB(Math.floorMod(x0, w), Math.floorMod(y0, h));
+					int b = img.getRGB(Math.floorMod(x0 + 1, w), Math.floorMod(y0, h));
+					int c = img.getRGB(Math.floorMod(x0, w), Math.floorMod(y0 + 1, h));
+					int d = img.getRGB(Math.floorMod(x0 + 1, w), Math.floorMod(y0 + 1, h));
+					int o = (y * size + x) * 4;
+					for (int ch = 0; ch < 3; ++ch)
+					{
+						int sh = 16 - ch * 8;
+						float top = (a >> sh & 0xFF) * (1 - tx) + (b >> sh & 0xFF) * tx;
+						float bottom = (c >> sh & 0xFF) * (1 - tx) + (d >> sh & 0xFF) * tx;
+						out[o + ch] = (byte) Math.round(top * (1 - ty) + bottom * ty);
+					}
+					out[o + 3] = (byte) 255;
+				}
+			}
+		}
+		catch (IOException ex)
+		{
+			for (int i = 0; i < out.length; i += 4)
+			{
+				out[i] = out[i + 1] = (byte) 128;
+				out[i + 2] = out[i + 3] = (byte) 255;
+			}
+		}
+		return out;
 	}
 
 	/**

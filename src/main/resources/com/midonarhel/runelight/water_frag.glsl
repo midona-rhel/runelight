@@ -4,9 +4,8 @@
 // how far away the surface is along the view ray, its normal, type and foam, how deep the water is there and the
 // caustics on the bed below, for the composite to shade (water.glsl).
 //
-// The normal: soft round ripple cells (Water.cells) in two sizes, carried along the flow map in two phases so the
-// current shows in the sky they reflect, a little of the wave noise for variety, the swell's own slope and rain
-// rings. The caustics are 117 HD's, carried along by the same flow and drawn out along fast water.
+// The normal: 117 HD's water normal map in three sizes, carried along the flow map in two phases so the current
+// shows in the sky it reflects, and rain rings. The caustics are 117 HD's, carried along by the same flow and drawn out along fast water.
 
 #include "water_common.glsl"
 
@@ -30,24 +29,16 @@ in vec3 vRel;
 in vec2 vXZ;
 in vec2 vFlow;
 in vec4 vData;       // shore distance (tiles), wave energy, water share, turbulence
-in float vSwell;
 in float vDepth;     // how deep the water is here going by its distance from the shore, smooth across tiles
 flat in int vType;
 
 layout(location = 0) out uvec4 WaterOut;  // 64 bits packed, see water.glsl's waterUnpack
 
-#define SWELL_DIR vec2(0.6, 0.8)
-// The ripple cells: world units per repeat of the cell texture (six cells across) for the small and the large size,
-// and their share of the slope. Normal tilt per unit of slope before the type's normal strength.
-#define CELL_SCALE_A 230.0
+// The surface's normal map (layer 3 of waterNoise): 117 HD's strength and its seconds per repeat of each size
+#define NORMAL_STRENGTH 0.09
+#define NORMAL_PERIOD vec3(28.0, 24.0, 21.0)
+// the foam on rapids: the large ripple cells' rims (layer 2), world units per repeat
 #define CELL_SCALE_B 520.0
-#define CELL_MIX_A 0.55
-#define CELL_MIX_B 0.45
-#define CELL_STRENGTH 0.30
-// the wave noise mixed in under the cells, so they don't look stamped
-#define NOISE_MIX 0.35
-// the swell's slope counts this much toward the normal (the geometry alone would be too subtle to read)
-#define SWELL_NORMAL 1.6
 // turbulence (rapids) adds to the ripples, and lays soft foam over them where it is strong
 #define TURB_WAVES 0.6
 #define TURB_FOAM vec2(0.35, 0.9)
@@ -77,24 +68,16 @@ float waterLod(float footprint, float repeat) {
   return log2(max(footprint * 256.0 / repeat, 1.0));
 }
 
-vec4 noiseAt(vec2 uv, float lod) {
-  return textureLod(waterNoise, vec3(uv, 0.0), lod);
-}
-
-// Wave noise slope of the two octaves at xz, moved along by `move`
-vec2 noiseSlope(vec2 xz, vec2 move, float la, float lb) {
-  const mat2 ROT = mat2(0.8, 0.6, -0.6, 0.8);
-  vec4 a = noiseAt((xz - move) / WAVE_SCALE_A, la);
-  vec4 b = noiseAt(ROT * (xz - move * 1.15) / WAVE_SCALE_B + 0.37, lb);
-  return (a.rg * 2.0 - 1.0) * WAVE_MIX_A + ((b.rg * 2.0 - 1.0) * ROT) * WAVE_MIX_B;
-}
-
-// Slope of the round ripple cells in two sizes at xz, moved along by `move`, plus a little of the wave noise
+// 117 HD's surface (BSD-2, see LICENSE): its water normal map in three sizes (3, 5 and 7 tiles a repeat), each
+// scrolling on its own, the first one turned, all moved along by `move`. Their normals add up: the slope is the
+// sum of the sideways parts over the sum of the upward parts, at NORMAL_STRENGTH like 117 HD's
 vec2 ripples(vec2 xz, vec2 move, vec4 lods) {
-  const mat2 ROT = mat2(0.6, -0.8, 0.8, 0.6);
-  vec2 a = textureLod(waterNoise, vec3((xz - move) / CELL_SCALE_A, 2.0), lods.x).rg * 2.0 - 1.0;
-  vec2 b = textureLod(waterNoise, vec3(ROT * (xz - move * 0.85) / CELL_SCALE_B + 0.29, 2.0), lods.y).rg * 2.0 - 1.0;
-  return a * CELL_MIX_A + (b * ROT) * CELL_MIX_B + noiseSlope(xz, move, lods.z, lods.w) * NOISE_MIX;
+  vec2 p = -(xz - move) / 128.0;
+  vec3 a = textureLod(waterNoise, vec3((p / 3.0).yx - waterCycle(NORMAL_PERIOD.x), 3.0), lods.x).rgb;
+  vec3 b = textureLod(waterNoise, vec3(p / 5.0 + waterCycle(NORMAL_PERIOD.y), 3.0), lods.y).rgb;
+  vec3 c = textureLod(waterNoise, vec3(p / 7.0 + waterCycle(NORMAL_PERIOD.z), 3.0), lods.z).rgb;
+  vec2 side = (a.rg + b.rg + c.rg) * 2.0 - 3.0;
+  return side * NORMAL_STRENGTH / max(a.b + b.b + c.b, 0.5);
 }
 
 // 117 HD's caustics at uv: two copies scrolling apart, the darker kept
@@ -151,21 +134,21 @@ void main() {
 
   int type = vType;
   vec2 xz = vXZ;
-  vec4 motion = WATER_MOTION[type];
+  float speed = WATER_FLOW_SPEED[type];
   vec4 look = WATER_LOOK[type];
   float wind = waterWind.z;
   float energy = vData.g;
-  float turb = vData.a * step(0.5, motion.w);
+  float turb = vData.a * step(0.5, speed);
   vec2 flow = vFlow;
   float flowSpeed = length(flow);
 
   // mips picked from the derivatives once, here, where they are defined; every tap below is explicit
   float footprint = max(length(dFdx(xz)), length(dFdy(xz)));
-  vec4 lods = vec4(waterLod(footprint, CELL_SCALE_A), waterLod(footprint, CELL_SCALE_B),
-    waterLod(footprint, WAVE_SCALE_A), waterLod(footprint, WAVE_SCALE_B));
+  vec4 lods = vec4(waterLod(footprint, 384.0), waterLod(footprint, 640.0), waterLod(footprint, 896.0),
+    waterLod(footprint, CELL_SCALE_B));
 
   // still water drifts with the wind; running water carries its ripples in two phases (water_common.glsl)
-  vec2 base = waterDrift.xy * (motion.w * waterSpeed);
+  vec2 base = waterDrift.xy * (speed * waterSpeed);
   vec2 m0 = base, m1 = base;
   float w0 = 1.0;
   float flowing = smoothstep(FLOW_MIN * 0.5, FLOW_MIN, flowSpeed);
@@ -180,11 +163,7 @@ void main() {
   } else {
     slope = ripples(xz, base, lods);
   }
-  slope *= CELL_STRENGTH * look.w * waterWaves * (0.7 + 0.5 * wind) * (0.75 + 0.35 * energy) * (1.0 + TURB_WAVES * turb);
-  // the swell's own slope, past where its movement has faded out too
-  vec2 swellSlope = vec2(0.0);
-  waterSwell(xz, normalize(SWELL_DIR), vSwell, motion.y, swellSlope);
-  slope += swellSlope * SWELL_NORMAL;
+  slope *= look.w * waterWaves * (0.7 + 0.5 * wind) * (0.75 + 0.35 * energy) * (1.0 + TURB_WAVES * turb);
   if (waterRain > 0.01 && waterOutdoors == 1)
     slope += rainRings(xz) * look.w;
   // the surface's normal points up (-y); slope is d up / d x, d up / d z
@@ -194,8 +173,8 @@ void main() {
   float foam = 0.0;
   float churn = smoothstep(TURB_FOAM.x, TURB_FOAM.y, turb);
   if (churn > 0.0) {
-    float h = textureLod(waterNoise, vec3((xz - m0) / CELL_SCALE_B, 2.0), lods.y).b * w0
-      + textureLod(waterNoise, vec3((xz + vec2(173.0, 91.0) - m1) / CELL_SCALE_B, 2.0), lods.y).b * (1.0 - w0);
+    float h = textureLod(waterNoise, vec3((xz - m0) / CELL_SCALE_B, 2.0), lods.w).b * w0
+      + textureLod(waterNoise, vec3((xz + vec2(173.0, 91.0) - m1) / CELL_SCALE_B, 2.0), lods.w).b * (1.0 - w0);
     foam = (1.0 - smoothstep(0.15, 0.55, h)) * churn * FOAM;
   }
 
@@ -229,7 +208,7 @@ void main() {
     // type color, flow as stripes that move with it, turbulent water reddens
     const vec3 DEBUG_TYPE[WATER_TYPES] = vec3[](vec3(0.0), vec3(0.2, 0.6, 1.0), vec3(0.0, 0.2, 0.9),
       vec3(0.3, 0.3, 0.6), vec3(0.6, 0.9, 1.0), vec3(0.4, 0.6, 0.1), vec3(0.4, 0.3, 0.3));
-    float tiles = flowSpeed / (WATER_TILE * max(waterSpeed * motion.w, 1e-3));
+    float tiles = flowSpeed / (WATER_TILE * max(waterSpeed * speed, 1e-3));
     vec2 dir = flowSpeed > 1e-3 ? flow / flowSpeed : vec2(0.0);
     float stripe = flowSpeed > 1e-3 ? step(0.5, fract(dot(xz / 64.0, dir) - waterTime * tiles * 2.0)) : 0.5;
     vec3 c = mix(DEBUG_TYPE[type], vec3(stripe), 0.35) * mix(0.6, 1.0, energy);

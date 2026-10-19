@@ -4,7 +4,7 @@
 // The look follows 117 HD's water (BSD-2, see LICENSE): per type a surface color, a depth color the bed fades into
 // over a short depth, a base opacity and how much of the sky the surface shows; caustics from their caustics map.
 
-uniform sampler2DArray waterNoise;  // layer 0 tiling waves: rg slope, b height, a finer height; layer 1 caustics
+uniform sampler2DArray waterNoise;  // layer 0 tiling noise (b: the flow phases' jitter); layer 1 caustics
 uniform float waterTime;            // seconds, wraps
 uniform vec2 waterGrid;             // x: extended tile of local tile 0, y: corners per side
 
@@ -64,33 +64,9 @@ const vec3 WATER_FADE[WATER_TYPES] = vec3[](
   vec3(170.0, 560.0, 0.55),
   vec3(40.0, 160.0, 0.45),
   vec3(60.0, 220.0, 0.35));
-// Motion per type: swell height (world units), swell wave length, chop height, flow speed
-const vec4 WATER_MOTION[WATER_TYPES] = vec4[](
-  vec4(0.0),
-  vec4(2.5, 360.0, 1.6, 1.0),
-  vec4(9.0, 980.0, 2.6, 1.0),
-  vec4(10.0, 1100.0, 2.8, 1.0),
-  vec4(7.5, 900.0, 2.4, 1.0),
-  vec4(0.0, 300.0, 0.3, 0.35),
-  vec4(0.0, 300.0, 0.4, 0.45));
+// how fast each type's flow runs, as a share of the flow map's
+const float WATER_FLOW_SPEED[WATER_TYPES] = float[](0.0, 1.0, 1.0, 1.0, 1.0, 0.35, 0.45);
 
-// The swell: SWELL_WAVES Gerstner waves around the wind's direction (angle, length and height relative to the type's)
-#define SWELL_WAVES 3
-const vec3 SWELL_SHAPE[SWELL_WAVES] = vec3[](
-  vec3(0.0, 1.0, 1.0),
-  vec3(0.52, 0.71, 0.62),
-  vec3(-0.41, 0.53, 0.45));
-// how steep the crests get at most (Gerstner Q, 0 sine waves, 1 sharp crests); world units per second squared of gravity;
-// the waves run slower than real ones by SWELL_SLOW (they read better in the game's scale)
-#define SWELL_STEEP 0.45
-#define WATER_GRAVITY 1254.0
-#define SWELL_SLOW 0.45
-
-// world units per repeat of the two wave octaves; the small one is turned so they never line up
-#define WAVE_SCALE_A 560.0
-#define WAVE_SCALE_B 190.0
-#define WAVE_MIX_A 0.58
-#define WAVE_MIX_B 0.36
 // seconds per flow map phase: waves are dragged at most this long before fading to a fresh copy
 #define FLOW_CYCLE 2.4
 // the furthest the waves are dragged in one phase, world units: fast rapids would stretch them into streaks
@@ -134,34 +110,4 @@ void waterFlowPhases(vec2 xz, vec2 flow, vec2 base, out vec2 m0, out vec2 m1, ou
 // A scroll of a whole number of repeats per wrap of waterTime, about one per `period` seconds
 float waterCycle(float period) {
   return fract(floor(WATER_TIME_WRAP / period + 0.5) * (waterTime / WATER_TIME_WRAP));
-}
-
-// A whole number of cycles per wrap of waterTime: the phase of a wave of angular frequency omega at waterTime
-float waterWavePhase(float omega) {
-  float cycles = floor(omega * WATER_TIME_WRAP / WATER_TAU + 0.5);
-  return fract(cycles * (waterTime / WATER_TIME_WRAP)) * WATER_TAU;
-}
-
-// The swell at xz: Gerstner waves of height `amp` and length `len` around the wind direction `dir`. Returns the
-// displacement (x, up, z) and adds the surface's slope (d up / d x, d up / d z) to slope.
-vec3 waterSwell(vec2 xz, vec2 dir, float amp, float len, inout vec2 slope) {
-  vec3 disp = vec3(0.0);
-  if (amp <= 0.0)
-    return disp;
-  for (int i = 0; i < SWELL_WAVES; ++i) {
-    vec3 shape = SWELL_SHAPE[i];
-    float c = cos(shape.x), s = sin(shape.x);
-    vec2 d = vec2(dir.x * c - dir.y * s, dir.x * s + dir.y * c);
-    float k = WATER_TAU / (len * shape.y);
-    float a = amp * shape.z;
-    float omega = sqrt(WATER_GRAVITY * k) * SWELL_SLOW;
-    // each wave its own fixed offset, so the crests don't all line up at the origin
-    float ph = k * dot(d, xz) - waterWavePhase(omega) + float(i) * 2.1;
-    float cp = cos(ph), sp = sin(ph);
-    // the water moves in circles under small waves, the crests gather it toward them up to SWELL_STEEP
-    float h = a * min(1.0, SWELL_STEEP / (k * a * float(SWELL_WAVES)));
-    disp += vec3(d.x * h * cp, a * sp, d.y * h * cp);
-    slope += d * (k * a * cp);
-  }
-  return disp;
 }

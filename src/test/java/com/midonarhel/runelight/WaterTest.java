@@ -85,14 +85,14 @@ public class WaterTest
 			float[] wind = {(float) Math.cos(a), (float) Math.sin(a), f % 2 == 0 ? 1 : 0};
 			w.advance(wind, 1 / 60.0);
 			double[] d = w.drift();
-			for (int i = 0; i < 4; ++i)
+			for (int i = 0; i < 2; ++i)
 			{
 				assertTrue("frame " + f + " component " + i, Math.abs(d[i] - prev[i]) < 0.5);
 			}
 			prev = d;
 		}
 		// eased, not flipping
-		assertEquals(0.5, prev[4], 0.05);
+		assertEquals(0.5, prev[2], 0.05);
 		// a stall moves it a quarter second's worth at most
 		w.advance(new float[]{1, 0, 1}, 30);
 		assertTrue(w.drift()[0] - prev[0] < 18 * 0.25 + 1e-6);
