@@ -26,7 +26,7 @@ const vec3 WATER_SURFACE_COLOR[WATER_TYPES] = vec3[](
   vec3(0.533, 0.600, 0.678),
   vec3(0.190, 0.280, 0.150),
   vec3(0.050, 0.100, 0.140));
-// sRGB multiplier: the bed's tint under the water, times WATER_DEEP where the water is deepest
+// sRGB: the water's own color, which covers the bed with depth, times WATER_DEEP where the water is deepest
 const vec3 WATER_DEPTH_COLOR[WATER_TYPES] = vec3[](
   vec3(0.0),
   vec3(0.000, 0.459, 0.557),

@@ -429,7 +429,8 @@ vec3 waterOver(ivec2 px, inout vec3 p, vec3 albedo, float shadow, vec3 lit, floa
   // the middle of every shore tile doesn't show as a dark square; where the bed is shallower than that, its own.
   float colorDepth = min(shoreDepth, depth);
 
-  // the bed, lit by the composite and wet, with the caustics while it still shows, tinted by the water's color
+  // the bed, lit by the composite and wet, with the caustics while it still shows, giving way to the water's color in
+  // the same light (the bed's: its lit color over its albedo), darker the deeper
   float amount = waterAmount(type, colorDepth);
   vec3 under = srgbToLinear(lit * WET_SAND);
   if (waterCaustics == 1 && outdoors == 1 && lightingEnabled == 1 && amount < 1.0) {
@@ -438,7 +439,9 @@ vec3 waterOver(ivec2 px, inout vec3 p, vec3 albedo, float shadow, vec3 lit, floa
       * smoothstep(0.0, 6.0, depth) * (1.0 - amount);
     under += srgbToLinear(albedo) * caster * (k * clamp(caustic, CAUSTIC_RANGE.x, CAUSTIC_RANGE.y));
   }
-  under = max(under, vec3(0.0)) * mix(vec3(1.0), srgbToLinear(WATER_DEPTH_COLOR[type] * WATER_DEEP[type]), amount);
+  vec3 light = clamp(srgbToLinear(lit) / max(srgbToLinear(albedo), vec3(0.03)), 0.0, 4.0);
+  vec3 body = srgbToLinear(WATER_DEPTH_COLOR[type]) * light * mix(1.0, WATER_DEEP[type], amount);
+  under = mix(max(under, vec3(0.0)), body, amount);
   // what is seen through a wave face turned toward the camera is a little brighter, turned away darker
   vec3 v = p / dist;
   vec2 slope = nrm.xz / nrm.y;
