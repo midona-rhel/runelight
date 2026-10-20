@@ -2212,7 +2212,8 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		}
 
 		ShadowMap.View front = shadowMap.frontView();
-		if (!shadowMap.isBuilding() && (front == null || shadowStale(front, fx, fy, fz, radius, size)))
+		if (!shadowMap.isBuilding()
+			&& (front == null || shadowMap.isStale() || shadowStale(front, fx, fy, fz, radius, size)))
 		{
 			float sx = Math.round(fx / SHADOW_CACHE_SNAP) * (float) SHADOW_CACHE_SNAP;
 			float sz = Math.round(fz / SHADOW_CACHE_SNAP) * (float) SHADOW_CACHE_SNAP;
@@ -3202,7 +3203,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 					hitchMonitor.job(HitchMonitor.ZONE_REBUILD);
 					weather.invalidateOcclusion();
 					skyOcclusion.invalidate();
-					shadowStaticDirty = true;
+					shadowMap.refreshCache();
 					globalIllumination.zonesChanged();
 				}
 

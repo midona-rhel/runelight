@@ -41,6 +41,8 @@ class ShadowMap
 	// the static map in use, -1 for none; the one being drawn while building
 	private int front = -1;
 	private int building = -1;
+	// the scenery changed under the front map: redraw it, but keep showing it meanwhile
+	private boolean stale;
 	private int cacheKey;
 	// static maps started so far, for the timings overlay
 	int builds;
@@ -165,12 +167,28 @@ class ShadowMap
 			staticFbo[0] = staticFbo[1] = staticTex[0] = staticTex[1] = 0;
 		}
 		front = building = -1;
+		stale = false;
 	}
 
 	/** Forget the static map: the scenery, levels or settings changed. */
 	void invalidateCache()
 	{
 		front = building = -1;
+		stale = false;
+	}
+
+	/**
+	 * Some zones changed: draw the static map again, over several frames, while the old one stays in use. Forgetting
+	 * it instead (invalidateCache) draws the new one in a single frame, a hitch whenever an object appears.
+	 */
+	void refreshCache()
+	{
+		stale = true;
+	}
+
+	boolean isStale()
+	{
+		return stale;
 	}
 
 	/** Invalidate if anything the static map depends on, hashed, changed. */
@@ -209,6 +227,7 @@ class ShadowMap
 			initCache();
 		}
 		building = front == 0 ? 1 : 0;
+		stale = false;
 		++builds;
 		View v = views[building];
 		System.arraycopy(dir, 0, v.dir, 0, 3);
