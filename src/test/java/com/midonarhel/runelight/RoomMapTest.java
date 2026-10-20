@@ -195,6 +195,30 @@ public class RoomMapTest
 	}
 
 	@Test
+	public void wallTexelsFollowTheWalls()
+	{
+		RoomMap m = house(walls());
+		int t = (RoomMap.HEADER_TEXELS + (9 * SIZE + 10) * RoomMap.TEXELS_PER_TILE + 2) * 4;
+		FloatBuffer b = FloatBuffer.allocate(m.texelCount() * 4);
+		m.texels(b);
+		assertEquals(0, (int) b.get(t) & 63);
+		// a wall inside the room: no opening changes, but the texels must upload again
+		int[][][] f = walls();
+		f[0][9 - OFFSET][10 - OFFSET] |= WallMap.LOS_NORTH | WallMap.LOS_EAST;
+		int before = m.getVersion();
+		assertFalse(m.setWalls(WallMap.build(f, null, SIZE, OFFSET, 1)));
+		assertTrue(m.getVersion() != before);
+		b.clear();
+		m.texels(b);
+		assertEquals(WallMap.NORTH | WallMap.EAST, (int) b.get(t) & 63);
+		// the room's own number as the other half's: no diagonal, nothing changes room on the tile
+		assertEquals(m.room(0, 9, 10), (int) b.get(t) >> 7);
+		before = m.getVersion();
+		m.setWalls(WallMap.build(f, null, SIZE, OFFSET, 1));
+		assertEquals(before, m.getVersion());
+	}
+
+	@Test
 	public void openingsBetweenRoomsSpillBothWays()
 	{
 		// two rooms side by side (two roofs: x 8..11 and 12..15, y 8..11), a doorway between them at y 9

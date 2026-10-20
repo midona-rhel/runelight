@@ -3,9 +3,9 @@
 // texel ROOM_BASE: a header (enabled, tiles per side, extended tiles before local tile 0, whether the lights keep to
 // their rooms), then three texels per tile:
 // the four planes' rooms (room + porch room * 4096, 0 outdoors), the four planes' floor heights (world y, down), and
-// the four planes' diagonal walls: 0 none, else 1 for one from the south-west corner to the north-east one, 2 for
-// north-west to south-east, plus 4 times the half the tile's room has (0 the north-west or north-east one), plus 8
-// times the room of the other half (0 outdoors).
+// the four planes' walls: the tile's wall bits (ROOM_WALL_*, as WallMap.java), plus 64 times the half the tile's
+// room has where a diagonal wall crosses it (0 the north-west or north-east one), plus 128 times the room of the
+// other half (0 outdoors; the tile's own room when both halves are in it).
 // The porch of a tile is the room whose light spills onto it through an opening: a doorway or any gap with no wall
 // (the code is negative then; ROOM_ANY is the outdoors), or, for a room tile, the room across a hole in its floor or
 // ceiling (positive).
@@ -22,6 +22,14 @@
 #define ROOM_PORCH_SHARE 0.55
 #define ROOM_ANY 4095
 #define ROOM_SOFT 4096
+// wall bits of a tile: its edges, and the diagonals from the south-west corner to the north-east one ("/") and from
+// the north-west corner to the south-east one
+#define ROOM_WALL_NORTH 1
+#define ROOM_WALL_EAST 2
+#define ROOM_WALL_SOUTH 4
+#define ROOM_WALL_WEST 8
+#define ROOM_WALL_SW_NE 16
+#define ROOM_WALL_NW_SE 32
 
 // x the room of the tile under world point w on the storey w is on, 0 outdoors, -1 unknown (no map, outside it);
 // y the room whose porch it is or that lies across a hole, 0 none, plus ROOM_SOFT for an opening's porch;
@@ -54,14 +62,13 @@ ivec3 roomPlaneAt(vec3 w) {
   code = abs(code);
   int porch = int(floor(code / 4096.0));
   int room = int(code - float(porch) * 4096.0);
-  float diagonal = texelFetch(lightData, i + 2)[plane];
-  if (diagonal > 0.5) {
+  int walls = int(texelFetch(lightData, i + 2)[plane]);
+  if ((walls & (ROOM_WALL_SW_NE | ROOM_WALL_NW_SE)) != 0 && (walls >> 7) != room) {
     // a diagonal wall crosses the tile: the far side of it is the other half's room, with no porch
-    int d = int(diagonal);
     vec2 f = fract(w.xz / 128.0);
-    int h = (d & 3) == 1 ? (f.y > f.x ? 0 : 1) : (f.x + f.y > 1.0 ? 0 : 1);
-    if (h != ((d >> 2) & 1)) {
-      room = d >> 3;
+    int h = (walls & ROOM_WALL_SW_NE) != 0 ? (f.y > f.x ? 0 : 1) : (f.x + f.y > 1.0 ? 0 : 1);
+    if (h != ((walls >> 6) & 1)) {
+      room = walls >> 7;
       porch = 0;
       soft = false;
     }
@@ -89,6 +96,25 @@ float roomFloorY(vec3 w) {
     }
   }
   return y;
+}
+
+// The wall bits (ROOM_WALL_*) of the tile under world point w on the storey w is on, 0 off the map
+int roomWallsAt(vec3 w) {
+  vec4 h = texelFetch(lightData, ROOM_BASE);
+  int size = int(h.y);
+  ivec2 t = ivec2(floor(w.xz / 128.0)) + int(h.z);
+  if (h.x < 0.5 || any(lessThan(t, ivec2(0))) || any(greaterThanEqual(t, ivec2(size)))) {
+    return 0;
+  }
+  int i = ROOM_BASE + 1 + (t.x * size + t.y) * 3;
+  vec4 floors = texelFetch(lightData, i + 1);
+  int plane = 0;
+  for (int k = 1; k < 4; ++k) {
+    if (w.y <= floors[k] - ROOM_PLANE_MARGIN) {
+      plane = k;
+    }
+  }
+  return int(texelFetch(lightData, i + 2)[plane]) & 63;
 }
 
 ivec2 roomAt(vec3 w) {

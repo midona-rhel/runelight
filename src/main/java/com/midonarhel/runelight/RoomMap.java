@@ -176,9 +176,9 @@ final class RoomMap
 	 */
 	boolean setWalls(WallMap walls)
 	{
-		if (this.walls == null && walls != null)
+		if (walls != this.walls && (walls == null || this.walls == null || !walls.sameWalls(this.walls)))
 		{
-			// the diagonal walls' texels follow the walls
+			// the wall texels follow the walls: doors open and close
 			version++;
 		}
 		this.walls = walls;
@@ -625,8 +625,9 @@ final class RoomMap
 	/**
 	 * Fill the buffer with the header texel (enabled, size, offset, lights use rooms) and three texels per tile: the four planes' rooms
 	 * (room + porch * 4096, negative when the porch is an opening's), the four planes' floor heights (world y), and
-	 * the four planes' diagonal walls: 0 none, else 1 for "/" or 2 for "\", plus 4 times the half the room has, plus
-	 * 8 times the room of the other half.
+	 * the four planes' walls: the tile's WallMap bits, plus 64 times the half (WallMap.half) the tile's room has,
+	 * plus 128 times the room of the other half of a tile a diagonal wall crosses (0 outdoors; the tile's own room
+	 * when both halves are in it).
 	 */
 	void texels(FloatBuffer out)
 	{
@@ -650,8 +651,7 @@ final class RoomMap
 				{
 					int i = index(p, x, y);
 					int b = walls != null ? walls.get(p, x, y) : 0;
-					out.put(half[i] == 0 || !WallMap.split(b) ? 0
-						: ((b & WallMap.DIAG_SW_NE) != 0 ? 1 : 2) + 4 * (half[i] - 1) + 8 * across[i]);
+					out.put(b + (half[i] == 0 ? 128 * rooms[i] : 64 * (half[i] - 1) + 128 * across[i]));
 				}
 			}
 		}
