@@ -9,7 +9,7 @@ import static org.lwjgl.opengl.GL33C.*;
 /**
  * The sky's light under cover as a texture for the skylight (SkyField, skylight_ao.glsl): worked out on a worker
  * thread for the player's plane whenever the walls (a door opens), the rooms, the plane or the reach change, then
- * uploaded. Until the first result the skylight keeps to the top-down map alone.
+ * uploaded. Until the first result the skylight keeps to the traced sky visibility alone (SkyGrid).
  */
 final class SkyFieldMap
 {

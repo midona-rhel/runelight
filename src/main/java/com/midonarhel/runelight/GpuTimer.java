@@ -26,15 +26,16 @@ class GpuTimer
 	static final int UI = 9;
 	static final int GI = 10;
 	static final int WATER = 11;
-	// parts of the shadow map: copying the cached static map in, the moving models, the sky occlusion map
+	// parts of the shadow map: copying the cached static map in, the moving models
 	static final int SHADOW_COPY = 12;
 	static final int SHADOW_MODELS = 13;
-	static final int SKY_OCCLUSION = 14;
+	// uploading the skylight's traced grid
+	static final int SKY_GRID = 14;
 	static final int STAGES = 15;
 
 	static final String[] NAMES = {
 		"scene", "MSAA resolve", "shadow map", "weather occlusion", "AO", "sky cache", "fog", "composite",
-		"weather", "UI", "GI probes", "water", "shadow copy", "shadow models", "sky occlusion"
+		"weather", "UI", "GI probes", "water", "shadow copy", "shadow models", "sky grid upload"
 	};
 
 	private static final int SLOTS = 4;

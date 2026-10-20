@@ -1,98 +1,79 @@
-// Skylight, the AO pass's half (SkyOcclusion.java): how much of the sky a pixel sees, from the top-down depth of the
-// scenery around it, in the spirit of Community Shaders' Skylighting. Around the point, in a ring of directions,
-// the scenery's tops at two distances give the horizon's slope that way; the sky above that horizon, cosine weighted,
-// is what the point sees, 1 / (1 + slope^2). The column right above the point counts too, so anything under a roof is
-// dark and the top of every column is open. Walls only look out over their own side. Written to the shadow target's
-// alpha at half resolution; the composite upsamples it with the AO and scales the sky and ambient light by it
-// (light_occlusion.glsl). Needs frame.glsl.
+// Skylight, the AO pass's half: how much of the sky a pixel sees, from the sky visibility ray traced through the
+// scene's voxels at the tiles' corners (SkyGrid.java), a few heights above each floor, toward up and the four sides.
+// A pixel reads its own tile's four corners only, so nothing blends through a wall, and weighs the directions by its
+// normal (an ambient cube): under the open sky it is 1 whichever way it faces, a wall under eaves sees the sky
+// sideways, the ground under them doesn't see it overhead. Written to the shadow target's alpha at half resolution;
+// the composite upsamples it with the AO and scales the sky and ambient light by it (light_occlusion.glsl).
+// Needs frame.glsl.
 
 uniform int skylightOn;
-uniform sampler2D skyOcclusion;     // top-down window depth of the scenery, raw
-uniform mat4 skyOcclusionProjRel;   // camera-relative world -> occlusion clip
-uniform float skyOcclusionDepthRange;
+// RGBA16F, SKY_GRID_W x SKY_GRID_H x SKY_GRID_D (SkyGrid.java): slice 0 per tile corner the three floors' grounds
+// (world y) and the tile's diagonal walls per floor, then a slice per floor and height: up, +x, -x, +z in the left
+// half, -z in the right
+uniform sampler3D skyGrid;
+uniform vec3 skyGridCamera;  // the camera in the grid's coordinates: tile 0 at 0
 // the sky's light flowing in under cover (SkyField.java): r the light, g 1 under cover; texture coordinates are
 // camera-relative world xz * skyFieldMap.xy + skyFieldMap.zw
 uniform sampler2D skyField;
 uniform int skyFieldOn;
 uniform vec4 skyFieldMap;
 
-#define SKY_DIRECTIONS 8
-// world units out to the two horizon taps in each direction
-#define SKY_RADIUS_NEAR 56.0
-#define SKY_RADIUS_FAR 256.0
-// the point moves this far off its surface along the normal, so a surface doesn't hide its own sky
-#define SKY_NORMAL_OFFSET 24.0
-// world units scenery may rise above the point before it hides any sky: the surface's own bumps
-#define SKY_HEIGHT_BIAS 24.0
-// how far the scenery right above may be before the point counts as fully covered (world units above the bias)
-#define SKY_COVER_RAMP 48.0
-// a near tap within this much (world units) of the height over the point is the same overhang
-#define SKY_OVERHANG_STEP 64.0
-#define SKY_TAU 6.28318530718
+// as SkyGrid.java
+#define SKY_GRID_TILES 104.0
+#define SKY_GRID_W (4.0 * SKY_GRID_TILES)
+#define SKY_GRID_H (2.0 * SKY_GRID_TILES)
+#define SKY_GRID_D 10.0
+#define SKY_GRID_LOW 40.0
+#define SKY_GRID_STEP 72.0
+// the point moves this far off its surface along the normal, so a surface reads the air in front of it
+#define SKY_NORMAL_OFFSET 32.0
+// how far above a floor a point must be to be on that storey, as rooms.glsl's ROOM_PLANE_MARGIN
+#define SKY_PLANE_MARGIN 24.0
 
-// How high the scenery's top is above camera-relative point q (world units, up positive); a large negative number
-// past the map, where nothing is known to cover anything
-float skyOccluderAbove(vec3 q) {
-  vec4 c = skyOcclusionProjRel * vec4(q, 1.0);
-  vec2 uv = c.xy * 0.5 + 0.5;
-  if (any(lessThan(uv, vec2(0.0))) || any(greaterThan(uv, vec2(1.0)))) {
-    return -1e9;
+// The traced visibility at grid point w (world units, y down), weighed by normal n
+float skyGridVisibility(vec3 w, vec3 n) {
+  vec2 t = w.xz / 128.0;
+  if (any(lessThan(t, vec2(0.0))) || any(greaterThanEqual(t, vec2(SKY_GRID_TILES)))) {
+    return 1.0;
   }
-  float depth = depthZeroToOne == 1 ? c.z : c.z * 0.5 + 0.5;
-  // smaller depth is higher up; cleared texels (nothing drawn) are 1, far below
-  return (depth - textureLod(skyOcclusion, uv, 0.0).r) * 2.0 * skyOcclusionDepthRange;
+  vec2 tile = floor(t);
+  vec2 f = t - tile;
+  // a tile's four corners are a 2 x 2 block of texels: from the first's center to the last's, never past them
+  vec2 c = 2.0 * tile + 0.5;
+  vec4 meta = textureLod(skyGrid, vec3((c + f) / vec2(SKY_GRID_W, SKY_GRID_H), 0.5 / SKY_GRID_D), 0.0);
+  // the storey w is on, and how high above its floor
+  int floorIndex = w.y <= meta.z - SKY_PLANE_MARGIN ? 2 : w.y <= meta.y - SKY_PLANE_MARGIN ? 1 : 0;
+  float level = clamp((meta[floorIndex] - w.y - SKY_GRID_LOW) / SKY_GRID_STEP, 0.0, 2.0) + 3.0 * float(floorIndex);
+  int diagonal = int(meta.w + 0.5) / (floorIndex == 0 ? 1 : floorIndex == 1 ? 3 : 9) % 3;
+  if (diagonal != 0) {
+    // a diagonal wall crosses the tile: each half has its own pair of corners, the north half the north ones, the
+    // south half the south ones (SkyGrid.java), blended along x
+    bool north = diagonal == 1 ? f.y > f.x : f.x + f.y > 1.0;
+    f.y = north ? 1.0 : 0.0;
+  }
+  vec2 uv = (c + f) / vec2(SKY_GRID_W, SKY_GRID_H);
+  float z = (1.5 + level) / SKY_GRID_D;
+  vec4 a = textureLod(skyGrid, vec3(uv, z), 0.0);
+  float minusZ = textureLod(skyGrid, vec3(uv.x + 0.5, uv.y, z), 0.0).r;
+  // y points down: n.y < 0 faces up; facing down, a surface sees what the sides see
+  vec3 nn = n * n;
+  float down = (a.y + a.z + a.w + minusZ) * 0.25;
+  return nn.y * (n.y < 0.0 ? a.x : down) + nn.x * (n.x > 0.0 ? a.y : a.z) + nn.z * (n.z > 0.0 ? a.w : minusZ);
 }
 
-// 1 under the open sky, 0 under a roof, except where the tiles' flood of light (skyField) knows better: under cover
-// the light comes in through the openings, so a gate arch or a house with its door open fades from the opening
-// inward instead of being dark; horizon and cover are the field's there.
-// The map is a height field, so anything over a point looks solid down to the ground. Two things keep that from
-// darkening what sees the sky sideways: what is right above a point only hides the sky a surface faces up into (a
-// wall looks out, not up), and out of doors something right above the point is an overhang (eaves, a canopy), not a
-// wall: in a direction where it still covers the near tap, the sky shows under its edge, so only the far tap counts.
-float skylightVisibility(vec3 p, vec3 n, float noise) {
+// 1 under the open sky. Under cover (skyField's green: a roof or a floor over the tile) the light flowing in through
+// the openings counts too: it stands for the light that gets deep into a room by bouncing off the walls, which the
+// traced sky doesn't see; the trace stands for what the sky lights directly (a pavilion's open sides, a window), so
+// neither darkens what the other lights.
+float skylightVisibility(vec3 p, vec3 n) {
   if (skylightOn == 0) {
     return 1.0;
   }
   vec3 o = p + n * SKY_NORMAL_OFFSET;
-  float above = skyOccluderAbove(o);
-  if (above < -1e8) {
-    return 1.0;
+  float v = skyGridVisibility(o + skyGridCamera, n);
+  if (skyFieldOn == 1) {
+    vec2 field = textureLod(skyField, o.xz * skyFieldMap.xy + skyFieldMap.zw, 0.0).rg;
+    v = mix(v, max(v, field.r), field.g);
   }
-  float cover = smoothstep(SKY_HEIGHT_BIAS, SKY_HEIGHT_BIAS + SKY_COVER_RAMP, above);
-  float flow = 0.0;
-  float indoors = 0.0;
-  if (skyFieldOn == 1 && cover > 0.0) {
-    vec2 f = textureLod(skyField, o.xz * skyFieldMap.xy + skyFieldMap.zw, 0.0).rg;
-    flow = f.r;
-    indoors = cover * f.g;
-    if (indoors >= 0.999) {
-      return flow;
-    }
-  }
-  float open = 1.0 - cover * max(-n.y, 0.0);
-  // out of doors under something: an overhang, whose own height the near taps find
-  bool overhang = cover > 0.5;
-  if (open <= 0.0 && indoors <= 0.0) {
-    return 0.0;
-  }
-  float side = length(n.xz);
-  vec2 facing = side > 1e-3 ? n.xz / side : vec2(0.0);
-  float sum = 0.0;
-  float wsum = 0.0;
-  for (int i = 0; i < SKY_DIRECTIONS; ++i) {
-    float a = (float(i) + noise) * (SKY_TAU / float(SKY_DIRECTIONS));
-    vec2 d = vec2(cos(a), sin(a));
-    float slope = 0.0;
-    float near = skyOccluderAbove(o + vec3(d.x, 0.0, d.y) * SKY_RADIUS_NEAR);
-    if (!overhang || near < above - SKY_OVERHANG_STEP) {
-      slope = max(slope, (near - SKY_HEIGHT_BIAS) / SKY_RADIUS_NEAR);
-    }
-    slope = max(slope, (skyOccluderAbove(o + vec3(d.x, 0.0, d.y) * SKY_RADIUS_FAR) - SKY_HEIGHT_BIAS) / SKY_RADIUS_FAR);
-    // a wall sees the sky on its own side
-    float w = mix(1.0, max(dot(d, facing), 0.0) * 2.0, side);
-    sum += w / (1.0 + slope * slope);
-    wsum += w;
-  }
-  return mix(open * (wsum > 1e-4 ? sum / wsum : 1.0), flow, indoors);
+  return v;
 }

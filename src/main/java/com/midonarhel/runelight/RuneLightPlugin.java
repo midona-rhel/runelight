@@ -356,7 +356,6 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 	// the water surface pass's map of things standing in the water (WaterMap.contact)
 	private static final int WATER_CONTACT_UNIT = RuneLightPlugin.COMPOSITE_TEXTURE_UNIT + 13;
 	// the terrain the volumetric fog lies on (VolumetricFog)
-	// (sky occlusion takes +22 and +23)
 	private static final int FOG_GROUND_UNIT = RuneLightPlugin.COMPOSITE_TEXTURE_UNIT + 24;
 	// the surface pass's wave maps either side of now (WaterSurface.bake)
 	private static final int WATER_WAVES_UNIT_A = RuneLightPlugin.COMPOSITE_TEXTURE_UNIT + 17;
@@ -370,16 +369,19 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 	// before it
 	private static final int GI_PROBE_UNIT = RuneLightPlugin.COMPOSITE_TEXTURE_UNIT + 20;
 	private final float[] giOvercast = new float[7];
-	// the skylight's top-down scenery map for the AO pass (two units, sampled raw), and the static lights' occlusion
-	private static final int SKY_OCCLUSION_UNIT = RuneLightPlugin.COMPOSITE_TEXTURE_UNIT + 22;
-	private final SkyOcclusion skyOcclusion = new SkyOcclusion();
-	// the sky's light flowing in under cover, one unit after the occlusion map's two
+	// the skylight's traced sky visibility for the AO pass, and the static lights' occlusion
+	private static final int SKY_GRID_UNIT = RuneLightPlugin.COMPOSITE_TEXTURE_UNIT + 28;
+	private final SkyGridMap skyGrid = new SkyGridMap();
+	// the sky's light flowing in under cover
 	private static final int SKY_FIELD_UNIT = RuneLightPlugin.COMPOSITE_TEXTURE_UNIT + 25;
 	private final SkyFieldMap skyField = new SkyFieldMap();
 	private final LightOcclusion lightOcclusion = new LightOcclusion();
 	private int uniCompositeSkylightMode, uniCompositeSkylightOn, uniCompositeSkylightFloor;
-	// whether the AO pass worked the sky visibility out this frame
+	// whether the AO pass worked the sky visibility out this frame; whether it is wanted (under the open sky, logged
+	// in), and where the player is for the sky grid's tracing (world tiles)
 	private boolean frameSkylight;
+	private boolean frameSkylightWanted;
+	private float frameSkylightTileX, frameSkylightTileZ;
 	// when the plugin started; animations count from here (the day, the seasons and the weather follow GameClock)
 	private long startMillis = System.currentTimeMillis();
 
@@ -812,7 +814,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 				shadowMap.free();
 				ShadowMap.freeEmpty();
 				weather.free();
-				skyOcclusion.free();
+				skyGrid.free();
 				skyField.free();
 				lightClusters.free();
 				volumetricFog.free();
@@ -1135,7 +1137,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		globalIllumination.locateAo(glAoProgram, GI_PROBE_UNIT);
 		globalIllumination.locateComposite(glCompositeProgram);
 		weatherGround.locate(glAoProgram, glCompositeProgram, WEATHER_OCCLUSION_UNIT, WEATHER_FIELD_UNIT);
-		skyOcclusion.locateAo(glAoProgram, SKY_OCCLUSION_UNIT);
+		skyGrid.locateAo(glAoProgram, SKY_GRID_UNIT);
 		skyField.locateAo(glAoProgram, SKY_FIELD_UNIT);
 		water.locateAo(glAoProgram, WATER_DATA_UNIT);
 		// the shadow samplers' units hold an empty depth map until their maps are bound
@@ -1865,10 +1867,6 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 				weather.renderOcclusion(root, glShadowProgram, uniShadowLightProj,
 					uniShadowEntityProj, uniShadowBase, uniShadowTexturesReady, textureArrayId != -1, glCapabilities.OpenGL45);
 			}
-			// usually nothing too, like the weather's
-			gpuTimer.begin(GpuTimer.SKY_OCCLUSION);
-			skyOcclusion.render(root, glShadowProgram, uniShadowLightProj, uniShadowEntityProj, uniShadowBase,
-				uniShadowTexturesReady, textureArrayId != -1, glCapabilities.OpenGL45);
 			cpuTimer.end(CpuTimer.OCCLUSION);
 		}
 		catch (RuntimeException ex)
@@ -1922,7 +1920,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 
 		cpuTimer.begin(CpuTimer.WEATHER);
 		updateWeather(cameraX, cameraY, cameraZ);
-		updateSkyOcclusion(cameraX, cameraY, cameraZ);
+		updateSkylight();
 		cpuTimer.end(CpuTimer.WEATHER);
 
 		frameFog = false;
@@ -1982,23 +1980,23 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 	}
 
 	/**
-	 * Keep the skylight's scenery map around the player while the skylight or the roof rule for lights needs it.
+	 * Whether the skylight (or the roof rule for lights) is wanted this frame and where the player is, for the sky
+	 * grid; the light flowing in under cover follows the walls.
 	 */
-	private void updateSkyOcclusion(float cameraX, float cameraY, float cameraZ)
+	private void updateSkylight()
 	{
 		WorldView wv = client.getTopLevelWorldView();
 		boolean wanted = wv != null && frameOutdoors && client.getGameState() == GameState.LOGGED_IN;
-		float fx = cameraX, fy = cameraY, fz = cameraZ;
+		frameSkylightWanted = wanted;
 		int plane = wv != null ? wv.getPlane() : 0;
 		Player player = client.getLocalPlayer();
 		LocalPoint lp = player != null ? player.getLocalLocation() : null;
-		if (wanted && lp != null)
+		Scene scene = wv != null ? wv.getScene() : null;
+		if (wanted && lp != null && scene != null)
 		{
-			fx = lp.getX();
-			fz = lp.getY();
-			fy = Perspective.getTileHeight(client, lp, plane);
+			frameSkylightTileX = scene.getBaseX() + lp.getX() / (float) Perspective.LOCAL_TILE_SIZE;
+			frameSkylightTileZ = scene.getBaseY() + lp.getY() / (float) Perspective.LOCAL_TILE_SIZE;
 		}
-		skyOcclusion.update(wanted, fx, fy, fz, plane);
 		BuildingLights buildings = buildingLights;
 		if (wanted && config.skylightFlow() && buildings != null)
 		{
@@ -2643,8 +2641,9 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		{
 			int builds = globalIllumination.builds();
 			int shown = globalIllumination.shownBuild();
-			globalIllumination.prepare(giEnabled(), frameOutdoors, scene, root != null ? root.zones : null,
-				clientUploader.water, dayCycle, skyCache.getCaptures(), settings, GI_PROBE_UNIT);
+			globalIllumination.prepare(giEnabled(), frameSkylightWanted, frameOutdoors, scene,
+				root != null ? root.zones : null, clientUploader.water, dayCycle, skyCache.getCaptures(), settings,
+				GI_PROBE_UNIT);
 			if (builds != globalIllumination.builds())
 			{
 				hitchMonitor.job(HitchMonitor.GI_BUILD);
@@ -2692,13 +2691,21 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		cpuTimer.begin(CpuTimer.GI);
 		final boolean gi = prepareGlobalIllumination();
 		cpuTimer.end(CpuTimer.GI);
+		gpuTimer.begin(GpuTimer.SKY_GRID);
+		cpuTimer.begin(CpuTimer.SKY_GRID);
+		BuildingLights buildings = buildingLights;
+		skyGrid.update(frameSkylightWanted, globalIllumination.getVoxels(), buildings != null ? buildings.getWalls() : null,
+			frameSkylightTileX, frameSkylightTileZ);
+		cpuTimer.end(CpuTimer.SKY_GRID);
 		gpuTimer.end();
 
 		// the AO pass also writes the half resolution depth and normals that the fog's upsample reads, and the
 		// shadows and the global illumination's light
+		WorldView aoView = client.getTopLevelWorldView();
+		Scene aoScene = aoView != null ? aoView.getScene() : null;
 		final boolean shadows = frameShadows && shadowMap.isInitialized();
 		final boolean ground = config.weatherSurfaces() && weather.groundActive();
-		final boolean sky = skyOcclusion.isReady();
+		final boolean sky = skyGrid.isReady(aoScene);
 		frameSkylight = false;
 		final boolean halfPass = ao || frameFog || shadows || gi || ground || sky;
 		if (halfPass)
@@ -2722,10 +2729,8 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 			}
 			sceneTargets.bindMaterial(MATERIAL_UNIT);
 			water.bindAo(config, WATER_DATA_UNIT);
-			WorldView giView = client.getTopLevelWorldView();
-			Scene giScene = giView != null ? giView.getScene() : null;
 			globalIllumination.bindAo(GI_PROBE_UNIT, frameCameraX, frameCameraY, frameCameraZ,
-				giScene != null ? giScene.getBaseX() : 0, giScene != null ? giScene.getBaseY() : 0);
+				aoScene != null ? aoScene.getBaseX() : 0, aoScene != null ? aoScene.getBaseY() : 0);
 			if (ground)
 			{
 				weather.bindGround(weatherGround, WEATHER_OCCLUSION_UNIT, WEATHER_FIELD_UNIT, frameCameraX, frameCameraY,
@@ -2735,13 +2740,13 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 			{
 				weatherGround.setAoOff();
 			}
-			frameSkylight = skyOcclusion.bindAo(SKY_OCCLUSION_UNIT, frameCameraX, frameCameraY, frameCameraZ);
+			frameSkylight = skyGrid.bindAo(SKY_GRID_UNIT, aoScene, frameCameraX, frameCameraY, frameCameraZ);
 			skyField.bindAo(SKY_FIELD_UNIT, frameCameraX, frameCameraZ);
 			gpuTimer.begin(GpuTimer.AO);
 			glDrawArrays(GL_TRIANGLES, 0, 3);
 			gpuTimer.end();
 			GlobalIllumination.unbind(GI_PROBE_UNIT);
-			SkyOcclusion.unbind(SKY_OCCLUSION_UNIT);
+			SkyGridMap.unbind(SKY_GRID_UNIT);
 			SkyFieldMap.unbind(SKY_FIELD_UNIT);
 			// the sky cache takes the occlusion map's unit next, without its sampler objects
 			ShadowMap.unbind(WEATHER_OCCLUSION_UNIT, WEATHER_OCCLUSION_UNIT + 1);
@@ -3236,7 +3241,6 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 				{
 					hitchMonitor.job(HitchMonitor.ZONE_REBUILD);
 					weather.invalidateOcclusion();
-					skyOcclusion.invalidate();
 					shadowMap.refreshCache();
 					globalIllumination.zonesChanged();
 				}
@@ -3971,7 +3975,6 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		ctx.zones = nextZones;
 		nextZones = null;
 		weather.invalidateOcclusion();
-		skyOcclusion.invalidate();
 		shadowStaticDirty = true;
 		globalIllumination.sceneSwapped();
 		water.swap();

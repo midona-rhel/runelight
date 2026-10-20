@@ -56,7 +56,7 @@ void main() {
   vec4 gi = giEnabled == 1 ? giIrradiance(p, n) : vec4(0.0);
   FragAo = halfPackGeometry(1.0, nearOverDepth, n, gi.rgb, gi.a);
   float noise = ign(gl_FragCoord.xy);
-  FragShadow.a = skylightVisibility(p, n, noise);
+  FragShadow.a = skylightVisibility(p, n);
   if (shadowsEnabled == 1) {
     vec2 m = texelFetch(sceneMaterial, px, 0).rg / cover;
     // emissive surfaces show no shading; a leaf lit from behind looks up its shadow on the lit side

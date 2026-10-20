@@ -187,10 +187,12 @@ which area averaging and textures pull toward it.
 ## Skylight and light occlusion
 
 Plugin config, Skylight and light occlusion section. Lighting model Skylight (default) replaces the probes with a
-top-down depth map of the scenery around the player (`SkyOcclusion.java`, the weather's occlusion map kept while
-needed): the AO pass reads it in a ring of directions around each pixel and turns the horizon's slope into how much
-sky the pixel sees (`skylight_ao.glsl`, in the half resolution shadow target's alpha), and the composite scales the
-ambient and sky light by it (`light_occlusion.glsl`). "Skylight + GI bounce" adds, in color, the light the probes find bounced off surfaces (the probes then carry only the
+sky visibility ray traced through the global illumination's voxels (`SkyGrid.java`, `SkyGridMap.java`; built for it
+even with the probes off) on a worker thread, a few thousand rays a frame nearest the player first: at every tile
+corner, three heights above each floor, how much sky is seen toward up and the four sides. Every tile keeps its own
+four corner values, shared with its neighbors only where no wall stands between them, so nothing leaks through walls.
+The AO pass reads a pixel's tile and weighs the directions by its normal (`skylight_ao.glsl`, in the half resolution
+shadow target's alpha), and the composite scales the ambient and sky light by it (`light_occlusion.glsl`). "Skylight + GI bounce" adds, in color, the light the probes find bounced off surfaces (the probes then carry only the
 rays that hit something, no sky), keeping `BOUNCE_BRIGHTNESS` of its brightness so the exposure stays near the plain
 skylight's while the shade takes the colors of the ground and water beside it.
 Debug view "Skylight" shows it.
