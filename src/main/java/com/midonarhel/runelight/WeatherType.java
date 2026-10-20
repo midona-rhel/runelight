@@ -120,6 +120,12 @@ final class WeatherType
 	/** How white the overcast is for this weather with these amounts falling. */
 	float whiteness(float rainAmount, float snowAmount, float previous)
 	{
+		return whiteness(skyWhite, rainAmount, snowAmount, previous);
+	}
+
+	/** {@link #whiteness(float, float, float)} for a {@link #skyWhite}, so a blend of weathers can use it too. */
+	static float whiteness(float skyWhite, float rainAmount, float snowAmount, float previous)
+	{
 		if (skyWhite >= 0)
 		{
 			return skyWhite;

@@ -14,7 +14,7 @@ import static org.lwjgl.opengl.GL33C.*;
  *
  * Everything follows a few values (cover, rain, snow, wind, fog, storm, the light's strength, haze and tint, the
  * look of the clouds and the particles) that ease toward the current weather's: the automatic forecast's
- * WeatherType, or the one forced in the settings. A change of weather or of region therefore always blends; clouds
+ * WeatherType, or the one forced in the settings. A change of weather therefore always blends; clouds
  * build before rain starts and stay until it has stopped. The wind (Wind.java) is simulated here too and drives the
  * rain's slant, the snow's drift, the clouds and the water.
  *
@@ -24,9 +24,11 @@ import static org.lwjgl.opengl.GL33C.*;
  * player walks away from its center, the scene loads or a zone changes, so it costs nothing on most frames.
  *
  * Away from the player the weather is WeatherField's: each chunk of the scene has its region's weather, which the
- * passes add to the player's as a difference. In automatic weather the player's own rain, snow, cover and ground are
- * the field's at the player, so walking into a region where it has been snowing for days shows it snowing, at full
- * strength, on deep snow; only a change of the weather itself blends. The ground comes from Climate, which keeps
+ * passes add to the player's as a difference. Weather is tied to place: in automatic weather outdoors, everything
+ * the player sees (cover, rain, snow, ground, fog and its height, storm, wind, the light's look, the particles' look)
+ * is the field's at the player, blended across region borders by position. Walking into a region where it has been
+ * snowing for days shows it snowing, at full strength, on deep snow, and a border is never a step in time or in
+ * space; only a change of the weather itself blends over time, cell by cell. The ground comes from Climate, which keeps
  * each region's snow until it thaws. Wet ground and snow cover reach over the whole scene (past the
  * occlusion map everything counts as under the open sky). The particles fill everything the camera sees out to the
  * draw distance, wherever it rains or snows: in layers of world-anchored boxes, each twice the size of the last and
@@ -80,14 +82,12 @@ class Weather
 	static final float CLOUD_SECONDS = 15;
 	static final float PRECIP_SECONDS = 8;
 	static final float FOG_SECONDS = 15;
-	// how long walking into another region's weather keeps easing into it when the weather otherwise snaps
-	private static final float BORDER_SECONDS = 4 * FOG_SECONDS;
 	private static final float WIND_SECONDS = 8;
-	private static final float STORM_SECONDS = 10;
+	static final float STORM_SECONDS = 10;
 	// rain or snow starts once the clouds are this far toward their target cover
 	static final float PRECIP_GATE = 0.8f;
 	// below this, rain or snow has stopped
-	private static final float PRECIP_EPSILON = 0.003f;
+	static final float PRECIP_EPSILON = 0.003f;
 	// the intensity setting at which automatic weather has its own amounts
 	static final float DEFAULT_INTENSITY = 0.6f;
 	// time constant, seconds, of the cloud cover following the intensity's swells: slower than the rain itself
@@ -238,8 +238,6 @@ class Weather
 	private float rainAmount, snowAmount;
 	private float fog = WeatherType.clear().fog;
 	private float areaFog = WeatherType.clear().areaFog;
-	// seconds left of easing into the weather of a region just walked into
-	private float crossing;
 	private float distanceFog = WeatherType.clear().distanceFog;
 	// the type's look, eased: clouds (wisp, dark), light (sun - 1, haze, warmth, sky saturation), fog tint, rain
 	// drops (length, speed, width, alpha, slant), flakes (size, speed, sway, wind, then color), buildup (wet rate,
@@ -545,20 +543,84 @@ class Weather
 		double t = GameClock.realSeconds(now);
 		float scale = intensityPercent / 100f;
 
-		// this frame's targets
-		WeatherType type = resolve(mode, auto);
+		// outdoors with the field on, the weather is that of the place: the field's at the player
+		boolean fromField = field.isEnabled() && outdoors;
+		WeatherType type = fromField && field.getFocusType() != null ? field.getFocusType() : resolve(mode, auto);
 		this.type = type;
+		float windMean = type.wind, gustiness = type.gustiness;
+		// walking into another region shows its weather as it is, at once; only a change of the weather blends
+		boolean entered = !fromField && initialized && mode == WeatherMode.AUTOMATIC
+			&& !java.util.Objects.equals(biome, lastBiome);
+		lastBiome = biome;
+		if (fromField)
+		{
+			takeField(t, varying);
+			windMean = field.getFocus(WeatherField.WIND);
+			gustiness = field.getFocus(WeatherField.GUSTINESS);
+		}
+		else
+		{
+			followType(type, mode, scale, gradual, varying, entered, hour, biome, climate, dt, t);
+		}
+
+		float variation = varying ? WeatherVariation.intensity(t) : 1;
+		rainEffective = Math.min(rainAmount * variation, MAX_EFFECTIVE);
+		snowEffective = Math.min(snowAmount * variation, MAX_EFFECTIVE);
+		float effective = rainEffective + snowEffective;
+		slowEffective = !gradual ? effective
+			: slowEffective + (effective - slowEffective) * (1 - (float) Math.exp(-dt / COVER_SECONDS));
+		windSim.update(t, dt, windMean, gustiness, varying, gradual, fx, fz);
+		gust = windSim.getGust();
+		updateWind(dt, now);
+		lightning.update(dt, outdoors ? storm : 0, lightningEnabled, fx, fz);
+
+		boolean anything = rainAmount > 0 || snowAmount > 0 || wetness > 0 || snowCover > 0 || field.hasAnything();
+		active = anything && outdoors;
+		if (!anything)
+		{
+			if (occlusion.isInitialized())
+			{
+				occlusion.free();
+				occlusionDirty = true;
+			}
+			return false;
+		}
+		if (!active)
+		{
+			return false;
+		}
+
+		focusX = fx;
+		focusY = fy;
+		focusZ = fz;
+		focusPlane = plane;
+		if (plane != occlusionPlane
+			|| Math.abs(fx - occlusionX) > OCCLUSION_RECENTER
+			|| Math.abs(fz - occlusionZ) > OCCLUSION_RECENTER
+			|| Math.abs(fy - occlusionY) > OCCLUSION_DEPTH_RANGE / 4)
+		{
+			occlusionDirty = true;
+		}
+		return true;
+	}
+
+	/**
+	 * Ease the weather toward the player's own region's weather (manual modes, the field off, or indoors).
+	 *
+	 * @param entered the region changed: apply its weather at once
+	 */
+	private void followType(WeatherType type, WeatherMode mode, float scale, boolean gradual, boolean varying,
+		boolean entered, double hour, String biome, boolean climate, float dt, double t)
+	{
 		float targetCover = mode == WeatherMode.OFF ? 0 : type.cover;
 		float targetRain = type.rain * scale / DEFAULT_INTENSITY;
 		float targetSnow = type.snow * scale / DEFAULT_INTENSITY;
 		float targetFog = type.fog;
-		float showerK = 1;
 		if (type.showers > 0 && varying)
 		{
 			// showers come and go: rain, then a break of sun
 			float on = showers(t);
 			float k = 1 - type.showers * (1 - on);
-			showerK = k;
 			targetRain *= k;
 			targetSnow *= k;
 			targetCover *= 1 - type.showers * (1 - on) * (1 - SHOWER_BREAK_COVER);
@@ -587,25 +649,12 @@ class Weather
 			targetCover = Math.max(targetCover, type.coverSwell * Math.min(1, COVER_BASE + COVER_SLOPE * slowEffective));
 		}
 
-		// walking into another region shows its weather as it is, at once; only a change of the weather blends.
-		// Not with the field: it already blends the cover, rain, snow and ground across the border, and snapping the
-		// fog, the sun's light and the distance fog to the new region's changed the whole look in one frame
-		boolean changed = initialized && mode == WeatherMode.AUTOMATIC && !java.util.Objects.equals(biome, lastBiome);
-		boolean entered = changed && !(field.isEnabled() && outdoors);
-		if (changed)
+		if (entered)
 		{
-			log.debug("Look: weather biome {} -> {} ({}), fog {} -> {}, distance fog {} -> {}, {}", lastBiome, biome,
-				type, fog, targetFog, distanceFog, type.distanceFog, entered ? "snapped" : "eased");
+			log.debug("Look: weather biome {} ({}), fog {} -> {}, distance fog {} -> {}, snapped", biome, type, fog,
+				targetFog, distanceFog, type.distanceFog);
 		}
-		lastBiome = biome;
-		// Crossing into another region's weather always eases into it, gradual weather or not: it is a change of
-		// place, and the region border is a line on the map, not something to see
-		if (changed && !entered)
-		{
-			crossing = BORDER_SECONDS;
-		}
-		crossing = Math.max(0, crossing - dt);
-		if (!initialized || !gradual && crossing <= 0 || entered)
+		if (!initialized || !gradual || entered)
 		{
 			// at login or without gradual changes, start in the weather as it is
 			initialized = true;
@@ -653,58 +702,38 @@ class Weather
 			wetness = climateWet;
 			snowCover = climateSnow;
 		}
-		if (field.isEnabled() && outdoors)
-		{
-			// the field at the player: its cells start in their weather as it is and only ease when it changes,
-			// and it blends across region borders, so entering a region shows its weather at once
-			float average = 1 - type.showers * (1 - SHOWER_SHARE);
-			float k = showerK / Math.max(average, 0.05f);
-			cover = Math.min(1, field.getFocus(WeatherField.COVER));
-			rainAmount = settle(field.getFocus(WeatherField.RAIN) * k, 0);
-			snowAmount = settle(field.getFocus(WeatherField.SNOW) * k, 0);
-			wetness = field.getFocus(WeatherField.WET);
-			snowCover = field.getFocus(WeatherField.SNOW_COVER);
-		}
+	}
 
-		float variation = varying ? WeatherVariation.intensity(t) : 1;
-		rainEffective = Math.min(rainAmount * variation, MAX_EFFECTIVE);
-		snowEffective = Math.min(snowAmount * variation, MAX_EFFECTIVE);
-		float effective = rainEffective + snowEffective;
-		slowEffective = !gradual ? effective
-			: slowEffective + (effective - slowEffective) * (1 - (float) Math.exp(-dt / COVER_SECONDS));
-		windSim.update(t, dt, type.wind, type.gustiness, varying, gradual, fx, fz);
-		gust = windSim.getGust();
-		updateWind(dt, now);
-		lightning.update(dt, outdoors ? storm : 0, lightningEnabled, fx, fz);
-
-		boolean anything = rainAmount > 0 || snowAmount > 0 || wetness > 0 || snowCover > 0 || field.hasAnything();
-		active = anything && outdoors;
-		if (!anything)
-		{
-			if (occlusion.isInitialized())
-			{
-				occlusion.free();
-				occlusionDirty = true;
-			}
-			return false;
-		}
-		if (!active)
-		{
-			return false;
-		}
-
-		focusX = fx;
-		focusY = fy;
-		focusZ = fz;
-		focusPlane = plane;
-		if (plane != occlusionPlane
-			|| Math.abs(fx - occlusionX) > OCCLUSION_RECENTER
-			|| Math.abs(fz - occlusionZ) > OCCLUSION_RECENTER
-			|| Math.abs(fy - occlusionY) > OCCLUSION_DEPTH_RANGE / 4)
-		{
-			occlusionDirty = true;
-		}
-		return true;
+	/**
+	 * Take everything the weather looks like from the field at the player: its cells ease when their own weather
+	 * changes and blend across region borders, so crossing one is a walk through a gradient, not a change in time.
+	 * Showers (the rain coming and going) follow the blended share of showery weather.
+	 */
+	private void takeField(double t, boolean varying)
+	{
+		initialized = true;
+		float showery = field.getFocus(WeatherField.SHOWERS);
+		float showerK = varying && showery > 0 ? 1 - showery * (1 - showers(t)) : 1;
+		// the cells hold the rain as it is on average over showers
+		float k = showerK / Math.max(1 - showery * (1 - SHOWER_SHARE), 0.05f);
+		cover = Math.min(1, field.getFocus(WeatherField.COVER));
+		rainAmount = settle(field.getFocus(WeatherField.RAIN) * k, 0);
+		snowAmount = settle(field.getFocus(WeatherField.SNOW) * k, 0);
+		wetness = field.getFocus(WeatherField.WET);
+		snowCover = field.getFocus(WeatherField.SNOW_COVER);
+		fog = field.getFocus(WeatherField.FOG);
+		fogHeight = field.getFocus(WeatherField.FOG_HEIGHT);
+		humidity = field.getFocus(WeatherField.HUMIDITY);
+		areaFog = field.getFocus(WeatherField.AREA_FOG);
+		distanceFog = field.getFocus(WeatherField.DISTANCE_FOG);
+		storm = field.getFocus(WeatherField.STORM);
+		snowiness = field.getFocus(WeatherField.SNOWINESS);
+		cloudWisp = field.getFocus(WeatherField.CLOUD_WISP);
+		cloudDark = field.getFocus(WeatherField.CLOUD_DARK);
+		field.getFocus(WeatherField.LIGHT, light);
+		field.getFocus(WeatherField.FOG_TINT, fogTint);
+		field.getFocus(WeatherField.RAIN_STYLE, rainStyle);
+		field.getFocus(WeatherField.FLAKE_STYLE, flakeStyle);
 	}
 
 	/**
