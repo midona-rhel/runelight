@@ -10,6 +10,11 @@ uniform int skylightOn;
 uniform sampler2D skyOcclusion;     // top-down window depth of the scenery, raw
 uniform mat4 skyOcclusionProjRel;   // camera-relative world -> occlusion clip
 uniform float skyOcclusionDepthRange;
+// the sky's light flowing in under cover (SkyField.java): r the light, g 1 under cover; texture coordinates are
+// camera-relative world xz * skyFieldMap.xy + skyFieldMap.zw
+uniform sampler2D skyField;
+uniform int skyFieldOn;
+uniform vec4 skyFieldMap;
 
 #define SKY_DIRECTIONS 8
 // world units out to the two horizon taps in each direction
@@ -36,7 +41,9 @@ float skyOccluderAbove(vec3 q) {
   return (depth - textureLod(skyOcclusion, uv, 0.0).r) * 2.0 * skyOcclusionDepthRange;
 }
 
-// 1 under the open sky, 0 under a roof
+// 1 under the open sky, 0 under a roof, except where the tiles' flood of light (skyField) knows better: under cover
+// the light comes in through the openings, so a gate arch or a house with its door open fades from the opening
+// inward instead of being dark; horizon and cover are the field's there
 float skylightVisibility(vec3 p, vec3 n, float noise) {
   if (skylightOn == 0) {
     return 1.0;
@@ -46,8 +53,19 @@ float skylightVisibility(vec3 p, vec3 n, float noise) {
   if (above < -1e8) {
     return 1.0;
   }
-  float open = 1.0 - smoothstep(SKY_HEIGHT_BIAS, SKY_HEIGHT_BIAS + SKY_COVER_RAMP, above);
-  if (open <= 0.0) {
+  float cover = smoothstep(SKY_HEIGHT_BIAS, SKY_HEIGHT_BIAS + SKY_COVER_RAMP, above);
+  float open = 1.0 - cover;
+  float flow = 0.0;
+  float indoors = 0.0;
+  if (skyFieldOn == 1 && cover > 0.0) {
+    vec2 f = textureLod(skyField, o.xz * skyFieldMap.xy + skyFieldMap.zw, 0.0).rg;
+    flow = f.r;
+    indoors = cover * f.g;
+    if (indoors >= 0.999) {
+      return flow;
+    }
+  }
+  if (open <= 0.0 && indoors <= 0.0) {
     return 0.0;
   }
   float side = length(n.xz);
@@ -65,5 +83,5 @@ float skylightVisibility(vec3 p, vec3 n, float noise) {
     sum += w / (1.0 + slope * slope);
     wsum += w;
   }
-  return open * (wsum > 1e-4 ? sum / wsum : 1.0);
+  return mix(open * (wsum > 1e-4 ? sum / wsum : 1.0), flow, indoors);
 }

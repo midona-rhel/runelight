@@ -120,6 +120,12 @@ class BuildingLights
 		return walls;
 	}
 
+	/** Which planes have a floor on each extended tile (floorTiles), null before a scene is built. */
+	byte[] getFloors()
+	{
+		return filledTiles;
+	}
+
 	/** Whether rooms split along their interior walls; a change rebuilds the rooms on the next tick. */
 	void setSplitRooms(boolean split)
 	{
