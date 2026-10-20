@@ -393,7 +393,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 	 */
 	private static final class FrameUniforms
 	{
-		int viewProj, invViewProj, viewport, depthZeroToOne;
+		int viewProj, invViewProj, viewport, depthZeroToOne, halfRatio;
 
 		void locate(int program)
 		{
@@ -401,6 +401,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 			invViewProj = glGetUniformLocation(program, "invViewProj");
 			viewport = glGetUniformLocation(program, "sceneViewport");
 			depthZeroToOne = glGetUniformLocation(program, "depthZeroToOne");
+			halfRatio = glGetUniformLocation(program, "halfRatio");
 		}
 	}
 
@@ -438,6 +439,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 	private double lastRenderFactor;
 	private final Upscaler upscaler = new Upscaler();
 	private int lastAnisotropicFilteringLevel = -1;
+	private float lastTextureLodBias;
 
 	private GpuFloatBuffer uniformBuffer;
 
@@ -617,6 +619,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 			try
 			{
 				lastAnisotropicFilteringLevel = -1;
+				lastTextureLodBias = 0;
 
 				AWTContext.loadNatives();
 
@@ -1519,7 +1522,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 			glDisable(GL_MULTISAMPLE);
 		}
 
-		sceneTargets.init(width, height, aaSamples);
+		sceneTargets.init(width, height, aaSamples, (float) Math.max(1, 2 * renderFactor));
 		if (renderFactor != 1)
 		{
 			upscaler.init(width, height);
@@ -1655,6 +1658,14 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		{
 			textureManager.setAnisotropicFilteringLevel(textureArrayId, anisotropicFilteringLevel);
 			lastAnisotropicFilteringLevel = anisotropicFilteringLevel;
+		}
+
+		// the mip level follows the window's resolution, not the reduced scene's
+		final float lodBias = lastRenderFactor < 1 ? (float) (Math.log(lastRenderFactor) / Math.log(2)) : 0;
+		if (textureArrayId != -1 && lastTextureLodBias != lodBias)
+		{
+			textureManager.setLodBias(textureArrayId, lodBias);
+			lastTextureLodBias = lodBias;
 		}
 
 		// Setup viewport
@@ -2363,6 +2374,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		glUniformMatrix4fv(u.invViewProj, false, frameInvViewProj);
 		glUniform4i(u.viewport, frameViewport[0], frameViewport[1], frameViewport[2], frameViewport[3]);
 		glUniform1i(u.depthZeroToOne, glCapabilities.OpenGL45 ? 1 : 0);
+		glUniform1f(u.halfRatio, sceneTargets.getHalfRatio());
 	}
 
 	private void setLightingUniforms()
@@ -2745,7 +2757,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 			gpuTimer.begin(GpuTimer.FOG);
 			volumetricFog.indoorFactor = config.noFogIndoors() && lightClusters.isInitialized() ? VolumetricFog.INDOOR_DENSITY : 1;
 			volumetricFog.waterTexture = water.dataTexture(config);
-			volumetricFog.render(sceneTargets.getAoWidth(), sceneTargets.getAoHeight(), FOG_NOISE_UNIT, FOG_TEXTURE_UNIT, FOG_DISTURB_UNIT,
+			volumetricFog.render(sceneTargets.getAoWidth(), sceneTargets.getAoHeight(), sceneTargets.getHalfRatio(), FOG_NOISE_UNIT, FOG_TEXTURE_UNIT, FOG_DISTURB_UNIT,
 				frameViewProj, frameInvViewProj, frameViewport, glCapabilities.OpenGL45,
 				frameCameraX, frameCameraY, frameCameraZ, (System.currentTimeMillis() - startMillis) / 1000f,
 				// in a void the sun doesn't light the fog: it would glow over the black around the scene
@@ -2761,7 +2773,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		water.bind(config, WATER_DATA_UNIT);
 		// the water's half resolution shading, with everything bound for the composite (water.glsl)
 		gpuTimer.begin(GpuTimer.WATER);
-		water.shadeHalf(config, sceneTargets.getWidth(), sceneTargets.getHeight(), WATER_NOISE_UNIT);
+		water.shadeHalf(config, sceneTargets.getAoWidth(), sceneTargets.getAoHeight(), WATER_NOISE_UNIT);
 		gpuTimer.end();
 
 		// below 100% render scale the composite and the weather draw at the scene's size into the upscaler's target
@@ -3437,6 +3449,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 			}
 			textureArrayId = -1;
 			lastAnisotropicFilteringLevel = -1;
+			lastTextureLodBias = 0;
 		}
 	}
 

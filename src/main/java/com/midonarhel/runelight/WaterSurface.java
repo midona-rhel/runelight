@@ -297,11 +297,11 @@ class WaterSurface
 	}
 
 	/**
-	 * Bind the half resolution shaded target for drawing, sized for scene targets of w x h, with its viewport.
+	 * Bind the half resolution shaded target for drawing, sw x sh like the other half resolution targets
+	 * (SceneTargets), with its viewport.
 	 */
-	void bindShadedTarget(int w, int h)
+	void bindShadedTarget(int sw, int sh)
 	{
-		int sw = (w + 1) / 2, sh = (h + 1) / 2;
 		if (shadedFbo == 0 || sw != shadedWidth || sh != shadedHeight)
 		{
 			freeShaded();

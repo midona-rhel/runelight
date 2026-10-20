@@ -235,8 +235,8 @@ vec3 waterShoulder(vec3 c) {
 }
 
 // ---------------------------------------------------------------------------------------------------------------
-// The half resolution pass: for the half resolution pixel hpx, the nearest water surface among the four full
-// resolution pixels it covers, shaded: the surface's color (linear, foam in it), how much of what is under it the
+// The half resolution pass: for the half resolution pixel hpx, the nearest water surface among the full resolution
+// pixels it covers (four at most), shaded: the surface's color (linear, foam in it), how much of what is under it the
 // surface hides at least (Fresnel, the slant, foam; waterOver adds the depth's share), and the highlights on top
 // (linear), packed by waterPackShaded. 0 where there is no water.
 void waterShadeHalf(ivec2 hpx) {
@@ -247,8 +247,12 @@ void waterShadeHalf(ivec2 hpx) {
   uvec4 ws = uvec4(0u);
   ivec2 px = ivec2(0);
   float t = 1e9;
+  ivec2 first = halfToFull(hpx);
   for (int i = 0; i < 4; ++i) {
-    ivec2 q = min(hpx * 2 + ivec2(i & 1, i >> 1), last);
+    // a half texel that is one scene pixel has no others to choose from
+    if (i > 0 && halfRatio <= 1.0)
+      break;
+    ivec2 q = min(first + ivec2(i & 1, i >> 1), last);
     uvec4 w = texelFetch(waterSurface, q, 0);
     if (w.b == 0u)
       continue;
@@ -426,7 +430,7 @@ vec3 waterOver(ivec2 px, inout vec3 p, vec3 albedo, float shadow, vec3 lit, floa
   float depth = max(p.y - s.y, 0.0);
 
   // the half resolution shading around this pixel, bilinear over the texels that have water
-  vec2 hp = (vec2(px) + 0.5) * 0.5 - 0.5;
+  vec2 hp = fullToHalf(px);
   ivec2 h0 = ivec2(floor(hp));
   vec2 f = hp - vec2(h0);
   ivec2 last = textureSize(waterShaded, 0) - 1;

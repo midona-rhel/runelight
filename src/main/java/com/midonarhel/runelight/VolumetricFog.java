@@ -60,7 +60,7 @@ class VolumetricFog
 	private int uniCameraPos, uniTime, uniOutdoors, uniProceduralSky, uniClientSkyColor, uniCasterDir,
 		uniSunIsCaster, uniSunAltitude, uniShadowsEnabled, uniLightProjRel, uniShadowDepthRange,
 		uniPointLights, uniDensity, uniHeight, uniGroundY, uniCenter, uniFade, uniNear, uniSunScatter, uniNoiseAmount, uniBankAmount,
-		uniTint, uniSteps, uniViewProj, uniInvViewProj, uniViewport, uniDepthZeroToOne, uniOvercast, uniLight;
+		uniTint, uniSteps, uniViewProj, uniInvViewProj, uniViewport, uniDepthZeroToOne, uniHalfRatio, uniOvercast, uniLight;
 
 	private int uniCompositeEnabled;
 
@@ -106,6 +106,7 @@ class VolumetricFog
 		uniInvViewProj = glGetUniformLocation(program, "invViewProj");
 		uniViewport = glGetUniformLocation(program, "sceneViewport");
 		uniDepthZeroToOne = glGetUniformLocation(program, "depthZeroToOne");
+		uniHalfRatio = glGetUniformLocation(program, "halfRatio");
 
 		glUseProgram(program);
 		glUniform1i(glGetUniformLocation(program, "sceneDepth"), sceneDepthUnit);
@@ -192,7 +193,7 @@ class VolumetricFog
 	 * the scene depth, shadow map and light clusters already bound to the units given to {@link #setProgram},
 	 * and a VAO bound.
 	 */
-	void render(int halfWidth, int halfHeight, int noiseUnit, int fogUnit, int disturbUnit,
+	void render(int halfWidth, int halfHeight, float halfRatio, int noiseUnit, int fogUnit, int disturbUnit,
 		float[] viewProj, float[] invViewProj, int[] viewport, boolean zeroToOne,
 		float cameraX, float cameraY, float cameraZ, float time,
 		boolean outdoors, boolean proceduralSky, int skyColor, DayCycle day,
@@ -220,6 +221,7 @@ class VolumetricFog
 		glUniformMatrix4fv(uniInvViewProj, false, invViewProj);
 		glUniform4i(uniViewport, viewport[0], viewport[1], viewport[2], viewport[3]);
 		glUniform1i(uniDepthZeroToOne, zeroToOne ? 1 : 0);
+		glUniform1f(uniHalfRatio, halfRatio);
 
 		glUniform3f(uniCameraPos, cameraX, cameraY, cameraZ);
 		glUniform1f(uniTime, time);

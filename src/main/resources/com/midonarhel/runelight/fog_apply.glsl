@@ -24,7 +24,7 @@ float fogDepthWeight(float qz, float z) {
 }
 
 vec4 upsampleFog(ivec2 px, float z) {
-  vec2 hp = (vec2(px) + 0.5) * 0.5 - 0.5;
+  vec2 hp = fullToHalf(px);
   ivec2 base = ivec2(floor(hp)) - 1;
   ivec2 maxFog = textureSize(sceneFog, 0) - 1;
   vec4 sum = vec4(0.0);

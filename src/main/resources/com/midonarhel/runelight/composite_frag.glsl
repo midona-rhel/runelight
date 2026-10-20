@@ -90,7 +90,7 @@ layout(location = 0) out vec4 FragColor;
 // when the fog is on.
 
 float upsampleAoFog(ivec2 px, float z, vec3 n, out vec4 fog, out float shadow, out vec4 gi) {
-  vec2 hp = (vec2(px) + 0.5) * 0.5 - 0.5;
+  vec2 hp = fullToHalf(px);
   ivec2 base = ivec2(floor(hp));
   ivec2 maxAo = textureSize(sceneAo, 0) - 1;
   bool withFog = volumetricFog == 1;

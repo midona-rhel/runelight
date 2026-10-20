@@ -5,6 +5,8 @@
 // fog read their taps' geometry from here with one small fetch instead of the full resolution depth and normal.
 // The target is RGBA32F (SceneTargets). Needs frame.glsl.
 
+#include "halfmap.glsl"
+
 uniform sampler2D sceneAo;
 
 // view depth the upsamples give the sky

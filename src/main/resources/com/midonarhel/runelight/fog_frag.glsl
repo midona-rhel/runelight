@@ -123,6 +123,7 @@ out vec4 FragFog;
 // the map covers a square around the player; the effect fades out over this distance before its edge
 #define FOG_DISTURB_EDGE 512.0
 
+#include "halfmap.glsl"
 #include "bayer.glsl"
 
 vec2 fogWaterCell(vec2 worldXZ) {
@@ -213,7 +214,7 @@ vec3 pointGlow(ivec2 px, vec3 dir, float t0, float dt, int steps, float weight[F
 }
 
 void main() {
-  ivec2 px = ivec2(gl_FragCoord.xy) * 2;
+  ivec2 px = halfToFull(ivec2(gl_FragCoord.xy));
   FragFog = vec4(0.0, 0.0, 0.0, 1.0);
   if (!inViewport(px)) {
     return;

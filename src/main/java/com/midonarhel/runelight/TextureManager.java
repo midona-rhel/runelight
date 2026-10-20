@@ -117,6 +117,16 @@ class TextureManager
 		}
 	}
 
+	/**
+	 * Pick mipmaps for the resolution the scene renders at: below 100% render scale the textures' texels are
+	 * sampled further apart than the window's pixels are, and the unbiased choice would blur them as if they were.
+	 */
+	void setLodBias(int textureArrayId, float bias)
+	{
+		glBindTexture(GL_TEXTURE_2D_ARRAY, textureArrayId);
+		glTexParameterf(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_LOD_BIAS, bias);
+	}
+
 	void freeTextureArray(int textureArrayId)
 	{
 		glDeleteTextures(textureArrayId);

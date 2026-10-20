@@ -33,7 +33,7 @@ layout(location = 1) out vec4 FragShadow;  // r: lit share, 1 unshadowed; g snow
 #define GOLDEN_ANGLE 2.39996322973
 
 void main() {
-  ivec2 px = ivec2(gl_FragCoord.xy) * 2;
+  ivec2 px = halfToFull(ivec2(gl_FragCoord.xy));
   float d = texelFetch(sceneDepth, px, 0).r;
   if (isSky(d)) {
     FragAo = halfPackGeometry(1.0, 0.0, vec3(0.0, 0.0, 1.0), vec3(0.0), 0.0);

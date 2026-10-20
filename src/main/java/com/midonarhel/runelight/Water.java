@@ -341,7 +341,7 @@ class Water
 	 * pass into the shaded target, then that target bound on shadedUnit for the full resolution composite. Leaves the
 	 * framebuffer and viewport changed.
 	 *
-	 * @param width  the scene targets' size
+	 * @param width  the half resolution targets' size (SceneTargets)
 	 */
 	void shadeHalf(RuneLightConfig config, int width, int height, int shadedUnit)
 	{

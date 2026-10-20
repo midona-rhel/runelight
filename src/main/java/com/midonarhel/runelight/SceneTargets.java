@@ -39,11 +39,19 @@ class SceneTargets
 	// sun and moon shadows at half resolution, drawn by the AO pass and upsampled with it, and the weather's ground
 	private int texShadow;
 	private int aoWidth, aoHeight;
+	private float halfRatio = 2;
 	// the same two again, for the first of the denoise's two passes (denoise)
 	private int fboAoTemp, texAoTemp, texShadowTemp;
 
-	void init(int width, int height, int samples)
+	/**
+	 * @param halfRatio scene pixels per texel of the half resolution passes: 2 at full render scale. Below it those
+	 *                  passes stay at half the window's resolution (1 at a render scale of 50% and less, where
+	 *                  they are the scene's size): their dither and grain are averaged away by filters sized in
+	 *                  those texels, and at a smaller size the upscale would stretch them into visible blocks.
+	 */
+	void init(int width, int height, int samples, float halfRatio)
 	{
+		this.halfRatio = halfRatio;
 		this.width = width;
 		this.height = height;
 		this.samples = samples;
@@ -64,8 +72,8 @@ class SceneTargets
 		glDrawBuffers(OPAQUE_BUFFERS);
 		check("resolve");
 
-		aoWidth = (width + 1) / 2;
-		aoHeight = (height + 1) / 2;
+		aoWidth = (int) Math.ceil(width / (double) halfRatio);
+		aoHeight = (int) Math.ceil(height / (double) halfRatio);
 		texAo = glGenTextures();
 		glBindTexture(GL_TEXTURE_2D, texAo);
 		// AO and the global illumination plus the half resolution depth and normal the composite's upsamples read;
@@ -165,6 +173,11 @@ class SceneTargets
 	int getAoFbo()
 	{
 		return fboAo;
+	}
+
+	float getHalfRatio()
+	{
+		return halfRatio;
 	}
 
 	int getAoWidth()
