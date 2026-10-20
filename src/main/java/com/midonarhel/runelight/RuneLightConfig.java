@@ -36,6 +36,7 @@ import com.midonarhel.runelight.config.ColorBlindMode;
 import com.midonarhel.runelight.config.DebugView;
 import com.midonarhel.runelight.config.LightingModel;
 import com.midonarhel.runelight.config.Quality;
+import com.midonarhel.runelight.config.RenderScale;
 import com.midonarhel.runelight.config.ShadowResolution;
 import com.midonarhel.runelight.config.SwayFps;
 import com.midonarhel.runelight.config.UIScalingMode;
@@ -1504,5 +1505,41 @@ public interface RuneLightConfig extends Config
 	default boolean hideOtherAreas()
 	{
 		return true;
+	}
+
+	@ConfigSection(
+		name = "Resolution",
+		description = "Render the 3D scene below the screen's resolution and scale it up; the interface stays sharp",
+		position = 910
+	)
+	String resolutionSection = "resolution";
+
+	@ConfigItem(
+		keyName = "renderScale",
+		name = "Render scale",
+		description = "The 3D scene's resolution as a share of the window's pixels; it is scaled up to the window and the "
+			+ "interface is drawn at full resolution on top. 1x (no HiDPI) renders at the window's size in points, "
+			+ "which is half the pixels on a Retina display and the same as 100% elsewhere.",
+		section = resolutionSection,
+		position = 911
+	)
+	default RenderScale renderScale()
+	{
+		return RenderScale.FULL;
+	}
+
+	@Range(
+		max = 100
+	)
+	@ConfigItem(
+		keyName = "upscaleSharpness",
+		name = "Upscale sharpness",
+		description = "Sharpens the scaled-up scene without ringing. Only used when the render scale is below 100%.",
+		section = resolutionSection,
+		position = 912
+	)
+	default int upscaleSharpness()
+	{
+		return 40;
 	}
 }

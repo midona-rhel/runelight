@@ -434,6 +434,9 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 	private int lastStretchedCanvasWidth;
 	private int lastStretchedCanvasHeight;
 	private AntiAliasingMode lastAntiAliasingMode;
+	// the share of the drawable's resolution the scene targets were made for (config render scale)
+	private double lastRenderFactor;
+	private final Upscaler upscaler = new Upscaler();
 	private int lastAnisotropicFilteringLevel = -1;
 
 	private GpuFloatBuffer uniformBuffer;
@@ -1042,6 +1045,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 			LIGHT_DATA_UNIT, CLUSTER_DATA_UNIT, MATERIAL_UNIT, WEATHER_FIELD_UNIT);
 		skyCache.setPrograms(skyCache.compile(template), CLOUD_NOISE_UNIT, SKY_CACHE_UNIT);
 		globalIllumination.setPrograms(globalIllumination.compile(template), SKY_CACHE_UNIT, GI_PROBE_UNIT);
+		upscaler.setProgram(Upscaler.PROGRAM.compile(template));
 
 		glBindVertexArray(0);
 
@@ -1224,6 +1228,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		water.freeSurfaceProgram();
 		skyCache.freePrograms();
 		globalIllumination.freePrograms();
+		upscaler.freeProgram();
 	}
 
 	/**
@@ -1234,7 +1239,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 	{
 		glBindVertexArray(vaoUiHandle);
 		Template template = createTemplate();
-		int scene = 0, ui = 0, composite = 0, ao = 0, denoise = 0, shadow = 0, fog = 0, waterSurface = 0;
+		int scene = 0, ui = 0, composite = 0, ao = 0, denoise = 0, shadow = 0, fog = 0, waterSurface = 0, upscale = 0;
 		Weather.Programs weatherPrograms;
 		SkyCache.Programs skyCachePrograms;
 		GlobalIllumination.Programs giPrograms;
@@ -1248,6 +1253,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 			shadow = SHADOW_PROGRAM.compile(template);
 			fog = VolumetricFog.PROGRAM.compile(template);
 			waterSurface = WaterSurface.PROGRAM.compile(template);
+			upscale = Upscaler.PROGRAM.compile(template);
 			weatherPrograms = weather.compile(template);
 			try
 			{
@@ -1284,6 +1290,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 			glDeleteProgram(shadow);
 			glDeleteProgram(fog);
 			glDeleteProgram(waterSurface);
+			glDeleteProgram(upscale);
 			String msg = ex.getMessage();
 			if (!msg.equals(shaderError))
 			{
@@ -1312,6 +1319,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 			LIGHT_DATA_UNIT, CLUSTER_DATA_UNIT, MATERIAL_UNIT, WEATHER_FIELD_UNIT);
 		skyCache.setPrograms(skyCachePrograms, CLOUD_NOISE_UNIT, SKY_CACHE_UNIT);
 		globalIllumination.setPrograms(giPrograms, SKY_CACHE_UNIT, GI_PROBE_UNIT);
+		upscaler.setProgram(upscale);
 		initUniforms();
 
 		if (textureAnimations != null)
@@ -1494,13 +1502,13 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		interfaceTexture = -1;
 	}
 
-	private void initFbo(int width, int height, int aaSamples)
+	private void initFbo(int width, int height, int aaSamples, double renderFactor)
 	{
 		final GraphicsConfiguration graphicsConfiguration = clientUI.getGraphicsConfiguration();
 		final AffineTransform transform = graphicsConfiguration.getDefaultTransform();
 
-		width = getScaledValue(transform.getScaleX(), width);
-		height = getScaledValue(transform.getScaleY(), height);
+		width = Math.max(1, getScaledValue(transform.getScaleX() * renderFactor, width));
+		height = Math.max(1, getScaledValue(transform.getScaleY() * renderFactor, height));
 
 		if (aaSamples > 0)
 		{
@@ -1512,6 +1520,10 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		}
 
 		sceneTargets.init(width, height, aaSamples);
+		if (renderFactor != 1)
+		{
+			upscaler.init(width, height);
+		}
 
 		// Reset
 		glBindFramebuffer(GL_FRAMEBUFFER, awtContext.getFramebuffer(false));
@@ -1520,6 +1532,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 	private void shutdownFbo()
 	{
 		sceneTargets.free();
+		upscaler.free();
 	}
 
 	@Override
@@ -1601,6 +1614,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		// Setup FBO and anti-aliasing
 		{
 			final AntiAliasingMode antiAliasingMode = config.antiAliasingMode();
+			final double renderFactor = renderFactor();
 			final Dimension stretchedDimensions = client.getStretchedDimensions();
 
 			final int stretchedCanvasWidth = client.isStretchedEnabled() ? stretchedDimensions.width : canvasWidth;
@@ -1609,7 +1623,8 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 			// Re-create fbo
 			if (lastStretchedCanvasWidth != stretchedCanvasWidth
 				|| lastStretchedCanvasHeight != stretchedCanvasHeight
-				|| lastAntiAliasingMode != antiAliasingMode)
+				|| lastAntiAliasingMode != antiAliasingMode
+				|| lastRenderFactor != renderFactor)
 			{
 				shutdownFbo();
 
@@ -1622,11 +1637,12 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 
 				log.debug("AA samples: {}, max samples: {}, forced samples: {}", samples, maxSamples, forcedAASamples);
 
-				initFbo(stretchedCanvasWidth, stretchedCanvasHeight, samples);
+				initFbo(stretchedCanvasWidth, stretchedCanvasHeight, samples, renderFactor);
 
 				lastStretchedCanvasWidth = stretchedCanvasWidth;
 				lastStretchedCanvasHeight = stretchedCanvasHeight;
 				lastAntiAliasingMode = antiAliasingMode;
+				lastRenderFactor = renderFactor;
 			}
 
 			glBindFramebuffer(GL_DRAW_FRAMEBUFFER, sceneTargets.getRenderFbo());
@@ -1667,13 +1683,13 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 			renderWidthOff = (int) Math.floor(scaleFactorX * (renderWidthOff)) - padding;
 		}
 
-		glDpiAwareViewport(renderWidthOff, renderCanvasHeight - renderViewportHeight - renderHeightOff, renderViewportWidth, renderViewportHeight);
+		glDpiAwareViewport(renderWidthOff, renderCanvasHeight - renderViewportHeight - renderHeightOff, renderViewportWidth, renderViewportHeight, lastRenderFactor);
 		{
 			final AffineTransform t = clientUI.getGraphicsConfiguration().getDefaultTransform();
-			frameViewport[0] = getScaledValue(t.getScaleX(), renderWidthOff);
-			frameViewport[1] = getScaledValue(t.getScaleY(), renderCanvasHeight - renderViewportHeight - renderHeightOff);
-			frameViewport[2] = getScaledValue(t.getScaleX(), renderViewportWidth);
-			frameViewport[3] = getScaledValue(t.getScaleY(), renderViewportHeight);
+			frameViewport[0] = getScaledValue(t.getScaleX() * lastRenderFactor, renderWidthOff);
+			frameViewport[1] = getScaledValue(t.getScaleY() * lastRenderFactor, renderCanvasHeight - renderViewportHeight - renderHeightOff);
+			frameViewport[2] = getScaledValue(t.getScaleX() * lastRenderFactor, renderViewportWidth);
+			frameViewport[3] = getScaledValue(t.getScaleY() * lastRenderFactor, renderViewportHeight);
 		}
 
 		glUseProgram(glProgram);
@@ -2748,8 +2764,12 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		water.shadeHalf(config, sceneTargets.getWidth(), sceneTargets.getHeight(), WATER_NOISE_UNIT);
 		gpuTimer.end();
 
-		glBindFramebuffer(GL_FRAMEBUFFER, awtContext.getFramebuffer(false));
-		glViewport(0, 0, width, height);
+		// below 100% render scale the composite and the weather draw at the scene's size into the upscaler's target
+		final boolean upscale = upscaler.isInitialized();
+		final int sceneWidth = upscale ? sceneTargets.getWidth() : width;
+		final int sceneHeight = upscale ? sceneTargets.getHeight() : height;
+		glBindFramebuffer(GL_FRAMEBUFFER, upscale ? upscaler.getFbo() : awtContext.getFramebuffer(false));
+		glViewport(0, 0, sceneWidth, sceneHeight);
 		gpuTimer.begin(GpuTimer.COMPOSITE);
 		glDrawArrays(GL_TRIANGLES, 0, 3);
 		gpuTimer.end();
@@ -2764,7 +2784,15 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 				frameCameraX, frameCameraY, frameCameraZ, dayCycle, config.weatherSplashes(), WEATHER_OCCLUSION_UNIT,
 				config.pointLights() && config.weatherPointLights() && lightClusters.isInitialized(), frameDrawDistance);
 			gpuTimer.end();
-			glViewport(0, 0, width, height);
+			glViewport(0, 0, sceneWidth, sceneHeight);
+		}
+
+		if (upscale)
+		{
+			gpuTimer.begin(GpuTimer.COMPOSITE);
+			glBindFramebuffer(GL_FRAMEBUFFER, awtContext.getFramebuffer(false));
+			upscaler.draw(width, height, config.upscaleSharpness() / 100f);
+			gpuTimer.end();
 		}
 
 		glBindVertexArray(0);
@@ -3921,13 +3949,24 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 
 	private void glDpiAwareViewport(final int x, final int y, final int width, final int height)
 	{
+		glDpiAwareViewport(x, y, width, height, 1);
+	}
+
+	/** renderFactor shrinks the viewport with the scene targets (RenderScale). */
+	private void glDpiAwareViewport(final int x, final int y, final int width, final int height, final double renderFactor)
+	{
 		final GraphicsConfiguration graphicsConfiguration = clientUI.getGraphicsConfiguration();
 		final AffineTransform t = graphicsConfiguration.getDefaultTransform();
 		glViewport(
-			getScaledValue(t.getScaleX(), x),
-			getScaledValue(t.getScaleY(), y),
-			getScaledValue(t.getScaleX(), width),
-			getScaledValue(t.getScaleY(), height));
+			getScaledValue(t.getScaleX() * renderFactor, x),
+			getScaledValue(t.getScaleY() * renderFactor, y),
+			getScaledValue(t.getScaleX() * renderFactor, width),
+			getScaledValue(t.getScaleY() * renderFactor, height));
+	}
+
+	private double renderFactor()
+	{
+		return config.renderScale().factor(clientUI.getGraphicsConfiguration().getDefaultTransform().getScaleX());
 	}
 
 	private int getDrawDistance()
