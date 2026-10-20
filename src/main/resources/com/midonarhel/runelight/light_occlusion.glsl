@@ -32,6 +32,10 @@ float skyUpsampled = 1.0;
 // How much of the bounced light's brightness is added on top of the skylight in mode 2: 0 only gives the shade the
 // bounce's color, 1 adds all of it. Less than 1 keeps the exposure the skylight alone has; the colors still show.
 #define BOUNCE_BRIGHTNESS 1.0
+// The probes average their light over the whole sphere; a wall or a person beside the ground gets it over half of
+// theirs, the half facing it, and the albedos are the game's dim colors: the bounce they get is this many times the
+// probes' light.
+#define BOUNCE_GAIN 3.0
 
 // plain: the ambient plus sky light a surface would get under the open sky; gi the probes' light and giW their weight.
 // In mode 2 the probes carry only the light bounced off surfaces (GiRelight, bounceOnly), in color: the sunlit grass
@@ -40,7 +44,7 @@ vec3 skylightAmbient(vec3 plain, vec3 gi, float giW) {
   float v = skylightOn == 1 ? skyUpsampled : 1.0;
   vec3 s = plain * mix(skylightFloor, 1.0, v);
   if (skylightMode == 2 && giW > 0.0) {
-    vec3 bounce = gi * giW;
+    vec3 bounce = gi * (giW * BOUNCE_GAIN);
     float lb = overcastLuma(bounce);
     float ls = overcastLuma(s);
     s = (s + bounce) * ((ls + BOUNCE_BRIGHTNESS * lb) / max(ls + lb, 1e-4));
