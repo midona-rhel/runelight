@@ -22,17 +22,15 @@ uniform vec3 giCamera;       // camera position relative to the probe grid's cor
 #define GI_VIEW_BIAS 20.0
 // tiles over which the light fades back to the plain ambient toward the grid's edges
 #define GI_EDGE_FADE 3.0
-// Pixels are indoor when this far off their surface along the normal they are in a building column and below its
-// roof line (the bottom of the voxel holding the roof's top): more than a voxel, so a roof's top and a wall's outer
-// face count as outdoors and the ceiling and inner faces as indoors.
-#define GI_CLASS_BIAS 72.0
-// weight left to a probe behind the surface
-#define GI_BEHIND 0.05
+// probes count fully once this far (cosine) in front of the surface, none as far behind it
+#define GI_FACING_SOFT 0.2
+// the share of the surrounding probes' weight that counts as full coverage
+#define GI_COVER 2.0
 
 // Indirect light on a surface at camera-relative p facing n: rgb the probes' light, a how much of it to use (0 outside
 // the grid or with no usable probe). The light has no direction: the point blends linearly between the four nearest
-// columns and, in each, the two probes around its height; only probes of the pixel's own class (indoor or outdoor)
-// count, and those behind the surface count for little.
+// columns and, in each, the two probes around its height; probes behind the surface (inside the wall's building, under
+// the roof) don't count, and where few count the light fades to the plain skylight.
 vec4 giIrradiance(vec3 p, vec3 n) {
   vec3 world = p + giCamera;
   vec3 q = world + n * GI_NORMAL_BIAS - normalize(p) * GI_VIEW_BIAS;
@@ -46,12 +44,9 @@ vec4 giIrradiance(vec3 p, vec3 n) {
   vec2 c = (t - 0.5) / float(GI_PITCH);
   ivec2 b = ivec2(floor(c));
   vec2 f = c - vec2(b);
-  vec3 qc = world + n * GI_CLASS_BIAS;
-  float ownRoof = texelFetch(giMeta, clamp(ivec2(floor(qc.xz / GI_TILE)), 0, GI_SIZE - 1), 0).w;
-  bool pixelIndoor = qc.y > ownRoof;
 
   vec3 sum = vec3(0.0);
-  float wsum = 0.0;
+  float wsum = 0.0, total = 0.0;
   for (int i = 0; i < 4; ++i) {
     ivec2 o = ivec2(i & 1, i >> 1);
     ivec2 col = clamp(b + o, 0, GI_COLUMNS - 1);
@@ -72,19 +67,23 @@ vec4 giIrradiance(vec3 p, vec3 n) {
     for (int k = 0; k < 2; ++k) {
       int level = k == 0 ? lo : hi;
       float w = wxz * (k == 0 ? 1.0 - tv : tv);
-      if (w <= 0.0 || (hs[level] > m.w) != pixelIndoor) {
+      if (w <= 0.0) {
         continue;
       }
       vec4 pr = texelFetch(giProbes, ivec2(col.x, level * GI_COLUMNS + col.y), 0);
-      vec3 toProbe = vec3(center.x, hs[level], center.y) - q;
-      float facing = (dot(toProbe, n) * inversesqrt(max(dot(toProbe, toProbe), 1.0)) + 1.0) * 0.5;
-      w *= pr.a * (facing * facing + GI_BEHIND);
+      // a probe behind the surface (the other side of a wall, under a roof) lights nothing in front of it
+      vec3 toProbe = vec3(center.x, hs[level], center.y) - world;
+      float facing = smoothstep(-GI_FACING_SOFT, GI_FACING_SOFT,
+        dot(toProbe, n) * inversesqrt(max(dot(toProbe, toProbe), 1.0)));
+      w *= pr.a * facing;
       sum += pr.rgb * w;
       wsum += w;
+      total += wxz * (k == 0 ? 1.0 - tv : tv);
     }
   }
   if (wsum <= 1e-5) {
     return vec4(0.0);
   }
-  return vec4(sum / wsum, fade);
+  // where only some of the surrounding probes light this side, the rest of the way is the plain skylight
+  return vec4(sum / wsum, fade * clamp(wsum / max(total, 1e-5) * GI_COVER, 0.0, 1.0));
 }
