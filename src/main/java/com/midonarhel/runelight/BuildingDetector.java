@@ -44,6 +44,12 @@ final class BuildingDetector
 		 * Tiles packed as x << 16 | y.
 		 */
 		int[] tiles;
+		/**
+		 * Tiles a diagonal wall crosses of which the room has one half only, packed as (x << 16 | y) << 1 | half
+		 * (WallMap.half): the room's tiles where the other half is another room or outdoors, and tiles of another
+		 * room whose other half is this room's.
+		 */
+		int[] cut = new int[0];
 	}
 
 	/**
@@ -204,6 +210,36 @@ final class BuildingDetector
 				tileCount[l]++;
 			}
 			boolean[] spill = spill(walls, plane, room, ri + 1, tileLabel, tileCount, owner, label, counts);
+			// the halves of the tiles a diagonal wall crosses between two parts, for each part that is kept
+			int[][] cuts = new int[labels + 1][];
+			int[] cutCount = new int[labels + 1];
+			for (int k = 0; k < room.tiles.length; ++k)
+			{
+				int t = room.tiles[k];
+				int x = t >>> 16, y = t & 0xFFFF;
+				int node = (x * size + y) * 2;
+				if (x >= size || y >= size || !WallMap.split(walls.get(plane, x, y)) || label[node] == label[node + 1])
+				{
+					continue;
+				}
+				for (int h = 0; h < 2; ++h)
+				{
+					int l = label[node + h];
+					if (tileCount[l] == 0 || spill[l])
+					{
+						continue;
+					}
+					if (cuts[l] == null)
+					{
+						cuts[l] = new int[8];
+					}
+					else if (cutCount[l] == cuts[l].length)
+					{
+						cuts[l] = java.util.Arrays.copyOf(cuts[l], cutCount[l] * 2);
+					}
+					cuts[l][cutCount[l]++] = t << 1 | h;
+				}
+			}
 			for (int l = 1; l <= labels; ++l)
 			{
 				if (tileCount[l] == 0 || spill[l])
@@ -214,6 +250,10 @@ final class BuildingDetector
 				part.plane = plane;
 				part.roofId = room.roofId;
 				part.tiles = new int[tileCount[l]];
+				if (cuts[l] != null)
+				{
+					part.cut = java.util.Arrays.copyOf(cuts[l], cutCount[l]);
+				}
 				int n = 0;
 				for (int k = 0; k < room.tiles.length; ++k)
 				{

@@ -397,6 +397,20 @@ final class WallMap
 		return 0;
 	}
 
+	/** Which half of a tile with these bits a point in it is in, fx east and fy north within the tile (0..1). */
+	static int halfAt(int b, float fx, float fy)
+	{
+		if ((b & DIAG_SW_NE) != 0)
+		{
+			return fy > fx ? 0 : 1;
+		}
+		if ((b & DIAG_NW_SE) != 0)
+		{
+			return fx + fy > 1 ? 0 : 1;
+		}
+		return 0;
+	}
+
 	static boolean split(int b)
 	{
 		return (b & (DIAG_SW_NE | DIAG_NW_SE)) != 0;

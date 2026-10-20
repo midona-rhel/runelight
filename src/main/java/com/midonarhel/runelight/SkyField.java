@@ -51,7 +51,8 @@ final class SkyField
 	}
 
 	/**
-	 * The sky light per tile, 0..1.
+	 * The sky light per tile half, 0..1, at tile * 2 + half (WallMap.half): the two halves of a tile a diagonal wall
+	 * crosses each have their own, the halves of any other tile the same.
 	 *
 	 * @param covered tiles without open sky above
 	 * @param falloff the share left after a tile's step
@@ -60,7 +61,7 @@ final class SkyField
 	{
 		int size = walls.size;
 		int n = size * size;
-		float[] light = new float[n];
+		float[] light = new float[n * 2];
 		int maxCost = (int) Math.ceil(Math.log(MIN_LIGHT) / Math.log(falloff) * STRAIGHT);
 		float[] table = new float[maxCost + 1];
 		for (int c = 0; c <= maxCost; ++c)
@@ -81,7 +82,7 @@ final class SkyField
 				{
 					continue;
 				}
-				light[i] = 1;
+				light[2 * i] = light[2 * i + 1] = 1;
 				cost[2 * i] = cost[2 * i + 1] = 0;
 				// only the open tiles by covered ones have anything to give
 				if (touchesCovered(covered, size, x, y))
@@ -157,8 +158,12 @@ final class SkyField
 			{
 				continue;
 			}
-			int c = Math.min(cost[2 * i], cost[2 * i + 1]);
-			light[i] = c <= maxCost ? table[c] : 0;
+			boolean split = WallMap.split(walls.get(plane, i / size, i % size));
+			for (int h = 0; h < 2; ++h)
+			{
+				int c = split ? cost[2 * i + h] : Math.min(cost[2 * i], cost[2 * i + 1]);
+				light[2 * i + h] = c <= maxCost ? table[c] : 0;
+			}
 		}
 		return light;
 	}
@@ -205,7 +210,10 @@ final class SkyField
 	/**
 	 * The texture: two texels a side per tile, red the light and green 1 under cover, rows by y. A texel is the tile's
 	 * light eased a quarter toward the tile on its side, over open edges only, so that bilinear sampling gives smooth
-	 * gradients that stop at the walls; the cover eases the same way over any edge.
+	 * gradients that stop at the walls; the cover eases the same way over any edge. On a tile a diagonal wall crosses
+	 * the two texels either side of it take their halves' light, the two on it the darker one's, unblended.
+	 *
+	 * @param light per tile half, as {@link #propagate} gives it
 	 */
 	static byte[] pack(WallMap walls, int plane, float[] light, boolean[] covered)
 	{
@@ -235,18 +243,38 @@ final class SkyField
 
 	private static float lightTexel(WallMap walls, int plane, float[] light, int size, int x, int y, int sx, int sy)
 	{
+		int b = walls.get(plane, x, y);
+		int i = x * size + y;
+		if (WallMap.split(b))
+		{
+			// the quadrant's half: north-west or south-east of "/", north-east or south-west of ""
+			boolean slash = (b & WallMap.DIAG_SW_NE) != 0;
+			if (slash ? sx != sy : sx == sy)
+			{
+				return light[2 * i + WallMap.half(b, sy > 0 ? WallMap.NORTH : WallMap.SOUTH)];
+			}
+			return Math.min(light[2 * i], light[2 * i + 1]);
+		}
+		int sideX = sx > 0 ? WallMap.WEST : WallMap.EAST, sideY = sy > 0 ? WallMap.SOUTH : WallMap.NORTH;
 		boolean openX = openAcross(walls, plane, size, x, y, sx, 0);
 		boolean openY = openAcross(walls, plane, size, x, y, 0, sy);
-		float a = light[x * size + y];
-		float row = openX ? 0.75f * a + 0.25f * light[(x + sx) * size + y] : a;
+		float a = light[2 * i];
+		float row = openX ? 0.75f * a + 0.25f * facing(walls, plane, light, size, x + sx, y, sideX) : a;
 		if (!openY)
 		{
 			return row;
 		}
 		int y2 = y + sy;
-		float c = light[x * size + y2];
-		float rowY = openAcross(walls, plane, size, x, y2, sx, 0) ? 0.75f * c + 0.25f * light[(x + sx) * size + y2] : c;
+		float c = facing(walls, plane, light, size, x, y2, sideY);
+		float rowY = openAcross(walls, plane, size, x, y2, sx, 0)
+			? 0.75f * c + 0.25f * facing(walls, plane, light, size, x + sx, y2, sideX) : c;
 		return 0.75f * row + 0.25f * rowY;
+	}
+
+	/** The light of tile (x, y)'s half with the given edge. */
+	private static float facing(WallMap walls, int plane, float[] light, int size, int x, int y, int side)
+	{
+		return light[2 * (x * size + y) + WallMap.half(walls.get(plane, x, y), side)];
 	}
 
 	/** Whether tile (x, y) is open toward the tile one step (dx, dy) away, which is in the map. */

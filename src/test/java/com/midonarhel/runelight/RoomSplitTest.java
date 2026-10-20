@@ -272,6 +272,56 @@ public class RoomSplitTest
 	}
 
 	@Test
+	public void diagonalTilesKeepBothHalvesRooms()
+	{
+		// a 4x4 house with its south-east corner cut off by a "/" diagonal wall on tile (11, 8): the half of that tile
+		// past the wall is outdoors; and a "/" diagonal wall through the rest, as in diagonalWallSplitsRoom
+		byte[][][] settings = new byte[4][SIZE][SIZE];
+		int[][][] f = new int[4][LOCAL][LOCAL];
+		java.util.List<WallMap.Diagonal> d = new java.util.ArrayList<>();
+		for (int x = 8; x < 12; ++x)
+		{
+			for (int y = 8; y < 12; ++y)
+			{
+				settings[0][x][y] = BuildingDetector.TILE_FLAG_UNDER_ROOF;
+			}
+		}
+		for (int x = 8; x < 11; ++x)
+		{
+			d.add(new WallMap.Diagonal(0, x, x + 1, WallMap.DIAG_SW_NE));
+			f[0][x - OFFSET][x + 1 - OFFSET] |= WallMap.LOS_FULL;
+		}
+		d.add(new WallMap.Diagonal(0, 11, 8, WallMap.DIAG_SW_NE));
+		f[0][11 - OFFSET][8 - OFFSET] |= WallMap.LOS_FULL;
+		// outer walls, so the small room is no roof flags spilling past them
+		for (int k = 8; k < 12; ++k)
+		{
+			f[0][8 - OFFSET][k - OFFSET] |= WallMap.LOS_WEST;
+			f[0][k - OFFSET][11 - OFFSET] |= WallMap.LOS_NORTH;
+		}
+		WallMap w = WallMap.build(f, d, SIZE, OFFSET, 1);
+		BuildingDetector.Result r = BuildingDetector.split(BuildingDetector.detect(settings, null), settings, w);
+		RoomMap m = RoomMap.build(r, settings, new int[4][SIZE + 1][SIZE + 1], OFFSET);
+		m.setWalls(w);
+		// tile (9, 10) on the "/" wall: north-west of it the small room, south-east the big one
+		// (world y -10: just above the floor, on plane 0; the test's floors are all at 0)
+		int nw = m.roomAt((9 - OFFSET + 0.25f) * 128, -10, (10 - OFFSET + 0.75f) * 128)[0];
+		int se = m.roomAt((9 - OFFSET + 0.75f) * 128, -10, (10 - OFFSET + 0.25f) * 128)[0];
+		assertTrue(nw > 0 && se > 0);
+		assertNotEquals(nw, se);
+		assertEquals(nw, m.roomAt((8 - OFFSET + 0.5f) * 128, -10, (11 - OFFSET + 0.5f) * 128)[0]);
+		assertEquals(se, m.roomAt((10 - OFFSET + 0.5f) * 128, -10, (9 - OFFSET + 0.5f) * 128)[0]);
+		// the cut corner: inside the wall the big room, past it outdoors
+		assertEquals(se, m.roomAt((11 - OFFSET + 0.2f) * 128, -10, (8 - OFFSET + 0.8f) * 128)[0]);
+		assertEquals(0, m.roomAt((11 - OFFSET + 0.8f) * 128, -10, (8 - OFFSET + 0.2f) * 128)[0]);
+		// and the texels say so: "/" with the room on the north-west half (0), outdoors across
+		java.nio.FloatBuffer b = java.nio.FloatBuffer.allocate(m.texelCount() * 4);
+		m.texels(b);
+		int t = (RoomMap.HEADER_TEXELS + (11 * SIZE + 8) * RoomMap.TEXELS_PER_TILE + 2) * 4;
+		assertEquals(1, b.get(t), 0);
+	}
+
+	@Test
 	public void roomMapFollowsSplitRooms()
 	{
 		byte[][][] settings = house();

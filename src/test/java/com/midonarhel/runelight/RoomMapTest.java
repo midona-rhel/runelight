@@ -319,11 +319,11 @@ public class RoomMapTest
 		assertEquals(1, b.get(0), 0);
 		assertEquals(SIZE, b.get(1), 0);
 		assertEquals(OFFSET, b.get(2), 0);
-		int t = (RoomMap.HEADER_TEXELS + (9 * SIZE + 10) * 2) * 4;
+		int t = (RoomMap.HEADER_TEXELS + (9 * SIZE + 10) * RoomMap.TEXELS_PER_TILE) * 4;
 		assertEquals(1, b.get(t), 0);
 		assertEquals(-240, b.get(t + 5), 0);
 		// the porch tile: room 0, porch 1, negative as an opening's
-		int p = (RoomMap.HEADER_TEXELS + (7 * SIZE + 9) * 2) * 4;
+		int p = (RoomMap.HEADER_TEXELS + (7 * SIZE + 9) * RoomMap.TEXELS_PER_TILE) * 4;
 		assertEquals(-4096, b.get(p), 0);
 		assertTrue(LightClusters.ROOM_BASE + m.texelCount() < 65536);
 	}
@@ -399,7 +399,7 @@ public class RoomMapTest
 		// the link is in the texels
 		FloatBuffer b = FloatBuffer.allocate(m.texelCount() * 4);
 		m.texels(b);
-		int t = (RoomMap.HEADER_TEXELS + (9 * SIZE + 9) * 2) * 4;
+		int t = (RoomMap.HEADER_TEXELS + (9 * SIZE + 9) * RoomMap.TEXELS_PER_TILE) * 4;
 		assertEquals(below + above * 4096f, b.get(t), 0);
 		assertEquals(above + below * 4096f, b.get(t + 1), 0);
 	}

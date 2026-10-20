@@ -1,8 +1,11 @@
 // Rooms (RoomMap.java): which building room every tile is in, so point lights stay in their room instead of
 // shining through walls, and the fog stays out of interiors. Stored in the light buffer after the lights, from
 // texel ROOM_BASE: a header (enabled, tiles per side, extended tiles before local tile 0, whether the lights keep to
-// their rooms), then two texels per tile:
-// the four planes' rooms (room + porch room * 4096, 0 outdoors) and the four planes' floor heights (world y, down).
+// their rooms), then three texels per tile:
+// the four planes' rooms (room + porch room * 4096, 0 outdoors), the four planes' floor heights (world y, down), and
+// the four planes' diagonal walls: 0 none, else 1 for one from the south-west corner to the north-east one, 2 for
+// north-west to south-east, plus 4 times the half the tile's room has (0 the north-west or north-east one), plus 8
+// times the room of the other half (0 outdoors).
 // The porch of a tile is the room whose light spills onto it through an opening: a doorway or any gap with no wall
 // (the code is negative then; ROOM_ANY is the outdoors), or, for a room tile, the room across a hole in its floor or
 // ceiling (positive).
@@ -33,7 +36,7 @@ ivec3 roomPlaneAt(vec3 w) {
   if (any(lessThan(t, ivec2(0))) || any(greaterThanEqual(t, ivec2(size)))) {
     return ivec3(-1, 0, 0);
   }
-  int i = ROOM_BASE + 1 + (t.x * size + t.y) * 2;
+  int i = ROOM_BASE + 1 + (t.x * size + t.y) * 3;
   vec4 rooms = texelFetch(lightData, i);
   if (rooms == vec4(0.0)) {
     return ivec3(0);
@@ -51,6 +54,18 @@ ivec3 roomPlaneAt(vec3 w) {
   code = abs(code);
   int porch = int(floor(code / 4096.0));
   int room = int(code - float(porch) * 4096.0);
+  float diagonal = texelFetch(lightData, i + 2)[plane];
+  if (diagonal > 0.5) {
+    // a diagonal wall crosses the tile: the far side of it is the other half's room, with no porch
+    int d = int(diagonal);
+    vec2 f = fract(w.xz / 128.0);
+    int h = (d & 3) == 1 ? (f.y > f.x ? 0 : 1) : (f.x + f.y > 1.0 ? 0 : 1);
+    if (h != ((d >> 2) & 1)) {
+      room = d >> 3;
+      porch = 0;
+      soft = false;
+    }
+  }
   if (room != 0 && w.y < floors[plane] - ROOM_STOREY) {
     room = 0;
     porch = 0;
@@ -66,7 +81,7 @@ float roomFloorY(vec3 w) {
   if (h.x < 0.5 || any(lessThan(t, ivec2(0))) || any(greaterThanEqual(t, ivec2(size)))) {
     return w.y;
   }
-  vec4 floors = texelFetch(lightData, ROOM_BASE + 2 + (t.x * size + t.y) * 2);
+  vec4 floors = texelFetch(lightData, ROOM_BASE + 2 + (t.x * size + t.y) * 3);
   float y = floors[0];
   for (int k = 1; k < 4; ++k) {
     if (w.y <= floors[k] - ROOM_PLANE_MARGIN) {

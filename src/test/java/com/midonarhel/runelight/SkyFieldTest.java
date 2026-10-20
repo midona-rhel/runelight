@@ -30,7 +30,9 @@ public class SkyFieldTest
 
 	private static float at(float[] light, int x, int y)
 	{
-		return light[x * SIZE + y];
+		// the lighter half
+		int i = x * SIZE + y;
+		return Math.max(light[2 * i], light[2 * i + 1]);
 	}
 
 	/** Walls along the edge of the rectangle of tiles. */
@@ -188,7 +190,7 @@ public class SkyFieldTest
 		// the wall along the tunnel keeps the open sky's light from easing across it: the north texel of tile
 		// (12, 12), against the wall, only takes the tunnel's own light
 		int inside = (12 * 2 + (12 * 2 + 1) * width) * 2;
-		assertEquals(l[12 * SIZE + 12], (t[inside] & 0xFF) / 255f, 0.1f);
+		assertEquals(at(l, 12, 12), (t[inside] & 0xFF) / 255f, 0.1f);
 	}
 
 	@Test

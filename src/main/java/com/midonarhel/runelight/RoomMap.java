@@ -26,7 +26,7 @@ final class RoomMap
 	static final float TILE = 128;
 	// texels in front of the map: the header (rooms.glsl)
 	static final int HEADER_TEXELS = 1;
-	static final int TEXELS_PER_TILE = 2;
+	static final int TEXELS_PER_TILE = 3;
 
 	// the porch id of the outdoors: what lies across an opening from a room tile that has no room beside it
 	static final int OUTSIDE = ANY;
@@ -46,6 +46,10 @@ final class RoomMap
 	final float[] floors;
 	// under a roof by the map's flags, whether or not a room was found there: lights there are covered (rooms.glsl)
 	final boolean[] roofed;
+	// tiles a diagonal wall crosses with another room, or the outdoors, on its far side: which half (WallMap.half)
+	// the tile's room has, plus 1 (0: the whole tile), and the room of the other half (0 outdoors)
+	final byte[] half;
+	final short[] across;
 	// a bit per plane: the tile has a floor there (linkStoreys); null until known
 	private byte[] filled;
 	private boolean[] linked = new boolean[0];
@@ -71,6 +75,8 @@ final class RoomMap
 		link = new short[PLANES * size * size];
 		floors = new float[PLANES * size * size];
 		roofed = new boolean[PLANES * size * size];
+		half = new byte[PLANES * size * size];
+		across = new short[PLANES * size * size];
 	}
 
 	int index(int plane, int x, int y)
@@ -114,6 +120,33 @@ final class RoomMap
 				}
 			}
 		}
+		for (int i = 0; i < r.rooms.size(); ++i)
+		{
+			BuildingDetector.Room room = r.rooms.get(i);
+			if (room.plane >= PLANES)
+			{
+				continue;
+			}
+			short id = (short) (i + 1 > MAX_ROOM ? 0 : i + 1);
+			for (int c : room.cut)
+			{
+				int t = c >>> 1, x = t >>> 16, y = t & 0xFFFF;
+				if (id == 0 || x >= size || y >= size)
+				{
+					continue;
+				}
+				int k = m.index(room.plane, x, y);
+				if (m.rooms[k] == 0 || m.rooms[k] == id)
+				{
+					m.rooms[k] = id;
+					m.half[k] = (byte) ((c & 1) + 1);
+				}
+				else
+				{
+					m.across[k] = id;
+				}
+			}
+		}
 		for (int plane = 0; plane < PLANES; ++plane)
 		{
 			for (int x = 0; x < size; ++x)
@@ -143,6 +176,11 @@ final class RoomMap
 	 */
 	boolean setWalls(WallMap walls)
 	{
+		if (this.walls == null && walls != null)
+		{
+			// the diagonal walls' texels follow the walls
+			version++;
+		}
 		this.walls = walls;
 		touchedCount = 0;
 		for (int s : seams)
@@ -556,6 +594,13 @@ final class RoomMap
 		int i = index(plane, tx, ty);
 		int room = rooms[i];
 		int near = nearRoom(i);
+		if (half[i] != 0 && walls != null && WallMap.halfAt(walls.get(plane, tx, ty), x / TILE + offset - tx,
+			z / TILE + offset - ty) != half[i] - 1)
+		{
+			// the far side of a diagonal wall
+			room = across[i];
+			near = 0;
+		}
 		if (room != 0 && y < floors[i] - STOREY)
 		{
 			room = 0;
@@ -578,8 +623,10 @@ final class RoomMap
 	}
 
 	/**
-	 * Fill the buffer with the header texel (enabled, size, offset, lights use rooms) and two texels per tile: the four planes' rooms
-	 * (room + porch * 4096, negative when the porch is an opening's) and the four planes' floor heights (world y).
+	 * Fill the buffer with the header texel (enabled, size, offset, lights use rooms) and three texels per tile: the four planes' rooms
+	 * (room + porch * 4096, negative when the porch is an opening's), the four planes' floor heights (world y), and
+	 * the four planes' diagonal walls: 0 none, else 1 for "/" or 2 for "\", plus 4 times the half the room has, plus
+	 * 8 times the room of the other half.
 	 */
 	void texels(FloatBuffer out)
 	{
@@ -598,6 +645,13 @@ final class RoomMap
 				for (int p = 0; p < PLANES; ++p)
 				{
 					out.put(floors[index(p, x, y)]);
+				}
+				for (int p = 0; p < PLANES; ++p)
+				{
+					int i = index(p, x, y);
+					int b = walls != null ? walls.get(p, x, y) : 0;
+					out.put(half[i] == 0 || !WallMap.split(b) ? 0
+						: ((b & WallMap.DIAG_SW_NE) != 0 ? 1 : 2) + 4 * (half[i] - 1) + 8 * across[i]);
 				}
 			}
 		}
