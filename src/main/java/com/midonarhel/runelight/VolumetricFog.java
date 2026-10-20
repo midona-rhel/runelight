@@ -53,13 +53,14 @@ class VolumetricFog
 	private float sunScatter;
 	private float noiseAmount;
 	private float bankAmount;
+	private float maxCover = 1;
 	private int steps = 12;
 
 	private int program;
 	private int uniCameraPos, uniTime, uniOutdoors, uniProceduralSky, uniClientSkyColor, uniCasterDir,
 		uniSunIsCaster, uniSunAltitude, uniShadowsEnabled, uniLightProjRel, uniShadowDepthRange,
 		uniPointLights, uniDensity, uniHeight, uniGroundY, uniCenter, uniFade, uniNear, uniSunScatter, uniNoiseAmount, uniBankAmount,
-		uniTint, uniSteps, uniViewProj, uniInvViewProj, uniViewport, uniDepthZeroToOne, uniHalfRatio, uniOvercast, uniLight;
+		uniMaxCover, uniTint, uniSteps, uniViewProj, uniInvViewProj, uniViewport, uniDepthZeroToOne, uniHalfRatio, uniOvercast, uniLight;
 
 	private int uniCompositeEnabled;
 
@@ -98,6 +99,7 @@ class VolumetricFog
 		uniSunScatter = glGetUniformLocation(program, "fogSunScatter");
 		uniNoiseAmount = glGetUniformLocation(program, "fogNoiseAmount");
 		uniBankAmount = glGetUniformLocation(program, "fogBankAmount");
+		uniMaxCover = glGetUniformLocation(program, "fogMaxCover");
 		uniTint = glGetUniformLocation(program, "fogTint");
 		uniSteps = glGetUniformLocation(program, "fogSteps");
 		uniViewProj = glGetUniformLocation(program, "viewProj");
@@ -164,6 +166,7 @@ class VolumetricFog
 		sunScatter = config.volumetricFogSunScattering() / 100f;
 		noiseAmount = config.volumetricFogNoise() / 100f;
 		bankAmount = config.volumetricFogBanks() / 100f;
+		maxCover = config.volumetricFogMaxCover() / 100f;
 		steps = config.fogQuality().pick(6, 8, 12);
 	}
 
@@ -242,6 +245,7 @@ class VolumetricFog
 		glUniform1f(uniSunScatter, sunScatter);
 		glUniform1f(uniNoiseAmount, noiseAmount);
 		glUniform1f(uniBankAmount, bankAmount);
+		glUniform1f(uniMaxCover, maxCover);
 		glUniform3fv(uniTint, areaTint);
 		glUniform1i(uniSteps, steps);
 		WeatherField field = weatherField;

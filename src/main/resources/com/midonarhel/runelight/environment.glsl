@@ -6,10 +6,13 @@ uniform vec3 envAmbient;   // multiplies ambient and sky fill (linear)
 uniform vec3 envSun;       // multiplies the sun or moon, and the cave key light (linear)
 uniform vec4 envFogColor;  // sRGB, a: how much it replaces the sky-colored fog
 uniform float envFogDepth; // 117 HD-style fog density, already scaled for the draw distance; 0 is off
+uniform vec3 envFogCover;  // xy: the player's world xz, z: most of the view around them the fog may hide (1: no limit)
 uniform float envHaze;     // share of the sky hidden behind fog
 uniform vec3 envSkyTint;   // sRGB multiplier on the procedural sky
 uniform float envDrawDistance; // game units
 uniform int envCave;       // 1 underground by area (not merely with sun lighting turned off)
+
+#include "fog_cover.glsl"
 
 // how much of the horizon's own color an area's fog picks up outdoors, so sunsets and nights still show in it
 #define ENV_FOG_SKY_SHARE 0.35
@@ -36,8 +39,8 @@ vec3 envFog(vec3 skyFog, bool outdoors, float alt) {
 }
 
 // 117 HD's distance fog (utils/fog.glsl), exponential from a start distance that moves closer as fog thickens.
-// rel: camera-relative position.
-float envFogAmount(vec3 rel) {
+// rel: camera-relative position, worldXZ: the same point's world x and z (for the cover limit around the player).
+float envFogAmount(vec3 rel, vec2 worldXZ) {
   if (envFogDepth <= 0.0)
     return 0.0;
   float dd = min(envDrawDistance, 90.0 * 128.0);
@@ -45,7 +48,8 @@ float envFogAmount(vec3 rel) {
   // halve vertical distance, as 117 HD does, so looking down from high up does not fog the ground
   float dist = length(vec3(rel.x, rel.y * 0.5, rel.z));
   float d = max(dist - start, 0.0) / max(dd - start, 1.0);
-  return 1.0 - clamp(exp(-d * envFogDepth / 100.0), 0.0, 1.0);
+  float amount = 1.0 - clamp(exp(-d * envFogDepth / 100.0), 0.0, 1.0);
+  return capFogCover(amount, envFogCover.z, length(worldXZ - envFogCover.xy));
 }
 
 // Procedural sky with the area's tint and haze. elev: view ray elevation, -dir.y.

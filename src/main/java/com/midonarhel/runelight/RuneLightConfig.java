@@ -696,6 +696,20 @@ public interface RuneLightConfig extends Config
 		return 50;
 	}
 
+	@Range(min = 10, max = 100)
+	@ConfigItem(
+		keyName = "volumetricFogMaxCover",
+		name = "Fog cover",
+		description = "Most of the view around your character the fog and area fog may hide, in percent. Beyond about 25 tiles"
+			+ " they fade out fully; lights and sun still glow in the fog. 100 puts no limit on it.",
+		section = fogSection,
+		position = 259
+	)
+	default int volumetricFogMaxCover()
+	{
+		return 30;
+	}
+
 	@ConfigItem(
 		keyName = "fogClimate",
 		name = "Fog by region and time",

@@ -2049,7 +2049,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		// the game's own skyboxes have their own colors; area fog would not match them, like in 117 HD
 		float fog = frameHasSkybox ? 0 : config.areaFogStrength() / 100f;
 		u.set(on ? environmentManager : null, config.areaLightStrength() / 100f, fog * weather.distanceFogScale(),
-			getDrawDistance());
+			getDrawDistance(), config.volumetricFogMaxCover() / 100f, edgeFade.focalX, edgeFade.focalZ);
 	}
 
 	/**

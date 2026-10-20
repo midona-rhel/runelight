@@ -12,7 +12,7 @@ final class EnvironmentUniforms
 	static final int VALUES = 15;
 	final float[] values = new float[VALUES];
 
-	private int ambient, sun, fogColor, fogDepth, haze, skyTint, drawDistance, cave;
+	private int ambient, sun, fogColor, fogDepth, haze, skyTint, drawDistance, cave, fogCover;
 
 	void locate(int program)
 	{
@@ -24,6 +24,7 @@ final class EnvironmentUniforms
 		skyTint = glGetUniformLocation(program, "envSkyTint");
 		drawDistance = glGetUniformLocation(program, "envDrawDistance");
 		cave = glGetUniformLocation(program, "envCave");
+		fogCover = glGetUniformLocation(program, "envFogCover");
 	}
 
 	/**
@@ -31,10 +32,14 @@ final class EnvironmentUniforms
 	 * @param lightStrength    0 neutral, 1 as authored, more exaggerates
 	 * @param fogStrength      multiplier on the area's fog density
 	 * @param drawDistanceTiles the draw distance in tiles
+	 * @param maxFogCover      most of the view around the player the fog may hide, 0 to 1 (fog_cover.glsl)
+	 * @param focusX           world x and z of the player, where the limit is centered
 	 */
-	void set(EnvironmentManager env, float lightStrength, float fogStrength, int drawDistanceTiles)
+	void set(EnvironmentManager env, float lightStrength, float fogStrength, int drawDistanceTiles, float maxFogCover,
+		float focusX, float focusZ)
 	{
 		glUniform1f(drawDistance, drawDistanceTiles * 128f);
+		glUniform3f(fogCover, focusX, focusZ, maxFogCover);
 		glUniform1i(cave, env != null && !env.isOverworld() ? 1 : 0);
 		if (env == null)
 		{

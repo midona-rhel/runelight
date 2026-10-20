@@ -9,6 +9,7 @@
 #include "frame.glsl"
 #include "sky.glsl"
 #include cluster_config
+#include "fog_cover.glsl"
 
 uniform vec3 cameraPos;
 uniform float time;
@@ -48,6 +49,7 @@ uniform vec2 fogCenter;      // world x, z the fade is centered on: the player
 uniform vec2 fogFade;        // horizontal distance from the center where the fog starts and finishes fading out
 uniform float fogNear;       // distance from the camera over which the fog thickens from nothing
 uniform float fogSunScatter;
+uniform float fogMaxCover;   // most the fog may hide around the player (fog_cover.glsl), 1 for no limit
 uniform float fogNoiseAmount;
 uniform float fogBankAmount;
 uniform vec3 fogTint;        // multiplies the fog's ambient color; for per-area fog later
@@ -81,12 +83,15 @@ out vec4 FragFog;
 // below the reference ground (valleys) density stops growing at e^FOG_BELOW
 #define FOG_BELOW 1.0
 // Ambient light in the fog: mostly the horizon color, so fog and sky meet in the same tone, plus some of the
-// scene's ambient light so nights stay cool blue instead of going black.
-#define FOG_HORIZON 0.45
-#define FOG_AMBIENT_FILL 0.20
+// scene's ambient light so nights stay cool blue instead of going black. Kept low: a flat glow turns the fog into a
+// white veil, while light from the sun and lamps makes it a lit volume.
+#define FOG_HORIZON 0.32
+#define FOG_AMBIENT_FILL 0.14
+// share of the sun's and the lamps' glow kept when the cover limit takes opacity out of the fog (1: all of it)
+#define FOG_LIGHT_COVER_KEEP 0.75
 // sun or moon light scattered toward the camera at 100% sun scattering; strong enough that shafts read against
 // the ambient glow
-#define FOG_SUN_SCALE 0.55
+#define FOG_SUN_SCALE 0.8
 // shafts carry the caster's color more saturated than the light itself: orange at sunset, blue under the moon
 #define FOG_SUN_SATURATION 1.5
 // underground: no sky, so a dim neutral glow, and thinner
@@ -108,7 +113,7 @@ out vec4 FragFog;
 // (c^2 / (c^2 + d^2) - m) / (1 - m), c = FOG_GLOW_CORE * radius, m its value at the radius: close to the cubic
 // falloff it replaced (0.37, 0.10, 0.03 against 0.42, 0.13, 0.02 at a quarter, half and three quarters of the
 // radius), and the integral along a straight line is an arctangent.
-#define FOG_POINT_LIGHT_SCALE 0.35
+#define FOG_POINT_LIGHT_SCALE 0.6
 #define FOG_GLOW_CORE 0.2
 
 #include "halfmap.glsl"
@@ -297,7 +302,9 @@ void main() {
   float dt = (t1 - t0) / float(steps);
   // blurred away with the AO and shadows (denoise_frag.glsl)
   float jitter = ign(gl_FragCoord.xy);
-  vec3 scatter = vec3(0.0);
+  // the flat glow and the sun's shafts apart: the cover limit takes more of the first
+  vec3 scatterAmbient = vec3(0.0);
+  vec3 scatterSun = vec3(0.0);
   float trans = 1.0;
   float weight[FOG_MAX_STEPS];
   for (int i = 0; i < FOG_MAX_STEPS; ++i) {
@@ -332,7 +339,7 @@ void main() {
       continue;
     }
 
-    vec3 light = ambient;
+    vec3 direct = vec3(0.0);
     if (sunAndSky) {
       float vis = 1.0;
       if (shafts) {
@@ -345,23 +352,28 @@ void main() {
           vis = mix(1.0, texture(shadowCompare, vec3(uv, z - shadowBias)), smoothstep(0.0, 0.08, edge));
         }
       }
-      light += sun * vis;
+      direct = sun * vis;
     }
     float far = smoothstep(fogNear, fogFade.y * FOG_SKY_MATCH, centerDist);
-    light = mix(light, ambientFar, far);
 
     float stepTrans = exp(-sigma * dt);
     float scattered = trans * (1.0 - stepTrans);
-    scatter += light * scattered;
+    scatterAmbient += mix(ambient, ambientFar, far) * scattered;
+    scatterSun += direct * ((1.0 - far) * scattered);
     // the point lights' share fades into the far color like the rest of the light
     weight[i] = scattered * (1.0 - far) / dt;
     trans *= stepTrans;
   }
-  if (glow) {
-    scatter += pointGlow(px, dir, t0, dt, steps, weight);
-  }
+  vec3 lamps = glow ? pointGlow(px, dir, t0, dt, steps, weight) : vec3(0.0);
 
-  FragFog = vec4(scatter, trans);
+  // Limit how much of the view the fog hides where the ray ends. The flat glow shrinks with the cover; the light
+  // from the sun and the lamps mostly stays, so thick fog still shows where it is lit.
+  float cover = 1.0 - trans;
+  float limited = capFogCover(cover, fogMaxCover, length(cameraPos.xz + dir.xz * t1 - fogCenter));
+  float keep = cover > 1e-5 ? limited / cover : 1.0;
+  float lightKeep = mix(keep, 1.0, FOG_LIGHT_COVER_KEEP);
+
+  FragFog = vec4(scatterAmbient * keep + (scatterSun + lamps) * lightKeep, 1.0 - limited);
   // and no fog in the dark under the world (composite_frag.glsl)
   if (sky) {
     FragFog = mix(FragFog, vec4(0.0, 0.0, 0.0, 1.0), voidBelow(dir));
