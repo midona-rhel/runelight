@@ -67,6 +67,65 @@ public class RoomMapTest
 	}
 
 	@Test
+	public void porchesAreFoundOnlyBesideRoomsWhateverTheFlags()
+	{
+		java.util.Random rnd = new java.util.Random(7);
+		int[][][] f = new int[4][LOCAL][LOCAL];
+		for (int pass = 0; pass < 20; ++pass)
+		{
+			for (int[][] plane : f)
+			{
+				for (int[] row : plane)
+				{
+					for (int y = 0; y < row.length; ++y)
+					{
+						row[y] = rnd.nextInt(4) == 0 ? RoomMap.BLOCK_NORTH | RoomMap.BLOCK_WEST : rnd.nextInt(8) == 0 ? RoomMap.BLOCK_FULL : 0;
+					}
+				}
+			}
+			RoomMap m = house(f);
+			for (int plane = 0; plane < RoomMap.PLANES; ++plane)
+			{
+				for (int x = 0; x < SIZE; ++x)
+				{
+					for (int y = 0; y < SIZE; ++y)
+					{
+						assertEquals(porchByRule(m, f, plane, x, y), m.porch[m.index(plane, x, y)]);
+					}
+				}
+			}
+		}
+	}
+
+	// the rule written out for every tile: no room here, a free tile, and a room next to it with no wall between
+	private static short porchByRule(RoomMap m, int[][][] flags, int plane, int x, int y)
+	{
+		int lx = x - OFFSET, ly = y - OFFSET;
+		if (m.rooms[m.index(plane, x, y)] != 0 || lx < 0 || ly < 0 || lx >= LOCAL || ly >= LOCAL
+			|| (flags[plane][lx][ly] & RoomMap.BLOCK_FULL) != 0)
+		{
+			return 0;
+		}
+		int[][] steps = {{1, 0, RoomMap.BLOCK_EAST, RoomMap.BLOCK_WEST}, {-1, 0, RoomMap.BLOCK_WEST, RoomMap.BLOCK_EAST},
+			{0, 1, RoomMap.BLOCK_NORTH, RoomMap.BLOCK_SOUTH}, {0, -1, RoomMap.BLOCK_SOUTH, RoomMap.BLOCK_NORTH}};
+		for (int[] s : steps)
+		{
+			int nx = x + s[0], ny = y + s[1];
+			if (nx < 0 || ny < 0 || nx >= SIZE || ny >= SIZE || nx - OFFSET < 0 || ny - OFFSET < 0
+				|| nx - OFFSET >= LOCAL || ny - OFFSET >= LOCAL)
+			{
+				continue;
+			}
+			short room = m.rooms[m.index(plane, nx, ny)];
+			if (room != 0 && (flags[plane][lx][ly] & s[2]) == 0 && (flags[plane][nx - OFFSET][ny - OFFSET] & s[3]) == 0)
+			{
+				return room;
+			}
+		}
+		return 0;
+	}
+
+	@Test
 	public void lightsInsideAreIndoorAndStayInside()
 	{
 		RoomMap m = house(walls());

@@ -54,6 +54,10 @@ class GpuTimer
 	// exponential moving averages, milliseconds
 	private final double[] ms = new double[STAGES];
 	private double totalMs;
+	// frames ended so far, and the frame whose times the last endFrame read (-1: none); for the hitch monitor
+	private long frames;
+	private long readFrame = -1;
+	private double readTotalMs;
 
 	void init()
 	{
@@ -137,6 +141,8 @@ class GpuTimer
 		{
 			return;
 		}
+		++frames;
+		readFrame = -1;
 		end();
 		slot = (slot + 1) % SLOTS;
 		int n = used[slot];
@@ -168,6 +174,9 @@ class GpuTimer
 			total += frame[s];
 		}
 		totalMs = smooth(totalMs, total);
+		// this slot was filled SLOTS - 1 frames ago
+		readFrame = frames - (SLOTS - 1);
+		readTotalMs = total;
 	}
 
 	private static double smooth(double avg, double v)
@@ -187,5 +196,33 @@ class GpuTimer
 	double getTotalMs()
 	{
 		return totalMs;
+	}
+
+	boolean isEnabled()
+	{
+		return initialized && enabled;
+	}
+
+	/** Frames ended so far: the number of the frame that just ended. */
+	long getFrames()
+	{
+		return frames;
+	}
+
+	/** The number of the frame whose results the last endFrame read, 3 frames old; -1 if it read none. */
+	long getReadFrame()
+	{
+		return readFrame;
+	}
+
+	/** A stage's time in the frame getReadFrame names, not averaged. */
+	double getReadMs(int stage)
+	{
+		return frame[stage];
+	}
+
+	double getReadTotalMs()
+	{
+		return readTotalMs;
 	}
 }

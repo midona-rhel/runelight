@@ -25,17 +25,23 @@ class CpuTimer
 	static final int BUFFER_MAP = 10;
 	// sending the light and cluster tables to the GPU (part of light clusters before)
 	static final int LIGHT_UPLOAD = 11;
-	static final int STAGES = 12;
+	// global illumination's build submit, readback poll and upload; the sky capture; the occlusion map redraws
+	static final int GI = 12;
+	static final int SKY_CACHE = 13;
+	static final int OCCLUSION = 14;
+	static final int STAGES = 15;
 
 	static final String[] NAMES = {
 		"client scene", "environment", "weather", "light collection", "light clusters", "shadow submit",
 		"UI upload", "swap wait", "outside frame", "client UI + overlays",
-		"buffer map", "light upload"
+		"buffer map", "light upload", "global illumination", "sky capture", "occlusion maps"
 	};
 
 	private final long[] start = new long[STAGES];
 	private final double[] frame = new double[STAGES];
 	private final double[] ms = new double[STAGES];
+	// the frame that just ended, for the hitch monitor
+	private final double[] last = new double[STAGES];
 
 	void begin(int stage)
 	{
@@ -57,6 +63,7 @@ class CpuTimer
 		for (int s = 0; s < STAGES; ++s)
 		{
 			ms[s] = ms[s] == 0 ? frame[s] : ms[s] * 0.95 + frame[s] * 0.05;
+			last[s] = frame[s];
 			frame[s] = 0;
 		}
 	}
@@ -64,6 +71,12 @@ class CpuTimer
 	double getMs(int stage)
 	{
 		return ms[stage];
+	}
+
+	/** A step's time in the frame that ended last, not averaged. */
+	double getLastMs(int stage)
+	{
+		return last[stage];
 	}
 
 	/** The frame's time not in any step but the one outside it: the plugin's own untimed work. */
