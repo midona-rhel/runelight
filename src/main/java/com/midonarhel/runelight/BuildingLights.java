@@ -13,6 +13,7 @@ import net.runelite.api.Model;
 import net.runelite.api.Perspective;
 import net.runelite.api.Renderable;
 import net.runelite.api.Scene;
+import net.runelite.api.SceneTilePaint;
 import net.runelite.api.Tile;
 import net.runelite.api.WorldView;
 import net.runelite.api.events.GameObjectDespawned;
@@ -25,12 +26,15 @@ import org.slf4j.LoggerFactory;
 
 /**
  * Soft overhead lights inside buildings at night, as if their lamps were lit. Rooms come from the scene's roof
- * data (BuildingDetector); each gets one or a few ceiling lights, shown on the player's plane only. Everything
- * runs on the client thread.
+ * data (BuildingDetector); each gets one or a few ceiling lights, shown on the player's plane and, through holes in
+ * the floors, on the others. Everything runs on the client thread.
  */
 class BuildingLights
 {
 	private static final Logger log = LoggerFactory.getLogger(BuildingLights.class);
+
+	// the color of a tile paint that isn't drawn
+	private static final int HIDDEN_HSL = 12345678;
 
 	// a storey is 240 units; hang the light a little under the ceiling (y points down)
 	static final float CEILING_HEIGHT = 200;
@@ -83,6 +87,8 @@ class BuildingLights
 	private volatile WallMap walls;
 	private final Map<GameObject, WallMap.Diagonal> diagonals = new IdentityHashMap<>();
 	private BuildingDetector.Result coarse;
+	// which planes have a floor on every tile (RoomMap.linkStoreys), kept for the rooms rebuilt as doors open
+	private byte[] filledTiles;
 	private int wallScene;
 	private volatile boolean splitRooms = true;
 
@@ -132,6 +138,7 @@ class BuildingLights
 		rooms = null;
 		walls = null;
 		coarse = null;
+		filledTiles = null;
 		diagonals.clear();
 		if (client.getGameState() != GameState.LOGGED_IN)
 		{
@@ -160,6 +167,8 @@ class BuildingLights
 		if (m != null)
 		{
 			m.updateOpenings(flags);
+			filledTiles = floorTiles(scene, m.size);
+			m.linkStoreys(filledTiles);
 		}
 		rooms = m;
 		walls = w;
@@ -170,6 +179,37 @@ class BuildingLights
 		log.debug("Buildings: {} rooms, {} lights (roof ids {}, dropped {} small, {} huge) in {} ms",
 			r.rooms.size(), lights.size(), r.usedRoofIds ? "used" : "ignored", r.rejectedSmall, r.rejectedHuge,
 			(System.nanoTime() - start) / 1_000_000.0);
+	}
+
+	/**
+	 * Which planes have a floor (a visible tile paint or tile model) on each extended tile, a bit per plane, indexed
+	 * x * size + y; a plane's tile without one is a hole in the floor, as 117 HD's light plane rule sees them.
+	 */
+	static byte[] floorTiles(Scene scene, int size)
+	{
+		byte[] out = new byte[size * size];
+		Tile[][][] tiles = scene.getExtendedTiles();
+		for (int plane = 0; plane < RoomMap.PLANES && plane < tiles.length; ++plane)
+		{
+			for (int x = 0; x < size && x < tiles[plane].length; ++x)
+			{
+				Tile[] column = tiles[plane][x];
+				for (int y = 0; y < size && y < column.length; ++y)
+				{
+					Tile tile = column[y];
+					if (tile == null)
+					{
+						continue;
+					}
+					SceneTilePaint paint = tile.getSceneTilePaint();
+					if (paint != null && paint.getNeColor() != HIDDEN_HSL || tile.getSceneTileModel() != null)
+					{
+						out[x * size + y] |= (byte) (1 << plane);
+					}
+				}
+			}
+		}
+		return out;
 	}
 
 	/**
@@ -338,6 +378,7 @@ class BuildingLights
 						if (n != null)
 						{
 							n.updateOpenings(flags);
+							n.linkStoreys(filledTiles);
 							rooms = n;
 							return;
 						}
@@ -364,11 +405,14 @@ class BuildingLights
 		}
 		WorldView wv = client.getTopLevelWorldView();
 		int plane = wv.getPlane();
+		RoomMap map = rooms;
 
 		int used = 0;
 		for (Light l : ls)
 		{
-			if (l.plane != plane)
+			// other floors' lights only where a hole in the floor lets them be seen (the rooms keep them from lighting
+			// anything else)
+			if (l.plane != plane && (map == null || !map.seenFrom(l.plane, plane, l.x, l.z)))
 			{
 				continue;
 			}

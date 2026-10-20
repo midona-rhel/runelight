@@ -6,7 +6,8 @@
 //
 // Point lights: a static light's occlusion grid (LightOcclusion.java) dims it behind walls, and a light under a roof
 // leaves the tops of things open to the sky above it dark: roofs aren't lit from inside. The per-light texel after
-// the lights (LightOcclusion.texel) carries both. Needs lightData, cluster_config and cameraPos.
+// the lights (LightOcclusion.texel) carries both, and whether the walls already decide where the light reaches on
+// its own storey. Needs lightData, cluster_config, cameraPos and rooms.glsl.
 
 uniform int skylightMode;    // 0 probes only, 1 skylight, 2 skylight and the probes' bounce
 uniform int skylightOn;      // 1 when the AO pass worked the sky visibility out this frame
@@ -24,6 +25,9 @@ float skyUpsampled = 1.0;
 // sky visibility above which a surface counts as open to the sky
 #define LIGHT_OPEN_LOW 0.35
 #define LIGHT_OPEN_HIGH 0.65
+// how far up a surface must face (-normal.y) to count as a roof, rather than a wall of the room the light is in
+#define LIGHT_ROOF_FACING_LOW 0.05
+#define LIGHT_ROOF_FACING_HIGH 0.35
 
 // plain: the ambient plus sky light a surface would get under the open sky; gi and giW the probes' light and weight
 vec3 skylightAmbient(vec3 plain, vec3 gi, float giW) {
@@ -47,26 +51,40 @@ float lightVisCell(int base, int n, ivec2 c) {
   return float((v >> ((k & 3) * 4)) & 15) / 15.0;
 }
 
-// How much of light li (camera-relative position lightPos) reaches camera-relative point p with normal n
-float lightOcclusion(int li, vec3 lightPos, vec3 p, vec3 n) {
-  vec4 e = texelFetch(lightData, LIGHT_EXTRA_BASE + li);
-  int code = int(e.w);
+// How much of a light with room code roomCode and per-light texel `extra` reaches a point in room r (lightRoomPlaneAt).
+// The rooms decide it, except for a light whose occlusion grid is cast: its walls decide on its own storey, so the
+// rooms (which can only cut at tile edges, and not where a roof ends but no wall) only keep it off the other storeys.
+// The soft lights of building rooms (LightClusters: indoor) stay in their rooms.
+float lightRoomShare(float roomCode, vec4 extra, ivec3 r) {
+  int code = int(extra.w);
+  if ((code & 4) != 0 && ((code >> 3) & 3) == r.z) {
+    return 1.0;
+  }
+  return roomShare(roomCode, r.xy);
+}
+
+// How much of the light (per-light texel `extra`, camera-relative position lightPos) reaches camera-relative point p
+// with normal n
+float lightOcclusion(vec4 extra, vec3 lightPos, vec3 p, vec3 n) {
+  int code = int(extra.w);
   float v = 1.0;
   if ((code & 2) != 0 && skylightOn == 1) {
-    // y points down: positive when the light is below the point
+    // y points down: positive when the light is below the point. Only what faces up is a roof: walls and the like
+    // around a light in a room open to the sky keep their light
     float below = lightPos.y - p.y;
     v = 1.0 - smoothstep(LIGHT_OPEN_LOW, LIGHT_OPEN_HIGH, skyUpsampled)
-      * smoothstep(LIGHT_ROOF_MARGIN, LIGHT_ROOF_MARGIN + LIGHT_ROOF_RAMP, below);
+      * smoothstep(LIGHT_ROOF_MARGIN, LIGHT_ROOF_MARGIN + LIGHT_ROOF_RAMP, below)
+      * smoothstep(LIGHT_ROOF_FACING_LOW, LIGHT_ROOF_FACING_HIGH, -n.y);
   }
-  if (e.x >= 0.0 && v > 0.0) {
-    int n4 = code >> 2;
+  if (extra.x >= 0.0 && v > 0.0) {
+    int n4 = code >> 5;
     float cell = (code & 1) != 0 ? 64.0 : 32.0;
     vec3 w = p + cameraPos + n * LIGHT_VIS_NORMAL_BIAS;
-    vec2 c = (w.xz - e.yz) / cell - 0.5;
+    vec2 c = (w.xz - extra.yz) / cell - 0.5;
     vec2 b = floor(c);
     vec2 f = c - b;
     ivec2 i = ivec2(b);
-    int base = int(e.x);
+    int base = int(extra.x);
     float v00 = lightVisCell(base, n4, i);
     float v10 = lightVisCell(base, n4, i + ivec2(1, 0));
     float v01 = lightVisCell(base, n4, i + ivec2(0, 1));

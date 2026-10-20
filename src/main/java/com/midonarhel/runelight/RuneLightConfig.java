@@ -531,7 +531,8 @@ public interface RuneLightConfig extends Config
 	@ConfigItem(
 		keyName = "showBuildings",
 		name = "Show detected buildings",
-		description = "Outline the rooms found on your floor and mark where their lights are.",
+		description = "Tint the rooms found on your floor, label each with its id (R) and level (L), mark where their "
+			+ "lights are and outline the tiles where a hole in the floor links a room to the one above or below.",
 		section = buildingsSection,
 		position = 454
 	)
@@ -1373,7 +1374,8 @@ public interface RuneLightConfig extends Config
 		keyName = "roomLights",
 		name = "Lights stay in rooms",
 		description = "Lights inside a building only light its room, and lights outside don't shine in through the "
-			+ "walls; light spills a little out of open doorways.",
+			+ "walls; light spills a little out of open doorways, and through holes in the floors (stairwells, pits) "
+			+ "between the floors.",
 		section = roomsSection,
 		position = 751
 	)
