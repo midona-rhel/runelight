@@ -165,14 +165,19 @@ flow to check them. Needs numpy, scipy, scikit-image and Pillow.
 
 Plugin config, Global illumination section. When a region loads, the static scene's opaque triangles (captured as
 the zones upload, `GiCapture.java`) are voxelized into half-tile cubes on a worker thread (`GiVoxels.java`,
-`GiGrid.java`; per zone, so zones reused by the next load keep theirs). A probe grid covers the base scene, one
-column per tile with three layers (`GiProbes.java`); each probe traces 64 rays once and keeps what they hit. Probes
+`GiGrid.java`; per zone, so zones reused by the next load keep theirs). A probe grid covers the base scene: a
+column every second tile with two probes per floor, a quarter and three quarters of a storey above that floor's
+ground (`GiProbes.java`); each probe holds one color, the light around it averaged over all directions (surfaces
+count as rough, so none lights its neighbours more for facing them), and traces 32 rays once, keeping what they hit
+(rays steeply down are left out: a surface doesn't see its own floor). Probes
 in buildings (BuildingDetector rooms, below the roof line) are indoor and light only indoor pixels, so walls don't
 leak, while their rays still see out through doors. Relighting (`GiRelight.java`) takes the sky from the sky cache
 (`gi_sky_frag.glsl`, read back without stalling) plus the sun or moon on the hit voxels and the last light for
 further bounces, a few tens of milliseconds on the worker whenever the sky or the sun changes enough; new light
-blends in over a few seconds. The AO pass looks the probes up at half resolution (`gi.glsl`) and the composite
-uses the result instead of its plain ambient and sky light, keeping a floor of the latter (Shade floor). Debug view
+blends in over a few seconds. The AO pass looks the probes up at half resolution (`gi.glsl`: linear between the four
+nearest columns and the two probes around the pixel's height, pushed off the surface along its normal) and the
+composite scales its plain ambient and sky light by the result (the probes' light relative to the open sky's), keeping
+a floor of the plain light (Shade floor). Debug view
 "Global illumination" shows the indirect light alone. Outside the base scene and underground the plain ambient
 light stays. The water surface joins the voxels as a layer of blue-green ones at its height (`GiWater.java`, from the
 water map), and the sunk bed under it is left out of the capture, so water bounces its color onto the shores and

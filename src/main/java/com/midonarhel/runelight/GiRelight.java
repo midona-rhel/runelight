@@ -3,12 +3,14 @@ package com.midonarhel.runelight;
 /**
  * Lights the probes from their hit cache (GiProbes): rays that reached the sky bring the sky's radiance where they
  * point, rays that hit a surface bring its albedo times the light on it, which is the sun or moon where the voxels
- * see it, plus the probes' previous light there for further bounces. Runs on the global illumination's worker
+ * see it, plus the light the probe in front of the voxel had last time, for further bounces. A probe's color is the
+ * weighted average of its rays, whichever way they point: surfaces are treated as rough, scattering light everywhere,
+ * so no surface gets more from one that faces it than from any other. Runs on the global illumination's worker
  * whenever the sky or the light changes enough (GlobalIllumination), tens of milliseconds for a whole scene.
  *
  * The sky part is scaled so that a probe under the open sky lights a surface facing up as much as the composite's
  * plain ambient and sky light do: the probes move that light around (less of it under roofs and overhangs, the
- * sky's colors on the walls facing them, light bounced off sunlit ground) rather than changing the exposure.
+ * colors of the ground and walls around) rather than changing the exposure.
  */
 final class GiRelight
 {
@@ -22,6 +24,12 @@ final class GiRelight
 	// sun and moon light bounced off what they fall on, relative to the light itself: above 1 because the voxels'
 	// albedos are the dim vertex and texture colors, and the bounce is what makes sunlit ground warm the shade
 	static final float SUN_BOUNCE = 1.4f;
+	// A probe's color is an average over the sphere, which is about half what a surface facing the open sky receives
+	// from it; a surface hit by a ray reflects this much of the average of the probe in front of it, between that
+	// average and the most a facing surface would get. Kept low enough that light bouncing in a closed room dies out.
+	static final float INCIDENT_GAIN = 1.5f;
+	// the light shown with the sky (relative to the open sky's) stays within this, the range the composite can carry
+	static final float MAX_RELATIVE = 4;
 
 	/** What lights the probes this time. */
 	static final class Light
@@ -71,6 +79,24 @@ final class GiRelight
 		}
 	}
 
+	/** The probes' light (RGB each), whole and as shown. */
+	static final class Result
+	{
+		/** Sky and surfaces together: what the next bounces build on. */
+		final float[] light;
+		/**
+		 * What goes to the GPU: with bounceOnly the surfaces' light alone, in the composite's units; else the whole
+		 * light relative to what a probe under the open sky would have (1 where all of the sky is seen, nothing bounces).
+		 */
+		final float[] shown;
+
+		Result(float[] light, float[] shown)
+		{
+			this.light = light;
+			this.shown = shown;
+		}
+	}
+
 	private GiRelight()
 	{
 	}
@@ -102,22 +128,23 @@ final class GiRelight
 	}
 
 	/**
-	 * How much the table's sky radiance is scaled: an open probe's irradiance facing up matches the old ambient
-	 * plus sky light facing up.
+	 * How much the table's sky radiance is scaled: the irradiance on a surface facing up, under the open sky, matches
+	 * the old ambient plus sky light facing up (the mean radiance plus twice the mean radiance along the normal).
 	 */
-	static float skyScale(Light light, float[][] directions)
+	static float skyScale(Light light)
 	{
-		GiSh.Accumulator acc = new GiSh.Accumulator();
+		float[] d = GiProbes.SKY_RAYS;
+		int n = d.length / 3;
 		float[] rgb = new float[3];
-		float[] d = directions[0];
-		for (int i = 0; i < GiSh.RAYS; ++i)
+		float mean = 0, along = 0;
+		for (int i = 0; i < n; ++i)
 		{
 			sky(light.sky, d[i * 3], d[i * 3 + 1], d[i * 3 + 2], rgb);
-			acc.add(d[i * 3], d[i * 3 + 1], d[i * 3 + 2], rgb[0], rgb[1], rgb[2]);
+			float l = luminance(rgb[0], rgb[1], rgb[2]);
+			mean += l;
+			along -= l * d[i * 3 + 1];
 		}
-		float[] sh = new float[12];
-		acc.finish(sh, 0);
-		float open = luminance(GiSh.eval(sh, 0, 0, 0, -1, 0), GiSh.eval(sh, 0, 1, 0, -1, 0), GiSh.eval(sh, 0, 2, 0, -1, 0));
+		float open = (mean + 2 * along) / n;
 		float target = luminance(light.oldUp[0], light.oldUp[1], light.oldUp[2]);
 		if (open < 1e-6f || target <= 0)
 		{
@@ -127,36 +154,34 @@ final class GiRelight
 	}
 
 	/**
-	 * Light every valid probe. prev: the probes' last light for the bounces (null for none yet); each further
+	 * Light every valid probe. prev: the probes' last whole light for the bounces (null for none yet); each further
 	 * iteration bounces once more from the one before.
 	 *
-	 * @return 12 floats per probe (GiSh)
+	 * @param bounceOnly show the light of the rays that hit surfaces alone, with none of the sky's own: what the
+	 *                   skylight mode adds to its plain ambient and sky light
 	 */
-	static float[] relight(GiProbes p, Light light, float[] prev, int iterations, GiProbes.ParallelFor parallel)
+	static Result relight(GiProbes p, Light light, float[] prev, int iterations, GiProbes.ParallelFor parallel,
+		boolean bounceOnly)
 	{
-		return relight(p, light, prev, iterations, parallel, null);
-	}
-
-	/**
-	 * As {@link #relight(GiProbes, Light, float[], int, GiProbes.ParallelFor)}; with bounceOut given, bounceOut[0]
-	 * receives the same probes' light from the rays that hit surfaces only, with none of the sky's own: what the
-	 * skylight mode adds to its plain ambient and sky light.
-	 */
-	static float[] relight(GiProbes p, Light light, float[] prev, int iterations, GiProbes.ParallelFor parallel,
-		float[][] bounceOut)
-	{
-		float k = skyScale(light, p.directions);
-		float[][] skyRays = new float[GiSh.ROTATIONS][GiSh.RAYS * 3];
+		float k = skyScale(light);
+		int rays = GiProbes.RAYS;
+		float[][] skyRays = new float[GiProbes.ROTATIONS][rays * 3];
 		float[] rgb = new float[3];
-		for (int r = 0; r < GiSh.ROTATIONS; ++r)
+		float[] open = new float[3];
+		for (int r = 0; r < GiProbes.ROTATIONS; ++r)
 		{
-			float[] d = p.directions[r];
-			for (int i = 0; i < GiSh.RAYS; ++i)
+			float[] d = GiProbes.DIRECTIONS[r];
+			for (int i = 0; i < rays; ++i)
 			{
 				sky(light.sky, d[i * 3], d[i * 3 + 1], d[i * 3 + 2], rgb);
 				for (int c = 0; c < 3; ++c)
 				{
 					skyRays[r][i * 3 + c] = rgb[c] * k;
+					// what a probe sees of the sky where nothing is in the way, the rays that point up
+					if (r == 0 && d[i * 3 + 1] < 0)
+					{
+						open[c] += rgb[c] * k * GiProbes.WEIGHT[i] / GiProbes.WEIGHT_SUM;
+					}
 				}
 			}
 		}
@@ -186,11 +211,13 @@ final class GiRelight
 
 		float[] out = prev;
 		float[] radiance = new float[p.hits * 3];
+		float[] surfaces = null;
+		float inv = 1f / GiProbes.WEIGHT_SUM;
 		for (int it = 0; it < Math.max(1, iterations); ++it)
 		{
 			float[] last = out;
-			float[] cur = new float[GiProbes.PROBES * 12];
-			float[] curBounce = bounceOut != null ? new float[GiProbes.PROBES * 12] : null;
+			float[] cur = new float[GiProbes.PROBES * 3];
+			float[] curSurfaces = bounceOnly ? new float[GiProbes.PROBES * 3] : null;
 			// light leaving each one-sided hit voxel
 			parallel.run(p.hits, h ->
 			{
@@ -203,7 +230,7 @@ final class GiRelight
 				int b = p.hitBounce[h];
 				for (int c = 0; c < 3; ++c)
 				{
-					float e = light.caster[c] * sun + (last != null && b >= 0 ? GiSh.eval(last, b * 12, c, nx, ny, nz) : 0);
+					float e = light.caster[c] * sun + (last != null && b >= 0 ? last[b * 3 + c] * INCIDENT_GAIN : 0);
 					radiance[h * 3 + c] = p.hitAlbedo[h * 3 + c] * e;
 				}
 			});
@@ -213,72 +240,88 @@ final class GiRelight
 				{
 					return;
 				}
-				GiSh.Accumulator acc = new GiSh.Accumulator();
-				GiSh.Accumulator surfaces = curBounce != null ? new GiSh.Accumulator() : null;
-				int rot = GiSh.rotation(i);
-				float[] d = p.directions[rot];
-				float[] sr = skyRays[rot];
-				int base = i * GiSh.RAYS;
-				for (int r = 0; r < GiSh.RAYS; ++r)
+				float[] d = GiProbes.DIRECTIONS[GiProbes.rotation(i)];
+				float[] sr = skyRays[GiProbes.rotation(i)];
+				int base = i * rays;
+				float fr = 0, fg = 0, fb = 0, ur = 0, ug = 0, ub = 0;
+				for (int r = 0; r < rays; ++r)
 				{
 					int code = p.rays[base + r];
-					float dx = d[r * 3], dy = d[r * 3 + 1], dz = d[r * 3 + 2];
+					float w = GiProbes.WEIGHT[r];
 					if (code == GiProbes.MISS)
 					{
-						acc.add(dx, dy, dz, sr[r * 3], sr[r * 3 + 1], sr[r * 3 + 2]);
-						if (surfaces != null)
-						{
-							// the sky is no surface, but its ray still counts toward the average
-							surfaces.addDark();
-						}
+						// the sky is no surface: it counts toward the whole light but not the surfaces'
+						fr += sr[r * 3] * w;
+						fg += sr[r * 3 + 1] * w;
+						fb += sr[r * 3 + 2] * w;
+						continue;
 					}
-					else if (code == GiProbes.BACK)
+					if (code == GiProbes.BACK)
 					{
-						acc.addDark();
-						if (surfaces != null)
-						{
-							surfaces.addDark();
-						}
+						continue;
 					}
-					else if (!p.hitTwoSided[code])
+					float tr, tg, tb;
+					if (!p.hitTwoSided[code])
 					{
-						acc.add(dx, dy, dz, radiance[code * 3], radiance[code * 3 + 1], radiance[code * 3 + 2]);
-						if (surfaces != null)
-						{
-							surfaces.add(dx, dy, dz, radiance[code * 3], radiance[code * 3 + 1], radiance[code * 3 + 2]);
-						}
+						tr = radiance[code * 3];
+						tg = radiance[code * 3 + 1];
+						tb = radiance[code * 3 + 2];
 					}
 					else
 					{
 						// a thin surface shows the probe the side facing it
+						float dx = d[r * 3], dy = d[r * 3 + 1], dz = d[r * 3 + 2];
 						float sun = direct ? Math.max(0, -(dx * lx + dy * ly + dz * lz)) * lit[code] : 0;
 						int b = p.hitBounce[code];
 						float er = light.caster[0] * sun, eg = light.caster[1] * sun, eb = light.caster[2] * sun;
 						if (last != null && b >= 0)
 						{
-							er += GiSh.eval(last, b * 12, 0, -dx, -dy, -dz);
-							eg += GiSh.eval(last, b * 12, 1, -dx, -dy, -dz);
-							eb += GiSh.eval(last, b * 12, 2, -dx, -dy, -dz);
+							er += last[b * 3] * INCIDENT_GAIN;
+							eg += last[b * 3 + 1] * INCIDENT_GAIN;
+							eb += last[b * 3 + 2] * INCIDENT_GAIN;
 						}
-						float tr = p.hitAlbedo[code * 3] * er, tg = p.hitAlbedo[code * 3 + 1] * eg, tb = p.hitAlbedo[code * 3 + 2] * eb;
-						acc.add(dx, dy, dz, tr, tg, tb);
-						if (surfaces != null)
-						{
-							surfaces.add(dx, dy, dz, tr, tg, tb);
-						}
+						tr = p.hitAlbedo[code * 3] * er;
+						tg = p.hitAlbedo[code * 3 + 1] * eg;
+						tb = p.hitAlbedo[code * 3 + 2] * eb;
 					}
+					fr += tr * w;
+					fg += tg * w;
+					fb += tb * w;
+					ur += tr * w;
+					ug += tg * w;
+					ub += tb * w;
 				}
-				acc.finish(cur, i * 12);
-				if (surfaces != null)
+				cur[i * 3] = fr * inv;
+				cur[i * 3 + 1] = fg * inv;
+				cur[i * 3 + 2] = fb * inv;
+				if (curSurfaces != null)
 				{
-					surfaces.finish(curBounce, i * 12);
+					curSurfaces[i * 3] = ur * inv;
+					curSurfaces[i * 3 + 1] = ug * inv;
+					curSurfaces[i * 3 + 2] = ub * inv;
 				}
 			});
 			out = cur;
-			if (bounceOut != null)
-			{
-				bounceOut[0] = curBounce;
-			}
+			surfaces = curSurfaces;
+		}
+		return new Result(out, bounceOnly ? surfaces : relative(out, open));
+	}
+
+	/** The whole light over what the open sky gives a probe, per channel; 1 everywhere when there is no sky light. */
+	private static float[] relative(float[] light, float[] open)
+	{
+		float[] out = new float[light.length];
+		float l = luminance(open[0], open[1], open[2]);
+		if (l < 1e-5f)
+		{
+			java.util.Arrays.fill(out, 1);
+			return out;
+		}
+		// a channel the sky has next to none of would otherwise blow up
+		float[] den = {Math.max(open[0], l * 0.1f), Math.max(open[1], l * 0.1f), Math.max(open[2], l * 0.1f)};
+		for (int i = 0; i < light.length; ++i)
+		{
+			out[i] = Math.min(MAX_RELATIVE, light[i] / den[i % 3]);
 		}
 		return out;
 	}

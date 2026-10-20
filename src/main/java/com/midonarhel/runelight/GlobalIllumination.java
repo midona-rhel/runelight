@@ -16,20 +16,20 @@ import org.slf4j.LoggerFactory;
 import static org.lwjgl.opengl.GL33C.*;
 
 /**
- * Global illumination from a world-space grid of irradiance probes over the base scene (GiProbes): light from the
- * sky that gets past roofs, overhangs and walls, and sun or moon light bounced off what it falls on, so interiors
- * and the undersides of things darken, walls take the colors of the sky they face, and sunlit ground warms the
- * shade beside it.
+ * Global illumination from a world-space grid of irradiance probes over the base scene (GiProbes), each holding one
+ * color: light from the sky that gets past roofs, overhangs and walls, and sun or moon light bounced off what it
+ * falls on, averaged over all directions, so interiors and the undersides of things darken and sunlit ground warms
+ * the shade beside it.
  *
  * Everything heavy runs on a worker thread. After a region load the zones' triangles (captured as they upload,
  * GiCapture) are voxelized, per zone so reused zones keep theirs (GiVoxels), and every probe traces its rays once
  * (GiProbes). Relighting the probes from that hit cache (GiRelight) takes tens of milliseconds and happens when the
  * sky cache captures, the sun or moon has moved RELIGHT_DEGREES, the weather or settings change, or every
  * MAX_RELIGHT_MILLIS. The light it needs from the sky is drawn on the GPU into a tiny table (gi_sky_frag.glsl) and
- * read back without stalling. Each new set of probes is uploaded a layer a frame and blended in over about the time
- * between relights, like the sky cache, so nothing pops.
+ * read back without stalling. Each new set of probes is uploaded at once (a few
+ * kilobytes) and blended in over about the time between relights, like the sky cache, so nothing pops.
  *
- * On the GPU the only steady cost is the lookup in the half resolution AO pass (gi.glsl, about 30 small texture
+ * On the GPU the only steady cost is the lookup in the half resolution AO pass (gi.glsl, 13 small texture
  * fetches a pixel), whose result rides along in the AO target to the composite (halfres.glsl). Outside the base
  * scene, underground, and until the first probes are lit, the composite keeps its plain ambient light.
  */
@@ -46,9 +46,9 @@ class GlobalIllumination
 		.add(GL_VERTEX_SHADER, "composite_vert.glsl")
 		.add(GL_FRAGMENT_SHADER, "sky_cache_blend_frag.glsl");
 
-	static final int TEX_W = GiProbes.SIZE * 3;
-	static final int LAYER_H = GiProbes.SIZE;
-	static final int TEX_H = LAYER_H * GiProbes.LAYERS;
+	// one texel per probe: its column across, its level and column row down; alpha is 1 for a usable probe
+	static final int TEX_W = GiProbes.COLUMNS;
+	static final int TEX_H = GiProbes.COLUMNS * GiProbes.LEVELS;
 	static final int SKY_ROWS = GiRelight.SKY_H + 1;
 
 	// relight when the light that casts shadows has turned this far
@@ -116,10 +116,6 @@ class GlobalIllumination
 	private boolean blending;
 	private long blendStart, blendMillis;
 	private long lastLitMillis;
-	// a light being uploaded into the latest texture, a layer a frame
-	private Lit uploading;
-	private int uploadLayer;
-	private int uploadTarget;
 	// what the shown probes belong to
 	private int shownGeneration = -1;
 	private int shownBaseX, shownBaseY;
@@ -261,7 +257,6 @@ class GlobalIllumination
 		readbackPending = readbackWanted = false;
 		latest = from = shown = -1;
 		blending = false;
-		uploading = null;
 		shownGeneration = -1;
 		weight = 0;
 		relit = false;
@@ -381,7 +376,7 @@ class GlobalIllumination
 		pollReadback();
 
 		Lit l = lit;
-		if (l != null && uploading == null)
+		if (l != null)
 		{
 			lit = null;
 			if (l.generation != shownGeneration)
@@ -389,13 +384,10 @@ class GlobalIllumination
 				// new probes in a new place: shown as they are, there is nothing to blend from
 				log.debug("Look: GI probes replaced, generation {} -> {}, base ({}, {}) -> ({}, {})", shownGeneration,
 					l.generation, shownBaseX, shownBaseY, l.baseX, l.baseY);
-				uploadTarget = shown < 0 ? 0 : (shown + 1) % 3;
-				for (int layer = 0; layer < GiProbes.LAYERS; ++layer)
-				{
-					uploadLayer(l, uploadTarget, layer);
-				}
+				int target = shown < 0 ? 0 : (shown + 1) % 3;
+				uploadProbes(l, target);
 				uploadMeta(l.meta);
-				latest = from = shown = uploadTarget;
+				latest = from = shown = target;
 				blending = false;
 				awaitingFresh = false;
 				shownGeneration = l.generation;
@@ -407,28 +399,19 @@ class GlobalIllumination
 			else
 			{
 				// a blend in progress stops where it is: the shown texture holds it
-				blending = false;
-				uploading = l;
-				uploadLayer = 0;
-				uploadTarget = (shown + 1) % 3;
-			}
-		}
-		if (uploading != null)
-		{
-			uploadLayer(uploading, uploadTarget, uploadLayer);
-			if (++uploadLayer == GiProbes.LAYERS)
-			{
-				uploading = null;
+				int target = (shown + 1) % 3;
+				uploadProbes(l, target);
 				if (awaitingFresh)
 				{
 					// nothing worth blending from: the old light is from before the switch was turned on
 					awaitingFresh = false;
-					latest = from = shown = uploadTarget;
+					blending = false;
+					latest = from = shown = target;
 					lastLitMillis = now;
 					return;
 				}
 				from = shown;
-				latest = uploadTarget;
+				latest = target;
 				shown = 3 - from - latest;
 				blending = true;
 				blendStart = now;
@@ -451,7 +434,7 @@ class GlobalIllumination
 			}
 		}
 
-		if (!outdoors || readbackPending || readbackWanted || uploading != null || jobs.get() > 0)
+		if (!outdoors || readbackPending || readbackWanted || jobs.get() > 0)
 		{
 			return;
 		}
@@ -634,7 +617,7 @@ class GlobalIllumination
 		glBindBuffer(GL_PIXEL_PACK_BUFFER, pbo);
 		glBufferData(GL_PIXEL_PACK_BUFFER, (long) GiRelight.TABLE_FLOATS * Float.BYTES, GL_STREAM_READ);
 		glBindBuffer(GL_PIXEL_PACK_BUFFER, 0);
-		staging = BufferUtils.createShortBuffer(TEX_W * LAYER_H * 4);
+		staging = BufferUtils.createShortBuffer(TEX_W * TEX_H * 4);
 	}
 
 	private static void texture(int tex, int internal, int w, int h, int type)
@@ -657,14 +640,14 @@ class GlobalIllumination
 		}
 	}
 
-	private void uploadLayer(Lit l, int target, int layer)
+	private void uploadProbes(Lit l, int target)
 	{
 		staging.clear();
-		staging.put(l.texels, layer * TEX_W * LAYER_H * 4, TEX_W * LAYER_H * 4);
+		staging.put(l.texels);
 		staging.flip();
 		glBindBuffer(GL_PIXEL_UNPACK_BUFFER, 0);
 		glBindTexture(GL_TEXTURE_2D, probeTextures[target]);
-		glTexSubImage2D(GL_TEXTURE_2D, 0, 0, layer * LAYER_H, TEX_W, LAYER_H, GL_RGBA, GL_HALF_FLOAT, staging);
+		glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, TEX_W, TEX_H, GL_RGBA, GL_HALF_FLOAT, staging);
 		glBindTexture(GL_TEXTURE_2D, 0);
 	}
 
@@ -879,11 +862,10 @@ class GlobalIllumination
 		long start = System.nanoTime();
 		boolean first = lastLightGeneration != probesGeneration || lastLight == null;
 		GiRelight.Light light = GiRelight.Light.fromTable(in.table, in.casterDir, in.bounce);
-		float[][] surfaces = in.bounceOnly ? new float[1][] : null;
-		float[] sh = GiRelight.relight(p, light, first ? null : lastLight, first ? FIRST_BOUNCES : 1, parallel(),
-			surfaces);
+		GiRelight.Result result = GiRelight.relight(p, light, first ? null : lastLight, first ? FIRST_BOUNCES : 1,
+			parallel(), in.bounceOnly);
 		// the next bounces build on the whole light, whichever part is shown
-		lastLight = sh;
+		lastLight = result.light;
 		lastLightGeneration = probesGeneration;
 		Lit l = new Lit();
 		l.generation = probesGeneration;
@@ -891,33 +873,85 @@ class GlobalIllumination
 		l.baseY = probesBaseY;
 		l.instance = probesInstance;
 		l.meta = p.meta;
-		l.texels = texels(surfaces != null ? surfaces[0] : sh);
+		l.texels = texels(result.shown, p.valid);
 		lit = l;
 		log.trace("GI relight in {} ms", (System.nanoTime() - start) / 1_000_000);
 	}
 
-	/** Probe light as the probe texture's half floats: probe (x, z, layer) channel c at (x * 3 + c, layer * 104 + z). */
-	static short[] texels(float[] sh)
+
+	private static final short HALF_ONE = 0x3c00;
+
+	/**
+	 * The probes as the probe texture's half floats. Probe i lies at texel i: (its column x, its level * COLUMNS +
+	 * its column z), as GiProbes.probe numbers them. Alpha is 1 for a usable probe, 0 for the rest.
+	 */
+	static short[] texels(float[] light, boolean[] valid)
 	{
-		short[] out = new short[TEX_W * TEX_H * 4];
-		for (int layer = 0; layer < GiProbes.LAYERS; ++layer)
+		short[] out = new short[GiProbes.PROBES * 4];
+		for (int i = 0; i < GiProbes.PROBES; ++i)
 		{
-			for (int z = 0; z < GiProbes.SIZE; ++z)
+			for (int c = 0; c < 3; ++c)
 			{
-				for (int x = 0; x < GiProbes.SIZE; ++x)
-				{
-					int p = GiProbes.probe(x, z, layer);
-					for (int c = 0; c < 3; ++c)
-					{
-						int t = ((layer * LAYER_H + z) * TEX_W + x * 3 + c) * 4;
-						for (int k = 0; k < 4; ++k)
-						{
-							out[t + k] = GiSh.toHalf(sh[p * 12 + c * 4 + k]);
-						}
-					}
-				}
+				out[i * 4 + c] = toHalf(light[i * 3 + c]);
 			}
+			out[i * 4 + 3] = valid[i] ? HALF_ONE : 0;
 		}
 		return out;
+	}
+
+	/** IEEE half float bits of f, rounded to nearest; for the probe textures. */
+	static short toHalf(float f)
+	{
+		int bits = Float.floatToIntBits(f);
+		int sign = bits >>> 16 & 0x8000;
+		int exp = (bits >>> 23 & 0xff) - 127 + 15;
+		int mant = bits & 0x7fffff;
+		if (Float.isNaN(f))
+		{
+			return (short) (sign | 0x7e00);
+		}
+		if (exp >= 31)
+		{
+			return (short) (sign | 0x7c00);
+		}
+		if (exp <= 0)
+		{
+			if (exp < -10)
+			{
+				return (short) sign;
+			}
+			mant |= 0x800000;
+			int shift = 14 - exp;
+			int half = mant >> shift;
+			if ((mant >> (shift - 1) & 1) != 0)
+			{
+				half++;
+			}
+			return (short) (sign | half);
+		}
+		int half = sign | exp << 10 | mant >> 13;
+		if ((mant & 0x1000) != 0)
+		{
+			// rounding up may carry into the exponent, which is still correct (up to infinity)
+			half++;
+		}
+		return (short) half;
+	}
+
+	static float fromHalf(short h)
+	{
+		int s = (h & 0x8000) << 16;
+		int e = h >> 10 & 0x1f;
+		int m = h & 0x3ff;
+		if (e == 0)
+		{
+			float v = m / 1024f / 16384f;
+			return s != 0 ? -v : v;
+		}
+		if (e == 31)
+		{
+			return Float.intBitsToFloat(s | 0x7f800000 | m << 13);
+		}
+		return Float.intBitsToFloat(s | (e - 15 + 127) << 23 | m << 13);
 	}
 }
