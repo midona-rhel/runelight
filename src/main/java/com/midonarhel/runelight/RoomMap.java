@@ -38,6 +38,8 @@ final class RoomMap
 	// under a roof by the map's flags, whether or not a room was found there: lights there are covered (rooms.glsl)
 	final boolean[] roofed;
 	private int version;
+	// the outdoor tiles next to a room tile, the only ones that can be a porch; the rooms never change after build
+	private int[] porchCandidates;
 
 	private RoomMap(int size, int offset)
 	{
@@ -106,6 +108,7 @@ final class RoomMap
 				}
 			}
 		}
+		m.findPorchCandidates();
 		m.version = 1;
 		return m;
 	}
@@ -125,6 +128,34 @@ final class RoomMap
 		return (h[x][y] + h[x + 1][y] + h[x][y + 1] + h[x + 1][y + 1]) * 0.25f;
 	}
 
+	private void findPorchCandidates()
+	{
+		int[] found = new int[16];
+		int n = 0;
+		for (int plane = 0; plane < PLANES; ++plane)
+		{
+			for (int x = 0; x < size; ++x)
+			{
+				for (int y = 0; y < size; ++y)
+				{
+					int i = index(plane, x, y);
+					if (rooms[i] == 0 && (x + 1 < size && rooms[index(plane, x + 1, y)] != 0
+						|| x > 0 && rooms[index(plane, x - 1, y)] != 0
+						|| y + 1 < size && rooms[index(plane, x, y + 1)] != 0
+						|| y > 0 && rooms[index(plane, x, y - 1)] != 0))
+					{
+						if (n == found.length)
+						{
+							found = java.util.Arrays.copyOf(found, n * 2);
+						}
+						found[n++] = i;
+					}
+				}
+			}
+		}
+		porchCandidates = java.util.Arrays.copyOf(found, n);
+	}
+
 	/**
 	 * Find the openings out of every room from the collision maps: an outdoor tile next to a room tile with no wall
 	 * between them becomes the room's porch. Doors open and close, so this runs every game tick; it is a pass over
@@ -136,25 +167,15 @@ final class RoomMap
 	boolean updateOpenings(int[][][] flags)
 	{
 		boolean changed = false;
-		for (int plane = 0; plane < PLANES; ++plane)
+		for (int i : porchCandidates)
 		{
+			int plane = i / (size * size), x = i / size % size, y = i % size;
 			int[][] f = flags != null && plane < flags.length ? flags[plane] : null;
-			for (int x = 0; x < size; ++x)
+			short p = f != null ? porchRoom(f, plane, x, y) : 0;
+			if (porch[i] != p)
 			{
-				for (int y = 0; y < size; ++y)
-				{
-					int i = index(plane, x, y);
-					short p = 0;
-					if (f != null && rooms[i] == 0)
-					{
-						p = porchRoom(f, plane, x, y);
-					}
-					if (porch[i] != p)
-					{
-						porch[i] = p;
-						changed = true;
-					}
-				}
+				porch[i] = p;
+				changed = true;
 			}
 		}
 		if (changed)
