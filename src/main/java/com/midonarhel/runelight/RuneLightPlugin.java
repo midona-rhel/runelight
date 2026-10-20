@@ -353,6 +353,8 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 	private static final int WATER_NOISE_UNIT = RuneLightPlugin.COMPOSITE_TEXTURE_UNIT + 15;
 	// the water surface pass's map of things standing in the water (WaterMap.contact)
 	private static final int WATER_CONTACT_UNIT = RuneLightPlugin.COMPOSITE_TEXTURE_UNIT + 13;
+	// the terrain the volumetric fog lies on (VolumetricFog)
+	private static final int FOG_GROUND_UNIT = RuneLightPlugin.COMPOSITE_TEXTURE_UNIT + 23;
 	// the surface pass's wave maps either side of now (WaterSurface.bake)
 	private static final int WATER_WAVES_UNIT_A = RuneLightPlugin.COMPOSITE_TEXTURE_UNIT + 17;
 	private static final int WATER_WAVES_UNIT_B = RuneLightPlugin.COMPOSITE_TEXTURE_UNIT + 19;
@@ -1193,7 +1195,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 	private void setFogProgram(int program)
 	{
 		volumetricFog.setProgram(program, COMPOSITE_TEXTURE_UNIT + 2, SHADOW_COMPARE_UNIT, LIGHT_DATA_UNIT,
-			CLUSTER_DATA_UNIT, FOG_NOISE_UNIT, WEATHER_FIELD_UNIT, WATER_DATA_UNIT);
+			CLUSTER_DATA_UNIT, FOG_NOISE_UNIT, WEATHER_FIELD_UNIT, WATER_DATA_UNIT, FOG_GROUND_UNIT);
 	}
 
 	private static void bindSceneSamplers(int program)
@@ -1914,9 +1916,8 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		frameFog = false;
 		Player player = client.getLocalPlayer();
 		LocalPoint lp = player != null ? player.getLocalLocation() : null;
-		if (config.volumetricFog() && lp != null && client.getGameState() == GameState.LOGGED_IN)
+		if (config.volumetricFog() && lp != null && client.getGameState() == GameState.LOGGED_IN && volumetricFog.hasGround())
 		{
-			float ground = Perspective.getTileHeight(client, lp, client.getTopLevelWorldView().getPlane());
 			// thicker in rain and snow, and in areas 117 HD gives fog (its fogDepth: ~6 faint, 50 thick)
 			float areaFog = config.areaEnvironments() ? environmentManager.getFogDepth() * config.areaFogStrength() / 100f : 0;
 			volumetricFog.areaDensity = weather.fogMultiplier()
@@ -1925,7 +1926,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 			volumetricFog.weatherField = weather.getField();
 			volumetricFog.weatherFog = weather.fogMultiplier();
 			System.arraycopy(weather.getFogTint(), 0, volumetricFog.areaTint, 0, 3);
-			volumetricFog.updateParameters(config, lp.getX(), ground, lp.getY(), frameDrawDistance);
+			volumetricFog.updateParameters(config, lp.getX(), lp.getY(), client.getTopLevelWorldView().getPlane(), frameDrawDistance);
 			frameFog = true;
 		}
 	}
@@ -3678,6 +3679,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		mapUploader.water = waterMap;
 		water.sceneLoaded(waterMap);
 		log.debug("Water map time {}", sw);
+		volumetricFog.sceneLoaded(scene);
 
 		// size the zones which require upload
 		sw = Stopwatch.createStarted();
@@ -3941,6 +3943,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		shadowStaticDirty = true;
 		globalIllumination.sceneSwapped();
 		water.swap();
+		volumetricFog.swap();
 		clientUploader.water = mapUploader.water;
 
 		// setup vaos

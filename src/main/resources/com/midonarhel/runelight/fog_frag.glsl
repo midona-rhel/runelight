@@ -44,7 +44,10 @@ uniform sampler3D fogNoise;  // tiling value noise, 0..1: r patches, g banks (co
 
 uniform float fogDensity;    // extinction per world unit at the ground
 uniform float fogHeight;     // world units for the density to drop to 1/e
-uniform float fogGroundY;    // world y the height is measured from; y points down
+uniform float fogHighestY;   // world y of the highest ground within the fog's reach; y points down
+// The terrain the height is measured from (FogGround.java): ground y per tile corner, the planes' pages side by side
+uniform sampler2D fogGround;
+uniform vec3 fogGroundGrid;  // x: extended tile of local tile 0, y: corners per side, z: texel x of the plane's page
 uniform vec2 fogCenter;      // world x, z the fade is centered on: the player
 uniform vec2 fogFade;        // horizontal distance from the center where the fog starts and finishes fading out
 uniform float fogNear;       // distance from the camera over which the fog thickens from nothing
@@ -78,9 +81,10 @@ out vec4 FragFog;
 #define FOG_NEAR_FLOOR 0.15
 // fraction of the fog's reach by which its color has become the sky's horizon color
 #define FOG_SKY_MATCH 0.7
-// the layer is cut off where it has thinned to e^-FOG_TOP, so no steps are spent in clear air above it
+// the layer is cut off where it has thinned to e^-FOG_TOP above the highest ground, so no steps are spent in clear
+// air above it
 #define FOG_TOP 5.0
-// below the reference ground (valleys) density stops growing at e^FOG_BELOW
+// below the local ground density stops growing at e^FOG_BELOW
 #define FOG_BELOW 1.0
 // Ambient light in the fog: mostly the horizon color, so fog and sky meet in the same tone, plus some of the
 // scene's ambient light so nights stay cool blue instead of going black. Kept low: a flat glow turns the fog into a
@@ -118,6 +122,12 @@ out vec4 FragFog;
 
 #include "halfmap.glsl"
 #include "ign.glsl"
+
+// World y of the ground at a point, the terrain's own slopes between the tile corners; the edge of the scene goes on
+float fogGroundAt(vec2 worldXZ) {
+  vec2 c = clamp(worldXZ / 128.0 + fogGroundGrid.x, vec2(0.0), vec2(fogGroundGrid.y - 1.0));
+  return textureLod(fogGround, (c + vec2(0.5 + fogGroundGrid.z, 0.5)) / vec2(textureSize(fogGround, 0)), 0.0).r;
+}
 
 vec2 fogWaterCell(vec2 worldXZ) {
   return clamp(worldXZ / 128.0 + waterGrid.x, vec2(0.0), vec2(waterGrid.y - 1.0));
@@ -252,8 +262,9 @@ void main() {
     t1 = min(t1, (-b + sq) / a);
   }
 
-  // and to the part below the top of the layer: height above ground is h0 + t * rise
-  float h0 = fogGroundY - cameraPos.y;
+  // and to the part below the top of the layer, which is flat: a few heights above the highest ground, so over low
+  // ground some of the ray is clear air that the per-step height then thins out. Height above that is h0 + t * rise.
+  float h0 = fogHighestY - cameraPos.y;
   float top = fogHeight * FOG_TOP;
   float rise = -dir.y;
   if (abs(rise) < 1e-5) {
@@ -315,7 +326,7 @@ void main() {
     vec3 p = dir * t;
     vec3 wp = p + cameraPos;
 
-    float h = fogGroundY - wp.y;
+    float h = fogGroundAt(wp.xz) - wp.y;
     float sigma = density * exp(-max(h, -fogHeight * FOG_BELOW) / fogHeight);
     // Thin around the player and right in front of the camera, thickening over fogNear, so the fog sits in the
     // distance instead of over what you're looking at; and the outer edge thins to nothing.

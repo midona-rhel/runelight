@@ -1,13 +1,15 @@
 package com.midonarhel.runelight;
 
 import java.nio.ByteBuffer;
+import java.nio.FloatBuffer;
 import java.util.Random;
+import net.runelite.api.Scene;
 import org.lwjgl.BufferUtils;
 import static org.lwjgl.opengl.GL33C.*;
 
 /**
  * Lightweight volumetric fog. A half resolution pass (fog_frag.glsl) marches each view ray a fixed number of
- * steps through a height fog layer around the player and writes in-scattered light and transmittance into
+ * steps through a height fog layer around the player, its height measured from the terrain ({@link FogGround}) and writes in-scattered light and transmittance into
  * {@link SceneTargets}' fog target; the denoise smooths it with the AO and shadows (denoise_frag.glsl) and the
  * composite upsamples it depth-aware and applies it (fog_apply.glsl).
  *
@@ -38,7 +40,11 @@ class VolumetricFog
 	float weatherFog = 1;
 	private int uniFieldRect, uniFieldFog;
 	private int uniIndoor, uniWaterEnabled, uniWaterGrid;
-	private int waterUnit;
+	private int waterUnit, groundUnit;
+	// the terrain the fog lies on: built when a scene loads (any thread), uploaded when it swaps in
+	private FogGround pendingGround;
+	private FogGround ground;
+	private int texGround;
 	// density left inside building rooms (fog_frag.glsl), and the scene's water to stop the rays at
 	float indoorFactor = 1;
 	int waterTexture;
@@ -46,7 +52,9 @@ class VolumetricFog
 	// the values the pass uses this frame, in world units
 	private float density;
 	private float height;
-	private float groundY;
+	// world y of the highest ground within the fog's reach: the layer ends a few heights above it
+	private float highestY;
+	private int plane;
 	private float centerX, centerZ;
 	private float fadeStart, fadeEnd;
 	private float near;
@@ -59,7 +67,7 @@ class VolumetricFog
 	private int program;
 	private int uniCameraPos, uniTime, uniOutdoors, uniProceduralSky, uniClientSkyColor, uniCasterDir,
 		uniSunIsCaster, uniSunAltitude, uniShadowsEnabled, uniLightProjRel, uniShadowDepthRange,
-		uniPointLights, uniDensity, uniHeight, uniGroundY, uniCenter, uniFade, uniNear, uniSunScatter, uniNoiseAmount, uniBankAmount,
+		uniPointLights, uniDensity, uniHeight, uniHighestY, uniGroundGrid, uniCenter, uniFade, uniNear, uniSunScatter, uniNoiseAmount, uniBankAmount,
 		uniMaxCover, uniTint, uniSteps, uniViewProj, uniInvViewProj, uniViewport, uniDepthZeroToOne, uniHalfRatio, uniOvercast, uniLight;
 
 	private int uniCompositeEnabled;
@@ -70,9 +78,10 @@ class VolumetricFog
 	 * Take ownership of a freshly compiled fog program and look up its uniforms.
 	 */
 	void setProgram(int program, int sceneDepthUnit, int shadowCompareUnit, int lightDataUnit, int clusterDataUnit,
-		int noiseUnit, int weatherFieldUnit, int waterUnit)
+		int noiseUnit, int weatherFieldUnit, int waterUnit, int groundUnit)
 	{
 		this.waterUnit = waterUnit;
+		this.groundUnit = groundUnit;
 		glDeleteProgram(this.program);
 		this.program = program;
 
@@ -92,7 +101,8 @@ class VolumetricFog
 		uniPointLights = glGetUniformLocation(program, "pointLightsEnabled");
 		uniDensity = glGetUniformLocation(program, "fogDensity");
 		uniHeight = glGetUniformLocation(program, "fogHeight");
-		uniGroundY = glGetUniformLocation(program, "fogGroundY");
+		uniHighestY = glGetUniformLocation(program, "fogHighestY");
+		uniGroundGrid = glGetUniformLocation(program, "fogGroundGrid");
 		uniCenter = glGetUniformLocation(program, "fogCenter");
 		uniFade = glGetUniformLocation(program, "fogFade");
 		uniNear = glGetUniformLocation(program, "fogNear");
@@ -121,6 +131,7 @@ class VolumetricFog
 		uniWaterEnabled = glGetUniformLocation(program, "waterEnabled");
 		uniWaterGrid = glGetUniformLocation(program, "waterGrid");
 		glUniform1i(glGetUniformLocation(program, "waterData"), waterUnit);
+		glUniform1i(glGetUniformLocation(program, "fogGround"), groundUnit);
 		glUseProgram(0);
 	}
 
@@ -147,27 +158,82 @@ class VolumetricFog
 	 * The one place fog parameters are decided. Config values first, then any per-area multipliers.
 	 *
 	 * @param x player position, where the fog is centered and fades out from
-	 * @param groundY ground height under the player; y points down
+	 * @param plane the plane the player is on: which floor the fog lies on
 	 * @param drawDistance world units, the fog never reaches past it
 	 */
-	void updateParameters(RuneLightConfig config, float x, float groundY, float z, float drawDistance)
+	void updateParameters(RuneLightConfig config, float x, float z, int plane, float drawDistance)
 	{
 		final float tile = 128;
 		// 1% is an extinction of 1e-5 per unit: at the default 25% about half the light is lost over 22 tiles
 		density = config.volumetricFogDensity() * 1e-5f * areaDensity;
 		height = Math.max(config.volumetricFogHeight() / 100f * tile * areaHeight, 16);
-		this.groundY = groundY;
+		this.plane = plane;
 		centerX = x;
 		centerZ = z;
 		fadeEnd = Math.min(config.volumetricFogDistance() * tile, drawDistance);
 		// the outer EDGE_FADE_TILES thin out to nothing, and so do the first NEAR_FADE_TILES from the camera
 		fadeStart = Math.max(fadeEnd - EDGE_FADE_TILES * tile, 0);
 		near = NEAR_FADE_TILES * tile;
+		highestY = ground.highest(plane, x - fadeEnd, z - fadeEnd, x + fadeEnd, z + fadeEnd);
 		sunScatter = config.volumetricFogSunScattering() / 100f;
 		noiseAmount = config.volumetricFogNoise() / 100f;
 		bankAmount = config.volumetricFogBanks() / 100f;
 		maxCover = config.volumetricFogMaxCover() / 100f;
 		steps = config.fogQuality().pick(6, 8, 12);
+	}
+
+	/**
+	 * The terrain of a scene being loaded (any thread). Takes effect at {@link #swap}.
+	 */
+	void sceneLoaded(Scene scene)
+	{
+		FogGround g = FogGround.build(scene);
+		synchronized (this)
+		{
+			pendingGround = g;
+		}
+	}
+
+	/**
+	 * The loaded scene became the current one: upload its terrain. GL thread.
+	 */
+	void swap()
+	{
+		FogGround g;
+		synchronized (this)
+		{
+			g = pendingGround;
+			pendingGround = null;
+		}
+		if (g == null)
+		{
+			return;
+		}
+		ground = g;
+		if (texGround == 0)
+		{
+			texGround = glGenTextures();
+			glBindTexture(GL_TEXTURE_2D, texGround);
+			glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+			glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+			glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+			glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+		}
+		else
+		{
+			glBindTexture(GL_TEXTURE_2D, texGround);
+		}
+		FloatBuffer buf = BufferUtils.createFloatBuffer(g.texture.length);
+		buf.put(g.texture).flip();
+		// full floats: heights reach thousands of units, where half floats step by 2 to 4
+		glTexImage2D(GL_TEXTURE_2D, 0, GL_R32F, FogGround.WIDTH, FogGround.CORNERS, 0, GL_RED, GL_FLOAT, buf);
+		glBindTexture(GL_TEXTURE_2D, 0);
+	}
+
+	/** Whether a scene's terrain has been uploaded: the fog has nothing to lie on before. */
+	boolean hasGround()
+	{
+		return ground != null;
 	}
 
 	/** World x of the fog's center: the player. */
@@ -238,7 +304,8 @@ class VolumetricFog
 
 		glUniform1f(uniDensity, density);
 		glUniform1f(uniHeight, height);
-		glUniform1f(uniGroundY, groundY);
+		glUniform1f(uniHighestY, highestY);
+		glUniform3f(uniGroundGrid, RuneLightPlugin.SCENE_OFFSET, FogGround.CORNERS, plane * FogGround.CORNERS);
 		glUniform2f(uniCenter, centerX, centerZ);
 		glUniform2f(uniFade, fadeStart, fadeEnd);
 		glUniform1f(uniNear, near);
@@ -270,10 +337,14 @@ class VolumetricFog
 			glBindTexture(GL_TEXTURE_2D, waterTexture);
 		}
 
+		glActiveTexture(GL_TEXTURE0 + groundUnit);
+		glBindTexture(GL_TEXTURE_2D, texGround);
 		glActiveTexture(GL_TEXTURE0 + noiseUnit);
 		glBindTexture(GL_TEXTURE_3D, texNoise);
 		glDrawArrays(GL_TRIANGLES, 0, 3);
 		glBindTexture(GL_TEXTURE_3D, 0);
+		glActiveTexture(GL_TEXTURE0 + groundUnit);
+		glBindTexture(GL_TEXTURE_2D, 0);
 		if (waterTexture != 0)
 		{
 			glActiveTexture(GL_TEXTURE0 + waterUnit);
@@ -296,6 +367,12 @@ class VolumetricFog
 			glDeleteTextures(texNoise);
 			texNoise = 0;
 		}
+		if (texGround != 0)
+		{
+			glDeleteTextures(texGround);
+			texGround = 0;
+		}
+		ground = null;
 		glDeleteProgram(program);
 		program = 0;
 	}
