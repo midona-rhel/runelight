@@ -26,6 +26,8 @@ uniform vec4 skyFieldMap;
 #define SKY_HEIGHT_BIAS 24.0
 // how far the scenery right above may be before the point counts as fully covered (world units above the bias)
 #define SKY_COVER_RAMP 48.0
+// a near tap within this much (world units) of the height over the point is the same overhang
+#define SKY_OVERHANG_STEP 64.0
 #define SKY_TAU 6.28318530718
 
 // How high the scenery's top is above camera-relative point q (world units, up positive); a large negative number
@@ -43,7 +45,11 @@ float skyOccluderAbove(vec3 q) {
 
 // 1 under the open sky, 0 under a roof, except where the tiles' flood of light (skyField) knows better: under cover
 // the light comes in through the openings, so a gate arch or a house with its door open fades from the opening
-// inward instead of being dark; horizon and cover are the field's there
+// inward instead of being dark; horizon and cover are the field's there.
+// The map is a height field, so anything over a point looks solid down to the ground. Two things keep that from
+// darkening what sees the sky sideways: what is right above a point only hides the sky a surface faces up into (a
+// wall looks out, not up), and out of doors something right above the point is an overhang (eaves, a canopy), not a
+// wall: in a direction where it still covers the near tap, the sky shows under its edge, so only the far tap counts.
 float skylightVisibility(vec3 p, vec3 n, float noise) {
   if (skylightOn == 0) {
     return 1.0;
@@ -54,7 +60,6 @@ float skylightVisibility(vec3 p, vec3 n, float noise) {
     return 1.0;
   }
   float cover = smoothstep(SKY_HEIGHT_BIAS, SKY_HEIGHT_BIAS + SKY_COVER_RAMP, above);
-  float open = 1.0 - cover;
   float flow = 0.0;
   float indoors = 0.0;
   if (skyFieldOn == 1 && cover > 0.0) {
@@ -65,6 +70,9 @@ float skylightVisibility(vec3 p, vec3 n, float noise) {
       return flow;
     }
   }
+  float open = 1.0 - cover * max(-n.y, 0.0);
+  // out of doors under something: an overhang, whose own height the near taps find
+  bool overhang = cover > 0.5;
   if (open <= 0.0 && indoors <= 0.0) {
     return 0.0;
   }
@@ -76,7 +84,10 @@ float skylightVisibility(vec3 p, vec3 n, float noise) {
     float a = (float(i) + noise) * (SKY_TAU / float(SKY_DIRECTIONS));
     vec2 d = vec2(cos(a), sin(a));
     float slope = 0.0;
-    slope = max(slope, (skyOccluderAbove(o + vec3(d.x, 0.0, d.y) * SKY_RADIUS_NEAR) - SKY_HEIGHT_BIAS) / SKY_RADIUS_NEAR);
+    float near = skyOccluderAbove(o + vec3(d.x, 0.0, d.y) * SKY_RADIUS_NEAR);
+    if (!overhang || near < above - SKY_OVERHANG_STEP) {
+      slope = max(slope, (near - SKY_HEIGHT_BIAS) / SKY_RADIUS_NEAR);
+    }
     slope = max(slope, (skyOccluderAbove(o + vec3(d.x, 0.0, d.y) * SKY_RADIUS_FAR) - SKY_HEIGHT_BIAS) / SKY_RADIUS_FAR);
     // a wall sees the sky on its own side
     float w = mix(1.0, max(dot(d, facing), 0.0) * 2.0, side);
