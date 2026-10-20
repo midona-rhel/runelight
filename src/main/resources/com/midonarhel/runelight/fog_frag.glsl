@@ -68,6 +68,11 @@ float weatherFogFactor(vec2 worldXZ) {
   return clamp((f + weatherFieldFog.x) * weatherFieldFog.y, 0.0, FOG_FIELD_MAX);
 }
 
+// Fog pushed aside by actors (FogDisturbance.java): how far the fog is cleared (0 not, 1 fully) at world x, z,
+// wrapping every FOG_DISTURB_EXTENT world units
+uniform sampler2D fogDisturb;
+uniform int fogDisturbOn;
+
 out vec4 FragFog;
 
 #define FOG_MAX_STEPS 16
@@ -109,6 +114,14 @@ out vec4 FragFog;
 // radius), and the integral along a straight line is an arctangent.
 #define FOG_POINT_LIGHT_SCALE 0.35
 #define FOG_GLOW_CORE 0.2
+
+// FogDisturbance.EXTENT
+#define FOG_DISTURB_EXTENT 8192.0
+// Actors only push the low fog: full up to a quarter of this height above the ground, none at it, so tall banks
+// aren't cut into columns.
+#define FOG_DISTURB_TOP 512.0
+// the map covers a square around the player; the effect fades out over this distance before its edge
+#define FOG_DISTURB_EDGE 512.0
 
 #include "bayer.glsl"
 
@@ -315,6 +328,12 @@ void main() {
     sigma *= mix(FOG_NEAR_FLOOR, 1.0, smoothstep(0.0, fogNear, centerDist));
     sigma *= smoothstep(0.0, fogNear, t);
     sigma *= weatherFogFactor(wp.xz);
+    if (fogDisturbOn == 1 && h < FOG_DISTURB_TOP) {
+      vec2 rel = abs(wp.xz - fogCenter);
+      float reach = (1.0 - smoothstep(FOG_DISTURB_TOP * 0.25, FOG_DISTURB_TOP, h))
+        * smoothstep(0.0, FOG_DISTURB_EDGE, 0.5 * FOG_DISTURB_EXTENT - max(rel.x, rel.y));
+      sigma *= 1.0 - reach * textureLod(fogDisturb, wp.xz / FOG_DISTURB_EXTENT, 0.0).r;
+    }
     if (fogNoiseAmount > 0.0 || fogBankAmount > 0.0) {
       vec3 uvw = (wp + FOG_WIND * time) / vec3(FOG_NOISE_SCALE, FOG_NOISE_SCALE_Y, FOG_NOISE_SCALE);
       vec2 n = texture(fogNoise, uvw).rg;

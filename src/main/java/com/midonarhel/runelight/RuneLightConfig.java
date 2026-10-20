@@ -708,6 +708,38 @@ public interface RuneLightConfig extends Config
 	}
 
 	@ConfigSection(
+		name = "Fog disturbance",
+		description = "Players and creatures pushing the ground fog aside",
+		position = 850
+	)
+	String fogDisturbanceSection = "fogDisturbance";
+
+	@ConfigItem(
+		keyName = "fogDisturbance",
+		name = "Fog disturbance",
+		description = "Players and creatures push the fog on the ground aside where they walk; it creeps back in over a few seconds.",
+		section = fogDisturbanceSection,
+		position = 851
+	)
+	default boolean fogDisturbance()
+	{
+		return true;
+	}
+
+	@Range(max = 100)
+	@ConfigItem(
+		keyName = "fogDisturbanceStrength",
+		name = "Strength",
+		description = "How much fog is pushed away, in percent.",
+		section = fogDisturbanceSection,
+		position = 852
+	)
+	default int fogDisturbanceStrength()
+	{
+		return 80;
+	}
+
+	@ConfigSection(
 		name = "Weather",
 		description = "Automatic regional weather, rain, snow and storms",
 		position = 400
