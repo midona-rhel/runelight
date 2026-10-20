@@ -65,14 +65,16 @@ class SceneUploader
 	// Static objects standing in the water: the game's end them at its water level, which the bed was sunk below, so
 	// their faces with an edge within WATERLINE of their ground level (model y 0) are extruded down to the bed, along
 	// their own texture, when the object reaches at least STANDING_HEIGHT above it (lily pads and the like lie on it).
-	// Their see-through faces lying at that level are the game's ripples, which the water draws itself (contact).
 	private static final int WATERLINE = 3;
 	private static final int STANDING_HEIGHT = 24;
 	// how far the object's ground may be from the water's level (the game places it by the tile's height at its middle)
 	private static final int WATER_HEIGHT_SLACK = 16;
 	private boolean sinkWater;
+	private Scene scene;
+	private final int[] objectWorld = new int[3];
 	private final boolean[] atWaterLevel = new boolean[ModelUploader.MAX_VERTEX_COUNT];
-	// faces of the last static model left out as the game's ripples; Zone.addAlphaModel has to skip them as well
+	// faces of the last static model left out as the game's ripples (117 HD's, WaterOverrides); Zone.addAlphaModel has
+	// to skip them as well
 	private final boolean[] rippleFace = new boolean[ModelUploader.MAX_FACE_COUNT];
 	private final GroundBlender groundBlender = new GroundBlender();
 	private final float[] slope = new float[2];
@@ -218,6 +220,7 @@ class SceneUploader
 
 		int offset = scene.getWorldViewId() == WorldView.TOPLEVEL ? RuneLightPlugin.SCENE_OFFSET >> 3 : 0;
 		sinkWater = water != null && scene.getWorldViewId() == WorldView.TOPLEVEL;
+		this.scene = scene;
 		this.basex = (mzx - offset) << 10;
 		this.basez = (mzz - offset) << 10;
 
@@ -552,14 +555,14 @@ class SceneUploader
 		if (r instanceof Model)
 		{
 			model = (Model) r;
-			uploadStaticModel(model, orient, x - basex, y, z - basez, material, vb, ab);
+			uploadStaticModel(model, orient, x - basex, y, z - basez, material, id, vb, ab);
 		}
 		else if (r instanceof DynamicObject)
 		{
 			model = ((DynamicObject) r).getModelZbuf();
 			if (model != null)
 			{
-				uploadStaticModel(model, orient, x - basex, y, z - basez, material, vb, ab);
+				uploadStaticModel(model, orient, x - basex, y, z - basez, material, id, vb, ab);
 			}
 		}
 		int endpos = zone.vboA != null ? zone.vboA.vb.position() : 0;
@@ -1129,7 +1132,7 @@ class SceneUploader
 	private final int[] flatNormals = new int[3];
 	private final VertexShading.Normals computedNormals = new VertexShading.Normals();
 
-	private int uploadStaticModel(Model model, int orient, int x, int y, int z, int material, GpuIntBuffer vb, GpuIntBuffer ab)
+	private int uploadStaticModel(Model model, int orient, int x, int y, int z, int material, int id, GpuIntBuffer vb, GpuIntBuffer ab)
 	{
 		final int vertexCount = model.getVerticesCount();
 		final int triangleCount = model.getFaceCount();
@@ -1187,6 +1190,10 @@ class SceneUploader
 			}
 		}
 
+		// the game's ripples on it, which the water draws itself (WaterMap.contact): 117 HD's list
+		WaterOverrides overrides = WaterOverrides.get();
+		boolean ripples = overrides.hasRipples(id) && EnvironmentManager.toWorld(scene, x + basex >> 7, z + basez >> 7,
+			level, objectWorld);
 		boolean standing = false;
 		if (sinkWater && !sway)
 		{
@@ -1237,9 +1244,8 @@ class SceneUploader
 			int triangleA = indices1[face];
 			int triangleB = indices2[face];
 			int triangleC = indices3[face];
-			// the game's ripples around things in the water: see-through faces lying at its water level (the water
-			// draws its own, WaterMap.contact)
-			if (alpha && atWaterLevel[triangleA] && atWaterLevel[triangleB] && atWaterLevel[triangleC])
+			if (ripples && overrides.hidesFace(id, objectWorld[0], objectWorld[1], objectWorld[2],
+				faceTextures != null && faceTextures[face] != -1, transparencies != null ? transparencies[face] : 0, color1))
 			{
 				rippleFace[face] = true;
 				continue;

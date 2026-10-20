@@ -577,6 +577,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		sceneLights = new SceneLights(client);
 		sceneLights.load(gson);
 		SurfaceMaterials.load(gson);
+		WaterOverrides.load(gson);
 		WindSway.load(gson);
 		eventBus.register(sceneLights);
 		clientThread.invoke(sceneLights::rebuild);
@@ -3541,7 +3542,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		// the water's bed depths and flow, needed to size and upload the zones; swapped in with them
 		Stopwatch sw = Stopwatch.createStarted();
 		WaterMap waterMap = config.water()
-			? WaterMap.build(scene, (x, y, plane) -> environmentManager.waterMurk(scene, x, y, plane)) : null;
+			? WaterMap.build(scene, WaterOverrides.get()) : null;
 		mapUploader.water = waterMap;
 		water.sceneLoaded(waterMap);
 		log.debug("Water map time {}", sw);

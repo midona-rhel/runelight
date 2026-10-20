@@ -347,50 +347,6 @@ final class EnvironmentManager
 		select(env, c, regionEnv, jumped, time);
 	}
 
-	// areas whose water is murky besides caves; matched against environment names
-	private static final String[] MURKY_SWAMP_AREAS = {"SWAMP", "MORYTANIA", "POISON_WASTE", "MEIYERDITCH",
-		"DARKMEYER", "BARROWS", "STRANGLEWOOD", "BACKWATER"};
-	// caves with clear water
-	private static final String[] CLEAR_CAVES = {"ZANARIS", "TEARS_OF_GUTHIX", "LUNAR_DREAM_WORLD", "COSMIC_ENTITYS_PLANE"};
-
-	/**
-	 * How the area of a scene tile treats its water (WaterMap.CLEAR, MURKY_SWAMP or MURKY_CAVE): murky underground
-	 * and in swamps. For scene loading; safe off the client thread once loaded.
-	 */
-	int waterMurk(Scene scene, int sceneX, int sceneY, int plane)
-	{
-		int[] wp = new int[3];
-		if (environments == null || !toWorld(scene, sceneX, sceneY, plane, wp))
-		{
-			return WaterMap.CLEAR;
-		}
-		Environment env = environmentAt(wp[0], wp[1], wp[2]);
-		if (env == null)
-		{
-			return WaterMap.CLEAR;
-		}
-		String name = env.name != null ? env.name.toUpperCase() : "";
-		if (env.cave)
-		{
-			for (String c : CLEAR_CAVES)
-			{
-				if (name.contains(c))
-				{
-					return WaterMap.CLEAR;
-				}
-			}
-			return WaterMap.MURKY_CAVE;
-		}
-		for (String m : MURKY_SWAMP_AREAS)
-		{
-			if (name.contains(m))
-			{
-				return WaterMap.MURKY_SWAMP;
-			}
-		}
-		return WaterMap.CLEAR;
-	}
-
 	/**
 	 * The biome whose weather a scene tile has, for WeatherField: the region's 3D Weather biome, null where no
 	 * biome describes it (the default biome's weather), or WeatherField.NO_SKY underground and in caves.

@@ -38,11 +38,6 @@ final class WaterMap
 	static final int SWAMP = 5;
 	static final int CAVE = 6;
 
-	// what an area does to the water in it (Areas)
-	static final int CLEAR = 0;
-	static final int MURKY_SWAMP = 1;
-	static final int MURKY_CAVE = 2;
-
 	// vertex flags in the texture id short of terrain (above SurfaceMaterials' bits): the frag shader writes them
 	// to the material target so the composite knows bed (always under water) from land (never)
 	static final int BED_FLAG = 1 << 13;
@@ -54,16 +49,6 @@ final class WaterMap
 	private static final int[] DEPTH = {82, 165, 258, 335, 385, 412, 451, 506};
 	// at least this deep in the middle of a water tile, so a stream between two banks still holds water
 	static final int MIN_DEPTH = 56;
-	// tiles around a water tile whose murk and fresh or swamp water it takes the most common of
-	private static final int CLASS_REACH = 16;
-
-	interface Areas
-	{
-		/**
-		 * @return {@link #CLEAR}, {@link #MURKY_SWAMP} or {@link #MURKY_CAVE} for a scene tile
-		 */
-		int murk(int sceneX, int sceneY, int plane);
-	}
 
 	// per tile: final water type, render level of the water tile (-1 none), the game's water texture, the bed color
 	final byte[] type = new byte[SIZE * SIZE];
@@ -150,19 +135,19 @@ final class WaterMap
 		return textureKind(texture) != NONE;
 	}
 
-	static WaterMap build(Scene scene, Areas areas)
+	static WaterMap build(Scene scene, WaterOverrides overrides)
 	{
-		return build(scene, areas, WaterFlow.world());
+		return build(scene, overrides, WaterFlow.world());
 	}
 
-	static WaterMap build(Scene scene, Areas areas, WaterFlow flowMap)
+	static WaterMap build(Scene scene, WaterOverrides overrides, WaterFlow flowMap)
 	{
 		WaterMap m = new WaterMap();
-		m.load(scene, areas, flowMap);
+		m.load(scene, overrides, flowMap);
 		return m;
 	}
 
-	private void load(Scene scene, Areas areas, WaterFlow flowMap)
+	private void load(Scene scene, WaterOverrides overrides, WaterFlow flowMap)
 	{
 		Tile[][][] tiles = scene.getExtendedTiles();
 		int[][][] heights = scene.getTileHeights();
@@ -171,8 +156,6 @@ final class WaterMap
 		baseY = scene.getBaseY() - RuneLightPlugin.SCENE_OFFSET;
 
 		java.util.Arrays.fill(level, (byte) -1);
-		int[] kind = new int[SIZE * SIZE];
-		int[] murk = new int[SIZE * SIZE];
 		boolean[] landCorner = new boolean[CORNERS * CORNERS];
 		WaterBodies b = bodies;
 		float[] flow = new float[2];
@@ -238,7 +221,14 @@ final class WaterMap
 				int lvl = water.getRenderLevel();
 				level[i] = (byte) lvl;
 				waterTexture[i] = (short) tileTexture(water);
-				kind[i] = k;
+				// its type as 117 HD gives it, tile by tile: by its tile override where one gives water, else by its
+				// texture
+				int over = overrides == null || !EnvironmentManager.toWorld(scene, x - RuneLightPlugin.SCENE_OFFSET,
+					y - RuneLightPlugin.SCENE_OFFSET, lvl, world) ? NONE
+					: overrides.tileType(world[0], world[1], world[2], scene.getOverlayIds()[lvl][x][y],
+					scene.getUnderlayIds()[lvl][x][y]);
+				type[i] = (byte) (over != NONE ? over : k);
+				bedHsl[i] = (short) bedColor(type[i]);
 				b.water[i] = true;
 				b.sea[i] = isSea(water);
 				int[][] h = heights[lvl];
@@ -248,7 +238,6 @@ final class WaterMap
 					b.mapFlowX[i] = flow[0];
 					b.mapFlowZ[i] = flow[1];
 				}
-				murk[i] = areas == null ? CLEAR : areas.murk(x - RuneLightPlugin.SCENE_OFFSET, y - RuneLightPlugin.SCENE_OFFSET, lvl);
 				hasWater = true;
 
 				SceneTileModel model = water.getSceneTileModel();
@@ -266,55 +255,6 @@ final class WaterMap
 
 		depthLevels(landCorner, CORNERS, MAX_LEVEL, depthLevel);
 		b.solve();
-
-		// A tile takes the murk, and fresh or swamp water, that most of its body's tiles within CLASS_REACH tiles have:
-		// a river with a few tiles of the swamp texture doesn't show them as dark squares, and as it is counted over
-		// the world around the tile rather than the whole body, the river doesn't turn to swamp just because the
-		// loaded map takes in more of the swamp it runs into.
-		int[] bodyMurk = new int[kind.length];
-		int[] bodyKind = new int[kind.length];
-		int[] v = new int[3];
-		for (int y = 0; y < SIZE; ++y)
-		{
-			for (int x = 0; x < SIZE; ++x)
-			{
-				int i = y * SIZE + x, body = b.body[i];
-				if (body < 0)
-				{
-					continue;
-				}
-				v[0] = v[1] = v[2] = 0;
-				int fresh = 0, swamp = 0;
-				for (int ny = Math.max(0, y - CLASS_REACH); ny <= Math.min(SIZE - 1, y + CLASS_REACH); ++ny)
-				{
-					for (int nx = Math.max(0, x - CLASS_REACH); nx <= Math.min(SIZE - 1, x + CLASS_REACH); ++nx)
-					{
-						int n = ny * SIZE + nx;
-						if (b.body[n] != body)
-						{
-							continue;
-						}
-						v[murk[n]]++;
-						fresh += kind[n] == FRESH ? 1 : 0;
-						swamp += kind[n] == SWAMP ? 1 : 0;
-					}
-				}
-				bodyMurk[i] = v[MURKY_CAVE] > v[CLEAR] && v[MURKY_CAVE] >= v[MURKY_SWAMP] ? MURKY_CAVE
-					: v[MURKY_SWAMP] > v[CLEAR] ? MURKY_SWAMP : CLEAR;
-				bodyKind[i] = kind[i] == FRESH || kind[i] == SWAMP ? (swamp > fresh ? SWAMP : FRESH) : kind[i];
-			}
-		}
-		for (int i = 0; i < kind.length; ++i)
-		{
-			int body = b.body[i];
-			if (body < 0)
-			{
-				continue;
-			}
-			kind[i] = bodyKind[i];
-			type[i] = (byte) finalType(kind[i], bodyMurk[i], b.bodyClass[body]);
-			bedHsl[i] = (short) bedColor(kind[i], murk[i]);
-		}
 
 		for (int z = 0; z < bedHeights.length; ++z)
 		{
@@ -534,40 +474,23 @@ final class WaterMap
 		return level <= 0 ? 0 : DEPTH[Math.min(level, DEPTH.length) - 1];
 	}
 
-	private static int finalType(int kind, int murk, int bodyClass)
-	{
-		if (kind != FRESH)
-		{
-			return kind;
-		}
-		if (murk == MURKY_CAVE)
-		{
-			return CAVE;
-		}
-		if (murk == MURKY_SWAMP)
-		{
-			return SWAMP;
-		}
-		return bodyClass == WaterBodies.OCEAN ? OCEAN : FRESH;
-	}
-
 	// bed colors, packed HSL: sand under clear water, mud in swamps, dark stone in caves
 	private static final int SAND = 8 << 10 | 2 << 7 | 40;
 	private static final int PALE_SAND = 8 << 10 | 1 << 7 | 46;
 	private static final int MUD = 9 << 10 | 3 << 7 | 16;
 	private static final int STONE = 6 << 10 | 1 << 7 | 22;
 
-	private static int bedColor(int kind, int murk)
+	private static int bedColor(int type)
 	{
-		if (murk == MURKY_CAVE)
+		if (type == CAVE)
 		{
 			return STONE;
 		}
-		if (murk == MURKY_SWAMP || kind == SWAMP)
+		if (type == SWAMP)
 		{
 			return MUD;
 		}
-		return kind == OCEAN_PALE ? PALE_SAND : SAND;
+		return type == OCEAN_PALE ? PALE_SAND : SAND;
 	}
 
 	// ---------------------------------------------------------------------------------------------------------

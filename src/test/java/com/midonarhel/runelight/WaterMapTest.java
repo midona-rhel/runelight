@@ -53,9 +53,9 @@ public class WaterMapTest
 	}
 
 	/**
-	 * Flat land with a 20 x 20 lake in the middle, every tile on plane 0, given murk everywhere.
+	 * Flat land with a 20 x 20 lake in the middle drawn with the given water texture, every tile on plane 0.
 	 */
-	private static WaterMap lake(int murk)
+	private static WaterMap lake(int texture)
 	{
 		Tile[][][] tiles = new Tile[4][N][N];
 		for (int x = 0; x < N; ++x)
@@ -63,7 +63,7 @@ public class WaterMapTest
 			for (int y = 0; y < N; ++y)
 			{
 				boolean water = x >= 80 && x < 100 && y >= 80 && y < 100;
-				tiles[0][x][y] = tile(x, y, water ? 1 : -1);
+				tiles[0][x][y] = tile(x, y, water ? texture : -1);
 			}
 		}
 		int[][][] heights = new int[4][N + 1][N + 1];
@@ -82,13 +82,13 @@ public class WaterMapTest
 					return null;
 			}
 		});
-		return WaterMap.build(scene, (x, y, plane) -> murk, null);
+		return WaterMap.build(scene, null, null);
 	}
 
 	@Test
 	public void lakeBed()
 	{
-		WaterMap m = lake(WaterMap.CLEAR);
+		WaterMap m = lake(1);
 		assertTrue(m.hasWater);
 		assertTrue(m.isBed(90, 90, 0, 1));
 		assertFalse(m.isBed(90, 90, 1, 1));
@@ -111,7 +111,7 @@ public class WaterMapTest
 	@Test
 	public void textureLayout()
 	{
-		WaterMap m = lake(WaterMap.CLEAR);
+		WaterMap m = lake(1);
 		int w = WaterMap.CORNERS * 2;
 		// page 0: the tile type sits at its sw corner; page 1: shore distance and the water share
 		assertEquals(WaterMap.FRESH, m.texture[(90 * w + 90) * 4 + 3], 0);
@@ -166,14 +166,14 @@ public class WaterMapTest
 	}
 
 	@Test
-	public void murkyAreas()
+	public void typeByTexture()
 	{
-		assertEquals(WaterMap.CAVE, lake(WaterMap.MURKY_CAVE).type[90 * N + 90]);
-		assertEquals(WaterMap.SWAMP, lake(WaterMap.MURKY_SWAMP).type[90 * N + 90]);
+		// 117 HD's rule, tile by tile: the swamp texture gives swamp water, the plain ones fresh
+		assertEquals(WaterMap.FRESH, lake(1).type[90 * N + 90]);
+		assertEquals(WaterMap.SWAMP, lake(25).type[90 * N + 90]);
 		// the bed is mud in a swamp, sand otherwise
-		WaterMap clear = lake(WaterMap.CLEAR), swamp = lake(WaterMap.MURKY_SWAMP);
-		int sand = clear.bedColor(85, 85, 0);
-		int mud = swamp.bedColor(85, 85, 0);
+		int sand = lake(1).bedColor(85, 85, 0);
+		int mud = lake(25).bedColor(85, 85, 0);
 		assertTrue((sand & 127) > (mud & 127));
 	}
 }
