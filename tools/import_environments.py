@@ -63,7 +63,7 @@ SKY_TINTS = {name: MORYTANIA_SKY_TINT for name in (
 # MORYTANIA_SWAMP biome, so its weather is Morytania's whatever 3D Weather called it (Barrows is "barrens")
 MORYTANIA_AREAS = ("MORYTANIA", "BARROWS", "DARKMEYER", "MEIYERDITCH", "VER_SINHAZA", "BURGH_DE_ROTT",
                    "PORT_PHASMATYS", "CANIFIS", "SLEPE", "MORTTON")
-MORYTANIA_REGION_SHARE = 0.5
+MORYTANIA_REGION_SHARE = 0.3
 # y from here down is instances and underground; MORYTANIA nests cutscene and trekking instances up there
 SURFACE_MAX_Y = 4160
 

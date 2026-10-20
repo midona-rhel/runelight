@@ -80,6 +80,8 @@ class Weather
 	static final float CLOUD_SECONDS = 15;
 	static final float PRECIP_SECONDS = 8;
 	static final float FOG_SECONDS = 15;
+	// how long walking into another region's weather keeps easing into it when the weather otherwise snaps
+	private static final float BORDER_SECONDS = 4 * FOG_SECONDS;
 	private static final float WIND_SECONDS = 8;
 	private static final float STORM_SECONDS = 10;
 	// rain or snow starts once the clouds are this far toward their target cover
@@ -236,6 +238,8 @@ class Weather
 	private float rainAmount, snowAmount;
 	private float fog = WeatherType.clear().fog;
 	private float areaFog = WeatherType.clear().areaFog;
+	// seconds left of easing into the weather of a region just walked into
+	private float crossing;
 	private float distanceFog = WeatherType.clear().distanceFog;
 	// the type's look, eased: clouds (wisp, dark), light (sun - 1, haze, warmth, sky saturation), fog tint, rain
 	// drops (length, speed, width, alpha, slant), flakes (size, speed, sway, wind, then color), buildup (wet rate,
@@ -594,7 +598,14 @@ class Weather
 				type, fog, targetFog, distanceFog, type.distanceFog, entered ? "snapped" : "eased");
 		}
 		lastBiome = biome;
-		if (!initialized || !gradual || entered)
+		// Crossing into another region's weather always eases into it, gradual weather or not: it is a change of
+		// place, and the region border is a line on the map, not something to see
+		if (changed && !entered)
+		{
+			crossing = BORDER_SECONDS;
+		}
+		crossing = Math.max(0, crossing - dt);
+		if (!initialized || !gradual && crossing <= 0 || entered)
 		{
 			// at login or without gradual changes, start in the weather as it is
 			initialized = true;
