@@ -9,7 +9,7 @@ Usage:
       src/main/resources/com/midonarhel/runelight/environments.json
 
 Lookup order in game (EnvironmentManager.java): 117 HD environments in their file order (specific before
-general), then the 3D Weather biome of the 64x64 region, then 117 HD's OVERWORLD area (open sky), then a
+general), then CAVE_AREAS (looks for underground areas 117 HD leaves out), then the 3D Weather biome of the 64x64 region, then 117 HD's OVERWORLD area (open sky), then a
 default by height (y >= 4160 is underground).
 
 117 HD lights in its own units (strong ambient, strong sun, its own fog curve). RuneLight keeps its own
@@ -84,6 +84,62 @@ BIOMES = {
     "COSMOS": {"cave": True, "ambientColor": "#b8a8e0", "ambientStrength": 1.5, "directionalColor": "#e0d8ff",
                "fogColor": "#0c0818", "fogDepth": 30},
 }
+# Looks for underground areas 117 HD gives no environment (they would all fall back to the plain CAVE biome),
+# in 117 HD's units like BIOMES. Only the differences from CAVE are written: how warm or cold the stone is,
+# how murky the air. All stay dark with black fog, so the void around them is black.
+CAVE_LOOKS = {
+    "SEWER": {"ambientColor": "#94a88a", "ambientStrength": 1.25, "directionalColor": "#b9c49a",
+              "directionalStrength": 0.8, "fogColor": "#0a1006", "fogDepth": 45},
+    "CRYPT": {"ambientColor": "#8e9f9c", "ambientStrength": 1.2, "directionalColor": "#aebdb8",
+              "directionalStrength": 0.7, "fogColor": "#040708", "fogDepth": 50},
+    "MINE": {"ambientColor": "#b4a690", "ambientStrength": 1.35, "directionalColor": "#ffd9a6",
+             "directionalStrength": 0.95, "fogColor": "#0e0903", "fogDepth": 28},
+    "BASEMENT": {"ambientColor": "#bdb4a6", "ambientStrength": 1.5, "directionalColor": "#ffe2b8",
+                 "directionalStrength": 0.8, "fogColor": "#0b0804", "fogDepth": 22},
+    "ICE": {"ambientColor": "#9cc2f0", "ambientStrength": 1.2, "directionalColor": "#d4e6ff",
+            "directionalStrength": 0.85, "fogColor": "#16222e", "fogDepth": 32},
+    "DAMP": {"ambientColor": "#93b0c2", "ambientStrength": 1.25, "directionalColor": "#b4d2de",
+             "directionalStrength": 0.8, "fogColor": "#040a0e", "fogDepth": 42},
+    "JUNGLE": {"ambientColor": "#9db393", "ambientStrength": 1.25, "directionalColor": "#c9d8a8",
+               "directionalStrength": 0.8, "fogColor": "#050b05", "fogDepth": 40},
+    "DESERT": {"ambientColor": "#c4ab85", "ambientStrength": 1.3, "directionalColor": "#ffd9a0",
+               "directionalStrength": 0.9, "fogColor": "#150e04", "fogDepth": 32},
+    "LAVA": BIOMES["LAVA_CAVE"],
+}
+
+# 117 HD area names (areas.json) per look, in priority order. Only areas no 117 HD environment covers: those
+# environments come first and win. Boxes that touch the overworld are skipped.
+CAVE_AREAS = [
+    ("LAVA", ["CERBERUS", "Lava Maze Dungeon"]),
+    ("SEWER", ["DRAYNOR_SEWERS", "VARROCK_SEWERS", "PLAGUE_CITY_SEWERS"]),
+    ("CRYPT", ["MORYTANIA_SLAYER_TOWER_BASEMENT", "PATERDOMUS_MAUSOLEUM", "PATERDOMUS_MAUSOLEUM_BASEMENT",
+               "SHADE_CATACOMBS", "Shayzien Crypt", "Tomb of Ivandis (In Aid of Myreque)",
+               "VARROCK_JULIETS_FAMILY_CRYPT", "White Knights' Castle crypt", "FORTHOS_DUNGEON",
+               "Mort Myre Myreque Hideout", "MORYTANIA_SPIDER_CAVES", "ABANDONED_MINE"]),
+    ("BASEMENT", ["HEROES_GUILD_BASEMENT", "WARRIORS_GUILD_BASEMENT", "DRAYNOR_MANOR_BASEMENT",
+                  "WIZARD_TOWER_BASEMENT", "WITCHES_HOUSE_BASEMENT", "Blue Moon Inn basement", "Varrock West bank",
+                  "Ferox Basement", "Champion's Challenge", "Phoenix Gang Hideout", "HAM_HIDEOUT",
+                  "HAM Store Room", "ALDARIN_MANOR_WINECELLER", "Elemental Workshop floor 1"]),
+    ("MINE", ["DWARVEN_MINES", "AMETHYST_MINES", "KELDAGRIM_TUNNEL", "KELDAGRIM", "KELDAGRIM_INTERIORS",
+              "WEISS_SALT_MINE", "SHILO_VILLAGE_MINE", "DEEPFIN_POINT_MINE_CAVE"]),
+    ("ICE", ["GHORROCK_DUNGEON", "Ghorrock Dungeon Cell", "Ghorrock Dungeon Duke Arena",
+             "FREMENNIK_ISLES_ICE_TROLL_DUNGEON", "TROLLWEISS_CAVES", "Polar eagle cave",
+             "Wilderness Slayer Cave - Snow Area", "Ruins of Tapoyauik Ice", "WEISS_UNDERGROUND"]),
+    ("DAMP", ["WATERFALL_DUNGEON", "WATERFALL_DUNGEON_CHALICE_ROOM", "WATERFALL_DUNGEON_CHALICE_ROOM_FLOODED",
+              "KRAKEN_COVE", "BRINE_RAT_CAVERN", "WATERBIRTH_DUNGEON", "WATERBIRTH_DUNGEON_LEVEL_1",
+              "Glarial's Tomb Dungeon"]),
+    ("JUNGLE", ["Ape Atoll Dungeon (Monkey Madness 1)", "Kruk's Dungeon main area (Monkey Madness 2)",
+                "Kruk's Dungeon hunter area (Monkey Madness 2)",
+                "Kruk's Dungeon maniacal monkey tunnels (Monkey Madness 2)",
+                "Temple of Marimbo Dungeon (Monkey Madness 1)", "Ah Za Rhoon 1 (Shilo Village)",
+                "Ah Za Rhoon 2 (Shilo Village)", "Tomb of Bervirius (Shilo Village)",
+                "Viyeldi caves top floor (Legends' Quest)", "Karamjan Temple (Dragon Slayer 2)"]),
+    ("DESERT", ["KALPHITE_SLAYER_CAVE", "Enakhra's Temple", "Beneath Cursed Sands cave", "SCABARAS_DUNGEON_ULLEK",
+                "Klenter's Pyramid (A Tail of Two Cats)", "Genie cave", "DESERT_TREASURE_PYRAMID_LEVEL_4",
+                "Desert Mining Camp (The Tourist Trap)", "ANCIENT_VAULT", "ANCIENT_VAULT_LOWER",
+                "ANCIENT_VAULT_UPPER"]),
+]
+
 # 3D Weather lists these regions twice or with a typo; its lookup takes the first biome
 REGION_FIXES = {43448: 13448}
 REGION_OVERRIDES = {5789: "LAVA_CAVE"}
@@ -302,6 +358,20 @@ def main():
         for b in bx:
             boxes.append([index, *b])
 
+    # looks for the underground areas 117 HD leaves to the plain CAVE biome; after its environments, so those win
+    hd_count = len(envs)
+    for look, names in CAVE_AREAS:
+        bx = []
+        for n in names:
+            bx += areas.boxes(n)
+        bx = [b for b in dict.fromkeys(bx) if not any(intersects(b, o) for o in overworld)]
+        d = {"name": "CAVE_" + look, "cave": True}
+        d.update(convert({"ambientStrength": 1.0, **CAVE_LOOKS[look]}, True))
+        index = len(envs)
+        envs.append(d)
+        for b in bx:
+            boxes.append([index, *b])
+
     # 117 HD's OVERWORLD (mainland and its extensions such as player-owned houses): neutral and sunlit. The
     # game looks at the region's surface biome before this one, so biomes can flavour it.
     overworld_index = len(envs)
@@ -343,7 +413,7 @@ def main():
     for b in boxes:
         spans += ((b[4] >> 6) - (b[1] >> 6) + 1) * ((b[5] >> 6) - (b[2] >> 6) + 1)
     print("environments: %d from 117 HD (%d underground), %d biomes, overworld fallback with %d boxes" % (
-        overworld_index, sum(1 for e in envs[:overworld_index] if e.get("cave")), len(envs) - first_biome,
+        hd_count, sum(1 for e in envs[:hd_count] if e.get("cave")), len(envs) - first_biome,
         len(overworld)))
     print("boxes: %d, region index entries: %d" % (len(boxes), spans))
     print("biome regions: %d" % len(region_biomes))
