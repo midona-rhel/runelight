@@ -274,6 +274,10 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 	private static final int FOG_NOISE_UNIT = RuneLightPlugin.COMPOSITE_TEXTURE_UNIT + 11;
 
 	private final VolumetricFog volumetricFog = new VolumetricFog();
+	// the fog pushed aside by actors, on a unit past the skylight occlusion's two
+	private final FogDisturbance fogDisturbance = new FogDisturbance();
+	private static final int FOG_DISTURB_UNIT = RuneLightPlugin.COMPOSITE_TEXTURE_UNIT + 24;
+	private long fogDisturbNanos;
 	private final Clouds clouds = new Clouds();
 	// the composite has no 3D sampler, so the clouds' 2D noise shares the fog noise's unit on the 2D target
 	private static final int CLOUD_NOISE_UNIT = FOG_NOISE_UNIT;
@@ -796,6 +800,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 				skyOcclusion.free();
 				lightClusters.free();
 				volumetricFog.free();
+				fogDisturbance.free();
 				clouds.free();
 				water.free();
 				skyCache.free();
@@ -1180,7 +1185,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 	private void setFogProgram(int program)
 	{
 		volumetricFog.setProgram(program, COMPOSITE_TEXTURE_UNIT + 2, SHADOW_COMPARE_UNIT, LIGHT_DATA_UNIT,
-			CLUSTER_DATA_UNIT, FOG_NOISE_UNIT, WEATHER_FIELD_UNIT, WATER_DATA_UNIT);
+			CLUSTER_DATA_UNIT, FOG_NOISE_UNIT, WEATHER_FIELD_UNIT, WATER_DATA_UNIT, FOG_DISTURB_UNIT);
 	}
 
 	private static void bindSceneSamplers(int program)
@@ -1888,7 +1893,26 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 			volumetricFog.weatherFog = weather.fogMultiplier();
 			System.arraycopy(weather.getFogTint(), 0, volumetricFog.areaTint, 0, 3);
 			volumetricFog.updateParameters(config, lp.getX(), ground, lp.getY(), frameDrawDistance);
+			updateFogDisturbance(lp);
 			frameFog = true;
+		}
+	}
+
+	private void updateFogDisturbance(LocalPoint lp)
+	{
+		long now = System.nanoTime();
+		float dt = (now - fogDisturbNanos) * 1e-9f;
+		fogDisturbNanos = now;
+		if (config.fogDisturbance())
+		{
+			fogDisturbance.update(dt, lp.getX(), lp.getY(), client.getTopLevelWorldView(),
+				config.fogDisturbanceStrength() / 100f);
+			volumetricFog.disturbance = fogDisturbance;
+		}
+		else
+		{
+			fogDisturbance.clear();
+			volumetricFog.disturbance = null;
 		}
 	}
 
@@ -2702,7 +2726,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 			gpuTimer.begin(GpuTimer.FOG);
 			volumetricFog.indoorFactor = config.noFogIndoors() && lightClusters.isInitialized() ? VolumetricFog.INDOOR_DENSITY : 1;
 			volumetricFog.waterTexture = water.dataTexture(config);
-			volumetricFog.render(sceneTargets.getAoWidth(), sceneTargets.getAoHeight(), FOG_NOISE_UNIT, FOG_TEXTURE_UNIT,
+			volumetricFog.render(sceneTargets.getAoWidth(), sceneTargets.getAoHeight(), FOG_NOISE_UNIT, FOG_TEXTURE_UNIT, FOG_DISTURB_UNIT,
 				frameViewProj, frameInvViewProj, frameViewport, glCapabilities.OpenGL45,
 				frameCameraX, frameCameraY, frameCameraZ, (System.currentTimeMillis() - startMillis) / 1000f,
 				// in a void the sun doesn't light the fog: it would glow over the black around the scene

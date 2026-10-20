@@ -36,11 +36,13 @@ class VolumetricFog
 	WeatherField weatherField;
 	float weatherFog = 1;
 	private int uniFieldRect, uniFieldFog;
-	private int uniIndoor, uniWaterEnabled, uniWaterGrid;
+	private int uniIndoor, uniWaterEnabled, uniWaterGrid, uniDisturbOn;
 	private int waterUnit;
 	// density left inside building rooms (fog_frag.glsl), and the scene's water to stop the rays at
 	float indoorFactor = 1;
 	int waterTexture;
+	// actors pushing the fog aside, or null when off
+	FogDisturbance disturbance;
 
 	// the values the pass uses this frame, in world units
 	private float density;
@@ -69,7 +71,7 @@ class VolumetricFog
 	 * Take ownership of a freshly compiled fog program and look up its uniforms.
 	 */
 	void setProgram(int program, int sceneDepthUnit, int shadowCompareUnit, int lightDataUnit, int clusterDataUnit,
-		int noiseUnit, int weatherFieldUnit, int waterUnit)
+		int noiseUnit, int weatherFieldUnit, int waterUnit, int disturbUnit)
 	{
 		this.waterUnit = waterUnit;
 		glDeleteProgram(this.program);
@@ -118,6 +120,8 @@ class VolumetricFog
 		uniWaterEnabled = glGetUniformLocation(program, "waterEnabled");
 		uniWaterGrid = glGetUniformLocation(program, "waterGrid");
 		glUniform1i(glGetUniformLocation(program, "waterData"), waterUnit);
+		uniDisturbOn = glGetUniformLocation(program, "fogDisturbOn");
+		glUniform1i(glGetUniformLocation(program, "fogDisturb"), disturbUnit);
 		glUseProgram(0);
 	}
 
@@ -188,7 +192,7 @@ class VolumetricFog
 	 * the scene depth, shadow map and light clusters already bound to the units given to {@link #setProgram},
 	 * and a VAO bound.
 	 */
-	void render(int halfWidth, int halfHeight, int noiseUnit, int fogUnit,
+	void render(int halfWidth, int halfHeight, int noiseUnit, int fogUnit, int disturbUnit,
 		float[] viewProj, float[] invViewProj, int[] viewport, boolean zeroToOne,
 		float cameraX, float cameraY, float cameraZ, float time,
 		boolean outdoors, boolean proceduralSky, int skyColor, DayCycle day,
@@ -270,10 +274,20 @@ class VolumetricFog
 			glBindTexture(GL_TEXTURE_2D, waterTexture);
 		}
 
+		glUniform1i(uniDisturbOn, disturbance != null ? 1 : 0);
+		if (disturbance != null)
+		{
+			disturbance.bind(disturbUnit);
+		}
+
 		glActiveTexture(GL_TEXTURE0 + noiseUnit);
 		glBindTexture(GL_TEXTURE_3D, texNoise);
 		glDrawArrays(GL_TRIANGLES, 0, 3);
 		glBindTexture(GL_TEXTURE_3D, 0);
+		if (disturbance != null)
+		{
+			FogDisturbance.unbind(disturbUnit);
+		}
 		if (waterTexture != 0)
 		{
 			glActiveTexture(GL_TEXTURE0 + waterUnit);
