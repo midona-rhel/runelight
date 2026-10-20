@@ -248,6 +248,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 	private static final int CLUSTER_DATA_UNIT = RuneLightPlugin.COMPOSITE_TEXTURE_UNIT + 7;
 
 	private final LightClusters lightClusters = new LightClusters();
+	private final OpenRooms openRooms = new OpenRooms();
 	// repeating errors are logged once per interval
 	private final LogLimiter logLimiter = new LogLimiter(10_000);
 	private final LookMonitor lookMonitor = new LookMonitor();
@@ -2401,6 +2402,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		RoomMap rooms = buildingRooms != null && (config.roomLights() || config.noFogIndoors()) ? buildingRooms.getRooms() : null;
 		// the fog finds the rooms in the light buffer too, so it is filled for the fog even without point lights
 		boolean fogRooms = frameFog && config.noFogIndoors() && rooms != null;
+		volumetricFog.openRooms = null;
 		if (points || fogRooms)
 		{
 			if (!lightClusters.isInitialized())
@@ -2418,6 +2420,15 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 			}
 			cpuTimer.end(CpuTimer.LIGHTS);
 			lightClusters.setRooms(rooms, config.roomLights());
+			SceneContext roofCtx = root;
+			boolean openRoofs = frameFog && rooms != null && config.roomLights() && config.openRoofFog() && roofCtx != null;
+			if (openRoofs)
+			{
+				openRooms.update(buildingRooms.getResult(), roofCtx.hideRoofIds, roofCtx.level);
+			}
+			openRoofs = openRoofs && openRooms.count() > 0;
+			lightClusters.setOpenRooms(openRoofs ? openRooms : null);
+			volumetricFog.openRooms = openRoofs ? openRooms : null;
 			lightClusters.setOcclusion(config.lightWallOcclusion() ? lightOcclusion.getAtlas() : null,
 				config.lightRoofOcclusion() && frameSkylight);
 			cpuTimer.begin(CpuTimer.CLUSTERS);

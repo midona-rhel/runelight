@@ -34,7 +34,7 @@ class LightClusters
 	private static final int CLUSTER_COUNT = CLUSTERS_X * CLUSTERS_Y * CLUSTERS_Z;
 	// Fog columns, stored after the clusters: per screen tile, the lights that glow in the fog anywhere along its
 	// rays (fog_frag.glsl integrates each once per pixel instead of looking up clusters at every step). Indoor
-	// lights are left out, and lights outside the fog. When a column is full, the brightest lights win, in the same
+	// lights are left out unless their room has no roof right now (OpenRooms), and lights outside the fog. When a column is full, the brightest lights win, in the same
 	// order for every column, so neighbouring columns keep the same lights instead of showing the tile grid.
 	private static final int COLUMN_COUNT = CLUSTERS_X * CLUSTERS_Y;
 	// per cluster: count, then up to MAX_LIGHTS_PER_CLUSTER indices
@@ -70,6 +70,8 @@ class LightClusters
 
 	// fog: camera-relative xz of the fog's center and its radius; columns are only filled while enabled
 	private boolean fogColumns;
+	// rooms whose roof is hidden: their lights glow in the fog (null: none)
+	private OpenRooms openRooms;
 	private float fogX, fogZ, fogRadius;
 	// candidates for the fog columns this frame: light index, tile rectangle, packed for sorting by brightness
 	private long[] fogOrder = new long[64];
@@ -152,6 +154,14 @@ class LightClusters
 		fogX = centerX;
 		fogZ = centerZ;
 		fogRadius = radius;
+	}
+
+	/**
+	 * The rooms without a roof this frame, whose lights light the fog above their walls (null: none).
+	 */
+	void setOpenRooms(OpenRooms open)
+	{
+		openRooms = open != null && open.count() > 0 ? open : null;
 	}
 
 	/**
@@ -253,7 +263,7 @@ class LightClusters
 			LightOcclusion.texel(l.occlusion, grids, atlasStart,
 				roofLights && rooms != null && rooms.covered(l.x, l.z, l.plane), l.plane, l.radius, extraData);
 
-			if (fogColumns && !indoor)
+			if (fogColumns && (!indoor || openRooms != null && openRooms.isOpen(RoomMap.roomOf(code))))
 			{
 				float fx = x - fogX, fz = z - fogZ, reach = fogRadius + l.radius;
 				if (fx * fx + fz * fz < reach * reach)

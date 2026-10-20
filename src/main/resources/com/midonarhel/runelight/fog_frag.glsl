@@ -33,6 +33,11 @@ uniform usamplerBuffer clusterData;
 
 // inside building rooms (rooms.glsl) the fog's density is multiplied by this; 1 leaves interiors foggy
 uniform float fogIndoor;
+// and in the rooms whose roof is hidden (OpenRooms.java): open to the sky, so their lamps shine up over the walls into
+// the fog and the fog comes back inside. A bit per room id, fogOpenCount rooms; 0 skips all of it.
+uniform float fogIndoorOpen;
+uniform ivec4 fogOpenRooms[32];
+uniform int fogOpenCount;
 
 // The water (Water.java, water.glsl): a ray down to something under the water ends at the surface, the fog doesn't
 // go on under it
@@ -119,6 +124,10 @@ out vec4 FragFog;
 // radius), and the integral along a straight line is an arctangent.
 #define FOG_POINT_LIGHT_SCALE 0.6
 #define FOG_GLOW_CORE 0.2
+// A lamp of a room without a roof lights the fog in its room and over its walls: from this height above the floor
+// (the ceiling its lamp hangs from) the walls no longer hide it, fully lit after FOG_OPEN_FADE more
+#define FOG_OPEN_WALL_TOP 200.0
+#define FOG_OPEN_FADE 80.0
 
 #include "halfmap.glsl"
 #include "ign.glsl"
@@ -173,10 +182,14 @@ int columnBase(ivec2 px) {
   return (CLUSTERS_X * CLUSTERS_Y * CLUSTERS_Z + cy * CLUSTERS_X + cx) * CLUSTER_STRIDE;
 }
 
+bool roomOpen(int room) {
+  return room > 0 && room < ROOM_ANY && ((fogOpenRooms[room >> 7][(room >> 5) & 3] >> (room & 31)) & 1) != 0;
+}
+
 // Light from the point lights scattered toward the camera along the ray dir between t0 and t0 + steps * dt.
 // weight[i]: scattering per unit length in step i (transmittance to the step times the share it scatters, over
 // dt), so each light's integral is split over the steps its sphere spans. No shadowing.
-vec3 pointGlow(ivec2 px, vec3 dir, float t0, float dt, int steps, float weight[FOG_MAX_STEPS]) {
+vec3 pointGlow(ivec2 px, vec3 dir, float t0, float dt, int steps, float weight[FOG_MAX_STEPS], int stepRoom[FOG_MAX_STEPS]) {
   int base = columnBase(px);
   int count = int(texelFetch(clusterData, base).r);
   float tEnd = t0 + dt * float(steps);
@@ -200,6 +213,19 @@ vec3 pointGlow(ivec2 px, vec3 dir, float t0, float dt, int steps, float weight[F
     float q = sqrt(c2 + h2);
     float m = c2 / (c2 + r2);
     float k1 = c2 / q;
+    // the lamp of a room without a roof: below its walls' tops only the fog of its own room is lit, above them all of it
+    vec4 color = texelFetch(lightData, li * 2 + 1);
+    bool open = false;
+    int lampRoom = 0;
+    float lampFloor = 0.0;
+    if (fogOpenCount > 0) {
+      float code = abs(color.w) - 1.0;
+      lampRoom = int(code - floor(code / 4096.0) * 4096.0);
+      open = roomOpen(lampRoom);
+      if (open) {
+        lampFloor = roomFloorY(posRadius.xyz + cameraPos);
+      }
+    }
     int i0 = clamp(int((a - t0) / dt), 0, steps - 1);
     int i1 = clamp(int((b - t0) / dt), 0, steps - 1);
     float glow = 0.0;
@@ -208,10 +234,15 @@ vec3 pointGlow(ivec2 px, vec3 dir, float t0, float dt, int steps, float weight[F
     for (int i = i0; i <= i1; ++i) {
       float s1 = min(t0 + dt * float(i + 1), b) - tc;
       float f1 = k1 * atan(s1 / q) - m * s1;
-      glow += (f1 - f0) * weight[i];
+      float share = 1.0;
+      if (open) {
+        float above = lampFloor - (cameraPos.y + dir.y * (t0 + dt * (float(i) + 0.5)));
+        share = stepRoom[i] == lampRoom ? 1.0 : smoothstep(FOG_OPEN_WALL_TOP, FOG_OPEN_WALL_TOP + FOG_OPEN_FADE, above);
+      }
+      glow += (f1 - f0) * weight[i] * share;
       f0 = f1;
     }
-    sum += texelFetch(lightData, li * 2 + 1).rgb * (glow / (1.0 - m));
+    sum += color.rgb * (glow / (1.0 - m));
   }
   return sum * FOG_POINT_LIGHT_SCALE;
 }
@@ -318,8 +349,11 @@ void main() {
   vec3 scatterSun = vec3(0.0);
   float trans = 1.0;
   float weight[FOG_MAX_STEPS];
+  // the building room each step is in, for the lamps of rooms without a roof
+  int stepRoom[FOG_MAX_STEPS];
   for (int i = 0; i < FOG_MAX_STEPS; ++i) {
     weight[i] = 0.0;
+    stepRoom[i] = 0;
   }
   for (int i = 0; i < steps; ++i) {
     float t = t0 + (float(i) + jitter) * dt;
@@ -342,9 +376,13 @@ void main() {
       sigma *= max(mix(1.0, n.r * 2.0, fogNoiseAmount), 0.0);
       sigma *= mix(1.0, smoothstep(FOG_BANK_LOW, FOG_BANK_HIGH, n.g) * 2.0, fogBankAmount);
     }
-    if (sigma > 0.0 && fogIndoor < 1.0 && roomAt(wp).x > 0) {
-      // no fog inside buildings
-      sigma *= fogIndoor;
+    if (sigma > 0.0 && (fogIndoor < 1.0 || fogOpenCount > 0)) {
+      int room = roomAt(wp).x;
+      if (room > 0) {
+        stepRoom[i] = room;
+        // no fog inside buildings, a little in the ones open to the sky
+        sigma *= fogOpenCount > 0 && roomOpen(room) ? fogIndoorOpen : fogIndoor;
+      }
     }
     if (sigma <= 0.0) {
       continue;
@@ -375,7 +413,7 @@ void main() {
     weight[i] = scattered * (1.0 - far) / dt;
     trans *= stepTrans;
   }
-  vec3 lamps = glow ? pointGlow(px, dir, t0, dt, steps, weight) : vec3(0.0);
+  vec3 lamps = glow ? pointGlow(px, dir, t0, dt, steps, weight, stepRoom) : vec3(0.0);
 
   // Limit how much of the view the fog hides where the ray ends. The flat glow shrinks with the cover; the light
   // from the sun and the lamps mostly stays, so thick fog still shows where it is lit.

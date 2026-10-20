@@ -27,6 +27,8 @@ class VolumetricFog
 	private static final float NEAR_FADE_TILES = 7;
 	// density left inside building rooms with "No fog indoors": a trace, so a doorway doesn't cut it off sharply
 	static final float INDOOR_DENSITY = 0.03f;
+	// and in rooms whose roof is hidden, open to the sky: enough for their lamps to glow in it
+	static final float OPEN_INDOOR_DENSITY = 0.25f;
 
 	// Per-area overrides for an environment system: multipliers on the configured values, and a color tint
 	// on the fog's ambient light. 1 leaves the config as it is.
@@ -39,7 +41,7 @@ class VolumetricFog
 	WeatherField weatherField;
 	float weatherFog = 1;
 	private int uniFieldRect, uniFieldFog;
-	private int uniIndoor, uniWaterEnabled, uniWaterGrid;
+	private int uniIndoor, uniIndoorOpen, uniOpenRooms, uniOpenCount, uniWaterEnabled, uniWaterGrid;
 	private int waterUnit, groundUnit;
 	// the terrain the fog lies on: built when a scene loads (any thread), uploaded when it swaps in
 	private FogGround pendingGround;
@@ -47,6 +49,8 @@ class VolumetricFog
 	private int texGround;
 	// density left inside building rooms (fog_frag.glsl), and the scene's water to stop the rays at
 	float indoorFactor = 1;
+	// the rooms whose roof is hidden (OpenRooms): lit by their own lamps and thicker than the other rooms
+	OpenRooms openRooms;
 	int waterTexture;
 
 	// the values the pass uses this frame, in world units
@@ -128,6 +132,9 @@ class VolumetricFog
 		uniFieldFog = glGetUniformLocation(program, "weatherFieldFog");
 		glUniform1i(glGetUniformLocation(program, "weatherField"), weatherFieldUnit);
 		uniIndoor = glGetUniformLocation(program, "fogIndoor");
+		uniIndoorOpen = glGetUniformLocation(program, "fogIndoorOpen");
+		uniOpenRooms = glGetUniformLocation(program, "fogOpenRooms");
+		uniOpenCount = glGetUniformLocation(program, "fogOpenCount");
 		uniWaterEnabled = glGetUniformLocation(program, "waterEnabled");
 		uniWaterGrid = glGetUniformLocation(program, "waterGrid");
 		glUniform1i(glGetUniformLocation(program, "waterData"), waterUnit);
@@ -329,6 +336,13 @@ class VolumetricFog
 		}
 
 		glUniform1f(uniIndoor, indoorFactor);
+		glUniform1f(uniIndoorOpen, Math.max(indoorFactor, OPEN_INDOOR_DENSITY));
+		OpenRooms open = openRooms;
+		glUniform1i(uniOpenCount, open != null ? open.count() : 0);
+		if (open != null && open.count() > 0)
+		{
+			glUniform4iv(uniOpenRooms, open.bits);
+		}
 		glUniform1i(uniWaterEnabled, waterTexture != 0 ? 1 : 0);
 		if (waterTexture != 0)
 		{

@@ -58,6 +58,24 @@ ivec3 roomPlaneAt(vec3 w) {
   return ivec3(room, soft && porch > 0 ? porch + ROOM_SOFT : porch, plane);
 }
 
+// World y of the floor of the storey a point w is on, w itself when it is off the map
+float roomFloorY(vec3 w) {
+  vec4 h = texelFetch(lightData, ROOM_BASE);
+  int size = int(h.y);
+  ivec2 t = ivec2(floor(w.xz / 128.0)) + int(h.z);
+  if (h.x < 0.5 || any(lessThan(t, ivec2(0))) || any(greaterThanEqual(t, ivec2(size)))) {
+    return w.y;
+  }
+  vec4 floors = texelFetch(lightData, ROOM_BASE + 2 + (t.x * size + t.y) * 2);
+  float y = floors[0];
+  for (int k = 1; k < 4; ++k) {
+    if (w.y <= floors[k] - ROOM_PLANE_MARGIN) {
+      y = floors[k];
+    }
+  }
+  return y;
+}
+
 ivec2 roomAt(vec3 w) {
   return roomPlaneAt(w).xy;
 }

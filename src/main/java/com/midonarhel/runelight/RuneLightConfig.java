@@ -1396,6 +1396,19 @@ public interface RuneLightConfig extends Config
 		return true;
 	}
 
+	@ConfigItem(
+		keyName = "openRoofFog",
+		name = "Hidden roofs open the fog",
+		description = "A building whose roof is hidden lets its lamps shine up over the walls into the fog, and the "
+			+ "fog comes back inside it, thinly.",
+		section = roomsSection,
+		position = 753
+	)
+	default boolean openRoofFog()
+	{
+		return true;
+	}
+
 	@ConfigSection(
 		name = "Skylight and light occlusion",
 		description = "Light from the sky and from lamps stops where the scenery and the walls block it",

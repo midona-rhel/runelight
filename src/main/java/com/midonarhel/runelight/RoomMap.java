@@ -486,6 +486,12 @@ final class RoomMap
 		return a != 0 && b != 0 && a != ANY ? c : -c;
 	}
 
+	/** The room a light with this code is in (0 outdoors, ANY for every room). */
+	static int roomOf(float code)
+	{
+		return (int) ((Math.abs(code) - 1) % 4096);
+	}
+
 	/** Whether a light with this code is indoors: it lights only building rooms. */
 	static boolean indoor(float code)
 	{
