@@ -30,10 +30,32 @@ final class WeatherField
 	static final int BLUR = 2;
 	private static final float[] KERNEL = {1, 2, 3, 2, 1};
 
-	// channels of the eased state
-	static final int COVER = 0, RAIN = 1, SNOW = 2, FOG = 3, WET = 4, SNOW_COVER = 5, CHANNELS = 6;
-	// targets past the channels: the type's buildup rates and frost (not eased, not uploaded)
-	static final int WET_RATE = CHANNELS, SNOW_RATE = CHANNELS + 1, FROST = CHANNELS + 2, TARGETS = CHANNELS + 3;
+	// channels of the eased state; the first six are uploaded as textures (8 bits)
+	static final int COVER = 0, RAIN = 1, SNOW = 2, FOG = 3, WET = 4, SNOW_COVER = 5, GPU_CHANNELS = 6;
+	// the rest only the player's weather reads, at the focus: the fog's height and the region's humidity, the area
+	// fog and distance fog weights, storm, how snowy the overcast is, wind and gustiness, showers, then the type's
+	// look: clouds (wisp, dark), light (sun - 1, haze, warmth, sky saturation), fog tint, rain drops (length, speed,
+	// width, alpha, slant) and flakes (size, speed, sway, wind, color)
+	static final int FOG_HEIGHT = 6, HUMIDITY = 7, AREA_FOG = 8, DISTANCE_FOG = 9, STORM = 10, SNOWINESS = 11, WIND = 12,
+		GUSTINESS = 13, SHOWERS = 14, CLOUD_WISP = 15, CLOUD_DARK = 16, LIGHT = 17, FOG_TINT = 21, RAIN_STYLE = 24,
+		FLAKE_STYLE = 29, CHANNELS = 36;
+	// targets past the channels: the type's buildup rates and frost, and how white its sky is (not eased)
+	static final int WET_RATE = CHANNELS, SNOW_RATE = CHANNELS + 1, FROST = CHANNELS + 2, SKY_WHITE = CHANNELS + 3,
+		TARGETS = CHANNELS + 4;
+	// easing time constant per channel past the GPU's, seconds; 0 follows the target at once (Wind eases the wind)
+	private static final float[] SECONDS = new float[CHANNELS];
+
+	static
+	{
+		for (int c = FOG_HEIGHT; c < CHANNELS; ++c)
+		{
+			SECONDS[c] = Weather.CLOUD_SECONDS;
+		}
+		SECONDS[FOG_HEIGHT] = SECONDS[HUMIDITY] = SECONDS[AREA_FOG] = SECONDS[DISTANCE_FOG] = Weather.FOG_SECONDS;
+		SECONDS[STORM] = Weather.STORM_SECONDS;
+		SECONDS[SHOWERS] = Weather.PRECIP_SECONDS;
+		SECONDS[WIND] = SECONDS[GUSTINESS] = 0;
+	}
 
 	// biome name of cells without a sky
 	static final String NO_SKY = "CAVE";
@@ -54,6 +76,7 @@ final class WeatherField
 	// [channel][cell], cell = z * sizeX + x
 	private float[][] state = new float[CHANNELS][0];
 	private final float[] target = new float[TARGETS];
+	private final float[] noSky = new float[TARGETS];
 	// this update's targets and weather per biome
 	private final Map<String, float[]> byBiome = new HashMap<>();
 	private final Map<String, WeatherType> typeByBiome = new HashMap<>();
@@ -76,6 +99,10 @@ final class WeatherField
 	// the field at the player, and the player's own weather values the deltas are added to
 	private final float[] focus = new float[CHANNELS];
 	private float focusX, focusZ;
+	// the weather most of the field at the player is, for what is shown by name
+	private WeatherType focusType;
+	private final int[] corner = new int[4];
+	private final float[] cornerWeight = new float[4];
 
 	/**
 	 * Lay the cells over a newly loaded scene. Cells that cover a chunk the previous layout also covered keep their
@@ -161,6 +188,8 @@ final class WeatherField
 		this.enabled = enabled;
 		int n = sizeX * sizeZ;
 		boolean snap = !initialized || !gradual;
+		targets(WeatherType.clear(), null, scale, false, hour, noSky);
+		noSky[COVER] = noSky[RAIN] = noSky[SNOW] = noSky[FROST] = noSky[SHOWERS] = 0;
 		byBiome.clear();
 		groundByBiome.clear();
 		anything = false;
@@ -185,16 +214,18 @@ final class WeatherField
 			else
 			{
 				types[i] = null;
-				target[COVER] = target[RAIN] = target[SNOW] = target[FROST] = 0;
-				target[FOG] = WeatherType.clear().fog;
-				target[WET_RATE] = target[SNOW_RATE] = 1;
+				System.arraycopy(noSky, 0, target, 0, TARGETS);
 			}
 			if (snap || !hasState[i])
 			{
-				for (int c = COVER; c <= FOG; ++c)
+				for (int c = 0; c < CHANNELS; ++c)
 				{
-					state[c][i] = target[c];
+					if (c != WET && c != SNOW_COVER && c != SNOWINESS)
+					{
+						state[c][i] = target[c];
+					}
 				}
+				state[SNOWINESS][i] = WeatherType.whiteness(target[SKY_WHITE], target[RAIN], target[SNOW], state[SNOWINESS][i]);
 				state[WET][i] = target[RAIN] > 0 ? 1 : snap && gradual ? state[WET][i] : 0;
 				float kept = snap && gradual ? state[SNOW_COVER][i] : 0;
 				state[SNOW_COVER][i] = target[SNOW] > 0 && target[SNOW_RATE] > 0 ? 1 : Math.max(kept, target[FROST]);
@@ -233,10 +264,14 @@ final class WeatherField
 			cover = Math.max(cover, type.coverSwell * Math.min(1, Weather.COVER_BASE + Weather.COVER_SLOPE * (rain + snow)));
 		}
 		float fog = type.fog;
+		float fogHeight = 1, humidity = 1;
 		if (climate)
 		{
 			FogClimate.Profile p = FogClimate.profile(biome);
-			fog = FogClimate.total(fog, FogClimate.density(p, hour, FogClimate.calm(type), cover));
+			float calm = FogClimate.calm(type);
+			fog = FogClimate.total(fog, FogClimate.density(p, hour, calm, cover));
+			fogHeight = FogClimate.height(p, hour, calm, cover);
+			humidity = p.humidity;
 		}
 		else
 		{
@@ -246,12 +281,30 @@ final class WeatherField
 		out[RAIN] = rain;
 		out[SNOW] = snow;
 		out[FOG] = fog;
-		if (out.length >= TARGETS)
-		{
-			out[WET_RATE] = type.wetRate;
-			out[SNOW_RATE] = type.snowRate;
-			out[FROST] = type.frost;
-		}
+		out[FOG_HEIGHT] = fogHeight;
+		out[HUMIDITY] = humidity;
+		out[AREA_FOG] = type.areaFog;
+		out[DISTANCE_FOG] = type.distanceFog;
+		out[STORM] = type.lightning;
+		out[WIND] = type.wind;
+		out[GUSTINESS] = type.gustiness;
+		out[SHOWERS] = type.showers;
+		out[CLOUD_WISP] = type.cloudWisp;
+		out[CLOUD_DARK] = type.cloudDark;
+		set(out, LIGHT, type.sun - 1, type.haze, type.warmth, type.skySaturation);
+		set(out, FOG_TINT, type.fogTint[0], type.fogTint[1], type.fogTint[2]);
+		set(out, RAIN_STYLE, type.dropLength, type.dropSpeed, type.dropWidth, type.dropAlpha, type.slant);
+		set(out, FLAKE_STYLE, type.flakeSize, type.flakeSpeed, type.flakeSway, type.flakeWind, type.flakeColor[0],
+			type.flakeColor[1], type.flakeColor[2]);
+		out[WET_RATE] = type.wetRate;
+		out[SNOW_RATE] = type.snowRate;
+		out[FROST] = type.frost;
+		out[SKY_WHITE] = type.skyWhite;
+	}
+
+	private static void set(float[] out, int first, float... values)
+	{
+		System.arraycopy(values, 0, out, first, values.length);
 	}
 
 	/**
@@ -270,9 +323,20 @@ final class WeatherField
 		s[SNOW][i] = settle(Weather.ease(s[SNOW][i], ts, dt, Weather.PRECIP_SECONDS), ts);
 		s[FOG][i] = Weather.ease(s[FOG][i], t[FOG], dt, Weather.FOG_SECONDS);
 		float rain = s[RAIN][i], snow = s[SNOW][i];
-		float wetRate = t.length >= TARGETS ? t[WET_RATE] : 1;
-		float snowRate = t.length >= TARGETS ? t[SNOW_RATE] : 1;
-		float frost = t.length >= TARGETS ? t[FROST] : 0;
+		for (int c = FOG_HEIGHT; c < CHANNELS; ++c)
+		{
+			if (c != SNOWINESS)
+			{
+				s[c][i] = SECONDS[c] > 0 ? Weather.ease(s[c][i], t[c], dt, SECONDS[c]) : t[c];
+			}
+		}
+		// the overcast whitens with what falls, and keeps its color when nothing does
+		if (t[SKY_WHITE] >= 0 || rain + snow > Weather.PRECIP_EPSILON)
+		{
+			s[SNOWINESS][i] = Weather.ease(s[SNOWINESS][i], WeatherType.whiteness(t[SKY_WHITE], rain, snow, s[SNOWINESS][i]),
+				dt, Weather.PRECIP_SECONDS);
+		}
+		float wetRate = t[WET_RATE], snowRate = t[SNOW_RATE], frost = t[FROST];
 		s[WET][i] = rain > 0.02f
 			? Math.min(1, s[WET][i] + dt / Weather.WET_BUILD_SECONDS * Math.min(1, rain * 2) * wetRate)
 			: Math.max(0, s[WET][i] - dt / Weather.DRY_SECONDS);
@@ -297,7 +361,7 @@ final class WeatherField
 		return target == 0 && v < 0.003f ? 0 : v;
 	}
 
-	/** Separable blur of every channel into {@link #smooth}, quantized to the textures' 8 bits. */
+	/** Separable blur of every channel into {@link #smooth}; the textures' channels quantized to their 8 bits. */
 	private void blur()
 	{
 		int n = sizeX * sizeZ;
@@ -335,8 +399,12 @@ final class WeatherField
 						sum += KERNEL[k + BLUR] * tmp[zz * sizeX + x];
 						w += KERNEL[k + BLUR];
 					}
-					int q = Math.round(Math.max(0, Math.min(1, sum / w / range)) * 255);
-					smooth[c][z * sizeX + x] = q / 255f * range;
+					float v = sum / w;
+					if (c < GPU_CHANNELS)
+					{
+						v = Math.round(Math.max(0, Math.min(1, v / range)) * 255) / 255f * range;
+					}
+					smooth[c][z * sizeX + x] = v;
 				}
 			}
 		}
@@ -391,6 +459,55 @@ final class WeatherField
 	}
 
 	/**
+	 * The weather with the largest share of the bilinear blend at a position: the same four cells and weights as
+	 * {@link #sample}. Null without a sky or a field.
+	 */
+	private WeatherType dominant(float x, float z)
+	{
+		if (sizeX == 0 || sizeZ == 0)
+		{
+			return null;
+		}
+		float cx = Math.max(0, Math.min(sizeX - 1, (x - originX) / CELL - 0.5f));
+		float cz = Math.max(0, Math.min(sizeZ - 1, (z - originZ) / CELL - 0.5f));
+		int x0 = Math.min((int) cx, sizeX - 1), z0 = Math.min((int) cz, sizeZ - 1);
+		int x1 = Math.min(x0 + 1, sizeX - 1), z1 = Math.min(z0 + 1, sizeZ - 1);
+		float fx = cx - x0, fz = cz - z0;
+		corner[0] = z0 * sizeX + x0;
+		corner[1] = z0 * sizeX + x1;
+		corner[2] = z1 * sizeX + x0;
+		corner[3] = z1 * sizeX + x1;
+		cornerWeight[0] = (1 - fx) * (1 - fz);
+		cornerWeight[1] = fx * (1 - fz);
+		cornerWeight[2] = (1 - fx) * fz;
+		cornerWeight[3] = fx * fz;
+		WeatherType best = null;
+		float bestWeight = -1;
+		for (int i = 0; i < 4; ++i)
+		{
+			WeatherType t = types[corner[i]];
+			if (t == null)
+			{
+				continue;
+			}
+			float w = 0;
+			for (int j = 0; j < 4; ++j)
+			{
+				if (types[corner[j]] == t)
+				{
+					w += cornerWeight[j];
+				}
+			}
+			if (w > bestWeight)
+			{
+				bestWeight = w;
+				best = t;
+			}
+		}
+		return best;
+	}
+
+	/**
 	 * Highest value of a channel over the cells within {@code half} world units (square) of a point: how much rain
 	 * or snow there is anywhere the particles reach.
 	 */
@@ -433,6 +550,7 @@ final class WeatherField
 		{
 			focus[c] = sample(c, x, z);
 		}
+		focusType = dominant(x, z);
 		// the cloud array: cover differences at its own cell centers, at most CLOUD_CELLS a side over the scene
 		cloudCellsX = Math.min(sizeX, CLOUD_CELLS);
 		cloudCellsZ = Math.min(sizeZ, CLOUD_CELLS);
@@ -467,6 +585,18 @@ final class WeatherField
 	float getFocus(int channel)
 	{
 		return focus[channel];
+	}
+
+	/** {@code out.length} channels from {@code first}: a vector of the look (light, tint, styles). */
+	void getFocus(int first, float[] out)
+	{
+		System.arraycopy(focus, first, out, 0, out.length);
+	}
+
+	/** The weather that dominates at the player, null when none of the nearby cells has a sky. */
+	WeatherType getFocusType()
+	{
+		return focusType;
 	}
 
 	float getFocusX()

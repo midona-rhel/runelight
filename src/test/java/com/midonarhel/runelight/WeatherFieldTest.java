@@ -25,6 +25,11 @@ public class WeatherFieldTest
 	/** Cells west of {@code split} (in world chunks) are rainy; the scene starts {@code shift} chunks east. */
 	private static void layout(WeatherField f, int split, int shift)
 	{
+		layout(f, split, shift, "WET", null);
+	}
+
+	private static void layout(WeatherField f, int split, int shift, String west, String east)
+	{
 		long[] keys = new long[N * N];
 		String[] biomes = new String[N * N];
 		for (int z = 0; z < N; ++z)
@@ -33,7 +38,7 @@ public class WeatherFieldTest
 			{
 				int wx = x + shift;
 				keys[z * N + x] = WeatherField.chunkKey(wx * 8, z * 8);
-				biomes[z * N + x] = wx < split ? "WET" : null;
+				biomes[z * N + x] = wx < split ? west : east;
 			}
 		}
 		f.layout(N, N, (shift - 11) * WeatherField.CELL, -11 * WeatherField.CELL, keys, biomes);
@@ -236,6 +241,113 @@ public class WeatherFieldTest
 		WeatherType showers = WeatherTestData.type("SPRING_SHOWERS");
 		WeatherField.targets(showers, null, 0.6f, false, 12, t);
 		assertTrue(t[WeatherField.RAIN] < showers.rain * 0.8f);
+	}
+
+	// a swamp in a thunderstorm west of a desert in a sandstorm: nearly every quantity differs
+	private static final Function<String, WeatherType> STORM_AND_DUST = b -> "SWAMP".equals(b)
+		? WeatherTestData.type("THUNDERSTORM") : WeatherTestData.type("SANDSTORM");
+
+	@Test
+	public void everyChannelIsContinuousAcrossABorder()
+	{
+		WeatherField f = new WeatherField();
+		layout(f, 12, 0, "SWAMP", "DESERT");
+		f.update(true, STORM_AND_DUST, 0.6f, true, true, 6.5, 0);
+		float x0 = f.getOriginX() + center(2), z = f.getOriginZ() + center(10);
+		int tiles = (int) ((center(21) - center(2)) / 128);
+		float[][] v = new float[WeatherField.CHANNELS][tiles + 1];
+		for (int i = 0; i <= tiles; ++i)
+		{
+			f.focus(x0 + i * 128, z);
+			for (int c = 0; c < WeatherField.CHANNELS; ++c)
+			{
+				v[c][i] = f.getFocus(c);
+			}
+		}
+		int changing = 0;
+		for (int c = 0; c < WeatherField.CHANNELS; ++c)
+		{
+			float lo = Float.MAX_VALUE, hi = -Float.MAX_VALUE, steepest = 0;
+			for (int i = 0; i <= tiles; ++i)
+			{
+				lo = Math.min(lo, v[c][i]);
+				hi = Math.max(hi, v[c][i]);
+				if (i > 0)
+				{
+					steepest = Math.max(steepest, Math.abs(v[c][i] - v[c][i - 1]));
+				}
+			}
+			// the textures' channels are 8 bits; the blur spreads a step over 40 tiles, 1/24 of it at the steepest
+			float quantum = c >= WeatherField.GPU_CHANNELS ? 0 : (c == WeatherField.FOG ? WeatherField.FOG_RANGE : 1) / 255f;
+			assertTrue("channel " + c + " jumps " + steepest + " of " + (hi - lo), steepest <= (hi - lo) / 20 + quantum);
+			changing += hi - lo > 0.01f ? 1 : 0;
+		}
+		// and the two places really differ in most of them
+		assertTrue("only " + changing + " channels differ", changing >= 20);
+	}
+
+	@Test
+	public void theTypeShownIsTheDominantOne()
+	{
+		WeatherField f = new WeatherField();
+		layout(f, 12, 0, "SWAMP", "DESERT");
+		f.update(true, STORM_AND_DUST, 0.6f, true, true, 6.5, 0);
+		float z = f.getOriginZ() + center(10);
+		f.focus(f.getOriginX() + center(9), z);
+		assertEquals(WeatherTestData.type("THUNDERSTORM"), f.getFocusType());
+		f.focus(f.getOriginX() + center(14), z);
+		assertEquals(WeatherTestData.type("SANDSTORM"), f.getFocusType());
+	}
+
+	@Test
+	public void aRegionsWeatherChangeEasesEveryChannel()
+	{
+		WeatherField f = new WeatherField();
+		layout(f, -1, 0, "SWAMP", "DESERT");
+		f.update(true, b -> CLEAR, 0.6f, true, true, 13, 0);
+		layout(f, 12, 0, "SWAMP", "DESERT");
+		f.update(true, b -> CLEAR, 0.6f, true, true, 13, 0);
+		float x = f.getOriginX() + center(3), z = f.getOriginZ() + center(10);
+		f.focus(x, z);
+		float[] before = new float[WeatherField.CHANNELS];
+		for (int c = 0; c < WeatherField.CHANNELS; ++c)
+		{
+			before[c] = f.getFocus(c);
+		}
+		WeatherType storm = WeatherTestData.type("THUNDERSTORM");
+		Function<String, WeatherType> types = b -> storm;
+		float[] t = new float[WeatherField.TARGETS];
+		WeatherField.targets(storm, "SWAMP", 0.6f, true, 13, t);
+		f.update(true, types, 0.6f, true, true, 13, 0.25f);
+		f.focus(x, z);
+		float[] soon = new float[WeatherField.CHANNELS];
+		for (int c = 0; c < WeatherField.CHANNELS; ++c)
+		{
+			soon[c] = f.getFocus(c);
+		}
+		for (int i = 0; i < 4 * 60 * 4; ++i)
+		{
+			f.update(true, types, 0.6f, true, true, 13, 0.25f);
+		}
+		f.focus(x, z);
+		int eased = 0;
+		for (int c = WeatherField.FOG; c < WeatherField.CHANNELS; ++c)
+		{
+			float delta = t[c] - before[c];
+			if (c == WeatherField.WET || c == WeatherField.SNOW_COVER || c == WeatherField.SNOWINESS
+				|| c == WeatherField.WIND || c == WeatherField.GUSTINESS || Math.abs(delta) < 0.05f)
+			{
+				continue;
+			}
+			// a little way after a quarter second, there after minutes
+			float quantum = c >= WeatherField.GPU_CHANNELS ? 0 : (c == WeatherField.FOG ? WeatherField.FOG_RANGE : 1) / 255f;
+			assertTrue("channel " + c + " jumped", Math.abs(soon[c] - before[c]) <= 0.08f * Math.abs(delta) + quantum);
+			assertEquals("channel " + c, t[c], f.getFocus(c), 0.02f * Math.max(1, Math.abs(t[c])));
+			++eased;
+		}
+		assertTrue("only " + eased + " channels eased", eased >= 8);
+		// the wind is eased by Wind and gets the new value at once
+		assertEquals(storm.wind, f.getFocus(WeatherField.WIND), 0.01f);
 	}
 
 	@Test

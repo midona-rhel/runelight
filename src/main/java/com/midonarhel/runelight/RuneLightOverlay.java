@@ -153,7 +153,10 @@ class RuneLightOverlay extends OverlayPanel
 		Climate.Region region = plugin.getClimateRegion();
 		if (mode == WeatherMode.AUTOMATIC)
 		{
-			line("Weather", (region != null ? region.type : forecast.getCurrent()).toString(), Color.CYAN);
+			// with the field, the weather that dominates where the player stands
+			WeatherType shown = weather.getField().isEnabled() ? weather.getType()
+				: region != null ? region.type : forecast.getCurrent();
+			line("Weather", shown.toString(), Color.CYAN);
 		}
 		else
 		{
