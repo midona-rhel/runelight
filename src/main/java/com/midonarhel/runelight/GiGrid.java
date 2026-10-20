@@ -64,6 +64,12 @@ final class GiGrid
 	 */
 	static GiGrid assemble(GiVoxels.Zone[] zones, int[] zoneX, int[] zoneZ, int baseZone)
 	{
+		return assemble(zones, zoneX, zoneZ, baseZone, null);
+	}
+
+	/** As above, with the water's surface (GiWater, may be null) as one more layer of voxels. */
+	static GiGrid assemble(GiVoxels.Zone[] zones, int[] zoneX, int[] zoneZ, int baseZone, GiWater water)
+	{
 		int perZone = 8 * 128 / VOXEL;
 		int lo = Integer.MAX_VALUE, hi = Integer.MIN_VALUE;
 		for (int i = 0; i < zones.length; ++i)
@@ -85,6 +91,14 @@ final class GiGrid
 				int l = GiVoxels.Zone.layer(key);
 				lo = Math.min(lo, l);
 				hi = Math.max(hi, l);
+			}
+		}
+		for (int i = 0; water != null && i < water.type.length; ++i)
+		{
+			if (water.type[i] != WaterMap.NONE)
+			{
+				lo = Math.min(lo, water.layer(i));
+				hi = Math.max(hi, water.layer(i));
 			}
 		}
 		if (lo > hi)
@@ -123,7 +137,46 @@ final class GiGrid
 				g.cells[idx] = g.cells[idx] == 0 ? cell : merge(g.cells[idx], cell);
 			}
 		}
+		if (water != null)
+		{
+			addWater(g, water);
+		}
 		return g;
+	}
+
+	// The surface faces up (y down), over the voxel columns of every water tile; what already fills a voxel (a pier,
+	// a post, the bank) stays.
+	private static void addWater(GiGrid g, GiWater water)
+	{
+		int perTile = 128 / VOXEL;
+		float[] rgb = new float[3];
+		int[] cellOfType = new int[7];
+		for (int t = 1; t < cellOfType.length; ++t)
+		{
+			GiWater.albedo(t, rgb);
+			cellOfType[t] = pack(1, rgb[0], rgb[1], rgb[2], 0, -1, 0);
+		}
+		for (int i = 0; i < water.type.length; ++i)
+		{
+			int type = water.type[i];
+			int y = water.layer(i) - g.layer0;
+			if (type == WaterMap.NONE || y < 0 || y >= g.ny)
+			{
+				continue;
+			}
+			int tx = i % GiProbes.SIZE, tz = i / GiProbes.SIZE;
+			for (int dz = 0; dz < perTile; ++dz)
+			{
+				for (int dx = 0; dx < perTile; ++dx)
+				{
+					int idx = g.index(tx * perTile + dx, y, tz * perTile + dz);
+					if (g.cells[idx] == 0)
+					{
+						g.cells[idx] = cellOfType[type];
+					}
+				}
+			}
+		}
 	}
 
 	static int pack(float w, float r, float gr, float b, float nx, float ny, float nz)

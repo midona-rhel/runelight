@@ -1965,6 +1965,12 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		return config.proceduralSky() && !frameHasSkybox && !frameSkyVoid;
 	}
 
+	/** Whether the probes carry only the bounced light: the skylight mode has the sky's own. */
+	private boolean giBounceOnly()
+	{
+		return config.lightingModel() == LightingModel.SKYLIGHT_GI;
+	}
+
 	/** Whether the probes run: on, and the lighting model uses them. */
 	private boolean giEnabled()
 	{
@@ -2618,7 +2624,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		WorldView wv = client.getTopLevelWorldView();
 		Scene scene = wv != null ? wv.getScene() : null;
 		weather.getOvercast(giOvercast);
-		int settings = java.util.Objects.hash(config.giSunBounce(), config.skyCache(), Math.round(giOvercast[0] * 20),
+		int settings = java.util.Objects.hash(config.giSunBounce(), giBounceOnly(), config.skyCache(), Math.round(giOvercast[0] * 20),
 			Math.round(giOvercast[1] * 10), Math.round(giOvercast[3] * 10), Math.round(giOvercast[4] * 10),
 			Math.round(giOvercast[5] * 10), Math.round(giOvercast[6] * 10));
 		try
@@ -2626,7 +2632,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 			int builds = globalIllumination.builds();
 			int shown = globalIllumination.shownBuild();
 			globalIllumination.prepare(giEnabled(), frameOutdoors, scene, root != null ? root.zones : null,
-				dayCycle, skyCache.getCaptures(), settings, GI_PROBE_UNIT);
+				clientUploader.water, dayCycle, skyCache.getCaptures(), settings, GI_PROBE_UNIT);
 			if (builds != globalIllumination.builds())
 			{
 				hitchMonitor.job(HitchMonitor.GI_BUILD);
@@ -2743,7 +2749,8 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		{
 			// the sky cache is bound now; the probes are relit with its light
 			gpuTimer.begin(GpuTimer.GI);
-			globalIllumination.afterSky(dayCycle, giOvercast, skyCache.getLightWeight(), config.giSunBounce());
+			globalIllumination.afterSky(dayCycle, giOvercast, skyCache.getLightWeight(), config.giSunBounce(),
+				giBounceOnly());
 		}
 		gpuTimer.end();
 

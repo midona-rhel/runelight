@@ -134,6 +134,17 @@ final class GiRelight
 	 */
 	static float[] relight(GiProbes p, Light light, float[] prev, int iterations, GiProbes.ParallelFor parallel)
 	{
+		return relight(p, light, prev, iterations, parallel, null);
+	}
+
+	/**
+	 * As {@link #relight(GiProbes, Light, float[], int, GiProbes.ParallelFor)}; with bounceOut given, bounceOut[0]
+	 * receives the same probes' light from the rays that hit surfaces only, with none of the sky's own: what the
+	 * skylight mode adds to its plain ambient and sky light.
+	 */
+	static float[] relight(GiProbes p, Light light, float[] prev, int iterations, GiProbes.ParallelFor parallel,
+		float[][] bounceOut)
+	{
 		float k = skyScale(light, p.directions);
 		float[][] skyRays = new float[GiSh.ROTATIONS][GiSh.RAYS * 3];
 		float[] rgb = new float[3];
@@ -179,6 +190,7 @@ final class GiRelight
 		{
 			float[] last = out;
 			float[] cur = new float[GiProbes.PROBES * 12];
+			float[] curBounce = bounceOut != null ? new float[GiProbes.PROBES * 12] : null;
 			// light leaving each one-sided hit voxel
 			parallel.run(p.hits, h ->
 			{
@@ -202,6 +214,7 @@ final class GiRelight
 					return;
 				}
 				GiSh.Accumulator acc = new GiSh.Accumulator();
+				GiSh.Accumulator surfaces = curBounce != null ? new GiSh.Accumulator() : null;
 				int rot = GiSh.rotation(i);
 				float[] d = p.directions[rot];
 				float[] sr = skyRays[rot];
@@ -213,14 +226,27 @@ final class GiRelight
 					if (code == GiProbes.MISS)
 					{
 						acc.add(dx, dy, dz, sr[r * 3], sr[r * 3 + 1], sr[r * 3 + 2]);
+						if (surfaces != null)
+						{
+							// the sky is no surface, but its ray still counts toward the average
+							surfaces.addDark();
+						}
 					}
 					else if (code == GiProbes.BACK)
 					{
 						acc.addDark();
+						if (surfaces != null)
+						{
+							surfaces.addDark();
+						}
 					}
 					else if (!p.hitTwoSided[code])
 					{
 						acc.add(dx, dy, dz, radiance[code * 3], radiance[code * 3 + 1], radiance[code * 3 + 2]);
+						if (surfaces != null)
+						{
+							surfaces.add(dx, dy, dz, radiance[code * 3], radiance[code * 3 + 1], radiance[code * 3 + 2]);
+						}
 					}
 					else
 					{
@@ -234,12 +260,25 @@ final class GiRelight
 							eg += GiSh.eval(last, b * 12, 1, -dx, -dy, -dz);
 							eb += GiSh.eval(last, b * 12, 2, -dx, -dy, -dz);
 						}
-						acc.add(dx, dy, dz, p.hitAlbedo[code * 3] * er, p.hitAlbedo[code * 3 + 1] * eg, p.hitAlbedo[code * 3 + 2] * eb);
+						float tr = p.hitAlbedo[code * 3] * er, tg = p.hitAlbedo[code * 3 + 1] * eg, tb = p.hitAlbedo[code * 3 + 2] * eb;
+						acc.add(dx, dy, dz, tr, tg, tb);
+						if (surfaces != null)
+						{
+							surfaces.add(dx, dy, dz, tr, tg, tb);
+						}
 					}
 				}
 				acc.finish(cur, i * 12);
+				if (surfaces != null)
+				{
+					surfaces.finish(curBounce, i * 12);
+				}
 			});
 			out = cur;
+			if (bounceOut != null)
+			{
+				bounceOut[0] = curBounce;
+			}
 		}
 		return out;
 	}
