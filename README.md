@@ -174,7 +174,10 @@ further bounces, a few tens of milliseconds on the worker whenever the sky or th
 blends in over a few seconds. The AO pass looks the probes up at half resolution (`gi.glsl`) and the composite
 uses the result instead of its plain ambient and sky light, keeping a floor of the latter (Shade floor). Debug view
 "Global illumination" shows the indirect light alone. Outside the base scene and underground the plain ambient
-light stays.
+light stays. The water surface joins the voxels as a layer of blue-green ones at its height (`GiWater.java`, from the
+water map), and the sunk bed under it is left out of the capture, so water bounces its color onto the shores and
+nothing bounces from under it. Hit voxels' colors are pushed 1.5 times further from gray (`GiProbes.ALBEDO_SATURATION`),
+which area averaging and textures pull toward it.
 
 ## Skylight and light occlusion
 
@@ -182,7 +185,9 @@ Plugin config, Skylight and light occlusion section. Lighting model Skylight (de
 top-down depth map of the scenery around the player (`SkyOcclusion.java`, the weather's occlusion map kept while
 needed): the AO pass reads it in a ring of directions around each pixel and turns the horizon's slope into how much
 sky the pixel sees (`skylight_ao.glsl`, in the half resolution shadow target's alpha), and the composite scales the
-ambient and sky light by it (`light_occlusion.glsl`). "Skylight + GI bounce" adds what the probes find beyond it.
+ambient and sky light by it (`light_occlusion.glsl`). "Skylight + GI bounce" adds, in color, the light the probes find bounced off surfaces (the probes then carry only the
+rays that hit something, no sky), keeping `BOUNCE_BRIGHTNESS` of its brightness so the exposure stays near the plain
+skylight's while the shade takes the colors of the ground and water beside it.
 Debug view "Skylight" shows it.
 
 Walls (`WallMap.java`) come from the collision map's line-of-sight edges plus the diagonal wall objects; rooms split

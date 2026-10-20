@@ -36,6 +36,10 @@ final class GiProbes
 	static final float ROOF_SEARCH = 16 * TILE;
 	// meta's roof for columns that aren't indoors: below everything (y down)
 	static final float NO_ROOF = 131072;
+	// The hit voxels' colors are pushed this far from their gray: a voxel averages the colors of everything in it,
+	// the texture detail included, which pulls them toward gray, and light that bounces twice keeps the surfaces'
+	// colors squared. The bounce is what carries the colors of the ground and the water into the shade.
+	static final float ALBEDO_SATURATION = 1.5f;
 	// ray results other than a hit voxel
 	static final int MISS = -1, BACK = -2;
 
@@ -268,10 +272,7 @@ final class GiProbes
 			}
 			int cell = grid.cells[c];
 			hitCell[h] = c;
-			for (int k = 0; k < 3; ++k)
-			{
-				hitAlbedo[h * 3 + k] = GiGrid.albedo(cell, k);
-			}
+			saturate(GiGrid.albedo(cell, 0), GiGrid.albedo(cell, 1), GiGrid.albedo(cell, 2), hitAlbedo, h * 3);
 			float[] nn = GiGrid.normal(cell);
 			System.arraycopy(nn, 0, hitNormal, h * 3, 3);
 			hitTwoSided[h] = GiGrid.twoSided(cell);
@@ -284,6 +285,15 @@ final class GiProbes
 			float wz = hitPos[h * 3 + 2] * GiGrid.VOXEL + nn[2] * 48;
 			hitBounce[h] = nearestProbe(wx, wy, wz);
 		}
+	}
+
+	/** Linear color (r, g, b) moved ALBEDO_SATURATION times as far from its luminance, same luminance, into out[at..]. */
+	static void saturate(float r, float g, float b, float[] out, int at)
+	{
+		float l = GiRelight.luminance(r, g, b);
+		out[at] = Math.max(0, l + (r - l) * ALBEDO_SATURATION);
+		out[at + 1] = Math.max(0, l + (g - l) * ALBEDO_SATURATION);
+		out[at + 2] = Math.max(0, l + (b - l) * ALBEDO_SATURATION);
 	}
 
 	/** The valid probe nearest a world position, looking in its column and then the ones around; -1 if none. */

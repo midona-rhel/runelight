@@ -95,6 +95,11 @@ final class GiCapture
 			{
 				return;
 			}
+			// the water bed lies sunk under the surface, which the grid gets from the water map instead (GiWater)
+			if ((vt[0] & WaterMap.BED_FLAG) != 0)
+			{
+				return;
+			}
 			int color = vc[0] & 0xffff | (vt[0] & 0x3ff) << 16;
 			// wind codes (WindSway) are positive on swaying models, 0 where they stay put; -1 marks ground borders
 			if (vw[0] > 0 && vw[1] > 0 && vw[2] > 0)

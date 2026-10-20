@@ -96,6 +96,7 @@ class GlobalIllumination
 		float[] table;
 		float[] casterDir;
 		boolean bounce;
+		boolean bounceOnly;
 	}
 
 	private int skyProgram, blendProgram;
@@ -136,7 +137,7 @@ class GlobalIllumination
 	private boolean readbackPending;
 	private long fence;
 	private final float[] readbackCasterDir = new float[3];
-	private boolean readbackBounce;
+	private boolean readbackBounce, readbackBounceOnly;
 	private boolean relit;
 	private final float[] lastCasterDir = new float[3];
 	private boolean lastSunIsCaster;
@@ -320,11 +321,12 @@ class GlobalIllumination
 	 * viewport and program; expects a VAO bound.
 	 *
 	 * @param zones the top level scene's zones, [x][z] in extended zone coordinates
+	 * @param water the scene's water map, null with none
 	 * @param settings hash of what else the probes' light depends on
 	 * @param blendUnit, blendUnit + 1: free units for the blend
 	 */
-	void prepare(boolean enabled, boolean outdoors, Scene scene, Zone[][] zones, DayCycle day, int skyCaptures,
-		int settings, int blendUnit)
+	void prepare(boolean enabled, boolean outdoors, Scene scene, Zone[][] zones, WaterMap water, DayCycle day,
+		int skyCaptures, int settings, int blendUnit)
 	{
 		long now = System.currentTimeMillis();
 		float dt = Math.max(0, Math.min(0.1f, (now - weightMillis) / 1000f));
@@ -374,7 +376,7 @@ class GlobalIllumination
 		{
 			buildRequested = false;
 			lastBuildMillis = now;
-			submitBuild(scene, zones);
+			submitBuild(scene, zones, water);
 		}
 		pollReadback();
 
@@ -486,8 +488,10 @@ class GlobalIllumination
 	 * relight if one is wanted and start reading it back. Changes the framebuffer, viewport and program.
 	 *
 	 * @param overcast Weather.getOvercast's 7 values
+	 * @param bounceOnly light the probes with the surfaces' bounced light alone, for the skylight mode that adds it to
+	 *                   its own sky light
 	 */
-	void afterSky(DayCycle day, float[] overcast, float skyCacheWeight, boolean bounce)
+	void afterSky(DayCycle day, float[] overcast, float skyCacheWeight, boolean bounce, boolean bounceOnly)
 	{
 		if (!readbackWanted || readbackPending || skyProgram == 0 || skyFbo == 0)
 		{
@@ -515,6 +519,7 @@ class GlobalIllumination
 		readbackPending = true;
 		System.arraycopy(day.casterDir, 0, readbackCasterDir, 0, 3);
 		readbackBounce = bounce;
+		readbackBounceOnly = bounceOnly;
 	}
 
 	private void pollReadback()
@@ -552,6 +557,7 @@ class GlobalIllumination
 		in.table = table.clone();
 		in.casterDir = readbackCasterDir.clone();
 		in.bounce = readbackBounce;
+		in.bounceOnly = readbackBounceOnly;
 		submit(() -> relight(in));
 	}
 
@@ -751,7 +757,7 @@ class GlobalIllumination
 	}
 
 	/** Copy what the build needs from the scene, on the client thread, and queue it. */
-	private void submitBuild(Scene scene, Zone[][] zones)
+	private void submitBuild(Scene scene, Zone[][] zones, WaterMap waterMap)
 	{
 		int g = ++generation;
 		int baseZone = RuneLightPlugin.SCENE_OFFSET >> 3;
@@ -774,12 +780,13 @@ class GlobalIllumination
 		}
 		GiProbes.Input in = new GiProbes.Input();
 		in.ground = GiProbes.groundHeights(scene.getTileHeights(), RuneLightPlugin.SCENE_OFFSET);
+		GiWater water = GiWater.of(waterMap, scene.getTileHeights(), RuneLightPlugin.SCENE_OFFSET);
 		byte[][][] settings = copy(scene.getExtendedTileSettings());
 		int[][][] roofs = copy(scene.getRoofs());
 		int baseX = scene.getBaseX(), baseY = scene.getBaseY();
 		boolean instance = scene.isInstance();
 		int zones2 = n;
-		submit(() -> build(g, list, zx, zz, zones2, baseZone, in, settings, roofs, baseX, baseY, instance));
+		submit(() -> build(g, list, zx, zz, zones2, baseZone, in, water, settings, roofs, baseX, baseY, instance));
 	}
 
 	private static byte[][][] copy(byte[][][] a)
@@ -818,7 +825,7 @@ class GlobalIllumination
 		return c;
 	}
 
-	private void build(int g, Zone[] list, int[] zx, int[] zz, int n, int baseZone, GiProbes.Input in,
+	private void build(int g, Zone[] list, int[] zx, int[] zz, int n, int baseZone, GiProbes.Input in, GiWater water,
 		byte[][][] settings, int[][][] roofs, int baseX, int baseY, boolean instance)
 	{
 		if (g != generation)
@@ -843,7 +850,7 @@ class GlobalIllumination
 			voxels[i] = z.giVoxels;
 		});
 		long voxelTime = System.nanoTime();
-		GiGrid grid = GiGrid.assemble(voxels, zx, zz, baseZone);
+		GiGrid grid = GiGrid.assemble(voxels, zx, zz, baseZone, water);
 		in.indoor = GiProbes.indoorColumns(BuildingDetector.detect(settings, roofs), RuneLightPlugin.SCENE_OFFSET);
 		GiProbes p = GiProbes.build(grid, in, parallel);
 		probes = p;
@@ -872,7 +879,10 @@ class GlobalIllumination
 		long start = System.nanoTime();
 		boolean first = lastLightGeneration != probesGeneration || lastLight == null;
 		GiRelight.Light light = GiRelight.Light.fromTable(in.table, in.casterDir, in.bounce);
-		float[] sh = GiRelight.relight(p, light, first ? null : lastLight, first ? FIRST_BOUNCES : 1, parallel());
+		float[][] surfaces = in.bounceOnly ? new float[1][] : null;
+		float[] sh = GiRelight.relight(p, light, first ? null : lastLight, first ? FIRST_BOUNCES : 1, parallel(),
+			surfaces);
+		// the next bounces build on the whole light, whichever part is shown
 		lastLight = sh;
 		lastLightGeneration = probesGeneration;
 		Lit l = new Lit();
@@ -881,7 +891,7 @@ class GlobalIllumination
 		l.baseY = probesBaseY;
 		l.instance = probesInstance;
 		l.meta = p.meta;
-		l.texels = texels(sh);
+		l.texels = texels(surfaces != null ? surfaces[0] : sh);
 		lit = l;
 		log.trace("GI relight in {} ms", (System.nanoTime() - start) / 1_000_000);
 	}

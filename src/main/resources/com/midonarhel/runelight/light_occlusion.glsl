@@ -2,7 +2,7 @@
 //
 // Skylight (skylight_ao.glsl): the sky visibility upsampled with the AO scales the ambient and sky light, so
 // interiors, overhangs and the shade under trees darken without the probes; with the probes on too
-// (skylightMode 2) they add only what they find beyond it: light bounced off sunlit surfaces.
+// (skylightMode 2) they add the light bounced off surfaces, with its colors.
 //
 // Point lights: a static light's occlusion grid (LightOcclusion.java) dims it behind walls, and a light under a roof
 // leaves the tops of things open to the sky above it dark: roofs aren't lit from inside. The per-light texel after
@@ -29,12 +29,21 @@ float skyUpsampled = 1.0;
 #define LIGHT_ROOF_FACING_LOW 0.05
 #define LIGHT_ROOF_FACING_HIGH 0.35
 
-// plain: the ambient plus sky light a surface would get under the open sky; gi and giW the probes' light and weight
+// How much of the bounced light's brightness is added on top of the skylight in mode 2: 0 only gives the shade the
+// bounce's color, 1 adds all of it. Less than 1 keeps the exposure the skylight alone has; the colors still show.
+#define BOUNCE_BRIGHTNESS 0.5
+
+// plain: the ambient plus sky light a surface would get under the open sky; gi the probes' light and giW their weight.
+// In mode 2 the probes carry only the light bounced off surfaces (GiRelight, bounceOnly), in color: the sunlit grass
+// that greens the wall in its shade, the red roof that warms the ground beside it, the water that blues its banks.
 vec3 skylightAmbient(vec3 plain, vec3 gi, float giW) {
   float v = skylightOn == 1 ? skyUpsampled : 1.0;
   vec3 s = plain * mix(skylightFloor, 1.0, v);
   if (skylightMode == 2 && giW > 0.0) {
-    s += max(gi - plain * v, 0.0) * giW;
+    vec3 bounce = gi * giW;
+    float lb = overcastLuma(bounce);
+    float ls = overcastLuma(s);
+    s = (s + bounce) * ((ls + BOUNCE_BRIGHTNESS * lb) / max(ls + lb, 1e-4));
   }
   return s;
 }
