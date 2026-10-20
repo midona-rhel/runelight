@@ -431,12 +431,12 @@ void main() {
     causticRB = c.rb - c.g;
   }
 
-  uvec2 packed;
+  uvec2 bits;
   if (waterDebug == 2) {
     // the waves as a relief lit from one side, crests light on one face and dark on the other; foam red
     vec3 c = vec3(clamp(0.5 + 2.5 * dot(slope, vec2(0.7071, 0.7071)), 0.0, 1.0));
     c = mix(c, vec3(1.0, 0.2, 0.1), foam);
-    packed.x = pack01(c.r, 255.0) | pack01(c.g, 255.0) << 8 | pack01(c.b, 255.0) << 16;
+    bits.x = pack01(c.r, 255.0) | pack01(c.g, 255.0) << 8 | pack01(c.b, 255.0) << 16;
   } else if (waterDebug == 1) {
     // type color, flow as stripes that move with it, turbulent water reddens
     const vec3 DEBUG_TYPE[WATER_TYPES] = vec3[](vec3(0.0), vec3(0.2, 0.6, 1.0), vec3(0.0, 0.2, 0.9),
@@ -446,17 +446,17 @@ void main() {
     float stripe = flowSpeed > 1e-3 ? step(0.5, fract(dot(xz / 64.0, dir) - waterTime * tiles * 2.0)) : 0.5;
     vec3 c = mix(DEBUG_TYPE[type], vec3(stripe), 0.35) * mix(0.6, 1.0, energy);
     c = mix(c, vec3(1.0, 0.25, 0.1), turb * 0.6);
-    packed.x = pack01(c.r, 255.0) | pack01(c.g, 255.0) << 8 | pack01(c.b, 255.0) << 16;
+    bits.x = pack01(c.r, 255.0) | pack01(c.g, 255.0) << 8 | pack01(c.b, 255.0) << 16;
   } else {
     // normal x, z (9 bits each), look slot (5: type and the game's texture, Water.java), foam (3), depth (6, square
     // root)
-    packed.x = pack01(nrm.x * 0.5 + 0.5, 511.0) | pack01(nrm.z * 0.5 + 0.5, 511.0) << 9 | uint(vSlot & 31) << 18
+    bits.x = pack01(nrm.x * 0.5 + 0.5, 511.0) | pack01(nrm.z * 0.5 + 0.5, 511.0) << 9 | uint(vSlot & 31) << 18
       | pack01(foam, 7.0) << 23 | pack01(sqrt(nominalDepth(data.r) / 512.0), 63.0) << 26;
   }
   // distance (16 bits), caustics: green -1 to 3 (8 bits), red and blue -0.5 to 0.5 from it (4 bits each)
-  packed.y = pack01(length(vRel) / WATER_REACH, 65535.0) | pack01((caustic + 1.0) / 4.0, 255.0) << 16
+  bits.y = pack01(length(vRel) / WATER_REACH, 65535.0) | pack01((caustic + 1.0) / 4.0, 255.0) << 16
     | pack01(causticRB.x + 0.5, 15.0) << 24 | pack01(causticRB.y + 0.5, 15.0) << 28;
   // never 0, which is no water
-  packed.y = max(packed.y & 0xFFFFu, 1u) | (packed.y & 0xFFFF0000u);
-  WaterOut = uvec4(packed.x & 0xFFFFu, packed.x >> 16, packed.y & 0xFFFFu, packed.y >> 16);
+  bits.y = max(bits.y & 0xFFFFu, 1u) | (bits.y & 0xFFFF0000u);
+  WaterOut = uvec4(bits.x & 0xFFFFu, bits.x >> 16, bits.y & 0xFFFFu, bits.y >> 16);
 }
