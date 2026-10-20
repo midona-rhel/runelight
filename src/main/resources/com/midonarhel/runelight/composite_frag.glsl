@@ -146,15 +146,17 @@ float upsampleAoFog(ivec2 px, float z, vec3 n, out vec4 fog, out float shadow, o
 
 // ---------------------------------------------------------------------------------------------------------------
 // Global illumination (GlobalIllumination.java, gi.glsl): the probes' indirect light, upsampled with the AO, stands
-// in for the plain ambient and sky light where the probes have it. giFloor keeps a share of the plain light, so
-// interiors stay readable however little light the probes find there.
+// in for the plain ambient and sky light where the probes have it: their light is relative to what the open sky gives
+// (1 in the open, less under roofs, tinted by what surrounds), so it scales the plain light, which keeps its shape
+// over the surface's normal. giFloor keeps a share of the plain light, so interiors stay readable however little
+// light the probes find there.
 
 uniform float giWeight;  // 0..1: enabled, eased in and out, strength
 uniform float giFloor;
 
 vec3 giAmbient(vec3 ambient, vec4 gi) {
   float w = gi.a * giWeight;
-  return w > 0.0 ? mix(ambient, max(gi.rgb, ambient * giFloor), w) : ambient;
+  return w > 0.0 ? mix(ambient, ambient * max(gi.rgb, vec3(giFloor)), w) : ambient;
 }
 
 // ---------------------------------------------------------------------------------------------------------------

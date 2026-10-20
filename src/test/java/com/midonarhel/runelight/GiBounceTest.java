@@ -72,31 +72,41 @@ public class GiBounceTest
 	public void bounceCarriesTheGroundsColorAndNoSky()
 	{
 		GiProbes p = probes(greenGrid(null, false));
-		float[][] bounce = new float[1][];
-		float[] full = GiRelight.relight(p, sunlit(), null, 3, GiProbes.ParallelFor.SEQUENTIAL, bounce);
-		int probe = GiProbes.probe(10, 10, 0);
+		GiRelight.Result r = GiRelight.relight(p, sunlit(), null, 3, GiProbes.ParallelFor.SEQUENTIAL, true);
+		// tile 10 is column 5
+		int probe = GiProbes.probe(5, 5, 0);
 		assertTrue(p.valid[probe]);
-		// a surface facing down sees the sunlit green ground
-		float r = GiSh.eval(bounce[0], probe * 12, 0, 0, 1, 0);
-		float g = GiSh.eval(bounce[0], probe * 12, 1, 0, 1, 0);
-		float b = GiSh.eval(bounce[0], probe * 12, 2, 0, 1, 0);
-		assertTrue("green " + r + " " + g + " " + b, g > r * 1.4f && g > b * 2f);
-		// facing up it sees no surface at all: the sky is not part of the bounce but is part of the whole light
-		float upBounce = GiSh.eval(bounce[0], probe * 12, 1, 0, -1, 0);
-		float upFull = GiSh.eval(full, probe * 12, 1, 0, -1, 0);
-		assertTrue("up " + upBounce + " of " + upFull, upBounce < upFull * 0.15f);
-		// the whole light holds the bounce
-		assertTrue(GiSh.eval(full, probe * 12, 1, 0, 1, 0) >= g * 0.99f);
+		float red = r.shown[probe * 3], green = r.shown[probe * 3 + 1], blue = r.shown[probe * 3 + 2];
+		assertTrue("green " + red + " " + green + " " + blue, green > red * 1.4f && green > blue * 2f);
+		// the sky is not part of the bounce but is part of the whole light
+		assertTrue(r.light[probe * 3 + 2] > blue * 1.5f);
+		// without sun and with nothing lit before, the surfaces give nothing
+		float[] t = new float[GiRelight.TABLE_FLOATS];
+		for (int i = 0; i < GiRelight.SKY_W * GiRelight.SKY_H; ++i)
+		{
+			t[i * 4] = t[i * 4 + 1] = t[i * 4 + 2] = 0.5f;
+		}
+		t[GiRelight.SKY_W * GiRelight.SKY_H * 4 + 4] = 0.5f;
+		GiRelight.Light dark = GiRelight.Light.fromTable(t, new float[]{0, -1, 0}, true);
+		for (float v : GiRelight.relight(p, dark, null, 1, GiProbes.ParallelFor.SEQUENTIAL, true).shown)
+		{
+			assertEquals(0, v, 0);
+		}
 	}
 
 	@Test
-	public void bounceOutputIsOptional()
+	public void shownLightIsRelativeToTheOpenSkyWithoutBounceOnly()
 	{
 		GiProbes p = probes(greenGrid(null, false));
 		GiRelight.Light light = sunlit();
-		float[] plain = GiRelight.relight(p, light, null, 1, GiProbes.ParallelFor.SEQUENTIAL);
-		float[] with = GiRelight.relight(p, light, null, 1, GiProbes.ParallelFor.SEQUENTIAL, new float[1][]);
-		assertArrayEquals(plain, with, 0);
+		GiRelight.Result sky = GiRelight.relight(p, light, null, 1, GiProbes.ParallelFor.SEQUENTIAL, false);
+		GiRelight.Result bounce = GiRelight.relight(p, light, null, 1, GiProbes.ParallelFor.SEQUENTIAL, true);
+		// the same whole light either way
+		assertArrayEquals(sky.light, bounce.light, 0);
+		int probe = GiProbes.probe(5, 5, 0);
+		// grass under the open sky: about the sky's own light, plus what the sunlit grass throws back, green
+		assertTrue(sky.shown[probe * 3 + 1] > 1f && sky.shown[probe * 3 + 1] < 2f);
+		assertTrue(sky.shown[probe * 3 + 1] > sky.shown[probe * 3 + 2]);
 	}
 
 	@Test
@@ -156,18 +166,17 @@ public class GiBounceTest
 			}
 		}
 		GiProbes p = probes(greenGrid(water, true));
-		float[][] bounce = new float[1][];
-		GiRelight.relight(p, sunlit(), null, 3, GiProbes.ParallelFor.SEQUENTIAL, bounce);
+		float[] bounce = GiRelight.relight(p, sunlit(), null, 3, GiProbes.ParallelFor.SEQUENTIAL, true).shown;
 		// over the water the light thrown up is blue, over the grass it is green
-		int overWater = GiProbes.probe(15, 15, 0), overGrass = GiProbes.probe(3, 3, 0);
+		int overWater = GiProbes.probe(7, 7, 0), overGrass = GiProbes.probe(1, 1, 0);
 		assertTrue(p.valid[overWater] && p.valid[overGrass]);
-		float wr = GiSh.eval(bounce[0], overWater * 12, 0, 0, 1, 0);
-		float wg = GiSh.eval(bounce[0], overWater * 12, 1, 0, 1, 0);
-		float wb = GiSh.eval(bounce[0], overWater * 12, 2, 0, 1, 0);
+		float wr = bounce[overWater * 3 + 0];
+		float wg = bounce[overWater * 3 + 1];
+		float wb = bounce[overWater * 3 + 2];
 		assertTrue("water " + wr + " " + wg + " " + wb, wb > wr * 2f && wb > wg * 0.9f);
-		float gr = GiSh.eval(bounce[0], overGrass * 12, 0, 0, 1, 0);
-		float gg = GiSh.eval(bounce[0], overGrass * 12, 1, 0, 1, 0);
-		float gb = GiSh.eval(bounce[0], overGrass * 12, 2, 0, 1, 0);
+		float gr = bounce[overGrass * 3 + 0];
+		float gg = bounce[overGrass * 3 + 1];
+		float gb = bounce[overGrass * 3 + 2];
 		assertTrue("grass " + gr + " " + gg + " " + gb, gg > gb * 2f);
 	}
 

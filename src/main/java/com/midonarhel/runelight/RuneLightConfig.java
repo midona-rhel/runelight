@@ -1312,8 +1312,8 @@ public interface RuneLightConfig extends Config
 		keyName = "globalIllumination",
 		name = "Global illumination",
 		description = "Light from the sky only reaches what can see the sky, and sunlight bounces off what it falls on: "
-			+ "interiors and overhangs darken, walls take the colors of the sky they face, sunlit ground warms the shade "
-			+ "beside it. Worked out in the background whenever a region loads.",
+			+ "interiors and overhangs darken, sunlit ground warms the shade beside it. Worked out in the background "
+			+ "whenever a region loads.",
 		section = giSection,
 		position = 701
 	)
