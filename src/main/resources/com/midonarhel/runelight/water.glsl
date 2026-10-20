@@ -386,19 +386,13 @@ void waterShadeHalf(ivec2 hpx) {
     reflection = mix(reflection, hit.rgb, hit.a);
   }
 
-  // ---- highlights: a faint sheen and sharp glints from the sun or moon, lamp streaks
+  // ---- highlights: a faint sheen from the sun or moon, lamp streaks (the sharp glints are the full resolution
+  // blend's, waterGlitter: at half resolution each was a block)
   vec3 spec = min(lampSpec * LAMP_SPECULAR, vec3(LAMP_MAX));
   if (outdoors == 1 && lightOn) {
     vec3 h = normalize(casterDir + toCamera);
     float sheen = pow(max(dot(nrm, h), 0.0), SHEEN_GLOSS) * (SHEEN_GLOSS + 8.0) / 25.0 * SHEEN * fresnel;
-    // A facet catches the sun where its slope is within GLITTER_ROUGH of the half vector's. The slopes taken
-    // GLINT_SUN_SIZE times as large reach that from GLINT_SUN_SIZE times farther from the mirror point, and the lobe
-    // as wide keeps the slope band, so the glint, as small as before; its Ward norm 1/(along*across) is squared back.
-    vec3 steep = normalize(vec3(nrm.x * GLITTER_SLOPE * GLINT_SUN_SIZE, nrm.y, nrm.z * GLITTER_SLOPE * GLINT_SUN_SIZE));
-    float rough = GLITTER_ROUGH * GLINT_SUN_SIZE;
-    float glitter = waterGlint(steep, casterDir, toCamera, tAlong, tAcross, rough * 1.6, rough)
-      * (GLITTER * GLINT_SUN_SIZE * GLINT_SUN_SIZE);
-    spec += caster * ((sheen + glitter) * shadow * look.z * (1.0 - foam) * (sunIsCaster == 1 ? 1.0 : MOON_SPECULAR));
+    spec += caster * (sheen * shadow * look.z * (1.0 - foam) * (sunIsCaster == 1 ? 1.0 : MOON_SPECULAR));
   }
 
   // the surface (117 HD): its own color lit, mostly the sky's reflection; foam over it, folded in as waterOver would
@@ -411,6 +405,23 @@ void waterShadeHalf(ivec2 hpx) {
   float covered = cover + foam * (1.0 - cover);
   surface = (surface * (cover * (1.0 - foam)) + foamColor * foam) / max(covered, 1e-4);
   WaterShadedOut = waterPackShaded(surface, covered, spec);
+}
+
+// The sharp glints of the sun or moon on the surface at full resolution: v the view direction, shadow the sun's.
+// A facet catches the sun where its slope is within GLITTER_ROUGH of the half vector's. The slopes taken
+// GLINT_SUN_SIZE times as large reach that from GLINT_SUN_SIZE times farther from the mirror point, and the lobe as
+// wide keeps the slope band, so the glint, as small as before; its Ward norm 1/(along*across) is squared back.
+vec3 waterGlitter(vec3 nrm, vec3 v, float shine, float foam, float shadow) {
+  if (outdoors == 0 || lightingEnabled == 0)
+    return vec3(0.0);
+  vec2 fwd = v.xz * inversesqrt(max(dot(v.xz, v.xz), 1e-6));
+  vec3 tAlong = vec3(fwd.x, 0.0, fwd.y), tAcross = vec3(-fwd.y, 0.0, fwd.x);
+  vec3 steep = normalize(vec3(nrm.x * GLITTER_SLOPE * GLINT_SUN_SIZE, nrm.y, nrm.z * GLITTER_SLOPE * GLINT_SUN_SIZE));
+  float rough = GLITTER_ROUGH * GLINT_SUN_SIZE;
+  float glitter = waterGlint(steep, casterDir, -v, tAlong, tAcross, rough * 1.6, rough)
+    * (GLITTER * GLINT_SUN_SIZE * GLINT_SUN_SIZE);
+  vec3 caster = (sunIsCaster == 1 ? sunLight(sunAltitude) : moonLight(sunAltitude)) * envSun;
+  return caster * (glitter * shadow * shine * (1.0 - foam) * (sunIsCaster == 1 ? 1.0 : MOON_SPECULAR));
 }
 
 // ---------------------------------------------------------------------------------------------------------------
@@ -484,6 +495,7 @@ vec3 waterOver(ivec2 px, inout vec3 p, vec3 albedo, float shadow, vec3 lit, floa
   vec3 under = max(srgbToLinear(lit * WET_SAND) + caustics, vec3(0.0)) * srgbToLinear(waterDepthTint(type, colorDepth));
   // what is seen through a wave face turned toward the camera is a little brighter, turned away darker
   vec3 v = p / dist;
+  spec += waterGlitter(nrm, v, WATER_LOOK[type].z, foam, shadow);
   vec2 slope = nrm.xz / nrm.y;
   under *= max(1.0 + WAVE_SHADE * dot(slope, v.xz) / max(length(v.xz), 0.25), 0.0);
   float alpha = max(WATER_LOOK[type].x * smoothstep(0.0, SURFACE_DEPTH, colorDepth), surface.a);
