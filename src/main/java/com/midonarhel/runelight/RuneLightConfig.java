@@ -1492,7 +1492,7 @@ public interface RuneLightConfig extends Config
 	)
 	default int skylightReach()
 	{
-		return 3;
+		return 6;
 	}
 
 	@ConfigSection(
