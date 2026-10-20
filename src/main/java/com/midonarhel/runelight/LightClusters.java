@@ -43,18 +43,15 @@ class LightClusters
 
 	private int lightBuffer, lightTexture;
 	private int clusterBuffer, clusterTexture;
-	// the room map, uploaded when it changes and copied after the lights every frame on the GPU, so the light
-	// buffer can still be orphaned each frame without sending the map again
-	private int roomBuffer;
+	// The light buffer: the lights, the room map after them and the static lights' occlusion grids after that. The map
+	// and the grids are sent when they change; each frame only the lights and the map's header are.
 	private RoomMap roomMap, uploadedRooms;
 	private boolean roomLights;
 	private int uploadedVersion = -1;
-	private int roomTexels;
 	private int maxTexels;
 	private FloatBuffer roomStaging;
 	private final FloatBuffer roomOff = BufferUtils.createFloatBuffer(4);
-	// the static lights' occlusion grids (LightOcclusion), uploaded when they change and copied after the rooms
-	private int occlusionBuffer;
+	// the static lights' occlusion grids (LightOcclusion)
 	private LightOcclusion.Atlas atlas, uploadedAtlas;
 	private boolean roofLights;
 	private int atlasStart;
@@ -92,11 +89,9 @@ class LightClusters
 	void init()
 	{
 		maxTexels = glGetInteger(GL_MAX_TEXTURE_BUFFER_SIZE);
-		roomBuffer = glGenBuffers();
-		occlusionBuffer = glGenBuffers();
 		lightBuffer = glGenBuffers();
 		glBindBuffer(GL_TEXTURE_BUFFER, lightBuffer);
-		glBufferData(GL_TEXTURE_BUFFER, (long) ROOM_BASE * 4 * Float.BYTES, GL_STREAM_DRAW);
+		glBufferData(GL_TEXTURE_BUFFER, (long) (ROOM_BASE + RoomMap.HEADER_TEXELS) * 4 * Float.BYTES, GL_DYNAMIC_DRAW);
 		lightTexture = glGenTextures();
 		glBindTexture(GL_TEXTURE_BUFFER, lightTexture);
 		glTexBuffer(GL_TEXTURE_BUFFER, GL_RGBA32F, lightBuffer);
@@ -117,13 +112,12 @@ class LightClusters
 		if (lightBuffer != 0)
 		{
 			glDeleteTextures(new int[]{lightTexture, clusterTexture});
-			glDeleteBuffers(new int[]{lightBuffer, clusterBuffer, roomBuffer, occlusionBuffer});
-			lightBuffer = lightTexture = clusterBuffer = clusterTexture = roomBuffer = occlusionBuffer = 0;
+			glDeleteBuffers(new int[]{lightBuffer, clusterBuffer});
+			lightBuffer = lightTexture = clusterBuffer = clusterTexture = 0;
 		}
 		uploadedRooms = null;
 		uploadedAtlas = null;
 		uploadedVersion = -1;
-		roomTexels = 0;
 		boundsValid = false;
 	}
 
@@ -367,72 +361,52 @@ class LightClusters
 			// the driver's buffer textures are too small for the map (GL 3.3 only promises 65536 texels)
 			rooms = null;
 		}
-		if (rooms != null && (rooms != uploadedRooms || rooms.getVersion() != uploadedVersion))
-		{
-			int floats = rooms.texelCount() * 4;
-			if (roomStaging == null || roomStaging.capacity() < floats)
-			{
-				roomStaging = BufferUtils.createFloatBuffer(floats);
-			}
-			roomStaging.clear();
-			rooms.texels(roomStaging);
-			roomStaging.flip();
-			glBindBuffer(GL_COPY_READ_BUFFER, roomBuffer);
-			glBufferData(GL_COPY_READ_BUFFER, roomStaging, GL_STATIC_DRAW);
-			glBindBuffer(GL_COPY_READ_BUFFER, 0);
-			uploadedRooms = rooms;
-			uploadedVersion = rooms.getVersion();
-			roomTexels = rooms.texelCount();
-		}
-		int texels = rooms != null ? roomTexels : RoomMap.HEADER_TEXELS;
+		int texels = rooms != null ? rooms.texelCount() : RoomMap.HEADER_TEXELS;
 		LightOcclusion.Atlas grids = atlas;
-		if (grids != null && grids != uploadedAtlas && grids.texelCount > 0)
+		if (grids != null && (grids.texelCount == 0 || ROOM_BASE + texels + grids.texelCount > maxTexels))
 		{
-			if (gridStaging == null || gridStaging.capacity() < grids.texelCount * 4)
+			grids = null;
+		}
+		glBindBuffer(GL_TEXTURE_BUFFER, lightBuffer);
+		if (rooms != uploadedRooms || rooms != null && rooms.getVersion() != uploadedVersion || grids != uploadedAtlas)
+		{
+			// the map or the grids changed: lay the buffer out again and send them
+			int gridTexels = grids != null ? grids.texelCount : 0;
+			glBufferData(GL_TEXTURE_BUFFER, (long) (ROOM_BASE + texels + gridTexels) * 4 * Float.BYTES, GL_DYNAMIC_DRAW);
+			if (rooms != null)
 			{
-				gridStaging = BufferUtils.createFloatBuffer(grids.texelCount * 4);
+				roomStaging = staging(roomStaging, texels * 4);
+				rooms.texels(roomStaging);
+				roomStaging.flip();
+				glBufferSubData(GL_TEXTURE_BUFFER, (long) ROOM_BASE * 4 * Float.BYTES, roomStaging);
 			}
-			gridStaging.clear();
-			gridStaging.put(grids.texels, 0, grids.texelCount * 4).flip();
-			glBindBuffer(GL_COPY_READ_BUFFER, occlusionBuffer);
-			glBufferData(GL_COPY_READ_BUFFER, gridStaging, GL_STATIC_DRAW);
-			glBindBuffer(GL_COPY_READ_BUFFER, 0);
+			if (grids != null)
+			{
+				gridStaging = staging(gridStaging, gridTexels * 4);
+				gridStaging.put(grids.texels, 0, gridTexels * 4).flip();
+				glBufferSubData(GL_TEXTURE_BUFFER, (long) (ROOM_BASE + texels) * 4 * Float.BYTES, gridStaging);
+			}
+			uploadedRooms = rooms;
+			uploadedVersion = rooms != null ? rooms.getVersion() : -1;
 			uploadedAtlas = grids;
 		}
-		int gridTexels = grids != null && grids == uploadedAtlas ? grids.texelCount : 0;
-
-		glBindBuffer(GL_TEXTURE_BUFFER, lightBuffer);
-		glBufferData(GL_TEXTURE_BUFFER, (long) (ROOM_BASE + texels + gridTexels) * 4 * Float.BYTES, GL_STREAM_DRAW);
 		if (lightCount > 0)
 		{
 			glBufferSubData(GL_TEXTURE_BUFFER, 0, lightData);
 			glBufferSubData(GL_TEXTURE_BUFFER, (long) LIGHT_EXTRA_BASE * 4 * Float.BYTES, extraData);
 		}
-		if (gridTexels > 0)
-		{
-			glBindBuffer(GL_COPY_READ_BUFFER, occlusionBuffer);
-			glCopyBufferSubData(GL_COPY_READ_BUFFER, GL_TEXTURE_BUFFER, 0, (long) (ROOM_BASE + texels) * 4 * Float.BYTES,
-				(long) gridTexels * 4 * Float.BYTES);
-			glBindBuffer(GL_COPY_READ_BUFFER, 0);
-		}
+		// the map's header: whether there is a map, and whether the lights keep to their rooms or only the fog uses it
+		roomOff.clear();
 		if (rooms != null)
 		{
-			glBindBuffer(GL_COPY_READ_BUFFER, roomBuffer);
-			glCopyBufferSubData(GL_COPY_READ_BUFFER, GL_TEXTURE_BUFFER, 0, (long) ROOM_BASE * 4 * Float.BYTES,
-				(long) roomTexels * 4 * Float.BYTES);
-			glBindBuffer(GL_COPY_READ_BUFFER, 0);
-			// the header's w: whether the lights keep to their rooms, or only the fog uses the map
-			roomOff.clear();
-			roomOff.put(1).put(rooms.size).put(rooms.offset).put(roomLights ? 1 : 0).flip();
-			glBufferSubData(GL_TEXTURE_BUFFER, (long) ROOM_BASE * 4 * Float.BYTES, roomOff);
+			roomOff.put(1).put(rooms.size).put(rooms.offset).put(roomLights ? 1 : 0);
 		}
 		else
 		{
-			// header: no rooms, every light reaches every pixel
-			roomOff.clear();
-			roomOff.put(0).put(0).put(0).put(0).flip();
-			glBufferSubData(GL_TEXTURE_BUFFER, (long) ROOM_BASE * 4 * Float.BYTES, roomOff);
+			roomOff.put(0).put(0).put(0).put(0);
 		}
+		roomOff.flip();
+		glBufferSubData(GL_TEXTURE_BUFFER, (long) ROOM_BASE * 4 * Float.BYTES, roomOff);
 
 		clusterData.clear();
 		clusterData.put(clusters);
@@ -440,6 +414,16 @@ class LightClusters
 		glBindBuffer(GL_TEXTURE_BUFFER, clusterBuffer);
 		glBufferData(GL_TEXTURE_BUFFER, clusterData, GL_STREAM_DRAW);
 		glBindBuffer(GL_TEXTURE_BUFFER, 0);
+	}
+
+	private static FloatBuffer staging(FloatBuffer b, int floats)
+	{
+		if (b == null || b.capacity() < floats)
+		{
+			b = BufferUtils.createFloatBuffer(floats);
+		}
+		b.clear();
+		return b;
 	}
 
 	void bind(int lightUnit, int clusterUnit)
