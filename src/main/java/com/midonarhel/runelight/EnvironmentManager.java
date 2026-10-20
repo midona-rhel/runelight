@@ -301,50 +301,85 @@ final class EnvironmentManager
 	private void lookup(int[] wp, boolean skyBlack, boolean jumped, float time)
 	{
 		int x = wp[0], y = wp[1], p = wp[2];
-		int region = x >> 6 << 8 | y >> 6;
-
-		Environment env = null;
-		int[] candidates = regionBoxes.get(region);
-		if (candidates != null)
+		Environment env = environmentAt(x, y, p);
+		Classification c = classOf(env, y, skyBlack);
+		Environment regionEnv = regionBiome.get(x >> 6 << 8 | y >> 6);
+		// Out in the open the look is a blend of the areas around the focal point, so it follows where you are and
+		// changes gradually as you walk from one into the next, instead of switching where they meet
+		boolean blended = c == Classification.OVERWORLD && (env == null || !env.instant);
+		if (blended)
 		{
-			for (int b : candidates)
+			blendAround(x, y, p, skyBlack, env);
+		}
+		select(env, c, regionEnv, jumped, time, blended);
+	}
+
+	// the area blend: samples BLEND_STEP tiles apart out to BLEND_REACH tiles each way, weighed by closeness
+	private static final int BLEND_STEP = 6;
+	private static final int BLEND_REACH = 24;
+	private final Ambience blendSum = new Ambience();
+	private final Ambience sample = new Ambience();
+
+	/**
+	 * Fills {@link #blendSum} with the open-air environments around world (x, y, p), weighed by how close they are;
+	 * samples underground, or in an area that switches instantly, count as the one at the middle.
+	 */
+	private void blendAround(int x, int y, int p, boolean skyBlack, Environment middle)
+	{
+		Ambience sum = blendSum;
+		java.util.Arrays.fill(sum.ambient, 0);
+		java.util.Arrays.fill(sum.sun, 0);
+		java.util.Arrays.fill(sum.fogColor, 0);
+		java.util.Arrays.fill(sum.skyTint, 0);
+		sum.fogColorWeight = sum.fogDepth = sum.haze = 0;
+		float total = 0, colored = 0;
+		for (int dy = -BLEND_REACH; dy <= BLEND_REACH; dy += BLEND_STEP)
+		{
+			for (int dx = -BLEND_REACH; dx <= BLEND_REACH; dx += BLEND_STEP)
 			{
-				if (x >= boxes[b + 1] && x <= boxes[b + 4] && y >= boxes[b + 2] && y <= boxes[b + 5]
-					&& p >= boxes[b + 3] && p <= boxes[b + 6])
+				float w = (1 - Math.abs(dx) / (BLEND_REACH + (float) BLEND_STEP))
+					* (1 - Math.abs(dy) / (BLEND_REACH + (float) BLEND_STEP));
+				Environment e = environmentAt(x + dx, y + dy, p);
+				if (classOf(e, y + dy, skyBlack) != Classification.OVERWORLD || e != null && e.instant)
 				{
-					env = environments[boxes[b]];
-					break;
+					e = middle;
 				}
+				sample.set(e == null ? NEUTRAL : e);
+				for (int k = 0; k < 3; ++k)
+				{
+					sum.ambient[k] += sample.ambient[k] * w;
+					sum.sun[k] += sample.sun[k] * w;
+					sum.skyTint[k] += sample.skyTint[k] * w;
+					// only the areas with a fog color of their own make up its color
+					sum.fogColor[k] += sample.fogColor[k] * w * sample.fogColorWeight;
+				}
+				colored += w * sample.fogColorWeight;
+				sum.fogDepth += sample.fogDepth * w;
+				sum.haze += sample.haze * w;
+				total += w;
 			}
 		}
-
-		Environment regionEnv = regionBiome.get(region);
-		if (env != null && env.fallback && regionEnv != null && !regionEnv.cave)
+		for (int k = 0; k < 3; ++k)
 		{
-			env = regionEnv;
+			sum.ambient[k] /= total;
+			sum.sun[k] /= total;
+			sum.skyTint[k] /= total;
+			sum.fogColor[k] = colored > 0 ? sum.fogColor[k] / colored : 0;
 		}
+		sum.fogColorWeight = colored / total;
+		sum.fogDepth /= total;
+		sum.haze /= total;
+	}
 
-		Classification c;
+	// how the area at a world point is lit: from its environment, else underground past the mainland's top, else as
+	// the client's sky says
+	private static Classification classOf(Environment env, int y, boolean skyBlack)
+	{
 		if (env != null)
 		{
-			c = env.cave ? Classification.CAVE : Classification.OVERWORLD;
+			return env.cave ? Classification.CAVE : Classification.OVERWORLD;
 		}
-		else if (regionEnv != null)
-		{
-			env = regionEnv;
-			c = env.cave ? Classification.CAVE : Classification.OVERWORLD;
-		}
-		else if (y >= Constants.OVERWORLD_MAX_Y)
-		{
-			env = caveBiome;
-			c = Classification.CAVE;
-		}
-		else
-		{
-			// mainland coordinates nobody described: trust the client's sky
-			c = skyBlack ? Classification.CAVE : Classification.OVERWORLD;
-		}
-		select(env, c, regionEnv, jumped, time);
+		return y >= Constants.OVERWORLD_MAX_Y || skyBlack ? Classification.CAVE : Classification.OVERWORLD;
 	}
 
 	/**
@@ -403,13 +438,28 @@ final class EnvironmentManager
 
 	private void select(Environment env, Classification c, Environment biome, boolean jumped, float time)
 	{
+		select(env, c, biome, jumped, time, false);
+	}
+
+	/**
+	 * @param blended the look is {@link #blendSum}, the areas around (it changes with every step, so it is taken as
+	 *                it is rather than faded into over time; only a change into or out of it fades)
+	 */
+	private void select(Environment env, Classification c, Environment biome, boolean jumped, float time, boolean blended)
+	{
 		if (env == null)
 		{
 			env = c == Classification.CAVE ? NEUTRAL_CAVE : NEUTRAL;
 		}
 		this.biome = biome;
-		if (hasTarget && env == target && c == classification)
+		boolean same = hasTarget && c == classification && blended == targetBlended && (blended || env == target);
+		if (same)
 		{
+			if (blended)
+			{
+				to.copyFrom(blendSum);
+				target = env;
+			}
 			return;
 		}
 
@@ -417,12 +467,22 @@ final class EnvironmentManager
 		log.debug("environment {} -> {} ({}{})", target, env, c, instant ? ", instant" : "");
 		hasTarget = true;
 		target = env;
+		targetBlended = blended;
 		classification = c;
 
 		from.copyFrom(current);
-		to.set(env);
+		if (blended)
+		{
+			to.copyFrom(blendSum);
+		}
+		else
+		{
+			to.set(env);
+		}
 		transitionStart = instant ? time - TRANSITION_SECONDS : time;
 	}
+
+	private boolean targetBlended;
 
 	private void advance(float time, boolean shelteredNow)
 	{
