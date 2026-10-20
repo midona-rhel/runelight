@@ -212,7 +212,8 @@ final class GiRelight
 					return;
 				}
 				float nx = p.hitNormal[h * 3], ny = p.hitNormal[h * 3 + 1], nz = p.hitNormal[h * 3 + 2];
-				float sun = direct ? Math.max(0, nx * lx + ny * ly + nz * lz) * lit[h] : 0;
+				// lit or not, whatever angle the light comes in at: the bounce is the color of what is lit around
+				float sun = direct && nx * lx + ny * ly + nz * lz > 0 ? lit[h] : 0;
 				int b = p.hitBounce[h];
 				for (int c = 0; c < 3; ++c)
 				{
@@ -257,7 +258,7 @@ final class GiRelight
 					{
 						// a thin surface shows the probe the side facing it
 						float dx = d[r * 3], dy = d[r * 3 + 1], dz = d[r * 3 + 2];
-						float sun = direct ? Math.max(0, -(dx * lx + dy * ly + dz * lz)) * lit[code] : 0;
+						float sun = direct && dx * lx + dy * ly + dz * lz < 0 ? lit[code] : 0;
 						int b = p.hitBounce[code];
 						float er = light.caster[0] * sun, eg = light.caster[1] * sun, eb = light.caster[2] * sun;
 						if (last != null && b >= 0)

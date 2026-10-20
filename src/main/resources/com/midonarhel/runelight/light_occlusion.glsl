@@ -35,7 +35,7 @@ float skyUpsampled = 1.0;
 // The probes average their light over the whole sphere; a wall or a person beside the ground gets it over half of
 // theirs, the half facing it, and the albedos are the game's dim colors: the bounce they get is this many times the
 // probes' light.
-#define BOUNCE_GAIN 3.0
+#define BOUNCE_GAIN 2.0
 
 // plain: the ambient plus sky light a surface would get under the open sky; gi the probes' light and giW their weight.
 // In mode 2 the probes carry only the light bounced off surfaces (GiRelight, bounceOnly), in color: the sunlit grass
