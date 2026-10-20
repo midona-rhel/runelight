@@ -1483,6 +1483,33 @@ public interface RuneLightConfig extends Config
 		return true;
 	}
 
+	@ConfigItem(
+		keyName = "skylightFlow",
+		name = "Skylight through openings",
+		description = "The sky's light flows in under cover through the openings of the walls: a gate arch fades in "
+			+ "from its ends, a house with its door open has a pool of light inside, a closed door keeps it out. "
+			+ "Without it, everything under a roof is as dark as the skylight floor.",
+		section = lightOcclusionSection,
+		position = 806
+	)
+	default boolean skylightFlow()
+	{
+		return true;
+	}
+
+	@Range(min = 1, max = 12)
+	@ConfigItem(
+		keyName = "skylightReach",
+		name = "Skylight reach",
+		description = "How far in, in tiles, the light flowing in under cover falls to a third of its brightness.",
+		section = lightOcclusionSection,
+		position = 807
+	)
+	default int skylightReach()
+	{
+		return 3;
+	}
+
 	@ConfigSection(
 		name = "Hide other areas",
 		description = "What shows of the map around instances, caves and other areas of their own",

@@ -35,6 +35,9 @@ final class WallMap
 	// scenes and rebuilds of the same scene: a different scene means everything cast before is stale
 	final int scene;
 	private final byte[] bits;
+	// tiles the collision map blocks sight across entirely (a solid object); a diagonal wall tile is one too, but
+	// has its bit
+	private final boolean[] full;
 
 	/** A diagonal wall object on a tile: kind is DIAG_SW_NE or DIAG_NW_SE. Extended tile coordinates. */
 	static final class Diagonal
@@ -73,6 +76,7 @@ final class WallMap
 		this.offset = offset;
 		this.scene = scene;
 		bits = new byte[PLANES * size * size];
+		full = new boolean[PLANES * size * size];
 	}
 
 	/** A map without walls. */
@@ -109,6 +113,10 @@ final class WallMap
 					if (b != 0 && x < size && y < size)
 					{
 						m.bits[m.index(plane, x, y)] |= (byte) b;
+					}
+					if ((v & LOS_FULL) != 0 && x < size && y < size)
+					{
+						m.full[m.index(plane, x, y)] = true;
 					}
 				}
 			}
@@ -147,6 +155,17 @@ final class WallMap
 			return 0;
 		}
 		return bits[index(plane, x, y)] & 0xFF;
+	}
+
+	/** Whether a solid object fills the tile: it blocks sight across all of it, and no diagonal wall is why. */
+	boolean solid(int plane, int x, int y)
+	{
+		if (plane < 0 || plane >= PLANES || x < 0 || y < 0 || x >= size || y >= size)
+		{
+			return false;
+		}
+		int i = index(plane, x, y);
+		return full[i] && (bits[i] & (DIAG_SW_NE | DIAG_NW_SE)) == 0;
 	}
 
 	/** Whether a wall stands on the edge between tile (x, y) and its neighbor toward side (NORTH, EAST, ...). */
@@ -193,7 +212,7 @@ final class WallMap
 	/** Same walls (and size) as another map. */
 	boolean sameWalls(WallMap o)
 	{
-		return o != null && o.size == size && o.offset == offset && Arrays.equals(o.bits, bits);
+		return o != null && o.size == size && o.offset == offset && Arrays.equals(o.bits, bits) && Arrays.equals(o.full, full);
 	}
 
 	/**

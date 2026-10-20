@@ -372,6 +372,9 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 	// the skylight's top-down scenery map for the AO pass (two units, sampled raw), and the static lights' occlusion
 	private static final int SKY_OCCLUSION_UNIT = RuneLightPlugin.COMPOSITE_TEXTURE_UNIT + 22;
 	private final SkyOcclusion skyOcclusion = new SkyOcclusion();
+	// the sky's light flowing in under cover, one unit after the occlusion map's two
+	private static final int SKY_FIELD_UNIT = RuneLightPlugin.COMPOSITE_TEXTURE_UNIT + 25;
+	private final SkyFieldMap skyField = new SkyFieldMap();
 	private final LightOcclusion lightOcclusion = new LightOcclusion();
 	private int uniCompositeSkylightMode, uniCompositeSkylightOn, uniCompositeSkylightFloor;
 	// whether the AO pass worked the sky visibility out this frame
@@ -808,6 +811,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 				shadowMap.free();
 				weather.free();
 				skyOcclusion.free();
+				skyField.free();
 				lightClusters.free();
 				volumetricFog.free();
 				clouds.free();
@@ -1130,6 +1134,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		globalIllumination.locateComposite(glCompositeProgram);
 		weatherGround.locate(glAoProgram, glCompositeProgram, WEATHER_OCCLUSION_UNIT, WEATHER_FIELD_UNIT);
 		skyOcclusion.locateAo(glAoProgram, SKY_OCCLUSION_UNIT);
+		skyField.locateAo(glAoProgram, SKY_FIELD_UNIT);
 		water.locateAo(glAoProgram, WATER_DATA_UNIT);
 
 		int c = glCompositeProgram;
@@ -1996,6 +2001,15 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 			fy = Perspective.getTileHeight(client, lp, plane);
 		}
 		skyOcclusion.update(wanted, fx, fy, fz, plane);
+		BuildingLights buildings = buildingLights;
+		if (wanted && config.skylightFlow() && buildings != null)
+		{
+			skyField.update(buildings.getWalls(), buildings.getRooms(), buildings.getFloors(), plane, config.skylightReach());
+		}
+		else
+		{
+			skyField.free();
+		}
 	}
 
 	private void updateWeather(float cameraX, float cameraY, float cameraZ)
@@ -2724,11 +2738,13 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 				weatherGround.setAoOff();
 			}
 			frameSkylight = skyOcclusion.bindAo(SKY_OCCLUSION_UNIT, frameCameraX, frameCameraY, frameCameraZ);
+			skyField.bindAo(SKY_FIELD_UNIT, frameCameraX, frameCameraZ);
 			gpuTimer.begin(GpuTimer.AO);
 			glDrawArrays(GL_TRIANGLES, 0, 3);
 			gpuTimer.end();
 			GlobalIllumination.unbind(GI_PROBE_UNIT);
 			SkyOcclusion.unbind(SKY_OCCLUSION_UNIT);
+			SkyFieldMap.unbind(SKY_FIELD_UNIT);
 			// the sky cache takes the occlusion map's unit next, without its sampler objects
 			ShadowMap.unbind(WEATHER_OCCLUSION_UNIT, WEATHER_OCCLUSION_UNIT + 1);
 			sceneTargets.bindAo(AO_TEXTURE_UNIT);
