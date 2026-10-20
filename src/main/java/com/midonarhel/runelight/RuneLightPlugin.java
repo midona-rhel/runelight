@@ -2791,6 +2791,8 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		{
 			gpuTimer.begin(GpuTimer.COMPOSITE);
 			glBindFramebuffer(GL_FRAMEBUFFER, awtContext.getFramebuffer(false));
+			// the weather pass leaves its own vertex array bound (or none); the fullscreen triangle needs one bound
+			glBindVertexArray(vaoUiHandle);
 			upscaler.draw(width, height, config.upscaleSharpness() / 100f);
 			gpuTimer.end();
 		}
