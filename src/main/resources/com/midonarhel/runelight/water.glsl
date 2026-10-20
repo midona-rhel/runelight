@@ -78,7 +78,7 @@ layout(location = 1) out uvec4 WaterShadedOut;
 // how much of a lamp's light the surface itself takes
 #define LAMP_SURFACE 0.15
 // how much of the sun's shadow on its surface the murkiest water lifts
-#define MURKY_SHADOW_LIFT 0.6
+#define MURKY_SHADOW_LIFT 0.85
 // how much the murkiest water's foam takes its own color, MURKY_FOAM_LIGHTER times as light (sRGB)
 #define MURKY_FOAM_TINT 0.75
 #define MURKY_FOAM_LIGHTER 1.6
