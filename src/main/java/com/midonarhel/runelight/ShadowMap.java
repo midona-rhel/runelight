@@ -13,6 +13,7 @@ class ShadowMap
 	private int fbo;
 	private int texDepth;
 	// two views of the same texture: raw depth for the PCSS blocker search, hardware compare for filtering
+	private static int emptyTexture, emptySampler;
 	private int samplerRaw;
 	private int samplerCompare;
 
@@ -369,14 +370,43 @@ class ShadowMap
 		glActiveTexture(GL_TEXTURE0);
 	}
 
+	/**
+	 * Leave the units with no map: the raw unit empty, the compare unit with a 1x1 depth texture at the far plane and
+	 * a compare sampler, since a shadow sampler (in a program drawn with this map unused) must always find a depth
+	 * texture with comparison on its unit, or NVIDIA flags undefined behavior. Reads as lit.
+	 */
 	static void unbind(int rawUnit, int compareUnit)
 	{
 		glActiveTexture(GL_TEXTURE0 + rawUnit);
 		glBindTexture(GL_TEXTURE_2D, 0);
 		glBindSampler(rawUnit, 0);
+		if (emptyTexture == 0)
+		{
+			emptyTexture = glGenTextures();
+			glBindTexture(GL_TEXTURE_2D, emptyTexture);
+			glTexImage2D(GL_TEXTURE_2D, 0, GL_DEPTH_COMPONENT16, 1, 1, 0, GL_DEPTH_COMPONENT, GL_FLOAT, new float[]{1});
+			glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+			glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+			emptySampler = glGenSamplers();
+			glSamplerParameteri(emptySampler, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+			glSamplerParameteri(emptySampler, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+			glSamplerParameteri(emptySampler, GL_TEXTURE_COMPARE_MODE, GL_COMPARE_REF_TO_TEXTURE);
+			glSamplerParameteri(emptySampler, GL_TEXTURE_COMPARE_FUNC, GL_LEQUAL);
+		}
 		glActiveTexture(GL_TEXTURE0 + compareUnit);
-		glBindTexture(GL_TEXTURE_2D, 0);
-		glBindSampler(compareUnit, 0);
+		glBindTexture(GL_TEXTURE_2D, emptyTexture);
+		glBindSampler(compareUnit, emptySampler);
 		glActiveTexture(GL_TEXTURE0);
+	}
+
+	/** Free the empty map {@link #unbind} leaves on compare units. */
+	static void freeEmpty()
+	{
+		if (emptyTexture != 0)
+		{
+			glDeleteTextures(emptyTexture);
+			glDeleteSamplers(emptySampler);
+			emptyTexture = emptySampler = 0;
+		}
 	}
 }

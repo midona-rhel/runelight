@@ -810,6 +810,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 			{
 				gpuTimer.free();
 				shadowMap.free();
+				ShadowMap.freeEmpty();
 				weather.free();
 				skyOcclusion.free();
 				skyField.free();
@@ -1137,6 +1138,9 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		skyOcclusion.locateAo(glAoProgram, SKY_OCCLUSION_UNIT);
 		skyField.locateAo(glAoProgram, SKY_FIELD_UNIT);
 		water.locateAo(glAoProgram, WATER_DATA_UNIT);
+		// the shadow samplers' units hold an empty depth map until their maps are bound
+		ShadowMap.unbind(SHADOW_RAW_UNIT, SHADOW_COMPARE_UNIT);
+		ShadowMap.unbind(WEATHER_OCCLUSION_UNIT, WEATHER_OCCLUSION_UNIT + 1);
 
 		int c = glCompositeProgram;
 		uniCompositeCameraPos = glGetUniformLocation(c, "cameraPos");
