@@ -77,6 +77,9 @@ layout(location = 1) out uvec4 WaterShadedOut;
 #define LAMP_MAX 2.0
 // how much of a lamp's light the surface itself takes
 #define LAMP_SURFACE 0.15
+// how much of the sun's shadow on its surface the murkiest water lifts
+#define MURKY_SHADOW_LIFT 0.6
+
 // Caustics: 117 HD's, carried by the flow, worked out by the water pass (water_frag.glsl) as their value above the
 // mean in units of the brightest lines'. The bed gains CAUSTICS times the direct light per unit (between
 // CAUSTIC_RANGE); fainter by moonlight.
@@ -284,7 +287,11 @@ void waterShadeHalf(ivec2 hpx) {
     shadow = overcastShadow(shadow * cloudShadow(s + cameraPos, casterDir));
     vec3 ambient = ambientLight(sunAltitude) * envAmbient;
     vec3 sky = skyLight(sunAltitude) * envAmbient;
-    surfaceLight = ambient + sky * max(-nrm.y, 0.0) + caster * max(dot(nrm, casterDir), 0.0) * shadow;
+    // Murky water's own color is light scattered back from within it, which a shadow on the surface only partly
+    // takes away: the heavier the water (its base opacity, from clear's to swamp's), the less of the shadow it keeps
+    float murk = smoothstep(WATER_LOOK[1].x, WATER_LOOK[5].x, look.x);
+    float bodyShadow = mix(shadow, 1.0, MURKY_SHADOW_LIFT * murk);
+    surfaceLight = ambient + sky * max(-nrm.y, 0.0) + caster * max(dot(nrm, casterDir), 0.0) * bodyShadow;
   } else if (lightOn) {
     surfaceLight = envCaveLight(vec3(0.0, -1.0, 0.0));
   }
