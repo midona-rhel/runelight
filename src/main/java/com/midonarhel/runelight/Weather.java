@@ -583,12 +583,15 @@ class Weather
 			targetCover = Math.max(targetCover, type.coverSwell * Math.min(1, COVER_BASE + COVER_SLOPE * slowEffective));
 		}
 
-		// walking into another region shows its weather as it is, at once; only a change of the weather blends
-		boolean entered = initialized && mode == WeatherMode.AUTOMATIC && !java.util.Objects.equals(biome, lastBiome);
-		if (entered)
+		// walking into another region shows its weather as it is, at once; only a change of the weather blends.
+		// Not with the field: it already blends the cover, rain, snow and ground across the border, and snapping the
+		// fog, the sun's light and the distance fog to the new region's changed the whole look in one frame
+		boolean changed = initialized && mode == WeatherMode.AUTOMATIC && !java.util.Objects.equals(biome, lastBiome);
+		boolean entered = changed && !(field.isEnabled() && outdoors);
+		if (changed)
 		{
-			log.debug("Look: weather biome {} -> {} ({}), fog {} -> {}, distance fog {} -> {}", lastBiome, biome, type,
-				fog, targetFog, distanceFog, type.distanceFog);
+			log.debug("Look: weather biome {} -> {} ({}), fog {} -> {}, distance fog {} -> {}, {}", lastBiome, biome,
+				type, fog, targetFog, distanceFog, type.distanceFog, entered ? "snapped" : "eased");
 		}
 		lastBiome = biome;
 		if (!initialized || !gradual || entered)
