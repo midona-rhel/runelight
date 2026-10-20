@@ -52,6 +52,9 @@ layout(location = 1) out uvec4 WaterShadedOut;
 // the sky cache no brighter than SKY_CLOUD_MAX times the sky there.
 #define SKY_TILT 1.5
 #define WAVE_SKY_TILT 7.0
+// Underground there is no sky to reflect: the water reflects a black stand-in, a very dark tint of the cave's fog
+// color, so it is told from the rock by its own dark color, the lamps on it and the cave in its screen-space reflections
+#define CAVE_SKY_REFLECT 0.1
 #define CLOUD_TILT 1.0
 // how fast the reflected sky goes from the horizon's color to the zenith's as the reflection rises (an exponent on
 // the elevation): low keeps the horizon to a narrow bright band, so the wave faces that catch it stand out
@@ -365,6 +368,8 @@ void waterShadeHalf(ivec2 hpx) {
       sc = linearToSrgb(clamp(min(cached, srgbToLinear(sc) * SKY_CLOUD_MAX), 0.0, 1.0));
     }
     reflection = srgbToLinear(envSky(sc, fogColor, elev));
+  } else if (outdoors == 0 && envCave == 1) {
+    reflection = srgbToLinear(fogColor) * CAVE_SKY_REFLECT;
   } else {
     reflection = srgbToLinear(fogColor) * (outdoors == 1 ? 1.0 : 0.5);
   }
