@@ -98,25 +98,6 @@ float roomFloorY(vec3 w) {
   return y;
 }
 
-// The wall bits (ROOM_WALL_*) of the tile under world point w on the storey w is on, 0 off the map
-int roomWallsAt(vec3 w) {
-  vec4 h = texelFetch(lightData, ROOM_BASE);
-  int size = int(h.y);
-  ivec2 t = ivec2(floor(w.xz / 128.0)) + int(h.z);
-  if (h.x < 0.5 || any(lessThan(t, ivec2(0))) || any(greaterThanEqual(t, ivec2(size)))) {
-    return 0;
-  }
-  int i = ROOM_BASE + 1 + (t.x * size + t.y) * 3;
-  vec4 floors = texelFetch(lightData, i + 1);
-  int plane = 0;
-  for (int k = 1; k < 4; ++k) {
-    if (w.y <= floors[k] - ROOM_PLANE_MARGIN) {
-      plane = k;
-    }
-  }
-  return int(texelFetch(lightData, i + 2)[plane]) & 63;
-}
-
 ivec2 roomAt(vec3 w) {
   return roomPlaneAt(w).xy;
 }
