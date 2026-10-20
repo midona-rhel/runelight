@@ -300,3 +300,11 @@ vec3 skyColor(vec3 dir, vec3 sunDir, vec3 moonDir, float alt, float time) {
 
   return col;
 }
+
+// How far a view ray (camera-relative, y down) points down past where any sky could be: none at the horizon and
+// shallow angles (the fog and horizon past the map's edge), all of it from VOID_BELOW.y down. What is seen there is
+// the dark under the world, not sky.
+#define VOID_BELOW vec2(0.35, 0.7)
+float voidBelow(vec3 dir) {
+  return smoothstep(VOID_BELOW.x, VOID_BELOW.y, dir.y);
+}

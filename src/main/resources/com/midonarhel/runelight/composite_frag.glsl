@@ -316,6 +316,8 @@ void main() {
     // a point on the near plane gives the view ray; the camera is at the origin of camera-relative space
     vec3 dir = normalize(reconstructPosition(vec2(px) + 0.5, 1.0));
     behind = openSky ? skyBehind(vec2(px) + 0.5, dir, fogColor, true, CLOUD_STEPS) : fogColor;
+    // looking steeply down past the world (into a trapdoor, off a cliff) there is no sky, only the dark under it
+    behind *= 1.0 - voidBelow(dir);
   }
 
   if (isSky(d) || cover <= 0.004) {

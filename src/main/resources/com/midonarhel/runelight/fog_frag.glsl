@@ -360,4 +360,8 @@ void main() {
   }
 
   FragFog = vec4(scatter, trans);
+  // and no fog in the dark under the world (composite_frag.glsl)
+  if (sky) {
+    FragFog = mix(FragFog, vec4(0.0, 0.0, 0.0, 1.0), voidBelow(dir));
+  }
 }
