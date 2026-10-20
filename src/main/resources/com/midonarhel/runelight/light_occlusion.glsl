@@ -52,6 +52,17 @@ vec3 skylightAmbient(vec3 plain, vec3 gi, float giW) {
   return s;
 }
 
+// Inside a building the skylight is the light flowed in through its openings (SkyField), and what comes in through a
+// door is mostly the sunlit ground outside, not just the sky: covered surfaces get this share of the sunlight on open
+// ground, as much as the sky's light does (the sky's own part is in skylightAmbient). sun: the caster's light.
+#define DOORWAY_DAYLIGHT 0.35
+vec3 doorwayDaylight(vec3 world, vec3 n, vec3 sun) {
+  if (skylightOn == 0 || roomPlaneAt(world + n * ROOM_NORMAL_BIAS).x <= 0) {
+    return vec3(0.0);
+  }
+  return sun * (skyUpsampled * DOORWAY_DAYLIGHT * max(-casterDir.y, 0.0));
+}
+
 // one cell of a grid starting at texel base, n cells per side: 0..1, 1 outside it
 float lightVisCell(int base, int n, ivec2 c) {
   if (any(lessThan(c, ivec2(0))) || any(greaterThanEqual(c, ivec2(n)))) {
