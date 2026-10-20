@@ -345,8 +345,9 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 	private final WeatherGround weatherGround = new WeatherGround();
 	// GameClock's time this frame
 	private long frameGameMillis;
-	// two units: the occlusion map's raw and compare views
-	private static final int WEATHER_OCCLUSION_UNIT = RuneLightPlugin.COMPOSITE_TEXTURE_UNIT + 12;
+	// two units: the occlusion map's raw and compare views; their own, since the AO program's compare sampler must
+	// never find another program's color texture left on its unit (the sky cache and the water contact were there)
+	private static final int WEATHER_OCCLUSION_UNIT = RuneLightPlugin.COMPOSITE_TEXTURE_UNIT + 26;
 	// the water: data and noise for its surface pass, then the surface and its half resolution shading for the
 	// composite; 16 and 17, past the composite's other units (the per-stage limit of 16 counts samplers a program
 	// uses, not unit numbers; units go up to the combined limit, 80 on macOS)
