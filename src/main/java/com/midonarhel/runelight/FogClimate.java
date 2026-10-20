@@ -45,6 +45,7 @@ final class FogClimate
 		PROFILES.put("GRASSLAND", new Profile(1.00f, 2.5f, 0.6f, 0.4f, 0.00f, 0.45f));
 		PROFILES.put("FOREST", new Profile(1.10f, 3.5f, 1.5f, 0.8f, 0.00f, 0.50f));
 		PROFILES.put("SWAMP", new Profile(1.40f, 5.0f, 2.5f, 1.5f, 0.00f, 0.55f));
+		PROFILES.put("MORYTANIA_SWAMP", PROFILES.get("SWAMP"));
 		PROFILES.put("TROPICAL", new Profile(1.20f, 4.0f, 2.0f, 1.0f, 0.20f, 0.50f));
 		PROFILES.put("DESERT", new Profile(0.35f, 0.0f, 0.0f, 0.1f, 0.40f, 0.80f));
 		PROFILES.put("BARRENS", new Profile(0.60f, 0.3f, 0.1f, 0.1f, 0.25f, 0.70f));

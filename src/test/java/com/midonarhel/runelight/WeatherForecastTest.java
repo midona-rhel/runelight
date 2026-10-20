@@ -508,4 +508,15 @@ public class WeatherForecastTest
 		}
 		assertTrue(v > 0.95f);
 	}
+
+	@Test
+	public void morytaniaNeverClears()
+	{
+		assertTrue(WeatherClimate.knows("MORYTANIA_SWAMP"));
+		float[] n = shares("MORYTANIA_SWAMP");
+		for (String clear : new String[]{"CLEAR", "SUNNY", "HARSH_SUN", "PARTLY_CLOUDY", "HIGH_CLOUDS"})
+		{
+			assertEquals(clear, 0, n[WeatherType.get(clear).index], 0);
+		}
+	}
 }
