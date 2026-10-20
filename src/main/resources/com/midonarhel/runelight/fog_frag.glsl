@@ -208,6 +208,11 @@ void main() {
 
   float d = texelFetch(sceneDepth, px, 0).r;
   bool sky = isSky(d);
+  // Underground there is no sky, only the void around the cave: a ray into it would run on through fog forever
+  // (straight down nothing clips it) and gather the cave's lamps into a pale wall. It stays the void.
+  if (sky && outdoors == 0) {
+    return;
+  }
   // for the sky, a point on the near plane gives the ray
   vec3 hit = reconstructPosition(vec2(px) + 0.5, sky ? 1.0 : d);
   vec3 dir = normalize(hit);
