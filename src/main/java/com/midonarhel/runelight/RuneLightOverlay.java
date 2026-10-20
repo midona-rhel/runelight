@@ -99,7 +99,7 @@ class RuneLightOverlay extends OverlayPanel
 					line("  " + CpuTimer.NAMES[s], ms(c.getMs(s)), Color.WHITE);
 				}
 			}
-			line("  other plugin work", ms(c.untrackedMs(plugin.getCpuFrameMs())), Color.WHITE);
+			line("  untimed (ours + driver)", ms(c.untrackedMs(plugin.getCpuFrameMs())), Color.WHITE);
 			if (config.shadows())
 			{
 				long now = System.currentTimeMillis();

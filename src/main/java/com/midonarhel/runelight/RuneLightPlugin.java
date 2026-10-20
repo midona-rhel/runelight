@@ -1849,6 +1849,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 					uniShadowEntityProj, uniShadowBase, uniShadowTexturesReady, textureArrayId != -1, glCapabilities.OpenGL45);
 			}
 			// usually nothing too, like the weather's
+			gpuTimer.begin(GpuTimer.SKY_OCCLUSION);
 			skyOcclusion.render(root, glShadowProgram, uniShadowLightProj, uniShadowEntityProj, uniShadowBase,
 				uniShadowTexturesReady, textureArrayId != -1, glCapabilities.OpenGL45);
 		}
@@ -2129,7 +2130,9 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 			{
 				renderStaticShadows(ctx, size, fx, fy, fz, radius, depthRange, swayShadows);
 				// this frame's map starts as a copy of the static one
+				gpuTimer.begin(GpuTimer.SHADOW_COPY);
 				shadowMap.useFront(frameCameraX, frameCameraY, frameCameraZ);
+				gpuTimer.begin(GpuTimer.SHADOW);
 				glViewport(0, 0, size, size);
 				glUniformMatrix4fv(uniShadowLightProj, false, shadowMap.lightProj);
 				if (swayShadows)
@@ -2144,6 +2147,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 			}
 
 			// players, NPCs and other models drawn this frame
+			gpuTimer.begin(GpuTimer.SHADOW_MODELS);
 			glUniform3i(uniShadowBase, 0, 0, 0);
 			glUniformMatrix4fv(uniShadowEntityProj, false, IDENTITY);
 			for (int i = 0; i < VAO.shadowDrawCount; ++i)
