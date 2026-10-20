@@ -72,7 +72,12 @@ float skylightVisibility(vec3 p, vec3 n) {
   vec3 o = p + n * SKY_NORMAL_OFFSET;
   float v = skyGridVisibility(o + skyGridCamera, n);
   if (skyFieldOn == 1) {
-    vec2 field = textureLod(skyField, o.xz * skyFieldMap.xy + skyFieldMap.zw, 0.0).rg;
+    // kept within the point's own tile's four texels, so the filtering never blends across a wall on the tile's edge
+    // (the texels already ease toward the tiles beyond the open edges)
+    vec2 w = o.xz + skyGridCamera.xz;
+    vec2 t = floor(w / 128.0) * 128.0;
+    vec2 q = clamp(w, t + 32.0, t + 96.0) - skyGridCamera.xz;
+    vec2 field = textureLod(skyField, q * skyFieldMap.xy + skyFieldMap.zw, 0.0).rg;
     v = mix(v, max(v, field.r), field.g);
   }
   return v;
