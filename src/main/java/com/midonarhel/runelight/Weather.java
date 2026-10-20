@@ -35,6 +35,8 @@ import static org.lwjgl.opengl.GL33C.*;
  */
 class Weather
 {
+	private static final org.slf4j.Logger log = org.slf4j.LoggerFactory.getLogger(Weather.class);
+
 	// occlusion map: OCCLUSION_SIZE^2 texels over +-OCCLUSION_RADIUS world units, 1/8 tile per texel, 4 MB
 	private static final int OCCLUSION_SIZE = 1024;
 	private static final float OCCLUSION_RADIUS = 64 * 128;
@@ -583,6 +585,11 @@ class Weather
 
 		// walking into another region shows its weather as it is, at once; only a change of the weather blends
 		boolean entered = initialized && mode == WeatherMode.AUTOMATIC && !java.util.Objects.equals(biome, lastBiome);
+		if (entered)
+		{
+			log.debug("Look: weather biome {} -> {} ({}), fog {} -> {}, distance fog {} -> {}", lastBiome, biome, type,
+				fog, targetFog, distanceFog, type.distanceFog);
+		}
 		lastBiome = biome;
 		if (!initialized || !gradual || entered)
 		{

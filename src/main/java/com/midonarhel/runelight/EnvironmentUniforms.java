@@ -8,6 +8,10 @@ import static org.lwjgl.opengl.GL33C.*;
  */
 final class EnvironmentUniforms
 {
+	// the values of the last set(), for LookMonitor: ambient, sun, sky tint, fog color and weight, fog depth, haze
+	static final int VALUES = 15;
+	final float[] values = new float[VALUES];
+
 	private int ambient, sun, fogColor, fogDepth, haze, skyTint, drawDistance, cave;
 
 	void locate(int program)
@@ -40,18 +44,31 @@ final class EnvironmentUniforms
 			glUniform1f(fogDepth, 0);
 			glUniform1f(haze, 0);
 			glUniform3f(skyTint, 1, 1, 1);
+			java.util.Arrays.fill(values, 0);
+			java.util.Arrays.fill(values, 0, 9, 1);
 			return;
 		}
 
 		EnvironmentManager.Ambience a = env.getAmbience();
 		float k = lightStrength;
-		glUniform3f(ambient, scale(a.ambient[0], k), scale(a.ambient[1], k), scale(a.ambient[2], k));
-		glUniform3f(sun, scale(a.sun[0], k), scale(a.sun[1], k), scale(a.sun[2], k));
-		glUniform3f(skyTint, scale(a.skyTint[0], k), scale(a.skyTint[1], k), scale(a.skyTint[2], k));
-		glUniform4f(fogColor, a.fogColor[0], a.fogColor[1], a.fogColor[2], fogStrength > 0 ? a.fogColorWeight : 0);
+		float[] v = values;
+		for (int i = 0; i < 3; ++i)
+		{
+			v[i] = scale(a.ambient[i], k);
+			v[3 + i] = scale(a.sun[i], k);
+			v[6 + i] = scale(a.skyTint[i], k);
+			v[9 + i] = a.fogColor[i];
+		}
+		v[12] = fogStrength > 0 ? a.fogColorWeight : 0;
 		// 117 HD scales its fog depth with the draw distance so the look holds as it changes
-		glUniform1f(fogDepth, a.fogDepth * fogStrength * Math.min(drawDistanceTiles, 90) / 10f);
-		glUniform1f(haze, Math.min(1, a.haze * Math.min(fogStrength, 1)));
+		v[13] = a.fogDepth * fogStrength * Math.min(drawDistanceTiles, 90) / 10f;
+		v[14] = Math.min(1, a.haze * Math.min(fogStrength, 1));
+		glUniform3f(ambient, v[0], v[1], v[2]);
+		glUniform3f(sun, v[3], v[4], v[5]);
+		glUniform3f(skyTint, v[6], v[7], v[8]);
+		glUniform4f(fogColor, v[9], v[10], v[11], v[12]);
+		glUniform1f(fogDepth, v[13]);
+		glUniform1f(haze, v[14]);
 	}
 
 	private static float scale(float v, float k)

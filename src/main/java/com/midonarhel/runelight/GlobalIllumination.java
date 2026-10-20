@@ -290,6 +290,12 @@ class GlobalIllumination
 		buildAfterMillis = Math.max(now + REBUILD_DELAY_MILLIS, lastBuildMillis + MIN_REBUILD_MILLIS);
 	}
 
+	/** How much of the probes' light is shown, 0 when they are off. */
+	float shownWeight()
+	{
+		return isActive() ? weight : 0;
+	}
+
 	/** Whether the AO pass has probes to look up. */
 	boolean isActive()
 	{
@@ -367,6 +373,8 @@ class GlobalIllumination
 			if (l.generation != shownGeneration)
 			{
 				// new probes in a new place: shown as they are, there is nothing to blend from
+				log.debug("Look: GI probes replaced, generation {} -> {}, base ({}, {}) -> ({}, {})", shownGeneration,
+					l.generation, shownBaseX, shownBaseY, l.baseX, l.baseY);
 				uploadTarget = shown < 0 ? 0 : (shown + 1) % 3;
 				for (int layer = 0; layer < GiProbes.LAYERS; ++layer)
 				{

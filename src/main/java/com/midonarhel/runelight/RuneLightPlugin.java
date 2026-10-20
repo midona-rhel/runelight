@@ -248,6 +248,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 	private final LightClusters lightClusters = new LightClusters();
 	// repeating errors are logged once per interval
 	private final LogLimiter logLimiter = new LogLimiter(10_000);
+	private final LookMonitor lookMonitor = new LookMonitor();
 	private final java.util.ArrayList<PointLight> frameLights = new java.util.ArrayList<>();
 	private final PointLight testLight = new PointLight();
 	private int uniCompositePointLights;
@@ -2682,6 +2683,12 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		glUniform1f(uniCompositeAoStrength, config.aoStrength() / 100f);
 		globalIllumination.setComposite(config.giStrength() / 100f, config.giShadeFloor() / 100f);
 		setLightingUniforms();
+		if (log.isDebugEnabled())
+		{
+			EnvironmentManager.Environment b = environmentManager.getBiome();
+			lookMonitor.frame(compositeEnvUniforms, weather, globalIllumination, frameLights.size(),
+				environmentManager.getWorldPoint(), b != null ? b.name : null);
+		}
 		sceneTargets.bindAlphaLayer(ALPHA_LAYER_UNIT);
 		Scene groundScene = client.getTopLevelWorldView().getScene();
 		weatherGround.setComposite(ground && groundScene != null,
@@ -3410,6 +3417,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		Scene prev = client.getTopLevelWorldView().getScene();
 
 		regionManager.prepare(scene);
+		lookMonitor.scene("load", scene);
 
 		int dx = scene.getBaseX() - prev.getBaseX() >> 3;
 		int dy = scene.getBaseY() - prev.getBaseY() >> 3;
@@ -3798,6 +3806,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 			}
 		}
 		nextRoofChanges = null;
+		lookMonitor.scene("swap", scene);
 
 		ctx.zones = nextZones;
 		nextZones = null;
