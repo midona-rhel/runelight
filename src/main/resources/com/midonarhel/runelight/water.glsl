@@ -79,6 +79,9 @@ layout(location = 1) out uvec4 WaterShadedOut;
 #define LAMP_SURFACE 0.15
 // how much of the sun's shadow on its surface the murkiest water lifts
 #define MURKY_SHADOW_LIFT 0.6
+// how much the murkiest water's foam takes its own color, MURKY_FOAM_LIGHTER times as light (sRGB)
+#define MURKY_FOAM_TINT 0.75
+#define MURKY_FOAM_LIGHTER 1.6
 
 // Caustics: 117 HD's, carried by the flow, worked out by the water pass (water_frag.glsl) as their value above the
 // mean in units of the brightest lines'. The bed gains CAUSTICS times the direct light per unit (between
@@ -279,6 +282,8 @@ void waterShadeHalf(ivec2 hpx) {
   vec3 caster = vec3(0.0);
   vec3 surfaceLight = vec3(1.0);
   float shadow = 1.0;
+  // how heavy the water is: its base opacity, from clear water's to swamp's
+  float murk = smoothstep(WATER_LOOK[1].x, WATER_LOOK[5].x, look.x);
   if (outdoors == 1 && lightOn) {
     caster = (sunIsCaster == 1 ? sunLight(sunAltitude) : moonLight(sunAltitude)) * envSun;
     // the AO pass's sun shadow of what is under this pixel: close enough for the surface over it
@@ -288,8 +293,7 @@ void waterShadeHalf(ivec2 hpx) {
     vec3 ambient = ambientLight(sunAltitude) * envAmbient;
     vec3 sky = skyLight(sunAltitude) * envAmbient;
     // Murky water's own color is light scattered back from within it, which a shadow on the surface only partly
-    // takes away: the heavier the water (its base opacity, from clear's to swamp's), the less of the shadow it keeps
-    float murk = smoothstep(WATER_LOOK[1].x, WATER_LOOK[5].x, look.x);
+    // takes away: the heavier the water, the less of the shadow it keeps
     float bodyShadow = mix(shadow, 1.0, MURKY_SHADOW_LIFT * murk);
     surfaceLight = ambient + sky * max(-nrm.y, 0.0) + caster * max(dot(nrm, casterDir), 0.0) * bodyShadow;
   } else if (lightOn) {
@@ -384,7 +388,9 @@ void waterShadeHalf(ivec2 hpx) {
   // lay it over the whole (a mix over a mix is one mix)
   vec3 surface = mix(srgbToLinear(WATER_SURFACE_COLOR[type]) * surfaceLight, reflection * waveSky, look.y);
   float cover = max(fresnel, (1.0 + toCamera.y) * OPACITY_SLANT);
-  vec3 foamColor = srgbToLinear(WATER_FOAM_COLOR[type]) * surfaceLight;
+  // the foam on murky water is its own water whipped up, a lighter shade of it rather than white
+  vec3 foamColor = srgbToLinear(mix(WATER_FOAM_COLOR[type], WATER_SURFACE_COLOR[type] * MURKY_FOAM_LIGHTER,
+    murk * MURKY_FOAM_TINT)) * surfaceLight;
   float covered = cover + foam * (1.0 - cover);
   surface = (surface * (cover * (1.0 - foam)) + foamColor * foam) / max(covered, 1e-4);
   WaterShadedOut = waterPackShaded(surface, covered, spec);
