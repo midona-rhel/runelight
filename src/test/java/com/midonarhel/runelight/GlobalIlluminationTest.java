@@ -212,32 +212,31 @@ public class GlobalIlluminationTest
 	// ---- rays
 
 	@Test
-	public void raysCoverTheSphereAboveTheFloor()
+	public void raysCoverTheWholeSphereEqually()
 	{
-		assertTrue(GiProbes.RAYS > 16 && GiProbes.RAYS < GiProbes.RAY_SAMPLES);
-		float sum = 0;
+		assertEquals(GiProbes.RAY_SAMPLES, GiProbes.RAYS);
+		assertEquals(GiProbes.RAYS, GiProbes.WEIGHT_SUM, 1e-4);
+		float up = 0, down = 0;
 		for (int r = 0; r < GiProbes.RAYS; ++r)
 		{
-			float w = GiProbes.WEIGHT[r];
-			assertTrue(w > 0 && w <= 1);
-			sum += w;
+			assertEquals(1, GiProbes.WEIGHT[r], 0);
 			for (float[] d : GiProbes.DIRECTIONS)
 			{
 				assertEquals(1, d[r * 3] * d[r * 3] + d[r * 3 + 1] * d[r * 3 + 1] + d[r * 3 + 2] * d[r * 3 + 2], 1e-5);
-				// the same elevation in every rotation, none steeply down (y is down)
 				assertEquals(GiProbes.DIRECTIONS[0][r * 3 + 1], d[r * 3 + 1], 1e-6);
-				assertTrue(d[r * 3 + 1] < GiProbes.BELOW_HORIZON);
 			}
-		}
-		assertEquals(sum, GiProbes.WEIGHT_SUM, 1e-4);
-		// rays up and level count in full
-		for (int r = 0; r < GiProbes.RAYS; ++r)
-		{
-			if (GiProbes.DIRECTIONS[0][r * 3 + 1] <= 0)
+			// y is down
+			if (GiProbes.DIRECTIONS[0][r * 3 + 1] > 0)
 			{
-				assertEquals(1, GiProbes.WEIGHT[r], 0);
+				down++;
+			}
+			else
+			{
+				up++;
 			}
 		}
+		// the ground counts as much as the sky
+		assertEquals(up, down, 2);
 	}
 
 	@Test
@@ -471,33 +470,29 @@ public class GlobalIlluminationTest
 	}
 
 	@Test
-	public void openProbesAreOneAndInteriorsAreDarker()
+	public void interiorsAreDarkerAndSunlightBounces()
 	{
 		GiProbes p = probes();
 		GiRelight.Light skyOnly = GiRelight.Light.fromTable(table(0.3f, 2.6f), sunDir(), false);
-		GiRelight.Result r = GiRelight.relight(p, skyOnly, null, 1, GiProbes.ParallelFor.SEQUENTIAL, false);
-		// in the open, nothing in the way: the sky's own light, 1 relative to itself (what the ground below gives is
-		// dark with no sun to light it)
+		GiRelight.Result r = GiRelight.relight(p, skyOnly, null, 1, GiProbes.ParallelFor.SEQUENTIAL);
+		// with no sun nothing is lit to bounce: the shown bounce is dark, and the whole light darker indoors than out
 		int open = GiProbes.probe(15, 15, 1);
-		for (int c = 0; c < 3; ++c)
-		{
-			assertEquals(1, r.shown[open * 3 + c], 0.08);
-		}
 		int house = GiProbes.probe(6, 6, 0);
 		assertTrue(p.valid[house]);
-		assertTrue("inside " + lum(r.shown, house), lum(r.shown, house) < 0.35f);
+		assertEquals(0, lum(r.shown, open), 1e-6);
+		assertTrue("inside " + lum(r.light, house) + " open " + lum(r.light, open), lum(r.light, house) < lum(r.light, open) * 0.5f);
 
 		// sunlight bounced off the ground and walls adds light, more bounces add more
 		GiRelight.Light withSun = GiRelight.Light.fromTable(table(0.3f, 2.6f), sunDir(), true);
-		GiRelight.Result bounced = GiRelight.relight(p, withSun, null, 3, GiProbes.ParallelFor.SEQUENTIAL, false);
-		GiRelight.Result once = GiRelight.relight(p, withSun, null, 1, GiProbes.ParallelFor.SEQUENTIAL, false);
+		GiRelight.Result bounced = GiRelight.relight(p, withSun, null, 3, GiProbes.ParallelFor.SEQUENTIAL);
+		GiRelight.Result once = GiRelight.relight(p, withSun, null, 1, GiProbes.ParallelFor.SEQUENTIAL);
 		int ground = GiProbes.probe(15, 15, 0);
 		assertTrue(lum(bounced.light, ground) > lum(r.light, ground) * 1.1f);
 		assertTrue(lum(bounced.light, house) > lum(r.light, house));
 		assertTrue(sum(bounced.light) > sum(once.light));
 		for (float v : bounced.shown)
 		{
-			assertTrue(Float.isFinite(v) && v >= 0 && v <= GiRelight.MAX_RELATIVE);
+			assertTrue(Float.isFinite(v) && v >= 0);
 		}
 	}
 
@@ -523,7 +518,7 @@ public class GlobalIlluminationTest
 		float[] peaks = new float[2];
 		for (int i = 1; i <= 40; ++i)
 		{
-			last = GiRelight.relight(p, light, last, 1, GiProbes.ParallelFor.SEQUENTIAL, false).light;
+			last = GiRelight.relight(p, light, last, 1, GiProbes.ParallelFor.SEQUENTIAL).light;
 			if (i == 20 || i == 40)
 			{
 				for (float v : last)
@@ -541,8 +536,8 @@ public class GlobalIlluminationTest
 	{
 		GiProbes p = probes();
 		GiRelight.Light light = GiRelight.Light.fromTable(table(0.3f, 2.6f), new float[]{0, -1, 0}, false);
-		float[] shown = GiRelight.relight(p, light, null, 1, GiProbes.ParallelFor.SEQUENTIAL, false).shown;
-		// the probe by the door sees more sky than the one at the back wall
+		// the whole light (the shown bounce has no sky): the probe by the door sees more sky than the one at the back wall
+		float[] shown = GiRelight.relight(p, light, null, 1, GiProbes.ParallelFor.SEQUENTIAL).light;
 		int byDoor = GiProbes.probe(6, 5, 0);
 		int back = GiProbes.probe(6, 6, 0);
 		assertTrue(p.valid[byDoor] && p.valid[back]);

@@ -72,7 +72,7 @@ public class GiBounceTest
 	public void bounceCarriesTheGroundsColorAndNoSky()
 	{
 		GiProbes p = probes(greenGrid(null, false));
-		GiRelight.Result r = GiRelight.relight(p, sunlit(), null, 3, GiProbes.ParallelFor.SEQUENTIAL, true);
+		GiRelight.Result r = GiRelight.relight(p, sunlit(), null, 3, GiProbes.ParallelFor.SEQUENTIAL);
 		// tile 10 is column 5
 		int probe = GiProbes.probe(5, 5, 0);
 		assertTrue(p.valid[probe]);
@@ -88,25 +88,10 @@ public class GiBounceTest
 		}
 		t[GiRelight.SKY_W * GiRelight.SKY_H * 4 + 4] = 0.5f;
 		GiRelight.Light dark = GiRelight.Light.fromTable(t, new float[]{0, -1, 0}, true);
-		for (float v : GiRelight.relight(p, dark, null, 1, GiProbes.ParallelFor.SEQUENTIAL, true).shown)
+		for (float v : GiRelight.relight(p, dark, null, 1, GiProbes.ParallelFor.SEQUENTIAL).shown)
 		{
 			assertEquals(0, v, 0);
 		}
-	}
-
-	@Test
-	public void shownLightIsRelativeToTheOpenSkyWithoutBounceOnly()
-	{
-		GiProbes p = probes(greenGrid(null, false));
-		GiRelight.Light light = sunlit();
-		GiRelight.Result sky = GiRelight.relight(p, light, null, 1, GiProbes.ParallelFor.SEQUENTIAL, false);
-		GiRelight.Result bounce = GiRelight.relight(p, light, null, 1, GiProbes.ParallelFor.SEQUENTIAL, true);
-		// the same whole light either way
-		assertArrayEquals(sky.light, bounce.light, 0);
-		int probe = GiProbes.probe(5, 5, 0);
-		// grass under the open sky: about the sky's own light, plus what the sunlit grass throws back, green
-		assertTrue(sky.shown[probe * 3 + 1] > 1f && sky.shown[probe * 3 + 1] < 2f);
-		assertTrue(sky.shown[probe * 3 + 1] > sky.shown[probe * 3 + 2]);
 	}
 
 	@Test
@@ -166,7 +151,7 @@ public class GiBounceTest
 			}
 		}
 		GiProbes p = probes(greenGrid(water, true));
-		float[] bounce = GiRelight.relight(p, sunlit(), null, 3, GiProbes.ParallelFor.SEQUENTIAL, true).shown;
+		float[] bounce = GiRelight.relight(p, sunlit(), null, 3, GiProbes.ParallelFor.SEQUENTIAL).shown;
 		// over the water the light thrown up is blue, over the grass it is green
 		int overWater = GiProbes.probe(7, 7, 0), overGrass = GiProbes.probe(1, 1, 0);
 		assertTrue(p.valid[overWater] && p.valid[overGrass]);

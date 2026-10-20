@@ -96,7 +96,6 @@ class GlobalIllumination
 		float[] table;
 		float[] casterDir;
 		boolean bounce;
-		boolean bounceOnly;
 	}
 
 	private int skyProgram, blendProgram;
@@ -104,7 +103,7 @@ class GlobalIllumination
 		uniSkyCacheWeight;
 	private int uniBlend;
 	private int uniAoEnabled = -1, uniAoCamera = -1;
-	private int uniWeight = -1, uniFloor = -1;
+	private int uniWeight = -1;
 
 	private final int[] probeTextures = new int[3];
 	private int metaTexture, probeFbo, skyTexture, skyFbo, pbo;
@@ -133,7 +132,7 @@ class GlobalIllumination
 	private boolean readbackPending;
 	private long fence;
 	private final float[] readbackCasterDir = new float[3];
-	private boolean readbackBounce, readbackBounceOnly;
+	private boolean readbackBounce;
 	private boolean relit;
 	private final float[] lastCasterDir = new float[3];
 	private boolean lastSunIsCaster;
@@ -225,7 +224,6 @@ class GlobalIllumination
 	void locateComposite(int program)
 	{
 		uniWeight = glGetUniformLocation(program, "giWeight");
-		uniFloor = glGetUniformLocation(program, "giFloor");
 	}
 
 	/** GL resources and the worker. */
@@ -471,10 +469,8 @@ class GlobalIllumination
 	 * relight if one is wanted and start reading it back. Changes the framebuffer, viewport and program.
 	 *
 	 * @param overcast Weather.getOvercast's 7 values
-	 * @param bounceOnly light the probes with the surfaces' bounced light alone, for the skylight mode that adds it to
-	 *                   its own sky light
 	 */
-	void afterSky(DayCycle day, float[] overcast, float skyCacheWeight, boolean bounce, boolean bounceOnly)
+	void afterSky(DayCycle day, float[] overcast, float skyCacheWeight, boolean bounce)
 	{
 		if (!readbackWanted || readbackPending || skyProgram == 0 || skyFbo == 0)
 		{
@@ -502,7 +498,6 @@ class GlobalIllumination
 		readbackPending = true;
 		System.arraycopy(day.casterDir, 0, readbackCasterDir, 0, 3);
 		readbackBounce = bounce;
-		readbackBounceOnly = bounceOnly;
 	}
 
 	private void pollReadback()
@@ -540,7 +535,6 @@ class GlobalIllumination
 		in.table = table.clone();
 		in.casterDir = readbackCasterDir.clone();
 		in.bounce = readbackBounce;
-		in.bounceOnly = readbackBounceOnly;
 		submit(() -> relight(in));
 	}
 
@@ -577,11 +571,10 @@ class GlobalIllumination
 		glActiveTexture(GL_TEXTURE0);
 	}
 
-	/** With the composite in use: how much of its ambient light the probes replace, and the floor kept. */
-	void setComposite(float strength, float floor)
+	/** With the composite in use: how much of the probes' bounced light it adds. */
+	void setComposite(float strength)
 	{
 		glUniform1f(uniWeight, isActive() ? weight * strength : 0);
-		glUniform1f(uniFloor, floor);
 	}
 
 	// ---------------------------------------------------------------------------------------------------------
@@ -863,7 +856,7 @@ class GlobalIllumination
 		boolean first = lastLightGeneration != probesGeneration || lastLight == null;
 		GiRelight.Light light = GiRelight.Light.fromTable(in.table, in.casterDir, in.bounce);
 		GiRelight.Result result = GiRelight.relight(p, light, first ? null : lastLight, first ? FIRST_BOUNCES : 1,
-			parallel(), in.bounceOnly);
+			parallel());
 		// the next bounces build on the whole light, whichever part is shown
 		lastLight = result.light;
 		lastLightGeneration = probesGeneration;
@@ -873,7 +866,7 @@ class GlobalIllumination
 		l.baseY = probesBaseY;
 		l.instance = probesInstance;
 		l.meta = p.meta;
-		l.texels = texels(result.shown, p.valid);
+		l.texels = texels(GiProbes.smooth(p, result.shown), p.valid);
 		lit = l;
 		log.trace("GI relight in {} ms", (System.nanoTime() - start) / 1_000_000);
 	}

@@ -8,9 +8,9 @@ package com.midonarhel.runelight;
  * so no surface gets more from one that faces it than from any other. Runs on the global illumination's worker
  * whenever the sky or the light changes enough (GlobalIllumination), tens of milliseconds for a whole scene.
  *
- * The sky part is scaled so that a probe under the open sky lights a surface facing up as much as the composite's
- * plain ambient and sky light do: the probes move that light around (less of it under roofs and overhangs, the
- * colors of the ground and walls around) rather than changing the exposure.
+ * The sky is part of the light the further bounces build on (scaled so that a probe under the open sky gets what the
+ * composite's plain ambient and sky light give a surface facing up), but what is shown is the light of the rays that
+ * hit surfaces alone: the composite adds that to its skylight, which already has the sky's own.
  */
 final class GiRelight
 {
@@ -28,8 +28,6 @@ final class GiRelight
 	// from it; a surface hit by a ray reflects this much of the average of the probe in front of it, between that
 	// average and the most a facing surface would get. Kept low enough that light bouncing in a closed room dies out.
 	static final float INCIDENT_GAIN = 1.5f;
-	// the light shown with the sky (relative to the open sky's) stays within this, the range the composite can carry
-	static final float MAX_RELATIVE = 4;
 
 	/** What lights the probes this time. */
 	static final class Light
@@ -84,10 +82,7 @@ final class GiRelight
 	{
 		/** Sky and surfaces together: what the next bounces build on. */
 		final float[] light;
-		/**
-		 * What goes to the GPU: with bounceOnly the surfaces' light alone, in the composite's units; else the whole
-		 * light relative to what a probe under the open sky would have (1 where all of the sky is seen, nothing bounces).
-		 */
+		/** What goes to the GPU: the light the rays that hit surfaces bring alone, in the composite's units. */
 		final float[] shown;
 
 		Result(float[] light, float[] shown)
@@ -157,17 +152,13 @@ final class GiRelight
 	 * Light every valid probe. prev: the probes' last whole light for the bounces (null for none yet); each further
 	 * iteration bounces once more from the one before.
 	 *
-	 * @param bounceOnly show the light of the rays that hit surfaces alone, with none of the sky's own: what the
-	 *                   skylight mode adds to its plain ambient and sky light
 	 */
-	static Result relight(GiProbes p, Light light, float[] prev, int iterations, GiProbes.ParallelFor parallel,
-		boolean bounceOnly)
+	static Result relight(GiProbes p, Light light, float[] prev, int iterations, GiProbes.ParallelFor parallel)
 	{
 		float k = skyScale(light);
 		int rays = GiProbes.RAYS;
 		float[][] skyRays = new float[GiProbes.ROTATIONS][rays * 3];
 		float[] rgb = new float[3];
-		float[] open = new float[3];
 		for (int r = 0; r < GiProbes.ROTATIONS; ++r)
 		{
 			float[] d = GiProbes.DIRECTIONS[r];
@@ -177,11 +168,6 @@ final class GiRelight
 				for (int c = 0; c < 3; ++c)
 				{
 					skyRays[r][i * 3 + c] = rgb[c] * k;
-					// what a probe sees of the sky where nothing is in the way, the rays that point up
-					if (r == 0 && d[i * 3 + 1] < 0)
-					{
-						open[c] += rgb[c] * k * GiProbes.WEIGHT[i] / GiProbes.WEIGHT_SUM;
-					}
 				}
 			}
 		}
@@ -217,7 +203,7 @@ final class GiRelight
 		{
 			float[] last = out;
 			float[] cur = new float[GiProbes.PROBES * 3];
-			float[] curSurfaces = bounceOnly ? new float[GiProbes.PROBES * 3] : null;
+			float[] curSurfaces = new float[GiProbes.PROBES * 3];
 			// light leaving each one-sided hit voxel
 			parallel.run(p.hits, h ->
 			{
@@ -294,35 +280,14 @@ final class GiRelight
 				cur[i * 3] = fr * inv;
 				cur[i * 3 + 1] = fg * inv;
 				cur[i * 3 + 2] = fb * inv;
-				if (curSurfaces != null)
-				{
-					curSurfaces[i * 3] = ur * inv;
-					curSurfaces[i * 3 + 1] = ug * inv;
-					curSurfaces[i * 3 + 2] = ub * inv;
-				}
+				curSurfaces[i * 3] = ur * inv;
+				curSurfaces[i * 3 + 1] = ug * inv;
+				curSurfaces[i * 3 + 2] = ub * inv;
 			});
 			out = cur;
 			surfaces = curSurfaces;
 		}
-		return new Result(out, bounceOnly ? surfaces : relative(out, open));
+		return new Result(out, surfaces);
 	}
 
-	/** The whole light over what the open sky gives a probe, per channel; 1 everywhere when there is no sky light. */
-	private static float[] relative(float[] light, float[] open)
-	{
-		float[] out = new float[light.length];
-		float l = luminance(open[0], open[1], open[2]);
-		if (l < 1e-5f)
-		{
-			java.util.Arrays.fill(out, 1);
-			return out;
-		}
-		// a channel the sky has next to none of would otherwise blow up
-		float[] den = {Math.max(open[0], l * 0.1f), Math.max(open[1], l * 0.1f), Math.max(open[2], l * 0.1f)};
-		for (int i = 0; i < light.length; ++i)
-		{
-			out[i] = Math.min(MAX_RELATIVE, light[i] / den[i % 3]);
-		}
-		return out;
-	}
 }

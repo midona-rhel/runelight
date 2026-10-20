@@ -9,7 +9,7 @@
 // the lights (LightOcclusion.texel) carries both, and whether the walls already decide where the light reaches on
 // its own storey. Needs lightData, cluster_config, cameraPos and rooms.glsl.
 
-uniform int skylightMode;    // 0 probes only, 1 skylight, 2 skylight and the probes' bounce
+uniform int skylightMode;    // 1 skylight, 2 skylight and the probes' bounce
 uniform int skylightOn;      // 1 when the AO pass worked the sky visibility out this frame
 uniform float skylightFloor; // share of the ambient light kept where no sky is seen
 
@@ -31,7 +31,7 @@ float skyUpsampled = 1.0;
 
 // How much of the bounced light's brightness is added on top of the skylight in mode 2: 0 only gives the shade the
 // bounce's color, 1 adds all of it. Less than 1 keeps the exposure the skylight alone has; the colors still show.
-#define BOUNCE_BRIGHTNESS 0.5
+#define BOUNCE_BRIGHTNESS 1.0
 
 // plain: the ambient plus sky light a surface would get under the open sky; gi the probes' light and giW their weight.
 // In mode 2 the probes carry only the light bounced off surfaces (GiRelight, bounceOnly), in color: the sunlit grass

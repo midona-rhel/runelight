@@ -3,8 +3,7 @@ package com.midonarhel.runelight.config;
 public enum LightingModel
 {
 	SKYLIGHT("Skylight"),
-	SKYLIGHT_GI("Skylight + GI bounce"),
-	GI("GI probes");
+	SKYLIGHT_GI("Skylight + GI bounce");
 
 	private final String name;
 

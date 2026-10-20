@@ -50,10 +50,8 @@ final class GiProbes
 	// ray results other than a hit voxel
 	static final int MISS = -1, BACK = -2;
 
-	// Rays pointing further below the horizon than this (the sine of the elevation) are left out and the ones nearer
-	// it count less: a surface doesn't see the floor it lies on, and a probe's own ground would otherwise bounce its
-	// light onto everything standing on it.
-	static final float BELOW_HORIZON = 0.6f;
+	// Rays spread evenly over the whole sphere, each counting the same: the ground below a probe is what bounces most
+	// of the light (the green of grass onto the walls and people standing on it), so it counts like any other side.
 	static final int RAY_SAMPLES = 40;
 	// probes rotate their rays about the vertical by one of this many angles, so neighbours sample between each
 	// other's directions instead of all missing the same thin gap
@@ -75,14 +73,9 @@ final class GiProbes
 		float sum = 0;
 		for (int i = 0; i < RAY_SAMPLES; ++i)
 		{
-			// y is down: below the horizon is +y
-			float w = Math.min(1, 1 - all[i * 3 + 1] / BELOW_HORIZON);
-			if (w > 0)
-			{
-				weights[n] = w;
-				kept[n++] = i;
-				sum += w;
-			}
+			weights[n] = 1;
+			kept[n++] = i;
+			sum += 1;
 		}
 		RAYS = n;
 		WEIGHT = Arrays.copyOf(weights, n);
@@ -404,6 +397,55 @@ final class GiProbes
 			float wz = hitPos[h * 3 + 2] * GiGrid.VOXEL + nn[2] * 48;
 			hitBounce[h] = nearestProbe(wx, wy, wz);
 		}
+	}
+
+	/**
+	 * Each valid probe's light averaged with its valid neighbours' of the same level and class (indoor or outdoor), the
+	 * probe itself counting twice: a probe's few dozen rays see a noisy sample of what is around it, and one lucky ray
+	 * on a bright wall would otherwise show as a lit patch two tiles wide.
+	 */
+	static float[] smooth(GiProbes p, float[] light)
+	{
+		float[] out = light.clone();
+		for (int level = 0; level < LEVELS; ++level)
+		{
+			for (int cz = 0; cz < COLUMNS; ++cz)
+			{
+				for (int cx = 0; cx < COLUMNS; ++cx)
+				{
+					int i = probe(cx, cz, level);
+					if (!p.valid[i])
+					{
+						continue;
+					}
+					float r = 2 * light[i * 3], g = 2 * light[i * 3 + 1], b = 2 * light[i * 3 + 2], w = 2;
+					for (int dz = -1; dz <= 1; ++dz)
+					{
+						for (int dx = -1; dx <= 1; ++dx)
+						{
+							int x = cx + dx, z = cz + dz;
+							if ((dx | dz) == 0 || x < 0 || z < 0 || x >= COLUMNS || z >= COLUMNS)
+							{
+								continue;
+							}
+							int j = probe(x, z, level);
+							if (!p.valid[j] || p.indoor[j] != p.indoor[i])
+							{
+								continue;
+							}
+							r += light[j * 3];
+							g += light[j * 3 + 1];
+							b += light[j * 3 + 2];
+							w += 1;
+						}
+					}
+					out[i * 3] = r / w;
+					out[i * 3 + 1] = g / w;
+					out[i * 3 + 2] = b / w;
+				}
+			}
+		}
+		return out;
 	}
 
 	/** Linear color (r, g, b) moved ALBEDO_SATURATION times as far from its luminance, same luminance, into out[at..]. */

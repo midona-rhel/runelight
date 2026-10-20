@@ -1349,20 +1349,6 @@ public interface RuneLightConfig extends Config
 		return true;
 	}
 
-	@Range(max = 100)
-	@ConfigItem(
-		keyName = "giShadeFloor",
-		name = "Shade floor",
-		description = "Share of the plain ambient light kept where little light reaches, such as deep inside "
-			+ "buildings, in percent: higher keeps interiors easier to see.",
-		section = giSection,
-		position = 704
-	)
-	default int giShadeFloor()
-	{
-		return 30;
-	}
-
 	@ConfigSection(
 		name = "Rooms",
 		description = "Keep light and fog where they belong: lamps inside buildings, fog outside them",
@@ -1421,8 +1407,7 @@ public interface RuneLightConfig extends Config
 		name = "Lighting model",
 		description = "Where the ambient light comes from. Skylight: how much sky each spot sees, from a top-down map "
 			+ "of the scenery; cheap, interiors and overhangs darken. Skylight + GI bounce: the same, plus the colored "
-			+ "light bounced into the shade by the global illumination's probes. GI probes: the probes alone. The probes "
-			+ "also need Global illumination on.",
+			+ "light bounced into the shade by the global illumination's probes, which also need Global illumination on.",
 		section = lightOcclusionSection,
 		position = 801
 	)

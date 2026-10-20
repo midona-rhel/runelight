@@ -145,19 +145,9 @@ float upsampleAoFog(ivec2 px, float z, vec3 n, out vec4 fog, out float shadow, o
 }
 
 // ---------------------------------------------------------------------------------------------------------------
-// Global illumination (GlobalIllumination.java, gi.glsl): the probes' indirect light, upsampled with the AO, stands
-// in for the plain ambient and sky light where the probes have it: their light is relative to what the open sky gives
-// (1 in the open, less under roofs, tinted by what surrounds), so it scales the plain light, which keeps its shape
-// over the surface's normal. giFloor keeps a share of the plain light, so interiors stay readable however little
-// light the probes find there.
-
+// Global illumination (GlobalIllumination.java, gi.glsl): the light bounced off the surfaces around, upsampled with
+// the AO, added to the skylight's ambient (light_occlusion.glsl skylightAmbient)
 uniform float giWeight;  // 0..1: enabled, eased in and out, strength
-uniform float giFloor;
-
-vec3 giAmbient(vec3 ambient, vec4 gi) {
-  float w = gi.a * giWeight;
-  return w > 0.0 ? mix(ambient, ambient * max(gi.rgb, vec3(giFloor)), w) : ambient;
-}
 
 // ---------------------------------------------------------------------------------------------------------------
 // Distance fog by the game's fog depth setting, from the same edge as the edge fade, as in vert.glsl
@@ -377,7 +367,7 @@ void main() {
     vec3 caster = sunIsCaster == 1 ? sunLight(sunAltitude) : moonLight(sunAltitude);
     float up = max(-n.y, 0.0);
     vec3 plain = ambientLight(sunAltitude) + skyFill(n, sunAltitude, up);
-    indirect = (skylightMode == 0 ? giAmbient(plain, gi) : skylightAmbient(plain, gi.rgb, gi.a * giWeight))
+    indirect = skylightAmbient(plain, gi.rgb, gi.a * giWeight)
       * envAmbient * ao;
     light = indirect
       + caster * envSun * max(ndl, 0.0) * shadow * mix(1.0, ao, AO_DIRECT);

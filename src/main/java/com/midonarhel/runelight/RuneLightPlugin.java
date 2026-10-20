@@ -1970,12 +1970,6 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		return config.proceduralSky() && !frameHasSkybox && !frameSkyVoid;
 	}
 
-	/** Whether the probes carry only the bounced light: the skylight mode has the sky's own. */
-	private boolean giBounceOnly()
-	{
-		return config.lightingModel() == LightingModel.SKYLIGHT_GI;
-	}
-
 	/** Whether the probes run: on, and the lighting model uses them. */
 	private boolean giEnabled()
 	{
@@ -1988,8 +1982,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 	private void updateSkyOcclusion(float cameraX, float cameraY, float cameraZ)
 	{
 		WorldView wv = client.getTopLevelWorldView();
-		boolean wanted = wv != null && frameOutdoors && client.getGameState() == GameState.LOGGED_IN
-			&& (config.lightingModel() != LightingModel.GI || (config.lightRoofOcclusion() && config.pointLights()));
+		boolean wanted = wv != null && frameOutdoors && client.getGameState() == GameState.LOGGED_IN;
 		float fx = cameraX, fy = cameraY, fz = cameraZ;
 		int plane = wv != null ? wv.getPlane() : 0;
 		Player player = client.getLocalPlayer();
@@ -2464,7 +2457,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		}
 		glUniform1i(uniCompositePointLights, points ? 1 : 0);
 		LightingModel model = config.lightingModel();
-		glUniform1i(uniCompositeSkylightMode, model == LightingModel.GI ? 0 : model == LightingModel.SKYLIGHT ? 1 : 2);
+		glUniform1i(uniCompositeSkylightMode, model == LightingModel.SKYLIGHT ? 1 : 2);
 		glUniform1i(uniCompositeSkylightOn, frameSkylight ? 1 : 0);
 		glUniform1f(uniCompositeSkylightFloor, config.skylightFloor() / 100f);
 
@@ -2638,7 +2631,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		WorldView wv = client.getTopLevelWorldView();
 		Scene scene = wv != null ? wv.getScene() : null;
 		weather.getOvercast(giOvercast);
-		int settings = java.util.Objects.hash(config.giSunBounce(), giBounceOnly(), config.skyCache(), Math.round(giOvercast[0] * 20),
+		int settings = java.util.Objects.hash(config.giSunBounce(), config.skyCache(), Math.round(giOvercast[0] * 20),
 			Math.round(giOvercast[1] * 10), Math.round(giOvercast[3] * 10), Math.round(giOvercast[4] * 10),
 			Math.round(giOvercast[5] * 10), Math.round(giOvercast[6] * 10));
 		try
@@ -2765,8 +2758,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		{
 			// the sky cache is bound now; the probes are relit with its light
 			gpuTimer.begin(GpuTimer.GI);
-			globalIllumination.afterSky(dayCycle, giOvercast, skyCache.getLightWeight(), config.giSunBounce(),
-				giBounceOnly());
+			globalIllumination.afterSky(dayCycle, giOvercast, skyCache.getLightWeight(), config.giSunBounce());
 		}
 		gpuTimer.end();
 
@@ -2776,7 +2768,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		glUniform1i(uniCompositeDebugView, config.debugView().ordinal());
 		glUniform1i(uniCompositeAoEnabled, ao ? 1 : 0);
 		glUniform1f(uniCompositeAoStrength, config.aoStrength() / 100f);
-		globalIllumination.setComposite(config.giStrength() / 100f, config.giShadeFloor() / 100f);
+		globalIllumination.setComposite(config.giStrength() / 100f);
 		setLightingUniforms();
 		if (log.isDebugEnabled())
 		{
