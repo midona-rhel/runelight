@@ -72,6 +72,11 @@ layout(location = 1) out uvec4 WaterShadedOut;
 #define GLITTER_SLOPE 1.5
 #define GLITTER_ROUGH 0.01
 #define GLITTER 0.45
+// How far around the mirror direction waves may catch the sun: slow swells (patches GLINT_SWELL tiles across) tilt the
+// glitter slopes by up to GLINT_SPREAD, so the glints show over a wider area. Each glint keeps its size and brightness
+// (GLITTER_SLOPE, GLITTER_ROUGH); 0 = the old tight spread.
+#define GLINT_SPREAD 0.12
+#define GLINT_SWELL 9.0
 #define MOON_SPECULAR 0.35
 // lamps: their streak's width along and across, strength, and the most one adds (linear)
 #define LAMP_ALONG 0.03
@@ -388,7 +393,10 @@ void waterShadeHalf(ivec2 hpx) {
   if (outdoors == 1 && lightOn) {
     vec3 h = normalize(casterDir + toCamera);
     float sheen = pow(max(dot(nrm, h), 0.0), SHEEN_GLOSS) * (SHEEN_GLOSS + 8.0) / 25.0 * SHEEN * fresnel;
-    vec3 steep = normalize(vec3(nrm.x * GLITTER_SLOPE, nrm.y, nrm.z * GLITTER_SLOPE));
+    vec2 swellPos = (s + cameraPos).xz * (1.0 / (128.0 * GLINT_SWELL));
+    vec2 swell = sin(vec2(swellPos.x * 6.2832 + swellPos.y * 3.7, swellPos.y * 6.2832 - swellPos.x * 2.9));
+    vec3 steep = normalize(vec3(nrm.x * GLITTER_SLOPE + swell.x * GLINT_SPREAD, nrm.y,
+                                nrm.z * GLITTER_SLOPE + swell.y * GLINT_SPREAD));
     float glitter = waterGlint(steep, casterDir, toCamera, tAlong, tAcross, GLITTER_ROUGH * 1.6, GLITTER_ROUGH) * GLITTER;
     spec += caster * ((sheen + glitter) * shadow * look.z * (1.0 - foam) * (sunIsCaster == 1 ? 1.0 : MOON_SPECULAR));
   }
