@@ -3,8 +3,9 @@
 // texel ROOM_BASE: a header (enabled, tiles per side, extended tiles before local tile 0, whether the lights keep to
 // their rooms), then two texels per tile:
 // the four planes' rooms (room + porch room * 4096, 0 outdoors) and the four planes' floor heights (world y, down).
-// The porch of an outdoor tile is the room whose doorway it lies across, that of a room tile the room across a hole
-// in its floor or ceiling.
+// The porch of a tile is the room whose light spills onto it through an opening: a doorway or any gap with no wall
+// (the code is negative then; ROOM_ANY is the outdoors), or, for a room tile, the room across a hole in its floor or
+// ceiling (positive).
 // A light's room code is its second texel's w (LightClusters.java). Needs lightData and cluster_config.
 
 // how far above a floor a point must be to be on that storey (world units): the tops of the walls stay on theirs
@@ -14,12 +15,14 @@
 // pixels look their room up this far off their surface along the normal: a wall's outer face is outdoors, its
 // inner face in the room, a ceiling in the room below it
 #define ROOM_NORMAL_BIAS 40.0
-// share of a room's light on its porch, the outdoor tile across an opening: the light spilling out of the door
+// share of a room's light on its porch, the tiles across an opening: the light spilling out of the door
 #define ROOM_PORCH_SHARE 0.55
 #define ROOM_ANY 4095
+#define ROOM_SOFT 4096
 
 // x the room of the tile under world point w on the storey w is on, 0 outdoors, -1 unknown (no map, outside it);
-// y the room whose porch it is or that lies across a hole, 0 none; z the storey (plane), 0 where no room is
+// y the room whose porch it is or that lies across a hole, 0 none, plus ROOM_SOFT for an opening's porch;
+// z the storey (plane), 0 where no room is
 ivec3 roomPlaneAt(vec3 w) {
   vec4 h = texelFetch(lightData, ROOM_BASE);
   if (h.x < 0.5) {
@@ -44,13 +47,15 @@ ivec3 roomPlaneAt(vec3 w) {
     }
   }
   float code = rooms[plane];
+  bool soft = code < 0.0;
+  code = abs(code);
   int porch = int(floor(code / 4096.0));
   int room = int(code - float(porch) * 4096.0);
   if (room != 0 && w.y < floors[plane] - ROOM_STOREY) {
     room = 0;
     porch = 0;
   }
-  return ivec3(room, porch, plane);
+  return ivec3(room, soft && porch > 0 ? porch + ROOM_SOFT : porch, plane);
 }
 
 ivec2 roomAt(vec3 w) {
@@ -69,11 +74,12 @@ float roomShare(float code, ivec2 r) {
   if (a == ROOM_ANY || a == r.x || b == r.x) {
     return 1.0;
   }
-  if (r.y == 0 || (a != r.y && b != r.y)) {
+  int near = r.y & (ROOM_SOFT - 1);
+  if (near == 0 || (a != near && b != near && (near != ROOM_ANY || (a != 0 && b != 0)))) {
     return 0.0;
   }
-  // across a doorway the light only spills; through a hole in a floor it shines in full
-  return r.x == 0 ? ROOM_PORCH_SHARE : 1.0;
+  // across an opening the light only spills; through a hole in a floor it shines in full
+  return r.y >= ROOM_SOFT ? ROOM_PORCH_SHARE : 1.0;
 }
 
 // roomAt for lighting: unknown (every light reaches it) when the lights don't keep to their rooms

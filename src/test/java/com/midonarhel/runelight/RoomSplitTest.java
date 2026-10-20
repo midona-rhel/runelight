@@ -10,6 +10,8 @@ import static org.junit.Assert.assertTrue;
 
 public class RoomSplitTest
 {
+	// CollisionDataFlag: blocks walking toward a side
+	private static final int BLOCK_EAST = 0x8, BLOCK_WEST = 0x80;
 	private static final int SIZE = 24, OFFSET = 4, LOCAL = SIZE - 2 * OFFSET;
 
 	// an 8x4 house on plane 0 at extended tiles x 8..15, y 8..11
@@ -24,6 +26,12 @@ public class RoomSplitTest
 			}
 		}
 		return settings;
+	}
+
+	// local world position of the center of extended tile t
+	private static float world(int t)
+	{
+		return (t - OFFSET + 0.5f) * 128;
 	}
 
 	private static void westWall(int[][][] f, int x, int y)
@@ -79,32 +87,35 @@ public class RoomSplitTest
 	}
 
 	@Test
-	public void lowWallsAndFencesSplitToo()
+	public void lowWallsFencesAndGatesDoNotSplit()
 	{
 		byte[][][] settings = house();
 		BuildingDetector.Result coarse = BuildingDetector.detect(settings, null);
 		int[][][] f = new int[4][LOCAL][LOCAL];
-		// a fence: blocks walking, not sight
+		// a fence, closed gate or low wall: blocks walking, not sight
 		for (int y = 8; y < 12; ++y)
 		{
-			f[0][12 - OFFSET][y - OFFSET] |= RoomMap.BLOCK_WEST;
-			f[0][11 - OFFSET][y - OFFSET] |= RoomMap.BLOCK_EAST;
+			f[0][12 - OFFSET][y - OFFSET] |= BLOCK_WEST;
+			f[0][11 - OFFSET][y - OFFSET] |= BLOCK_EAST;
 		}
 		WallMap w = WallMap.build(f, null, SIZE, OFFSET, 1);
 		assertFalse(w.edge(0, 12, 9, WallMap.WEST));
-		assertTrue(w.barrier(0, 12, 9, WallMap.WEST));
-		assertTrue(w.barrier(0, 11, 9, WallMap.EAST));
-		assertFalse(w.barrier(0, 12, 9, WallMap.NORTH));
+		assertFalse(w.edge(0, 11, 9, WallMap.EAST));
 		BuildingDetector.Result r = BuildingDetector.split(coarse, settings, w);
-		assertEquals(2, r.rooms.size());
-		assertNotEquals(roomOf(r, 9, 9), roomOf(r, 14, 9));
-		// the gate opens
+		assertEquals(1, r.rooms.size());
+		assertEquals(coarse.rooms.get(0).tiles.length, r.rooms.get(0).tiles.length);
+		// light passes it too
+		assertFalse(w.blocked(0, world(10), world(9), world(14), world(9)));
+		// opening and closing it changes nothing about the walls
 		f[0][12 - OFFSET][9 - OFFSET] = 0;
 		f[0][11 - OFFSET][9 - OFFSET] = 0;
-		assertEquals(1, BuildingDetector.split(coarse, settings, WallMap.build(f, null, SIZE, OFFSET, 1)).rooms.size());
-		// barriers count as a change of the walls, though sight is the same
-		assertFalse(w.sameWalls(WallMap.build(f, null, SIZE, OFFSET, 1)));
-		assertEquals(null, w.diff(WallMap.build(f, null, SIZE, OFFSET, 1)));
+		assertTrue(w.sameWalls(WallMap.build(f, null, SIZE, OFFSET, 1)));
+		// a wall of the same line does split
+		for (int y = 8; y < 12; ++y)
+		{
+			westWall(f, 12, y);
+		}
+		assertEquals(2, BuildingDetector.split(coarse, settings, WallMap.build(f, null, SIZE, OFFSET, 1)).rooms.size());
 	}
 
 	// the 8x4 house walled all round (outer walls: sight and walking), its roof flags running one row past the north
@@ -114,17 +125,17 @@ public class RoomSplitTest
 		int[][][] f = new int[4][LOCAL][LOCAL];
 		for (int x = 8; x < 16; ++x)
 		{
-			f[0][x - OFFSET][8 - OFFSET] |= WallMap.LOS_SOUTH | RoomMap.BLOCK_SOUTH;
-			f[0][x - OFFSET][7 - OFFSET] |= WallMap.LOS_NORTH | RoomMap.BLOCK_NORTH;
-			f[0][x - OFFSET][11 - OFFSET] |= WallMap.LOS_NORTH | RoomMap.BLOCK_NORTH;
-			f[0][x - OFFSET][12 - OFFSET] |= WallMap.LOS_SOUTH | RoomMap.BLOCK_SOUTH;
+			f[0][x - OFFSET][8 - OFFSET] |= WallMap.LOS_SOUTH;
+			f[0][x - OFFSET][7 - OFFSET] |= WallMap.LOS_NORTH;
+			f[0][x - OFFSET][11 - OFFSET] |= WallMap.LOS_NORTH;
+			f[0][x - OFFSET][12 - OFFSET] |= WallMap.LOS_SOUTH;
 		}
 		for (int y = 8; y < 12; ++y)
 		{
-			f[0][15 - OFFSET][y - OFFSET] |= WallMap.LOS_EAST | RoomMap.BLOCK_EAST;
-			f[0][16 - OFFSET][y - OFFSET] |= WallMap.LOS_WEST | RoomMap.BLOCK_WEST;
-			f[0][8 - OFFSET][y - OFFSET] |= WallMap.LOS_WEST | RoomMap.BLOCK_WEST;
-			f[0][7 - OFFSET][y - OFFSET] |= WallMap.LOS_EAST | RoomMap.BLOCK_EAST;
+			f[0][15 - OFFSET][y - OFFSET] |= WallMap.LOS_EAST;
+			f[0][16 - OFFSET][y - OFFSET] |= WallMap.LOS_WEST;
+			f[0][8 - OFFSET][y - OFFSET] |= WallMap.LOS_WEST;
+			f[0][7 - OFFSET][y - OFFSET] |= WallMap.LOS_EAST;
 		}
 		return f;
 	}
@@ -174,7 +185,6 @@ public class RoomSplitTest
 		{
 			westWall(f, 12, y);
 		}
-		f[0][12 - OFFSET][9 - OFFSET] |= RoomMap.BLOCK_WEST;
 		WallMap w = WallMap.build(f, null, SIZE, OFFSET, 1);
 		BuildingDetector.Result r = BuildingDetector.split(BuildingDetector.detect(settings, null), settings, w);
 		int[][][] heights = new int[4][SIZE + 1][SIZE + 1];

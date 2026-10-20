@@ -32,7 +32,7 @@ public class RoomMapTest
 		}
 		BuildingDetector.Result r = BuildingDetector.detect(settings, null);
 		RoomMap m = RoomMap.build(r, settings, heights, OFFSET);
-		m.updateOpenings(flags);
+		m.setWalls(WallMap.build(flags, null, SIZE, OFFSET, 1));
 		return m;
 	}
 
@@ -48,26 +48,26 @@ public class RoomMapTest
 		int[][][] f = new int[4][LOCAL][LOCAL];
 		for (int x = 8; x < 12; ++x)
 		{
-			f[0][x - OFFSET][8 - OFFSET] |= RoomMap.BLOCK_SOUTH;
-			f[0][x - OFFSET][7 - OFFSET] |= RoomMap.BLOCK_NORTH;
-			f[0][x - OFFSET][11 - OFFSET] |= RoomMap.BLOCK_NORTH;
-			f[0][x - OFFSET][12 - OFFSET] |= RoomMap.BLOCK_SOUTH;
+			f[0][x - OFFSET][8 - OFFSET] |= WallMap.LOS_SOUTH;
+			f[0][x - OFFSET][7 - OFFSET] |= WallMap.LOS_NORTH;
+			f[0][x - OFFSET][11 - OFFSET] |= WallMap.LOS_NORTH;
+			f[0][x - OFFSET][12 - OFFSET] |= WallMap.LOS_SOUTH;
 		}
 		for (int y = 8; y < 12; ++y)
 		{
-			f[0][11 - OFFSET][y - OFFSET] |= RoomMap.BLOCK_EAST;
-			f[0][12 - OFFSET][y - OFFSET] |= RoomMap.BLOCK_WEST;
+			f[0][11 - OFFSET][y - OFFSET] |= WallMap.LOS_EAST;
+			f[0][12 - OFFSET][y - OFFSET] |= WallMap.LOS_WEST;
 			if (y != 9)
 			{
-				f[0][8 - OFFSET][y - OFFSET] |= RoomMap.BLOCK_WEST;
-				f[0][7 - OFFSET][y - OFFSET] |= RoomMap.BLOCK_EAST;
+				f[0][8 - OFFSET][y - OFFSET] |= WallMap.LOS_WEST;
+				f[0][7 - OFFSET][y - OFFSET] |= WallMap.LOS_EAST;
 			}
 		}
 		return f;
 	}
 
 	@Test
-	public void porchesAreFoundOnlyBesideRoomsWhateverTheFlags()
+	public void porchesAreFoundOnlyAcrossOpeningsWhateverTheWalls()
 	{
 		java.util.Random rnd = new java.util.Random(7);
 		int[][][] f = new int[4][LOCAL][LOCAL];
@@ -79,50 +79,66 @@ public class RoomMapTest
 				{
 					for (int y = 0; y < row.length; ++y)
 					{
-						row[y] = rnd.nextInt(4) == 0 ? RoomMap.BLOCK_NORTH | RoomMap.BLOCK_WEST : rnd.nextInt(8) == 0 ? RoomMap.BLOCK_FULL : 0;
+						row[y] = rnd.nextInt(4) == 0 ? WallMap.LOS_NORTH | WallMap.LOS_WEST : 0;
 					}
 				}
 			}
 			RoomMap m = house(f);
+			WallMap w = WallMap.build(f, null, SIZE, OFFSET, 1);
 			for (int plane = 0; plane < RoomMap.PLANES; ++plane)
 			{
 				for (int x = 0; x < SIZE; ++x)
 				{
 					for (int y = 0; y < SIZE; ++y)
 					{
-						assertEquals(porchByRule(m, f, plane, x, y), m.porch[m.index(plane, x, y)]);
+						short p = m.porch[m.index(plane, x, y)];
+						if (p != 0)
+						{
+							assertTrue(porchPossible(m, w, plane, x, y, p));
+						}
+						else
+						{
+							assertFalse(porchPossible(m, w, plane, x, y, (short) -1));
+						}
 					}
 				}
 			}
 		}
 	}
 
-	// the rule written out for every tile: no room here, a free tile, and a room next to it with no wall between
-	private static short porchByRule(RoomMap m, int[][][] flags, int plane, int x, int y)
+	// whether the tile can have the porch p (any when -1): a neighbor of another room with no wall between, or one more
+	// tile on in line with it in the same room
+	private static boolean porchPossible(RoomMap m, WallMap w, int plane, int x, int y, short p)
 	{
-		int lx = x - OFFSET, ly = y - OFFSET;
-		if (m.rooms[m.index(plane, x, y)] != 0 || lx < 0 || ly < 0 || lx >= LOCAL || ly >= LOCAL
-			|| (flags[plane][lx][ly] & RoomMap.BLOCK_FULL) != 0)
-		{
-			return 0;
-		}
-		int[][] steps = {{1, 0, RoomMap.BLOCK_EAST, RoomMap.BLOCK_WEST}, {-1, 0, RoomMap.BLOCK_WEST, RoomMap.BLOCK_EAST},
-			{0, 1, RoomMap.BLOCK_NORTH, RoomMap.BLOCK_SOUTH}, {0, -1, RoomMap.BLOCK_SOUTH, RoomMap.BLOCK_NORTH}};
+		int[][] steps = {{1, 0, WallMap.EAST}, {-1, 0, WallMap.WEST}, {0, 1, WallMap.NORTH}, {0, -1, WallMap.SOUTH}};
 		for (int[] s : steps)
 		{
-			int nx = x + s[0], ny = y + s[1];
-			if (nx < 0 || ny < 0 || nx >= SIZE || ny >= SIZE || nx - OFFSET < 0 || ny - OFFSET < 0
-				|| nx - OFFSET >= LOCAL || ny - OFFSET >= LOCAL)
+			for (int k = 1; k <= RoomMap.PORCH_DEPTH; ++k)
 			{
-				continue;
-			}
-			short room = m.rooms[m.index(plane, nx, ny)];
-			if (room != 0 && (flags[plane][lx][ly] & s[2]) == 0 && (flags[plane][nx - OFFSET][ny - OFFSET] & s[3]) == 0)
-			{
-				return room;
+				// k tiles back from here is the tile the light comes from
+				int fx = x - s[0] * k, fy = y - s[1] * k;
+				if (fx < 0 || fy < 0 || fx >= SIZE || fy >= SIZE)
+				{
+					break;
+				}
+				short from = m.rooms[m.index(plane, fx, fy)];
+				short id = from != 0 ? from : (short) RoomMap.OUTSIDE;
+				// the seam is between the source and the next tile; tiles after it stay in one room with no wall
+				int sx = fx + s[0], sy = fy + s[1];
+				boolean open = m.rooms[m.index(plane, sx, sy)] != from && !w.edge(plane, fx, fy, s[2]);
+				for (int j = 1; open && j < k; ++j)
+				{
+					int ax = sx + s[0] * (j - 1), ay = sy + s[1] * (j - 1);
+					open = m.rooms[m.index(plane, ax + s[0], ay + s[1])] == m.rooms[m.index(plane, sx, sy)]
+						&& !w.edge(plane, ax, ay, s[2]);
+				}
+				if (open && (p == -1 || p == id))
+				{
+					return true;
+				}
 			}
 		}
-		return 0;
+		return false;
 	}
 
 	@Test
@@ -150,30 +166,108 @@ public class RoomMapTest
 		RoomMap m = house(walls());
 		float inside = m.lightCode(world(9), -200, world(9), 0);
 		int[] porch = m.roomAt(world(7), -40, world(9));
+		int[] beyond = m.roomAt(world(6), -40, world(9));
+		int[] far = m.roomAt(world(5), -40, world(9));
 		int[] besideWall = m.roomAt(world(7), -40, world(10));
 		assertEquals(0, porch[0]);
-		assertEquals(1, porch[1]);
+		assertEquals(1 + RoomMap.SOFT, porch[1]);
+		assertEquals(1 + RoomMap.SOFT, beyond[1]);
+		assertEquals(0, far[1]);
 		assertEquals(0, besideWall[1]);
 		assertEquals(0.5f, RoomMap.share(inside, porch[0], porch[1], 0.5f), 0);
+		assertEquals(0.5f, RoomMap.share(inside, beyond[0], beyond[1], 0.5f), 0);
+		assertEquals(0, RoomMap.share(inside, far[0], far[1], 0.5f), 0);
 		assertEquals(0, RoomMap.share(inside, besideWall[0], besideWall[1], 0.5f), 0);
 
 		// the door closes
 		int[][][] closed = walls();
-		closed[0][8 - OFFSET][9 - OFFSET] |= RoomMap.BLOCK_WEST;
+		closed[0][8 - OFFSET][9 - OFFSET] |= WallMap.LOS_WEST;
+		closed[0][7 - OFFSET][9 - OFFSET] |= WallMap.LOS_EAST;
 		int before = m.getVersion();
-		assertTrue(m.updateOpenings(closed));
+		assertTrue(m.setWalls(WallMap.build(closed, null, SIZE, OFFSET, 1)));
 		assertTrue(m.getVersion() != before);
 		assertEquals(0, m.roomAt(world(7), -40, world(9))[1]);
-		assertFalse(m.updateOpenings(closed));
+		assertEquals(0, m.roomAt(world(6), -40, world(9))[1]);
+		assertFalse(m.setWalls(WallMap.build(closed, null, SIZE, OFFSET, 1)));
+		// and opens again
+		assertTrue(m.setWalls(WallMap.build(walls(), null, SIZE, OFFSET, 1)));
+		assertEquals(1 + RoomMap.SOFT, m.roomAt(world(7), -40, world(9))[1]);
+	}
+
+	@Test
+	public void openingsBetweenRoomsSpillBothWays()
+	{
+		// two rooms side by side (two roofs: x 8..11 and 12..15, y 8..11), a doorway between them at y 9
+		byte[][][] settings = new byte[4][SIZE][SIZE];
+		for (int x = 8; x < 16; ++x)
+		{
+			for (int y = 8; y < 12; ++y)
+			{
+				settings[0][x][y] = BuildingDetector.TILE_FLAG_UNDER_ROOF;
+			}
+		}
+		int[][][] rids = new int[4][SIZE][SIZE];
+		for (int x = 8; x < 16; ++x)
+		{
+			for (int y = 8; y < 12; ++y)
+			{
+				rids[0][x][y] = x < 12 ? 1 : 2;
+			}
+		}
+		int[][][] heights = new int[4][SIZE + 1][SIZE + 1];
+		for (int l = 0; l < 4; ++l)
+		{
+			for (int[] row : heights[l])
+			{
+				java.util.Arrays.fill(row, -240 * l);
+			}
+		}
+		BuildingDetector.Result r = BuildingDetector.detect(settings, rids);
+		assertEquals(2, r.rooms.size());
+		RoomMap m = RoomMap.build(r, settings, heights, OFFSET);
+		int west = m.room(0, 9, 9), east = m.room(0, 14, 9);
+		assertTrue(west > 0 && east > 0 && west != east);
+		int[][][] f = new int[4][LOCAL][LOCAL];
+		for (int y = 8; y < 12; ++y)
+		{
+			if (y != 9)
+			{
+				f[0][11 - OFFSET][y - OFFSET] |= WallMap.LOS_EAST;
+				f[0][12 - OFFSET][y - OFFSET] |= WallMap.LOS_WEST;
+			}
+		}
+		m.setWalls(WallMap.build(f, null, SIZE, OFFSET, 1));
+		float inWest = m.lightCode(world(9), -200, world(9), 0), inEast = m.lightCode(world(14), -200, world(9), 0);
+		// through the doorway, a tile or two into the next room, both ways; not past the wall
+		int[] into = m.roomAt(world(12), -40, world(9));
+		assertEquals(east, into[0]);
+		assertEquals(0.5f, RoomMap.share(inWest, into[0], into[1], 0.5f), 0);
+		assertEquals(0.5f, RoomMap.share(inWest, east, m.roomAt(world(13), -40, world(9))[1], 0.5f), 0);
+		assertEquals(0, RoomMap.share(inWest, east, m.roomAt(world(14), -40, world(9))[1], 0.5f), 0);
+		assertEquals(0, RoomMap.share(inWest, east, m.roomAt(world(12), -40, world(10))[1], 0.5f), 0);
+		assertEquals(0.5f, RoomMap.share(inEast, west, m.roomAt(world(11), -40, world(9))[1], 0.5f), 0);
+		assertEquals(1, RoomMap.share(inEast, east, m.roomAt(world(13), -40, world(9))[1], 0.5f), 0);
+	}
+
+	@Test
+	public void outdoorLightsSpillIntoTheRoomThroughAnOpenDoor()
+	{
+		RoomMap m = house(walls());
+		float lamp = m.lightCode(world(4), -200, world(9), 0);
+		// the tile inside the open doorway and the next one, not the wall's other tiles
+		int[] inside = m.roomAt(world(8), -40, world(9));
+		assertEquals(1, inside[0]);
+		assertEquals(0.5f, RoomMap.share(lamp, inside[0], inside[1], 0.5f), 0);
+		assertEquals(0.5f, RoomMap.share(lamp, 1, m.roomAt(world(9), -40, world(9))[1], 0.5f), 0);
+		assertEquals(0, RoomMap.share(lamp, 1, m.roomAt(world(10), -40, world(9))[1], 0.5f), 0);
+		assertEquals(0, RoomMap.share(lamp, 1, m.roomAt(world(8), -40, world(10))[1], 0.5f), 0);
 	}
 
 	@Test
 	public void wallLightsShineOnTheirOwnSideOnly()
 	{
-		// the house's walls (as BLOCK_ flags: barriers) all round except the west doorway at y 9
-		int[][][] f = walls();
-		RoomMap m = house(f);
-		m.setWalls(WallMap.build(f, null, SIZE, OFFSET, 1));
+		// the house's walls all round except the west doorway at y 9
+		RoomMap m = house(walls());
 		// a torch on the inside of the east wall: on the room's edge tile, 10 units from the edge
 		float x = (12 - OFFSET) * TILE - 10;
 		float inside = m.lightCode(x, -200, world(10), 0);
@@ -228,9 +322,9 @@ public class RoomMapTest
 		int t = (RoomMap.HEADER_TEXELS + (9 * SIZE + 10) * 2) * 4;
 		assertEquals(1, b.get(t), 0);
 		assertEquals(-240, b.get(t + 5), 0);
-		// the porch tile: room 0, porch 1
+		// the porch tile: room 0, porch 1, negative as an opening's
 		int p = (RoomMap.HEADER_TEXELS + (7 * SIZE + 9) * 2) * 4;
-		assertEquals(4096, b.get(p), 0);
+		assertEquals(-4096, b.get(p), 0);
 		assertTrue(LightClusters.ROOM_BASE + m.texelCount() < 65536);
 	}
 

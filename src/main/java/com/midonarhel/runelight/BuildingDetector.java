@@ -121,9 +121,10 @@ final class BuildingDetector
 
 	/**
 	 * Split the rooms of a detection along their walls: each part of a room that can't be reached from the rest
-	 * without crossing a wall (WallMap barriers: walls, low walls and fences, closed gates; diagonal walls included)
-	 * becomes a room of its own and gets its own lights. A tile a diagonal wall crosses is two halves while flooding
-	 * and goes to the larger of their rooms. Rooms whose tiles all stay connected come out unchanged.
+	 * without crossing a wall (WallMap edges: what blocks sight, closed doors included, open doors not; low walls,
+	 * fences and gates are no walls; diagonal walls included) becomes a room of its own and gets its own lights. A
+	 * tile a diagonal wall crosses is two halves while flooding and goes to the larger of their rooms. Rooms whose
+	 * tiles all stay connected come out unchanged.
 	 *
 	 * The roof flags often run a tile or two past a building's outer wall (eaves, overhangs). Such a part, cut off by
 	 * the wall and open to the ground on its other sides, is no room: of the parts a room splits into, those at most
@@ -286,7 +287,7 @@ final class BuildingDetector
 				{
 					continue;
 				}
-				if (walls.barrier(plane, x, y, side))
+				if (walls.edge(plane, x, y, side))
 				{
 					closed[tileLabel[k]]++;
 				}
@@ -335,7 +336,7 @@ final class BuildingDetector
 			for (int d = 0; d < 4; ++d)
 			{
 				int side = d == 0 ? WallMap.EAST : d == 1 ? WallMap.WEST : d == 2 ? WallMap.NORTH : WallMap.SOUTH;
-				if (WallMap.half(b, side) != h || walls.barrier(plane, x, y, side))
+				if (WallMap.half(b, side) != h || walls.edge(plane, x, y, side))
 				{
 					continue;
 				}

@@ -480,15 +480,12 @@ final class LightOcclusion
 	 * what is open to the sky above it) + 1 for half tile cells.
 	 *
 	 * @param radius the light's radius: past the grids' reach the walls decide nothing
-	 * @param inRoom the light must stay in its room whatever the walls say (the soft lights of building rooms, which
-	 * would spill out of open sides)
 	 */
-	static void texel(Entry e, Atlas a, int atlasStart, boolean covered, int plane, float radius, boolean inRoom,
-		FloatBuffer out)
+	static void texel(Entry e, Atlas a, int atlasStart, boolean covered, int plane, float radius, FloatBuffer out)
 	{
 		int base = a != null && e != null && !e.open ? a.base(e) : -1;
 		int flags = (covered ? 2 : 0) | (plane >= 0 && plane < WallMap.PLANES ? plane << 3 : 0);
-		if (e != null && !inRoom && radius <= MAX_RADIUS && (e.open || base >= 0))
+		if (e != null && radius <= MAX_RADIUS && (e.open || base >= 0))
 		{
 			flags |= 4;
 		}

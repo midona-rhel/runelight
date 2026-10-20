@@ -30,14 +30,14 @@ public class LightOcclusionTest
 	// a line-of-sight wall on the west edge of extended tile (x, y), flagged on both sides as the game does
 	private static void westWall(int[][][] f, int x, int y)
 	{
-		f[0][x - OFFSET][y - OFFSET] |= WallMap.LOS_WEST | RoomMap.BLOCK_WEST;
-		f[0][x - 1 - OFFSET][y - OFFSET] |= WallMap.LOS_EAST | RoomMap.BLOCK_EAST;
+		f[0][x - OFFSET][y - OFFSET] |= WallMap.LOS_WEST;
+		f[0][x - 1 - OFFSET][y - OFFSET] |= WallMap.LOS_EAST;
 	}
 
 	private static void southWall(int[][][] f, int x, int y)
 	{
-		f[0][x - OFFSET][y - OFFSET] |= WallMap.LOS_SOUTH | RoomMap.BLOCK_SOUTH;
-		f[0][x - OFFSET][y - 1 - OFFSET] |= WallMap.LOS_NORTH | RoomMap.BLOCK_NORTH;
+		f[0][x - OFFSET][y - OFFSET] |= WallMap.LOS_SOUTH;
+		f[0][x - OFFSET][y - 1 - OFFSET] |= WallMap.LOS_NORTH;
 	}
 
 	@Test
@@ -46,7 +46,6 @@ public class LightOcclusionTest
 		int[][][] f = noFlags();
 		westWall(f, 10, 10);
 		// a fence: blocks walking, not sight
-		f[0][12 - OFFSET][10 - OFFSET] |= RoomMap.BLOCK_WEST;
 		WallMap w = WallMap.build(f, null, SIZE, OFFSET, 1);
 		assertTrue(w.edge(0, 10, 10, WallMap.WEST));
 		assertTrue(w.edge(0, 9, 10, WallMap.EAST));
@@ -180,6 +179,77 @@ public class LightOcclusionTest
 		return WallMap.build(f, null, SIZE, OFFSET, 1);
 	}
 
+	/** Two rooms side by side (x 8..11 and 12..15, y 8..11) with a door between them and one out of the east one, at y 9. */
+	private static WallMap twoRooms(boolean innerOpen, boolean outerOpen)
+	{
+		int[][][] f = noFlags();
+		for (int y = 7; y <= 12; ++y)
+		{
+			if (innerOpen ? y != 9 : true)
+			{
+				westWall(f, 12, y);
+			}
+			if (outerOpen ? y != 9 : true)
+			{
+				westWall(f, 16, y);
+			}
+		}
+		for (int x = 8; x < 16; ++x)
+		{
+			southWall(f, x, 8);
+			southWall(f, x, 12);
+		}
+		return WallMap.build(f, null, SIZE, OFFSET, 1);
+	}
+
+	@Test
+	public void openDoorsPassLightIntoTheNextRoomAndOutdoors()
+	{
+		// a light in the west room: the next room and the ground outside the east door see it through the open doors
+		WallMap w = twoRooms(true, true);
+		LightOcclusion.Entry e = new LightOcclusion.Entry(0, 0, 0, 0, world(10), world(9), 1000);
+		LightOcclusion.castEntry(e, w);
+		LightOcclusion.Atlas a = LightOcclusion.pack(Collections.singletonList(e), 0);
+		assertEquals(1, visAt(a, e, world(11), world(9)), 1e-6);
+		assertEquals(1, visAt(a, e, world(13), world(9)), 1e-6);
+		assertEquals(1, visAt(a, e, world(14), world(9)), 1e-6);
+		assertEquals(1, visAt(a, e, world(17), world(9)), 1e-6);
+		// not behind the walls beside the doors
+		assertEquals(0, visAt(a, e, world(13), world(11)), 1e-6);
+		assertEquals(0, visAt(a, e, world(17), world(11)), 1e-6);
+		// and the other way: a light in the east room reaches the west one and the outdoors
+		LightOcclusion.Entry back = new LightOcclusion.Entry(1, 0, 1, 0, world(14), world(9), 1000);
+		LightOcclusion.castEntry(back, w);
+		LightOcclusion.Atlas b = LightOcclusion.pack(Collections.singletonList(back), 0);
+		assertEquals(1, visAt(b, back, world(10), world(9)), 1e-6);
+		assertEquals(1, visAt(b, back, world(17), world(9)), 1e-6);
+		assertEquals(0, visAt(b, back, world(10), world(11)), 1e-6);
+	}
+
+	@Test
+	public void closedDoorsStopLight()
+	{
+		// the door between the rooms shut: the east room and what is past its open door are dark
+		WallMap w = twoRooms(false, true);
+		LightOcclusion.Entry e = new LightOcclusion.Entry(0, 0, 0, 0, world(10), world(9), 1000);
+		LightOcclusion.castEntry(e, w);
+		LightOcclusion.Atlas a = LightOcclusion.pack(Collections.singletonList(e), 0);
+		assertEquals(1, visAt(a, e, world(11), world(9)), 1e-6);
+		assertEquals(0, visAt(a, e, world(13), world(9)), 1e-6);
+		assertEquals(0, visAt(a, e, world(17), world(9)), 1e-6);
+		// the outer door shut instead: the east room is lit, not outdoors
+		WallMap v = twoRooms(true, false);
+		LightOcclusion.Entry e2 = new LightOcclusion.Entry(0, 0, 0, 0, world(10), world(9), 1000);
+		LightOcclusion.castEntry(e2, v);
+		LightOcclusion.Atlas a2 = LightOcclusion.pack(Collections.singletonList(e2), 0);
+		assertEquals(1, visAt(a2, e2, world(14), world(9)), 1e-6);
+		assertEquals(0, visAt(a2, e2, world(17), world(9)), 1e-6);
+		// a door that opens changes the walls: the grids around it are recast
+		int[] rect = v.diff(w);
+		assertNotNull(rect);
+		assertTrue(rect[0] <= 15 && rect[2] >= 16);
+	}
+
 	@Test
 	public void castStopsAtWalls()
 	{
@@ -234,7 +304,7 @@ public class LightOcclusionTest
 		assertTrue(e.open);
 		assertNull(e.cells);
 		FloatBuffer out = FloatBuffer.allocate(4);
-		LightOcclusion.texel(e, LightOcclusion.pack(Collections.singletonList(e), 0), 100, true, 0, 600, false, out);
+		LightOcclusion.texel(e, LightOcclusion.pack(Collections.singletonList(e), 0), 100, true, 0, 600, out);
 		assertEquals(-1, out.get(0), 0);
 		// covered, and the walls (there are none near) decide on plane 0
 		assertEquals(2 + 4, out.get(3), 0);
@@ -257,24 +327,20 @@ public class LightOcclusionTest
 		LightOcclusion.Atlas a = LightOcclusion.pack(Collections.singletonList(e), 0);
 		assertEquals((e.n * e.n + 15) / 16, a.texelCount);
 		FloatBuffer out = FloatBuffer.allocate(4);
-		LightOcclusion.texel(e, a, 5000, false, 2, 900, false, out);
+		LightOcclusion.texel(e, a, 5000, false, 2, 900, out);
 		assertEquals(5000, out.get(0), 0);
 		assertEquals(e.originX, out.get(1), 0);
 		// cells per side, plane 2, handled by the grid, fine cells
 		assertEquals(e.n * 32 + 2 * 8 + 4, out.get(3), 0);
 		// a light beyond the grids' reach, or whose grid isn't cast yet, is left to the rooms
 		FloatBuffer far = FloatBuffer.allocate(4);
-		LightOcclusion.texel(e, a, 5000, false, 0, LightOcclusion.MAX_RADIUS + 1, false, far);
+		LightOcclusion.texel(e, a, 5000, false, 0, LightOcclusion.MAX_RADIUS + 1, far);
 		assertEquals(0, (int) far.get(3) & 4);
 		LightOcclusion.Entry pending = new LightOcclusion.Entry(1, 0, 1, 0, world(10), world(10), 900);
 		FloatBuffer wait = FloatBuffer.allocate(4);
-		LightOcclusion.texel(pending, a, 5000, false, 0, 900, false, wait);
+		LightOcclusion.texel(pending, a, 5000, false, 0, 900, wait);
 		assertEquals(-1, wait.get(0), 0);
 		assertEquals(0, (int) wait.get(3) & 4);
-		// the soft lights of building rooms stay in their rooms
-		FloatBuffer room = FloatBuffer.allocate(4);
-		LightOcclusion.texel(e, a, 5000, false, 0, 900, true, room);
-		assertEquals(0, (int) room.get(3) & 4);
 		// every packed float is a whole number the shader can take apart exactly
 		for (int i = 0; i < a.texelCount * 4; ++i)
 		{

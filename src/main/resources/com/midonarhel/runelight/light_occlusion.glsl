@@ -53,8 +53,9 @@ float lightVisCell(int base, int n, ivec2 c) {
 
 // How much of a light with room code roomCode and per-light texel `extra` reaches a point in room r (lightRoomPlaneAt).
 // The rooms decide it, except for a light whose occlusion grid is cast: its walls decide on its own storey, so the
-// rooms (which can only cut at tile edges, and not where a roof ends but no wall) only keep it off the other storeys.
-// The soft lights of building rooms (LightClusters: indoor) stay in their rooms.
+// rooms (which can only cut at tile edges, and not where a roof ends but no wall) only keep it off the other storeys:
+// an open door is a portal, between rooms and out of doors. The other lights (moving ones, those not cast yet) go by
+// the rooms, which let them spill through openings (RoomMap).
 float lightRoomShare(float roomCode, vec4 extra, ivec3 r) {
   int code = int(extra.w);
   if ((code & 4) != 0 && ((code >> 3) & 3) == r.z) {

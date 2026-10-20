@@ -6,9 +6,10 @@ import java.nio.FloatBuffer;
  * Which building room every tile of the scene belongs to, so point lights stay in the room they are in instead of
  * shining through walls (rooms.glsl), and the volumetric fog stays out of interiors. Rooms come from
  * BuildingDetector; 0 is outdoors. An outdoor tile directly across an opening (a doorway, an open door: no wall
- * between them in the collision map) from a room is that room's porch, where its light spills out a little. Where
- * a floor has a hole (a stairwell, a pit) the rooms above and below it are linked there: a room tile's porch is the
- * room across the hole.
+ * between them: sight is not blocked) from a room is that room's porch, where its light spills out a little; the
+ * same across an opening between two rooms or from outdoors into a room, for the lights the walls don't decide
+ * (LightOcclusion: those cast against the walls pass open doors on their own). Where a floor has a hole (a
+ * stairwell, a pit) the rooms above and below it are linked there: the room across the hole is shown in full.
  *
  * GL-free so it can be tested; LightClusters uploads {@link #texels} after the lights in the light buffer. Arrays
  * are [plane][x][y] in extended scene tiles; planes are logical planes as in BuildingDetector.
@@ -27,14 +28,18 @@ final class RoomMap
 	static final int HEADER_TEXELS = 1;
 	static final int TEXELS_PER_TILE = 2;
 
-	// CollisionDataFlag
-	static final int BLOCK_NORTH = 0x2, BLOCK_EAST = 0x8, BLOCK_SOUTH = 0x20, BLOCK_WEST = 0x80;
-	static final int BLOCK_FULL = 0x100 | 0x40000 | 0x200000;
+	// the porch id of the outdoors: what lies across an opening from a room tile that has no room beside it
+	static final int OUTSIDE = ANY;
+	// added to the porch id roomAt returns when it is an opening (light spills through it) rather than a hole in a floor
+	static final int SOFT = 4096;
+	// tiles a light spills in through an opening, in a straight line from it
+	static final int PORCH_DEPTH = 2;
 
 	final int size;
 	// extended tiles before local tile 0
 	final int offset;
 	final short[] rooms;
+	// the room (OUTSIDE for the outdoors) whose light spills onto the tile through an opening; set by setWalls
 	final short[] porch;
 	// room tiles: the room across a hole in the floor above or below; set by linkStoreys
 	final short[] link;
@@ -45,9 +50,15 @@ final class RoomMap
 	private byte[] filled;
 	private boolean[] linked = new boolean[0];
 	private int version;
-	// the outdoor tiles next to a room tile, the only ones that can be a porch; the rooms never change after build
-	private int[] porchCandidates;
-	// the walls the rooms were split along, null when unknown: a light on a wall belongs to the side it hangs on
+	// the pairs of neighboring tiles in different rooms (or a room and the outdoors), as tile index * 2 + (0 east of
+	// it, 1 north of it): the only places an opening can be; the rooms never change after build
+	private int[] seams;
+	// the openings' porches as found, and the tiles they were written to, to tell what changed
+	private final short[] found;
+	private int[] touched = new int[16], previous = new int[16];
+	private int touchedCount, previousCount;
+	// the walls the rooms were split along, null when unknown: a light on a wall belongs to the side it hangs on,
+	// and openings are the edges with none
 	private WallMap walls;
 
 	private RoomMap(int size, int offset)
@@ -56,6 +67,7 @@ final class RoomMap
 		this.offset = offset;
 		rooms = new short[PLANES * size * size];
 		porch = new short[PLANES * size * size];
+		found = new short[PLANES * size * size];
 		link = new short[PLANES * size * size];
 		floors = new float[PLANES * size * size];
 		roofed = new boolean[PLANES * size * size];
@@ -118,14 +130,94 @@ final class RoomMap
 				}
 			}
 		}
-		m.findPorchCandidates();
+		m.findSeams();
 		m.version = 1;
 		return m;
 	}
 
-	void setWalls(WallMap walls)
+	/**
+	 * Follow the scene's walls: doors open and close. Openings are the seams between rooms (or a room and the
+	 * outdoors) with no wall on them; a light spills through them onto the tiles beyond.
+	 *
+	 * @return whether the porches changed
+	 */
+	boolean setWalls(WallMap walls)
 	{
 		this.walls = walls;
+		touchedCount = 0;
+		for (int s : seams)
+		{
+			int i = s >> 1;
+			int plane = i / (size * size), x = i / size % size, y = i % size;
+			boolean east = (s & 1) == 0;
+			if (walls == null || walls.edge(plane, x, y, east ? WallMap.EAST : WallMap.NORTH))
+			{
+				continue;
+			}
+			int j = east ? i + size : i + 1;
+			spill(plane, i, j, east ? WallMap.EAST : WallMap.NORTH);
+			spill(plane, j, i, east ? WallMap.WEST : WallMap.SOUTH);
+		}
+		boolean changed = false;
+		for (int k = 0; k < previousCount; ++k)
+		{
+			if (found[previous[k]] == 0 && porch[previous[k]] != 0)
+			{
+				porch[previous[k]] = 0;
+				changed = true;
+			}
+		}
+		for (int k = 0; k < touchedCount; ++k)
+		{
+			int i = touched[k];
+			if (porch[i] != found[i])
+			{
+				porch[i] = found[i];
+				changed = true;
+			}
+			found[i] = 0;
+		}
+		int[] swap = previous;
+		previous = touched;
+		touched = swap;
+		previousCount = touchedCount;
+		if (changed)
+		{
+			version++;
+		}
+		return changed;
+	}
+
+	/** The light of the room (or the outdoors) at tile from spills onto tile to and on in line with it, through the opening. */
+	private void spill(int plane, int from, int to, int side)
+	{
+		short id = rooms[from] != 0 ? rooms[from] : (short) OUTSIDE;
+		int dx = side == WallMap.EAST ? 1 : side == WallMap.WEST ? -1 : 0;
+		int dy = side == WallMap.NORTH ? 1 : side == WallMap.SOUTH ? -1 : 0;
+		int x = to / size % size, y = to % size;
+		for (int k = 0; k < PORCH_DEPTH; ++k, x += dx, y += dy)
+		{
+			// on through the same room, with no wall in the way
+			if (k > 0 && (x < 0 || y < 0 || x >= size || y >= size || rooms[index(plane, x, y)] != rooms[index(plane, x - dx, y - dy)]
+				|| walls.edge(plane, x - dx, y - dy, side)))
+			{
+				return;
+			}
+			int t = index(plane, x, y);
+			// the first light to reach a tile keeps it, but another room's beats the outdoors
+			if (found[t] == 0 || found[t] == OUTSIDE && id != OUTSIDE)
+			{
+				if (found[t] == 0)
+				{
+					if (touchedCount == touched.length)
+					{
+						touched = java.util.Arrays.copyOf(touched, touchedCount * 2);
+					}
+					touched[touchedCount++] = t;
+				}
+				found[t] = id;
+			}
+		}
 	}
 
 	/**
@@ -283,9 +375,9 @@ final class RoomMap
 		return (h[x][y] + h[x + 1][y] + h[x][y + 1] + h[x + 1][y + 1]) * 0.25f;
 	}
 
-	private void findPorchCandidates()
+	private void findSeams()
 	{
-		int[] found = new int[16];
+		int[] out = new int[16];
 		int n = 0;
 		for (int plane = 0; plane < PLANES; ++plane)
 		{
@@ -294,83 +386,23 @@ final class RoomMap
 				for (int y = 0; y < size; ++y)
 				{
 					int i = index(plane, x, y);
-					if (rooms[i] == 0 && (x + 1 < size && rooms[index(plane, x + 1, y)] != 0
-						|| x > 0 && rooms[index(plane, x - 1, y)] != 0
-						|| y + 1 < size && rooms[index(plane, x, y + 1)] != 0
-						|| y > 0 && rooms[index(plane, x, y - 1)] != 0))
+					for (int d = 0; d < 2; ++d)
 					{
-						if (n == found.length)
+						boolean east = d == 0;
+						if ((east ? x + 1 >= size : y + 1 >= size) || rooms[i] == rooms[east ? i + size : i + 1])
 						{
-							found = java.util.Arrays.copyOf(found, n * 2);
+							continue;
 						}
-						found[n++] = i;
+						if (n == out.length)
+						{
+							out = java.util.Arrays.copyOf(out, n * 2);
+						}
+						out[n++] = i * 2 + d;
 					}
 				}
 			}
 		}
-		porchCandidates = java.util.Arrays.copyOf(found, n);
-	}
-
-	/**
-	 * Find the openings out of every room from the collision maps: an outdoor tile next to a room tile with no wall
-	 * between them becomes the room's porch. Doors open and close, so this runs every game tick; it is a pass over
-	 * the scene's tiles.
-	 *
-	 * @param flags collision flags per plane, [plane][x][y] in local scene tiles; null entries are skipped
-	 * @return whether the porches changed
-	 */
-	boolean updateOpenings(int[][][] flags)
-	{
-		boolean changed = false;
-		for (int i : porchCandidates)
-		{
-			int plane = i / (size * size), x = i / size % size, y = i % size;
-			int[][] f = flags != null && plane < flags.length ? flags[plane] : null;
-			short p = f != null ? porchRoom(f, plane, x, y) : 0;
-			if (porch[i] != p)
-			{
-				porch[i] = p;
-				changed = true;
-			}
-		}
-		if (changed)
-		{
-			version++;
-		}
-		return changed;
-	}
-
-	private short porchRoom(int[][] f, int plane, int x, int y)
-	{
-		int lx = x - offset, ly = y - offset;
-		if (lx < 0 || ly < 0 || lx >= f.length || ly >= f[lx].length || (f[lx][ly] & BLOCK_FULL) != 0)
-		{
-			return 0;
-		}
-		// toward each neighbor: the wall flag on this tile's side and on the neighbor's facing side
-		for (int d = 0; d < 4; ++d)
-		{
-			int dx = d == 0 ? 1 : d == 1 ? -1 : 0;
-			int dy = d == 2 ? 1 : d == 3 ? -1 : 0;
-			int nx = x + dx, ny = y + dy;
-			int nlx = lx + dx, nly = ly + dy;
-			if (nx < 0 || ny < 0 || nx >= size || ny >= size || nlx < 0 || nly < 0 || nlx >= f.length || nly >= f[nlx].length)
-			{
-				continue;
-			}
-			short room = rooms[index(plane, nx, ny)];
-			if (room == 0)
-			{
-				continue;
-			}
-			int mine = d == 0 ? BLOCK_EAST : d == 1 ? BLOCK_WEST : d == 2 ? BLOCK_NORTH : BLOCK_SOUTH;
-			int theirs = d == 0 ? BLOCK_WEST : d == 1 ? BLOCK_EAST : d == 2 ? BLOCK_SOUTH : BLOCK_NORTH;
-			if ((f[lx][ly] & mine) == 0 && (f[nlx][nly] & theirs) == 0)
-			{
-				return room;
-			}
-		}
-		return 0;
+		seams = java.util.Arrays.copyOf(out, n);
 	}
 
 	/** The room across a hole in the floor or ceiling of a room tile, 0 for none. */
@@ -423,7 +455,7 @@ final class RoomMap
 			}
 			int n = room(plane, tx + (d == 0 ? -1 : d == 1 ? 1 : 0), ty + (d == 2 ? -1 : d == 3 ? 1 : 0));
 			if (n != a && (walls == null
-				|| !walls.barrier(plane, tx, ty, d == 0 ? WallMap.WEST : d == 1 ? WallMap.EAST : d == 2 ? WallMap.SOUTH : WallMap.NORTH)))
+				|| !walls.edge(plane, tx, ty, d == 0 ? WallMap.WEST : d == 1 ? WallMap.EAST : d == 2 ? WallMap.SOUTH : WallMap.NORTH)))
 			{
 				b = n;
 				best = dist;
@@ -467,10 +499,10 @@ final class RoomMap
 	}
 
 	/**
-	 * How much of a light with this code reaches a point in room (with porch room porch), as rooms.glsl decides.
-	 * room -1: unknown, everything reaches it.
+	 * How much of a light with this code reaches a point in room (with near, the porch room roomAt gives, plus SOFT
+	 * when it is an opening's), as rooms.glsl decides. room -1: unknown, everything reaches it.
 	 */
-	static float share(float code, int room, int porch, float porchShare)
+	static float share(float code, int room, int near, float porchShare)
 	{
 		float c = Math.abs(code) - 1;
 		if (room < 0 || c < 0)
@@ -482,12 +514,13 @@ final class RoomMap
 		{
 			return 1;
 		}
-		if (porch != 0 && (a == porch || b == porch))
+		int id = near & (SOFT - 1);
+		if (id == 0 || a != id && b != id && (id != OUTSIDE || a != 0 && b != 0))
 		{
-			// across a doorway the light only spills; through a hole in a floor it shines in full
-			return room == 0 ? porchShare : 1;
+			return 0;
 		}
-		return 0;
+		// through an opening the light only spills; through a hole in a floor it shines in full
+		return near >= SOFT ? porchShare : 1;
 	}
 
 	// as rooms.glsl: how far above a floor (world units) a point must be to be on that storey, and how far above
@@ -516,13 +549,20 @@ final class RoomMap
 		}
 		int i = index(plane, tx, ty);
 		int room = rooms[i];
-		int near = room != 0 ? link[i] : porch[i];
+		int near = nearRoom(i);
 		if (room != 0 && y < floors[i] - STOREY)
 		{
 			room = 0;
 			near = 0;
 		}
 		return new int[]{room, near};
+	}
+
+	// the room across a hole in a tile's floor or ceiling, else the one whose light spills in through an opening
+	// (plus SOFT), 0 for none
+	private int nearRoom(int i)
+	{
+		return rooms[i] != 0 && link[i] != 0 ? link[i] : porch[i] != 0 ? porch[i] + SOFT : 0;
 	}
 
 	/** Texels after the header. */
@@ -533,7 +573,7 @@ final class RoomMap
 
 	/**
 	 * Fill the buffer with the header texel (enabled, size, offset, lights use rooms) and two texels per tile: the four planes' rooms
-	 * (room + porch * 4096) and the four planes' floor heights (world y).
+	 * (room + porch * 4096, negative when the porch is an opening's) and the four planes' floor heights (world y).
 	 */
 	void texels(FloatBuffer out)
 	{
@@ -545,7 +585,9 @@ final class RoomMap
 				for (int p = 0; p < PLANES; ++p)
 				{
 					int i = index(p, x, y);
-					out.put(rooms[i] + (rooms[i] != 0 ? link[i] : porch[i]) * 4096f);
+					int near = nearRoom(i);
+					float code = rooms[i] + (near & (SOFT - 1)) * 4096f;
+					out.put(near >= SOFT ? -code : code);
 				}
 				for (int p = 0; p < PLANES; ++p)
 				{

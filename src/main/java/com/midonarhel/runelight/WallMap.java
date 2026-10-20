@@ -35,8 +35,6 @@ final class WallMap
 	// scenes and rebuilds of the same scene: a different scene means everything cast before is stale
 	final int scene;
 	private final byte[] bits;
-	// per tile, the sides that block walking but not sight
-	private final byte[] fences;
 
 	/** A diagonal wall object on a tile: kind is DIAG_SW_NE or DIAG_NW_SE. Extended tile coordinates. */
 	static final class Diagonal
@@ -75,7 +73,6 @@ final class WallMap
 		this.offset = offset;
 		this.scene = scene;
 		bits = new byte[PLANES * size * size];
-		fences = new byte[PLANES * size * size];
 	}
 
 	/** A map without walls. */
@@ -109,13 +106,9 @@ final class WallMap
 					int b = ((v & LOS_NORTH) != 0 ? NORTH : 0) | ((v & LOS_EAST) != 0 ? EAST : 0)
 						| ((v & LOS_SOUTH) != 0 ? SOUTH : 0) | ((v & LOS_WEST) != 0 ? WEST : 0);
 					int x = lx + offset, y = ly + offset;
-					int walk = ((v & RoomMap.BLOCK_NORTH) != 0 ? NORTH : 0) | ((v & RoomMap.BLOCK_EAST) != 0 ? EAST : 0)
-						| ((v & RoomMap.BLOCK_SOUTH) != 0 ? SOUTH : 0) | ((v & RoomMap.BLOCK_WEST) != 0 ? WEST : 0);
-					if ((b | walk) != 0 && x < size && y < size)
+					if (b != 0 && x < size && y < size)
 					{
-						int i = m.index(plane, x, y);
-						m.bits[i] |= (byte) b;
-						m.fences[i] |= (byte) (walk & ~b);
+						m.bits[m.index(plane, x, y)] |= (byte) b;
 					}
 				}
 			}
@@ -172,30 +165,6 @@ final class WallMap
 		}
 	}
 
-	/**
-	 * Whether the edge between tile (x, y) and its neighbor toward side holds a wall or only a barrier (a low wall, a
-	 * fence, a closed gate): what splits rooms.
-	 */
-	boolean barrier(int plane, int x, int y, int side)
-	{
-		if (edge(plane, x, y, side))
-		{
-			return true;
-		}
-		int opposite = side == NORTH ? SOUTH : side == SOUTH ? NORTH : side == EAST ? WEST : EAST;
-		int nx = x + (side == EAST ? 1 : side == WEST ? -1 : 0), ny = y + (side == NORTH ? 1 : side == SOUTH ? -1 : 0);
-		return (fence(plane, x, y) & side) != 0 || (fence(plane, nx, ny) & opposite) != 0;
-	}
-
-	private int fence(int plane, int x, int y)
-	{
-		if (plane < 0 || plane >= PLANES || x < 0 || y < 0 || x >= size || y >= size)
-		{
-			return 0;
-		}
-		return fences[index(plane, x, y)];
-	}
-
 	/** Whether any wall lies in the rectangle of extended tiles (inclusive). */
 	boolean anyIn(int plane, int x0, int y0, int x1, int y1)
 	{
@@ -224,12 +193,12 @@ final class WallMap
 	/** Same walls (and size) as another map. */
 	boolean sameWalls(WallMap o)
 	{
-		return o != null && o.size == size && o.offset == offset && Arrays.equals(o.bits, bits) && Arrays.equals(o.fences, fences);
+		return o != null && o.size == size && o.offset == offset && Arrays.equals(o.bits, bits);
 	}
 
 	/**
-	 * The rectangle of tiles whose walls (barriers aside: light passes them) differ from another map of the same
-	 * size, over all planes, as {x0, y0, x1, y1}; null when they are the same.
+	 * The rectangle of tiles whose walls differ from another map of the same size, over all planes, as
+	 * {x0, y0, x1, y1}; null when they are the same.
 	 */
 	int[] diff(WallMap o)
 	{

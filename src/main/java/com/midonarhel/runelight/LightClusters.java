@@ -251,7 +251,7 @@ class LightClusters
 			lightData.put(x).put(y).put(z).put(l.radius);
 			lightData.put(l.r * l.intensity).put(l.g * l.intensity).put(l.b * l.intensity).put(code);
 			LightOcclusion.texel(l.occlusion, grids, atlasStart,
-				roofLights && rooms != null && rooms.covered(l.x, l.z, l.plane), l.plane, l.radius, l.indoor, extraData);
+				roofLights && rooms != null && rooms.covered(l.x, l.z, l.plane), l.plane, l.radius, extraData);
 
 			if (fogColumns && !indoor)
 			{
