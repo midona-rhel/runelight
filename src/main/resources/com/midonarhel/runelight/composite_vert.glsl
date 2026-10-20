@@ -8,7 +8,7 @@ uniform float sunAltitude;  // degrees
 
 #include "sky.glsl"
 
-flat out vec3 skyFrame[6];
+flat out vec3 skyFrame[7];
 
 void main() {
   vec2 p = vec2((gl_VertexID << 1) & 2, gl_VertexID & 2);
@@ -19,4 +19,5 @@ void main() {
   skyFrame[3] = moonLightAt(sunAltitude);
   skyFrame[4] = ambientLightAt(sunAltitude);
   skyFrame[5] = skyLightAt(sunAltitude);
+  skyFrame[6] = vec3(skyBoostAt(sunAltitude));
 }

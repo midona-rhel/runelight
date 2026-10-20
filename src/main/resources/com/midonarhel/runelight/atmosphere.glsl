@@ -65,7 +65,7 @@ vec3 skyFill(vec3 n, float alt, float up) {
   }
   // alpha is 0 on broken texels (sky_irradiance_frag.glsl), which have no color either
   vec4 irr = textureLod(skyIrradiance, skyCacheUv(n), 0.0);
-  vec3 sky = irr.rgb / max(irr.a, 1e-3) * SKY_CACHE_LIGHT;
+  vec3 sky = irr.rgb / max(irr.a, 1e-3) * (SKY_CACHE_LIGHT * skyBoost(alt));
   // the cache leaves out lightning, which skyLight has through skyZenith
   sky += srgbToLinear(LIGHTNING_COLOR * (LIGHTNING_SKY * weatherOvercast.z)) * SKY_LIGHT;
   vec3 cached = sky * mix(up, 0.5 + 0.5 * up, SKY_CACHE_SIDES);
