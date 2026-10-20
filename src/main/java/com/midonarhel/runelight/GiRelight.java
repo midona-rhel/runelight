@@ -2,7 +2,8 @@ package com.midonarhel.runelight;
 
 /**
  * Lights the probes from their hit cache (GiProbes): rays that reached the sky bring the sky's radiance where they
- * point, rays that hit a surface bring its albedo times the light on it, which is the sun or moon where the voxels
+ * point, rays that hit a surface bring its albedo times the brightness of the light on it (gray: the surface's own
+ * color goes out, as it looks on screen), which is the sun or moon where the voxels
  * see it, plus the light the probe in front of the voxel had last time, for further bounces. A probe's color is the
  * weighted average of its rays, whichever way they point: surfaces are treated as rough, scattering light everywhere,
  * so no surface gets more from one that faces it than from any other. Runs on the global illumination's worker
@@ -149,6 +150,23 @@ final class GiRelight
 	}
 
 	/**
+	 * How bright the light on a surface is, as one gray: the caster where it is lit (sun of 0..1) plus the light of the
+	 * probe b in front of it from the last bounce. Gray, so a surface bounces the color it shows on screen, where the
+	 * warm sun and the blue sky on it even out, not its albedo tinted by the sun's color alone.
+	 */
+	static float incident(float[] caster, float sun, float[] last, int b)
+	{
+		float r = caster[0] * sun, g = caster[1] * sun, bl = caster[2] * sun;
+		if (last != null && b >= 0)
+		{
+			r += last[b * 3] * INCIDENT_GAIN;
+			g += last[b * 3 + 1] * INCIDENT_GAIN;
+			bl += last[b * 3 + 2] * INCIDENT_GAIN;
+		}
+		return luminance(r, g, bl);
+	}
+
+	/**
 	 * Light every valid probe. prev: the probes' last whole light for the bounces (null for none yet); each further
 	 * iteration bounces once more from the one before.
 	 *
@@ -215,9 +233,9 @@ final class GiRelight
 				// lit or not, whatever angle the light comes in at: the bounce is the color of what is lit around
 				float sun = direct && nx * lx + ny * ly + nz * lz > 0 ? lit[h] : 0;
 				int b = p.hitBounce[h];
+				float e = incident(light.caster, sun, last, b);
 				for (int c = 0; c < 3; ++c)
 				{
-					float e = light.caster[c] * sun + (last != null && b >= 0 ? last[b * 3 + c] * INCIDENT_GAIN : 0);
 					radiance[h * 3 + c] = p.hitAlbedo[h * 3 + c] * e;
 				}
 			});
@@ -259,17 +277,10 @@ final class GiRelight
 						// a thin surface shows the probe the side facing it
 						float dx = d[r * 3], dy = d[r * 3 + 1], dz = d[r * 3 + 2];
 						float sun = direct && dx * lx + dy * ly + dz * lz < 0 ? lit[code] : 0;
-						int b = p.hitBounce[code];
-						float er = light.caster[0] * sun, eg = light.caster[1] * sun, eb = light.caster[2] * sun;
-						if (last != null && b >= 0)
-						{
-							er += last[b * 3] * INCIDENT_GAIN;
-							eg += last[b * 3 + 1] * INCIDENT_GAIN;
-							eb += last[b * 3 + 2] * INCIDENT_GAIN;
-						}
-						tr = p.hitAlbedo[code * 3] * er;
-						tg = p.hitAlbedo[code * 3 + 1] * eg;
-						tb = p.hitAlbedo[code * 3 + 2] * eb;
+						float e = incident(light.caster, sun, last, p.hitBounce[code]);
+						tr = p.hitAlbedo[code * 3] * e;
+						tg = p.hitAlbedo[code * 3 + 1] * e;
+						tb = p.hitAlbedo[code * 3 + 2] * e;
 					}
 					fr += tr * w;
 					fg += tg * w;

@@ -77,7 +77,12 @@ vec4 giIrradiance(vec3 p, vec3 n) {
       vec3 toProbe = vec3(center.x, hs[level], center.y) - world;
       float facing = smoothstep(-GI_FACING_SOFT, GI_FACING_SOFT,
         dot(toProbe, n) * inversesqrt(max(dot(toProbe, toProbe), 1.0)));
-      w *= pr.a * facing;
+      if (pr.a <= 0.0) {
+        // no probe here (a floor the column doesn't have, one stuck in a wall): the others carry the light, so the
+        // top probe outdoors lights the wall above it rather than fading into the floor above that isn't there
+        continue;
+      }
+      w *= facing;
       sum += pr.rgb * w;
       wsum += w;
       total += wxz * (k == 0 ? 1.0 - tv : tv);
