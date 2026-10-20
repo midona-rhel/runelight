@@ -251,6 +251,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 	// repeating errors are logged once per interval
 	private final LogLimiter logLimiter = new LogLimiter(10_000);
 	private final LookMonitor lookMonitor = new LookMonitor();
+	private final HitchMonitor hitchMonitor = new HitchMonitor();
 	private final java.util.ArrayList<PointLight> frameLights = new java.util.ArrayList<>();
 	private final PointLight testLight = new PointLight();
 	private int uniCompositePointLights;
@@ -1582,7 +1583,8 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 	private void preSceneDrawToplevel(Scene scene,
 		float cameraX, float cameraY, float cameraZ, float cameraPitch, float cameraYaw)
 	{
-		gpuTimer.setEnabled(config.showTimings());
+		// the hitch monitor reads the GPU's times too, but only when someone is reading the debug log
+		gpuTimer.setEnabled(config.showTimings() || log.isDebugEnabled());
 		captureFrameState(scene, cameraX, cameraY, cameraZ);
 		updateEdge(scene, cameraX, cameraZ);
 
@@ -1841,6 +1843,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 				renderShadowMap();
 				cpuTimer.end(CpuTimer.SHADOW_SUBMIT);
 			}
+			cpuTimer.begin(CpuTimer.OCCLUSION);
 			if (weather.isActive())
 			{
 				// usually nothing: the map is only redrawn after the player moves far or the scenery changes
@@ -1852,9 +1855,11 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 			gpuTimer.begin(GpuTimer.SKY_OCCLUSION);
 			skyOcclusion.render(root, glShadowProgram, uniShadowLightProj, uniShadowEntityProj, uniShadowBase,
 				uniShadowTexturesReady, textureArrayId != -1, glCapabilities.OpenGL45);
+			cpuTimer.end(CpuTimer.OCCLUSION);
 		}
 		catch (RuntimeException ex)
 		{
+			cpuTimer.end(CpuTimer.OCCLUSION);
 			logLimiter.warn(log, "shadows " + ex, "Error drawing the shadow or weather occlusion map", ex);
 			glBindVertexArray(0);
 			glUseProgram(0);
@@ -2211,6 +2216,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		{
 			float sx = Math.round(fx / SHADOW_CACHE_SNAP) * (float) SHADOW_CACHE_SNAP;
 			float sz = Math.round(fz / SHADOW_CACHE_SNAP) * (float) SHADOW_CACHE_SNAP;
+			hitchMonitor.job(HitchMonitor.STATIC_SHADOWS);
 			shadowMap.startBuild(dayCycle.casterDir, sx, fy, sz, radius + SHADOW_CACHE_SNAP,
 				depthRange + SHADOW_CACHE_SNAP, glCapabilities.OpenGL45);
 			shadowBuildCount = 0;
@@ -2602,8 +2608,18 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 			Math.round(giOvercast[5] * 10), Math.round(giOvercast[6] * 10));
 		try
 		{
+			int builds = globalIllumination.builds();
+			int shown = globalIllumination.shownBuild();
 			globalIllumination.prepare(giEnabled(), frameOutdoors, scene, root != null ? root.zones : null,
 				dayCycle, skyCache.getCaptures(), settings, GI_PROBE_UNIT);
+			if (builds != globalIllumination.builds())
+			{
+				hitchMonitor.job(HitchMonitor.GI_BUILD);
+			}
+			if (shown != globalIllumination.shownBuild())
+			{
+				hitchMonitor.job(HitchMonitor.GI_UPLOAD);
+			}
 		}
 		catch (RuntimeException ex)
 		{
@@ -2640,7 +2656,9 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		// fullscreen triangles are generated from gl_VertexID; core profile still needs some VAO bound
 		glBindVertexArray(vaoUiHandle);
 		gpuTimer.begin(GpuTimer.GI);
+		cpuTimer.begin(CpuTimer.GI);
 		final boolean gi = prepareGlobalIllumination();
+		cpuTimer.end(CpuTimer.GI);
 		gpuTimer.end();
 
 		// the AO pass also writes the half resolution depth and normals that the fog's upsample reads, and the
@@ -2698,7 +2716,14 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 
 		updateClouds();
 		gpuTimer.begin(GpuTimer.SKY);
+		cpuTimer.begin(CpuTimer.SKY_CACHE);
+		int captured = skyCache.getCaptures();
 		int skyCacheMode = updateSkyCache();
+		cpuTimer.end(CpuTimer.SKY_CACHE);
+		if (captured != skyCache.getCaptures())
+		{
+			hitchMonitor.job(HitchMonitor.SKY_CAPTURE);
+		}
 		if (giEnabled())
 		{
 			// the sky cache is bound now; the probes are relit with its light
@@ -3118,6 +3143,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		LocalPoint lp = player.getLocalLocation();
 		if (areaHiding.changed(wv.getScene(), config.hideOtherAreas(), lp.getSceneX(), lp.getSceneY(), wv.getPlane()))
 		{
+			hitchMonitor.job(HitchMonitor.AREA_HIDING);
 			client.setGameState(GameState.LOADING);
 		}
 	}
@@ -3173,6 +3199,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 				zone.dirty = true;
 				if (ctx == root)
 				{
+					hitchMonitor.job(HitchMonitor.ZONE_REBUILD);
 					weather.invalidateOcclusion();
 					skyOcclusion.invalidate();
 					shadowStaticDirty = true;
@@ -3215,6 +3242,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		ShaderWatcher watcher = shaderWatcher;
 		if (watcher != null && watcher.poll())
 		{
+			hitchMonitor.job(HitchMonitor.SHADER_RELOAD);
 			reloadShaders();
 		}
 
@@ -3314,12 +3342,18 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 			frameCpuStart = 0;
 		}
 		long now = System.nanoTime();
+		double swapIntervalNow = 0;
 		if (lastSwapNanos != 0)
 		{
 			double ms = (now - lastSwapNanos) / 1e6;
 			swapIntervalMs = swapIntervalMs == 0 ? ms : swapIntervalMs * 0.95 + ms * 0.05;
+			swapIntervalNow = ms;
 		}
 		lastSwapNanos = now;
+		if (log.isDebugEnabled())
+		{
+			hitchMonitor.endFrame(swapIntervalNow, cpuTimer, gpuTimer);
+		}
 		cpuTimer.endFrame();
 		cpuTimer.begin(CpuTimer.OUTSIDE);
 		drawManager.processDrawComplete(this::screenshot);
@@ -3875,6 +3909,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 			return;
 		}
 
+		hitchMonitor.job(HitchMonitor.SCENE_SWAP);
 		areaHiding.swapped();
 		SceneContext ctx = root;
 		for (int x = 0; x < ctx.sizeX; ++x)

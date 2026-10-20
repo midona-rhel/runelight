@@ -302,6 +302,18 @@ class GlobalIllumination
 		return weight > 0 && shown >= 0;
 	}
 
+	/** Builds submitted so far; a change means a build started. */
+	int builds()
+	{
+		return generation;
+	}
+
+	/** The build whose probes are on the GPU; a change means an upload happened. */
+	int shownBuild()
+	{
+		return shownGeneration;
+	}
+
 	/**
 	 * Once a frame before the AO pass, on the client thread with the GL context: start builds, hand finished
 	 * readbacks to the worker, upload and blend new probes and decide whether to relight. Changes the framebuffer,
