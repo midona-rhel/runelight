@@ -445,19 +445,30 @@ final class LightOcclusion
 
 	/**
 	 * A light's texel after the lights (light_occlusion.glsl): its grid's first texel (atlasStart + base, -1 for
-	 * none), the grid's corner (local world xz), and cells per side * 4 + 1 for half tile cells + 2 when the light is
-	 * covered (under a roof: it doesn't light what is open to the sky above it).
+	 * none), the grid's corner (local world xz), and a code: cells per side * 32 + the light's plane * 8 + 4 when the
+	 * walls already decide where it reaches on its plane (its grid is cast, or no wall is near enough to matter: the
+	 * rooms then only keep it off the other planes) + 2 when the light is covered (under a roof: it doesn't light
+	 * what is open to the sky above it) + 1 for half tile cells.
+	 *
+	 * @param radius the light's radius: past the grids' reach the walls decide nothing
+	 * @param inRoom the light must stay in its room whatever the walls say (the soft lights of building rooms, which
+	 * would spill out of open sides)
 	 */
-	static void texel(Entry e, Atlas a, int atlasStart, boolean covered, FloatBuffer out)
+	static void texel(Entry e, Atlas a, int atlasStart, boolean covered, int plane, float radius, boolean inRoom,
+		FloatBuffer out)
 	{
 		int base = a != null && e != null && !e.open ? a.base(e) : -1;
+		int flags = (covered ? 2 : 0) | (plane >= 0 && plane < WallMap.PLANES ? plane << 3 : 0);
+		if (e != null && !inRoom && radius <= MAX_RADIUS && (e.open || base >= 0))
+		{
+			flags |= 4;
+		}
 		if (base < 0)
 		{
-			out.put(-1).put(0).put(0).put(covered ? 2 : 0);
+			out.put(-1).put(0).put(0).put(flags);
 			return;
 		}
-		out.put(atlasStart + base).put(e.originX).put(e.originZ)
-			.put(e.n * 4 + (e.cell > CELL_FINE ? 1 : 0) + (covered ? 2 : 0));
+		out.put(atlasStart + base).put(e.originX).put(e.originZ).put(e.n * 32 + flags + (e.cell > CELL_FINE ? 1 : 0));
 	}
 
 	/** The visibility the shader reads for a cell of a packed grid, 0-1; 1 outside it. For tests. */

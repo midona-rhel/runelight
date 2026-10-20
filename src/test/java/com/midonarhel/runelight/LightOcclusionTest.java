@@ -212,9 +212,10 @@ public class LightOcclusionTest
 		assertTrue(e.open);
 		assertNull(e.cells);
 		FloatBuffer out = FloatBuffer.allocate(4);
-		LightOcclusion.texel(e, LightOcclusion.pack(Collections.singletonList(e), 0), 100, true, out);
+		LightOcclusion.texel(e, LightOcclusion.pack(Collections.singletonList(e), 0), 100, true, 0, 600, false, out);
 		assertEquals(-1, out.get(0), 0);
-		assertEquals(2, out.get(3), 0);
+		// covered, and the walls (there are none near) decide on plane 0
+		assertEquals(2 + 4, out.get(3), 0);
 	}
 
 	@Test
@@ -234,10 +235,24 @@ public class LightOcclusionTest
 		LightOcclusion.Atlas a = LightOcclusion.pack(Collections.singletonList(e), 0);
 		assertEquals((e.n * e.n + 15) / 16, a.texelCount);
 		FloatBuffer out = FloatBuffer.allocate(4);
-		LightOcclusion.texel(e, a, 5000, false, out);
+		LightOcclusion.texel(e, a, 5000, false, 2, 900, false, out);
 		assertEquals(5000, out.get(0), 0);
 		assertEquals(e.originX, out.get(1), 0);
-		assertEquals(e.n * 4, out.get(3), 0);
+		// cells per side, plane 2, handled by the grid, fine cells
+		assertEquals(e.n * 32 + 2 * 8 + 4, out.get(3), 0);
+		// a light beyond the grids' reach, or whose grid isn't cast yet, is left to the rooms
+		FloatBuffer far = FloatBuffer.allocate(4);
+		LightOcclusion.texel(e, a, 5000, false, 0, LightOcclusion.MAX_RADIUS + 1, false, far);
+		assertEquals(0, (int) far.get(3) & 4);
+		LightOcclusion.Entry pending = new LightOcclusion.Entry(1, 0, 1, 0, world(10), world(10), 900);
+		FloatBuffer wait = FloatBuffer.allocate(4);
+		LightOcclusion.texel(pending, a, 5000, false, 0, 900, false, wait);
+		assertEquals(-1, wait.get(0), 0);
+		assertEquals(0, (int) wait.get(3) & 4);
+		// the soft lights of building rooms stay in their rooms
+		FloatBuffer room = FloatBuffer.allocate(4);
+		LightOcclusion.texel(e, a, 5000, false, 0, 900, true, room);
+		assertEquals(0, (int) room.get(3) & 4);
 		// every packed float is a whole number the shader can take apart exactly
 		for (int i = 0; i < a.texelCount * 4; ++i)
 		{

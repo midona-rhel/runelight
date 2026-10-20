@@ -206,16 +206,17 @@ vec3 pointLights(int base, vec3 p, vec3 n, float transmissive, out vec3 throughO
   vec3 sum = vec3(0.0);
   int count = clusterLightCount(base);
   // lights only reach the room they are in, or the outdoors (rooms.glsl)
-  ivec2 room = count > 0 ? lightRoomAt(p + cameraPos + n * ROOM_NORMAL_BIAS) : ivec2(-1, 0);
+  ivec3 room = count > 0 ? lightRoomPlaneAt(p + cameraPos + n * ROOM_NORMAL_BIAS) : ivec3(-1, 0, 0);
   for (int i = 0; i < count; ++i) {
     int li = int(texelFetch(clusterData, base + 1 + i).r);
     vec4 posRadius = texelFetch(lightData, li * 2);
     vec4 colorCode = texelFetch(lightData, li * 2 + 1);
-    float share = roomShare(colorCode.w, room);
+    vec4 extra = texelFetch(lightData, LIGHT_EXTRA_BASE + li);
+    float share = lightRoomShare(colorCode.w, extra, room);
     if (share <= 0.0) {
       continue;
     }
-    vec3 color = colorCode.rgb * share * lightOcclusion(li, posRadius.xyz, p, n);
+    vec3 color = colorCode.rgb * share * lightOcclusion(extra, posRadius.xyz, p, n);
 
     vec3 l = posRadius.xyz - p;
     float d2 = dot(l, l);

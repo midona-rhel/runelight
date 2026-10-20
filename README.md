@@ -188,4 +188,8 @@ Debug view "Skylight" shows it.
 Walls (`WallMap.java`) come from the collision map's line-of-sight edges plus the diagonal wall objects; rooms split
 along them (`BuildingDetector.split`), and every light that stays put gets a quarter-tile visibility grid cast
 against them on a worker thread (`LightOcclusion.java`), recast when a door opens or closes, packed after the room
-map in the light buffer. Lights under a roof don't light surfaces open to the sky above them.
+map in the light buffer. Once a light's grid is cast the walls alone decide where it reaches on its own plane; the
+rooms keep it off the other planes, except through holes in the floors (`RoomMap.linkStoreys`, from the scene's tile
+paints and models): the rooms either side of a hole share their lights there, and a light of another plane shows when
+nothing floors it over or in, or its room has a hole (`RoomMap.seenFrom`; 117 HD's plane rule plus the holes). Lights
+under a roof don't light surfaces open to the sky above them, facing up (roofs), not the walls around them.

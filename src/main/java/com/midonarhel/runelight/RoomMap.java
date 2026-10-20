@@ -6,7 +6,9 @@ import java.nio.FloatBuffer;
  * Which building room every tile of the scene belongs to, so point lights stay in the room they are in instead of
  * shining through walls (rooms.glsl), and the volumetric fog stays out of interiors. Rooms come from
  * BuildingDetector; 0 is outdoors. An outdoor tile directly across an opening (a doorway, an open door: no wall
- * between them in the collision map) from a room is that room's porch, where its light spills out a little.
+ * between them in the collision map) from a room is that room's porch, where its light spills out a little. Where
+ * a floor has a hole (a stairwell, a pit) the rooms above and below it are linked there: a room tile's porch is the
+ * room across the hole.
  *
  * GL-free so it can be tested; LightClusters uploads {@link #texels} after the lights in the light buffer. Arrays
  * are [plane][x][y] in extended scene tiles; planes are logical planes as in BuildingDetector.
@@ -34,9 +36,14 @@ final class RoomMap
 	final int offset;
 	final short[] rooms;
 	final short[] porch;
+	// room tiles: the room across a hole in the floor above or below; set by linkStoreys
+	final short[] link;
 	final float[] floors;
 	// under a roof by the map's flags, whether or not a room was found there: lights there are covered (rooms.glsl)
 	final boolean[] roofed;
+	// a bit per plane: the tile has a floor there (linkStoreys); null until known
+	private byte[] filled;
+	private boolean[] linked = new boolean[0];
 	private int version;
 
 	private RoomMap(int size, int offset)
@@ -45,6 +52,7 @@ final class RoomMap
 		this.offset = offset;
 		rooms = new short[PLANES * size * size];
 		porch = new short[PLANES * size * size];
+		link = new short[PLANES * size * size];
 		floors = new float[PLANES * size * size];
 		roofed = new boolean[PLANES * size * size];
 	}
@@ -108,6 +116,90 @@ final class RoomMap
 		}
 		m.version = 1;
 		return m;
+	}
+
+	/**
+	 * Link the rooms above and below every hole in a floor, so lights shine through stairwells and pits and the
+	 * storeys they connect, and remember which tiles have a floor (for lights seen through the openings).
+	 *
+	 * @param filled per extended tile (x * size + y), a bit per plane that has a floor tile there
+	 */
+	void linkStoreys(byte[] filled)
+	{
+		this.filled = filled;
+		java.util.Arrays.fill(link, (short) 0);
+		boolean[] linkedRooms = new boolean[ANY];
+		boolean any = false;
+		if (filled != null && filled.length >= size * size)
+		{
+			for (int plane = 1; plane < PLANES; ++plane)
+			{
+				for (int x = 0; x < size; ++x)
+				{
+					for (int y = 0; y < size; ++y)
+					{
+						if ((filled[x * size + y] >> plane & 1) != 0)
+						{
+							continue;
+						}
+						int low = index(plane - 1, x, y), high = index(plane, x, y);
+						short below = rooms[low], above = rooms[high];
+						if (below != 0 && above != 0 && below != above)
+						{
+							link[low] = above;
+							link[high] = below;
+							linkedRooms[below] = true;
+							linkedRooms[above] = true;
+							any = true;
+						}
+					}
+				}
+			}
+		}
+		linked = any ? linkedRooms : new boolean[0];
+		version++;
+	}
+
+	/** Whether a floor lies at a point of a plane. True when unknown. */
+	boolean floorAt(int plane, float x, float z)
+	{
+		int tx = (int) Math.floor(x / TILE) + offset;
+		int ty = (int) Math.floor(z / TILE) + offset;
+		if (filled == null || plane < 0 || plane >= PLANES || tx < 0 || ty < 0 || tx >= size || ty >= size)
+		{
+			return true;
+		}
+		return (filled[tx * size + ty] >> plane & 1) != 0;
+	}
+
+	/**
+	 * Whether a light at a point of a plane can be seen from another plane through an opening: nothing floors it
+	 * over (below the viewer), or nothing floors it in (above the viewer), or its room has a hole in its floor or
+	 * ceiling.
+	 */
+	boolean seenFrom(int lightPlane, int viewPlane, float x, float z)
+	{
+		if (lightPlane == viewPlane || lightPlane < 0 || lightPlane >= PLANES)
+		{
+			return true;
+		}
+		if (lightPlane < viewPlane ? lightPlane + 1 >= PLANES || !floorAt(lightPlane + 1, x, z) : !floorAt(lightPlane, x, z))
+		{
+			return true;
+		}
+		int tx = (int) Math.floor(x / TILE) + offset;
+		int ty = (int) Math.floor(z / TILE) + offset;
+		if (tx < 0 || ty < 0 || tx >= size || ty >= size)
+		{
+			return false;
+		}
+		return isLinked(rooms[index(lightPlane, tx, ty)]);
+	}
+
+	/** Whether a room has a hole in its floor or ceiling. */
+	boolean isLinked(int room)
+	{
+		return room > 0 && room < linked.length && linked[room];
 	}
 
 	private static float floorHeight(byte[][][] settings, int[][][] heights, int plane, int x, int y)
@@ -195,6 +287,16 @@ final class RoomMap
 			}
 		}
 		return 0;
+	}
+
+	/** The room across a hole in the floor or ceiling of a room tile, 0 for none. */
+	int link(int plane, int x, int y)
+	{
+		if (plane < 0 || plane >= PLANES || x < 0 || y < 0 || x >= size || y >= size)
+		{
+			return 0;
+		}
+		return link[index(plane, x, y)];
 	}
 
 	/** The room of a tile, 0 outdoors or outside the map. */
@@ -295,9 +397,10 @@ final class RoomMap
 		{
 			return 1;
 		}
-		if (room == 0 && porch != 0 && (a == porch || b == porch))
+		if (porch != 0 && (a == porch || b == porch))
 		{
-			return porchShare;
+			// across a doorway the light only spills; through a hole in a floor it shines in full
+			return room == 0 ? porchShare : 1;
 		}
 		return 0;
 	}
@@ -328,11 +431,13 @@ final class RoomMap
 		}
 		int i = index(plane, tx, ty);
 		int room = rooms[i];
+		int near = room != 0 ? link[i] : porch[i];
 		if (room != 0 && y < floors[i] - STOREY)
 		{
 			room = 0;
+			near = 0;
 		}
-		return new int[]{room, porch[i]};
+		return new int[]{room, near};
 	}
 
 	/** Texels after the header. */
@@ -355,7 +460,7 @@ final class RoomMap
 				for (int p = 0; p < PLANES; ++p)
 				{
 					int i = index(p, x, y);
-					out.put(rooms[i] + porch[i] * 4096f);
+					out.put(rooms[i] + (rooms[i] != 0 ? link[i] : porch[i]) * 4096f);
 				}
 				for (int p = 0; p < PLANES; ++p)
 				{

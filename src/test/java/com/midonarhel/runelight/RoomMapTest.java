@@ -162,4 +162,105 @@ public class RoomMapTest
 		assertEquals(4096, b.get(p), 0);
 		assertTrue(LightClusters.ROOM_BASE + m.texelCount() < 65536);
 	}
+
+	// the 4x4 house with a second storey over it (rooms 1 below, 2 above); the upper floor has a hole at extended tile
+	// (9, 9) when hole is set, and every other tile of both planes has a floor, except open ground at (14, 14) that
+	// has none on the upper plane
+	private static RoomMap twoStoreys(boolean hole)
+	{
+		byte[][][] settings = new byte[4][SIZE][SIZE];
+		byte[] filled = new byte[SIZE * SIZE];
+		for (int x = 0; x < SIZE; ++x)
+		{
+			for (int y = 0; y < SIZE; ++y)
+			{
+				filled[x * SIZE + y] = 0b11;
+			}
+		}
+		for (int x = 8; x < 12; ++x)
+		{
+			for (int y = 8; y < 12; ++y)
+			{
+				settings[0][x][y] = BuildingDetector.TILE_FLAG_UNDER_ROOF;
+				settings[1][x][y] = BuildingDetector.TILE_FLAG_UNDER_ROOF;
+			}
+		}
+		filled[14 * SIZE + 14] = 0b01;
+		if (hole)
+		{
+			filled[9 * SIZE + 9] = 0b01;
+		}
+		int[][][] heights = new int[4][SIZE + 1][SIZE + 1];
+		for (int l = 0; l < 4; ++l)
+		{
+			for (int[] row : heights[l])
+			{
+				java.util.Arrays.fill(row, -240 * l);
+			}
+		}
+		RoomMap m = RoomMap.build(BuildingDetector.detect(settings, null), settings, heights, OFFSET);
+		m.linkStoreys(filled);
+		return m;
+	}
+
+	@Test
+	public void holesInTheFloorLinkTheStoreys()
+	{
+		RoomMap m = twoStoreys(true);
+		int below = m.room(0, 9, 9), above = m.room(1, 9, 9);
+		assertTrue(below > 0 && above > 0 && below != above);
+		// a light on the lower floor lights its own room, and the upper room only where the hole is
+		float lamp = m.lightCode(world(10), -200, world(10), 0);
+		assertEquals(1, RoomMap.share(lamp, m.roomAt(world(10), -40, world(10))[0], m.roomAt(world(10), -40, world(10))[1], 0.5f), 0);
+		int[] aboveHole = m.roomAt(world(9), -300, world(9));
+		assertEquals(above, aboveHole[0]);
+		assertEquals(below, aboveHole[1]);
+		assertEquals(1, RoomMap.share(lamp, aboveHole[0], aboveHole[1], 0.5f), 0);
+		int[] aboveFloor = m.roomAt(world(10), -300, world(10));
+		assertEquals(above, aboveFloor[0]);
+		assertEquals(0, aboveFloor[1]);
+		assertEquals(0, RoomMap.share(lamp, aboveFloor[0], aboveFloor[1], 0.5f), 0);
+		// and the other way: the upper light reaches the floor under the hole
+		float chandelier = m.lightCode(world(10), -440, world(10), 1);
+		int[] underHole = m.roomAt(world(9), -40, world(9));
+		assertEquals(1, RoomMap.share(chandelier, underHole[0], underHole[1], 0.5f), 0);
+		assertEquals(0, RoomMap.share(chandelier, m.roomAt(world(10), -40, world(10))[0], 0, 0.5f), 0);
+		// the link is in the texels
+		FloatBuffer b = FloatBuffer.allocate(m.texelCount() * 4);
+		m.texels(b);
+		int t = (RoomMap.HEADER_TEXELS + (9 * SIZE + 9) * 2) * 4;
+		assertEquals(below + above * 4096f, b.get(t), 0);
+		assertEquals(above + below * 4096f, b.get(t + 1), 0);
+	}
+
+	@Test
+	public void solidFloorsLinkNothing()
+	{
+		RoomMap m = twoStoreys(false);
+		assertEquals(0, m.roomAt(world(9), -300, world(9))[1]);
+		assertEquals(0, m.roomAt(world(9), -40, world(9))[1]);
+		assertFalse(m.seenFrom(0, 1, world(9), world(9)));
+		assertTrue(m.seenFrom(1, 1, world(9), world(9)));
+	}
+
+	@Test
+	public void lightsOfOtherPlanesAreSeenThroughOpenings()
+	{
+		RoomMap m = twoStoreys(true);
+		// the room under the hole is linked: its lights show from above, and the upper room's from below
+		assertTrue(m.seenFrom(0, 1, world(10), world(10)));
+		assertTrue(m.seenFrom(1, 0, world(10), world(10)));
+		// nothing floors a light over: the pit below a gallery
+		assertTrue(m.seenFrom(0, 1, world(14), world(14)));
+		// but a floor above (the second storey) over an unlinked room hides it
+		RoomMap solid = twoStoreys(false);
+		assertFalse(solid.seenFrom(0, 1, world(10), world(10)));
+		assertFalse(solid.seenFrom(1, 0, world(10), world(10)));
+		// a light on the upper floor, seen from below, over open air: nothing floors it in
+		assertTrue(solid.seenFrom(1, 0, world(14), world(14)));
+		// without floor data a light on another plane is hidden
+		RoomMap unknown = house(walls());
+		assertFalse(unknown.seenFrom(0, 1, world(10), world(10)));
+		assertTrue(unknown.seenFrom(0, 0, world(10), world(10)));
+	}
 }

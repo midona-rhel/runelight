@@ -2457,7 +2457,8 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 			float t = Math.max(0, Math.min(1, (-2 - dayCycle.sunAltitude) / 8));
 			float night = frameOutdoors ? t * t * (3 - 2 * t) : 1;
 			// around the focal point like the drawn world (EdgeFade), so lights don't come and go as the camera turns
-			lights.collect(frameLights, time, night, edgeFade.focalX, edgeFade.focalZ, edgeFade.radius);
+			lights.collect(frameLights, time, night, edgeFade.focalX, edgeFade.focalZ, edgeFade.radius,
+				walls != null ? walls.getRooms() : null);
 		}
 		BuildingLights buildings = buildingLights;
 		// caves and dungeons have no buildings; frameOutdoors stands in until areas are classified

@@ -88,6 +88,8 @@ class SceneLights
 
 	private final Map<TileObject, TrackedObject> objects = new IdentityHashMap<>();
 	private final List<Placed> worldLights = new ArrayList<>();
+	// this frame's rooms, for the lights of the other planes
+	private RoomMap viewRooms;
 
 	// per-frame pool so collecting lights does not allocate
 	private final List<PointLight> pool = new ArrayList<>();
@@ -399,10 +401,13 @@ class SceneLights
 	 * @param time seconds, for flicker and pulse
 	 * @param night 0 by day to 1 at night, for night-only lights and night multipliers
 	 * @param maxDistance only lights whose sphere comes within this distance of the camera (xz) are added
+	 * @param rooms the scene's rooms and floors, null when unknown: they decide which lights of the other planes are
+	 * seen through an opening
 	 */
-	void collect(List<PointLight> out, float time, float night, float camX, float camZ, float maxDistance)
+	void collect(List<PointLight> out, float time, float night, float camX, float camZ, float maxDistance, RoomMap rooms)
 	{
 		poolUsed = 0;
+		viewRooms = rooms;
 		if (client.getGameState() != GameState.LOGGED_IN)
 		{
 			return;
@@ -499,7 +504,10 @@ class SceneLights
 	private void emit(List<PointLight> out, LightDefinition d, float x, float y, float z, int lightPlane, int plane,
 		float seed, float time, float night, float camX, float camZ, float maxDistance)
 	{
-		if (lightPlane != plane && !d.visibleFromOtherPlanes)
+		// Other planes' lights stay hidden unless they are meant to show through (the definition says so) or nothing
+		// floors them off: the pit below a gallery, the room under a stairwell (117 HD hides the rest to keep them
+		// from leaking through floors)
+		if (lightPlane != plane && !d.visibleFromOtherPlanes && (viewRooms == null || !viewRooms.seenFrom(lightPlane, plane, x, z)))
 		{
 			return;
 		}
