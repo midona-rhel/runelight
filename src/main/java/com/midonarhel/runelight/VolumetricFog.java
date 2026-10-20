@@ -7,8 +7,9 @@ import static org.lwjgl.opengl.GL33C.*;
 
 /**
  * Lightweight volumetric fog. A half resolution pass (fog_frag.glsl) marches each view ray a fixed number of
- * steps through a height fog layer around the player and writes in-scattered light and transmittance; the
- * composite upsamples that depth-aware and applies it (fog_apply.glsl).
+ * steps through a height fog layer around the player and writes in-scattered light and transmittance into
+ * {@link SceneTargets}' fog target; the denoise smooths it with the AO and shadows (denoise_frag.glsl) and the
+ * composite upsamples it depth-aware and applies it (fog_apply.glsl).
  *
  * All fog parameters are set in {@link #updateParameters}, so a later per-area environment system only has to
  * change the values there (or the {@code area*} multipliers).
@@ -64,8 +65,7 @@ class VolumetricFog
 
 	private int uniCompositeEnabled;
 
-	private int fbo, texFog, texNoise;
-	private int targetWidth, targetHeight;
+	private int texNoise;
 
 	/**
 	 * Take ownership of a freshly compiled fog program and look up its uniforms.
@@ -189,11 +189,10 @@ class VolumetricFog
 	}
 
 	/**
-	 * Render the fog into its half resolution target and bind it to {@code fogUnit} for the composite. Expects
-	 * the scene depth, shadow map and light clusters already bound to the units given to {@link #setProgram},
-	 * and a VAO bound.
+	 * Render the fog into the half resolution framebuffer {@code fbo}. Expects the scene depth, shadow map and
+	 * light clusters already bound to the units given to {@link #setProgram}, and a VAO bound.
 	 */
-	void render(int halfWidth, int halfHeight, float halfRatio, int noiseUnit, int fogUnit, int disturbUnit,
+	void render(int fbo, int halfWidth, int halfHeight, float halfRatio, int noiseUnit, int disturbUnit,
 		float[] viewProj, float[] invViewProj, int[] viewport, boolean zeroToOne,
 		float cameraX, float cameraY, float cameraZ, float time,
 		boolean outdoors, boolean proceduralSky, int skyColor, DayCycle day,
@@ -203,18 +202,13 @@ class VolumetricFog
 		{
 			return;
 		}
-		if (fbo == 0 || targetWidth != halfWidth || targetHeight != halfHeight)
-		{
-			freeTarget();
-			initTarget(halfWidth, halfHeight);
-		}
 		if (texNoise == 0)
 		{
 			texNoise = createNoise();
 		}
 
 		glBindFramebuffer(GL_FRAMEBUFFER, fbo);
-		glViewport(0, 0, targetWidth, targetHeight);
+		glViewport(0, 0, halfWidth, halfHeight);
 		glUseProgram(program);
 
 		glUniformMatrix4fv(uniViewProj, false, viewProj);
@@ -295,9 +289,6 @@ class VolumetricFog
 			glActiveTexture(GL_TEXTURE0 + waterUnit);
 			glBindTexture(GL_TEXTURE_2D, 0);
 		}
-
-		glActiveTexture(GL_TEXTURE0 + fogUnit);
-		glBindTexture(GL_TEXTURE_2D, texFog);
 		glActiveTexture(GL_TEXTURE0);
 	}
 
@@ -310,7 +301,6 @@ class VolumetricFog
 
 	void free()
 	{
-		freeTarget();
 		if (texNoise != 0)
 		{
 			glDeleteTextures(texNoise);
@@ -318,41 +308,6 @@ class VolumetricFog
 		}
 		glDeleteProgram(program);
 		program = 0;
-	}
-
-	private void initTarget(int w, int h)
-	{
-		targetWidth = w;
-		targetHeight = h;
-		texFog = glGenTextures();
-		glBindTexture(GL_TEXTURE_2D, texFog);
-		// half float: the scattered light is linear and dim at night, 8 bits would band
-		glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA16F, w, h, 0, GL_RGBA, GL_HALF_FLOAT, 0);
-		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
-		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
-		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
-		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-		glBindTexture(GL_TEXTURE_2D, 0);
-
-		fbo = glGenFramebuffers();
-		glBindFramebuffer(GL_FRAMEBUFFER, fbo);
-		glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, texFog, 0);
-		glDrawBuffers(GL_COLOR_ATTACHMENT0);
-		int status = glCheckFramebufferStatus(GL_FRAMEBUFFER);
-		if (status != GL_FRAMEBUFFER_COMPLETE)
-		{
-			throw new RuntimeException("Fog framebuffer incomplete, status 0x" + Integer.toHexString(status));
-		}
-	}
-
-	private void freeTarget()
-	{
-		if (fbo != 0)
-		{
-			glDeleteFramebuffers(fbo);
-			glDeleteTextures(texFog);
-			fbo = texFog = 0;
-		}
 	}
 
 	private static int createNoise()

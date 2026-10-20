@@ -1,7 +1,7 @@
 // Sun and moon shadows: PCSS. Blocker search for the average occluder depth, then a PCF kernel sized by the
 // distance between occluder and receiver, so contact shadows are sharp and long ones soften. Drawn at half
-// resolution in the AO pass (ao_frag.glsl), rotated by the 4x4 ordered pattern, which the composite's upsample
-// averages away: soft edges without grain. Needs frame.glsl.
+// resolution in the AO pass (ao_frag.glsl), rotated by interleaved gradient noise (ign.glsl), which the denoise
+// (denoise_frag.glsl) averages away: soft edges without grain. Needs frame.glsl.
 
 uniform sampler2D shadowRaw;
 uniform sampler2DShadow shadowCompare;

@@ -1,5 +1,5 @@
-// Volumetric fog in the composite: depth-aware upsample of the half resolution fog pass (fog_frag.glsl), which
-// also blurs its per-pixel step jitter, then the scene seen through it. Needs frame.glsl and sky.glsl.
+// Volumetric fog in the composite: depth-aware 2x2 upsample of the half resolution fog pass (fog_frag.glsl), whose
+// step jitter the denoise (denoise_frag.glsl) has already smoothed, then the scene seen through it. Needs frame.glsl and sky.glsl.
 // The composite's AO upsample takes the same taps and does the fog in the same loop (upsampleAoFog).
 
 #include "halfres.glsl"
@@ -11,29 +11,21 @@ uniform sampler2D sceneFog;  // half resolution: rgb light scattered toward the 
 #define FOG_UPSAMPLE_DEPTH 0.03
 #define FOG_SKY_DEPTH HALF_SKY_DEPTH
 
-// Nearly flat over the 4x4 half resolution texels around px: the half resolution passes jitter by a 4x4 ordered
-// pattern (bayer.glsl), which flat weights average away exactly; a Gaussian left a fine grain of it
-#define UPSAMPLE_TAPER 0.15
-float upsampleSpatial(vec2 o) {
-  vec2 w = 1.0 - UPSAMPLE_TAPER * abs(o);
-  return w.x * w.y;
-}
-
 float fogDepthWeight(float qz, float z) {
   return 1.0 / (1.0 + abs(qz - z) / (z * FOG_UPSAMPLE_DEPTH + 1.0));
 }
 
 vec4 upsampleFog(ivec2 px, float z) {
   vec2 hp = fullToHalf(px);
-  ivec2 base = ivec2(floor(hp)) - 1;
+  ivec2 base = ivec2(floor(hp));
   ivec2 maxFog = textureSize(sceneFog, 0) - 1;
   vec4 sum = vec4(0.0);
   float wsum = 0.0;
-  for (int y = 0; y < 4; ++y) {
-    for (int x = 0; x < 4; ++x) {
+  for (int y = 0; y < 2; ++y) {
+    for (int x = 0; x < 2; ++x) {
       ivec2 q = clamp(base + ivec2(x, y), ivec2(0), maxFog);
-      float qz = halfViewDepth(texelFetch(sceneAo, q, 0));
-      float w = upsampleSpatial(vec2(q) - hp) * fogDepthWeight(qz, z);
+      vec2 bl = max(1.0 - abs(vec2(q) - hp), 0.0);
+      float w = (bl.x * bl.y + 1e-3) * fogDepthWeight(halfViewDepth(texelFetch(sceneAo, q, 0)), z);
       sum += texelFetch(sceneFog, q, 0) * w;
       wsum += w;
     }

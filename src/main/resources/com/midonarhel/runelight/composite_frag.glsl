@@ -85,9 +85,9 @@ uniform usamplerBuffer clusterData;  // per cluster: count, then light indices
 layout(location = 0) out vec4 FragColor;
 
 // ---------------------------------------------------------------------------------------------------------------
-// Ambient occlusion and shadows: 4x4 depth- and normal-aware upsample of the half resolution pass, which also
-// averages away its ordered noise. The volumetric fog's upsample uses the same taps, so it is done in the same loop
-// when the fog is on.
+// Ambient occlusion and shadows: 2x2 depth- and normal-aware upsample of the half resolution pass, whose noise the
+// denoise (denoise_frag.glsl) has smoothed. The volumetric fog's upsample uses the same taps, so it is done in the
+// same loop when the fog is on.
 
 float upsampleAoFog(ivec2 px, float z, vec3 n, out vec4 fog, out float shadow, out vec4 gi) {
   vec2 hp = fullToHalf(px);

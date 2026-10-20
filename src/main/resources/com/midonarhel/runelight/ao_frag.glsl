@@ -1,12 +1,12 @@
 #version 330
 
 // Screen-space ambient occlusion at half resolution. Normal-oriented hemisphere samples in world space,
-// tested against the depth buffer. Noisy by design; the composite pass blurs it depth-aware while upsampling.
+// tested against the depth buffer. Noisy by design; the denoise (denoise_frag.glsl) blurs it depth-aware before the composite upsamples it.
 // The sun and moon shadows are drawn here too (shadow_pcss.glsl), at half resolution, and upsampled the same way.
 
 #include "frame.glsl"
 #include "halfres.glsl"
-#include "bayer.glsl"
+#include "ign.glsl"
 #include "shadow_pcss.glsl"
 #include "gi.glsl"
 #include "weather_ground_ao.glsl"
@@ -55,7 +55,7 @@ void main() {
   FragShadow.gb = weatherGroundAo(p, n);
   vec4 gi = giEnabled == 1 ? giIrradiance(p, n) : vec4(0.0);
   FragAo = halfPackGeometry(1.0, nearOverDepth, n, gi.rgb, gi.a);
-  float noise = bayer4(gl_FragCoord.xy);
+  float noise = ign(gl_FragCoord.xy);
   FragShadow.a = skylightVisibility(p, n, noise);
   if (shadowsEnabled == 1) {
     vec2 m = texelFetch(sceneMaterial, px, 0).rg / cover;

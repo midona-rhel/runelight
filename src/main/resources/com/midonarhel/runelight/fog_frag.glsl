@@ -3,7 +3,8 @@
 // Volumetric fog at half resolution: march each view ray through a height fog layer around the player, lighting
 // every sample with the sky, the sun or moon (through the shadow map, so shafts show through gaps) and nearby
 // point lights. Output is the light scattered toward the camera (linear) and how much of the scene behind still
-// shows; fog_apply.glsl upsamples it depth-aware in the composite. Parameters come from VolumetricFog.java.
+// shows; the denoise (denoise_frag.glsl) smooths its step jitter and fog_apply.glsl upsamples it depth-aware in the
+// composite. Parameters come from VolumetricFog.java.
 
 #include "frame.glsl"
 #include "sky.glsl"
@@ -124,7 +125,7 @@ out vec4 FragFog;
 #define FOG_DISTURB_EDGE 512.0
 
 #include "halfmap.glsl"
-#include "bayer.glsl"
+#include "ign.glsl"
 
 vec2 fogWaterCell(vec2 worldXZ) {
   return clamp(worldXZ / 128.0 + waterGrid.x, vec2(0.0), vec2(waterGrid.y - 1.0));
@@ -307,8 +308,8 @@ void main() {
 
   int steps = clamp(fogSteps, 1, FOG_MAX_STEPS);
   float dt = (t1 - t0) / float(steps);
-  // ordered, so the upsample averages it away (bayer.glsl)
-  float jitter = bayer4(gl_FragCoord.xy);
+  // blurred away with the AO and shadows (denoise_frag.glsl)
+  float jitter = ign(gl_FragCoord.xy);
   vec3 scatter = vec3(0.0);
   float trans = 1.0;
   float weight[FOG_MAX_STEPS];

@@ -227,7 +227,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 
 	private int glAoProgram;
 	private int glDenoiseProgram;
-	private int uniDenoiseAxis;
+	private int uniDenoiseAxis, uniDenoiseFog;
 	private int uniAoRadius;
 	private int uniAoSamples;
 	private int uniAoShadowsEnabled, uniAoLightProjRel, uniAoShadowRadius, uniAoShadowDepthRange, uniAoShadowMapSize,
@@ -1104,9 +1104,11 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		glUseProgram(0);
 
 		uniDenoiseAxis = glGetUniformLocation(glDenoiseProgram, "denoiseAxis");
+		uniDenoiseFog = glGetUniformLocation(glDenoiseProgram, "denoiseFog");
 		glUseProgram(glDenoiseProgram);
 		glUniform1i(glGetUniformLocation(glDenoiseProgram, "sceneAo"), AO_TEXTURE_UNIT);
 		glUniform1i(glGetUniformLocation(glDenoiseProgram, "sceneShadow"), SCENE_SHADOW_UNIT);
+		glUniform1i(glGetUniformLocation(glDenoiseProgram, "sceneFog"), FOG_TEXTURE_UNIT);
 		glUseProgram(0);
 		uniAoRadius = glGetUniformLocation(glAoProgram, "aoRadius");
 		uniAoSamples = glGetUniformLocation(glAoProgram, "aoSamples");
@@ -2667,7 +2669,8 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		final boolean ground = config.weatherSurfaces() && weather.groundActive();
 		final boolean sky = skyOcclusion.isReady();
 		frameSkylight = false;
-		if (ao || frameFog || shadows || gi || ground || sky)
+		final boolean halfPass = ao || frameFog || shadows || gi || ground || sky;
+		if (halfPass)
 		{
 			glBindFramebuffer(GL_FRAMEBUFFER, sceneTargets.getAoFbo());
 			glViewport(0, 0, sceneTargets.getAoWidth(), sceneTargets.getAoHeight());
@@ -2704,12 +2707,6 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 			frameSkylight = skyOcclusion.bindAo(SKY_OCCLUSION_UNIT, frameCameraX, frameCameraY, frameCameraZ);
 			gpuTimer.begin(GpuTimer.AO);
 			glDrawArrays(GL_TRIANGLES, 0, 3);
-			// the AO and the shadows are dithered: smoothed at half resolution before the composite upsamples them
-			if (glDenoiseProgram != 0)
-			{
-				glUseProgram(glDenoiseProgram);
-				sceneTargets.denoise(uniDenoiseAxis, AO_TEXTURE_UNIT, SCENE_SHADOW_UNIT);
-			}
 			gpuTimer.end();
 			GlobalIllumination.unbind(GI_PROBE_UNIT);
 			SkyOcclusion.unbind(SKY_OCCLUSION_UNIT);
@@ -2757,15 +2754,30 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 			gpuTimer.begin(GpuTimer.FOG);
 			volumetricFog.indoorFactor = config.noFogIndoors() && lightClusters.isInitialized() ? VolumetricFog.INDOOR_DENSITY : 1;
 			volumetricFog.waterTexture = water.dataTexture(config);
-			volumetricFog.render(sceneTargets.getAoWidth(), sceneTargets.getAoHeight(), sceneTargets.getHalfRatio(), FOG_NOISE_UNIT, FOG_TEXTURE_UNIT, FOG_DISTURB_UNIT,
+			volumetricFog.render(sceneTargets.fogFbo(), sceneTargets.getAoWidth(), sceneTargets.getAoHeight(), sceneTargets.getHalfRatio(), FOG_NOISE_UNIT, FOG_DISTURB_UNIT,
 				frameViewProj, frameInvViewProj, frameViewport, glCapabilities.OpenGL45,
 				frameCameraX, frameCameraY, frameCameraZ, (System.currentTimeMillis() - startMillis) / 1000f,
 				// in a void the sun doesn't light the fog: it would glow over the black around the scene
 				frameOutdoors && !frameSkyVoid, proceduralSky(), frameSkyColor, dayCycle,
 				shadows ? shadowMap : null, config.pointLights() && lightClusters.isInitialized());
 			gpuTimer.end();
-			glUseProgram(glCompositeProgram);
 		}
+		// the AO, the shadows and the fog are all dithered: smoothed together at half resolution before the composite
+		// upsamples them
+		if (halfPass && glDenoiseProgram != 0)
+		{
+			gpuTimer.begin(GpuTimer.AO);
+			glUseProgram(glDenoiseProgram);
+			sceneTargets.denoise(uniDenoiseAxis, uniDenoiseFog, AO_TEXTURE_UNIT, SCENE_SHADOW_UNIT, FOG_TEXTURE_UNIT, frameFog);
+			sceneTargets.bindAo(AO_TEXTURE_UNIT);
+			sceneTargets.bindShadow(SCENE_SHADOW_UNIT);
+			gpuTimer.end();
+		}
+		if (frameFog)
+		{
+			sceneTargets.bindFog(FOG_TEXTURE_UNIT);
+		}
+		glUseProgram(glCompositeProgram);
 		volumetricFog.setCompositeEnabled(frameFog);
 		bindClouds();
 		sceneTargets.bindMaterial(MATERIAL_UNIT);
