@@ -1452,4 +1452,25 @@ public interface RuneLightConfig extends Config
 	{
 		return true;
 	}
+
+	@ConfigSection(
+		name = "Hide other areas",
+		description = "What shows of the map around instances, caves and other areas of their own",
+		position = 900
+	)
+	String areasSection = "areas";
+
+	@ConfigItem(
+		keyName = "hideOtherAreas",
+		name = "Hide other areas",
+		description = "While you are in an area that stands apart from the map around it (an instance, a cave, a "
+			+ "cutscene spot, an island, as 117 HD lists them), the rest of the loaded map is not drawn. Loads the "
+			+ "map again.",
+		section = areasSection,
+		position = 901
+	)
+	default boolean hideOtherAreas()
+	{
+		return true;
+	}
 }

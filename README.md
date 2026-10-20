@@ -105,6 +105,11 @@ environments with 3D Weather's biome regions as fallback (see the script for usa
 Rerun it against newer checkouts to pick up their additions. The biome looks (desert, swamp, snow, ...) are set in
 the script's `BIOMES` table.
 
+Plugin config, Hide other areas section: while the player is in one of 117 HD's areas that hide the rest of the map
+(caves, instances, cutscene spots; the mainland's surface too), `AreaHiding.java` takes every other tile out of the
+scene as it loads, so no zone, shadow, water body, light or GI probe ever sees it. Walking into another area loads the
+scene again. The areas come from `area_hiding.json`, built by `tools/import_117hd_areas.py`.
+
 ## Clouds
 
 Plugin config, Clouds section: one slab of clouds over the procedural sky, marched in 6 (looking up) to 16 (at

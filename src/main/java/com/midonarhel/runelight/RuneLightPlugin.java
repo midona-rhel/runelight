@@ -139,6 +139,8 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 	@Inject
 	private RegionManager regionManager;
 
+	private final AreaHiding areaHiding = new AreaHiding();
+
 	@Inject
 	private DrawManager drawManager;
 
@@ -578,6 +580,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		sceneLights.load(gson);
 		SurfaceMaterials.load(gson);
 		WaterOverrides.load(gson);
+		areaHiding.load(gson);
 		WindSway.load(gson);
 		eventBus.register(sceneLights);
 		clientThread.invoke(sceneLights::rebuild);
@@ -894,7 +897,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 					}
 				});
 			}
-			else if (configChanged.getKey().equals("water"))
+			else if (configChanged.getKey().equals("water") || configChanged.getKey().equals("hideOtherAreas"))
 			{
 				clientThread.invokeLater(() ->
 				{
@@ -3030,11 +3033,27 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 			return;
 		}
 
+		hideAreas(wv);
 		rebuild(wv);
 		for (WorldEntity we : wv.worldEntities())
 		{
 			wv = we.getWorldView();
 			rebuild(wv);
+		}
+	}
+
+	/** The scene is cut to the area the player was in as it loaded: load it again when they walk into another. */
+	private void hideAreas(WorldView wv)
+	{
+		Player player = client.getLocalPlayer();
+		if (player == null || nextZones != null || client.getGameState() != GameState.LOGGED_IN)
+		{
+			return;
+		}
+		LocalPoint lp = player.getLocalLocation();
+		if (areaHiding.changed(wv.getScene(), config.hideOtherAreas(), lp.getSceneX(), lp.getSceneY(), wv.getPlane()))
+		{
+			client.setGameState(GameState.LOADING);
 		}
 	}
 
@@ -3411,6 +3430,14 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 
 		regionManager.prepare(scene);
 
+		// loaded again where the player stands, their tile is known; a new map is built around them instead
+		Player player = client.getLocalPlayer();
+		boolean inPlace = player != null && scene.getBaseX() == prev.getBaseX() && scene.getBaseY() == prev.getBaseY()
+			&& scene.isInstance() == prev.isInstance();
+		LocalPoint playerPoint = inPlace ? player.getLocalLocation() : null;
+		areaHiding.prepare(scene, config.hideOtherAreas(), client.getTopLevelWorldView().getPlane(),
+			playerPoint != null ? new int[]{playerPoint.getSceneX(), playerPoint.getSceneY()} : null);
+
 		int dx = scene.getBaseX() - prev.getBaseX() >> 3;
 		int dy = scene.getBaseY() - prev.getBaseY() >> 3;
 
@@ -3431,7 +3458,9 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		Zone[][] newZones = new Zone[SCENE_ZONES][SCENE_ZONES];
 		final GameState gameState = client.getGameState();
 		if (prev.isInstance() == scene.isInstance()
-			&& gameState == GameState.LOGGED_IN)
+			&& gameState == GameState.LOGGED_IN
+			// zones built with other tiles hidden can't be reused
+			&& areaHiding.sameAsShown())
 		{
 			int[][][] prevTemplates = prev.getInstanceTemplateChunks();
 			int[][][] curTemplates = scene.getInstanceTemplateChunks();
@@ -3779,6 +3808,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 			return;
 		}
 
+		areaHiding.swapped();
 		SceneContext ctx = root;
 		for (int x = 0; x < ctx.sizeX; ++x)
 		{
