@@ -354,7 +354,8 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 	// the water surface pass's map of things standing in the water (WaterMap.contact)
 	private static final int WATER_CONTACT_UNIT = RuneLightPlugin.COMPOSITE_TEXTURE_UNIT + 13;
 	// the terrain the volumetric fog lies on (VolumetricFog)
-	private static final int FOG_GROUND_UNIT = RuneLightPlugin.COMPOSITE_TEXTURE_UNIT + 23;
+	// (sky occlusion takes +22 and +23)
+	private static final int FOG_GROUND_UNIT = RuneLightPlugin.COMPOSITE_TEXTURE_UNIT + 24;
 	// the surface pass's wave maps either side of now (WaterSurface.bake)
 	private static final int WATER_WAVES_UNIT_A = RuneLightPlugin.COMPOSITE_TEXTURE_UNIT + 17;
 	private static final int WATER_WAVES_UNIT_B = RuneLightPlugin.COMPOSITE_TEXTURE_UNIT + 19;
