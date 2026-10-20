@@ -168,15 +168,27 @@ public class RoomMapTest
 	}
 
 	@Test
-	public void wallLightsLightBothSides()
+	public void wallLightsShineOnTheirOwnSideOnly()
 	{
-		RoomMap m = house(walls());
-		// a torch on the outside of the east wall: on the room's edge tile, 10 units from the edge
+		// the house's walls (as BLOCK_ flags: barriers) all round except the west doorway at y 9
+		int[][][] f = walls();
+		RoomMap m = house(f);
+		m.setWalls(WallMap.build(f, null, SIZE, OFFSET, 1));
+		// a torch on the inside of the east wall: on the room's edge tile, 10 units from the edge
 		float x = (12 - OFFSET) * TILE - 10;
-		float torch = m.lightCode(x, -200, world(10), 0);
-		assertFalse(RoomMap.indoor(torch));
-		assertEquals(1, RoomMap.share(torch, 1, 0, 0.5f), 0);
-		assertEquals(1, RoomMap.share(torch, 0, 0, 0.5f), 0);
+		float inside = m.lightCode(x, -200, world(10), 0);
+		assertEquals(1, RoomMap.share(inside, 1, 0, 0.5f), 0);
+		assertEquals(0, RoomMap.share(inside, 0, 0, 0.5f), 0);
+		assertTrue(RoomMap.indoor(inside));
+		// one on the outside of it, on the outdoor tile: it stays out
+		float outside = m.lightCode(x + 20, -200, world(10), 0);
+		assertEquals(0, RoomMap.share(outside, 1, 0, 0.5f), 0);
+		assertEquals(1, RoomMap.share(outside, 0, 0, 0.5f), 0);
+		// by the doorway, with no wall in it, a light still lights both sides
+		float doorway = (8 - OFFSET) * TILE + 10;
+		float lamp = m.lightCode(doorway, -200, world(9), 0);
+		assertEquals(1, RoomMap.share(lamp, 1, 0, 0.5f), 0);
+		assertEquals(1, RoomMap.share(lamp, 0, 0, 0.5f), 0);
 	}
 
 	@Test
@@ -227,13 +239,19 @@ public class RoomMapTest
 	// has none on the upper plane
 	private static RoomMap twoStoreys(boolean hole)
 	{
+		return twoStoreys(hole, false);
+	}
+
+	// unfloored: the upper plane has no floor anywhere, the rooms above are flagged under a roof over open ground
+	private static RoomMap twoStoreys(boolean hole, boolean unfloored)
+	{
 		byte[][][] settings = new byte[4][SIZE][SIZE];
 		byte[] filled = new byte[SIZE * SIZE];
 		for (int x = 0; x < SIZE; ++x)
 		{
 			for (int y = 0; y < SIZE; ++y)
 			{
-				filled[x * SIZE + y] = 0b11;
+				filled[x * SIZE + y] = (byte) (unfloored ? 0b01 : 0b11);
 			}
 		}
 		for (int x = 8; x < 12; ++x)
@@ -300,6 +318,18 @@ public class RoomMapTest
 		assertEquals(0, m.roomAt(world(9), -40, world(9))[1]);
 		assertFalse(m.seenFrom(0, 1, world(9), world(9)));
 		assertTrue(m.seenFrom(1, 1, world(9), world(9)));
+	}
+
+	@Test
+	public void roofedOpenGroundIsNoHole()
+	{
+		// rooms flagged on both planes but nothing floored above: not a stairwell, nothing links
+		RoomMap m = twoStoreys(true, true);
+		assertTrue(m.room(0, 9, 9) > 0 && m.room(1, 9, 9) > 0);
+		assertEquals(0, m.link(0, 9, 9));
+		assertEquals(0, m.link(1, 9, 9));
+		assertEquals(0, m.link(0, 10, 10));
+		assertFalse(m.isLinked(m.room(0, 9, 9)));
 	}
 
 	@Test

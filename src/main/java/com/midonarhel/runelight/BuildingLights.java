@@ -166,6 +166,7 @@ class BuildingLights
 		RoomMap m = RoomMap.build(r, settings, scene.getTileHeights(), RuneLightPlugin.SCENE_OFFSET);
 		if (m != null)
 		{
+			m.setWalls(w);
 			m.updateOpenings(flags);
 			filledTiles = floorTiles(scene, m.size);
 			m.linkStoreys(filledTiles);
@@ -369,6 +370,7 @@ class BuildingLights
 				if (!w.sameWalls(old))
 				{
 					walls = w;
+					m.setWalls(w);
 					if (splitRooms && coarse != null)
 					{
 						// the building lights stay where they were; only which tiles each room has changes
@@ -377,6 +379,7 @@ class BuildingLights
 							RuneLightPlugin.SCENE_OFFSET);
 						if (n != null)
 						{
+							n.setWalls(w);
 							n.updateOpenings(flags);
 							n.linkStoreys(filledTiles);
 							rooms = n;

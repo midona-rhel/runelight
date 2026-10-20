@@ -3,6 +3,7 @@ package com.midonarhel.runelight;
 import java.util.Collections;
 import org.junit.Test;
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNotEquals;
 import static org.junit.Assert.assertSame;
 import static org.junit.Assert.assertTrue;
@@ -75,6 +76,146 @@ public class RoomSplitTest
 		}
 		BuildingDetector.Result open = BuildingDetector.split(coarse, settings, WallMap.build(g, null, SIZE, OFFSET, 1));
 		assertEquals(1, open.rooms.size());
+	}
+
+	@Test
+	public void lowWallsAndFencesSplitToo()
+	{
+		byte[][][] settings = house();
+		BuildingDetector.Result coarse = BuildingDetector.detect(settings, null);
+		int[][][] f = new int[4][LOCAL][LOCAL];
+		// a fence: blocks walking, not sight
+		for (int y = 8; y < 12; ++y)
+		{
+			f[0][12 - OFFSET][y - OFFSET] |= RoomMap.BLOCK_WEST;
+			f[0][11 - OFFSET][y - OFFSET] |= RoomMap.BLOCK_EAST;
+		}
+		WallMap w = WallMap.build(f, null, SIZE, OFFSET, 1);
+		assertFalse(w.edge(0, 12, 9, WallMap.WEST));
+		assertTrue(w.barrier(0, 12, 9, WallMap.WEST));
+		assertTrue(w.barrier(0, 11, 9, WallMap.EAST));
+		assertFalse(w.barrier(0, 12, 9, WallMap.NORTH));
+		BuildingDetector.Result r = BuildingDetector.split(coarse, settings, w);
+		assertEquals(2, r.rooms.size());
+		assertNotEquals(roomOf(r, 9, 9), roomOf(r, 14, 9));
+		// the gate opens
+		f[0][12 - OFFSET][9 - OFFSET] = 0;
+		f[0][11 - OFFSET][9 - OFFSET] = 0;
+		assertEquals(1, BuildingDetector.split(coarse, settings, WallMap.build(f, null, SIZE, OFFSET, 1)).rooms.size());
+		// barriers count as a change of the walls, though sight is the same
+		assertFalse(w.sameWalls(WallMap.build(f, null, SIZE, OFFSET, 1)));
+		assertEquals(null, w.diff(WallMap.build(f, null, SIZE, OFFSET, 1)));
+	}
+
+	// the 8x4 house walled all round (outer walls: sight and walking), its roof flags running one row past the north
+	// wall at y 12
+	private static int[][][] walledHouse()
+	{
+		int[][][] f = new int[4][LOCAL][LOCAL];
+		for (int x = 8; x < 16; ++x)
+		{
+			f[0][x - OFFSET][8 - OFFSET] |= WallMap.LOS_SOUTH | RoomMap.BLOCK_SOUTH;
+			f[0][x - OFFSET][7 - OFFSET] |= WallMap.LOS_NORTH | RoomMap.BLOCK_NORTH;
+			f[0][x - OFFSET][11 - OFFSET] |= WallMap.LOS_NORTH | RoomMap.BLOCK_NORTH;
+			f[0][x - OFFSET][12 - OFFSET] |= WallMap.LOS_SOUTH | RoomMap.BLOCK_SOUTH;
+		}
+		for (int y = 8; y < 12; ++y)
+		{
+			f[0][15 - OFFSET][y - OFFSET] |= WallMap.LOS_EAST | RoomMap.BLOCK_EAST;
+			f[0][16 - OFFSET][y - OFFSET] |= WallMap.LOS_WEST | RoomMap.BLOCK_WEST;
+			f[0][8 - OFFSET][y - OFFSET] |= WallMap.LOS_WEST | RoomMap.BLOCK_WEST;
+			f[0][7 - OFFSET][y - OFFSET] |= WallMap.LOS_EAST | RoomMap.BLOCK_EAST;
+		}
+		return f;
+	}
+
+	@Test
+	public void roofFlagsPastTheOuterWallAreNoRoom()
+	{
+		byte[][][] settings = house();
+		for (int x = 8; x < 16; ++x)
+		{
+			settings[0][x][12] = BuildingDetector.TILE_FLAG_UNDER_ROOF;
+		}
+		BuildingDetector.Result coarse = BuildingDetector.detect(settings, null);
+		assertEquals(1, coarse.rooms.size());
+		assertEquals(40, coarse.rooms.get(0).tiles.length);
+		BuildingDetector.Result r = BuildingDetector.split(coarse, settings,
+			WallMap.build(walledHouse(), null, SIZE, OFFSET, 1));
+		assertEquals(1, r.rooms.size());
+		assertEquals(32, r.rooms.get(0).tiles.length);
+		assertEquals(0, roomOf(r, 9, 9));
+		assertEquals(-1, roomOf(r, 9, 12));
+		// every light is inside the walls
+		for (BuildingDetector.Anchor a : r.anchors)
+		{
+			assertTrue(a.tileY < 12);
+		}
+		// and the same with an interior wall: two halves, no strip
+		int[][][] f = walledHouse();
+		for (int y = 8; y < 12; ++y)
+		{
+			westWall(f, 12, y);
+		}
+		BuildingDetector.Result two = BuildingDetector.split(coarse, settings, WallMap.build(f, null, SIZE, OFFSET, 1));
+		assertEquals(2, two.rooms.size());
+		assertEquals(-1, roomOf(two, 14, 12));
+		assertEquals(16, two.rooms.get(0).tiles.length);
+		assertEquals(16, two.rooms.get(1).tiles.length);
+	}
+
+	@Test
+	public void wallTorchLightsItsOwnRoomOnly()
+	{
+		// a house with an interior wall between x 11 and 12; a torch hangs on it on the west side, one on the east side
+		byte[][][] settings = house();
+		int[][][] f = walledHouse();
+		for (int y = 8; y < 12; ++y)
+		{
+			westWall(f, 12, y);
+		}
+		f[0][12 - OFFSET][9 - OFFSET] |= RoomMap.BLOCK_WEST;
+		WallMap w = WallMap.build(f, null, SIZE, OFFSET, 1);
+		BuildingDetector.Result r = BuildingDetector.split(BuildingDetector.detect(settings, null), settings, w);
+		int[][][] heights = new int[4][SIZE + 1][SIZE + 1];
+		for (int l = 0; l < 4; ++l)
+		{
+			for (int[] row : heights[l])
+			{
+				java.util.Arrays.fill(row, -240 * l);
+			}
+		}
+		RoomMap m = RoomMap.build(r, settings, heights, OFFSET);
+		m.setWalls(w);
+		int west = m.room(0, 10, 9), east = m.room(0, 13, 9);
+		assertTrue(west > 0 && east > 0 && west != east);
+		float edge = (12 - OFFSET) * 128f, z = (9 - OFFSET + 0.5f) * 128;
+		for (boolean onWest : new boolean[]{true, false})
+		{
+			float x = onWest ? edge - 6 : edge + 6;
+			// the room test: only its own room
+			float code = m.lightCode(x, -200, z, 0);
+			assertTrue(RoomMap.indoor(code));
+			int[] own = m.roomAt(onWest ? edge - 64 : edge + 64, -40, z), other = m.roomAt(onWest ? edge + 64 : edge - 64, -40, z);
+			assertEquals(1, RoomMap.share(code, own[0], own[1], 0.55f), 0);
+			assertEquals(0, RoomMap.share(code, other[0], other[1], 0.55f), 0);
+			// the cast: the other side of the wall is dark, the near side is lit right up to the wall
+			LightOcclusion.Entry e = new LightOcclusion.Entry(0, 0, 0, 0, x, z, 600);
+			LightOcclusion.castEntry(e, w);
+			LightOcclusion.Atlas a = LightOcclusion.pack(java.util.Collections.singletonList(e), 0);
+			assertEquals(1, LightOcclusion.lookup(a, e, cellOf(e, onWest ? edge - 16 : edge + 16), cellOfZ(e, z)), 1e-6);
+			assertEquals(0, LightOcclusion.lookup(a, e, cellOf(e, onWest ? edge + 16 : edge - 16), cellOfZ(e, z)), 1e-6);
+		}
+	}
+
+	private static int cellOf(LightOcclusion.Entry e, float x)
+	{
+		return (int) Math.floor((x - e.originX) / e.cell);
+	}
+
+	private static int cellOfZ(LightOcclusion.Entry e, float z)
+	{
+		return (int) Math.floor((z - e.originZ) / e.cell);
 	}
 
 	@Test

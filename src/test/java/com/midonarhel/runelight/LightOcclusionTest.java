@@ -63,24 +63,46 @@ public class LightOcclusionTest
 			westWall(f, 10, y);
 		}
 		WallMap w = WallMap.build(f, null, SIZE, OFFSET, 1);
-		assertTrue(w.blocked(0, world(8), world(10), world(12), world(9), 0));
-		assertFalse(w.blocked(0, world(11), world(10), world(12), world(13), 0));
+		assertTrue(w.blocked(0, world(8), world(10), world(12), world(9)));
+		assertFalse(w.blocked(0, world(11), world(10), world(12), world(13)));
 		// around the end of the wall
-		assertFalse(w.blocked(0, world(8), world(15), world(12), world(15), 0));
+		assertFalse(w.blocked(0, world(8), world(15), world(12), world(15)));
 		// other planes have no walls
-		assertFalse(w.blocked(1, world(8), world(10), world(12), world(9), 0));
+		assertFalse(w.blocked(1, world(8), world(10), world(12), world(9)));
 	}
 
 	@Test
-	public void lightOnTheWallLightsBothSides()
+	public void lightOnTheWallShinesOnItsOwnSideOnly()
 	{
 		int[][][] f = noFlags();
-		westWall(f, 10, 10);
+		for (int y = 6; y < 14; ++y)
+		{
+			westWall(f, 10, y);
+		}
 		WallMap w = WallMap.build(f, null, SIZE, OFFSET, 1);
-		// right on the tile edge, 2 units west of it
 		float edgeX = (10 - OFFSET) * TILE;
-		assertTrue(w.blocked(0, edgeX - 2, world(10), world(11), world(10), 0));
-		assertFalse(w.blocked(0, edgeX - 2, world(10), world(11), world(10), LightOcclusion.WALL_IGNORE));
+		// a torch 2 units east of the wall (in tile 10) and one 2 units west of it (in tile 9)
+		for (float torchX : new float[]{edgeX + 2, edgeX - 2})
+		{
+			boolean east = torchX > edgeX;
+			float[] from = LightOcclusion.castOrigin(w, 0, torchX, world(10));
+			// moved off the wall, still on its side
+			assertTrue(east == from[0] > edgeX);
+			assertEquals(east ? edgeX + LightOcclusion.WALL_CLEARANCE : edgeX - LightOcclusion.WALL_CLEARANCE, from[0], 1e-3);
+			assertEquals(world(10), from[1], 0);
+			LightOcclusion.Entry e = new LightOcclusion.Entry(0, 0, 0, 0, torchX, world(10), 600);
+			LightOcclusion.castEntry(e, w);
+			LightOcclusion.Atlas a = LightOcclusion.pack(Collections.singletonList(e), 0);
+			float own = east ? world(11) : world(9), other = east ? world(9) : world(11);
+			assertEquals(1, visAt(a, e, own, world(10)), 1e-6);
+			assertEquals(1, visAt(a, e, own, world(11)), 1e-6);
+			assertEquals(0, visAt(a, e, other, world(10)), 1e-6);
+			assertEquals(0, visAt(a, e, other, world(12)), 1e-6);
+		}
+		// a light well off the wall isn't moved
+		float[] clear = LightOcclusion.castOrigin(w, 0, world(10), world(10));
+		assertEquals(world(10), clear[0], 0);
+		assertEquals(world(10), clear[1], 0);
 	}
 
 	@Test
@@ -92,12 +114,12 @@ public class LightOcclusionTest
 		southWall(f, 10, 10);
 		WallMap w = WallMap.build(f, null, SIZE, OFFSET, 1);
 		// exactly through the corner, from (9, 9) to (10, 10): both ways round it cross a wall
-		assertTrue(w.blocked(0, world(9), world(9), world(10), world(10), 0));
+		assertTrue(w.blocked(0, world(9), world(9), world(10), world(10)));
 		// a single wall end at a corner lets a ray graze past it
 		int[][][] g = noFlags();
 		westWall(g, 10, 10);
 		WallMap w2 = WallMap.build(g, null, SIZE, OFFSET, 1);
-		assertFalse(w2.blocked(0, world(9), world(9), world(10), world(8), 0));
+		assertFalse(w2.blocked(0, world(9), world(9), world(10), world(8)));
 	}
 
 	@Test
@@ -110,19 +132,19 @@ public class LightOcclusionTest
 		WallMap w = WallMap.build(f, d, SIZE, OFFSET, 1);
 		// "/" splits the tile into north-west and south-east halves: from the west tile to the south tile crosses it
 		float x0 = (10 - OFFSET) * TILE, y0 = (10 - OFFSET) * TILE;
-		assertTrue(w.blocked(0, x0 + 32, y0 + 96, x0 + 96, y0 + 32, 0));
+		assertTrue(w.blocked(0, x0 + 32, y0 + 96, x0 + 96, y0 + 32));
 		// along it, on one side
-		assertFalse(w.blocked(0, x0 + 16, y0 + 48, x0 + 80, y0 + 112, 0));
+		assertFalse(w.blocked(0, x0 + 16, y0 + 48, x0 + 80, y0 + 112));
 		// across it from far away
-		assertTrue(w.blocked(0, world(7), world(13), world(13), world(7), 0));
+		assertTrue(w.blocked(0, world(7), world(13), world(13), world(7)));
 		// "\" the other way
 		List<WallMap.Diagonal> d2 = Collections.singletonList(new WallMap.Diagonal(0, 10, 10, WallMap.DIAG_NW_SE));
 		WallMap w2 = WallMap.build(f, d2, SIZE, OFFSET, 1);
-		assertFalse(w2.blocked(0, x0 + 32, y0 + 96, x0 + 96, y0 + 32, 0));
-		assertTrue(w2.blocked(0, x0 + 32, y0 + 32, x0 + 96, y0 + 96, 0));
+		assertFalse(w2.blocked(0, x0 + 32, y0 + 96, x0 + 96, y0 + 32));
+		assertTrue(w2.blocked(0, x0 + 32, y0 + 32, x0 + 96, y0 + 96));
 		// a diagonal fence (sight not blocked) is no wall
 		WallMap w3 = WallMap.build(noFlags(), d, SIZE, OFFSET, 1);
-		assertFalse(w3.blocked(0, x0 + 32, y0 + 96, x0 + 96, y0 + 32, 0));
+		assertFalse(w3.blocked(0, x0 + 32, y0 + 96, x0 + 96, y0 + 32));
 	}
 
 	@Test

@@ -19,8 +19,8 @@ final class RoomMap
 	// room ids are packed in 12 bits; ANY marks a light that reaches every room
 	static final int ANY = 4095;
 	static final int MAX_ROOM = ANY - 1;
-	// a light this close to a tile edge (world units) whose far side is another room or outdoors lights both sides:
-	// wall torches and lamps hang on walls
+	// a light this close to a tile edge (world units) whose far side is another room or outdoors, with no wall
+	// between, lights both sides
 	static final float EDGE_REACH = 40;
 	static final float TILE = 128;
 	// texels in front of the map: the header (rooms.glsl)
@@ -47,6 +47,8 @@ final class RoomMap
 	private int version;
 	// the outdoor tiles next to a room tile, the only ones that can be a porch; the rooms never change after build
 	private int[] porchCandidates;
+	// the walls the rooms were split along, null when unknown: a light on a wall belongs to the side it hangs on
+	private WallMap walls;
 
 	private RoomMap(int size, int offset)
 	{
@@ -121,9 +123,17 @@ final class RoomMap
 		return m;
 	}
 
+	void setWalls(WallMap walls)
+	{
+		this.walls = walls;
+	}
+
 	/**
 	 * Link the rooms above and below every hole in a floor, so lights shine through stairwells and pits and the
-	 * storeys they connect, and remember which tiles have a floor (for lights seen through the openings).
+	 * storeys they connect, and remember which tiles have a floor (for lights seen through the openings). A run of
+	 * floorless tiles between a room and the room over it is a hole only when it sits in a floor: at least half of
+	 * the tiles around it have one. Floorless tiles under a roof that stands over open ground (a courtyard, the
+	 * unfloored top of a storey) are not holes.
 	 *
 	 * @param filled per extended tile (x * size + y), a bit per plane that has a floor tile there
 	 */
@@ -135,20 +145,62 @@ final class RoomMap
 		boolean any = false;
 		if (filled != null && filled.length >= size * size)
 		{
+			int[] queue = new int[size * size];
+			boolean[] seen = new boolean[size * size];
 			for (int plane = 1; plane < PLANES; ++plane)
 			{
+				java.util.Arrays.fill(seen, false);
 				for (int x = 0; x < size; ++x)
 				{
 					for (int y = 0; y < size; ++y)
 					{
-						if ((filled[x * size + y] >> plane & 1) != 0)
+						if (seen[x * size + y] || !isHole(plane, x, y))
 						{
 							continue;
 						}
-						int low = index(plane - 1, x, y), high = index(plane, x, y);
-						short below = rooms[low], above = rooms[high];
-						if (below != 0 && above != 0 && below != above)
+						// the run of holes around this one, and how much of its surroundings is floor
+						int head = 0, tail = 0, around = 0, floored = 0;
+						queue[tail++] = x * size + y;
+						seen[x * size + y] = true;
+						while (head < tail)
 						{
+							int t = queue[head++];
+							int tx = t / size, ty = t % size;
+							for (int d = 0; d < 4; ++d)
+							{
+								int nx = tx + (d == 0 ? 1 : d == 1 ? -1 : 0);
+								int ny = ty + (d == 2 ? 1 : d == 3 ? -1 : 0);
+								if (nx < 0 || ny < 0 || nx >= size || ny >= size)
+								{
+									continue;
+								}
+								if (isHole(plane, nx, ny))
+								{
+									if (!seen[nx * size + ny])
+									{
+										seen[nx * size + ny] = true;
+										queue[tail++] = nx * size + ny;
+									}
+								}
+								else
+								{
+									around++;
+									if ((filled[nx * size + ny] >> plane & 1) != 0)
+									{
+										floored++;
+									}
+								}
+							}
+						}
+						if (floored * 2 < around)
+						{
+							continue;
+						}
+						for (int k = 0; k < tail; ++k)
+						{
+							int tx = queue[k] / size, ty = queue[k] % size;
+							int low = index(plane - 1, tx, ty), high = index(plane, tx, ty);
+							short below = rooms[low], above = rooms[high];
 							link[low] = above;
 							link[high] = below;
 							linkedRooms[below] = true;
@@ -161,6 +213,17 @@ final class RoomMap
 		}
 		linked = any ? linkedRooms : new boolean[0];
 		version++;
+	}
+
+	// a tile of a plane with no floor between its room and a different room right over it
+	private boolean isHole(int plane, int x, int y)
+	{
+		if ((filled[x * size + y] >> plane & 1) != 0)
+		{
+			return false;
+		}
+		short below = rooms[index(plane - 1, x, y)], above = rooms[index(plane, x, y)];
+		return below != 0 && above != 0 && below != above;
 	}
 
 	/** Whether a floor lies at a point of a plane. True when unknown. */
@@ -333,8 +396,8 @@ final class RoomMap
 	/**
 	 * The room code of a point light at local world position (x, y, z) on a logical plane, as LightClusters stores it
 	 * in the light's fourth color channel: (1 + a + b * 4096), positive when both rooms are building rooms (an
-	 * indoor light, left out of the fog and the weather), negative otherwise. a is the room it is in, b the room on
-	 * the other side of a wall it hangs on, or a again.
+	 * indoor light, left out of the fog and the weather), negative otherwise. a is the room it is in, b the room
+	 * across a nearby tile edge with no wall on it (a wall light shines on its own side only), or a again.
 	 *
 	 * @param plane the light's logical plane, -1 when unknown: it then reaches everything
 	 */
@@ -359,7 +422,8 @@ final class RoomMap
 				continue;
 			}
 			int n = room(plane, tx + (d == 0 ? -1 : d == 1 ? 1 : 0), ty + (d == 2 ? -1 : d == 3 ? 1 : 0));
-			if (n != a)
+			if (n != a && (walls == null
+				|| !walls.barrier(plane, tx, ty, d == 0 ? WallMap.WEST : d == 1 ? WallMap.EAST : d == 2 ? WallMap.SOUTH : WallMap.NORTH)))
 			{
 				b = n;
 				best = dist;

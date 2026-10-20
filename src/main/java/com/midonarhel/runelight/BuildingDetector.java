@@ -120,10 +120,14 @@ final class BuildingDetector
 	}
 
 	/**
-	 * Split the rooms of a detection along their interior walls: each part of a room that can't be reached from the
-	 * rest without crossing a wall (WallMap edges, diagonal walls included) becomes a room of its own, and gets its
-	 * own lights. A tile a diagonal wall crosses is two halves while flooding and goes to the larger of their rooms.
-	 * Rooms whose tiles all stay connected come out unchanged.
+	 * Split the rooms of a detection along their walls: each part of a room that can't be reached from the rest
+	 * without crossing a wall (WallMap barriers: walls, low walls and fences, closed gates; diagonal walls included)
+	 * becomes a room of its own and gets its own lights. A tile a diagonal wall crosses is two halves while flooding
+	 * and goes to the larger of their rooms. Rooms whose tiles all stay connected come out unchanged.
+	 *
+	 * The roof flags often run a tile or two past a building's outer wall (eaves, overhangs). Such a part, cut off by
+	 * the wall and open to the ground on its other sides, is no room: of the parts a room splits into, those at most
+	 * half the size of the largest are dropped when more of their edges open onto outdoor tiles than onto walls.
 	 */
 	static Result split(Result coarse, byte[][][] settings, WallMap walls)
 	{
@@ -194,18 +198,14 @@ final class BuildingDetector
 				{
 					continue;
 				}
-				int node = (x * size + y) * 2;
-				int l = label[node];
-				if (WallMap.split(walls.get(plane, x, y)) && counts[label[node + 1]] > counts[l])
-				{
-					l = label[node + 1];
-				}
+				int l = partOf(walls, plane, x, y, label, counts);
 				tileLabel[k] = l;
 				tileCount[l]++;
 			}
+			boolean[] spill = spill(walls, plane, room, ri + 1, tileLabel, tileCount, owner, label, counts);
 			for (int l = 1; l <= labels; ++l)
 			{
-				if (tileCount[l] == 0)
+				if (tileCount[l] == 0 || spill[l])
 				{
 					continue;
 				}
@@ -239,6 +239,71 @@ final class BuildingDetector
 		return result;
 	}
 
+	/** The part of a tile after the split: a tile a diagonal wall crosses goes to the larger of its halves' parts. */
+	private static int partOf(WallMap walls, int plane, int x, int y, int[] label, int[] counts)
+	{
+		int node = (x * walls.size + y) * 2;
+		int l = label[node];
+		if (WallMap.split(walls.get(plane, x, y)) && counts[label[node + 1]] > counts[l])
+		{
+			l = label[node + 1];
+		}
+		return l;
+	}
+
+	/**
+	 * The parts of a split room that are roof flags spilling past an outer wall: parts at most half the size of the
+	 * largest whose edges open onto outdoor tiles (not the room's, no wall between) outnumber those on a wall.
+	 */
+	private static boolean[] spill(WallMap walls, int plane, Room room, int owned, int[] tileLabel, int[] tileCount,
+		int[] owner, int[] label, int[] counts)
+	{
+		int size = walls.size;
+		int parts = tileCount.length - 1;
+		int largest = 1;
+		for (int l = 2; l <= parts; ++l)
+		{
+			if (tileCount[l] > tileCount[largest])
+			{
+				largest = l;
+			}
+		}
+		int[] open = new int[parts + 1], closed = new int[parts + 1];
+		for (int k = 0; k < room.tiles.length; ++k)
+		{
+			int x = room.tiles[k] >>> 16, y = room.tiles[k] & 0xFFFF;
+			if (x >= size || y >= size)
+			{
+				continue;
+			}
+			for (int d = 0; d < 4; ++d)
+			{
+				int side = d == 0 ? WallMap.EAST : d == 1 ? WallMap.WEST : d == 2 ? WallMap.NORTH : WallMap.SOUTH;
+				int nx = x + (d == 0 ? 1 : d == 1 ? -1 : 0);
+				int ny = y + (d == 2 ? 1 : d == 3 ? -1 : 0);
+				boolean inside = nx >= 0 && ny >= 0 && nx < size && ny < size && owner[nx * size + ny] == owned;
+				if (inside && partOf(walls, plane, nx, ny, label, counts) == tileLabel[k])
+				{
+					continue;
+				}
+				if (walls.barrier(plane, x, y, side))
+				{
+					closed[tileLabel[k]]++;
+				}
+				else if (!inside)
+				{
+					open[tileLabel[k]]++;
+				}
+			}
+		}
+		boolean[] out = new boolean[parts + 1];
+		for (int l = 1; l <= parts; ++l)
+		{
+			out[l] = tileCount[l] * 2 <= tileCount[largest] && open[l] > closed[l];
+		}
+		return out;
+	}
+
 	private static void clear(Room room, int size, int[] owner, int[] label)
 	{
 		for (int t : room.tiles)
@@ -270,7 +335,7 @@ final class BuildingDetector
 			for (int d = 0; d < 4; ++d)
 			{
 				int side = d == 0 ? WallMap.EAST : d == 1 ? WallMap.WEST : d == 2 ? WallMap.NORTH : WallMap.SOUTH;
-				if (WallMap.half(b, side) != h || walls.edge(plane, x, y, side))
+				if (WallMap.half(b, side) != h || walls.barrier(plane, x, y, side))
 				{
 					continue;
 				}

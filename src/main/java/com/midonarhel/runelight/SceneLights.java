@@ -47,6 +47,8 @@ import org.slf4j.LoggerFactory;
 class SceneLights
 {
 	private static final Logger log = LoggerFactory.getLogger(SceneLights.class);
+	// half a tile, and how far inside it a wall decoration's light is kept (world units)
+	private static final float TILE_HALF = 64, TILE_MARGIN = 2;
 	private static final float JAU_TO_RAD = (float) (Math.PI * 2 / 2048);
 
 	private final Client client;
@@ -287,9 +289,21 @@ class SceneLights
 		List<Placed> out = new ArrayList<>(defs.size());
 		for (LightDefinition d : defs)
 		{
-			out.add(place(d, x, ground, z, orientation, plane, System.identityHashCode(object)));
+			Placed placed = place(d, x, ground, z, orientation, plane, System.identityHashCode(object));
+			out.add(object instanceof DecorativeObject ? onTile(placed, lp.getX(), lp.getY()) : placed);
 		}
 		return out;
+	}
+
+	/**
+	 * A wall decoration's light stays on the tile the decoration hangs on, which is the side of the wall it faces,
+	 * whatever its definition's offsets add to the decoration's own.
+	 */
+	private static Placed onTile(Placed p, float tileX, float tileZ)
+	{
+		float x = Math.max(tileX - TILE_HALF + TILE_MARGIN, Math.min(tileX + TILE_HALF - TILE_MARGIN, p.x));
+		float z = Math.max(tileZ - TILE_HALF + TILE_MARGIN, Math.min(tileZ + TILE_HALF - TILE_MARGIN, p.z));
+		return x == p.x && z == p.z ? p : new Placed(p.def, x, p.y, z, p.plane, p.seed);
 	}
 
 	/**

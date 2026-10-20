@@ -35,6 +35,8 @@ final class WallMap
 	// scenes and rebuilds of the same scene: a different scene means everything cast before is stale
 	final int scene;
 	private final byte[] bits;
+	// per tile, the sides that block walking but not sight
+	private final byte[] fences;
 
 	/** A diagonal wall object on a tile: kind is DIAG_SW_NE or DIAG_NW_SE. Extended tile coordinates. */
 	static final class Diagonal
@@ -73,6 +75,7 @@ final class WallMap
 		this.offset = offset;
 		this.scene = scene;
 		bits = new byte[PLANES * size * size];
+		fences = new byte[PLANES * size * size];
 	}
 
 	/** A map without walls. */
@@ -106,9 +109,13 @@ final class WallMap
 					int b = ((v & LOS_NORTH) != 0 ? NORTH : 0) | ((v & LOS_EAST) != 0 ? EAST : 0)
 						| ((v & LOS_SOUTH) != 0 ? SOUTH : 0) | ((v & LOS_WEST) != 0 ? WEST : 0);
 					int x = lx + offset, y = ly + offset;
-					if (b != 0 && x < size && y < size)
+					int walk = ((v & RoomMap.BLOCK_NORTH) != 0 ? NORTH : 0) | ((v & RoomMap.BLOCK_EAST) != 0 ? EAST : 0)
+						| ((v & RoomMap.BLOCK_SOUTH) != 0 ? SOUTH : 0) | ((v & RoomMap.BLOCK_WEST) != 0 ? WEST : 0);
+					if ((b | walk) != 0 && x < size && y < size)
 					{
-						m.bits[m.index(plane, x, y)] |= (byte) b;
+						int i = m.index(plane, x, y);
+						m.bits[i] |= (byte) b;
+						m.fences[i] |= (byte) (walk & ~b);
 					}
 				}
 			}
@@ -165,6 +172,30 @@ final class WallMap
 		}
 	}
 
+	/**
+	 * Whether the edge between tile (x, y) and its neighbor toward side holds a wall or only a barrier (a low wall, a
+	 * fence, a closed gate): what splits rooms.
+	 */
+	boolean barrier(int plane, int x, int y, int side)
+	{
+		if (edge(plane, x, y, side))
+		{
+			return true;
+		}
+		int opposite = side == NORTH ? SOUTH : side == SOUTH ? NORTH : side == EAST ? WEST : EAST;
+		int nx = x + (side == EAST ? 1 : side == WEST ? -1 : 0), ny = y + (side == NORTH ? 1 : side == SOUTH ? -1 : 0);
+		return (fence(plane, x, y) & side) != 0 || (fence(plane, nx, ny) & opposite) != 0;
+	}
+
+	private int fence(int plane, int x, int y)
+	{
+		if (plane < 0 || plane >= PLANES || x < 0 || y < 0 || x >= size || y >= size)
+		{
+			return 0;
+		}
+		return fences[index(plane, x, y)];
+	}
+
 	/** Whether any wall lies in the rectangle of extended tiles (inclusive). */
 	boolean anyIn(int plane, int x0, int y0, int x1, int y1)
 	{
@@ -193,12 +224,12 @@ final class WallMap
 	/** Same walls (and size) as another map. */
 	boolean sameWalls(WallMap o)
 	{
-		return o != null && o.size == size && o.offset == offset && Arrays.equals(o.bits, bits);
+		return o != null && o.size == size && o.offset == offset && Arrays.equals(o.bits, bits) && Arrays.equals(o.fences, fences);
 	}
 
 	/**
-	 * The rectangle of tiles whose walls differ from another map of the same size, over all planes, as
-	 * {x0, y0, x1, y1}; null when they are the same.
+	 * The rectangle of tiles whose walls (barriers aside: light passes them) differ from another map of the same
+	 * size, over all planes, as {x0, y0, x1, y1}; null when they are the same.
 	 */
 	int[] diff(WallMap o)
 	{
@@ -269,11 +300,10 @@ final class WallMap
 	// Line of sight
 
 	/**
-	 * Whether a wall stands between two points on a plane, local world units (128 per tile, x east, z north).
-	 * Crossings within {@code ignore} world units of a are left out: a light hung right on a wall lights both of its
-	 * faces' sides rather than neither. Ends exactly on a wall don't count as crossing it.
+	 * Whether a wall stands between two points on a plane, local world units (128 per tile, x east, z north). Ends
+	 * exactly on a wall don't count as crossing it.
 	 */
-	boolean blocked(int plane, float ax, float az, float bx, float bz, float ignore)
+	boolean blocked(int plane, float ax, float az, float bx, float bz)
 	{
 		if (plane < 0 || plane >= PLANES)
 		{
@@ -282,8 +312,6 @@ final class WallMap
 		double x0 = ax / 128.0 + offset, z0 = az / 128.0 + offset;
 		double x1 = bx / 128.0 + offset, z1 = bz / 128.0 + offset;
 		double dx = x1 - x0, dz = z1 - z0;
-		double len = Math.sqrt(dx * dx + dz * dz) * 128;
-		double tIgnore = len > 0 ? ignore / len : 1;
 		int tx = (int) Math.floor(x0), tz = (int) Math.floor(z0);
 		int ex = (int) Math.floor(x1), ez = (int) Math.floor(z1);
 		int sx = dx > 0 ? 1 : dx < 0 ? -1 : 0;
@@ -298,7 +326,7 @@ final class WallMap
 		while (true)
 		{
 			double tExit = Math.min(Math.min(tMaxX, tMaxZ), 1);
-			if (crossesDiagonal(get(plane, tx, tz), tx, tz, x0, z0, dx, dz, Math.max(tEnter, tIgnore), tExit))
+			if (crossesDiagonal(get(plane, tx, tz), tx, tz, x0, z0, dx, dz, tEnter, tExit))
 			{
 				return true;
 			}
@@ -306,14 +334,13 @@ final class WallMap
 			{
 				return false;
 			}
-			boolean ignored = tExit <= tIgnore;
 			if (Math.abs(tMaxX - tMaxZ) < 1e-9)
 			{
 				// through a corner: blocked when both ways around it are
 				int xSide = sx > 0 ? EAST : WEST, zSide = sz > 0 ? NORTH : SOUTH;
 				boolean viaX = edge(plane, tx, tz, xSide) || edge(plane, tx + sx, tz, zSide);
 				boolean viaZ = edge(plane, tx, tz, zSide) || edge(plane, tx, tz + sz, xSide);
-				if (!ignored && viaX && viaZ)
+				if (viaX && viaZ)
 				{
 					return true;
 				}
@@ -325,7 +352,7 @@ final class WallMap
 			}
 			else if (tMaxX < tMaxZ)
 			{
-				if (!ignored && edge(plane, tx, tz, sx > 0 ? EAST : WEST))
+				if (edge(plane, tx, tz, sx > 0 ? EAST : WEST))
 				{
 					return true;
 				}
@@ -335,7 +362,7 @@ final class WallMap
 			}
 			else
 			{
-				if (!ignored && edge(plane, tx, tz, sz > 0 ? NORTH : SOUTH))
+				if (edge(plane, tx, tz, sz > 0 ? NORTH : SOUTH))
 				{
 					return true;
 				}

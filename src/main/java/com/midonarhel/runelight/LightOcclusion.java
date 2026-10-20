@@ -33,8 +33,9 @@ final class LightOcclusion
 	static final float MAX_RADIUS = 2048;
 	// radii round up to this, so flickering and pulsing lights don't recast
 	static final float RADIUS_STEP = 128;
-	// wall crossings this close to the light don't count: a light hung on a wall lights both of its sides
-	static final float WALL_IGNORE = 12;
+	// a light closer than this (world units) to a wall of its own tile is cast from this far off it, on its own side:
+	// a torch hung on a wall shines into its room and not through the wall
+	static final float WALL_CLEARANCE = 8;
 	// cells on a diagonal wall average two rays this far to either side of it
 	static final float DIAGONAL_SPREAD = 8;
 	static final int CELLS_PER_TEXEL = 16;
@@ -354,8 +355,36 @@ final class LightOcclusion
 			e.cells = null;
 			return;
 		}
-		e.cells = cast(w, e.plane, e.x, e.z, e.originX, e.originZ, e.n, e.cell, e.radius);
+		float[] from = castOrigin(w, e.plane, e.x, e.z);
+		e.cells = cast(w, e.plane, from[0], from[1], e.originX, e.originZ, e.n, e.cell, e.radius);
 		e.open = false;
+	}
+
+	/**
+	 * Where a light is cast from: its own position, moved off the walls of its tile that it sits within
+	 * WALL_CLEARANCE of, so that the wall stands between it and the other side whichever way its position rounds.
+	 */
+	static float[] castOrigin(WallMap w, int plane, float x, float z)
+	{
+		int tx = (int) Math.floor(x / 128) + w.offset, tz = (int) Math.floor(z / 128) + w.offset;
+		float fx = x - (float) Math.floor(x / 128) * 128, fz = z - (float) Math.floor(z / 128) * 128;
+		if (w.edge(plane, tx, tz, WallMap.WEST) && fx < WALL_CLEARANCE)
+		{
+			x += WALL_CLEARANCE - fx;
+		}
+		else if (w.edge(plane, tx, tz, WallMap.EAST) && 128 - fx < WALL_CLEARANCE)
+		{
+			x -= WALL_CLEARANCE - (128 - fx);
+		}
+		if (w.edge(plane, tx, tz, WallMap.SOUTH) && fz < WALL_CLEARANCE)
+		{
+			z += WALL_CLEARANCE - fz;
+		}
+		else if (w.edge(plane, tx, tz, WallMap.NORTH) && 128 - fz < WALL_CLEARANCE)
+		{
+			z -= WALL_CLEARANCE - (128 - fz);
+		}
+		return new float[]{x, z};
 	}
 
 	/**
@@ -387,12 +416,12 @@ final class LightOcclusion
 				{
 					// across the diagonal: north-west/south-east of "/", north-east/south-west of "\"
 					float ox = (b & WallMap.DIAG_SW_NE) != 0 ? -spread : spread, oz = spread;
-					vis = ((w.blocked(plane, lx, lz, px + ox, pz + oz, WALL_IGNORE) ? 0 : 1)
-						+ (w.blocked(plane, lx, lz, px - ox, pz - oz, WALL_IGNORE) ? 0 : 1)) * 0.5f;
+					vis = ((w.blocked(plane, lx, lz, px + ox, pz + oz) ? 0 : 1)
+						+ (w.blocked(plane, lx, lz, px - ox, pz - oz) ? 0 : 1)) * 0.5f;
 				}
 				else
 				{
-					vis = w.blocked(plane, lx, lz, px, pz, WALL_IGNORE) ? 0 : 1;
+					vis = w.blocked(plane, lx, lz, px, pz) ? 0 : 1;
 				}
 				out[k] = (byte) Math.round(vis * 15);
 			}
