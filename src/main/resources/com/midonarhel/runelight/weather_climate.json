@@ -7,6 +7,7 @@
 		"DESERT": {"spring": [24, 9], "summer": [34, 10], "autumn": [24, 9], "winter": [14, 9], "noise": 2.5},
 		"BARRENS": {"spring": [8, 6], "summer": [17, 7], "autumn": [7, 5], "winter": [-2, 5], "noise": 3},
 		"SWAMP": {"spring": [11, 3], "summer": [19, 3], "autumn": [10, 3], "winter": [2, 3], "noise": 2.5},
+		"MORYTANIA_SWAMP": {"spring": [10, 3], "summer": [17, 3], "autumn": [9, 3], "winter": [1, 3], "noise": 2.5},
 		"ARCTIC": {"spring": [-12, 4], "summer": [-6, 3], "autumn": [-12, 4], "winter": [-22, 4], "noise": 3, "frozen": true},
 		"MOUNTAIN": {"spring": [-6, 5], "summer": [-2, 5], "autumn": [-6, 5], "winter": [-14, 5], "noise": 3, "frozen": true},
 		"WILDERNESS": {"spring": [6, 4], "summer": [14, 5], "autumn": [6, 4], "winter": [-3, 4], "noise": 3.5},
@@ -42,6 +43,12 @@
 			"summer": {"CLEAR": 6, "PARTLY_CLOUDY": 10, "HIGH_CLOUDS": 6, "HAZY": 10, "OVERCAST": 10, "DRIZZLE": 8, "SUMMER_RAIN": 10, "THUNDERSTORM": 8, "MIST": 16, "FOG": 12},
 			"autumn": {"CLEAR": 3, "PARTLY_CLOUDY": 6, "OVERCAST": 16, "DRIZZLE": 12, "AUTUMN_RAIN": 12, "RAIN": 4, "THUNDERSTORM": 4, "MIST": 18, "FOG": 20, "GALE": 3},
 			"winter": {"CLEAR": 4, "PARTLY_CLOUDY": 6, "OVERCAST": 18, "DRIZZLE": 10, "RAIN": 6, "SLEET": 6, "LIGHT_SNOW": 4, "MIST": 14, "FOG": 18, "FREEZING_FOG": 10}
+		},
+		"MORYTANIA_SWAMP": {
+			"spring": {"OVERCAST": 26, "SPRING_SHOWERS": 8, "DRIZZLE": 16, "RAIN": 10, "THUNDERSTORM": 4, "MIST": 18, "FOG": 16},
+			"summer": {"OVERCAST": 22, "DRIZZLE": 12, "SUMMER_RAIN": 10, "THUNDERSTORM": 8, "MIST": 18, "FOG": 14},
+			"autumn": {"OVERCAST": 26, "DRIZZLE": 12, "AUTUMN_RAIN": 12, "RAIN": 4, "THUNDERSTORM": 4, "MIST": 18, "FOG": 20, "GALE": 3},
+			"winter": {"OVERCAST": 28, "DRIZZLE": 10, "RAIN": 6, "SLEET": 6, "LIGHT_SNOW": 4, "MIST": 14, "FOG": 18, "FREEZING_FOG": 10}
 		},
 		"ARCTIC": {
 			"spring": {"CLEAR": 12, "SUNNY": 6, "PARTLY_CLOUDY": 10, "HIGH_CLOUDS": 6, "OVERCAST": 12, "LIGHT_SNOW": 16, "SNOW": 14, "HEAVY_SNOW": 6, "BLIZZARD": 6, "FREEZING_FOG": 8, "MIST": 2, "GALE": 4},

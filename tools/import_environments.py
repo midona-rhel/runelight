@@ -52,6 +52,21 @@ HAZE_SCALE = 0.85
 
 SKIPPED_KEYS = {"OVERWORLD", "AUTUMN", "WINTER"}
 
+# Sky multipliers (sRGB) layered over 117 HD's environments, which carry none. A blue sky is right for most of
+# the mainland; Morytania's is a little greener and darker. Its clouds and the sky seen in water follow because
+# envSky() multiplies the finished sky. Tune here, then regenerate.
+MORYTANIA_SKY_TINT = "#c4d6ae"
+# 117 HD environment (key or area) -> tint
+SKY_TINTS = {name: MORYTANIA_SKY_TINT for name in (
+    "MORYTANIA", "BARROWS", "DARKMEYER", "MEIYERDITCH", "VER_SINHAZA", "VER_SINHAZA_TRANSITION")}
+# 117 HD areas that make up open-air Morytania; a 3D Weather region mostly covered by them gets the
+# MORYTANIA_SWAMP biome, so its weather is Morytania's whatever 3D Weather called it (Barrows is "barrens")
+MORYTANIA_AREAS = ("MORYTANIA", "BARROWS", "DARKMEYER", "MEIYERDITCH", "VER_SINHAZA", "BURGH_DE_ROTT",
+                   "PORT_PHASMATYS", "CANIFIS", "SLEPE", "MORTTON")
+MORYTANIA_REGION_SHARE = 0.5
+# y from here down is instances and underground; MORYTANIA nests cutscene and trekking instances up there
+SURFACE_MAX_Y = 4160
+
 # Biome looks for regions no 117 HD environment covers, written in 117 HD's units so they go through the
 # same conversion. Absent fields mean "baseline". Cave biomes light underground areas.
 BIOMES = {
@@ -64,6 +79,10 @@ BIOMES = {
     "SWAMP": {"ambientColor": "#9aa889", "ambientStrength": 0.8, "directionalColor": "#c8c9a0",
               "directionalStrength": 2.4, "fogColor": "#4a5240", "fogDepth": 45, "skyVisibility": 0.45,
               "skyTint": "#c8d0bc"},
+    # Morytania's weather (weather_climate.json) never clears; its sky is the sky tint above
+    "MORYTANIA_SWAMP": {"ambientColor": "#9aa889", "ambientStrength": 0.8, "directionalColor": "#c8c9a0",
+                        "directionalStrength": 2.4, "fogColor": "#4a5240", "fogDepth": 45, "skyVisibility": 0.45,
+                        "skyTint": MORYTANIA_SKY_TINT},
     "ARCTIC": {"ambientColor": "#a9cfff", "ambientStrength": 1.4, "directionalColor": "#eef4ff",
                "directionalStrength": 3.2, "fogColor": "#c3d2e8", "fogDepth": 30, "skyVisibility": 0.65,
                "skyTint": "#e6f0ff"},
@@ -260,6 +279,20 @@ def load_biomes(path):
     return regions
 
 
+def morytania_regions(areas):
+    """Surface regions at least MORYTANIA_REGION_SHARE covered by the Morytania areas."""
+    covered = set()
+    for name in MORYTANIA_AREAS:
+        for b in areas.boxes(name):
+            if b[2] == 0 and b[4] < SURFACE_MAX_Y:
+                covered.update((x, y) for x in range(b[0], b[3] + 1) for y in range(b[1], b[4] + 1))
+    count = {}
+    for x, y in covered:
+        key = (x >> 6) << 8 | (y >> 6)
+        count[key] = count.get(key, 0) + 1
+    return sorted(r for r, n in count.items() if n >= MORYTANIA_REGION_SHARE * 64 * 64)
+
+
 # ---------------------------------------------------------------------------------------------------------
 
 def main():
@@ -297,6 +330,8 @@ def main():
         if cave:
             d["cave"] = True
         d.update(convert(e, cave))
+        if d["name"] in SKY_TINTS and not cave:
+            d["skyTint"] = [round(x, 4) for x in parse_color(SKY_TINTS[d["name"]])]
         index = len(envs)
         envs.append(d)
         for b in bx:
@@ -325,6 +360,8 @@ def main():
         envs.append(d)
 
     region_biomes = load_biomes(biome_path)
+    for rid in morytania_regions(areas):
+        region_biomes[rid] = "MORYTANIA_SWAMP"
     biome_regions = {}
     for rid, biome in sorted(region_biomes.items()):
         biome_regions.setdefault(biome, []).append(rid)
