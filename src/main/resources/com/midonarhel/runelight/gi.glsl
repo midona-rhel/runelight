@@ -27,7 +27,7 @@ uniform vec3 giCamera;       // camera position relative to the probe grid's cor
 // the share of the surrounding probes' weight that counts as full coverage
 #define GI_COVER 2.0
 // share of the probes' light a surface facing straight up takes
-#define GI_UP_BOUNCE 0.2
+#define GI_UP_BOUNCE 0.1
 
 // Indirect light on a surface at camera-relative p facing n: rgb the probes' light, a how much of it to use (0 outside
 // the grid or with no usable probe). The light has no direction: the point blends linearly between the four nearest
@@ -90,6 +90,6 @@ vec4 giIrradiance(vec3 p, vec3 n) {
   // A probe's light is mostly what the ground around it throws up; a surface facing up doesn't get its own ground's
   // light back, only the walls' and what else stands above it, so it takes less of it.
   float up = max(-n.y, 0.0);
-  return vec4(sum / wsum * mix(1.0, GI_UP_BOUNCE, up * up),
+  return vec4(sum / wsum * mix(1.0, GI_UP_BOUNCE, up),
     fade * clamp(wsum / max(total, 1e-5) * GI_COVER, 0.0, 1.0));
 }
