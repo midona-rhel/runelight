@@ -51,7 +51,7 @@ public class SkyGridTest
 	{
 		SkyGrid s = new SkyGrid();
 		s.setWalls(walls);
-		s.setGrid(g, new int[1][SkyGrid.CORNERS][SkyGrid.CORNERS], 0, 0, 0, false);
+		s.setGrid(g, new int[1][SkyGrid.CORNERS][SkyGrid.CORNERS], 0, 0, 0, false, null);
 		while (s.dirtyCount() > 0)
 		{
 			s.trace(1 << 20, 50, 50);
@@ -62,7 +62,9 @@ public class SkyGridTest
 	/** Lobe of the value tile (tx, tz) keeps at its corner (i, j) (1 east, north), at a height of the ground floor. */
 	private static float value(SkyGrid s, int tx, int tz, int i, int j, int height, int lobe)
 	{
-		int x = (lobe == MINUS_Z ? 2 * SkyGrid.SIZE : 0) + 2 * tx + i, y = 2 * tz + j;
+		int meta = ((2 * tz) * SkyGrid.TEX_W + 2 * tx) * 4 + 3;
+		int half = GlobalIllumination.fromHalf(s.texels.get(meta)) % 3 != 0 && j == 0 ? 1 : 0;
+		int x = half * 4 * SkyGrid.SIZE + (lobe == MINUS_Z ? 2 * SkyGrid.SIZE : 0) + 2 * tx + i, y = 2 * tz + j;
 		int t = (((1 + height) * SkyGrid.TEX_H + y) * SkyGrid.TEX_W + x) * 4 + (lobe == MINUS_Z ? 0 : lobe);
 		return GlobalIllumination.fromHalf(s.texels.get(t));
 	}
@@ -105,11 +107,8 @@ public class SkyGridTest
 		SkyGrid s = traced(house(), houseWalls());
 		// inside, the floor sees no sky overhead
 		assertTrue(value(s, 52, 52, 0, 0, 0, UP) < 0.05f);
-		// out in the open everything sees all of it
-		for (int lobe = 0; lobe < SkyGrid.LOBES; ++lobe)
-		{
-			assertEquals(1, value(s, 20, 20, 0, 0, 1, lobe), 0.02f);
-		}
+		// This empty-air sample is more than half a tile above the ground and is culled.
+		assertEquals(-1, value(s, 20, 20, 0, 0, 1, UP), 0);
 		// the west wall: outside (tile 49's east corners) it sees the sky to the west, inside (tile 50's west ones)
 		// nothing
 		assertTrue(value(s, 49, 52, 1, 0, 1, MINUS_X) > 0.6f);
@@ -189,7 +188,7 @@ public class SkyGridTest
 		float inside = value(s, 52, 52, 0, 0, 0, UP);
 		// the next region: the same house 8 tiles west and south in the new base's coordinates
 		GiGrid g = flat();
-		s.setGrid(g, new int[1][SkyGrid.CORNERS][SkyGrid.CORNERS], 0, 8, 8, false);
+		s.setGrid(g, new int[1][SkyGrid.CORNERS][SkyGrid.CORNERS], 0, 8, 8, false, null);
 		assertEquals(inside, value(s, 44, 44, 0, 0, 0, UP), 0);
 		// what came in at the far edge is open sky until traced
 		assertEquals(1, value(s, SkyGrid.SIZE - 1, 30, 0, 0, 0, UP), 0);
@@ -205,7 +204,7 @@ public class SkyGridTest
 		GiGrid g = house();
 		// the door gets a roof over the porch
 		box(g, 96, 92, 109, 99, 256, 320);
-		s.setGrid(g, new int[1][SkyGrid.CORNERS][SkyGrid.CORNERS], 0, 0, 0, false);
+		s.setGrid(g, new int[1][SkyGrid.CORNERS][SkyGrid.CORNERS], 0, 0, 0, false, null);
 		int dirty = s.dirtyCount();
 		assertTrue(dirty > 0 && dirty < SkyGrid.LEVELS * SkyGrid.CORNERS * SkyGrid.CORNERS / 4);
 		s.trace(1 << 20, 51, 49);
@@ -263,13 +262,13 @@ public class SkyGridTest
 		}
 		// warm up the JIT on one, time another
 		SkyGrid warm = new SkyGrid();
-		warm.setGrid(g, new int[1][SkyGrid.CORNERS][SkyGrid.CORNERS], 0, 0, 0, false);
+		warm.setGrid(g, new int[1][SkyGrid.CORNERS][SkyGrid.CORNERS], 0, 0, 0, false, null);
 		for (int i = 0; i < 100; ++i)
 		{
 			warm.trace(SkyGridMap.RAY_BUDGET, 20, 20);
 		}
 		SkyGrid s = new SkyGrid();
-		s.setGrid(g, new int[1][SkyGrid.CORNERS][SkyGrid.CORNERS], 0, 0, 0, false);
+		s.setGrid(g, new int[1][SkyGrid.CORNERS][SkyGrid.CORNERS], 0, 0, 0, false, null);
 		s.takeChanges();
 		int jobs = 0, near = 0, uploads = 0;
 		long rays = 0, bytes = 0, nanos = 0;

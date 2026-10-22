@@ -26,7 +26,7 @@ final class RoomMap
 	static final float TILE = 128;
 	// texels in front of the map: the header (rooms.glsl)
 	static final int HEADER_TEXELS = 1;
-	static final int TEXELS_PER_TILE = 3;
+	static final int TEXELS_PER_TILE = 4;
 
 	// the porch id of the outdoors: what lies across an opening from a room tile that has no room beside it
 	static final int OUTSIDE = ANY;
@@ -623,7 +623,7 @@ final class RoomMap
 	}
 
 	/**
-	 * Fill the buffer with the header texel (enabled, size, offset, lights use rooms) and three texels per tile: the four planes' rooms
+	 * Fill the buffer with the header texel (enabled, size, offset, lights use rooms) and four texels per tile: the four planes' rooms
 	 * (room + porch * 4096, negative when the porch is an opening's), the four planes' floor heights (world y), and
 	 * the four planes' walls: the tile's WallMap bits, plus 64 times the half (WallMap.half) the tile's room has,
 	 * plus 128 times the room of the other half of a tile a diagonal wall crosses (0 outdoors; the tile's own room
@@ -631,7 +631,7 @@ final class RoomMap
 	 */
 	void texels(FloatBuffer out)
 	{
-		out.put(1).put(size).put(offset).put(1);
+		out.put(2).put(size).put(offset).put(1); // Version 2 adds baked room ambient distance.
 		for (int x = 0; x < size; ++x)
 		{
 			for (int y = 0; y < size; ++y)
@@ -651,7 +651,23 @@ final class RoomMap
 				{
 					int i = index(p, x, y);
 					int b = walls != null ? walls.get(p, x, y) : 0;
-					out.put(b + (half[i] == 0 ? 128 * rooms[i] : 64 * (half[i] - 1) + 128 * across[i]));
+					// Shader filtering needs both sides of cardinal boundaries in the current tile.
+					if (walls != null)
+					{
+						for (int side = 1; side <= 8; side <<= 1)
+						{
+							if (walls.edge(p, x, y, side)) b |= side;
+						}
+					}
+					// Bit 19 is floor presence; the lower 19 bits retain wall/room encoding.
+					int floor = filled != null && (filled[x * size + y] & (1 << p)) != 0 ? 1 << 19 : 0;
+					out.put(floor + b + (half[i] == 0 ? 128 * rooms[i] : 64 * (half[i] - 1) + 128 * across[i]));
+				}
+				for (int p = 0; p < PLANES; ++p)
+				{
+					int i = index(p, x, y);
+					out.put(walls != null && (rooms[i] != 0 || across[i] != 0)
+						? RoomAmbient.pack(walls, p, x, y) : 0);
 				}
 			}
 		}

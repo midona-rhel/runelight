@@ -399,7 +399,7 @@ class LightClusters
 		roomOff.clear();
 		if (rooms != null)
 		{
-			roomOff.put(1).put(rooms.size).put(rooms.offset).put(roomLights ? 1 : 0);
+			roomOff.put(2).put(rooms.size).put(rooms.offset).put(roomLights ? 1 : 0);
 		}
 		else
 		{

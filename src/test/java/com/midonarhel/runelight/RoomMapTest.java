@@ -340,7 +340,7 @@ public class RoomMapTest
 		FloatBuffer b = FloatBuffer.allocate(m.texelCount() * 4);
 		m.texels(b);
 		assertEquals(0, b.remaining());
-		assertEquals(1, b.get(0), 0);
+		assertEquals(2, b.get(0), 0);
 		assertEquals(SIZE, b.get(1), 0);
 		assertEquals(OFFSET, b.get(2), 0);
 		int t = (RoomMap.HEADER_TEXELS + (9 * SIZE + 10) * RoomMap.TEXELS_PER_TILE) * 4;
@@ -349,7 +349,8 @@ public class RoomMapTest
 		// the porch tile: room 0, porch 1, negative as an opening's
 		int p = (RoomMap.HEADER_TEXELS + (7 * SIZE + 9) * RoomMap.TEXELS_PER_TILE) * 4;
 		assertEquals(-4096, b.get(p), 0);
-		assertTrue(LightClusters.ROOM_BASE + m.texelCount() < 65536);
+		// Buffer addresses are packed as floats; expanded diagnostic light storage must stay exact.
+		assertTrue(LightClusters.ROOM_BASE + m.texelCount() < (1 << 24));
 	}
 
 	// the 4x4 house with a second storey over it (rooms 1 below, 2 above); the upper floor has a hole at extended tile

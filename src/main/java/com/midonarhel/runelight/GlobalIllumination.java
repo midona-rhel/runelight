@@ -169,6 +169,7 @@ class GlobalIllumination
 	static final class Voxels
 	{
 		final GiGrid grid;
+		SkyTerrain terrain;
 		final int baseX, baseY;
 		final boolean instance;
 		// the scene's corner heights, [level][extended x][extended z]
@@ -806,9 +807,10 @@ class GlobalIllumination
 		int baseX = scene.getBaseX(), baseY = scene.getBaseY();
 		boolean instance = scene.isInstance();
 		int[][][] heights = scene.getTileHeights();
+		SkyTerrain terrain = SkyTerrain.capture(scene, RuneLightPlugin.SCENE_OFFSET);
 		int zones2 = n;
 		submit(() -> build(g, list, zx, zz, zones2, baseZone, in, water, settings, roofs, baseX, baseY, instance, heights,
-			withProbes));
+			withProbes, terrain));
 	}
 
 	private static byte[][][] copy(byte[][][] a)
@@ -848,7 +850,7 @@ class GlobalIllumination
 	}
 
 	private void build(int g, Zone[] list, int[] zx, int[] zz, int n, int baseZone, GiProbes.Input in, GiWater water,
-		byte[][][] settings, int[][][] roofs, int baseX, int baseY, boolean instance, int[][][] heights, boolean withProbes)
+		byte[][][] settings, int[][][] roofs, int baseX, int baseY, boolean instance, int[][][] heights, boolean withProbes, SkyTerrain terrain)
 	{
 		if (g != generation)
 		{
@@ -873,11 +875,16 @@ class GlobalIllumination
 		});
 		long voxelTime = System.nanoTime();
 		GiGrid grid = GiGrid.assemble(voxels, zx, zz, baseZone, water);
-		this.voxels = new Voxels(grid, baseX, baseY, instance, heights);
+		Voxels result = new Voxels(grid, baseX, baseY, instance, heights);
+		result.terrain = terrain;
+		this.voxels = result;
+		long gridTime = System.nanoTime();
+		log.info("Voxel build {}: {} new / {} zones, voxelize {} ms, assemble {} ms, total {} ms; {}-unit cells, {}x{}x{}, {} MiB cells",
+			g, voxelized.get(), n, (voxelTime - start) / 1_000_000.0, (gridTime - voxelTime) / 1_000_000.0,
+			(gridTime - start) / 1_000_000.0, GiGrid.VOXEL, grid.nx, grid.ny, grid.nz,
+			grid.cells.length * 4L / (1024.0 * 1024.0));
 		if (!withProbes)
 		{
-			log.debug("GI build {}: voxelized {} zones in {} ms, grid {}x{}x{}, no probes", g, voxelized,
-				(voxelTime - start) / 1_000_000, grid.nx, grid.ny, grid.nz);
 			return;
 		}
 		in.indoor = GiProbes.indoorColumns(BuildingDetector.detect(settings, roofs), RuneLightPlugin.SCENE_OFFSET);
@@ -889,6 +896,13 @@ class GlobalIllumination
 		probesInstance = instance;
 		lastLight = null;
 		builtGeneration = g;
+		int activeProbes = 0;
+		for (boolean valid : p.valid)
+		{
+			if (valid) ++activeProbes;
+		}
+		log.debug("GI probes: {} / {} active, {}-unit spacing, one-tile scenery cutoff",
+			activeProbes, GiProbes.PROBES, GiProbes.PITCH * GiProbes.TILE);
 		log.debug("GI build {}: voxelized {} zones in {} ms, grid {}x{}x{}, {} hit voxels, traced in {} ms", g, voxelized,
 			(voxelTime - start) / 1_000_000, grid.nx, grid.ny, grid.nz, p.hits, (System.nanoTime() - voxelTime) / 1_000_000);
 		if (lastInput != null)
@@ -919,7 +933,7 @@ class GlobalIllumination
 		l.baseY = probesBaseY;
 		l.instance = probesInstance;
 		l.meta = p.meta;
-		l.texels = texels(GiProbes.smooth(p, result.shown), p.valid);
+		l.texels = texels(result.shown, p.valid);
 		lit = l;
 		log.trace("GI relight in {} ms", (System.nanoTime() - start) / 1_000_000);
 	}

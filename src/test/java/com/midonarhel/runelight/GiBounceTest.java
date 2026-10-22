@@ -73,8 +73,8 @@ public class GiBounceTest
 	{
 		GiProbes p = probes(greenGrid(null, false));
 		GiRelight.Result r = GiRelight.relight(p, sunlit(), null, 3, GiProbes.ParallelFor.SEQUENTIAL);
-		// tile 10 is column 5
-		int probe = GiProbes.probe(5, 5, 0);
+		// Keep the same world tile when probe spacing changes.
+		int probe = GiProbes.probe(10 / GiProbes.PITCH, 10 / GiProbes.PITCH, 0);
 		assertTrue(p.valid[probe]);
 		float red = r.shown[probe * 3], green = r.shown[probe * 3 + 1], blue = r.shown[probe * 3 + 2];
 		assertTrue("green " + red + " " + green + " " + blue, green > red * 1.4f && green > blue * 2f);
@@ -153,7 +153,7 @@ public class GiBounceTest
 		GiProbes p = probes(greenGrid(water, true));
 		float[] bounce = GiRelight.relight(p, sunlit(), null, 3, GiProbes.ParallelFor.SEQUENTIAL).shown;
 		// over the water the light thrown up is blue, over the grass it is green
-		int overWater = GiProbes.probe(7, 7, 0), overGrass = GiProbes.probe(1, 1, 0);
+		int overWater = GiProbes.probe(14 / GiProbes.PITCH, 14 / GiProbes.PITCH, 0), overGrass = GiProbes.probe(2 / GiProbes.PITCH, 2 / GiProbes.PITCH, 0);
 		assertTrue(p.valid[overWater] && p.valid[overGrass]);
 		float wr = bounce[overWater * 3 + 0];
 		float wg = bounce[overWater * 3 + 1];

@@ -2,8 +2,7 @@ package com.midonarhel.runelight;
 
 /**
  * Lights the probes from their hit cache (GiProbes): rays that reached the sky bring the sky's radiance where they
- * point, rays that hit a surface bring its albedo times the brightness of the light on it (gray: the surface's own
- * color goes out, as it looks on screen), which is the sun or moon where the voxels
+ * point, rays that hit a surface bring its albedo times the RGB light on it, which is the sun or moon where the voxels
  * see it, plus the light the probe in front of the voxel had last time, for further bounces. A probe's color is the
  * weighted average of its rays, whichever way they point: surfaces are treated as rough, scattering light everywhere,
  * so no surface gets more from one that faces it than from any other. Runs on the global illumination's worker
@@ -25,10 +24,8 @@ final class GiRelight
 	// sun and moon light bounced off what they fall on, relative to the light itself: above 1 because the voxels'
 	// albedos are the dim vertex and texture colors, and the bounce is what makes sunlit ground warm the shade
 	static final float SUN_BOUNCE = 1.4f;
-	// A probe's color is an average over the sphere, which is about half what a surface facing the open sky receives
-	// from it; a surface hit by a ray reflects this much of the average of the probe in front of it, between that
-	// average and the most a facing surface would get. Kept low enough that light bouncing in a closed room dies out.
-	static final float INCIDENT_GAIN = 1.5f;
+	// Do not amplify energy on successive bounces.
+	static final float INCIDENT_GAIN = 1.0f;
 
 	/** What lights the probes this time. */
 	static final class Light
@@ -149,21 +146,10 @@ final class GiRelight
 		return Math.max(MIN_SCALE, Math.min(MAX_SCALE, target / open));
 	}
 
-	/**
-	 * How bright the light on a surface is, as one gray: the caster where it is lit (sun of 0..1) plus the light of the
-	 * probe b in front of it from the last bounce. Gray, so a surface bounces the color it shows on screen, where the
-	 * warm sun and the blue sky on it even out, not its albedo tinted by the sun's color alone.
-	 */
-	static float incident(float[] caster, float sun, float[] last, int b)
+	/** Preserve the incident light's color through each diffuse bounce. */
+	static float incident(float[] caster, float sun, float[] last, int b, int channel)
 	{
-		float r = caster[0] * sun, g = caster[1] * sun, bl = caster[2] * sun;
-		if (last != null && b >= 0)
-		{
-			r += last[b * 3] * INCIDENT_GAIN;
-			g += last[b * 3 + 1] * INCIDENT_GAIN;
-			bl += last[b * 3 + 2] * INCIDENT_GAIN;
-		}
-		return luminance(r, g, bl);
+		return caster[channel] * sun + (last != null && b >= 0 ? last[b * 3 + channel] * INCIDENT_GAIN : 0);
 	}
 
 	/**
@@ -233,10 +219,10 @@ final class GiRelight
 				// lit or not, whatever angle the light comes in at: the bounce is the color of what is lit around
 				float sun = direct && nx * lx + ny * ly + nz * lz > 0 ? lit[h] : 0;
 				int b = p.hitBounce[h];
-				float e = incident(light.caster, sun, last, b);
+
 				for (int c = 0; c < 3; ++c)
 				{
-					radiance[h * 3 + c] = p.hitAlbedo[h * 3 + c] * e;
+					radiance[h * 3 + c] = p.hitAlbedo[h * 3 + c] * incident(light.caster, sun, last, b, c);
 				}
 			});
 			parallel.run(GiProbes.PROBES, i ->
@@ -277,11 +263,17 @@ final class GiRelight
 						// a thin surface shows the probe the side facing it
 						float dx = d[r * 3], dy = d[r * 3 + 1], dz = d[r * 3 + 2];
 						float sun = direct && dx * lx + dy * ly + dz * lz < 0 ? lit[code] : 0;
-						float e = incident(light.caster, sun, last, p.hitBounce[code]);
-						tr = p.hitAlbedo[code * 3] * e;
-						tg = p.hitAlbedo[code * 3 + 1] * e;
-						tb = p.hitAlbedo[code * 3 + 2] * e;
+						int b = p.hitBounce[code];
+						tr = p.hitAlbedo[code * 3] * incident(light.caster, sun, last, b, 0);
+						tg = p.hitAlbedo[code * 3 + 1] * incident(light.caster, sun, last, b, 1);
+						tb = p.hitAlbedo[code * 3 + 2] * incident(light.caster, sun, last, b, 2);
 					}
+					// A smooth local-bounce window, reaching zero at the ray limit (voxel units).
+					float dx = p.hitPos[code * 3] - p.position[i * 3] / GiGrid.VOXEL;
+					float dy = p.hitPos[code * 3 + 1] + p.grid.layer0 - p.position[i * 3 + 1] / GiGrid.VOXEL;
+					float dz = p.hitPos[code * 3 + 2] - p.position[i * 3 + 2] / GiGrid.VOXEL;
+					float t = Math.min(1, (float) Math.sqrt(dx * dx + dy * dy + dz * dz) / GiProbes.MAX_DISTANCE);
+					w *= 1 - t * t * (3 - 2 * t);
 					fr += tr * w;
 					fg += tg * w;
 					fb += tb * w;

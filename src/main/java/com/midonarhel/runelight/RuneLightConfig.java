@@ -1413,7 +1413,7 @@ public interface RuneLightConfig extends Config
 	)
 	default LightingModel lightingModel()
 	{
-		return LightingModel.SKYLIGHT;
+		return LightingModel.SKYLIGHT_GI;
 	}
 
 	@Range(max = 100)

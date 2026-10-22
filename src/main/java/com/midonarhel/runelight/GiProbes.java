@@ -23,7 +23,7 @@ import java.util.function.IntConsumer;
 final class GiProbes
 {
 	static final int SIZE = 104;
-	static final int PITCH = 2;
+	static final int PITCH = 1;
 	static final int COLUMNS = SIZE / PITCH;
 	static final int FLOORS = 3;
 	static final int LEVELS = FLOORS * 2;
@@ -35,7 +35,7 @@ final class GiProbes
 	// the least two floors' grounds are apart, so the probes stay in order
 	static final float FLOOR_GAP = 240;
 	// rays reach this many voxels; beyond, the sky
-	static final float MAX_DISTANCE = 64;
+	static final float MAX_DISTANCE = 32;
 	static final float MAX_BACKFACE = 0.25f;
 	// a ray meeting a one-sided voxel at more than this cosine from behind saw its back
 	static final float BACKFACE_COS = 0.2f;
@@ -311,7 +311,7 @@ final class GiProbes
 		for (float[] c : CANDIDATES)
 		{
 			float ox = (bx + c[0]) / GiGrid.VOXEL, oy = (by + c[1]) / GiGrid.VOXEL - grid.layer0, oz = (bz + c[2]) / GiGrid.VOXEL;
-			if (grid.occupied((int) Math.floor(ox), (int) Math.floor(oy), (int) Math.floor(oz)))
+			if (!nearGeometry(ox, oy, oz) || grid.occupied((int) Math.floor(ox), (int) Math.floor(oy), (int) Math.floor(oz)))
 			{
 				continue;
 			}
@@ -337,6 +337,21 @@ final class GiProbes
 			}
 		}
 		Arrays.fill(rays, base, base + RAYS, MISS);
+	}
+
+	// Keep probes within one tile of captured scenery voxels, including the relocated origin.
+	private boolean nearGeometry(float x, float y, float z)
+	{
+		for (int iz = (int) Math.floor(z - 2); iz <= (int) Math.floor(z + 2); ++iz)
+		for (int iy = (int) Math.floor(y - 2); iy <= (int) Math.floor(y + 2); ++iy)
+		for (int ix = (int) Math.floor(x - 2); ix <= (int) Math.floor(x + 2); ++ix)
+		{
+			float dx = Math.max(Math.max(ix - x, x - ix - 1), 0);
+			float dy = Math.max(Math.max(iy - y, y - iy - 1), 0);
+			float dz = Math.max(Math.max(iz - z, z - iz - 1), 0);
+			if (dx * dx + dy * dy + dz * dz <= 4 && grid.occupied(ix, iy, iz)) return true;
+		}
+		return false;
 	}
 
 	static boolean backface(int cell, float dx, float dy, float dz)

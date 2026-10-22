@@ -208,92 +208,83 @@ final class SkyField
 	}
 
 	/**
-	 * The texture: two texels a side per tile, red the light and green 1 under cover, rows by y. A texel is the tile's
-	 * light eased a quarter toward the tile on its side, over open edges only, so that bilinear sampling gives smooth
-	 * gradients that stop at the walls; the cover eases the same way over any edge. On a tile a diagonal wall crosses
-	 * the two texels either side of it take their halves' light, the two on it the darker one's, unblended.
-	 *
-	 * @param light per tile half, as {@link #propagate} gives it
+	 * Two texels per tile axis, representing its actual corners. RG and BA hold each half's light and cover;
+	 * G additionally encodes twice the diagonal kind (0, 1, 2). Open edges share corner values; walls keep
+	 * separate values, including the two sides of a diagonal ending at a corner. Propagation itself is unchanged.
 	 */
-	static byte[] pack(WallMap walls, int plane, float[] light, boolean[] covered)
+	static float[] pack(WallMap walls, int plane, float[] light, boolean[] covered)
 	{
-		int size = walls.size;
-		int w = size * TEXELS_PER_TILE;
-		byte[] out = new byte[w * w * 2];
-		for (int x = 0; x < size; ++x)
+		int size = walls.size, width = size * TEXELS_PER_TILE;
+		float[] out = new float[width * width * 4];
+		int[] bits = new int[4], tiles = new int[4], parent = new int[8], count = new int[8];
+		float[] sum = new float[8], coverSum = new float[8];
+		for (int cx = 0; cx <= size; ++cx)
 		{
-			for (int y = 0; y < size; ++y)
+			for (int cy = 0; cy <= size; ++cy)
 			{
-				for (int i = 0; i < 2; ++i)
+				java.util.Arrays.fill(parent, -1);
+				java.util.Arrays.fill(count, 0);
+				java.util.Arrays.fill(sum, 0);
+				java.util.Arrays.fill(coverSum, 0);
+				int present = 0;
+				// Quadrants around this corner: SW, SE, NW, NE.
+				for (int q = 0; q < 4; ++q)
 				{
-					for (int j = 0; j < 2; ++j)
+					int x = cx - 1 + (q & 1), y = cy - 1 + (q >> 1);
+					if (x < 0 || y < 0 || x >= size || y >= size) continue;
+					present |= 1 << q;
+					tiles[q] = x * size + y;
+					bits[q] = walls.get(plane, x, y);
+					int hx = WallMap.half(bits[q], (q & 1) == 0 ? WallMap.EAST : WallMap.WEST);
+					int hy = WallMap.half(bits[q], q < 2 ? WallMap.NORTH : WallMap.SOUTH);
+					parent[2 * q + hx] = 2 * q + hx;
+					parent[2 * q + hy] = 2 * q + hy;
+				}
+				joinCorner(walls, plane, cx - 1, cy - 1, present, bits, parent, 0, 1, WallMap.EAST, WallMap.WEST);
+				joinCorner(walls, plane, cx - 1, cy, present, bits, parent, 2, 3, WallMap.EAST, WallMap.WEST);
+				joinCorner(walls, plane, cx - 1, cy - 1, present, bits, parent, 0, 2, WallMap.NORTH, WallMap.SOUTH);
+				joinCorner(walls, plane, cx, cy - 1, present, bits, parent, 1, 3, WallMap.NORTH, WallMap.SOUTH);
+				for (int node = 0; node < 8; ++node)
+				{
+					if (parent[node] < 0) continue;
+					int root = cornerRoot(parent, node);
+					sum[root] += light[2 * tiles[node >> 1] + (node & 1)];
+					coverSum[root] += covered[tiles[node >> 1]] ? 1 : 0;
+					count[root]++;
+				}
+				for (int q = 0; q < 4; ++q)
+				{
+					if ((present & (1 << q)) == 0) continue;
+					int x = cx - 1 + (q & 1), y = cy - 1 + (q >> 1);
+					int o = ((2 * y + 1 - (q >> 1)) * width + 2 * x + 1 - (q & 1)) * 4;
+					for (int h = 0; h < 2; ++h)
 					{
-						int sx = i == 0 ? -1 : 1, sy = j == 0 ? -1 : 1;
-						float r = lightTexel(walls, plane, light, size, x, y, sx, sy);
-						float g = coverTexel(covered, size, x, y, sx, sy);
-						int o = ((y * 2 + j) * w + x * 2 + i) * 2;
-						out[o] = (byte) Math.round(r * 255);
-						out[o + 1] = (byte) Math.round(g * 255);
+						int node = 2 * q + (WallMap.split(bits[q]) ? h : 0);
+						// A triangle's opposite corner is never sampled.
+						if (parent[node] < 0) continue;
+						int root = cornerRoot(parent, node);
+						out[o + 2 * h] = sum[root] / count[root];
+						out[o + 2 * h + 1] = coverSum[root] / count[root];
 					}
+					out[o + 1] += (bits[q] & WallMap.DIAG_SW_NE) != 0 ? 2
+						: (bits[q] & WallMap.DIAG_NW_SE) != 0 ? 4 : 0;
 				}
 			}
 		}
 		return out;
 	}
 
-	private static float lightTexel(WallMap walls, int plane, float[] light, int size, int x, int y, int sx, int sy)
+	private static void joinCorner(WallMap walls, int plane, int x, int y, int present, int[] bits,
+		int[] parent, int a, int b, int side, int opposite)
 	{
-		int b = walls.get(plane, x, y);
-		int i = x * size + y;
-		if (WallMap.split(b))
-		{
-			// the quadrant's half: north-west or south-east of "/", north-east or south-west of ""
-			boolean slash = (b & WallMap.DIAG_SW_NE) != 0;
-			if (slash ? sx != sy : sx == sy)
-			{
-				return light[2 * i + WallMap.half(b, sy > 0 ? WallMap.NORTH : WallMap.SOUTH)];
-			}
-			return Math.min(light[2 * i], light[2 * i + 1]);
-		}
-		int sideX = sx > 0 ? WallMap.WEST : WallMap.EAST, sideY = sy > 0 ? WallMap.SOUTH : WallMap.NORTH;
-		boolean openX = openAcross(walls, plane, size, x, y, sx, 0);
-		boolean openY = openAcross(walls, plane, size, x, y, 0, sy);
-		float a = light[2 * i];
-		float row = openX ? 0.75f * a + 0.25f * facing(walls, plane, light, size, x + sx, y, sideX) : a;
-		if (!openY)
-		{
-			return row;
-		}
-		int y2 = y + sy;
-		float c = facing(walls, plane, light, size, x, y2, sideY);
-		float rowY = openAcross(walls, plane, size, x, y2, sx, 0)
-			? 0.75f * c + 0.25f * facing(walls, plane, light, size, x + sx, y2, sideX) : c;
-		return 0.75f * row + 0.25f * rowY;
+		if ((present & (1 << a)) == 0 || (present & (1 << b)) == 0 || walls.edge(plane, x, y, side)) return;
+		int na = 2 * a + WallMap.half(bits[a], side), nb = 2 * b + WallMap.half(bits[b], opposite);
+		parent[cornerRoot(parent, na)] = cornerRoot(parent, nb);
 	}
 
-	/** The light of tile (x, y)'s half with the given edge. */
-	private static float facing(WallMap walls, int plane, float[] light, int size, int x, int y, int side)
+	private static int cornerRoot(int[] parent, int node)
 	{
-		return light[2 * (x * size + y) + WallMap.half(walls.get(plane, x, y), side)];
-	}
-
-	/** Whether tile (x, y) is open toward the tile one step (dx, dy) away, which is in the map. */
-	private static boolean openAcross(WallMap walls, int plane, int size, int x, int y, int dx, int dy)
-	{
-		int nx = x + dx, ny = y + dy;
-		if (nx < 0 || ny < 0 || nx >= size || ny >= size)
-		{
-			return false;
-		}
-		int side = dx > 0 ? WallMap.EAST : dx < 0 ? WallMap.WEST : dy > 0 ? WallMap.NORTH : WallMap.SOUTH;
-		return !walls.edge(plane, x, y, side);
-	}
-
-	private static float coverTexel(boolean[] covered, int size, int x, int y, int sx, int sy)
-	{
-		int x2 = Math.max(0, Math.min(size - 1, x + sx)), y2 = Math.max(0, Math.min(size - 1, y + sy));
-		float a = covered[x * size + y] ? 1 : 0, b = covered[x2 * size + y] ? 1 : 0;
-		float c = covered[x * size + y2] ? 1 : 0, d = covered[x2 * size + y2] ? 1 : 0;
-		return 0.75f * (0.75f * a + 0.25f * b) + 0.25f * (0.75f * c + 0.25f * d);
+		while (parent[node] != node) node = parent[node];
+		return node;
 	}
 }

@@ -17,20 +17,20 @@ import java.nio.ShortBuffer;
  * that reach each other without crossing a wall (WallMap edges; a diagonal wall splits its tile into halves) are
  * traced together, their rays shared out among their points, and get the same value, so the light is continuous
  * wherever no wall is; quadrants a wall separates keep their own. A pixel reads only its own tile's four values.
- * On a tile a diagonal wall crosses the north corners' values are the north half's (WallMap.half 0: north-west of
- * "/", north-east of "\"), the south corners' the south half's, each traced from a point in that half; the halves
- * blend their two values along x.
+ * A diagonal tile keeps three actual corners for each half, with independent values on the two sides of the wall.
+ * Height samples exist above every tile; actual scene floor flags identify where vertical blending must stop.
+ * One additional exterior layer follows the top of the captured geometry, above roofs and foliage.
  *
  * Tracing is amortized: work is a corner at one height (a unit, all its quadrants), units are marked dirty when the
  * voxels or the walls around them change, and trace() works through the dirty ones nearest the player first, up to
  * a budget of rays. The rays of a unit are always the same (a fixed set turned by a per-unit angle, and foliage
  * stopping the same rays), so a unit traced again over unchanged voxels gets the same values: nothing flickers.
  *
- * Results go straight into the texels of a 3D RGBA16F texture (SkyGridMap): x is part * 2 * SIZE + 2 * tile x +
- * corner x (part 0: up, +x, -x, +z; part 1: -z), y is 2 * tile z + corner z, so a tile's four corners are a 2 x 2
- * block that linear filtering blends exactly within; slice 0 holds part 0 only, per corner the grounds of the three
- * floors (world y, NO_FLOOR where the tile has no such floor) and the tile's diagonal walls per floor (0 none, 1 "/",
- * 2 "\", times 3 to the floor's power); slice 1 + floor * HEIGHTS.length + height the values.
+ * The 3D RGBA16F texture has four horizontal parts: half 0's up/+x/-x/+z and -z, then the same for half 1.
+ * Each tile is a 2x2 block of actual corners. Slice 0 stores three floor heights and packed diagonal kinds in
+ * part 0, actual floor flags in part 1, room floor heights in part 2 and protected room bits in part 3.
+ * Slice 1 + floor * HEIGHTS.length + height stores visibility; the final slice stores exterior visibility.
+ * The -z parts' spare channels store the sample's x/z offset from its corner and its world y (g/b/a = x/y/z).
  *
  * Not thread safe: one thread (SkyGridMap's worker) calls everything; the texels and changes are read between calls.
  * World coordinates are the base scene's local ones, tile 0 at 0, y down.
@@ -43,9 +43,9 @@ final class SkyGrid
 	// heights of the values above each floor's ground: between a storey's floor and ceiling voxels (a storey is about
 	// 240 high, a voxel 64), low enough for the floor, high enough for the tops of walls
 	static final float[] HEIGHTS = {40, 112, 184};
-	static final int LEVELS = FLOORS * HEIGHTS.length;
-	// a floor the tile doesn't have: far above anything, so no pixel is ever on it
-	static final float NO_FLOOR = -16384;
+	static final int LEVELS = FLOORS * HEIGHTS.length + 1;
+	// One exterior sample just above the captured geometry at each corner.
+	static final int SURFACE_LEVEL = LEVELS - 1;
 	static final float TILE = 128;
 	// rays per group of quadrants: an even spread over the sky's half of the sphere, each counting for every lobe it
 	// lies in (the one up and up to two sides)
@@ -58,7 +58,7 @@ final class SkyGrid
 	static final int LOBES = 5;
 	// corners per side of the blocks tracing goes by
 	static final int BLOCK = 4;
-	static final int TEX_W = 4 * SIZE, TEX_H = 2 * SIZE, TEX_D = 1 + LEVELS;
+	static final int TEX_W = 8 * SIZE, TEX_H = 2 * SIZE, TEX_D = 1 + LEVELS;
 
 	private static final short HALF_ONE = GlobalIllumination.toHalf(1);
 	// where a quadrant's point may move when its voxel is taken: up and down (world units, y down)
@@ -105,19 +105,43 @@ final class SkyGrid
 		}
 	}
 
-	final ShortBuffer texels = ByteBuffer.allocateDirect(TEX_W * TEX_H * TEX_D * 4 * Short.BYTES)
-		.order(ByteOrder.nativeOrder()).asShortBuffer();
+	final int resolution, size, corners, textureWidth, textureHeight, reach;
+	final float spacing;
+
+	SkyGrid() { this(1); }
+
+	SkyGrid(int resolution)
+	{
+		this.resolution = resolution;
+		size = SIZE * resolution;
+		corners = size + 1;
+		spacing = TILE / resolution;
+		textureWidth = 8 * size;
+		textureHeight = 2 * size;
+		reach = REACH * resolution;
+		texels = ByteBuffer.allocateDirect(textureWidth * textureHeight * TEX_D * 4 * Short.BYTES)
+			.order(ByteOrder.nativeOrder()).asShortBuffer();
+		ground = new float[FLOORS * corners * corners];
+		floors = new byte[size * size];
+		active = new boolean[LEVELS * corners * corners];
+		dirty = new boolean[active.length];
+	}
+
+	final ShortBuffer texels;
 
 	private GiGrid grid;
+	SkyTerrain terrain;
 	private int baseX, baseY;
 	private boolean instance;
 	private WallMap walls;
-	// the grounds of the floors at every corner, [floor][z * CORNERS + x], world y
-	private final float[] ground = new float[FLOORS * CORNERS * CORNERS];
-	// per tile (z * SIZE + x), a bit per floor it has; the ground floor always
-	private final byte[] floors = new byte[SIZE * SIZE];
-	// units to trace, [(level * CORNERS + z) * CORNERS + x]
-	private final boolean[] dirty = new boolean[LEVELS * CORNERS * CORNERS];
+	// the grounds of the floors at every corner, [floor][z * corners + x], world y
+	private final float[] ground;
+	// Actual scene floors per tile (z * size + x), one bit per plane; the ground floor always
+	private final byte[] floors;
+	// units to trace, [(level * corners + z) * corners + x]
+	final boolean[] active;
+	int nearbyUnits, supportUnits;
+	final boolean[] dirty;
 	private int dirtyCount;
 	// rings of corners around the last trace's center with nothing left to trace
 	private int clearRings;
@@ -126,11 +150,11 @@ final class SkyGrid
 	private boolean changedAll;
 
 	// scratch for a unit
-	private final float[] start = new float[4 * 3];
+	private final float[] start = new float[8 * 3];
 	private final float[] acc = new float[LOBES];
 	private final short[] value = new short[LOBES];
-	private final int[] group = new int[4];
-	private final int[] members = new int[4];
+	private final int[] group = new int[8];
+	private final int[] members = new int[8];
 	private final int[] bits = new int[4];
 
 	int baseX()
@@ -165,20 +189,21 @@ final class SkyGrid
 	 * same place traces again around the voxels that changed (a door, a tree cut down).
 	 *
 	 * @param heights the scene's corner heights, [level][extended x][extended z]
+	 * @param sceneFloors actual floor planes per extended tile, from BuildingLights.floorTiles
 	 * @param offset extended tiles before local tile 0
 	 * @return whether it starts over
 	 */
-	boolean setGrid(GiGrid g, int[][][] heights, int offset, int bx, int by, boolean inst)
+	boolean setGrid(GiGrid g, int[][][] heights, int offset, int bx, int by, boolean inst, byte[] sceneFloors)
 	{
 		GiGrid old = grid;
-		int dx = bx - baseX, dz = by - baseY;
+		int dx = (bx - baseX)*resolution, dz = (by - baseY)*resolution;
 		boolean fresh = old == null || inst != instance || inst && (dx != 0 || dz != 0)
-			|| Math.abs(dx) >= SIZE || Math.abs(dz) >= SIZE;
+			|| Math.abs(dx) >= size || Math.abs(dz) >= size;
 		if (fresh)
 		{
 			for (int s = 1; s < TEX_D; ++s)
 			{
-				fillOpen(s, 0, SIZE, 0, SIZE);
+				fillOpen(s, 0, size, 0, size);
 			}
 		}
 		else if (dx != 0 || dz != 0)
@@ -189,16 +214,18 @@ final class SkyGrid
 		baseX = bx;
 		baseY = by;
 		instance = inst;
-		layout(heights, offset);
+		layout(heights, offset, sceneFloors);
+		nearbyUnits = 0; // Geometry/height changes invalidate the proximity selection.
+		if (fresh || dx != 0 || dz != 0) java.util.Arrays.fill(active, true);
 		if (fresh || dx != 0 || dz != 0)
 		{
-			markDirty(0, 0, SIZE, SIZE);
+			markDirty(0, 0, corners, corners);
 			changedAll = true;
 		}
 		else
 		{
 			markChanged(old, g);
-			change(0, 0, SIZE - 1, SIZE - 1, 0, 0);
+			change(0, 0, size - 1, size - 1, 0, 0);
 		}
 		return fresh;
 	}
@@ -212,7 +239,7 @@ final class SkyGrid
 		{
 			return;
 		}
-		int x0 = 0, z0 = 0, x1 = SIZE - 1, z1 = SIZE - 1;
+		int x0 = 0, z0 = 0, x1 = size - 1, z1 = size - 1;
 		if (old != null && w != null && old.size == w.size && old.offset == w.offset)
 		{
 			int[] d = w.diff(old);
@@ -220,10 +247,10 @@ final class SkyGrid
 			{
 				return;
 			}
-			x0 = Math.max(0, d[0] - w.offset);
-			z0 = Math.max(0, d[1] - w.offset);
-			x1 = Math.min(SIZE - 1, d[2] - w.offset);
-			z1 = Math.min(SIZE - 1, d[3] - w.offset);
+			x0 = Math.max(0, (d[0] - w.offset)*resolution);
+			z0 = Math.max(0, (d[1] - w.offset)*resolution);
+			x1 = Math.min(size - 1, (d[2] - w.offset+1)*resolution-1);
+			z1 = Math.min(size - 1, (d[3] - w.offset+1)*resolution-1);
 			if (x1 < x0 || z1 < z0)
 			{
 				return;
@@ -249,12 +276,12 @@ final class SkyGrid
 	{
 		if (grid == null || dirtyCount == 0)
 		{
-			clearRings = CORNERS;
+			clearRings = corners;
 			return 0;
 		}
-		int bx = Math.max(0, Math.min(SIZE, Math.round(worldTileX - baseX))) / BLOCK;
-		int bz = Math.max(0, Math.min(SIZE, Math.round(worldTileZ - baseY))) / BLOCK;
-		int blocks = (CORNERS + BLOCK - 1) / BLOCK;
+		int bx = Math.max(0, Math.min(size, Math.round((worldTileX - baseX)*resolution))) / BLOCK;
+		int bz = Math.max(0, Math.min(size, Math.round((worldTileZ - baseY)*resolution))) / BLOCK;
+		int blocks = (corners + BLOCK - 1) / BLOCK;
 		int maxRing = Math.max(Math.max(bx, blocks - 1 - bx), Math.max(bz, blocks - 1 - bz));
 		int rays = 0;
 		for (int r = 0; r <= maxRing && dirtyCount > 0; ++r)
@@ -266,13 +293,13 @@ final class SkyGrid
 				for (int dx = -r; dx <= r; dx += step)
 				{
 					int x0 = (bx + dx) * BLOCK, z0 = (bz + dz) * BLOCK;
-					for (int cz = Math.max(0, z0); cz < Math.min(CORNERS, z0 + BLOCK); ++cz)
+					for (int cz = Math.max(0, z0); cz < Math.min(corners, z0 + BLOCK); ++cz)
 					{
-						for (int cx = Math.max(0, x0); cx < Math.min(CORNERS, x0 + BLOCK); ++cx)
+						for (int cx = Math.max(0, x0); cx < Math.min(corners, x0 + BLOCK); ++cx)
 						{
 							for (int level = 0; level < LEVELS; ++level)
 							{
-								int u = (level * CORNERS + cz) * CORNERS + cx;
+								int u = (level * corners + cz) * corners + cx;
 								if (!dirty[u])
 								{
 									continue;
@@ -292,7 +319,7 @@ final class SkyGrid
 				}
 			}
 		}
-		clearRings = CORNERS;
+		clearRings = corners;
 		return rays;
 	}
 
@@ -302,7 +329,7 @@ final class SkyGrid
 	 */
 	int[] takeChanges()
 	{
-		int[] c = changedAll ? new int[]{0, 0, SIZE - 1, SIZE - 1, 0, TEX_D - 1, 1}
+		int[] c = changedAll ? new int[]{0, 0, size - 1, size - 1, 0, TEX_D - 1, 1}
 			: changeX1 < changeX0 ? null : new int[]{changeX0, changeZ0, changeX1, changeZ1, changeS0, changeS1, 0};
 		changedAll = false;
 		changeX1 = -1;
@@ -311,90 +338,74 @@ final class SkyGrid
 
 	// ---------------------------------------------------------------------------------------------------------
 
-	private void layout(int[][][] heights, int offset)
+	private void layout(int[][][] heights, int offset, byte[] sceneFloors)
 	{
 		float[] g = new float[FLOORS];
-		for (int cz = 0; cz < CORNERS; ++cz)
+		for (int cz = 0; cz < corners; ++cz)
 		{
-			for (int cx = 0; cx < CORNERS; ++cx)
+			for (int cx = 0; cx < corners; ++cx)
 			{
 				for (int f = 0; f < FLOORS; ++f)
 				{
 					// as GiProbes: a floor's ground is at least FLOOR_GAP over the one below
-					float h = heights != null && f < heights.length ? height(heights[f], cx + offset, cz + offset)
+					float h = heights != null && f < heights.length ? height(heights[f], (float)cx/resolution + offset, (float)cz/resolution + offset)
 						: f > 0 ? g[f - 1] - GiProbes.FLOOR_GAP : 0;
 					g[f] = f == 0 ? h : Math.min(h, g[f - 1] - GiProbes.FLOOR_GAP);
-					ground[(f * CORNERS + cz) * CORNERS + cx] = g[f];
+					ground[(f * corners + cz) * corners + cx] = g[f];
 				}
 			}
 		}
-		for (int tz = 0; tz < SIZE; ++tz)
+		for (int tz = 0; tz < size; ++tz)
 		{
-			for (int tx = 0; tx < SIZE; ++tx)
+			for (int tx = 0; tx < size; ++tx)
 			{
-				int bits = 1;
-				for (int f = 1; f < FLOORS; ++f)
-				{
-					float center = (ground(f, tx, tz) + ground(f, tx + 1, tz) + ground(f, tx, tz + 1) + ground(f, tx + 1, tz + 1)) / 4;
-					if (hasFloor(tx, tz, center))
-					{
-						bits |= 1 << f;
-					}
-				}
-				floors[tz * SIZE + tx] = (byte) bits;
+				int sceneSize = walls != null ? walls.size : SIZE + 2 * offset;
+				int i = (tx/resolution + offset) * sceneSize + tz/resolution + offset;
+				floors[tz * size + tx] = (byte) (1 | (sceneFloors != null && i < sceneFloors.length ? sceneFloors[i] : 0));
 				writeMeta(tx, tz);
 			}
 		}
 	}
 
-	private static float height(int[][] h, int x, int z)
+	private static float height(int[][] h, float x, float z)
 	{
-		x = Math.max(0, Math.min(h.length - 1, x));
-		return h[x][Math.max(0, Math.min(h[x].length - 1, z))];
+		x = Math.max(0, Math.min(h.length-1, x));
+		z = Math.max(0, Math.min(h[(int)x].length-1, z));
+		int x0=(int)x, z0=(int)z, x1=Math.min(x0+1,h.length-1), z1=Math.min(z0+1,h[x0].length-1);
+		float fx=x-x0, fz=z-z0;
+		return (h[x0][z0]*(1-fx)+h[x1][z0]*fx)*(1-fz)+(h[x0][z1]*(1-fx)+h[x1][z1]*fx)*fz;
 	}
 
 	private float ground(int f, int cx, int cz)
 	{
-		return ground[(f * CORNERS + cz) * CORNERS + cx];
-	}
-
-	/** Whether a tile has an upper floor at height y: some geometry in its voxel columns within a voxel of it. */
-	private boolean hasFloor(int tx, int tz, float y)
-	{
-		int y0 = Math.floorDiv((int) (y - GiGrid.VOXEL), GiGrid.VOXEL) - grid.layer0;
-		int y1 = Math.floorDiv((int) (y + GiGrid.VOXEL / 2), GiGrid.VOXEL) - grid.layer0;
-		for (int vx = tx * 2; vx < tx * 2 + 2; ++vx)
-		{
-			for (int vz = tz * 2; vz < tz * 2 + 2; ++vz)
-			{
-				for (int vy = y0; vy <= y1; ++vy)
-				{
-					if (grid.occupied(vx, vy, vz))
-					{
-						return true;
-					}
-				}
-			}
-		}
-		return false;
+		return ground[(f * corners + cz) * corners + cx];
 	}
 
 	/** The diagonal wall of a tile on a floor: 0 none, 1 "/", 2 "\". */
 	private int diagonal(int f, int tx, int tz)
 	{
-		int b = walls != null ? walls.get(f, tx + walls.offset, tz + walls.offset) : 0;
+		int b = wallBits(f, tx, tz);
 		return (b & WallMap.DIAG_SW_NE) != 0 ? 1 : (b & WallMap.DIAG_NW_SE) != 0 ? 2 : 0;
 	}
 
-	private int wallBits(int f, int tx, int tz)
+	int wallBits(int f, int tx, int tz)
 	{
-		return walls != null ? walls.get(f, tx + walls.offset, tz + walls.offset) : 0;
+		if (walls == null) return 0;
+		int b = walls.get(f, tx/resolution+walls.offset, tz/resolution+walls.offset);
+		int x=tx%resolution, z=tz%resolution;
+		if(x!=0)b&=~WallMap.WEST;
+		if(z!=0)b&=~WallMap.SOUTH;
+		if(x!=resolution-1)b&=~WallMap.EAST;
+		if(z!=resolution-1)b&=~WallMap.NORTH;
+		if(x!=z)b&=~WallMap.DIAG_SW_NE;
+		if(x+z!=resolution-1)b&=~WallMap.DIAG_NW_SE;
+		return b;
 	}
 
 	private void writeMeta(int tx, int tz)
 	{
 		int code = diagonal(0, tx, tz) + 3 * diagonal(1, tx, tz) + 9 * diagonal(2, tx, tz);
-		int bits = floors[tz * SIZE + tx];
+		int bits = floors[tz * size + tx];
 		for (int j = 0; j < 2; ++j)
 		{
 			for (int i = 0; i < 2; ++i)
@@ -402,16 +413,102 @@ final class SkyGrid
 				int t = texel(2 * tx + i, 2 * tz + j, 0);
 				for (int f = 0; f < FLOORS; ++f)
 				{
-					texels.put(t + f, GlobalIllumination.toHalf((bits >> f & 1) != 0 ? ground(f, tx + i, tz + j) : NO_FLOOR));
+					texels.put(t + f, GlobalIllumination.toHalf(ground(f, tx + i, tz + j)));
 				}
 				texels.put(t + 3, GlobalIllumination.toHalf(code));
+				texels.put(texel(2 * tx + i + 2 * size, 2 * tz + j, 0), GlobalIllumination.toHalf(bits));
 			}
 		}
 	}
 
-	private static int texel(int x, int y, int slice)
+	/** Use the same per-storey room classification as the existing room lighting. Unknown stays protected. */
+	void setRooms(RoomMap rooms)
 	{
-		return ((slice * TEX_H + y) * TEX_W + x) * 4;
+		for (int z = 0; z < size; ++z)
+			for (int x = 0; x < size; ++x)
+			{
+				int mask = 15;
+				int rx = rooms != null ? x/resolution + rooms.offset : 0, rz = rooms != null ? z/resolution + rooms.offset : 0;
+				boolean known = rooms != null && rx < rooms.size && rz < rooms.size;
+				if (known)
+				{
+					mask = 0;
+					for (int f = 0; f < RoomMap.PLANES; ++f)
+					{
+						int i = rooms.index(f, rx, rz);
+						if (rooms.rooms[i] != 0 || rooms.across[i] != 0 || rooms.roofed[i]) mask |= 1 << f;
+					}
+				}
+				for (int dz = 0; dz < 2; ++dz)
+					for (int dx = 0; dx < 2; ++dx)
+					{
+						int a = texel(2 * x + dx + 4 * size, 2 * z + dz, 0);
+						for (int f = 0; f < RoomMap.PLANES; ++f)
+							texels.put(a + f, GlobalIllumination.toHalf(known ? rooms.floors[rooms.index(f, rx, rz)] : 0));
+						texels.put(texel(2 * x + dx + 6 * size, 2 * z + dz, 0), GlobalIllumination.toHalf(mask));
+					}
+			}
+		selectNearbySamples();
+		change(0, 0, size - 1, size - 1, 0, 0);
+	}
+
+	/** Select geometry-adjacent samples at either grid resolution. */
+	private void selectNearbySamples()
+	{
+		if (grid != null) selectDenseSamples();
+	}
+
+	private void selectDenseSamples()
+	{
+		// Wall-only door changes alter visibility, not distance to the existing geometry.
+		if (nearbyUnits != 0) return;
+		nearbyUnits=0; supportUnits=0;
+		for(int level=0;level<LEVELS;level++)
+		for(int cz=0;cz<corners;cz++)
+		for(int cx=0;cx<corners;cx++)
+		{
+			float y=level==SURFACE_LEVEL?surfaceY(cx,cz):ground(level/3,cx,cz)-HEIGHTS[level%3];
+			boolean keep=nearGeometry(cx*spacing,y,cz*spacing,112);
+			int u=(level*corners+cz)*corners+cx;
+			if(keep)nearbyUnits++;
+			if(!keep && dirty[u]){dirty[u]=false;dirtyCount--;}
+			if(keep && !active[u] && !dirty[u]){dirty[u]=true;dirtyCount++;}
+			active[u]=keep;
+			if(!keep) invalidateUnit(cx,cz,level);
+		}
+	}
+
+	private boolean nearGeometry(float px,float py,float pz,float radius)
+	{
+		int vx=(int)Math.floor(px/64), vy=(int)Math.floor(py/64)-grid.layer0, vz=(int)Math.floor(pz/64);
+		for(int z=Math.max(0,vz-3);z<=Math.min(grid.nz-1,vz+2);z++)
+		for(int x=Math.max(0,vx-3);x<=Math.min(grid.nx-1,vx+2);x++)
+		for(int y=Math.max(0,vy-3);y<=Math.min(grid.ny-1,vy+2);y++)
+		{
+			if(!grid.occupied(x,y,z))continue;
+			float dx=Math.max(Math.max(x*64-px,px-(x+1)*64),0);
+			float dy=Math.max(Math.max((y+grid.layer0)*64-py,py-(y+grid.layer0+1)*64),0);
+			float dz=Math.max(Math.max(z*64-pz,pz-(z+1)*64),0);
+			if(dx*dx+dy*dy+dz*dz<=radius*radius)return true;
+		}
+		return false;
+	}
+
+	private void invalidateUnit(int cx,int cz,int level)
+	{
+		for(int dz=0;dz<2;dz++)for(int dx=0;dx<2;dx++)
+		{
+			int tx=cx-dx,tz=cz-dz;
+			if(tx<0||tz<0||tx>=size||tz>=size)continue;
+			for(int half=0;half<2;half++)
+				texels.put(texel(half*4*size+2*tx+dx,2*tz+dz,level+1),GlobalIllumination.toHalf(-1));
+			change(tx,tz,tx,tz,level+1,level+1);
+		}
+	}
+
+	private int texel(int x, int y, int slice)
+	{
+		return ((slice * textureHeight + y) * textureWidth + x) * 4;
 	}
 
 	/** Open sky in both parts of a slice's tiles x0..x1 - 1 by z0..z1 - 1. */
@@ -421,11 +518,10 @@ final class SkyGrid
 		{
 			for (int x = 2 * x0; x < 2 * x1; ++x)
 			{
-				int a = texel(x, y, slice), b = texel(x + 2 * SIZE, y, slice);
-				for (int c = 0; c < 4; ++c)
+				for (int part = 0; part < 4; ++part)
 				{
-					texels.put(a + c, HALF_ONE);
-					texels.put(b + c, c == 0 ? HALF_ONE : 0);
+					int t = texel(x + part * 2 * size, y, slice);
+					for (int c = 0; c < 4; ++c) texels.put(t + c, part % 2 == 0 || c == 0 ? HALF_ONE : 0);
 				}
 			}
 		}
@@ -434,21 +530,21 @@ final class SkyGrid
 	/** Move the values to a base dx, dz tiles away: what lay at tile t + d is now at t; what is new is open sky. */
 	private void shift(int dx, int dz)
 	{
-		short[] slice = new short[TEX_W * TEX_H * 4];
+		short[] slice = new short[textureWidth * textureHeight * 4];
 		short[] moved = new short[slice.length];
-		int row = TEX_W * 4;
+		int row = textureWidth * 4;
 		for (int s = 1; s < TEX_D; ++s)
 		{
 			texels.position(texel(0, 0, s));
 			texels.get(slice);
 			java.util.Arrays.fill(moved, (short) 0);
-			int xs = Math.max(0, -dx), xe = Math.min(SIZE, SIZE - dx);
-			for (int y = 2 * Math.max(0, -dz); y < 2 * Math.min(SIZE, SIZE - dz); ++y)
+			int xs = Math.max(0, -dx), xe = Math.min(size, size - dx);
+			for (int y = 2 * Math.max(0, -dz); y < 2 * Math.min(size, size - dz); ++y)
 			{
 				int from = (y + 2 * dz) * row, to = y * row;
-				for (int part = 0; part < 2; ++part)
+				for (int part = 0; part < 4; ++part)
 				{
-					int p = part * 2 * SIZE * 4;
+					int p = part * 2 * size * 4;
 					System.arraycopy(slice, from + p + 2 * (xs + dx) * 4, moved, to + p + 2 * xs * 4, 2 * (xe - xs) * 4);
 				}
 			}
@@ -456,10 +552,10 @@ final class SkyGrid
 			texels.put(moved);
 			texels.position(0);
 			// the tiles that came in
-			fillOpen(s, 0, SIZE, 0, Math.max(0, -dz));
-			fillOpen(s, 0, SIZE, Math.min(SIZE, SIZE - dz), SIZE);
-			fillOpen(s, 0, Math.max(0, -dx), 0, SIZE);
-			fillOpen(s, Math.min(SIZE, SIZE - dx), SIZE, 0, SIZE);
+			fillOpen(s, 0, size, 0, Math.max(0, -dz));
+			fillOpen(s, 0, size, Math.min(size, size - dz), size);
+			fillOpen(s, 0, Math.max(0, -dx), 0, size);
+			fillOpen(s, Math.min(size, size - dx), size, 0, size);
 		}
 	}
 
@@ -468,16 +564,16 @@ final class SkyGrid
 	{
 		x0 = Math.max(0, x0);
 		z0 = Math.max(0, z0);
-		x1 = Math.min(CORNERS, x1);
-		z1 = Math.min(CORNERS, z1);
+		x1 = Math.min(corners, x1);
+		z1 = Math.min(corners, z1);
 		for (int level = 0; level < LEVELS; ++level)
 		{
 			for (int cz = z0; cz < z1; ++cz)
 			{
 				for (int cx = x0; cx < x1; ++cx)
 				{
-					int u = (level * CORNERS + cz) * CORNERS + cx;
-					if (!dirty[u])
+					int u = (level * corners + cz) * corners + cx;
+					if (active[u] && !dirty[u])
 					{
 						dirty[u] = true;
 						dirtyCount++;
@@ -487,22 +583,22 @@ final class SkyGrid
 		}
 	}
 
-	/** Mark the corners within REACH of every tile whose voxels differ between two grids of the same place. */
+	/** Mark the corners within reach of every tile whose voxels differ between two grids of the same place. */
 	private void markChanged(GiGrid a, GiGrid b)
 	{
 		if (a.nx != b.nx || a.ny != b.ny || a.nz != b.nz || a.layer0 != b.layer0)
 		{
-			markDirty(0, 0, CORNERS, CORNERS);
+			markDirty(0, 0, corners, corners);
 			return;
 		}
-		// changed tiles, then spread REACH along x and then along z
-		boolean[] changed = new boolean[SIZE * SIZE];
+		// changed tiles, then spread reach along x and then along z
+		boolean[] changed = new boolean[size * size];
 		int stride = a.nx * a.nz;
 		for (int vz = 0; vz < a.nz; ++vz)
 		{
 			for (int vx = 0; vx < a.nx; ++vx)
 			{
-				int t = vz / 2 * SIZE + vx / 2;
+				int t = (vz*resolution/2)*size + vx*resolution/2;
 				if (changed[t])
 				{
 					continue;
@@ -518,27 +614,27 @@ final class SkyGrid
 			}
 		}
 		// [tile z][corner x]
-		boolean[] wide = new boolean[SIZE * CORNERS];
-		for (int tz = 0; tz < SIZE; ++tz)
+		boolean[] wide = new boolean[size * corners];
+		for (int tz = 0; tz < size; ++tz)
 		{
-			for (int tx = 0; tx < SIZE; ++tx)
+			for (int tx = 0; tx < size; ++tx)
 			{
-				if (changed[tz * SIZE + tx])
+				if (changed[tz * size + tx])
 				{
-					for (int cx = Math.max(0, tx - REACH); cx <= Math.min(SIZE, tx + 1 + REACH); ++cx)
+					for (int cx = Math.max(0, tx - reach); cx <= Math.min(size, tx + 1 + reach); ++cx)
 					{
-						wide[tz * CORNERS + cx] = true;
+						wide[tz * corners + cx] = true;
 					}
 				}
 			}
 		}
-		for (int cx = 0; cx < CORNERS; ++cx)
+		for (int cx = 0; cx < corners; ++cx)
 		{
-			for (int tz = 0; tz < SIZE; ++tz)
+			for (int tz = 0; tz < size; ++tz)
 			{
-				if (wide[tz * CORNERS + cx])
+				if (wide[tz * corners + cx])
 				{
-					markDirty(cx, tz - REACH, cx + 1, tz + 2 + REACH);
+					markDirty(cx, tz - reach, cx + 1, tz + 2 + reach);
 				}
 			}
 		}
@@ -568,167 +664,164 @@ final class SkyGrid
 	// which of that tile's corners it is (x 1 east, z 1 north)
 	private static final int[] QX = {-1, 0, -1, 0}, QZ = {-1, -1, 0, 0};
 
-	/** Which half of its tile a quadrant's value is for: the north half (0) has the north corners. */
-	private static int half(int bits, int q)
-	{
-		return !WallMap.split(bits) || QZ[q] < 0 ? 0 : 1;
-	}
-
-	/** Whether a quadrant borders its tile's edge toward side, rather than the diagonal wall cutting it off. */
-	private static boolean touches(int bits, int q, int side)
-	{
-		return !WallMap.split(bits) || WallMap.half(bits, side) == half(bits, q);
-	}
-
-	/**
-	 * Trace one unit: the quadrants of the tiles around corner (cx, cz) that have the level's floor, grouped by the
-	 * walls, each group's RAYS rays shared among its quadrants' points. Returns the rays traced.
-	 */
+	/** Trace the actual corner of each touching triangle, sharing rays only across open edges. */
 	private int traceUnit(int cx, int cz, int level)
 	{
-		int f = level / HEIGHTS.length;
-		float height = HEIGHTS[level % HEIGHTS.length];
-		float y = ground(f, cx, cz) - height;
+		boolean surface = level == SURFACE_LEVEL;
+		int f = surface ? FLOORS - 1 : level / HEIGHTS.length;
+		float height = surface ? HEIGHTS[HEIGHTS.length - 1] : HEIGHTS[level % HEIGHTS.length];
+		float y = surface ? surfaceY(cx, cz) : ground(f, cx, cz) - height;
+		java.util.Arrays.fill(group, -1);
 		int present = 0;
 		for (int q = 0; q < 4; ++q)
 		{
 			int tx = cx + QX[q], tz = cz + QZ[q];
-			if (tx < 0 || tz < 0 || tx >= SIZE || tz >= SIZE || (floors[tz * SIZE + tx] >> f & 1) == 0)
-			{
-				continue;
-			}
+			if (tx < 0 || tz < 0 || tx >= size || tz >= size) continue;
 			present |= 1 << q;
-			bits[q] = wallBits(f, tx, tz);
-			group[q] = q;
-			startPoint(q, cx, cz, bits[q], y, height);
+			bits[q] = surface ? 0 : wallBits(f, tx, tz);
+			int hx = WallMap.half(bits[q], QX[q] < 0 ? WallMap.EAST : WallMap.WEST);
+			int hz = WallMap.half(bits[q], QZ[q] < 0 ? WallMap.NORTH : WallMap.SOUTH);
+			group[2 * q + hx] = 2 * q + hx;
+			group[2 * q + hz] = 2 * q + hz;
+			for (int h = 0; h < 2; ++h)
+				if (group[2 * q + h] >= 0) startPoint(2 * q + h, cx, cz, bits[q], y, height, false);
 		}
-		if (present == 0)
+		int off = 0;
+		if (surface)
 		{
-			return 0;
+			int root = Integer.numberOfTrailingZeros(present) * 2;
+			for (int q = 0; q < 4; ++q)
+				if ((present & (1 << q)) != 0) group[q * 2] = root;
 		}
-		int off = walls != null ? walls.offset : 0;
-		// south-west to south-east, north-west to north-east, south-west to north-west, south-east to north-east
-		join(present, bits, 0, 1, WallMap.EAST, WallMap.WEST, cx - 1 + off, cz - 1 + off, f);
-		join(present, bits, 2, 3, WallMap.EAST, WallMap.WEST, cx - 1 + off, cz + off, f);
-		join(present, bits, 0, 2, WallMap.NORTH, WallMap.SOUTH, cx - 1 + off, cz - 1 + off, f);
-		join(present, bits, 1, 3, WallMap.NORTH, WallMap.SOUTH, cx + off, cz - 1 + off, f);
-		int unit = (level * CORNERS + cz) * CORNERS + cx;
+		else
+		{
+			join(present, bits, 0, 1, WallMap.EAST, WallMap.WEST, cx - 1 + off, cz - 1 + off, f);
+			join(present, bits, 2, 3, WallMap.EAST, WallMap.WEST, cx - 1 + off, cz + off, f);
+			join(present, bits, 0, 2, WallMap.NORTH, WallMap.SOUTH, cx - 1 + off, cz - 1 + off, f);
+			join(present, bits, 1, 3, WallMap.NORTH, WallMap.SOUTH, cx + off, cz - 1 + off, f);
+		}
+
+		int unit = (level * corners + cz) * corners + cx;
 		int rot = GiProbes.rotation(unit);
 		float[] dirs = DIRECTIONS[rot], weights = WEIGHTS[rot];
 		int rays = 0;
-		for (int root = 0; root < 4; ++root)
+		for (int root = 0; root < 8; ++root)
 		{
-			if ((present >> root & 1) == 0 || find(root) != root)
-			{
-				continue;
-			}
+			if (group[root] < 0 || find(root) != root) continue;
 			int m = 0;
-			for (int q = 0; q < 4; ++q)
+			for (int node = 0; node < 8; ++node)
+				if (group[node] >= 0 && find(node) == root) members[m++] = node;
+			// A shared corner touching an interior keeps every ray's original placement.
+			boolean followTerrain = level < HEIGHTS.length && terrain != null;
+			for (int k = 0; followTerrain && k < m; ++k)
 			{
-				if ((present >> q & 1) != 0 && find(q) == root)
-				{
-					members[m++] = q;
-				}
+				int q = members[k] / 2, tx = cx + QX[q], tz = cz + QZ[q];
+				int mask = (int) GlobalIllumination.fromHalf(texels.get(texel(2 * tx + 6 * size, 2 * tz, 0)));
+				if ((mask & 1) != 0) followTerrain = false;
 			}
-			java.util.Arrays.fill(acc, 0);
-			for (int r = 0; r < RAYS; ++r)
-			{
-				int q = members[r % m];
-				int hit = grid.trace(start[q * 3], start[q * 3 + 1], start[q * 3 + 2], dirs[r * 3], dirs[r * 3 + 1],
-					dirs[r * 3 + 2], MAX_DISTANCE, true, (unit * RAYS + r) & 0x7fffffff);
-				if (hit < 0)
-				{
-					for (int k = 0; k < LOBES; ++k)
-					{
-						acc[k] += weights[r * LOBES + k];
-					}
-				}
-			}
-			rays += RAYS;
-			for (int k = 0; k < LOBES; ++k)
-			{
-				value[k] = GlobalIllumination.toHalf(acc[k]);
-			}
+			if (followTerrain)
+				for (int k = 0; k < m; ++k)
+					startPoint(members[k], cx, cz, bits[members[k] / 2], y, height, true);
+			// Keep the position represented by this shared visibility sample, including relocation
+			// away from solid geometry. The shader must not treat a point below a roof as above it.
+			float px = 0, py = 0, pz = 0;
 			for (int k = 0; k < m; ++k)
 			{
-				int q = members[k];
+				int node = members[k];
+				px += start[node * 3];
+				py += start[node * 3 + 1];
+				pz += start[node * 3 + 2];
+			}
+			short sampleX = GlobalIllumination.toHalf(px * GiGrid.VOXEL / m - cx * spacing);
+			short sampleY = GlobalIllumination.toHalf((py / m + grid.layer0) * GiGrid.VOXEL);
+			short sampleZ = GlobalIllumination.toHalf(pz * GiGrid.VOXEL / m - cz * spacing);
+			boolean keep = nearGeometry(cx*spacing+GlobalIllumination.fromHalf(sampleX),
+				GlobalIllumination.fromHalf(sampleY),cz*spacing+GlobalIllumination.fromHalf(sampleZ),64);
+			java.util.Arrays.fill(acc, 0);
+			for (int r = 0; keep && r < RAYS; ++r)
+			{
+				int node = members[r % m];
+				int hit = grid.trace(start[node * 3], start[node * 3 + 1], start[node * 3 + 2], dirs[r * 3],
+					dirs[r * 3 + 1], dirs[r * 3 + 2], MAX_DISTANCE, true, (unit * RAYS + r) & 0x7fffffff);
+				if (hit < 0)
+					for (int k = 0; k < LOBES; ++k) acc[k] += weights[r * LOBES + k];
+			}
+			if (keep) rays += RAYS;
+			for (int k = 0; k < LOBES; ++k) value[k] = GlobalIllumination.toHalf(acc[k]);
+			if (!keep) value[0] = GlobalIllumination.toHalf(-1);
+			for (int k = 0; k < m; ++k)
+			{
+				int node = members[k], q = node / 2, half = node % 2;
 				int tx = cx + QX[q], tz = cz + QZ[q];
-				int x = 2 * tx + (QX[q] < 0 ? 1 : 0), yy = 2 * tz + (QZ[q] < 0 ? 1 : 0);
-				int a = texel(x, yy, 1 + level), b = texel(x + 2 * SIZE, yy, 1 + level);
-				// traced again over the same voxels the value is the same: nothing to upload
+				int x = half * 4 * size + 2 * tx + (QX[q] < 0 ? 1 : 0), yy = 2 * tz + (QZ[q] < 0 ? 1 : 0);
+				int a = texel(x, yy, 1 + level), b = texel(x + 2 * size, yy, 1 + level);
 				if (texels.get(a) == value[0] && texels.get(a + 1) == value[1] && texels.get(a + 2) == value[2]
-					&& texels.get(a + 3) == value[3] && texels.get(b) == value[4])
-				{
-					continue;
-				}
-				for (int c = 0; c < 4; ++c)
-				{
-					texels.put(a + c, value[c]);
-				}
+					&& texels.get(a + 3) == value[3] && texels.get(b) == value[4]
+					&& texels.get(b + 1) == sampleX && texels.get(b + 2) == sampleY && texels.get(b + 3) == sampleZ) continue;
+				for (int c = 0; c < 4; ++c) texels.put(a + c, value[c]);
 				texels.put(b, value[4]);
+				texels.put(b + 1, sampleX);
+				texels.put(b + 2, sampleY);
+				texels.put(b + 3, sampleZ);
 				change(tx, tz, tx, tz, 1 + level, 1 + level);
 			}
 		}
 		return rays;
 	}
 
-	// union of two quadrants when both are there and nothing walls them apart: the edge between their tiles (the
-	// first's toward side a) has no wall, and each touches it rather than being cut off by a diagonal
 	private void join(int present, int[] bits, int p, int q, int a, int b, int x, int z, int f)
 	{
-		if ((present >> p & 1) == 0 || (present >> q & 1) == 0 || !touches(bits[p], p, a) || !touches(bits[q], q, b)
-			|| walls != null && walls.edge(f, x, z, a))
-		{
-			return;
-		}
-		group[find(p)] = find(q);
+		if ((present >> p & 1) == 0 || (present >> q & 1) == 0 || ((wallBits(f,x,z)&a)!=0 || (wallBits(f,x+(a==WallMap.EAST?1:0),z+(a==WallMap.NORTH?1:0))&b)!=0)) return;
+		group[find(2 * p + WallMap.half(bits[p], a))] = find(2 * q + WallMap.half(bits[q], b));
 	}
 
 	private int find(int q)
 	{
-		while (group[q] != q)
-		{
-			q = group[q];
-		}
+		while (group[q] != q) q = group[q];
 		return q;
 	}
 
-	/**
-	 * The point quadrant q traces from, into start[q * 3..] in voxel space: halfway from the corner to the middle of
-	 * its tile, or of its half of the tile, at world y; moved up or down, then to the tile's other voxels, when that
-	 * voxel is solid (a wall standing on the edge fills it). With nowhere free it stays, its own voxel skipped.
-	 */
-	private void startPoint(int q, int cx, int cz, int bits, float y, float height)
+	/** Start inside the triangle that owns this corner; never relocate through its diagonal wall. */
+	private void startPoint(int node, int cx, int cz, int bits, float y, float height, boolean followTerrain)
 	{
+		int q = node / 2;
 		float mx = 0.5f, mz = 0.5f;
 		if (WallMap.split(bits))
 		{
-			// the middle of the half: the centroid of its triangle
-			boolean slash = (bits & WallMap.DIAG_SW_NE) != 0;
-			boolean north = half(bits, q) == 0;
+			boolean slash = (bits & WallMap.DIAG_SW_NE) != 0, north = node % 2 == 0;
 			mx = slash == north ? 1 / 3f : 2 / 3f;
 			mz = north ? 2 / 3f : 1 / 3f;
 		}
 		int tx = cx + QX[q], tz = cz + QZ[q];
-		// the corner within its tile
 		float kx = QX[q] < 0 ? 1 : 0, kz = QZ[q] < 0 ? 1 : 0;
-		float px = (tx + (kx + mx) / 2) * TILE, pz = (tz + (kz + mz) / 2) * TILE;
-		float sx = kx > 0 ? -GiGrid.VOXEL : GiGrid.VOXEL, sz = kz > 0 ? -GiGrid.VOXEL : GiGrid.VOXEL;
+		float px = (tx + (kx + mx) / 2) * spacing, pz = (tz + (kz + mz) / 2) * spacing;
+		float sx = kx > 0 ? -spacing/2 : spacing/2, sz = kz > 0 ? -spacing/2 : spacing/2;
 		int moves = WallMap.split(bits) ? 1 : 4;
 		for (int k = 0; k < moves; ++k)
 		{
 			float x = px + (k == 1 || k == 3 ? sx : 0), z = pz + (k >= 2 ? sz : 0);
+			float candidateY = followTerrain ? terrain.height(x, z, y + height) - height : y;
 			for (float dy : NUDGE)
 			{
-				if (height - dy < MIN_HEIGHT || k > 0 && Math.abs(dy) > 24 || solid(x, y + dy, z))
-				{
-					continue;
-				}
-				setStart(q, x, y + dy, z);
+				if (height - dy < MIN_HEIGHT || k > 0 && Math.abs(dy) > 24 || solid(x, candidateY + dy, z)) continue;
+				setStart(node, x, candidateY + dy, z);
 				return;
 			}
 		}
-		setStart(q, px, y, pz);
+		setStart(node, px, followTerrain ? terrain.height(px, pz, y + height) - height : y, pz);
+	}
+
+	// Highest occupied voxel in the four columns adjacent to this corner. This includes foliage;
+	// the extra sample belongs above the canopy, not inside its occupied volume.
+	private float surfaceY(int cx, int cz)
+	{
+		int vx = cx * (int) spacing / GiGrid.VOXEL, vz = cz * (int) spacing / GiGrid.VOXEL;
+		for (int y = 0; y < grid.ny; ++y)
+			for (int z = Math.max(0, vz - 1); z < Math.min(grid.nz, vz + 1); ++z)
+				for (int x = Math.max(0, vx - 1); x < Math.min(grid.nx, vx + 1); ++x)
+					if (grid.cells[grid.index(x, y, z)] != 0)
+						return (y + grid.layer0) * GiGrid.VOXEL - 8;
+		return ground(0, cx, cz) - HEIGHTS[0];
 	}
 
 	private void setStart(int q, float x, float y, float z)

@@ -1,33 +1,30 @@
-// Global illumination: irradiance probes over the base scene, one color each (GiProbes.java), in columns every two
-// tiles with two probes per floor, relit on the CPU from a hit cache whenever the sky or the sun changes
+// Global illumination: tile-centered irradiance probes (GiProbes.java), up to two heights per floor
+// within one tile of scenery, relit on the CPU from a hit cache whenever the sky or sun changes
 // (GlobalIllumination.java). Looked up at half resolution in the AO pass; the composite blends the result with its
 // plain ambient light. Needs frame.glsl.
 
-uniform sampler2D giProbes;  // RGBA16F: probe (column x, level, column z) at (x, level * 52 + z); rgb its light, a 1 if usable
+uniform sampler2D giProbes;  // RGBA16F: probe (column x, level, column z) at (x, level * columns + z); rgb its light, a 1 if usable
 uniform sampler2D giMeta;    // RGBA32F per tile: the grounds of the three floors (world y, down), the roof line
 uniform int giEnabled;
 uniform vec3 giCamera;       // camera position relative to the probe grid's corner, world y
 
 #define GI_SIZE 104
-#define GI_PITCH 2
-#define GI_COLUMNS 52
+#define GI_PITCH (GI_SIZE / textureSize(giProbes, 0).x)
+#define GI_COLUMNS textureSize(giProbes, 0).x
 #define GI_LEVELS 6
 #define GI_TILE 128.0
 // a floor's two probes stand this high above its ground (GiProbes.LOW, HIGH)
 #define GI_LOW 60.0
 #define GI_HIGH 180.0
-// the lookup moves off the surface along its normal and toward the camera, so a pixel takes its light from the
+// the lookup moves one unit off the surface along its normal, so a pixel takes its light from the
 // space in front of it rather than from inside the wall or floor it lies on
-#define GI_NORMAL_BIAS 40.0
-#define GI_VIEW_BIAS 20.0
+#define GI_NORMAL_BIAS 1.0
 // tiles over which the light fades back to the plain ambient toward the grid's edges
 #define GI_EDGE_FADE 3.0
 // probes count fully once this far (cosine) in front of the surface, none as far behind it
 #define GI_FACING_SOFT 0.2
 // the share of the surrounding probes' weight that counts as full coverage
 #define GI_COVER 2.0
-// share of the probes' light a surface facing straight up takes
-#define GI_UP_BOUNCE 0.1
 
 // Indirect light on a surface at camera-relative p facing n: rgb the probes' light, a how much of it to use (0 outside
 // the grid or with no usable probe). The light has no direction: the point blends linearly between the four nearest
@@ -35,14 +32,14 @@ uniform vec3 giCamera;       // camera position relative to the probe grid's cor
 // the roof) don't count, and where few count the light fades to the plain skylight.
 vec4 giIrradiance(vec3 p, vec3 n) {
   vec3 world = p + giCamera;
-  vec3 q = world + n * GI_NORMAL_BIAS - normalize(p) * GI_VIEW_BIAS;
+  vec3 q = world + n * GI_NORMAL_BIAS;
   vec2 t = q.xz / GI_TILE;
   vec2 edge = min(t, vec2(float(GI_SIZE)) - t);
   float fade = clamp(min(edge.x, edge.y) / GI_EDGE_FADE, 0.0, 1.0);
   if (fade <= 0.0) {
     return vec4(0.0);
   }
-  // columns stand at the centers of every second tile
+  // columns stand at tile centers; derive spacing from the uploaded texture during live reloads
   vec2 c = (t - 0.5) / float(GI_PITCH);
   ivec2 b = ivec2(floor(c));
   vec2 f = c - vec2(b);
@@ -78,11 +75,12 @@ vec4 giIrradiance(vec3 p, vec3 n) {
       float facing = smoothstep(-GI_FACING_SOFT, GI_FACING_SOFT,
         dot(toProbe, n) * inversesqrt(max(dot(toProbe, toProbe), 1.0)));
       if (pr.a <= 0.0) {
-        // no probe here (a floor the column doesn't have, one stuck in a wall): the others carry the light, so the
-        // top probe outdoors lights the wall above it rather than fading into the floor above that isn't there
+        // No sample at this level; distance weighting below limits the remaining samples' reach.
         continue;
       }
-      w *= facing;
+      // Fade beyond the highest/lowest supported height instead of extending that color indefinitely.
+      float heightWeight = 1.0 - smoothstep(GI_HIGH - GI_LOW, GI_TILE * 2.0, abs(toProbe.y));
+      w *= facing * heightWeight;
       sum += pr.rgb * w;
       wsum += w;
       total += wxz * (k == 0 ? 1.0 - tv : tv);
@@ -92,9 +90,6 @@ vec4 giIrradiance(vec3 p, vec3 n) {
     return vec4(0.0);
   }
   // where only some of the surrounding probes light this side, the rest of the way is the plain skylight
-  // A probe's light is mostly what the ground around it throws up; a surface facing up doesn't get its own ground's
-  // light back, only the walls' and what else stands above it, so it takes less of it.
-  float up = max(-n.y, 0.0);
-  return vec4(sum / wsum * mix(1.0, GI_UP_BOUNCE, up),
+  return vec4(sum / wsum,
     fade * clamp(wsum / max(total, 1e-5) * GI_COVER, 0.0, 1.0));
 }

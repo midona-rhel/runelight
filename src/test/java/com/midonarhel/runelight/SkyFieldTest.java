@@ -165,7 +165,7 @@ public class SkyFieldTest
 	}
 
 	@Test
-	public void packedTexelsEaseOverOpenEdgesOnly()
+	public void packedCornersShareOpenEdgesOnly()
 	{
 		int[][][] f = noFlags();
 		for (int x = 10; x <= 17; ++x)
@@ -176,21 +176,21 @@ public class SkyFieldTest
 		WallMap w = WallMap.build(f, null, SIZE, 0, 1);
 		boolean[] c = cover(10, 10, 17, 12);
 		float[] l = SkyField.propagate(w, c, 0, FALL);
-		byte[] t = SkyField.pack(w, 0, l, c);
+		float[] t = SkyField.pack(w, 0, l, c);
 		int width = SIZE * SkyField.TEXELS_PER_TILE;
-		// the two texels of tile (10, 11) in its row: the west one leans to the open sky, the east one to tile 11
-		int west = (10 * 2 + (11 * 2) * width) * 2, east = west + 2;
-		assertTrue((t[west] & 0xFF) > (t[east] & 0xFF));
-		// the cover eases toward the open tile beside it
-		assertEquals(191, t[west + 1] & 0xFF, 1);
+		// Shared west/east corners of tile (10, 11).
+		int west = (10 * 2 + (11 * 2) * width) * 4, east = west + 4;
+		assertTrue(t[west] > t[east]);
+		// The boundary averages cover with the open tile beside it.
+		assertEquals(0.5f, t[west + 1], 1e-6f);
 		// out in the open: light everywhere, and no cover
-		int open = (30 * 2 + 30 * 2 * width) * 2;
-		assertEquals(255, t[open] & 0xFF);
-		assertEquals(0, t[open + 1] & 0xFF);
+		int open = (30 * 2 + 30 * 2 * width) * 4;
+		assertEquals(1f, t[open], 1e-6f);
+		assertEquals(0f, t[open + 1], 1e-6f);
 		// the wall along the tunnel keeps the open sky's light from easing across it: the north texel of tile
 		// (12, 12), against the wall, only takes the tunnel's own light
-		int inside = (12 * 2 + (12 * 2 + 1) * width) * 2;
-		assertEquals(at(l, 12, 12), (t[inside] & 0xFF) / 255f, 0.1f);
+		int inside = (12 * 2 + (12 * 2 + 1) * width) * 4;
+		assertEquals(at(l, 12, 12), t[inside], 0.1f);
 	}
 
 	@Test

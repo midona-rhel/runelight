@@ -2419,7 +2419,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		// the fog finds the rooms in the light buffer too, so it is filled for the fog even without point lights
 		boolean fogRooms = frameFog && config.noFogIndoors() && rooms != null;
 		volumetricFog.openRooms = null;
-		if (points || fogRooms)
+		if (points || fogRooms || rooms != null)
 		{
 			if (!lightClusters.isInitialized())
 			{
@@ -2695,7 +2695,8 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		cpuTimer.begin(CpuTimer.SKY_GRID);
 		BuildingLights buildings = buildingLights;
 		skyGrid.update(frameSkylightWanted, globalIllumination.getVoxels(), buildings != null ? buildings.getWalls() : null,
-			frameSkylightTileX, frameSkylightTileZ);
+			frameSkylightTileX, frameSkylightTileZ, buildings != null ? buildings.getFloors() : null,
+			buildings != null ? buildings.getRooms() : null);
 		cpuTimer.end(CpuTimer.SKY_GRID);
 		gpuTimer.end();
 

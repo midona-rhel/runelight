@@ -8,7 +8,7 @@ import java.util.Collection;
  * crosses it. Walls are the edges the collision map says block line of sight (closed doors and windows included,
  * fences and railings not; an open door is no wall), plus the diagonal walls, which the collision map only shows
  * as a fully blocked tile, from their objects. Rooms split along these walls (BuildingDetector.split) and the
- * static lights' visibility is cast against them (LightOcclusion).
+ * point-light blocking reads the same edges in point_light_blocking.glsl.
  *
  * GL-free and immutable once built, so the light occlusion worker can read it. Arrays are [plane][x][y] in
  * extended scene tiles, like RoomMap; x is east, y north.
@@ -107,6 +107,11 @@ final class WallMap
 				for (int ly = 0; ly < f[lx].length; ++ly)
 				{
 					int v = f[lx][ly];
+					// The client's collision-map border is initialized to 0xFFFFFF, not actual wall flags.
+					if ((v & 0xFFFFFF) == 0xFFFFFF)
+					{
+						continue;
+					}
 					int b = ((v & LOS_NORTH) != 0 ? NORTH : 0) | ((v & LOS_EAST) != 0 ? EAST : 0)
 						| ((v & LOS_SOUTH) != 0 ? SOUTH : 0) | ((v & LOS_WEST) != 0 ? WEST : 0);
 					int x = lx + offset, y = ly + offset;

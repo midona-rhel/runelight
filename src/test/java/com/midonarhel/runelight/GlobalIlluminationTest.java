@@ -370,16 +370,16 @@ public class GlobalIlluminationTest
 	public void layoutAndClassification()
 	{
 		GiProbes p = probes();
-		// columns stand at every second tile: column 6 is tile 12, column 15 tile 30
-		int house = GiProbes.probe(6, 6, 0);
-		int outside = GiProbes.probe(15, 15, 0);
+		// Use the original world tiles regardless of probe spacing.
+		int house = GiProbes.probe(12 / GiProbes.PITCH, 12 / GiProbes.PITCH, 0);
+		int outside = GiProbes.probe(30 / GiProbes.PITCH, 30 / GiProbes.PITCH, 0);
 		assertTrue(p.valid[house]);
 		assertTrue(p.valid[outside]);
 		assertTrue(p.indoor[house]);
 		assertFalse(p.indoor[outside]);
 		// the floor's high probe is above its low one, and the second floor's above the roof
-		assertTrue(p.indoor[GiProbes.probe(6, 6, 1)]);
-		assertFalse(p.indoor[GiProbes.probe(6, 6, 3)]);
+		assertTrue(p.indoor[GiProbes.probe(12 / GiProbes.PITCH, 12 / GiProbes.PITCH, 1)]);
+		assertFalse(p.indoor[GiProbes.probe(12 / GiProbes.PITCH, 12 / GiProbes.PITCH, 3)]);
 		int tile = 12 * GiProbes.SIZE + 12;
 		float roof = (float) Math.floor(p.meta[tile * 4 + 3]);
 		// the roof line: the bottom of the voxel holding the roof at -384
@@ -390,10 +390,10 @@ public class GlobalIlluminationTest
 		assertEquals(0, p.meta[open * 4], 0);
 		assertEquals(-GiProbes.FLOOR_GAP, p.meta[open * 4 + 1], 0);
 		assertEquals(-2 * GiProbes.FLOOR_GAP, p.meta[open * 4 + 2], 0);
-		// an open column has probes in the air, floors with no floor have none
-		assertTrue(p.valid[GiProbes.probe(15, 15, 1)]);
-		assertFalse(p.valid[GiProbes.probe(15, 15, 2)]);
-		assertFalse(p.valid[GiProbes.probe(15, 15, 5)]);
+		// Open-air high probes beyond the one-tile scenery cutoff are removed.
+		assertFalse(p.valid[GiProbes.probe(30 / GiProbes.PITCH, 30 / GiProbes.PITCH, 1)]);
+		assertFalse(p.valid[GiProbes.probe(30 / GiProbes.PITCH, 30 / GiProbes.PITCH, 2)]);
+		assertFalse(p.valid[GiProbes.probe(30 / GiProbes.PITCH, 30 / GiProbes.PITCH, 5)]);
 	}
 
 	@Test
@@ -401,11 +401,11 @@ public class GlobalIlluminationTest
 	{
 		GiProbes p = probes();
 		// the low probe starts inside the pillar, whose top is at -120: it moves up out of it
-		int pillar = GiProbes.probe(2, 2, 0);
+		int pillar = GiProbes.probe(4 / GiProbes.PITCH, 4 / GiProbes.PITCH, 0);
 		assertTrue(p.valid[pillar]);
 		assertTrue(p.position[pillar * 3 + 1] < -GiProbes.LOW);
 		// inside the closed block every spot sees only the block's back faces
-		assertFalse(p.valid[GiProbes.probe(10, 10, 0)]);
+		assertFalse(p.valid[GiProbes.probe(20 / GiProbes.PITCH, 20 / GiProbes.PITCH, 0)]);
 	}
 
 	private static float[] table(float sky, float caster)
@@ -476,8 +476,8 @@ public class GlobalIlluminationTest
 		GiRelight.Light skyOnly = GiRelight.Light.fromTable(table(0.3f, 2.6f), sunDir(), false);
 		GiRelight.Result r = GiRelight.relight(p, skyOnly, null, 1, GiProbes.ParallelFor.SEQUENTIAL);
 		// with no sun nothing is lit to bounce: the shown bounce is dark, and the whole light darker indoors than out
-		int open = GiProbes.probe(15, 15, 1);
-		int house = GiProbes.probe(6, 6, 0);
+		int open = GiProbes.probe(30 / GiProbes.PITCH, 30 / GiProbes.PITCH, 0);
+		int house = GiProbes.probe(12 / GiProbes.PITCH, 12 / GiProbes.PITCH, 0);
 		assertTrue(p.valid[house]);
 		assertEquals(0, lum(r.shown, open), 1e-6);
 		assertTrue("inside " + lum(r.light, house) + " open " + lum(r.light, open), lum(r.light, house) < lum(r.light, open) * 0.5f);
@@ -486,7 +486,7 @@ public class GlobalIlluminationTest
 		GiRelight.Light withSun = GiRelight.Light.fromTable(table(0.3f, 2.6f), sunDir(), true);
 		GiRelight.Result bounced = GiRelight.relight(p, withSun, null, 3, GiProbes.ParallelFor.SEQUENTIAL);
 		GiRelight.Result once = GiRelight.relight(p, withSun, null, 1, GiProbes.ParallelFor.SEQUENTIAL);
-		int ground = GiProbes.probe(15, 15, 0);
+		int ground = GiProbes.probe(30 / GiProbes.PITCH, 30 / GiProbes.PITCH, 0);
 		assertTrue(lum(bounced.light, ground) > lum(r.light, ground) * 1.1f);
 		assertTrue(lum(bounced.light, house) > lum(r.light, house));
 		assertTrue(sum(bounced.light) > sum(once.light));
@@ -538,8 +538,8 @@ public class GlobalIlluminationTest
 		GiRelight.Light light = GiRelight.Light.fromTable(table(0.3f, 2.6f), new float[]{0, -1, 0}, false);
 		// the whole light (the shown bounce has no sky): the probe by the door sees more sky than the one at the back wall
 		float[] shown = GiRelight.relight(p, light, null, 1, GiProbes.ParallelFor.SEQUENTIAL).light;
-		int byDoor = GiProbes.probe(6, 5, 0);
-		int back = GiProbes.probe(6, 6, 0);
+		int byDoor = GiProbes.probe(12 / GiProbes.PITCH, 10 / GiProbes.PITCH, 0);
+		int back = GiProbes.probe(12 / GiProbes.PITCH, 12 / GiProbes.PITCH, 0);
 		assertTrue(p.valid[byDoor] && p.valid[back]);
 		assertTrue(lum(shown, byDoor) > lum(shown, back));
 		assertTrue(lum(shown, byDoor) > 0);

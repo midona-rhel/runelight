@@ -367,8 +367,14 @@ void main() {
     vec3 caster = sunIsCaster == 1 ? sunLight(sunAltitude) : moonLight(sunAltitude);
     float up = max(-n.y, 0.0);
     vec3 plain = ambientLight(sunAltitude) + skyFill(n, sunAltitude, up);
-    indirect = (skylightAmbient(plain, gi.rgb, gi.a * giWeight) * envAmbient
-      + doorwayDaylight(p + cameraPos, n, caster * envSun)) * ao;
+    indirect = skylightAmbient(plain, gi.rgb, gi.a * giWeight) * envAmbient * ao;
+    // Retain the later skylight daylight fill and the tuned indoor ambient floor.
+    float daylightFill = skylightOn == 1 ? 0.7 * clamp(skyUpsampled, 0.0, 1.0) : 0.0;
+    indirect += caster * envSun * max(ndl, 0.0) * (1.0 - shadow) * daylightFill * ao;
+    float roomFill = roomAmbientFill(p + cameraPos, n);
+    vec3 roomDaylight = ambientLight(sunAltitude) + skyFill(vec3(0.0, -1.0, 0.0), sunAltitude, 1.0)
+      + caster * envSun * (0.7 * max(-casterDir.y, 0.0));
+    indirect = max(indirect, roomDaylight * envAmbient * roomFill * 0.3 * ao);
     light = indirect
       + caster * envSun * max(ndl, 0.0) * shadow * mix(1.0, ao, AO_DIRECT);
     if (transmissive > 0.0) {

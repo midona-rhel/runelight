@@ -1,6 +1,6 @@
 package com.midonarhel.runelight;
 
-import java.nio.ByteBuffer;
+import java.nio.FloatBuffer;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import org.lwjgl.BufferUtils;
@@ -20,7 +20,7 @@ final class SkyFieldMap
 		final byte[] floors;
 		final int plane;
 		final float falloff;
-		byte[] texels;
+		float[] texels;
 
 		Job(WallMap walls, RoomMap rooms, byte[] floors, int plane, float falloff)
 		{
@@ -88,7 +88,7 @@ final class SkyFieldMap
 	private void upload(Job job)
 	{
 		int w = job.walls.size * SkyField.TEXELS_PER_TILE;
-		ByteBuffer buf = BufferUtils.createByteBuffer(job.texels.length);
+		FloatBuffer buf = BufferUtils.createFloatBuffer(job.texels.length);
 		buf.put(job.texels).flip();
 		if (texture == 0)
 		{
@@ -96,7 +96,7 @@ final class SkyFieldMap
 		}
 		glBindTexture(GL_TEXTURE_2D, texture);
 		glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
-		glTexImage2D(GL_TEXTURE_2D, 0, GL_RG8, w, w, 0, GL_RG, GL_UNSIGNED_BYTE, buf);
+		glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA16F, w, w, 0, GL_RGBA, GL_FLOAT, buf);
 		glPixelStorei(GL_UNPACK_ALIGNMENT, 4);
 		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
 		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
