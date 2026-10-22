@@ -9,6 +9,7 @@ from PIL import Image
 
 p = argparse.ArgumentParser()
 p.add_argument('capture', type=Path)
+p.add_argument('--reference', type=Path, help='Check that every in-radius pair also exists in this replay/capture')
 p.add_argument('--stride', type=int, default=1, help='1 = every pixel; larger values are estimates')
 a = p.parse_args()
 if a.stride < 1: p.error('stride must be positive')
@@ -41,6 +42,19 @@ ci = (cz*ny+cy)*nx+cx
 counts = clusters[ci,0].astype(int)
 counts[~geometry] = 0
 if m.get('config', {}).get('pointLights') == 'false': counts[:] = 0
+reference_table = None
+missing_pairs = 0
+if a.reference:
+    rm=json.loads((a.reference/'scene.json').read_text())
+    assert rm['frameViewProj']==m['frameViewProj'] and rm['width']==w and rm['height']==h
+    assert (a.reference/'lights.f32').read_bytes()==(d/'lights.f32').read_bytes()
+    reference_table=np.fromfile(a.reference/'clusters.u16',dtype='<u2').reshape(-1,rm['MAX_LIGHTS_PER_CLUSTER']+1)
+    rx,ry,rz=(rm[k] for k in ('CLUSTERS_X','CLUSTERS_Y','CLUSTERS_Z'))
+    rcx=np.clip(((xs+.5-vx)/vw*rx).astype(int),0,rx-1)
+    rcy=np.clip(((ys+.5-vy)/vh*ry).astype(int),0,ry-1)
+    rcz=np.zeros_like(cx)
+    rcz[geometry]=np.clip(np.floor(np.log(np.maximum(view_z[geometry],rm['NEAR'])/rm['NEAR'])/np.log(rm['FAR']/rm['NEAR'])*rz),0,rz-1).astype(int)
+    reference_ci=(rcz*ry+rcy)*rx+rcx
 inv = np.asarray(m['frameInvViewProj']).reshape(4,4).T
 # Chunk processing avoids a pixel x light x xyz allocation.
 flat = np.flatnonzero(geometry)
@@ -67,6 +81,10 @@ for offset in range(0,len(flat),65536):
         li = table[take,k+1].astype(int)
         delta = lights[li,:3]-pos[take]
         hit = np.einsum('ij,ij->i',delta,delta)<lights[li,3]**2
+        if reference_table is not None and hit.any():
+            candidate=reference_table[reference_ci.ravel()[ids[take[hit]]]]
+            included=((candidate[:,1:]==li[hit,None]) & (np.arange(candidate.shape[1]-1)[None,:]<candidate[:,0,None])).any(axis=1)
+            missing_pairs+=int((~included).sum())
         facing = hit & ((np.einsum('ij,ij->i',delta,n[take])>0)|(transmission[take]>0))
         per_light[:,0] += np.bincount(li,minlength=len(lights))
         per_light[:,1] += np.bincount(li[hit],minlength=len(lights))
@@ -115,6 +133,7 @@ report=dict(dimensions=[w,h],stride=s,geometry_pixels=int(geometry.sum())*scale,
     timing_frames_matching_dump=len(matching),sampled_frames=len(frames),gpu_samples=len(gpu))
 assert 0 <= facing <= radius <= loops
 assert int(counts.sum()) * scale == loops
+report['reference_missing_in_radius_pairs'] = missing_pairs if a.reference else None
 report['logical_light_fetches_before_room_checks'] = 2*loops + 2*facing
 report['cpu_stage_timings'] = {k[4:]: stats([float(r[k]) for r in frames.values()]) for k in rows[0] if k.startswith('cpu:')}
 (d/'analysis.json').write_text(json.dumps(report,indent=2))
@@ -132,7 +151,9 @@ def heat(name, values):
 heat('cluster-work',counts)
 heat('useful-light-work',facing_heat)
 heat('rejected-light-work',counts-radius_heat.reshape(depth.shape))
-lines=['# Scene workload report','',f'Render target: {w} × {h}; analyzed every {s} pixel(s).',
+lines=['# Scene workload report','',
+    '**OFFLINE CULLING REPLAY: timings below are inherited from the source capture, not measurements of the new renderer. Fog lists are not replayed.**' if m.get('replay') else '',
+    f'Reference check: {missing_pairs:,} missing in-radius pixel/light pairs.' if a.reference else '',f'Render target: {w} × {h}; analyzed every {s} pixel(s).',
     f'Visible geometry: {report["geometry_pixels"]:,} pixels.',
     f'Raw sampled frame time: median {frame_stats.get("p50",0):.3f} ms, p95 {frame_stats.get("p95",0):.3f} ms.',
     f'Surface light loop: {loops:,} pixel/light pairs; {radius:,} inside radius; {facing:,} front-facing or transmissive.',

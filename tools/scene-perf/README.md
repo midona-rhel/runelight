@@ -22,3 +22,15 @@ Outputs:
 The analyzer reconstructs positions using the shader's inverse projection, accounts for coverage when decoding normals, and reproduces the current cluster/radius/back-face checks. Default `--stride 1` examines every pixel; larger strides estimate counts. Room rejection and visibility lookups are not simulated. Fog candidate iterations are an upper bound before ray/cylinder/depth early exits. Inspect the report's limitations before converting work counts into cost claims: neither instruction counts nor physical bandwidth can be inferred from texture-fetch counts alone.
 
 Compare captures only at matching settings/viewpoints. A/B feature toggles are separate experiments; a snapshot cannot assign a causal millisecond cost to each expression inside a shader. The tool never adds CPU and GPU elapsed times together.
+
+## Replay cluster culling
+
+Rebuild surface light lists from a captured scene using the current production Java culler:
+
+```sh
+./gradlew --offline sceneClusterReplay -PsceneCapture=/tmp/runelight-scene -PreplayOutput=/tmp/runelight-replay
+python3 tools/scene-perf/analyze.py /tmp/runelight-replay
+python3 tools/scene-perf/analyze.py /tmp/runelight-scene --reference /tmp/runelight-replay
+```
+
+The reference check counts source pixel/light pairs inside the light radius that disappear from the replacement lists. Zero missing pairs verifies conservative culling for the captured visible surfaces, not all possible scenes. The replay benchmarks CPU culling with a stable matrix and with bounds recomputation forced; it excludes uploads and live room/fog state. Its copied GPU timings belong to the original capture and must not be presented as optimized frame times. Restart the client and capture again to measure the GPU impact.

@@ -18,8 +18,8 @@ import static org.lwjgl.opengl.GL33C.*;
  */
 class LightClusters
 {
-	static final int CLUSTERS_X = 16;
-	static final int CLUSTERS_Y = 9;
+	static final int CLUSTERS_X = 32;
+	static final int CLUSTERS_Y = 18;
 	static final int CLUSTERS_Z = 24;
 	static final int MAX_LIGHTS_PER_CLUSTER = 31;
 	static final int MAX_LIGHTS = 1024;
@@ -84,6 +84,7 @@ class LightClusters
 	private final float[] bounds = new float[CLUSTER_COUNT * 6];
 	// view rays through the cluster grid corners, scaled to view depth 1
 	private final float[] rays = new float[(CLUSTERS_X + 1) * (CLUSTERS_Y + 1) * 3];
+	private final float[] columnPlanes = new float[COLUMN_COUNT * 16];
 	private final float[] sliceDepth = new float[CLUSTERS_Z + 1];
 
 	void init()
@@ -266,11 +267,12 @@ class LightClusters
 				}
 			}
 
-			for (int cz = z0; cz <= z1; ++cz)
+			for (int cy = y0; cy <= y1; ++cy)
 			{
-				for (int cy = y0; cy <= y1; ++cy)
+				for (int cx = x0; cx <= x1; ++cx)
 				{
-					for (int cx = x0; cx <= x1; ++cx)
+					if (!columnTouches(cx, cy, x, y, z, l.radius)) continue;
+					for (int cz = z0; cz <= z1; ++cz)
 					{
 						int cluster = (cz * CLUSTERS_Y + cy) * CLUSTERS_X + cx;
 						if (!sphereTouches(cluster, x, y, z, l.radius))
@@ -327,34 +329,6 @@ class LightClusters
 		{
 			return;
 		}
-		// Side planes shared by every light. Conservative sphere tests avoid the very
-		// loose projected boxes near the camera without rejecting any contributing ray.
-		float[] planes = new float[COLUMN_COUNT * 16];
-		for (int cy = 0; cy < CLUSTERS_Y; cy++)
-		{
-			for (int cx = 0; cx < CLUSTERS_X; cx++)
-			{
-				int origin = (cy * (CLUSTERS_X + 1) + cx) * 3;
-				int opposite = origin + (CLUSTERS_X + 2) * 3;
-				for (int edge = 0; edge < 4; edge++)
-				{
-					int next = (edge + 1) & 3;
-					int a = origin + ((edge == 1 || edge == 2 ? 1 : 0) + (edge >= 2 ? CLUSTERS_X + 1 : 0)) * 3;
-					int b = origin + ((next == 1 || next == 2 ? 1 : 0) + (next >= 2 ? CLUSTERS_X + 1 : 0)) * 3;
-					float nx = rays[a + 1] * rays[b + 2] - rays[a + 2] * rays[b + 1];
-					float ny = rays[a + 2] * rays[b] - rays[a] * rays[b + 2];
-					float nz = rays[a] * rays[b + 1] - rays[a + 1] * rays[b];
-					float facing = nx * (rays[origin] + rays[opposite]) + ny * (rays[origin + 1] + rays[opposite + 1])
-						+ nz * (rays[origin + 2] + rays[opposite + 2]);
-					int plane = ((cy * CLUSTERS_X + cx) * 4 + edge) * 4;
-					float sign = facing < 0 ? -1 : 1;
-					planes[plane] = nx * sign;
-					planes[plane + 1] = ny * sign;
-					planes[plane + 2] = nz * sign;
-					planes[plane + 3] = nx * nx + ny * ny + nz * nz;
-				}
-			}
-		}
 		java.util.Arrays.sort(fogOrder, 0, fogCandidates);
 		for (int k = fogCandidates - 1; k >= 0; --k)
 		{
@@ -364,16 +338,9 @@ class LightClusters
 			float lz = lightData.get(index * 8 + 2), radius = lightData.get(index * 8 + 3);
 			for (int cy = fogRect[c * 4 + 1]; cy <= fogRect[c * 4 + 3]; ++cy)
 			{
-				column:
 				for (int cx = fogRect[c * 4]; cx <= fogRect[c * 4 + 2]; ++cx)
 				{
-					for (int edge = 0; edge < 4; edge++)
-					{
-						int plane = ((cy * CLUSTERS_X + cx) * 4 + edge) * 4;
-						float distance = planes[plane] * lx + planes[plane + 1] * ly + planes[plane + 2] * lz;
-						if (distance < 0 && distance * distance > radius * radius * planes[plane + 3] * 1.0001f)
-							continue column;
-					}
+					if (!columnTouches(cx, cy, lx, ly, lz, radius)) continue;
 					int base = columns + (cy * CLUSTERS_X + cx) * CLUSTER_STRIDE;
 					int count = clusters[base];
 					if (count < MAX_LIGHTS_PER_CLUSTER)
@@ -507,6 +474,33 @@ class LightClusters
 				rays[i + 2] = pz * s;
 			}
 		}
+		// Side planes shared by every light. Conservative sphere tests avoid the very
+		// loose projected boxes near the camera without rejecting any contributing ray.
+		for (int cy = 0; cy < CLUSTERS_Y; cy++)
+		{
+			for (int cx = 0; cx < CLUSTERS_X; cx++)
+			{
+				int origin = (cy * (CLUSTERS_X + 1) + cx) * 3;
+				int opposite = origin + (CLUSTERS_X + 2) * 3;
+				for (int edge = 0; edge < 4; edge++)
+				{
+					int next = (edge + 1) & 3;
+					int a = origin + ((edge == 1 || edge == 2 ? 1 : 0) + (edge >= 2 ? CLUSTERS_X + 1 : 0)) * 3;
+					int b = origin + ((next == 1 || next == 2 ? 1 : 0) + (next >= 2 ? CLUSTERS_X + 1 : 0)) * 3;
+					float nx = rays[a + 1] * rays[b + 2] - rays[a + 2] * rays[b + 1];
+					float ny = rays[a + 2] * rays[b] - rays[a] * rays[b + 2];
+					float nz = rays[a] * rays[b + 1] - rays[a + 1] * rays[b];
+					float facing = nx * (rays[origin] + rays[opposite]) + ny * (rays[origin + 1] + rays[opposite + 1])
+						+ nz * (rays[origin + 2] + rays[opposite + 2]);
+					int plane = ((cy * CLUSTERS_X + cx) * 4 + edge) * 4;
+					float sign = facing < 0 ? -1 : 1;
+					columnPlanes[plane] = nx * sign;
+					columnPlanes[plane + 1] = ny * sign;
+					columnPlanes[plane + 2] = nz * sign;
+					columnPlanes[plane + 3] = nx * nx + ny * ny + nz * nz;
+				}
+			}
+		}
 		for (int k = 0; k <= CLUSTERS_Z; ++k)
 		{
 			sliceDepth[k] = (float) (NEAR * Math.pow(FAR / NEAR, (double) k / CLUSTERS_Z));
@@ -547,6 +541,20 @@ class LightClusters
 				}
 			}
 		}
+	}
+
+	/** Conservative sphere/frustum-side test; shared by surface, fog and particle light lists. */
+	private boolean columnTouches(int cx, int cy, float x, float y, float z, float radius)
+	{
+		int base = (cy * CLUSTERS_X + cx) * 16;
+		for (int edge = 0; edge < 4; edge++)
+		{
+			int plane = base + edge * 4;
+			float distance = columnPlanes[plane] * x + columnPlanes[plane + 1] * y + columnPlanes[plane + 2] * z;
+			if (distance < 0 && distance * distance > radius * radius * columnPlanes[plane + 3] * 1.0001f)
+				return false;
+		}
+		return true;
 	}
 
 	private boolean sphereTouches(int cluster, float x, float y, float z, float r)

@@ -44,3 +44,13 @@ tasks.register('run', JavaExec) {
 	}
 	args '--developer-mode'
 }
+
+// Re-run the production light culler on captured scene data; no game or GL context needed.
+tasks.register('sceneClusterReplay', JavaExec) {
+    dependsOn testClasses
+    classpath = sourceSets.test.runtimeClasspath
+    mainClass = 'com.midonarhel.runelight.SceneClusterReplay'
+    doFirst {
+        args project.property('sceneCapture'), project.property('replayOutput')
+    }
+}
