@@ -31,16 +31,22 @@ class GpuTimer
 	static final int SHADOW_MODELS = 13;
 	// uploading the skylight's traced grid
 	static final int SKY_GRID = 14;
-	static final int STAGES = 15;
+	static final int FILTER = 15;
+	static final int UPSCALE = 16;
+	static final int AMBIENT = 17;
+	static final int SUN = 18;
+	static final int POINT_LIGHTS = 19;
+	static final int SURFACES = 20;
+	static final int STAGES = 21;
 
 	static final String[] NAMES = {
-		"scene", "MSAA resolve", "shadow map", "weather occlusion", "AO", "sky cache", "fog", "composite",
-		"weather", "UI", "GI probes", "water", "shadow copy", "shadow models", "sky grid upload"
+		"scene", "MSAA resolve", "shadow map", "weather occlusion", "AO + skylight/GI", "sky cache", "fog", "sky/fog + final blend",
+		"weather", "UI", "GI probes", "water", "shadow copy", "shadow models", "sky grid upload", "AO/fog filtering", "upscale", "ambient + sky/GI", "sun + cloud shadows", "point lights + blocking", "materials + water blend"
 	};
 
 	private static final int SLOTS = 4;
 	// queries per frame; more begins than this in one frame are not timed
-	private static final int ENTRIES = 24;
+	private static final int ENTRIES = 40;
 
 	private final int[][] queries = new int[SLOTS][ENTRIES];
 	private final int[][] stageOf = new int[SLOTS][ENTRIES];
@@ -52,13 +58,16 @@ class GpuTimer
 	private boolean enabled = true;
 
 	private final double[] frame = new double[STAGES];
-	// exponential moving averages, milliseconds
+	// Last valid execution of each stage, milliseconds; cached jobs retain their result.
 	private final double[] ms = new double[STAGES];
 	private double totalMs;
 	// frames ended so far, and the frame whose times the last endFrame read (-1: none); for the hitch monitor
 	private long frames;
 	private long readFrame = -1;
 	private double readTotalMs;
+	private long lastReadNanos;
+	private final long[] stageReadNanos = new long[STAGES];
+	private final boolean[] present = new boolean[STAGES];
 
 	void init()
 	{
@@ -69,6 +78,10 @@ class GpuTimer
 		}
 		slot = 0;
 		active = false;
+		java.util.Arrays.fill(ms, Double.NaN);
+		totalMs = Double.NaN;
+		lastReadNanos = 0;
+		java.util.Arrays.fill(stageReadNanos, 0);
 		initialized = true;
 	}
 
@@ -158,6 +171,7 @@ class GpuTimer
 			return;
 		}
 		java.util.Arrays.fill(frame, 0);
+		java.util.Arrays.fill(present, false);
 		for (int i = 0; i < n; ++i)
 		{
 			int q = queries[slot][i];
@@ -165,38 +179,40 @@ class GpuTimer
 			{
 				return;
 			}
-			frame[stageOf[slot][i]] += glGetQueryObjecti64(q, GL_QUERY_RESULT) / 1e6;
+			long nanos = glGetQueryObjecti64(q, GL_QUERY_RESULT);
+			// Invalid driver results must not leave plausible-looking stale averages.
+			int stage = stageOf[slot][i];
+			present[stage] = true;
+			frame[stage] += nanos < 0 || nanos > 1_000_000_000L ? Double.NaN : nanos / 1e6;
 		}
 		double total = 0;
+		long now = System.nanoTime();
 		for (int s = 0; s < STAGES; ++s)
 		{
-			// passes that did not run this frame decay toward 0, so turning something off shows
-			ms[s] = smooth(ms[s], frame[s]);
+			// Keep the last real execution for cached jobs and invalid driver samples.
+			if (present[s] && Double.isFinite(frame[s]) && frame[s] > 0)
+			{
+				ms[s] = frame[s];
+				stageReadNanos[s] = now;
+			}
 			total += frame[s];
 		}
-		totalMs = smooth(totalMs, total);
+		// A bad query must not freeze the displayed total at an unrelated startup frame.
+		// Show this frame's valid subtotal; the overlay explicitly reports missing queries.
+		totalMs = 0;
+		for (double value : frame) if (Double.isFinite(value)) totalMs += value;
+		lastReadNanos = now;
 		// this slot was filled SLOTS - 1 frames ago
 		readFrame = frames - (SLOTS - 1);
 		readTotalMs = total;
 	}
 
-	private static double smooth(double avg, double v)
+	double getMs(int stage) { return ms[stage]; }
+	double getTotalMs() { return totalMs; }
+	double ageSeconds(int stage)
 	{
-		if (v < 0 || v > 1000)
-		{
-			return avg;
-		}
-		return avg == 0 ? v : avg * 0.95 + v * 0.05;
-	}
-
-	double getMs(int stage)
-	{
-		return ms[stage];
-	}
-
-	double getTotalMs()
-	{
-		return totalMs;
+		long time = stage < 0 ? lastReadNanos : stageReadNanos[stage];
+		return time == 0 ? Double.POSITIVE_INFINITY : (System.nanoTime() - time) / 1e9;
 	}
 
 	boolean isEnabled()

@@ -1,6 +1,5 @@
 package com.midonarhel.runelight;
 
-import com.midonarhel.runelight.config.WeatherMode;
 import java.awt.Color;
 import java.awt.Dimension;
 import java.awt.Graphics2D;
@@ -21,10 +20,6 @@ class RuneLightOverlay extends OverlayPanel
 	private final Client client;
 	private final RuneLightPlugin plugin;
 	private final RuneLightConfig config;
-	// static shadow redraws per second, counted over a second
-	private int lastBuilds;
-	private long lastBuildsMillis;
-	private int buildsPerSecond;
 
 	@Inject
 	RuneLightOverlay(Client client, RuneLightPlugin plugin, RuneLightConfig config)
@@ -77,162 +72,49 @@ class RuneLightOverlay extends OverlayPanel
 
 	private void timingLines()
 	{
+		panelComponent.setPreferredSize(new Dimension(310, 0));
+		GpuTimer gpu = plugin.gpuTimer;
+		CpuTimer cpu = plugin.cpuTimer;
+		double frame = plugin.getSwapIntervalMs();
+		line("FPS / target", client.getFPS() + " / 200", Color.WHITE);
+		line("Frame / budget", ms(frame) + " / 5.00 ms", frame > 5 ? Color.ORANGE : Color.GREEN);
+		int missing = 0;
+		for (int stage = 0; stage < GpuTimer.STAGES; stage++)
+			if (!Double.isFinite(gpu.getReadMs(stage))) missing++;
+		line(missing == 0 ? "GPU measured passes" : "GPU subtotal (" + missing + " missing)", gpuResult(gpu, -1), Color.CYAN);
+		// Stable pass order: once measured, keep the last valid result and show its age.
+		for (int stage = 0; stage < GpuTimer.STAGES; stage++)
 		{
-			GpuTimer t = plugin.gpuTimer;
-			CpuTimer c = plugin.cpuTimer;
-			line("FPS", Integer.toString(client.getFPS()), Color.WHITE);
-			line("Frame", ms(plugin.getSwapIntervalMs()), Color.WHITE);
-			line("GPU total", ms(t.getTotalMs()), Color.CYAN);
-			for (int s = 0; s < GpuTimer.STAGES; ++s)
-			{
-				// passes that are off stay out of the way
-				if (t.getMs(s) >= 0.005)
-				{
-					line("  " + GpuTimer.NAMES[s], ms(t.getMs(s)), Color.WHITE);
-				}
-			}
-			line("CPU frame", ms(plugin.getCpuFrameMs()), Color.CYAN);
-			for (int s = 0; s < CpuTimer.STAGES; ++s)
-			{
-				if (c.getMs(s) >= 0.005)
-				{
-					line("  " + CpuTimer.NAMES[s], ms(c.getMs(s)), Color.WHITE);
-				}
-			}
-			line("  untimed (ours + driver)", ms(c.untrackedMs(plugin.getCpuFrameMs())), Color.WHITE);
-			if (config.shadows())
-			{
-				long now = System.currentTimeMillis();
-				if (now - lastBuildsMillis >= 1000)
-				{
-					int builds = plugin.getShadowMap().builds;
-					buildsPerSecond = (int) Math.round((builds - lastBuilds) * 1000.0 / Math.max(now - lastBuildsMillis, 1));
-					lastBuilds = builds;
-					lastBuildsMillis = now;
-				}
-				line("Shadow redraws", buildsPerSecond + " / s", Color.WHITE);
-			}
-			line("Point lights", Integer.toString(plugin.getPointLightCount()), Color.WHITE);
-			BuildingLights buildings = plugin.getBuildingLights();
-			if (buildings != null)
-			{
-				line("Buildings", buildings.getResult().rooms.size() + " rooms, " + buildings.getLights().size() + " lights",
-					Color.WHITE);
-			}
-			double h = plugin.getHourOfDay();
-			line("Time", String.format("%02d:%02d", (int) h, (int) (h * 60) % 60), Color.WHITE);
-			if (config.areaEnvironments())
-			{
-				environmentLines(plugin.environmentManager);
-			}
-			weatherLines();
-			if (plugin.isHotReloading())
-			{
-				line("Shaders", "hot reload", Color.GREEN);
-			}
+			double value = gpu.getMs(stage);
+			if (Double.isFinite(value))
+				line("  " + (stage == GpuTimer.COMPOSITE && Boolean.parseBoolean(System.getProperty("runelight.compositeCombined", "true"))
+					? "lighting + composite" : GpuTimer.NAMES[stage]), gpuResult(gpu, stage), value >= 1 ? Color.ORANGE : Color.WHITE);
 		}
+		line("CPU elapsed (incl. waits)", ms(plugin.getCpuFrameMs()), Color.CYAN);
+		Integer[] stages = new Integer[CpuTimer.STAGES];
+		for (int i = 0; i < stages.length; i++) stages[i] = i;
+		java.util.Arrays.sort(stages, (a, b) -> Double.compare(cpu.getMs(b), cpu.getMs(a)));
+		int shown = 0;
+		for (int stage : stages)
+		{
+			if (stage == CpuTimer.SWAP || stage == CpuTimer.OUTSIDE) continue;
+			if (shown++ == 4 || cpu.getMs(stage) < 0.05) break;
+			line("  " + CpuTimer.NAMES[stage], ms(cpu.getMs(stage)), Color.WHITE);
+		}
+		line("  swap wait", ms(cpu.getMs(CpuTimer.SWAP)), Color.WHITE);
+		line("  other plugin/driver", ms(cpu.untrackedMs(plugin.getCpuFrameMs())), Color.WHITE);
+		line("Between frames", ms(cpu.getMs(CpuTimer.OUTSIDE)), Color.WHITE);
+		line("Point lights", Integer.toString(plugin.getPointLightCount()), Color.WHITE);
+		line("CPU: largest 4 steps", "CPU/GPU overlap", Color.GRAY);
+		line("GPU values", "last valid run + age", Color.GRAY);
 	}
 
-	private void environmentLines(EnvironmentManager env)
+	private static String gpuResult(GpuTimer timer, int stage)
 	{
-		boolean cave = !env.isOverworld();
-		line("Area", env.getEnvironment().toString(), cave ? Color.ORANGE : Color.CYAN);
-		EnvironmentManager.Environment biome = env.getBiome();
-		line("Biome", biome != null ? biome.toString() : "-", Color.WHITE);
-		String where = cave ? "cave" : env.getSheltered() > 0.5f ? "outside, sheltered" : "outside";
-		line("Where", where, Color.WHITE);
-		int[] wp = env.getWorldPoint();
-		line("Tile", wp[0] + ", " + wp[1] + ", " + wp[2], Color.WHITE);
-	}
-
-	private void weatherLines()
-	{
-		WeatherMode mode = config.weatherMode();
-		WeatherForecast forecast = plugin.getWeatherForecast();
-		Weather weather = plugin.getWeather();
-		Climate.Region region = plugin.getClimateRegion();
-		if (mode == WeatherMode.AUTOMATIC)
-		{
-			// with the field, the weather that dominates where the player stands
-			WeatherType shown = weather.getField().isEnabled() ? weather.getType()
-				: region != null ? region.type : forecast.getCurrent();
-			line("Weather", shown.toString(), Color.CYAN);
-		}
-		else
-		{
-			line("Weather", mode == WeatherMode.OFF ? "off" : weather.getType() + " (forced)", Color.WHITE);
-		}
-		line("Season", forecast.getSeason() + String.format(" (day %d/%d)", forecast.getSeasonDay(),
-			forecast.getSeasonDays()), Color.WHITE);
-		Wind wind = weather.getWind();
-		line("Wind", String.format("%s %.2f, gust %.2f", wind.fromCompass(), wind.getStrength(), wind.getGust()),
-			Color.WHITE);
-		String biome = forecast.getBiome();
-		line("Region", biome.charAt(0) + biome.substring(1).toLowerCase().replace('_', ' '), Color.WHITE);
-		line("Next", forecast.getNext() + " in " + String.format("%.1f min", forecast.getMinutesToNext()), Color.WHITE);
-		if (region != null)
-		{
-			line("Temperature", String.format("%.1f C", region.temperature), region.temperature < 0 ? Color.CYAN : Color.WHITE);
-			line("Snow / wet", String.format("%.1f cm / %.2f", region.snowCm, region.wet), Color.WHITE);
-		}
-		if (mode != WeatherMode.AUTOMATIC)
-		{
-			return;
-		}
-		WeatherField field = weather.getField();
-		if (field.isEnabled())
-		{
-			line("Around", sceneWeather(field), Color.WHITE);
-		}
-		line("Cover / fog", String.format("%.2f / %.2f", weather.cloudCover(), weather.fogMultiplier()), Color.WHITE);
-		line("Fog height", String.format("%.2f", weather.fogHeightMultiplier()), Color.WHITE);
-	}
-
-	/** The two most common weathers over the loaded scene, by share of its chunks. */
-	private static String sceneWeather(WeatherField field)
-	{
-		WeatherType[] types = WeatherType.all();
-		int[] counts = new int[types.length];
-		int total = 0;
-		for (int z = 0; z < field.getSizeZ(); ++z)
-		{
-			for (int x = 0; x < field.getSizeX(); ++x)
-			{
-				WeatherType t = field.type(x, z);
-				if (t != null && t.index < counts.length)
-				{
-					counts[t.index]++;
-					total++;
-				}
-			}
-		}
-		if (total == 0)
-		{
-			return "-";
-		}
-		StringBuilder sb = new StringBuilder();
-		for (int k = 0; k < 2; ++k)
-		{
-			int best = 0;
-			for (int i = 1; i < counts.length; ++i)
-			{
-				if (counts[i] > counts[best])
-				{
-					best = i;
-				}
-			}
-			if (counts[best] == 0)
-			{
-				break;
-			}
-			if (k > 0)
-			{
-				sb.append(", ");
-			}
-			sb.append(types[best]).append(' ').append(100 * counts[best] / total).append('%');
-			counts[best] = 0;
-		}
-		return sb.toString();
+		double value = stage < 0 ? timer.getTotalMs() : timer.getMs(stage);
+		if (!Double.isFinite(value)) return "awaiting valid result";
+		double age = timer.ageSeconds(stage);
+		return ms(value) + (age >= 0.25 ? String.format(" (%.1fs ago)", age) : "");
 	}
 
 	private static final int MAP_CELL = 5;
@@ -315,6 +197,6 @@ class RuneLightOverlay extends OverlayPanel
 
 	private static String ms(double v)
 	{
-		return String.format("%.2f ms", v);
+		return Double.isFinite(v) ? String.format("%.2f ms", v) : "—";
 	}
 }

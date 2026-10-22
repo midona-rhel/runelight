@@ -82,6 +82,9 @@ uniform usamplerBuffer clusterData;  // per cluster: count, then light indices
 #include "rooms.glsl"
 #include "light_occlusion.glsl"
 
+// 0 legacy/debug, 1 ambient, 2 sun, 3 points, 4 surfaces, 5 atmosphere.
+#include "composite_mode"
+uniform sampler2DArray compositeParts;
 layout(location = 0) out vec4 FragColor;
 
 // ---------------------------------------------------------------------------------------------------------------
@@ -193,7 +196,7 @@ int clusterLightCount(int base) {
 
 // returns the light on the front; light through thin foliage from behind goes to throughOut
 vec3 pointLights(int base, vec3 p, vec3 n, float transmissive, out vec3 throughOut) {
-  vec3 viewDir = normalize(-p);
+  vec3 viewDir = transmissive > 0.0 ? normalize(-p) : vec3(0.0);
   vec3 through = vec3(0.0);
   vec3 sum = vec3(0.0);
   int count = clusterLightCount(base);
@@ -202,6 +205,19 @@ vec3 pointLights(int base, vec3 p, vec3 n, float transmissive, out vec3 throughO
   for (int i = 0; i < count; ++i) {
     int li = int(texelFetch(clusterData, base + 1 + i).r);
     vec4 posRadius = texelFetch(lightData, li * 2);
+    // Reject outside the radius before fetching room/visibility data.
+    vec3 l = posRadius.xyz - p;
+    float d2 = dot(l, l);
+    float r2 = posRadius.w * posRadius.w;
+    if (d2 >= r2) {
+      continue;
+    }
+    vec3 ld = l * inversesqrt(max(d2, 1.0));
+    float ndl = dot(n, ld);
+    // Opaque back faces receive neither diffuse light nor foliage transmission.
+    if (ndl <= 0.0 && transmissive <= 0.0) {
+      continue;
+    }
     vec4 colorCode = texelFetch(lightData, li * 2 + 1);
     vec4 extra = texelFetch(lightData, LIGHT_EXTRA_BASE + li);
     float share = lightRoomShare(colorCode.w, extra, room);
@@ -210,17 +226,9 @@ vec3 pointLights(int base, vec3 p, vec3 n, float transmissive, out vec3 throughO
     }
     vec3 color = colorCode.rgb * share * lightOcclusion(extra, posRadius.xyz, p, n);
 
-    vec3 l = posRadius.xyz - p;
-    float d2 = dot(l, l);
-    float r2 = posRadius.w * posRadius.w;
-    if (d2 >= r2) {
-      continue;
-    }
     // 117 HD's falloff; we light in linear space like it does
     float att = 1.0 - sqrt(d2 / r2);
     att *= att;
-    vec3 ld = l * inversesqrt(max(d2, 1.0));
-    float ndl = dot(n, ld);
     sum += color * att * max(ndl, 0.0) * POINT_LIGHT_SCALE;
     // thin foliage is also lit from behind: magic tree canopies glow around the lights inside them
     through += color * att * transmission(ndl, dot(-ld, viewDir), transmissive) * POINT_LIGHT_SCALE;
@@ -305,7 +313,7 @@ void main() {
     }
   }
   vec3 behind = vec3(0.0);
-  if (replaceSky && (cover < 0.996 || isSky(d))) {
+  if ((compositePart == 0 || compositePart == 5) && replaceSky && (cover < 0.996 || isSky(d))) {
     // a point on the near plane gives the view ray; the camera is at the origin of camera-relative space
     vec3 dir = normalize(reconstructPosition(vec2(px) + 0.5, 1.0));
     behind = openSky ? skyBehind(vec2(px) + 0.5, dir, fogColor, true, CLOUD_STEPS) : fogColor;
@@ -314,6 +322,7 @@ void main() {
   }
 
   if (isSky(d) || cover <= 0.004) {
+    if (compositePart > 0 && compositePart < 5) { FragColor = vec4(0.0); return; }
     if (replaceSky) {
       color.rgb = behind;
     }
@@ -348,12 +357,12 @@ void main() {
     fogDone = volumetricFog == 1;
   }
   // snow and wet ground change the surface itself, before it is lit
-  float wet = inside && weatherGroundOn == 1 ? weatherGroundSurface(color.rgb, n, p + cameraPos, emissive, material.b,
+  float wet = compositePart != 5 && inside && weatherGroundOn == 1 ? weatherGroundSurface(color.rgb, n, p + cameraPos, emissive, material.b,
     texelFetch(sceneAlpha, px, 0).a) : 0.0;
 
   float shadow = 1.0;
   vec3 light = vec3(ao);
-  if (sunAndSky && lightingEnabled == 1 && inside) {
+  if (compositePart <= 2 && sunAndSky && lightingEnabled == 1 && inside) {
     float ndl = dot(n, casterDir);
     // faces turned away from the light get none of it, so their shadow only matters to water and the debug view
     bool needShadow = ndl > 0.0 || transmissive > 0.0 || material.b >= 0.25 || debugView == DEBUG_SHADOWS;
@@ -366,6 +375,7 @@ void main() {
     shadow = overcastShadow(shadow);
     vec3 caster = sunIsCaster == 1 ? sunLight(sunAltitude) : moonLight(sunAltitude);
     float up = max(-n.y, 0.0);
+    if (compositePart != 2) {
     vec3 plain = ambientLight(sunAltitude) + skyFill(n, sunAltitude, up);
     indirect = skylightAmbient(plain, gi.rgb, gi.a * giWeight) * envAmbient * ao;
     // Retain the later skylight daylight fill and the tuned indoor ambient floor.
@@ -375,25 +385,36 @@ void main() {
     vec3 roomDaylight = ambientLight(sunAltitude) + skyFill(vec3(0.0, -1.0, 0.0), sunAltitude, 1.0)
       + caster * envSun * (0.7 * max(-casterDir.y, 0.0));
     indirect = max(indirect, roomDaylight * envAmbient * roomFill * 0.3 * ao);
+    }
     light = indirect
       + caster * envSun * max(ndl, 0.0) * shadow * mix(1.0, ao, AO_DIRECT);
     if (transmissive > 0.0) {
       // light through the leaf isn't occluded by the creases SSAO sees on its front
       light += caster * envSun * transmission(ndl, dot(-casterDir, normalize(-p)), transmissive) * shadow;
     }
-  } else if (lightingEnabled == 1 && inside) {
+  } else if (compositePart <= 2 && lightingEnabled == 1 && inside) {
     // Underground: no sun, and the game's own baked shading is removed, so a fixed soft key light from above
     // keeps shapes readable. Point lights do the rest.
     light = envCaveLight(n) * ao;
     indirect = light;
   }
 
+  if (compositePart == 1) { FragColor = vec4(indirect, 0.0); return; }
+  if (compositePart == 2) { FragColor = vec4(light - indirect, shadow); return; }
+  if (compositePart == 3) light = vec3(0.0);
   int cluster = clusterBase(px, viewDepth(d));
-  if (pointLightsEnabled == 1 && inside) {
+  if ((compositePart == 0 || compositePart == 3) && pointLightsEnabled == 1 && inside) {
     vec3 through;
     light += pointLights(cluster, p, n, transmissive, through) * mix(1.0, ao, AO_DIRECT);
     // the canopy interior SSAO darkens is exactly where light inside a tree shines through
     light += through;
+  }
+  if (compositePart == 3) { FragColor = vec4(light, 0.0); return; }
+  if (compositePart == 4) {
+    vec4 sun = texelFetch(compositeParts, ivec3(px, 1), 0);
+    light = texelFetch(compositeParts, ivec3(px, 0), 0).rgb + sun.rgb
+      + texelFetch(compositeParts, ivec3(px, 2), 0).rgb;
+    shadow = sun.a;
   }
   // emissive surfaces show their own color: no shading, shadows or AO, but fog below still applies
   light = emissiveLight(light, emissive);
@@ -435,9 +456,17 @@ void main() {
     return;
   }
 
-  vec3 lit = shade(color.rgb, light);
-  lit = weatherWetSheen(lit, p, n, wet, ao, skyHorizon(sunAltitude));
+  vec3 lit;
+  if (compositePart != 5) {
+  lit = shade(color.rgb, light);
+  if (wet > 0.0) {
+    lit = weatherWetSheen(lit, p, n, wet, ao, skyHorizon(sunAltitude));
+  }
   lit = waterOver(px, p, color.rgb, shadow, lit, material.b);
+  if (compositePart == 4) { FragColor = vec4(lit, 1.0); return; }
+  } else {
+    lit = texelFetch(compositeParts, ivec3(px, 0), 0).rgb;
+  }
   lit = mix(lit, fogColor, max(fogAmount(p + cameraPos), envFogAmount(p, (p + cameraPos).xz)));
   // the world fades into the sky behind it toward the draw distance, so where the culling stops never shows
   float edge = inside ? edgeFadeAmount(p + cameraPos) : 0.0;

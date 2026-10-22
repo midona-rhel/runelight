@@ -16,6 +16,35 @@ class SceneTargets
 	static final int MATERIAL_FORMAT = GL_RGBA8;
 
 	private int width, height, samples;
+	private final int[] partTextures = new int[2], partFbos = new int[2];
+
+	/** Full-resolution linear-light intermediates; distinct textures avoid framebuffer feedback. */
+	void drawPart(int part, int unit)
+	{
+		glActiveTexture(GL_TEXTURE0);
+		for (int i = 0; i < 2; i++)
+		{
+			if (partTextures[i] != 0) continue;
+			partTextures[i] = glGenTextures();
+			glBindTexture(GL_TEXTURE_2D_ARRAY, partTextures[i]);
+			glTexImage3D(GL_TEXTURE_2D_ARRAY, 0, GL_RGBA16F, width, height, i == 0 ? 3 : 1, 0, GL_RGBA, GL_FLOAT, 0L);
+			glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+			glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+			partFbos[i] = glGenFramebuffers();
+		}
+		glActiveTexture(GL_TEXTURE0 + unit);
+		glBindTexture(GL_TEXTURE_2D_ARRAY, part == 4 ? partTextures[0] : part == 5 ? partTextures[1] : 0);
+		glActiveTexture(GL_TEXTURE0);
+		// Allocation used unit 0; remove that binding too before drawing.
+		glBindTexture(GL_TEXTURE_2D_ARRAY, 0);
+		if (part == 5) return;
+		int target = part == 4 ? 1 : 0;
+		glBindFramebuffer(GL_FRAMEBUFFER, partFbos[target]);
+		glFramebufferTextureLayer(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, partTextures[target], 0, part == 4 ? 0 : part - 1);
+		glDrawBuffer(GL_COLOR_ATTACHMENT0);
+		check("composite part");
+		glViewport(0, 0, width, height);
+	}
 
 	// what the scene draws into: fboMsaa when multisampled, else fboResolve
 	private int fboMsaa;
@@ -136,6 +165,10 @@ class SceneTargets
 	void free()
 	{
 		freeFog();
+		glDeleteTextures(partTextures);
+		glDeleteFramebuffers(partFbos);
+		java.util.Arrays.fill(partTextures, 0);
+		java.util.Arrays.fill(partFbos, 0);
 		if (fboMsaa != 0)
 		{
 			glDeleteFramebuffers(fboMsaa);

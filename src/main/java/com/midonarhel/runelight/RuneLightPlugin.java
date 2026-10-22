@@ -220,6 +220,8 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		.add(GL_FRAGMENT_SHADER, "denoise_frag.glsl");
 
 	private int glCompositeProgram;
+	private int uniCompositePart;
+	private static final int COMPOSITE_PARTS_UNIT = 31;
 	private int uniCompositeDebugView;
 	private int uniCompositeAoEnabled;
 	private int uniCompositeAoStrength;
@@ -1023,6 +1025,11 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 						+ "#define CLUSTER_FAR " + LightClusters.FAR + "\n"
 						+ "#define ROOM_BASE " + LightClusters.ROOM_BASE + "\n"
 						+ "#define LIGHT_EXTRA_BASE " + LightClusters.LIGHT_EXTRA_BASE + "\n";
+				case "composite_mode":
+					// Compile out the diagnostic branches and intermediate samplers in normal rendering.
+					// Changing this diagnostic property requires a shader reload.
+					return Boolean.parseBoolean(System.getProperty("runelight.compositeCombined", "true"))
+						? "const int compositePart = 0;\n" : "uniform int compositePart;\n";
 				case "colorblind_mode":
 					return "#define COLORBLIND_MODE " + config.colorBlindMode().ordinal() + "\n";
 			}
@@ -1169,8 +1176,10 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		compositeEdgeUniforms.locate(c);
 		uniCompositeExpandedChunks = glGetUniformLocation(c, "expandedMapLoadingChunks");
 		uniCompositeClientSkyColor = glGetUniformLocation(c, "clientSkyColor");
+		uniCompositePart = glGetUniformLocation(c, "compositePart");
 		glUseProgram(c);
 		glUniform1i(glGetUniformLocation(c, "sceneShadow"), SCENE_SHADOW_UNIT);
+		glUniform1i(glGetUniformLocation(c, "compositeParts"), COMPOSITE_PARTS_UNIT);
 		glUniform1i(glGetUniformLocation(c, "shadowCompare"), SHADOW_COMPARE_UNIT);
 		glUniform1i(glGetUniformLocation(c, "lightData"), LIGHT_DATA_UNIT);
 		glUniform1i(glGetUniformLocation(c, "clusterData"), CLUSTER_DATA_UNIT);
@@ -2812,7 +2821,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		// upsamples them
 		if (halfPass && glDenoiseProgram != 0)
 		{
-			gpuTimer.begin(GpuTimer.AO);
+			gpuTimer.begin(GpuTimer.FILTER);
 			glUseProgram(glDenoiseProgram);
 			sceneTargets.denoise(uniDenoiseAxis, uniDenoiseFog, AO_TEXTURE_UNIT, SCENE_SHADOW_UNIT, FOG_TEXTURE_UNIT, frameFog);
 			sceneTargets.bindAo(AO_TEXTURE_UNIT);
@@ -2834,6 +2843,20 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		water.shadeHalf(config, sceneTargets.getAoWidth(), sceneTargets.getAoHeight(), WATER_NOISE_UNIT);
 		gpuTimer.end();
 
+		if (config.debugView() == DebugView.FINAL && !Boolean.parseBoolean(System.getProperty("runelight.compositeCombined", "true")))
+		{
+			for (int part = 1; part <= 4; part++)
+			{
+				sceneTargets.drawPart(part, COMPOSITE_PARTS_UNIT);
+				glUniform1i(uniCompositePart, part);
+				gpuTimer.begin(GpuTimer.AMBIENT + part - 1);
+				glDrawArrays(GL_TRIANGLES, 0, 3);
+				gpuTimer.end();
+			}
+			sceneTargets.drawPart(5, COMPOSITE_PARTS_UNIT);
+			glUniform1i(uniCompositePart, 5);
+		}
+
 		// below 100% render scale the composite and the weather draw at the scene's size into the upscaler's target
 		final boolean upscale = upscaler.isInitialized();
 		final int sceneWidth = upscale ? sceneTargets.getWidth() : width;
@@ -2843,6 +2866,10 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		gpuTimer.begin(GpuTimer.COMPOSITE);
 		glDrawArrays(GL_TRIANGLES, 0, 3);
 		gpuTimer.end();
+		glUniform1i(uniCompositePart, 0);
+		glActiveTexture(GL_TEXTURE0 + COMPOSITE_PARTS_UNIT);
+		glBindTexture(GL_TEXTURE_2D_ARRAY, 0);
+		glActiveTexture(GL_TEXTURE0);
 		Water.unbind(WATER_DATA_UNIT, WATER_NOISE_UNIT);
 		// before the weather binds its occlusion map on the same unit
 		SkyCache.unbind(SKY_CACHE_UNIT);
@@ -2859,7 +2886,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 
 		if (upscale)
 		{
-			gpuTimer.begin(GpuTimer.COMPOSITE);
+			gpuTimer.begin(GpuTimer.UPSCALE);
 			glBindFramebuffer(GL_FRAMEBUFFER, awtContext.getFramebuffer(false));
 			// the weather pass leaves its own vertex array bound (or none); the fullscreen triangle needs one bound
 			glBindVertexArray(vaoUiHandle);

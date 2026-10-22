@@ -327,15 +327,53 @@ class LightClusters
 		{
 			return;
 		}
+		// Side planes shared by every light. Conservative sphere tests avoid the very
+		// loose projected boxes near the camera without rejecting any contributing ray.
+		float[] planes = new float[COLUMN_COUNT * 16];
+		for (int cy = 0; cy < CLUSTERS_Y; cy++)
+		{
+			for (int cx = 0; cx < CLUSTERS_X; cx++)
+			{
+				int origin = (cy * (CLUSTERS_X + 1) + cx) * 3;
+				int opposite = origin + (CLUSTERS_X + 2) * 3;
+				for (int edge = 0; edge < 4; edge++)
+				{
+					int next = (edge + 1) & 3;
+					int a = origin + ((edge == 1 || edge == 2 ? 1 : 0) + (edge >= 2 ? CLUSTERS_X + 1 : 0)) * 3;
+					int b = origin + ((next == 1 || next == 2 ? 1 : 0) + (next >= 2 ? CLUSTERS_X + 1 : 0)) * 3;
+					float nx = rays[a + 1] * rays[b + 2] - rays[a + 2] * rays[b + 1];
+					float ny = rays[a + 2] * rays[b] - rays[a] * rays[b + 2];
+					float nz = rays[a] * rays[b + 1] - rays[a + 1] * rays[b];
+					float facing = nx * (rays[origin] + rays[opposite]) + ny * (rays[origin + 1] + rays[opposite + 1])
+						+ nz * (rays[origin + 2] + rays[opposite + 2]);
+					int plane = ((cy * CLUSTERS_X + cx) * 4 + edge) * 4;
+					float sign = facing < 0 ? -1 : 1;
+					planes[plane] = nx * sign;
+					planes[plane + 1] = ny * sign;
+					planes[plane + 2] = nz * sign;
+					planes[plane + 3] = nx * nx + ny * ny + nz * nz;
+				}
+			}
+		}
 		java.util.Arrays.sort(fogOrder, 0, fogCandidates);
 		for (int k = fogCandidates - 1; k >= 0; --k)
 		{
 			int c = (int) (0xFFFFFFFFL - (fogOrder[k] & 0xFFFFFFFFL));
 			int index = fogLight[c];
+			float lx = lightData.get(index * 8), ly = lightData.get(index * 8 + 1);
+			float lz = lightData.get(index * 8 + 2), radius = lightData.get(index * 8 + 3);
 			for (int cy = fogRect[c * 4 + 1]; cy <= fogRect[c * 4 + 3]; ++cy)
 			{
+				column:
 				for (int cx = fogRect[c * 4]; cx <= fogRect[c * 4 + 2]; ++cx)
 				{
+					for (int edge = 0; edge < 4; edge++)
+					{
+						int plane = ((cy * CLUSTERS_X + cx) * 4 + edge) * 4;
+						float distance = planes[plane] * lx + planes[plane + 1] * ly + planes[plane + 2] * lz;
+						if (distance < 0 && distance * distance > radius * radius * planes[plane + 3] * 1.0001f)
+							continue column;
+					}
 					int base = columns + (cy * CLUSTERS_X + cx) * CLUSTER_STRIDE;
 					int count = clusters[base];
 					if (count < MAX_LIGHTS_PER_CLUSTER)
