@@ -68,7 +68,7 @@ public final class ScenePerf {
                     meta.put("compositeCombined", Boolean.parseBoolean(System.getProperty("runelight.compositeCombined", "true")));
                     meta.put("camera_hash", Arrays.hashCode((float[]) field(p, "frameViewProj")));
                     meta.put("depthZeroToOne", field(field(p, "glCapabilities"), "OpenGL45"));
-                    for (String n : new String[]{"lightCount", "fogCandidates", "overflows", "CLUSTERS_X", "CLUSTERS_Y", "CLUSTERS_Z", "MAX_LIGHTS_PER_CLUSTER", "NEAR", "FAR"}) meta.put(n, field(lights, n));
+                    for (String n : new String[]{"lightCount", "fogCandidates", "overflows", "CLUSTERS_X", "CLUSTERS_Y", "CLUSTERS_Z", "MAX_LIGHTS_PER_CLUSTER", "CLUSTER_ENTRIES", "NEAR", "FAR"}) meta.put(n, field(lights, n));
                     meta.put("gpuStages", gpuNames); meta.put("cpuStages", cpuNames);
                     Map<String,Object> config = new TreeMap<>();
                     Object cfg = field(p, "config");
@@ -79,8 +79,9 @@ public final class ScenePerf {
                     FloatBuffer data = ((FloatBuffer)field(lights, "lightData")).duplicate();
                     float[] fs = new float[data.limit()]; data.position(0); data.get(fs); writeFloats(dir.resolve("lights.f32"), fs);
                     data = ((FloatBuffer)field(lights, "extraData")).duplicate(); fs = new float[data.limit()]; data.position(0); data.get(fs); writeFloats(dir.resolve("light-extra.f32"), fs);
-                    short[] cs = (short[]) field(lights, "clusters");
-                    ByteBuffer bytes = ByteBuffer.allocate(cs.length * 2).order(ByteOrder.LITTLE_ENDIAN); bytes.asShortBuffer().put(cs); Files.write(dir.resolve("clusters.u16"), bytes.array());
+                    int texels = (int) field(lights, "texels"); meta.put("CLUSTER_TEXELS", texels);
+                    int[] cs = Arrays.copyOf((int[]) field(lights, "masks"), (int) field(lights, "CLUSTER_ENTRIES") * texels * 4);
+                    ByteBuffer bytes = ByteBuffer.allocate(cs.length * 4).order(ByteOrder.LITTLE_ENDIAN); bytes.asIntBuffer().put(cs); Files.write(dir.resolve("clusters.u32"), bytes.array());
                     int w = (int)field(targets,"width"), h = (int)field(targets,"height");
                     texture(loader, dir, targets, "texDepth", "depth", w, h, 0x1902, 1);
                     texture(loader, dir, targets, "texNormal", "normal", w, h, 0x1907, 3);
@@ -89,7 +90,7 @@ public final class ScenePerf {
                 });
                 Object gson = Class.forName("com.google.gson.Gson", true, loader).getConstructor().newInstance();
                 Files.writeString(dir.resolve("scene.json"), (String)gson.getClass().getMethod("toJson", Object.class).invoke(gson, meta));
-                Files.writeString(dir.resolve("DONE"), "Timing excludes the synchronous texture readback. Binary floats/shorts are little endian, rows bottom-up.\n");
+                Files.writeString(dir.resolve("DONE"), "Timing excludes the synchronous texture readback. Binary floats/ints are little endian, rows bottom-up.\n");
             } catch (Throwable e) {
                 try { java.io.StringWriter s = new java.io.StringWriter(); e.printStackTrace(new java.io.PrintWriter(s)); Files.writeString(dir.resolve("ERROR"), s.toString()); } catch (Exception ignored) {}
             }

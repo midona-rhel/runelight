@@ -8,10 +8,10 @@ import org.lwjgl.BufferUtils;
 import static org.lwjgl.opengl.GL33C.*;
 
 /**
- * Lightweight volumetric fog. A half resolution pass (fog_frag.glsl) marches each view ray a fixed number of
- * steps through a height fog layer around the player, its height measured from the terrain ({@link FogGround}) and writes in-scattered light and transmittance into
- * {@link SceneTargets}' fog target; the denoise smooths it with the AO and shadows (denoise_frag.glsl) and the
- * composite upsamples it depth-aware and applies it (fog_apply.glsl).
+ * Lightweight volumetric fog. A half resolution pass (fog_frag.glsl) marches each view ray a fixed number of steps
+ * through a height fog layer around the player, its height measured from the terrain ({@link FogGround}), and writes
+ * in-scattered light and transmittance into {@link SceneTargets}' fog target; the denoise smooths it with the AO and
+ * shadows (denoise_frag.glsl) and the composite upsamples it depth-aware and applies it (fog_apply.glsl).
  *
  * All fog parameters are set in {@link #updateParameters}, so a later per-area environment system only has to
  * change the values there (or the {@code area*} multipliers).
@@ -21,9 +21,6 @@ class VolumetricFog
 	static final Shader PROGRAM = new Shader()
 		.add(GL_VERTEX_SHADER, "composite_vert.glsl")
 		.add(GL_FRAGMENT_SHADER, "fog_frag.glsl");
-	static final Shader LAMP_PROGRAM = new Shader()
-		.add(GL_VERTEX_SHADER, "composite_vert.glsl")
-		.add(GL_FRAGMENT_SHADER, "fog_lamps_frag.glsl");
 
 	private static final int NOISE_SIZE = 64;
 	private static final float EDGE_FADE_TILES = 7;
@@ -69,11 +66,7 @@ class VolumetricFog
 	private float maxCover = 1;
 	private int steps = 12;
 
-	private static final boolean[] WITH_LAMPS = {true, false}, WITHOUT_LAMPS = {false};
-
-	// the half resolution pass and the quarter resolution one for the point lights' glow (fog_lamps_frag.glsl)
-	private Locations main, lamps;
-	private int lampsUnit;
+	private Locations fog;
 
 	private int uniCompositeEnabled;
 
@@ -97,23 +90,16 @@ class VolumetricFog
 	}
 
 	/**
-	 * Take ownership of the freshly compiled fog programs (PROGRAM and LAMP_PROGRAM) and look up their uniforms.
+	 * Take ownership of the freshly compiled fog program (PROGRAM) and look up its uniforms.
 	 */
-	void setProgram(int program, int lampProgram, int sceneDepthUnit, int shadowCompareUnit, int lightDataUnit,
-		int clusterDataUnit, int noiseUnit, int weatherFieldUnit, int waterUnit, int groundUnit, int lampsUnit)
+	void setProgram(int program, int sceneDepthUnit, int shadowCompareUnit, int lightDataUnit,
+		int clusterDataUnit, int noiseUnit, int weatherFieldUnit, int waterUnit, int groundUnit)
 	{
 		this.waterUnit = waterUnit;
 		this.groundUnit = groundUnit;
-		this.lampsUnit = lampsUnit;
-		free(main);
-		free(lamps);
-		main = locate(program, sceneDepthUnit, shadowCompareUnit, lightDataUnit, clusterDataUnit, noiseUnit,
+		free(fog);
+		fog = locate(program, sceneDepthUnit, shadowCompareUnit, lightDataUnit, clusterDataUnit, noiseUnit,
 			weatherFieldUnit, waterUnit, groundUnit);
-		lamps = locate(lampProgram, sceneDepthUnit, shadowCompareUnit, lightDataUnit, clusterDataUnit, noiseUnit,
-			weatherFieldUnit, waterUnit, groundUnit);
-		glUseProgram(program);
-		glUniform1i(glGetUniformLocation(program, "fogLamps"), lampsUnit);
-		glUseProgram(0);
 	}
 
 	private static void free(Locations u)
@@ -301,17 +287,17 @@ class VolumetricFog
 	}
 
 	/**
-	 * Render the fog into the half resolution framebuffer {@code fbo}, with the point lights' glow first into the
-	 * quarter resolution {@code lampFbo} (texture {@code lampTexture}). Expects the scene depth, shadow map and light
+	 * Render the fog into the half resolution framebuffer {@code fbo}. Expects the scene depth, shadow map and light
 	 * clusters already bound to the units given to {@link #setProgram}, and a VAO bound.
 	 */
-	void render(int fbo, int halfWidth, int halfHeight, int lampFbo, int lampWidth, int lampHeight, int lampTexture,
-		float halfRatio, int noiseUnit, float[] viewProj, float[] invViewProj, int[] viewport, boolean zeroToOne,
+	void render(int fbo, int halfWidth, int halfHeight, float halfRatio, int noiseUnit, float[] viewProj,
+		float[] invViewProj, int[] viewport, boolean zeroToOne,
 		float cameraX, float cameraY, float cameraZ, float time,
 		boolean outdoors, boolean proceduralSky, int skyColor, DayCycle day,
 		ShadowMap shadows, boolean pointLights)
 	{
-		if (main == null || lamps == null)
+		Locations u = fog;
+		if (u == null)
 		{
 			return;
 		}
@@ -320,96 +306,83 @@ class VolumetricFog
 			texNoise = createNoise();
 		}
 
-		// the lamps' glow first, at quarter resolution, then the rest of the fog, which adds it
-		for (boolean lampPass : pointLights ? WITH_LAMPS : WITHOUT_LAMPS)
+		glBindFramebuffer(GL_FRAMEBUFFER, fbo);
+		glViewport(0, 0, halfWidth, halfHeight);
+		glUseProgram(u.program);
+
+		glUniformMatrix4fv(u.uniViewProj, false, viewProj);
+		glUniformMatrix4fv(u.uniInvViewProj, false, invViewProj);
+		glUniform4i(u.uniViewport, viewport[0], viewport[1], viewport[2], viewport[3]);
+		glUniform1i(u.uniDepthZeroToOne, zeroToOne ? 1 : 0);
+		glUniform1f(u.uniHalfRatio, halfRatio);
+
+		glUniform3f(u.uniCameraPos, cameraX, cameraY, cameraZ);
+		glUniform1f(u.uniTime, time);
+		glUniform1i(u.uniOutdoors, outdoors ? 1 : 0);
+		glUniform1i(u.uniProceduralSky, proceduralSky ? 1 : 0);
+		glUniform3f(u.uniClientSkyColor,
+			(skyColor >> 16 & 0xFF) / 255f, (skyColor >> 8 & 0xFF) / 255f, (skyColor & 0xFF) / 255f);
+		glUniform3fv(u.uniCasterDir, day.casterDir);
+		glUniform1i(u.uniSunIsCaster, day.sunIsCaster ? 1 : 0);
+		glUniform1f(u.uniSunAltitude, day.sunAltitude);
+		glUniform3f(u.uniOvercast, overcast[0], overcast[1], overcast[2]);
+		// sky.glsl's weatherLight follows weatherOvercast (Weather.getOvercast)
+		glUniform4f(u.uniLight, overcast[3], overcast[4], overcast[5], overcast[6]);
+		glUniform1i(u.uniShadowsEnabled, shadows != null ? 1 : 0);
+		if (shadows != null)
 		{
-			Locations u = lampPass ? lamps : main;
-			glBindFramebuffer(GL_FRAMEBUFFER, lampPass ? lampFbo : fbo);
-			glViewport(0, 0, lampPass ? lampWidth : halfWidth, lampPass ? lampHeight : halfHeight);
-			glUseProgram(u.program);
-
-			glUniformMatrix4fv(u.uniViewProj, false, viewProj);
-			glUniformMatrix4fv(u.uniInvViewProj, false, invViewProj);
-			glUniform4i(u.uniViewport, viewport[0], viewport[1], viewport[2], viewport[3]);
-			glUniform1i(u.uniDepthZeroToOne, zeroToOne ? 1 : 0);
-			// the quarter resolution pass' texels are twice as far apart on the screen
-			glUniform1f(u.uniHalfRatio, lampPass ? halfRatio * 2 : halfRatio);
-
-			glUniform3f(u.uniCameraPos, cameraX, cameraY, cameraZ);
-			glUniform1f(u.uniTime, time);
-			glUniform1i(u.uniOutdoors, outdoors ? 1 : 0);
-			glUniform1i(u.uniProceduralSky, proceduralSky ? 1 : 0);
-			glUniform3f(u.uniClientSkyColor,
-				(skyColor >> 16 & 0xFF) / 255f, (skyColor >> 8 & 0xFF) / 255f, (skyColor & 0xFF) / 255f);
-			glUniform3fv(u.uniCasterDir, day.casterDir);
-			glUniform1i(u.uniSunIsCaster, day.sunIsCaster ? 1 : 0);
-			glUniform1f(u.uniSunAltitude, day.sunAltitude);
-			glUniform3f(u.uniOvercast, overcast[0], overcast[1], overcast[2]);
-			// sky.glsl's weatherLight follows weatherOvercast (Weather.getOvercast)
-			glUniform4f(u.uniLight, overcast[3], overcast[4], overcast[5], overcast[6]);
-			glUniform1i(u.uniShadowsEnabled, shadows != null ? 1 : 0);
-			if (shadows != null)
-			{
-				glUniformMatrix4fv(u.uniLightProjRel, false, shadows.lightProjRel);
-				glUniform1f(u.uniShadowDepthRange, shadows.getDepthRange());
-			}
-			glUniform1i(u.uniPointLights, pointLights ? 1 : 0);
-
-			glUniform1f(u.uniDensity, density);
-			glUniform1f(u.uniHeight, height);
-			glUniform1f(u.uniHighestY, highestY);
-			glUniform3f(u.uniGroundGrid, RuneLightPlugin.SCENE_OFFSET, FogGround.CORNERS, plane * FogGround.CORNERS);
-			glUniform2f(u.uniCenter, centerX, centerZ);
-			glUniform2f(u.uniFade, fadeStart, fadeEnd);
-			glUniform1f(u.uniNear, near);
-			glUniform1f(u.uniSunScatter, sunScatter);
-			glUniform1f(u.uniNoiseAmount, noiseAmount);
-			glUniform1f(u.uniBankAmount, bankAmount);
-			glUniform1f(u.uniMaxCover, maxCover);
-			glUniform3fv(u.uniTint, areaTint);
-			glUniform1i(u.uniSteps, steps);
-			WeatherField field = weatherField;
-			if (field != null && field.isEnabled())
-			{
-				// density times (fog here) / (fog at the player), with the player's own multiplier as the reference
-				float local = Math.max(weatherFog, 0.05f);
-				field.setRect(u.uniFieldRect);
-				glUniform3f(u.uniFieldFog, local - field.getFocus(WeatherField.FOG), 1 / local, 1);
-			}
-			else
-			{
-				glUniform3f(u.uniFieldFog, 0, 0, 0);
-			}
-
-			glUniform1f(u.uniIndoor, indoorFactor);
-			glUniform1f(u.uniIndoorOpen, Math.max(indoorFactor, OPEN_INDOOR_DENSITY));
-			OpenRooms open = openRooms;
-			glUniform1i(u.uniOpenCount, open != null ? open.count() : 0);
-			if (open != null && open.count() > 0)
-			{
-				glUniform4iv(u.uniOpenRooms, open.bits);
-			}
-			glUniform1i(u.uniWaterEnabled, waterTexture != 0 ? 1 : 0);
-			if (waterTexture != 0)
-			{
-				glUniform2f(u.uniWaterGrid, RuneLightPlugin.SCENE_OFFSET, WaterMap.CORNERS);
-				glActiveTexture(GL_TEXTURE0 + waterUnit);
-				glBindTexture(GL_TEXTURE_2D, waterTexture);
-			}
-
-			glActiveTexture(GL_TEXTURE0 + groundUnit);
-			glBindTexture(GL_TEXTURE_2D, texGround);
-			glActiveTexture(GL_TEXTURE0 + noiseUnit);
-			glBindTexture(GL_TEXTURE_3D, texNoise);
-			if (!lampPass && pointLights)
-			{
-				glActiveTexture(GL_TEXTURE0 + lampsUnit);
-				glBindTexture(GL_TEXTURE_2D, lampTexture);
-			}
-			glDrawArrays(GL_TRIANGLES, 0, 3);
+			glUniformMatrix4fv(u.uniLightProjRel, false, shadows.lightProjRel);
+			glUniform1f(u.uniShadowDepthRange, shadows.getDepthRange());
 		}
-		glActiveTexture(GL_TEXTURE0 + lampsUnit);
-		glBindTexture(GL_TEXTURE_2D, 0);
+		glUniform1i(u.uniPointLights, pointLights ? 1 : 0);
+
+		glUniform1f(u.uniDensity, density);
+		glUniform1f(u.uniHeight, height);
+		glUniform1f(u.uniHighestY, highestY);
+		glUniform3f(u.uniGroundGrid, RuneLightPlugin.SCENE_OFFSET, FogGround.CORNERS, plane * FogGround.CORNERS);
+		glUniform2f(u.uniCenter, centerX, centerZ);
+		glUniform2f(u.uniFade, fadeStart, fadeEnd);
+		glUniform1f(u.uniNear, near);
+		glUniform1f(u.uniSunScatter, sunScatter);
+		glUniform1f(u.uniNoiseAmount, noiseAmount);
+		glUniform1f(u.uniBankAmount, bankAmount);
+		glUniform1f(u.uniMaxCover, maxCover);
+		glUniform3fv(u.uniTint, areaTint);
+		glUniform1i(u.uniSteps, steps);
+		WeatherField field = weatherField;
+		if (field != null && field.isEnabled())
+		{
+			// density times (fog here) / (fog at the player), with the player's own multiplier as the reference
+			float local = Math.max(weatherFog, 0.05f);
+			field.setRect(u.uniFieldRect);
+			glUniform3f(u.uniFieldFog, local - field.getFocus(WeatherField.FOG), 1 / local, 1);
+		}
+		else
+		{
+			glUniform3f(u.uniFieldFog, 0, 0, 0);
+		}
+
+		glUniform1f(u.uniIndoor, indoorFactor);
+		glUniform1f(u.uniIndoorOpen, Math.max(indoorFactor, OPEN_INDOOR_DENSITY));
+		OpenRooms open = openRooms;
+		glUniform1i(u.uniOpenCount, open != null ? open.count() : 0);
+		if (open != null && open.count() > 0)
+		{
+			glUniform4iv(u.uniOpenRooms, open.bits);
+		}
+		glUniform1i(u.uniWaterEnabled, waterTexture != 0 ? 1 : 0);
+		if (waterTexture != 0)
+		{
+			glUniform2f(u.uniWaterGrid, RuneLightPlugin.SCENE_OFFSET, WaterMap.CORNERS);
+			glActiveTexture(GL_TEXTURE0 + waterUnit);
+			glBindTexture(GL_TEXTURE_2D, waterTexture);
+		}
+
+		glActiveTexture(GL_TEXTURE0 + groundUnit);
+		glBindTexture(GL_TEXTURE_2D, texGround);
+		glActiveTexture(GL_TEXTURE0 + noiseUnit);
+		glBindTexture(GL_TEXTURE_3D, texNoise);
+		glDrawArrays(GL_TRIANGLES, 0, 3);
 		glActiveTexture(GL_TEXTURE0 + noiseUnit);
 		glBindTexture(GL_TEXTURE_3D, 0);
 		glActiveTexture(GL_TEXTURE0 + groundUnit);
@@ -442,9 +415,8 @@ class VolumetricFog
 			texGround = 0;
 		}
 		ground = null;
-		free(main);
-		free(lamps);
-		main = lamps = null;
+		free(fog);
+		fog = null;
 	}
 
 	private static int createNoise()

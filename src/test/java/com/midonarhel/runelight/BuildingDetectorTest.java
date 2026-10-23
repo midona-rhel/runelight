@@ -3,7 +3,6 @@ package com.midonarhel.runelight;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
-import java.util.List;
 import org.junit.Test;
 
 public class BuildingDetectorTest
@@ -25,18 +24,6 @@ public class BuildingDetectorTest
 		}
 	}
 
-	private static boolean inRoom(BuildingDetector.Room room, int x, int y)
-	{
-		for (int t : room.tiles)
-		{
-			if (t >>> 16 == x && (t & 0xFFFF) == y)
-			{
-				return true;
-			}
-		}
-		return false;
-	}
-
 	@Test
 	public void separateHousesAreSeparateRooms()
 	{
@@ -44,17 +31,9 @@ public class BuildingDetectorTest
 		room(0, 10, 2, 14, 6, 2);
 		BuildingDetector.Result r = BuildingDetector.detect(settings, roofs);
 		assertEquals(2, r.rooms.size());
-		assertEquals(2, r.anchors.size());
 		assertTrue(r.usedRoofIds);
 		assertEquals(16, r.rooms.get(0).tiles.length);
 		assertEquals(25, r.rooms.get(1).tiles.length);
-		// one light at the middle of each house
-		BuildingDetector.Anchor a = r.anchors.get(0);
-		assertEquals(4f, a.x, 1e-4);
-		assertEquals(4f, a.y, 1e-4);
-		BuildingDetector.Anchor b = r.anchors.get(1);
-		assertEquals(12.5f, b.x, 1e-4);
-		assertEquals(4.5f, b.y, 1e-4);
 	}
 
 	@Test
@@ -130,37 +109,6 @@ public class BuildingDetectorTest
 	}
 
 	@Test
-	public void largeHallGetsSeveralLightsInside()
-	{
-		room(0, 2, 2, 25, 13, 1);
-		BuildingDetector.Result r = BuildingDetector.detect(settings, roofs);
-		assertEquals(1, r.rooms.size());
-		// 24 x 12 in cells of 6: 4 x 2
-		assertEquals(8, r.anchors.size());
-		for (BuildingDetector.Anchor a : r.anchors)
-		{
-			assertTrue(inRoom(r.rooms.get(0), a.tileX, a.tileY));
-			assertTrue(a.extent < 10);
-		}
-	}
-
-	@Test
-	public void lShapedRoomLightsStayInside()
-	{
-		// an L whose bounding box centre is outside the room
-		room(0, 2, 2, 20, 4, 1);
-		room(0, 2, 5, 4, 20, 1);
-		BuildingDetector.Result r = BuildingDetector.detect(settings, roofs);
-		assertEquals(1, r.rooms.size());
-		assertTrue(r.anchors.size() >= 3);
-		for (BuildingDetector.Anchor a : r.anchors)
-		{
-			assertTrue(inRoom(r.rooms.get(0), a.tileX, a.tileY));
-			assertTrue(inRoom(r.rooms.get(0), (int) a.x, (int) a.y));
-		}
-	}
-
-	@Test
 	public void upperFloorsAreTheirOwnPlanes()
 	{
 		room(0, 2, 2, 7, 7, 1);
@@ -203,29 +151,6 @@ public class BuildingDetectorTest
 		BuildingDetector.Result r = BuildingDetector.detect(settings, roofs);
 		assertEquals(1, r.rooms.size());
 		assertEquals(0, r.rooms.get(0).plane);
-		assertEquals(1, r.anchors.get(0).mapLevel);
-	}
-
-	@Test
-	public void lightsHangBelowTheCeiling()
-	{
-		room(0, 10, 10, 13, 13, 1);
-		int[][][] heights = new int[4][SIZE + 1][SIZE + 1];
-		for (int x = 0; x <= SIZE; ++x)
-		{
-			for (int y = 0; y <= SIZE; ++y)
-			{
-				heights[0][x][y] = -400;
-			}
-		}
-		BuildingDetector.Result r = BuildingDetector.detect(settings, roofs);
-		List<BuildingLights.Light> lights = BuildingLights.place(r, heights, 8);
-		assertEquals(1, lights.size());
-		BuildingLights.Light l = lights.get(0);
-		assertEquals((12 - 8) * 128, l.x, 1e-3);
-		assertEquals((12 - 8) * 128, l.z, 1e-3);
-		assertEquals(-400 - BuildingLights.CEILING_HEIGHT, l.y, 1e-3);
-		assertTrue(l.radius >= BuildingLights.MIN_RADIUS * 128 && l.radius <= BuildingLights.MAX_RADIUS * 128);
 	}
 
 	@Test

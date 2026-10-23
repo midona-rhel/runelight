@@ -27,10 +27,11 @@ public final class SceneClusterReplay {
         for(int i=0;i<moving.length;i++) { changed[0]=matrix[0]*(i%2==0?1.000001f:1f);long t=System.nanoTime();c.cull(lights,changed,0,0,0);moving[i]=(System.nanoTime()-t)/1e6; }
         c.cull(lights,matrix,0,0,0);
         if(c.getLightCount()!=lights.size())throw new IllegalStateException("Replay changed light indices");
-        ByteBuffer bytes=ByteBuffer.allocate(c.clusterTable().length*2).order(ByteOrder.LITTLE_ENDIAN);bytes.asShortBuffer().put(c.clusterTable());Files.write(out.resolve("clusters.u16"),bytes.array());
+        int[] masks=Arrays.copyOf(c.clusterTable(),LightClusters.CLUSTER_ENTRIES*c.clusterTexels()*4);
+        ByteBuffer bytes=ByteBuffer.allocate(masks.length*4).order(ByteOrder.LITTLE_ENDIAN);bytes.asIntBuffer().put(masks);Files.write(out.resolve("clusters.u32"),bytes.array());
         for(String f:new String[]{"depth.f32","normal.f32","material.f32","color.f32","lights.f32","light-extra.f32","timings.csv"})
             Files.copy(source.resolve(f),out.resolve(f),StandardCopyOption.REPLACE_EXISTING);
-        meta.addProperty("CLUSTERS_X",LightClusters.CLUSTERS_X);meta.addProperty("CLUSTERS_Y",LightClusters.CLUSTERS_Y);
+        meta.addProperty("CLUSTER_TEXELS",c.clusterTexels());meta.addProperty("CLUSTERS_X",LightClusters.CLUSTERS_X);meta.addProperty("CLUSTERS_Y",LightClusters.CLUSTERS_Y);
         meta.addProperty("replay",true);
         Files.writeString(out.resolve("scene.json"),new Gson().toJson(meta));
         Arrays.sort(stable);Arrays.sort(moving);

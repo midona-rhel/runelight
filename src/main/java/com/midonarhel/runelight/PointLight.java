@@ -10,12 +10,10 @@ class PointLight
 	float radius;
 	float r, g, b;
 	float intensity;
-	// inside a building: lights its room but not the fog, which it would light through the walls
-	boolean indoor;
 	// logical plane, -1 unknown; and the rooms it reaches (RoomMap.lightCode), set when the frame's lights are culled
 	int plane = -1;
 	float roomCode = RoomMap.anyCode();
-	// stays where it is (scenery, world and building lights): its view past the walls is cast once (LightOcclusion)
+	// stays where it is (scenery and world lights): its view past the walls is cast once (LightOcclusion)
 	boolean fixed;
 	LightOcclusion.Entry occlusion;
 
@@ -29,7 +27,6 @@ class PointLight
 		this.g = g;
 		this.b = b;
 		this.intensity = intensity;
-		this.indoor = false;
 		this.plane = -1;
 		this.roomCode = RoomMap.anyCode();
 		this.fixed = false;
@@ -46,12 +43,6 @@ class PointLight
 	PointLight fixed()
 	{
 		fixed = true;
-		return this;
-	}
-
-	PointLight indoor()
-	{
-		indoor = true;
 		return this;
 	}
 }

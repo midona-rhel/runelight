@@ -1,11 +1,9 @@
 package com.midonarhel.runelight;
 
-import java.awt.BasicStroke;
 import java.awt.Color;
 import java.awt.Dimension;
 import java.awt.Graphics2D;
 import java.awt.Polygon;
-import java.util.List;
 import javax.inject.Inject;
 import net.runelite.api.Client;
 import net.runelite.api.Constants;
@@ -20,7 +18,7 @@ import net.runelite.client.ui.overlay.OverlayPosition;
 
 /**
  * Development aid: tints the rooms detected on the player's plane, each in its own color, labels each with the id
- * the lights and the shaders know it by (R) and its plane (L), marks where their lights hang and outlines the tiles
+ * the lights and the shaders know it by (R) and its plane (L), outlines the tiles
  * where a hole in the floor links a room to the one above or below it, and says which room the player stands in.
  */
 class BuildingOverlay extends Overlay
@@ -108,24 +106,6 @@ class BuildingOverlay extends Overlay
 			label(g, player.getCanvasTextLocation(g, text, player.getLogicalHeight() + 40), text);
 		}
 
-		List<BuildingLights.Light> lights = buildings.getLights();
-		g.setStroke(new BasicStroke(2));
-		for (BuildingLights.Light l : lights)
-		{
-			if (l.plane != plane)
-			{
-				continue;
-			}
-			Point p = Perspective.localToCanvas(client, (int) l.x, (int) l.z, (int) l.y);
-			if (p == null)
-			{
-				continue;
-			}
-			g.setColor(new Color(255, 200, 120));
-			g.fillOval(p.getX() - 5, p.getY() - 5, 10, 10);
-			g.setColor(Color.BLACK);
-			g.drawOval(p.getX() - 5, p.getY() - 5, 10, 10);
-		}
 		return null;
 	}
 

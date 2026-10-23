@@ -12,7 +12,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 /**
- * Which ground around each static light (scenery and world lights, building lights) the light can see past the
+ * Which ground around each static light (scenery and world lights) the light can see past the
  * walls: a small top-down visibility grid per light, cast on the wall map (WallMap) on a worker thread when the
  * light first shows up and again when the walls near it change (a door opens). The composite multiplies each
  * light by its grid, looked up bilinearly at the pixel (light_occlusion.glsl), so a light stops at the walls of its

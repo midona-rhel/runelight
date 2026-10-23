@@ -27,10 +27,6 @@ final class BuildingDetector
 	static final int MIN_TILES = 3;
 	// larger components come from roof removal overrides flagging whole regions, not real buildings
 	static final int MAX_TILES = 2000;
-	// rooms up to this size (tiles, either side) get a single light; larger ones are split into cells this size
-	static final int CELL = 6;
-	// a cell needs this share of its area under the roof to get its own light
-	static final float MIN_CELL_FILL = 0.2f;
 	// roof ids are trusted when at least this share of flagged tiles have one; low, because flags ORed in after
 	// the roofs were built can cover more tiles than the real buildings
 	static final float ROOF_ID_AGREEMENT = 0.1f;
@@ -52,24 +48,9 @@ final class BuildingDetector
 		int[] cut = new int[0];
 	}
 
-	/**
-	 * A light anchor in tile space: (x, y) is a fractional tile position (tile centers at +0.5), on the room tile
-	 * (tileX, tileY), lighting an area about extent tiles across.
-	 */
-	static final class Anchor
-	{
-		int plane;
-		int mapLevel;
-		float x, y;
-		int tileX, tileY;
-		float extent;
-		int room;
-	}
-
 	static final class Result
 	{
 		final List<Room> rooms = new ArrayList<>();
-		final List<Anchor> anchors = new ArrayList<>();
 		boolean usedRoofIds;
 		int rejectedSmall, rejectedHuge;
 	}
@@ -117,7 +98,6 @@ final class BuildingDetector
 						result.rejectedHuge++;
 						continue;
 					}
-					place(settings, room, result.rooms.size(), result.anchors);
 					result.rooms.add(room);
 				}
 			}
@@ -128,7 +108,7 @@ final class BuildingDetector
 	/**
 	 * Split the rooms of a detection along their walls: each part of a room that can't be reached from the rest
 	 * without crossing a wall (WallMap edges: what blocks sight, closed doors included, open doors not; low walls,
-	 * fences and gates are no walls; diagonal walls included) becomes a room of its own and gets its own lights. A
+	 * fences and gates are no walls; diagonal walls included) becomes a room of its own. A
 	 * tile a diagonal wall crosses is two halves while flooding and goes to the larger of their rooms. Rooms whose
 	 * tiles all stay connected come out unchanged.
 	 *
@@ -272,10 +252,6 @@ final class BuildingDetector
 				result.rooms.add(part);
 			}
 			clear(room, size, owner, label);
-		}
-		for (int i = 0; i < result.rooms.size(); ++i)
-		{
-			place(settings, result.rooms.get(i), i, result.anchors);
 		}
 		return result;
 	}
@@ -497,81 +473,4 @@ final class BuildingDetector
 		return room;
 	}
 
-	/**
-	 * One light for a small room; for a large one, split its bounds into roughly CELL-sized cells and light each
-	 * cell that is mostly room. Each light sits on the room tile nearest the centroid of its tiles, so L-shaped
-	 * rooms do not get lights inside their walls or outside.
-	 */
-	private static void place(byte[][][] settings, Room room, int index, List<Anchor> out)
-	{
-		int w = room.maxX - room.minX + 1;
-		int h = room.maxY - room.minY + 1;
-		int cellsX = w <= CELL + 2 ? 1 : (w + CELL - 1) / CELL;
-		int cellsY = h <= CELL + 2 ? 1 : (h + CELL - 1) / CELL;
-		float cw = (float) w / cellsX, ch = (float) h / cellsY;
-
-		int cells = cellsX * cellsY;
-		float[] sumX = new float[cells], sumY = new float[cells];
-		int[] count = new int[cells];
-		for (int t : room.tiles)
-		{
-			int x = t >>> 16, y = t & 0xFFFF;
-			int c = cell(x - room.minX, cw, cellsX) * cellsY + cell(y - room.minY, ch, cellsY);
-			sumX[c] += x + 0.5f;
-			sumY[c] += y + 0.5f;
-			count[c]++;
-		}
-
-		float minCount = cells == 1 ? 1 : Math.max(MIN_TILES, cw * ch * MIN_CELL_FILL);
-		for (int c = 0; c < cells; ++c)
-		{
-			if (count[c] < minCount)
-			{
-				continue;
-			}
-			Anchor a = new Anchor();
-			a.plane = room.plane;
-			a.room = index;
-			float mx = sumX[c] / count[c], my = sumY[c] / count[c];
-			int best = nearestTile(room, mx, my);
-			a.tileX = best >>> 16;
-			a.tileY = best & 0xFFFF;
-			a.mapLevel = mapLevel(settings, room.plane, a.tileX, a.tileY);
-			// keep the centroid when it lies on a room tile (edges included), otherwise move onto the nearest one
-			if (Math.abs(mx - a.tileX - 0.5f) <= 0.5f && Math.abs(my - a.tileY - 0.5f) <= 0.5f)
-			{
-				a.x = mx;
-				a.y = my;
-			}
-			else
-			{
-				a.x = a.tileX + 0.5f;
-				a.y = a.tileY + 0.5f;
-			}
-			a.extent = cells == 1 ? (float) Math.sqrt(w * w + h * h) : (float) Math.sqrt(cw * cw + ch * ch);
-			out.add(a);
-		}
-	}
-
-	private static int cell(int offset, float size, int cells)
-	{
-		return Math.min(cells - 1, (int) (offset / size));
-	}
-
-	private static int nearestTile(Room room, float x, float y)
-	{
-		int best = room.tiles[0];
-		float bestD = Float.MAX_VALUE;
-		for (int t : room.tiles)
-		{
-			float dx = (t >>> 16) + 0.5f - x, dy = (t & 0xFFFF) + 0.5f - y;
-			float d = dx * dx + dy * dy;
-			if (d < bestD)
-			{
-				bestD = d;
-				best = t;
-			}
-		}
-		return best;
-	}
 }

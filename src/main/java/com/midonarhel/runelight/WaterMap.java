@@ -27,6 +27,8 @@ import net.runelite.api.WallObject;
 final class WaterMap
 {
 	static final int SIZE = Constants.EXTENDED_SCENE_SIZE;
+	// heightRange's bound when the heights aren't known, far past any the game has
+	static final int HEIGHT_UNKNOWN = 1 << 20;
 	static final int CORNERS = SIZE + 1;
 
 	// water types, indices into the palette in water.glsl
@@ -750,6 +752,34 @@ final class WaterMap
 		float fx = (ex & 127) / 128f, fz = (ez & 127) / 128f;
 		float s = (h[tx][tz] * (1 - fx) + h[tx + 1][tz] * fx) * (1 - fz) + (h[tx][tz + 1] * (1 - fx) + h[tx + 1][tz + 1] * fx) * fz;
 		return Math.abs(height - s) <= tolerance;
+	}
+
+	/**
+	 * The lowest and highest height (y, down) of the extended tiles [x0, x1) x [y0, y1): the water level's corners
+	 * where a tile has water, the ground's on plane 0 elsewhere. {min, max}.
+	 */
+	int[] heightRange(int x0, int y0, int x1, int y1)
+	{
+		if (tileHeights == null)
+		{
+			// a map built without the scene's heights: any height
+			return new int[]{-HEIGHT_UNKNOWN, HEIGHT_UNKNOWN};
+		}
+		int min = Integer.MAX_VALUE, max = Integer.MIN_VALUE;
+		for (int y = y0; y < y1; ++y)
+		{
+			for (int x = x0; x < x1; ++x)
+			{
+				int[][] h = tileHeights[Math.max(level[y * SIZE + x], 0)];
+				for (int c = 0; c < 4; ++c)
+				{
+					int v = h[x + (c & 1)][y + (c >> 1)];
+					min = Math.min(min, v);
+					max = Math.max(max, v);
+				}
+			}
+		}
+		return new int[]{min, max};
 	}
 
 	/**

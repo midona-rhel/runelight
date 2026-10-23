@@ -29,6 +29,8 @@ class WaterSurface
 		.add(GL_FRAGMENT_SHADER, "water_frag.glsl");
 
 	static final int CHUNK = 8;
+	// how far the waves and the surface's offsets can move it off the water level, world units, and more
+	static final int WAVE_MARGIN = 256;
 
 	/**
 	 * The instances of one scene: 4 bytes per tile (extended x, y, water type, look slot), by chunk.
@@ -37,8 +39,9 @@ class WaterSurface
 	{
 		byte[] tiles;
 		int count;
-		// per chunk with tiles: its first instance, instance count, and its bounds in extended tiles
-		int[] chunkStart, chunkCount, chunkX, chunkY;
+		// per chunk with tiles: its first instance, instance count, its bounds in extended tiles, and the lowest and
+		// highest height (y, down) its surface can be at
+		int[] chunkStart, chunkCount, chunkX, chunkY, chunkMinY, chunkMaxY;
 		int chunks;
 		// the looks (Water.slotKey) the tiles use, by slot; more than Water.SLOTS share the last
 		final int[] slotKeys = new int[Water.SLOTS];
@@ -137,6 +140,8 @@ class WaterSurface
 		m.chunkCount = new int[m.chunkStart.length];
 		m.chunkX = new int[m.chunkStart.length];
 		m.chunkY = new int[m.chunkStart.length];
+		m.chunkMinY = new int[m.chunkStart.length];
+		m.chunkMaxY = new int[m.chunkStart.length];
 		for (int cy = 0; cy < chunksPerSide; ++cy)
 		{
 			for (int cx = 0; cx < chunksPerSide; ++cx)
@@ -164,6 +169,10 @@ class WaterSurface
 					m.chunkCount[m.chunks] = m.count - start;
 					m.chunkX[m.chunks] = cx * CHUNK;
 					m.chunkY[m.chunks] = cy * CHUNK;
+					int[] range = map.heightRange(cx * CHUNK, cy * CHUNK, Math.min(size, cx * CHUNK + CHUNK),
+						Math.min(size, cy * CHUNK + CHUNK));
+					m.chunkMinY[m.chunks] = range[0] - WAVE_MARGIN;
+					m.chunkMaxY[m.chunks] = range[1] + WAVE_MARGIN;
 					++m.chunks;
 				}
 			}
@@ -187,6 +196,49 @@ class WaterSurface
 
 	// one quad per tile: corners 0 sw, 1 se, 2 nw, 3 ne (water_vert.glsl)
 	static final short[] QUAD = {0, 2, 1, 1, 2, 3};
+
+	/**
+	 * Whether any chunk drawn this frame (within reach of the focal point) is in the view: without one the water's
+	 * passes have nothing to draw. viewProj is camera-relative.
+	 */
+	boolean anyVisible(float[] m, float camX, float camY, float camZ, float focusX, float focusZ, float reach)
+	{
+		Mesh mesh = this.mesh;
+		if (mesh == null)
+		{
+			return false;
+		}
+		for (int c = 0; c < mesh.chunks; ++c)
+		{
+			if (chunkDistance(focusX, focusZ, mesh.chunkX[c], mesh.chunkY[c]) > reach)
+			{
+				continue;
+			}
+			float x0 = (mesh.chunkX[c] - RuneLightPlugin.SCENE_OFFSET) * 128f - camX;
+			float z0 = (mesh.chunkY[c] - RuneLightPlugin.SCENE_OFFSET) * 128f - camZ;
+			float y0 = mesh.chunkMinY[c] - camY, y1 = mesh.chunkMaxY[c] - camY;
+			// outside when all eight corners are beyond the same side of the view, or behind the camera
+			int left = 0, right = 0, below = 0, above = 0, behind = 0;
+			for (int k = 0; k < 8; ++k)
+			{
+				float x = x0 + ((k & 1) != 0 ? CHUNK * 128f : 0), y = (k & 2) != 0 ? y1 : y0;
+				float z = z0 + ((k & 4) != 0 ? CHUNK * 128f : 0);
+				float cx = m[0] * x + m[4] * y + m[8] * z + m[12];
+				float cy = m[1] * x + m[5] * y + m[9] * z + m[13];
+				float w = m[3] * x + m[7] * y + m[11] * z + m[15];
+				left += cx < -w ? 1 : 0;
+				right += cx > w ? 1 : 0;
+				below += cy < -w ? 1 : 0;
+				above += cy > w ? 1 : 0;
+				behind += w <= 0 ? 1 : 0;
+			}
+			if (left < 8 && right < 8 && below < 8 && above < 8 && behind < 8)
+			{
+				return true;
+			}
+		}
+		return false;
+	}
 
 	/**
 	 * Horizontal distance from (px, pz) to a chunk's square, world units, with the chunk at extended tile (cx, cy).

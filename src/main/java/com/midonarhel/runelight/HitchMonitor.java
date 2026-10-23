@@ -12,6 +12,10 @@ import org.slf4j.LoggerFactory;
  * (and more than {@link #MIN_MS}) is logged with the plugin's CPU steps and GPU passes that were large in it, the
  * garbage collections that ran during it, and the periodic jobs that were flagged on it. The GPU times arrive 3
  * frames later, so the line is written then. Client thread only; costs a few array reads a frame.
+ *
+ * Where the client thread was stuck: a watchdog thread looks every couple of milliseconds, and once a frame has run
+ * past the hitch threshold takes the client thread's stack a few times; the hitch line names the frames. Started on
+ * the first frame, stopped by {@link #stop}.
  */
 final class HitchMonitor
 {
@@ -42,6 +46,12 @@ final class HitchMonitor
 	// stages of at least this long are named
 	private static final double STAGE_MS = 2;
 	private static final int MAX_STAGES = 5;
+	// the watchdog: how often it looks, how many stacks it takes in a long frame and how far apart, and how many of
+	// each stack's innermost frames the line names
+	private static final long WATCH_MS = 2;
+	private static final int SAMPLES = 3;
+	private static final long SAMPLE_GAP_NANOS = 4_000_000;
+	private static final int STACK_FRAMES = 8;
 
 	private final LogLimiter limiter = new LogLimiter(1000);
 	private final List<GarbageCollectorMXBean> collectors = ManagementFactory.getGarbageCollectorMXBeans();
@@ -58,6 +68,16 @@ final class HitchMonitor
 	private long pendingFrame = -1;
 	private String pendingText;
 
+	// shared with the watchdog: the client thread, when its frame began, the hitch threshold, and the stacks taken
+	// in the current frame
+	private volatile Thread clientThread;
+	private volatile long frameStartNanos;
+	private volatile long thresholdNanos = Long.MAX_VALUE;
+	private final String[] stacks = new String[SAMPLES];
+	private int stackCount;
+	private long lastSampleNanos;
+	private Thread watchdog;
+
 	/** Flag a job as running this frame. */
 	void job(int flag)
 	{
@@ -71,6 +91,13 @@ final class HitchMonitor
 	 */
 	void endFrame(double frameMs, CpuTimer cpu, GpuTimer gpu)
 	{
+		if (watchdog == null)
+		{
+			clientThread = Thread.currentThread();
+			watchdog = new Thread(this::watch, "RuneLight hitch watchdog");
+			watchdog.setDaemon(true);
+			watchdog.start();
+		}
 		long frame = gpu.getFrames();
 		long collections = 0;
 		long collectionMillis = 0;
@@ -99,7 +126,8 @@ final class HitchMonitor
 			int held = limiter.check("hitch");
 			if (held >= 0)
 			{
-				pendingText = text(frame, frameMs, cpu, collections - gcCount, collectionMillis - gcMillis, held);
+				pendingText = text(frame, frameMs, cpu, collections - gcCount, collectionMillis - gcMillis, held)
+					+ stuckText();
 				pendingFrame = frame;
 				if (!gpu.isEnabled())
 				{
@@ -120,6 +148,94 @@ final class HitchMonitor
 			System.arraycopy(history, 0, sorted, 0, n);
 			Arrays.sort(sorted, 0, n);
 			median = sorted[n / 2];
+		}
+		synchronized (stacks)
+		{
+			stackCount = 0;
+			lastSampleNanos = 0;
+			thresholdNanos = count >= WARMUP ? (long) (Math.max(MIN_MS, median * FACTOR) * 1e6) : Long.MAX_VALUE;
+			frameStartNanos = System.nanoTime();
+		}
+	}
+
+	/** Stop the watchdog. */
+	void stop()
+	{
+		Thread w = watchdog;
+		if (w != null)
+		{
+			w.interrupt();
+			watchdog = null;
+		}
+	}
+
+	private void watch()
+	{
+		try
+		{
+			while (!Thread.currentThread().isInterrupted())
+			{
+				Thread.sleep(WATCH_MS);
+				long now = System.nanoTime();
+				Thread client = clientThread;
+				synchronized (stacks)
+				{
+					if (client == null || now - frameStartNanos < thresholdNanos || stackCount == SAMPLES
+						|| now - lastSampleNanos < SAMPLE_GAP_NANOS)
+					{
+						continue;
+					}
+					lastSampleNanos = now;
+				}
+				String stack = describe(client.getStackTrace(), (now - frameStartNanos) / 1e6);
+				synchronized (stacks)
+				{
+					if (stackCount < SAMPLES)
+					{
+						stacks[stackCount++] = stack;
+					}
+				}
+			}
+		}
+		catch (InterruptedException ex)
+		{
+			Thread.currentThread().interrupt();
+		}
+	}
+
+	private static String describe(StackTraceElement[] trace, double atMs)
+	{
+		StringBuilder b = new StringBuilder(256);
+		b.append(String.format("at %.0f ms:", atMs));
+		for (int i = 0; i < Math.min(trace.length, STACK_FRAMES); ++i)
+		{
+			StackTraceElement e = trace[i];
+			String c = e.getClassName();
+			b.append(i == 0 ? " " : " < ").append(c.substring(c.lastIndexOf('.') + 1)).append('.')
+				.append(e.getMethodName());
+			if (e.getLineNumber() > 0)
+			{
+				b.append(':').append(e.getLineNumber());
+			}
+		}
+		return b.toString();
+	}
+
+	/** Where the watchdog found the client thread during this frame, if it looked. */
+	private String stuckText()
+	{
+		synchronized (stacks)
+		{
+			if (stackCount == 0)
+			{
+				return "";
+			}
+			StringBuilder b = new StringBuilder("; stuck ");
+			for (int i = 0; i < stackCount; ++i)
+			{
+				b.append(i > 0 ? " | " : "").append(stacks[i]);
+			}
+			return b.toString();
 		}
 	}
 

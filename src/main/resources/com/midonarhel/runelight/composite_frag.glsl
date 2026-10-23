@@ -81,8 +81,9 @@ uniform int skyVoid;
 // point lights, culled into clusters on the CPU (LightClusters.java)
 uniform int pointLightsEnabled;
 uniform samplerBuffer lightData;     // per light: (camera-relative position, radius), (color * strength, room code); then the rooms
-uniform usamplerBuffer clusterData;  // per cluster: count, then light indices
+uniform usamplerBuffer clusterData;  // per cluster: a bit per light in view (light_clusters.glsl)
 
+#include "light_clusters.glsl"
 #include "rooms.glsl"
 #include "light_occlusion.glsl"
 
@@ -156,6 +157,13 @@ float upsampleAoFog(ivec2 px, float z, vec3 n, out vec4 fog, out float shadow, o
 // the AO, added to the skylight's ambient (light_occlusion.glsl skylightAmbient)
 uniform float giWeight;  // 0..1: enabled, eased in and out, strength
 
+// the inside of buildings at night (BuildingLights.FILL, linear), and how much of it is left at a room's walls
+uniform vec3 interiorLight;
+#define INTERIOR_WALL 0.35
+// sky visibility at which a spot counts as fully indoors, and as not indoors at all
+#define INTERIOR_SKY_CLOSED 0.1
+#define INTERIOR_SKY_OPEN 0.4
+
 // ---------------------------------------------------------------------------------------------------------------
 // Distance fog by the game's fog depth setting, from the same edge as the edge fade, as in vert.glsl
 
@@ -184,29 +192,31 @@ vec3 skyBehind(vec2 px, vec3 dir, vec3 fogColor, bool sunAndSky) {
 // lights.json colors are linear and strengths are 117 HD's, used as they are; this is only a global trim
 #define POINT_LIGHT_SCALE 1.0
 
-int clusterBase(ivec2 px, float z) {
-  vec2 rel = (vec2(px) + 0.5 - vec2(sceneViewport.xy)) / vec2(sceneViewport.zw);
-  int cx = clamp(int(rel.x * float(CLUSTERS_X)), 0, CLUSTERS_X - 1);
-  int cy = clamp(int(rel.y * float(CLUSTERS_Y)), 0, CLUSTERS_Y - 1);
-  int cz = z <= CLUSTER_NEAR ? 0
-    : clamp(int(floor(log(z / CLUSTER_NEAR) / log(CLUSTER_FAR / CLUSTER_NEAR) * float(CLUSTERS_Z))), 0, CLUSTERS_Z - 1);
-  return ((cz * CLUSTERS_Y + cy) * CLUSTERS_X + cx) * CLUSTER_STRIDE;
+int clusterAt(ivec2 px, float z) {
+  return clusterEntry((vec2(px) + 0.5 - vec2(sceneViewport.xy)) / vec2(sceneViewport.zw), z);
 }
 
-int clusterLightCount(int base) {
-  return int(texelFetch(clusterData, base).r);
+int clusterLightCount(int entry) {
+  LightMask m = clusterLights(entry);
+  int count = 0, li;
+  while (nextLight(m, li)) {
+    ++count;
+  }
+  return count;
 }
 
 // returns the light on the front; light through thin foliage from behind goes to throughOut
-vec3 pointLights(int base, vec3 p, vec3 n, float transmissive, out vec3 throughOut) {
+vec3 pointLights(int entry, vec3 p, vec3 n, float transmissive, out vec3 throughOut) {
   vec3 viewDir = transmissive > 0.0 ? normalize(-p) : vec3(0.0);
   vec3 through = vec3(0.0);
   vec3 sum = vec3(0.0);
-  int count = clusterLightCount(base);
-  // lights only reach the room they are in, or the outdoors (rooms.glsl)
-  ivec3 room = count > 0 ? lightRoomPlaneAt(p + cameraPos + n * ROOM_NORMAL_BIAS) : ivec3(-1, 0, 0);
-  for (int i = 0; i < count; ++i) {
-    int li = int(texelFetch(clusterData, base + 1 + i).r);
+  // lights only reach the room they are in, or the outdoors (rooms.glsl): looked up at the first light that reaches
+  // the point, as most pixels of a cluster lie outside all its lights' radii
+  ivec3 room;
+  bool roomKnown = false;
+  LightMask lights = clusterLights(entry);
+  int li;
+  while (nextLight(lights, li)) {
     vec4 posRadius = texelFetch(lightData, li * 2);
     // Reject outside the radius before fetching room/visibility data.
     vec3 l = posRadius.xyz - p;
@@ -220,6 +230,10 @@ vec3 pointLights(int base, vec3 p, vec3 n, float transmissive, out vec3 throughO
     // Opaque back faces receive neither diffuse light nor foliage transmission.
     if (ndl <= 0.0 && transmissive <= 0.0) {
       continue;
+    }
+    if (!roomKnown) {
+      room = lightRoomPlaneAt(p + cameraPos + n * ROOM_NORMAL_BIAS);
+      roomKnown = true;
     }
     vec4 colorCode = texelFetch(lightData, li * 2 + 1);
     vec4 extra = texelFetch(lightData, LIGHT_EXTRA_BASE + li);
@@ -243,8 +257,7 @@ vec3 pointLights(int base, vec3 p, vec3 n, float transmissive, out vec3 throughO
 // ---------------------------------------------------------------------------------------------------------------
 
 // Transparent surfaces were lit as they were drawn, into their own layer; put them over the lit scene
-vec4 overTransparent(ivec2 px, vec4 base) {
-  vec4 a = texelFetch(sceneAlpha, px, 0);
+vec4 overTransparent(vec4 a, vec4 base) {
   return vec4(a.rgb + base.rgb * (1.0 - a.a), base.a);
 }
 
@@ -301,13 +314,17 @@ void main() {
     }
     vec3 dir = normalize(reconstructPosition(c, 1.0));
     float pixelAngle = length(normalize(reconstructPosition(c + vec2(0.0, 1.0), 1.0)) - dir);
-    FragColor = cloudLayer(cloudSkyDir(dir), cameraPos, sunDir, moonDir, sunAltitude, pixelAngle, cloudJitter(c),
-      CLOUD_STEPS);
+    // jittered per cloud texel: the noise is only even at a stride of one texel, at a scene pixel stride of two
+    // it ramps across the sky and combs the clouds into bands
+    FragColor = cloudLayer(cloudSkyDir(dir), cameraPos, sunDir, moonDir, sunAltitude, pixelAngle,
+      cloudJitter(gl_FragCoord.xy), CLOUD_STEPS);
     return;
   }
   ivec2 px = ivec2(gl_FragCoord.xy);
   vec4 color = texelFetch(sceneColor, px, 0);
   float d = texelFetch(sceneDepth, px, 0).r;
+  // transparent geometry over this pixel: the wet ground's coverage test and the final blend both read it
+  vec4 transparent = texelFetch(sceneAlpha, px, 0);
   bool inside = inViewport(px);
   bool sunAndSky = outdoors == 1;
   // the procedural sky shows; a black void or a cave shows the fog color instead
@@ -353,9 +370,13 @@ void main() {
       color.rgb = behind;
     }
     // the color target's alpha is coverage; the window wants opaque
-    FragColor = overTransparent(px, vec4(color.rgb, 1.0));
+    FragColor = overTransparent(transparent, vec4(color.rgb, 1.0));
     // 0 is sky in both depth conventions
     FragColor.rgb = applyVolumetricFog(px, FragColor.rgb, 0.0);
+    // the sky's broad gradients band in the 8-bit window: a triangular dither of one step hides it
+    vec2 q = vec2(px);
+    FragColor.rgb += (fract(52.9829189 * fract(dot(q, vec2(0.06711056, 0.00583715))))
+      - fract(52.9829189 * fract(dot(q + 0.5, vec2(0.00583715, 0.06711056))))) / 255.0;
     return;
   }
 
@@ -384,7 +405,7 @@ void main() {
   }
   // snow and wet ground change the surface itself, before it is lit
   float wet = compositePart != 5 && inside && weatherGroundOn == 1 ? weatherGroundSurface(color.rgb, n, p + cameraPos, emissive, material.b,
-    texelFetch(sceneAlpha, px, 0).a) : 0.0;
+    transparent.a) : 0.0;
 
   float shadow = 1.0;
   vec3 light = vec3(ao);
@@ -408,9 +429,17 @@ void main() {
     float daylightFill = skylightOn == 1 ? 0.7 * clamp(skyUpsampled, 0.0, 1.0) : 0.0;
     indirect += caster * envSun * max(ndl, 0.0) * (1.0 - shadow) * daylightFill * ao;
     float roomFill = roomAmbientFill(p + cameraPos, n);
-    vec3 roomDaylight = ambientLight(sunAltitude) + skyFill(vec3(0.0, -1.0, 0.0), sunAltitude, 1.0)
-      + caster * envSun * (0.7 * max(-casterDir.y, 0.0));
-    indirect = max(indirect, roomDaylight * envAmbient * roomFill * 0.3 * ao);
+    if (roomFill > 0.0) {
+      // how closed in the spot is: a room with its roof hidden still counts, a covered gateway open at both ends
+      // doesn't, and the fill fades out toward a room's doorways and open sides instead of ending at its tiles' edge
+      float enclosed = skylightOn == 1 ? 1.0 - smoothstep(INTERIOR_SKY_CLOSED, INTERIOR_SKY_OPEN, skyUpsampled) : 1.0;
+      // the daylight a room gets at least, through its windows and doors
+      vec3 roomDaylight = ambientLight(sunAltitude) + skyFill(vec3(0.0, -1.0, 0.0), sunAltitude, 1.0)
+        + caster * envSun * (0.7 * max(-casterDir.y, 0.0));
+      indirect = max(indirect, roomDaylight * envAmbient * roomFill * enclosed * 0.3 * ao);
+      // the room's lamps at night: a soft fill over the whole room, darker toward its walls (BuildingLights)
+      indirect += interiorLight * mix(INTERIOR_WALL, 1.0, clamp((roomFill - 0.6) / 0.4, 0.0, 1.0)) * enclosed * ao;
+    }
     }
     light = indirect
       + caster * envSun * max(ndl, 0.0) * shadow * mix(1.0, ao, AO_DIRECT);
@@ -428,7 +457,7 @@ void main() {
   if (compositePart == 1) { FragColor = vec4(indirect, 0.0); return; }
   if (compositePart == 2) { FragColor = vec4(light - indirect, shadow); return; }
   if (compositePart == 3) light = vec3(0.0);
-  int cluster = clusterBase(px, viewDepth(d));
+  int cluster = clusterAt(px, viewDepth(d));
   if ((compositePart == 0 || compositePart == 3) && pointLightsEnabled == 1 && inside) {
     vec3 through;
     light += pointLights(cluster, p, n, transmissive, through) * mix(1.0, ao, AO_DIRECT);
@@ -501,6 +530,6 @@ void main() {
   }
   // over the sky by the geometry's coverage
   lit = mix(behind, lit, cover);
-  FragColor = overTransparent(px, vec4(lit, 1.0));
+  FragColor = overTransparent(transparent, vec4(lit, 1.0));
   FragColor.rgb = fogDone ? applyFogSample(FragColor.rgb, fog) : applyVolumetricFog(px, FragColor.rgb, d);
 }

@@ -474,7 +474,8 @@ public interface RuneLightConfig extends Config
 	@ConfigItem(
 		keyName = "buildingLights",
 		name = "Building lights",
-		description = "Light the inside of buildings from overhead at night, found from the map's roof data.",
+		description = "Light the inside of buildings softly at night, as if their lamps were lit, found from the map's "
+			+ "roof data.",
 		section = buildingsSection,
 		position = 451
 	)
@@ -507,7 +508,7 @@ public interface RuneLightConfig extends Config
 	@ConfigItem(
 		keyName = "buildingLightBrightness",
 		name = "Brightness",
-		description = "Strength of building lights, in percent.",
+		description = "How brightly the inside of buildings is lit, in percent.",
 		section = buildingsSection,
 		position = 452
 	)
@@ -519,7 +520,7 @@ public interface RuneLightConfig extends Config
 	@ConfigItem(
 		keyName = "buildingLightsByDay",
 		name = "Also by day",
-		description = "Keep a dimmer version of the building lights on during the day.",
+		description = "Keep the inside of buildings dimly lit during the day too.",
 		section = buildingsSection,
 		position = 453
 	)
@@ -1446,8 +1447,8 @@ public interface RuneLightConfig extends Config
 	@ConfigItem(
 		keyName = "roomsByWalls",
 		name = "Split rooms at walls",
-		description = "Buildings are split into rooms along their interior walls, so lights stay in their own room "
-			+ "and each room gets its own building light.",
+		description = "Buildings are split into rooms along their interior walls, so lights stay in their own "
+			+ "room.",
 		section = lightOcclusionSection,
 		position = 805
 	)

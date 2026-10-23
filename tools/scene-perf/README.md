@@ -13,7 +13,7 @@ Outputs:
 
 - `scene.json`: dimensions, viewport, camera matrices, settings, light counts.
 - `depth/normal/material/color.f32`: full-resolution rendered buffers, little-endian floats, bottom-up rows. Color includes coverage. This captures visible geometry, **not** all world meshes and is not a replay renderer.
-- `lights.f32`, `light-extra.f32`, `clusters.u16`: actual uploaded light and cluster tables.
+- `lights.f32`, `light-extra.f32`, `clusters.u32`: actual uploaded light and cluster tables (the clusters' light masks, `CLUSTER_TEXELS` RGBA32UI texels each).
 - `timings.csv`: raw GPU results (blank = no query, NaN = invalid), raw CPU stages and raw sampled frame intervals; no retained overlay averages.
 - `revision.txt`, `working-tree.patch`: source provenance.
 - `report.md`, `analysis.json`, `lights.csv`: statistics and per-light work ranking.

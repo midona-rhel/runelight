@@ -115,7 +115,9 @@ vec3 weatherParticleColor(vec3 srgb, vec3 points) {
 // Point lights, culled into clusters on the CPU (LightClusters.java); same tables and lookup as the composite
 uniform int pointLightsEnabled;
 uniform samplerBuffer lightData;     // per light: (camera-relative position, radius), (color * strength, 0)
-uniform usamplerBuffer clusterData;  // per cluster: count, then light indices
+uniform usamplerBuffer clusterData;  // per cluster: a bit per light in view (light_clusters.glsl)
+
+#include "light_clusters.glsl"
 
 // particles are lit at their center, once per vertex; global trim against the surface lighting
 #define WEATHER_POINT_LIGHT_SCALE 1.0
@@ -143,11 +145,7 @@ vec3 weatherPointLights(vec3 p, vec4 clip, vec3 n, float roofY) {
     return vec3(0.0);
   }
   float z = clip.w;
-  int cx = clamp(int(rel.x * float(CLUSTERS_X)), 0, CLUSTERS_X - 1);
-  int cy = clamp(int(rel.y * float(CLUSTERS_Y)), 0, CLUSTERS_Y - 1);
-  int cz = z <= CLUSTER_NEAR ? 0
-    : clamp(int(floor(log(z / CLUSTER_NEAR) / log(CLUSTER_FAR / CLUSTER_NEAR) * float(CLUSTERS_Z))), 0, CLUSTERS_Z - 1);
-  int base = ((cz * CLUSTERS_Y + cy) * CLUSTERS_X + cx) * CLUSTER_STRIDE;
+  int entry = clusterEntry(rel, z);
 
   bool particle = dot(n, n) < 0.5;
   float reach = particle ? 1.0 - smoothstep(WEATHER_PARTICLE_LIGHT_FAR * 0.75, WEATHER_PARTICLE_LIGHT_FAR, z) : 1.0;
@@ -158,9 +156,9 @@ vec3 weatherPointLights(vec3 p, vec4 clip, vec3 n, float roofY) {
   float roof = roofY - cameraPos.y + WEATHER_ROOF_BIAS;
   bool overRoof = p.y < roof;
   vec3 sum = vec3(0.0);
-  int count = int(texelFetch(clusterData, base).r);
-  for (int i = 0; i < count; ++i) {
-    int li = int(texelFetch(clusterData, base + 1 + i).r);
+  LightMask lights = clusterLights(entry);
+  int li;
+  while (nextLight(lights, li)) {
     vec4 posRadius = texelFetch(lightData, li * 2);
     vec4 colorIndoor = texelFetch(lightData, li * 2 + 1);
     if (colorIndoor.w > 0.5 || overRoof && posRadius.y > roof) {

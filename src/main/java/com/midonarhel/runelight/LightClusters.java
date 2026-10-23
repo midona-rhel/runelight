@@ -2,7 +2,8 @@ package com.midonarhel.runelight;
 
 import java.nio.ByteBuffer;
 import java.nio.FloatBuffer;
-import java.nio.ShortBuffer;
+import java.nio.IntBuffer;
+import java.util.Arrays;
 import java.util.List;
 import org.lwjgl.BufferUtils;
 import static org.lwjgl.opengl.GL33C.*;
@@ -14,7 +15,9 @@ import static org.lwjgl.opengl.GL33C.*;
  * lights overlap a pixel rather than how many exist.
  *
  * Built on the CPU because macOS OpenGL 4.1 has no compute shaders; for OSRS light counts this is cheap.
- * Both tables go to the GPU as buffer textures.
+ * Both tables go to the GPU as buffer textures. A cluster lists its lights as a mask with a bit per light in view, in
+ * RGBA32UI texels of 128 lights each: the shader walks the set bits instead of fetching an index per light, and the
+ * table is a quarter of a list's size. As many texels per cluster as there are lights in view, in 128s.
  */
 class LightClusters
 {
@@ -23,6 +26,7 @@ class LightClusters
 	static final int CLUSTERS_Z = 24;
 	static final int MAX_LIGHTS_PER_CLUSTER = 31;
 	static final int MAX_LIGHTS = 1024;
+	static final int LIGHTS_PER_TEXEL = 128;
 	static final float NEAR = 50;
 	static final float FAR = 25600;
 	// a third texel per light after the two per light: its occlusion grid and whether it is covered
@@ -37,9 +41,9 @@ class LightClusters
 	// lights are left out unless their room has no roof right now (OpenRooms), and lights outside the fog. When a column is full, the brightest lights win, in the same
 	// order for every column, so neighbouring columns keep the same lights instead of showing the tile grid.
 	private static final int COLUMN_COUNT = CLUSTERS_X * CLUSTERS_Y;
-	// per cluster: count, then up to MAX_LIGHTS_PER_CLUSTER indices
-	private static final int CLUSTER_STRIDE = MAX_LIGHTS_PER_CLUSTER + 1;
-	private static final int TABLE_SIZE = (CLUSTER_COUNT + COLUMN_COUNT) * CLUSTER_STRIDE;
+	// entries of the light masks: the clusters, a column's depth slices next to each other as the culling walks them,
+	// then the fog columns
+	static final int CLUSTER_ENTRIES = CLUSTER_COUNT + COLUMN_COUNT;
 
 	private int lightBuffer, lightTexture;
 	private int clusterBuffer, clusterTexture;
@@ -62,25 +66,38 @@ class LightClusters
 	private boolean boundsValid;
 
 	private final FloatBuffer lightData = BufferUtils.createFloatBuffer(MAX_LIGHTS * 8);
-	private final short[] clusters = new short[TABLE_SIZE];
-	private final ShortBuffer clusterData = BufferUtils.createShortBuffer(TABLE_SIZE);
+	// per entry, texels * 4 words of light bits; light i is bit i & 31 of word i >> 5
+	private final int[] masks = new int[CLUSTER_ENTRIES * MAX_LIGHTS / 32];
+	private final IntBuffer maskData = BufferUtils.createIntBuffer(masks.length);
+	// lights listed per entry, held to MAX_LIGHTS_PER_CLUSTER
+	private final byte[] counts = new byte[CLUSTER_ENTRIES];
+	private int texels = 1;
+	// The table is only rebuilt when what it depends on changed, and each half only sent then; the buffer is laid out
+	// again only when the texels per entry change (the shaders find them from its size).
+	private int bufferTexels;
+	private boolean clustersDirty, columnsDirty;
+	// per light in view: camera-relative center and radius, as last culled, and its cluster range x0, y0, x1, y1, z0, z1
+	private final float[] spheres = new float[MAX_LIGHTS * 4];
+	private final int[] ranges = new int[MAX_LIGHTS * 6];
 
 	// fog: camera-relative xz of the fog's center and its radius; columns are only filled while enabled
 	private boolean fogColumns;
 	// rooms whose roof is hidden: their lights glow in the fog (null: none)
 	private OpenRooms openRooms;
 	private float fogX, fogZ, fogRadius;
-	// candidates for the fog columns this frame: light index, tile rectangle, packed for sorting by brightness
+	// candidates for the fog columns this frame, packed for sorting by brightness, and their lights
 	private long[] fogOrder = new long[64];
-	private int[] fogRect = new int[64 * 4];
 	private int fogCandidates;
 	private int[] fogLight = new int[64];
+	// the candidates' lights brightest first, as the columns were last filled with them
+	private int[] fogFilled = new int[64];
+	private int fogFilledCount;
 	private final float[] tile = new float[4];
 
 	private int lightCount;
 	private int overflows;
 
-	// camera-relative world space bounds of every cluster: minX, minY, minZ, maxX, maxY, maxZ
+	// camera-relative world space bounds of every cluster, in the masks' order: minX, minY, minZ, maxX, maxY, maxZ
 	private final float[] bounds = new float[CLUSTER_COUNT * 6];
 	// view rays through the cluster grid corners, scaled to view depth 1
 	private final float[] rays = new float[(CLUSTERS_X + 1) * (CLUSTERS_Y + 1) * 3];
@@ -101,10 +118,12 @@ class LightClusters
 
 		clusterBuffer = glGenBuffers();
 		glBindBuffer(GL_TEXTURE_BUFFER, clusterBuffer);
-		glBufferData(GL_TEXTURE_BUFFER, (long) TABLE_SIZE * Short.BYTES, GL_STREAM_DRAW);
+		bufferTexels = texels;
+		glBufferData(GL_TEXTURE_BUFFER, (long) CLUSTER_ENTRIES * bufferTexels * 4 * Integer.BYTES, GL_DYNAMIC_DRAW);
+		clustersDirty = columnsDirty = true;
 		clusterTexture = glGenTextures();
 		glBindTexture(GL_TEXTURE_BUFFER, clusterTexture);
-		glTexBuffer(GL_TEXTURE_BUFFER, GL_R16UI, clusterBuffer);
+		glTexBuffer(GL_TEXTURE_BUFFER, GL_RGBA32UI, clusterBuffer);
 
 		glBindTexture(GL_TEXTURE_BUFFER, 0);
 		glBindBuffer(GL_TEXTURE_BUFFER, 0);
@@ -205,16 +224,12 @@ class LightClusters
 	 */
 	void cull(List<PointLight> lights, float[] viewProj, float camX, float camY, float camZ)
 	{
-		// only the counts need clearing; indices past a count are never read
-		for (int i = 0; i < clusters.length; i += CLUSTER_STRIDE)
-		{
-			clusters[i] = 0;
-		}
 		lightData.clear();
 		extraData.clear();
-		overflows = 0;
 		fogCandidates = 0;
-		if (!boundsValid || !java.util.Arrays.equals(viewProj, boundsViewProj))
+		// the clusters only change with the view and the spheres of the lights in it
+		boolean changed = !boundsValid || !Arrays.equals(viewProj, boundsViewProj);
+		if (changed)
 		{
 			computeBounds(viewProj);
 			System.arraycopy(viewProj, 0, boundsViewProj, 0, 16);
@@ -241,22 +256,27 @@ class LightClusters
 				continue;
 			}
 
-			int x0 = clampi((int) Math.floor((tile[0] * 0.5f + 0.5f) * CLUSTERS_X), 0, CLUSTERS_X - 1);
-			int x1 = clampi((int) Math.floor((tile[2] * 0.5f + 0.5f) * CLUSTERS_X), 0, CLUSTERS_X - 1);
-			int y0 = clampi((int) Math.floor((tile[1] * 0.5f + 0.5f) * CLUSTERS_Y), 0, CLUSTERS_Y - 1);
-			int y1 = clampi((int) Math.floor((tile[3] * 0.5f + 0.5f) * CLUSTERS_Y), 0, CLUSTERS_Y - 1);
-			int z0 = slice(w - l.radius);
-			int z1 = slice(w + l.radius);
-
 			int index = kept++;
-			float code = rooms != null && roomLights ? rooms.lightCode(l.x, l.y, l.z, l.plane) : l.roomCode;
-			// a light only in building rooms counts as indoors even when it isn't a building light
-			boolean indoor = l.indoor || RoomMap.indoor(code);
-			if (l.indoor && !RoomMap.indoor(code))
+			int s = index * 4;
+			if (spheres[s] != x || spheres[s + 1] != y || spheres[s + 2] != z || spheres[s + 3] != l.radius)
 			{
-				// building lights stay out of the fog and the weather whatever their tile says
-				code = Math.abs(code);
+				spheres[s] = x;
+				spheres[s + 1] = y;
+				spheres[s + 2] = z;
+				spheres[s + 3] = l.radius;
+				changed = true;
 			}
+			int r = index * 6;
+			ranges[r] = clampi((int) Math.floor((tile[0] * 0.5f + 0.5f) * CLUSTERS_X), 0, CLUSTERS_X - 1);
+			ranges[r + 1] = clampi((int) Math.floor((tile[1] * 0.5f + 0.5f) * CLUSTERS_Y), 0, CLUSTERS_Y - 1);
+			ranges[r + 2] = clampi((int) Math.floor((tile[2] * 0.5f + 0.5f) * CLUSTERS_X), 0, CLUSTERS_X - 1);
+			ranges[r + 3] = clampi((int) Math.floor((tile[3] * 0.5f + 0.5f) * CLUSTERS_Y), 0, CLUSTERS_Y - 1);
+			ranges[r + 4] = slice(w - l.radius);
+			ranges[r + 5] = slice(w + l.radius);
+
+			float code = rooms != null && roomLights ? rooms.lightCode(l.x, l.y, l.z, l.plane) : l.roomCode;
+			// a light only in building rooms counts as indoors
+			boolean indoor = RoomMap.indoor(code);
 			lightData.put(x).put(y).put(z).put(l.radius);
 			lightData.put(l.r * l.intensity).put(l.g * l.intensity).put(l.b * l.intensity).put(code);
 			LightOcclusion.texel(l.occlusion, grids,
@@ -267,98 +287,146 @@ class LightClusters
 				float fx = x - fogX, fz = z - fogZ, reach = fogRadius + l.radius;
 				if (fx * fx + fz * fz < reach * reach)
 				{
-					addFogCandidate(index, x0, y0, x1, y1, (l.r + l.g + l.b) * l.intensity * l.radius);
+					addFogCandidate(index, (l.r + l.g + l.b) * l.intensity * l.radius);
 				}
 			}
+		}
+		changed |= kept != lightCount;
+		lightCount = kept;
+		lightData.flip();
+		extraData.flip();
+		if (changed)
+		{
+			texels = Math.max(1, (kept + LIGHTS_PER_TEXEL - 1) / LIGHTS_PER_TEXEL);
+			fillClusters();
+		}
+		fillFogColumns(changed);
+	}
 
+	private void fillClusters()
+	{
+		int words = texels * 4;
+		Arrays.fill(masks, 0, CLUSTER_COUNT * words, 0);
+		Arrays.fill(counts, 0, CLUSTER_COUNT, (byte) 0);
+		overflows = 0;
+		for (int index = 0; index < lightCount; ++index)
+		{
+			int s = index * 4, r = index * 6;
+			float x = spheres[s], y = spheres[s + 1], z = spheres[s + 2], r2 = spheres[s + 3] * spheres[s + 3];
+			int x0 = ranges[r], y0 = ranges[r + 1], x1 = ranges[r + 2], y1 = ranges[r + 3];
+			int z0 = ranges[r + 4], z1 = ranges[r + 5];
+			int word = index >> 5, bit = 1 << (index & 31);
 			for (int cy = y0; cy <= y1; ++cy)
 			{
 				for (int cx = x0; cx <= x1; ++cx)
 				{
-					if (!columnTouches(cx, cy, x, y, z, l.radius)) continue;
+					int column = cy * CLUSTERS_X + cx;
+					if (!columnTouches(column, x, y, z, r2)) continue;
 					for (int cz = z0; cz <= z1; ++cz)
 					{
-						int cluster = (cz * CLUSTERS_Y + cy) * CLUSTERS_X + cx;
-						if (!sphereTouches(cluster, x, y, z, l.radius))
+						int cluster = column * CLUSTERS_Z + cz;
+						// The sphere against the cluster's box. Comparisons rather than Math.max, whose NaN and -0 handling
+						// made it twice as slow here.
+						int b = cluster * 6;
+						float below = bounds[b] - x, above = x - bounds[b + 3];
+						float dx = below > 0 ? below : above > 0 ? above : 0;
+						below = bounds[b + 1] - y;
+						above = y - bounds[b + 4];
+						float dy = below > 0 ? below : above > 0 ? above : 0;
+						below = bounds[b + 2] - z;
+						above = z - bounds[b + 5];
+						float dz = below > 0 ? below : above > 0 ? above : 0;
+						if (dx * dx + dy * dy + dz * dz > r2)
 						{
 							continue;
 						}
-						int base = cluster * CLUSTER_STRIDE;
-						int count = clusters[base];
-						if (count == MAX_LIGHTS_PER_CLUSTER)
+						if (counts[cluster] == MAX_LIGHTS_PER_CLUSTER)
 						{
 							++overflows;
 							continue;
 						}
-						clusters[base + 1 + count] = (short) index;
-						clusters[base] = (short) (count + 1);
+						++counts[cluster];
+						masks[cluster * words + word] |= bit;
 					}
 				}
 			}
 		}
-		lightCount = kept;
-		lightData.flip();
-		extraData.flip();
-		fillFogColumns();
+		clustersDirty = true;
 	}
 
-	private void addFogCandidate(int index, int x0, int y0, int x1, int y1, float brightness)
+	private void addFogCandidate(int index, float brightness)
 	{
 		int c = fogCandidates++;
 		if (c == fogOrder.length)
 		{
-			fogOrder = java.util.Arrays.copyOf(fogOrder, c * 2);
-			fogRect = java.util.Arrays.copyOf(fogRect, c * 8);
-			fogLight = java.util.Arrays.copyOf(fogLight, c * 2);
+			fogOrder = Arrays.copyOf(fogOrder, c * 2);
+			fogLight = Arrays.copyOf(fogLight, c * 2);
 		}
 		// brightest first; ties by index so the order is stable. Positive floats sort like their bits.
 		long key = (long) Float.floatToIntBits(Math.max(brightness, 0)) << 32 | (0xFFFFFFFFL - c);
 		fogOrder[c] = key;
-		fogRect[c * 4] = x0;
-		fogRect[c * 4 + 1] = y0;
-		fogRect[c * 4 + 2] = x1;
-		fogRect[c * 4 + 3] = y1;
 		fogLight[c] = index;
 	}
 
-	private void fillFogColumns()
+	/**
+	 * Fill the fog columns, unless the lights' spheres and the candidates, brightest first, are as they were.
+	 */
+	private void fillFogColumns(boolean changed)
 	{
-		int columns = CLUSTER_COUNT * CLUSTER_STRIDE;
-		for (int i = columns; i < TABLE_SIZE; i += CLUSTER_STRIDE)
+		Arrays.sort(fogOrder, 0, fogCandidates);
+		if (fogFilled.length < fogCandidates)
 		{
-			clusters[i] = 0;
+			fogFilled = Arrays.copyOf(fogFilled, fogOrder.length);
 		}
-		if (fogCandidates == 0)
+		boolean same = !changed && fogCandidates == fogFilledCount;
+		for (int k = 0; k < fogCandidates; ++k)
+		{
+			int c = (int) (0xFFFFFFFFL - (fogOrder[fogCandidates - 1 - k] & 0xFFFFFFFFL));
+			int index = fogLight[c];
+			same &= fogFilled[k] == index;
+			fogFilled[k] = index;
+		}
+		fogFilledCount = fogCandidates;
+		if (same)
 		{
 			return;
 		}
-		java.util.Arrays.sort(fogOrder, 0, fogCandidates);
-		for (int k = fogCandidates - 1; k >= 0; --k)
+		int words = texels * 4;
+		Arrays.fill(masks, CLUSTER_COUNT * words, CLUSTER_ENTRIES * words, 0);
+		Arrays.fill(counts, CLUSTER_COUNT, CLUSTER_ENTRIES, (byte) 0);
+		for (int k = 0; k < fogCandidates; ++k)
 		{
-			int c = (int) (0xFFFFFFFFL - (fogOrder[k] & 0xFFFFFFFFL));
-			int index = fogLight[c];
-			float lx = lightData.get(index * 8), ly = lightData.get(index * 8 + 1);
-			float lz = lightData.get(index * 8 + 2), radius = lightData.get(index * 8 + 3);
-			for (int cy = fogRect[c * 4 + 1]; cy <= fogRect[c * 4 + 3]; ++cy)
+			int index = fogFilled[k];
+			int s = index * 4, r = index * 6;
+			float x = spheres[s], y = spheres[s + 1], z = spheres[s + 2], r2 = spheres[s + 3] * spheres[s + 3];
+			int word = index >> 5, bit = 1 << (index & 31);
+			for (int cy = ranges[r + 1]; cy <= ranges[r + 3]; ++cy)
 			{
-				for (int cx = fogRect[c * 4]; cx <= fogRect[c * 4 + 2]; ++cx)
+				for (int cx = ranges[r]; cx <= ranges[r + 2]; ++cx)
 				{
-					if (!columnTouches(cx, cy, lx, ly, lz, radius)) continue;
-					int base = columns + (cy * CLUSTERS_X + cx) * CLUSTER_STRIDE;
-					int count = clusters[base];
-					if (count < MAX_LIGHTS_PER_CLUSTER)
+					int column = cy * CLUSTERS_X + cx;
+					if (!columnTouches(column, x, y, z, r2)) continue;
+					int entry = CLUSTER_COUNT + column;
+					if (counts[entry] < MAX_LIGHTS_PER_CLUSTER)
 					{
-						clusters[base + 1 + count] = (short) index;
-						clusters[base] = (short) (count + 1);
+						++counts[entry];
+						masks[entry * words + word] |= bit;
 					}
 				}
 			}
 		}
+		columnsDirty = true;
 	}
 
-	short[] clusterTable()
+	/** The light masks as cull left them, CLUSTER_ENTRIES entries of {@link #clusterTexels} * 4 words. */
+	int[] clusterTable()
 	{
-		return clusters;
+		return masks;
+	}
+
+	int clusterTexels()
+	{
+		return texels;
 	}
 
 	void upload()
@@ -411,12 +479,33 @@ class LightClusters
 		roomOff.flip();
 		glBufferSubData(GL_TEXTURE_BUFFER, (long) ROOM_BASE * 4 * Float.BYTES, roomOff);
 
-		clusterData.clear();
-		clusterData.put(clusters);
-		clusterData.flip();
 		glBindBuffer(GL_TEXTURE_BUFFER, clusterBuffer);
-		glBufferData(GL_TEXTURE_BUFFER, clusterData, GL_STREAM_DRAW);
+		int words = texels * 4;
+		if (texels != bufferTexels)
+		{
+			glBufferData(GL_TEXTURE_BUFFER, (long) CLUSTER_ENTRIES * words * Integer.BYTES, GL_DYNAMIC_DRAW);
+			bufferTexels = texels;
+			clustersDirty = columnsDirty = true;
+		}
+		if (clustersDirty)
+		{
+			sendMasks(0, CLUSTER_COUNT * words);
+			clustersDirty = false;
+		}
+		if (columnsDirty)
+		{
+			sendMasks(CLUSTER_COUNT * words, COLUMN_COUNT * words);
+			columnsDirty = false;
+		}
 		glBindBuffer(GL_TEXTURE_BUFFER, 0);
+	}
+
+	private void sendMasks(int from, int words)
+	{
+		maskData.clear();
+		maskData.put(masks, from, words);
+		maskData.flip();
+		glBufferSubData(GL_TEXTURE_BUFFER, (long) from * Integer.BYTES, maskData);
 	}
 
 	/** Send the occlusion grids' atlas into the bound 2D texture; a single fully visible texel when there is none. */
@@ -572,7 +661,7 @@ class LightClusters
 			for (int column = 0; column < COLUMN_COUNT; ++column)
 			{
 				int r = column * 6;
-				int b = (cz * COLUMN_COUNT + column) * 6;
+				int b = (column * CLUSTERS_Z + cz) * 6;
 				for (int axis = 0; axis < 3; ++axis)
 				{
 					float lo = columnRays[r + axis], hi = columnRays[r + 3 + axis];
@@ -583,27 +672,18 @@ class LightClusters
 		}
 	}
 
-	/** Conservative sphere/frustum-side test; shared by surface, fog and particle light lists. */
-	private boolean columnTouches(int cx, int cy, float x, float y, float z, float radius)
+	/** Conservative sphere/frustum-side test (r2: the radius squared); shared by surface and fog light lists. */
+	private boolean columnTouches(int column, float x, float y, float z, float r2)
 	{
-		int base = (cy * CLUSTERS_X + cx) * 16;
+		int base = column * 16;
 		for (int edge = 0; edge < 4; edge++)
 		{
 			int plane = base + edge * 4;
 			float distance = columnPlanes[plane] * x + columnPlanes[plane + 1] * y + columnPlanes[plane + 2] * z;
-			if (distance < 0 && distance * distance > radius * radius * columnPlanes[plane + 3] * 1.0001f)
+			if (distance < 0 && distance * distance > r2 * columnPlanes[plane + 3] * 1.0001f)
 				return false;
 		}
 		return true;
-	}
-
-	private boolean sphereTouches(int cluster, float x, float y, float z, float r)
-	{
-		int b = cluster * 6;
-		float dx = Math.max(Math.max(bounds[b] - x, 0), x - bounds[b + 3]);
-		float dy = Math.max(Math.max(bounds[b + 1] - y, 0), y - bounds[b + 4]);
-		float dz = Math.max(Math.max(bounds[b + 2] - z, 0), z - bounds[b + 5]);
-		return dx * dx + dy * dy + dz * dz <= r * r;
 	}
 
 	static int slice(float viewDepth)

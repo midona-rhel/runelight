@@ -246,9 +246,6 @@ void waterShadeHalf(ivec2 hpx) {
   float t = 1e9;
   ivec2 first = halfToFull(hpx);
   for (int i = 0; i < 4; ++i) {
-    // a half texel that is one scene pixel has no others to choose from
-    if (i > 0 && halfRatio <= 1.0)
-      break;
     ivec2 q = min(first + ivec2(i & 1, i >> 1), last);
     uvec4 w = texelFetch(waterSurface, q, 0);
     if (w.b == 0u)
@@ -308,12 +305,12 @@ void waterShadeHalf(ivec2 hpx) {
   vec3 tAlong = vec3(fwd.x, 0.0, fwd.y), tAcross = vec3(-fwd.y, 0.0, fwd.x);
   vec3 lampSpec = vec3(0.0);
   if (pointLightsEnabled == 1 && lightOn) {
-    int cbase = clusterBase(px, viewZ);
-    int count = clusterLightCount(cbase);
+    int entry = clusterAt(px, viewZ);
     // lights in buildings stay there (rooms.glsl)
-    ivec2 room = count > 0 ? lightRoomAt(s + cameraPos - vec3(0.0, ROOM_NORMAL_BIAS, 0.0)) : ivec2(-1, 0);
-    for (int i = 0; i < count; ++i) {
-      int li = int(texelFetch(clusterData, cbase + 1 + i).r);
+    ivec2 room = clusterHasLights(entry) ? lightRoomAt(s + cameraPos - vec3(0.0, ROOM_NORMAL_BIAS, 0.0)) : ivec2(-1, 0);
+    LightMask lights = clusterLights(entry);
+    int li;
+    while (nextLight(lights, li)) {
       vec4 posRadius = texelFetch(lightData, li * 2);
       vec3 l = posRadius.xyz - s;
       float d2 = dot(l, l);

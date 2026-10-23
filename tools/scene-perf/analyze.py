@@ -30,7 +30,16 @@ vx,vy,vw,vh = m['frameViewport']
 inside = (xs>=vx)&(xs<vx+vw)&(ys>=vy)&(ys<vy+vh)
 geometry = inside & (depth > (0 if m['depthZeroToOne'] else .5))
 lights = np.fromfile(d/'lights.f32',dtype='<f4').reshape(-1,8)
-clusters = np.fromfile(d/'clusters.u16',dtype='<u2').reshape(-1,m['MAX_LIGHTS_PER_CLUSTER']+1)
+def light_lists(capture, meta):
+    """The light masks (LightClusters) as rows of a count, then the lights in index order, as the shaders walk them."""
+    words = np.fromfile(capture/'clusters.u32',dtype='<u4').reshape(-1,meta['CLUSTER_TEXELS']*4)
+    bits = np.unpackbits(words.view(np.uint8),axis=1,bitorder='little').astype(bool)
+    table = np.zeros((len(bits),meta['MAX_LIGHTS_PER_CLUSTER']+1),dtype=np.int32)
+    table[:,0] = bits.sum(axis=1)
+    table[:,1:] = np.argsort(~bits,axis=1,kind='stable')[:,:meta['MAX_LIGHTS_PER_CLUSTER']]
+    return table
+
+clusters = light_lists(d,m)
 nx,ny,nz = [m[k] for k in ('CLUSTERS_X','CLUSTERS_Y','CLUSTERS_Z')]
 cx = np.clip(((xs+.5-vx)/vw*nx).astype(int),0,nx-1)
 cy = np.clip(((ys+.5-vy)/vh*ny).astype(int),0,ny-1)
@@ -38,7 +47,7 @@ view_z = np.zeros_like(depth,dtype=np.float64)
 view_z[geometry] = (100/depth[geometry] if m['depthZeroToOne'] else 50/(depth[geometry]-.5))
 cz = np.zeros_like(cx)
 cz[geometry] = np.clip(np.floor(np.log(np.maximum(view_z[geometry],m['NEAR'])/m['NEAR'])/np.log(m['FAR']/m['NEAR'])*nz),0,nz-1).astype(int)
-ci = (cz*ny+cy)*nx+cx
+ci = (cy*nx+cx)*nz+cz
 counts = clusters[ci,0].astype(int)
 counts[~geometry] = 0
 if m.get('config', {}).get('pointLights') == 'false': counts[:] = 0
@@ -48,13 +57,13 @@ if a.reference:
     rm=json.loads((a.reference/'scene.json').read_text())
     assert rm['frameViewProj']==m['frameViewProj'] and rm['width']==w and rm['height']==h
     assert (a.reference/'lights.f32').read_bytes()==(d/'lights.f32').read_bytes()
-    reference_table=np.fromfile(a.reference/'clusters.u16',dtype='<u2').reshape(-1,rm['MAX_LIGHTS_PER_CLUSTER']+1)
+    reference_table=light_lists(a.reference,rm)
     rx,ry,rz=(rm[k] for k in ('CLUSTERS_X','CLUSTERS_Y','CLUSTERS_Z'))
     rcx=np.clip(((xs+.5-vx)/vw*rx).astype(int),0,rx-1)
     rcy=np.clip(((ys+.5-vy)/vh*ry).astype(int),0,ry-1)
     rcz=np.zeros_like(cx)
     rcz[geometry]=np.clip(np.floor(np.log(np.maximum(view_z[geometry],rm['NEAR'])/rm['NEAR'])/np.log(rm['FAR']/rm['NEAR'])*rz),0,rz-1).astype(int)
-    reference_ci=(rcz*ry+rcy)*rx+rcx
+    reference_ci=(rcy*rx+rcx)*rz+rcz
 inv = np.asarray(m['frameInvViewProj']).reshape(4,4).T
 # Chunk processing avoids a pixel x light x xyz allocation.
 flat = np.flatnonzero(geometry)

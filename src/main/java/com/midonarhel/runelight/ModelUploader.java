@@ -85,40 +85,49 @@ class ModelUploader
 
 	private final int[] flatNormals = new int[3];
 	private final VertexShading.Normals computedNormals = new VertexShading.Normals();
+	private final float[] projected = new float[3];
+	private final ModelData live = new ModelData();
 
-	int uploadSortedModel(RuneLightPlugin.RenderThread rt, Projection proj, Model model, int orientation, int x, int y, int z,
+	int uploadSortedModel(Projection proj, Model model, int orientation, int x, int y, int z,
 		int cameraX, int cameraY, int cameraZ, IntBuffer opaqueBuffer, IntBuffer alphaBuffer, boolean prioritySort, int material)
 	{
-		final int vertexCount = model.getVerticesCount();
-		final float[] verticesX = model.getVerticesX();
-		final float[] verticesY = model.getVerticesY();
-		final float[] verticesZ = model.getVerticesZ();
+		return uploadSortedModel(proj, live.wrap(model), orientation, x, y, z,
+			cameraX, cameraY, cameraZ, opaqueBuffer, alphaBuffer, prioritySort, material);
+	}
 
-		final int faceCount = Math.min(model.getFaceCount(), MAX_FACE_COUNT);
-		final int[] indices1 = model.getFaceIndices1();
-		final int[] indices2 = model.getFaceIndices2();
-		final int[] indices3 = model.getFaceIndices3();
+	int uploadSortedModel(Projection proj, ModelData model, int orientation, int x, int y, int z,
+		int cameraX, int cameraY, int cameraZ, IntBuffer opaqueBuffer, IntBuffer alphaBuffer, boolean prioritySort, int material)
+	{
+		final int vertexCount = model.vertexCount;
+		final float[] verticesX = model.verticesX;
+		final float[] verticesY = model.verticesY;
+		final float[] verticesZ = model.verticesZ;
 
-		final int[] faceColors1 = model.getFaceColors1();
-		final int[] faceColors2 = model.getFaceColors2();
-		final int[] faceColors3 = model.getFaceColors3();
-		final byte[] faceRenderPriorities = model.getFaceRenderPriorities();
+		final int faceCount = Math.min(model.faceCount, MAX_FACE_COUNT);
+		final int[] indices1 = model.indices1;
+		final int[] indices2 = model.indices2;
+		final int[] indices3 = model.indices3;
 
-		final short[] faceTextures = model.getFaceTextures();
+		final int[] faceColors1 = model.colors1;
+		final int[] faceColors2 = model.colors2;
+		final int[] faceColors3 = model.colors3;
+		final byte[] faceRenderPriorities = model.priorities;
 
-		final byte[] transparencies = model.getFaceTransparencies();
-		final byte modelTransparency = model.getTransparency();
-		final byte[] bias = model.getFaceBias();
+		final short[] faceTextures = model.textures;
+
+		final byte[] transparencies = model.transparencies;
+		final byte modelTransparency = model.transparency;
+		final byte[] bias = model.bias;
 
 		final VertexShading.Normals computed = this.computedNormals;
-		computed.ensure(model.getVerticesCount());
-		VertexShading.computeNormals(model.getVerticesCount(), verticesX, verticesY, verticesZ,
-			model.getFaceCount(), indices1, indices2, indices3, faceColors3, computed.x, computed.y, computed.z);
+		computed.ensure(vertexCount);
+		VertexShading.computeNormals(vertexCount, verticesX, verticesY, verticesZ,
+			model.faceCount, indices1, indices2, indices3, faceColors3, computed.x, computed.y, computed.z);
 		final float[] normalsX = computed.x;
 		final float[] normalsY = computed.y;
 		final float[] normalsZ = computed.z;
 		final boolean hasNormals = true;
-		final short[] unlitColors = model.getUnlitFaceColors();
+		final short[] unlitColors = model.unlitColors;
 
 		float orientSine = 0;
 		float orientCosine = 0;
@@ -140,7 +149,7 @@ class ModelUploader
 		final float normalSin = orientSine;
 		final float normalCos = orientation != 0 ? orientCosine : 1;
 
-		float[] p = proj.project(x, y, z, rt.tmp);
+		float[] p = proj.project(x, y, z, projected);
 		int zero = (int) p[2];
 
 		for (int v = 0; v < vertexCount; ++v)
@@ -165,7 +174,7 @@ class ModelUploader
 			modelLocalY[v] = vertexY;
 			modelLocalZ[v] = vertexZ;
 
-			p = proj.project(vertexX, vertexY, vertexZ, rt.tmp);
+			p = proj.project(vertexX, vertexY, vertexZ, projected);
 			if (p[2] < 50)
 			{
 				return 0;
@@ -176,8 +185,8 @@ class ModelUploader
 			distances[v] = (int) p[2] - zero;
 		}
 
-		final int diameter = model.getDiameter();
-		final int radius = model.getRadius();
+		final int diameter = model.diameter;
+		final int radius = model.radius;
 		if (diameter >= MAX_DIAMETER)
 		{
 			return 0;
@@ -273,11 +282,11 @@ class ModelUploader
 					// HSL override is not applied to textured faces
 					if (faceTextures == null || faceTextures[faceIdx] == -1)
 					{
-						if (model.getOverrideAmount() > 0)
+						if (model.overrideAmount > 0)
 						{
-							color1 = interpolateHSL(color1, model.getOverrideHue(), model.getOverrideSaturation(), model.getOverrideLuminance(), model.getOverrideAmount());
-							color2 = interpolateHSL(color2, model.getOverrideHue(), model.getOverrideSaturation(), model.getOverrideLuminance(), model.getOverrideAmount());
-							color3 = interpolateHSL(color3, model.getOverrideHue(), model.getOverrideSaturation(), model.getOverrideLuminance(), model.getOverrideAmount());
+							color1 = interpolateHSL(color1, model.overrideHue, model.overrideSaturation, model.overrideLuminance, model.overrideAmount);
+							color2 = interpolateHSL(color2, model.overrideHue, model.overrideSaturation, model.overrideLuminance, model.overrideAmount);
+							color3 = interpolateHSL(color3, model.overrideHue, model.overrideSaturation, model.overrideLuminance, model.overrideAmount);
 						}
 					}
 
@@ -511,6 +520,25 @@ class ModelUploader
 		return len;
 	}
 
+	/** The most faces uploadSortedModel can put in the alpha buffer, the rest going to the opaque buffer. */
+	static int maxAlphaFaces(ModelData model)
+	{
+		int faceCount = Math.min(model.faceCount, MAX_FACE_COUNT);
+		byte[] transparencies = model.transparencies;
+		int[] colors1 = model.colors1;
+		int n = 0;
+		for (int f = 0; f < faceCount; ++f)
+		{
+			// a face's top byte is its alpha, or a raw color's (textured faces keep theirs) when that has one
+			if (faceTransparency(model.transparency, transparencies != null ? transparencies[f] & 0xff : 0) != 0
+				|| colors1[f] >>> 24 != 0)
+			{
+				++n;
+			}
+		}
+		return n;
+	}
+
 	private static int faceTransparency(byte modelTransparency, int faceTransparency)
 	{
 		if (modelTransparency == -1)
@@ -531,41 +559,47 @@ class ModelUploader
 	int uploadTempModel(Model model, int orientation, int x, int y, int z,
 		int cameraX, int cameraY, int cameraZ, IntBuffer buffer, int material)
 	{
-		final int triangleCount = model.getFaceCount();
-		final int vertexCount = model.getVerticesCount();
+		return uploadTempModel(live.wrap(model), orientation, x, y, z, cameraX, cameraY, cameraZ, buffer, material);
+	}
 
-		final float[] verticesX = model.getVerticesX();
-		final float[] verticesY = model.getVerticesY();
-		final float[] verticesZ = model.getVerticesZ();
+	int uploadTempModel(ModelData model, int orientation, int x, int y, int z,
+		int cameraX, int cameraY, int cameraZ, IntBuffer buffer, int material)
+	{
+		final int triangleCount = model.faceCount;
+		final int vertexCount = model.vertexCount;
 
-		final int[] indices1 = model.getFaceIndices1();
-		final int[] indices2 = model.getFaceIndices2();
-		final int[] indices3 = model.getFaceIndices3();
+		final float[] verticesX = model.verticesX;
+		final float[] verticesY = model.verticesY;
+		final float[] verticesZ = model.verticesZ;
 
-		final int[] color1s = model.getFaceColors1();
-		final int[] color2s = model.getFaceColors2();
-		final int[] color3s = model.getFaceColors3();
+		final int[] indices1 = model.indices1;
+		final int[] indices2 = model.indices2;
+		final int[] indices3 = model.indices3;
 
-		final byte[] transparencies = model.getFaceTransparencies();
+		final int[] color1s = model.colors1;
+		final int[] color2s = model.colors2;
+		final int[] color3s = model.colors3;
 
-		final short[] faceTextures = model.getFaceTextures();
+		final byte[] transparencies = model.transparencies;
 
-		final byte[] bias = model.getFaceBias();
+		final short[] faceTextures = model.textures;
 
-		final byte overrideAmount = model.getOverrideAmount();
-		final byte overrideHue = model.getOverrideHue();
-		final byte overrideSat = model.getOverrideSaturation();
-		final byte overrideLum = model.getOverrideLuminance();
+		final byte[] bias = model.bias;
+
+		final byte overrideAmount = model.overrideAmount;
+		final byte overrideHue = model.overrideHue;
+		final byte overrideSat = model.overrideSaturation;
+		final byte overrideLum = model.overrideLuminance;
 
 		final VertexShading.Normals computed = this.computedNormals;
-		computed.ensure(model.getVerticesCount());
-		VertexShading.computeNormals(model.getVerticesCount(), verticesX, verticesY, verticesZ,
-			model.getFaceCount(), indices1, indices2, indices3, color3s, computed.x, computed.y, computed.z);
+		computed.ensure(vertexCount);
+		VertexShading.computeNormals(vertexCount, verticesX, verticesY, verticesZ,
+			triangleCount, indices1, indices2, indices3, color3s, computed.x, computed.y, computed.z);
 		final float[] normalsX = computed.x;
 		final float[] normalsY = computed.y;
 		final float[] normalsZ = computed.z;
 		final boolean hasNormals = true;
-		final short[] unlitColors = model.getUnlitFaceColors();
+		final short[] unlitColors = model.unlitColors;
 
 		float orientSine = 0;
 		float orientCosine = 0;
@@ -752,19 +786,26 @@ class ModelUploader
 	static void computeFaceUvs(Model model, int face,
 		float cameraX, float cameraY, float cameraZ, boolean project, float[] u, float[] v)
 	{
-		final float[] vertexX = model.getVerticesX();
-		final float[] vertexY = model.getVerticesY();
-		final float[] vertexZ = model.getVerticesZ();
+		computeFaceUvs(model.getVerticesX(), model.getVerticesY(), model.getVerticesZ(),
+			model.getFaceIndices1(), model.getFaceIndices2(), model.getFaceIndices3(),
+			model.getTextureFaces(), model.getTexIndices1(), model.getTexIndices2(), model.getTexIndices3(),
+			face, cameraX, cameraY, cameraZ, project, u, v);
+	}
 
-		final int[] indices1 = model.getFaceIndices1();
-		final int[] indices2 = model.getFaceIndices2();
-		final int[] indices3 = model.getFaceIndices3();
+	static void computeFaceUvs(ModelData model, int face,
+		float cameraX, float cameraY, float cameraZ, boolean project, float[] u, float[] v)
+	{
+		computeFaceUvs(model.verticesX, model.verticesY, model.verticesZ,
+			model.indices1, model.indices2, model.indices3,
+			model.textureFaces, model.texIndices1, model.texIndices2, model.texIndices3,
+			face, cameraX, cameraY, cameraZ, project, u, v);
+	}
 
-		final byte[] textureFaces = model.getTextureFaces();
-		final int[] texIndices1 = model.getTexIndices1();
-		final int[] texIndices2 = model.getTexIndices2();
-		final int[] texIndices3 = model.getTexIndices3();
-
+	private static void computeFaceUvs(float[] vertexX, float[] vertexY, float[] vertexZ,
+		int[] indices1, int[] indices2, int[] indices3,
+		byte[] textureFaces, int[] texIndices1, int[] texIndices2, int[] texIndices3,
+		int face, float cameraX, float cameraY, float cameraZ, boolean project, float[] u, float[] v)
+	{
 		if (textureFaces != null && textureFaces[face] != -1)
 		{
 			final int triangleA = indices1[face];

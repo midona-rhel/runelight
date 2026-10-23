@@ -1,8 +1,7 @@
-// How the half resolution passes (halfres.glsl) map to the scene's pixels. The half targets are half the window's
-// size, but never larger than the scene's, so below 100% render scale a half texel covers fewer scene pixels, down
-// to one (SceneTargets).
+// How the half resolution passes (halfres.glsl) map to the scene's pixels: the half targets are half the scene's
+// size at every render scale (SceneTargets).
 
-uniform float halfRatio;  // scene pixels per half resolution texel along each axis: 2 at 100%, 1 at 50% and below
+uniform float halfRatio;  // scene pixels per texel of the pass being drawn along each axis: 2, the fog march 4
 
 // the scene pixel a half texel's geometry is read from
 ivec2 halfToFull(ivec2 h) {

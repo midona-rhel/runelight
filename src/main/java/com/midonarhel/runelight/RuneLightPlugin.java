@@ -250,8 +250,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 	private static final int CLUSTER_DATA_UNIT = RuneLightPlugin.COMPOSITE_TEXTURE_UNIT + 7;
 	// the static lights' occlusion grids (LightOcclusion), filtered by the hardware
 	private static final int LIGHT_VIS_UNIT = RuneLightPlugin.COMPOSITE_TEXTURE_UNIT + 21;
-	// the fog's point light glow, read by the fog pass
-	private static final int FOG_LAMPS_UNIT = RuneLightPlugin.COMPOSITE_TEXTURE_UNIT + 22;
+	// the fog as marched at quarter resolution, read by its upsample
 	// the clouds at half resolution, which the composite's sky filters (composite_frag.glsl)
 	private static final int CLOUD_HALF_UNIT = RuneLightPlugin.COMPOSITE_TEXTURE_UNIT + 23;
 
@@ -266,6 +265,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 	private int uniCompositePointLights;
 	private int uniCompositeLightVisSize;
 	private int uniCompositeCloudPass;
+	private int uniCompositeInteriorLight;
 	private int uniAlphaPass;
 	private int uniSceneOutdoors;
 	private int uniSceneProceduralSky;
@@ -433,6 +433,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 	private int interfaceTexture;
 	private int interfacePbo;
 	private final InterfaceUpload interfaceUpload = new InterfaceUpload();
+	private final TempModels tempModels = new TempModels();
 
 	private int vaoUiHandle;
 	private int vboUiHandle;
@@ -465,7 +466,6 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 	static class RenderThread
 	{
 		VAOList vaoO, vaoA;
-		float[] tmp = new float[3];
 		ModelUploader modelUploader;
 	}
 
@@ -480,7 +480,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		final int sizeX, sizeZ;
 		Zone[][] zones;
 
-		private int cameraX, cameraY, cameraZ;
+		int cameraX, cameraY, cameraZ;
 		private int minLevel, level, maxLevel;
 		private Set<Integer> hideRoofIds;
 
@@ -714,6 +714,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 				client.setDrawCallbacks(this);
 				active = true;
 				setupGpuFlags();
+				tempModels.setThreads(renderThreads());
 				client.setExpandedMapLoading(config.expandedMapLoadingZones());
 
 				// force rebuild of main buffer provider to enable alpha channel
@@ -755,10 +756,14 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		});
 	}
 
+	private int renderThreads()
+	{
+		return Math.min(Runtime.getRuntime().availableProcessors() - 1, config.numThreads());
+	}
+
 	private void setupGpuFlags()
 	{
-		int cpus = Runtime.getRuntime().availableProcessors();
-		int threads = Math.min(cpus - 1, config.numThreads());
+		int threads = renderThreads();
 		log.debug("Using {} render threads", threads);
 		client.setGpuFlags(DrawCallbacks.GPU
 			| (config.removeVertexSnapping() ? DrawCallbacks.NO_VERTEX_SNAPPING : 0)
@@ -796,6 +801,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		}
 		overlayManager.remove(buildingOverlay);
 		lightOcclusion.shutdown();
+		hitchMonitor.stop();
 		if (buildingLights != null)
 		{
 			eventBus.unregister(buildingLights);
@@ -817,6 +823,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 				client.setExpandedMapLoading(0);
 				active = false;
 			}
+			tempModels.free();
 
 			if (lwjglInitted)
 			{
@@ -956,6 +963,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 			{
 				clientThread.invokeLater(() ->
 				{
+					tempModels.setThreads(renderThreads());
 					for (int i = 0; i < rts.length; ++i) // NOPMD: ForLoopCanBeForeach
 					{
 						rts[i].vaoO.free();
@@ -1028,7 +1036,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 					return "#define CLUSTERS_X " + LightClusters.CLUSTERS_X + "\n"
 						+ "#define CLUSTERS_Y " + LightClusters.CLUSTERS_Y + "\n"
 						+ "#define CLUSTERS_Z " + LightClusters.CLUSTERS_Z + "\n"
-						+ "#define CLUSTER_STRIDE " + (LightClusters.MAX_LIGHTS_PER_CLUSTER + 1) + "\n"
+						+ "#define CLUSTER_ENTRIES " + LightClusters.CLUSTER_ENTRIES + "\n"
 						+ "#define CLUSTER_NEAR " + LightClusters.NEAR + "\n"
 						+ "#define CLUSTER_FAR " + LightClusters.FAR + "\n"
 						+ "#define ROOM_BASE " + LightClusters.ROOM_BASE + "\n"
@@ -1064,7 +1072,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		glAoProgram = AO_PROGRAM.compile(template);
 		glDenoiseProgram = DENOISE_PROGRAM.compile(template);
 		glShadowProgram = SHADOW_PROGRAM.compile(template);
-		setFogProgram(VolumetricFog.PROGRAM.compile(template), VolumetricFog.LAMP_PROGRAM.compile(template));
+		setFogProgram(VolumetricFog.PROGRAM.compile(template));
 		water.setSurfaceProgram(WaterSurface.PROGRAM.compile(template), COMPOSITE_TEXTURE_UNIT + 2, WATER_DATA_UNIT,
 			WATER_NOISE_UNIT, WATER_CONTACT_UNIT, WATER_WAVES_UNIT_A, WATER_WAVES_UNIT_B);
 		weather.setPrograms(weather.compile(template), COMPOSITE_TEXTURE_UNIT, WEATHER_OCCLUSION_UNIT, SHADOW_COMPARE_UNIT, ALPHA_LAYER_UNIT,
@@ -1204,6 +1212,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		uniCompositeSkylightMode = glGetUniformLocation(c, "skylightMode");
 		uniCompositeSkylightOn = glGetUniformLocation(c, "skylightOn");
 		uniCompositeSkylightFloor = glGetUniformLocation(c, "skylightFloor");
+		uniCompositeInteriorLight = glGetUniformLocation(c, "interiorLight");
 		glUseProgram(0);
 		volumetricFog.locateComposite(c, FOG_TEXTURE_UNIT);
 		clouds.locateComposite(c, CLOUD_NOISE_UNIT);
@@ -1227,10 +1236,10 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		return config.windSway() ? config.windSwayStrength() / 100f : 0f;
 	}
 
-	private void setFogProgram(int program, int lampProgram)
+	private void setFogProgram(int program)
 	{
-		volumetricFog.setProgram(program, lampProgram, COMPOSITE_TEXTURE_UNIT + 2, SHADOW_COMPARE_UNIT, LIGHT_DATA_UNIT,
-			CLUSTER_DATA_UNIT, FOG_NOISE_UNIT, WEATHER_FIELD_UNIT, WATER_DATA_UNIT, FOG_GROUND_UNIT, FOG_LAMPS_UNIT);
+		volumetricFog.setProgram(program, COMPOSITE_TEXTURE_UNIT + 2, SHADOW_COMPARE_UNIT, LIGHT_DATA_UNIT,
+			CLUSTER_DATA_UNIT, FOG_NOISE_UNIT, WEATHER_FIELD_UNIT, WATER_DATA_UNIT, FOG_GROUND_UNIT);
 	}
 
 	private static void bindSceneSamplers(int program)
@@ -1277,7 +1286,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 	{
 		glBindVertexArray(vaoUiHandle);
 		Template template = createTemplate();
-		int scene = 0, ui = 0, composite = 0, ao = 0, denoise = 0, shadow = 0, fog = 0, fogLamps = 0, waterSurface = 0,
+		int scene = 0, ui = 0, composite = 0, ao = 0, denoise = 0, shadow = 0, fog = 0, waterSurface = 0,
 			upscale = 0;
 		Weather.Programs weatherPrograms;
 		SkyCache.Programs skyCachePrograms;
@@ -1291,7 +1300,6 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 			denoise = DENOISE_PROGRAM.compile(template);
 			shadow = SHADOW_PROGRAM.compile(template);
 			fog = VolumetricFog.PROGRAM.compile(template);
-			fogLamps = VolumetricFog.LAMP_PROGRAM.compile(template);
 			waterSurface = WaterSurface.PROGRAM.compile(template);
 			upscale = Upscaler.PROGRAM.compile(template);
 			weatherPrograms = weather.compile(template);
@@ -1329,7 +1337,6 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 			glDeleteProgram(denoise);
 			glDeleteProgram(shadow);
 			glDeleteProgram(fog);
-			glDeleteProgram(fogLamps);
 			glDeleteProgram(waterSurface);
 			glDeleteProgram(upscale);
 			String msg = ex.getMessage();
@@ -1353,7 +1360,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		glAoProgram = ao;
 		glDenoiseProgram = denoise;
 		glShadowProgram = shadow;
-		setFogProgram(fog, fogLamps);
+		setFogProgram(fog);
 		water.setSurfaceProgram(waterSurface, COMPOSITE_TEXTURE_UNIT + 2, WATER_DATA_UNIT, WATER_NOISE_UNIT,
 			WATER_CONTACT_UNIT, WATER_WAVES_UNIT_A, WATER_WAVES_UNIT_B);
 		weather.setPrograms(weatherPrograms, COMPOSITE_TEXTURE_UNIT, WEATHER_OCCLUSION_UNIT, SHADOW_COMPARE_UNIT, ALPHA_LAYER_UNIT,
@@ -1560,7 +1567,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 			glDisable(GL_MULTISAMPLE);
 		}
 
-		sceneTargets.init(width, height, aaSamples, (float) Math.max(1, 2 * renderFactor));
+		sceneTargets.init(width, height, aaSamples);
 		if (renderFactor != 1)
 		{
 			upscaler.init(width, height);
@@ -1581,6 +1588,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		float cameraX, float cameraY, float cameraZ, float cameraPitch, float cameraYaw,
 		int minLevel, int level, int maxLevel, Set<Integer> hideRoofIds)
 	{
+		tempModels.flush();
 		SceneContext ctx = context(scene);
 		if (ctx == null)
 		{
@@ -1854,6 +1862,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 	@Override
 	public void postSceneDraw(Scene scene)
 	{
+		tempModels.flush();
 		if (scene.getWorldViewId() == WorldView.TOPLEVEL)
 		{
 			postDrawToplevel();
@@ -2488,6 +2497,17 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		glUniform1i(uniCompositeSkylightMode, model == LightingModel.SKYLIGHT ? 1 : 2);
 		glUniform1i(uniCompositeSkylightOn, frameSkylight ? 1 : 0);
 		glUniform1f(uniCompositeSkylightFloor, config.skylightFloor() / 100f);
+		// the inside of buildings at night, as if their lamps were lit; caves and dungeons have no buildings, and
+		// frameOutdoors stands in until areas are classified
+		float interior = 0;
+		if (config.buildingLights() && frameOutdoors)
+		{
+			float night = BuildingLights.nightFactor(dayCycle.sunAltitude);
+			interior = (config.buildingLightsByDay() ? BuildingLights.DAY_FACTOR + (1 - BuildingLights.DAY_FACTOR) * night
+				: night) * config.buildingLightBrightness() / 100f;
+		}
+		glUniform3f(uniCompositeInteriorLight, BuildingLights.FILL[0] * interior, BuildingLights.FILL[1] * interior,
+			BuildingLights.FILL[2] * interior);
 
 		glUniform1i(uniCompositeUseFog, frameFogDepth > 0 ? 1 : 0);
 		glUniform1i(uniCompositeFogDepth, frameFogDepth);
@@ -2520,18 +2540,6 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 			// around the focal point like the drawn world (EdgeFade), so lights don't come and go as the camera turns
 			lights.collect(frameLights, time, night, edgeFade.focalX, edgeFade.focalZ, edgeFade.radius,
 				walls != null ? walls.getRooms() : null);
-		}
-		BuildingLights buildings = buildingLights;
-		// caves and dungeons have no buildings; frameOutdoors stands in until areas are classified
-		if (buildings != null && config.buildingLights() && frameOutdoors)
-		{
-			float night = BuildingLights.nightFactor(dayCycle.sunAltitude);
-			if (config.buildingLightsByDay())
-			{
-				night = BuildingLights.DAY_FACTOR + (1 - BuildingLights.DAY_FACTOR) * night;
-			}
-			buildings.collect(frameLights, config.buildingLightBrightness() / 100f, night,
-				edgeFade.focalX, edgeFade.focalZ, edgeFade.radius);
 		}
 		if (config.testLight())
 		{
@@ -2825,8 +2833,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 			volumetricFog.waterTexture = water.dataTexture(config);
 			int fogFbo = sceneTargets.fogFbo();
 			volumetricFog.render(fogFbo, sceneTargets.getAoWidth(), sceneTargets.getAoHeight(),
-				sceneTargets.fogLampsFbo(), sceneTargets.getFogLampsWidth(), sceneTargets.getFogLampsHeight(),
-				sceneTargets.fogLampsTexture(), sceneTargets.getHalfRatio(), FOG_NOISE_UNIT,
+				sceneTargets.getHalfRatio(), FOG_NOISE_UNIT,
 				frameViewProj, frameInvViewProj, frameViewport, glCapabilities.OpenGL45,
 				frameCameraX, frameCameraY, frameCameraZ, (System.currentTimeMillis() - startMillis) / 1000f,
 				// in a void the sun doesn't light the fog: it would glow over the black around the scene
@@ -2895,6 +2902,9 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		final boolean upscale = upscaler.isInitialized();
 		final int sceneWidth = upscale ? sceneTargets.getWidth() : width;
 		final int sceneHeight = upscale ? sceneTargets.getHeight() : height;
+		// the interface texture is filled before the drawable's pass starts, so the composite, the weather and the
+		// interface all draw in one pass: an upload between them would end it and store and reload the drawable
+		finishInterfaceUpload();
 		glBindFramebuffer(GL_FRAMEBUFFER, upscale ? upscaler.getFbo() : awtContext.getFramebuffer(false));
 		glViewport(0, 0, sceneWidth, sceneHeight);
 		gpuTimer.begin(GpuTimer.COMPOSITE);
@@ -2979,6 +2989,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 	@Override
 	public void drawZoneAlpha(Projection entityProjection, Scene scene, int level, int zx, int zz)
 	{
+		tempModels.flush();
 		SceneContext ctx = context(scene);
 		if (ctx == null)
 		{
@@ -3011,6 +3022,8 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 	@Override
 	public void drawPass(Projection projection, Scene scene, int pass)
 	{
+		// the temp models must be in the buffers before they are drawn or unmapped
+		tempModels.flush();
 		SceneContext ctx = context(scene);
 		if (ctx == null)
 		{
@@ -3109,7 +3122,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 			int start = a.vbo.vb.position();
 			try
 			{
-				sorter.uploadSortedModel(rt, worldProjection, m, orient, x, y, z,
+				sorter.uploadSortedModel(worldProjection, m, orient, x, y, z,
 					ctx.cameraX, ctx.cameraY, ctx.cameraZ, o.vbo.vb, a.vbo.vb, false, material);
 			}
 			catch (Exception ex)
@@ -3155,50 +3168,22 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		}
 
 		Renderable renderable = gameObject.getRenderable();
-		int size = m.getFaceCount() * 3 * VAO.VERT_SIZE;
 		int renderMode = renderable.getRenderMode();
 		int material = SurfaceMaterials.forRenderable(renderable, gameObject.getHash(), gameObject.getId());
 		if (renderMode == Renderable.RENDERMODE_SORTED_NO_DEPTH || m.getFaceTransparencies() != null || m.getTransparency() != 0)
 		{
-			RenderThread rt = rts[0];
-			VAO o = rt.vaoO.get(size);
-			VAO a = rt.vaoA.get(size);
-			ModelUploader uploader = rt.modelUploader;
-
-			int start = a.vbo.vb.position();
 			m.calculateBoundsCylinder();
-			try
-			{
-				uploader.uploadSortedModel(rt, worldProjection, m, orient, x, y, z,
-					ctx.cameraX, ctx.cameraY, ctx.cameraZ, o.vbo.vb, a.vbo.vb,
-					renderMode == Renderable.RENDERMODE_SORTED_NO_DEPTH, material);
-			}
-			catch (Exception ex)
-			{
-				log.debug("error drawing entity", ex);
-			}
-			int end = a.vbo.vb.position();
-
-			o.addRange(ctx.projection, scene, renderMode == Renderable.RENDERMODE_SORTED_NO_DEPTH ? renderMode : 0);
-
-			if (end > start)
-			{
-				int offset = scene.getWorldViewId() == WorldView.TOPLEVEL ? (SCENE_OFFSET >> 3) : 0;
-				int zx = (gameObject.getX() >> 10) + offset;
-				int zz = (gameObject.getY() >> 10) + offset;
-				Zone zone = ctx.zones[zx][zz];
-				int plane = Math.min(ctx.maxLevel, gameObject.getPlane());
-				zone.addTempAlphaModel(a.vao, start, end, plane, x & 1023, y - renderable.getModelHeight() /* to render players over locs */, z & 1023);
-			}
+			int offset = scene.getWorldViewId() == WorldView.TOPLEVEL ? (SCENE_OFFSET >> 3) : 0;
+			int zx = (gameObject.getX() >> 10) + offset;
+			int zz = (gameObject.getY() >> 10) + offset;
+			int plane = Math.min(ctx.maxLevel, gameObject.getPlane());
+			tempModels.uploadSorted(rts[0], ctx, scene, worldProjection, m, orient, x, y, z, material,
+				renderMode == Renderable.RENDERMODE_SORTED_NO_DEPTH, zx, zz, plane,
+				y - renderable.getModelHeight() /* to render players over locs */);
 		}
 		else
 		{
-			RenderThread rt = rts[0];
-			VAO o = rt.vaoO.get(size);
-			ModelUploader uploader = rt.modelUploader;
-			uploader.uploadTempModel(m, orient, x, y, z,
-				ctx.cameraX, ctx.cameraY, ctx.cameraZ, o.vbo.vb, material);
-			o.addRange(ctx.projection, scene, 0);
+			tempModels.uploadTemp(rts[0], ctx, scene, m, orient, x, y, z, material);
 		}
 	}
 
@@ -3333,6 +3318,24 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 			bufferProvider.getHeight());
 	}
 
+	// the interface texture holds this frame's canvas (finishInterfaceUpload)
+	private boolean interfaceFinished;
+
+	private void finishInterfaceUpload()
+	{
+		if (interfaceFinished)
+		{
+			return;
+		}
+		interfaceFinished = true;
+		cpuTimer.begin(CpuTimer.UI_UPLOAD);
+		interfaceUpload.await();
+		cpuTimer.end(CpuTimer.UI_UPLOAD);
+		// the composite samples none of unit 0, and the interface draws from it
+		glActiveTexture(GL_TEXTURE0);
+		interfaceUpload.finish(interfaceTexture);
+	}
+
 	@Override
 	public void draw(int overlayColor)
 	{
@@ -3374,32 +3377,34 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		prepareInterfaceTexture(canvasWidth, canvasHeight);
 		cpuTimer.end(CpuTimer.UI_UPLOAD);
 
-		gpuTimer.begin(GpuTimer.UI);
-		glClearColor(0, 0, 0, 1);
-		glClear(GL_COLOR_BUFFER_BIT);
-		gpuTimer.end();
-
+		interfaceFinished = false;
+		boolean composited = false;
 		if (sceneFboValid && sceneTargets.isInitialized() && glCompositeProgram != 0)
 		{
 			try
 			{
 				compositeScene();
+				composited = true;
 			}
 			catch (RuntimeException ex)
 			{
 				// one broken effect must not flood the log every frame or take the UI with it
 				logLimiter.warn(log, "composite " + ex, "Error compositing the scene", ex);
-				glBindFramebuffer(GL_FRAMEBUFFER, awtContext.getFramebuffer(false));
 				glBindVertexArray(0);
 				glUseProgram(0);
 				glActiveTexture(GL_TEXTURE0);
 			}
 		}
-		cpuTimer.begin(CpuTimer.UI_UPLOAD);
-		interfaceUpload.await();
-		cpuTimer.end(CpuTimer.UI_UPLOAD);
+		finishInterfaceUpload();
+		glBindFramebuffer(GL_FRAMEBUFFER, awtContext.getFramebuffer(false));
 		gpuTimer.begin(GpuTimer.UI);
-		interfaceUpload.finish(interfaceTexture);
+		if (!composited)
+		{
+			// the composite covers the whole drawable; without it the window is cleared here instead. Clearing it
+			// up front would open the drawable's pass early and store and reload it around the composite's passes.
+			glClearColor(0, 0, 0, 1);
+			glClear(GL_COLOR_BUFFER_BIT);
+		}
 
 		// Texture on UI
 		drawUi(overlayColor, canvasHeight, canvasWidth);

@@ -61,6 +61,8 @@ class Water
 	private long lastNanos;
 	private double driftX, driftZ, strength;
 	private boolean hasData;
+	// whether any of the water is in view this frame (drawSurface)
+	private boolean visible;
 	private WaterMap pending;
 	private WaterSurface.Mesh pendingMesh;
 	private boolean pendingSet;
@@ -262,6 +264,7 @@ class Water
 		int[] viewport, float[] viewProj, float[] invViewProj, float camX, float camY, float camZ, float focusX,
 		float focusZ, float reach, float[] casterDir, boolean depthZeroToOne, int dataUnit, int noiseUnit, int contactUnit)
 	{
+		visible = false;
 		if (!config.water() || !hasData)
 		{
 			return;
@@ -299,7 +302,12 @@ class Water
 		glActiveTexture(GL_TEXTURE0 + contactUnit);
 		glBindTexture(GL_TEXTURE_2D, texContact);
 		glActiveTexture(GL_TEXTURE0);
-		surface.draw(width, height, viewport, viewProj, camX, camY, camZ, focusX, focusZ, reach, f);
+		// no water in view: the surface, its shading and the composite's water are all skipped this frame
+		visible = surface.anyVisible(viewProj, camX, camY, camZ, focusX, focusZ, reach);
+		if (visible)
+		{
+			surface.draw(width, height, viewport, viewProj, camX, camY, camZ, focusX, focusZ, reach, f);
+		}
 	}
 
 	/**
@@ -333,7 +341,7 @@ class Water
 
 	private boolean enabled(RuneLightConfig config)
 	{
-		return config.water() && hasData && surface.texture() != 0 && surface.mesh() != null;
+		return visible && config.water() && hasData && surface.texture() != 0 && surface.mesh() != null;
 	}
 
 	/**

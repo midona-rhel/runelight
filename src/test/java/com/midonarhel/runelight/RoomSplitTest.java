@@ -72,9 +72,6 @@ public class RoomSplitTest
 		assertEquals(2, r.rooms.size());
 		assertNotEquals(roomOf(r, 9, 9), roomOf(r, 14, 9));
 		assertEquals(roomOf(r, 8, 8), roomOf(r, 11, 11));
-		// each part has its own light
-		assertEquals(2, r.anchors.size());
-		assertTrue(r.anchors.get(0).room != r.anchors.get(1).room);
 
 		// the door open: one room again
 		int[][][] g = new int[4][LOCAL][LOCAL];
@@ -157,11 +154,6 @@ public class RoomSplitTest
 		assertEquals(32, r.rooms.get(0).tiles.length);
 		assertEquals(0, roomOf(r, 9, 9));
 		assertEquals(-1, roomOf(r, 9, 12));
-		// every light is inside the walls
-		for (BuildingDetector.Anchor a : r.anchors)
-		{
-			assertTrue(a.tileY < 12);
-		}
 		// and the same with an interior wall: two halves, no strip
 		int[][][] f = walledHouse();
 		for (int y = 8; y < 12; ++y)
