@@ -248,6 +248,10 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 	private static final int SHADOW_COMPARE_UNIT = RuneLightPlugin.COMPOSITE_TEXTURE_UNIT + 5;
 	private static final int LIGHT_DATA_UNIT = RuneLightPlugin.COMPOSITE_TEXTURE_UNIT + 6;
 	private static final int CLUSTER_DATA_UNIT = RuneLightPlugin.COMPOSITE_TEXTURE_UNIT + 7;
+	// the static lights' occlusion grids (LightOcclusion), filtered by the hardware
+	private static final int LIGHT_VIS_UNIT = RuneLightPlugin.COMPOSITE_TEXTURE_UNIT + 21;
+	// the fog's point light glow, read by the fog pass
+	private static final int FOG_LAMPS_UNIT = RuneLightPlugin.COMPOSITE_TEXTURE_UNIT + 22;
 
 	private final LightClusters lightClusters = new LightClusters();
 	private final OpenRooms openRooms = new OpenRooms();
@@ -258,6 +262,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 	private final java.util.ArrayList<PointLight> frameLights = new java.util.ArrayList<>();
 	private final PointLight testLight = new PointLight();
 	private int uniCompositePointLights;
+	private int uniCompositeLightVisSize;
 	private int uniAlphaPass;
 	private int uniSceneOutdoors;
 	private int uniSceneProceduralSky;
@@ -1056,7 +1061,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		glAoProgram = AO_PROGRAM.compile(template);
 		glDenoiseProgram = DENOISE_PROGRAM.compile(template);
 		glShadowProgram = SHADOW_PROGRAM.compile(template);
-		setFogProgram(VolumetricFog.PROGRAM.compile(template));
+		setFogProgram(VolumetricFog.PROGRAM.compile(template), VolumetricFog.LAMP_PROGRAM.compile(template));
 		water.setSurfaceProgram(WaterSurface.PROGRAM.compile(template), COMPOSITE_TEXTURE_UNIT + 2, WATER_DATA_UNIT,
 			WATER_NOISE_UNIT, WATER_CONTACT_UNIT, WATER_WAVES_UNIT_A, WATER_WAVES_UNIT_B);
 		weather.setPrograms(weather.compile(template), COMPOSITE_TEXTURE_UNIT, WEATHER_OCCLUSION_UNIT, SHADOW_COMPARE_UNIT, ALPHA_LAYER_UNIT,
@@ -1183,6 +1188,8 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		glUniform1i(glGetUniformLocation(c, "shadowCompare"), SHADOW_COMPARE_UNIT);
 		glUniform1i(glGetUniformLocation(c, "lightData"), LIGHT_DATA_UNIT);
 		glUniform1i(glGetUniformLocation(c, "clusterData"), CLUSTER_DATA_UNIT);
+		glUniform1i(glGetUniformLocation(c, "lightVis"), LIGHT_VIS_UNIT);
+		uniCompositeLightVisSize = glGetUniformLocation(c, "lightVisSize");
 		glUniform1i(glGetUniformLocation(c, "sceneAlpha"), ALPHA_LAYER_UNIT);
 		glUniform1i(glGetUniformLocation(c, "sceneMaterial"), MATERIAL_UNIT);
 		compositeMaterials.locate(c);
@@ -1215,10 +1222,10 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		return config.windSway() ? config.windSwayStrength() / 100f : 0f;
 	}
 
-	private void setFogProgram(int program)
+	private void setFogProgram(int program, int lampProgram)
 	{
-		volumetricFog.setProgram(program, COMPOSITE_TEXTURE_UNIT + 2, SHADOW_COMPARE_UNIT, LIGHT_DATA_UNIT,
-			CLUSTER_DATA_UNIT, FOG_NOISE_UNIT, WEATHER_FIELD_UNIT, WATER_DATA_UNIT, FOG_GROUND_UNIT);
+		volumetricFog.setProgram(program, lampProgram, COMPOSITE_TEXTURE_UNIT + 2, SHADOW_COMPARE_UNIT, LIGHT_DATA_UNIT,
+			CLUSTER_DATA_UNIT, FOG_NOISE_UNIT, WEATHER_FIELD_UNIT, WATER_DATA_UNIT, FOG_GROUND_UNIT, FOG_LAMPS_UNIT);
 	}
 
 	private static void bindSceneSamplers(int program)
@@ -1265,7 +1272,8 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 	{
 		glBindVertexArray(vaoUiHandle);
 		Template template = createTemplate();
-		int scene = 0, ui = 0, composite = 0, ao = 0, denoise = 0, shadow = 0, fog = 0, waterSurface = 0, upscale = 0;
+		int scene = 0, ui = 0, composite = 0, ao = 0, denoise = 0, shadow = 0, fog = 0, fogLamps = 0, waterSurface = 0,
+			upscale = 0;
 		Weather.Programs weatherPrograms;
 		SkyCache.Programs skyCachePrograms;
 		GlobalIllumination.Programs giPrograms;
@@ -1278,6 +1286,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 			denoise = DENOISE_PROGRAM.compile(template);
 			shadow = SHADOW_PROGRAM.compile(template);
 			fog = VolumetricFog.PROGRAM.compile(template);
+			fogLamps = VolumetricFog.LAMP_PROGRAM.compile(template);
 			waterSurface = WaterSurface.PROGRAM.compile(template);
 			upscale = Upscaler.PROGRAM.compile(template);
 			weatherPrograms = weather.compile(template);
@@ -1315,6 +1324,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 			glDeleteProgram(denoise);
 			glDeleteProgram(shadow);
 			glDeleteProgram(fog);
+			glDeleteProgram(fogLamps);
 			glDeleteProgram(waterSurface);
 			glDeleteProgram(upscale);
 			String msg = ex.getMessage();
@@ -1338,7 +1348,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		glAoProgram = ao;
 		glDenoiseProgram = denoise;
 		glShadowProgram = shadow;
-		setFogProgram(fog);
+		setFogProgram(fog, fogLamps);
 		water.setSurfaceProgram(waterSurface, COMPOSITE_TEXTURE_UNIT + 2, WATER_DATA_UNIT, WATER_NOISE_UNIT,
 			WATER_CONTACT_UNIT, WATER_WAVES_UNIT_A, WATER_WAVES_UNIT_B);
 		weather.setPrograms(weatherPrograms, COMPOSITE_TEXTURE_UNIT, WEATHER_OCCLUSION_UNIT, SHADOW_COMPARE_UNIT, ALPHA_LAYER_UNIT,
@@ -2465,7 +2475,8 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 			cpuTimer.begin(CpuTimer.LIGHT_UPLOAD);
 			lightClusters.upload();
 			cpuTimer.end(CpuTimer.LIGHT_UPLOAD);
-			lightClusters.bind(LIGHT_DATA_UNIT, CLUSTER_DATA_UNIT);
+			lightClusters.bind(LIGHT_DATA_UNIT, CLUSTER_DATA_UNIT, LIGHT_VIS_UNIT);
+			glUniform2f(uniCompositeLightVisSize, lightClusters.getAtlasWidth(), lightClusters.getAtlasHeight());
 		}
 		glUniform1i(uniCompositePointLights, points ? 1 : 0);
 		LightingModel model = config.lightingModel();
@@ -2809,7 +2820,10 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 			gpuTimer.begin(GpuTimer.FOG);
 			volumetricFog.indoorFactor = config.noFogIndoors() && lightClusters.isInitialized() ? VolumetricFog.INDOOR_DENSITY : 1;
 			volumetricFog.waterTexture = water.dataTexture(config);
-			volumetricFog.render(sceneTargets.fogFbo(), sceneTargets.getAoWidth(), sceneTargets.getAoHeight(), sceneTargets.getHalfRatio(), FOG_NOISE_UNIT,
+			int fogFbo = sceneTargets.fogFbo();
+			volumetricFog.render(fogFbo, sceneTargets.getAoWidth(), sceneTargets.getAoHeight(),
+				sceneTargets.fogLampsFbo(), sceneTargets.getFogLampsWidth(), sceneTargets.getFogLampsHeight(),
+				sceneTargets.fogLampsTexture(), sceneTargets.getHalfRatio(), FOG_NOISE_UNIT,
 				frameViewProj, frameInvViewProj, frameViewport, glCapabilities.OpenGL45,
 				frameCameraX, frameCameraY, frameCameraZ, (System.currentTimeMillis() - startMillis) / 1000f,
 				// in a void the sun doesn't light the fog: it would glow over the black around the scene
@@ -2902,7 +2916,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		glBindTexture(GL_TEXTURE_2D, 0);
 		glActiveTexture(GL_TEXTURE0);
 		ShadowMap.unbind(SHADOW_RAW_UNIT, SHADOW_COMPARE_UNIT);
-		LightClusters.unbind(LIGHT_DATA_UNIT, CLUSTER_DATA_UNIT);
+		LightClusters.unbind(LIGHT_DATA_UNIT, CLUSTER_DATA_UNIT, LIGHT_VIS_UNIT);
 		glActiveTexture(GL_TEXTURE0 + ALPHA_LAYER_UNIT);
 		glBindTexture(GL_TEXTURE_2D, 0);
 		glActiveTexture(GL_TEXTURE0 + MATERIAL_UNIT);

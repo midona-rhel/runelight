@@ -20,7 +20,8 @@ import org.slf4j.LoggerFactory;
  * projectiles, the test light) keep the room rules only.
  *
  * Grids are cells of a quarter tile (half a tile for big lights), 4 bits each (how much of the cell sees the light),
- * 16 to a texel of the light buffer, all packed into one atlas after the room map (LightClusters).
+ * a byte to a texel of one 2D atlas texture (LightClusters), each grid inside a border of fully visible texels, so the
+ * shader's lookup is a single hardware filtered fetch that reads 1 past the grid's edge.
  */
 final class LightOcclusion
 {
@@ -38,9 +39,11 @@ final class LightOcclusion
 	static final float WALL_CLEARANCE = 8;
 	// cells on a diagonal wall average two rays this far to either side of it
 	static final float DIAGONAL_SPREAD = 8;
-	static final int CELLS_PER_TEXEL = 16;
-	// the atlas stops growing here (texels, 16 bytes each)
-	static final int MAX_ATLAS_TEXELS = 1 << 20;
+	// the atlas: this many texels across, grids packed in rows, at most this many down; a grid's position is
+	// x + y * ATLAS_BASE_ROW, a whole number a float keeps exactly
+	static final int ATLAS_WIDTH = 2048;
+	static final int ATLAS_MAX_HEIGHT = 4096;
+	static final int ATLAS_BASE_ROW = 4096;
 
 	static final class Entry
 	{
@@ -83,17 +86,21 @@ final class LightOcclusion
 		}
 	}
 
-	/** Every cast grid packed for the light buffer; bases are texels from the atlas' start, by entry id. */
+	/**
+	 * Every cast grid packed into the atlas texture: a byte per cell (visibility * 255), row by row, ATLAS_WIDTH
+	 * across; bases are the texels of the grids' cells (0, 0) as x + y * ATLAS_BASE_ROW, by entry id.
+	 */
 	static final class Atlas
 	{
-		final float[] texels;
-		final int texelCount;
+		final byte[] texels;
+		final int width, height;
 		private final int[] base;
 
-		Atlas(float[] texels, int texelCount, int[] base)
+		Atlas(byte[] texels, int width, int height, int[] base)
 		{
 			this.texels = texels;
-			this.texelCount = texelCount;
+			this.width = width;
+			this.height = height;
 			this.base = base;
 		}
 
@@ -328,8 +335,8 @@ final class LightOcclusion
 					{
 						atlas = a;
 					}
-					log.debug("Light occlusion: cast {} lights in {} ms, atlas {} texels", cast,
-						(System.nanoTime() - start) / 1_000_000.0, a.texelCount);
+					log.debug("Light occlusion: cast {} lights in {} ms, atlas {} rows", cast,
+						(System.nanoTime() - start) / 1_000_000.0, a.height);
 				}
 				draining.set(false);
 				// something queued after the poll found nothing, before the flag was cleared
@@ -433,8 +440,9 @@ final class LightOcclusion
 	static Atlas pack(List<Entry> entries, int generation)
 	{
 		int maxId = 0;
-		int texels = 0;
 		List<Entry> packed = new ArrayList<>();
+		List<int[]> places = new ArrayList<>();
+		int x = 0, y = 0, rowHeight = 0;
 		for (Entry e : entries)
 		{
 			maxId = Math.max(maxId, e.id + 1);
@@ -443,37 +451,48 @@ final class LightOcclusion
 			{
 				continue;
 			}
-			int t = (c.length + CELLS_PER_TEXEL - 1) / CELLS_PER_TEXEL;
-			if (texels + t > MAX_ATLAS_TEXELS)
+			// the grid and its border
+			int side = e.n + 2;
+			if (x + side > ATLAS_WIDTH)
+			{
+				x = 0;
+				y += rowHeight;
+				rowHeight = 0;
+			}
+			if (y + side > ATLAS_MAX_HEIGHT)
 			{
 				continue;
 			}
-			texels += t;
 			packed.add(e);
+			places.add(new int[]{x, y});
+			x += side;
+			rowHeight = Math.max(rowHeight, side);
 		}
+		int height = Math.max(y + rowHeight, 1);
 		int[] base = new int[maxId];
 		java.util.Arrays.fill(base, -1);
-		float[] data = new float[texels * 4];
-		int at = 0;
-		for (Entry e : packed)
+		byte[] data = new byte[ATLAS_WIDTH * height];
+		// the borders, and the gaps no lookup reaches: fully visible
+		java.util.Arrays.fill(data, (byte) 255);
+		for (int i = 0; i < packed.size(); ++i)
 		{
+			Entry e = packed.get(i);
 			byte[] c = e.cells;
-			if (c == null || at + (c.length + CELLS_PER_TEXEL - 1) / CELLS_PER_TEXEL > texels)
+			int x0 = places.get(i)[0] + 1, y0 = places.get(i)[1] + 1;
+			for (int cz = 0; cz < e.n; ++cz)
 			{
-				continue;
+				for (int cx = 0; cx < e.n; ++cx)
+				{
+					data[(y0 + cz) * ATLAS_WIDTH + x0 + cx] = (byte) ((c[cz * e.n + cx] & 15) * 17);
+				}
 			}
-			base[e.id] = at;
-			for (int k = 0; k < c.length; ++k)
-			{
-				data[(at + (k >> 4)) * 4 + ((k >> 2) & 3)] += (c[k] & 15) << ((k & 3) * 4);
-			}
-			at += (c.length + CELLS_PER_TEXEL - 1) / CELLS_PER_TEXEL;
+			base[e.id] = x0 + y0 * ATLAS_BASE_ROW;
 		}
-		return new Atlas(data, texels, base);
+		return new Atlas(data, ATLAS_WIDTH, height, base);
 	}
 
 	/**
-	 * A light's texel after the lights (light_occlusion.glsl): its grid's first texel (atlasStart + base, -1 for
+	 * A light's texel after the lights (light_occlusion.glsl): its grid's position in the atlas (Atlas, -1 for
 	 * none), the grid's corner (local world xz), and a code: cells per side * 32 + the light's plane * 8 + 4 when the
 	 * walls already decide where it reaches on its plane (its grid is cast, or no wall is near enough to matter: the
 	 * rooms then only keep it off the other planes) + 2 when the light is covered (under a roof: it doesn't light
@@ -481,7 +500,7 @@ final class LightOcclusion
 	 *
 	 * @param radius the light's radius: past the grids' reach the walls decide nothing
 	 */
-	static void texel(Entry e, Atlas a, int atlasStart, boolean covered, int plane, float radius, FloatBuffer out)
+	static void texel(Entry e, Atlas a, boolean covered, int plane, float radius, FloatBuffer out)
 	{
 		int base = a != null && e != null && !e.open ? a.base(e) : -1;
 		int flags = (covered ? 2 : 0) | (plane >= 0 && plane < WallMap.PLANES ? plane << 3 : 0);
@@ -494,18 +513,18 @@ final class LightOcclusion
 			out.put(-1).put(0).put(0).put(flags);
 			return;
 		}
-		out.put(atlasStart + base).put(e.originX).put(e.originZ).put(e.n * 32 + flags + (e.cell > CELL_FINE ? 1 : 0));
+		out.put(base).put(e.originX).put(e.originZ).put(e.n * 32 + flags + (e.cell > CELL_FINE ? 1 : 0));
 	}
 
 	/** The visibility the shader reads for a cell of a packed grid, 0-1; 1 outside it. For tests. */
 	static float lookup(Atlas a, Entry e, int cx, int cz)
 	{
-		if (cx < 0 || cz < 0 || cx >= e.n || cz >= e.n || a.base(e) < 0)
+		int b = a.base(e);
+		if (cx < 0 || cz < 0 || cx >= e.n || cz >= e.n || b < 0)
 		{
 			return 1;
 		}
-		int k = cz * e.n + cx;
-		int v = (int) a.texels[(a.base(e) + (k >> 4)) * 4 + ((k >> 2) & 3)];
-		return (v >> ((k & 3) * 4) & 15) / 15f;
+		int x = b % ATLAS_BASE_ROW + cx, y = b / ATLAS_BASE_ROW + cz;
+		return (a.texels[y * a.width + x] & 255) / 255f;
 	}
 }

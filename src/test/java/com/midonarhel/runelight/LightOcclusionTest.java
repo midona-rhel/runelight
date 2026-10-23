@@ -304,7 +304,7 @@ public class LightOcclusionTest
 		assertTrue(e.open);
 		assertNull(e.cells);
 		FloatBuffer out = FloatBuffer.allocate(4);
-		LightOcclusion.texel(e, LightOcclusion.pack(Collections.singletonList(e), 0), 100, true, 0, 600, out);
+		LightOcclusion.texel(e, LightOcclusion.pack(Collections.singletonList(e), 0), true, 0, 600, out);
 		assertEquals(-1, out.get(0), 0);
 		// covered, and the walls (there are none near) decide on plane 0
 		assertEquals(2 + 4, out.get(3), 0);
@@ -325,27 +325,30 @@ public class LightOcclusionTest
 		LightOcclusion.Entry e = new LightOcclusion.Entry(0, 0, 0, 0, world(10), world(10), 900);
 		LightOcclusion.castEntry(e, w);
 		LightOcclusion.Atlas a = LightOcclusion.pack(Collections.singletonList(e), 0);
-		assertEquals((e.n * e.n + 15) / 16, a.texelCount);
+		// the grid and its border in the first row of the atlas, cell (0, 0) one texel in
+		assertEquals(e.n + 2, a.height);
 		FloatBuffer out = FloatBuffer.allocate(4);
-		LightOcclusion.texel(e, a, 5000, false, 2, 900, out);
-		assertEquals(5000, out.get(0), 0);
+		LightOcclusion.texel(e, a, false, 2, 900, out);
+		assertEquals(1 + LightOcclusion.ATLAS_BASE_ROW, out.get(0), 0);
 		assertEquals(e.originX, out.get(1), 0);
 		// cells per side, plane 2, handled by the grid, fine cells
 		assertEquals(e.n * 32 + 2 * 8 + 4, out.get(3), 0);
 		// a light beyond the grids' reach, or whose grid isn't cast yet, is left to the rooms
 		FloatBuffer far = FloatBuffer.allocate(4);
-		LightOcclusion.texel(e, a, 5000, false, 0, LightOcclusion.MAX_RADIUS + 1, far);
+		LightOcclusion.texel(e, a, false, 0, LightOcclusion.MAX_RADIUS + 1, far);
 		assertEquals(0, (int) far.get(3) & 4);
 		LightOcclusion.Entry pending = new LightOcclusion.Entry(1, 0, 1, 0, world(10), world(10), 900);
 		FloatBuffer wait = FloatBuffer.allocate(4);
-		LightOcclusion.texel(pending, a, 5000, false, 0, 900, wait);
+		LightOcclusion.texel(pending, a, false, 0, 900, wait);
 		assertEquals(-1, wait.get(0), 0);
 		assertEquals(0, (int) wait.get(3) & 4);
-		// every packed float is a whole number the shader can take apart exactly
-		for (int i = 0; i < a.texelCount * 4; ++i)
+		// the border is fully visible, so the filtered lookup reads 1 past the grid's edge
+		for (int i = 0; i < e.n + 2; ++i)
 		{
-			assertEquals(Math.rint(a.texels[i]), a.texels[i], 0);
-			assertTrue(a.texels[i] < 65536);
+			assertEquals(-1, a.texels[i]);
+			assertEquals(-1, a.texels[(e.n + 1) * a.width + i]);
+			assertEquals(-1, a.texels[i * a.width]);
+			assertEquals(-1, a.texels[i * a.width + e.n + 1]);
 		}
 	}
 

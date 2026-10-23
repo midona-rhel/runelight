@@ -76,6 +76,8 @@ class SceneTargets
 	// the volumetric fog at the same size, which the denoise smooths along with the AO and shadows: made when the fog
 	// first runs (fogFbo); fboDenoise holds the final AO, shadow and fog textures together
 	private int fboFog, texFog, texFogTemp, fboDenoise;
+	// the point lights' glow in the fog at half the fog's resolution, filtered when the fog pass adds it (fog_frag.glsl)
+	private int fboFogLamps, texFogLamps, lampWidth, lampHeight;
 
 	/**
 	 * @param halfRatio scene pixels per texel of the half resolution passes: 2 at full render scale. Below it those
@@ -266,17 +268,54 @@ class SceneTargets
 			glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT2, GL_TEXTURE_2D, texFog, 0);
 			glDrawBuffers(DENOISE_FOG_BUFFERS);
 			check("denoise");
+
+			lampWidth = (aoWidth + 1) / 2;
+			lampHeight = (aoHeight + 1) / 2;
+			texFogLamps = glGenTextures();
+			glBindTexture(GL_TEXTURE_2D, texFogLamps);
+			glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA16F, lampWidth, lampHeight, 0, GL_RGBA, GL_HALF_FLOAT, 0);
+			glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+			glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+			glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+			glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+			glBindTexture(GL_TEXTURE_2D, 0);
+			fboFogLamps = glGenFramebuffers();
+			glBindFramebuffer(GL_FRAMEBUFFER, fboFogLamps);
+			glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, texFogLamps, 0);
+			glDrawBuffers(GL_COLOR_ATTACHMENT0);
+			check("fog lamps");
 		}
 		return fboFog;
+	}
+
+	/** The framebuffer of the fog's point light glow, made with {@link #fogFbo}; and its texture and size. */
+	int fogLampsFbo()
+	{
+		return fboFogLamps;
+	}
+
+	int fogLampsTexture()
+	{
+		return texFogLamps;
+	}
+
+	int getFogLampsWidth()
+	{
+		return lampWidth;
+	}
+
+	int getFogLampsHeight()
+	{
+		return lampHeight;
 	}
 
 	private void freeFog()
 	{
 		if (fboFog != 0)
 		{
-			glDeleteFramebuffers(new int[]{fboFog, fboDenoise});
-			glDeleteTextures(new int[]{texFog, texFogTemp});
-			fboFog = fboDenoise = texFog = texFogTemp = 0;
+			glDeleteFramebuffers(new int[]{fboFog, fboDenoise, fboFogLamps});
+			glDeleteTextures(new int[]{texFog, texFogTemp, texFogLamps});
+			fboFog = fboDenoise = texFog = texFogTemp = fboFogLamps = texFogLamps = 0;
 		}
 	}
 
