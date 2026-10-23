@@ -63,16 +63,25 @@ vec3 doorwayDaylight(vec3 world, vec3 n, vec3 sun) {
   return sun * (skyUpsampled * DOORWAY_DAYLIGHT * max(-casterDir.y, 0.0));
 }
 
-// one cell of a grid starting at texel base, n cells per side: 0..1, 1 outside it
-float lightVisCell(int base, int n, ivec2 c) {
-  if (any(lessThan(c, ivec2(0))) || any(greaterThanEqual(c, ivec2(n)))) {
-    return 1.0;
-  }
-  int k = c.y * n + c.x;
-  vec4 t = texelFetch(lightData, base + (k >> 4));
+// one cell's 4 bit value, k its index, t the texel holding it (16 cells to a texel, 4 to a component)
+float lightVisNibble(vec4 t, int k) {
   int comp = (k >> 2) & 3;
   int v = int(comp == 0 ? t.x : comp == 1 ? t.y : comp == 2 ? t.z : t.w);
   return float((v >> ((k & 3) * 4)) & 15) / 15.0;
+}
+
+// Cells c and c + (1, 0) of a grid starting at texel base, n cells per side: 0..1, 1 outside it. Neighbors along a row
+// mostly share a texel, so a row of the bilinear lookup usually takes one fetch instead of two.
+vec2 lightVisPair(int base, int n, ivec2 c) {
+  if (c.y < 0 || c.y >= n || c.x < -1 || c.x >= n) {
+    return vec2(1.0);
+  }
+  int k = c.y * n + c.x;
+  bool in0 = c.x >= 0;
+  bool in1 = c.x + 1 < n;
+  vec4 t0 = texelFetch(lightData, base + (max(k, 0) >> 4));
+  vec4 t1 = in1 && (!in0 || ((k + 1) >> 4) != (k >> 4)) ? texelFetch(lightData, base + ((k + 1) >> 4)) : t0;
+  return vec2(in0 ? lightVisNibble(t0, k) : 1.0, in1 ? lightVisNibble(t1, k + 1) : 1.0);
 }
 
 // How much of a light with room code roomCode and per-light texel `extra` reaches a point in room r (lightRoomPlaneAt).
@@ -110,11 +119,9 @@ float lightOcclusion(vec4 extra, vec3 lightPos, vec3 p, vec3 n) {
     vec2 f = c - b;
     ivec2 i = ivec2(b);
     int base = int(extra.x);
-    float v00 = lightVisCell(base, n4, i);
-    float v10 = lightVisCell(base, n4, i + ivec2(1, 0));
-    float v01 = lightVisCell(base, n4, i + ivec2(0, 1));
-    float v11 = lightVisCell(base, n4, i + ivec2(1, 1));
-    v *= mix(mix(v00, v10, f.x), mix(v01, v11, f.x), f.y);
+    vec2 r0 = lightVisPair(base, n4, i);
+    vec2 r1 = lightVisPair(base, n4, i + ivec2(0, 1));
+    v *= mix(mix(r0.x, r0.y, f.x), mix(r1.x, r1.y, f.x), f.y);
   }
   return v;
 }
