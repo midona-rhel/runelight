@@ -1,0 +1,1 @@
+Timing excludes the synchronous texture readback. Binary floats/shorts are little endian, rows bottom-up.
