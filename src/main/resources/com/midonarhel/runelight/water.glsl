@@ -48,21 +48,15 @@ layout(location = 1) out uvec4 WaterShadedOut;
 #define WET_SAND 0.86
 // The sky is reflected off a normal SKY_TILT times as steep as the waves', and the Fresnel goes by it too: each wave
 // face catches a different part of the sky, the bright horizon toward the camera, the darker zenith away, which is
-// what shows the waves from above (the waves themselves are too gentle to move the reflection much). Cloud tops in
-// the sky cache no brighter than SKY_CLOUD_MAX times the sky there.
+// what shows the waves from above (the waves themselves are too gentle to move the reflection much).
 #define SKY_TILT 1.5
 #define WAVE_SKY_TILT 7.0
 // Underground there is no sky to reflect: the water reflects a black stand-in, a very dark tint of the cave's fog
 // color, so it is told from the rock by its own dark color, the lamps on it and the cave in its screen-space reflections
 #define CAVE_SKY_REFLECT 0.1
-#define CLOUD_TILT 1.0
 // how fast the reflected sky goes from the horizon's color to the zenith's as the reflection rises (an exponent on
 // the elevation): low keeps the horizon to a narrow bright band, so the wave faces that catch it stand out
 #define SKY_GRADIENT 0.45
-// how much of the clouds' own color shows over the sky's, and the spread of the taps that soften them (radians)
-#define CLOUD_SHARE 0.55
-#define CLOUD_BLUR 0.008
-#define SKY_CLOUD_MAX 1.1
 // Highlights. Sheen: a faint tight lobe of the sun or moon on the waves (Blinn-Phong exponent, strength). Glitter:
 // its reflection off the waves as if they were GLITTER_SLOPE times taller, so many small slopes face the sun, each
 // catching it in a narrow lobe (GLITTER_ROUGH): many pinpoint glints instead of a wide smear. The moon's are
@@ -353,27 +347,6 @@ void waterShadeHalf(ivec2 hpx) {
   if (outdoors == 1 && proceduralSky == 1) {
     float elev = -r.y;
     vec3 sc = mix(skyHorizon(sunAltitude), skyZenith(sunAltitude), pow(clamp(elev, 0.0, 1.0), SKY_GRADIENT));
-    // The sky as drawn this frame, clouds and all, when the sky cache has it. Looked up along a reflection off the
-    // waves at their own slope (CLOUD_TILT): along the steep one each wave face caught its own scrap of cloud, and
-    // the clouds broke up into white blobs. The steep one's gradient still shades it, so the waves show.
-    if ((skyCacheMode & 2) != 0) {
-      vec3 rc = reflect(v, normalize(nrm * vec3(CLOUD_TILT, 1.0, CLOUD_TILT)));
-      rc.y = min(rc.y, -0.02);
-      rc = normalize(rc);
-      vec3 gentle = mix(skyHorizon(sunAltitude), skyZenith(sunAltitude), pow(clamp(-rc.y, 0.0, 1.0), SKY_GRADIENT));
-      // four taps a little apart: the cache's clouds are marched with dithered steps, which the water showed as grain
-      vec3 cd = cloudSkyDir(rc);
-      vec3 ax = normalize(cross(cd, vec3(0.0, 1.0, 0.0)));
-      vec3 ay = cross(cd, ax);
-      vec3 cached = 0.25 * (textureLod(skyCache, skyCacheUv(normalize(cd + ax * CLOUD_BLUR)), 0.0).rgb
-        + textureLod(skyCache, skyCacheUv(normalize(cd - ax * CLOUD_BLUR)), 0.0).rgb
-        + textureLod(skyCache, skyCacheUv(normalize(cd + ay * CLOUD_BLUR)), 0.0).rgb
-        + textureLod(skyCache, skyCacheUv(normalize(cd - ay * CLOUD_BLUR)), 0.0).rgb);
-      cached *= srgbToLinear(sc) / max(srgbToLinear(gentle), vec3(1e-4));
-      // the clouds only partly: white on the dark water they stood out as blotches
-      cached = mix(srgbToLinear(sc), cached, CLOUD_SHARE);
-      sc = linearToSrgb(clamp(min(cached, srgbToLinear(sc) * SKY_CLOUD_MAX), 0.0, 1.0));
-    }
     reflection = srgbToLinear(envSky(sc, fogColor, elev));
   } else if (outdoors == 0 && envCave == 1) {
     reflection = srgbToLinear(fogColor) * CAVE_SKY_REFLECT;

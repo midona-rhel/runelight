@@ -11,6 +11,12 @@
 #include "fog_apply.glsl"
 #include "lightning.glsl"
 #include "clouds.glsl"
+// The clouds are marched at half resolution, by this program's cloud pass (cloudPass 1, into cloudHalf), and the sky
+// below filters them from there (atmosphere.glsl): they are soft, and marched at every pixel they cost the sky most
+// of its time. The stars, sun and moon in front of them stay at full resolution.
+#define CLOUDS_HALF_RES
+uniform int cloudPass;
+uniform sampler2D cloudHalf;
 #include "atmosphere.glsl"
 #include "edge_fade.glsl"
 #include "weather_ground.glsl"
@@ -33,8 +39,6 @@
 
 
 #define TILE_SIZE 128.0
-// cloud steps for the sky seen through the edge fade: it is mostly hidden by the scenery in front
-#define EDGE_SKY_STEPS (CLOUD_STEPS / 2)
 
 uniform sampler2D sceneAlpha;  // transparent geometry, already lit, premultiplied
 uniform sampler2D sceneMaterial;  // r emissive, g transmissive, b water (frag.glsl)
@@ -163,10 +167,9 @@ float fogAmount(vec3 world) {
 }
 
 // The sky this pixel would show if nothing stood in front of it, in sRGB: what the world melts into at its edge.
-// steps: cloud march steps, fewer behind the scenery, where it shows only through the fade.
-vec3 skyBehind(vec2 px, vec3 dir, vec3 fogColor, bool sunAndSky, int steps) {
+vec3 skyBehind(vec2 px, vec3 dir, vec3 fogColor, bool sunAndSky) {
   if (sunAndSky && skyVoid == 0 && proceduralSky == 1) {
-    vec3 sky = atmosphereSkySteps(px, dir, cameraPos, sunDir, moonDir, sunAltitude, time, steps);
+    vec3 sky = atmosphereSky(px, dir, cameraPos, sunDir, moonDir, sunAltitude, time);
     sky = lightningOverSky(sky, dir, cameraPos);
     return envSky(sky, fogColor, -dir.y);
   }
@@ -279,6 +282,29 @@ void main() {
     waterShadeHalf(ivec2(gl_FragCoord.xy));
     return;
   }
+  if (cloudPass == 1) {
+    // the ray through the middle of the scene pixels this texel covers
+    vec2 c = gl_FragCoord.xy * halfRatio;
+    // Only where the sky shows: in the scene pixels this texel covers and the ones next to them, which the filtering
+    // reaches, or behind geometry's partly covered edges or its fade at the edge of the world. Elsewhere clear sky.
+    bool needed = false;
+    ivec2 last = textureSize(sceneDepth, 0) - 1;
+    for (int i = 0; i < 4 && !needed; ++i) {
+      ivec2 q = clamp(ivec2(c + vec2(i & 1, i >> 1) * (halfRatio + 2.0) - (halfRatio * 0.5 + 1.0)), ivec2(0), last);
+      float qd = texelFetch(sceneDepth, q, 0).r;
+      needed = isSky(qd) || texelFetch(sceneColor, q, 0).a < 0.996
+        || edgeFadeAmount(reconstructPosition(vec2(q) + 0.5, qd) + cameraPos) > 0.002;
+    }
+    if (!needed) {
+      FragColor = vec4(0.0, 0.0, 0.0, 1.0);
+      return;
+    }
+    vec3 dir = normalize(reconstructPosition(c, 1.0));
+    float pixelAngle = length(normalize(reconstructPosition(c + vec2(0.0, 1.0), 1.0)) - dir);
+    FragColor = cloudLayer(cloudSkyDir(dir), cameraPos, sunDir, moonDir, sunAltitude, pixelAngle, cloudJitter(c),
+      CLOUD_STEPS);
+    return;
+  }
   ivec2 px = ivec2(gl_FragCoord.xy);
   vec4 color = texelFetch(sceneColor, px, 0);
   float d = texelFetch(sceneDepth, px, 0).r;
@@ -316,7 +342,7 @@ void main() {
   if ((compositePart == 0 || compositePart == 5) && replaceSky && (cover < 0.996 || isSky(d))) {
     // a point on the near plane gives the view ray; the camera is at the origin of camera-relative space
     vec3 dir = normalize(reconstructPosition(vec2(px) + 0.5, 1.0));
-    behind = openSky ? skyBehind(vec2(px) + 0.5, dir, fogColor, true, CLOUD_STEPS) : fogColor;
+    behind = openSky ? skyBehind(vec2(px) + 0.5, dir, fogColor, true) : fogColor;
     // looking steeply down past the world (into a trapdoor, off a cliff) there is no sky, only the dark under it
     behind *= 1.0 - voidBelow(dir);
   }
@@ -471,7 +497,7 @@ void main() {
   // the world fades into the sky behind it toward the draw distance, so where the culling stops never shows
   float edge = inside ? edgeFadeAmount(p + cameraPos) : 0.0;
   if (edge > 0.002) {
-    lit = mix(lit, skyBehind(vec2(px) + 0.5, normalize(p), fogColor, sunAndSky, EDGE_SKY_STEPS), edge);
+    lit = mix(lit, skyBehind(vec2(px) + 0.5, normalize(p), fogColor, sunAndSky), edge);
   }
   // over the sky by the geometry's coverage
   lit = mix(behind, lit, cover);

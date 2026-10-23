@@ -1175,18 +1175,6 @@ public interface RuneLightConfig extends Config
 		return 5;
 	}
 
-	@ConfigItem(
-		keyName = "skyCacheView",
-		name = "Draw sky from capture",
-		description = "Draw the sky and clouds from the captured sky instead of every frame: faster, but softer clouds that move in steps.",
-		section = cloudsSection,
-		position = 508
-	)
-	default boolean skyCacheView()
-	{
-		return false;
-	}
-
 	@Range(max = 200)
 	@ConfigItem(
 		keyName = "starBrightness",

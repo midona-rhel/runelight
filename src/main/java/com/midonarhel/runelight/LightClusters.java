@@ -85,6 +85,8 @@ class LightClusters
 	// view rays through the cluster grid corners, scaled to view depth 1
 	private final float[] rays = new float[(CLUSTERS_X + 1) * (CLUSTERS_Y + 1) * 3];
 	private final float[] columnPlanes = new float[COLUMN_COUNT * 16];
+	// per column, the smallest and largest x, y, z of its four corner rays (computeBounds)
+	private final float[] columnRays = new float[COLUMN_COUNT * 6];
 	private final float[] sliceDepth = new float[CLUSTERS_Z + 1];
 
 	void init()
@@ -543,37 +545,39 @@ class LightClusters
 		}
 		sliceDepth[0] = 0;
 
+		// A cluster is its column's four corner rays between two slice depths, both positive, so per axis its box is
+		// the rays' smallest and largest component times the near or the far depth, whichever keeps it extreme
+		for (int cy = 0; cy < CLUSTERS_Y; ++cy)
+		{
+			for (int cx = 0; cx < CLUSTERS_X; ++cx)
+			{
+				int r = (cy * CLUSTERS_X + cx) * 6;
+				for (int axis = 0; axis < 3; ++axis)
+				{
+					float lo = Float.MAX_VALUE, hi = -Float.MAX_VALUE;
+					for (int c = 0; c < 4; ++c)
+					{
+						float v = rays[((cy + (c >> 1)) * (CLUSTERS_X + 1) + cx + (c & 1)) * 3 + axis];
+						lo = Math.min(lo, v);
+						hi = Math.max(hi, v);
+					}
+					columnRays[r + axis] = lo;
+					columnRays[r + 3 + axis] = hi;
+				}
+			}
+		}
 		for (int cz = 0; cz < CLUSTERS_Z; ++cz)
 		{
 			float d0 = sliceDepth[cz], d1 = sliceDepth[cz + 1];
-			for (int cy = 0; cy < CLUSTERS_Y; ++cy)
+			for (int column = 0; column < COLUMN_COUNT; ++column)
 			{
-				for (int cx = 0; cx < CLUSTERS_X; ++cx)
+				int r = column * 6;
+				int b = (cz * COLUMN_COUNT + column) * 6;
+				for (int axis = 0; axis < 3; ++axis)
 				{
-					float minX = Float.MAX_VALUE, minY = Float.MAX_VALUE, minZ = Float.MAX_VALUE;
-					float maxX = -Float.MAX_VALUE, maxY = -Float.MAX_VALUE, maxZ = -Float.MAX_VALUE;
-					for (int c = 0; c < 4; ++c)
-					{
-						int i = ((cy + (c >> 1)) * (CLUSTERS_X + 1) + cx + (c & 1)) * 3;
-						for (int e = 0; e < 2; ++e)
-						{
-							float d = e == 0 ? d0 : d1;
-							float px = rays[i] * d, py = rays[i + 1] * d, pz = rays[i + 2] * d;
-							minX = Math.min(minX, px);
-							minY = Math.min(minY, py);
-							minZ = Math.min(minZ, pz);
-							maxX = Math.max(maxX, px);
-							maxY = Math.max(maxY, py);
-							maxZ = Math.max(maxZ, pz);
-						}
-					}
-					int b = ((cz * CLUSTERS_Y + cy) * CLUSTERS_X + cx) * 6;
-					bounds[b] = minX;
-					bounds[b + 1] = minY;
-					bounds[b + 2] = minZ;
-					bounds[b + 3] = maxX;
-					bounds[b + 4] = maxY;
-					bounds[b + 5] = maxZ;
+					float lo = columnRays[r + axis], hi = columnRays[r + 3 + axis];
+					bounds[b + axis] = lo * (lo >= 0 ? d0 : d1);
+					bounds[b + 3 + axis] = hi * (hi >= 0 ? d1 : d0);
 				}
 			}
 		}

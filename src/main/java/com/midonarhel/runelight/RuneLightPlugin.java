@@ -252,6 +252,8 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 	private static final int LIGHT_VIS_UNIT = RuneLightPlugin.COMPOSITE_TEXTURE_UNIT + 21;
 	// the fog's point light glow, read by the fog pass
 	private static final int FOG_LAMPS_UNIT = RuneLightPlugin.COMPOSITE_TEXTURE_UNIT + 22;
+	// the clouds at half resolution, which the composite's sky filters (composite_frag.glsl)
+	private static final int CLOUD_HALF_UNIT = RuneLightPlugin.COMPOSITE_TEXTURE_UNIT + 23;
 
 	private final LightClusters lightClusters = new LightClusters();
 	private final OpenRooms openRooms = new OpenRooms();
@@ -263,6 +265,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 	private final PointLight testLight = new PointLight();
 	private int uniCompositePointLights;
 	private int uniCompositeLightVisSize;
+	private int uniCompositeCloudPass;
 	private int uniAlphaPass;
 	private int uniSceneOutdoors;
 	private int uniSceneProceduralSky;
@@ -1190,6 +1193,8 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		glUniform1i(glGetUniformLocation(c, "clusterData"), CLUSTER_DATA_UNIT);
 		glUniform1i(glGetUniformLocation(c, "lightVis"), LIGHT_VIS_UNIT);
 		uniCompositeLightVisSize = glGetUniformLocation(c, "lightVisSize");
+		glUniform1i(glGetUniformLocation(c, "cloudHalf"), CLOUD_HALF_UNIT);
+		uniCompositeCloudPass = glGetUniformLocation(c, "cloudPass");
 		glUniform1i(glGetUniformLocation(c, "sceneAlpha"), ALPHA_LAYER_UNIT);
 		glUniform1i(glGetUniformLocation(c, "sceneMaterial"), MATERIAL_UNIT);
 		compositeMaterials.locate(c);
@@ -2618,9 +2623,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 	 */
 	private int updateSkyCache()
 	{
-		boolean procedural = config.proceduralSky() && !frameHasSkybox;
-		int mode = (config.skyCache() ? SkyCache.MODE_LIGHT : 0)
-			| (config.skyCacheView() && procedural ? SkyCache.MODE_VIEW : 0);
+		int mode = config.skyCache() ? SkyCache.MODE_LIGHT : 0;
 		// Loading a region keeps drawing the last frames; dropping the cache for them would switch the sky light.
 		// Without updates the composite eases from the last capture back to the analytic light (SkyCache).
 		GameState state = client.getGameState();
@@ -2641,7 +2644,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 			clouds.bindNoise(CLOUD_NOISE_UNIT);
 		}
 		skyCache.update(clouds, gameMinutes, config.skyCacheMinutes(), frameCameraX, frameCameraY, frameCameraZ,
-			dayCycle, skyCacheOvercast, settings, (mode & SkyCache.MODE_VIEW) != 0, SKY_CACHE_UNIT);
+			dayCycle, skyCacheOvercast, settings, SKY_CACHE_UNIT);
 		skyCache.bind(SKY_CACHE_UNIT);
 		return mode;
 	}
@@ -2852,6 +2855,23 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		sceneTargets.bindMaterial(MATERIAL_UNIT);
 		compositeMaterials.set(config);
 		water.bind(config, WATER_DATA_UNIT);
+		// the clouds at half resolution, with everything bound for the composite; its sky filters them
+		if (clouds.isEnabled() && frameOutdoors && proceduralSky())
+		{
+			glActiveTexture(GL_TEXTURE0 + CLOUD_HALF_UNIT);
+			glBindTexture(GL_TEXTURE_2D, 0);
+			glBindFramebuffer(GL_FRAMEBUFFER, sceneTargets.cloudFbo());
+			glViewport(0, 0, sceneTargets.getAoWidth(), sceneTargets.getAoHeight());
+			glDisable(GL_BLEND);
+			glUniform1i(uniCompositeCloudPass, 1);
+			gpuTimer.begin(GpuTimer.CLOUDS);
+			glDrawArrays(GL_TRIANGLES, 0, 3);
+			gpuTimer.end();
+			glUniform1i(uniCompositeCloudPass, 0);
+			glActiveTexture(GL_TEXTURE0 + CLOUD_HALF_UNIT);
+			glBindTexture(GL_TEXTURE_2D, sceneTargets.cloudTexture());
+			glActiveTexture(GL_TEXTURE0);
+		}
 		// the water's half resolution shading, with everything bound for the composite (water.glsl)
 		gpuTimer.begin(GpuTimer.WATER);
 		water.shadeHalf(config, sceneTargets.getAoWidth(), sceneTargets.getAoHeight(), WATER_NOISE_UNIT);
@@ -2885,6 +2905,9 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		glBindTexture(GL_TEXTURE_2D_ARRAY, 0);
 		glActiveTexture(GL_TEXTURE0);
 		Water.unbind(WATER_DATA_UNIT, WATER_NOISE_UNIT);
+		glActiveTexture(GL_TEXTURE0 + CLOUD_HALF_UNIT);
+		glBindTexture(GL_TEXTURE_2D, 0);
+		glActiveTexture(GL_TEXTURE0);
 		// before the weather binds its occlusion map on the same unit
 		SkyCache.unbind(SKY_CACHE_UNIT);
 

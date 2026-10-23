@@ -78,6 +78,8 @@ class SceneTargets
 	private int fboFog, texFog, texFogTemp, fboDenoise;
 	// the point lights' glow in the fog at half the fog's resolution, filtered when the fog pass adds it (fog_frag.glsl)
 	private int fboFogLamps, texFogLamps, lampWidth, lampHeight;
+	// the clouds in front of the sky at the AO targets' size, filtered by the composite's sky (composite_frag.glsl)
+	private int fboClouds, texClouds;
 
 	/**
 	 * @param halfRatio scene pixels per texel of the half resolution passes: 2 at full render scale. Below it those
@@ -167,6 +169,7 @@ class SceneTargets
 	void free()
 	{
 		freeFog();
+		freeClouds();
 		glDeleteTextures(partTextures);
 		glDeleteFramebuffers(partFbos);
 		java.util.Arrays.fill(partTextures, 0);
@@ -242,6 +245,47 @@ class SceneTargets
 		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
 		glBindTexture(GL_TEXTURE_2D, 0);
 		return t;
+	}
+
+	/**
+	 * The framebuffer of the composite's cloud pass, at the AO targets' size, made when first asked for; its texture is
+	 * {@link #cloudTexture}.
+	 */
+	int cloudFbo()
+	{
+		if (fboClouds == 0)
+		{
+			// half float: the clouds' scattered light is linear, and dim at night
+			texClouds = glGenTextures();
+			glBindTexture(GL_TEXTURE_2D, texClouds);
+			glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA16F, aoWidth, aoHeight, 0, GL_RGBA, GL_HALF_FLOAT, 0);
+			glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+			glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+			glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+			glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+			glBindTexture(GL_TEXTURE_2D, 0);
+			fboClouds = glGenFramebuffers();
+			glBindFramebuffer(GL_FRAMEBUFFER, fboClouds);
+			glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, texClouds, 0);
+			glDrawBuffers(GL_COLOR_ATTACHMENT0);
+			check("clouds");
+		}
+		return fboClouds;
+	}
+
+	int cloudTexture()
+	{
+		return texClouds;
+	}
+
+	private void freeClouds()
+	{
+		if (fboClouds != 0)
+		{
+			glDeleteFramebuffers(fboClouds);
+			glDeleteTextures(texClouds);
+			fboClouds = texClouds = 0;
+		}
 	}
 
 	/**
