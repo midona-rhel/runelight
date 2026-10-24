@@ -32,9 +32,11 @@ float skyUpsampled = 1.0;
 // The patches' light is the light that reached the surface by bouncing, as irradiance in the units of the ambient light
 // (GiRelight). The form factors keep it physical, which is faint: a patch standing in sunlit grass gathers about a third
 // of the grass' albedo times the sun's light, and the game's albedos are dim, so the bounce is a few hundredths of the
-// ambient light where the colors should show. This is how many times stronger than that it is shown. It is added after the
-// light has gone through the half resolution target and its range, so it clamps nothing there.
-#define BOUNCE_GAIN 4.0
+// ambient light where the colors should show. This is how many times stronger than that it is shown: enough that, on a
+// surface in shade, the bounce is about as strong as the ambient light, since the surface's own albedo dims it again in
+// the final color. It is added after the light has gone through the half resolution target and its range, so it clamps
+// nothing there.
+#define BOUNCE_GAIN 12.0
 
 // plain: the ambient plus sky light a surface would get under the open sky
 vec3 skylightAmbient(vec3 plain) {

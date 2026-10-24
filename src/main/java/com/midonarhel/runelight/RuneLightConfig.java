@@ -1299,12 +1299,11 @@ public interface RuneLightConfig extends Config
 		return true;
 	}
 
-	@Range(max = 100)
+	@Range(max = 400)
 	@ConfigItem(
 		keyName = "giStrength",
 		name = "Strength",
-		description = "How much of the ambient light comes from the global illumination rather than the plain sky "
-			+ "light, in percent.",
+		description = "How strong the light bounced off the surfaces around is, in percent.",
 		section = giSection,
 		position = 702
 	)
