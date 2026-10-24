@@ -60,14 +60,18 @@ class SceneTargets
 	private static final int[] OPAQUE_BUFFERS = {GL_COLOR_ATTACHMENT0, GL_COLOR_ATTACHMENT1, GL_NONE, GL_COLOR_ATTACHMENT3};
 	private static final int[] ALPHA_BUFFERS = {GL_NONE, GL_NONE, GL_COLOR_ATTACHMENT2, GL_NONE};
 	private static final int[] ALL_BUFFERS = {GL_COLOR_ATTACHMENT0, GL_COLOR_ATTACHMENT1, GL_COLOR_ATTACHMENT2, GL_COLOR_ATTACHMENT3};
-	private static final int[] FIRST_BUFFER = {GL_COLOR_ATTACHMENT0};
 	private static final int[] FIRST_TWO_BUFFERS = {GL_COLOR_ATTACHMENT0, GL_COLOR_ATTACHMENT1};
+	// the denoise's: the shadows, the fog when it smooths it, the geometry with the GI smoothed
+	private static final int[] DENOISE_BUFFERS = {GL_COLOR_ATTACHMENT0, GL_NONE, GL_COLOR_ATTACHMENT2};
+	private static final int[] DENOISE_FOG_BUFFERS = {GL_COLOR_ATTACHMENT0, GL_COLOR_ATTACHMENT1, GL_COLOR_ATTACHMENT2};
 	private static final float[] TRANSPARENT = {0, 0, 0, 0};
 	private static final float[] FAR_DEPTH = {0};
 	private final float[] clearColor = {0, 0, 0, 0};
 
 	// the AO pass's geometry and global illumination at half resolution (halfres.glsl), for the upsamples
 	private int fboAo, texAo;
+	// the geometry again, with its global illumination smoothed by the denoise: what the composite reads after it
+	private int texAoSmooth;
 	// sun and moon shadows, AO, the weather's ground and sky visibility at half resolution: drawn by the AO pass into
 	// texShadowRaw, smoothed by the denoise (denoise) into texShadow and upsampled depth-aware in the composite pass
 	private int texShadowRaw, texShadow;
@@ -137,6 +141,13 @@ class SceneTargets
 		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
 		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
 		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+		texAoSmooth = glGenTextures();
+		glBindTexture(GL_TEXTURE_2D, texAoSmooth);
+		glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA32F, aoWidth, aoHeight, 0, GL_RGBA, GL_FLOAT, 0);
+		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
 		glBindTexture(GL_TEXTURE_2D, 0);
 		// r shadow, g AO, b the snow or puddle cover the composite's surfaces get (weather_ground_ao.glsl), a sky
 		// visibility; half floats, so the cover builds up smoothly
@@ -151,7 +162,8 @@ class SceneTargets
 		fboDenoise = glGenFramebuffers();
 		glBindFramebuffer(GL_FRAMEBUFFER, fboDenoise);
 		glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, texShadow, 0);
-		glDrawBuffers(GL_COLOR_ATTACHMENT0);
+		glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT2, GL_TEXTURE_2D, texAoSmooth, 0);
+		glDrawBuffers(DENOISE_BUFFERS);
 		check("denoise");
 		denoiseFog = false;
 	}
@@ -167,8 +179,8 @@ class SceneTargets
 		if (fboAo != 0)
 		{
 			glDeleteFramebuffers(new int[]{fboAo, fboDenoise});
-			glDeleteTextures(new int[]{texAo, texShadowRaw, texShadow});
-			fboAo = texAo = texShadowRaw = texShadow = fboDenoise = 0;
+			glDeleteTextures(new int[]{texAo, texAoSmooth, texShadowRaw, texShadow});
+			fboAo = texAo = texAoSmooth = texShadowRaw = texShadow = fboDenoise = 0;
 		}
 		if (fboScene != 0)
 		{
@@ -357,9 +369,10 @@ class SceneTargets
 
 	/**
 	 * Smooth the AO pass's dithered AO and shadow, and with fog the fog drawn into {@link #fogFbo}(true) this frame
-	 * (denoise_frag.glsl), into the shadow and fog targets the composite reads. The denoise program in use, its fog
+	 * (denoise_frag.glsl), into the shadow and fog targets the composite reads, and the global illumination into a copy
+	 * of the geometry ({@link #bindAoSmoothed}). The denoise program in use, its fog
 	 * flag at fogUniform, its sceneAo, sceneShadow and sceneFog samplers on aoUnit, shadowUnit and fogUnit; a
-	 * fullscreen triangle's VAO bound. Leaves the shadow and fog units holding the AO pass's and the fog pass's own
+	 * fullscreen triangle's VAO bound. Leaves the AO, shadow and fog units holding the AO pass's and the fog pass's own
 	 * targets: bind the smoothed ones for the composite.
 	 */
 	void denoise(int fogUniform, int aoUnit, int shadowUnit, int fogUnit, boolean fog)
@@ -369,7 +382,7 @@ class SceneTargets
 		glBindFramebuffer(GL_FRAMEBUFFER, fboDenoise);
 		if (fog != denoiseFog)
 		{
-			glDrawBuffers(fog ? FIRST_TWO_BUFFERS : FIRST_BUFFER);
+			glDrawBuffers(fog ? DENOISE_FOG_BUFFERS : DENOISE_BUFFERS);
 			denoiseFog = fog;
 		}
 		// the pass writes every texel: cleared first, the GPU starts it without loading the old contents
@@ -400,6 +413,12 @@ class SceneTargets
 		glActiveTexture(GL_TEXTURE0 + unit);
 		glBindTexture(GL_TEXTURE_2D, texShadow);
 		glActiveTexture(GL_TEXTURE0);
+	}
+
+	/** The geometry with the global illumination the {@link #denoise} smoothed, for the composite. */
+	void bindAoSmoothed(int unit)
+	{
+		bind(unit, texAoSmooth);
 	}
 
 	void bindAo(int unit)

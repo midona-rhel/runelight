@@ -88,3 +88,16 @@ float shadowFactor(vec3 p, vec3 n, float rotation) {
   }
   return mix(1.0, lit / float(filterTaps), edgeFade);
 }
+
+// One hardware filtered compare, no penumbra: the light on a surface the screen-space GI (ao_frag.glsl) bounces off,
+// where a shadow's soft edge doesn't show
+float shadowTap(vec3 p, vec3 n) {
+  float texelWorld = 2.0 * shadowRadius / shadowMapSize;
+  vec4 lc = lightProjRel * vec4(p + n * texelWorld * 1.5, 1.0);
+  vec2 uv = lc.xy * 0.5 + 0.5;
+  float z = depthZeroToOne == 1 ? lc.z : lc.z * 0.5 + 0.5;
+  if (any(lessThan(uv, vec2(0.0))) || any(greaterThan(uv, vec2(1.0))) || z >= 1.0) {
+    return 1.0;
+  }
+  return texture(shadowCompare, vec3(uv, z - 2.0 * texelWorld / (2.0 * shadowDepthRange)));
+}

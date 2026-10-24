@@ -264,12 +264,15 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 	// this frame's point lights on, and whether the light clusters and the rooms were uploaded and bound
 	// (prepareLighting); whether the wet ground is drawn
 	private boolean framePointLights, frameLightClusters, frameGround;
+	// whether the composite adds the global illumination the AO pass gathered this frame
+	private boolean frameGi;
 
 	private int glAoProgram;
 	private int glDenoiseProgram;
 	private int uniDenoiseFog;
 	private int uniAoRadius;
 	private int uniAoSamples;
+	private int uniAoGi;
 	private int uniAoShadowsEnabled, uniAoLightProjRel, uniAoShadowRadius, uniAoShadowDepthRange, uniAoShadowMapSize,
 		uniAoShadowMaxTile, uniAoCasterDir, uniAoSunIsCaster;
 	// the half resolution shadows the AO pass draws, for the composite
@@ -1209,6 +1212,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		uniAoShadowMaxTile = glGetUniformLocation(glAoProgram, "shadowMaxTile");
 		uniAoCasterDir = glGetUniformLocation(glAoProgram, "casterDir");
 		uniAoSunIsCaster = glGetUniformLocation(glAoProgram, "sunIsCaster");
+		uniAoGi = glGetUniformLocation(glAoProgram, "giEnabled");
 		glUseProgram(glAoProgram);
 		glUniform1i(glGetUniformLocation(glAoProgram, "shadowRaw"), SHADOW_RAW_UNIT);
 		glUniform1i(glGetUniformLocation(glAoProgram, "shadowCompare"), SHADOW_COMPARE_UNIT);
@@ -1217,7 +1221,6 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		glUseProgram(0);
 		aoFrame.locate(glAoProgram);
 		bindSceneSamplers(glAoProgram);
-		globalIllumination.locateAo(glAoProgram, GI_PROBE_UNIT);
 		weatherGround.locate(glAoProgram, WEATHER_OCCLUSION_UNIT, WEATHER_FIELD_UNIT);
 		skyGrid.locateAo(glAoProgram, SKY_GRID_UNIT);
 		skyField.locateAo(glAoProgram, SKY_FIELD_UNIT);
@@ -2585,7 +2588,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		skyCache.setComposite(c.skyCache, weather.skyHaze(), config.starBrightness() / 100f);
 		glUniform1i(c.aoEnabled, config.ambientOcclusion() ? 1 : 0);
 		glUniform1f(c.aoStrength, config.aoStrength() / 100f);
-		globalIllumination.setComposite(c.giWeight, config.giStrength() / 100f);
+		glUniform1f(c.giWeight, frameGi ? config.giStrength() / 100f : 0);
 
 		glUniform3f(c.cameraPos, frameCameraX, frameCameraY, frameCameraZ);
 		glUniform1f(c.time, compositeTime);
@@ -2813,10 +2816,8 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		return mode;
 	}
 
-	/**
-	 * Build, relight, upload and blend the global illumination's probes as due; whether the AO pass looks them up.
-	 */
-	private boolean prepareGlobalIllumination()
+	/** Voxelize the scene as due, for the skylight. */
+	private void prepareGlobalIllumination()
 	{
 		WorldView wv = client.getTopLevelWorldView();
 		Scene scene = wv != null ? wv.getScene() : null;
@@ -2829,7 +2830,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 			int builds = globalIllumination.builds();
 			int shown = globalIllumination.shownBuild();
 			BuildingLights buildings = buildingLights;
-			globalIllumination.prepare(giEnabled(), frameSkylightWanted, frameOutdoors, scene,
+			globalIllumination.prepare(false, frameSkylightWanted, frameOutdoors, scene,
 				root != null ? root.zones : null, clientUploader.water, buildings != null ? buildings.getWalls(scene) : null,
 				dayCycle, skyCache.getCaptures(), settings, GI_PROBE_UNIT);
 			if (builds != globalIllumination.builds())
@@ -2846,9 +2847,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 			// e.g. a framebuffer the driver won't take: the composite keeps its plain ambient light
 			logLimiter.warn(log, "gi " + ex, "Global illumination failed", ex);
 			globalIllumination.free();
-			return false;
 		}
-		return globalIllumination.isActive();
 	}
 
 	private void compositeScene()
@@ -2877,7 +2876,8 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		glBindVertexArray(vaoUiHandle);
 		gpuTimer.begin(GpuTimer.GI);
 		cpuTimer.begin(CpuTimer.GI);
-		final boolean gi = prepareGlobalIllumination();
+		prepareGlobalIllumination();
+		final boolean gi = giEnabled();
 		cpuTimer.end(CpuTimer.GI);
 		gpuTimer.begin(GpuTimer.SKY_GRID);
 		cpuTimer.begin(CpuTimer.SKY_GRID);
@@ -2895,6 +2895,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		final boolean shadows = frameShadows && shadowMap.isInitialized();
 		final boolean ground = config.weatherSurfaces() && weather.groundActive();
 		frameGround = ground;
+		frameGi = false;
 		final boolean sky = skyGrid.isReady(aoScene);
 		frameSkylight = false;
 		final boolean halfPass = ao || frameFog || shadows || gi || ground || sky;
@@ -2908,7 +2909,9 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 			glUseProgram(glAoProgram);
 			setFrameUniforms(aoFrame);
 			glUniform1f(uniAoRadius, config.aoRadius() / 100f * Perspective.LOCAL_TILE_SIZE);
-			glUniform1i(uniAoSamples, ao ? config.aoQuality().pick(6, 8, 12) : 0);
+			// the global illumination is gathered from the AO's samples
+			glUniform1i(uniAoSamples, ao || gi ? config.aoQuality().pick(6, 8, 12) : 0);
+			glUniform1i(uniAoGi, gi ? 1 : 0);
 			glUniform1i(uniAoShadowsEnabled, shadows ? 1 : 0);
 			if (shadows)
 			{
@@ -2923,8 +2926,6 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 			}
 			sceneTargets.bindMaterial(MATERIAL_UNIT);
 			water.bindAo(config, WATER_DATA_UNIT);
-			globalIllumination.bindAo(GI_PROBE_UNIT, frameCameraX, frameCameraY, frameCameraZ,
-				aoScene != null ? aoScene.getBaseX() : 0, aoScene != null ? aoScene.getBaseY() : 0);
 			if (ground)
 			{
 				weather.bindGround(weatherGround, WEATHER_OCCLUSION_UNIT, WEATHER_FIELD_UNIT, frameCameraX, frameCameraY,
@@ -2940,7 +2941,6 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 			gpuTimer.begin(GpuTimer.AO);
 			glDrawArrays(GL_TRIANGLES, 0, 3);
 			gpuTimer.end();
-			GlobalIllumination.unbind(GI_PROBE_UNIT);
 			SkyGridMap.unbind(SKY_GRID_UNIT);
 			SkyFieldMap.unbind(SKY_FIELD_UNIT);
 			// the sky cache takes the occlusion map's unit next, without its sampler objects
@@ -2958,12 +2958,6 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		if (captured != skyCache.getCaptures())
 		{
 			hitchMonitor.job(HitchMonitor.SKY_CAPTURE);
-		}
-		if (giEnabled())
-		{
-			// the sky cache is bound now; the probes are relit with its light
-			gpuTimer.begin(GpuTimer.GI);
-			globalIllumination.afterSky(dayCycle, giOvercast, skyCache.getLightWeight(), config.giSunBounce());
 		}
 		gpuTimer.end();
 
@@ -3001,6 +2995,9 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 			glUseProgram(glDenoiseProgram);
 			sceneTargets.denoise(uniDenoiseFog, AO_TEXTURE_UNIT, SCENE_SHADOW_UNIT, FOG_TEXTURE_UNIT, denoiseFog);
 			sceneTargets.bindShadow(SCENE_SHADOW_UNIT);
+			sceneTargets.bindAoSmoothed(AO_TEXTURE_UNIT);
+			// unsmoothed, the bounce is grain
+			frameGi = gi;
 			gpuTimer.end();
 		}
 		if (frameFog)

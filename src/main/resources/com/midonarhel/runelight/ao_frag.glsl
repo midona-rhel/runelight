@@ -3,12 +3,13 @@
 // Screen-space ambient occlusion at half resolution. Normal-oriented hemisphere samples in world space,
 // tested against the depth buffer. Noisy by design; the denoise (denoise_frag.glsl) blurs it depth-aware before the composite upsamples it.
 // The sun and moon shadows are drawn here too (shadow_pcss.glsl), at half resolution, and upsampled the same way.
+// So is the global illumination, from the same samples: what an occluding sample hits is a surface near this one, and
+// the sunlight it reflects is the bounce this one gets (screen space: what the screen doesn't show bounces nothing).
 
 #include "frame.glsl"
 #include "halfres.glsl"
 #include "ign.glsl"
 #include "shadow_pcss.glsl"
-#include "gi.glsl"
 #include "weather_ground_ao.glsl"
 #include "skylight_ao.glsl"
 #include "water_common.glsl"
@@ -16,6 +17,7 @@
 uniform float aoRadius;  // world units
 uniform int aoSamples;   // 0: only the geometry for the upsamples (AO off, fog on)
 uniform int shadowsEnabled;
+uniform int giEnabled;   // 1: the samples gather the bounced light too
 uniform vec3 casterDir;  // toward the light that casts shadows
 uniform SCENE_SAMPLER sceneMaterial;  // r emissive, g transmissive, b water, a snow (frag.glsl)
 uniform usampler2D waterAoSurface;  // the water surface pass's target (water_frag.glsl)
@@ -53,8 +55,6 @@ void main() {
 
   vec3 p = reconstructPosition(vec2(px) + 0.5, d);
   FragShadow.b = weatherGroundAo(p, n);
-  vec4 gi = giEnabled == 1 ? giIrradiance(p, n) : vec4(0.0);
-  FragAo = halfPackGeometry(nearOverDepth, n, gi.rgb, gi.a);
   float noise = ign(gl_FragCoord.xy);
   FragShadow.a = skylightVisibility(p, n);
   if (shadowsEnabled == 1) {
@@ -82,6 +82,7 @@ void main() {
 
   float bias = aoRadius * 0.04;
   float occlusion = 0.0;
+  vec3 bounce = vec3(0.0);
 
   for (int i = 0; i < aoSamples; ++i) {
     // cosine-weighted direction on a rotated golden-angle spiral
@@ -122,8 +123,26 @@ void main() {
     vec3 q = reconstructPosition(vec2(sp) + 0.5, sd);
     vec3 h = q - p;
     float elevation = dot(n, h) * inversesqrt(max(dot(h, h), 1.0));
-    occlusion += range * smoothstep(AO_ANGLE_BIAS, AO_ANGLE_BIAS + 0.35, elevation);
+    float occ = range * smoothstep(AO_ANGLE_BIAS, AO_ANGLE_BIAS + 0.35, elevation);
+    occlusion += occ;
+    if (giEnabled == 1 && occ > 0.0) {
+      // the hit surface's albedo lit by the caster (in its units: the composite colors it), seen by this one: the
+      // samples are cosine weighted, so their mean is the irradiance
+      vec3 nq = decodeNormal(texelFetch(sceneNormal, sp, 0).rgb);
+      float lit = max(dot(nq, casterDir), 0.0) * max(-dot(nq, h), 0.0) * inversesqrt(max(dot(h, h), 1.0));
+      if (lit > 0.0) {
+        if (shadowsEnabled == 1) {
+          lit *= shadowTap(q, nq);
+        }
+        // squared: sRGB to linear, near enough for a bounce
+        vec3 albedo = texelFetch(sceneColor, sp, 0).rgb;
+        bounce += albedo * albedo * (occ * lit);
+      }
+    }
   }
 
   FragShadow.g = 1.0 - occlusion * keep / float(aoSamples);
+  if (giEnabled == 1) {
+    FragAo = halfPackGeometry(nearOverDepth, n, bounce * (keep / float(aoSamples)), 1.0);
+  }
 }
