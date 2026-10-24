@@ -240,5 +240,10 @@ float sceneViewDepth(vec2 fragCoord) {
   return isSky(d) ? 1e9 : viewDepth(d);
 }
 
+// Rain impacts are sprites standing on the surface: this tall over their half width, and their foot's pixel may show
+// the surface up to this share of its view depth (plus a little) off
+#define SPLASH_ASPECT 1.4
+#define SPLASH_SURFACE_TOLERANCE 0.02
+
 // Clip position that the rasterizer discards, for particles that should not draw
 const vec4 CULLED = vec4(2.0, 2.0, 2.0, 1.0);

@@ -24,7 +24,7 @@ uniform ivec4 waterAoRect;  // the pixels the surface can cover (water.glsl's wa
 
 layout(location = 0) out vec4 FragAo;  // the geometry, see halfres.glsl
 layout(location = 1) out vec4 FragShadow;  // r: lit share, 1 unshadowed; g AO, 1 unoccluded; b snow and
-                                           // puddles (ground_cover.glsl); a sky visibility (skylight_ao.glsl)
+                                           // puddles (weather_ground_ao.glsl); a sky visibility (skylight_ao.glsl)
 // sine of the minimum angle above the surface for an occluder to count; higher ignores more of the shallow folds
 #define AO_ANGLE_BIAS 0.10
 // none under water: it fades out over this depth below the surface (no hard line at the waterline), and isn't worked
@@ -38,7 +38,7 @@ void main() {
   float d = texelFetch(sceneDepth, px, 0).r;
   if (isSky(d)) {
     FragAo = halfPackGeometry(0.0, vec3(0.0, 0.0, 1.0), vec3(0.0), 0.0);
-    FragShadow = vec4(1.0, 1.0, GROUND_NONE, 1.0);
+    FragShadow = vec4(1.0, 1.0, 0.0, 1.0);
     return;
   }
   // sample 0 of the pixel, as in every pass but the composite, which shades the pixels that sample 0 doesn't stand for
@@ -46,13 +46,13 @@ void main() {
   vec3 n = decodeNormal(texelFetch(sceneNormal, px, 0).rgb);
   float nearOverDepth = NEAR / viewDepth(d);
   FragAo = halfPackGeometry(nearOverDepth, n, vec3(0.0), 0.0);
-  FragShadow = vec4(1.0, 1.0, GROUND_NONE, 1.0);
+  FragShadow = vec4(1.0, 1.0, 0.0, 1.0);
   if (!inViewport(px)) {
     return;
   }
 
   vec3 p = reconstructPosition(vec2(px) + 0.5, d);
-  FragShadow.b = groundPack(weatherGroundAo(p, n));
+  FragShadow.b = weatherGroundAo(p, n);
   vec4 gi = giEnabled == 1 ? giIrradiance(p, n) : vec4(0.0);
   FragAo = halfPackGeometry(nearOverDepth, n, gi.rgb, gi.a);
   float noise = ign(gl_FragCoord.xy);

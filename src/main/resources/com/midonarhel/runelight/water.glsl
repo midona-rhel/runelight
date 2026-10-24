@@ -231,6 +231,22 @@ vec4 waterTraceReflection(vec3 s, vec3 r, vec3 light, vec2 px) {
   return vec4(0.0);
 }
 
+// The sky seen along a reflected ray r (y down, so up into the sky is negative), linear: the horizon's color rising to
+// the zenith's, or the cave's fog color. Also the puddles' (weather_ground.glsl).
+vec3 waterSkyReflection(vec3 r) {
+  vec3 fogColor = envFog(outdoors == 1 && proceduralSky == 1 ? skyHorizon(sunAltitude) : clientSkyColor,
+    outdoors == 1 && skyVoid == 0, sunAltitude);
+  if (outdoors == 1 && proceduralSky == 1) {
+    float elev = -r.y;
+    vec3 sc = mix(skyHorizon(sunAltitude), skyZenith(sunAltitude), pow(clamp(elev, 0.0, 1.0), SKY_GRADIENT));
+    return srgbToLinear(envSky(sc, fogColor, elev));
+  }
+  if (outdoors == 0 && envCave == 1) {
+    return srgbToLinear(fogColor) * CAVE_SKY_REFLECT;
+  }
+  return srgbToLinear(fogColor) * (outdoors == 1 ? 1.0 : 0.5);
+}
+
 vec3 waterShoulder(vec3 c) {
   return mix(c, 1.0 - (1.0 - SHOULDER) * exp(-(c - SHOULDER) / (1.0 - SHOULDER)), step(SHOULDER, c));
 }
@@ -348,18 +364,7 @@ void waterShadeHalf(ivec2 hpx) {
   vec3 r = reflect(v, waveN);
   r.y = min(r.y, -0.02);
   r = normalize(r);
-  vec3 fogColor = envFog(outdoors == 1 && proceduralSky == 1 ? skyHorizon(sunAltitude) : clientSkyColor,
-    outdoors == 1 && skyVoid == 0, sunAltitude);
-  vec3 reflection;
-  if (outdoors == 1 && proceduralSky == 1) {
-    float elev = -r.y;
-    vec3 sc = mix(skyHorizon(sunAltitude), skyZenith(sunAltitude), pow(clamp(elev, 0.0, 1.0), SKY_GRADIENT));
-    reflection = srgbToLinear(envSky(sc, fogColor, elev));
-  } else if (outdoors == 0 && envCave == 1) {
-    reflection = srgbToLinear(fogColor) * CAVE_SKY_REFLECT;
-  } else {
-    reflection = srgbToLinear(fogColor) * (outdoors == 1 ? 1.0 : 0.5);
-  }
+  vec3 reflection = waterSkyReflection(r);
   if (waterReflections == 1) {
     vec4 hit = waterTraceReflection(s, reflect(v, normalize(nrm * vec3(SSR_TILT, 1.0, SSR_TILT))), surfaceLight,
       vec2(px));

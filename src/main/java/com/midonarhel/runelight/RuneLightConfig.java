@@ -762,7 +762,7 @@ public interface RuneLightConfig extends Config
 	@ConfigItem(
 		keyName = "weatherSplashes",
 		name = "Rain splashes",
-		description = "Small splashes where rain hits the ground.",
+		description = "Small sky-colored impacts where rain hits the ground, drawn like anime rain. Water has its own rings.",
 		section = weatherSection,
 		position = 404
 	)

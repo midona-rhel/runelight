@@ -138,9 +138,10 @@ class SceneTargets
 		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
 		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
 		glBindTexture(GL_TEXTURE_2D, 0);
-		// r shadow, g AO, b the wetness the composite's surfaces get (weather_ground_ao.glsl), a sky visibility
-		texShadowRaw = halfTexture(GL_RGBA8, GL_UNSIGNED_BYTE);
-		texShadow = halfTexture(GL_RGBA8, GL_UNSIGNED_BYTE);
+		// r shadow, g AO, b the snow or puddle cover the composite's surfaces get (weather_ground_ao.glsl), a sky
+		// visibility; half floats, so the cover builds up smoothly
+		texShadowRaw = halfTexture(GL_RGBA16F, GL_HALF_FLOAT);
+		texShadow = halfTexture(GL_RGBA16F, GL_HALF_FLOAT);
 		fboAo = glGenFramebuffers();
 		glBindFramebuffer(GL_FRAMEBUFFER, fboAo);
 		glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, texAo, 0);

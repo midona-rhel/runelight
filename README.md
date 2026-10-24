@@ -48,14 +48,17 @@ it slowly and grays the sky and softens the sun and moon everywhere through `wea
 `OVERCAST_*` defines). Drops, flakes and splashes pick up nearby point lights through the light clusters
 (`weather_common.glsl`). Snow cover and rain puddles are part of the surfaces: the half resolution AO pass works out
 how much cover a pixel gets (`weather_ground_ao.glsl`: the region's ground times how open to the sky it is) into
-the shadow target's blue channel (`ground_cover.glsl`), and the composite changes the albedo and normal before
-lighting (`weather_ground.glsl`), so they take the AO, shadows, GI and point lights like any other surface. Both are
-blobs of world-space Perlin noise compared with a threshold that falls as the cover builds, so a blob starts at a peak
-and grows outward with a crisp edge, and melts back the same way. Snow is big blobs over terrain and floors and a soft
-whitening on the tops of scenery; items and actors get none and scenery with an action (`Interactables.java`) less,
-by two bits in each face's material (`SurfaceMaterials.java`). Puddles lie only on level terrain, small and sparse,
-and most within a tile of a wall (the baked wall distance of `RoomAmbient.java`, also for outdoor tiles); outside
-them the ground is not darkened.
+the shadow target's blue channel, and the composite changes the albedo and normal before
+lighting (`weather_ground.glsl`), so they take the AO, shadows, GI and point lights like any other surface. Snow is
+blobs of world-space Perlin noise compared with a level that falls as the cover builds, so a blob starts at a peak and
+grows outward and melts back the same way; its edge is crisp and two-tone like the water's foam (a shaded outer band
+round the bright snow), antialiased to a pixel from the noise's gradient and the surface's footprint on screen. Snow
+is big blobs over terrain and floors and a whitening on the tops of scenery; items and actors get none and scenery
+with an action (`Interactables.java`) less, by two bits in each face's material (`SurfaceMaterials.java`). Puddles
+are separate round blobs, at most one to each 2.25 tile cell of level terrain, most within a tile of a wall (the baked
+wall distance of `RoomAmbient.java`, also for outdoor tiles); each is a small water of its own with a damp rim,
+reflecting the sky (`waterSkyReflection`) and, with the water's reflections on, the world beside it
+(`waterTraceReflection`); outside them the ground is not darkened.
 
 Time (`GameClock.java`) is a function of the real clock from a fixed epoch: with the default 24 minute day one game
 hour per real minute, seasons of "Days per season" game days. The time of day, the season, the forecast and the

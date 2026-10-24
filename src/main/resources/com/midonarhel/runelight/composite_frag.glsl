@@ -92,7 +92,6 @@ uniform usamplerBuffer clusterData;  // per cluster: a bit per light in view (li
 #include "light_clusters.glsl"
 #include "rooms.glsl"
 #include "light_occlusion.glsl"
-#include "weather_ground.glsl"
 
 // 0 legacy/debug, 1 ambient, 2 sun, 3 points, 4 surfaces, 5 atmosphere.
 #include "composite_mode"
@@ -109,7 +108,7 @@ uniform float giWeight;  // 0..1: enabled, eased in and out, strength
 // denoise (denoise_frag.glsl) has smoothed. The volumetric fog's upsample uses the same taps, so it is done in the
 // same loop when the fog is on.
 
-float upsampleAoFog(ivec2 px, float z, vec3 n, out vec4 fog, out float shadow, out vec4 gi) {
+float upsampleAoFog(ivec2 px, float z, vec3 n, out vec4 fog, out float shadow, out vec4 gi, out float ground) {
   vec2 hp = fullToHalf(px);
   ivec2 base = ivec2(floor(hp));
   ivec2 maxAo = textureSize(sceneAo, 0) - 1;
@@ -157,7 +156,7 @@ float upsampleAoFog(ivec2 px, float z, vec3 n, out vec4 fog, out float shadow, o
   vec4 sh = wsum > 1e-4 ? shSum / wsum : texelFetch(sceneShadow, clamp(ivec2(hp + 0.5), ivec2(0), maxAo), 0);
   shadow = sh.r;
   gi = wsum > 1e-4 ? giSum / wsum : vec4(0.0);
-  groundUpsampled = sh.b;
+  ground = sh.b;
   skyUpsampled = sh.a;
   return wsum > 1e-4 ? sh.g : 1.0;
 }
@@ -272,6 +271,10 @@ vec4 overTransparent(vec4 a, vec4 base) {
 
 // ---------------------------------------------------------------------------------------------------------------
 
+#include "weather_ground.glsl"
+
+// ---------------------------------------------------------------------------------------------------------------
+
 // Whether the sky can show in the scene pixel q: through a sample no geometry covers, or (sample 0's) the world's fade
 // at its edge. With MSAA the sky shows behind a silhouette through the samples that miss.
 bool skyShowsAt(ivec2 q) {
@@ -381,17 +384,18 @@ vec4 shadeScene(ivec2 px, SceneSample sm, vec4 transparent) {
   float halfShadow = 1.0;
   vec4 fog;
   vec4 gi = vec4(0.0);
+  float ground = 0.0;
   vec3 indirect = vec3(0.0);
   bool fogDone = false;
   if ((aoEnabled == 1 || shadowsEnabled == 1 || volumetricFog == 1 || giWeight > 0.0 || weatherGroundOn == 1
     || skylightOn == 1) && inside) {
-    ao = upsampleAoFog(px, viewDepth(d), n, fog, halfShadow, gi);
+    ao = upsampleAoFog(px, viewDepth(d), n, fog, halfShadow, gi, ground);
     ao = aoEnabled == 1 ? clamp(1.0 - (1.0 - ao) * aoStrength, 0.0, 1.0) : 1.0;
     fogDone = volumetricFog == 1;
   }
   // snow and puddles change the surface itself, before it is lit
-  float wet = compositePart != 5 && inside && weatherGroundOn == 1
-    ? weatherGroundSurface(color.rgb, n, p, p + cameraPos, material, transparent.a) : 0.0;
+  vec2 wet = compositePart != 5 && inside && weatherGroundOn == 1
+    ? weatherGroundSurface(color.rgb, n, p, p + cameraPos, vec2(px) + 0.5, material, transparent.a, ground) : vec2(0.0);
 
   float shadow = 1.0;
   vec3 light = vec3(ao);
@@ -496,12 +500,12 @@ vec4 shadeScene(ivec2 px, SceneSample sm, vec4 transparent) {
   bool linearLit = false;
   if (compositePart != 5) {
     lit = shadeLinear(color.rgb, light);
-    linearLit = fogDone && compositePart == 0 && wet <= 0.0 && transparent == vec4(0.0)
+    linearLit = fogDone && compositePart == 0 && wet.x <= 0.0 && transparent == vec4(0.0)
       && !waterUnder(px, material.b);
     if (!linearLit) {
       lit = linearToSrgb(lit);
-      if (wet > 0.0) {
-        lit = weatherWetSheen(lit, p, n, wet, ao, skyHorizon(sunAltitude));
+      if (wet.x > 0.0) {
+        lit = weatherPuddleWater(lit, p, light, wet, vec2(px) + 0.5);
       }
       lit = waterOver(px, p, color.rgb, shadow, lit, material.b);
       if (compositePart == 4) { return vec4(lit, 1.0); }

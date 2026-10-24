@@ -147,6 +147,17 @@ class Water
 	}
 
 	/**
+	 * With a program in use that has a {@code waterRect} uniform at {@code uniRect} (and the surface sampler on the
+	 * unit {@link #bind} used): the pixels the surface covers, none without water.
+	 */
+	void setRect(RuneLightConfig config, int uniRect)
+	{
+		boolean enabled = enabled(config);
+		glUniform4i(uniRect, enabled ? rect[0] : 0, enabled ? rect[1] : 0, enabled ? rect[2] : 0,
+			enabled ? rect[3] : 0);
+	}
+
+	/**
 	 * The surface pass's program, newly compiled (0 to drop it).
 	 */
 	void setSurfaceProgram(int program, int depthUnit, int dataUnit, int noiseUnit, int contactUnit, int waveUnitA,

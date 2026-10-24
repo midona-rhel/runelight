@@ -145,14 +145,14 @@ class Weather
 		int viewProj, invViewProj, viewport, depthZeroToOne;
 		int occlusionProjRel, occlusionCenterY, occlusionDepthRange;
 		int cameraPos, focusPos, time, sunAltitude, casterDir, sunIsCaster, amount;
-		int dropCount, splashCount, wind, windOffset, gust, overcast, pointLights;
+		int dropCount, splashCount, waterRect, wind, windOffset, gust, overcast, pointLights;
 		int particleAmount, layerBox, layerSpan, layerBand, particleReach;
 		int light, rainStyle, flakeStyle, flakeColor, fallTime;
 		WeatherField.Locations field;
 		Wind.Locations windLocations;
 
-		void locate(int p, int sceneUnit, int occlusionUnit, int shadowCompareUnit, int alphaLayerUnit,
-			int lightDataUnit, int clusterDataUnit, int materialUnit, int fieldUnit)
+		void locate(int p, int sceneUnit, int materialUnit, int occlusionUnit, int shadowCompareUnit, int alphaLayerUnit,
+			int lightDataUnit, int clusterDataUnit, int waterUnit, int fieldUnit)
 		{
 			program = p;
 			field = WeatherField.locate(p, fieldUnit, fieldUnit + 1);
@@ -183,6 +183,7 @@ class Weather
 			amount = glGetUniformLocation(p, "amount");
 			dropCount = glGetUniformLocation(p, "dropCount");
 			splashCount = glGetUniformLocation(p, "splashCount");
+			waterRect = glGetUniformLocation(p, "waterRect");
 			wind = glGetUniformLocation(p, "wind");
 			windOffset = glGetUniformLocation(p, "windOffset");
 			gust = glGetUniformLocation(p, "gust");
@@ -199,6 +200,7 @@ class Weather
 			glUniform1i(glGetUniformLocation(p, "sceneAlpha"), alphaLayerUnit);
 			glUniform1i(glGetUniformLocation(p, "lightData"), lightDataUnit);
 			glUniform1i(glGetUniformLocation(p, "clusterData"), clusterDataUnit);
+			glUniform1i(glGetUniformLocation(p, "waterSurface"), waterUnit);
 			glUniform1i(glGetUniformLocation(p, "sceneMaterial"), materialUnit);
 			glUseProgram(0);
 		}
@@ -281,14 +283,14 @@ class Weather
 	/**
 	 * Replace the current programs, deleting the old ones.
 	 */
-	void setPrograms(Programs p, int sceneUnit, int occlusionUnit, int shadowCompareUnit, int alphaLayerUnit,
-		int lightDataUnit, int clusterDataUnit, int materialUnit, int fieldUnit)
+	void setPrograms(Programs p, int sceneUnit, int materialUnit, int occlusionUnit, int shadowCompareUnit, int alphaLayerUnit,
+		int lightDataUnit, int clusterDataUnit, int waterUnit, int fieldUnit)
 	{
 		freePrograms();
-		rain.locate(p.rain, sceneUnit, occlusionUnit, occlusionUnit + 1, alphaLayerUnit, lightDataUnit, clusterDataUnit,
-			materialUnit, fieldUnit);
-		snow.locate(p.snow, sceneUnit, occlusionUnit, occlusionUnit + 1, alphaLayerUnit, lightDataUnit, clusterDataUnit,
-			materialUnit, fieldUnit);
+		rain.locate(p.rain, sceneUnit, materialUnit, occlusionUnit, occlusionUnit + 1, alphaLayerUnit, lightDataUnit, clusterDataUnit,
+			waterUnit, fieldUnit);
+		snow.locate(p.snow, sceneUnit, materialUnit, occlusionUnit, occlusionUnit + 1, alphaLayerUnit, lightDataUnit, clusterDataUnit,
+			waterUnit, fieldUnit);
 	}
 
 	void freePrograms()
@@ -849,15 +851,17 @@ class Weather
 
 	/**
 	 * Draw this frame's falling weather over the composited scene in the bound framebuffer. The scene textures, the
-	 * transparency layer, the light clusters (with pointLights) and the weather field ({@link #bindField}) must
-	 * still be bound on the units given to setPrograms, as they are right after the composite.
+	 * transparency layer, the water surface, the light clusters (with pointLights) and the weather field
+	 * ({@link #bindField}) must still be bound on the units given to setPrograms, as they are right after the
+	 * composite.
 	 *
+	 * @param splashes   draw the rain's impacts on the ground, not on water (it has its own rings)
 	 * @param pointLights light particles with this frame's light clusters
 	 * @param drawDistance world units from the player: how far the particles reach
 	 */
 	void draw(float[] viewProj, float[] invViewProj, int[] viewport, boolean zeroToOne,
-		float cameraX, float cameraY, float cameraZ, DayCycle day, boolean splashes, int occlusionUnit,
-		boolean pointLights, float drawDistance)
+		float cameraX, float cameraY, float cameraZ, DayCycle day, boolean splashes, Water water,
+		RuneLightConfig config, int occlusionUnit, boolean pointLights, float drawDistance)
 	{
 		if (!active || !occlusion.isInitialized() || rain.program == 0)
 		{
@@ -906,6 +910,7 @@ class Weather
 			glUniform2f(rain.particleAmount, rainEffective, rainShown);
 			glUniform1f(rain.particleReach, drawDistance);
 			glUniform1i(rain.splashCount, 0);
+			water.setRect(config, rain.waterRect);
 			drawLayers(rain, LAYER_RAIN_DROPS * rainShown, RAIN_ABOVE, RAIN_BELOW, out, height, cameraX, cameraZ,
 				aheadX, aheadZ);
 			int splashCount = splashes ? Math.round(MAX_RAIN_SPLASHES * rainShown * Math.min(1, wetShown)) : 0;
