@@ -30,6 +30,10 @@ uniform vec4 skyFieldMap;
 // Nudge off the surface to choose its facing side at a tile boundary. A larger offset can cross
 // a nearby wall and read outdoor visibility/fill instead of this surface's room.
 #define SKY_NORMAL_OFFSET 1.0
+// A wall's outer face stands at or just short of its tile's edge, so which tile a point of it falls in depends on how
+// far its brick pattern is inset: the mortar read the room behind the wall and the bricks the outdoors. A face within
+// SKY_EDGE_REACH world units of the tile edge it looks across reads the tile beyond that edge, the one it faces.
+#define SKY_EDGE_REACH 32.0
 
 // Read one height without crossing a tile's wall. Diagonal halves have their own three actual corners.
 float skyGridLevel(sampler3D grid, float scale, vec2 tile, vec2 f, int level, int diagonal, vec3 n) {
@@ -193,8 +197,28 @@ float skylightVisibility(vec3 p, vec3 n) {
     return 1.0;
   }
   vec3 o = p + n * SKY_NORMAL_OFFSET;
+  float scale = max(skyGridScale, 1.0);
+  float tileSize = 128.0 / scale;
+  vec3 g = o + skyGridCamera;
+  for (int axis = 0; axis < 2; ++axis) {
+    float d = axis == 0 ? n.x : n.z;
+    if (abs(d) > 0.5) {
+      float x = axis == 0 ? g.x : g.z;
+      float f = fract(x / tileSize) * tileSize;
+      // world units to the edge the face looks across
+      float toEdge = d > 0.0 ? tileSize - f : f;
+      if (toEdge < SKY_EDGE_REACH) {
+        float step = (toEdge + 1.0) * sign(d);
+        if (axis == 0) {
+          o.x += step;
+        } else {
+          o.z += step;
+        }
+      }
+    }
+  }
   vec2 field = skyFieldOn == 1 ? skyFieldVisibility(o) : vec2(0.0);
-  float v = skyGridVisibility(skyGrid, max(skyGridScale, 1.0), o + skyGridCamera, n);
+  float v = skyGridVisibility(skyGrid, scale, o + skyGridCamera, n);
   if (skyFieldOn == 1) {
     v = mix(v, max(v, field.r), field.g);
   }
