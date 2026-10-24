@@ -151,12 +151,24 @@ float skyGridVisibility(sampler3D grid, float scale, vec3 w, vec3 n) {
   // Upward-facing roof/floor surfaces belong to the storey at their height; the one-unit
   // normal offset already selects the exposed side. Do not move a roof lip into the room below.
   for (int k = 1; k < 4; ++k) if (w.y <= roomFloors[k]) roomPlane = k;
-  bool exterior = (roomMask & (1 << roomPlane)) == 0;
-  if (!exterior && n.y < -0.5) {
-    // the highest traced point over the tile, where it was traced: the top of its scenery
+  float exterior = (roomMask & (1 << roomPlane)) == 0 ? 1.0 : 0.0;
+  if (exterior < 1.0 && n.y < -0.3) {
+    // an upward face near the top of the scenery is out of doors, whatever room lies under it (a roof, a wall's
+    // top). The top is the highest traced point over the tile, blended between its corners like the values, and
+    // the face goes out of doors gradually over SKY_TOP_SLACK below it, so a sloping roof has no step.
     float surfaceZ = (1.5 + 9.0) / SKY_GRID_D;
-    if (textureLod(grid, vec3(uv, surfaceZ), 0.0).x >= 0.0) {
-      exterior = w.y <= textureLod(grid, vec3(uv + vec2(0.25, 0.0), surfaceZ), 0.0).b + SKY_TOP_SLACK;
+    vec4 cornerWeights = vec4((1.0 - f.x) * (1.0 - f.y), f.x * (1.0 - f.y), (1.0 - f.x) * f.y, f.x * f.y);
+    float top = 0.0, topWeight = 0.0;
+    for (int k = 0; k < 4; ++k) {
+      vec2 cuv = (2.0 * tile + 0.5 + vec2(k & 1, k >> 1)) / (vec2(SKY_GRID_W, SKY_GRID_H) * scale);
+      if (textureLod(grid, vec3(cuv, surfaceZ), 0.0).x >= 0.0) {
+        top += cornerWeights[k] * textureLod(grid, vec3(cuv + vec2(0.25, 0.0), surfaceZ), 0.0).b;
+        topWeight += cornerWeights[k];
+      }
+    }
+    if (topWeight > 0.0001) {
+      top /= topWeight;
+      exterior = (1.0 - smoothstep(top + SKY_TOP_SLACK, top + 2.0 * SKY_TOP_SLACK, w.y)) * smoothstep(0.3, 0.7, -n.y);
     }
   }
   float lower = skyGridLevel(grid, scale, tile, f, lo, loDiagonal, n, w);
@@ -175,13 +187,13 @@ float skyGridVisibility(sampler3D grid, float scale, vec3 w, vec3 n) {
       if (original < 0.0) original = max(0.0, skyGridLevel(grid, scale, tile, f, 9, 0, n, w));
     }
   }
-  if (exterior && n.y < 0.0) {
+  if (exterior > 0.0 && n.y < 0.0) {
     vec2 a = skySurfaceLevel(grid, scale, tile, f, lo, loDiagonal, w, n);
     vec2 b = skySurfaceLevel(grid, scale, tile, f, hi, hiDiagonal, w, n);
     vec2 total = mix(a, b, blend);
     float surfaceWeight = (1.0 - total.y);
     total += skySurfaceLevel(grid, scale, tile, f, 9, 0, w, n) * surfaceWeight;
-    if (total.y > 0.0001) return mix(original, total.x / total.y, smoothstep(0.0, 0.5, -n.y));
+    if (total.y > 0.0001) return mix(original, total.x / total.y, smoothstep(0.0, 0.5, -n.y) * exterior);
   }
   return original;
 }
