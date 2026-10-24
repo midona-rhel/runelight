@@ -34,6 +34,11 @@ uniform vec4 skyFieldMap;
 // far its brick pattern is inset: the mortar read the room behind the wall and the bricks the outdoors. A face within
 // SKY_EDGE_REACH world units of the tile edge it looks across reads the tile beyond that edge, the one it faces.
 #define SKY_EDGE_REACH 32.0
+// Faces that aren't walls and face up or down (the ground at a wall's foot, the ledges of an inset brick pattern) only
+// ever stray past a wall's outer face by a few units: within SKY_FOOT_REACH of the edge of a room tile, where the tile
+// across that edge is out of doors, they are out of doors too. Facing down they read where they are (an eave's
+// underside sees no sky).
+#define SKY_FOOT_REACH 8.0
 
 // Read one height without crossing a tile's wall. Diagonal halves have their own three actual corners.
 float skyGridLevel(sampler3D grid, float scale, vec2 tile, vec2 f, int level, int diagonal, vec3 n) {
@@ -188,6 +193,18 @@ vec2 skyFieldVisibility(vec3 p) {
   return field;
 }
 
+// Whether grid point w (grid coordinates) is in a room on the storey at its height
+bool skyInRoom(vec3 w, float scale) {
+  vec2 t = w.xz * scale / 128.0;
+  if (any(lessThan(t, vec2(0.0))) || any(greaterThanEqual(t, vec2(SKY_GRID_TILES * scale)))) return false;
+  vec2 uv = (2.0 * floor(t) + 0.5 + fract(t)) / (vec2(SKY_GRID_W, SKY_GRID_H) * scale);
+  vec4 roomFloors = textureLod(skyGrid, vec3(uv + vec2(0.5, 0.0), 0.5 / SKY_GRID_D), 0.0);
+  int roomMask = int(textureLod(skyGrid, vec3(uv + vec2(0.75, 0.0), 0.5 / SKY_GRID_D), 0.0).r + 0.5);
+  int roomPlane = 0;
+  for (int k = 1; k < 4; ++k) if (w.y <= roomFloors[k]) roomPlane = k;
+  return (roomMask & (1 << roomPlane)) != 0;
+}
+
 // 1 under the open sky. Under cover (the reconstructed field's green channel) the light flowing in through
 // the openings counts too: it stands for the light that gets deep into a room by bouncing off the walls, which the
 // traced sky doesn't see; the trace stands for what the sky lights directly (a pavilion's open sides, a window), so
@@ -200,21 +217,34 @@ float skylightVisibility(vec3 p, vec3 n) {
   float scale = max(skyGridScale, 1.0);
   float tileSize = 128.0 / scale;
   vec3 g = o + skyGridCamera;
+  bool wall = abs(n.x) > 0.5 || abs(n.z) > 0.5;
   for (int axis = 0; axis < 2; ++axis) {
     float d = axis == 0 ? n.x : n.z;
-    if (abs(d) > 0.5) {
-      float x = axis == 0 ? g.x : g.z;
-      float f = fract(x / tileSize) * tileSize;
+    float x = axis == 0 ? g.x : g.z;
+    float f = fract(x / tileSize) * tileSize;
+    float step = 0.0;
+    if (abs(d) > 0.5 && n.y < 0.1) {
       // world units to the edge the face looks across
       float toEdge = d > 0.0 ? tileSize - f : f;
       if (toEdge < SKY_EDGE_REACH) {
-        float step = (toEdge + 1.0) * sign(d);
-        if (axis == 0) {
-          o.x += step;
-        } else {
-          o.z += step;
-        }
+        step = (toEdge + 1.0) * sign(d);
       }
+    } else if (!wall && n.y < 0.1 && (f < SKY_FOOT_REACH || tileSize - f < SKY_FOOT_REACH)) {
+      step = f < SKY_FOOT_REACH ? -(f + 1.0) : tileSize - f + 1.0;
+      vec3 across = g;
+      if (axis == 0) {
+        across.x += step;
+      } else {
+        across.z += step;
+      }
+      if (!skyInRoom(g, scale) || skyInRoom(across, scale)) {
+        step = 0.0;
+      }
+    }
+    if (axis == 0) {
+      o.x += step;
+    } else {
+      o.z += step;
     }
   }
   vec2 field = skyFieldOn == 1 ? skyFieldVisibility(o) : vec2(0.0);
