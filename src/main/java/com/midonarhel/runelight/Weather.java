@@ -146,7 +146,7 @@ class Weather
 		int viewProj, invViewProj, viewport, depthZeroToOne;
 		int occlusionProjRel, occlusionCenterY, occlusionDepthRange;
 		int cameraPos, focusPos, time, sunAltitude, casterDir, sunIsCaster, amount;
-		int dropCount, mist, wadeDroplets, wadeSteps, waterRect, wind, windOffset, gust, overcast,
+		int dropCount, mist, mistStage, wadeDroplets, wadeSteps, waterRect, wind, windOffset, gust, overcast,
 			pointLights;
 		int particleAmount, layerBox, layerSpan, layerBand, particleReach;
 		int light, rainStyle, flakeStyle, flakeColor, fallTime;
@@ -185,6 +185,7 @@ class Weather
 			amount = glGetUniformLocation(p, "amount");
 			dropCount = glGetUniformLocation(p, "dropCount");
 			mist = glGetUniformLocation(p, "mist");
+			mistStage = glGetUniformLocation(p, "mistStage");
 			wadeDroplets = glGetUniformLocation(p, "wadeDroplets");
 			wadeSteps = glGetUniformLocation(p, "wadeSteps");
 			waterRect = glGetUniformLocation(p, "waterRect");
@@ -206,6 +207,7 @@ class Weather
 			glUniform1i(glGetUniformLocation(p, "clusterData"), clusterDataUnit);
 			glUniform1i(glGetUniformLocation(p, "waterSurface"), waterUnit);
 			glUniform1i(glGetUniformLocation(p, "sceneMaterial"), materialUnit);
+			glUniform1i(glGetUniformLocation(p, "mistTex"), MIST_UNIT);
 			glUseProgram(0);
 		}
 	}
@@ -217,6 +219,13 @@ class Weather
 	private final ShadowMap occlusion = new ShadowMap();
 	// particles have no vertex attributes; an empty VAO keeps drivers from fetching unrelated buffers
 	private int vao;
+
+	// the rain's mist (rain_frag.glsl): worked out at 1 / MIST_DOWN of the scene's resolution in two targets it
+	// blurs between, its texture on MIST_UNIT while it is read
+	static final int MIST_DOWN = 4;
+	private static final int MIST_UNIT = 32;
+	private final int[] mistTex = new int[2], mistFbo = new int[2];
+	private int mistWidth, mistHeight;
 	private final float[] occlusionProjRel = Mat4.identity();
 	private boolean occlusionDirty = true;
 	private float occlusionX, occlusionY, occlusionZ;
@@ -317,6 +326,70 @@ class Weather
 			glDeleteVertexArrays(vao);
 			vao = 0;
 		}
+		freeMist();
+	}
+
+	private void freeMist()
+	{
+		for (int i = 0; i < 2; ++i)
+		{
+			glDeleteFramebuffers(mistFbo[i]);
+			glDeleteTextures(mistTex[i]);
+			mistFbo[i] = mistTex[i] = 0;
+		}
+		mistWidth = mistHeight = 0;
+	}
+
+	/**
+	 * The rain's mist over what it hits, strength 0..1, laid over the bound framebuffer within the viewport; with the
+	 * rain program in use and blending on. Its four stages are rain_frag.glsl's.
+	 */
+	private void drawMist(float strength, int[] viewport)
+	{
+		int w = (viewport[2] + MIST_DOWN - 1) / MIST_DOWN, h = (viewport[3] + MIST_DOWN - 1) / MIST_DOWN;
+		if (w != mistWidth || h != mistHeight)
+		{
+			freeMist();
+			for (int i = 0; i < 2; ++i)
+			{
+				mistTex[i] = glGenTextures();
+				glBindTexture(GL_TEXTURE_2D, mistTex[i]);
+				glTexImage2D(GL_TEXTURE_2D, 0, GL_R16F, w, h, 0, GL_RED, GL_HALF_FLOAT, (java.nio.ByteBuffer) null);
+				glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+				glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+				glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+				glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+				mistFbo[i] = glGenFramebuffers();
+				glBindFramebuffer(GL_FRAMEBUFFER, mistFbo[i]);
+				glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, mistTex[i], 0);
+			}
+			glBindTexture(GL_TEXTURE_2D, 0);
+			mistWidth = w;
+			mistHeight = h;
+		}
+		int target = glGetInteger(GL_DRAW_FRAMEBUFFER_BINDING);
+		glDisable(GL_BLEND);
+		glViewport(0, 0, w, h);
+		glUniform1f(rain.mist, strength);
+		// 1: the mist of each texel into 0; 2: across, 0 into 1; 3: up, 1 into 0
+		glActiveTexture(GL_TEXTURE0 + MIST_UNIT);
+		for (int stage = 1; stage <= 3; ++stage)
+		{
+			glBindTexture(GL_TEXTURE_2D, stage == 2 ? mistTex[0] : stage == 3 ? mistTex[1] : 0);
+			glBindFramebuffer(GL_DRAW_FRAMEBUFFER, mistFbo[stage == 2 ? 1 : 0]);
+			glUniform1i(rain.mistStage, stage);
+			glDrawArrays(GL_TRIANGLES, 0, 3);
+		}
+		// 4: over the scene
+		glBindTexture(GL_TEXTURE_2D, mistTex[0]);
+		glBindFramebuffer(GL_DRAW_FRAMEBUFFER, target);
+		glViewport(viewport[0], viewport[1], viewport[2], viewport[3]);
+		glEnable(GL_BLEND);
+		glUniform1i(rain.mistStage, 4);
+		glDrawArrays(GL_TRIANGLES, 0, 3);
+		glUniform1i(rain.mistStage, 0);
+		glBindTexture(GL_TEXTURE_2D, 0);
+		glActiveTexture(GL_TEXTURE0);
 	}
 
 	/**
@@ -914,17 +987,15 @@ class Weather
 			glUniform1f(rain.fallTime, rainFall);
 			glUniform2f(rain.particleAmount, rainEffective, rainShown);
 			glUniform1f(rain.particleReach, drawDistance);
-			glUniform1f(rain.mist, 0);
+			glUniform1i(rain.mistStage, 0);
 			water.setRect(config, rain.waterRect);
 			drawLayers(rain, LAYER_RAIN_DROPS * rainShown, RAIN_ABOVE, RAIN_BELOW, out, height, cameraX, cameraZ,
 				aheadX, aheadZ);
 			float impacts = splashes ? rainShown * Math.min(1, wetShown) : 0;
 			if (impacts > 0)
 			{
-				// the mist the rain beats up over what it hits: one triangle over the viewport
-				glUniform1f(rain.mist, impacts);
-				glDrawArrays(GL_TRIANGLES, 0, 3);
-				glUniform1f(rain.mist, 0);
+				// the mist the rain beats up over what it hits
+				drawMist(impacts, viewport);
 				// and the droplets thrown up by steps, one range of instances for every step
 				glUniform1i(rain.dropCount, 0);
 				glUniform4fv(rain.wadeSteps, wadeSteps);

@@ -13,7 +13,8 @@
 #include "weather_wade.glsl"
 
 uniform int dropCount;
-uniform float mist;            // > 0: draw the rain's mist over what it hits instead, this strong (one fullscreen triangle)
+uniform int mistStage;         // > 0: one of the mist's stages (rain_frag.glsl), one triangle over the target
+uniform float mist;            // how strong the mist is
 uniform int wadeDroplets;      // 1: the instances are the droplets of wading steps, not drops or splashes
 uniform SCENE_SAMPLER sceneMaterial;  // r emissive, b water bed (frag.glsl)
 uniform usampler2D waterSurface;  // the water pass's pixels, 0 where there is none (water_common.glsl)
@@ -204,8 +205,8 @@ void wadeDroplet(int id, vec2 corner) {
 void main() {
   int id = gl_InstanceID;
   vec2 corner = CORNERS[gl_VertexID];
-  if (mist > 0.0) {
-    // one triangle over the whole viewport; the fragments march their rays (rain_frag.glsl)
+  if (mistStage != 0) {
+    // one triangle over the whole target
     vec2 v = vec2((gl_VertexID << 1) & 2, gl_VertexID & 2);
     gl_Position = vec4(v * 2.0 - 1.0, 0.0, 1.0);
     fQuad = vec2(0.0);
