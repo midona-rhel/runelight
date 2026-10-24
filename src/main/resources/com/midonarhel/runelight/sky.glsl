@@ -105,10 +105,12 @@ uniform vec4 weatherLight;
 #define OVERCAST_SKY_KEEP 0.06
 // how far zenith and horizon move toward one brightness: an overcast sky is nearly even
 #define OVERCAST_SKY_FLATTEN 0.7
-// sun or moon left at full cover, and how much of its color it keeps
+// sun or moon left at full cover, and how much of its color it keeps: next to none, it is gray daylight, tinted like
+// the overcast sky. The color goes well before the light does: gone by OVERCAST_DIRECT_GRAY of the cover.
 #define OVERCAST_DIRECT_RAIN 0.30
 #define OVERCAST_DIRECT_SNOW 0.42
-#define OVERCAST_DIRECT_SATURATION 0.2
+#define OVERCAST_DIRECT_SATURATION 0.05
+#define OVERCAST_DIRECT_GRAY 0.5
 // ambient sky light at full cover: grayer, a little lower in rain, brighter in snow
 #define OVERCAST_AMBIENT_RAIN 0.95
 #define OVERCAST_AMBIENT_SNOW 1.30
@@ -165,8 +167,9 @@ vec3 overcastSky(vec3 c, float alt) {
 // the sun or moon color c at cover o
 vec3 overcastDirectAt(vec3 c, float o) {
   c *= (1.0 - HAZE_DIRECT * weatherLight.y) * weatherTint(1.0);
-  vec3 muted = mix(vec3(overcastLuma(c)), c, OVERCAST_DIRECT_SATURATION);
-  return mix(c, muted * mix(OVERCAST_DIRECT_RAIN, OVERCAST_DIRECT_SNOW, weatherOvercast.y), o);
+  float s = weatherOvercast.y;
+  vec3 muted = mix(overcastLuma(c) * mix(OVERCAST_RAIN_TINT, OVERCAST_SNOW_TINT, s), c, OVERCAST_DIRECT_SATURATION);
+  return mix(c, muted, smoothstep(0.0, OVERCAST_DIRECT_GRAY, o)) * mix(1.0, mix(OVERCAST_DIRECT_RAIN, OVERCAST_DIRECT_SNOW, s), o);
 }
 
 vec3 overcastDirect(vec3 c) {
