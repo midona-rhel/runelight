@@ -2828,9 +2828,10 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		{
 			int builds = globalIllumination.builds();
 			int shown = globalIllumination.shownBuild();
+			BuildingLights buildings = buildingLights;
 			globalIllumination.prepare(giEnabled(), frameSkylightWanted, frameOutdoors, scene,
-				root != null ? root.zones : null, clientUploader.water, dayCycle, skyCache.getCaptures(), settings,
-				GI_PROBE_UNIT);
+				root != null ? root.zones : null, clientUploader.water, buildings != null ? buildings.getWalls(scene) : null,
+				dayCycle, skyCache.getCaptures(), settings, GI_PROBE_UNIT);
 			if (builds != globalIllumination.builds())
 			{
 				hitchMonitor.job(HitchMonitor.GI_BUILD);

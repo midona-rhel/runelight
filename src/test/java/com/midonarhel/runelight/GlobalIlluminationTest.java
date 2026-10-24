@@ -17,6 +17,11 @@ public class GlobalIlluminationTest
 	/** Add a triangle so its front faces (nx, ny, nz), as the capture stores them. */
 	private static void face(GiCapture cap, int[] a, int[] b, int[] c, float nx, float ny, float nz)
 	{
+		face(cap, GRAY, a, b, c, nx, ny, nz);
+	}
+
+	static void face(GiCapture cap, int color, int[] a, int[] b, int[] c, float nx, float ny, float nz)
+	{
 		long fx = (long) (b[1] - a[1]) * (c[2] - a[2]) - (long) (b[2] - a[2]) * (c[1] - a[1]);
 		long fy = (long) (b[2] - a[2]) * (c[0] - a[0]) - (long) (b[0] - a[0]) * (c[2] - a[2]);
 		long fz = (long) (b[0] - a[0]) * (c[1] - a[1]) - (long) (b[1] - a[1]) * (c[0] - a[0]);
@@ -26,24 +31,34 @@ public class GlobalIlluminationTest
 			b = c;
 			c = t;
 		}
-		cap.add(a[0], a[1], a[2], b[0], b[1], b[2], c[0], c[1], c[2], GRAY);
+		cap.add(a[0], a[1], a[2], b[0], b[1], b[2], c[0], c[1], c[2], color);
 	}
 
 	private static void quad(GiCapture cap, int[] a, int[] b, int[] c, int[] d, float nx, float ny, float nz)
 	{
-		face(cap, a, b, c, nx, ny, nz);
-		face(cap, a, c, d, nx, ny, nz);
+		quad(cap, GRAY, a, b, c, d, nx, ny, nz);
+	}
+
+	static void quad(GiCapture cap, int color, int[] a, int[] b, int[] c, int[] d, float nx, float ny, float nz)
+	{
+		face(cap, color, a, b, c, nx, ny, nz);
+		face(cap, color, a, c, d, nx, ny, nz);
 	}
 
 	/** A box of outward faces from (x0, y0, z0) to (x1, y1, z1), zone-local units, y down. */
 	private static void box(GiCapture cap, int x0, int y0, int z0, int x1, int y1, int z1)
 	{
-		quad(cap, p(x0, y0, z0), p(x1, y0, z0), p(x1, y0, z1), p(x0, y0, z1), 0, -1, 0);
-		quad(cap, p(x0, y1, z0), p(x1, y1, z0), p(x1, y1, z1), p(x0, y1, z1), 0, 1, 0);
-		quad(cap, p(x0, y0, z0), p(x0, y1, z0), p(x0, y1, z1), p(x0, y0, z1), -1, 0, 0);
-		quad(cap, p(x1, y0, z0), p(x1, y1, z0), p(x1, y1, z1), p(x1, y0, z1), 1, 0, 0);
-		quad(cap, p(x0, y0, z0), p(x1, y0, z0), p(x1, y1, z0), p(x0, y1, z0), 0, 0, -1);
-		quad(cap, p(x0, y0, z1), p(x1, y0, z1), p(x1, y1, z1), p(x0, y1, z1), 0, 0, 1);
+		box(cap, GRAY, x0, y0, z0, x1, y1, z1);
+	}
+
+	static void box(GiCapture cap, int color, int x0, int y0, int z0, int x1, int y1, int z1)
+	{
+		quad(cap, color, p(x0, y0, z0), p(x1, y0, z0), p(x1, y0, z1), p(x0, y0, z1), 0, -1, 0);
+		quad(cap, color, p(x0, y1, z0), p(x1, y1, z0), p(x1, y1, z1), p(x0, y1, z1), 0, 1, 0);
+		quad(cap, color, p(x0, y0, z0), p(x0, y1, z0), p(x0, y1, z1), p(x0, y0, z1), -1, 0, 0);
+		quad(cap, color, p(x1, y0, z0), p(x1, y1, z0), p(x1, y1, z1), p(x1, y0, z1), 1, 0, 0);
+		quad(cap, color, p(x0, y0, z0), p(x1, y0, z0), p(x1, y1, z0), p(x0, y1, z0), 0, 0, -1);
+		quad(cap, color, p(x0, y0, z1), p(x1, y0, z1), p(x1, y1, z1), p(x0, y1, z1), 0, 0, 1);
 	}
 
 	private static int[] p(int x, int y, int z)
@@ -270,8 +285,8 @@ public class GlobalIlluminationTest
 
 	/**
 	 * Flat ground over the zones around base tiles 0-31, a 4x4 tile house at tiles 10-13 (2 tiles tall walls,
-	 * a door on the south side at tile 12, a roof at 3 tiles), a low pillar at tile 4, 4 and a closed block at tiles
-	 * 20-22.
+	 * a door on the south side at tile 12, a roof at 3 tiles), a low pillar at tile 4, 4 and a solid block at tiles
+	 * 20-22 (walls()).
 	 */
 	private static GiProbes scene()
 	{
@@ -314,15 +329,32 @@ public class GlobalIlluminationTest
 			zz.stream().mapToInt(i -> i).toArray(), BASE_ZONE);
 		GiProbes.Input in = new GiProbes.Input();
 		in.ground = new float[4][GiProbes.SIZE * GiProbes.SIZE];
-		in.indoor = new boolean[GiProbes.SIZE * GiProbes.SIZE];
-		for (int x = 10; x < 14; ++x)
+		in.walls = walls();
+		return GiProbes.build(g, in, GiProbes.ParallelFor.SEQUENTIAL);
+	}
+
+	/** The collision map's walls of scene(): the house's four sides but for the door, and the block's solid tiles. */
+	private static WallMap walls()
+	{
+		int[][][] flags = new int[1][GiProbes.SIZE][GiProbes.SIZE];
+		for (int i = 10; i < 14; ++i)
 		{
-			for (int z = 10; z < 14; ++z)
+			flags[0][10][i] |= WallMap.LOS_WEST;
+			flags[0][13][i] |= WallMap.LOS_EAST;
+			flags[0][i][13] |= WallMap.LOS_NORTH;
+			if (i != 12)
 			{
-				in.indoor[z * GiProbes.SIZE + x] = true;
+				flags[0][i][10] |= WallMap.LOS_SOUTH;
 			}
 		}
-		return GiProbes.build(g, in, GiProbes.ParallelFor.SEQUENTIAL);
+		for (int x = 20; x < 23; ++x)
+		{
+			for (int z = 20; z < 23; ++z)
+			{
+				flags[0][x][z] |= WallMap.LOS_FULL;
+			}
+		}
+		return WallMap.build(flags, null, GiProbes.SIZE, 0, 0);
 	}
 
 	/**
@@ -366,46 +398,149 @@ public class GlobalIlluminationTest
 		return probes;
 	}
 
+	private static int probesIn(GiProbes p, int tx, int tz)
+	{
+		int t = tz * GiProbes.SIZE + tx;
+		return p.tileStart[t + 1] - p.tileStart[t];
+	}
+
 	@Test
-	public void layoutAndClassification()
+	public void groundProbeStandsAboveFlatGroundAndNothingInTheAir()
 	{
 		GiProbes p = probes();
-		// Use the original world tiles regardless of probe spacing.
-		int house = GiProbes.probe(12 / GiProbes.PITCH, 12 / GiProbes.PITCH, 0);
-		int outside = GiProbes.probe(30 / GiProbes.PITCH, 30 / GiProbes.PITCH, 0);
-		assertTrue(p.valid[house]);
-		assertTrue(p.valid[outside]);
-		assertTrue(p.indoor[house]);
-		assertFalse(p.indoor[outside]);
-		// the floor's high probe is above its low one, and the second floor's above the roof
-		assertTrue(p.indoor[GiProbes.probe(12 / GiProbes.PITCH, 12 / GiProbes.PITCH, 1)]);
-		assertFalse(p.indoor[GiProbes.probe(12 / GiProbes.PITCH, 12 / GiProbes.PITCH, 3)]);
-		int tile = 12 * GiProbes.SIZE + 12;
-		float roof = (float) Math.floor(p.meta[tile * 4 + 3]);
-		// the roof line: the bottom of the voxel holding the roof at -384
-		assertTrue("roof " + roof, roof <= -320 && roof >= -384);
-		int open = 30 * GiProbes.SIZE + 30;
-		assertEquals(GiProbes.NO_ROOF, p.meta[open * 4 + 3], 0);
-		// the floors' grounds, FLOOR_GAP apart at least
-		assertEquals(0, p.meta[open * 4], 0);
-		assertEquals(-GiProbes.FLOOR_GAP, p.meta[open * 4 + 1], 0);
-		assertEquals(-2 * GiProbes.FLOOR_GAP, p.meta[open * 4 + 2], 0);
-		// Open-air high probes beyond the one-tile scenery cutoff are removed.
-		assertFalse(p.valid[GiProbes.probe(30 / GiProbes.PITCH, 30 / GiProbes.PITCH, 1)]);
-		assertFalse(p.valid[GiProbes.probe(30 / GiProbes.PITCH, 30 / GiProbes.PITCH, 2)]);
-		assertFalse(p.valid[GiProbes.probe(30 / GiProbes.PITCH, 30 / GiProbes.PITCH, 5)]);
+		// one probe over the open ground, a little above it, at the tile's center
+		int open = GiLookup.ground(p, 30, 30);
+		assertTrue(p.valid[open]);
+		assertEquals(30.5f * GiProbes.TILE, p.position[open * 3], GiProbes.TILE / 2);
+		assertEquals(30.5f * GiProbes.TILE, p.position[open * 3 + 2], GiProbes.TILE / 2);
+		float height = -p.position[open * 3 + 1];
+		assertTrue("height " + height, height >= GiProbes.GROUND_HEIGHT - 1 && height <= GiProbes.GROUND_HEIGHT + 2 * GiGrid.VOXEL);
+		// no probes for the floors above, which are air there, nor for tiles with no geometry at all
+		assertEquals(1, probesIn(p, 30, 30));
+		assertEquals(0, probesIn(p, 60, 60));
+		// every probe is within a voxel of geometry
+		for (int i = 0; i < p.count; ++i)
+		{
+			if (p.valid[i])
+			{
+				assertTrue("probe " + i, p.nearGeometry(p.position[i * 3] / GiGrid.VOXEL,
+					p.position[i * 3 + 1] / GiGrid.VOXEL - p.grid.layer0, p.position[i * 3 + 2] / GiGrid.VOXEL));
+			}
+		}
 	}
 
 	@Test
 	public void probesInGeometryMoveOrStop()
 	{
 		GiProbes p = probes();
-		// the low probe starts inside the pillar, whose top is at -120: it moves up out of it
-		int pillar = GiProbes.probe(4 / GiProbes.PITCH, 4 / GiProbes.PITCH, 0);
+		// the ground probe starts inside the pillar, whose top is at -120: it moves up out of it
+		int pillar = GiLookup.ground(p, 4, 4);
 		assertTrue(p.valid[pillar]);
-		assertTrue(p.position[pillar * 3 + 1] < -GiProbes.LOW);
-		// inside the closed block every spot sees only the block's back faces
-		assertFalse(p.valid[GiProbes.probe(20 / GiProbes.PITCH, 20 / GiProbes.PITCH, 0)]);
+		assertTrue(p.position[pillar * 3 + 1] < -GiProbes.GROUND_HEIGHT);
+		// no probe is inside the block, which is 512 tall: only the ones over its top
+		for (int i = 0; i < p.count; ++i)
+		{
+			if (p.valid[i])
+			{
+				assertFalse("probe " + i, p.position[i * 3] > 20 * GiProbes.TILE && p.position[i * 3] < 23 * GiProbes.TILE
+					&& p.position[i * 3 + 2] > 20 * GiProbes.TILE && p.position[i * 3 + 2] < 23 * GiProbes.TILE
+					&& p.position[i * 3 + 1] > -512);
+			}
+		}
+	}
+
+	@Test
+	public void aWallHasProbesOnEachOpenSideUpItsHeight()
+	{
+		GiProbes p = probes();
+		// the house' west wall stands at x = 10 tiles: tile 9 is outside it, tile 10 inside, probes out from it
+		java.util.List<Integer> outside = GiLookup.wall(p, 9, 12, -1, 0), inside = GiLookup.wall(p, 10, 12, 1, 0);
+		assertTrue("outside " + outside.size(), outside.size() >= 3);
+		assertTrue("inside " + inside.size(), inside.size() >= 3);
+		float top = 0;
+		for (int i : outside)
+		{
+			assertTrue(p.valid[i]);
+			float x = p.position[i * 3];
+			assertTrue("outside at " + x, x < 10 * GiProbes.TILE - 16 && x > 9 * GiProbes.TILE);
+			top = Math.max(top, -p.position[i * 3 + 1]);
+		}
+		// as high as the wall: 3 tiles of it
+		assertTrue("top " + top, top > 250);
+		for (int i : inside)
+		{
+			assertTrue(p.position[i * 3] > 10 * GiProbes.TILE + 16);
+		}
+		// no wall under the door, and the wall probes of its sides stand in their own tiles
+		assertTrue(GiLookup.wall(p, 12, 10, 0, 1).isEmpty());
+		assertFalse(GiLookup.wall(p, 11, 10, 0, 1).isEmpty());
+	}
+
+	@Test
+	public void aSolidObjectHasProbesOnItsOutsideOnly()
+	{
+		GiProbes p = probes();
+		// the block at tiles 20-22 is 4 tiles tall, its sides get SOLID_HEIGHTS probes each at most
+		java.util.List<Integer> west = GiLookup.wall(p, 19, 21, -1, 0);
+		assertFalse(west.isEmpty());
+		assertTrue(west.size() <= GiProbes.SOLID_HEIGHTS);
+		assertFalse(GiLookup.wall(p, 21, 23, 0, 1).isEmpty());
+		assertFalse(GiLookup.wall(p, 21, 19, 0, -1).isEmpty());
+		// and a solid tile has none of its own: what is in it is over its top
+		for (int z = 20; z < 23; ++z)
+		{
+			for (int x = 20; x < 23; ++x)
+			{
+				int t = z * GiProbes.SIZE + x;
+				for (int k = p.tileStart[t]; k < p.tileStart[t + 1]; ++k)
+				{
+					int i = p.tileProbes[k];
+					assertTrue(p.position[i * 3 + 1] < -512 && p.outward[i * 2] == 0 && p.outward[i * 2 + 1] == 0);
+				}
+			}
+		}
+	}
+
+	@Test
+	public void tileListsHoldTheNearestProbesNearestFirst()
+	{
+		GiProbes p = probes();
+		for (int[] tile : new int[][]{{30, 30}, {9, 12}, {10, 10}, {21, 19}, {60, 60}})
+		{
+			float cx = (tile[0] + 0.5f) * GiProbes.TILE, cz = (tile[1] + 0.5f) * GiProbes.TILE;
+			java.util.List<Float> expected = new java.util.ArrayList<>();
+			for (int i = 0; i < p.count; ++i)
+			{
+				float d = (float) Math.hypot(p.position[i * 3] - cx, p.position[i * 3 + 2] - cz);
+				if (p.valid[i] && d <= GiProbes.LIST_REACH)
+				{
+					expected.add(d);
+				}
+			}
+			java.util.Collections.sort(expected);
+			int at = (tile[1] * GiProbes.SIZE + tile[0]) * GiProbes.LIST;
+			int n = 0;
+			for (int e = 0; e < GiProbes.LIST; ++e)
+			{
+				int i = p.lists[at + e];
+				if (i == GiProbes.NONE)
+				{
+					break;
+				}
+				assertTrue(p.valid[i]);
+				assertEquals("tile " + tile[0] + "," + tile[1] + " entry " + e, expected.get(e),
+					(float) Math.hypot(p.position[i * 3] - cx, p.position[i * 3 + 2] - cz), 1e-3);
+				n++;
+			}
+			// the list is full, or has every probe in reach
+			assertEquals(Math.min(GiProbes.LIST, expected.size()), n);
+			for (int e = n; e < GiProbes.LIST; ++e)
+			{
+				assertEquals(GiProbes.NONE, p.lists[at + e]);
+			}
+		}
+		// the open ground's tile finds its own probe first
+		assertEquals(GiLookup.ground(p, 30, 30), p.lists[(30 * GiProbes.SIZE + 30) * GiProbes.LIST]);
 	}
 
 	private static float[] table(float sky, float caster)
@@ -478,8 +613,8 @@ public class GlobalIlluminationTest
 		GiRelight.Light skyOnly = GiRelight.Light.fromTable(table(0.3f, 2.6f), sunDir(), false);
 		GiRelight.Result r = GiRelight.relight(p, skyOnly, null, 1, GiProbes.ParallelFor.SEQUENTIAL);
 		// with no sun nothing is lit to bounce: the shown bounce is dark, and the whole light darker indoors than out
-		int open = GiProbes.probe(30 / GiProbes.PITCH, 30 / GiProbes.PITCH, 0);
-		int house = GiProbes.probe(12 / GiProbes.PITCH, 12 / GiProbes.PITCH, 0);
+		int open = GiLookup.ground(p, 30, 30);
+		int house = GiLookup.ground(p, 12, 12);
 		assertTrue(p.valid[house]);
 		assertEquals(0, lum(r.shown, open), 1e-6);
 		assertTrue("inside " + lum(r.light, house) + " open " + lum(r.light, open), lum(r.light, house) < lum(r.light, open) * 0.5f);
@@ -488,11 +623,11 @@ public class GlobalIlluminationTest
 		GiRelight.Light withSun = GiRelight.Light.fromTable(table(0.3f, 2.6f), sunDir(), true);
 		GiRelight.Result bounced = GiRelight.relight(p, withSun, null, 3, GiProbes.ParallelFor.SEQUENTIAL);
 		GiRelight.Result once = GiRelight.relight(p, withSun, null, 1, GiProbes.ParallelFor.SEQUENTIAL);
-		int ground = GiProbes.probe(30 / GiProbes.PITCH, 30 / GiProbes.PITCH, 0);
+		int ground = open;
 		assertTrue(lum(bounced.light, ground) > lum(r.light, ground) * 1.1f);
 		assertTrue(lum(bounced.light, house) > lum(r.light, house));
 		assertTrue(sum(bounced.light) > sum(once.light));
-		for (int i = 0; i < GiProbes.PROBES; ++i)
+		for (int i = 0; i < p.count; ++i)
 		{
 			for (int k = 0; k < GiRelight.SH; ++k)
 			{
@@ -547,8 +682,8 @@ public class GlobalIlluminationTest
 		GiRelight.Light light = GiRelight.Light.fromTable(table(0.3f, 2.6f), new float[]{0, -1, 0}, false);
 		// the whole light (the shown bounce has no sky): the probe by the door sees more sky than the one at the back wall
 		float[] shown = GiRelight.relight(p, light, null, 1, GiProbes.ParallelFor.SEQUENTIAL).light;
-		int byDoor = GiProbes.probe(12 / GiProbes.PITCH, 10 / GiProbes.PITCH, 0);
-		int back = GiProbes.probe(12 / GiProbes.PITCH, 12 / GiProbes.PITCH, 0);
+		int byDoor = GiLookup.ground(p, 12, 10);
+		int back = GiLookup.ground(p, 12, 12);
 		assertTrue(p.valid[byDoor] && p.valid[back]);
 		assertTrue(lum(shown, byDoor) > lum(shown, back));
 		assertTrue(lum(shown, byDoor) > 0);
@@ -565,9 +700,12 @@ public class GlobalIlluminationTest
 	@Test
 	public void texelLayout()
 	{
-		float[] light = new float[GiProbes.PROBES * GiRelight.SH];
-		float[] visibility = new float[GiProbes.PROBES * GiProbes.VISIBILITY];
-		int probe = GiProbes.probe(5, 7, 2);
+		int count = 301;
+		float[] light = new float[count * GiRelight.SH];
+		float[] visibility = new float[count * GiProbes.VISIBILITY];
+		float[] position = new float[count * 3];
+		// the second row's 45th probe
+		int probe = 300;
 		for (int k = 0; k < GiRelight.SH; ++k)
 		{
 			light[probe * GiRelight.SH + k] = k + 1;
@@ -576,12 +714,12 @@ public class GlobalIlluminationTest
 		{
 			visibility[probe * GiProbes.VISIBILITY + k] = 20 + k;
 		}
-		float[] place = new float[GiProbes.PROBES * GiProbes.PLACE];
-		place[probe * GiProbes.PLACE + 1] = -48;
-		short[] t = GlobalIllumination.texels(light, visibility, place);
-		// column x 5 across (TEXELS texels each), level 2 and column z 7 down: three texels of light, three of
-		// visibility, one of where it stands
-		int i = ((2 * GiProbes.COLUMNS + 7) * GlobalIllumination.TEX_W + 5 * GlobalIllumination.TEXELS) * 4;
+		position[probe * 3] = 2600;
+		position[probe * 3 + 1] = -148;
+		position[probe * 3 + 2] = 5100;
+		short[] t = GlobalIllumination.texels(count, light, visibility, position);
+		int i = ((300 / GlobalIllumination.ROW) * GlobalIllumination.TEX_W + 300 % GlobalIllumination.ROW * GlobalIllumination.TEXELS) * 4;
+		assertEquals(1, 300 / GlobalIllumination.ROW);
 		for (int k = 0; k < GiRelight.SH; ++k)
 		{
 			assertEquals(k + 1, GlobalIllumination.fromHalf(t[i + k]), 0);
@@ -590,54 +728,47 @@ public class GlobalIlluminationTest
 		{
 			assertEquals(20 + k, GlobalIllumination.fromHalf(t[i + GiRelight.SH + k]), 0);
 		}
-		assertEquals(-48, GlobalIllumination.fromHalf(t[i + GiRelight.SH + GiProbes.VISIBILITY + 1]), 0);
-		// the next probe along is untouched, and so is its first texel's neighbour
+		// the position, as gi.glsl reads it back: from the corner of its square, and the square
+		int at = i + GiRelight.SH + GiProbes.VISIBILITY;
+		float w = GlobalIllumination.fromHalf(t[at + 3]);
+		float chunkZ = (float) Math.floor(w / GlobalIllumination.CHUNKS);
+		assertEquals(2600, (w - chunkZ * GlobalIllumination.CHUNKS) * GlobalIllumination.CHUNK + GlobalIllumination.fromHalf(t[at]), 0);
+		assertEquals(-148, GlobalIllumination.fromHalf(t[at + 1]), 0);
+		assertEquals(5100, chunkZ * GlobalIllumination.CHUNK + GlobalIllumination.fromHalf(t[at + 2]), 0);
+		// the next probe along is untouched
 		assertEquals(0, t[i + GlobalIllumination.TEXELS * 4]);
-		assertEquals(GlobalIllumination.TEX_W * GlobalIllumination.TEX_H, GiProbes.PROBES * GlobalIllumination.TEXELS);
+		// the texture holds every probe, and the squares are whole numbers a half float keeps
+		assertTrue(GlobalIllumination.ROW * GlobalIllumination.TEX_H > GiProbes.MAX_PROBES);
+		assertTrue(GiProbes.SIZE * GiProbes.TILE <= GlobalIllumination.CHUNK * GlobalIllumination.CHUNKS);
+		assertTrue(GlobalIllumination.CHUNKS * GlobalIllumination.CHUNKS < 2048);
 	}
 
 	@Test
-	public void shaderMatchesTheLayout() throws Exception
+	public void indexTexelLayout()
 	{
-		String glsl = new String(java.nio.file.Files.readAllBytes(
-			java.nio.file.Paths.get("src/main/resources/com/midonarhel/runelight/gi.glsl")));
-		assertEquals(GlobalIllumination.TEXELS, define(glsl, "GI_TEXELS"), 0);
-		assertEquals(GiProbes.SIZE, define(glsl, "GI_SIZE"), 0);
-		assertEquals(GiProbes.LEVELS, define(glsl, "GI_LEVELS"), 0);
-		assertEquals(GiProbes.TILE, define(glsl, "GI_TILE"), 0);
-		assertEquals(GiProbes.LOW, define(glsl, "GI_LOW"), 0);
-		assertEquals(GiProbes.HIGH, define(glsl, "GI_HIGH"), 0);
-		assertEquals(GiGrid.VOXEL, define(glsl, "GI_VOXEL"), 0);
+		int[] lists = new int[GiProbes.SIZE * GiProbes.SIZE * GiProbes.LIST];
+		java.util.Arrays.fill(lists, GiProbes.NONE);
+		// tile (5, 7)'s seventh entry: texel 5 * 3 + 1 of row 7, third component
+		lists[(7 * GiProbes.SIZE + 5) * GiProbes.LIST + 6] = 40000;
+		short[] t = GlobalIllumination.indexTexels(lists);
+		assertEquals(GlobalIllumination.INDEX_W * GiProbes.SIZE * 4, t.length);
+		assertEquals(40000, t[(7 * GlobalIllumination.INDEX_W + 5 * GlobalIllumination.INDEX_TEXELS + 1) * 4 + 2] & 0xffff);
+		assertEquals(GiProbes.NONE, t[0] & 0xffff);
 	}
 
-	private static float define(String glsl, String name)
+	@Test
+	public void shaderMatchesTheLayout()
 	{
-		java.util.regex.Matcher m = java.util.regex.Pattern.compile("#define " + name + " ([0-9.]+)").matcher(glsl);
-		assertTrue(name, m.find());
-		return Float.parseFloat(m.group(1));
-	}
-
-	// gi.glsl's visibility test: the share of the probe's rays that Chebyshev's bound lets reach a point dist voxels
-	// away along unit (dx, dy, dz)
-	private static float visibility(float[] v, int probe, float dx, float dy, float dz, float dist)
-	{
-		int o = probe * GiProbes.VISIBILITY;
-		float[] d = {dx, dy, dz};
-		float mean = 0, variance = 0;
-		for (int axis = 0; axis < 3; ++axis)
-		{
-			int bin = axis * 2 + (d[axis] < 0 ? 1 : 0);
-			mean += d[axis] * d[axis] * v[o + bin];
-			variance += d[axis] * d[axis] * v[o + 6 + bin];
-		}
-		float excess = dist - mean;
-		if (excess <= 0)
-		{
-			return 1;
-		}
-		variance = Math.max(variance, 0.25f);
-		float c = variance / (variance + excess * excess);
-		return c * c * c;
+		assertEquals(GlobalIllumination.TEXELS, GiLookup.define("GI_TEXELS"), 0);
+		assertEquals(GlobalIllumination.ROW, GiLookup.define("GI_ROW"), 0);
+		assertEquals(GlobalIllumination.CHUNK, GiLookup.define("GI_CHUNK"), 0);
+		assertEquals(GlobalIllumination.CHUNKS, GiLookup.define("GI_CHUNKS"), 0);
+		assertEquals(GlobalIllumination.INDEX_TEXELS, GiLookup.define("GI_LIST_TEXELS"), 0);
+		assertEquals(GiProbes.NONE, GiLookup.define("GI_NONE"), 0);
+		assertEquals(GiProbes.SIZE, GiLookup.define("GI_SIZE"), 0);
+		assertEquals(GiProbes.TILE, GiLookup.define("GI_TILE"), 0);
+		assertEquals(GiProbes.RADIUS, GiLookup.define("GI_RADIUS"), 0);
+		assertEquals(GiGrid.VOXEL, GiLookup.define("GI_VOXEL"), 0);
 	}
 
 	@Test
@@ -645,30 +776,31 @@ public class GlobalIlluminationTest
 	{
 		GiProbes p = probes();
 		// the house' west wall is at x = 1280 (tile 10's west edge); probes inside at tile 11 and 12, row 12
-		int inside = GiProbes.probe(11 / GiProbes.PITCH, 12 / GiProbes.PITCH, 0);
+		int inside = GiLookup.ground(p, 11, 12);
 		assertTrue(p.valid[inside]);
 		float px = p.position[inside * 3], py = p.position[inside * 3 + 1], pz = p.position[inside * 3 + 2];
 		// a pixel a tile outside the wall, and one hugging it (which the facing test cuts as well)
 		float dist = (px - (1280 - GiProbes.TILE)) / GiGrid.VOXEL;
-		float wall = visibility(p.visibility, inside, -1, 0, 0, dist);
+		float wall = GiLookup.visibility(p.visibility, inside, -1, 0, 0, dist);
 		assertTrue("behind the wall " + wall, wall < 0.01f);
-		float hugging = visibility(p.visibility, inside, -1, 0, 0, (px - (1280 - 32)) / GiGrid.VOXEL);
+		float hugging = GiLookup.visibility(p.visibility, inside, -1, 0, 0, (px - (1280 - 32)) / GiGrid.VOXEL);
 		assertTrue("hugging the wall " + hugging, hugging < 0.25f);
 		// a pixel on the wall's inner side, and one in the room toward the opposite wall, can see it
-		assertEquals(1, visibility(p.visibility, inside, -1, 0, 0, (px - (1280 + 32)) / GiGrid.VOXEL), 1e-6);
-		assertEquals(1, visibility(p.visibility, inside, 1, 0, 0, 3), 1e-6);
+		assertEquals(1, GiLookup.visibility(p.visibility, inside, -1, 0, 0, (px - (1280 + 32)) / GiGrid.VOXEL), 1e-6);
+		assertEquals(1, GiLookup.visibility(p.visibility, inside, 1, 0, 0, 3), 1e-6);
 		assertEquals(pz, 12.5f * GiProbes.TILE, 1e-3);
 		assertTrue(py < 0);
 		// out in the open nothing is in the way
-		int open = GiProbes.probe(30 / GiProbes.PITCH, 30 / GiProbes.PITCH, 0);
+		int open = GiLookup.ground(p, 30, 30);
 		assertTrue(p.valid[open]);
-		assertEquals(1, visibility(p.visibility, open, 1, 0, 0, 3), 1e-6);
+		assertEquals(1, GiLookup.visibility(p.visibility, open, 1, 0, 0, 3), 1e-6);
 		// an unusable probe has no visibility at all
-		int block = GiProbes.probe(20 / GiProbes.PITCH, 20 / GiProbes.PITCH, 0);
-		assertFalse(p.valid[block]);
-		for (int k = 0; k < GiProbes.VISIBILITY; ++k)
+		for (int i = 0; i < p.count; ++i)
 		{
-			assertEquals(0, p.visibility[block * GiProbes.VISIBILITY + k], 0);
+			for (int k = 0; !p.valid[i] && k < GiProbes.VISIBILITY; ++k)
+			{
+				assertEquals(0, p.visibility[i * GiProbes.VISIBILITY + k], 0);
+			}
 		}
 	}
 

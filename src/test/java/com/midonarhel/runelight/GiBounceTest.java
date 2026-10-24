@@ -2,6 +2,7 @@ package com.midonarhel.runelight;
 
 import static org.junit.Assert.assertArrayEquals;
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNotEquals;
 import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertTrue;
@@ -43,7 +44,6 @@ public class GiBounceTest
 	{
 		GiProbes.Input in = new GiProbes.Input();
 		in.ground = new float[1][GiProbes.SIZE * GiProbes.SIZE];
-		in.indoor = new boolean[GiProbes.SIZE * GiProbes.SIZE];
 		return GiProbes.build(grid, in, GiProbes.ParallelFor.SEQUENTIAL);
 	}
 
@@ -73,8 +73,7 @@ public class GiBounceTest
 	{
 		GiProbes p = probes(greenGrid(null, false));
 		GiRelight.Result r = GiRelight.relight(p, sunlit(), null, 3, GiProbes.ParallelFor.SEQUENTIAL);
-		// Keep the same world tile when probe spacing changes.
-		int probe = GiProbes.probe(10 / GiProbes.PITCH, 10 / GiProbes.PITCH, 0);
+		int probe = GiLookup.ground(p, 10, 10);
 		assertTrue(p.valid[probe]);
 		float red = r.shown[probe * GiRelight.SH], green = r.shown[probe * GiRelight.SH + 1], blue = r.shown[probe * GiRelight.SH + 2];
 		assertTrue("green " + red + " " + green + " " + blue, green > red * 1.4f && green > blue * 2f);
@@ -99,7 +98,7 @@ public class GiBounceTest
 	{
 		GiProbes p = probes(greenGrid(null, false));
 		GiRelight.Result r = GiRelight.relight(p, sunlit(), null, 3, GiProbes.ParallelFor.SEQUENTIAL);
-		int probe = GiProbes.probe(10 / GiProbes.PITCH, 10 / GiProbes.PITCH, 0);
+		int probe = GiLookup.ground(p, 10, 10);
 		assertTrue(p.valid[probe]);
 		// the probe sees the green ground all below it: a floor facing up gets none of it, a ceiling facing down gets it
 		float up = GiRelight.irradiance(r.shown, probe, 0, -1, 0, 1);
@@ -108,6 +107,55 @@ public class GiBounceTest
 		assertTrue("down " + down, down > 0.01f);
 		assertTrue("up " + up + " down " + down, up < down * 0.15f);
 		assertTrue("side " + side + " down " + down, side > up && side < down);
+	}
+
+	/**
+	 * Green ground over 4 x 4 zones, and a gray wall 8 units thick on the west edge of tile 10, from tile 10 to 13 and
+	 * 240 high, as the collision map has it.
+	 */
+	private static GiProbes greenWall()
+	{
+		GiVoxels.Zone[] zones = new GiVoxels.Zone[16];
+		int[] zx = new int[16], zz = new int[16];
+		GiVoxels.Zone ground = greenGround();
+		for (int i = 0; i < 16; ++i)
+		{
+			zones[i] = ground;
+			zx[i] = BASE_ZONE + i / 4;
+			zz[i] = BASE_ZONE + i % 4;
+		}
+		GiCapture cap = new GiCapture();
+		cap.add(0, 0, 0, 1024, 0, 0, 0, 0, 1024, GREEN);
+		cap.add(1024, 0, 0, 1024, 0, 1024, 0, 0, 1024, GREEN);
+		GlobalIlluminationTest.box(cap, 63, 252, -240, 256, 260, 0, 768);
+		zones[5] = GiVoxels.voxelize(cap);
+		GiProbes.Input in = new GiProbes.Input();
+		in.ground = new float[1][GiProbes.SIZE * GiProbes.SIZE];
+		int[][][] flags = new int[1][GiProbes.SIZE][GiProbes.SIZE];
+		for (int z = 10; z < 14; ++z)
+		{
+			flags[0][10][z] |= WallMap.LOS_WEST;
+		}
+		in.walls = WallMap.build(flags, null, GiProbes.SIZE, 0, 0);
+		return GiProbes.build(GiGrid.assemble(zones, zx, zz, BASE_ZONE), in, GiProbes.ParallelFor.SEQUENTIAL);
+	}
+
+	@Test
+	public void theGrassBouncesOntoTheFootOfAWall()
+	{
+		GiProbes p = greenWall();
+		float[] shown = GiRelight.relight(p, sunlit(), null, 3, GiProbes.ParallelFor.SEQUENTIAL).shown;
+		// the wall's west face is at x = 1276; a pixel at its foot on the grass side faces west
+		float[] foot = GiLookup.irradiance(p, shown, new float[]{1275, -10, 12.5f * GiProbes.TILE}, new float[]{-1, 0, 0});
+		assertTrue("coverage " + foot[3], foot[3] > 0.5f);
+		assertTrue("green " + foot[0] + " " + foot[1] + " " + foot[2], foot[1] > foot[0] * 1.4f && foot[1] > foot[2] * 2f);
+		// higher up the wall the green is still what bounces, from the probes up its face
+		float[] high = GiLookup.irradiance(p, shown, new float[]{1275, -170, 12.5f * GiProbes.TILE}, new float[]{-1, 0, 0});
+		assertTrue("high coverage " + high[3], high[3] > 0.5f);
+		assertTrue("high green " + high[0] + " " + high[1] + " " + high[2], high[1] > high[0] * 1.4f && high[1] > high[2] * 2f);
+		// both faces have their own probes in front of them
+		assertTrue(GiLookup.wall(p, 9, 12, -1, 0).size() >= 2);
+		assertFalse(GiLookup.wall(p, 10, 12, 1, 0).isEmpty());
 	}
 
 	@Test
@@ -169,7 +217,7 @@ public class GiBounceTest
 		GiProbes p = probes(greenGrid(water, true));
 		float[] bounce = GiRelight.relight(p, sunlit(), null, 3, GiProbes.ParallelFor.SEQUENTIAL).shown;
 		// over the water the light thrown up is blue, over the grass it is green
-		int overWater = GiProbes.probe(14 / GiProbes.PITCH, 14 / GiProbes.PITCH, 0), overGrass = GiProbes.probe(2 / GiProbes.PITCH, 2 / GiProbes.PITCH, 0);
+		int overWater = GiLookup.ground(p, 14, 14), overGrass = GiLookup.ground(p, 2, 2);
 		assertTrue(p.valid[overWater] && p.valid[overGrass]);
 		float wr = bounce[overWater * GiRelight.SH];
 		float wg = bounce[overWater * GiRelight.SH + 1];

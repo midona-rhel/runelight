@@ -237,8 +237,8 @@ final class GiRelight
 		for (int it = 0; it < Math.max(1, iterations); ++it)
 		{
 			float[] last = out;
-			float[] cur = new float[GiProbes.PROBES * SH];
-			float[] curSurfaces = new float[GiProbes.PROBES * SH];
+			float[] cur = new float[p.count * SH];
+			float[] curSurfaces = new float[p.count * SH];
 			// light leaving each one-sided hit voxel
 			parallel.run(p.hits, h ->
 			{
@@ -256,7 +256,7 @@ final class GiRelight
 					radiance[h * 3 + c] = p.hitAlbedo[h * 3 + c] * incident(light.caster, sun, last, b, nx, ny, nz, c);
 				}
 			});
-			parallel.run(GiProbes.PROBES, i ->
+			parallel.run(p.count, i ->
 			{
 				if (!p.valid[i])
 				{

@@ -172,17 +172,17 @@ flow to check them. Needs numpy, scipy, scikit-image and Pillow.
 
 Plugin config, Global illumination section. When a region loads, the static scene's opaque triangles (captured as
 the zones upload, `GiCapture.java`) are voxelized into half-tile cubes on a worker thread (`GiVoxels.java`,
-`GiGrid.java`; per zone, so zones reused by the next load keep theirs). A probe grid covers the base scene: a
-column every second tile with two probes per floor, a quarter and three quarters of a storey above that floor's
-ground (`GiProbes.java`); each probe holds one color, the light around it averaged over all directions (surfaces
-count as rough, so none lights its neighbours more for facing them), and traces 32 rays once, keeping what they hit
-(rays steeply down are left out: a surface doesn't see its own floor). Probes
-in buildings (BuildingDetector rooms, below the roof line) are indoor and light only indoor pixels, so walls don't
-leak, while their rays still see out through doors. Relighting (`GiRelight.java`) takes the sky from the sky cache
+`GiGrid.java`; per zone, so zones reused by the next load keep theirs). Probes (`GiProbes.java`) stand where
+geometry is: one over every floor tile, a little above it, and in front of every wall of the collision map (both
+sides, at a few heights up the wall; a solid object gets a couple on each side), so the grass's green reaches the foot
+of a wall. Open air has none. Each probe holds the light around it as directional irradiance (surfaces count as rough),
+and traces 40 rays once, keeping what they hit. Which side of a wall or roof a probe is on is the visibility test's
+job (how far it sees each way), so walls don't leak, while the rays still see out through doors. Relighting (`GiRelight.java`) takes the sky from the sky cache
 (`gi_sky_frag.glsl`, read back without stalling) plus the sun or moon on the hit voxels and the last light for
 further bounces, a few tens of milliseconds on the worker whenever the sky or the sun changes enough; new light
-blends in over a few seconds. The AO pass looks the probes up at half resolution (`gi.glsl`: linear between the four
-nearest columns and the two probes around the pixel's height, pushed off the surface along its normal) and the
+blends in over a few seconds. The AO pass looks the probes up at half resolution (`gi.glsl`: the pixel's tile
+has a list of the twelve probes nearest its center, of which it weights the nearest few by distance, facing and
+visibility, the point pushed off the surface along its normal) and the
 composite scales its plain ambient and sky light by the result (the probes' light relative to the open sky's), keeping
 a floor of the plain light (Shade floor). Debug view
 "Global illumination" shows the indirect light alone. Outside the base scene and underground the plain ambient

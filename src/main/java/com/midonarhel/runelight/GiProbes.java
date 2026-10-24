@@ -9,42 +9,60 @@ import java.util.function.IntConsumer;
  *
  * A probe holds the light it gathers from around it as directional irradiance (GiRelight: the mean radiance and its
  * gradient, so a surface reads the light that arrives on its own side) and how far it can see in each of the six axis
- * directions (VISIBILITY, below), which tells a pixel whether a wall or roof lies between it and the probe. Columns of probes
- * stand every PITCH tiles, and each of a column's FLOORS floors (the scene's planes) has two: LOW and HIGH above
- * that floor's ground. A probe sitting in geometry, or seeing the back of surfaces in more than MAX_BACKFACE of its
- * rays (inside a wall, a table, the ground), is moved a little; if no candidate spot works it is disabled, as are
- * the probes of floors the column has no floor on. Every probe traces its rays once through the voxel grid; what
- * each ray hits (the sky, the back of something, or a surface voxel) is kept, so relighting only has to light those
- * voxels.
+ * directions (VISIBILITY, below), which tells a pixel whether a wall or roof lies between it and the probe.
  *
- * Probes are indoor or outdoor: indoor when their column belongs to a building (BuildingDetector rooms) and they
- * are below its roof, the top of the geometry over the column. Pixels use only probes of their own class (gi.glsl),
- * so walls don't leak daylight inside or darkness outside. Light through a door still gets in: indoor probes'
- * rays leave through the doorway and see the sky and the sunlit ground there.
+ * Probes stand where geometry is, and nowhere else. Every tile of every floor that has one gets a ground probe,
+ * GROUND_HEIGHT above the floor at the tile's center. Wherever a wall stands on a tile's edge (WallMap, closed doors
+ * included), the tile gets wall probes in front of it, WALL_OFFSET out from the wall at WALL_FIRST above the floor and
+ * then every WALL_SPACING as far up as the wall's voxels reach, so the wall's whole face has probes beside it, and the
+ * color of the grass at its foot reaches it. A diagonal wall has them on both its sides, and a tile with a solid
+ * object (a castle's wall, a tree, a statue) gives the tiles around it a few on that side. Walls that are not in the
+ * collision map are covered by the ground probes only. Open air has no probes: one that is not within a voxel of
+ * geometry is dropped, and a probe sitting in geometry, or seeing the back of surfaces in more than MAX_BACKFACE of
+ * its rays (inside a wall, a table, the ground), is moved a little, and dropped if no candidate spot works. Every
+ * probe traces its rays once through the voxel grid; what each ray hits (the sky, the back of something, or a surface
+ * voxel) is kept, so relighting only has to light those voxels.
+ *
+ * The pixel's side of the lookup (gi.glsl) finds its probes through a list per tile: the LIST probes nearest the
+ * tile's center, so it reads a handful of probes instead of searching.
  */
 final class GiProbes
 {
 	static final int SIZE = 104;
-	static final int PITCH = 1;
-	static final int COLUMNS = SIZE / PITCH;
 	static final int FLOORS = 3;
-	static final int LEVELS = FLOORS * 2;
-	static final int PROBES = COLUMNS * COLUMNS * LEVELS;
 	static final int TILE = 128;
-	// the two probes of a floor, above its ground: a quarter and three quarters of the storey
-	static final float LOW = 60;
-	static final float HIGH = 180;
-	// the least two floors' grounds are apart, so the probes stay in order
+	// the least two floors' grounds are apart
 	static final float FLOOR_GAP = 240;
+	// a ground probe's height above its floor
+	static final float GROUND_HEIGHT = 48;
+	// a wall probe's distance from the wall, its first height above the floor, the spacing of the ones above and the
+	// height up to which they go at most
+	static final float WALL_OFFSET = 48;
+	static final float WALL_FIRST = 48;
+	static final float WALL_SPACING = 112;
+	static final float WALL_MAX_HEIGHT = 640;
+	// the heights a solid object's sides get at most; they are many, and the object shades more than it bounces
+	static final int SOLID_HEIGHTS = 2;
+	// the walls' voxels are looked for at this spacing up the wall, the first this far below the floor, and a wall
+	// that has not started by SCAN_START above it is no wall
+	static final float SCAN = 32;
+	static final float SCAN_START = 48;
+	// how far toward its wall a probe may be moved from its nominal spot
+	static final float WALL_APPROACH = 16;
+	// probes a layout holds at most; the lists use NONE for no probe, so it is not the index of one
+	static final int MAX_PROBES = 65535;
+	static final int NONE = 65535;
+	// entries of a tile's list of probes
+	static final int LIST = 12;
+	// a probe lights the pixels this near (gi.glsl), so a pixel's tile has the probes within this and half a tile's
+	// diagonal of its center
+	static final float RADIUS = 192;
+	static final float LIST_REACH = RADIUS + TILE * 0.71f;
 	// rays reach this many voxels; beyond, the sky
 	static final float MAX_DISTANCE = 32;
 	static final float MAX_BACKFACE = 0.25f;
 	// a ray meeting a one-sided voxel at more than this cosine from behind saw its back
 	static final float BACKFACE_COS = 0.2f;
-	// roofs are looked for up to this high above the first probe
-	static final float ROOF_SEARCH = 16 * TILE;
-	// meta's roof for columns that aren't indoors: below everything (y down)
-	static final float NO_ROOF = 131072;
 	// The hit voxels' colors are pushed this far from their gray: a voxel averages the colors of everything in it,
 	// the texture detail included, which pulls them toward gray, and light that bounces twice keeps the surfaces'
 	// colors squared. The bounce is what carries the colors of the ground and the water into the shade.
@@ -111,8 +129,6 @@ final class GiProbes
 	// a spot counts as much worse than its own as this share of its rays more seeing the back of something; the probe
 	// keeps the nearest of the best
 	private static final float WORSE_BACKFACE = 0.05f;
-	// floats per probe of where it stands: x, y, z from its nominal spot (world units), and a spare
-	static final int PLACE = 4;
 
 	/** Runs body(0..n-1), possibly in parallel. */
 	interface ParallelFor
@@ -133,22 +149,26 @@ final class GiProbes
 	{
 		// ground height at each base tile's center per map level, [level][z * SIZE + x], world y
 		float[][] ground;
-		// base tiles that belong to a building
-		boolean[] indoor;
+		// the scene's walls, null for none
+		WallMap walls;
 	}
 
 	final GiGrid grid;
-	// per tile: the grounds of the floors (world y, FLOOR_GAP apart at least) and the roof line (gi.glsl)
-	final float[] meta = new float[SIZE * SIZE * 4];
-	final float[] position = new float[PROBES * 3];
-	final boolean[] valid = new boolean[PROBES];
-	final boolean[] indoor = new boolean[PROBES];
+	// the candidate probes; the layout's floors' grounds are not kept
+	int count;
+	// per probe: where it stands (world units, y down; its nominal spot until it is traced) and the horizontal unit
+	// direction from its wall to it, zero for a ground probe
+	float[] position;
+	float[] outward;
+	boolean[] valid;
 	// per probe and ray: a hit (index into the hit arrays), MISS or BACK
-	final int[] rays = new int[PROBES * RAYS];
+	int[] rays;
 	// per probe: VISIBILITY floats, all zero for a probe that isn't usable
-	final float[] visibility = new float[PROBES * VISIBILITY];
-	// where each usable probe stands, from its nominal spot (PLACE floats)
-	final float[] place = new float[PROBES * PLACE];
+	float[] visibility;
+	// the usable probes by the tile they stand in: tileProbes[tileStart[t]..tileStart[t + 1]) for tile z * SIZE + x
+	int[] tileStart, tileProbes;
+	// per tile, LIST probes near its center, nearest first, then NONE
+	int[] lists;
 
 	// the voxels hit by any ray
 	int hits;
@@ -161,12 +181,6 @@ final class GiProbes
 	private GiProbes(GiGrid grid)
 	{
 		this.grid = grid;
-	}
-
-	/** Probe of column (cx, cz) at a level: the low probe of floor f is level 2 * f, its high one 2 * f + 1. */
-	static int probe(int cx, int cz, int level)
-	{
-		return (level * COLUMNS + cz) * COLUMNS + cx;
 	}
 
 	/** Spherical Fibonacci directions: count unit vectors spread evenly over the sphere, xyz interleaved. */
@@ -186,7 +200,7 @@ final class GiProbes
 		return d;
 	}
 
-	/** The rotation a probe uses: a hash, so the pattern doesn't line up across the grid. */
+	/** The rotation a probe uses: a hash, so the pattern doesn't line up across the scene. */
 	static int rotation(int probe)
 	{
 		int h = probe * 0x9E3779B1;
@@ -201,90 +215,187 @@ final class GiProbes
 		GiProbes p = new GiProbes(grid);
 		p.layout(in);
 		p.trace(parallel);
+		p.index();
 		p.collectHits();
 		return p;
 	}
 
-	private void layout(Input in)
+	/** The tile (z * SIZE + x) a world position lies in, clamped to the base scene. */
+	static int tileOf(float x, float z)
 	{
-		float[] g = new float[FLOORS];
-		for (int z = 0; z < SIZE; ++z)
-		{
-			for (int x = 0; x < SIZE; ++x)
-			{
-				int c = z * SIZE + x;
-				g[0] = in.ground[0][c];
-				for (int f = 1; f < FLOORS; ++f)
-				{
-					float up = in.ground.length > f ? in.ground[f][c] : g[f - 1] - FLOOR_GAP;
-					g[f] = Math.min(up, g[f - 1] - FLOOR_GAP);
-				}
-				meta[c * 4] = g[0];
-				meta[c * 4 + 1] = g[1];
-				meta[c * 4 + 2] = g[2];
-				meta[c * 4 + 3] = in.indoor != null && in.indoor[c] ? roofTop(x, z, g[0] - LOW) : NO_ROOF;
-			}
-		}
-		for (int cz = 0; cz < COLUMNS; ++cz)
-		{
-			for (int cx = 0; cx < COLUMNS; ++cx)
-			{
-				int c = cz * PITCH * SIZE + cx * PITCH;
-				for (int level = 0; level < LEVELS; ++level)
-				{
-					int i = probe(cx, cz, level);
-					float h = meta[c * 4 + level / 2] - (level % 2 == 0 ? LOW : HIGH);
-					position[i * 3] = (cx * PITCH + 0.5f) * TILE;
-					position[i * 3 + 1] = h;
-					position[i * 3 + 2] = (cz * PITCH + 0.5f) * TILE;
-					indoor[i] = h > meta[c * 4 + 3];
-				}
-			}
-		}
+		int tx = Math.max(0, Math.min(SIZE - 1, (int) Math.floor(x / TILE)));
+		int tz = Math.max(0, Math.min(SIZE - 1, (int) Math.floor(z / TILE)));
+		return tz * SIZE + tx;
 	}
 
-	/**
-	 * The roof line of a building column, world y: the bottom of the topmost voxel over it, searched from the given
-	 * height up (the roof's outer surface lies within that voxel); NO_ROOF when nothing is there.
-	 */
-	float roofTop(int x, int z, float from)
+	/** Lay out the candidate spots: ground probes first, so a scene with too many probes loses wall probes first. */
+	private void layout(Input in)
 	{
-		int top = Integer.MAX_VALUE;
-		int yStart = (int) Math.floor(from / GiGrid.VOXEL) - grid.layer0;
-		int yEnd = (int) Math.floor((from - ROOF_SEARCH) / GiGrid.VOXEL) - grid.layer0;
-		for (int vx = x * 2; vx <= x * 2 + 1; ++vx)
+		int tiles = SIZE * SIZE;
+		// each floor's ground per tile: a floor is at least FLOOR_GAP above the one below
+		float[][] floor = new float[FLOORS][tiles];
+		for (int c = 0; c < tiles; ++c)
 		{
-			for (int vz = z * 2; vz <= z * 2 + 1; ++vz)
+			floor[0][c] = in.ground[0][c];
+			for (int f = 1; f < FLOORS; ++f)
 			{
-				for (int y = Math.max(0, yEnd); y <= Math.min(grid.ny - 1, yStart); ++y)
+				float up = in.ground.length > f ? in.ground[f][c] : floor[f - 1][c] - FLOOR_GAP;
+				floor[f][c] = Math.min(up, floor[f - 1][c] - FLOOR_GAP);
+			}
+		}
+		position = new float[MAX_PROBES * 3];
+		outward = new float[MAX_PROBES * 2];
+		WallMap walls = in.walls;
+		int offset = walls != null ? walls.offset : 0;
+		for (int f = 0; f < FLOORS; ++f)
+		{
+			for (int z = 0; z < SIZE; ++z)
+			{
+				for (int x = 0; x < SIZE; ++x)
 				{
-					if (grid.occupied(vx, y, vz))
+					int c = z * SIZE + x;
+					// a diagonal wall's tile has its probes on the two sides of the wall
+					boolean blocked = walls != null && (walls.solid(f, x + offset, z + offset)
+						|| WallMap.split(walls.get(f, x + offset, z + offset)));
+					if (!blocked && hasFloor(x, z, floor[f][c]))
 					{
-						top = Math.min(top, y);
-						break;
+						add((x + 0.5f) * TILE, floor[f][c] - GROUND_HEIGHT, (z + 0.5f) * TILE, 0, 0);
 					}
 				}
 			}
 		}
-		return top == Integer.MAX_VALUE ? NO_ROOF : (top + 1 + grid.layer0) * (float) GiGrid.VOXEL;
+		if (walls != null)
+		{
+			for (int f = 0; f < FLOORS; ++f)
+			{
+				for (int z = 0; z < SIZE; ++z)
+				{
+					for (int x = 0; x < SIZE; ++x)
+					{
+						wallProbes(walls, floor, f, x, z);
+					}
+				}
+			}
+		}
+		position = Arrays.copyOf(position, count * 3);
+		outward = Arrays.copyOf(outward, count * 2);
+	}
+
+	private void add(float x, float y, float z, float outX, float outZ)
+	{
+		if (count < MAX_PROBES)
+		{
+			position[count * 3] = x;
+			position[count * 3 + 1] = y;
+			position[count * 3 + 2] = z;
+			outward[count * 2] = outX;
+			outward[count * 2 + 1] = outZ;
+			count++;
+		}
+	}
+
+	/** The wall probes of tile (x, z) on floor f: in front of each edge with a wall, a solid object or a diagonal wall. */
+	private void wallProbes(WallMap walls, float[][] floor, int f, int x, int z)
+	{
+		int ex = x + walls.offset, ez = z + walls.offset;
+		if (walls.solid(f, ex, ez))
+		{
+			return;
+		}
+		float ground = floor[f][z * SIZE + x];
+		// the walls of a floor end at the next one, if that has them too
+		float storey = f + 1 < FLOORS ? ground - floor[f + 1][z * SIZE + x] : WALL_MAX_HEIGHT;
+		float cx = (x + 0.5f) * TILE, cz = (z + 0.5f) * TILE;
+		for (int side : SIDES)
+		{
+			// the wall's side is toward the tile, its probes out from it into the tile
+			float outX = side == WallMap.EAST ? -1 : side == WallMap.WEST ? 1 : 0;
+			float outZ = side == WallMap.NORTH ? -1 : side == WallMap.SOUTH ? 1 : 0;
+			int nx = ex - (int) outX, nz = ez - (int) outZ;
+			boolean solid = walls.solid(f, nx, nz);
+			if (!solid && !walls.edge(f, ex, ez, side))
+			{
+				continue;
+			}
+			boolean above = f + 1 < FLOORS && (solid ? walls.solid(f + 1, nx, nz) : walls.edge(f + 1, ex, ez, side));
+			// the voxels on both sides of the edge, along the tile
+			int edgeX = Math.round((cx - outX * TILE / 2) / GiGrid.VOXEL), edgeZ = Math.round((cz - outZ * TILE / 2) / GiGrid.VOXEL);
+			float standing = standing(ground, outX != 0 ? edgeX - 1 : 2 * x, outX != 0 ? edgeX : 2 * x + 1,
+				outZ != 0 ? edgeZ - 1 : 2 * z, outZ != 0 ? edgeZ : 2 * z + 1);
+			wallColumn(cx + outX * (WALL_OFFSET - TILE / 2), cz + outZ * (WALL_OFFSET - TILE / 2), outX, outZ, ground,
+				Math.min(standing, above ? storey : WALL_MAX_HEIGHT), solid ? SOLID_HEIGHTS : Integer.MAX_VALUE);
+		}
+		int bits = walls.get(f, ex, ez);
+		if (WallMap.split(bits))
+		{
+			boolean above = f + 1 < FLOORS && WallMap.split(walls.get(f + 1, ex, ez));
+			float standing = standing(ground, 2 * x, 2 * x + 1, 2 * z, 2 * z + 1);
+			// the two sides of the diagonal: northwest and southeast of "/", northeast and southwest of "\"
+			float d = 0.70710678f;
+			float outX = (bits & WallMap.DIAG_SW_NE) != 0 ? -d : d;
+			for (int sign = -1; sign <= 1; sign += 2)
+			{
+				wallColumn(cx + sign * outX * WALL_OFFSET, cz + sign * d * WALL_OFFSET, sign * outX, sign * d, ground,
+					Math.min(standing, above ? storey : WALL_MAX_HEIGHT), Integer.MAX_VALUE);
+			}
+		}
+	}
+
+	private static final int[] SIDES = {WallMap.NORTH, WallMap.EAST, WallMap.SOUTH, WallMap.WEST};
+
+	/** A wall's probes at (x, z), out from the wall by (outX, outZ): from WALL_FIRST every WALL_SPACING up to height. */
+	private void wallColumn(float x, float z, float outX, float outZ, float ground, float height, int most)
+	{
+		int n = 0;
+		for (float h = WALL_FIRST; h <= height && n < most; h += WALL_SPACING, ++n)
+		{
+			add(x, ground - h, z, outX, outZ);
+		}
 	}
 
 	/**
-	 * Whether a column has a floor at height ground (world y): some geometry in its tiles within a voxel of it. The
-	 * ground floor always has one; the others are mostly open air, and probes there would only see the sky.
+	 * How high geometry stands above ground (world units; at most WALL_MAX_HEIGHT, a little less) in the voxel columns
+	 * x0..x1, z0..z1, going up from the ground while some voxel of the columns is filled; 0 if none is.
 	 */
-	private boolean hasFloor(int cx, int cz, float ground, int floor)
+	private float standing(float ground, int x0, int x1, int z0, int z1)
 	{
-		if (floor == 0)
+		float top = 0;
+		boolean started = false;
+		for (float h = -SCAN / 2; h <= WALL_MAX_HEIGHT; h += SCAN)
 		{
-			return true;
+			int y = (int) Math.floor((ground - h) / GiGrid.VOXEL) - grid.layer0;
+			boolean filled = false;
+			for (int vx = x0; vx <= x1 && !filled; ++vx)
+			{
+				for (int vz = z0; vz <= z1 && !filled; ++vz)
+				{
+					filled = grid.occupied(vx, y, vz);
+				}
+			}
+			if (filled)
+			{
+				top = h;
+				started = true;
+			}
+			else if (started || h > SCAN_START)
+			{
+				break;
+			}
 		}
+		return top;
+	}
+
+	/**
+	 * Whether a tile has a floor at height ground (world y): some geometry in its tile within a voxel of it. Without,
+	 * as in the open air of the upper floors, there is nothing to put a probe over.
+	 */
+	private boolean hasFloor(int x, int z, float ground)
+	{
 		int y0 = Math.floorDiv((int) (ground - GiGrid.VOXEL), GiGrid.VOXEL) - grid.layer0;
 		int y1 = Math.floorDiv((int) (ground + GiGrid.VOXEL / 2), GiGrid.VOXEL) - grid.layer0;
-		int span = PITCH * 2;
-		for (int vx = cx * span; vx < (cx + 1) * span; ++vx)
+		for (int vx = x * 2; vx < x * 2 + 2; ++vx)
 		{
-			for (int vz = cz * span; vz < (cz + 1) * span; ++vz)
+			for (int vz = z * 2; vz < z * 2 + 2; ++vz)
 			{
 				for (int y = y0; y <= y1; ++y)
 				{
@@ -300,43 +411,36 @@ final class GiProbes
 
 	private void trace(ParallelFor parallel)
 	{
-		parallel.run(COLUMNS * LEVELS, row ->
-		{
-			int level = row / COLUMNS, cz = row % COLUMNS;
-			for (int cx = 0; cx < COLUMNS; ++cx)
-			{
-				int i = row * COLUMNS + cx;
-				float ground = meta[(cz * PITCH * SIZE + cx * PITCH) * 4 + level / 2];
-				if (hasFloor(cx, cz, ground, level / 2))
-				{
-					traceProbe(i);
-				}
-				else
-				{
-					Arrays.fill(rays, i * RAYS, (i + 1) * RAYS, MISS);
-				}
-			}
-		});
+		valid = new boolean[count];
+		rays = new int[count * RAYS];
+		visibility = new float[count * VISIBILITY];
+		parallel.run(count, this::traceProbe);
 	}
 
 	/**
-	 * Find the best spot for probe i and trace its rays; leaves it invalid if none works. Every candidate spot out of
-	 * the geometry and near it is traced, and the probe takes the one whose rays see the backs of the fewest surfaces
-	 * (the one most in the open, with the most of the scene in front of it), the nearest of those within
-	 * WORSE_BACKFACE of the best.
+	 * Find the best spot for probe i and trace its rays; leaves it invalid if none works. Every candidate spot in the
+	 * base scene, out of the geometry and near it, not much nearer its wall, is traced, and the probe takes the one
+	 * whose rays see the backs of the fewest surfaces (the one most in the open, with the most of the scene in front
+	 * of it), the nearest of those within WORSE_BACKFACE of the best.
 	 */
 	void traceProbe(int i)
 	{
 		float[] dirs = DIRECTIONS[rotation(i)];
 		int base = i * RAYS;
 		float bx = position[i * 3], by = position[i * 3 + 1], bz = position[i * 3 + 2];
+		float outX = outward[i * 2], outZ = outward[i * 2 + 1];
 		int[] candidateRays = new int[RAYS], bestRays = new int[RAYS];
 		float[] candidateDistance = new float[RAYS], bestDistance = new float[RAYS];
 		int best = -1, bestBack = Integer.MAX_VALUE;
 		for (int k = 0; k < CANDIDATES.length; ++k)
 		{
 			float[] c = CANDIDATES[k];
-			float ox = (bx + c[0]) / GiGrid.VOXEL, oy = (by + c[1]) / GiGrid.VOXEL - grid.layer0, oz = (bz + c[2]) / GiGrid.VOXEL;
+			float wx = bx + c[0], wz = bz + c[2];
+			if (c[0] * outX + c[2] * outZ < -WALL_APPROACH || wx < 0 || wz < 0 || wx >= SIZE * TILE || wz >= SIZE * TILE)
+			{
+				continue;
+			}
+			float ox = wx / GiGrid.VOXEL, oy = (by + c[1]) / GiGrid.VOXEL - grid.layer0, oz = wz / GiGrid.VOXEL;
 			if (!nearGeometry(ox, oy, oz) || grid.occupied((int) Math.floor(ox), (int) Math.floor(oy), (int) Math.floor(oz)))
 			{
 				continue;
@@ -380,9 +484,6 @@ final class GiProbes
 		position[i * 3] = bx + c[0];
 		position[i * 3 + 1] = by + c[1];
 		position[i * 3 + 2] = bz + c[2];
-		place[i * PLACE] = c[0];
-		place[i * PLACE + 1] = c[1];
-		place[i * PLACE + 2] = c[2];
 	}
 
 	private static float sq(float v)
@@ -423,17 +524,17 @@ final class GiProbes
 		}
 	}
 
-	// Keep probes within one tile of captured scenery voxels, including the relocated origin.
-	private boolean nearGeometry(float x, float y, float z)
+	/** Whether a filled voxel lies within a voxel of the point (voxel units), which is what keeps probes out of open air. */
+	boolean nearGeometry(float x, float y, float z)
 	{
-		for (int iz = (int) Math.floor(z - 2); iz <= (int) Math.floor(z + 2); ++iz)
-		for (int iy = (int) Math.floor(y - 2); iy <= (int) Math.floor(y + 2); ++iy)
-		for (int ix = (int) Math.floor(x - 2); ix <= (int) Math.floor(x + 2); ++ix)
+		for (int iz = (int) Math.floor(z - 1); iz <= (int) Math.floor(z + 1); ++iz)
+		for (int iy = (int) Math.floor(y - 1); iy <= (int) Math.floor(y + 1); ++iy)
+		for (int ix = (int) Math.floor(x - 1); ix <= (int) Math.floor(x + 1); ++ix)
 		{
 			float dx = Math.max(Math.max(ix - x, x - ix - 1), 0);
 			float dy = Math.max(Math.max(iy - y, y - iy - 1), 0);
 			float dz = Math.max(Math.max(iz - z, z - iz - 1), 0);
-			if (dx * dx + dy * dy + dz * dz <= 4 && grid.occupied(ix, iy, iz)) return true;
+			if (dx * dx + dy * dy + dz * dz <= 1 && grid.occupied(ix, iy, iz)) return true;
 		}
 		return false;
 	}
@@ -507,11 +608,11 @@ final class GiProbes
 		out[at + 2] = Math.max(0, l + (b - l) * ALBEDO_SATURATION);
 	}
 
-	/** The valid probe nearest a world position, looking in its column and then the ones around; -1 if none. */
+	/** The usable probe nearest a world position, looking in its tile and then the ones around; -1 if none. */
 	int nearestProbe(float wx, float wy, float wz)
 	{
-		int cx = Math.max(0, Math.min(COLUMNS - 1, Math.round((wx / TILE - 0.5f) / PITCH)));
-		int cz = Math.max(0, Math.min(COLUMNS - 1, Math.round((wz / TILE - 0.5f) / PITCH)));
+		int tile = tileOf(wx, wz);
+		int cx = tile % SIZE, cz = tile / SIZE;
 		for (int ring = 0; ring <= 2; ++ring)
 		{
 			int best = -1;
@@ -520,17 +621,13 @@ final class GiProbes
 			{
 				for (int x = cx - ring; x <= cx + ring; ++x)
 				{
-					if (x < 0 || z < 0 || x >= COLUMNS || z >= COLUMNS || Math.max(Math.abs(x - cx), Math.abs(z - cz)) != ring)
+					if (x < 0 || z < 0 || x >= SIZE || z >= SIZE || Math.max(Math.abs(x - cx), Math.abs(z - cz)) != ring)
 					{
 						continue;
 					}
-					for (int l = 0; l < LEVELS; ++l)
+					for (int k = tileStart[z * SIZE + x]; k < tileStart[z * SIZE + x + 1]; ++k)
 					{
-						int i = probe(x, z, l);
-						if (!valid[i])
-						{
-							continue;
-						}
+						int i = tileProbes[k];
 						float dx = position[i * 3] - wx, dy = position[i * 3 + 1] - wy, dz = position[i * 3 + 2] - wz;
 						float d = dx * dx + dy * dy + dz * dz;
 						if (d < bestD)
@@ -547,6 +644,75 @@ final class GiProbes
 			}
 		}
 		return -1;
+	}
+
+	/**
+	 * File the usable probes by tile, and give every tile its list: the LIST probes nearest its center within
+	 * LIST_REACH, nearest first (by the distance along the ground, so each floor's probes of the tile come before the
+	 * neighbours'). A pixel in the tile finds its probes there.
+	 */
+	private void index()
+	{
+		int tiles = SIZE * SIZE;
+		tileStart = new int[tiles + 1];
+		for (int i = 0; i < count; ++i)
+		{
+			if (valid[i])
+			{
+				tileStart[tileOf(position[i * 3], position[i * 3 + 2]) + 1]++;
+			}
+		}
+		for (int t = 0; t < tiles; ++t)
+		{
+			tileStart[t + 1] += tileStart[t];
+		}
+		tileProbes = new int[tileStart[tiles]];
+		int[] fill = Arrays.copyOf(tileStart, tiles);
+		for (int i = 0; i < count; ++i)
+		{
+			if (valid[i])
+			{
+				tileProbes[fill[tileOf(position[i * 3], position[i * 3 + 2])]++] = i;
+			}
+		}
+		lists = new int[tiles * LIST];
+		Arrays.fill(lists, NONE);
+		float[] near = new float[LIST];
+		int reach = (int) Math.ceil(LIST_REACH / TILE);
+		for (int z = 0; z < SIZE; ++z)
+		{
+			for (int x = 0; x < SIZE; ++x)
+			{
+				float cx = (x + 0.5f) * TILE, cz = (z + 0.5f) * TILE;
+				int at = (z * SIZE + x) * LIST;
+				int n = 0;
+				for (int tz = Math.max(0, z - reach); tz <= Math.min(SIZE - 1, z + reach); ++tz)
+				{
+					for (int tx = Math.max(0, x - reach); tx <= Math.min(SIZE - 1, x + reach); ++tx)
+					{
+						for (int k = tileStart[tz * SIZE + tx]; k < tileStart[tz * SIZE + tx + 1]; ++k)
+						{
+							int i = tileProbes[k];
+							float d = sq(position[i * 3] - cx) + sq(position[i * 3 + 2] - cz);
+							if (d > LIST_REACH * LIST_REACH || n == LIST && d >= near[LIST - 1])
+							{
+								continue;
+							}
+							int e = Math.min(n, LIST - 1);
+							while (e > 0 && near[e - 1] > d)
+							{
+								near[e] = near[e - 1];
+								lists[at + e] = lists[at + e - 1];
+								e--;
+							}
+							near[e] = d;
+							lists[at + e] = i;
+							n = Math.min(n + 1, LIST);
+						}
+					}
+				}
+			}
+		}
 	}
 
 	/**
@@ -569,24 +735,6 @@ final class GiProbes
 					{
 						out[l][z * SIZE + x] = (h[ex][ez] + h[ex + 1][ez] + h[ex][ez + 1] + h[ex + 1][ez + 1]) / 4f;
 					}
-				}
-			}
-		}
-		return out;
-	}
-
-	/** Base tiles in any detected building room. */
-	static boolean[] indoorColumns(BuildingDetector.Result rooms, int offset)
-	{
-		boolean[] out = new boolean[SIZE * SIZE];
-		for (BuildingDetector.Room room : rooms.rooms)
-		{
-			for (int t : room.tiles)
-			{
-				int x = (t >>> 16) - offset, z = (t & 0xffff) - offset;
-				if (x >= 0 && z >= 0 && x < SIZE && z < SIZE)
-				{
-					out[z * SIZE + x] = true;
 				}
 			}
 		}

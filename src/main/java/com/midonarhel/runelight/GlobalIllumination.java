@@ -16,11 +16,11 @@ import org.slf4j.LoggerFactory;
 import static org.lwjgl.opengl.GL33C.*;
 
 /**
- * Global illumination from a world-space grid of irradiance probes over the base scene (GiProbes), each holding
- * the sun or moon light bounced off what its rays hit, as directional irradiance, and how far it sees in each axis
- * direction, so a surface reads the light on its own side from probes it can actually see; interiors and the
- * undersides of things darken (the sky's own light, past roofs, overhangs and walls, comes from the composite) and
- * sunlit ground warms the shade beside it.
+ * Global illumination from irradiance probes laid over the ground and along the walls of the base scene (GiProbes),
+ * each holding the sun or moon light bounced off what its rays hit, as directional irradiance, and how far it sees in
+ * each axis direction, so a surface reads the light on its own side from probes it can actually see; interiors and
+ * the undersides of things darken (the sky's own light, past roofs, overhangs and walls, comes from the composite)
+ * and sunlit ground warms the shade beside it, the foot of a wall in particular.
  *
  * Everything heavy runs on a worker thread. After a region load the zones' triangles (captured as they upload,
  * GiCapture) are voxelized, per zone so reused zones keep theirs (GiVoxels), and every probe traces its rays once
@@ -31,9 +31,10 @@ import static org.lwjgl.opengl.GL33C.*;
  * read back without stalling. Each new set of probes is uploaded at once (a few
  * megabytes) and blended in over about the time between relights, like the sky cache, so nothing pops.
  *
- * On the GPU the only steady cost is the lookup in the half resolution AO pass (gi.glsl, up to 6 small
- * texture fetches for each of the 8 probes around a pixel), whose result rides along in the AO target to the composite (halfres.glsl). Outside the base
- * scene, underground, and until the first probes are lit, the composite keeps its plain ambient light.
+ * On the GPU the only steady cost is the lookup in the half resolution AO pass (gi.glsl: the pixel's tile has a list
+ * of the probes near it, of which it reads the nearest few, at most 57 texture fetches in all), whose result rides
+ * along in the AO target to the composite (halfres.glsl). Outside the base scene, underground, and until the first
+ * probes are lit, the composite keeps its plain ambient light.
  */
 class GlobalIllumination
 {
@@ -48,12 +49,21 @@ class GlobalIllumination
 		.add(GL_VERTEX_SHADER, "composite_vert.glsl")
 		.add(GL_FRAGMENT_SHADER, "sky_cache_blend_frag.glsl");
 
-	// TEXELS texels per probe, side by side: its column across (times TEXELS), its level and column row down. The
-	// first three hold the light (GiRelight.SH floats), the next three how far it sees (GiProbes.VISIBILITY floats);
-	// a probe that isn't usable is all zero.
-	static final int TEXELS = (GiRelight.SH + GiProbes.VISIBILITY + GiProbes.PLACE) / 4;
-	static final int TEX_W = GiProbes.COLUMNS * TEXELS;
-	static final int TEX_H = GiProbes.COLUMNS * GiProbes.LEVELS;
+	// TEXELS texels per probe, side by side, ROW probes to a row: probe i at texels (i % ROW * TEXELS + k, i / ROW). The
+	// first three hold the light (GiRelight.SH floats), the next three how far it sees (GiProbes.VISIBILITY floats),
+	// the last where it stands (see texels); a slot without a usable probe is all zero. The size is the same for every
+	// scene, which is what lets the blend mix two lit sets texel for texel.
+	static final int TEXELS = (GiRelight.SH + GiProbes.VISIBILITY) / 4 + 1;
+	static final int ROW = 256;
+	static final int TEX_W = ROW * TEXELS;
+	static final int TEX_H = (GiProbes.MAX_PROBES + ROW) / ROW;
+	// a probe's x and z are stored from the corner of the CHUNK-unit square of the base scene it is in, which half
+	// floats keep to a half unit, and the square's coordinates (x + z * CHUNKS) with them
+	static final int CHUNK = 1024;
+	static final int CHUNKS = 16;
+	// the tile lists (GiProbes.lists) as texels of LIST / 4 indices, a tile's side by side, the tile rows down
+	static final int INDEX_TEXELS = GiProbes.LIST / 4;
+	static final int INDEX_W = GiProbes.SIZE * INDEX_TEXELS;
 	static final int SKY_ROWS = GiRelight.SKY_H + 1;
 
 	// relight when the light that casts shadows has turned this far
@@ -89,7 +99,7 @@ class GlobalIllumination
 		int generation;
 		int baseX, baseY;
 		boolean instance;
-		float[] meta;
+		short[] index;
 		short[] texels;
 	}
 
@@ -108,7 +118,7 @@ class GlobalIllumination
 	private int uniAoEnabled = -1, uniAoCamera = -1;
 
 	private final int[] probeTextures = new int[3];
-	private int metaTexture, probeFbo, skyTexture, skyFbo, pbo;
+	private int indexTexture, probeFbo, skyTexture, skyFbo, pbo;
 	private ShortBuffer staging;
 	private final float[] table = new float[GiRelight.TABLE_FLOATS];
 
@@ -238,14 +248,14 @@ class GlobalIllumination
 		skyProgram = blendProgram = 0;
 	}
 
-	/** Look up the AO program's uniforms; the probes go on probeUnit, the column data on probeUnit + 1. */
+	/** Look up the AO program's uniforms; the probes go on probeUnit, the tile lists on probeUnit + 1. */
 	void locateAo(int program, int probeUnit)
 	{
 		uniAoEnabled = glGetUniformLocation(program, "giEnabled");
 		uniAoCamera = glGetUniformLocation(program, "giCamera");
 		glUseProgram(program);
 		glUniform1i(glGetUniformLocation(program, "giProbes"), probeUnit);
-		glUniform1i(glGetUniformLocation(program, "giMeta"), probeUnit + 1);
+		glUniform1i(glGetUniformLocation(program, "giIndex"), probeUnit + 1);
 		glUseProgram(0);
 	}
 
@@ -270,10 +280,10 @@ class GlobalIllumination
 			glDeleteFramebuffers(probeFbo);
 			glDeleteFramebuffers(skyFbo);
 			glDeleteTextures(probeTextures);
-			glDeleteTextures(metaTexture);
+			glDeleteTextures(indexTexture);
 			glDeleteTextures(skyTexture);
 			glDeleteBuffers(pbo);
-			probeFbo = skyFbo = metaTexture = skyTexture = pbo = 0;
+			probeFbo = skyFbo = indexTexture = skyTexture = pbo = 0;
 			probeTextures[0] = probeTextures[1] = probeTextures[2] = 0;
 		}
 		if (fence != 0)
@@ -347,11 +357,12 @@ class GlobalIllumination
 	 *                     voxelize the scene and stop there
 	 * @param zones the top level scene's zones, [x][z] in extended zone coordinates
 	 * @param water the scene's water map, null with none
+	 * @param walls the walls of this very scene, null until they are known (the probes' build waits for them)
 	 * @param settings hash of what else the probes' light depends on
 	 * @param blendUnit, blendUnit + 1: free units for the blend
 	 */
 	void prepare(boolean enabled, boolean voxelsWanted, boolean outdoors, Scene scene, Zone[][] zones, WaterMap water,
-		DayCycle day, int skyCaptures, int settings, int blendUnit)
+		WallMap walls, DayCycle day, int skyCaptures, int settings, int blendUnit)
 	{
 		long now = System.currentTimeMillis();
 		float dt = Math.max(0, Math.min(0.1f, (now - weightMillis) / 1000f));
@@ -385,12 +396,12 @@ class GlobalIllumination
 		{
 			return;
 		}
-		if (buildRequested && now >= buildAfterMillis && scene != null && zones != null)
+		if (buildRequested && now >= buildAfterMillis && scene != null && zones != null && (walls != null || !enabled))
 		{
 			buildRequested = false;
 			lastBuildMillis = now;
 			submittedProbes = enabled;
-			submitBuild(scene, zones, water, enabled);
+			submitBuild(scene, zones, water, walls, enabled);
 		}
 		if (!enabled)
 		{
@@ -419,7 +430,7 @@ class GlobalIllumination
 					l.generation, shownBaseX, shownBaseY, l.baseX, l.baseY);
 				int target = shown < 0 ? 0 : (shown + 1) % 3;
 				uploadProbes(l, target);
-				uploadMeta(l.meta);
+				uploadIndex(l.index);
 				latest = from = shown = target;
 				blending = false;
 				shownGeneration = l.generation;
@@ -583,7 +594,7 @@ class GlobalIllumination
 		glActiveTexture(GL_TEXTURE0 + probeUnit);
 		glBindTexture(GL_TEXTURE_2D, probeTextures[shown]);
 		glActiveTexture(GL_TEXTURE0 + probeUnit + 1);
-		glBindTexture(GL_TEXTURE_2D, metaTexture);
+		glBindTexture(GL_TEXTURE_2D, indexTexture);
 		glActiveTexture(GL_TEXTURE0);
 	}
 
@@ -611,12 +622,12 @@ class GlobalIllumination
 		glGenTextures(probeTextures);
 		for (int tex : probeTextures)
 		{
-			texture(tex, GL_RGBA16F, TEX_W, TEX_H, GL_HALF_FLOAT);
+			texture(tex, GL_RGBA16F, TEX_W, TEX_H, GL_RGBA, GL_HALF_FLOAT);
 		}
-		metaTexture = glGenTextures();
-		texture(metaTexture, GL_RGBA32F, GiProbes.SIZE, GiProbes.SIZE, GL_FLOAT);
+		indexTexture = glGenTextures();
+		texture(indexTexture, GL_RGBA16UI, INDEX_W, GiProbes.SIZE, GL_RGBA_INTEGER, GL_UNSIGNED_SHORT);
 		skyTexture = glGenTextures();
-		texture(skyTexture, GL_RGBA32F, GiRelight.SKY_W, SKY_ROWS, GL_FLOAT);
+		texture(skyTexture, GL_RGBA32F, GiRelight.SKY_W, SKY_ROWS, GL_RGBA, GL_FLOAT);
 		glBindTexture(GL_TEXTURE_2D, 0);
 
 		probeFbo = glGenFramebuffers();
@@ -638,10 +649,10 @@ class GlobalIllumination
 		staging = BufferUtils.createShortBuffer(TEX_W * TEX_H * 4);
 	}
 
-	private static void texture(int tex, int internal, int w, int h, int type)
+	private static void texture(int tex, int internal, int w, int h, int format, int type)
 	{
 		glBindTexture(GL_TEXTURE_2D, tex);
-		glTexImage2D(GL_TEXTURE_2D, 0, internal, w, h, 0, GL_RGBA, type, (ByteBuffer) null);
+		glTexImage2D(GL_TEXTURE_2D, 0, internal, w, h, 0, format, type, (ByteBuffer) null);
 		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
 		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
 		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
@@ -669,13 +680,13 @@ class GlobalIllumination
 		glBindTexture(GL_TEXTURE_2D, 0);
 	}
 
-	private void uploadMeta(float[] meta)
+	private void uploadIndex(short[] index)
 	{
-		FloatBuffer b = BufferUtils.createFloatBuffer(meta.length);
-		b.put(meta).flip();
+		ShortBuffer b = BufferUtils.createShortBuffer(index.length);
+		b.put(index).flip();
 		glBindBuffer(GL_PIXEL_UNPACK_BUFFER, 0);
-		glBindTexture(GL_TEXTURE_2D, metaTexture);
-		glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, GiProbes.SIZE, GiProbes.SIZE, GL_RGBA, GL_FLOAT, b);
+		glBindTexture(GL_TEXTURE_2D, indexTexture);
+		glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, INDEX_W, GiProbes.SIZE, GL_RGBA_INTEGER, GL_UNSIGNED_SHORT, b);
 		glBindTexture(GL_TEXTURE_2D, 0);
 	}
 
@@ -758,7 +769,7 @@ class GlobalIllumination
 	}
 
 	/** Copy what the build needs from the scene, on the client thread, and queue it. */
-	private void submitBuild(Scene scene, Zone[][] zones, WaterMap waterMap, boolean withProbes)
+	private void submitBuild(Scene scene, Zone[][] zones, WaterMap waterMap, WallMap walls, boolean withProbes)
 	{
 		int g = ++generation;
 		int baseZone = RuneLightPlugin.SCENE_OFFSET >> 3;
@@ -783,55 +794,18 @@ class GlobalIllumination
 		GiWater water = GiWater.of(waterMap, scene.getTileHeights(), RuneLightPlugin.SCENE_OFFSET);
 		// the rest is for the probes only
 		in.ground = withProbes ? GiProbes.groundHeights(scene.getTileHeights(), RuneLightPlugin.SCENE_OFFSET) : null;
-		byte[][][] settings = withProbes ? copy(scene.getExtendedTileSettings()) : null;
-		int[][][] roofs = withProbes ? copy(scene.getRoofs()) : null;
+		in.walls = walls;
 		int baseX = scene.getBaseX(), baseY = scene.getBaseY();
 		boolean instance = scene.isInstance();
 		int[][][] heights = scene.getTileHeights();
 		SkyTerrain terrain = SkyTerrain.capture(scene, RuneLightPlugin.SCENE_OFFSET);
 		int zones2 = n;
-		submit(() -> build(g, list, zx, zz, zones2, baseZone, in, water, settings, roofs, baseX, baseY, instance, heights,
-			withProbes, terrain));
-	}
-
-	private static byte[][][] copy(byte[][][] a)
-	{
-		if (a == null)
-		{
-			return null;
-		}
-		byte[][][] c = new byte[a.length][][];
-		for (int i = 0; i < a.length; ++i)
-		{
-			c[i] = new byte[a[i].length][];
-			for (int j = 0; j < a[i].length; ++j)
-			{
-				c[i][j] = a[i][j].clone();
-			}
-		}
-		return c;
-	}
-
-	private static int[][][] copy(int[][][] a)
-	{
-		if (a == null)
-		{
-			return null;
-		}
-		int[][][] c = new int[a.length][][];
-		for (int i = 0; i < a.length; ++i)
-		{
-			c[i] = new int[a[i].length][];
-			for (int j = 0; j < a[i].length; ++j)
-			{
-				c[i][j] = a[i][j].clone();
-			}
-		}
-		return c;
+		submit(() -> build(g, list, zx, zz, zones2, baseZone, in, water, baseX, baseY, instance, heights, withProbes,
+			terrain));
 	}
 
 	private void build(int g, Zone[] list, int[] zx, int[] zz, int n, int baseZone, GiProbes.Input in, GiWater water,
-		byte[][][] settings, int[][][] roofs, int baseX, int baseY, boolean instance, int[][][] heights, boolean withProbes, SkyTerrain terrain)
+		int baseX, int baseY, boolean instance, int[][][] heights, boolean withProbes, SkyTerrain terrain)
 	{
 		if (g != generation)
 		{
@@ -868,7 +842,6 @@ class GlobalIllumination
 		{
 			return;
 		}
-		in.indoor = GiProbes.indoorColumns(BuildingDetector.detect(settings, roofs), RuneLightPlugin.SCENE_OFFSET);
 		GiProbes p = GiProbes.build(grid, in, parallel);
 		probes = p;
 		probesGeneration = g;
@@ -882,8 +855,7 @@ class GlobalIllumination
 		{
 			if (valid) ++activeProbes;
 		}
-		log.debug("GI probes: {} / {} active, {}-unit spacing, one-tile scenery cutoff",
-			activeProbes, GiProbes.PROBES, GiProbes.PITCH * GiProbes.TILE);
+		log.debug("GI probes: {} of {} candidate spots usable", activeProbes, p.count);
 		log.debug("GI build {}: voxelized {} zones in {} ms, grid {}x{}x{}, {} hit voxels, traced in {} ms", g, voxelized,
 			(voxelTime - start) / 1_000_000, grid.nx, grid.ny, grid.nz, p.hits, (System.nanoTime() - voxelTime) / 1_000_000);
 		if (lastInput != null)
@@ -913,24 +885,24 @@ class GlobalIllumination
 		l.baseX = probesBaseX;
 		l.baseY = probesBaseY;
 		l.instance = probesInstance;
-		l.meta = p.meta;
-		l.texels = texels(result.shown, p.visibility, p.place);
+		l.index = indexTexels(p.lists);
+		l.texels = texels(p.count, result.shown, p.visibility, p.position);
 		lit = l;
 		log.trace("GI relight in {} ms", (System.nanoTime() - start) / 1_000_000);
 	}
 
 
 	/**
-	 * The probes as the probe texture's half floats. Probe i lies at texels (its column x * TEXELS + 0..TEXELS-1, its
-	 * level * COLUMNS + its column z), as GiProbes.probe numbers them: its light, then its visibility, then where it
-	 * stands. Probes that aren't usable have no light and no visibility, which gi.glsl reads as no probe.
+	 * The probes as the probe texture's half floats. Probe i lies at texels (i % ROW * TEXELS + 0..TEXELS-1, i / ROW):
+	 * its light, then its visibility, then where it stands: x and z from the corner of its CHUNK square, y, and the
+	 * square (x + z * CHUNKS). Probes that aren't usable have no visibility, and are in no tile's list.
 	 */
-	static short[] texels(float[] light, float[] visibility, float[] place)
+	static short[] texels(int count, float[] light, float[] visibility, float[] position)
 	{
 		short[] out = new short[TEX_W * TEX_H * 4];
-		for (int i = 0; i < GiProbes.PROBES; ++i)
+		for (int i = 0; i < count; ++i)
 		{
-			int at = ((i / GiProbes.COLUMNS) * TEX_W + i % GiProbes.COLUMNS * TEXELS) * 4;
+			int at = ((i / ROW) * TEX_W + i % ROW * TEXELS) * 4;
 			for (int k = 0; k < GiRelight.SH; ++k)
 			{
 				out[at + k] = toHalf(light[i * GiRelight.SH + k]);
@@ -939,10 +911,23 @@ class GlobalIllumination
 			{
 				out[at + GiRelight.SH + k] = toHalf(visibility[i * GiProbes.VISIBILITY + k]);
 			}
-			for (int k = 0; k < GiProbes.PLACE; ++k)
-			{
-				out[at + GiRelight.SH + GiProbes.VISIBILITY + k] = toHalf(place[i * GiProbes.PLACE + k]);
-			}
+			int p = at + GiRelight.SH + GiProbes.VISIBILITY;
+			int cx = (int) Math.floor(position[i * 3] / CHUNK), cz = (int) Math.floor(position[i * 3 + 2] / CHUNK);
+			out[p] = toHalf(position[i * 3] - cx * CHUNK);
+			out[p + 1] = toHalf(position[i * 3 + 1]);
+			out[p + 2] = toHalf(position[i * 3 + 2] - cz * CHUNK);
+			out[p + 3] = toHalf(cx + cz * CHUNKS);
+		}
+		return out;
+	}
+
+	/** The tile lists as the index texture's unsigned shorts: the same order, a tile's LIST indices after another's. */
+	static short[] indexTexels(int[] lists)
+	{
+		short[] out = new short[lists.length];
+		for (int i = 0; i < lists.length; ++i)
+		{
+			out[i] = (short) lists[i];
 		}
 		return out;
 	}

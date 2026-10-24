@@ -80,6 +80,12 @@ class BuildingLights
 		return walls;
 	}
 
+	/** The walls of this scene, null until they are built for it (the scene's place counts). */
+	WallMap getWalls(Scene scene)
+	{
+		return scene != null && scene == builtFor && scene.getBaseX() == builtBaseX && scene.getBaseY() == builtBaseY ? walls : null;
+	}
+
 	/** Which planes have a floor on each extended tile (floorTiles), null before a scene is built. */
 	byte[] getFloors()
 	{
