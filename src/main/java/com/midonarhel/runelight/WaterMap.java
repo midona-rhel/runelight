@@ -703,6 +703,14 @@ final class WaterMap
 				}
 			}
 		}
+		int cells = 0;
+		for (boolean m : marked)
+		{
+			cells += m ? 1 : 0;
+		}
+		// TEMP diagnostic: is the contact map (foam round things in the water) empty?
+		org.slf4j.LoggerFactory.getLogger(WaterMap.class).info("Water contact: {} cells marked, previous map {}", cells,
+			contact != null ? "kept" : "none");
 		if (!any)
 		{
 			return;
