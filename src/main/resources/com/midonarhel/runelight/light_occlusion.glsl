@@ -30,13 +30,15 @@ float skyUpsampled = 1.0;
 #define LIGHT_ROOF_FACING_HIGH 0.35
 
 // The patches' light is the light that reached the surface by bouncing, as irradiance in the units of the ambient light
-// (GiRelight). The form factors keep it physical, which is faint: a patch standing in sunlit grass gathers about a third
-// of the grass' albedo times the sun's light, and the game's albedos are dim, so the bounce is a few hundredths of the
-// ambient light where the colors should show. This is how many times stronger than that it is shown: enough that, on a
-// surface in shade, the bounce is about as strong as the ambient light, since the surface's own albedo dims it again in
-// the final color. It is added after the light has gone through the half resolution target and its range, so it clamps
-// nothing there.
-#define BOUNCE_GAIN 12.0
+// (GiRelight). The form factors keep it physical, which is faint: a wall standing in sunlit grass gathers about a third
+// of the grass' albedo times the sun's light, and the game's grass is dark (albedo ~0.07), so it gets ~0.04, against an
+// ambient plus daylight fill of 0.5 to 2 on a wall in shade. This is how many times stronger it is shown, so that the
+// grass' bounce is as strong as the rest of the light there and its color shows. Bright surfaces would bounce far more
+// at that gain: the bounce's brightness is held to BOUNCE_MAX (luminance) before the strength setting scales it, which
+// keeps their color and stops a white courtyard from glowing. Added after the half resolution target and its range, so
+// it clamps nothing there.
+#define BOUNCE_GAIN 40.0
+#define BOUNCE_MAX 1.2
 
 // plain: the ambient plus sky light a surface would get under the open sky
 vec3 skylightAmbient(vec3 plain) {
@@ -49,7 +51,12 @@ vec3 skylightAmbient(vec3 plain) {
 // sunlight, so it goes with the area's sun (envSun), not its ambient, and the AO doesn't darken it: the creases the AO
 // finds are where the surfaces it comes off meet.
 vec3 giBounce(vec3 gi, float giW) {
-  return skylightMode == 2 ? gi * (giW * BOUNCE_GAIN) * envSun : vec3(0.0);
+  if (skylightMode != 2) {
+    return vec3(0.0);
+  }
+  vec3 b = gi * BOUNCE_GAIN;
+  float l = overcastLuma(b);
+  return b * (min(l, BOUNCE_MAX) / max(l, 1e-4)) * giW * envSun;
 }
 
 // Inside a building the skylight is the light flowed in through its openings (SkyField), and what comes in through a
