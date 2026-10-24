@@ -224,7 +224,8 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 	// own path: a GPU gives a program the registers of its heaviest path, and the full resolution composite paid for
 	// the cloud march and the water's reflections. The passes share their uniforms, set on each before it draws
 	// (useComposite).
-	private static final int COMPOSITE_FULL = 0, COMPOSITE_CLOUDS = 1, COMPOSITE_WATER = 2, COMPOSITE_CLOUDS_WATER = 3;
+	private static final int COMPOSITE_FULL = 0, COMPOSITE_CLOUDS = 1, COMPOSITE_WATER = 2, COMPOSITE_CLOUDS_WATER = 3,
+		COMPOSITE_EDGES = 4;
 
 	/** One of the composite's programs and its uniforms. */
 	private static final class CompositeProgram
@@ -257,7 +258,10 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 	private final CompositeProgram compositeClouds = new CompositeProgram(COMPOSITE_CLOUDS);
 	private final CompositeProgram compositeWater = new CompositeProgram(COMPOSITE_WATER);
 	private final CompositeProgram compositeCloudsWater = new CompositeProgram(COMPOSITE_CLOUDS_WATER);
-	private final CompositeProgram[] composites = {compositeFull, compositeClouds, compositeWater, compositeCloudsWater};
+	// with MSAA, the second surface of the pixels that have two, blended over the full pass
+	private final CompositeProgram compositeEdges = new CompositeProgram(COMPOSITE_EDGES);
+	private final CompositeProgram[] composites = {compositeFull, compositeClouds, compositeWater, compositeCloudsWater,
+		compositeEdges};
 	private static final int COMPOSITE_PARTS_UNIT = 31;
 	// this frame's time for the composite's passes, seconds since the start
 	private float compositeTime;
@@ -3069,8 +3073,17 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		glClear(GL_COLOR_BUFFER_BIT);
 		gpuTimer.begin(GpuTimer.COMPOSITE);
 		glDrawArrays(GL_TRIANGLES, 0, 3);
-		gpuTimer.end();
 		glUniform1i(compositeFull.part, 0);
+		if (shaderSamples > 0)
+		{
+			// the second surfaces, over the first by their share of the samples; the target's alpha stays
+			useComposite(compositeEdges);
+			glEnable(GL_BLEND);
+			glBlendFuncSeparate(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA, GL_ZERO, GL_ONE);
+			glDrawArrays(GL_TRIANGLES, 0, 3);
+			glDisable(GL_BLEND);
+		}
+		gpuTimer.end();
 		glActiveTexture(GL_TEXTURE0 + COMPOSITE_PARTS_UNIT);
 		glBindTexture(GL_TEXTURE_2D_ARRAY, 0);
 		glActiveTexture(GL_TEXTURE0);

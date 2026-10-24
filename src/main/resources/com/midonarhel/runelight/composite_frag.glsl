@@ -2,11 +2,14 @@
 
 // Runs once per pixel over the finished scene: sky, lighting, shadows, AO and fog. Compiled once for each of its
 // passes (RuneLightPlugin.CompositeProgram), so that each program holds only its own path: the full resolution
-// composite, and at half resolution the clouds and the water, apart or, when both are drawn, in one pass.
+// composite, and at half resolution the clouds and the water, apart or, when both are drawn, in one pass. With MSAA
+// the full resolution one shades each pixel's first surface, and a second pass (COMPOSITE_EDGES) blends the second one
+// over the pixels that have one.
 #define COMPOSITE_FULL 0
 #define COMPOSITE_CLOUDS 1
 #define COMPOSITE_WATER 2
 #define COMPOSITE_CLOUDS_WATER 3
+#define COMPOSITE_EDGES 4
 #include composite_pass
 
 #include "frame.glsl"
@@ -542,13 +545,14 @@ vec4 shadeScene(ivec2 px, SceneSample sm, vec4 transparent) {
 #define MSAA_NORMAL_TOLERANCE 0.03
 #define MSAA_MATERIAL_TOLERANCE 0.05
 
-// The scene pixel, shaded by its surfaces: the samples that agree with sample 0 (depth, normal and material) are one
-// surface, all the others a second, each shaded once with the mean of its samples' colors (the second with its first
-// sample's depth, normal and material) and weighted by its share of the samples. Where the pixel is one surface that is
-// the single shading the no-MSAA path does, with the colors antialiased; at a silhouette against the sky, or a fold
-// between faces, each side is lit with its own values and the lit results are averaged, not the normals. Two surfaces
-// at most, and no loop around the shading: the full shading inlined once more stays cheap for the compiler, a loop
-// around it made every pixel pay for it.
+// A pixel's samples are split into two surfaces: the samples that agree with sample 0 (depth, normal and material)
+// are one, all the others a second, each shaded with the mean of its samples' colors (the second with its first
+// sample's depth, normal and material) and weighted by its share of the samples. Where the pixel is one surface that
+// is the single shading the no-MSAA path does, with the colors antialiased; at a silhouette against the sky, or a fold
+// between faces, each side is lit with its own values and the lit results are averaged, not the normals. The full
+// pass shades the first surface of every pixel, the edge pass (COMPOSITE_EDGES) the second where there is one, blended
+// over it by its share: each program holds the shading once, so the pixels that are one surface pay no more than
+// without MSAA. Both in one program, the shading inlined twice, the composite took nine times as long.
 bool sameSurface(SceneSample a, float vz, ivec2 px, int t) {
   float dt = texelFetch(sceneDepth, px, t).r;
   if (isSky(dt) != isSky(a.depth) || (!isSky(dt) && abs(viewDepth(dt) - vz) > MSAA_DEPTH_TOLERANCE * vz)) {
@@ -558,36 +562,49 @@ bool sameSurface(SceneSample a, float vz, ivec2 px, int t) {
     && all(lessThanEqual(abs(texelFetch(sceneMaterial, px, t) - a.material), vec4(MSAA_MATERIAL_TOLERANCE)));
 }
 
+#if COMPOSITE_PASS == COMPOSITE_EDGES
+// the second surface, its share of the samples in alpha; none: discarded
 vec4 shadeSamples(ivec2 px, vec4 transparent) {
   SceneSample first = sceneSample(px, 0);
   float vz = viewDepth(first.depth);
-  vec4 colorsA = first.color;
-  vec4 colorsB = vec4(0.0);
-  int countA = 1;
+  vec4 colors = vec4(0.0);
+  int count = 0;
   int other = -1;
   for (int t = 1; t < MSAA_SAMPLES; ++t) {
-    if (sameSurface(first, vz, px, t)) {
-      colorsA += texelFetch(sceneColor, px, t);
-      ++countA;
-    } else {
-      colorsB += texelFetch(sceneColor, px, t);
+    if (!sameSurface(first, vz, px, t)) {
+      colors += texelFetch(sceneColor, px, t);
+      ++count;
       other = other < 0 ? t : other;
     }
   }
-  first.color = colorsA / float(countA);
-  vec4 lit = shadeScene(px, first, transparent);
   if (other < 0) {
-    return lit;
+    discard;
   }
   SceneSample second = sceneSample(px, other);
-  int countB = MSAA_SAMPLES - countA;
-  second.color = colorsB / float(countB);
-  return (lit * float(countA) + shadeScene(px, second, transparent) * float(countB)) / float(MSAA_SAMPLES);
+  second.color = colors / float(count);
+  return vec4(shadeScene(px, second, transparent).rgb, float(count) / float(MSAA_SAMPLES));
 }
+#else
+// the first surface
+vec4 shadeSamples(ivec2 px, vec4 transparent) {
+  SceneSample first = sceneSample(px, 0);
+  float vz = viewDepth(first.depth);
+  vec4 colors = first.color;
+  int count = 1;
+  for (int t = 1; t < MSAA_SAMPLES; ++t) {
+    if (sameSurface(first, vz, px, t)) {
+      colors += texelFetch(sceneColor, px, t);
+      ++count;
+    }
+  }
+  first.color = colors / float(count);
+  return shadeScene(px, first, transparent);
+}
+#endif
 #endif
 
 void main() {
-#if COMPOSITE_PASS != COMPOSITE_FULL
+#if COMPOSITE_PASS != COMPOSITE_FULL && COMPOSITE_PASS != COMPOSITE_EDGES
   // the half resolution passes: the clouds, the water's surface (water.glsl), or both
 #if COMPOSITE_PASS != COMPOSITE_WATER
   FragColor = cloudsHalf();
