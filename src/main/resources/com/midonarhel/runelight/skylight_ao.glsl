@@ -39,8 +39,9 @@ uniform vec4 skyFieldMap;
 // Faces that aren't walls and face up or down (the ground at a wall's foot, the ledges of an inset brick pattern) only
 // ever stray past a wall's outer face by a few units: within SKY_FOOT_REACH of the edge of a room tile, where the tile
 // across that edge is out of doors, they are out of doors too. Facing down they read where they are (an eave's
-// underside sees no sky).
-#define SKY_FOOT_REACH 8.0
+// underside sees no sky). Kept to the width of an inset: where a wall stands in the tile outside, the room's own
+// floor runs up to the edge, and a wider reach lights a line along the wall's foot inside.
+#define SKY_FOOT_REACH 3.0
 // how much of the traced darkening is kept out of doors
 #define SKY_OUTDOOR_STRENGTH 0.35
 // what a corner behind the surface still counts for, against 1 for one well in front: only enough that a pixel with
