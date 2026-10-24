@@ -47,6 +47,9 @@ uniform vec4 skyFieldMap;
 // An upward face at the top of the scenery over its tile (a roof, a wall's top: within SKY_TOP_SLACK of the highest
 // traced point) is out of doors, whatever storey's room lies under it.
 #define SKY_TOP_SLACK 48.0
+// world units above a storey's floor over which a face goes from the room to the roof over it (a storey's walls are
+// about 240 high)
+#define SKY_ROOF_ABOVE vec2(190.0, 240.0)
 
 // Read one height without crossing a tile's wall. Diagonal halves have their own three actual corners. A corner counts
 // by how far its traced point lies in front of the surface (w, grid coordinates, along n): one behind the surface or
@@ -152,6 +155,11 @@ float skyGridVisibility(sampler3D grid, float scale, vec3 w, vec3 n) {
   // normal offset already selects the exposed side. Do not move a roof lip into the room below.
   for (int k = 1; k < 4; ++k) if (w.y <= roomFloors[k]) roomPlane = k;
   float exterior = (roomMask & (1 << roomPlane)) == 0 ? 1.0 : 0.0;
+  // A face that isn't a ceiling, higher above its storey's floor than a storey's walls stand, is on the roof over that
+  // storey: out of doors, however low it slopes down.
+  if (exterior < 1.0 && n.y < 0.3) {
+    exterior = smoothstep(SKY_ROOF_ABOVE.x, SKY_ROOF_ABOVE.y, roomFloors[roomPlane] - w.y);
+  }
   if (exterior < 1.0 && n.y < -0.3) {
     // an upward face near the top of the scenery is out of doors, whatever room lies under it (a roof, a wall's
     // top). The top is the highest traced point over the tile, blended between its corners like the values, and
@@ -168,7 +176,8 @@ float skyGridVisibility(sampler3D grid, float scale, vec3 w, vec3 n) {
     }
     if (topWeight > 0.0001) {
       top /= topWeight;
-      exterior = (1.0 - smoothstep(top + SKY_TOP_SLACK, top + 2.0 * SKY_TOP_SLACK, w.y)) * smoothstep(0.3, 0.7, -n.y);
+      exterior = max(exterior, (1.0 - smoothstep(top + SKY_TOP_SLACK, top + 2.0 * SKY_TOP_SLACK, w.y))
+        * smoothstep(0.3, 0.7, -n.y));
     }
   }
   float lower = skyGridLevel(grid, scale, tile, f, lo, loDiagonal, n, w);
@@ -187,7 +196,7 @@ float skyGridVisibility(sampler3D grid, float scale, vec3 w, vec3 n) {
       if (original < 0.0) original = max(0.0, skyGridLevel(grid, scale, tile, f, 9, 0, n, w));
     }
   }
-  if (exterior > 0.0 && n.y < 0.0) {
+  if (exterior > 0.0) {
     vec2 a = skySurfaceLevel(grid, scale, tile, f, lo, loDiagonal, w, n);
     vec2 b = skySurfaceLevel(grid, scale, tile, f, hi, hiDiagonal, w, n);
     vec2 total = mix(a, b, blend);
