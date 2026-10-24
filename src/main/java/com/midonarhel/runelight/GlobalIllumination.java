@@ -23,8 +23,7 @@ import static org.lwjgl.opengl.GL33C.*;
  *
  * Everything heavy runs on a worker thread. After a region load the zones' triangles (captured as they upload,
  * GiCapture) are voxelized, per zone so reused zones keep theirs (GiVoxels), and every probe traces its rays once
- * (GiProbes). The skylight traces the same voxels (SkyGrid), so with the probes off the builds still voxelize the
- * scene for it and stop there. Relighting the probes from that hit cache (GiRelight) takes tens of milliseconds and
+ * (GiProbes). Relighting the probes from that hit cache (GiRelight) takes tens of milliseconds and
  * happens when the sky cache captures, the sun or moon has moved RELIGHT_DEGREES, the weather or settings change, or
  * every MAX_RELIGHT_MILLIS. The light it needs from the sky is drawn on the GPU into a tiny table (gi_sky_frag.glsl) and
  * read back without stalling. Each new set of probes is uploaded at once (a few
@@ -160,36 +159,6 @@ class GlobalIllumination
 	private float[] lastLight;
 	private int lastLightGeneration = -1;
 	private LightInput lastInput;
-	// whether the last build submitted traces the probes, or only voxelizes the scene for the skylight
-	private boolean submittedProbes;
-	private volatile Voxels voxels;
-
-	/** The scene's voxels as a build left them, for the skylight's grid (SkyGrid). */
-	static final class Voxels
-	{
-		final GiGrid grid;
-		SkyTerrain terrain;
-		final int baseX, baseY;
-		final boolean instance;
-		// the scene's corner heights, [level][extended x][extended z]
-		final int[][][] heights;
-
-		Voxels(GiGrid grid, int baseX, int baseY, boolean instance, int[][][] heights)
-		{
-			this.grid = grid;
-			this.baseX = baseX;
-			this.baseY = baseY;
-			this.instance = instance;
-			this.heights = heights;
-		}
-	}
-
-	/** The newest voxels, null before the first build; a new object after every build. */
-	Voxels getVoxels()
-	{
-		return voxels;
-	}
-
 	Programs compile(Template template) throws ShaderException
 	{
 		int s = SKY_PROGRAM.compile(template);
@@ -344,14 +313,12 @@ class GlobalIllumination
 	 * viewport and program; expects a VAO bound.
 	 *
 	 * @param enabled whether the probes run
-	 * @param voxelsWanted whether the scene's voxels are wanted without the probes too (the skylight): builds then
-	 *                     voxelize the scene and stop there
 	 * @param zones the top level scene's zones, [x][z] in extended zone coordinates
 	 * @param water the scene's water map, null with none
 	 * @param settings hash of what else the probes' light depends on
 	 * @param blendUnit, blendUnit + 1: free units for the blend
 	 */
-	void prepare(boolean enabled, boolean voxelsWanted, boolean outdoors, Scene scene, Zone[][] zones, WaterMap water,
+	void prepare(boolean enabled, boolean outdoors, Scene scene, Zone[][] zones, WaterMap water,
 		DayCycle day, int skyCaptures, int settings, int blendUnit)
 	{
 		long now = System.currentTimeMillis();
@@ -369,12 +336,6 @@ class GlobalIllumination
 				// off at once: easing out made the switch look like it did nothing
 				weight = 0;
 			}
-			else if (!submittedProbes)
-			{
-				// the last build only voxelized the scene
-				buildRequested = true;
-				buildAfterMillis = 0;
-			}
 			if (enabled && shown >= 0)
 			{
 				awaitingFresh = true;
@@ -390,7 +351,7 @@ class GlobalIllumination
 		{
 			easeSeconds = WEIGHT_SECONDS;
 		}
-		if (!enabled && !voxelsWanted)
+		if (!enabled)
 		{
 			return;
 		}
@@ -398,12 +359,7 @@ class GlobalIllumination
 		{
 			buildRequested = false;
 			lastBuildMillis = now;
-			submittedProbes = enabled;
-			submitBuild(scene, zones, water, enabled);
-		}
-		if (!enabled)
-		{
-			return;
+			submitBuild(scene, zones, water);
 		}
 		if (probeFbo == 0)
 		{
@@ -777,7 +733,7 @@ class GlobalIllumination
 	}
 
 	/** Copy what the build needs from the scene, on the client thread, and queue it. */
-	private void submitBuild(Scene scene, Zone[][] zones, WaterMap waterMap, boolean withProbes)
+	private void submitBuild(Scene scene, Zone[][] zones, WaterMap waterMap)
 	{
 		int g = ++generation;
 		int baseZone = RuneLightPlugin.SCENE_OFFSET >> 3;
@@ -800,17 +756,13 @@ class GlobalIllumination
 		}
 		GiProbes.Input in = new GiProbes.Input();
 		GiWater water = GiWater.of(waterMap, scene.getTileHeights(), RuneLightPlugin.SCENE_OFFSET);
-		// the rest is for the probes only
-		in.ground = withProbes ? GiProbes.groundHeights(scene.getTileHeights(), RuneLightPlugin.SCENE_OFFSET) : null;
-		byte[][][] settings = withProbes ? copy(scene.getExtendedTileSettings()) : null;
-		int[][][] roofs = withProbes ? copy(scene.getRoofs()) : null;
+		in.ground = GiProbes.groundHeights(scene.getTileHeights(), RuneLightPlugin.SCENE_OFFSET);
+		byte[][][] settings = copy(scene.getExtendedTileSettings());
+		int[][][] roofs = copy(scene.getRoofs());
 		int baseX = scene.getBaseX(), baseY = scene.getBaseY();
 		boolean instance = scene.isInstance();
-		int[][][] heights = scene.getTileHeights();
-		SkyTerrain terrain = SkyTerrain.capture(scene, RuneLightPlugin.SCENE_OFFSET);
 		int zones2 = n;
-		submit(() -> build(g, list, zx, zz, zones2, baseZone, in, water, settings, roofs, baseX, baseY, instance, heights,
-			withProbes, terrain));
+		submit(() -> build(g, list, zx, zz, zones2, baseZone, in, water, settings, roofs, baseX, baseY, instance));
 	}
 
 	private static byte[][][] copy(byte[][][] a)
@@ -850,7 +802,7 @@ class GlobalIllumination
 	}
 
 	private void build(int g, Zone[] list, int[] zx, int[] zz, int n, int baseZone, GiProbes.Input in, GiWater water,
-		byte[][][] settings, int[][][] roofs, int baseX, int baseY, boolean instance, int[][][] heights, boolean withProbes, SkyTerrain terrain)
+		byte[][][] settings, int[][][] roofs, int baseX, int baseY, boolean instance)
 	{
 		if (g != generation)
 		{
@@ -875,18 +827,11 @@ class GlobalIllumination
 		});
 		long voxelTime = System.nanoTime();
 		GiGrid grid = GiGrid.assemble(voxels, zx, zz, baseZone, water);
-		Voxels result = new Voxels(grid, baseX, baseY, instance, heights);
-		result.terrain = terrain;
-		this.voxels = result;
 		long gridTime = System.nanoTime();
 		log.info("Voxel build {}: {} new / {} zones, voxelize {} ms, assemble {} ms, total {} ms; {}-unit cells, {}x{}x{}, {} MiB cells",
 			g, voxelized.get(), n, (voxelTime - start) / 1_000_000.0, (gridTime - voxelTime) / 1_000_000.0,
 			(gridTime - start) / 1_000_000.0, GiGrid.VOXEL, grid.nx, grid.ny, grid.nz,
 			grid.cells.length * 4L / (1024.0 * 1024.0));
-		if (!withProbes)
-		{
-			return;
-		}
 		in.indoor = GiProbes.indoorColumns(BuildingDetector.detect(settings, roofs), RuneLightPlugin.SCENE_OFFSET);
 		GiProbes p = GiProbes.build(grid, in, parallel);
 		probes = p;

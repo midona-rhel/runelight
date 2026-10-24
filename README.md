@@ -193,15 +193,23 @@ which area averaging and textures pull toward it.
 
 ## Skylight and light occlusion
 
-Plugin config, Skylight and light occlusion section. Lighting model Skylight (default) replaces the probes with a
-sky visibility ray traced through the global illumination's voxels (`SkyGrid.java`, `SkyGridMap.java`; built for it
-even with the probes off) on a worker thread, a few thousand rays a frame nearest the player first: at every tile
-corner, three heights above each floor, how much sky is seen toward up and the four sides. Every tile keeps its own
-four corner values, shared with its neighbors only where no wall stands between them, so nothing leaks through walls.
-The AO pass reads a pixel's tile and weighs the directions by its normal (`skylight_ao.glsl`, in the half resolution
-shadow target's alpha), and the composite scales the ambient and sky light by it (`light_occlusion.glsl`). "Skylight + GI bounce" adds, in color, the light the probes find bounced off surfaces (the probes then carry only the
-rays that hit something, no sky), keeping `BOUNCE_BRIGHTNESS` of its brightness so the exposure stays near the plain
-skylight's while the shade takes the colors of the ground and water beside it.
+Plugin config, Skylight and light occlusion section. Lighting model Skylight (default) replaces the probes with
+sky probes (`SkyProbes.java`): a dense grid of L1 spherical harmonics of the sky's visibility, half a tile apart over
+80 x 80 tiles around the player, ten layers high that follow the ground (a 3D RGBA16F texture, wrapped like a torus so
+walking only replaces the far edge). They are worked out on the GPU by fragment passes (`sky_probes_frag.glsl`; no
+compute shaders), one fragment a probe: 24 rays over the upper hemisphere, turned and jittered every update, marched
+12 steps out to 32 tiles against the top-down map of the scenery (`OcclusionMap.java`, which the weather uses too; the
+highest scenery in each column, roofs included). Two of the ten layers are updated each frame and blended in 10% at a
+time with the fixed function blender, so they converge in a second or two without flicker; probes new to the window
+are worked out with a third more rays and written as they are. Under a roof the map blocks every ray, rooms are lit by the
+light flowing in through their openings (`SkyField.java`) instead.
+The AO pass looks a pixel up half a probe spacing off its surface, trilinearly over the four columns and two layers
+around it, and evaluates the harmonics for its normal, cosine weighted and scaled so that under the open sky it is 1
+whichever way it faces (`skylight_ao.glsl`, in the half resolution shadow target's alpha); probes inside a roof's
+thickness or on the other side of a wall do not count for it. The composite scales the ambient and sky light by it
+(`light_occlusion.glsl`). "Skylight + GI bounce" adds, in color, the light the probes find bounced off surfaces (the
+probes then carry only the rays that hit something, no sky), keeping `BOUNCE_BRIGHTNESS` of its brightness so the
+exposure stays near the plain skylight's while the shade takes the colors of the ground and water beside it.
 Debug view "Skylight" shows it.
 
 Walls (`WallMap.java`) come from the collision map's line-of-sight edges plus the diagonal wall objects; rooms split
