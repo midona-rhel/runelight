@@ -13,26 +13,25 @@
 // aren't perfectly round blobs without turning grainy; whole regions of sky turn wispy. One light sample toward
 // the sun or moon with Beer's law, a powder term, and a broad plus a narrow forward lobe: silver linings where the
 // sun is behind thin edges, dark cores where it is behind thick ones. The weather field (WeatherField.java) sets
-// the cover and the rain darkness by position: rain clouds over a rainy region in the distance, clear sky over a
-// clear one. The same coverage, looked up along the light, gives cheap cloud shadows on the ground.
+// the cover, wispiness and rain darkness by position, looked up where the view ray crosses the slab: rain clouds
+// over a rainy region in the distance, clear sky over a clear one. The same coverage, looked up along the light,
+// gives cheap cloud shadows on the ground, with the player's own weather (the composite has no texture unit left).
 // Needs frame.glsl, sky.glsl and lightning.glsl.
 
 uniform int cloudsEnabled;
 uniform int cloudShadowsEnabled;
-uniform float cloudCoverage;   // 0 clear .. 1 overcast at the player: base coverage raised by the weather
 uniform float cloudBaseCoverage;  // the configured clear weather coverage
 uniform float cloudWeather;    // Weather.cloudCover() at the player: rain clouds are denser, darker and grayer
 uniform vec2 cloudOffset;      // world xz of the noise origin: scene base plus wind drift, wrapped
 uniform float cloudDetail;     // roughness: 0 smooth and round, 1 normal, 2 very broken
-uniform vec2 cloudType;        // the weather's look (WeatherType): x how wispy and high 0..1, y darkness offset -1..1
+uniform vec2 cloudType;        // the player's weather look (WeatherType): x how wispy and high 0..1, y darkness offset -1..1
 // tiling: r cloud shape, equalized (1 - c covers a share c); g Worley puffs; b fine value noise; a coarse character
 uniform sampler2D cloudNoise;
-// The weather field's cloud cover over the scene, as differences from the player's (WeatherField.java): a grid of
-// up to CLOUD_FIELD_SIZE^2 cells, x fastest, packed four to a vec4. The composite has no texture unit left.
-#define CLOUD_FIELD_SIZE 24
-uniform vec4 cloudField[CLOUD_FIELD_SIZE * CLOUD_FIELD_SIZE / 4];
-uniform vec4 cloudFieldRect;   // xy: world xz of the grid's corner (scene coordinates), zw: cells per world unit, 0 off
-uniform vec2 cloudFieldCells;  // cells used across x and z
+// The weather field's sky around the player (WeatherField.java): r cloud cover, g wispiness, b darkness offset
+// (0..1 for -1..1), one bilinear texel per cell. cloudSkyRect: xy the world xz (scene coordinates) of its corner,
+// zw one over its size; zero without a field, and the player's own weather is the sky everywhere.
+uniform sampler2D weatherSkyTex;
+uniform vec4 cloudSkyRect;
 // xy: the camera's focal point minus the camera (xz), where the clouds are seen from; z: radius of the drawn world
 // around the focal point; w: the camera's height above the focal point, 0 to keep the sky's horizon level
 uniform vec4 cloudEye;
@@ -70,9 +69,6 @@ uniform float cloudGround;     // world y of the focal point: the cloud shadows 
 // cover varies by up to +-CLOUD_VARY / 2 over a few noise repeats, the full amount from a cover of CLOUD_VARY_FULL
 #define CLOUD_VARY 0.5
 #define CLOUD_VARY_FULL 0.3
-// past the weather field's edge its differences fade out over this many of its cells: far-off sky has the
-// player's weather, instead of each edge cell's weather stretched to the horizon in its direction
-#define CLOUD_FIELD_EDGE_FADE 4.0
 // noise value needed for cloud with no coverage, and when fully overcast (below 0 so the erosion leaves no gaps)
 #define CLOUD_THRESHOLD_CLEAR 0.96
 #define CLOUD_THRESHOLD_OVERCAST -0.3
@@ -162,43 +158,29 @@ vec3 cloudSkyDir(vec3 dir) {
   return vec3(h.x * sqrt(max(1.0 - s * s, 0.0)), -s, h.y * sqrt(max(1.0 - s * s, 0.0)));
 }
 
-float cloudFieldCell(int i) {
-  return cloudField[i >> 2][i & 3];
+// The weather of the sky over a world xz (scene coordinates): x cloud cover, y how wispy and high, z darkness offset
+vec3 cloudSkyWeather(vec2 world) {
+  if (cloudSkyRect.z == 0.0) {
+    return vec3(cloudWeather, cloudType);
+  }
+  vec3 w = textureLod(weatherSkyTex, (world - cloudSkyRect.xy) * cloudSkyRect.zw, 0.0).rgb;
+  return vec3(w.xy, w.z * 2.0 - 1.0);
 }
 
-// How much cloudier the weather field says it is at a world xz (scene coordinates) than at the player, bilinear
-float cloudFieldDelta(vec2 xz) {
-  if (cloudFieldRect.z == 0.0) {
-    return 0.0;
-  }
-  vec2 u = (xz - cloudFieldRect.xy) * cloudFieldRect.zw - 0.5;
-  vec2 c = clamp(u, vec2(0.0), cloudFieldCells - 1.0);
-  float outside = length(u - c);
-  if (outside >= CLOUD_FIELD_EDGE_FADE) {
-    return 0.0;
-  }
-  ivec2 i0 = ivec2(c);
-  ivec2 i1 = min(i0 + 1, ivec2(cloudFieldCells) - 1);
-  vec2 f = c - vec2(i0);
-  float a = mix(cloudFieldCell(i0.y * CLOUD_FIELD_SIZE + i0.x), cloudFieldCell(i0.y * CLOUD_FIELD_SIZE + i1.x), f.x);
-  float b = mix(cloudFieldCell(i1.y * CLOUD_FIELD_SIZE + i0.x), cloudFieldCell(i1.y * CLOUD_FIELD_SIZE + i1.x), f.x);
-  return mix(a, b, f.y) * (1.0 - smoothstep(0.0, CLOUD_FIELD_EDGE_FADE, outside));
-}
-
-// The weather under a stretch of sky: x coverage, y how wispy, z how rainy (cloudWeather there). xz: noise
-// coordinates; world: the same place in scene coordinates, for the weather field. The coverage varies over a few
-// repeats so the noise doesn't read as tiled, and fair weather has regions of broken, wispy cloud.
-vec3 cloudLocalCover(vec2 xz, vec2 world) {
-  float weather = clamp(cloudWeather + cloudFieldDelta(world), 0.0, 1.0);
-  float coverage = cloudCoverage + (1.0 - cloudBaseCoverage) * (weather - cloudWeather);
+// The sky under a stretch of the slab: x coverage, y how wispy, z how rainy (the weather's cover). xz: noise
+// coordinates; sky: cloudSkyWeather there. The coverage varies over a few repeats so the noise doesn't read as
+// tiled, and fair weather has regions of broken, wispy cloud.
+vec3 cloudLocalCover(vec2 xz, vec3 sky) {
+  float weather = sky.x;
+  float coverage = cloudBaseCoverage + (1.0 - cloudBaseCoverage) * weather;
   vec4 macro = textureLod(cloudNoise, xz / (4.0 * CLOUD_TILE), 2.0);
   // thin skies vary less, so clear weather stays clear everywhere
   float vary = CLOUD_VARY * min(coverage / CLOUD_VARY_FULL, 1.0) * (1.0 - weather);
   float cov = clamp(coverage + (macro.r - 0.5) * vary, 0.0, 1.0);
   float wisp = smoothstep(CLOUD_WISP_LOW, CLOUD_WISP_HIGH, macro.a) * (1.0 - weather) * min(cloudDetail, 1.0);
-  wisp = max(wisp, cloudType.x);
+  wisp = max(wisp, sky.y);
   // how dark: the cover, brightened or darkened by the weather's look (high thin cloud stays white)
-  float dark = clamp(weather * (1.0 + cloudType.y), 0.0, 1.0);
+  float dark = clamp(weather * (1.0 + sky.z), 0.0, 1.0);
   return vec3(cov, wisp, dark);
 }
 
@@ -276,8 +258,8 @@ vec4 cloudLayer(vec3 dir, vec3 camPos, vec3 sunDir, vec3 moonDir, float alt, flo
   float across = (t1 - t0) * length(dir.xz);
   // the weather where the ray enters and leaves the slab, in between blended along it: tied to places in the sky
   // rather than to the ray, so clouds keep their size as the camera turns
-  vec3 cw0 = cloudLocalCover(origin + dir.xz * t0, eye + dir.xz * t0);
-  vec3 cw1 = cloudLocalCover(origin + dir.xz * t1, eye + dir.xz * t1);
+  vec3 cw0 = cloudLocalCover(origin + dir.xz * t0, cloudSkyWeather(eye + dir.xz * t0));
+  vec3 cw1 = cloudLocalCover(origin + dir.xz * t1, cloudSkyWeather(eye + dir.xz * t1));
   cw0.x = cloudSlantCover(cw0.x, across);
   cw1.x = cloudSlantCover(cw1.x, across);
   if (max(cw0.x, cw1.x) <= 0.0) {
@@ -372,7 +354,7 @@ vec3 cloudsOverSky(vec3 sky, vec2 px, vec3 dir, vec3 camPos, vec3 lightDir, floa
 
 // How much sunlight reaches world position p through the clouds, 1 without clouds or their shadows
 float cloudShadow(vec3 p, vec3 lightDir) {
-  if (cloudsEnabled == 0 || cloudShadowsEnabled == 0 || cloudWeather >= 1.0 && cloudFieldRect.z == 0.0) {
+  if (cloudsEnabled == 0 || cloudShadowsEnabled == 0 || cloudWeather >= 1.0) {
     return 1.0;
   }
   float t = max(CLOUD_SHADOW_ALTITUDE - cloudGround + p.y, 0.0) / max(-lightDir.y, 0.15);
@@ -381,7 +363,7 @@ float cloudShadow(vec3 p, vec3 lightDir) {
   // the same warp as the clouds overhead, so the shadows have their shapes
   vec4 dn = textureLod(cloudNoise, xz * (CLOUD_DETAIL_SCALE / CLOUD_TILE), 1.5 + log2(CLOUD_DETAIL_SCALE));
   xz += (dn.rb - 0.5) * (CLOUD_WARP * min(cloudDetail, 1.5));
-  vec3 cw = cloudLocalCover(xz, world);
+  vec3 cw = cloudLocalCover(xz, vec3(cloudWeather, cloudType));
   float d = cloudDensity(xz, 0.3, cw, 1.5);
   // thin high cloud casts faint shadows
   return 1.0 - d * CLOUD_SHADOW_STRENGTH * (1.0 - cw.z) * (1.0 - 0.6 * cloudType.x);

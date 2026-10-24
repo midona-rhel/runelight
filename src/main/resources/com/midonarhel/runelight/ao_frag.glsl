@@ -17,14 +17,14 @@ uniform float aoRadius;  // world units
 uniform int aoSamples;   // 0: only the geometry for the upsamples (AO off, fog on)
 uniform int shadowsEnabled;
 uniform vec3 casterDir;  // toward the light that casts shadows
-uniform sampler2D sceneMaterial;  // r emissive, g transmissive, b water (frag.glsl)
+uniform sampler2D sceneMaterial;  // r emissive, g transmissive, b water, a snow (frag.glsl)
 uniform usampler2D waterAoSurface;  // the water surface pass's target (water_frag.glsl)
 uniform int waterAoOn;
 uniform ivec4 waterAoRect;  // the pixels the surface can cover (water.glsl's waterRect)
 
 layout(location = 0) out vec4 FragAo;  // the geometry, see halfres.glsl
-layout(location = 1) out vec4 FragShadow;  // r: lit share, 1 unshadowed; g AO, 1 unoccluded; b wetness
-                                           // (weather_ground_ao.glsl); a sky visibility (skylight_ao.glsl)
+layout(location = 1) out vec4 FragShadow;  // r: lit share, 1 unshadowed; g AO, 1 unoccluded; b snow and
+                                           // puddles (ground_cover.glsl); a sky visibility (skylight_ao.glsl)
 // sine of the minimum angle above the surface for an occluder to count; higher ignores more of the shallow folds
 #define AO_ANGLE_BIAS 0.10
 // none under water: it fades out over this depth below the surface (no hard line at the waterline), and isn't worked
@@ -38,7 +38,7 @@ void main() {
   float d = texelFetch(sceneDepth, px, 0).r;
   if (isSky(d)) {
     FragAo = halfPackGeometry(0.0, vec3(0.0, 0.0, 1.0), vec3(0.0), 0.0);
-    FragShadow = vec4(1.0, 1.0, 0.0, 1.0);
+    FragShadow = vec4(1.0, 1.0, GROUND_NONE, 1.0);
     return;
   }
   // a pixel partly covering the sky holds that share of its normal and material, the rest cleared to 0
@@ -47,13 +47,13 @@ void main() {
   vec3 n = decodeNormal(texelFetch(sceneNormal, px, 0).rgb / cover);
   float nearOverDepth = NEAR / viewDepth(d);
   FragAo = halfPackGeometry(nearOverDepth, n, vec3(0.0), 0.0);
-  FragShadow = vec4(1.0, 1.0, 0.0, 1.0);
+  FragShadow = vec4(1.0, 1.0, GROUND_NONE, 1.0);
   if (!inViewport(px)) {
     return;
   }
 
   vec3 p = reconstructPosition(vec2(px) + 0.5, d);
-  FragShadow.b = weatherGroundAo(p, n);
+  FragShadow.b = groundPack(weatherGroundAo(p, n));
   vec4 gi = giEnabled == 1 ? giIrradiance(p, n) : vec4(0.0);
   FragAo = halfPackGeometry(nearOverDepth, n, gi.rgb, gi.a);
   float noise = ign(gl_FragCoord.xy);

@@ -25,7 +25,6 @@
 uniform sampler2D cloudHalf;
 #include "atmosphere.glsl"
 #include "edge_fade.glsl"
-#include "weather_ground.glsl"
 
 #define DEBUG_FINAL 0
 #define DEBUG_DEPTH 1
@@ -47,7 +46,7 @@ uniform sampler2D cloudHalf;
 #define TILE_SIZE 128.0
 
 uniform sampler2D sceneAlpha;  // transparent geometry, already lit, premultiplied
-uniform sampler2D sceneMaterial;  // r emissive, g transmissive, b water (frag.glsl)
+uniform sampler2D sceneMaterial;  // r emissive, g transmissive, b water, a snow (frag.glsl)
 #include debug_view
 uniform int aoEnabled;
 uniform float aoStrength;
@@ -67,7 +66,7 @@ uniform float sunAltitude;  // degrees
 
 // shadows
 uniform int shadowsEnabled;
-uniform sampler2D sceneShadow;  // half resolution, from the AO pass (ao_frag.glsl): r shadow, g AO, b wetness,
+uniform sampler2D sceneShadow;  // half resolution, from the AO pass (ao_frag.glsl): r shadow, g AO, b snow and puddles,
                                 // a sky visibility; the water samples the map
 uniform sampler2DShadow shadowCompare;
 uniform mat4 lightProjRel;  // camera-relative world -> light clip
@@ -93,6 +92,7 @@ uniform usamplerBuffer clusterData;  // per cluster: a bit per light in view (li
 #include "light_clusters.glsl"
 #include "rooms.glsl"
 #include "light_occlusion.glsl"
+#include "weather_ground.glsl"
 
 // 0 legacy/debug, 1 ambient, 2 sun, 3 points, 4 surfaces, 5 atmosphere.
 #include "composite_mode"
@@ -157,7 +157,7 @@ float upsampleAoFog(ivec2 px, float z, vec3 n, out vec4 fog, out float shadow, o
   vec4 sh = wsum > 1e-4 ? shSum / wsum : texelFetch(sceneShadow, clamp(ivec2(hp + 0.5), ivec2(0), maxAo), 0);
   shadow = sh.r;
   gi = wsum > 1e-4 ? giSum / wsum : vec4(0.0);
-  wetUpsampled = sh.b;
+  groundUpsampled = sh.b;
   skyUpsampled = sh.a;
   return wsum > 1e-4 ? sh.g : 1.0;
 }
@@ -403,7 +403,7 @@ void main() {
   }
   vec3 n = decodeNormal(cover < 0.996 ? texelFetch(sceneNormal, px, 0).rgb * inv : texelFetch(sceneNormal, px, 0).rgb);
   vec3 p = reconstructPosition(vec2(px) + 0.5, d);
-  vec3 material = texelFetch(sceneMaterial, px, 0).rgb * (cover < 0.996 ? inv : 1.0);
+  vec4 material = texelFetch(sceneMaterial, px, 0) * (cover < 0.996 ? inv : 1.0);
   float emissive = material.r;
   float transmissive = material.g;
 
@@ -419,9 +419,9 @@ void main() {
     ao = aoEnabled == 1 ? clamp(1.0 - (1.0 - ao) * aoStrength, 0.0, 1.0) : 1.0;
     fogDone = volumetricFog == 1;
   }
-  // snow and wet ground change the surface itself, before it is lit
-  float wet = compositePart != 5 && inside && weatherGroundOn == 1 ? weatherGroundSurface(color.rgb, n, p + cameraPos, emissive, material.b,
-    transparent.a) : 0.0;
+  // snow and puddles change the surface itself, before it is lit
+  float wet = compositePart != 5 && inside && weatherGroundOn == 1
+    ? weatherGroundSurface(color.rgb, n, p, p + cameraPos, material, transparent.a) : 0.0;
 
   float shadow = 1.0;
   vec3 light = vec3(ao);

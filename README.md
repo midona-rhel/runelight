@@ -38,7 +38,7 @@ Point light placements come from 117 HD's light definitions, converted with `too
 
 ## Weather
 
-Plugin config, Weather section: rain or snow with an intensity, wet ground / snow cover, rain splashes and a
+Plugin config, Weather section: rain or snow with an intensity, puddles / snow cover, rain splashes and a
 gradual buildup. Shelter comes from a top-down depth map of all static scenery around the player, drawn with every
 roof (also roofs hidden by the game or a plugin), redrawn only after the player walks ~24 tiles or the scenery
 changes. Tuning constants are `#define`s at the top of `rain_vert.glsl`, `snow_vert.glsl` and
@@ -46,12 +46,16 @@ changes. Tuning constants are `#define`s at the top of `rain_vert.glsl`, `snow_v
 rain or snow swells, eases off and gusts around the set intensity (`WeatherVariation.java`). The cloud cover follows
 it slowly and grays the sky and softens the sun and moon everywhere through `weatherOvercast` in `sky.glsl` (its
 `OVERCAST_*` defines). Drops, flakes and splashes pick up nearby point lights through the light clusters
-(`weather_common.glsl`). Wet ground and snow cover are part of the surfaces: the half resolution AO pass works out
-how much of each a pixel gets (`weather_ground_ao.glsl`: the region's ground times how open to the sky it is) into
-the shadow target's spare channels, and the composite changes the albedo and normal before lighting
-(`weather_ground.glsl`), so snow takes the AO, shadows, GI and point lights like any other surface. Snow lies in
-patches: a fixed world-space noise thresholded against the depth, so patches grow from their cores as it deepens and
-melt back the same way, upward faces first and sheltered spots last.
+(`weather_common.glsl`). Snow cover and rain puddles are part of the surfaces: the half resolution AO pass works out
+how much cover a pixel gets (`weather_ground_ao.glsl`: the region's ground times how open to the sky it is) into
+the shadow target's blue channel (`ground_cover.glsl`), and the composite changes the albedo and normal before
+lighting (`weather_ground.glsl`), so they take the AO, shadows, GI and point lights like any other surface. Both are
+blobs of world-space Perlin noise compared with a threshold that falls as the cover builds, so a blob starts at a peak
+and grows outward with a crisp edge, and melts back the same way. Snow is big blobs over terrain and floors and a soft
+whitening on the tops of scenery; items and actors get none and scenery with an action (`Interactables.java`) less,
+by two bits in each face's material (`SurfaceMaterials.java`). Puddles lie only on level terrain, small and sparse,
+and most within a tile of a wall (the baked wall distance of `RoomAmbient.java`, also for outdoor tiles); outside
+them the ground is not darkened.
 
 Time (`GameClock.java`) is a function of the real clock from a fixed epoch: with the default 24 minute day one game
 hour per real minute, seasons of "Days per season" game days. The time of day, the season, the forecast and the

@@ -620,7 +620,7 @@ public interface RuneLightConfig extends Config
 		return true;
 	}
 
-	@Range(max = 200)
+	@Range(max = 15)
 	@ConfigItem(
 		keyName = "volumetricFogDensity",
 		name = "Fog density",
@@ -712,18 +712,6 @@ public interface RuneLightConfig extends Config
 		return 30;
 	}
 
-	@ConfigItem(
-		keyName = "fogClimate",
-		name = "Fog by region and time",
-		description = "Mist at dawn and dusk in damp regions such as swamps and forests, barely any in deserts, little at midday.",
-		section = fogSection,
-		position = 258
-	)
-	default boolean fogClimate()
-	{
-		return true;
-	}
-
 	@ConfigSection(
 		name = "Weather",
 		description = "Automatic regional weather, rain, snow and storms",
@@ -761,8 +749,8 @@ public interface RuneLightConfig extends Config
 
 	@ConfigItem(
 		keyName = "weatherSurfaces",
-		name = "Wet ground",
-		description = "Surfaces under the open sky get darker and glossy in rain.",
+		name = "Snow and puddles",
+		description = "Snow settles on the ground and puddles gather on level terrain under the open sky.",
 		section = weatherSection,
 		position = 403
 	)
@@ -845,22 +833,9 @@ public interface RuneLightConfig extends Config
 	}
 
 	@ConfigItem(
-		keyName = "weatherField",
-		name = "Weather by region",
-		description = "In automatic weather, every region of the loaded map has its own weather: rain clouds, fog and"
-			+ " wet ground over a rainy region in the distance while it is clear where you are.",
-		section = weatherSection,
-		position = 410
-	)
-	default boolean weatherField()
-	{
-		return true;
-	}
-
-	@ConfigItem(
 		keyName = "weatherFieldMap",
 		name = "Show weather map",
-		description = "Development: a small map of the weather over the loaded scene in the timings overlay.",
+		description = "Development: a small map of the weather around you in the timings overlay.",
 		section = weatherSection,
 		position = 412
 	)

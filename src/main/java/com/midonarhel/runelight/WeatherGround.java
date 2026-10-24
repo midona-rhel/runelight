@@ -3,9 +3,9 @@ package com.midonarhel.runelight;
 import static org.lwjgl.opengl.GL33C.*;
 
 /**
- * Wet ground as part of the surfaces: the half resolution AO pass works out how wet a pixel gets
+ * Snow and rain puddles as part of the surfaces: the half resolution AO pass works out how much cover a pixel gets
  * (weather_ground_ao.glsl: the region's ground from the weather field, times how open to the sky it is) into the
- * shadow target's blue channel, and the composite turns that into wet darkening before lighting
+ * shadow target's blue channel, and the composite lays it out as blobs of noise before lighting
  * (weather_ground.glsl), so it takes the AO, the shadows, the global illumination and the point lights like any
  * other surface. This holds the two programs' uniforms.
  */
@@ -68,7 +68,7 @@ final class WeatherGround
 		/**
 		 * With the program in use.
 		 *
-		 * @param originX world x of local (scene) x 0, world units, so snow patches stay put when the scene reloads
+		 * @param originX world x of local (scene) x 0, world units, so snow and puddles stay put when the scene reloads
 		 */
 		void set(boolean enabled, float originX, float originZ)
 		{

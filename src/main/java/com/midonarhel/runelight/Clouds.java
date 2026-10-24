@@ -33,8 +33,8 @@ class Clouds
 	/** Uniform locations of one program that draws clouds: the composite's, and the sky cache's capture. */
 	static final class Locations
 	{
-		int enabled, shadows, coverage, weather, offset, detail, type;
-		int base, field, fieldRect, fieldCells;
+		int enabled, shadows, weather, offset, detail, type;
+		int base, skyRect;
 		int eye, ground;
 	}
 
@@ -201,24 +201,25 @@ class Clouds
 		return lowest;
 	}
 
-	/** Look up a program's cloud uniforms into l and point its noise sampler at noiseUnit. */
-	static void locate(Locations l, int program, int noiseUnit)
+	/**
+	 * Look up a program's cloud uniforms into l and point its noise sampler at noiseUnit and its sky weather sampler
+	 * (WeatherField.bindSky) at skyUnit.
+	 */
+	static void locate(Locations l, int program, int noiseUnit, int skyUnit)
 	{
 		l.enabled = glGetUniformLocation(program, "cloudsEnabled");
 		l.shadows = glGetUniformLocation(program, "cloudShadowsEnabled");
-		l.coverage = glGetUniformLocation(program, "cloudCoverage");
 		l.weather = glGetUniformLocation(program, "cloudWeather");
 		l.offset = glGetUniformLocation(program, "cloudOffset");
 		l.detail = glGetUniformLocation(program, "cloudDetail");
 		l.type = glGetUniformLocation(program, "cloudType");
 		l.base = glGetUniformLocation(program, "cloudBaseCoverage");
-		l.field = glGetUniformLocation(program, "cloudField");
-		l.fieldRect = glGetUniformLocation(program, "cloudFieldRect");
-		l.fieldCells = glGetUniformLocation(program, "cloudFieldCells");
+		l.skyRect = glGetUniformLocation(program, "cloudSkyRect");
 		l.eye = glGetUniformLocation(program, "cloudEye");
 		l.ground = glGetUniformLocation(program, "cloudGround");
 		glUseProgram(program);
 		glUniform1i(glGetUniformLocation(program, "cloudNoise"), noiseUnit);
+		glUniform1i(glGetUniformLocation(program, "weatherSkyTex"), skyUnit);
 		glUseProgram(0);
 	}
 
@@ -227,7 +228,7 @@ class Clouds
 	 *
 	 * @param cloudCover Weather.cloudCover(), 0 clear to 1 overcast
 	 * @param baseX world x of the scene's origin, in world units, so clouds stay put when the scene reloads
-	 * @param field the weather over the scene: rain clouds over rainy regions, clear sky over clear ones
+	 * @param field the weather around the player: rain clouds over rainy regions, clear sky over clear ones
 	 */
 	void update(boolean enabled, boolean shadows, int coveragePercent, int speedPercent, int detailPercent,
 		float cloudCover, long baseX, long baseZ, WeatherField field)
@@ -263,7 +264,6 @@ class Clouds
 	{
 		glUniform1i(l.enabled, enabled ? 1 : 0);
 		glUniform1i(l.shadows, shadows ? 1 : 0);
-		glUniform1f(l.coverage, coverage);
 		glUniform1f(l.weather, weather);
 		glUniform1f(l.detail, detail);
 		glUniform2f(l.type, wisp, dark);
@@ -271,14 +271,7 @@ class Clouds
 		glUniform1f(l.base, base);
 		glUniform4f(l.eye, eyeX, eyeZ, eyeRadius, eyeHeight);
 		glUniform1f(l.ground, ground);
-		if (field != null)
-		{
-			field.applyClouds(l.field, l.fieldRect, l.fieldCells);
-		}
-		else
-		{
-			glUniform4f(l.fieldRect, 0, 0, 0, 0);
-		}
+		field.setSkyRect(l.skyRect);
 	}
 
 	/**

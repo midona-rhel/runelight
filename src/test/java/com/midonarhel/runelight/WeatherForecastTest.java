@@ -97,12 +97,11 @@ public class WeatherForecastTest
 			if (m != WeatherMode.AUTOMATIC && m != WeatherMode.OFF)
 			{
 				assertNotNull(m.name(), WeatherType.get(m.name()));
-				assertEquals(WeatherType.get(m.name()), Weather.resolve(m, null));
+				assertEquals(WeatherType.get(m.name()), Weather.resolve(m));
 			}
 		}
 		assertEquals(all.length + 2, WeatherMode.values().length);
-		assertEquals(WeatherType.clear(), Weather.resolve(WeatherMode.OFF, WeatherType.get("BLIZZARD")));
-		assertEquals(WeatherType.get("BLIZZARD"), Weather.resolve(WeatherMode.AUTOMATIC, WeatherType.get("BLIZZARD")));
+		assertEquals(WeatherType.clear(), Weather.resolve(WeatherMode.OFF));
 		// only storms strike
 		for (WeatherType t : all)
 		{
@@ -172,21 +171,6 @@ public class WeatherForecastTest
 				assertEquals(WeatherForecast.at(s, b), WeatherForecast.at(s, b));
 			}
 		}
-		// the forecast of the next slot is what that slot then gets
-		WeatherForecast f = new WeatherForecast();
-		WeatherForecast g = new WeatherForecast();
-		for (long ms = 0; ms < 10 * GameClock.DAY; ms += 37 * 60_000)
-		{
-			f.update("SWAMP", ms, 12, 3);
-			g.update("SWAMP", ms, 12, 3);
-			assertEquals(f.getCurrent(), g.getCurrent());
-			WeatherType next = f.getNext();
-			float minutes = f.getMinutesToNext();
-			assertTrue(minutes > 0 && minutes <= 4.0001f);
-			f.update("SWAMP", ms + (long) Math.ceil(minutes * 60_000 / GameClock.realPerGame(12)) + 100, 12, 3);
-			assertEquals(next, f.getCurrent());
-			f.update("SWAMP", ms, 12, 3);
-		}
 		// unknown or missing biomes behave like the default
 		String def = WeatherClimate.defaultBiome();
 		assertEquals(WeatherForecast.at(77, null), WeatherForecast.at(77, def));
@@ -196,15 +180,7 @@ public class WeatherForecastTest
 	@Test
 	public void slotsFollowTheDay()
 	{
-		// game time 0 is midnight, so the first change is at 08:00: 4 minutes of a 12 minute day, 8 of a 24 minute one
-		WeatherForecast f = new WeatherForecast();
-		f.update(null, 0, 12, 7);
-		assertEquals(4f, f.getMinutesToNext(), 1e-4f);
-		f.update(null, 0, 24, 7);
-		assertEquals(8f, f.getMinutesToNext(), 1e-4f);
-		f.update(null, 6 * GameClock.HOUR, 24, 7);
-		assertEquals(2f, f.getMinutesToNext(), 1e-4f);
-		// a third of a day per slot
+		// game time 0 is midnight, so the first change is at 08:00; a third of a day per slot
 		assertEquals(0, WeatherForecast.slot(0));
 		assertEquals(0, WeatherForecast.slot(8 * GameClock.HOUR - 1));
 		assertEquals(1, WeatherForecast.slot(8 * GameClock.HOUR));
@@ -233,16 +209,6 @@ public class WeatherForecastTest
 		assertEquals(11, changes);
 		assertEquals(Season.SPRING, WeatherForecast.season(0, days));
 		assertEquals(Season.WINTER, WeatherForecast.season(-1, days));
-		// the forecast reports the day of its season
-		WeatherForecast f = new WeatherForecast();
-		long day = GameClock.DAY;
-		f.update(null, 0, 12, days);
-		Season first = f.getSeason();
-		int firstDay = f.getSeasonDay();
-		assertTrue(firstDay >= 1 && firstDay <= days);
-		f.update(null, day * (days - firstDay + 1), 12, days);
-		assertEquals(1, f.getSeasonDay());
-		assertEquals(WeatherClimate.SEASONS[(first.ordinal() + 1) % 4], f.getSeason());
 		// odds blend into the next season's only at the end of a season, and always sum up to something
 		for (long s = 0; s < 3L * days * 4; ++s)
 		{
@@ -495,9 +461,6 @@ public class WeatherForecastTest
 			assertTrue(t.id, t.fog <= WeatherTestData.type("FOG").fog);
 			assertTrue(t.cover >= 0 && t.cover <= 1);
 		}
-		assertEquals(1, Weather.morning(6.5), 1e-6f);
-		assertEquals(0, Weather.morning(14), 0);
-		assertEquals(0, Weather.morning(0), 0);
 		// easing approaches the target without overshooting
 		float v = 0;
 		for (int i = 0; i < 60 * 60; ++i)

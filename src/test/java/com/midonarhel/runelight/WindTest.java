@@ -143,9 +143,9 @@ public class WindTest
 	public void weatherDrivesTheWind()
 	{
 		Weather calm = new Weather();
-		calm.update(WeatherMode.CLEAR, null, 60, false, false, 100, true, true, 12, null, false, 0, 0, 0, 0);
+		WeatherTestData.drive(calm, WeatherMode.CLEAR, true);
 		Weather gale = new Weather();
-		gale.update(WeatherMode.GALE, null, 60, false, false, 100, true, true, 12, null, false, 0, 0, 0, 0);
+		WeatherTestData.drive(gale, WeatherMode.GALE, true);
 		assertTrue(gale.getWind().getStrength() > 3 * calm.getWind().getStrength());
 		assertTrue(gale.getWind().getGustiness() > calm.getWind().getGustiness());
 		// the water follows it
@@ -156,7 +156,7 @@ public class WindTest
 		assertEquals(1, Math.hypot(b[0], b[1]), 1e-5);
 		// underground the air is still for anything that sways
 		Weather cave = new Weather();
-		cave.update(WeatherMode.GALE, null, 60, false, false, 100, true, false, 12, null, false, 0, 0, 0, 0);
+		WeatherTestData.drive(cave, WeatherMode.GALE, false);
 		assertTrue(cave.isWindStill());
 		cave.getWaterWind(a);
 		assertEquals(0, a[2], 0);
@@ -167,21 +167,21 @@ public class WindTest
 	{
 		Weather w = new Weather();
 		float[] o = new float[7];
-		w.update(WeatherMode.HARSH_SUN, null, 60, false, false, 100, true, true, 12, null, false, 0, 0, 0, 0);
+		WeatherTestData.drive(w, WeatherMode.HARSH_SUN, true);
 		w.getOvercast(o);
 		// stronger, crisper sun, not hazy
 		assertTrue(o[3] > 0.2f);
 		assertTrue(o[4] < 0.2f);
-		w.update(WeatherMode.SANDSTORM, null, 60, false, false, 100, true, true, 12, null, false, 0, 0, 0, 0);
+		WeatherTestData.drive(w, WeatherMode.SANDSTORM, true);
 		w.getOvercast(o);
 		// weaker, hazy, warm sun; dust tints the fog; dust is not snow: the overcast does not whiten
 		assertTrue(o[3] < 0 && o[4] > 0.5f && o[5] > 0.5f);
 		assertTrue(w.getFogTint()[0] > w.getFogTint()[2]);
 		assertEquals(0, o[1], 1e-6f);
-		w.update(WeatherMode.HIGH_CLOUDS, null, 60, false, false, 100, true, true, 12, null, false, 0, 0, 0, 0);
+		WeatherTestData.drive(w, WeatherMode.HIGH_CLOUDS, true);
 		assertTrue(w.cloudWisp() > 0.9f && w.cloudDark() < 0);
 		// Off is neutral
-		w.update(WeatherMode.OFF, null, 60, false, false, 100, true, true, 12, null, false, 0, 0, 0, 0);
+		WeatherTestData.drive(w, WeatherMode.OFF, true);
 		w.getOvercast(o);
 		for (int i = 3; i < 7; ++i)
 		{
@@ -189,7 +189,7 @@ public class WindTest
 		}
 		assertEquals(0, w.cloudCover(), 0);
 		// and so is everything underground
-		w.update(WeatherMode.SANDSTORM, null, 60, false, false, 100, true, false, 12, null, false, 0, 0, 0, 0);
+		WeatherTestData.drive(w, WeatherMode.SANDSTORM, false);
 		w.getOvercast(o);
 		for (int i = 3; i < 7; ++i)
 		{

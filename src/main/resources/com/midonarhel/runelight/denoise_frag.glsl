@@ -12,7 +12,7 @@
 #include "frame.glsl"
 #include "halfres.glsl"
 
-uniform sampler2D sceneShadow;  // half resolution: r lit share, g AO, b wetness, a sky visibility
+uniform sampler2D sceneShadow;  // half resolution: r lit share, g AO, b snow and puddles, a sky visibility
 uniform sampler2D sceneFog;     // half resolution (fog_frag.glsl): premultiplied scatter rgb, transmittance a
 uniform int denoiseFog;         // 1: the fog is smoothed too
 

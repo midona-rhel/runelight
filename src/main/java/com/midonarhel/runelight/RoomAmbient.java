@@ -1,6 +1,9 @@
 package com.midonarhel.runelight;
 
-/** Baked wall distance at tile corners. Six bits per corner fit exactly in a float texture value. */
+/**
+ * Baked wall distance at tile corners, outdoors too (rain puddles gather by walls). Six bits per corner fit exactly in
+ * a float texture value.
+ */
 final class RoomAmbient
 {
 	private RoomAmbient() {}

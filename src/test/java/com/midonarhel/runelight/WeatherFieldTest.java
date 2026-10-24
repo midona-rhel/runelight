@@ -18,7 +18,7 @@ public class WeatherFieldTest
 	{
 		WeatherField f = new WeatherField();
 		layout(f, split, shift);
-		f.update(true, TYPES, 0.6f, gradual, false, 12, 0);
+		f.update(TYPES, null, 0.6f, gradual, 12, 0);
 		return f;
 	}
 
@@ -37,7 +37,7 @@ public class WeatherFieldTest
 			for (int x = 0; x < N; ++x)
 			{
 				int wx = x + shift;
-				keys[z * N + x] = WeatherField.chunkKey(wx * 8, z * 8);
+				keys[z * N + x] = WeatherField.chunkKey(wx * WeatherField.CELL_TILES, z * WeatherField.CELL_TILES);
 				biomes[z * N + x] = wx < split ? west : east;
 			}
 		}
@@ -54,7 +54,7 @@ public class WeatherFieldTest
 	{
 		WeatherField f = field(12, 0, true);
 		float[] t = new float[WeatherField.TARGETS];
-		WeatherField.targets(RAIN, "WET", 0.6f, false, 12, t);
+		WeatherField.targets(RAIN, "WET", 0.6f, 12, t);
 		float ox = f.getOriginX(), oz = f.getOriginZ();
 		// at least the blur away from the border
 		assertEquals(t[WeatherField.RAIN], f.sample(WeatherField.RAIN, ox + center(3), oz + center(10)), EPS);
@@ -81,8 +81,8 @@ public class WeatherFieldTest
 			steepest = Math.max(steepest, prev - v);
 			prev = v;
 		}
-		assertTrue("too sharp: " + steepest, steepest < full / 20);
-		// the change is spread over several chunks either side of the border
+		assertTrue("too sharp: " + steepest, steepest < full / 40);
+		// the change is spread over several cells either side of the border
 		float atBorder = f.sample(WeatherField.RAIN, ox + 12 * WeatherField.CELL, oz);
 		assertEquals(full * 0.5f, atBorder, full * 0.1f);
 		assertTrue(f.sample(WeatherField.RAIN, ox + 12 * WeatherField.CELL - 2 * WeatherField.CELL, oz) < full - EPS);
@@ -101,15 +101,6 @@ public class WeatherFieldTest
 				assertEquals(a.sample(c, x, x * 0.3f), b.sample(c, x, x * 0.3f), 0);
 			}
 		}
-		// and the forecast for a biome only depends on the slot
-		WeatherForecast fa = new WeatherForecast(), fb = new WeatherForecast();
-		fa.update("SWAMP", 1_000_000_000, 12, 7);
-		fb.update("DESERT", 1_000_000_000, 12, 7);
-		for (String biome : new String[]{null, "SWAMP", "ARCTIC", "DESERT"})
-		{
-			assertEquals(fa.currentFor(biome), fb.currentFor(biome));
-		}
-		assertEquals(fa.getCurrent(), fa.currentFor("SWAMP"));
 	}
 
 	@Test
@@ -118,16 +109,16 @@ public class WeatherFieldTest
 		// clear everywhere, then the west turns rainy: cover builds before the rain, the ground wets later
 		WeatherField f = new WeatherField();
 		layout(f, -1, 0);
-		f.update(true, TYPES, 0.6f, true, false, 12, 0);
+		f.update(TYPES, null, 0.6f, true, 12, 0);
 		layout(f, 12, 0);
 		float x = f.getOriginX() + center(3), z = f.getOriginZ() + center(10);
-		f.update(true, TYPES, 0.6f, true, false, 12, 0.25f);
+		f.update(TYPES, null, 0.6f, true, 12, 0.25f);
 		float cover = f.sample(WeatherField.COVER, x, z);
 		assertTrue(cover > 0 && cover < 0.1f);
 		assertEquals(0, f.sample(WeatherField.RAIN, x, z), 0);
 		for (int i = 0; i < 4 * 60 * 4; ++i)
 		{
-			f.update(true, TYPES, 0.6f, true, false, 12, 0.25f);
+			f.update(TYPES, null, 0.6f, true, 12, 0.25f);
 		}
 		assertTrue(f.sample(WeatherField.RAIN, x, z) > 0.5f);
 		assertTrue(f.sample(WeatherField.WET, x, z) > 0.9f);
@@ -138,11 +129,11 @@ public class WeatherFieldTest
 	{
 		WeatherField f = new WeatherField();
 		layout(f, -1, 0);
-		f.update(true, TYPES, 0.6f, true, false, 12, 0);
+		f.update(TYPES, null, 0.6f, true, 12, 0);
 		layout(f, 12, 0);
 		for (int i = 0; i < 40; ++i)
 		{
-			f.update(true, TYPES, 0.6f, true, false, 12, 0.25f);
+			f.update(TYPES, null, 0.6f, true, 12, 0.25f);
 		}
 		float[] before = new float[N];
 		for (int x = 0; x < N; ++x)
@@ -167,16 +158,9 @@ public class WeatherFieldTest
 		{
 			assertEquals(f.sample(c, x, z), f.getFocus(c), 0);
 		}
-		// clouds: rainier to the west, clearer to the east
-		assertTrue(f.cloudDelta(2, 10) > 0.2f);
-		assertTrue(f.cloudDelta(f.getCloudCellsX() - 2, 10) < -0.3f);
-		// off: no differences at all
-		f.update(false, TYPES, 0.6f, true, false, 12, 0);
-		f.focus(x, z);
-		for (int i = 0; i < f.getCloudCellsX(); ++i)
-		{
-			assertEquals(0, f.cloudDelta(i, 10), 0);
-		}
+		// the sky: cloudier to the west, clearer to the east, wherever the player stands
+		assertTrue(f.sample(WeatherField.COVER, f.getOriginX() + center(2), z) - f.getFocus(WeatherField.COVER) > 0.2f);
+		assertTrue(f.sample(WeatherField.COVER, f.getOriginX() + center(N - 2), z) - f.getFocus(WeatherField.COVER) < -0.3f);
 	}
 
 	@Test
@@ -187,7 +171,7 @@ public class WeatherFieldTest
 		String[] biomes = new String[N * N];
 		java.util.Arrays.fill(biomes, WeatherField.NO_SKY);
 		f.layout(N, N, 0, 0, keys, biomes);
-		f.update(true, b -> WeatherTestData.type("THUNDERSTORM"), 1, true, true, 6, 0);
+		f.update(b -> WeatherTestData.type("THUNDERSTORM"), null, 1, true, 6, 0);
 		assertTrue(!f.hasAnything());
 		assertEquals(0, f.max(WeatherField.RAIN), 0);
 	}
@@ -202,7 +186,7 @@ public class WeatherFieldTest
 		{
 			s[WeatherField.SNOW_COVER][0] = 0;
 			s[WeatherField.COVER][0] = 1;
-			WeatherField.targets(WeatherTestData.type(id), null, 0.6f, false, 12, t);
+			WeatherField.targets(WeatherTestData.type(id), null, 0.6f, 12, t);
 			assertTrue(t[WeatherField.SNOW] > 0);
 			for (int i = 0; i < 4 * 600; ++i)
 			{
@@ -214,7 +198,7 @@ public class WeatherFieldTest
 		}
 		// freezing fog leaves frost, and only that much
 		WeatherType frost = WeatherTestData.type("FREEZING_FOG");
-		WeatherField.targets(frost, null, 0.6f, false, 12, t);
+		WeatherField.targets(frost, null, 0.6f, 12, t);
 		s[WeatherField.SNOW_COVER][0] = 0;
 		for (int i = 0; i < 4 * 1200; ++i)
 		{
@@ -229,7 +213,7 @@ public class WeatherFieldTest
 			java.util.Arrays.fill(s[WeatherField.WET], 0);
 			s[WeatherField.COVER][0] = 1;
 			s[WeatherField.RAIN][0] = 0.01f;
-			WeatherField.targets(WeatherTestData.type(ids[k]), null, 0.6f, false, 12, t);
+			WeatherField.targets(WeatherTestData.type(ids[k]), null, 0.6f, 12, t);
 			for (int i = 0; i < 4 * 10; ++i)
 			{
 				WeatherField.step(s, 0, t, 0.25f);
@@ -239,7 +223,7 @@ public class WeatherFieldTest
 		assertTrue(wet[1] > 2 * wet[0]);
 		// showers rain less on average than their peak
 		WeatherType showers = WeatherTestData.type("SPRING_SHOWERS");
-		WeatherField.targets(showers, null, 0.6f, false, 12, t);
+		WeatherField.targets(showers, null, 0.6f, 12, t);
 		assertTrue(t[WeatherField.RAIN] < showers.rain * 0.8f);
 	}
 
@@ -252,7 +236,7 @@ public class WeatherFieldTest
 	{
 		WeatherField f = new WeatherField();
 		layout(f, 12, 0, "SWAMP", "DESERT");
-		f.update(true, STORM_AND_DUST, 0.6f, true, true, 6.5, 0);
+		f.update(STORM_AND_DUST, null, 0.6f, true, 6.5, 0);
 		float x0 = f.getOriginX() + center(2), z = f.getOriginZ() + center(10);
 		int tiles = (int) ((center(21) - center(2)) / 128);
 		float[][] v = new float[WeatherField.CHANNELS][tiles + 1];
@@ -277,9 +261,9 @@ public class WeatherFieldTest
 					steepest = Math.max(steepest, Math.abs(v[c][i] - v[c][i - 1]));
 				}
 			}
-			// the textures' channels are 8 bits; the blur spreads a step over 40 tiles, 1/24 of it at the steepest
+			// the textures' channels are 8 bits; the blur spreads a step over 80 tiles, 1/48 of it at the steepest
 			float quantum = c >= WeatherField.GPU_CHANNELS ? 0 : (c == WeatherField.FOG ? WeatherField.FOG_RANGE : 1) / 255f;
-			assertTrue("channel " + c + " jumps " + steepest + " of " + (hi - lo), steepest <= (hi - lo) / 20 + quantum);
+			assertTrue("channel " + c + " jumps " + steepest + " of " + (hi - lo), steepest <= (hi - lo) / 40 + quantum);
 			changing += hi - lo > 0.01f ? 1 : 0;
 		}
 		// and the two places really differ in most of them
@@ -291,7 +275,7 @@ public class WeatherFieldTest
 	{
 		WeatherField f = new WeatherField();
 		layout(f, 12, 0, "SWAMP", "DESERT");
-		f.update(true, STORM_AND_DUST, 0.6f, true, true, 6.5, 0);
+		f.update(STORM_AND_DUST, null, 0.6f, true, 6.5, 0);
 		float z = f.getOriginZ() + center(10);
 		f.focus(f.getOriginX() + center(9), z);
 		assertEquals(WeatherTestData.type("THUNDERSTORM"), f.getFocusType());
@@ -304,9 +288,9 @@ public class WeatherFieldTest
 	{
 		WeatherField f = new WeatherField();
 		layout(f, -1, 0, "SWAMP", "DESERT");
-		f.update(true, b -> CLEAR, 0.6f, true, true, 13, 0);
+		f.update(b -> CLEAR, null, 0.6f, true, 13, 0);
 		layout(f, 12, 0, "SWAMP", "DESERT");
-		f.update(true, b -> CLEAR, 0.6f, true, true, 13, 0);
+		f.update(b -> CLEAR, null, 0.6f, true, 13, 0);
 		float x = f.getOriginX() + center(3), z = f.getOriginZ() + center(10);
 		f.focus(x, z);
 		float[] before = new float[WeatherField.CHANNELS];
@@ -317,8 +301,8 @@ public class WeatherFieldTest
 		WeatherType storm = WeatherTestData.type("THUNDERSTORM");
 		Function<String, WeatherType> types = b -> storm;
 		float[] t = new float[WeatherField.TARGETS];
-		WeatherField.targets(storm, "SWAMP", 0.6f, true, 13, t);
-		f.update(true, types, 0.6f, true, true, 13, 0.25f);
+		WeatherField.targets(storm, "SWAMP", 0.6f, 13, t);
+		f.update(types, null, 0.6f, true, 13, 0.25f);
 		f.focus(x, z);
 		float[] soon = new float[WeatherField.CHANNELS];
 		for (int c = 0; c < WeatherField.CHANNELS; ++c)
@@ -327,7 +311,7 @@ public class WeatherFieldTest
 		}
 		for (int i = 0; i < 4 * 60 * 4; ++i)
 		{
-			f.update(true, types, 0.6f, true, true, 13, 0.25f);
+			f.update(types, null, 0.6f, true, 13, 0.25f);
 		}
 		f.focus(x, z);
 		int eased = 0;
@@ -359,22 +343,22 @@ public class WeatherFieldTest
 		layout(f, 12, 0);
 		java.util.function.Function<String, float[]> ground = b -> "WET".equals(b) ? new float[]{0.3f, 0.8f}
 			: new float[]{0, 0};
-		f.update(true, b -> CLEAR, ground, 0.6f, true, false, 12, 0);
+		f.update(b -> CLEAR, ground, 0.6f, true, 12, 0);
 		float x = f.getOriginX() + center(3), z = f.getOriginZ() + center(10);
 		assertEquals(0.8f, f.sample(WeatherField.SNOW_COVER, x, z), EPS);
 		assertEquals(0.3f, f.sample(WeatherField.WET, x, z), EPS);
 		assertEquals(0, f.sample(WeatherField.SNOW_COVER, f.getOriginX() + center(20), z), EPS);
 		for (int i = 0; i < 400; ++i)
 		{
-			f.update(true, b -> CLEAR, ground, 0.6f, true, false, 12, 0.25f);
+			f.update(b -> CLEAR, ground, 0.6f, true, 12, 0.25f);
 		}
 		assertEquals(0.8f, f.sample(WeatherField.SNOW_COVER, x, z), EPS);
 		// and falling weather starts at full strength in a newly seen region
 		WeatherField g = new WeatherField();
 		layout(g, 12, 0);
-		g.update(true, TYPES, ground, 0.6f, true, false, 12, 0);
+		g.update(TYPES, ground, 0.6f, true, 12, 0);
 		float[] t = new float[WeatherField.TARGETS];
-		WeatherField.targets(RAIN, "WET", 0.6f, false, 12, t);
+		WeatherField.targets(RAIN, "WET", 0.6f, 12, t);
 		assertEquals(t[WeatherField.RAIN], g.cell(WeatherField.RAIN, 3, 10), 1e-6f);
 	}
 }

@@ -6,7 +6,9 @@ import java.util.Map;
 
 /**
  * Which weather each biome gets in each season: weather_climate.json's odds, as weight arrays in the catalogue's
- * order (WeatherType.index). A zero stays zero whatever the forecast's chain does: deserts never see snow.
+ * order (WeatherType.index), their temperatures (which split rain and snow, Climate) and how foggy they are
+ * (FogClimate). A zero stays zero whatever the forecast's chain does, and a biome that is never cold enough
+ * never sees snow: deserts, the tropics and the other warm biomes stay clear of it.
  */
 final class WeatherClimate
 {
@@ -43,6 +45,8 @@ final class WeatherClimate
 		Map<String, Map<String, Map<String, Float>>> biomes;
 		// biome -> its temperatures (Climate)
 		Map<String, Temperature> temperature;
+		// biome -> how it mists over (FogClimate)
+		Map<String, FogClimate.Profile> fog;
 	}
 
 	/** A biome's temperatures: per season the mean and the half swing between night and afternoon, degrees C. */
@@ -89,9 +93,14 @@ final class WeatherClimate
 		final float[] morning;
 		final int catalogueVersion;
 		final Map<String, Temperature> temperature = new HashMap<>();
+		final Map<String, FogClimate.Profile> fog = new HashMap<>();
 
 		Tables(Data d)
 		{
+			if (d.fog != null)
+			{
+				fog.putAll(d.fog);
+			}
 			catalogueVersion = WeatherType.version();
 			int n = WeatherType.count();
 			morning = new float[n];
@@ -275,6 +284,18 @@ final class WeatherClimate
 			r = t.temperature.get(t.defaultBiome);
 		}
 		return r != null ? r : MILD;
+	}
+
+	/** The biome's fog profile; unknown biomes get the default biome's, and without any, a plain one. */
+	static FogClimate.Profile fog(String biome)
+	{
+		Tables t = tables();
+		FogClimate.Profile p = biome != null ? t.fog.get(biome) : null;
+		if (p == null)
+		{
+			p = t.fog.get(t.defaultBiome);
+		}
+		return p != null ? p : FogClimate.PLAIN;
 	}
 
 	/** Multiplier on a type's odds in the morning slot. */

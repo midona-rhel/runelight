@@ -55,6 +55,7 @@ import net.runelite.api.FloatProjection;
 import net.runelite.api.GameObject;
 import net.runelite.api.GameState;
 import net.runelite.api.Model;
+import net.runelite.api.ObjectComposition;
 import net.runelite.api.Perspective;
 import net.runelite.api.Player;
 import net.runelite.api.Projection;
@@ -369,10 +370,8 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 	private final EnvironmentUniforms sceneEnvUniforms = new EnvironmentUniforms();
 	private final ShadowMap shadowMap = new ShadowMap();
 	private final Weather weather = new Weather();
-	// automatic weather's forecast, and each region's temperature and ground; both follow the game clock
-	private WeatherForecast weatherForecast = new WeatherForecast();
+	// each region's forecast, temperature and ground, which follow the game clock
 	private final Climate climate = new Climate();
-	private Climate.Region climateRegion;
 	private final WeatherGround weatherGround = new WeatherGround();
 	// GameClock's time this frame
 	private long frameGameMillis;
@@ -402,6 +401,8 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 	private final float[] giOvercast = new float[7];
 	// the skylight's traced sky visibility for the AO pass, and the static lights' occlusion
 	private static final int SKY_GRID_UNIT = RuneLightPlugin.COMPOSITE_TEXTURE_UNIT + 28;
+	// the weather field's sky (cover, wispiness, darkness around the player) for the clouds
+	private static final int WEATHER_SKY_UNIT = RuneLightPlugin.COMPOSITE_TEXTURE_UNIT + 27;
 	private final SkyGridMap skyGrid = new SkyGridMap();
 	// the sky's light flowing in under cover
 	private static final int SKY_FIELD_UNIT = RuneLightPlugin.COMPOSITE_TEXTURE_UNIT + 25;
@@ -636,7 +637,6 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		environmentManager.load(gson);
 		WeatherData.load(gson);
 		startMillis = System.currentTimeMillis();
-		weatherForecast = new WeatherForecast();
 
 		root = new SceneContext(NUM_ZONES, NUM_ZONES);
 		subs = new SceneContext[MAX_WORLDVIEWS];
@@ -1111,7 +1111,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 			WATER_NOISE_UNIT, WATER_CONTACT_UNIT, WATER_WAVES_UNIT_A, WATER_WAVES_UNIT_B);
 		weather.setPrograms(weather.compile(template), COMPOSITE_TEXTURE_UNIT, WEATHER_OCCLUSION_UNIT, SHADOW_COMPARE_UNIT, ALPHA_LAYER_UNIT,
 			LIGHT_DATA_UNIT, CLUSTER_DATA_UNIT, MATERIAL_UNIT, WEATHER_FIELD_UNIT);
-		skyCache.setPrograms(skyCache.compile(template), CLOUD_NOISE_UNIT, SKY_CACHE_UNIT);
+		skyCache.setPrograms(skyCache.compile(template), CLOUD_NOISE_UNIT, WEATHER_SKY_UNIT, SKY_CACHE_UNIT);
 		globalIllumination.setPrograms(globalIllumination.compile(template), SKY_CACHE_UNIT, GI_PROBE_UNIT);
 		upscaler.setProgram(Upscaler.PROGRAM.compile(template));
 
@@ -1263,7 +1263,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		c.edge.locate(p);
 		c.materials.locate(p);
 		c.ground.locate(p);
-		Clouds.locate(c.clouds, p, CLOUD_NOISE_UNIT);
+		Clouds.locate(c.clouds, p, CLOUD_NOISE_UNIT, WEATHER_SKY_UNIT);
 		c.water.locate(p, WATER_DATA_UNIT, WATER_NOISE_UNIT);
 		c.skyCache.locate(p, SKY_CACHE_UNIT);
 		bindSceneSamplers(p);
@@ -1439,7 +1439,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 			WATER_CONTACT_UNIT, WATER_WAVES_UNIT_A, WATER_WAVES_UNIT_B);
 		weather.setPrograms(weatherPrograms, COMPOSITE_TEXTURE_UNIT, WEATHER_OCCLUSION_UNIT, SHADOW_COMPARE_UNIT, ALPHA_LAYER_UNIT,
 			LIGHT_DATA_UNIT, CLUSTER_DATA_UNIT, MATERIAL_UNIT, WEATHER_FIELD_UNIT);
-		skyCache.setPrograms(skyCachePrograms, CLOUD_NOISE_UNIT, SKY_CACHE_UNIT);
+		skyCache.setPrograms(skyCachePrograms, CLOUD_NOISE_UNIT, WEATHER_SKY_UNIT, SKY_CACHE_UNIT);
 		globalIllumination.setPrograms(giPrograms, SKY_CACHE_UNIT, GI_PROBE_UNIT);
 		upscaler.setProgram(upscale);
 		initUniforms();
@@ -1642,7 +1642,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 			glDisable(GL_MULTISAMPLE);
 		}
 
-		sceneTargets.init(width, height, aaSamples);
+		sceneTargets.init(width, height, aaSamples, (float) Math.max(1, 2 * renderFactor));
 		if (renderFactor != 1)
 		{
 			upscaler.init(width, height);
@@ -2130,25 +2130,17 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 			fy = Perspective.getTileHeight(client, lp, plane);
 		}
 		boolean sky = frameOpenSky && client.getGameState() == GameState.LOGGED_IN;
-		EnvironmentManager.Environment biome = config.areaEnvironments() ? environmentManager.getBiome() : null;
-		String biomeName = biome != null && !biome.cave ? biome.name : null;
+		String biomeName = config.areaEnvironments() ? environmentManager.getBiome() : null;
 		ShaderWatcher watcher = shaderWatcher;
 		if (watcher != null)
 		{
 			WeatherData.reloadIfChanged(watcher.getDirectory(), gson);
 		}
-		weatherForecast.update(biomeName, frameGameMillis, config.dayCycleMinutes(), config.weatherSeasonDays());
 		climate.update(frameGameMillis, config.weatherSeasonDays());
-		climateRegion = climate.region(biomeName);
-		weather.setGround(config.weatherMode() == WeatherMode.AUTOMATIC, climateRegion.wet, climateRegion.snowCover());
-		SceneContext ctx = root;
-		weather.updateField(sky && ctx != null ? wv.getScene() : null, ctx != null ? ctx.sizeX : 0,
-			ctx != null ? ctx.sizeZ : 0, SCENE_OFFSET >> 3, plane, environmentManager, config.areaEnvironments(),
-			biomeName, config.weatherField() && config.weatherMode() == WeatherMode.AUTOMATIC, climate,
-			config.weatherIntensity(), config.weatherBuildup(), config.fogClimate(), dayCycle.hour(), fx, fz);
-		weather.update(config.weatherMode(), climateRegion.type, config.weatherIntensity(),
-			config.weatherBuildup(), config.weatherVarying(), config.weatherOvercast(), config.weatherLightning(), sky,
-			dayCycle.hour(), biomeName, config.fogClimate(), fx, fy, fz, plane);
+		weather.updateField(sky ? wv.getScene() : null, plane, environmentManager, config.areaEnvironments(), biomeName,
+			config.weatherMode(), climate, config.weatherIntensity(), config.weatherBuildup(), dayCycle.hour(), fx, fz);
+		weather.update(config.weatherBuildup(), config.weatherVarying(), config.weatherOvercast(),
+			config.weatherLightning(), sky, fx, fy, fz, plane);
 		weather.getOvercast(volumetricFog.overcast);
 	}
 
@@ -2684,17 +2676,6 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		return weather;
 	}
 
-	WeatherForecast getWeatherForecast()
-	{
-		return weatherForecast;
-	}
-
-	/** The player's region's temperature, weather and ground, null before the first frame. */
-	Climate.Region getClimateRegion()
-	{
-		return climateRegion;
-	}
-
 	BuildingLights getBuildingLights()
 	{
 		return buildingLights;
@@ -2792,6 +2773,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		if (config.clouds())
 		{
 			clouds.bindNoise(CLOUD_NOISE_UNIT);
+			weather.getField().bindSky(WEATHER_SKY_UNIT);
 		}
 		skyCache.update(clouds, gameMinutes, config.skyCacheMinutes(), frameCameraX, frameCameraY, frameCameraZ,
 			dayCycle, skyCacheOvercast, settings, SKY_CACHE_UNIT);
@@ -2956,7 +2938,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		prepareLighting();
 		sceneTargets.bindAlphaLayer(ALPHA_LAYER_UNIT);
 
-		weather.bindField(WEATHER_FIELD_UNIT);
+		weather.bindField(WEATHER_FIELD_UNIT, WEATHER_SKY_UNIT);
 		final boolean denoise = halfPass && glDenoiseProgram != 0;
 		boolean denoiseFog = false;
 		// after prepareLighting, which binds the shadow map and light clusters the fog also samples
@@ -3026,9 +3008,8 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		useComposite(compositeFull);
 		if (log.isDebugEnabled())
 		{
-			EnvironmentManager.Environment b = environmentManager.getBiome();
 			lookMonitor.frame(compositeFull.env, weather, globalIllumination, frameLights.size(),
-				environmentManager.getWorldPoint(), b != null ? b.name : null);
+				environmentManager.getWorldPoint(), environmentManager.getBiome());
 		}
 
 		if (config.debugView() == DebugView.FINAL && !Boolean.parseBoolean(System.getProperty("runelight.compositeCombined", "true")))
@@ -3107,7 +3088,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		glActiveTexture(GL_TEXTURE0);
 		VolumetricFog.unbind(FOG_TEXTURE_UNIT);
 		Clouds.unbind(CLOUD_NOISE_UNIT);
-		WeatherField.unbind(WEATHER_FIELD_UNIT, WEATHER_FIELD_UNIT + 1);
+		WeatherField.unbind(WEATHER_FIELD_UNIT, WEATHER_FIELD_UNIT + 1, WEATHER_SKY_UNIT);
 		glUseProgram(0);
 
 		checkGLErrors();
@@ -3388,6 +3369,17 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		}
 	}
 
+	/** Whether the object has an action to interact with, as it looks now; client thread (Interactables). */
+	private boolean hasAction(int id)
+	{
+		ObjectComposition comp = client.getObjectDefinition(id);
+		if (comp != null && comp.getImpostorIds() != null && comp.getImpostor() != null)
+		{
+			comp = comp.getImpostor();
+		}
+		return comp != null && Interactables.hasAction(comp.getActions());
+	}
+
 	private void rebuild(WorldView wv)
 	{
 		SceneContext ctx = context(wv);
@@ -3412,6 +3404,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 
 				Scene scene = wv.getScene();
 				clientUploader.zoneSize(scene, zone, x, z);
+				Interactables.resolve(this::hasAction);
 
 				VBO o = null, a = null;
 				int sz = zone.sizeO * Zone.VERT_SIZE * 3;
@@ -3973,6 +3966,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		CountDownLatch latch = new CountDownLatch(1);
 		clientThread.invoke(() ->
 		{
+			Interactables.resolve(this::hasAction);
 			for (int x = 0; x < Constants.EXTENDED_SCENE_SIZE >> 3; ++x)
 			{
 				for (int z = 0; z < Constants.EXTENDED_SCENE_SIZE >> 3; ++z)
@@ -4096,6 +4090,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		CountDownLatch latch = new CountDownLatch(1);
 		clientThread.invoke(() ->
 		{
+			Interactables.resolve(this::hasAction);
 			for (int x = 0; x < ctx.sizeX; ++x)
 			{
 				for (int z = 0; z < ctx.sizeZ; ++z)

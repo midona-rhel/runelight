@@ -14,7 +14,8 @@ import org.slf4j.LoggerFactory;
 /**
  * 117 HD's water definitions (water_overrides.json, converted by tools/import_117hd_water.py), matched as 117 HD
  * matches them: which tiles' water its tile overrides make another type, and which objects' faces are the game's
- * ripples it hides.
+ * ripples it hides. Also the lakes (water_lakes.json, boxes of world tiles) the sea is told from by hand: a lake that
+ * runs off the loaded scene looks like the sea in it.
  */
 final class WaterOverrides
 {
@@ -24,6 +25,17 @@ final class WaterOverrides
 	{
 		List<Tile> tiles;
 		List<Effect> effects;
+	}
+
+	private static final class Lakes
+	{
+		List<Lake> lakes;
+	}
+
+	private static final class Lake
+	{
+		String name;
+		int[] box;
 	}
 
 	private static final class Tile
@@ -49,15 +61,17 @@ final class WaterOverrides
 		boolean hide;
 	}
 
-	private static WaterOverrides loaded = new WaterOverrides(new Data());
+	private static WaterOverrides loaded = new WaterOverrides(new Data(), new Lakes());
 
 	// tile overrides by overlay id and by underlay id, each in the file's order, and those matching any id
 	private final Map<Integer, List<Tile>> overlays = new HashMap<>(), underlays = new HashMap<>();
 	private final List<Tile> anyMatch = new ArrayList<>();
 	private final Map<Integer, Effect> effects = new HashMap<>();
+	private final List<Lake> lakes;
 
-	private WaterOverrides(Data d)
+	private WaterOverrides(Data d, Lakes l)
 	{
+		lakes = l.lakes != null ? l.lakes : new ArrayList<>();
 		if (d.tiles != null)
 		{
 			for (int i = 0; i < d.tiles.size(); ++i)
@@ -117,24 +131,51 @@ final class WaterOverrides
 
 	static void load(Gson gson)
 	{
-		try (InputStream is = WaterOverrides.class.getResourceAsStream("water_overrides.json"))
+		Data data = read(gson, "water_overrides.json", Data.class);
+		Lakes lakes = read(gson, "water_lakes.json", Lakes.class);
+		if (data != null && lakes != null)
+		{
+			loaded = new WaterOverrides(data, lakes);
+		}
+	}
+
+	private static <T> T read(Gson gson, String name, Class<T> type)
+	{
+		try (InputStream is = WaterOverrides.class.getResourceAsStream(name))
 		{
 			if (is == null)
 			{
-				log.warn("water_overrides.json missing");
-				return;
+				log.warn("{} missing", name);
+				return null;
 			}
-			loaded = new WaterOverrides(gson.fromJson(new InputStreamReader(is, StandardCharsets.UTF_8), Data.class));
+			return gson.fromJson(new InputStreamReader(is, StandardCharsets.UTF_8), type);
 		}
 		catch (Exception ex)
 		{
-			log.error("Unable to load water_overrides.json", ex);
+			log.error("Unable to load {}", name, ex);
+			return null;
 		}
 	}
 
 	static WaterOverrides get()
 	{
 		return loaded;
+	}
+
+	/**
+	 * Whether world tile (x, y) is in one of the lakes.
+	 */
+	boolean lake(int x, int y)
+	{
+		for (Lake l : lakes)
+		{
+			int[] b = l.box;
+			if (b[0] <= x && x <= b[2] && b[1] <= y && y <= b[3])
+			{
+				return true;
+			}
+		}
+		return false;
 	}
 
 	/**

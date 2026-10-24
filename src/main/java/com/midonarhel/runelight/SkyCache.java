@@ -224,7 +224,7 @@ class SkyCache
 	 * Replace the programs. The blend program samples its two captures from fromUnit and fromUnit + 1, the
 	 * irradiance pass the shown cache from fromUnit.
 	 */
-	void setPrograms(Programs p, int cloudNoiseUnit, int fromUnit)
+	void setPrograms(Programs p, int cloudNoiseUnit, int weatherSkyUnit, int fromUnit)
 	{
 		freePrograms();
 		captureProgram = p.capture;
@@ -238,7 +238,7 @@ class SkyCache
 		uniOvercast = glGetUniformLocation(captureProgram, "weatherOvercast");
 		uniLight = glGetUniformLocation(captureProgram, "weatherLight");
 		uniSteps = glGetUniformLocation(captureProgram, "captureSteps");
-		Clouds.locate(captureClouds, captureProgram, cloudNoiseUnit);
+		Clouds.locate(captureClouds, captureProgram, cloudNoiseUnit, weatherSkyUnit);
 
 		uniBlend = glGetUniformLocation(blendProgram, "blend");
 		glUseProgram(blendProgram);
@@ -360,7 +360,8 @@ class SkyCache
 
 	/**
 	 * Capture the sky if it is due and advance the blend. Changes the framebuffer, viewport and program; expects a
-	 * VAO bound and the cloud noise bound on the unit given to setPrograms if clouds are enabled.
+	 * VAO bound and the cloud noise and the weather field's sky bound on the units given to setPrograms if clouds are
+	 * enabled.
 	 *
 	 * @param gameMinutes the game clock in minutes, NaN while it stands still
 	 * @param minutes configured in-game minutes between captures

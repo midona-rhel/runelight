@@ -13,8 +13,9 @@
 
 uniform vec4 roomHeader;  // LightClusters.getRoomHeader
 
-// how far above a floor a point must be to be on that storey (world units): the tops of the walls stay on theirs
-#define ROOM_PLANE_MARGIN 24.0
+// how far above a floor a point must be to be on that storey (world units): only a little slack for rounding. More
+// put the foot of an upper storey's walls on the storey below, lit by its lamps and its indoor fill.
+#define ROOM_PLANE_MARGIN 2.0
 // a room ends this far above its floor; above it is a roof
 #define ROOM_STOREY 420.0
 // pixels look their room up this far off their surface along the normal: a wall's outer face is outdoors, its
@@ -115,6 +116,18 @@ ivec2 lightRoomAt(vec3 w) {
   return lightRoomPlaneAt(w).xy;
 }
 
+// Distance in tiles (1: a tile or more) to the nearest wall from a point on a storey, baked at the tile corners
+// (RoomAmbient) for outdoor tiles as well as rooms; f is the point's place in its tile.
+float tileWallDistance(int index, int plane, vec2 f) {
+  int packed = int(texelFetch(lightData, index + 3)[plane]);
+  vec4 distances = vec4(packed & 63, (packed >> 6) & 63, (packed >> 12) & 63, (packed >> 18) & 63) / 63.0;
+  float distance = mix(mix(distances.x, distances.y, f.x), mix(distances.z, distances.w, f.x), f.y);
+  int walls = int(texelFetch(lightData, index + 2)[plane]);
+  if ((walls & ROOM_WALL_SW_NE) != 0) distance = min(distance, abs(f.y - f.x) * 0.70710678);
+  if ((walls & ROOM_WALL_NW_SE) != 0) distance = min(distance, abs(f.x + f.y - 1.0) * 0.70710678);
+  return distance;
+}
+
 // Version 2 bakes wall distance; older running clients have no ambient field yet.
 float roomAmbientFill(vec3 world, vec3 normal) {
   vec4 header = roomHeader;
@@ -125,12 +138,28 @@ float roomAmbientFill(vec3 world, vec3 normal) {
   if (room.x <= 0) return 0.0;
   ivec2 tile = ivec2(floor(receiver.xz / 128.0)) + int(header.z);
   int index = ROOM_BASE + 1 + (tile.x * int(header.y) + tile.y) * 4;
-  int packed = int(texelFetch(lightData, index + 3)[room.z]);
-  vec4 distances = vec4(packed & 63, (packed >> 6) & 63, (packed >> 12) & 63, (packed >> 18) & 63) / 63.0;
-  vec2 f = fract(receiver.xz / 128.0);
-  float distance = mix(mix(distances.x, distances.y, f.x), mix(distances.z, distances.w, f.x), f.y);
-  int walls = int(texelFetch(lightData, index + 2)[room.z]);
-  if ((walls & ROOM_WALL_SW_NE) != 0) distance = min(distance, abs(f.y - f.x) * 0.70710678);
-  if ((walls & ROOM_WALL_NW_SE) != 0) distance = min(distance, abs(f.x + f.y - 1.0) * 0.70710678);
+  float distance = tileWallDistance(index, room.z, fract(receiver.xz / 128.0));
   return mix(0.6, 1.0, smoothstep(0.0, 1.0, distance));
+}
+
+// Wall distance of the ground at a world point, on the highest storey with a floor under it; 1 where nothing is known.
+float wallDistanceAt(vec3 w) {
+  vec4 header = roomHeader;
+  if (header.x < 1.5) return 1.0;
+  ivec2 tile = ivec2(floor(w.xz / 128.0)) + int(header.z);
+  int size = int(header.y);
+  if (any(lessThan(tile, ivec2(0))) || any(greaterThanEqual(tile, ivec2(size)))) {
+    return 1.0;
+  }
+  int index = ROOM_BASE + 1 + (tile.x * size + tile.y) * 4;
+  vec4 floors = texelFetch(lightData, index + 1);
+  vec4 walls = texelFetch(lightData, index + 2);
+  int plane = 0;
+  for (int k = 1; k < 4; ++k) {
+    // bit 19 of a tile's walls: a floor on that storey
+    if (((int(walls[k]) >> 19) & 1) != 0 && w.y <= floors[k] - ROOM_PLANE_MARGIN) {
+      plane = k;
+    }
+  }
+  return tileWallDistance(index, plane, fract(w.xz / 128.0));
 }

@@ -296,16 +296,16 @@ public class RoomSplitTest
 		RoomMap m = RoomMap.build(r, settings, new int[4][SIZE + 1][SIZE + 1], OFFSET);
 		m.setWalls(w);
 		// tile (9, 10) on the "/" wall: north-west of it the small room, south-east the big one
-		// (world y -10: just above the floor, on plane 0; the test's floors are all at 0)
-		int nw = m.roomAt((9 - OFFSET + 0.25f) * 128, -10, (10 - OFFSET + 0.75f) * 128)[0];
-		int se = m.roomAt((9 - OFFSET + 0.75f) * 128, -10, (10 - OFFSET + 0.25f) * 128)[0];
+		// (world y -1: just above the floor, on plane 0; the test's floors are all at 0)
+		int nw = m.roomAt((9 - OFFSET + 0.25f) * 128, -1, (10 - OFFSET + 0.75f) * 128)[0];
+		int se = m.roomAt((9 - OFFSET + 0.75f) * 128, -1, (10 - OFFSET + 0.25f) * 128)[0];
 		assertTrue(nw > 0 && se > 0);
 		assertNotEquals(nw, se);
-		assertEquals(nw, m.roomAt((8 - OFFSET + 0.5f) * 128, -10, (11 - OFFSET + 0.5f) * 128)[0]);
-		assertEquals(se, m.roomAt((10 - OFFSET + 0.5f) * 128, -10, (9 - OFFSET + 0.5f) * 128)[0]);
+		assertEquals(nw, m.roomAt((8 - OFFSET + 0.5f) * 128, -1, (11 - OFFSET + 0.5f) * 128)[0]);
+		assertEquals(se, m.roomAt((10 - OFFSET + 0.5f) * 128, -1, (9 - OFFSET + 0.5f) * 128)[0]);
 		// the cut corner: inside the wall the big room, past it outdoors
-		assertEquals(se, m.roomAt((11 - OFFSET + 0.2f) * 128, -10, (8 - OFFSET + 0.8f) * 128)[0]);
-		assertEquals(0, m.roomAt((11 - OFFSET + 0.8f) * 128, -10, (8 - OFFSET + 0.2f) * 128)[0]);
+		assertEquals(se, m.roomAt((11 - OFFSET + 0.2f) * 128, -1, (8 - OFFSET + 0.8f) * 128)[0]);
+		assertEquals(0, m.roomAt((11 - OFFSET + 0.8f) * 128, -1, (8 - OFFSET + 0.2f) * 128)[0]);
 		// and the texels say so: "/" with the room on the north-west half (0), outdoors across
 		java.nio.FloatBuffer b = java.nio.FloatBuffer.allocate(m.texelCount() * 4);
 		m.texels(b);

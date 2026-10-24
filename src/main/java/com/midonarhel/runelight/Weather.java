@@ -12,33 +12,30 @@ import static org.lwjgl.opengl.GL33C.*;
  * themselves: the AO pass finds how much of each a pixel gets (weather_ground_ao.glsl) and the composite lights them
  * like everything else (weather_ground.glsl).
  *
- * Everything follows a few values (cover, rain, snow, wind, fog, storm, the light's strength, haze and tint, the
- * look of the clouds and the particles) that ease toward the current weather's: the automatic forecast's
- * WeatherType, or the one forced in the settings. A change of weather therefore always blends; clouds
- * build before rain starts and stay until it has stopped. The wind (Wind.java) is simulated here too and drives the
- * rain's slant, the snow's drift, the clouds and the water.
+ * Everything the player sees (cover, rain, snow, wind, fog and its height, storm, the light's strength, haze and
+ * tint, the look of the clouds and the particles, the ground) is the weather field's at the player: WeatherField
+ * holds the weather of every place around, each cell easing toward its biome's forecast (Climate) or the one forced
+ * in the settings, and blended across region borders by position. A change of weather therefore always blends,
+ * clouds build before rain starts and stay until it has stopped, and walking into a region where it has been snowing
+ * for days shows it snowing, at full strength, on deep snow, with no step in time or space at the border. This class
+ * adds what the cells do not have: showers, swells, gusts and the wind (Wind.java), which drives the rain's slant,
+ * the snow's drift, the clouds and the water.
  *
  * Shelter comes from an "occlusion map": a top-down orthographic depth map of all static scenery around the
  * player, drawn with every roof and every level, including roofs the game (or a roof hiding plugin) hides from the
  * camera. A point is under the open sky when nothing in its column is above it. The map is only redrawn when the
  * player walks away from its center, the scene loads or a zone changes, so it costs nothing on most frames.
  *
- * Away from the player the weather is WeatherField's: each chunk of the scene has its region's weather, which the
- * passes add to the player's as a difference. Weather is tied to place: in automatic weather outdoors, everything
- * the player sees (cover, rain, snow, ground, fog and its height, storm, wind, the light's look, the particles' look)
- * is the field's at the player, blended across region borders by position. Walking into a region where it has been
- * snowing for days shows it snowing, at full strength, on deep snow, and a border is never a step in time or in
- * space; only a change of the weather itself blends over time, cell by cell. The ground comes from Climate, which keeps
- * each region's snow until it thaws. Wet ground and snow cover reach over the whole scene (past the
- * occlusion map everything counts as under the open sky). The particles fill everything the camera sees out to the
- * draw distance, wherever it rains or snows: in layers of world-anchored boxes, each twice the size of the last and
- * owning a band of distance from the camera, with fewer, larger particles the farther the band (weather_common.glsl).
- * So a change of weather shows over the whole view at once, thinning gradually into the distance.
+ * Away from the player the weather is the field's there: the passes add its difference from the player's to the
+ * player's own, the clouds look it up where the view ray crosses them. Wet ground and snow cover reach over the whole
+ * field (past the occlusion map everything counts as under the open sky). The particles fill everything the camera
+ * sees out to the draw distance, wherever it rains or snows: in layers of world-anchored boxes, each twice the size
+ * of the last and owning a band of distance from the camera, with fewer, larger particles the farther the band
+ * (weather_common.glsl). So a change of weather shows over the whole view at once, thinning gradually into the
+ * distance.
  */
 class Weather
 {
-	private static final org.slf4j.Logger log = org.slf4j.LoggerFactory.getLogger(Weather.class);
-
 	// occlusion map: OCCLUSION_SIZE^2 texels over +-OCCLUSION_RADIUS world units, 1/8 tile per texel, 4 MB
 	private static final int OCCLUSION_SIZE = 1024;
 	private static final float OCCLUSION_RADIUS = 64 * 128;
@@ -90,8 +87,6 @@ class Weather
 	static final float PRECIP_EPSILON = 0.003f;
 	// the intensity setting at which automatic weather has its own amounts
 	static final float DEFAULT_INTENSITY = 0.6f;
-	// time constant, seconds, of the cloud cover following the intensity's swells: slower than the rain itself
-	private static final float COVER_SECONDS = 20;
 	// cloud cover at the lightest rain or snow, and what each unit of intensity adds
 	static final float COVER_BASE = 0.35f;
 	static final float COVER_SLOPE = 0.8f;
@@ -105,13 +100,10 @@ class Weather
 	private static final float RAIN_DRIFT = 120, RAIN_DRIFT_HEAVY = 140;
 	private static final float SNOW_DRIFT = 35, SNOW_DRIFT_HEAVY = 50;
 	private static final float DRIFT_CALM = 0.3f, DRIFT_WIND = 1.2f;
-	// showers: seconds per noise step of the rain coming and going, and the cover left between showers
+	// showers: seconds per noise step of the rain coming and going
 	private static final double SHOWER_PERIOD = 40;
-	private static final float SHOWER_BREAK_COVER = 0.55f;
 	// on average, showers rain this share of the time (for the weather field, which has no swells)
 	static final float SHOWER_SHARE = 0.6f;
-	// frost builds this much slower than snow cover
-	private static final float FROST_SLOWER = 2;
 	static final float WET_BUILD_SECONDS = 25;
 	static final float SNOW_BUILD_SECONDS = 90;
 	// seconds for wet ground to dry, and for snow cover to melt (rain melts it three times as fast)
@@ -119,9 +111,6 @@ class Weather
 	static final float MELT_SECONDS = 180;
 	// fog multiplier underground, where there is no weather
 	private static final float FOG_CAVE = 0.6f;
-	// hours around which morning mist peaks, and its half width
-	private static final double MIST_HOUR = 6.5;
-	private static final double MIST_WIDTH = 3;
 	// the particle clock wraps so float precision holds; a wrap moves every particle once, unnoticeable in rain
 	private static final long CLOCK_WRAP_MILLIS = 600_000;
 
@@ -228,7 +217,6 @@ class Weather
 	private int occlusionPlane = -1;
 
 	// per frame
-	private boolean initialized;
 	private boolean active;
 	private boolean openSky;
 	private float overcastStrength;
@@ -239,15 +227,13 @@ class Weather
 	private float fog = WeatherType.clear().fog;
 	private float areaFog = WeatherType.clear().areaFog;
 	private float distanceFog = WeatherType.clear().distanceFog;
-	// the type's look, eased: clouds (wisp, dark), light (sun - 1, haze, warmth, sky saturation), fog tint, rain
-	// drops (length, speed, width, alpha, slant), flakes (size, speed, sway, wind, then color), buildup (wet rate,
-	// snow rate, frost, cover swell)
+	// the field's look at the player: clouds (wisp, dark), light (sun - 1, haze, warmth, sky saturation), fog tint,
+	// rain drops (length, speed, width, alpha, slant), flakes (size, speed, sway, wind, then color)
 	private float cloudWisp, cloudDark;
 	private final float[] light = new float[4];
 	private final float[] fogTint = {1, 1, 1};
 	private final float[] rainStyle = {1, 1, 1, 1, 1};
 	private final float[] flakeStyle = {1, 1, 1, 1, 0.95f, 0.97f, 1.0f};
-	private final float[] buildup = {1, 1, 0, 1};
 	private final float[] scratch = new float[8];
 	private WeatherType type = WeatherType.clear();
 	// FogClimate: multiplier on the fog height (low mist, rising haze) and the region's humidity
@@ -255,9 +241,8 @@ class Weather
 	private float humidity = 1;
 	private float storm;
 	private float snowiness;
-	// rain and snow with this moment's swell or lull, and their slow average that the cloud cover follows
+	// rain and snow with this moment's swell or lull
 	private float rainEffective, snowEffective;
-	private float slowEffective;
 	private float gust;
 	// wind this frame and how far it has carried the particles, world units; reset when the particle clock wraps
 	private float windX, windZ;
@@ -272,10 +257,6 @@ class Weather
 	private long lastMillis;
 	// the prevailing wind is the same for everyone; it wanders with the clock (GameClock), not the session
 	private final Wind windSim = new Wind(1);
-	// automatic weather: the ground from Climate rather than built up here
-	private boolean groundFromClimate;
-	private String lastBiome;
-	private float climateWet, climateSnow;
 	private float focusX, focusY, focusZ;
 	private int focusPlane;
 
@@ -512,25 +493,17 @@ class Weather
 	}
 
 	/**
-	 * Ease the weather toward this frame's targets, advance the buildup, the variation, the wind and the lightning,
-	 * and decide whether rain or snow is drawn. Underground the weather goes on but nothing is drawn, and the
-	 * occlusion map is freed once nothing is left to draw.
+	 * Take this frame's weather from the field at the player, advance the variation, the wind and the lightning, and
+	 * decide whether rain or snow is drawn. Underground the weather goes on but nothing is drawn, and the occlusion
+	 * map is freed once nothing is left to draw. Call after {@link #updateField}, with the same focus.
 	 *
-	 * @param mode Automatic follows {@code auto}; Off is clear weather; any other holds that weather
-	 * @param auto the forecast's weather for the region, used in Automatic mode
-	 * @param gradual false applies every change at once
 	 * @param varying whether intensity and wind wander over time
 	 * @param overcastPercent how much the cover grays the sky and changes the light
 	 * @param lightningEnabled whether storms strike
 	 * @param outdoors whether the area has a sky at all
-	 * @param hour clock time 0-24, for mist by the time of day
-	 * @param biome the region's 3D Weather biome or null, for {@link FogClimate}
-	 * @param climate whether fog follows the region and the time of day (FogClimate); otherwise only a little
-	 *                morning mist
 	 * @param fx player ground position, world units
 	 */
-	boolean update(WeatherMode mode, WeatherType auto, int intensityPercent, boolean gradual, boolean varying,
-		int overcastPercent, boolean lightningEnabled, boolean outdoors, double hour, String biome, boolean climate,
+	boolean update(boolean gradual, boolean varying, int overcastPercent, boolean lightningEnabled, boolean outdoors,
 		float fx, float fy, float fz, int plane)
 	{
 		long now = System.currentTimeMillis();
@@ -541,34 +514,18 @@ class Weather
 		// real seconds since the clock's epoch: showers, swells and the wind's wander are the same whenever the
 		// client started
 		double t = GameClock.realSeconds(now);
-		float scale = intensityPercent / 100f;
 
-		// outdoors with the field on, the weather is that of the place: the field's at the player
-		boolean fromField = field.isEnabled() && outdoors;
-		WeatherType type = fromField && field.getFocusType() != null ? field.getFocusType() : resolve(mode, auto);
-		this.type = type;
 		float windMean = type.wind, gustiness = type.gustiness;
-		// walking into another region shows its weather as it is, at once; only a change of the weather blends
-		boolean entered = !fromField && initialized && mode == WeatherMode.AUTOMATIC
-			&& !java.util.Objects.equals(biome, lastBiome);
-		lastBiome = biome;
-		if (fromField)
+		if (field.isEnabled())
 		{
 			takeField(t, varying);
 			windMean = field.getFocus(WeatherField.WIND);
 			gustiness = field.getFocus(WeatherField.GUSTINESS);
 		}
-		else
-		{
-			followType(type, mode, scale, gradual, varying, entered, hour, biome, climate, dt, t);
-		}
 
 		float variation = varying ? WeatherVariation.intensity(t) : 1;
 		rainEffective = Math.min(rainAmount * variation, MAX_EFFECTIVE);
 		snowEffective = Math.min(snowAmount * variation, MAX_EFFECTIVE);
-		float effective = rainEffective + snowEffective;
-		slowEffective = !gradual ? effective
-			: slowEffective + (effective - slowEffective) * (1 - (float) Math.exp(-dt / COVER_SECONDS));
 		windSim.update(t, dt, windMean, gustiness, varying, gradual, fx, fz);
 		gust = windSim.getGust();
 		updateWind(dt, now);
@@ -605,113 +562,13 @@ class Weather
 	}
 
 	/**
-	 * Ease the weather toward the player's own region's weather (manual modes, the field off, or indoors).
-	 *
-	 * @param entered the region changed: apply its weather at once
-	 */
-	private void followType(WeatherType type, WeatherMode mode, float scale, boolean gradual, boolean varying,
-		boolean entered, double hour, String biome, boolean climate, float dt, double t)
-	{
-		float targetCover = mode == WeatherMode.OFF ? 0 : type.cover;
-		float targetRain = type.rain * scale / DEFAULT_INTENSITY;
-		float targetSnow = type.snow * scale / DEFAULT_INTENSITY;
-		float targetFog = type.fog;
-		if (type.showers > 0 && varying)
-		{
-			// showers come and go: rain, then a break of sun
-			float on = showers(t);
-			float k = 1 - type.showers * (1 - on);
-			targetRain *= k;
-			targetSnow *= k;
-			targetCover *= 1 - type.showers * (1 - on) * (1 - SHOWER_BREAK_COVER);
-		}
-		float targetFogHeight = 1;
-		float targetHumidity = 1;
-		if (climate)
-		{
-			// replaces the plain morning mist: each region mists over at its own hours, or not at all
-			FogClimate.Profile p = FogClimate.profile(biome);
-			float calm = FogClimate.calm(type);
-			targetFog = FogClimate.total(targetFog, FogClimate.density(p, hour, calm, targetCover));
-			targetFogHeight = FogClimate.height(p, hour, calm, targetCover);
-			targetHumidity = p.humidity;
-		}
-		else
-		{
-			targetFog *= 1 + type.morningMist * morning(hour);
-		}
-
-		float precipitation = rainAmount + snowAmount;
-		float baseCover = targetCover;
-		// clouds swell with heavy spells, and stay while anything still falls (not for dust or ash)
-		if (type.coverSwell > 0 && (precipitation > 0 || targetRain + targetSnow > 0))
-		{
-			targetCover = Math.max(targetCover, type.coverSwell * Math.min(1, COVER_BASE + COVER_SLOPE * slowEffective));
-		}
-
-		if (entered)
-		{
-			log.debug("Look: weather biome {} ({}), fog {} -> {}, distance fog {} -> {}, snapped", biome, type, fog,
-				targetFog, distanceFog, type.distanceFog);
-		}
-		if (!initialized || !gradual || entered)
-		{
-			// at login or without gradual changes, start in the weather as it is
-			initialized = true;
-			cover = targetCover;
-			rainAmount = targetRain;
-			snowAmount = targetSnow;
-			fog = targetFog;
-			fogHeight = targetFogHeight;
-			humidity = targetHumidity;
-			areaFog = type.areaFog;
-			distanceFog = type.distanceFog;
-			storm = type.lightning;
-			snowiness = type.whiteness(targetRain, targetSnow, snowiness);
-			setLook(type, 1);
-			wetness = targetRain > 0 ? 1 : gradual ? wetness : 0;
-			snowCover = targetSnow > 0 && type.whitens() ? 1 : type.frost > 0 ? Math.max(type.frost, gradual ? snowCover : 0)
-				: gradual ? snowCover : 0;
-		}
-		else
-		{
-			// rain and snow wait for the clouds to build
-			if (precipitation == 0 && cover < PRECIP_GATE * baseCover)
-			{
-				targetRain = targetSnow = 0;
-			}
-			cover = ease(cover, targetCover, dt, CLOUD_SECONDS);
-			rainAmount = settle(ease(rainAmount, targetRain, dt, PRECIP_SECONDS), targetRain);
-			snowAmount = settle(ease(snowAmount, targetSnow, dt, PRECIP_SECONDS), targetSnow);
-			fog = ease(fog, targetFog, dt, FOG_SECONDS);
-			fogHeight = ease(fogHeight, targetFogHeight, dt, FOG_SECONDS);
-			humidity = ease(humidity, targetHumidity, dt, FOG_SECONDS);
-			areaFog = ease(areaFog, type.areaFog, dt, FOG_SECONDS);
-			distanceFog = ease(distanceFog, type.distanceFog, dt, FOG_SECONDS);
-			storm = ease(storm, type.lightning, dt, STORM_SECONDS);
-			if (type.skyWhite >= 0 || rainAmount + snowAmount > PRECIP_EPSILON)
-			{
-				snowiness = ease(snowiness, type.whiteness(rainAmount, snowAmount, snowiness), dt, PRECIP_SECONDS);
-			}
-			setLook(type, 1 - (float) Math.exp(-dt / CLOUD_SECONDS));
-			accumulate(dt);
-		}
-
-		if (groundFromClimate && mode == WeatherMode.AUTOMATIC)
-		{
-			wetness = climateWet;
-			snowCover = climateSnow;
-		}
-	}
-
-	/**
 	 * Take everything the weather looks like from the field at the player: its cells ease when their own weather
 	 * changes and blend across region borders, so crossing one is a walk through a gradient, not a change in time.
 	 * Showers (the rain coming and going) follow the blended share of showery weather.
 	 */
 	private void takeField(double t, boolean varying)
 	{
-		initialized = true;
+		type = field.getFocusType() != null ? field.getFocusType() : WeatherType.clear();
 		float showery = field.getFocus(WeatherField.SHOWERS);
 		float showerK = varying && showery > 0 ? 1 - showery * (1 - showers(t)) : 1;
 		// the cells hold the rain as it is on average over showers
@@ -736,17 +593,6 @@ class Weather
 		field.getFocus(WeatherField.FLAKE_STYLE, flakeStyle);
 	}
 
-	/**
-	 * The ground for automatic weather (Climate's, for the player's region): wet and snow cover 0-1, used as they
-	 * are instead of building up here. Off for the manual modes, which build their own.
-	 */
-	void setGround(boolean fromClimate, float wet, float snow)
-	{
-		groundFromClimate = fromClimate;
-		climateWet = wet;
-		climateSnow = snow;
-	}
-
 	/** wet ground and snow cover at the player, 0-1 */
 	float getWetness()
 	{
@@ -758,19 +604,11 @@ class Weather
 		return snowCover;
 	}
 
-	/** The weather a mode asks for: the forecast's, clear for Off, or the forced type. */
-	static WeatherType resolve(WeatherMode mode, WeatherType auto)
+	/** The weather a manual mode asks for: clear for Off, else the forced type. */
+	static WeatherType resolve(WeatherMode mode)
 	{
-		switch (mode)
-		{
-			case AUTOMATIC:
-				return auto != null ? auto : WeatherType.clear();
-			case OFF:
-				return WeatherType.clear();
-			default:
-				WeatherType t = WeatherType.get(mode.name());
-				return t != null ? t : WeatherType.clear();
-		}
+		WeatherType t = mode == WeatherMode.OFF ? null : WeatherType.get(mode.name());
+		return t != null ? t : WeatherType.clear();
 	}
 
 	/** 0 between showers to 1 in one: smooth noise, on about SHOWER_SHARE of the time. */
@@ -782,41 +620,21 @@ class Weather
 		return x * x * (3 - 2 * x);
 	}
 
-	/** Move the type's look (clouds, light, fog tint, drops, flakes, buildup) a share k of the way to it. */
-	private void setLook(WeatherType t, float k)
-	{
-		cloudWisp += (t.cloudWisp - cloudWisp) * k;
-		cloudDark += (t.cloudDark - cloudDark) * k;
-		toward(light, k, t.sun - 1, t.haze, t.warmth, t.skySaturation);
-		toward(fogTint, k, t.fogTint[0], t.fogTint[1], t.fogTint[2]);
-		toward(rainStyle, k, t.dropLength, t.dropSpeed, t.dropWidth, t.dropAlpha, t.slant);
-		toward(flakeStyle, k, t.flakeSize, t.flakeSpeed, t.flakeSway, t.flakeWind, t.flakeColor[0], t.flakeColor[1],
-			t.flakeColor[2]);
-		toward(buildup, k, t.wetRate, t.snowRate, t.frost, t.coverSwell);
-	}
-
-	private static void toward(float[] v, float k, float... target)
-	{
-		for (int i = 0; i < v.length; ++i)
-		{
-			v[i] += (target[i] - v[i]) * k;
-		}
-	}
-
 	/**
-	 * Lay the weather field over the scene when it changes, and ease every chunk toward its region's weather. Call
-	 * before {@link #update}, with the same focus.
+	 * Keep the weather field laid over the world around the player and ease every cell toward its place's weather.
+	 * The cells are anchored to the world, not the scene: the window re-centers on the player whenever the scene
+	 * loads, and cells that stay inside it keep their weather. Call before {@link #update}, with the same focus.
 	 *
 	 * @param scene    the top-level scene, or null when there is none
-	 * @param sizeX    zones across the scene, offset by {@code offset} from local coordinates
-	 * @param enabled  automatic weather with the field on; otherwise the field is uniform
-	 * @param areas    whether area data (biomes) is on; without it every chunk has the default biome
-	 * @param biome    the player's biome, for chunks whose place on the map is unknown (instances)
-	 * @param fx       player ground position, world units
+	 * @param mode     Automatic: every place has its climate's forecast and ground (Climate); Off is clear weather
+	 *                 everywhere; any other mode is that weather everywhere
+	 * @param areas    whether area data (biomes) is on; without it every cell has the default biome
+	 * @param biome    the player's biome, for cells whose place on the map is unknown (instances)
+	 * @param hour     clock time 0-24, for mist by the time of day
+	 * @param fx       player ground position, local units
 	 */
-	void updateField(Scene scene, int sizeX, int sizeZ, int offset, int plane, EnvironmentManager env, boolean areas,
-		String biome, boolean enabled, Climate regions, int intensityPercent, boolean gradual, boolean climate,
-		double hour, float fx, float fz)
+	void updateField(Scene scene, int plane, EnvironmentManager env, boolean areas, String biome, WeatherMode mode,
+		Climate climate, int intensityPercent, boolean gradual, double hour, float fx, float fz)
 	{
 		long now = System.currentTimeMillis();
 		float dt = fieldMillis == 0 ? 0 : Math.min((now - fieldMillis) / 1000f, 0.25f);
@@ -828,8 +646,7 @@ class Weather
 		}
 		boolean relaid = false;
 		if (scene != fieldScene || scene.getBaseX() != fieldBaseX || scene.getBaseY() != fieldBaseY
-			|| sizeX != field.getSizeX() || sizeZ != field.getSizeZ() || areas != fieldAreas || plane != fieldPlane
-			|| !java.util.Objects.equals(biome, fieldBiome))
+			|| areas != fieldAreas || plane != fieldPlane || !java.util.Objects.equals(biome, fieldBiome))
 		{
 			fieldBiome = biome;
 			relaid = true;
@@ -838,35 +655,58 @@ class Weather
 			fieldBaseY = scene.getBaseY();
 			fieldAreas = areas;
 			fieldPlane = plane;
-			int n = sizeX * sizeZ;
-			long[] keys = new long[n];
-			String[] biomes = new String[n];
-			int[] wp = new int[3];
-			for (int z = 0; z < sizeZ; ++z)
-			{
-				for (int x = 0; x < sizeX; ++x)
-				{
-					// the chunk's middle tile
-					int sx = (x - offset) * 8 + 4, sy = (z - offset) * 8 + 4;
-					int i = z * sizeX + x;
-					boolean known = EnvironmentManager.toWorld(scene, sx, sy, plane, wp);
-					keys[i] = known ? WeatherField.chunkKey(wp[0], wp[1]) : Long.MIN_VALUE;
-					biomes[i] = !areas ? null : known ? env.weatherBiome(scene, sx, sy, plane, wp) : biome;
-				}
-			}
-			field.layout(sizeX, sizeZ, -offset * WeatherField.CELL, -offset * WeatherField.CELL, keys, biomes);
+			layoutField(scene, plane, env, areas, biome, fx, fz);
 		}
 		// a tenth of a second is plenty for weather that changes over minutes
 		fieldDt += dt;
-		if (fieldDt >= FIELD_SECONDS || relaid || enabled != field.isEnabled())
+		if (fieldDt >= FIELD_SECONDS || relaid)
 		{
-			field.update(enabled, regions::type, regions::ground, intensityPercent / 100f, gradual, climate, hour,
-				fieldDt);
+			boolean automatic = mode == WeatherMode.AUTOMATIC;
+			WeatherType manual = automatic ? null : resolve(mode);
+			field.update(automatic ? climate::type : b -> manual, automatic ? climate::ground : null,
+				intensityPercent / 100f, gradual, hour, fieldDt);
 			fieldDt = 0;
 		}
 		field.focus(fx, fz);
 	}
 
+	/** The cells around the player's world position, FIELD_RADIUS each way. */
+	private void layoutField(Scene scene, int plane, EnvironmentManager env, boolean areas, String biome, float fx, float fz)
+	{
+		int n = 2 * FIELD_RADIUS + 1;
+		int cx0 = Math.floorDiv(fieldBaseX + ((int) fx >> 7), WeatherField.CELL_TILES) - FIELD_RADIUS;
+		int cz0 = Math.floorDiv(fieldBaseY + ((int) fz >> 7), WeatherField.CELL_TILES) - FIELD_RADIUS;
+		long[] keys = new long[n * n];
+		String[] biomes = new String[n * n];
+		int[] wp = new int[3];
+		for (int z = 0; z < n; ++z)
+		{
+			for (int x = 0; x < n; ++x)
+			{
+				// the cell's middle tile
+				int wx = (cx0 + x) * WeatherField.CELL_TILES + WeatherField.CELL_TILES / 2;
+				int wy = (cz0 + z) * WeatherField.CELL_TILES + WeatherField.CELL_TILES / 2;
+				boolean known = scene.isInstance()
+					? EnvironmentManager.toWorld(scene, wx - fieldBaseX, wy - fieldBaseY, plane, wp)
+					: wp(wp, wx, wy);
+				int i = z * n + x;
+				keys[i] = known ? WeatherField.chunkKey(wp[0], wp[1]) : Long.MIN_VALUE;
+				biomes[i] = !areas ? null : !known ? biome : env.weatherBiomeAt(wp[0], wp[1], plane);
+			}
+		}
+		field.layout(n, n, (cx0 * WeatherField.CELL_TILES - fieldBaseX) * 128f,
+			(cz0 * WeatherField.CELL_TILES - fieldBaseY) * 128f, keys, biomes);
+	}
+
+	private static boolean wp(int[] out, int x, int y)
+	{
+		out[0] = x;
+		out[1] = y;
+		return true;
+	}
+
+	// cells on each side of the player's: the window is 2 * FIELD_RADIUS + 1 across, 528 tiles
+	private static final int FIELD_RADIUS = 16;
 	private Scene fieldScene;
 	private int fieldBaseX, fieldBaseY, fieldPlane;
 	private boolean fieldAreas;
@@ -874,45 +714,6 @@ class Weather
 	private float fieldDt;
 	private static final float FIELD_SECONDS = 0.1f;
 	private long fieldMillis;
-
-	/**
-	 * Wet ground builds in rain and dries after it; snow cover builds in snow and melts after, faster in rain. Frost
-	 * (freezing fog) holds a thin cover without snow. The type's rates scale both.
-	 */
-	private void accumulate(float dt)
-	{
-		float wetRate = buildup[0], snowRate = buildup[1], frost = buildup[2];
-		if (rainAmount > 0.02f)
-		{
-			wetness = Math.min(1, wetness + dt / WET_BUILD_SECONDS * Math.min(1, rainAmount * 2) * wetRate);
-		}
-		else
-		{
-			wetness = Math.max(0, wetness - dt / DRY_SECONDS);
-		}
-		if (snowAmount > 0.02f && snowRate > 0.01f)
-		{
-			snowCover = Math.min(1, snowCover + dt / SNOW_BUILD_SECONDS * Math.min(1, snowAmount * 2) * snowRate);
-		}
-		else if (snowCover < frost - 0.01f)
-		{
-			snowCover = Math.min(frost, snowCover + dt / (SNOW_BUILD_SECONDS * FROST_SLOWER));
-		}
-		else
-		{
-			snowCover = Math.max(Math.min(frost, snowCover),
-				snowCover - dt / MELT_SECONDS * (rainAmount > 0.02f ? 3 : 1));
-		}
-	}
-
-	/** 0 to 1, peaking at dawn: thicker mist in the morning. */
-	static float morning(double hour)
-	{
-		double d = Math.abs(hour - MIST_HOUR);
-		d = Math.min(d, 24 - d);
-		double x = Math.max(0, 1 - d / MIST_WIDTH);
-		return (float) (x * x * (3 - 2 * x));
-	}
 
 	static float ease(float value, float target, float dt, float seconds)
 	{
@@ -1234,11 +1035,12 @@ class Weather
 
 	/**
 	 * Upload the weather field if it changed and bind it on two units from {@code unit}, for the weather passes and
-	 * the fog.
+	 * the fog, and its sky on {@code skyUnit}, for the clouds.
 	 */
-	void bindField(int unit)
+	void bindField(int unit, int skyUnit)
 	{
 		field.bind(unit, unit + 1);
+		field.bindSky(skyUnit);
 	}
 
 	private void setParticles(Uniforms u, float kindAmount, float[] viewProj, float[] invViewProj, int[] viewport,

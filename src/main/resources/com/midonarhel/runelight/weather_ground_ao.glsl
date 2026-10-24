@@ -1,7 +1,9 @@
-// Wet ground, the AO pass's half (WeatherGround.java): how wet this pixel gets, the region's ground (the weather
-// field, as a difference from the player's) times how open to the sky the pixel is. Written to the shadow target's b
-// at half resolution; it is smooth, so the composite's upsample carries it well and adds the detail
-// (weather_ground.glsl). Needs frame.glsl.
+// Snow and puddles, the AO pass's half (WeatherGround.java): how much cover this pixel gets, the region's ground (the
+// weather field, as a difference from the player's) times how open to the sky the pixel is. Written to the shadow
+// target's b at half resolution (ground_cover.glsl); it is smooth, so the composite's upsample carries it well and
+// adds the detail (weather_ground.glsl). Needs frame.glsl.
+
+#include "ground_cover.glsl"
 
 uniform int weatherGroundOn;
 // top-down depth of the scenery around the player, every roof included (Weather.java); bilinear compare
@@ -41,18 +43,24 @@ float groundExposure(vec3 p) {
   return sum / 16.0;
 }
 
-// wetness at a camera-relative point, times its exposure; 0 when off
+// snow cover that keeps the puddles away: they are gone once this much has settled
+#define GROUND_SNOW_OVER_WATER 0.125
+
+// the cover at a camera-relative point times its exposure (ground_cover.glsl): snow, else water; 0 when off
 float weatherGroundAo(vec3 p, vec3 n) {
   if (weatherGroundOn == 0) {
     return 0.0;
   }
-  float wet = weatherGroundLocal.x;
+  vec2 g = weatherGroundLocal;
   if (weatherFieldOn != 0.0) {
-    wet += textureLod(weatherGround, (p.xz - groundFieldRect.xy) * groundFieldRect.zw, 0.0).r - weatherGroundFocus.x;
+    g += textureLod(weatherGround, (p.xz - groundFieldRect.xy) * groundFieldRect.zw, 0.0).rg - weatherGroundFocus;
   }
-  wet = clamp(wet, 0.0, 1.0);
-  if (wet <= 0.0) {
+  g = clamp(g, 0.0, 1.0);
+  // puddles freeze and disappear under the snow that settles on them
+  float water = g.x * (1.0 - min(g.y / GROUND_SNOW_OVER_WATER, 1.0));
+  float cover = g.y > water ? g.y : -water;
+  if (cover == 0.0) {
     return 0.0;
   }
-  return wet * groundExposure(p + n * GROUND_NORMAL_OFFSET);
+  return cover * groundExposure(p + n * GROUND_NORMAL_OFFSET);
 }

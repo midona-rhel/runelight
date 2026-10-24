@@ -18,8 +18,9 @@ import org.slf4j.LoggerFactory;
  * and the ambience that area asks for, blended over a few seconds as the camera moves between areas.
  *
  * Areas come from environments.json (tools/import_environments.py): 117 HD's environments in priority order,
- * then 3D Weather's biome per 64x64 region, then 117 HD's OVERWORLD area (mainland plus extensions such as
- * houses: open sky), then a fallback by height (y >= 4160 is underground) and finally the client's sky color.
+ * then the lighting of the biome the place has on the climate map (WeatherRegions: the same biome that decides its
+ * weather), then 117 HD's OVERWORLD area (mainland plus extensions such as houses: open sky), then a fallback by
+ * height (y >= 4160 is underground) and finally the client's sky color. Caves are 3D Weather's cave regions.
  *
  * Everything here is relative to RuneLight's own lighting: 1.0 multipliers and zero fog are its normal look.
  * The values for the frame are in the public fields/getters, for the shaders and for other effects (fog,
@@ -46,7 +47,7 @@ final class EnvironmentManager
 		String name;
 		boolean cave;
 		boolean biome;
-		// 117 HD's OVERWORLD area: open sky, but a biome of the same region describes it better
+		// 117 HD's OVERWORLD area: open sky, but the place's biome describes it better
 		boolean fallback;
 		boolean instant;
 		float[] ambient = {1, 1, 1};
@@ -68,6 +69,7 @@ final class EnvironmentManager
 	{
 		Environment[] environments;
 		int[] boxes;
+		// cave biome -> its 64x64 regions
 		Map<String, int[]> biomeRegions;
 	}
 
@@ -148,14 +150,17 @@ final class EnvironmentManager
 
 	private Environment[] environments = new Environment[0];
 	private int[] boxes = new int[0];
-	// region id -> indices into boxes (in priority order), and region id -> biome environment
+	// region id -> indices into boxes (in priority order), and region id -> cave biome environment
 	private final Map<Integer, int[]> regionBoxes = new HashMap<>();
 	private final Map<Integer, Environment> regionBiome = new HashMap<>();
+	// biome name -> the lighting preset of the open air there
+	private final Map<String, Environment> looks = new HashMap<>();
 	private Environment caveBiome = NEUTRAL_CAVE;
 
 	// selection
 	private Environment target = NEUTRAL;
-	private Environment biome;
+	// the weather biome at the focal point, null underground
+	private String biome;
 	private Classification classification = Classification.OVERWORLD;
 	private final int[] worldPoint = {-1, -1, -1};
 	private final int[] lastWorldPoint = {Integer.MIN_VALUE, 0, 0};
@@ -194,6 +199,7 @@ final class EnvironmentManager
 		boxes = data.boxes;
 		regionBoxes.clear();
 		regionBiome.clear();
+		looks.clear();
 
 		Map<Integer, List<Integer>> byRegion = new HashMap<>();
 		for (int b = 0; b < boxes.length; b += 7)
@@ -232,12 +238,16 @@ final class EnvironmentManager
 		}
 		for (Environment e : environments)
 		{
+			if (e.biome)
+			{
+				looks.put(e.name, e);
+			}
 			if (e.biome && "CAVE".equals(e.name))
 			{
 				caveBiome = e;
 			}
 		}
-		log.debug("Loaded {} environments, {} boxes over {} regions, {} biome regions",
+		log.debug("Loaded {} environments, {} boxes over {} regions, {} cave regions",
 			environments.length, boxes.length / 7, regionBoxes.size(), regionBiome.size());
 	}
 
@@ -303,7 +313,6 @@ final class EnvironmentManager
 		int x = wp[0], y = wp[1], p = wp[2];
 		Environment env = environmentAt(x, y, p);
 		Classification c = classOf(env, y, skyBlack);
-		Environment regionEnv = regionBiome.get(x >> 6 << 8 | y >> 6);
 		// Out in the open the look is a blend of the areas around the focal point, so it follows where you are and
 		// changes gradually as you walk from one into the next, instead of switching where they meet
 		boolean blended = c == Classification.OVERWORLD && (env == null || !env.instant);
@@ -311,7 +320,7 @@ final class EnvironmentManager
 		{
 			blendAround(x, y, p, skyBlack, env);
 		}
-		select(env, c, regionEnv, jumped, time, blended);
+		select(env, c, weatherBiomeAt(x, y, p), jumped, time, blended);
 	}
 
 	// the area blend: samples BLEND_STEP tiles apart out to BLEND_REACH tiles each way, weighed by closeness
@@ -383,24 +392,40 @@ final class EnvironmentManager
 	}
 
 	/**
-	 * The biome whose weather a scene tile has, for WeatherField: the region's 3D Weather biome, null where no
-	 * biome describes it (the default biome's weather), or WeatherField.NO_SKY underground and in caves.
-	 *
-	 * @param wp scratch, 3 ints
+	 * The biome whose weather a world tile has, for the weather field: the climate map's biome
+	 * ({@link WeatherRegions}), or WeatherField.NO_SKY underground and in caves.
 	 */
-	String weatherBiome(Scene scene, int sceneX, int sceneY, int plane, int[] wp)
+	String weatherBiomeAt(int x, int y, int plane)
 	{
-		if (!toWorld(scene, sceneX, sceneY, plane, wp))
-		{
-			return null;
-		}
-		Environment env = environmentAt(wp[0], wp[1], wp[2]);
-		if (env != null && env.cave)
+		Environment env = environmentAt(x, y, plane);
+		if (env == null || env.cave)
 		{
 			return WeatherField.NO_SKY;
 		}
-		Environment biome = regionBiome.get(wp[0] >> 6 << 8 | wp[1] >> 6);
-		return biome != null && !biome.cave ? biome.name : null;
+		String b = skyBiome(x, y);
+		return b != null ? b : WeatherRegions.get().getDefaultBiome();
+	}
+
+	// scratch for the area names at a point
+	private final List<String> names = new ArrayList<>();
+
+	/** The climate map's biome at a world tile, null underground. */
+	private String skyBiome(int x, int y)
+	{
+		names.clear();
+		int[] candidates = regionBoxes.get(x >> 6 << 8 | y >> 6);
+		if (candidates != null)
+		{
+			for (int b : candidates)
+			{
+				if (x >= boxes[b + 1] && x <= boxes[b + 4] && y >= boxes[b + 2] && y <= boxes[b + 5]
+					&& boxes[b + 3] <= 0 && boxes[b + 6] >= 0)
+				{
+					names.add(environments[boxes[b]].name);
+				}
+			}
+		}
+		return WeatherRegions.get().biomeAt(x, y, names);
 	}
 
 	/**
@@ -424,10 +449,18 @@ final class EnvironmentManager
 				}
 			}
 		}
-		Environment regionEnv = regionBiome.get(region);
-		if (env == null || env.fallback && regionEnv != null && !regionEnv.cave)
+		if (env == null || env.fallback)
 		{
-			env = regionEnv != null ? regionEnv : env;
+			String b = skyBiome(x, y);
+			Environment look = b != null ? looks.get(WeatherRegions.get().look(b)) : null;
+			if (look != null)
+			{
+				env = look;
+			}
+			else if (env == null)
+			{
+				env = regionBiome.get(region);
+			}
 		}
 		if (env == null && y >= Constants.OVERWORLD_MAX_Y)
 		{
@@ -436,7 +469,7 @@ final class EnvironmentManager
 		return env;
 	}
 
-	private void select(Environment env, Classification c, Environment biome, boolean jumped, float time)
+	private void select(Environment env, Classification c, String biome, boolean jumped, float time)
 	{
 		select(env, c, biome, jumped, time, false);
 	}
@@ -445,7 +478,7 @@ final class EnvironmentManager
 	 * @param blended the look is {@link #blendSum}, the areas around (it changes with every step, so it is taken as
 	 *                it is rather than faded into over time; only a change into or out of it fades)
 	 */
-	private void select(Environment env, Classification c, Environment biome, boolean jumped, float time, boolean blended)
+	private void select(Environment env, Classification c, String biome, boolean jumped, float time, boolean blended)
 	{
 		if (env == null)
 		{
@@ -592,10 +625,10 @@ final class EnvironmentManager
 		return target;
 	}
 
-	/** 3D Weather's biome of the current region, or null. */
-	Environment getBiome()
+	/** The weather biome of the place the camera looks at, null when it has none (underground). */
+	String getBiome()
 	{
-		return biome;
+		return WeatherField.NO_SKY.equals(biome) ? null : biome;
 	}
 
 	/** World tile the lookup used: x, y, plane; -1 when unknown. */

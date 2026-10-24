@@ -4,6 +4,8 @@ import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
 import java.lang.reflect.Proxy;
+import net.runelite.api.GameObject;
+import net.runelite.api.Model;
 import net.runelite.api.Point;
 import net.runelite.api.Scene;
 import net.runelite.api.SceneTilePaint;
@@ -22,6 +24,11 @@ public class WaterMapTest
 	}
 
 	private static Tile tile(int x, int y, int texture)
+	{
+		return tile(x, y, texture, null, null);
+	}
+
+	private static Tile tile(int x, int y, int texture, Tile bridge, GameObject[] objects)
 	{
 		SceneTilePaint paint = proxy(SceneTilePaint.class, m ->
 		{
@@ -46,6 +53,10 @@ public class WaterMapTest
 					return 0;
 				case "getSceneLocation":
 					return loc;
+				case "getBridge":
+					return bridge;
+				case "getGameObjects":
+					return objects;
 				default:
 					return null;
 			}
@@ -53,19 +64,31 @@ public class WaterMapTest
 	}
 
 	/**
-	 * Flat land with a 20 x 20 lake in the middle drawn with the given water texture, every tile on plane 0.
+	 * Flat land with a 20 x 20 lake in the middle drawn with the given water texture.
 	 */
 	private static WaterMap lake(int texture)
+	{
+		return flat(texture, (x, y) -> x >= 80 && x < 100 && y >= 80 && y < 100);
+	}
+
+	/**
+	 * Flat land with water of the given texture where {@code water} says, every tile on plane 0.
+	 */
+	private static WaterMap flat(int texture, java.util.function.BiPredicate<Integer, Integer> water)
 	{
 		Tile[][][] tiles = new Tile[4][N][N];
 		for (int x = 0; x < N; ++x)
 		{
 			for (int y = 0; y < N; ++y)
 			{
-				boolean water = x >= 80 && x < 100 && y >= 80 && y < 100;
-				tiles[0][x][y] = tile(x, y, water ? texture : -1);
+				tiles[0][x][y] = tile(x, y, water.test(x, y) ? texture : -1);
 			}
 		}
+		return build(tiles);
+	}
+
+	private static WaterMap build(Tile[][][] tiles)
+	{
 		int[][][] heights = new int[4][N + 1][N + 1];
 		Scene scene = proxy(Scene.class, m ->
 		{
@@ -175,5 +198,118 @@ public class WaterMapTest
 		int sand = lake(1).bedColor(85, 85, 0);
 		int mud = lake(25).bedColor(85, 85, 0);
 		assertTrue((sand & 127) > (mud & 127));
+	}
+
+	@Test
+	public void seaByWidth()
+	{
+		// the game draws the sea with the rivers' texture: wide water running off the scene is the sea, to its shore
+		WaterMap sea = flat(1, (x, y) -> x >= 60);
+		assertEquals(WaterMap.OCEAN, sea.type[100 * N + 150]);
+		assertEquals(WaterMap.OCEAN, sea.type[100 * N + 60]);
+		assertEquals(WaterMap.NONE, sea.type[100 * N + 59]);
+		// a narrow channel off the scene is a river, a swamp stays a swamp, an enclosed lake a lake
+		assertEquals(WaterMap.FRESH, flat(1, (x, y) -> x >= 90 && x < 94).type[100 * N + 91]);
+		assertEquals(WaterMap.SWAMP, flat(25, (x, y) -> x >= 60).type[100 * N + 150]);
+		assertEquals(WaterMap.FRESH, lake(1).type[90 * N + 90]);
+	}
+
+	/**
+	 * A one tile wide pier: a triangle from the surface up 100 units, standing in the middle of tile (90, 90) at
+	 * the given height above it.
+	 */
+	private static GameObject pier(int hover)
+	{
+		Model model = proxy(Model.class, m ->
+		{
+			switch (m)
+			{
+				case "getVerticesX":
+					return new float[]{0, 64, 0};
+				case "getVerticesY":
+					return new float[]{0, 0, -100};
+				case "getVerticesZ":
+					return new float[3];
+				case "getFaceIndices1":
+					return new int[]{0};
+				case "getFaceIndices2":
+					return new int[]{1};
+				case "getFaceIndices3":
+					return new int[]{2};
+				case "getFaceColors3":
+					return new int[]{0};
+				case "getFaceCount":
+					return 1;
+				case "getVerticesCount":
+					return 3;
+				default:
+					return null;
+			}
+		});
+		Point at = new Point(90 - OFF, 90 - OFF);
+		return proxy(GameObject.class, m ->
+		{
+			switch (m)
+			{
+				case "getSceneMinLocation":
+					return at;
+				case "getRenderable":
+					return model;
+				case "getX":
+					return (90 - OFF) * 128 + 32;
+				case "getY":
+					return (90 - OFF) * 128 + 64;
+				case "getZ":
+					return -hover;
+				default:
+					return 0;
+			}
+		});
+	}
+
+	private static boolean touched(WaterMap m)
+	{
+		if (m.contact == null)
+		{
+			return false;
+		}
+		// the cells of tile (90, 90)
+		for (int cy = 90 * WaterMap.CONTACT_RES; cy < 91 * WaterMap.CONTACT_RES; ++cy)
+		{
+			for (int cx = 90 * WaterMap.CONTACT_RES; cx < 91 * WaterMap.CONTACT_RES; ++cx)
+			{
+				if (m.contact[cy * WaterMap.CONTACT_SIZE + cx] != 0)
+				{
+					return true;
+				}
+			}
+		}
+		return false;
+	}
+
+	private static WaterMap withPier(int hover, boolean underBridge)
+	{
+		Tile[][][] tiles = new Tile[4][N][N];
+		for (int x = 0; x < N; ++x)
+		{
+			for (int y = 0; y < N; ++y)
+			{
+				tiles[0][x][y] = tile(x, y, x >= 80 && x < 100 && y >= 80 && y < 100 ? 1 : -1);
+			}
+		}
+		GameObject[] pier = {pier(hover)};
+		tiles[0][90][90] = underBridge ? tile(90, 90, -1, tile(90, 90, 1, null, pier), null) : tile(90, 90, 1, null, pier);
+		return build(tiles);
+	}
+
+	@Test
+	public void piersFoam()
+	{
+		assertTrue(touched(withPier(0, false)));
+		// the bridge tile under a deck holds the piers of a bridge
+		assertTrue(touched(withPier(0, true)));
+		// a foot a little over the surface (bank tiles climb) stands in it, one high over it is clear
+		assertTrue(touched(withPier(30, false)));
+		assertFalse(touched(withPier(80, false)));
 	}
 }

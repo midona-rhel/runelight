@@ -22,8 +22,8 @@ void main() {
   vec3 noNormal = vec3(0.0);
   worldPos.xyz += windDisplacement(vertf.w, worldPos.xyz, noNormal, false);
   gl_Position = lightProj * worldPos;
-  fTextureId = tex.x & 0x3ff;  // material bits above, see SurfaceMaterials.java
-  fEmissive = tex.x >> 10 & 3;
-  fTransmissive = tex.x >> 12 & 1;
+  fTextureId = tex.x & 0x1ff;  // material bits above, see SurfaceMaterials.java
+  fEmissive = tex.x >> 9 & 3;
+  fTransmissive = tex.x >> 11 & 1;
   fUv = vec2(float(tex.y) / 256.0, float(tex.z) / 256.0);
 }

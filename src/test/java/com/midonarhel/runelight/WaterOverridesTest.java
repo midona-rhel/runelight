@@ -37,4 +37,13 @@ public class WaterOverridesTest
 		assertFalse(o.hidesFace(6707, 3240, 3230, 0, false, 0, 10 << 10 | 2 << 7 | 60));
 		assertFalse(o.hasRipples(1));
 	}
+
+	@Test
+	public void lakes()
+	{
+		WaterOverrides o = WaterOverrides.get();
+		assertTrue(o.lake(2780, 3550));
+		assertFalse(o.lake(2780, 3600));
+		assertFalse(o.lake(3240, 3230));
+	}
 }

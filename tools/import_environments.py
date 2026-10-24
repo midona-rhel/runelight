@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Build RuneLight's environments.json: per-area ambience (ambient and sun tint, fog, sky haze) and the
-cave/overworld classification, from 117 HD's areas and environments plus 3D Weather's biome regions.
+cave/overworld classification, from 117 HD's areas and environments plus 3D Weather's cave regions.
 
 Usage:
   tools/import_environments.py <RLHD>/src/main/resources/rs117/hd/scene \
@@ -9,8 +9,9 @@ Usage:
       src/main/resources/com/midonarhel/runelight/environments.json
 
 Lookup order in game (EnvironmentManager.java): 117 HD environments in their file order (specific before
-general), then CAVE_AREAS (looks for underground areas 117 HD leaves out), then the 3D Weather biome of the 64x64 region, then 117 HD's OVERWORLD area (open sky), then a
-default by height (y >= 4160 is underground).
+general), then CAVE_AREAS (looks for underground areas 117 HD leaves out), then the lighting of the biome the place
+has on the climate map (weather_regions.json, which decides the weather too), then 117 HD's OVERWORLD area (open
+sky), then a default by height (y >= 4160 is underground). Only the cave biomes' 64x64 regions are stored here.
 
 117 HD lights in its own units (strong ambient, strong sun, its own fog curve). RuneLight keeps its own
 time-of-day palette (sky.glsl), so each environment is stored relative to a baseline: the tint and strength
@@ -59,42 +60,32 @@ MORYTANIA_SKY_TINT = "#c4d6ae"
 # 117 HD environment (key or area) -> tint
 SKY_TINTS = {name: MORYTANIA_SKY_TINT for name in (
     "MORYTANIA", "BARROWS", "DARKMEYER", "MEIYERDITCH", "VER_SINHAZA", "VER_SINHAZA_TRANSITION")}
-# 117 HD areas that make up open-air Morytania; a 3D Weather region mostly covered by them gets the
-# MORYTANIA_SWAMP biome, so its weather is Morytania's whatever 3D Weather called it (Barrows is "barrens")
-MORYTANIA_AREAS = ("MORYTANIA", "BARROWS", "DARKMEYER", "MEIYERDITCH", "VER_SINHAZA", "BURGH_DE_ROTT",
-                   "PORT_PHASMATYS", "CANIFIS", "SLEPE", "MORTTON")
-MORYTANIA_REGION_SHARE = 0.3
-# y from here down is instances and underground; MORYTANIA nests cutscene and trekking instances up there
-SURFACE_MAX_Y = 4160
-
-# Biome looks for regions no 117 HD environment covers, written in 117 HD's units so they go through the
-# same conversion. Absent fields mean "baseline". Cave biomes light underground areas.
+# Biome looks for places no 117 HD environment covers, written in 117 HD's units so they go through the
+# same conversion. Absent fields mean "baseline". Cave biomes light underground areas. The open-air biomes have no
+# fog depth or sky haze: how foggy and hazy a place is comes from its weather and climate (weather_climate.json),
+# which blend by position, while these apply to the whole view at once. Biomes without a preset of their own share
+# one's lighting (weather_regions.json, "looks").
 BIOMES = {
     "GRASSLAND": {},
     "FOREST": {"ambientColor": "#a3c9b0", "directionalColor": "#fff1d6", "directionalStrength": 3.6,
-               "fogColor": "#9fb39a", "fogDepth": 10, "skyVisibility": 0.9},
+               "fogColor": "#9fb39a"},
     "DESERT": {"ambientColor": "#c9b597", "ambientStrength": 1.8, "directionalColor": "#ffe0b0",
-               "directionalStrength": 4.2, "fogColor": "#d9c49a", "fogDepth": 22, "skyVisibility": 0.65,
-               "skyTint": "#fff3df"},
+               "directionalStrength": 4.2, "fogColor": "#d9c49a", "skyTint": "#fff3df"},
     "SWAMP": {"ambientColor": "#9aa889", "ambientStrength": 0.8, "directionalColor": "#c8c9a0",
-              "directionalStrength": 2.4, "fogColor": "#4a5240", "fogDepth": 45, "skyVisibility": 0.45,
-              "skyTint": "#c8d0bc"},
+              "directionalStrength": 2.4, "fogColor": "#4a5240", "skyTint": "#c8d0bc"},
     # Morytania's weather (weather_climate.json) never clears; its sky is the sky tint above
     "MORYTANIA_SWAMP": {"ambientColor": "#9aa889", "ambientStrength": 0.8, "directionalColor": "#c8c9a0",
-                        "directionalStrength": 2.4, "fogColor": "#4a5240", "fogDepth": 45, "skyVisibility": 0.45,
-                        "skyTint": MORYTANIA_SKY_TINT},
+                        "directionalStrength": 2.4, "fogColor": "#4a5240", "skyTint": MORYTANIA_SKY_TINT},
     "ARCTIC": {"ambientColor": "#a9cfff", "ambientStrength": 1.4, "directionalColor": "#eef4ff",
-               "directionalStrength": 3.2, "fogColor": "#c3d2e8", "fogDepth": 30, "skyVisibility": 0.65,
-               "skyTint": "#e6f0ff"},
+               "directionalStrength": 3.2, "fogColor": "#c3d2e8", "skyTint": "#e6f0ff"},
     "MOUNTAIN": {"ambientColor": "#a7b8d6", "directionalColor": "#fff8ee", "directionalStrength": 3.8,
-                 "fogColor": "#b4bfcf", "fogDepth": 18, "skyVisibility": 0.75},
+                 "fogColor": "#b4bfcf"},
     "WILDERNESS": {"ambientColor": "#b8a4a4", "ambientStrength": 0.75, "directionalColor": "#d9b3a6",
-                   "directionalStrength": 2.6, "fogColor": "#3a2222", "fogDepth": 30, "skyVisibility": 0.5,
-                   "skyTint": "#e0b8b0"},
+                   "directionalStrength": 2.6, "fogColor": "#3a2222", "skyTint": "#e0b8b0"},
     "TROPICAL": {"ambientColor": "#a9d4b8", "ambientStrength": 1.1, "directionalColor": "#ffe9c4",
-                 "directionalStrength": 4.2, "fogColor": "#b9d9cf", "fogDepth": 16, "skyVisibility": 0.8},
+                 "directionalStrength": 4.2, "fogColor": "#b9d9cf"},
     "BARRENS": {"ambientColor": "#b5aa9c", "directionalColor": "#f0dcc4", "directionalStrength": 3.4,
-                "fogColor": "#9c8f80", "fogDepth": 20, "skyVisibility": 0.7, "skyTint": "#f0e6dc"},
+                "fogColor": "#9c8f80", "skyTint": "#f0e6dc"},
     "CAVE": {"cave": True, "ambientColor": "#9fb0c8", "ambientStrength": 1.3, "directionalColor": "#b8c8e0",
              "directionalStrength": 0.9, "fogColor": "#070a10", "fogDepth": 35},
     "LAVA_CAVE": {"cave": True, "ambientColor": "#d9a080", "ambientStrength": 1.4,
@@ -320,9 +311,11 @@ def intersects(a, b):
 
 
 # ---------------------------------------------------------------------------------------------------------
-# 3D Weather biomes
+# 3D Weather's cave regions
 
-def load_biomes(path):
+def load_cave_regions(path):
+    """64x64 region id -> cave biome. 3D Weather's open-air biomes are not used: weather_regions.json draws the
+    climate map of the surface."""
     src = open(path, encoding="utf-8").read()
     regions = {}
     for m in re.finditer(r"(\w+)\(Biome\.\w+,([\d,\s]+)\)", src):
@@ -332,21 +325,7 @@ def load_biomes(path):
             regions.setdefault(rid, biome)
     for rid, biome in REGION_OVERRIDES.items():
         regions[rid] = biome
-    return regions
-
-
-def morytania_regions(areas):
-    """Surface regions at least MORYTANIA_REGION_SHARE covered by the Morytania areas."""
-    covered = set()
-    for name in MORYTANIA_AREAS:
-        for b in areas.boxes(name):
-            if b[2] == 0 and b[4] < SURFACE_MAX_Y:
-                covered.update((x, y) for x in range(b[0], b[3] + 1) for y in range(b[1], b[4] + 1))
-    count = {}
-    for x, y in covered:
-        key = (x >> 6) << 8 | (y >> 6)
-        count[key] = count.get(key, 0) + 1
-    return sorted(r for r, n in count.items() if n >= MORYTANIA_REGION_SHARE * 64 * 64)
+    return {rid: b for rid, b in regions.items() if BIOMES.get(b, {}).get("cave")}
 
 
 # ---------------------------------------------------------------------------------------------------------
@@ -424,14 +403,14 @@ def main():
         if preset:
             # 117 HD would derive a missing ambient strength from the sun; biomes mean "normal"
             d.update(convert({"ambientStrength": 1.0, **preset}, cave))
+            if not cave:
+                d["fogDepth"] = 0.0
         else:
             d.update({"ambient": [1, 1, 1], "sun": [1, 1, 1], "fogDepth": 0.0})
         biome_index[name] = len(envs)
         envs.append(d)
 
-    region_biomes = load_biomes(biome_path)
-    for rid in morytania_regions(areas):
-        region_biomes[rid] = "MORYTANIA_SWAMP"
+    region_biomes = load_cave_regions(biome_path)
     biome_regions = {}
     for rid, biome in sorted(region_biomes.items()):
         biome_regions.setdefault(biome, []).append(rid)
@@ -440,6 +419,7 @@ def main():
         "environments": envs,
         # env index, minX, minY, minPlane, maxX, maxY, maxPlane; earlier entries win
         "boxes": [v for b in boxes for v in b],
+        # cave biome env index -> its 64x64 region ids
         "biomeRegions": {str(biome_index[b]): r for b, r in biome_regions.items()},
     }
     with open(out_path, "w", encoding="utf-8") as f:
@@ -453,7 +433,7 @@ def main():
         hd_count, sum(1 for e in envs[:hd_count] if e.get("cave")), len(envs) - first_biome,
         len(overworld)))
     print("boxes: %d, region index entries: %d" % (len(boxes), spans))
-    print("biome regions: %d" % len(region_biomes))
+    print("cave regions: %d" % len(region_biomes))
     for reason, names in dropped.items():
         print("dropped (%s): %d: %s" % (reason, len(names), ", ".join(names)))
 

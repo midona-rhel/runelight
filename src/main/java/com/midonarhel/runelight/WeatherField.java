@@ -8,25 +8,26 @@ import org.lwjgl.BufferUtils;
 import static org.lwjgl.opengl.GL33C.*;
 
 /**
- * The weather over the whole loaded scene, so a storm a region over shows from afar: every chunk (8x8 tiles, one
- * zone) takes the forecast for its own region's biome, eases toward it like the player's weather does, and builds
- * up its own wet ground and snow cover. The cells are blurred across region borders and uploaded as two tiny
- * textures (bilinear, one texel per chunk) that the weather passes and the fog sample by world position, plus a
- * coarse array of cloud cover for the composite, which has no texture unit left.
+ * The weather over the world around the player, so a storm a region over shows from afar: every cell (16x16 tiles)
+ * takes the forecast for its place's biome (WeatherRegions), eases toward it, and builds up its own wet ground and
+ * snow cover. This is the only place the weather is decided: everything the player sees is the field at the player,
+ * and everything farther away is the field there. The cells are blurred across region borders, so a border is a ramp
+ * of about 80 tiles that nothing steps across, and uploaded as three tiny textures (bilinear, one texel per cell)
+ * that the weather passes, the fog and the clouds sample by world position: the weather (cover, rain, snow, fog),
+ * the ground (wet, snow cover) and the sky (cover, wispiness, darkness).
  *
- * Shaders use the field as a difference from its value at the player: there the weather is exactly
- * Weather.java's (which also has manual modes, swells and gusts), and elsewhere it is that plus how much rainier,
- * cloudier or foggier the field says it is there.
+ * Shaders use the weather and the ground as a difference from their value at the player: there the weather is
+ * exactly Weather.java's (which adds swells and gusts), and elsewhere it is that plus how much rainier or foggier the
+ * field says it is there. The sky is looked up as it is.
  */
 final class WeatherField
 {
-	// world units per cell: one zone
-	static final int CELL = 1024;
-	// cells per side of the composite's cloud cover array; must match CLOUD_FIELD_SIZE in clouds.glsl
-	static final int CLOUD_CELLS = 24;
+	// tiles per cell side, and world units
+	static final int CELL_TILES = 16;
+	static final int CELL = CELL_TILES * 128;
 	// the fog channel holds fog / FOG_RANGE (FogClimate caps fog at 3.2)
 	static final float FOG_RANGE = 4;
-	// chunks of blur on each side, on top of the bilinear filter: region borders blend over about 40 tiles
+	// cells of blur on each side, on top of the bilinear filter: region borders blend over about 80 tiles
 	static final int BLUR = 2;
 	private static final float[] KERNEL = {1, 2, 3, 2, 1};
 
@@ -77,6 +78,8 @@ final class WeatherField
 	private float[][] state = new float[CHANNELS][0];
 	private final float[] target = new float[TARGETS];
 	private final float[] noSky = new float[TARGETS];
+	// cell key -> index in the current layout
+	private final Map<Long, Integer> index = new HashMap<>();
 	// this update's targets and weather per biome
 	private final Map<String, float[]> byBiome = new HashMap<>();
 	private final Map<String, WeatherType> typeByBiome = new HashMap<>();
@@ -88,13 +91,11 @@ final class WeatherField
 	private float[][] smooth = new float[CHANNELS][0];
 	private byte[] fieldBytes = new byte[0];
 	private byte[] groundBytes = new byte[0];
-	private final float[] cloudDelta = new float[CLOUD_CELLS * CLOUD_CELLS];
-	private int cloudCellsX, cloudCellsZ;
-	private boolean enabled;
+	private byte[] skyBytes = new byte[0];
 	private boolean initialized;
 	private boolean anything;
 	private boolean uploaded;
-	private int texField, texGround;
+	private int texField, texGround, texSky;
 	private int texSizeX, texSizeZ;
 	// the field at the player, and the player's own weather values the deltas are added to
 	private final float[] focus = new float[CHANNELS];
@@ -105,24 +106,18 @@ final class WeatherField
 	private final float[] cornerWeight = new float[4];
 
 	/**
-	 * Lay the cells over a newly loaded scene. Cells that cover a chunk the previous layout also covered keep their
-	 * weather (the scene reloads as the player walks); new ones start in their weather as it is.
+	 * Lay the cells over the world around the player. Cells that cover a place the previous layout also covered keep
+	 * their weather (the window moves as the player walks); new ones start in their weather as it is.
 	 *
 	 * @param originX world x of cell 0's corner, local units
-	 * @param keys    per cell, the world chunk it covers (see {@link #chunkKey}), or Long.MIN_VALUE when unknown
+	 * @param keys    per cell, the place it covers (see {@link #chunkKey}), or Long.MIN_VALUE when unknown
 	 * @param biomes  per cell, the region's biome name, null for the default biome, {@link #NO_SKY} for no weather
 	 */
 	void layout(int sizeX, int sizeZ, float originX, float originZ, long[] keys, String[] biomes)
 	{
 		int n = sizeX * sizeZ;
-		Map<Long, Integer> old = new HashMap<>();
-		for (int i = 0; i < this.keys.length; ++i)
-		{
-			if (this.keys[i] != Long.MIN_VALUE)
-			{
-				old.put(this.keys[i], i);
-			}
-		}
+		Map<Long, Integer> old = new HashMap<>(index);
+		index.clear();
 		float[][] next = new float[CHANNELS][n];
 		boolean[] kept = new boolean[n];
 		for (int i = 0; i < n; ++i)
@@ -154,41 +149,39 @@ final class WeatherField
 		smooth = new float[CHANNELS][n];
 		fieldBytes = new byte[n * 4];
 		groundBytes = new byte[n * 2];
+		skyBytes = new byte[n * 3];
 		uploaded = false;
+		for (int i = 0; i < n; ++i)
+		{
+			if (keys[i] != Long.MIN_VALUE)
+			{
+				index.put(keys[i], i);
+			}
+		}
 	}
 
+	/** The key of the cell that holds a world tile. */
 	static long chunkKey(int worldX, int worldY)
 	{
-		return (long) (worldX >> 3) << 32 | (worldY >> 3) & 0xFFFFFFFFL;
+		return (long) Math.floorDiv(worldX, CELL_TILES) << 32 | Math.floorDiv(worldY, CELL_TILES) & 0xFFFFFFFFL;
 	}
 
 	/**
 	 * Ease every cell toward its weather and rebuild the blurred field.
 	 *
-	 * @param enabled false: uniform weather (manual modes, or the field turned off); shaders see no differences
-	 * @param typeFor the current weather of a biome (null: the default biome)
-	 * @param scale   intensity setting / 100
-	 * @param gradual false applies every change at once
-	 * @param climate fog follows FogClimate
-	 * @param dt      seconds since the last update
-	 */
-	void update(boolean enabled, Function<String, WeatherType> typeFor, float scale, boolean gradual, boolean climate,
-		double hour, float dt)
-	{
-		update(enabled, typeFor, null, scale, gradual, climate, hour, dt);
-	}
-
-	/**
+	 * @param typeFor   the current weather of a biome (null: the default biome)
 	 * @param groundFor wet ground and snow cover of a biome (Climate), which the cells then hold as they are; null
 	 *                  eases them here from the weather instead
+	 * @param scale     intensity setting / 100
+	 * @param gradual   false applies every change at once
+	 * @param dt        seconds since the last update
 	 */
-	void update(boolean enabled, Function<String, WeatherType> typeFor, Function<String, float[]> groundFor, float scale,
-		boolean gradual, boolean climate, double hour, float dt)
+	void update(Function<String, WeatherType> typeFor, Function<String, float[]> groundFor, float scale, boolean gradual,
+		double hour, float dt)
 	{
-		this.enabled = enabled;
 		int n = sizeX * sizeZ;
 		boolean snap = !initialized || !gradual;
-		targets(WeatherType.clear(), null, scale, false, hour, noSky);
+		targets(WeatherType.clear(), null, scale, hour, noSky);
 		noSky[COVER] = noSky[RAIN] = noSky[SNOW] = noSky[FROST] = noSky[SHOWERS] = 0;
 		byBiome.clear();
 		groundByBiome.clear();
@@ -204,7 +197,7 @@ final class WeatherField
 				{
 					WeatherType type = typeFor.apply(b);
 					t = new float[TARGETS];
-					targets(type, b, scale, climate, hour, t);
+					targets(type, b, scale, hour, t);
 					byBiome.put(key, t);
 					typeByBiome.put(key, type);
 				}
@@ -250,10 +243,10 @@ final class WeatherField
 	}
 
 	/**
-	 * A cell's targets for a weather, as Weather.update sets them for the player in automatic mode, with showers
-	 * as their average. {@code out} holds {@link #TARGETS}.
+	 * A cell's targets for a weather in a biome, with showers as their average. {@code out} holds
+	 * {@link #TARGETS}.
 	 */
-	static void targets(WeatherType type, String biome, float scale, boolean climate, double hour, float[] out)
+	static void targets(WeatherType type, String biome, float scale, double hour, float[] out)
 	{
 		float showers = 1 - type.showers * (1 - Weather.SHOWER_SHARE);
 		float rain = type.rain * scale / Weather.DEFAULT_INTENSITY * showers;
@@ -263,26 +256,15 @@ final class WeatherField
 		{
 			cover = Math.max(cover, type.coverSwell * Math.min(1, Weather.COVER_BASE + Weather.COVER_SLOPE * (rain + snow)));
 		}
-		float fog = type.fog;
-		float fogHeight = 1, humidity = 1;
-		if (climate)
-		{
-			FogClimate.Profile p = FogClimate.profile(biome);
-			float calm = FogClimate.calm(type);
-			fog = FogClimate.total(fog, FogClimate.density(p, hour, calm, cover));
-			fogHeight = FogClimate.height(p, hour, calm, cover);
-			humidity = p.humidity;
-		}
-		else
-		{
-			fog *= 1 + type.morningMist * Weather.morning(hour);
-		}
+		FogClimate.Profile p = FogClimate.profile(biome);
+		float calm = FogClimate.calm(type);
+		float fog = FogClimate.total(type.fog, FogClimate.density(p, hour, calm, cover));
 		out[COVER] = Math.min(cover, 1);
 		out[RAIN] = rain;
 		out[SNOW] = snow;
 		out[FOG] = fog;
-		out[FOG_HEIGHT] = fogHeight;
-		out[HUMIDITY] = humidity;
+		out[FOG_HEIGHT] = FogClimate.height(p, hour, calm, cover);
+		out[HUMIDITY] = p.humidity;
 		out[AREA_FOG] = type.areaFog;
 		out[DISTANCE_FOG] = type.distanceFog;
 		out[STORM] = type.lightning;
@@ -417,6 +399,10 @@ final class WeatherField
 			changed |= put(fieldBytes, i * 4 + 3, smooth[FOG][i], FOG_RANGE);
 			changed |= put(groundBytes, i * 2, smooth[WET][i], 1);
 			changed |= put(groundBytes, i * 2 + 1, smooth[SNOW_COVER][i], 1);
+			changed |= put(skyBytes, i * 3, smooth[COVER][i], 1);
+			changed |= put(skyBytes, i * 3 + 1, smooth[CLOUD_WISP][i], 1);
+			// the darkness offset is -1 to 1
+			changed |= put(skyBytes, i * 3 + 2, (smooth[CLOUD_DARK][i] + 1) / 2, 1);
 		}
 		if (changed)
 		{
@@ -539,9 +525,7 @@ final class WeatherField
 		return best;
 	}
 
-	/**
-	 * Remember the field at the player, which the shaders subtract, and lay out the clouds' cover differences.
-	 */
+	/** Remember the field at the player, which the shaders subtract. */
 	void focus(float x, float z)
 	{
 		focusX = x;
@@ -551,35 +535,18 @@ final class WeatherField
 			focus[c] = sample(c, x, z);
 		}
 		focusType = dominant(x, z);
-		// the cloud array: cover differences at its own cell centers, at most CLOUD_CELLS a side over the scene
-		cloudCellsX = Math.min(sizeX, CLOUD_CELLS);
-		cloudCellsZ = Math.min(sizeZ, CLOUD_CELLS);
-		java.util.Arrays.fill(cloudDelta, 0);
-		if (!enabled)
-		{
-			return;
-		}
-		float stepX = (float) sizeX * CELL / Math.max(cloudCellsX, 1);
-		float stepZ = (float) sizeZ * CELL / Math.max(cloudCellsZ, 1);
-		for (int j = 0; j < cloudCellsZ; ++j)
-		{
-			for (int i = 0; i < cloudCellsX; ++i)
-			{
-				float v = sample(COVER, originX + (i + 0.5f) * stepX, originZ + (j + 0.5f) * stepZ);
-				cloudDelta[j * CLOUD_CELLS + i] = v - focus[COVER];
-			}
-		}
 	}
 
+	/** Whether there are cells to look up. */
 	boolean isEnabled()
 	{
-		return enabled && sizeX > 0;
+		return initialized && sizeX > 0;
 	}
 
 	/** Whether any cell has rain, snow, wet ground or snow cover. */
 	boolean hasAnything()
 	{
-		return enabled && anything;
+		return anything;
 	}
 
 	float getFocus(int channel)
@@ -659,11 +626,35 @@ final class WeatherField
 		{
 			return;
 		}
+		ensureUploaded();
+		glActiveTexture(GL_TEXTURE0 + fieldUnit);
+		glBindTexture(GL_TEXTURE_2D, texField);
+		glActiveTexture(GL_TEXTURE0 + groundUnit);
+		glBindTexture(GL_TEXTURE_2D, texGround);
+		glActiveTexture(GL_TEXTURE0);
+	}
+
+	/** Upload the field if it changed and bind the sky (cover, wispiness, darkness) on {@code skyUnit}. */
+	void bindSky(int skyUnit)
+	{
+		if (sizeX == 0 || sizeZ == 0)
+		{
+			return;
+		}
+		ensureUploaded();
+		glActiveTexture(GL_TEXTURE0 + skyUnit);
+		glBindTexture(GL_TEXTURE_2D, texSky);
+		glActiveTexture(GL_TEXTURE0);
+	}
+
+	private void ensureUploaded()
+	{
 		if (texField == 0 || texSizeX != sizeX || texSizeZ != sizeZ)
 		{
 			freeTextures();
 			texField = createTexture(GL_RGBA8, sizeX, sizeZ);
 			texGround = createTexture(GL_RG8, sizeX, sizeZ);
+			texSky = createTexture(GL_RGB8, sizeX, sizeZ);
 			texSizeX = sizeX;
 			texSizeZ = sizeZ;
 			uploaded = false;
@@ -672,21 +663,18 @@ final class WeatherField
 		{
 			upload(texField, GL_RGBA, fieldBytes);
 			upload(texGround, GL_RG, groundBytes);
+			upload(texSky, GL_RGB, skyBytes);
 			uploaded = true;
 		}
-		glActiveTexture(GL_TEXTURE0 + fieldUnit);
-		glBindTexture(GL_TEXTURE_2D, texField);
-		glActiveTexture(GL_TEXTURE0 + groundUnit);
-		glBindTexture(GL_TEXTURE_2D, texGround);
-		glActiveTexture(GL_TEXTURE0);
 	}
 
-	static void unbind(int fieldUnit, int groundUnit)
+	static void unbind(int... units)
 	{
-		glActiveTexture(GL_TEXTURE0 + fieldUnit);
-		glBindTexture(GL_TEXTURE_2D, 0);
-		glActiveTexture(GL_TEXTURE0 + groundUnit);
-		glBindTexture(GL_TEXTURE_2D, 0);
+		for (int unit : units)
+		{
+			glActiveTexture(GL_TEXTURE0 + unit);
+			glBindTexture(GL_TEXTURE_2D, 0);
+		}
 		glActiveTexture(GL_TEXTURE0);
 	}
 
@@ -694,8 +682,8 @@ final class WeatherField
 	{
 		int tex = glGenTextures();
 		glBindTexture(GL_TEXTURE_2D, tex);
-		glTexImage2D(GL_TEXTURE_2D, 0, format, w, h, 0, format == GL_RGBA8 ? GL_RGBA : GL_RG, GL_UNSIGNED_BYTE,
-			(ByteBuffer) null);
+		glTexImage2D(GL_TEXTURE_2D, 0, format, w, h, 0, format == GL_RGBA8 ? GL_RGBA : format == GL_RGB8 ? GL_RGB : GL_RG,
+			GL_UNSIGNED_BYTE, (ByteBuffer) null);
 		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
 		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
 		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
@@ -721,7 +709,8 @@ final class WeatherField
 		{
 			glDeleteTextures(texField);
 			glDeleteTextures(texGround);
-			texField = texGround = 0;
+			glDeleteTextures(texSky);
+			texField = texGround = texSky = 0;
 		}
 	}
 
@@ -759,29 +748,16 @@ final class WeatherField
 		glUniform4f(location, originX, originZ, 1f / Math.max(sizeX * CELL, 1), 1f / Math.max(sizeZ * CELL, 1));
 	}
 
-	/** clouds.glsl's cloudField uniforms: the cover differences and where they lie. */
-	void applyClouds(int fieldLocation, int rectLocation, int cellsLocation)
+	/** clouds.glsl's cloudSkyRect: where the sky lies, like weatherFieldRect; all zero when there is none. */
+	void setSkyRect(int location)
 	{
-		glUniform4fv(fieldLocation, cloudDelta);
-		glUniform2f(cellsLocation, Math.max(cloudCellsX, 1), Math.max(cloudCellsZ, 1));
-		float w = (float) sizeX * CELL, h = (float) sizeZ * CELL;
-		// cells per world unit in zw; 0 turns the lookup off
-		glUniform4f(rectLocation, originX, originZ, isEnabled() && w > 0 ? cloudCellsX / w : 0,
-			isEnabled() && h > 0 ? cloudCellsZ / h : 0);
-	}
-
-	int getCloudCellsX()
-	{
-		return cloudCellsX;
-	}
-
-	int getCloudCellsZ()
-	{
-		return cloudCellsZ;
-	}
-
-	float cloudDelta(int i, int j)
-	{
-		return cloudDelta[j * CLOUD_CELLS + i];
+		if (isEnabled())
+		{
+			setRect(location);
+		}
+		else
+		{
+			glUniform4f(location, 0, 0, 0, 0);
+		}
 	}
 }

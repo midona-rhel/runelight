@@ -19,18 +19,21 @@ import static org.lwjgl.opengl.GL33C.glUniform1f;
 /**
  * Per-surface material behaviour, from materials.json (derived from 117 HD by tools/import_117hd_materials.py).
  *
- * Every face carries 5 material bits in the spare high bits of its texture id short (texture ids need 9 bits),
+ * Every face carries 7 material bits in the spare high bits of its texture id short (texture ids need 9 bits),
  * which is free in both the static zone and the dynamic vertex formats:
- *   bits 10-11  emissive level 0-3: lit as if by at least a fixed light, so it shows its own color and glows
- *   bit  12     transmissive: thin foliage that is also lit through from behind
+ *   bits 9-10   emissive level 0-3: lit as if by at least a fixed light, so it shows its own color and glows
+ *   bit  11     transmissive: thin foliage that is also lit through from behind
+ *   bits 12-13  the water bed and land terrain flags (WaterMap)
+ *   bits 14-15  how much snow settles on it: all, reduced (things to interact with) or none (items, actors)
  * The flags are always baked; the config toggles only change shader uniforms, so no scene reload is needed.
  */
 final class SurfaceMaterials
 {
 	private static final Logger log = LoggerFactory.getLogger(SurfaceMaterials.class);
 
-	static final int SHIFT = 10;
+	static final int SHIFT = 9;
 	static final int TEXTURE_MASK = (1 << SHIFT) - 1;
+	static final int SNOW_SHIFT = SHIFT + 5;
 
 	// model-level flags: emissive level in bits 0-1, then the bits below
 	static final int EMISSIVE_MASK = 3;
@@ -38,6 +41,12 @@ final class SurfaceMaterials
 	// emissive applies only to hot-colored faces (flames, not the logs under them)
 	static final int FIRE = 1 << 3;
 	static final int EMISSIVE_FULL = 3;
+	// model-level snow class in bits 4-5 (the face's bits 14-15): scenery with an action, and things that move or
+	// lie around
+	static final int SNOW_MODEL_SHIFT = 4;
+	static final int SNOW_REDUCED = 1 << SNOW_MODEL_SHIFT;
+	static final int SNOW_NONE = 2 << SNOW_MODEL_SHIFT;
+	private static final int SNOW_MASK = 3 << SNOW_MODEL_SHIFT;
 
 	// Foliage objects are whole trees: these HSL limits keep brown and grey faces (bark, trunks, rocks) opaque.
 	// OSRS hue runs 0-63 (0 red, ~8 brown/orange, ~11 yellow, ~21 green, ~42 blue), saturation 0-7.
@@ -209,31 +218,35 @@ final class SurfaceMaterials
 
 	/**
 	 * Model flags for a static or animated scene object, preferring the composition the dynamic object recorded
-	 * (farming patches and other impostors draw as the object they currently look like).
+	 * (farming patches and other impostors draw as the object they currently look like). Objects with an action
+	 * (Interactables) take less snow.
 	 */
 	static int forObject(int id, Renderable r)
 	{
+		int flags = lookup(objects, id);
+		int shown = id;
 		if (r instanceof DynamicObject)
 		{
 			var comp = ((DynamicObject) r).getRecordedObjectComposition();
 			if (comp != null)
 			{
-				int f = lookup(objects, comp.getId());
+				shown = comp.getId();
+				int f = lookup(objects, shown);
 				if (f != 0)
 				{
-					return f;
+					flags = f;
 				}
 			}
 		}
-		return lookup(objects, id);
+		return Interactables.is(shown) ? flags | SNOW_REDUCED : flags;
 	}
 
 	// type field of a scene object hash (TileObject.getHash), as 117 HD's ModelHash reads it
 	private static final int HASH_TYPE_OBJECT = 2;
 
 	/**
-	 * Model flags for an entity drawn as a temporary model: NPCs, projectiles, spot animations, spawned objects.
-	 * Players and ground items get none.
+	 * Model flags for an entity drawn as a temporary model: NPCs, projectiles, spot animations, spawned objects,
+	 * players and ground items. Everything but objects takes no snow.
 	 */
 	static int forRenderable(Renderable r, long hash, int id)
 	{
@@ -248,21 +261,21 @@ final class SurfaceMaterials
 				NPCComposition comp = npc.getTransformedComposition();
 				f = comp != null ? lookup(npcs, comp.getId()) : 0;
 			}
-			return f;
+			return f | SNOW_NONE;
 		}
 		if (r instanceof Projectile)
 		{
-			return lookup(spotanims, ((Projectile) r).getId());
+			return lookup(spotanims, ((Projectile) r).getId()) | SNOW_NONE;
 		}
 		if (r instanceof GraphicsObject)
 		{
-			return lookup(spotanims, ((GraphicsObject) r).getId());
+			return lookup(spotanims, ((GraphicsObject) r).getId()) | SNOW_NONE;
 		}
 		if ((hash >> 16 & 7) == HASH_TYPE_OBJECT)
 		{
 			return forObject(id, r);
 		}
-		return 0;
+		return SNOW_NONE;
 	}
 
 	/**
@@ -290,7 +303,7 @@ final class SurfaceMaterials
 		{
 			bits = (bits & ~(EMISSIVE_MASK << SHIFT)) | Math.max(level, bits >> SHIFT & EMISSIVE_MASK) << SHIFT;
 		}
-		return bits;
+		return bits | (model & SNOW_MASK) >> SNOW_MODEL_SHIFT << SNOW_SHIFT;
 	}
 
 	/**

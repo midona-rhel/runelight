@@ -17,6 +17,10 @@ import java.util.Arrays;
  * too) and over drops, slower where it widens into a lake. A shaped world flow map ({@link #mapShaped}) already has
  * all of that but the drops, worked out from the map at a finer scale than the scene's tiles, so its tiles only get
  * those.
+ *
+ * The sea itself ({@link #open}) is told from rivers and lakes apart from that: the game draws all three with the
+ * same water texture. Open water far from any shore ({@link #OCEAN_SHORE}) in a body that runs off the scene, spreading
+ * through the water that is not a river (the map's flow runs there) or known to be inland, is sea.
  */
 final class WaterBodies
 {
@@ -37,6 +41,8 @@ final class WaterBodies
 	static final int OCEAN_SIZE = 400;
 	static final int OCEAN_SHORE = 6;
 	private static final int MAX_DISTANCE = 64;
+	// tiles per second of the map's flow from which water is a river, not the sea
+	private static final float RIVER_FLOW = 0.05f;
 
 	// tiles per second
 	static final float RIVER_SPEED = 0.7f;
@@ -68,6 +74,8 @@ final class WaterBodies
 	final float[] surface;
 	// tiles the game's own textures mark as open sea
 	final boolean[] sea;
+	// tiles known not to be sea: lakes, which the scene alone takes for it where they run off its edge, and caves
+	final boolean[] inland;
 	// tiles the scene doesn't have (not loaded): neither land nor water, the water may go on there
 	final boolean[] unknown;
 	// flow from the world flow map in tiles per second, NaN where it has none
@@ -78,6 +86,8 @@ final class WaterBodies
 	// per tile: body label (-1 none), distance to the nearest land in tiles (1 next to land), flow in tiles per
 	// second, wave energy 0-1
 	final int[] body;
+	// whether the tile is sea, as above
+	final boolean[] open;
 	final int[] shore;
 	final float[] flowX, flowZ;
 	final float[] energy;
@@ -93,6 +103,7 @@ final class WaterBodies
 	int bodies;
 	int[] bodyClass = new int[0];
 	int[] bodySize = new int[0];
+	private boolean[] runsOff = new boolean[0];
 
 	private final int[] queue;
 	private final int[] dist;
@@ -104,6 +115,8 @@ final class WaterBodies
 		water = new boolean[n];
 		surface = new float[n];
 		sea = new boolean[n];
+		inland = new boolean[n];
+		open = new boolean[n];
 		unknown = new boolean[n];
 		mapFlowX = new float[n];
 		mapFlowZ = new float[n];
@@ -128,6 +141,7 @@ final class WaterBodies
 		label();
 		shoreDistance();
 		classify();
+		findSea();
 		Arrays.fill(flowX, 0);
 		Arrays.fill(flowZ, 0);
 		Arrays.fill(pushX, 0);
@@ -279,7 +293,7 @@ final class WaterBodies
 	private void classify()
 	{
 		bodyClass = new int[bodies];
-		boolean[] edge = new boolean[bodies];
+		boolean[] edge = runsOff = new boolean[bodies];
 		boolean[] hasSea = new boolean[bodies];
 		int[] maxShore = new int[bodies];
 		for (int i = 0; i < water.length; ++i)
@@ -313,6 +327,54 @@ final class WaterBodies
 				bodyClass[b] = POOL;
 			}
 		}
+	}
+
+	/**
+	 * Marks the sea: from its open water, the tiles at least OCEAN_SHORE from shore in bodies that run off the scene,
+	 * through the connected water that is no river and not inland.
+	 */
+	private void findSea()
+	{
+		Arrays.fill(open, false);
+		int tail = 0;
+		for (int i = 0; i < water.length; ++i)
+		{
+			if (body[i] >= 0 && runsOff[body[i]] && shore[i] >= OCEAN_SHORE && !river(i) && !inland[i])
+			{
+				open[i] = true;
+				queue[tail++] = i;
+			}
+		}
+		for (int head = 0; head < tail; ++head)
+		{
+			int i = queue[head];
+			int x = i % size, y = i / size;
+			tail = spreadSea(x - 1, y, tail);
+			tail = spreadSea(x + 1, y, tail);
+			tail = spreadSea(x, y - 1, tail);
+			tail = spreadSea(x, y + 1, tail);
+		}
+	}
+
+	private int spreadSea(int x, int y, int tail)
+	{
+		if (x < 0 || y < 0 || x >= size || y >= size)
+		{
+			return tail;
+		}
+		int j = y * size + x;
+		if (water[j] && !open[j] && !river(j) && !inland[j])
+		{
+			open[j] = true;
+			queue[tail++] = j;
+		}
+		return tail;
+	}
+
+	// whether the world flow map has the tile running
+	private boolean river(int i)
+	{
+		return hasMapFlow(i) && Math.hypot(mapFlowX[i], mapFlowZ[i]) >= RIVER_FLOW;
 	}
 
 	private void flow(int b)

@@ -61,7 +61,7 @@ layout(std140) uniform uniforms {
 layout(location = 0) out vec4 FragColor;
 layout(location = 1) out vec4 FragNormal;
 layout(location = 2) out vec4 FragAlpha;  // transparency layer, see SceneTargets
-layout(location = 3) out vec4 FragMaterial;  // emissive, transmissive, water (water.glsl); see materials.glsl
+layout(location = 3) out vec4 FragMaterial;  // emissive, transmissive, water (water.glsl), snow; see materials.glsl
 
 // Transparent faces are drawn in a separate pass into their own layer and lit right here, because the composite
 // pass only sees the opaque surface behind them. Same lighting as the composite, without shadows.
@@ -147,7 +147,7 @@ void main() {
   // alpha 1: the coverage the composite divides by (SceneTargets.clear); the opaque pass writes without blending
   // water: 1 bed (always under the water), 0 land terrain (never), 0.5 anything else (if below the surface)
   float water = (fMaterial & 8) != 0 ? 1.0 : (fMaterial & 16) != 0 ? 0.0 : 0.5;
-  FragMaterial = vec4(materialEmissive(fMaterial), materialTransmissive(fMaterial), water, 1.0);
+  FragMaterial = vec4(materialEmissive(fMaterial), materialTransmissive(fMaterial), water, materialSnow(fMaterial));
 
   if (alphaPass == 1) {
     vec3 light;

@@ -19,7 +19,7 @@ uniform vec3 windOffset;       // world units the wind has carried everything so
 uniform vec2 particleAmount;   // rain at the player, and the most anywhere in the box that the drop count follows
 
 #define FALL_SPEED 2000.0      // world units per second
-#define DROP_LENGTH 70.0       // streak length at rest, times the layer's size scale
+#define DROP_LENGTH 40.0       // streak length at rest, times the layer's size scale
 #define DROP_WIDTH 1.6         // world units; streaks are at least a pixel wide, thinner ones fade instead
 #define DROP_ALPHA 0.32
 #define NEAR_FADE 250.0        // drops this close to the camera fade out so they don't smear the view

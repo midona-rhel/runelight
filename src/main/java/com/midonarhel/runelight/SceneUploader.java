@@ -325,21 +325,21 @@ class SceneUploader
 		WallObject wallObject = t.getWallObject();
 		if (wallObject != null)
 		{
-			zoneRenderableSize(z, wallObject.getRenderable1());
-			zoneRenderableSize(z, wallObject.getRenderable2());
+			zoneRenderableSize(z, wallObject.getRenderable1(), wallObject.getId());
+			zoneRenderableSize(z, wallObject.getRenderable2(), wallObject.getId());
 		}
 
 		DecorativeObject decorativeObject = t.getDecorativeObject();
 		if (decorativeObject != null)
 		{
-			zoneRenderableSize(z, decorativeObject.getRenderable());
-			zoneRenderableSize(z, decorativeObject.getRenderable2());
+			zoneRenderableSize(z, decorativeObject.getRenderable(), decorativeObject.getId());
+			zoneRenderableSize(z, decorativeObject.getRenderable2(), decorativeObject.getId());
 		}
 
 		GroundObject groundObject = t.getGroundObject();
 		if (groundObject != null)
 		{
-			zoneRenderableSize(z, groundObject.getRenderable());
+			zoneRenderableSize(z, groundObject.getRenderable(), groundObject.getId());
 		}
 
 		GameObject[] gameObjects = t.getGameObjects();
@@ -356,7 +356,7 @@ class SceneUploader
 			}
 
 			Renderable renderable = gameObject.getRenderable();
-			zoneRenderableSize(z, renderable);
+			zoneRenderableSize(z, renderable, gameObject.getId());
 		}
 
 		Tile bridge = t.getBridge();
@@ -455,8 +455,18 @@ class SceneUploader
 		return len;
 	}
 
-	private void zoneRenderableSize(Zone z, Renderable r)
+	private void zoneRenderableSize(Zone z, Renderable r, int id)
 	{
+		// the client thread works out which objects have an action before the zone is uploaded (Interactables)
+		Interactables.want(id);
+		if (r instanceof DynamicObject)
+		{
+			var comp = ((DynamicObject) r).getRecordedObjectComposition();
+			if (comp != null)
+			{
+				Interactables.want(comp.getId());
+			}
+		}
 		Model m = null;
 		if (r instanceof Model)
 		{

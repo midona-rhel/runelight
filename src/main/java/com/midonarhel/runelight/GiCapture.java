@@ -100,7 +100,7 @@ final class GiCapture
 			{
 				return;
 			}
-			int color = vc[0] & 0xffff | (vt[0] & 0x3ff) << 16;
+			int color = vc[0] & 0xffff | (vt[0] & SurfaceMaterials.TEXTURE_MASK) << 16;
 			// wind codes (WindSway) are positive on swaying models, 0 where they stay put; -1 marks ground borders
 			if (vw[0] > 0 && vw[1] > 0 && vw[2] > 0)
 			{

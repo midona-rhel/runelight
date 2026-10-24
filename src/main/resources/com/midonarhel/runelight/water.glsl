@@ -251,6 +251,9 @@ void waterShadeHalf(ivec2 hpx) {
   float t = 1e9;
   ivec2 first = halfToFull(hpx);
   for (int i = 0; i < 4; ++i) {
+    // a half texel that is one scene pixel has no others to choose from
+    if (i > 0 && halfRatio <= 1.0)
+      break;
     ivec2 q = first + ivec2(i & 1, i >> 1);
     uvec4 w = waterSurfaceAt(waterSurface, waterRect, q);
     if (w.b == 0u)

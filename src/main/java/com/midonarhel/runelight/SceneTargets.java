@@ -71,8 +71,10 @@ class SceneTargets
 	// texShadowRaw, smoothed by the denoise (denoise) into texShadow and upsampled depth-aware in the composite pass
 	private int texShadowRaw, texShadow;
 	private int aoWidth, aoHeight;
-	// scene pixels per texel of the half resolution passes, at every render scale: they shrink with the scene
-	static final float HALF_RATIO = 2;
+	// scene pixels per texel of the half resolution passes: 2 at full render scale. Below it those passes stay at half
+	// the window's resolution (1 at a render scale of 50% and less, where they are the scene's size): their filtered
+	// grain, the water's shading and the clouds would otherwise be stretched into visible blocks by the upscale.
+	private float halfRatio = 2;
 	// the denoise's framebuffer: the smoothed shadows, and the smoothed fog next to them; the geometry is only read
 	private int fboDenoise;
 	// whether the denoise's framebuffer draws into the fog target too: draw buffers are framebuffer state, so they are
@@ -90,8 +92,9 @@ class SceneTargets
 	// no cloud: nothing scattered, all the sky through
 	private static final float[] CLEAR_SKY = {0, 0, 0, 1};
 
-	void init(int width, int height, int samples)
+	void init(int width, int height, int samples, float halfRatio)
 	{
+		this.halfRatio = halfRatio;
 		this.width = width;
 		this.height = height;
 		this.samples = samples;
@@ -112,8 +115,8 @@ class SceneTargets
 		glDrawBuffers(OPAQUE_BUFFERS);
 		check("resolve");
 
-		aoWidth = (int) Math.ceil(width / (double) HALF_RATIO);
-		aoHeight = (int) Math.ceil(height / (double) HALF_RATIO);
+		aoWidth = (int) Math.ceil(width / (double) halfRatio);
+		aoHeight = (int) Math.ceil(height / (double) halfRatio);
 		texAo = glGenTextures();
 		glBindTexture(GL_TEXTURE_2D, texAo);
 		// the global illumination plus the half resolution depth and normal the composite's upsamples read; 32 bit
@@ -215,7 +218,7 @@ class SceneTargets
 
 	float getHalfRatio()
 	{
-		return HALF_RATIO;
+		return halfRatio;
 	}
 
 	int getAoWidth()

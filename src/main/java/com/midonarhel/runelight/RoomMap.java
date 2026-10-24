@@ -569,7 +569,7 @@ final class RoomMap
 
 	// as rooms.glsl: how far above a floor (world units) a point must be to be on that storey, and how far above
 	// its storey's floor a point may be and still be inside the room
-	static final float PLANE_MARGIN = 24;
+	static final float PLANE_MARGIN = 2;
 	static final float STOREY = 420;
 
 	/**
@@ -627,7 +627,7 @@ final class RoomMap
 	 * (room + porch * 4096, negative when the porch is an opening's), the four planes' floor heights (world y), and
 	 * the four planes' walls: the tile's WallMap bits, plus 64 times the half (WallMap.half) the tile's room has,
 	 * plus 128 times the room of the other half of a tile a diagonal wall crosses (0 outdoors; the tile's own room
-	 * when both halves are in it).
+	 * when both halves are in it), and the four planes' wall distances at the tile's corners (RoomAmbient).
 	 */
 	void texels(FloatBuffer out)
 	{
@@ -666,8 +666,7 @@ final class RoomMap
 				for (int p = 0; p < PLANES; ++p)
 				{
 					int i = index(p, x, y);
-					out.put(walls != null && (rooms[i] != 0 || across[i] != 0)
-						? RoomAmbient.pack(walls, p, x, y) : 0);
+					out.put(walls != null ? RoomAmbient.pack(walls, p, x, y) : 0);
 				}
 			}
 		}
