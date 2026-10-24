@@ -35,6 +35,56 @@ layout(location = 1) out vec4 FragShadow;  // r: lit share, 1 unshadowed; g AO, 
 #define TAU 6.28318530718
 #define GOLDEN_ANGLE 2.39996322973
 
+// how far the bounced light is gathered from, world units: three tiles
+#define GI_REACH 384.0
+
+// Whether the sample point s is behind the visible surface, the occluder at sp, q: its weight, 0 when none. Occluders
+// far in front of the point (a wall between the camera and the floor) fade out beyond reach, and one nearly in the
+// surface's own tangent plane is the neighbouring face of a shallow fold in the same low-poly mesh, not something
+// casting a contact shadow or bouncing light.
+float sampleHit(vec3 p, vec3 n, vec3 s, float reach, float bias, out ivec2 sp, out vec3 q) {
+  vec4 clip = viewProj * vec4(s, 1.0);
+  if (clip.w <= NEAR) {
+    return 0.0;
+  }
+  vec2 ndc = clip.xy / clip.w;
+  sp = ivec2(vec2(sceneViewport.xy) + (ndc * 0.5 + 0.5) * vec2(sceneViewport.zw));
+  if (!inViewport(sp)) {
+    return 0.0;
+  }
+  float sd = texelFetch(sceneDepth, sp, 0).r;
+  if (isSky(sd)) {
+    return 0.0;
+  }
+  // positive when the visible surface is in front of the sample point
+  float diff = clip.w - viewDepth(sd);
+  if (diff <= bias) {
+    return 0.0;
+  }
+  float range = smoothstep(0.0, 1.0, reach / max(abs(diff), 1e-3));
+  q = reconstructPosition(vec2(sp) + 0.5, sd);
+  vec3 h = q - p;
+  float elevation = dot(n, h) * inversesqrt(max(dot(h, h), 1.0));
+  return range * smoothstep(AO_ANGLE_BIAS, AO_ANGLE_BIAS + 0.35, elevation);
+}
+
+// The sunlight the surface at sp, q reflects, in units of the caster's light (the composite colors it): its albedo
+// lit by the caster, if it faces the point it lights, p. A matte surface looks equally bright from every side, and
+// the samples are cosine weighted, so their mean is the irradiance.
+vec3 bounceFrom(vec3 p, ivec2 sp, vec3 q) {
+  vec3 nq = decodeNormal(texelFetch(sceneNormal, sp, 0).rgb);
+  float lit = max(dot(nq, casterDir), 0.0);
+  if (lit <= 0.0 || dot(nq, p - q) <= 0.0) {
+    return vec3(0.0);
+  }
+  if (shadowsEnabled == 1) {
+    lit *= shadowTap(q, nq);
+  }
+  // squared: sRGB to linear, near enough for a bounce
+  vec3 albedo = texelFetch(sceneColor, sp, 0).rgb;
+  return albedo * albedo * lit;
+}
+
 void main() {
   ivec2 px = halfToFull(ivec2(gl_FragCoord.xy));
   float d = texelFetch(sceneDepth, px, 0).r;
@@ -94,49 +144,19 @@ void main() {
     float len = fract(f + noise * 0.618034);
     len = mix(0.1, 1.0, len * len);
 
-    vec3 s = p + dir * (aoRadius * len);
-    vec4 clip = viewProj * vec4(s, 1.0);
-    if (clip.w <= NEAR) {
-      continue;
-    }
-
-    vec2 ndc = clip.xy / clip.w;
-    ivec2 sp = ivec2(vec2(sceneViewport.xy) + (ndc * 0.5 + 0.5) * vec2(sceneViewport.zw));
-    if (!inViewport(sp)) {
-      continue;
-    }
-
-    float sd = texelFetch(sceneDepth, sp, 0).r;
-    if (isSky(sd)) {
-      continue;
-    }
-
-    // positive when the visible surface is in front of the sample point
-    float diff = clip.w - viewDepth(sd);
-    if (diff <= bias) {
-      continue;
-    }
-    // ignore occluders far in front of the sample, e.g. a wall between the camera and the floor
-    float range = smoothstep(0.0, 1.0, aoRadius / max(abs(diff), 1e-3));
-    // Angle bias: an occluder that sits nearly in this surface's own tangent plane is just the neighboring
-    // face of a shallow fold in the same low-poly mesh, not something casting a contact shadow.
-    vec3 q = reconstructPosition(vec2(sp) + 0.5, sd);
-    vec3 h = q - p;
-    float elevation = dot(n, h) * inversesqrt(max(dot(h, h), 1.0));
-    float occ = range * smoothstep(AO_ANGLE_BIAS, AO_ANGLE_BIAS + 0.35, elevation);
+    ivec2 sp;
+    vec3 q;
+    float occ = sampleHit(p, n, p + dir * (aoRadius * len), aoRadius, bias, sp, q);
     occlusion += occ;
-    if (giEnabled == 1 && occ > 0.0) {
-      // the hit surface's albedo lit by the caster (in its units: the composite colors it), seen by this one: the
-      // samples are cosine weighted, so their mean is the irradiance
-      vec3 nq = decodeNormal(texelFetch(sceneNormal, sp, 0).rgb);
-      float lit = max(dot(nq, casterDir), 0.0) * max(-dot(nq, h), 0.0) * inversesqrt(max(dot(h, h), 1.0));
-      if (lit > 0.0) {
-        if (shadowsEnabled == 1) {
-          lit *= shadowTap(q, nq);
-        }
-        // squared: sRGB to linear, near enough for a bounce
-        vec3 albedo = texelFetch(sceneColor, sp, 0).rgb;
-        bounce += albedo * albedo * (occ * lit);
+    if (giEnabled == 1) {
+      // the bounce reaches further than the contact shadows: where the AO's short step finds nothing, the same
+      // direction a few tiles out (the ground a wall stands on, out to where its light comes from)
+      float w = occ;
+      if (w <= 0.0) {
+        w = sampleHit(p, n, p + dir * GI_REACH, GI_REACH, bias, sp, q);
+      }
+      if (w > 0.0) {
+        bounce += w * bounceFrom(p, sp, q);
       }
     }
   }
