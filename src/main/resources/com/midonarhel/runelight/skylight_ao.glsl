@@ -34,6 +34,8 @@ uniform vec4 skyFieldMap;
 // far its brick pattern is inset: the mortar read the room behind the wall and the bricks the outdoors. A face within
 // SKY_EDGE_REACH world units of the tile edge it looks across reads the tile beyond that edge, the one it faces.
 #define SKY_EDGE_REACH 32.0
+// how square to an axis a face must be (its normal's component along it) to count as standing on a tile edge
+#define SKY_SQUARE 0.9
 // Faces that aren't walls and face up or down (the ground at a wall's foot, the ledges of an inset brick pattern) only
 // ever stray past a wall's outer face by a few units: within SKY_FOOT_REACH of the edge of a room tile, where the tile
 // across that edge is out of doors, they are out of doors too. Facing down they read where they are (an eave's
@@ -269,7 +271,9 @@ float skylightVisibility(vec3 p, vec3 n) {
     float x = axis == 0 ? g.x : g.z;
     float f = fract(x / tileSize) * tileSize;
     float step = 0.0;
-    if (abs(d) > 0.5 && n.y < 0.1) {
+    // only a face square to the axis stands on a tile edge: a diagonal wall's faces cross the middle of their tiles,
+    // and pushing them across an edge read the next tile in stripes along the wall
+    if (abs(d) > SKY_SQUARE && n.y < 0.1) {
       // world units to the edge the face looks across
       float toEdge = d > 0.0 ? tileSize - f : f;
       if (toEdge < SKY_EDGE_REACH) {
