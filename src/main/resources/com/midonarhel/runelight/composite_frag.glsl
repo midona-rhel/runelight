@@ -4,12 +4,14 @@
 // passes (RuneLightPlugin.CompositeProgram), so that each program holds only its own path: the full resolution
 // composite, and at half resolution the clouds and the water, apart or, when both are drawn, in one pass. With MSAA
 // the full resolution one shades each pixel's first surface, and a second pass (COMPOSITE_EDGES) blends the second one
-// over the pixels that have one.
+// over the pixels that have one, which a small pass (COMPOSITE_MARK) marks in the stencil first where the target has
+// one.
 #define COMPOSITE_FULL 0
 #define COMPOSITE_CLOUDS 1
 #define COMPOSITE_WATER 2
 #define COMPOSITE_CLOUDS_WATER 3
 #define COMPOSITE_EDGES 4
+#define COMPOSITE_MARK 5
 #include composite_pass
 
 #include "frame.glsl"
@@ -562,7 +564,19 @@ bool sameSurface(SceneSample a, float vz, ivec2 px, int t) {
     && all(lessThanEqual(abs(texelFetch(sceneMaterial, px, t) - a.material), vec4(MSAA_MATERIAL_TOLERANCE)));
 }
 
-#if COMPOSITE_PASS == COMPOSITE_EDGES
+#if COMPOSITE_PASS == COMPOSITE_MARK
+// whether the pixel has a second surface: the edge pass's own test, alone
+bool twoSurfaces(ivec2 px) {
+  SceneSample first = sceneSample(px, 0);
+  float vz = viewDepth(first.depth);
+  for (int t = 1; t < MSAA_SAMPLES; ++t) {
+    if (!sameSurface(first, vz, px, t)) {
+      return true;
+    }
+  }
+  return false;
+}
+#elif COMPOSITE_PASS == COMPOSITE_EDGES
 // the second surface, its share of the samples in alpha; none: discarded
 vec4 shadeSamples(ivec2 px, vec4 transparent) {
   SceneSample first = sceneSample(px, 0);
@@ -604,7 +618,15 @@ vec4 shadeSamples(ivec2 px, vec4 transparent) {
 #endif
 
 void main() {
-#if COMPOSITE_PASS != COMPOSITE_FULL && COMPOSITE_PASS != COMPOSITE_EDGES
+#if COMPOSITE_PASS == COMPOSITE_MARK
+  // only its stencil writes count
+#if MSAA_SAMPLES > 0
+  if (!twoSurfaces(ivec2(gl_FragCoord.xy))) {
+    discard;
+  }
+#endif
+  FragColor = vec4(0.0);
+#elif COMPOSITE_PASS != COMPOSITE_FULL && COMPOSITE_PASS != COMPOSITE_EDGES
   // the half resolution passes: the clouds, the water's surface (water.glsl), or both
 #if COMPOSITE_PASS != COMPOSITE_WATER
   FragColor = cloudsHalf();

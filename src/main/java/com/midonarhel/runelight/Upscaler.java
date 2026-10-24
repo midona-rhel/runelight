@@ -3,7 +3,8 @@ package com.midonarhel.runelight;
 import static org.lwjgl.opengl.GL33C.*;
 
 /**
- * Render scale below 100%: the composite and the weather draw into this target at the scene's reduced size, and
+ * Render scale below 100%: the composite and the weather draw into this target at the scene's reduced size (with a
+ * stencil for the composite's MSAA edge pass), and
  * draw() scales it up to the window (upscale_frag.glsl). The interface is drawn afterwards at the window's full
  * resolution. Not allocated at 100%, where the composite draws into the window directly.
  */
@@ -14,6 +15,8 @@ class Upscaler
 		.add(GL_FRAGMENT_SHADER, "upscale_frag.glsl");
 
 	private int fbo, texture;
+	// the composite's stencil, which marks the pixels its MSAA edge pass runs on
+	private int stencil;
 	private int program, uniSharpness, uniOutSize;
 
 	void setProgram(int program)
@@ -45,6 +48,11 @@ class Upscaler
 		fbo = glGenFramebuffers();
 		glBindFramebuffer(GL_FRAMEBUFFER, fbo);
 		glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, texture, 0);
+		stencil = glGenRenderbuffers();
+		glBindRenderbuffer(GL_RENDERBUFFER, stencil);
+		glRenderbufferStorage(GL_RENDERBUFFER, GL_DEPTH24_STENCIL8, width, height);
+		glBindRenderbuffer(GL_RENDERBUFFER, 0);
+		glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_STENCIL_ATTACHMENT, GL_RENDERBUFFER, stencil);
 		glDrawBuffers(GL_COLOR_ATTACHMENT0);
 		int status = glCheckFramebufferStatus(GL_FRAMEBUFFER);
 		if (status != GL_FRAMEBUFFER_COMPLETE)
@@ -60,7 +68,8 @@ class Upscaler
 		{
 			glDeleteFramebuffers(fbo);
 			glDeleteTextures(texture);
-			fbo = texture = 0;
+			glDeleteRenderbuffers(stencil);
+			fbo = texture = stencil = 0;
 		}
 	}
 

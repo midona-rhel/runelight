@@ -225,7 +225,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 	// the cloud march and the water's reflections. The passes share their uniforms, set on each before it draws
 	// (useComposite).
 	private static final int COMPOSITE_FULL = 0, COMPOSITE_CLOUDS = 1, COMPOSITE_WATER = 2, COMPOSITE_CLOUDS_WATER = 3,
-		COMPOSITE_EDGES = 4;
+		COMPOSITE_EDGES = 4, COMPOSITE_MARK = 5;
 
 	/** One of the composite's programs and its uniforms. */
 	private static final class CompositeProgram
@@ -260,8 +260,14 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 	private final CompositeProgram compositeCloudsWater = new CompositeProgram(COMPOSITE_CLOUDS_WATER);
 	// with MSAA, the second surface of the pixels that have two, blended over the full pass
 	private final CompositeProgram compositeEdges = new CompositeProgram(COMPOSITE_EDGES);
+	// with MSAA, marks the pixels that have a second surface in the stencil, so the edge pass runs on those alone
+	private final CompositeProgram compositeMark = new CompositeProgram(COMPOSITE_MARK);
 	private final CompositeProgram[] composites = {compositeFull, compositeClouds, compositeWater, compositeCloudsWater,
-		compositeEdges};
+		compositeEdges, compositeMark};
+	// whether the window's framebuffer has a stencil, for the edge pass at 100% render scale; 0 unknown, 1 yes, -1 no.
+	// The GL bridge gives Windows and Linux one from the pixel format; on macOS it draws into an IOSurface's
+	// framebuffer, color alone
+	private int windowStencil;
 	private static final int COMPOSITE_PARTS_UNIT = 31;
 	// this frame's time for the composite's passes, seconds since the start
 	private float compositeTime;
@@ -677,7 +683,8 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 					}
 
 					awtContext = new AWTContext(canvas);
-					awtContext.configurePixelFormat(0, 0, 0);
+					// a stencil for the composite's edge pass (windowStencil)
+					awtContext.configurePixelFormat(0, 0, 8);
 				}
 
 				awtContext.createGLContext();
@@ -2512,6 +2519,19 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		glUniform1i(uniAlphaPass, alpha ? 1 : 0);
 	}
 
+	/** Whether the window's framebuffer has a stencil (windowStencil); call with it bound. */
+	private boolean hasWindowStencil()
+	{
+		if (windowStencil == 0)
+		{
+			int bits = glGetFramebufferAttachmentParameteri(GL_FRAMEBUFFER, GL_STENCIL,
+				GL_FRAMEBUFFER_ATTACHMENT_STENCIL_SIZE);
+			windowStencil = glGetError() == GL_NO_ERROR && bits > 0 ? 1 : -1;
+			log.debug("Window framebuffer stencil bits: {}", bits);
+		}
+		return windowStencil > 0;
+	}
+
 	private void setFrameUniforms(FrameUniforms u)
 	{
 		glUniformMatrix4fv(u.viewProj, false, frameViewProj);
@@ -3068,20 +3088,39 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		// the interface texture is filled before the drawable's pass starts, so the composite, the weather and the
 		// interface all draw in one pass: an upload between them would end it and store and reload the drawable
 		finishInterfaceUpload();
-		glBindFramebuffer(GL_FRAMEBUFFER, upscale ? upscaler.getFbo() : awtContext.getFramebuffer(false));
+		final int target = upscale ? upscaler.getFbo() : awtContext.getFramebuffer(false);
+		glBindFramebuffer(GL_FRAMEBUFFER, target);
+		final boolean edges = shaderSamples > 0;
+		final boolean stencil = edges && (upscale || target == 0 && hasWindowStencil());
 		glViewport(0, 0, sceneWidth, sceneHeight);
-		glClear(GL_COLOR_BUFFER_BIT);
+		glClear(stencil ? GL_COLOR_BUFFER_BIT | GL_STENCIL_BUFFER_BIT : GL_COLOR_BUFFER_BIT);
 		gpuTimer.begin(GpuTimer.COMPOSITE);
 		glDrawArrays(GL_TRIANGLES, 0, 3);
 		glUniform1i(compositeFull.part, 0);
-		if (shaderSamples > 0)
+		if (edges)
 		{
+			if (stencil)
+			{
+				// the pixels with a second surface, by a small program, so the edge pass's full shading never starts
+				// on the others; without a stencil the edge pass discards them itself
+				glUseProgram(compositeMark.program);
+				setFrameUniforms(compositeMark.frame);
+				glEnable(GL_STENCIL_TEST);
+				glStencilFunc(GL_ALWAYS, 1, 0xFF);
+				glStencilOp(GL_KEEP, GL_KEEP, GL_REPLACE);
+				glColorMask(false, false, false, false);
+				glDrawArrays(GL_TRIANGLES, 0, 3);
+				glColorMask(true, true, true, true);
+				glStencilFunc(GL_EQUAL, 1, 0xFF);
+				glStencilOp(GL_KEEP, GL_KEEP, GL_KEEP);
+			}
 			// the second surfaces, over the first by their share of the samples; the target's alpha stays
 			useComposite(compositeEdges);
 			glEnable(GL_BLEND);
 			glBlendFuncSeparate(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA, GL_ZERO, GL_ONE);
 			glDrawArrays(GL_TRIANGLES, 0, 3);
 			glDisable(GL_BLEND);
+			glDisable(GL_STENCIL_TEST);
 		}
 		gpuTimer.end();
 		glActiveTexture(GL_TEXTURE0 + COMPOSITE_PARTS_UNIT);
