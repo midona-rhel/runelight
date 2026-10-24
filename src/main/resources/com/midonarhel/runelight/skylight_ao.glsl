@@ -110,8 +110,10 @@ vec2 skySurfaceLevel(sampler3D grid, float scale, vec2 tile, vec2 f, int level, 
     vec4 b = textureLod(grid,vec3(uv+vec2(0.25,0.0),z),0.0);
     vec3 samplePosition = vec3((tile.x+corner.x)*(128.0/scale)+b.g,b.b,(tile.y+corner.y)*(128.0/scale)+b.a);
     float weight = weights[k]*smoothstep(-16.0,32.0,dot(samplePosition-w,n));
-    if (level == 9)
-      weight *= 1.0-smoothstep(80.0,160.0,abs(w.y-samplePosition.y));
+    // an outdoor face reads what is at its height or above it: a probe well below it (at the foot of the wall under
+    // a roof's eave, down in the alley beside it) sees a sky the face doesn't, and the one above the scenery stands
+    // for the open sky over it (y down: a larger y is lower)
+    weight *= 1.0 - smoothstep(48.0, 128.0, samplePosition.y - w.y);
     vec3 nn=n*n;
     float value=nn.y*(n.y<0.0?a.x:(a.y+a.z+a.w+b.r)*0.25)
       +nn.x*(n.x>0.0?a.y:a.z)+nn.z*(n.z>0.0?a.w:b.r);
