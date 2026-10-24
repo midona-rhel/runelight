@@ -244,7 +244,9 @@ void waterShadeHalf(ivec2 hpx) {
   WaterShadedOut = uvec4(0u);
   // only the texels with a pixel in the rect: texel x reads pixels 2x and 2x + 1 (halfToFull); the water's own pass
   // is scissored to them as well, the one with the clouds covers every texel
-  if (waterEnabled == 0 || any(lessThan(hpx, waterRect.xy >> 1)) || any(greaterThanEqual(hpx, (waterRect.zw + 1) >> 1)))
+  // the texels with a pixel in the surface's rect: texel h reads pixels from h * halfRatio (halfToFull)
+  if (waterEnabled == 0 || any(lessThan(hpx, ivec2(floor(vec2(waterRect.xy) / halfRatio))))
+    || any(greaterThanEqual(hpx, ivec2(ceil(vec2(waterRect.zw) / halfRatio)))))
     return;
   uvec4 ws = uvec4(0u);
   ivec2 px = ivec2(0);

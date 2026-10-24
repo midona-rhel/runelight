@@ -366,15 +366,15 @@ class Water
 
 	/**
 	 * The texels of the composite's half resolution water pass (water.glsl's waterShadeHalf) with a pixel in the
-	 * surface's rect, which the pass is scissored to: x0, y0 to x1, y1 exclusive into r. Texel x reads pixels 2x and
-	 * 2x + 1 (halfmap.glsl's halfToFull).
+	 * surface's rect, which the pass is scissored to: x0, y0 to x1, y1 exclusive into r. Texel x reads pixels from
+	 * x * halfRatio (halfmap.glsl's halfToFull), 2 at full render scale and 1 at 50% and below.
 	 */
-	void halfRect(int[] r)
+	void halfRect(int[] r, float halfRatio)
 	{
-		r[0] = rect[0] >> 1;
-		r[1] = rect[1] >> 1;
-		r[2] = (rect[2] + 1) >> 1;
-		r[3] = (rect[3] + 1) >> 1;
+		r[0] = (int) Math.floor(rect[0] / halfRatio);
+		r[1] = (int) Math.floor(rect[1] / halfRatio);
+		r[2] = (int) Math.ceil(rect[2] / halfRatio);
+		r[3] = (int) Math.ceil(rect[3] / halfRatio);
 	}
 
 	/**

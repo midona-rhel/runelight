@@ -2742,7 +2742,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		int[] r = halfScissor;
 		if (withWater)
 		{
-			water.halfRect(r);
+			water.halfRect(r, sceneTargets.getHalfRatio());
 		}
 		if (withClouds)
 		{
