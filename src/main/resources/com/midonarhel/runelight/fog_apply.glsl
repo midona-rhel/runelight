@@ -39,8 +39,13 @@ vec3 applyFogLinear(vec3 lin, vec4 fog) {
   return linearToSrgb(clamp(lin * fog.a + fog.rgb, 0.0, 1.0));
 }
 
-// the same for the final color in sRGB
+// the same for the final color in sRGB. Where none of the texels had fog (their rays missed it: nothing scattered,
+// everything shows; a only off 1 by the upsample's division) the color stays as it is instead of going to linear and
+// back.
 vec3 applyFogSample(vec3 srgb, vec4 fog) {
+  if (fog.rgb == vec3(0.0) && fog.a >= 1.0 - 1e-6) {
+    return clamp(srgb, 0.0, 1.0);
+  }
   return applyFogLinear(srgbToLinear(srgb), fog);
 }
 

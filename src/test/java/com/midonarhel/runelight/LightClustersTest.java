@@ -65,16 +65,40 @@ public class LightClustersTest
 		indoor.roomCode = RoomMap.code(1, 1);
 		lights.add(indoor);
 		lights.add(new PointLight().set(0, 800, 20000, 600, 1, 0.5f, 0.2f, 2));
-		clusters.setFog(true, 0, 3000, 4000);
+		clusters.setFog(true, 0, 3000, 4000, -1e9f, 0);
 		clusters.cull(lights, viewProj(), 0, 0, 0);
 		List<Integer> fog = fogColumnLights(clusters);
 		assertEquals(3, clusters.getLightCount());
 		assertEquals(1, fog.size());
 		assertEquals(0, (int) fog.get(0));
 
-		clusters.setFog(false, 0, 0, 0);
+		clusters.setFog(false, 0, 0, 0, 0, 0);
 		clusters.cull(lights, viewProj(), 0, 0, 0);
 		assertTrue(fogColumnLights(clusters).isEmpty());
+	}
+
+	@Test
+	public void fogColumnsSkipLightsAboveTheLayerAndTooDim()
+	{
+		LightClusters clusters = new LightClusters();
+		List<PointLight> lights = new ArrayList<>();
+		lights.add(new PointLight().set(0, 800, 3000, 600, 1, 0.5f, 0.2f, 2));
+		// its sphere ends above the layer's top at y 0 (y down)
+		lights.add(new PointLight().set(200, -700, 3200, 600, 1, 0.5f, 0.2f, 2));
+		// brightest channel times radius 0.1 * 2 * 600 = 120, under the 500 asked for
+		lights.add(new PointLight().set(-200, 800, 3200, 600, 0.1f, 0.1f, 0.1f, 2));
+		clusters.setFog(true, 0, 3000, 4000, 0, 500);
+		clusters.cull(lights, viewProj(), 0, 0, 0);
+		List<Integer> fog = fogColumnLights(clusters);
+		assertEquals(3, clusters.getLightCount());
+		assertEquals(1, fog.size());
+		assertEquals(0, (int) fog.get(0));
+		assertTrue(clusters.hasFogLights());
+
+		clusters.setFog(true, 0, 3000, 4000, 2000, 0);
+		clusters.cull(lights, viewProj(), 0, 0, 0);
+		assertTrue(fogColumnLights(clusters).isEmpty());
+		assertFalse(clusters.hasFogLights());
 	}
 
 	@Test
@@ -88,7 +112,7 @@ public class LightClustersTest
 			// dimmest first, all in the same place
 			lights.add(new PointLight().set(0, 800, 3000, 300, 1, 1, 1, 1 + i));
 		}
-		clusters.setFog(true, 0, 3000, 4000);
+		clusters.setFog(true, 0, 3000, 4000, -1e9f, 0);
 		clusters.cull(lights, viewProj(), 0, 0, 0);
 		boolean any = false;
 		for (int c = 0; c < COLUMNS; ++c)

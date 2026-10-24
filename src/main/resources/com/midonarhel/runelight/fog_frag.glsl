@@ -7,6 +7,8 @@
 // composite. Parameters come from VolumetricFog.java.
 
 #include "frame.glsl"
+// the sky's colors at this frame's sun altitude from composite_vert.glsl, not worked out again at every texel
+#define SKY_FRAME_CONSTANTS
 #include "sky.glsl"
 #include cluster_config
 #include "fog_cover.glsl"
@@ -241,16 +243,26 @@ void main() {
   vec3 dir = normalize(hit);
   float t0 = 0.0;
   float t1 = sky ? 1e6 : length(hit);
-  if (!sky) {
-    // no fog under water: the ray stops at the surface
-    float tw = waterSurfaceDistance(hit, dir);
-    if (tw > 0.0) {
-      t1 = min(t1, tw);
-    }
+
+  // Clip the ray to the part below the top of the layer, which is flat: a few heights above the highest ground, so
+  // over low ground some of the ray is clear air that the per-step height then thins out. Height above that is
+  // h0 + t * rise. The cheapest test first: with the camera above the layer every ray up into the sky ends here.
+  float h0 = fogHighestY - cameraPos.y;
+  float top = fogHeight * FOG_TOP;
+  float rise = -dir.y;
+  if (abs(rise) < 1e-5) {
+    t1 = h0 <= top ? t1 : -1.0;
+  } else if (rise > 0.0) {
+    t1 = min(t1, (top - h0) / rise);
+  } else {
+    t0 = max(t0, (top - h0) / rise);
+  }
+  if (t1 <= t0) {
+    return;
   }
 
-  // Clip the ray to the cylinder around the player where there is fog at all: the steps are spent there, and
-  // distant scenery and the sky only see the fog between them and the camera instead of turning into a wall.
+  // and to the cylinder around the player where there is fog at all: the steps are spent there, and distant scenery
+  // and the sky only see the fog between them and the camera instead of turning into a wall.
   vec2 o = cameraPos.xz - fogCenter;
   vec2 dh = dir.xz;
   float a = dot(dh, dh);
@@ -267,21 +279,19 @@ void main() {
     t0 = max(t0, (-b - sq) / a);
     t1 = min(t1, (-b + sq) / a);
   }
-
-  // and to the part below the top of the layer, which is flat: a few heights above the highest ground, so over low
-  // ground some of the ray is clear air that the per-step height then thins out. Height above that is h0 + t * rise.
-  float h0 = fogHighestY - cameraPos.y;
-  float top = fogHeight * FOG_TOP;
-  float rise = -dir.y;
-  if (abs(rise) < 1e-5) {
-    t1 = h0 <= top ? t1 : -1.0;
-  } else if (rise > 0.0) {
-    t1 = min(t1, (top - h0) / rise);
-  } else {
-    t0 = max(t0, (top - h0) / rise);
-  }
   if (t1 <= t0) {
     return;
+  }
+
+  // No fog under water: the ray stops at the surface. Looked up only for rays that reach the fog.
+  if (!sky) {
+    float tw = waterSurfaceDistance(hit, dir);
+    if (tw > 0.0) {
+      t1 = min(t1, tw);
+      if (t1 <= t0) {
+        return;
+      }
+    }
   }
 
   bool sunAndSky = outdoors == 1;

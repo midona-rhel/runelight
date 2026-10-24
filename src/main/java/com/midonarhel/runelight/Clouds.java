@@ -24,6 +24,11 @@ class Clouds
 	// so a gale drives them about three times as fast as a calm day; the wind's direction (Wind.java)
 	private static final float WIND_SPEED_CALM = 160;
 	private static final float WIND_SPEED = 320;
+	// sine of the elevation along clouds.glsl's cloudSkyDir at and below which the clouds are clear sky: the first
+	// of CLOUD_HORIZON
+	private static final double HORIZON = -0.02;
+	// what skyRows allows for the GPU's rounding of the same rays, in the sine of their elevation
+	private static final double ROWS_SLACK = 1e-3;
 
 	/** Uniform locations of one program that draws clouds: the composite's, and the sky cache's capture. */
 	static final class Locations
@@ -79,6 +84,121 @@ class Clouds
 		eyeRadius = radius;
 		eyeHeight = horizonAtEdge ? Math.max(focalY - cameraY, 0) : 0;
 		ground = focalY;
+	}
+
+	/**
+	 * The rows of the composite's half resolution cloud pass (composite_frag.glsl's cloudsHalf) that can hold cloud:
+	 * the first in {@code rows[0]}, one past the last in {@code rows[1]}, the same for none. The pass is scissored to
+	 * them over clear sky. Call after {@link #setEye}.
+	 * <p>
+	 * Conservative, so the scissor changes nothing: a texel holds cloud only if the ray through its center, dir, is
+	 * above the clouds' horizon, -cloudSkyDir(dir).y > HORIZON (cloudLayer's first test). With y the normalized
+	 * dir.y, cloudSkyDir gives (-y + below) / (1 + below), so that needs y < below * (1 - HORIZON) - HORIZON, which
+	 * grows with below; where it leaves dir as it is (no height or radius, straight up or down), y < -HORIZON, less.
+	 * So a row can only hold cloud if the lowest y of its rays is under the bound for the largest below of its rays
+	 * (rowBelow). The texel centers of a row lie on a segment of the near plane, and the lowest y of the rays through
+	 * a segment is at one of its ends or where it turns (lowestRay).
+	 *
+	 * @param invViewProj the composite's invViewProj (camera relative)
+	 * @param viewport the composite's sceneViewport: the game viewport inside the targets, pixels
+	 * @param width the half resolution target's width, texels
+	 * @param height its height
+	 * @param halfRatio scene pixels per texel
+	 */
+	void skyRows(int[] rows, float[] invViewProj, int[] viewport, int width, int height, float halfRatio)
+	{
+		// texel centers in scene pixels, as cloudsHalf has them, to NDC (frame.glsl's reconstructPosition)
+		double x0 = (0.5 * halfRatio - viewport[0]) / viewport[2] * 2 - 1;
+		double x1 = ((width - 0.5) * halfRatio - viewport[0]) / viewport[2] * 2 - 1;
+		double[] a = new double[3], b = new double[3];
+		int first = -1, end = 0;
+		for (int j = 0; j < height; ++j)
+		{
+			double y = ((j + 0.5) * halfRatio - viewport[1]) / viewport[3] * 2 - 1;
+			nearPoint(a, invViewProj, x0, y);
+			nearPoint(b, invViewProj, x1, y);
+			if (lowestRay(a, b) < rowBelow(a, b) * (1 - HORIZON) - HORIZON + ROWS_SLACK)
+			{
+				first = first < 0 ? j : first;
+				end = j + 1;
+			}
+		}
+		// a row more each side for the GPU's rounding of the texel centers
+		rows[0] = first < 0 ? 0 : Math.max(first - 1, 0);
+		rows[1] = first < 0 ? 0 : Math.min(end + 1, height);
+	}
+
+	/**
+	 * The largest below (clouds.glsl's cloudSkyDir) of the rays through the segment from a to b: h / sqrt(h * h +
+	 * far * far) for the eye's height h, at the smallest distance far to the edge of the drawn world along their
+	 * headings. far = oc + sqrt(r * r - |e| * |e| + oc * oc), at least 1, for the focal point e from the camera and
+	 * oc = dot(heading, e), grows with oc while the camera is inside the edge; the headings sweep the shorter arc
+	 * between those of the ends (the segment's shadow on the ground), over which oc is least at an end or at the
+	 * heading away from e, -|e|. With the camera outside the edge far can be anything down to 1.
+	 */
+	private double rowBelow(double[] a, double[] b)
+	{
+		if (eyeHeight <= 0 || eyeRadius <= 0)
+		{
+			return 0;
+		}
+		double e = Math.hypot(eyeX, eyeZ);
+		double inside = (double) eyeRadius * eyeRadius - e * e;
+		double far = 1;
+		if (inside > 0)
+		{
+			double la = Math.hypot(a[0], a[2]), lb = Math.hypot(b[0], b[2]);
+			double oc = -e;
+			if (la > 1e-9 && lb > 1e-9)
+			{
+				double ax = a[0] / la, az = a[2] / la, bx = b[0] / lb, bz = b[2] / lb;
+				// the heading away from e is between the ends: on the inner side of both, the arc short of a half turn
+				double cross = ax * bz - az * bx;
+				boolean away = (ax * eyeZ - az * eyeX <= 0) == (cross >= 0)
+					&& (eyeX * bz - eyeZ * bx <= 0) == (cross >= 0)
+					|| ax * bx + az * bz < 0 && Math.abs(cross) < 1e-6;
+				if (!away)
+				{
+					oc = Math.min(ax * eyeX + az * eyeZ, bx * eyeX + bz * eyeZ);
+				}
+			}
+			far = Math.max(oc + Math.sqrt(inside + oc * oc), 1);
+		}
+		return eyeHeight / Math.hypot(eyeHeight, far);
+	}
+
+	/** The camera relative point on the near plane at NDC x, y, into p. */
+	private static void nearPoint(double[] p, float[] m, double x, double y)
+	{
+		// column major; the near plane is at NDC z 1 in both depth conventions (reverse z)
+		double w = m[3] * x + m[7] * y + m[11] + m[15];
+		for (int i = 0; i < 3; ++i)
+		{
+			p[i] = (m[i] * x + m[4 + i] * y + m[8 + i] + m[12 + i]) / w;
+		}
+	}
+
+	/**
+	 * The lowest normalized y of the rays from the camera through the segment from a to b: y(t) = (a + t d).y /
+	 * |a + t d| with d = b - a, whose derivative is zero only where its numerator, linear in t, is.
+	 */
+	private static double lowestRay(double[] a, double[] b)
+	{
+		double dx = b[0] - a[0], dy = b[1] - a[1], dz = b[2] - a[2];
+		double aa = a[0] * a[0] + a[1] * a[1] + a[2] * a[2];
+		double ad = a[0] * dx + a[1] * dy + a[2] * dz;
+		double dd = dx * dx + dy * dy + dz * dz;
+		double lowest = Math.min(a[1] / Math.sqrt(aa), b[1] / Math.sqrt(b[0] * b[0] + b[1] * b[1] + b[2] * b[2]));
+		double den = dy * ad - a[1] * dd;
+		if (den != 0)
+		{
+			double t = (a[1] * ad - dy * aa) / den;
+			if (t > 0 && t < 1)
+			{
+				lowest = Math.min(lowest, (a[1] + t * dy) / Math.sqrt(aa + 2 * t * ad + t * t * dd));
+			}
+		}
+		return lowest;
 	}
 
 	/** Look up a program's cloud uniforms into l and point its noise sampler at noiseUnit. */

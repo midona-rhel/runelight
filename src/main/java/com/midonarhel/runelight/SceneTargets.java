@@ -87,6 +87,8 @@ class SceneTargets
 	private int fboHalf, texClouds, texWaterShaded;
 	private final int[] halfBuffers = new int[2];
 	private static final int[] NO_WATER = {0, 0, 0, 0};
+	// no cloud: nothing scattered, all the sky through
+	private static final float[] CLEAR_SKY = {0, 0, 0, 1};
 
 	void init(int width, int height, int samples)
 	{
@@ -241,7 +243,7 @@ class SceneTargets
 
 	/**
 	 * Bind the framebuffer of the composite's half resolution pass, with its viewport, drawing the clouds, the water's
-	 * shaded surface or both, cleared (the water to none).
+	 * shaded surface or both, cleared (the clouds to clear sky, the water to none).
 	 */
 	void bindHalf(boolean clouds, boolean water)
 	{
@@ -287,11 +289,12 @@ class SceneTargets
 			check("half");
 		}
 		glViewport(0, 0, aoWidth, aoHeight);
-		// the clouds write every texel, cleared first so the GPU starts without loading the old contents; the water
-		// only those in its rect. The water target is integer: glClear would leave it undefined.
+		// cleared first so the GPU starts without loading the old contents: the clouds to clear sky, which the texels
+		// outside the rows their pass is scissored to keep (Clouds.skyRows); the water's texels are only read in its
+		// rect. The water target is integer: glClear would leave it undefined.
 		if (clouds)
 		{
-			glClearBufferfv(GL_COLOR, 0, TRANSPARENT);
+			glClearBufferfv(GL_COLOR, 0, CLEAR_SKY);
 		}
 		if (water)
 		{

@@ -315,13 +315,13 @@ class Water
 		visible = surface.anyVisible(viewProj, viewport, camX, camY, camZ, focusX, focusZ, reach, rect);
 		if (visible)
 		{
-			surface.draw(width, height, viewport, viewProj, camX, camY, camZ, focusX, focusZ, reach, f, rect);
+			surface.draw(width, height, viewport, viewProj, camX, camY, camZ, focusX, focusZ, f, rect);
 		}
 	}
 
 	/**
 	 * Bind the surface for the composite, after {@link #drawSurface}, before its half resolution pass
-	 * ({@link #scissorHalf}).
+	 * ({@link #halfRect}).
 	 */
 	void bind(RuneLightConfig config, int surfaceUnit)
 	{
@@ -365,14 +365,16 @@ class Water
 	}
 
 	/**
-	 * Scissor the composite's half resolution water pass (water.glsl's waterShadeHalf) to the texels with a pixel in
-	 * the surface's rect: texel x reads pixels 2x and 2x + 1 (halfmap.glsl's halfToFull). Enables the scissor test.
+	 * The texels of the composite's half resolution water pass (water.glsl's waterShadeHalf) with a pixel in the
+	 * surface's rect, which the pass is scissored to: x0, y0 to x1, y1 exclusive into r. Texel x reads pixels 2x and
+	 * 2x + 1 (halfmap.glsl's halfToFull).
 	 */
-	void scissorHalf()
+	void halfRect(int[] r)
 	{
-		int x0 = rect[0] >> 1, y0 = rect[1] >> 1;
-		glEnable(GL_SCISSOR_TEST);
-		glScissor(x0, y0, ((rect[2] + 1) >> 1) - x0, ((rect[3] + 1) >> 1) - y0);
+		r[0] = rect[0] >> 1;
+		r[1] = rect[1] >> 1;
+		r[2] = (rect[2] + 1) >> 1;
+		r[3] = (rect[3] + 1) >> 1;
 	}
 
 	/**

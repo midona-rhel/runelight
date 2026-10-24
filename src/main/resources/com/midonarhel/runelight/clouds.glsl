@@ -53,6 +53,9 @@ uniform float cloudGround;     // world y of the focal point: the cloud shadows 
 #define CLOUD_MIN_STEPS 10
 #define CLOUD_STEP_LENGTH 900.0
 #define CLOUD_STEP_BLUR 0.5
+// sine of the elevation (along cloudSkyDir) over which the clouds fade in above the horizon: clear sky at and below
+// the first, which the cloud pass is scissored by (Clouds.HORIZON must match it)
+#define CLOUD_HORIZON vec2(-0.02, 0.05)
 // fakes the planet's curvature: clouds at the horizon are this far away (in slab heights over this) instead of
 // infinitely far, which also caps how long a ray at the horizon spends in the slab
 #define CLOUD_CURVE 0.12
@@ -113,17 +116,14 @@ uniform float cloudGround;     // world y of the focal point: the cloud shadows 
 #define CLOUD_RAIN_DENSITY 2.0
 // the light sample toward the sun or moon
 #define CLOUD_LIGHT_STEP 1500.0
-// Phase: a broad lobe (share CLOUD_BROAD over isotropic) lights the body; a narrow forward lobe, attenuated
-// CLOUD_FORWARD_EXTINCTION times harder so only thin edges catch it, makes silver linings around the sun
+// Phase: a broad lobe (share CLOUD_BROAD over isotropic) lights the body; a narrow forward lobe, attenuated twice
+// as hard (the square of the transmittance) so only thin edges catch it, makes silver linings around the sun
 #define CLOUD_G_BROAD 0.3
 #define CLOUD_BROAD 0.6
 #define CLOUD_DIRECT 0.85
 #define CLOUD_G_FORWARD 0.85
 #define CLOUD_FORWARD 0.15
-#define CLOUD_FORWARD_EXTINCTION 2.0
 #define CLOUD_POWDER 0.6
-#define CLOUD_SUN 1.0
-#define CLOUD_MOON 1.3
 // light on puffs and in crevices from the detail noise: soft shading inside the clouds
 #define CLOUD_CREVICE 0.85
 #define CLOUD_PUFF 1.12
@@ -141,8 +141,6 @@ uniform float cloudGround;     // world y of the focal point: the cloud shadows 
 // sun near the horizon: light reaches the undersides and they glow in the sunset's colors
 #define CLOUD_UNDERSIDE 0.35
 #define CLOUD_UNDERSIDE_TINT vec3(1.0, 0.85, 0.75)
-// below this sun altitude the moon lights the clouds; neither light reaches them there
-#define CLOUD_MOON_SWITCH -8.0
 // sunlight taken away under a cloud; shadows fade as the sky closes over, where it is all overcast light
 #define CLOUD_SHADOW_STRENGTH 0.55
 #define CLOUD_SHADOW_ALTITUDE (CLOUD_EYE_HEIGHT + CLOUD_BOTTOM + (CLOUD_TOP - CLOUD_BOTTOM) * 0.3)
@@ -249,20 +247,13 @@ float cloudDensity(vec2 xz, float hf, vec3 cw, float lod) {
 // Henyey-Greenstein times 4 pi, so isotropic is 1
 float cloudPhase(float mu, float g) {
   float gg = g * g;
-  return (1.0 - gg) / pow(1.0 + gg - 2.0 * g * mu, 1.5);
+  float x = 1.0 + gg - 2.0 * g * mu;
+  return (1.0 - gg) / (x * sqrt(x));
 }
 
 // soft highlight shoulder like sky.glsl's shade(), for the clouds' own light only
 vec3 cloudShoulder(vec3 c) {
   return mix(c, 1.0 - (1.0 - SHOULDER) * exp(-(c - SHOULDER) / (1.0 - SHOULDER)), step(SHOULDER, c));
-}
-
-// Sunlight on the clouds. They are high, so they catch it a little before sunrise and after sunset, red then.
-vec3 cloudSunLight(float alt) {
-  vec3 warm = mix(vec3(1.00, 0.42, 0.16), vec3(0.95, 0.30, 0.32), smoothstep(0.0, -6.0, alt));
-  vec3 noon = vec3(1.00, 0.90, 0.76);
-  return overcastDirect(mix(warm, noon, smoothstep(2.0, 28.0, alt)) * SUN_INTENSITY
-    * smoothstep(CLOUD_MOON_SWITCH, 4.0, alt));
 }
 
 // The clouds in front of the sky along dir (a cloudSkyDir). rgb: light scattered toward the camera (linear),
@@ -272,7 +263,7 @@ vec3 cloudSunLight(float alt) {
 vec4 cloudLayer(vec3 dir, vec3 camPos, vec3 sunDir, vec3 moonDir, float alt, float pixelAngle, float noise,
   int steps) {
   float s = -dir.y;
-  float horizon = smoothstep(-0.02, 0.05, s);
+  float horizon = smoothstep(CLOUD_HORIZON.x, CLOUD_HORIZON.y, s);
   if (horizon <= 0.0) {
     return vec4(0.0, 0.0, 0.0, 1.0);
   }
@@ -303,10 +294,10 @@ vec4 cloudLayer(vec3 dir, vec3 camPos, vec3 sunDir, vec3 moonDir, float alt, flo
   float extinction = CLOUD_DENSITY * mix(1.0, CLOUD_WISP_DENSITY, cloudType.x);
   bool sunLit = alt > CLOUD_MOON_SWITCH;
   vec3 lightDir = sunLit ? sunDir : moonDir;
-  vec3 light = sunLit ? cloudSunLight(alt) * CLOUD_SUN
-    : moonLight(alt) * (CLOUD_MOON * smoothstep(CLOUD_MOON_SWITCH, CLOUD_MOON_SWITCH - 3.0, alt));
-  vec3 zenith = srgbToLinear(skyZenith(alt));
-  vec3 horizonColor = srgbToLinear(skyHorizon(alt));
+  // frame constants in the composite (sky.glsl)
+  vec3 light = cloudLight(alt);
+  vec3 zenith = skyZenithLinear(alt);
+  vec3 horizonColor = skyHorizonLinear(alt);
   float mu = dot(dir, lightDir);
   float broad = mix(1.0, cloudPhase(mu, CLOUD_G_BROAD), CLOUD_BROAD) * CLOUD_DIRECT;
   float forward = cloudPhase(mu, CLOUD_G_FORWARD) * CLOUD_FORWARD;
@@ -338,9 +329,12 @@ vec4 cloudLayer(vec3 dir, vec3 camPos, vec3 sunDir, vec3 moonDir, float alt, flo
     float hfNear = f + CLOUD_LIGHT_STEP * lightUp / (CLOUD_TOP - CLOUD_BOTTOM);
     float dl = hfNear >= 1.0 ? 0.0 : cloudDensity(lxz + lightDir.xz * CLOUD_LIGHT_STEP, hfNear, cw, lod + 1.0);
     float od = (d * 0.5 + dl * mix(1.0, CLOUD_RAIN_DENSITY, rain)) * CLOUD_LIGHT_STEP * extinction;
-    float powder = mix(1.0, 1.0 - exp(-2.0 * od), powderAmount);
+    // the light's transmittance, and its square for the narrow lobe and the powder (twice the optical depth)
+    float tl = exp(-od);
+    float tl2 = tl * tl;
+    float powder = mix(1.0, 1.0 - tl2, powderAmount);
     float base = mix(mix(CLOUD_BASE_SHADE, 1.0, pow(f, CLOUD_BASE_SHADE_POWER)), 1.0, low);
-    float direct = (exp(-od) * broad + exp(-CLOUD_FORWARD_EXTINCTION * od) * forward) * powder * base * shade * crevice;
+    float direct = (tl * broad + tl2 * forward) * powder * base * shade * crevice;
     vec3 lit = light * mix(1.0, CLOUD_RAIN_LIGHT, rain)
       * (direct + CLOUD_UNDERSIDE_TINT * (low * (1.0 - f) * CLOUD_UNDERSIDE * shade));
 

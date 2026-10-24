@@ -48,6 +48,20 @@ class ShadowMap
 	// static maps started so far, for the timings overlay
 	int builds;
 
+	/*
+	 * The front static map's greatest depth over the reach of shadow_pcss.glsl's widest filter from each tile of texels
+	 * (its shadowMax): what is nearer the light than that is in shadow under every tap. The moving models only add
+	 * nearer depth, so it bounds the sampled map too (buildMax).
+	 */
+	private int maxTex, maxSpareTex, maxFbo;
+	private int maxSize;
+	private int maxTile;
+	// the widest filter tap: shadow_pcss.glsl's MAX_PENUMBRA_WORLD times its farthest POISSON point (1.234)
+	private static final float FILTER_REACH_WORLD = 112 * 1.234f;
+	// Tiles a third of the reach: the bound covers at most a third more than it must. No larger than this, so that
+	// a tile's own maximum stays a short loop when the texels are small.
+	private static final int MAX_TILE = 16;
+
 	void init(int size)
 	{
 		this.size = size;
@@ -167,6 +181,13 @@ class ShadowMap
 			glDeleteTextures(staticTex);
 			staticFbo[0] = staticFbo[1] = staticTex[0] = staticTex[1] = 0;
 		}
+		if (maxFbo != 0)
+		{
+			glDeleteFramebuffers(maxFbo);
+			glDeleteTextures(maxTex);
+			glDeleteTextures(maxSpareTex);
+			maxFbo = maxTex = maxSpareTex = maxSize = 0;
+		}
 		front = building = -1;
 		stale = false;
 	}
@@ -250,10 +271,75 @@ class ShadowMap
 		return staticFbo[building];
 	}
 
-	void finishBuild()
+	/** The new static map is drawn: make it the front one, and work out its maxima with maxProgram (a VAO bound). */
+	void finishBuild(int maxProgram)
 	{
 		front = building;
 		building = -1;
+		buildMax(maxProgram);
+	}
+
+	/**
+	 * The maxima (shadow_max_frag.glsl): each tile's own, then over the tiles to either side along rows and then
+	 * columns, as many as cover the filter's reach from any texel in the tile, plus one texel for the bilinear filter's
+	 * second and one for rounding.
+	 */
+	private void buildMax(int program)
+	{
+		float texel = 2 * views[front].radius / size;
+		int reach = (int) Math.ceil(FILTER_REACH_WORLD / texel) + 2;
+		int tile = Math.min((reach + 2) / 3, MAX_TILE);
+		int tiles = (reach + tile - 1) / tile;
+		int n = (size + tile - 1) / tile;
+		maxTile = tile;
+		if (n != maxSize)
+		{
+			if (maxFbo == 0)
+			{
+				maxFbo = glGenFramebuffers();
+				maxTex = glGenTextures();
+				maxSpareTex = glGenTextures();
+			}
+			maxSize = n;
+			for (int tex : new int[]{maxTex, maxSpareTex})
+			{
+				glBindTexture(GL_TEXTURE_2D, tex);
+				glTexImage2D(GL_TEXTURE_2D, 0, GL_R32F, n, n, 0, GL_RED, GL_FLOAT, 0);
+				glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+				glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+			}
+		}
+		glBindFramebuffer(GL_FRAMEBUFFER, maxFbo);
+		glViewport(0, 0, n, n);
+		glUseProgram(program);
+		glActiveTexture(GL_TEXTURE0);
+		maxPass(program, staticTex[front], maxTex, tile, 0, 0, tile, tile);
+		maxPass(program, maxTex, maxSpareTex, 1, -tiles, 0, 2 * tiles + 1, 1);
+		maxPass(program, maxSpareTex, maxTex, 1, 0, -tiles, 1, 2 * tiles + 1);
+		glBindTexture(GL_TEXTURE_2D, 0);
+	}
+
+	private static void maxPass(int program, int from, int to, int scale, int offsetX, int offsetY, int countX, int countY)
+	{
+		glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, to, 0);
+		glBindTexture(GL_TEXTURE_2D, from);
+		glUniform1i(glGetUniformLocation(program, "scale"), scale);
+		glUniform2i(glGetUniformLocation(program, "offset"), offsetX, offsetY);
+		glUniform2i(glGetUniformLocation(program, "count"), countX, countY);
+		glDrawArrays(GL_TRIANGLES, 0, 3);
+	}
+
+	/**
+	 * Bind the maxima for shadow_pcss.glsl's shadowMax and return its texels per tile, its shadowMaxTile: 0 with no
+	 * static map, for no bound.
+	 */
+	int bindMax(int unit)
+	{
+		glActiveTexture(GL_TEXTURE0 + unit);
+		glBindTexture(GL_TEXTURE_2D, front >= 0 ? maxTex : 0);
+		glBindSampler(unit, 0);
+		glActiveTexture(GL_TEXTURE0);
+		return front >= 0 ? maxTile : 0;
 	}
 
 	/**

@@ -1,14 +1,14 @@
 #version 330
 
-// Fullscreen triangle from gl_VertexID, no vertex buffer needed. Also works out the sky and light colors at this
-// frame's sun altitude once, for the composite (sky.glsl's SKY_FRAME_CONSTANTS); the other passes drawn with this
-// triangle ignore them.
+// Fullscreen triangle from gl_VertexID, no vertex buffer needed. Also works out the sky, light and cloud light
+// colors at this frame's sun altitude once, for the composite and the fog (sky.glsl's SKY_FRAME_CONSTANTS); the other
+// passes drawn with this triangle ignore them.
 
 uniform float sunAltitude;  // degrees
 
 #include "sky.glsl"
 
-flat out vec3 skyFrame[8];
+flat out vec3 skyFrame[11];
 
 void main() {
   vec2 p = vec2((gl_VertexID << 1) & 2, gl_VertexID & 2);
@@ -21,4 +21,7 @@ void main() {
   skyFrame[5] = skyLightAt(sunAltitude);
   skyFrame[6] = vec3(skyBoostAt(sunAltitude));
   skyFrame[7] = skyLightningAt();
+  skyFrame[8] = cloudLightAt(sunAltitude);
+  skyFrame[9] = srgbToLinear(skyZenithAt(sunAltitude));
+  skyFrame[10] = srgbToLinear(skyHorizonAt(sunAltitude));
 }

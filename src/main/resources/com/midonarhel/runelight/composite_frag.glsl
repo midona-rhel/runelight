@@ -294,10 +294,18 @@ float borrowDepth(ivec2 px) {
   return found ? best : -1.0;
 }
 
-// The half resolution clouds (into cloudHalf)
+// The half resolution clouds (into cloudHalf). The pass is scissored to the rows that can hold cloud
+// (Clouds.skyRows), over a target cleared to clear sky.
 vec4 cloudsHalf() {
   // the ray through the middle of the scene pixels this texel covers
   vec2 c = gl_FragCoord.xy * halfRatio;
+  vec3 dir = normalize(reconstructPosition(c, 1.0));
+  vec3 skyDir = cloudSkyDir(dir);
+  // at and below the clouds' horizon cloudLayer gives clear sky whatever the scene shows: tested first, the texels
+  // under it skip the scene fetches (the rows the scissor keeps for the water, in the pass shared with it)
+  if (-skyDir.y <= CLOUD_HORIZON.x) {
+    return vec4(0.0, 0.0, 0.0, 1.0);
+  }
   // Only where the sky shows: in the scene pixels this texel covers and the ones next to them, which the filtering
   // reaches, or behind geometry's partly covered edges or its fade at the edge of the world. Elsewhere clear sky.
   bool needed = false;
@@ -311,12 +319,11 @@ vec4 cloudsHalf() {
   if (!needed) {
     return vec4(0.0, 0.0, 0.0, 1.0);
   }
-  vec3 dir = normalize(reconstructPosition(c, 1.0));
   float pixelAngle = length(normalize(reconstructPosition(c + vec2(0.0, 1.0), 1.0)) - dir);
   // jittered per cloud texel: the noise is only even at a stride of one texel, at a scene pixel stride of two
   // it ramps across the sky and combs the clouds into bands
-  return cloudLayer(cloudSkyDir(dir), cameraPos, sunDir, moonDir, sunAltitude, pixelAngle,
-    cloudJitter(gl_FragCoord.xy), CLOUD_STEPS);
+  return cloudLayer(skyDir, cameraPos, sunDir, moonDir, sunAltitude, pixelAngle, cloudJitter(gl_FragCoord.xy),
+    CLOUD_STEPS);
 }
 
 void main() {

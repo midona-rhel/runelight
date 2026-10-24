@@ -30,6 +30,19 @@ class VolumetricFog
 	static final float INDOOR_DENSITY = 0.03f;
 	// and in rooms whose roof is hidden, open to the sky: enough for their lamps to glow in it
 	static final float OPEN_INDOOR_DENSITY = 0.25f;
+	// fog_frag.glsl's FOG_TOP, FOG_BELOW, FOG_FIELD_MAX, FOG_POINT_LIGHT_SCALE and FOG_GLOW_CORE
+	private static final float TOP = 5, BELOW = 1, FIELD_MAX = 6, GLOW_SCALE = 0.6f, GLOW_CORE = 0.2f;
+	// The most a point light's glow kernel (fog_frag.glsl pointGlow) integrates to along a ray, per unit of radius:
+	// through its center, over the whole diameter
+	private static final float GLOW_INTEGRAL;
+	static
+	{
+		float c = GLOW_CORE, m = c * c / (c * c + 1);
+		GLOW_INTEGRAL = (float) (2 * c * Math.atan(1 / c) - 2 * m) / (1 - m);
+	}
+	// a light's glow is left out where it can't add half an 8-bit step even over black (linear, through sRGB's slope
+	// of 12.92 there)
+	private static final float GLOW_VISIBLE = 0.5f / 255 / 12.92f;
 
 	// Per-area overrides for an environment system: multipliers on the configured values, and a color tint
 	// on the fog's ambient light. 1 leaves the config as it is.
@@ -308,6 +321,39 @@ class VolumetricFog
 		return fadeEnd;
 	}
 
+	/** World y of the top of the fog's layer (fog_frag.glsl clips the rays to below it); y points down. */
+	float getTop()
+	{
+		return highestY - height * TOP;
+	}
+
+	/**
+	 * The least brightest color channel times radius a point light needs for its glow in the fog to possibly show
+	 * (GLOW_VISIBLE). Its glow is at most its color times GLOW_SCALE * GLOW_INTEGRAL * radius times the march's
+	 * largest scattering per unit length, which is at most the fog's extinction: the density, e^BELOW at most from the
+	 * height, the open rooms' share over the plain rooms', the weather field's most and the noise and banks' peaks.
+	 */
+	float getMinGlow()
+	{
+		float field = 1;
+		WeatherField f = weatherField;
+		if (f != null && f.isEnabled())
+		{
+			// the field's alpha is at most 1, its fog FOG_RANGE (weatherFogFactor)
+			float local = fieldReference();
+			field = Math.min(Math.max((WeatherField.FOG_RANGE + local - f.getFocus(WeatherField.FOG)) / local, 0), FIELD_MAX);
+		}
+		float sigma = density * (float) Math.exp(BELOW) * (1 + OPEN_INDOOR_DENSITY) * field
+			* (1 + noiseAmount) * (1 + bankAmount);
+		return GLOW_VISIBLE / (GLOW_SCALE * GLOW_INTEGRAL * sigma);
+	}
+
+	// the weather's fog at the player, which the field's is taken relative to
+	private float fieldReference()
+	{
+		return Math.max(weatherFog, 0.05f);
+	}
+
 	/**
 	 * Whether {@link #render} with these outdoors and shadows draws the sun shafts (fog_frag.glsl's shafts), the only
 	 * part of the fog with grain: the shadow map is sampled at jittered points along each ray. The shader also leaves
@@ -388,7 +434,7 @@ class VolumetricFog
 		if (field != null && field.isEnabled())
 		{
 			// density times (fog here) / (fog at the player), with the player's own multiplier as the reference
-			float local = Math.max(weatherFog, 0.05f);
+			float local = fieldReference();
 			field.setRect(u.uniFieldRect);
 			glUniform3f(u.uniFieldFog, local - field.getFocus(WeatherField.FOG), 1 / local, 1);
 		}

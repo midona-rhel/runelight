@@ -19,7 +19,8 @@
 #define WATER_SLOTS 32
 
 uniform int waterEnabled;
-uniform usampler2D waterSurface;  // RGBA16UI, 64 bits packed by water_frag.glsl (waterUnpack); 0 no water
+uniform usampler2D waterSurface;  // RGBA16UI, 64 bits packed by water_frag.glsl (waterUnpack), of the rect's pixels
+                                  // (waterSurfaceAt); 0 no water
 uniform usampler2D waterShaded;   // RGBA32UI, half resolution: the shaded surface (waterShadeHalf)
 uniform int waterReflections;     // a few screen-space taps for the world in the reflection
 uniform float waterClarity;       // multiplier on how deep the bed stays visible
@@ -216,7 +217,7 @@ vec4 waterTraceReflection(vec3 s, vec3 r, vec3 light, vec2 px) {
       }
       // water reflecting water, and the sky, show the sky
       bool isWorld = !isSky(texelFetch(sceneDepth, ip, 0).r) && texelFetch(sceneMaterial, ip, 0).b <= 0.75
-        && texelFetch(waterSurface, ip, 0).b == 0u;
+        && waterSurfaceAt(waterSurface, waterRect, ip).b == 0u;
       if (!isWorld)
         return vec4(0.0);
       vec2 edge = smoothstep(vec2(1.0), vec2(0.75), abs(ndc));
@@ -245,14 +246,13 @@ void waterShadeHalf(ivec2 hpx) {
   // is scissored to them as well, the one with the clouds covers every texel
   if (waterEnabled == 0 || any(lessThan(hpx, waterRect.xy >> 1)) || any(greaterThanEqual(hpx, (waterRect.zw + 1) >> 1)))
     return;
-  ivec2 last = textureSize(waterSurface, 0) - 1;
   uvec4 ws = uvec4(0u);
   ivec2 px = ivec2(0);
   float t = 1e9;
   ivec2 first = halfToFull(hpx);
   for (int i = 0; i < 4; ++i) {
-    ivec2 q = min(first + ivec2(i & 1, i >> 1), last);
-    uvec4 w = texelFetch(waterSurface, q, 0);
+    ivec2 q = first + ivec2(i & 1, i >> 1);
+    uvec4 w = waterSurfaceAt(waterSurface, waterRect, q);
     if (w.b == 0u)
       continue;
     float tq = float(w.b) / 65535.0 * WATER_REACH;
@@ -402,10 +402,10 @@ vec3 waterGlitter(ivec2 px, vec3 nrm, vec3 v, float shine, float foam, float sha
   vec3 tAlong = vec3(fwd.x, 0.0, fwd.y), tAcross = vec3(-fwd.y, 0.0, fwd.x);
   float glitter = 0.5 * waterGlitterAt(nrm, v, tAlong, tAcross);
   float w = 0.5;
-  ivec2 last = textureSize(waterSurface, 0) - 1;
+  ivec2 last = textureSize(sceneDepth, 0) - 1;
   for (int i = 0; i < 4; ++i) {
     ivec2 q = clamp(px + ivec2(i == 0 ? 1 : i == 1 ? -1 : 0, i == 2 ? 1 : i == 3 ? -1 : 0), ivec2(0), last);
-    uvec4 ws = texelFetch(waterSurface, q, 0);
+    uvec4 ws = waterSurfaceAt(waterSurface, waterRect, q);
     if (ws.b == 0u)
       continue;
     uint a = ws.r | ws.g << 16;
@@ -436,7 +436,7 @@ bool waterUnder(ivec2 px, float mask) {
 vec3 waterOver(ivec2 px, inout vec3 p, vec3 albedo, float shadow, vec3 lit, float mask) {
   if (!waterUnder(px, mask))
     return lit;
-  uvec4 ws = texelFetch(waterSurface, px, 0);
+  uvec4 ws = texelFetch(waterSurface, px - waterRect.xy, 0);
   if (ws.b == 0u)
     return lit;
   float t, foam, shoreDepth, caustic;

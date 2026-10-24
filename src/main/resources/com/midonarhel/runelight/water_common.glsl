@@ -110,10 +110,17 @@ void waterFlowPhases(vec2 xz, vec2 flow, vec2 base, out vec2 m0, out vec2 m1, ou
   m1 = base + drag * (ph1 * FLOW_CYCLE);
 }
 
+// The surface pass's target at pixel px (water_frag.glsl): it holds only the pixels of rect (x0, y0 to x1, y1
+// exclusive, WaterSurface.anyVisible), from its corner; none outside it
+uvec4 waterSurfaceAt(usampler2D surface, ivec4 rect, ivec2 px) {
+  return all(greaterThanEqual(px, rect.xy)) && all(lessThan(px, rect.zw)) ? texelFetch(surface, px - rect.xy, 0)
+    : uvec4(0u);
+}
+
 // How far under the water surface the scene at px lies (p: camera-relative), from the surface pass's target
-// (water_frag.glsl); 0 above it or with no water there
-float waterDepthUnder(usampler2D surface, ivec2 px, vec3 p) {
-  uint b = texelFetch(surface, px, 0).b;
+// (waterSurfaceAt); 0 above it or with no water there
+float waterDepthUnder(usampler2D surface, ivec4 rect, ivec2 px, vec3 p) {
+  uint b = waterSurfaceAt(surface, rect, px).b;
   if (b == 0u) {
     return 0.0;
   }

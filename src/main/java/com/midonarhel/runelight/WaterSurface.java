@@ -43,6 +43,9 @@ class WaterSurface
 		// highest height (y, down) its surface can be at
 		int[] chunkStart, chunkCount, chunkX, chunkY, chunkMinY, chunkMaxY;
 		int chunks;
+		// the chunk with tiles at each place on the grid of chunks (side a side), by row, or -1
+		int[] chunkAt;
+		int side;
 		// the looks (Water.slotKey) the tiles use, by slot; more than Water.SLOTS share the last
 		final int[] slotKeys = new int[Water.SLOTS];
 		int slots;
@@ -76,7 +79,7 @@ class WaterSurface
 	private int program;
 	private int uniViewProj, uniCamera, uniFocus, uniGrid, uniTime, uniWind, uniDrift, uniWaves, uniSpeed,
 		uniRain, uniOutdoors, uniDebug, uniSkyDepth, uniCausticsOn, uniCasterDir, uniInvViewProj, uniViewport,
-		uniZeroToOne, uniBake, uniWaveBlend;
+		uniZeroToOne, uniBake, uniWaveBlend, uniOrigin;
 
 	// The wave maps: the waves and foam worked out at STEPS_PER_SECOND into world-space maps of WAVE_MAP_TILES
 	// tiles a side (wrapping, WAVE_MAP_TEXELS texels a tile), each over two frames, half the chunks each; the surface
@@ -91,10 +94,26 @@ class WaterSurface
 	private long builtStep = Long.MIN_VALUE, shownStep;
 	private int halvesDone;
 	private float lastTime = Float.NaN;
+	// Only the chunks in view or near it are worked out into the maps, with a chunk around them (the maps' filtering
+	// reaches into their neighbors): a step's chunks as it is due, and any that came into view since into the shown
+	// two before they are drawn. Near the view: within it widened WAVE_VIEW_SLACK times, so that turning the camera
+	// rarely finds a chunk missing. Per map the chunks worked out in it, and the motion they were worked out with
+	// (wind x, z, strength, drift x, z, waves, speed), so a chunk added later matches the rest.
+	private static final float WAVE_VIEW_SLACK = 2f;
+	private final boolean[][] waveBaked = new boolean[3][];
+	private final float[][] waveMotion = new float[3][7];
+	private final float[] motion = new float[7];
+	// per chunk this frame: drawn (within reach), in view, near it, its map region needed now, wanted soon, picked
+	private static final byte DRAWN = 1, IN_VIEW = 2, NEAR_VIEW = 4, NEEDED = 8, WANTED = 16, PICKED = 32;
+	private byte[] chunkFlags;
 
 	private int waveUnitA, waveUnitB;
 	private int vao, vboTiles, ebo;
 	private Mesh mesh;
+	// The target holds only the pixels of the rect (anyVisible), from its corner: a clear of all of it is cheap on a
+	// tiled GPU, but it is still written out whole. Sized in steps of TARGET_STEP pixels, and kept while the rect fits
+	// and needs at most a step less (no new one each frame while the rect's edge hovers about a step).
+	private static final int TARGET_STEP = 256;
 	private int fbo, texSurface, rboDepth, width, height;
 
 	private static final int[] CLEAR = {0, 0, 0, 0};
@@ -140,6 +159,9 @@ class WaterSurface
 		m.chunkY = new int[m.chunkStart.length];
 		m.chunkMinY = new int[m.chunkStart.length];
 		m.chunkMaxY = new int[m.chunkStart.length];
+		m.side = chunksPerSide;
+		m.chunkAt = new int[m.chunkStart.length];
+		java.util.Arrays.fill(m.chunkAt, -1);
 		for (int cy = 0; cy < chunksPerSide; ++cy)
 		{
 			for (int cx = 0; cx < chunksPerSide; ++cx)
@@ -171,6 +193,7 @@ class WaterSurface
 						Math.min(size, cy * CHUNK + CHUNK));
 					m.chunkMinY[m.chunks] = range[0] - WAVE_MARGIN;
 					m.chunkMaxY[m.chunks] = range[1] + WAVE_MARGIN;
+					m.chunkAt[cy * chunksPerSide + cx] = m.chunks;
 					++m.chunks;
 				}
 			}
@@ -199,7 +222,8 @@ class WaterSurface
 	 * Whether any chunk drawn this frame (within reach of the focal point) is in the view: without one the water's
 	 * passes have nothing to draw. viewProj is camera-relative. With one, rect is set to the targets' pixels the chunks
 	 * in view can cover (x0, y0, x1, y1, the ends exclusive): their boxes' projected corners' bounds a pixel wider,
-	 * within the viewport, or all of it when one reaches behind the camera.
+	 * within the viewport, or all of it when one reaches behind the camera. Marks the chunks drawn and in view or
+	 * near it for the draw.
 	 */
 	boolean anyVisible(float[] m, int[] viewport, float camX, float camY, float camZ, float focusX, float focusZ,
 		float reach, int[] rect)
@@ -209,19 +233,23 @@ class WaterSurface
 		{
 			return false;
 		}
-		boolean any = false;
+		boolean any = false, whole = false;
 		float minX = 1, minY = 1, maxX = -1, maxY = -1;
 		for (int c = 0; c < mesh.chunks; ++c)
 		{
+			chunkFlags[c] = 0;
 			if (chunkDistance(focusX, focusZ, mesh.chunkX[c], mesh.chunkY[c]) > reach)
 			{
 				continue;
 			}
+			chunkFlags[c] = DRAWN;
 			float x0 = (mesh.chunkX[c] - RuneLightPlugin.SCENE_OFFSET) * 128f - camX;
 			float z0 = (mesh.chunkY[c] - RuneLightPlugin.SCENE_OFFSET) * 128f - camZ;
 			float y0 = mesh.chunkMinY[c] - camY, y1 = mesh.chunkMaxY[c] - camY;
-			// outside when all eight corners are beyond the same side of the view, or behind the camera
+			// outside when all eight corners are beyond the same side of the view (or of the view widened), or behind
+			// the camera
 			int left = 0, right = 0, below = 0, above = 0, behind = 0;
+			int wideLeft = 0, wideRight = 0, wideBelow = 0, wideAbove = 0;
 			float cMinX = Float.MAX_VALUE, cMinY = Float.MAX_VALUE, cMaxX = -Float.MAX_VALUE, cMaxY = -Float.MAX_VALUE;
 			for (int k = 0; k < 8; ++k)
 			{
@@ -235,6 +263,11 @@ class WaterSurface
 				below += cy < -w ? 1 : 0;
 				above += cy > w ? 1 : 0;
 				behind += w <= 0 ? 1 : 0;
+				float ww = w * WAVE_VIEW_SLACK;
+				wideLeft += cx < -ww ? 1 : 0;
+				wideRight += cx > ww ? 1 : 0;
+				wideBelow += cy < -ww ? 1 : 0;
+				wideAbove += cy > ww ? 1 : 0;
 				if (w > 0)
 				{
 					cMinX = Math.min(cMinX, cx / w);
@@ -243,22 +276,26 @@ class WaterSurface
 					cMaxY = Math.max(cMaxY, cy / w);
 				}
 			}
+			if (wideLeft < 8 && wideRight < 8 && wideBelow < 8 && wideAbove < 8 && behind < 8)
+			{
+				chunkFlags[c] |= NEAR_VIEW;
+			}
 			if (left < 8 && right < 8 && below < 8 && above < 8 && behind < 8)
 			{
 				any = true;
-				if (behind > 0)
-				{
-					// its projection is unbounded
-					minX = minY = -1;
-					maxX = maxY = 1;
-					break;
-				}
-				// all in front: the box's projection lies within its corners'
+				chunkFlags[c] |= IN_VIEW;
+				// its projection is unbounded when it reaches behind the camera, else within its corners'
+				whole |= behind > 0;
 				minX = Math.min(minX, cMinX);
 				maxX = Math.max(maxX, cMaxX);
 				minY = Math.min(minY, cMinY);
 				maxY = Math.max(maxY, cMaxY);
 			}
+		}
+		if (whole)
+		{
+			minX = minY = -1;
+			maxX = maxY = 1;
 		}
 		if (any)
 		{
@@ -317,6 +354,7 @@ class WaterSurface
 		uniZeroToOne = glGetUniformLocation(program, "waterZeroToOne");
 		uniBake = glGetUniformLocation(program, "waterBake");
 		uniWaveBlend = glGetUniformLocation(program, "waterWaveBlend");
+		uniOrigin = glGetUniformLocation(program, "waterOrigin");
 		glUseProgram(program);
 		glUniform1i(glGetUniformLocation(program, "sceneDepth"), depthUnit);
 		glUniform1i(glGetUniformLocation(program, "waterData"), dataUnit);
@@ -346,6 +384,11 @@ class WaterSurface
 		if (m == null)
 		{
 			return;
+		}
+		chunkFlags = new byte[m.chunks];
+		for (int i = 0; i < 3; ++i)
+		{
+			waveBaked[i] = new boolean[m.chunks];
 		}
 		if (vao == 0)
 		{
@@ -384,12 +427,17 @@ class WaterSurface
 		return mesh;
 	}
 
-	private void ensureTarget(int w, int h)
+	/**
+	 * The target for a rect of w x h pixels, within targets of maxW x maxH.
+	 */
+	private void ensureTarget(int w, int h, int maxW, int maxH)
 	{
-		if (fbo != 0 && w == width && h == height)
+		if (fbo != 0 && fits(w, width, maxW) && fits(h, height, maxH))
 		{
 			return;
 		}
+		w = steps(w, maxW);
+		h = steps(h, maxH);
 		freeTarget();
 		width = w;
 		height = h;
@@ -417,20 +465,30 @@ class WaterSurface
 		}
 	}
 
+	private static int steps(int size, int max)
+	{
+		return Math.min(max, Math.max(1, (size + TARGET_STEP - 1) / TARGET_STEP) * TARGET_STEP);
+	}
+
+	private static boolean fits(int size, int current, int max)
+	{
+		return size <= current && current <= steps(size, max) + TARGET_STEP;
+	}
+
 	/**
-	 * Draw the surface into the target (width x height, the scene targets' size) within the scene's viewport. The
+	 * Draw the surface into the target (the rect's pixels of targets of w x h) within the scene's viewport. The
 	 * scene's resolved depth must be bound on the program's depth unit, the water data and noise on theirs. Leaves
 	 * the framebuffer and VAO bindings changed and depth testing off.
 	 *
 	 * @param focusX the focal point, around which the surface moves and is drawn fine
-	 * @param reach  radius of the drawn world around the focal point, world units
 	 * @param params this frame's motion and settings
-	 * @param rect   the pixels the chunks in view can cover (anyVisible)
+	 * @param rect   the pixels the chunks in view can cover, and the chunks drawn (anyVisible, just before)
 	 */
 	void draw(int w, int h, int[] viewport, float[] viewProj, float camX, float camY, float camZ, float focusX,
-		float focusZ, float reach, Water.Frame params, int[] rect)
+		float focusZ, Water.Frame params, int[] rect)
 	{
-		ensureTarget(w, h);
+		int rw = rect[2] - rect[0], rh = rect[3] - rect[1];
+		ensureTarget(rw, rh, w, h);
 		if (!hasMesh())
 		{
 			glBindFramebuffer(GL_FRAMEBUFFER, fbo);
@@ -446,11 +504,6 @@ class WaterSurface
 		glUniform3f(uniCamera, camX, camY, camZ);
 		glUniform2f(uniFocus, focusX, focusZ);
 		glUniform2f(uniGrid, RuneLightPlugin.SCENE_OFFSET, WaterMap.CORNERS);
-		glUniform1f(uniTime, params.time);
-		glUniform3f(uniWind, params.windX, params.windZ, params.strength);
-		glUniform4f(uniDrift, params.driftX, params.driftZ, 0, 0);
-		glUniform1f(uniWaves, params.waves);
-		glUniform1f(uniSpeed, params.speed);
 		glUniform1f(uniRain, params.rain);
 		glUniform1i(uniOutdoors, params.outdoors ? 1 : 0);
 		glUniform1i(uniDebug, params.debug);
@@ -463,9 +516,17 @@ class WaterSurface
 		glBindVertexArray(vao);
 		glBindBuffer(GL_ARRAY_BUFFER, vboTiles);
 
+		motion[0] = params.windX;
+		motion[1] = params.windZ;
+		motion[2] = params.strength;
+		motion[3] = params.driftX;
+		motion[4] = params.driftZ;
+		motion[5] = params.waves;
+		motion[6] = params.speed;
 		float blend = bakeWaves(params, focusX, focusZ);
 		glUniform1i(uniBake, 0);
 		glUniform1f(uniTime, params.time);
+		setMotion(motion);
 		glUniform1f(uniWaveBlend, blend);
 		glActiveTexture(GL_TEXTURE0 + waveUnitA);
 		glBindTexture(GL_TEXTURE_2D, waveTex[(int) Math.floorMod(shownStep, 3L)]);
@@ -478,13 +539,15 @@ class WaterSurface
 		glDepthMask(true);
 		glClearBufferuiv(GL_COLOR, 0, CLEAR);
 		glClearBufferfv(GL_DEPTH, 0, FAR_DEPTH);
-		glViewport(viewport[0], viewport[1], viewport[2], viewport[3]);
+		// the rect's corner at the target's
+		glUniform2i(uniOrigin, rect[0], rect[1]);
+		glViewport(viewport[0] - rect[0], viewport[1] - rect[1], viewport[2], viewport[3]);
 		// the clears stay whole: on a tiled GPU a scissored one loads the targets first
 		glEnable(GL_SCISSOR_TEST);
-		glScissor(rect[0], rect[1], rect[2] - rect[0], rect[3] - rect[1]);
+		glScissor(0, 0, rw, rh);
 		glEnable(GL_DEPTH_TEST);
 		glDepthFunc(GL_GREATER);
-		drawChunks(focusX, focusZ, reach, -1);
+		drawChunks(DRAWN);
 		glDisable(GL_SCISSOR_TEST);
 		glBindBuffer(GL_ARRAY_BUFFER, 0);
 		glBindVertexArray(0);
@@ -501,9 +564,10 @@ class WaterSurface
 	}
 
 	/**
-	 * Work on the wave maps for this frame (with the program in use, its uniforms set, the VAO and tile buffer bound):
-	 * half of the next step's chunks, or all that is left when it is due. Returns how far now is from the shown step's
-	 * map toward the next's. Leaves the framebuffer and viewport changed.
+	 * Work on the wave maps for this frame (with the program in use, the VAO and tile buffer bound): half of the next
+	 * step's chunks, or all that is left when it is due, and what the shown two lack of the chunks in view. Returns how
+	 * far now is from the shown step's map toward the next's. Leaves the framebuffer, viewport, time and motion
+	 * changed.
 	 */
 	private float bakeWaves(Water.Frame params, float focusX, float focusZ)
 	{
@@ -517,51 +581,168 @@ class WaterSurface
 		lastTime = t;
 		long now = (long) Math.floor(t * STEPS_PER_SECOND);
 		shownStep = now;
+		markWaveChunks(focusX, focusZ);
 		// shown: the maps of steps now and now + 1; the one after is worked out a half at a time while there is time
 		if (builtStep == Long.MIN_VALUE || builtStep < now)
 		{
 			// nothing yet, or far behind: both, whole
-			halvesDone = 0;
-			bakeStep(now, 2, params, focusX, focusZ);
-			halvesDone = 0;
-			bakeStep(now + 1, 2, params, focusX, focusZ);
+			startStep(now);
+			bakeStep(now, 2);
+			startStep(now + 1);
+			bakeStep(now + 1, 2);
 			builtStep = now + 1;
 			halvesDone = 0;
 		}
 		else if (builtStep <= now + 1)
 		{
 			// now + 1 is due: whatever is left of it at once
-			bakeStep(builtStep + 1, builtStep == now ? 2 : 1, params, focusX, focusZ);
+			if (halvesDone == 0)
+			{
+				startStep(builtStep + 1);
+			}
+			bakeStep(builtStep + 1, builtStep == now ? 2 : 1);
 			if (halvesDone == 2)
 			{
 				++builtStep;
 				halvesDone = 0;
 			}
 		}
+		// the chunks that came into view since
+		catchUp(now);
+		catchUp(now + 1);
 		return t * STEPS_PER_SECOND - now;
 	}
 
 	/**
-	 * Work out up to `halves` more halves (by chunk parity) of the map for step into its texture; once whole, its
+	 * Mark the chunks whose map regions are needed this frame (in view) and wanted (near it), with their neighbors,
+	 * within the maps' reach.
+	 */
+	private void markWaveChunks(float focusX, float focusZ)
+	{
+		Mesh m = mesh;
+		for (int c = 0; c < m.chunks; ++c)
+		{
+			chunkFlags[c] &= DRAWN | IN_VIEW | NEAR_VIEW;
+		}
+		for (int c = 0; c < m.chunks; ++c)
+		{
+			int view = chunkFlags[c] & (IN_VIEW | NEAR_VIEW);
+			if (view == 0)
+			{
+				continue;
+			}
+			int cx = m.chunkX[c] / CHUNK, cy = m.chunkY[c] / CHUNK;
+			for (int y = Math.max(0, cy - 1); y <= Math.min(m.side - 1, cy + 1); ++y)
+			{
+				for (int x = Math.max(0, cx - 1); x <= Math.min(m.side - 1, cx + 1); ++x)
+				{
+					int n = m.chunkAt[y * m.side + x];
+					if (n >= 0 && chunkDistance(focusX, focusZ, m.chunkX[n], m.chunkY[n]) <= WAVE_MAP_REACH * 128f)
+					{
+						chunkFlags[n] |= (view & IN_VIEW) != 0 ? NEEDED | WANTED : WANTED;
+					}
+				}
+			}
+		}
+	}
+
+	/**
+	 * Begin the map for step: none of its chunks yet, worked out with this frame's motion.
+	 */
+	private void startStep(long step)
+	{
+		int i = (int) Math.floorMod(step, 3L);
+		java.util.Arrays.fill(waveBaked[i], false);
+		System.arraycopy(motion, 0, waveMotion[i], 0, motion.length);
+		halvesDone = 0;
+	}
+
+	/**
+	 * Work out up to `halves` more halves (by chunk parity) of the wanted chunks of the map for step; once whole, its
 	 * mipmaps.
 	 */
-	private void bakeStep(long step, int halves, Water.Frame params, float focusX, float focusZ)
+	private void bakeStep(long step, int halves)
+	{
+		int i = bindMap(step);
+		Mesh m = mesh;
+		for (int h = 0; h < halves && halvesDone < 2; ++h, ++halvesDone)
+		{
+			for (int c = 0; c < m.chunks; ++c)
+			{
+				pick(c, (chunkFlags[c] & WANTED) != 0 && (m.chunkX[c] / CHUNK + m.chunkY[c] / CHUNK & 1) == halvesDone
+					&& !waveBaked[i][c]);
+			}
+			bakePicked(i);
+		}
+		if (halvesDone == 2)
+		{
+			mipmap(i);
+		}
+	}
+
+	/**
+	 * Add the needed chunks the finished map for step lacks, and redo its mipmaps.
+	 */
+	private void catchUp(long step)
+	{
+		int i = (int) Math.floorMod(step, 3L);
+		boolean any = false;
+		for (int c = 0; c < mesh.chunks; ++c)
+		{
+			boolean missing = (chunkFlags[c] & NEEDED) != 0 && !waveBaked[i][c];
+			pick(c, missing);
+			any |= missing;
+		}
+		if (any)
+		{
+			bindMap(step);
+			bakePicked(i);
+			mipmap(i);
+		}
+	}
+
+	private void pick(int c, boolean picked)
+	{
+		chunkFlags[c] = (byte) (picked ? chunkFlags[c] | PICKED : chunkFlags[c] & ~PICKED);
+	}
+
+	/**
+	 * Draw into the map for step, with its time and motion; returns its index.
+	 */
+	private int bindMap(long step)
 	{
 		int i = (int) Math.floorMod(step, 3L);
 		glBindFramebuffer(GL_FRAMEBUFFER, waveFbo[i]);
 		glViewport(0, 0, WAVE_MAP_TILES * WAVE_MAP_TEXELS, WAVE_MAP_TILES * WAVE_MAP_TEXELS);
 		glUniform1i(uniBake, 1);
 		glUniform1f(uniTime, (float) (step / STEPS_PER_SECOND));
-		for (int h = 0; h < halves && halvesDone < 2; ++h)
+		setMotion(waveMotion[i]);
+		return i;
+	}
+
+	private void bakePicked(int i)
+	{
+		drawChunks(PICKED);
+		for (int c = 0; c < mesh.chunks; ++c)
 		{
-			drawChunks(focusX, focusZ, WAVE_MAP_REACH * 128f, halvesDone++);
+			waveBaked[i][c] |= (chunkFlags[c] & PICKED) != 0;
 		}
-		if (halvesDone == 2)
-		{
-			glBindTexture(GL_TEXTURE_2D, waveTex[i]);
-			glGenerateMipmap(GL_TEXTURE_2D);
-			glBindTexture(GL_TEXTURE_2D, 0);
-		}
+	}
+
+	private void mipmap(int i)
+	{
+		glBindTexture(GL_TEXTURE_2D, waveTex[i]);
+		glGenerateMipmap(GL_TEXTURE_2D);
+		glBindTexture(GL_TEXTURE_2D, 0);
+	}
+
+	// wind x, z, strength, drift x, z, waves, speed
+	private void setMotion(float[] p)
+	{
+		glUniform3f(uniWind, p[0], p[1], p[2]);
+		glUniform4f(uniDrift, p[3], p[4], 0, 0);
+		glUniform1f(uniWaves, p[5]);
+		glUniform1f(uniSpeed, p[6]);
 	}
 
 	private void ensureWaveMaps()
@@ -603,17 +784,16 @@ class WaterSurface
 	}
 
 	/**
-	 * Draw the chunks within reach of the focus, all of them (half -1) or those of one parity (0 or 1).
+	 * Draw the chunks with the flag.
 	 */
-	private void drawChunks(float focusX, float focusZ, float reach, int half)
+	private void drawChunks(int flag)
 	{
 		Mesh m = mesh;
-		// consecutive chunks in reach go in one draw: their instances are contiguous
+		// consecutive chunks drawn go in one draw: their instances are contiguous
 		int runStart = -1, runEnd = 0;
 		for (int c = 0; c <= m.chunks; ++c)
 		{
-			boolean drawn = c < m.chunks && chunkDistance(focusX, focusZ, m.chunkX[c], m.chunkY[c]) <= reach
-				&& (half < 0 || (m.chunkX[c] / CHUNK + m.chunkY[c] / CHUNK & 1) == half);
+			boolean drawn = c < m.chunks && (chunkFlags[c] & flag) != 0;
 			if (runStart >= 0 && (!drawn || c == m.chunks))
 			{
 				glVertexAttribIPointer(0, 4, GL_UNSIGNED_BYTE, 4, runStart * 4L);

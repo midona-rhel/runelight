@@ -38,8 +38,9 @@ class LightClusters
 	private static final int CLUSTER_COUNT = CLUSTERS_X * CLUSTERS_Y * CLUSTERS_Z;
 	// Fog columns, stored after the clusters: per screen tile, the lights that glow in the fog anywhere along its
 	// rays (fog_frag.glsl integrates each once per pixel instead of looking up clusters at every step). Indoor
-	// lights are left out unless their room has no roof right now (OpenRooms), and lights outside the fog. When a column is full, the brightest lights win, in the same
-	// order for every column, so neighbouring columns keep the same lights instead of showing the tile grid.
+	// lights are left out unless their room has no roof right now (OpenRooms), and lights whose sphere misses the fog
+	// (its cylinder or layer) or whose glow in it can't show (setFog). When a column is full, the brightest lights win,
+	// in the same order for every column, so neighbouring columns keep the same lights instead of showing the tile grid.
 	private static final int COLUMN_COUNT = CLUSTERS_X * CLUSTERS_Y;
 	// entries of the light masks: the clusters, a column's depth slices next to each other as the culling walks them,
 	// then the fog columns
@@ -89,7 +90,7 @@ class LightClusters
 	private boolean fogColumns;
 	// rooms whose roof is hidden: their lights glow in the fog (null: none)
 	private OpenRooms openRooms;
-	private float fogX, fogZ, fogRadius;
+	private float fogX, fogZ, fogRadius, fogTop, fogMinGlow;
 	// candidates for the fog columns this frame, packed for sorting by brightness, and their lights
 	private long[] fogOrder = new long[64];
 	private int fogCandidates;
@@ -188,14 +189,24 @@ class LightClusters
 	}
 
 	/**
-	 * Whether to fill the fog columns, and the fog's extent: camera-relative center (xz) and radius, world units.
+	 * Whether to fill the fog columns, and the fog's extent: camera-relative center (xz) and radius and the top of its
+	 * layer (y, pointing down), world units; and the least brightest color channel times radius a light needs for its
+	 * glow to show (VolumetricFog.getMinGlow).
 	 */
-	void setFog(boolean enabled, float centerX, float centerZ, float radius)
+	void setFog(boolean enabled, float centerX, float centerZ, float radius, float top, float minGlow)
 	{
 		fogColumns = enabled;
 		fogX = centerX;
 		fogZ = centerZ;
 		fogRadius = radius;
+		fogTop = top;
+		fogMinGlow = minGlow;
+	}
+
+	/** Whether any light can glow in the fog this frame, as of {@link #cull}. */
+	boolean hasFogLights()
+	{
+		return fogCandidates > 0;
 	}
 
 	/**
@@ -301,8 +312,10 @@ class LightClusters
 
 			if (fogColumns && (!indoor || openRooms != null && openRooms.isOpen(RoomMap.roomOf(code))))
 			{
+				// the fog's rays are clipped to its cylinder and layer: a sphere outside either has no glow in them
 				float fx = x - fogX, fz = z - fogZ, reach = fogRadius + l.radius;
-				if (fx * fx + fz * fz < reach * reach)
+				if (fx * fx + fz * fz < reach * reach && y + l.radius > fogTop
+					&& Math.max(l.r, Math.max(l.g, l.b)) * l.intensity * l.radius >= fogMinGlow)
 				{
 					addFogCandidate(index, (l.r + l.g + l.b) * l.intensity * l.radius);
 				}

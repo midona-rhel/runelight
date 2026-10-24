@@ -32,6 +32,7 @@ uniform sampler2D waterWavesA;  // the wave maps either side of now: slope xy, f
 uniform sampler2D waterWavesB;
 uniform float waterWaveBlend;   // how far now is from A toward B
 uniform vec2 waterFocus;        // where the camera looks, world (the wave maps reach WAVE_MAP_REACH tiles from it)
+uniform ivec2 waterOrigin;      // the targets' pixel at the surface target's corner (WaterSurface.draw)
 
 in vec3 vRel;
 in vec2 vXZ;
@@ -360,7 +361,7 @@ void main() {
   }
   // behind the opaque scene: not seen (reverse-z, larger is nearer); in front of the sky past the drawn scene: the
   // composite only shades water over what is under it
-  ivec2 px = ivec2(gl_FragCoord.xy);
+  ivec2 px = ivec2(gl_FragCoord.xy) + waterOrigin;
   float sceneZ = texelFetch(sceneDepth, px, 0).r;
   if (gl_FragCoord.z < sceneZ || sceneZ <= waterSkyDepth)
     discard;

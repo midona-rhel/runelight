@@ -10,6 +10,10 @@ uniform float shadowRadius;      // half extent of the shadow map, world units
 uniform float shadowDepthRange;
 uniform float shadowMapSize;
 uniform int sunIsCaster;
+// The static map's greatest depth within the filter's reach of each tile of shadowMaxTile texels (ShadowMap.buildMax);
+// 0 tiles: none
+uniform sampler2D shadowMax;
+uniform int shadowMaxTile;
 
 const vec2 POISSON[16] = vec2[](
   vec2(-0.94201624, -0.39906216), vec2(0.94558609, -0.76890725),
@@ -26,6 +30,7 @@ const vec2 POISSON[16] = vec2[](
 #define SUN_SOFTNESS 0.08
 #define MOON_SOFTNESS 0.14
 #define BLOCKER_SEARCH_WORLD 160.0
+// with the POISSON points, the filter's reach ShadowMap.FILTER_REACH_WORLD bounds the shadow under
 #define MAX_PENUMBRA_WORLD 112.0
 #define SHADOW_SEARCH_TAPS 12
 #define SHADOW_FILTER_TAPS 16
@@ -41,11 +46,21 @@ float shadowFactor(vec3 p, vec3 n, float rotation) {
     return 1.0;
   }
   float edgeFade = smoothstep(0.0, 0.08, min(min(uv.x, uv.y), min(1.0 - uv.x, 1.0 - uv.y)));
+  float bias = 2.0 * texelWorld / (2.0 * shadowDepthRange);
+
+  // In the middle of a shadow: all the filter can reach is nearer the light than this texel, so every compare fails
+  // whatever the penumbra (and the search's nearest taps, well within that, find blockers): the same as the full
+  // filter at a fraction of its taps. The moving models only bring the depth nearer than the static map's.
+  if (shadowMaxTile > 0) {
+    ivec2 tile = min(ivec2(uv * shadowMapSize) / shadowMaxTile, textureSize(shadowMax, 0) - 1);
+    if (texelFetch(shadowMax, tile, 0).r < z - bias) {
+      return 1.0 - edgeFade;
+    }
+  }
 
   float a = rotation * SHADOW_TAU;
   mat2 rot = mat2(cos(a), sin(a), -sin(a), cos(a));
   float worldToUv = 1.0 / (2.0 * shadowRadius);
-  float bias = 2.0 * texelWorld / (2.0 * shadowDepthRange);
 
   float blockerSum = 0.0;
   float blockers = 0.0;

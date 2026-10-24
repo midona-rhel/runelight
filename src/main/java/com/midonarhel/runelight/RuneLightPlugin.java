@@ -270,7 +270,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 	private int uniAoRadius;
 	private int uniAoSamples;
 	private int uniAoShadowsEnabled, uniAoLightProjRel, uniAoShadowRadius, uniAoShadowDepthRange, uniAoShadowMapSize,
-		uniAoCasterDir, uniAoSunIsCaster;
+		uniAoShadowMaxTile, uniAoCasterDir, uniAoSunIsCaster;
 	// the half resolution shadows the AO pass draws, for the composite
 	private static final int SCENE_SHADOW_UNIT = RuneLightPlugin.COMPOSITE_TEXTURE_UNIT + 18;
 	// Static scenery is drawn into a cached shadow map, redrawn only as the light turns or the player walks
@@ -283,6 +283,8 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 	private static final int AO_TEXTURE_UNIT = RuneLightPlugin.COMPOSITE_TEXTURE_UNIT + 3;
 	private static final int SHADOW_RAW_UNIT = RuneLightPlugin.COMPOSITE_TEXTURE_UNIT + 4;
 	private static final int SHADOW_COMPARE_UNIT = RuneLightPlugin.COMPOSITE_TEXTURE_UNIT + 5;
+	// the static shadow map's maxima, for the AO pass (ShadowMap.bindMax)
+	private static final int SHADOW_MAX_UNIT = RuneLightPlugin.COMPOSITE_TEXTURE_UNIT + 22;
 	private static final int LIGHT_DATA_UNIT = RuneLightPlugin.COMPOSITE_TEXTURE_UNIT + 6;
 	private static final int CLUSTER_DATA_UNIT = RuneLightPlugin.COMPOSITE_TEXTURE_UNIT + 7;
 	// the static lights' occlusion grids (LightOcclusion), filtered by the hardware
@@ -321,6 +323,8 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 
 	private final VolumetricFog volumetricFog = new VolumetricFog();
 	private final Clouds clouds = new Clouds();
+	// the half resolution pass's scissor, x0, y0 to x1, y1 exclusive: the water's rect, the clouds' rows (skyRows)
+	private final int[] halfScissor = new int[4], cloudRows = new int[2];
 	// the composite has no 3D sampler, so the clouds' 2D noise shares the fog noise's unit on the 2D target
 	private static final int CLOUD_NOISE_UNIT = FOG_NOISE_UNIT;
 	private final SkyCache skyCache = new SkyCache();
@@ -342,8 +346,13 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		.add(GL_VERTEX_SHADER, "composite_vert.glsl")
 		.add(GL_FRAGMENT_SHADER, "shadow_copy_frag.glsl");
 
+	static final Shader SHADOW_MAX_PROGRAM = new Shader()
+		.add(GL_VERTEX_SHADER, "composite_vert.glsl")
+		.add(GL_FRAGMENT_SHADER, "shadow_max_frag.glsl");
+
 	private int glShadowProgram;
 	private int glShadowCopyProgram;
+	private int glShadowMaxProgram;
 	private int uniShadowLightProj;
 	private int uniShadowEntityProj;
 	private int uniShadowBase;
@@ -1096,6 +1105,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		glDenoiseProgram = DENOISE_PROGRAM.compile(template);
 		glShadowProgram = SHADOW_PROGRAM.compile(template);
 		glShadowCopyProgram = SHADOW_COPY_PROGRAM.compile(template);
+		glShadowMaxProgram = SHADOW_MAX_PROGRAM.compile(template);
 		setFogProgram(VolumetricFog.PROGRAM.compile(template));
 		water.setSurfaceProgram(WaterSurface.PROGRAM.compile(template), COMPOSITE_TEXTURE_UNIT + 2, WATER_DATA_UNIT,
 			WATER_NOISE_UNIT, WATER_CONTACT_UNIT, WATER_WAVES_UNIT_A, WATER_WAVES_UNIT_B);
@@ -1171,11 +1181,13 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		uniAoShadowRadius = glGetUniformLocation(glAoProgram, "shadowRadius");
 		uniAoShadowDepthRange = glGetUniformLocation(glAoProgram, "shadowDepthRange");
 		uniAoShadowMapSize = glGetUniformLocation(glAoProgram, "shadowMapSize");
+		uniAoShadowMaxTile = glGetUniformLocation(glAoProgram, "shadowMaxTile");
 		uniAoCasterDir = glGetUniformLocation(glAoProgram, "casterDir");
 		uniAoSunIsCaster = glGetUniformLocation(glAoProgram, "sunIsCaster");
 		glUseProgram(glAoProgram);
 		glUniform1i(glGetUniformLocation(glAoProgram, "shadowRaw"), SHADOW_RAW_UNIT);
 		glUniform1i(glGetUniformLocation(glAoProgram, "shadowCompare"), SHADOW_COMPARE_UNIT);
+		glUniform1i(glGetUniformLocation(glAoProgram, "shadowMax"), SHADOW_MAX_UNIT);
 		glUniform1i(glGetUniformLocation(glAoProgram, "sceneMaterial"), MATERIAL_UNIT);
 		glUseProgram(0);
 		aoFrame.locate(glAoProgram);
@@ -1202,6 +1214,8 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		glUniform1i(glGetUniformLocation(glShadowProgram, "textures"), 1); // game texture array lives on unit 1
 		glUseProgram(glShadowCopyProgram);
 		glUniform1i(glGetUniformLocation(glShadowCopyProgram, "staticDepth"), 0);
+		glUseProgram(glShadowMaxProgram);
+		glUniform1i(glGetUniformLocation(glShadowMaxProgram, "source"), 0);
 		glUseProgram(0);
 	}
 
@@ -1313,6 +1327,9 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		glDeleteProgram(glShadowCopyProgram);
 		glShadowCopyProgram = 0;
 
+		glDeleteProgram(glShadowMaxProgram);
+		glShadowMaxProgram = 0;
+
 		weather.freePrograms();
 		water.freeSurfaceProgram();
 		skyCache.freePrograms();
@@ -1328,7 +1345,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 	{
 		glBindVertexArray(vaoUiHandle);
 		Template template = createTemplate();
-		int scene = 0, ui = 0, ao = 0, denoise = 0, shadow = 0, shadowCopy = 0, fog = 0, waterSurface = 0, upscale = 0;
+		int scene = 0, ui = 0, ao = 0, denoise = 0, shadow = 0, shadowCopy = 0, shadowMax = 0, fog = 0, waterSurface = 0, upscale = 0;
 		int[] composite = new int[composites.length];
 		Weather.Programs weatherPrograms;
 		SkyCache.Programs skyCachePrograms;
@@ -1345,6 +1362,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 			denoise = DENOISE_PROGRAM.compile(template);
 			shadow = SHADOW_PROGRAM.compile(template);
 			shadowCopy = SHADOW_COPY_PROGRAM.compile(template);
+			shadowMax = SHADOW_MAX_PROGRAM.compile(template);
 			fog = VolumetricFog.PROGRAM.compile(template);
 			waterSurface = WaterSurface.PROGRAM.compile(template);
 			upscale = Upscaler.PROGRAM.compile(template);
@@ -1386,6 +1404,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 			glDeleteProgram(denoise);
 			glDeleteProgram(shadow);
 			glDeleteProgram(shadowCopy);
+			glDeleteProgram(shadowMax);
 			glDeleteProgram(fog);
 			glDeleteProgram(waterSurface);
 			glDeleteProgram(upscale);
@@ -1414,6 +1433,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		glDenoiseProgram = denoise;
 		glShadowProgram = shadow;
 		glShadowCopyProgram = shadowCopy;
+		glShadowMaxProgram = shadowMax;
 		setFogProgram(fog);
 		water.setSurfaceProgram(waterSurface, COMPOSITE_TEXTURE_UNIT + 2, WATER_DATA_UNIT, WATER_NOISE_UNIT,
 			WATER_CONTACT_UNIT, WATER_WAVES_UNIT_A, WATER_WAVES_UNIT_B);
@@ -2345,7 +2365,8 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		shadowBuildNext = end;
 		if (shadowBuildNext >= shadowBuildCount)
 		{
-			shadowMap.finishBuild();
+			glBindVertexArray(vaoUiHandle);
+			shadowMap.finishBuild(glShadowMaxProgram);
 		}
 	}
 
@@ -2519,7 +2540,8 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 			cpuTimer.begin(CpuTimer.CLUSTERS);
 			// the fog integrates the lights along each pixel's ray from per-column lists
 			lightClusters.setFog(frameFog, volumetricFog.getCenterX() - frameCameraX,
-				volumetricFog.getCenterZ() - frameCameraZ, volumetricFog.getRadius());
+				volumetricFog.getCenterZ() - frameCameraZ, volumetricFog.getRadius(),
+				volumetricFog.getTop() - frameCameraY, volumetricFog.getMinGlow());
 			lightClusters.cull(frameLights, frameViewProj, frameCameraX, frameCameraY, frameCameraZ);
 			cpuTimer.end(CpuTimer.CLUSTERS);
 			cpuTimer.begin(CpuTimer.LIGHT_UPLOAD);
@@ -2703,6 +2725,37 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		return dayCycle.hour();
 	}
 
+	/**
+	 * Scissor the half resolution pass to the texels it draws: the water's rect, and the rows that can hold cloud
+	 * across the whole width; with both, the rows from the first to the last of either. Enables the scissor test.
+	 */
+	private void scissorHalf(boolean withClouds, boolean withWater)
+	{
+		int[] r = halfScissor;
+		if (withWater)
+		{
+			water.halfRect(r);
+		}
+		if (withClouds)
+		{
+			clouds.skyRows(cloudRows, frameInvViewProj, frameViewport, sceneTargets.getAoWidth(),
+				sceneTargets.getAoHeight(), sceneTargets.getHalfRatio());
+			if (cloudRows[1] > cloudRows[0])
+			{
+				r[1] = withWater ? Math.min(r[1], cloudRows[0]) : cloudRows[0];
+				r[3] = withWater ? Math.max(r[3], cloudRows[1]) : cloudRows[1];
+				r[0] = 0;
+				r[2] = sceneTargets.getAoWidth();
+			}
+			else if (!withWater)
+			{
+				r[0] = r[1] = r[2] = r[3] = 0;
+			}
+		}
+		glEnable(GL_SCISSOR_TEST);
+		glScissor(r[0], r[1], Math.max(r[2] - r[0], 0), Math.max(r[3] - r[1], 0));
+	}
+
 	private void updateClouds()
 	{
 		WorldView wv = client.getTopLevelWorldView();
@@ -2851,6 +2904,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 				glUniform3fv(uniAoCasterDir, dayCycle.casterDir);
 				glUniform1i(uniAoSunIsCaster, dayCycle.sunIsCaster ? 1 : 0);
 				shadowMap.bindForSampling(SHADOW_RAW_UNIT, SHADOW_COMPARE_UNIT);
+				glUniform1i(uniAoShadowMaxTile, shadowMap.bindMax(SHADOW_MAX_UNIT));
 			}
 			sceneTargets.bindMaterial(MATERIAL_UNIT);
 			water.bindAo(config, WATER_DATA_UNIT);
@@ -2920,7 +2974,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 				frameViewProj, frameInvViewProj, frameViewport, glCapabilities.OpenGL45,
 				frameCameraX, frameCameraY, frameCameraZ, (System.currentTimeMillis() - startMillis) / 1000f,
 				fogSun, proceduralSky(), frameSkyColor, dayCycle, fogShadows,
-				config.pointLights() && lightClusters.isInitialized());
+				config.pointLights() && lightClusters.isInitialized() && lightClusters.hasFogLights());
 			gpuTimer.end();
 		}
 		// the AO, the shadows and the fog's sun shafts are all dithered: smoothed together at half resolution before
@@ -2958,10 +3012,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 			glDisable(GL_BLEND);
 			useComposite(!halfWater ? compositeClouds : halfClouds ? compositeCloudsWater : compositeWater);
 			gpuTimer.begin(halfClouds ? GpuTimer.CLOUDS : GpuTimer.WATER);
-			if (!halfClouds)
-			{
-				water.scissorHalf();
-			}
+			scissorHalf(halfClouds, halfWater);
 			glDrawArrays(GL_TRIANGLES, 0, 3);
 			glDisable(GL_SCISSOR_TEST);
 			gpuTimer.end();
@@ -3043,6 +3094,8 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		glActiveTexture(GL_TEXTURE0 + AO_TEXTURE_UNIT);
 		glBindTexture(GL_TEXTURE_2D, 0);
 		glActiveTexture(GL_TEXTURE0 + SCENE_SHADOW_UNIT);
+		glBindTexture(GL_TEXTURE_2D, 0);
+		glActiveTexture(GL_TEXTURE0 + SHADOW_MAX_UNIT);
 		glBindTexture(GL_TEXTURE_2D, 0);
 		glActiveTexture(GL_TEXTURE0);
 		ShadowMap.unbind(SHADOW_RAW_UNIT, SHADOW_COMPARE_UNIT);

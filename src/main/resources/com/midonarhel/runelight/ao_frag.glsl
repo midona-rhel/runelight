@@ -72,7 +72,7 @@ void main() {
   float keep = 1.0;
   if (waterAoOn == 1 && all(greaterThanEqual(px, waterAoRect.xy)) && all(lessThan(px, waterAoRect.zw))
     && texelFetch(sceneMaterial, px, 0).b / cover >= 0.25) {
-    keep = 1.0 - smoothstep(0.0, AO_WATER_DEPTH, waterDepthUnder(waterAoSurface, px, p));
+    keep = 1.0 - smoothstep(0.0, AO_WATER_DEPTH, waterDepthUnder(waterAoSurface, waterAoRect, px, p));
     if (keep <= 0.0) {
       return;
     }

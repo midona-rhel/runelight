@@ -308,11 +308,27 @@ vec3 skyLightningAt() {
   return srgbToLinear(LIGHTNING_COLOR * (LIGHTNING_SKY * weatherOvercast.z)) * SKY_LIGHT;
 }
 
+// The light on the clouds (clouds.glsl). They are high, so they catch the sun a little before sunrise and after
+// sunset, red then; below CLOUD_MOON_SWITCH the moon lights them, and neither light reaches them around it.
+#define CLOUD_MOON_SWITCH -8.0
+#define CLOUD_SUN 1.0
+#define CLOUD_MOON 1.3
+
+vec3 cloudLightAt(float alt) {
+  if (alt > CLOUD_MOON_SWITCH) {
+    vec3 warm = mix(vec3(1.00, 0.42, 0.16), vec3(0.95, 0.30, 0.32), smoothstep(0.0, -6.0, alt));
+    vec3 noon = vec3(1.00, 0.90, 0.76);
+    return overcastDirect(mix(warm, noon, smoothstep(2.0, 28.0, alt)) * SUN_INTENSITY
+      * smoothstep(CLOUD_MOON_SWITCH, 4.0, alt)) * CLOUD_SUN;
+  }
+  return moonLightAt(alt) * (CLOUD_MOON * smoothstep(CLOUD_MOON_SWITCH, CLOUD_MOON_SWITCH - 3.0, alt));
+}
+
 // The colors above at a sun altitude. The composite uses them at every pixel, always at this frame's altitude: there
 // composite_vert.glsl works them out once and hands them over (SKY_FRAME_CONSTANTS), instead of every pixel walking
 // the palette and the overcast mixing again, which cost over a millisecond.
 #ifdef SKY_FRAME_CONSTANTS
-flat in vec3 skyFrame[8];
+flat in vec3 skyFrame[11];
 vec3 skyZenith(float alt) { return skyFrame[0]; }
 vec3 skyHorizon(float alt) { return skyFrame[1]; }
 vec3 sunLight(float alt) { return skyFrame[2]; }
@@ -321,6 +337,9 @@ vec3 ambientLight(float alt) { return skyFrame[4]; }
 vec3 skyLight(float alt) { return skyFrame[5]; }
 float skyBoost(float alt) { return skyFrame[6].x; }
 vec3 skyLightning() { return skyFrame[7]; }
+vec3 cloudLight(float alt) { return skyFrame[8]; }
+vec3 skyZenithLinear(float alt) { return skyFrame[9]; }
+vec3 skyHorizonLinear(float alt) { return skyFrame[10]; }
 #else
 vec3 skyZenith(float alt) { return skyZenithAt(alt); }
 vec3 skyHorizon(float alt) { return skyHorizonAt(alt); }
@@ -330,6 +349,9 @@ vec3 ambientLight(float alt) { return ambientLightAt(alt); }
 vec3 skyLight(float alt) { return skyLightAt(alt); }
 float skyBoost(float alt) { return skyBoostAt(alt); }
 vec3 skyLightning() { return skyLightningAt(); }
+vec3 cloudLight(float alt) { return cloudLightAt(alt); }
+vec3 skyZenithLinear(float alt) { return srgbToLinear(skyZenithAt(alt)); }
+vec3 skyHorizonLinear(float alt) { return srgbToLinear(skyHorizonAt(alt)); }
 #endif
 
 // Underground: no sun, so a fixed soft key light from above keeps shapes readable. y points down.
