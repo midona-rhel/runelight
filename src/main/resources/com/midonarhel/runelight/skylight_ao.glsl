@@ -124,7 +124,11 @@ vec2 skySurfaceLevel(sampler3D grid, float scale, vec2 tile, vec2 f, int level, 
   return sum;
 }
 
+// how far out of doors the last skyGridVisibility found its face (a roof, a terrace, open ground: 1)
+float skyExterior;
+
 float skyGridVisibility(sampler3D grid, float scale, vec3 w, vec3 n) {
+  skyExterior = 1.0;
   vec2 t = w.xz * scale / 128.0;
   if (any(lessThan(t, vec2(0.0))) || any(greaterThanEqual(t, vec2(SKY_GRID_TILES*scale)))) return 1.0;
   vec2 tile = floor(t), f = fract(t), c = 2.0 * tile + 0.5;
@@ -160,9 +164,9 @@ float skyGridVisibility(sampler3D grid, float scale, vec3 w, vec3 n) {
   // normal offset already selects the exposed side. Do not move a roof lip into the room below.
   for (int k = 1; k < 4; ++k) if (w.y <= roomFloors[k]) roomPlane = k;
   float exterior = (roomMask & (1 << roomPlane)) == 0 ? 1.0 : 0.0;
-  // A face that isn't a ceiling, higher above its storey's floor than a storey's walls stand, is on the roof over that
-  // storey: out of doors, however low it slopes down.
-  if (exterior < 1.0 && n.y < 0.3) {
+  // A face turned up, higher above its storey's floor than a storey's walls stand, is on the roof over that storey:
+  // out of doors, however low it slopes down. (A wall's upper part indoors faces sideways and stays in.)
+  if (exterior < 1.0 && n.y < -0.3) {
     exterior = smoothstep(SKY_ROOF_ABOVE.x, SKY_ROOF_ABOVE.y, roomFloors[roomPlane] - w.y);
   }
   if (exterior < 1.0 && n.y < -0.3) {
@@ -201,6 +205,7 @@ float skyGridVisibility(sampler3D grid, float scale, vec3 w, vec3 n) {
       if (original < 0.0) original = max(0.0, skyGridLevel(grid, scale, tile, f, 9, 0, n, w));
     }
   }
+  skyExterior = exterior;
   if (exterior > 0.0) {
     vec2 a = skySurfaceLevel(grid, scale, tile, f, lo, loDiagonal, w, n);
     vec2 b = skySurfaceLevel(grid, scale, tile, f, hi, hiDiagonal, w, n);
@@ -302,10 +307,13 @@ float skylightVisibility(vec3 p, vec3 n) {
   // out of doors the trace only shades gently: the ambient occlusion draws the contact where things meet, and the
   // grid is too coarse to draw more than a soft darkening near buildings and trees. Under cover (the field's green)
   // it keeps its full range.
-  float outdoors = skyFieldOn == 1 ? 1.0 - field.g : 1.0;
+  // The field's cover is the map's under-roof flags, which a roof itself is flagged with too: a face the grid finds
+  // out of doors (a roof top, a terrace) is not under cover, whatever the flags say.
+  float cover = skyFieldOn == 1 ? field.g * (1.0 - skyExterior) : 0.0;
+  float outdoors = 1.0 - cover;
   v = mix(v, 1.0 - (1.0 - v) * SKY_OUTDOOR_STRENGTH, outdoors);
   if (skyFieldOn == 1) {
-    v = mix(v, max(v, field.r), field.g);
+    v = mix(v, max(v, field.r), cover);
   }
   return v;
 }
