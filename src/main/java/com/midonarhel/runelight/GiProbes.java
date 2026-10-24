@@ -49,9 +49,6 @@ final class GiProbes
 	// the texture detail included, which pulls them toward gray, and light that bounces twice keeps the surfaces'
 	// colors squared. The bounce is what carries the colors of the ground and the water into the shade.
 	static final float ALBEDO_SATURATION = 1.5f;
-	// Hits closer to the probe than this many voxels fade out smoothly: a probe lying just over a roof or the ground
-	// would otherwise see that surface almost everywhere below it, and the surface would read it back as its own light.
-	static final float NEAR_HIT = 1.5f;
 	// ray results other than a hit voxel
 	static final int MISS = -1, BACK = -2;
 

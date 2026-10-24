@@ -296,13 +296,14 @@ final class GiRelight
 						tg = p.hitAlbedo[code * 3 + 1] * incident(light.caster, sun, last, b, -dx, -dy, -dz, 1);
 						tb = p.hitAlbedo[code * 3 + 2] * incident(light.caster, sun, last, b, -dx, -dy, -dz, 2);
 					}
-					// A smooth local-bounce window, reaching zero at the ray limit (voxel units), and one that keeps
-					// the surface right next to the probe, which it would only see itself in, out.
+					// A smooth local-bounce window, reaching zero at the ray limit (voxel units). The ground right
+					// under a probe counts in full: it is what lights the foot of the walls beside it (grass green),
+					// and the light's direction keeps it off the ground itself.
 					float hx = p.hitPos[code * 3] - p.position[i * 3] / GiGrid.VOXEL;
 					float hy = p.hitPos[code * 3 + 1] + p.grid.layer0 - p.position[i * 3 + 1] / GiGrid.VOXEL;
 					float hz = p.hitPos[code * 3 + 2] - p.position[i * 3 + 2] / GiGrid.VOXEL;
 					float distance = (float) Math.sqrt(hx * hx + hy * hy + hz * hz);
-					w *= (1 - smoothstep(0, 1, distance / GiProbes.MAX_DISTANCE)) * smoothstep(0, GiProbes.NEAR_HIT, distance);
+					w *= 1 - smoothstep(0, 1, distance / GiProbes.MAX_DISTANCE);
 					accumulate(cur, i * SH, tr, tg, tb, dx, dy, dz, w);
 					accumulate(curSurfaces, i * SH, tr, tg, tb, dx, dy, dz, w);
 				}
