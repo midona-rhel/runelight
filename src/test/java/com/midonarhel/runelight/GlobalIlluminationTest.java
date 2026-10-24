@@ -576,8 +576,11 @@ public class GlobalIlluminationTest
 		{
 			visibility[probe * GiProbes.VISIBILITY + k] = 20 + k;
 		}
-		short[] t = GlobalIllumination.texels(light, visibility);
-		// column x 5 across (TEXELS texels each), level 2 and column z 7 down: three texels of light, three of visibility
+		float[] place = new float[GiProbes.PROBES * GiProbes.PLACE];
+		place[probe * GiProbes.PLACE + 1] = -48;
+		short[] t = GlobalIllumination.texels(light, visibility, place);
+		// column x 5 across (TEXELS texels each), level 2 and column z 7 down: three texels of light, three of
+		// visibility, one of where it stands
 		int i = ((2 * GiProbes.COLUMNS + 7) * GlobalIllumination.TEX_W + 5 * GlobalIllumination.TEXELS) * 4;
 		for (int k = 0; k < GiRelight.SH; ++k)
 		{
@@ -587,6 +590,7 @@ public class GlobalIlluminationTest
 		{
 			assertEquals(20 + k, GlobalIllumination.fromHalf(t[i + GiRelight.SH + k]), 0);
 		}
+		assertEquals(-48, GlobalIllumination.fromHalf(t[i + GiRelight.SH + GiProbes.VISIBILITY + 1]), 0);
 		// the next probe along is untouched, and so is its first texel's neighbour
 		assertEquals(0, t[i + GlobalIllumination.TEXELS * 4]);
 		assertEquals(GlobalIllumination.TEX_W * GlobalIllumination.TEX_H, GiProbes.PROBES * GlobalIllumination.TEXELS);

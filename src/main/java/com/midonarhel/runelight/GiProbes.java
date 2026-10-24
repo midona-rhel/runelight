@@ -105,11 +105,17 @@ final class GiProbes
 		}
 	}
 
-	// where a probe may move when its spot is bad: world units, y down
+	// where a probe may stand: its own spot and the spots around it, world units, y down, nearest first
 	private static final float[][] CANDIDATES = {
 		{0, 0, 0}, {0, -48, 0}, {40, 0, 0}, {-40, 0, 0}, {0, 0, 40}, {0, 0, -40}, {0, -96, 0},
 		{40, -48, 40}, {-40, -48, -40}, {40, -48, -40}, {-40, -48, 40},
+		{56, 0, 0}, {-56, 0, 0}, {0, 0, 56}, {0, 0, -56}, {0, -144, 0},
 	};
+	// a spot counts as much worse than its own as this share of its rays more seeing the back of something; the probe
+	// keeps the nearest of the best
+	private static final float WORSE_BACKFACE = 0.05f;
+	// floats per probe of where it stands: x, y, z from its nominal spot (world units), and a spare
+	static final int PLACE = 4;
 
 	/** Runs body(0..n-1), possibly in parallel. */
 	interface ParallelFor
@@ -144,6 +150,8 @@ final class GiProbes
 	final int[] rays = new int[PROBES * RAYS];
 	// per probe: VISIBILITY floats, all zero for a probe that isn't usable
 	final float[] visibility = new float[PROBES * VISIBILITY];
+	// where each usable probe stands, from its nominal spot (PLACE floats)
+	final float[] place = new float[PROBES * PLACE];
 
 	// the voxels hit by any ray
 	int hits;
@@ -314,45 +322,70 @@ final class GiProbes
 		});
 	}
 
-	/** Find a spot for probe i and trace its rays; leaves it invalid if none works. */
+	/**
+	 * Find the best spot for probe i and trace its rays; leaves it invalid if none works. Every candidate spot out of
+	 * the geometry and near it is traced, and the probe takes the one whose rays see the backs of the fewest surfaces
+	 * (the one most in the open, with the most of the scene in front of it), the nearest of those within
+	 * WORSE_BACKFACE of the best.
+	 */
 	void traceProbe(int i)
 	{
 		float[] dirs = DIRECTIONS[rotation(i)];
-		float[] distance = new float[RAYS];
 		int base = i * RAYS;
 		float bx = position[i * 3], by = position[i * 3 + 1], bz = position[i * 3 + 2];
-		for (float[] c : CANDIDATES)
+		int[] candidateRays = new int[RAYS], bestRays = new int[RAYS];
+		float[] candidateDistance = new float[RAYS], bestDistance = new float[RAYS];
+		int best = -1, bestBack = Integer.MAX_VALUE;
+		for (int k = 0; k < CANDIDATES.length; ++k)
 		{
+			float[] c = CANDIDATES[k];
 			float ox = (bx + c[0]) / GiGrid.VOXEL, oy = (by + c[1]) / GiGrid.VOXEL - grid.layer0, oz = (bz + c[2]) / GiGrid.VOXEL;
 			if (!nearGeometry(ox, oy, oz) || grid.occupied((int) Math.floor(ox), (int) Math.floor(oy), (int) Math.floor(oz)))
 			{
 				continue;
 			}
 			int back = 0;
-			for (int r = 0; r < RAYS && back <= MAX_BACKFACE * RAYS; ++r)
+			for (int r = 0; r < RAYS; ++r)
 			{
 				float dx = dirs[r * 3], dy = dirs[r * 3 + 1], dz = dirs[r * 3 + 2];
 				int cell = grid.trace(ox, oy, oz, dx, dy, dz, MAX_DISTANCE, false, base + r);
 				int result = cell < 0 ? MISS : backface(grid.cells[cell], dx, dy, dz) ? BACK : cell;
-				distance[r] = cell < 0 ? MAX_DISTANCE : Math.min(MAX_DISTANCE, (float) Math.sqrt(
+				candidateDistance[r] = cell < 0 ? MAX_DISTANCE : Math.min(MAX_DISTANCE, (float) Math.sqrt(
 					sq(grid.cellX(cell) + 0.5f - ox) + sq(grid.cellY(cell) + 0.5f - oy) + sq(grid.cellZ(cell) + 0.5f - oz)));
 				if (result == BACK)
 				{
 					back++;
 				}
-				rays[base + r] = result;
+				candidateRays[r] = result;
 			}
-			if (back <= MAX_BACKFACE * RAYS)
+			if (back > MAX_BACKFACE * RAYS || back >= bestBack - WORSE_BACKFACE * RAYS)
 			{
-				valid[i] = true;
-				measureVisibility(i, dirs, distance);
-				position[i * 3] = bx + c[0];
-				position[i * 3 + 1] = by + c[1];
-				position[i * 3 + 2] = bz + c[2];
-				return;
+				continue;
 			}
+			best = k;
+			bestBack = back;
+			int[] swapRays = bestRays;
+			bestRays = candidateRays;
+			candidateRays = swapRays;
+			float[] swapDistance = bestDistance;
+			bestDistance = candidateDistance;
+			candidateDistance = swapDistance;
 		}
-		Arrays.fill(rays, base, base + RAYS, MISS);
+		if (best < 0)
+		{
+			Arrays.fill(rays, base, base + RAYS, MISS);
+			return;
+		}
+		float[] c = CANDIDATES[best];
+		System.arraycopy(bestRays, 0, rays, base, RAYS);
+		valid[i] = true;
+		measureVisibility(i, dirs, bestDistance);
+		position[i * 3] = bx + c[0];
+		position[i * 3 + 1] = by + c[1];
+		position[i * 3 + 2] = bz + c[2];
+		place[i * PLACE] = c[0];
+		place[i * PLACE + 1] = c[1];
+		place[i * PLACE + 2] = c[2];
 	}
 
 	private static float sq(float v)

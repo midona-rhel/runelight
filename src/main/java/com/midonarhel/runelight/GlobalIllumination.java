@@ -51,7 +51,7 @@ class GlobalIllumination
 	// TEXELS texels per probe, side by side: its column across (times TEXELS), its level and column row down. The
 	// first three hold the light (GiRelight.SH floats), the next three how far it sees (GiProbes.VISIBILITY floats);
 	// a probe that isn't usable is all zero.
-	static final int TEXELS = (GiRelight.SH + GiProbes.VISIBILITY) / 4;
+	static final int TEXELS = (GiRelight.SH + GiProbes.VISIBILITY + GiProbes.PLACE) / 4;
 	static final int TEX_W = GiProbes.COLUMNS * TEXELS;
 	static final int TEX_H = GiProbes.COLUMNS * GiProbes.LEVELS;
 	static final int SKY_ROWS = GiRelight.SKY_H + 1;
@@ -914,7 +914,7 @@ class GlobalIllumination
 		l.baseY = probesBaseY;
 		l.instance = probesInstance;
 		l.meta = p.meta;
-		l.texels = texels(result.shown, p.visibility);
+		l.texels = texels(result.shown, p.visibility, p.place);
 		lit = l;
 		log.trace("GI relight in {} ms", (System.nanoTime() - start) / 1_000_000);
 	}
@@ -922,10 +922,10 @@ class GlobalIllumination
 
 	/**
 	 * The probes as the probe texture's half floats. Probe i lies at texels (its column x * TEXELS + 0..TEXELS-1, its
-	 * level * COLUMNS + its column z), as GiProbes.probe numbers them: its light, then its visibility. Probes that
-	 * aren't usable have no light and no visibility, which gi.glsl reads as no probe.
+	 * level * COLUMNS + its column z), as GiProbes.probe numbers them: its light, then its visibility, then where it
+	 * stands. Probes that aren't usable have no light and no visibility, which gi.glsl reads as no probe.
 	 */
-	static short[] texels(float[] light, float[] visibility)
+	static short[] texels(float[] light, float[] visibility, float[] place)
 	{
 		short[] out = new short[TEX_W * TEX_H * 4];
 		for (int i = 0; i < GiProbes.PROBES; ++i)
@@ -938,6 +938,10 @@ class GlobalIllumination
 			for (int k = 0; k < GiProbes.VISIBILITY; ++k)
 			{
 				out[at + GiRelight.SH + k] = toHalf(visibility[i * GiProbes.VISIBILITY + k]);
+			}
+			for (int k = 0; k < GiProbes.PLACE; ++k)
+			{
+				out[at + GiRelight.SH + GiProbes.VISIBILITY + k] = toHalf(place[i * GiProbes.PLACE + k]);
 			}
 		}
 		return out;

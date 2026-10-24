@@ -6,14 +6,15 @@
 // RGBA16F, GI_TEXELS texels per probe (GlobalIllumination.TEXELS): probe (column x, level, column z) at
 // (x * GI_TEXELS + k, level * columns + z). Texels 0-2 are its light as cosine-convolved L1 harmonics, 12 floats in
 // order: the mean radiance rgb, then the gradient rgb along x, y and z. Texels 3-5 are how far it sees, in voxels:
-// the mean distance toward +x, -x, +y, -y, +z, -z, then the six variances. All zero for no probe.
+// the mean distance toward +x, -x, +y, -y, +z, -z, then the six variances. Texel 6 is where it stands: xyz from its
+// nominal spot (world units). All zero for no probe.
 uniform sampler2D giProbes;
 uniform sampler2D giMeta;    // RGBA32F per tile: the grounds of the three floors (world y, down), the roof line
 uniform int giEnabled;
 uniform vec3 giCamera;       // camera position relative to the probe grid's corner, world y
 
 #define GI_SIZE 104
-#define GI_TEXELS 6
+#define GI_TEXELS 7
 #define GI_COLUMNS (textureSize(giProbes, 0).x / GI_TEXELS)
 #define GI_PITCH (GI_SIZE / GI_COLUMNS)
 #define GI_LEVELS 6
@@ -116,7 +117,8 @@ vec4 giIrradiance(vec3 p, vec3 n) {
         continue;
       }
       ivec2 texel = ivec2(col.x * GI_TEXELS, level * GI_COLUMNS + col.y);
-      vec3 probe = vec3(center.x, hs[level], center.y);
+      // where the probe stands: its nominal spot, moved out into the open when it was laid out (GiProbes.place)
+      vec3 probe = vec3(center.x, hs[level], center.y) + texelFetch(giProbes, texel + ivec2(6, 0), 0).xyz;
       vec3 fromProbe = q - probe;
       float dist = length(fromProbe);
       float vis = giVisibility(texel, fromProbe / max(dist, 1e-3), dist / GI_VOXEL);
