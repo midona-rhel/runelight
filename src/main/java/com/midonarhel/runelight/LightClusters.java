@@ -47,14 +47,14 @@ class LightClusters
 
 	private int lightBuffer, lightTexture;
 	private int clusterBuffer, clusterTexture;
-	// The light buffer: the lights and the room map after them. The map is sent when it changes; each frame only the
-	// lights and the map's header are.
+	// The light buffer: the lights and the room map after them. The map is sent when it changes, each frame only the
+	// lights; the map's header goes to the shaders as a uniform (getRoomHeader).
 	private RoomMap roomMap, uploadedRooms;
 	private boolean roomLights;
 	private int uploadedVersion = -1;
 	private int maxTexels;
 	private FloatBuffer roomStaging;
-	private final FloatBuffer roomOff = BufferUtils.createFloatBuffer(4);
+	private final float[] roomHeader = new float[4];
 	// the static lights' occlusion grids (LightOcclusion), in a texture of their own: one filtered fetch a lookup
 	private LightOcclusion.Atlas atlas, uploadedAtlas;
 	private boolean roofLights;
@@ -467,17 +467,10 @@ class LightClusters
 			glBufferSubData(GL_TEXTURE_BUFFER, (long) LIGHT_EXTRA_BASE * 4 * Float.BYTES, extraData);
 		}
 		// the map's header: whether there is a map, and whether the lights keep to their rooms or only the fog uses it
-		roomOff.clear();
-		if (rooms != null)
-		{
-			roomOff.put(2).put(rooms.size).put(rooms.offset).put(roomLights ? 1 : 0);
-		}
-		else
-		{
-			roomOff.put(0).put(0).put(0).put(0);
-		}
-		roomOff.flip();
-		glBufferSubData(GL_TEXTURE_BUFFER, (long) ROOM_BASE * 4 * Float.BYTES, roomOff);
+		roomHeader[0] = rooms != null ? 2 : 0;
+		roomHeader[1] = rooms != null ? rooms.size : 0;
+		roomHeader[2] = rooms != null ? rooms.offset : 0;
+		roomHeader[3] = rooms != null && roomLights ? 1 : 0;
 
 		glBindBuffer(GL_TEXTURE_BUFFER, clusterBuffer);
 		int words = texels * 4;
@@ -552,6 +545,15 @@ class LightClusters
 		}
 		b.clear();
 		return b;
+	}
+
+	/**
+	 * The room map's header as of the last upload, rooms.glsl's roomHeader: its version (0 no map), size and offset,
+	 * and whether the lights keep to their rooms.
+	 */
+	float[] getRoomHeader()
+	{
+		return roomHeader;
 	}
 
 	void bind(int lightUnit, int clusterUnit, int visUnit)

@@ -33,9 +33,15 @@ vec4 upsampleFog(ivec2 px, float z) {
   return wsum > 1e-6 ? sum / wsum : texelFetch(sceneFog, clamp(ivec2(hp + 0.5), ivec2(0), maxFog), 0);
 }
 
-// srgb: the final color of this pixel, including distance fog and transparent surfaces; fog: upsampled
+// lin: the final color of this pixel, including distance fog and transparent surfaces, in linear space; fog:
+// upsampled. Returns sRGB.
+vec3 applyFogLinear(vec3 lin, vec4 fog) {
+  return linearToSrgb(clamp(lin * fog.a + fog.rgb, 0.0, 1.0));
+}
+
+// the same for the final color in sRGB
 vec3 applyFogSample(vec3 srgb, vec4 fog) {
-  return linearToSrgb(clamp(srgbToLinear(srgb) * fog.a + fog.rgb, 0.0, 1.0));
+  return applyFogLinear(srgbToLinear(srgb), fog);
 }
 
 vec3 applyVolumetricFog(ivec2 px, vec3 srgb, float d) {

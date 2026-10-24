@@ -71,8 +71,7 @@ class Water
 	private final WaterSurface surface = new WaterSurface();
 	private final Frame frame = new Frame();
 
-	private int uniEnabled, uniTime, uniReflections, uniClarity, uniCaustics, uniDebug, uniPass, uniSlotType, uniRect,
-		uniAoOn, uniAoRect;
+	private int uniAoOn, uniAoRect;
 
 	// A tile's look (WaterSurface.build): its water type and the game's water texture, as a key; up to SLOTS of them a
 	// scene (water.glsl's WATER_SLOTS), whose types the composite gets as uniforms
@@ -95,24 +94,28 @@ class Water
 		return t == 0xFFFF ? -1 : t;
 	}
 
-	/**
-	 * Look up the composite program's water uniforms. Call with each newly compiled composite.
-	 */
-	void locateComposite(int program, int surfaceUnit, int shadedUnit)
+	/** A composite program's water uniforms. */
+	static final class CompositeUniforms
 	{
-		uniEnabled = glGetUniformLocation(program, "waterEnabled");
-		uniTime = glGetUniformLocation(program, "waterTime");
-		uniReflections = glGetUniformLocation(program, "waterReflections");
-		uniClarity = glGetUniformLocation(program, "waterClarity");
-		uniCaustics = glGetUniformLocation(program, "waterCaustics");
-		uniDebug = glGetUniformLocation(program, "waterDebug");
-		uniPass = glGetUniformLocation(program, "waterPass");
-		uniSlotType = glGetUniformLocation(program, "waterSlotType");
-		uniRect = glGetUniformLocation(program, "waterRect");
-		glUseProgram(program);
-		glUniform1i(glGetUniformLocation(program, "waterSurface"), surfaceUnit);
-		glUniform1i(glGetUniformLocation(program, "waterShaded"), shadedUnit);
-		glUseProgram(0);
+		private int enabled = -1, time = -1, reflections = -1, clarity = -1, caustics = -1, debug = -1, slotType = -1,
+			rect = -1;
+
+		/** Look them up and point the program's samplers at the units. Call with each newly compiled composite. */
+		void locate(int program, int surfaceUnit, int shadedUnit)
+		{
+			enabled = glGetUniformLocation(program, "waterEnabled");
+			time = glGetUniformLocation(program, "waterTime");
+			reflections = glGetUniformLocation(program, "waterReflections");
+			clarity = glGetUniformLocation(program, "waterClarity");
+			caustics = glGetUniformLocation(program, "waterCaustics");
+			debug = glGetUniformLocation(program, "waterDebug");
+			slotType = glGetUniformLocation(program, "waterSlotType");
+			rect = glGetUniformLocation(program, "waterRect");
+			glUseProgram(program);
+			glUniform1i(glGetUniformLocation(program, "waterSurface"), surfaceUnit);
+			glUniform1i(glGetUniformLocation(program, "waterShaded"), shadedUnit);
+			glUseProgram(0);
+		}
 	}
 
 	/**
@@ -317,53 +320,58 @@ class Water
 	}
 
 	/**
-	 * With the composite program in use: set this frame's uniforms and bind the surface. Then {@link #shadeHalf}.
+	 * Bind the surface for the composite, after {@link #drawSurface}. Then {@link #shadeHalf}.
 	 */
 	void bind(RuneLightConfig config, int surfaceUnit)
 	{
+		if (enabled(config))
+		{
+			glActiveTexture(GL_TEXTURE0 + surfaceUnit);
+			glBindTexture(GL_TEXTURE_2D, surface.texture());
+			glActiveTexture(GL_TEXTURE0);
+		}
+	}
+
+	/**
+	 * With a composite program in use: set this frame's uniforms on it.
+	 */
+	void setComposite(CompositeUniforms u, RuneLightConfig config)
+	{
 		boolean enabled = enabled(config);
-		glUniform1i(uniEnabled, enabled ? 1 : 0);
-		glUniform1i(uniPass, 0);
+		glUniform1i(u.enabled, enabled ? 1 : 0);
 		if (!enabled)
 		{
 			return;
 		}
-		glUniform1f(uniTime, frame.time);
-		glUniform1i(uniReflections, config.waterReflections() ? 1 : 0);
-		glUniform1f(uniClarity, config.waterClarity() / 100f);
-		glUniform1i(uniCaustics, config.waterCaustics() ? 1 : 0);
-		glUniform1i(uniDebug, config.waterDebug().ordinal());
-		glUniform4i(uniRect, rect[0], rect[1], rect[2], rect[3]);
+		glUniform1f(u.time, frame.time);
+		glUniform1i(u.reflections, config.waterReflections() ? 1 : 0);
+		glUniform1f(u.clarity, config.waterClarity() / 100f);
+		glUniform1i(u.caustics, config.waterCaustics() ? 1 : 0);
+		glUniform1i(u.debug, config.waterDebug().ordinal());
+		glUniform4i(u.rect, rect[0], rect[1], rect[2], rect[3]);
 		WaterSurface.Mesh m = surface.mesh();
 		for (int i = 0; i < m.slots; ++i)
 		{
 			slotTypes[i] = slotType(m.slotKeys[i]);
 		}
-		glUniform1iv(uniSlotType, slotTypes);
-
-		glActiveTexture(GL_TEXTURE0 + surfaceUnit);
-		glBindTexture(GL_TEXTURE_2D, surface.texture());
-		glActiveTexture(GL_TEXTURE0);
+		glUniform1iv(u.slotType, slotTypes);
 	}
 
-	private boolean enabled(RuneLightConfig config)
+	/** Whether the water is drawn this frame: its passes run. */
+	boolean enabled(RuneLightConfig config)
 	{
 		return visible && config.water() && hasData && surface.texture() != 0 && surface.mesh() != null;
 	}
 
 	/**
-	 * With the composite program in use and everything bound for it (after {@link #bind}): its half resolution water
-	 * pass into the shaded target, then that target bound on shadedUnit for the full resolution composite. Leaves the
-	 * framebuffer and viewport changed.
+	 * With the composite's water program in use, its uniforms set and everything bound for it (after {@link #bind}),
+	 * when {@link #enabled}: its half resolution water pass into the shaded target, then that target bound on
+	 * shadedUnit for the full resolution composite. Leaves the framebuffer and viewport changed.
 	 *
 	 * @param width  the half resolution targets' size (SceneTargets)
 	 */
-	void shadeHalf(RuneLightConfig config, int width, int height, int shadedUnit)
+	void shadeHalf(int width, int height, int shadedUnit)
 	{
-		if (!enabled(config))
-		{
-			return;
-		}
 		// not bound while it is drawn into
 		glActiveTexture(GL_TEXTURE0 + shadedUnit);
 		glBindTexture(GL_TEXTURE_2D, 0);
@@ -373,9 +381,7 @@ class Water
 		int x0 = rect[0] >> 1, y0 = rect[1] >> 1;
 		glEnable(GL_SCISSOR_TEST);
 		glScissor(x0, y0, ((rect[2] + 1) >> 1) - x0, ((rect[3] + 1) >> 1) - y0);
-		glUniform1i(uniPass, 1);
 		glDrawArrays(GL_TRIANGLES, 0, 3);
-		glUniform1i(uniPass, 0);
 		glDisable(GL_SCISSOR_TEST);
 		glActiveTexture(GL_TEXTURE0 + shadedUnit);
 		glBindTexture(GL_TEXTURE_2D, surface.shadedTexture());

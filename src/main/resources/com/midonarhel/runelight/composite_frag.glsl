@@ -1,6 +1,12 @@
 #version 330
 
-// Runs once per pixel over the finished scene: sky, lighting, shadows, AO and fog.
+// Runs once per pixel over the finished scene: sky, lighting, shadows, AO and fog. Compiled once for each of its
+// passes (RuneLightPlugin.CompositeProgram), so that each program holds only its own path: the full resolution
+// composite, and at half resolution the clouds and the water.
+#define COMPOSITE_FULL 0
+#define COMPOSITE_CLOUDS 1
+#define COMPOSITE_WATER 2
+#include composite_pass
 
 #include "frame.glsl"
 #define SKY_FRAME_CONSTANTS
@@ -11,11 +17,10 @@
 #include "fog_apply.glsl"
 #include "lightning.glsl"
 #include "clouds.glsl"
-// The clouds are marched at half resolution, by this program's cloud pass (cloudPass 1, into cloudHalf), and the sky
-// below filters them from there (atmosphere.glsl): they are soft, and marched at every pixel they cost the sky most
-// of its time. The stars, sun and moon in front of them stay at full resolution.
+// The clouds are marched at half resolution, by the cloud pass (COMPOSITE_CLOUDS, into cloudHalf), and the sky below
+// filters them from there (atmosphere.glsl): they are soft, and marched at every pixel they cost the sky most of its
+// time. The stars, sun and moon in front of them stay at full resolution.
 #define CLOUDS_HALF_RES
-uniform int cloudPass;
 uniform sampler2D cloudHalf;
 #include "atmosphere.glsl"
 #include "edge_fade.glsl"
@@ -42,7 +47,7 @@ uniform sampler2D cloudHalf;
 
 uniform sampler2D sceneAlpha;  // transparent geometry, already lit, premultiplied
 uniform sampler2D sceneMaterial;  // r emissive, g transmissive, b water (frag.glsl)
-uniform int debugView;
+#include debug_view
 uniform int aoEnabled;
 uniform float aoStrength;
 
@@ -94,6 +99,11 @@ uniform sampler2DArray compositeParts;
 layout(location = 0) out vec4 FragColor;
 
 // ---------------------------------------------------------------------------------------------------------------
+// Global illumination (GlobalIllumination.java, gi.glsl): the light bounced off the surfaces around, upsampled with
+// the AO, added to the skylight's ambient (light_occlusion.glsl skylightAmbient)
+uniform float giWeight;  // 0..1: enabled, eased in and out, strength
+
+// ---------------------------------------------------------------------------------------------------------------
 // Ambient occlusion and shadows: 2x2 depth- and normal-aware upsample of the half resolution pass, whose noise the
 // denoise (denoise_frag.glsl) has smoothed. The volumetric fog's upsample uses the same taps, so it is done in the
 // same loop when the fog is on.
@@ -103,6 +113,8 @@ float upsampleAoFog(ivec2 px, float z, vec3 n, out vec4 fog, out float shadow, o
   ivec2 base = ivec2(floor(hp));
   ivec2 maxAo = textureSize(sceneAo, 0) - 1;
   bool withFog = volumetricFog == 1;
+  // without its weight the global illumination is never used
+  bool withGi = giWeight > 0.0;
   vec4 shSum = vec4(0.0);
   float wsum = 0.0;
   vec4 giSum = vec4(0.0);
@@ -133,7 +145,9 @@ float upsampleAoFog(ivec2 px, float z, vec3 n, out vec4 fog, out float shadow, o
       w *= nd * nd;
 
       shSum += texelFetch(sceneShadow, q, 0) * w;
-      giSum += halfGi(g) * w;
+      if (withGi) {
+        giSum += halfGi(g) * w;
+      }
       wsum += w;
     }
   }
@@ -146,11 +160,6 @@ float upsampleAoFog(ivec2 px, float z, vec3 n, out vec4 fog, out float shadow, o
   skyUpsampled = sh.a;
   return wsum > 1e-4 ? sh.g : 1.0;
 }
-
-// ---------------------------------------------------------------------------------------------------------------
-// Global illumination (GlobalIllumination.java, gi.glsl): the light bounced off the surfaces around, upsampled with
-// the AO, added to the skylight's ambient (light_occlusion.glsl skylightAmbient)
-uniform float giWeight;  // 0..1: enabled, eased in and out, strength
 
 // the inside of buildings at night (BuildingLights.FILL, linear), and how much of it is left at a room's walls
 uniform vec3 interiorLight;
@@ -285,36 +294,33 @@ float borrowDepth(ivec2 px) {
 }
 
 void main() {
-  // the half resolution water pass (water.glsl) shares this program and everything bound for it
-  if (waterPass == 1) {
-    waterShadeHalf(ivec2(gl_FragCoord.xy));
+#if COMPOSITE_PASS == COMPOSITE_WATER
+  // the half resolution water pass (water.glsl)
+  waterShadeHalf(ivec2(gl_FragCoord.xy));
+#elif COMPOSITE_PASS == COMPOSITE_CLOUDS
+  // the ray through the middle of the scene pixels this texel covers
+  vec2 c = gl_FragCoord.xy * halfRatio;
+  // Only where the sky shows: in the scene pixels this texel covers and the ones next to them, which the filtering
+  // reaches, or behind geometry's partly covered edges or its fade at the edge of the world. Elsewhere clear sky.
+  bool needed = false;
+  ivec2 last = textureSize(sceneDepth, 0) - 1;
+  for (int i = 0; i < 4 && !needed; ++i) {
+    ivec2 q = clamp(ivec2(c + vec2(i & 1, i >> 1) * (halfRatio + 2.0) - (halfRatio * 0.5 + 1.0)), ivec2(0), last);
+    float qd = texelFetch(sceneDepth, q, 0).r;
+    needed = isSky(qd) || texelFetch(sceneColor, q, 0).a < 0.996
+      || edgeFadeAmount(reconstructPosition(vec2(q) + 0.5, qd) + cameraPos) > 0.002;
+  }
+  if (!needed) {
+    FragColor = vec4(0.0, 0.0, 0.0, 1.0);
     return;
   }
-  if (cloudPass == 1) {
-    // the ray through the middle of the scene pixels this texel covers
-    vec2 c = gl_FragCoord.xy * halfRatio;
-    // Only where the sky shows: in the scene pixels this texel covers and the ones next to them, which the filtering
-    // reaches, or behind geometry's partly covered edges or its fade at the edge of the world. Elsewhere clear sky.
-    bool needed = false;
-    ivec2 last = textureSize(sceneDepth, 0) - 1;
-    for (int i = 0; i < 4 && !needed; ++i) {
-      ivec2 q = clamp(ivec2(c + vec2(i & 1, i >> 1) * (halfRatio + 2.0) - (halfRatio * 0.5 + 1.0)), ivec2(0), last);
-      float qd = texelFetch(sceneDepth, q, 0).r;
-      needed = isSky(qd) || texelFetch(sceneColor, q, 0).a < 0.996
-        || edgeFadeAmount(reconstructPosition(vec2(q) + 0.5, qd) + cameraPos) > 0.002;
-    }
-    if (!needed) {
-      FragColor = vec4(0.0, 0.0, 0.0, 1.0);
-      return;
-    }
-    vec3 dir = normalize(reconstructPosition(c, 1.0));
-    float pixelAngle = length(normalize(reconstructPosition(c + vec2(0.0, 1.0), 1.0)) - dir);
-    // jittered per cloud texel: the noise is only even at a stride of one texel, at a scene pixel stride of two
-    // it ramps across the sky and combs the clouds into bands
-    FragColor = cloudLayer(cloudSkyDir(dir), cameraPos, sunDir, moonDir, sunAltitude, pixelAngle,
-      cloudJitter(gl_FragCoord.xy), CLOUD_STEPS);
-    return;
-  }
+  vec3 dir = normalize(reconstructPosition(c, 1.0));
+  float pixelAngle = length(normalize(reconstructPosition(c + vec2(0.0, 1.0), 1.0)) - dir);
+  // jittered per cloud texel: the noise is only even at a stride of one texel, at a scene pixel stride of two
+  // it ramps across the sky and combs the clouds into bands
+  FragColor = cloudLayer(cloudSkyDir(dir), cameraPos, sunDir, moonDir, sunAltitude, pixelAngle,
+    cloudJitter(gl_FragCoord.xy), CLOUD_STEPS);
+#else
   ivec2 px = ivec2(gl_FragCoord.xy);
   vec4 color = texelFetch(sceneColor, px, 0);
   float d = texelFetch(sceneDepth, px, 0).r;
@@ -507,19 +513,35 @@ void main() {
   }
 
   vec3 lit;
+  // Where nothing but the volumetric fog is left to change the lit color, it stays linear and is fogged as it is,
+  // instead of going to sRGB and back (applyFogSample)
+  bool linearLit = false;
   if (compositePart != 5) {
-  lit = shade(color.rgb, light);
-  if (wet > 0.0) {
-    lit = weatherWetSheen(lit, p, n, wet, ao, skyHorizon(sunAltitude));
-  }
-  lit = waterOver(px, p, color.rgb, shadow, lit, material.b);
-  if (compositePart == 4) { FragColor = vec4(lit, 1.0); return; }
+    lit = shadeLinear(color.rgb, light);
+    linearLit = fogDone && compositePart == 0 && wet <= 0.0 && cover >= 1.0 && transparent == vec4(0.0)
+      && !waterUnder(px, material.b);
+    if (!linearLit) {
+      lit = linearToSrgb(lit);
+      if (wet > 0.0) {
+        lit = weatherWetSheen(lit, p, n, wet, ao, skyHorizon(sunAltitude));
+      }
+      lit = waterOver(px, p, color.rgb, shadow, lit, material.b);
+      if (compositePart == 4) { FragColor = vec4(lit, 1.0); return; }
+    }
   } else {
     lit = texelFetch(compositeParts, ivec3(px, 0), 0).rgb;
   }
-  lit = mix(lit, fogColor, max(fogAmount(p + cameraPos), envFogAmount(p, (p + cameraPos).xz)));
+  float distanceFog = max(fogAmount(p + cameraPos), envFogAmount(p, (p + cameraPos).xz));
   // the world fades into the sky behind it toward the draw distance, so where the culling stops never shows
   float edge = inside ? edgeFadeAmount(p + cameraPos) : 0.0;
+  if (linearLit) {
+    if (distanceFog <= 0.0 && edge <= 0.002) {
+      FragColor = vec4(applyFogLinear(lit, fog), 1.0);
+      return;
+    }
+    lit = linearToSrgb(lit);
+  }
+  lit = mix(lit, fogColor, distanceFog);
   if (edge > 0.002) {
     lit = mix(lit, skyBehind(vec2(px) + 0.5, normalize(p), fogColor, sunAndSky), edge);
   }
@@ -527,4 +549,5 @@ void main() {
   lit = mix(behind, lit, cover);
   FragColor = overTransparent(transparent, vec4(lit, 1.0));
   FragColor.rgb = fogDone ? applyFogSample(FragColor.rgb, fog) : applyVolumetricFog(px, FragColor.rgb, d);
+#endif
 }

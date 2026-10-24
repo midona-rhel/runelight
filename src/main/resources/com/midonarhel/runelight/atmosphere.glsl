@@ -66,7 +66,7 @@ vec3 skyFill(vec3 n, float alt, float up) {
   vec4 irr = textureLod(skyIrradiance, skyCacheUv(n), 0.0);
   vec3 sky = irr.rgb / max(irr.a, 1e-3) * (SKY_CACHE_LIGHT * skyBoost(alt));
   // the cache leaves out lightning, which skyLight has through skyZenith
-  sky += srgbToLinear(LIGHTNING_COLOR * (LIGHTNING_SKY * weatherOvercast.z)) * SKY_LIGHT;
+  sky += skyLightning();
   vec3 cached = sky * mix(up, 0.5 + 0.5 * up, SKY_CACHE_SIDES);
   // a broken capture must not black out the light
   if (any(isnan(cached)) || any(isinf(cached))) {
@@ -105,7 +105,13 @@ vec3 celestial(vec3 dir, vec3 sunDir, vec3 moonDir, float alt, float time, float
 
   float night = smoothstep(-4.0, -14.0, alt) * clear;
   float mm = max(dot(dir, moonDir), 0.0);
-  c += vec3(0.85, 0.88, 1.00) * ((smoothstep(0.99990, 0.99995, mm) * MOON_DISC * through + pow(mm, 60.0) * MOON_HALO * T)
+  // the halo goes as mm^60, multiplied out
+  float m3 = mm * mm * mm;
+  float m15 = m3 * m3;
+  m15 *= m15 * m3;
+  float m60 = m15 * m15;
+  m60 *= m60;
+  c += vec3(0.85, 0.88, 1.00) * ((smoothstep(0.99990, 0.99995, mm) * MOON_DISC * through + m60 * MOON_HALO * T)
     * night);
 
   // stars wait for the sky to darken, and thin out toward the horizon and in hazy, damp air

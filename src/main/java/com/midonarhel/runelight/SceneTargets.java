@@ -331,6 +331,8 @@ class SceneTargets
 		glUniform1i(fogUniform, fog ? 1 : 0);
 		glBindFramebuffer(GL_FRAMEBUFFER, fboDenoiseTemp);
 		glDrawBuffers(fog ? FIRST_TWO_BUFFERS : FIRST_BUFFER);
+		// both passes write every texel: cleared first, the GPU starts them without loading the old contents
+		glClear(GL_COLOR_BUFFER_BIT);
 		bind(aoUnit, texAo);
 		bind(shadowUnit, texShadow);
 		// without the fog its unit holds none: texFog may be attached to fboDenoise, unwritten
@@ -339,6 +341,7 @@ class SceneTargets
 		glDrawArrays(GL_TRIANGLES, 0, 3);
 		glBindFramebuffer(GL_FRAMEBUFFER, fboDenoise);
 		glDrawBuffers(fog ? FIRST_TWO_BUFFERS : FIRST_BUFFER);
+		glClear(GL_COLOR_BUFFER_BIT);
 		bind(shadowUnit, texShadowTemp);
 		if (fog)
 		{

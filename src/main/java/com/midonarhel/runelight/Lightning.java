@@ -45,8 +45,6 @@ class Lightning
 	private float flash;
 	private float boltVisibility;
 
-	private int uniBolt;
-
 	/**
 	 * @param storm Weather's storm strength, 0 to 1
 	 * @param focusX player position, world units; bolts come down around it
@@ -160,18 +158,19 @@ class Lightning
 	}
 
 	/**
-	 * Look up the composite program's lightning uniform. Call with each newly compiled composite.
+	 * A composite program's lightning uniform. Call with each newly compiled composite.
 	 */
-	void locateComposite(int program)
+	static int locateComposite(int program)
 	{
-		uniBolt = glGetUniformLocation(program, "lightningBolt");
+		return glGetUniformLocation(program, "lightningBolt");
 	}
 
 	/**
-	 * With the composite program in use: where the bolt is relative to the camera and how visible it is.
+	 * With a composite program in use: where the bolt is relative to the camera and how visible it is (location: its
+	 * locateComposite).
 	 */
-	void bind(float cameraX, float cameraZ)
+	void bind(int location, float cameraX, float cameraZ)
 	{
-		glUniform4f(uniBolt, boltX - cameraX, boltZ - cameraZ, boltVisibility, boltSeed);
+		glUniform4f(location, boltX - cameraX, boltZ - cameraZ, boltVisibility, boltSeed);
 	}
 }

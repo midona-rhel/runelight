@@ -1,7 +1,7 @@
 // Rooms (RoomMap.java): which building room every tile is in, so point lights stay in their room instead of
-// shining through walls. Stored in the light buffer after the lights, from
-// texel ROOM_BASE: a header (enabled, tiles per side, extended tiles before local tile 0, whether the lights keep to
-// their rooms), then four texels per tile (version 2):
+// shining through walls. A header (roomHeader: enabled, tiles per side, extended tiles before local tile 0, whether the
+// lights keep to their rooms), and in the light buffer after the lights, from texel ROOM_BASE + 1 (ROOM_BASE holds
+// RoomMap's own copy of the header), four texels per tile (version 2):
 // the four planes' rooms (room + porch room * 4096, 0 outdoors), the four planes' floor heights (world y, down), and
 // the four planes' walls: the tile's wall bits (ROOM_WALL_*, as WallMap.java), plus 64 times the half the tile's
 // room has where a diagonal wall crosses it (0 the north-west or north-east one), plus 128 times the room of the
@@ -10,6 +10,8 @@
 // (the code is negative then; ROOM_ANY is the outdoors), or, for a room tile, the room across a hole in its floor or
 // ceiling (positive).
 // A light's room code is its second texel's w (LightClusters.java). Needs lightData and cluster_config.
+
+uniform vec4 roomHeader;  // LightClusters.getRoomHeader
 
 // how far above a floor a point must be to be on that storey (world units): the tops of the walls stay on theirs
 #define ROOM_PLANE_MARGIN 24.0
@@ -35,7 +37,7 @@
 // y the room whose porch it is or that lies across a hole, 0 none, plus ROOM_SOFT for an opening's porch;
 // z the storey (plane), 0 where no room is
 ivec3 roomPlaneAt(vec3 w) {
-  vec4 h = texelFetch(lightData, ROOM_BASE);
+  vec4 h = roomHeader;
   if (h.x < 0.5) {
     return ivec3(-1, 0, 0);
   }
@@ -106,7 +108,7 @@ float roomShare(float code, ivec2 r) {
 
 // roomAt for lighting: unknown (every light reaches it) when the lights don't keep to their rooms
 ivec3 lightRoomPlaneAt(vec3 w) {
-  return texelFetch(lightData, ROOM_BASE).w > 0.5 ? roomPlaneAt(w) : ivec3(-1, 0, 0);
+  return roomHeader.w > 0.5 ? roomPlaneAt(w) : ivec3(-1, 0, 0);
 }
 
 ivec2 lightRoomAt(vec3 w) {
@@ -115,7 +117,7 @@ ivec2 lightRoomAt(vec3 w) {
 
 // Version 2 bakes wall distance; older running clients have no ambient field yet.
 float roomAmbientFill(vec3 world, vec3 normal) {
-  vec4 header = texelFetch(lightData, ROOM_BASE);
+  vec4 header = roomHeader;
   if (header.x < 1.5) return 0.0;
   vec3 receiver = world + normal;
   receiver.y -= max(-normal.y, 0.0) * ROOM_PLANE_MARGIN;

@@ -8,8 +8,8 @@
 // shading what is seen through it; at a slant the surface turns into the sky, clouds and all, by Fresnel, with sharp
 // reflections of the world. Sharp glints from the sun and moon, lamps' streaks, foam.
 //
-// Two passes of the composite program. The first (waterPass 1) runs at half resolution over the water only and
-// works out the surface (waterShadeHalf), into waterShaded. The second, the full resolution composite, lights the bed
+// Two passes of the composite. The first (COMPOSITE_WATER) runs at half resolution over the water only and works
+// out the surface (waterShadeHalf), into waterShaded. The second, the full resolution composite, lights the bed
 // as any ground and only blends: the bed tinted by its depth under the surface, then the surface over it (waterOver),
 // using the full resolution surface for the edges.
 // Included by composite_frag.glsl after its lighting helpers (shadows, point light clusters).
@@ -21,7 +21,6 @@
 uniform int waterEnabled;
 uniform usampler2D waterSurface;  // RGBA16UI, 64 bits packed by water_frag.glsl (waterUnpack); 0 no water
 uniform usampler2D waterShaded;   // RGBA32UI, half resolution: the shaded surface (waterShadeHalf)
-uniform int waterPass;            // 1 while the half resolution water pass runs
 uniform int waterReflections;     // a few screen-space taps for the world in the reflection
 uniform float waterClarity;       // multiplier on how deep the bed stays visible
 uniform int waterCaustics;
@@ -163,7 +162,10 @@ float waterGlint(vec3 nrm, vec3 toLight, vec3 toCamera, vec3 tAlong, vec3 tAcros
     return 0.0;
   vec3 hs = h / nh - nrm;
   float ea = dot(hs, tAlong) / along, ec = dot(hs, tAcross) / across;
-  float fh = 0.02 + 0.98 * pow(1.0 - clamp(dot(h, toCamera), 0.0, 1.0), 5.0);
+  // Schlick's Fresnel, (1 - cos)^5
+  float f = 1.0 - clamp(dot(h, toCamera), 0.0, 1.0);
+  float f2 = f * f;
+  float fh = 0.02 + 0.98 * (f2 * f2 * f);
   return exp(-(ea * ea + ec * ec)) / (3.14159 * along * across) * fh * clamp(dot(nrm, toLight) * 4.0, 0.0, 1.0);
 }
 
@@ -417,14 +419,20 @@ vec3 waterGlitter(ivec2 px, vec3 nrm, vec3 v, float shine, float foam, float sha
 
 // ---------------------------------------------------------------------------------------------------------------
 // The full resolution blend.
+
+// Whether water can be over pixel px, mask its material target's water channel: land terrain is never under water
+// (the surface runs on under the banks, hidden, and never over land), nor is anything outside the rect
+bool waterUnder(ivec2 px, float mask) {
+  return waterEnabled != 0 && mask >= 0.25 && all(greaterThanEqual(px, waterRect.xy))
+    && all(lessThan(px, waterRect.zw));
+}
+
 // p: camera-relative position of this pixel's scene surface (the bed, or something else under the water)
 // albedo (sRGB), shadow: its color and sun shadow from the composite; lit: its lit color (sRGB); mask: the material
 // target's water channel (frag.glsl)
 // Returns the color with the water over it, or lit unchanged; moves p to the water surface for the fog.
 vec3 waterOver(ivec2 px, inout vec3 p, vec3 albedo, float shadow, vec3 lit, float mask) {
-  // land terrain is never under water: the surface runs on under the banks, hidden, and never over land; nor is
-  // anything outside the rect
-  if (waterEnabled == 0 || mask < 0.25 || any(lessThan(px, waterRect.xy)) || any(greaterThanEqual(px, waterRect.zw)))
+  if (!waterUnder(px, mask))
     return lit;
   uvec4 ws = texelFetch(waterSurface, px, 0);
   if (ws.b == 0u)

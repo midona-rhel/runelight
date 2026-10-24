@@ -104,7 +104,6 @@ class GlobalIllumination
 		uniSkyCacheWeight;
 	private int uniBlend;
 	private int uniAoEnabled = -1, uniAoCamera = -1;
-	private int uniWeight = -1;
 
 	private final int[] probeTextures = new int[3];
 	private int metaTexture, probeFbo, skyTexture, skyFbo, pbo;
@@ -251,9 +250,10 @@ class GlobalIllumination
 		glUseProgram(0);
 	}
 
-	void locateComposite(int program)
+	/** A composite program's giWeight uniform. */
+	static int locateComposite(int program)
 	{
-		uniWeight = glGetUniformLocation(program, "giWeight");
+		return glGetUniformLocation(program, "giWeight");
 	}
 
 	/** GL resources and the worker. */
@@ -615,10 +615,10 @@ class GlobalIllumination
 		glActiveTexture(GL_TEXTURE0);
 	}
 
-	/** With the composite in use: how much of the probes' bounced light it adds. */
-	void setComposite(float strength)
+	/** With a composite program in use: how much of the probes' bounced light it adds (its locateComposite). */
+	void setComposite(int location, float strength)
 	{
-		glUniform1f(uniWeight, isActive() ? weight * strength : 0);
+		glUniform1f(location, isActive() ? weight * strength : 0);
 	}
 
 	// ---------------------------------------------------------------------------------------------------------

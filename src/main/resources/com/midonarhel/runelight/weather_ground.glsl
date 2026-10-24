@@ -32,6 +32,8 @@ vec3 weatherWetSheen(vec3 lit, vec3 p, vec3 n, float wet, float ao, vec3 sky) {
   if (wet <= 0.0) {
     return lit;
   }
-  float fresnel = pow(1.0 - max(dot(-normalize(p), n), 0.0), 4.0);
+  float fresnel = 1.0 - max(dot(-normalize(p), n), 0.0);
+  fresnel *= fresnel;
+  fresnel *= fresnel;
   return lit + sky * (WET_SHEEN * max(-n.y, 0.0) * (0.3 + 0.7 * fresnel) * wet * ao);
 }

@@ -76,8 +76,6 @@ class VolumetricFog
 
 	private Locations fog;
 
-	private int uniCompositeEnabled;
-
 	private int texNoise;
 
 	/** A fog program and its uniforms' locations. */
@@ -175,22 +173,15 @@ class VolumetricFog
 	}
 
 	/**
-	 * Point the composite program's fog sampler at {@code fogUnit}. Call with each newly compiled composite.
+	 * Point a composite program's fog sampler at {@code fogUnit}, and return the location of its switch, which says
+	 * whether it applies the fog rendered this frame. Call with each newly compiled composite.
 	 */
-	void locateComposite(int compositeProgram, int fogUnit)
+	static int locateComposite(int compositeProgram, int fogUnit)
 	{
-		uniCompositeEnabled = glGetUniformLocation(compositeProgram, "volumetricFog");
 		glUseProgram(compositeProgram);
 		glUniform1i(glGetUniformLocation(compositeProgram, "sceneFog"), fogUnit);
 		glUseProgram(0);
-	}
-
-	/**
-	 * With the composite program in use: whether it should apply the fog rendered this frame.
-	 */
-	void setCompositeEnabled(boolean enabled)
-	{
-		glUniform1i(uniCompositeEnabled, enabled ? 1 : 0);
+		return glGetUniformLocation(compositeProgram, "volumetricFog");
 	}
 
 	/**
@@ -338,6 +329,8 @@ class VolumetricFog
 
 		glBindFramebuffer(GL_FRAMEBUFFER, fbo);
 		glViewport(0, 0, halfWidth, halfHeight);
+		// the march writes every texel: cleared first, the GPU starts the pass without loading the old contents
+		glClear(GL_COLOR_BUFFER_BIT);
 		glUseProgram(u.program);
 
 		glUniformMatrix4fv(u.uniViewProj, false, viewProj);

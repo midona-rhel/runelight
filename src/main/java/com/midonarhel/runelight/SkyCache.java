@@ -177,7 +177,6 @@ class SkyCache
 	private int uniBlend;
 	private int uniIrradianceSize, uniIrradianceBlend, uniIrradianceLod, uniIrradianceSunDir, uniIrradianceSunAltitude,
 		uniIrradianceOvercast;
-	private int uniMode, uniHaze, uniStars, uniWeight;
 	// how much of the composite's sky light comes from the cache, eased toward 1 while it is used and 0 when not
 	private float weight;
 	private long weightMillis;
@@ -285,28 +284,34 @@ class SkyCache
 		schedule.invalidate();
 	}
 
-	/**
-	 * Look up the composite's atmosphere uniforms and point its cache sampler at {@code unit}, its irradiance
-	 * sampler at {@code unit + 1}.
-	 */
-	void locateComposite(int program, int unit)
+	/** A composite program's atmosphere uniforms. */
+	static final class CompositeUniforms
 	{
-		uniMode = glGetUniformLocation(program, "skyCacheMode");
-		uniHaze = glGetUniformLocation(program, "skyHaze");
-		uniStars = glGetUniformLocation(program, "starBrightness");
-		uniWeight = glGetUniformLocation(program, "skyCacheWeight");
-		glUseProgram(program);
-		glUniform1i(glGetUniformLocation(program, "skyCache"), unit);
-		glUniform1i(glGetUniformLocation(program, "skyIrradiance"), unit + 1);
-		glUseProgram(0);
+		private int mode = -1, haze = -1, stars = -1, weight = -1;
+
+		/**
+		 * Look them up and point the program's cache sampler at {@code unit}, its irradiance sampler at
+		 * {@code unit + 1}.
+		 */
+		void locate(int program, int unit)
+		{
+			mode = glGetUniformLocation(program, "skyCacheMode");
+			haze = glGetUniformLocation(program, "skyHaze");
+			stars = glGetUniformLocation(program, "starBrightness");
+			weight = glGetUniformLocation(program, "skyCacheWeight");
+			glUseProgram(program);
+			glUniform1i(glGetUniformLocation(program, "skyCache"), unit);
+			glUniform1i(glGetUniformLocation(program, "skyIrradiance"), unit + 1);
+			glUseProgram(0);
+		}
 	}
 
 	/**
-	 * With the composite in use, once a frame: how it uses the cache (MODE_* bits, 0 when it was not updated this
-	 * frame), how hazy the air is and how bright the stars are. The sky light keeps coming partly from the last
-	 * capture while it eases back to the analytic one; {@link #bind} must have been called either way.
+	 * Once a frame, before the composite: how it uses the cache (MODE_* bits, 0 when it was not updated this frame).
+	 * The sky light keeps coming partly from the last capture while it eases back to the analytic one; {@link #bind}
+	 * must have been called either way.
 	 */
-	void setCompositeUniforms(int mode, float haze, float stars)
+	void easeComposite(int mode)
 	{
 		long now = System.currentTimeMillis();
 		// a long frame (loading) must not jump it
@@ -318,10 +323,18 @@ class SkyCache
 		{
 			weight = 0;
 		}
-		glUniform1i(uniMode, weight > 0 ? MODE_LIGHT : 0);
-		glUniform1f(uniWeight, weight);
-		glUniform1f(uniHaze, haze);
-		glUniform1f(uniStars, stars);
+	}
+
+	/**
+	 * With a composite program in use, after {@link #easeComposite}: this frame's use of the cache, how hazy the air
+	 * is and how bright the stars are.
+	 */
+	void setComposite(CompositeUniforms u, float haze, float stars)
+	{
+		glUniform1i(u.mode, weight > 0 ? MODE_LIGHT : 0);
+		glUniform1f(u.weight, weight);
+		glUniform1f(u.haze, haze);
+		glUniform1f(u.stars, stars);
 	}
 
 	// finished captures, for the global illumination, which relights with the sky

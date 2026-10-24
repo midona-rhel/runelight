@@ -25,7 +25,7 @@ class Clouds
 	private static final float WIND_SPEED_CALM = 160;
 	private static final float WIND_SPEED = 320;
 
-	/** Uniform locations of one program that draws clouds: the composite, and the sky cache's capture. */
+	/** Uniform locations of one program that draws clouds: the composite's, and the sky cache's capture. */
 	static final class Locations
 	{
 		int enabled, shadows, coverage, weather, offset, detail, type;
@@ -33,7 +33,6 @@ class Clouds
 		int eye, ground;
 	}
 
-	private final Locations composite = new Locations();
 	private int texNoise;
 	private double windX, windZ;
 	private long lastNanos;
@@ -82,14 +81,7 @@ class Clouds
 		ground = focalY;
 	}
 
-	/**
-	 * Look up the composite program's cloud uniforms. Call with each newly compiled composite.
-	 */
-	void locateComposite(int program, int noiseUnit)
-	{
-		locate(composite, program, noiseUnit);
-	}
-
+	/** Look up a program's cloud uniforms into l and point its noise sampler at noiseUnit. */
 	static void locate(Locations l, int program, int noiseUnit)
 	{
 		l.enabled = glGetUniformLocation(program, "cloudsEnabled");
@@ -181,18 +173,6 @@ class Clouds
 		glActiveTexture(GL_TEXTURE0 + noiseUnit);
 		glBindTexture(GL_TEXTURE_2D, texNoise);
 		glActiveTexture(GL_TEXTURE0);
-	}
-
-	/**
-	 * With the composite program in use: set its uniforms and bind the noise. {@link #update} first.
-	 */
-	void bindComposite(int noiseUnit)
-	{
-		apply(composite);
-		if (enabled)
-		{
-			bindNoise(noiseUnit);
-		}
 	}
 
 	boolean isEnabled()

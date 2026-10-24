@@ -303,11 +303,16 @@ float skyBoostAt(float alt) {
   return boost;
 }
 
+// the lightning flash's part of skyLightAt, for light that leaves it out (atmosphere.glsl's sky cache)
+vec3 skyLightningAt() {
+  return srgbToLinear(LIGHTNING_COLOR * (LIGHTNING_SKY * weatherOvercast.z)) * SKY_LIGHT;
+}
+
 // The colors above at a sun altitude. The composite uses them at every pixel, always at this frame's altitude: there
 // composite_vert.glsl works them out once and hands them over (SKY_FRAME_CONSTANTS), instead of every pixel walking
 // the palette and the overcast mixing again, which cost over a millisecond.
 #ifdef SKY_FRAME_CONSTANTS
-flat in vec3 skyFrame[7];
+flat in vec3 skyFrame[8];
 vec3 skyZenith(float alt) { return skyFrame[0]; }
 vec3 skyHorizon(float alt) { return skyFrame[1]; }
 vec3 sunLight(float alt) { return skyFrame[2]; }
@@ -315,6 +320,7 @@ vec3 moonLight(float alt) { return skyFrame[3]; }
 vec3 ambientLight(float alt) { return skyFrame[4]; }
 vec3 skyLight(float alt) { return skyFrame[5]; }
 float skyBoost(float alt) { return skyFrame[6].x; }
+vec3 skyLightning() { return skyFrame[7]; }
 #else
 vec3 skyZenith(float alt) { return skyZenithAt(alt); }
 vec3 skyHorizon(float alt) { return skyHorizonAt(alt); }
@@ -323,6 +329,7 @@ vec3 moonLight(float alt) { return moonLightAt(alt); }
 vec3 ambientLight(float alt) { return ambientLightAt(alt); }
 vec3 skyLight(float alt) { return skyLightAt(alt); }
 float skyBoost(float alt) { return skyBoostAt(alt); }
+vec3 skyLightning() { return skyLightningAt(); }
 #endif
 
 // Underground: no sun, so a fixed soft key light from above keeps shapes readable. y points down.
@@ -337,11 +344,16 @@ vec3 caveLight(vec3 n) {
 // linear value above which highlights are compressed toward 1
 #define SHOULDER 0.75
 
-// Light an sRGB surface color in linear space and return sRGB, with a soft highlight shoulder
-vec3 shade(vec3 srgb, vec3 light) {
+// Light an sRGB surface color in linear space, with a soft highlight shoulder; stays linear
+vec3 shadeLinear(vec3 srgb, vec3 light) {
   vec3 c = srgbToLinear(srgb) * light;
   c = mix(c, 1.0 - (1.0 - SHOULDER) * exp(-(c - SHOULDER) / (1.0 - SHOULDER)), step(SHOULDER, c));
-  return linearToSrgb(clamp(c, 0.0, 1.0));
+  return clamp(c, 0.0, 1.0);
+}
+
+// the same, returning sRGB
+vec3 shade(vec3 srgb, vec3 light) {
+  return linearToSrgb(shadeLinear(srgb, light));
 }
 
 float hash13(vec3 p) {
@@ -366,7 +378,13 @@ vec3 sunGlow(vec3 dir, vec3 sunDir, float alt) {
   float sunVis = smoothstep(-6.0, 2.0, alt) * overcastClear();
   float mu = max(dot(dir, sunDir), 0.0);
   vec3 glowColor = mix(vec3(1.0, 0.55, 0.30), vec3(1.0, 0.85, 0.65), smoothstep(0.0, 25.0, alt));
-  return glowColor * (pow(mu, 10.0) * 0.30 + pow(mu, 120.0) * 0.50) * sunVis;
+  // mu^10 and mu^120, multiplied out
+  float m2 = mu * mu;
+  float m4 = m2 * m2;
+  float m10 = m4 * m4 * m2;
+  float m40 = m10 * m10;
+  m40 *= m40;
+  return glowColor * (m10 * 0.30 + m40 * m40 * m40 * 0.50) * sunVis;
 }
 
 // dir: normalized view ray, game coordinates (y down)

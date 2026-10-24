@@ -219,13 +219,49 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		.add(GL_VERTEX_SHADER, "composite_vert.glsl")
 		.add(GL_FRAGMENT_SHADER, "denoise_frag.glsl");
 
-	private int glCompositeProgram;
-	private int uniCompositePart;
+	// The composite (composite_frag.glsl) is compiled once for each of its passes, so that each program holds only its
+	// own path: a GPU gives a program the registers of its heaviest path, and the full resolution composite paid for
+	// the cloud march and the water's reflections. The passes share their uniforms, set on each before it draws
+	// (useComposite).
+	private static final int COMPOSITE_FULL = 0, COMPOSITE_CLOUDS = 1, COMPOSITE_WATER = 2;
+
+	/** One of the composite's programs and its uniforms. */
+	private static final class CompositeProgram
+	{
+		final int pass;
+		int program;
+		int part, aoEnabled, aoStrength;
+		int cameraPos, time, outdoors, proceduralSky, lightingEnabled, sunDir, moonDir, casterDir, sunIsCaster,
+			sunAltitude, overcast, weatherLight;
+		int shadowsEnabled, lightProjRel, shadowRadius, shadowDepthRange, shadowMapSize;
+		int pointLights, lightVisSize, roomHeader, interiorLight, skylightMode, skylightOn, skylightFloor;
+		int skyVoid, useFog, fogDepth, drawDistance, expandedChunks, clientSkyColor;
+		int giWeight, lightningBolt, volumetricFog;
+		final FrameUniforms frame = new FrameUniforms();
+		final EnvironmentUniforms env = new EnvironmentUniforms();
+		final EdgeFade.Uniforms edge = new EdgeFade.Uniforms();
+		final SurfaceMaterials.Uniforms materials = new SurfaceMaterials.Uniforms();
+		final Clouds.Locations clouds = new Clouds.Locations();
+		final Water.CompositeUniforms water = new Water.CompositeUniforms();
+		final SkyCache.CompositeUniforms skyCache = new SkyCache.CompositeUniforms();
+		final WeatherGround.CompositeUniforms ground = new WeatherGround.CompositeUniforms();
+
+		CompositeProgram(int pass)
+		{
+			this.pass = pass;
+		}
+	}
+
+	private final CompositeProgram compositeFull = new CompositeProgram(COMPOSITE_FULL);
+	private final CompositeProgram compositeClouds = new CompositeProgram(COMPOSITE_CLOUDS);
+	private final CompositeProgram compositeWater = new CompositeProgram(COMPOSITE_WATER);
+	private final CompositeProgram[] composites = {compositeFull, compositeClouds, compositeWater};
 	private static final int COMPOSITE_PARTS_UNIT = 31;
-	private int uniCompositeDebugView;
-	private int uniCompositeAoEnabled;
-	private int uniCompositeAoStrength;
-	private final FrameUniforms compositeFrame = new FrameUniforms();
+	// this frame's time for the composite's passes, seconds since the start
+	private float compositeTime;
+	// this frame's point lights on, and whether the light clusters and the rooms were uploaded and bound
+	// (prepareLighting); whether the wet ground is drawn
+	private boolean framePointLights, frameLightClusters, frameGround;
 
 	private int glAoProgram;
 	private int glDenoiseProgram;
@@ -262,10 +298,6 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 	private final HitchMonitor hitchMonitor = new HitchMonitor();
 	private final java.util.ArrayList<PointLight> frameLights = new java.util.ArrayList<>();
 	private final PointLight testLight = new PointLight();
-	private int uniCompositePointLights;
-	private int uniCompositeLightVisSize;
-	private int uniCompositeCloudPass;
-	private int uniCompositeInteriorLight;
 	private int uniAlphaPass;
 	private int uniSceneOutdoors;
 	private int uniSceneProceduralSky;
@@ -273,7 +305,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 	private int uniSceneSunIsCaster;
 	private int uniSceneSunAltitude;
 	private int uniSceneOvercast;
-	private int uniSceneWeatherLight, uniCompositeWeatherLight;
+	private int uniSceneWeatherLight;
 	// the wind for foliage sway, on the scene and shadow programs
 	private Wind.Locations sceneWind, shadowWind;
 	private long lastSwayTick;
@@ -281,7 +313,6 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 	private static final int ALPHA_LAYER_UNIT = RuneLightPlugin.COMPOSITE_TEXTURE_UNIT + 8;
 	private static final int MATERIAL_UNIT = RuneLightPlugin.COMPOSITE_TEXTURE_UNIT + 9;
 	private final SurfaceMaterials.Uniforms sceneMaterials = new SurfaceMaterials.Uniforms();
-	private final SurfaceMaterials.Uniforms compositeMaterials = new SurfaceMaterials.Uniforms();
 	private final WindSway.Uniforms sceneSway = new WindSway.Uniforms();
 	private final WindSway.Uniforms shadowSway = new WindSway.Uniforms();
 	private static final int FOG_TEXTURE_UNIT = RuneLightPlugin.COMPOSITE_TEXTURE_UNIT + 10;
@@ -313,30 +344,6 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 	private int uniShadowTexturesReady;
 	private int uniShadowEmissiveCasts;
 
-	// composite lighting uniforms
-	private int uniCompositeCameraPos;
-	private int uniCompositeTime;
-	private int uniCompositeOutdoors;
-	private int uniCompositeProceduralSky;
-	private int uniCompositeLightingEnabled;
-	private int uniCompositeSunDir;
-	private int uniCompositeMoonDir;
-	private int uniCompositeCasterDir;
-	private int uniCompositeSunIsCaster;
-	private int uniCompositeSunAltitude;
-	private int uniCompositeOvercast;
-	private int uniCompositeShadowsEnabled;
-	private int uniCompositeLightProjRel;
-	private int uniCompositeShadowRadius;
-	private int uniCompositeShadowDepthRange;
-	private int uniCompositeShadowMapSize;
-	private int uniCompositeSkyVoid;
-	private int uniCompositeUseFog;
-	private int uniCompositeFogDepth;
-	private int uniCompositeDrawDistance;
-	private int uniCompositeExpandedChunks;
-	private int uniCompositeClientSkyColor;
-
 	private long frameCpuStart;
 	private volatile double cpuFrameMs;
 	private long lastSwapNanos;
@@ -345,7 +352,6 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 	private final DayCycle dayCycle = new DayCycle();
 	final EnvironmentManager environmentManager = new EnvironmentManager();
 	private final EnvironmentUniforms sceneEnvUniforms = new EnvironmentUniforms();
-	private final EnvironmentUniforms compositeEnvUniforms = new EnvironmentUniforms();
 	private final ShadowMap shadowMap = new ShadowMap();
 	private final Weather weather = new Weather();
 	// automatic weather's forecast, and each region's temperature and ground; both follow the game clock
@@ -386,7 +392,6 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 	private static final int SKY_FIELD_UNIT = RuneLightPlugin.COMPOSITE_TEXTURE_UNIT + 25;
 	private final SkyFieldMap skyField = new SkyFieldMap();
 	private final LightOcclusion lightOcclusion = new LightOcclusion();
-	private int uniCompositeSkylightMode, uniCompositeSkylightOn, uniCompositeSkylightFloor;
 	// whether the AO pass worked the sky visibility out this frame; whether it is wanted (under the open sky, logged
 	// in), and where the player is for the sky grid's tracing (world tiles)
 	private boolean frameSkylight;
@@ -542,7 +547,6 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 	private int uniDrawDistance;
 	private final EdgeFade edgeFade = new EdgeFade();
 	private final EdgeFade.Uniforms sceneEdgeUniforms = new EdgeFade.Uniforms();
-	private final EdgeFade.Uniforms compositeEdgeUniforms = new EdgeFade.Uniforms();
 	private int uniExpandedMapLoadingChunks;
 	private int uniSmoothBanding;
 	private int uniWorldProj;
@@ -950,7 +954,8 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 				log.debug("Toggle {}", configChanged.getKey());
 				setupGpuFlags();
 			}
-			else if (configChanged.getKey().equals("uiScalingMode") || configChanged.getKey().equals("colorBlindMode"))
+			else if (configChanged.getKey().equals("uiScalingMode") || configChanged.getKey().equals("colorBlindMode")
+				|| configChanged.getKey().equals("debugView"))
 			{
 				clientThread.invokeLater(() ->
 				{
@@ -1048,6 +1053,9 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 						? "const int compositePart = 0;\n" : "uniform int compositePart;\n";
 				case "colorblind_mode":
 					return "#define COLORBLIND_MODE " + config.colorBlindMode().ordinal() + "\n";
+				case "debug_view":
+					// the composite's debug branches compile out; changing the view reloads the shaders
+					return "const int debugView = " + config.debugView().ordinal() + ";\n";
 			}
 			return null;
 		});
@@ -1060,6 +1068,13 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		return template;
 	}
 
+	/** One of the composite's programs (composite_frag.glsl's COMPOSITE_PASS). */
+	private int compileComposite(int pass) throws ShaderException
+	{
+		return COMPOSITE_PROGRAM.compile(createTemplate()
+			.add(key -> key.equals("composite_pass") ? "#define COMPOSITE_PASS " + pass + "\n" : null));
+	}
+
 	private void initProgram() throws ShaderException
 	{
 		// macOS core profile has no default VAO, so the shaders won't validate unless a VAO is bound
@@ -1068,7 +1083,10 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		Template template = createTemplate();
 		glProgram = PROGRAM.compile(template);
 		glUiProgram = UI_PROGRAM.compile(template);
-		glCompositeProgram = COMPOSITE_PROGRAM.compile(template);
+		for (CompositeProgram c : composites)
+		{
+			c.program = compileComposite(c.pass);
+		}
 		glAoProgram = AO_PROGRAM.compile(template);
 		glDenoiseProgram = DENOISE_PROGRAM.compile(template);
 		glShadowProgram = SHADOW_PROGRAM.compile(template);
@@ -1113,9 +1131,6 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		uniUiAlphaOverlay = glGetUniformLocation(glUiProgram, "alphaOverlay");
 		uniUiColorblindIntensity = glGetUniformLocation(glUiProgram, "colorblindIntensity");
 
-		uniCompositeDebugView = glGetUniformLocation(glCompositeProgram, "debugView");
-		uniCompositeAoEnabled = glGetUniformLocation(glCompositeProgram, "aoEnabled");
-		uniCompositeAoStrength = glGetUniformLocation(glCompositeProgram, "aoStrength");
 		uniAlphaPass = glGetUniformLocation(glProgram, "alphaPass");
 		uniSceneOutdoors = glGetUniformLocation(glProgram, "outdoors");
 		uniSceneProceduralSky = glGetUniformLocation(glProgram, "proceduralSky");
@@ -1127,12 +1142,10 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		sceneWind = Wind.locate(glProgram);
 		shadowWind = Wind.locate(glShadowProgram);
 		sceneEnvUniforms.locate(glProgram);
-		compositeEnvUniforms.locate(glCompositeProgram);
-		compositeFrame.locate(glCompositeProgram);
-		bindSceneSamplers(glCompositeProgram);
-		glUseProgram(glCompositeProgram);
-		glUniform1i(glGetUniformLocation(glCompositeProgram, "sceneAo"), AO_TEXTURE_UNIT);
-		glUseProgram(0);
+		for (CompositeProgram c : composites)
+		{
+			locateComposite(c);
+		}
 
 		uniDenoiseAxis = glGetUniformLocation(glDenoiseProgram, "denoiseAxis");
 		uniDenoiseFog = glGetUniformLocation(glDenoiseProgram, "denoiseFog");
@@ -1158,8 +1171,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		aoFrame.locate(glAoProgram);
 		bindSceneSamplers(glAoProgram);
 		globalIllumination.locateAo(glAoProgram, GI_PROBE_UNIT);
-		globalIllumination.locateComposite(glCompositeProgram);
-		weatherGround.locate(glAoProgram, glCompositeProgram, WEATHER_OCCLUSION_UNIT, WEATHER_FIELD_UNIT);
+		weatherGround.locate(glAoProgram, WEATHER_OCCLUSION_UNIT, WEATHER_FIELD_UNIT);
 		skyGrid.locateAo(glAoProgram, SKY_GRID_UNIT);
 		skyField.locateAo(glAoProgram, SKY_FIELD_UNIT);
 		water.locateAo(glAoProgram, WATER_DATA_UNIT);
@@ -1167,58 +1179,8 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		ShadowMap.unbind(SHADOW_RAW_UNIT, SHADOW_COMPARE_UNIT);
 		ShadowMap.unbind(WEATHER_OCCLUSION_UNIT, WEATHER_OCCLUSION_UNIT + 1);
 
-		int c = glCompositeProgram;
-		uniCompositeCameraPos = glGetUniformLocation(c, "cameraPos");
-		uniCompositeTime = glGetUniformLocation(c, "time");
-		uniCompositeOutdoors = glGetUniformLocation(c, "outdoors");
-		uniCompositeProceduralSky = glGetUniformLocation(c, "proceduralSky");
-		uniCompositeLightingEnabled = glGetUniformLocation(c, "lightingEnabled");
-		uniCompositeSunDir = glGetUniformLocation(c, "sunDir");
-		uniCompositeMoonDir = glGetUniformLocation(c, "moonDir");
-		uniCompositeCasterDir = glGetUniformLocation(c, "casterDir");
-		uniCompositeSunIsCaster = glGetUniformLocation(c, "sunIsCaster");
-		uniCompositeSunAltitude = glGetUniformLocation(c, "sunAltitude");
-		uniCompositeOvercast = glGetUniformLocation(c, "weatherOvercast");
-		uniCompositeWeatherLight = glGetUniformLocation(c, "weatherLight");
-		uniCompositeShadowsEnabled = glGetUniformLocation(c, "shadowsEnabled");
-		uniCompositeLightProjRel = glGetUniformLocation(c, "lightProjRel");
-		uniCompositeShadowRadius = glGetUniformLocation(c, "shadowRadius");
-		uniCompositeShadowDepthRange = glGetUniformLocation(c, "shadowDepthRange");
-		uniCompositeShadowMapSize = glGetUniformLocation(c, "shadowMapSize");
-		uniCompositeSkyVoid = glGetUniformLocation(c, "skyVoid");
-		uniCompositeUseFog = glGetUniformLocation(c, "useFog");
-		uniCompositeFogDepth = glGetUniformLocation(c, "fogDepth");
-		uniCompositeDrawDistance = glGetUniformLocation(c, "drawDistance");
-		compositeEdgeUniforms.locate(c);
-		uniCompositeExpandedChunks = glGetUniformLocation(c, "expandedMapLoadingChunks");
-		uniCompositeClientSkyColor = glGetUniformLocation(c, "clientSkyColor");
-		uniCompositePart = glGetUniformLocation(c, "compositePart");
-		glUseProgram(c);
-		glUniform1i(glGetUniformLocation(c, "sceneShadow"), SCENE_SHADOW_UNIT);
-		glUniform1i(glGetUniformLocation(c, "compositeParts"), COMPOSITE_PARTS_UNIT);
-		glUniform1i(glGetUniformLocation(c, "shadowCompare"), SHADOW_COMPARE_UNIT);
-		glUniform1i(glGetUniformLocation(c, "lightData"), LIGHT_DATA_UNIT);
-		glUniform1i(glGetUniformLocation(c, "clusterData"), CLUSTER_DATA_UNIT);
-		glUniform1i(glGetUniformLocation(c, "lightVis"), LIGHT_VIS_UNIT);
-		uniCompositeLightVisSize = glGetUniformLocation(c, "lightVisSize");
-		glUniform1i(glGetUniformLocation(c, "cloudHalf"), CLOUD_HALF_UNIT);
-		uniCompositeCloudPass = glGetUniformLocation(c, "cloudPass");
-		glUniform1i(glGetUniformLocation(c, "sceneAlpha"), ALPHA_LAYER_UNIT);
-		glUniform1i(glGetUniformLocation(c, "sceneMaterial"), MATERIAL_UNIT);
-		compositeMaterials.locate(c);
 		sceneMaterials.locate(glProgram);
 		sceneSway.locate(glProgram);
-		uniCompositePointLights = glGetUniformLocation(c, "pointLightsEnabled");
-		uniCompositeSkylightMode = glGetUniformLocation(c, "skylightMode");
-		uniCompositeSkylightOn = glGetUniformLocation(c, "skylightOn");
-		uniCompositeSkylightFloor = glGetUniformLocation(c, "skylightFloor");
-		uniCompositeInteriorLight = glGetUniformLocation(c, "interiorLight");
-		glUseProgram(0);
-		volumetricFog.locateComposite(c, FOG_TEXTURE_UNIT);
-		clouds.locateComposite(c, CLOUD_NOISE_UNIT);
-		water.locateComposite(c, WATER_DATA_UNIT, WATER_NOISE_UNIT);
-		skyCache.locateComposite(c, SKY_CACHE_UNIT);
-		weather.getLightning().locateComposite(c);
 
 		uniShadowLightProj = glGetUniformLocation(glShadowProgram, "lightProj");
 		uniShadowEntityProj = glGetUniformLocation(glShadowProgram, "entityProj");
@@ -1228,6 +1190,68 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		shadowSway.locate(glShadowProgram);
 		glUseProgram(glShadowProgram);
 		glUniform1i(glGetUniformLocation(glShadowProgram, "textures"), 1); // game texture array lives on unit 1
+		glUseProgram(0);
+	}
+
+	private void locateComposite(CompositeProgram c)
+	{
+		int p = c.program;
+		c.part = glGetUniformLocation(p, "compositePart");
+		c.aoEnabled = glGetUniformLocation(p, "aoEnabled");
+		c.aoStrength = glGetUniformLocation(p, "aoStrength");
+		c.cameraPos = glGetUniformLocation(p, "cameraPos");
+		c.time = glGetUniformLocation(p, "time");
+		c.outdoors = glGetUniformLocation(p, "outdoors");
+		c.proceduralSky = glGetUniformLocation(p, "proceduralSky");
+		c.lightingEnabled = glGetUniformLocation(p, "lightingEnabled");
+		c.sunDir = glGetUniformLocation(p, "sunDir");
+		c.moonDir = glGetUniformLocation(p, "moonDir");
+		c.casterDir = glGetUniformLocation(p, "casterDir");
+		c.sunIsCaster = glGetUniformLocation(p, "sunIsCaster");
+		c.sunAltitude = glGetUniformLocation(p, "sunAltitude");
+		c.overcast = glGetUniformLocation(p, "weatherOvercast");
+		c.weatherLight = glGetUniformLocation(p, "weatherLight");
+		c.shadowsEnabled = glGetUniformLocation(p, "shadowsEnabled");
+		c.lightProjRel = glGetUniformLocation(p, "lightProjRel");
+		c.shadowRadius = glGetUniformLocation(p, "shadowRadius");
+		c.shadowDepthRange = glGetUniformLocation(p, "shadowDepthRange");
+		c.shadowMapSize = glGetUniformLocation(p, "shadowMapSize");
+		c.pointLights = glGetUniformLocation(p, "pointLightsEnabled");
+		c.lightVisSize = glGetUniformLocation(p, "lightVisSize");
+		c.roomHeader = glGetUniformLocation(p, "roomHeader");
+		c.interiorLight = glGetUniformLocation(p, "interiorLight");
+		c.skylightMode = glGetUniformLocation(p, "skylightMode");
+		c.skylightOn = glGetUniformLocation(p, "skylightOn");
+		c.skylightFloor = glGetUniformLocation(p, "skylightFloor");
+		c.skyVoid = glGetUniformLocation(p, "skyVoid");
+		c.useFog = glGetUniformLocation(p, "useFog");
+		c.fogDepth = glGetUniformLocation(p, "fogDepth");
+		c.drawDistance = glGetUniformLocation(p, "drawDistance");
+		c.expandedChunks = glGetUniformLocation(p, "expandedMapLoadingChunks");
+		c.clientSkyColor = glGetUniformLocation(p, "clientSkyColor");
+		c.giWeight = GlobalIllumination.locateComposite(p);
+		c.lightningBolt = Lightning.locateComposite(p);
+		c.volumetricFog = VolumetricFog.locateComposite(p, FOG_TEXTURE_UNIT);
+		c.frame.locate(p);
+		c.env.locate(p);
+		c.edge.locate(p);
+		c.materials.locate(p);
+		c.ground.locate(p);
+		Clouds.locate(c.clouds, p, CLOUD_NOISE_UNIT);
+		c.water.locate(p, WATER_DATA_UNIT, WATER_NOISE_UNIT);
+		c.skyCache.locate(p, SKY_CACHE_UNIT);
+		bindSceneSamplers(p);
+		glUseProgram(p);
+		glUniform1i(glGetUniformLocation(p, "sceneAo"), AO_TEXTURE_UNIT);
+		glUniform1i(glGetUniformLocation(p, "sceneShadow"), SCENE_SHADOW_UNIT);
+		glUniform1i(glGetUniformLocation(p, "compositeParts"), COMPOSITE_PARTS_UNIT);
+		glUniform1i(glGetUniformLocation(p, "shadowCompare"), SHADOW_COMPARE_UNIT);
+		glUniform1i(glGetUniformLocation(p, "lightData"), LIGHT_DATA_UNIT);
+		glUniform1i(glGetUniformLocation(p, "clusterData"), CLUSTER_DATA_UNIT);
+		glUniform1i(glGetUniformLocation(p, "lightVis"), LIGHT_VIS_UNIT);
+		glUniform1i(glGetUniformLocation(p, "cloudHalf"), CLOUD_HALF_UNIT);
+		glUniform1i(glGetUniformLocation(p, "sceneAlpha"), ALPHA_LAYER_UNIT);
+		glUniform1i(glGetUniformLocation(p, "sceneMaterial"), MATERIAL_UNIT);
 		glUseProgram(0);
 	}
 
@@ -1259,8 +1283,11 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		glDeleteProgram(glUiProgram);
 		glUiProgram = 0;
 
-		glDeleteProgram(glCompositeProgram);
-		glCompositeProgram = 0;
+		for (CompositeProgram c : composites)
+		{
+			glDeleteProgram(c.program);
+			c.program = 0;
+		}
 
 		glDeleteProgram(glAoProgram);
 		glAoProgram = 0;
@@ -1286,8 +1313,8 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 	{
 		glBindVertexArray(vaoUiHandle);
 		Template template = createTemplate();
-		int scene = 0, ui = 0, composite = 0, ao = 0, denoise = 0, shadow = 0, fog = 0, waterSurface = 0,
-			upscale = 0;
+		int scene = 0, ui = 0, ao = 0, denoise = 0, shadow = 0, fog = 0, waterSurface = 0, upscale = 0;
+		int[] composite = new int[composites.length];
 		Weather.Programs weatherPrograms;
 		SkyCache.Programs skyCachePrograms;
 		GlobalIllumination.Programs giPrograms;
@@ -1295,7 +1322,10 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		{
 			scene = PROGRAM.compile(template);
 			ui = UI_PROGRAM.compile(template);
-			composite = COMPOSITE_PROGRAM.compile(template);
+			for (int i = 0; i < composites.length; ++i)
+			{
+				composite[i] = compileComposite(composites[i].pass);
+			}
 			ao = AO_PROGRAM.compile(template);
 			denoise = DENOISE_PROGRAM.compile(template);
 			shadow = SHADOW_PROGRAM.compile(template);
@@ -1332,7 +1362,10 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 			// glDeleteProgram ignores 0
 			glDeleteProgram(scene);
 			glDeleteProgram(ui);
-			glDeleteProgram(composite);
+			for (int program : composite)
+			{
+				glDeleteProgram(program);
+			}
 			glDeleteProgram(ao);
 			glDeleteProgram(denoise);
 			glDeleteProgram(shadow);
@@ -1356,7 +1389,10 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		shutdownProgram();
 		glProgram = scene;
 		glUiProgram = ui;
-		glCompositeProgram = composite;
+		for (int i = 0; i < composites.length; ++i)
+		{
+			composites[i].program = composite[i];
+		}
 		glAoProgram = ao;
 		glDenoiseProgram = denoise;
 		glShadowProgram = shadow;
@@ -2418,31 +2454,14 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		glUniform1f(u.halfRatio, sceneTargets.getHalfRatio());
 	}
 
-	private void setLightingUniforms()
+	/**
+	 * Bind the shadow map, and gather, cull, upload and bind this frame's point lights and rooms: for the composite and
+	 * the fog.
+	 */
+	private void prepareLighting()
 	{
-		glUniform3f(uniCompositeCameraPos, frameCameraX, frameCameraY, frameCameraZ);
-		glUniform1f(uniCompositeTime, (System.currentTimeMillis() - startMillis) / 1000f);
-		glUniform1i(uniCompositeOutdoors, frameOutdoors ? 1 : 0);
-		glUniform1i(uniCompositeProceduralSky, proceduralSky() ? 1 : 0);
-		glUniform1i(uniCompositeSkyVoid, frameSkyVoid ? 1 : 0);
-		glUniform1i(uniCompositeLightingEnabled, 1);
-		glUniform3fv(uniCompositeSunDir, dayCycle.sunDir);
-		glUniform3fv(uniCompositeMoonDir, dayCycle.moonDir);
-		glUniform3fv(uniCompositeCasterDir, dayCycle.casterDir);
-		glUniform1i(uniCompositeSunIsCaster, dayCycle.sunIsCaster ? 1 : 0);
-		glUniform1f(uniCompositeSunAltitude, dayCycle.sunAltitude);
-		weather.setOvercastUniform(uniCompositeOvercast);
-		weather.setLightUniform(uniCompositeWeatherLight);
-		setEnvironmentUniforms(compositeEnvUniforms);
-
-		boolean shadows = frameShadows && shadowMap.isInitialized();
-		glUniform1i(uniCompositeShadowsEnabled, shadows ? 1 : 0);
-		if (shadows)
+		if (frameShadows && shadowMap.isInitialized())
 		{
-			glUniformMatrix4fv(uniCompositeLightProjRel, false, shadowMap.lightProjRel);
-			glUniform1f(uniCompositeShadowRadius, shadowMap.getRadius());
-			glUniform1f(uniCompositeShadowDepthRange, shadowMap.getDepthRange());
-			glUniform1f(uniCompositeShadowMapSize, shadowMap.getSize());
 			shadowMap.bindForSampling(SHADOW_RAW_UNIT, SHADOW_COMPARE_UNIT);
 		}
 
@@ -2451,7 +2470,9 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		RoomMap rooms = buildingRooms != null && (config.roomLights() || config.noFogIndoors()) ? buildingRooms.getRooms() : null;
 		volumetricFog.rooms = config.noFogIndoors() ? rooms : null;
 		volumetricFog.openRooms = null;
-		if (points || rooms != null)
+		framePointLights = points;
+		frameLightClusters = points || rooms != null;
+		if (frameLightClusters)
 		{
 			if (!lightClusters.isInitialized())
 			{
@@ -2489,13 +2510,62 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 			lightClusters.upload();
 			cpuTimer.end(CpuTimer.LIGHT_UPLOAD);
 			lightClusters.bind(LIGHT_DATA_UNIT, CLUSTER_DATA_UNIT, LIGHT_VIS_UNIT);
-			glUniform2f(uniCompositeLightVisSize, lightClusters.getAtlasWidth(), lightClusters.getAtlasHeight());
 		}
-		glUniform1i(uniCompositePointLights, points ? 1 : 0);
+	}
+
+	/**
+	 * Use one of the composite's programs and set this frame's uniforms on it: the same for each, whatever it uses.
+	 * After prepareLighting and the sky cache's easeComposite.
+	 */
+	private void useComposite(CompositeProgram c)
+	{
+		glUseProgram(c.program);
+		setFrameUniforms(c.frame);
+		skyCache.setComposite(c.skyCache, weather.skyHaze(), config.starBrightness() / 100f);
+		glUniform1i(c.aoEnabled, config.ambientOcclusion() ? 1 : 0);
+		glUniform1f(c.aoStrength, config.aoStrength() / 100f);
+		globalIllumination.setComposite(c.giWeight, config.giStrength() / 100f);
+
+		glUniform3f(c.cameraPos, frameCameraX, frameCameraY, frameCameraZ);
+		glUniform1f(c.time, compositeTime);
+		glUniform1i(c.outdoors, frameOutdoors ? 1 : 0);
+		glUniform1i(c.proceduralSky, proceduralSky() ? 1 : 0);
+		glUniform1i(c.skyVoid, frameSkyVoid ? 1 : 0);
+		glUniform1i(c.lightingEnabled, 1);
+		glUniform3fv(c.sunDir, dayCycle.sunDir);
+		glUniform3fv(c.moonDir, dayCycle.moonDir);
+		glUniform3fv(c.casterDir, dayCycle.casterDir);
+		glUniform1i(c.sunIsCaster, dayCycle.sunIsCaster ? 1 : 0);
+		glUniform1f(c.sunAltitude, dayCycle.sunAltitude);
+		weather.setOvercastUniform(c.overcast);
+		weather.setLightUniform(c.weatherLight);
+		setEnvironmentUniforms(c.env);
+
+		boolean shadows = frameShadows && shadowMap.isInitialized();
+		glUniform1i(c.shadowsEnabled, shadows ? 1 : 0);
+		if (shadows)
+		{
+			glUniformMatrix4fv(c.lightProjRel, false, shadowMap.lightProjRel);
+			glUniform1f(c.shadowRadius, shadowMap.getRadius());
+			glUniform1f(c.shadowDepthRange, shadowMap.getDepthRange());
+			glUniform1f(c.shadowMapSize, shadowMap.getSize());
+		}
+
+		if (frameLightClusters)
+		{
+			glUniform2f(c.lightVisSize, lightClusters.getAtlasWidth(), lightClusters.getAtlasHeight());
+			glUniform4fv(c.roomHeader, lightClusters.getRoomHeader());
+		}
+		else
+		{
+			// nothing bound: no rooms
+			glUniform4f(c.roomHeader, 0, 0, 0, 0);
+		}
+		glUniform1i(c.pointLights, framePointLights ? 1 : 0);
 		LightingModel model = config.lightingModel();
-		glUniform1i(uniCompositeSkylightMode, model == LightingModel.SKYLIGHT ? 1 : 2);
-		glUniform1i(uniCompositeSkylightOn, frameSkylight ? 1 : 0);
-		glUniform1f(uniCompositeSkylightFloor, config.skylightFloor() / 100f);
+		glUniform1i(c.skylightMode, model == LightingModel.SKYLIGHT ? 1 : 2);
+		glUniform1i(c.skylightOn, frameSkylight ? 1 : 0);
+		glUniform1f(c.skylightFloor, config.skylightFloor() / 100f);
 		// the inside of buildings at night, as if their lamps were lit; caves and dungeons have no buildings, and
 		// frameOutdoors stands in until areas are classified
 		float interior = 0;
@@ -2505,16 +2575,26 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 			interior = (config.buildingLightsByDay() ? BuildingLights.DAY_FACTOR + (1 - BuildingLights.DAY_FACTOR) * night
 				: night) * config.buildingLightBrightness() / 100f;
 		}
-		glUniform3f(uniCompositeInteriorLight, BuildingLights.FILL[0] * interior, BuildingLights.FILL[1] * interior,
+		glUniform3f(c.interiorLight, BuildingLights.FILL[0] * interior, BuildingLights.FILL[1] * interior,
 			BuildingLights.FILL[2] * interior);
 
-		glUniform1i(uniCompositeUseFog, frameFogDepth > 0 ? 1 : 0);
-		glUniform1i(uniCompositeFogDepth, frameFogDepth);
-		glUniform1i(uniCompositeDrawDistance, frameDrawDistance);
-		compositeEdgeUniforms.set(edgeFade);
-		glUniform1i(uniCompositeExpandedChunks, client.getExpandedMapLoading());
-		glUniform3f(uniCompositeClientSkyColor,
+		glUniform1i(c.useFog, frameFogDepth > 0 ? 1 : 0);
+		glUniform1i(c.fogDepth, frameFogDepth);
+		glUniform1i(c.drawDistance, frameDrawDistance);
+		c.edge.set(edgeFade);
+		glUniform1i(c.expandedChunks, client.getExpandedMapLoading());
+		glUniform3f(c.clientSkyColor,
 			(frameSkyColor >> 16 & 0xFF) / 255f, (frameSkyColor >> 8 & 0xFF) / 255f, (frameSkyColor & 0xFF) / 255f);
+
+		Scene groundScene = client.getTopLevelWorldView().getScene();
+		c.ground.set(frameGround && groundScene != null,
+			groundScene != null ? groundScene.getBaseX() * (float) Perspective.LOCAL_TILE_SIZE : 0,
+			groundScene != null ? groundScene.getBaseY() * (float) Perspective.LOCAL_TILE_SIZE : 0);
+		glUniform1i(c.volumetricFog, frameFog ? 1 : 0);
+		clouds.apply(c.clouds);
+		weather.getLightning().bind(c.lightningBolt, frameCameraX, frameCameraZ);
+		c.materials.set(config);
+		water.setComposite(c.water, config);
 	}
 
 	/**
@@ -2617,12 +2697,6 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 			client.getCameraFocalPointY(), client.getCameraFocalPointZ(), edgeFade.radius, config.skyHorizonAtEdge());
 		clouds.update(config.clouds(), config.cloudShadows(), config.cloudCoverage(), config.cloudSpeed(),
 			config.cloudDetail(), weather.cloudCover(), baseX, baseZ, weather.getField());
-	}
-
-	private void bindClouds()
-	{
-		clouds.bindComposite(CLOUD_NOISE_UNIT);
-		weather.getLightning().bind(frameCameraX, frameCameraZ);
 	}
 
 	/**
@@ -2736,6 +2810,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		Scene aoScene = aoView != null ? aoView.getScene() : null;
 		final boolean shadows = frameShadows && shadowMap.isInitialized();
 		final boolean ground = config.weatherSurfaces() && weather.groundActive();
+		frameGround = ground;
 		final boolean sky = skyGrid.isReady(aoScene);
 		frameSkylight = false;
 		final boolean halfPass = ao || frameFog || shadows || gi || ground || sky;
@@ -2743,6 +2818,9 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		{
 			glBindFramebuffer(GL_FRAMEBUFFER, sceneTargets.getAoFbo());
 			glViewport(0, 0, sceneTargets.getAoWidth(), sceneTargets.getAoHeight());
+			// the AO pass writes every texel: clearing first lets the GPU start the pass without loading the old
+			// contents (the fog, denoise, cloud and composite passes do the same)
+			glClear(GL_COLOR_BUFFER_BIT);
 			glUseProgram(glAoProgram);
 			setFrameUniforms(aoFrame);
 			glUniform1f(uniAoRadius, config.aoRadius() / 100f * Perspective.LOCAL_TILE_SIZE);
@@ -2803,28 +2881,13 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		}
 		gpuTimer.end();
 
-		glUseProgram(glCompositeProgram);
-		setFrameUniforms(compositeFrame);
-		skyCache.setCompositeUniforms(skyCacheMode, weather.skyHaze(), config.starBrightness() / 100f);
-		glUniform1i(uniCompositeDebugView, config.debugView().ordinal());
-		glUniform1i(uniCompositeAoEnabled, ao ? 1 : 0);
-		glUniform1f(uniCompositeAoStrength, config.aoStrength() / 100f);
-		globalIllumination.setComposite(config.giStrength() / 100f);
-		setLightingUniforms();
-		if (log.isDebugEnabled())
-		{
-			EnvironmentManager.Environment b = environmentManager.getBiome();
-			lookMonitor.frame(compositeEnvUniforms, weather, globalIllumination, frameLights.size(),
-				environmentManager.getWorldPoint(), b != null ? b.name : null);
-		}
+		skyCache.easeComposite(skyCacheMode);
+		compositeTime = (System.currentTimeMillis() - startMillis) / 1000f;
+		prepareLighting();
 		sceneTargets.bindAlphaLayer(ALPHA_LAYER_UNIT);
-		Scene groundScene = client.getTopLevelWorldView().getScene();
-		weatherGround.setComposite(ground && groundScene != null,
-			groundScene != null ? groundScene.getBaseX() * (float) Perspective.LOCAL_TILE_SIZE : 0,
-			groundScene != null ? groundScene.getBaseY() * (float) Perspective.LOCAL_TILE_SIZE : 0);
 
 		weather.bindField(WEATHER_FIELD_UNIT);
-		// after setLightingUniforms, which binds the shadow map and light clusters the fog also samples
+		// after prepareLighting, which binds the shadow map and light clusters the fog also samples
 		if (frameFog)
 		{
 			gpuTimer.begin(GpuTimer.FOG);
@@ -2854,11 +2917,11 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		{
 			sceneTargets.bindFog(FOG_TEXTURE_UNIT);
 		}
-		glUseProgram(glCompositeProgram);
-		volumetricFog.setCompositeEnabled(frameFog);
-		bindClouds();
+		if (clouds.isEnabled())
+		{
+			clouds.bindNoise(CLOUD_NOISE_UNIT);
+		}
 		sceneTargets.bindMaterial(MATERIAL_UNIT);
-		compositeMaterials.set(config);
 		water.bind(config, WATER_DATA_UNIT);
 		// the clouds at half resolution, with everything bound for the composite; its sky filters them
 		if (clouds.isEnabled() && frameOutdoors && proceduralSky())
@@ -2867,33 +2930,45 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 			glBindTexture(GL_TEXTURE_2D, 0);
 			glBindFramebuffer(GL_FRAMEBUFFER, sceneTargets.cloudFbo());
 			glViewport(0, 0, sceneTargets.getAoWidth(), sceneTargets.getAoHeight());
+			glClear(GL_COLOR_BUFFER_BIT);
 			glDisable(GL_BLEND);
-			glUniform1i(uniCompositeCloudPass, 1);
+			useComposite(compositeClouds);
 			gpuTimer.begin(GpuTimer.CLOUDS);
 			glDrawArrays(GL_TRIANGLES, 0, 3);
 			gpuTimer.end();
-			glUniform1i(uniCompositeCloudPass, 0);
 			glActiveTexture(GL_TEXTURE0 + CLOUD_HALF_UNIT);
 			glBindTexture(GL_TEXTURE_2D, sceneTargets.cloudTexture());
 			glActiveTexture(GL_TEXTURE0);
 		}
 		// the water's half resolution shading, with everything bound for the composite (water.glsl)
 		gpuTimer.begin(GpuTimer.WATER);
-		water.shadeHalf(config, sceneTargets.getAoWidth(), sceneTargets.getAoHeight(), WATER_NOISE_UNIT);
+		if (water.enabled(config))
+		{
+			useComposite(compositeWater);
+			water.shadeHalf(sceneTargets.getAoWidth(), sceneTargets.getAoHeight(), WATER_NOISE_UNIT);
+		}
 		gpuTimer.end();
+
+		useComposite(compositeFull);
+		if (log.isDebugEnabled())
+		{
+			EnvironmentManager.Environment b = environmentManager.getBiome();
+			lookMonitor.frame(compositeFull.env, weather, globalIllumination, frameLights.size(),
+				environmentManager.getWorldPoint(), b != null ? b.name : null);
+		}
 
 		if (config.debugView() == DebugView.FINAL && !Boolean.parseBoolean(System.getProperty("runelight.compositeCombined", "true")))
 		{
 			for (int part = 1; part <= 4; part++)
 			{
 				sceneTargets.drawPart(part, COMPOSITE_PARTS_UNIT);
-				glUniform1i(uniCompositePart, part);
+				glUniform1i(compositeFull.part, part);
 				gpuTimer.begin(GpuTimer.AMBIENT + part - 1);
 				glDrawArrays(GL_TRIANGLES, 0, 3);
 				gpuTimer.end();
 			}
 			sceneTargets.drawPart(5, COMPOSITE_PARTS_UNIT);
-			glUniform1i(uniCompositePart, 5);
+			glUniform1i(compositeFull.part, 5);
 		}
 
 		// below 100% render scale the composite and the weather draw at the scene's size into the upscaler's target
@@ -2905,10 +2980,11 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		finishInterfaceUpload();
 		glBindFramebuffer(GL_FRAMEBUFFER, upscale ? upscaler.getFbo() : awtContext.getFramebuffer(false));
 		glViewport(0, 0, sceneWidth, sceneHeight);
+		glClear(GL_COLOR_BUFFER_BIT);
 		gpuTimer.begin(GpuTimer.COMPOSITE);
 		glDrawArrays(GL_TRIANGLES, 0, 3);
 		gpuTimer.end();
-		glUniform1i(uniCompositePart, 0);
+		glUniform1i(compositeFull.part, 0);
 		glActiveTexture(GL_TEXTURE0 + COMPOSITE_PARTS_UNIT);
 		glBindTexture(GL_TEXTURE_2D_ARRAY, 0);
 		glActiveTexture(GL_TEXTURE0);
@@ -3377,7 +3453,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 
 		interfaceFinished = false;
 		boolean composited = false;
-		if (sceneFboValid && sceneTargets.isInitialized() && glCompositeProgram != 0)
+		if (sceneFboValid && sceneTargets.isInitialized() && compositeFull.program != 0)
 		{
 			try
 			{
