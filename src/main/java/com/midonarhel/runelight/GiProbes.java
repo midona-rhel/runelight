@@ -7,7 +7,9 @@ import java.util.function.IntConsumer;
  * The irradiance probe layout over the base scene and its hit cache, built once per region load on the global
  * illumination's worker (GlobalIllumination); relit by GiRelight.
  *
- * A probe holds one color: the light it gathers from around it, averaged, with no direction kept. Columns of probes
+ * A probe holds the light it gathers from around it as directional irradiance (GiRelight: the mean radiance and its
+ * gradient, so a surface reads the light that arrives on its own side) and how far it can see in each of the six axis
+ * directions (VISIBILITY, below), which tells a pixel whether a wall or roof lies between it and the probe. Columns of probes
  * stand every PITCH tiles, and each of a column's FLOORS floors (the scene's planes) has two: LOW and HIGH above
  * that floor's ground. A probe sitting in geometry, or seeing the back of surfaces in more than MAX_BACKFACE of its
  * rays (inside a wall, a table, the ground), is moved a little; if no candidate spot works it is disabled, as are
@@ -47,6 +49,9 @@ final class GiProbes
 	// the texture detail included, which pulls them toward gray, and light that bounces twice keeps the surfaces'
 	// colors squared. The bounce is what carries the colors of the ground and the water into the shade.
 	static final float ALBEDO_SATURATION = 1.5f;
+	// Hits closer to the probe than this many voxels fade out smoothly: a probe lying just over a roof or the ground
+	// would otherwise see that surface almost everywhere below it, and the surface would read it back as its own light.
+	static final float NEAR_HIT = 1.5f;
 	// ray results other than a hit voxel
 	static final int MISS = -1, BACK = -2;
 
@@ -61,6 +66,11 @@ final class GiProbes
 	static final float[] WEIGHT;
 	static final int RAYS;
 	static final float WEIGHT_SUM;
+	// Floats per probe of how far it sees, in voxels, along each of the six axis directions (+x, -x, +y, -y, +z, -z):
+	// the six means, then the six variances. A ray counts toward the bins of the sides it points to with the square of
+	// its direction's component along that axis (the squares add up to 1, so a pixel blends the bins by the squares of
+	// its own direction, as gi.glsl does); misses count as MAX_DISTANCE. A usable probe's means are all above zero.
+	static final int VISIBILITY = 12;
 	// an even spread over the whole sphere, to measure the sky with
 	static final float[] SKY_RAYS = fibonacci(64);
 
@@ -132,6 +142,8 @@ final class GiProbes
 	final boolean[] indoor = new boolean[PROBES];
 	// per probe and ray: a hit (index into the hit arrays), MISS or BACK
 	final int[] rays = new int[PROBES * RAYS];
+	// per probe: VISIBILITY floats, all zero for a probe that isn't usable
+	final float[] visibility = new float[PROBES * VISIBILITY];
 
 	// the voxels hit by any ray
 	int hits;
@@ -306,6 +318,7 @@ final class GiProbes
 	void traceProbe(int i)
 	{
 		float[] dirs = DIRECTIONS[rotation(i)];
+		float[] distance = new float[RAYS];
 		int base = i * RAYS;
 		float bx = position[i * 3], by = position[i * 3 + 1], bz = position[i * 3 + 2];
 		for (float[] c : CANDIDATES)
@@ -321,6 +334,8 @@ final class GiProbes
 				float dx = dirs[r * 3], dy = dirs[r * 3 + 1], dz = dirs[r * 3 + 2];
 				int cell = grid.trace(ox, oy, oz, dx, dy, dz, MAX_DISTANCE, false, base + r);
 				int result = cell < 0 ? MISS : backface(grid.cells[cell], dx, dy, dz) ? BACK : cell;
+				distance[r] = cell < 0 ? MAX_DISTANCE : Math.min(MAX_DISTANCE, (float) Math.sqrt(
+					sq(grid.cellX(cell) + 0.5f - ox) + sq(grid.cellY(cell) + 0.5f - oy) + sq(grid.cellZ(cell) + 0.5f - oz)));
 				if (result == BACK)
 				{
 					back++;
@@ -330,6 +345,7 @@ final class GiProbes
 			if (back <= MAX_BACKFACE * RAYS)
 			{
 				valid[i] = true;
+				measureVisibility(i, dirs, distance);
 				position[i * 3] = bx + c[0];
 				position[i * 3 + 1] = by + c[1];
 				position[i * 3 + 2] = bz + c[2];
@@ -337,6 +353,44 @@ final class GiProbes
 			}
 		}
 		Arrays.fill(rays, base, base + RAYS, MISS);
+	}
+
+	private static float sq(float v)
+	{
+		return v * v;
+	}
+
+	/** Probe i's visibility bins from the distances its rays travelled (VISIBILITY). */
+	private void measureVisibility(int i, float[] dirs, float[] distance)
+	{
+		int at = i * VISIBILITY;
+		float[] weight = new float[6];
+		for (int pass = 0; pass < 2; ++pass)
+		{
+			float[] sum = new float[6];
+			for (int r = 0; r < RAYS; ++r)
+			{
+				for (int axis = 0; axis < 3; ++axis)
+				{
+					float c = dirs[r * 3 + axis];
+					int bin = axis * 2 + (c < 0 ? 1 : 0);
+					float w = c * c;
+					if (pass == 0)
+					{
+						weight[bin] += w;
+						sum[bin] += w * distance[r];
+					}
+					else
+					{
+						sum[bin] += w * sq(distance[r] - visibility[at + bin]);
+					}
+				}
+			}
+			for (int bin = 0; bin < 6; ++bin)
+			{
+				visibility[at + pass * 6 + bin] = sum[bin] / Math.max(weight[bin], 1e-6f);
+			}
+		}
 	}
 
 	// Keep probes within one tile of captured scenery voxels, including the relocated origin.
@@ -412,55 +466,6 @@ final class GiProbes
 			float wz = hitPos[h * 3 + 2] * GiGrid.VOXEL + nn[2] * 48;
 			hitBounce[h] = nearestProbe(wx, wy, wz);
 		}
-	}
-
-	/**
-	 * Each valid probe's light averaged with its valid neighbours' of the same level and class (indoor or outdoor), the
-	 * probe itself counting twice: a probe's few dozen rays see a noisy sample of what is around it, and one lucky ray
-	 * on a bright wall would otherwise show as a lit patch two tiles wide.
-	 */
-	static float[] smooth(GiProbes p, float[] light)
-	{
-		float[] out = light.clone();
-		for (int level = 0; level < LEVELS; ++level)
-		{
-			for (int cz = 0; cz < COLUMNS; ++cz)
-			{
-				for (int cx = 0; cx < COLUMNS; ++cx)
-				{
-					int i = probe(cx, cz, level);
-					if (!p.valid[i])
-					{
-						continue;
-					}
-					float r = 2 * light[i * 3], g = 2 * light[i * 3 + 1], b = 2 * light[i * 3 + 2], w = 2;
-					for (int dz = -1; dz <= 1; ++dz)
-					{
-						for (int dx = -1; dx <= 1; ++dx)
-						{
-							int x = cx + dx, z = cz + dz;
-							if ((dx | dz) == 0 || x < 0 || z < 0 || x >= COLUMNS || z >= COLUMNS)
-							{
-								continue;
-							}
-							int j = probe(x, z, level);
-							if (!p.valid[j] || p.indoor[j] != p.indoor[i])
-							{
-								continue;
-							}
-							r += light[j * 3];
-							g += light[j * 3 + 1];
-							b += light[j * 3 + 2];
-							w += 1;
-						}
-					}
-					out[i * 3] = r / w;
-					out[i * 3 + 1] = g / w;
-					out[i * 3 + 2] = b / w;
-				}
-			}
-		}
-		return out;
 	}
 
 	/** Linear color (r, g, b) moved ALBEDO_SATURATION times as far from its luminance, same luminance, into out[at..]. */

@@ -16,10 +16,11 @@ import org.slf4j.LoggerFactory;
 import static org.lwjgl.opengl.GL33C.*;
 
 /**
- * Global illumination from a world-space grid of irradiance probes over the base scene (GiProbes), each holding one
- * color: light from the sky that gets past roofs, overhangs and walls, and sun or moon light bounced off what it
- * falls on, averaged over all directions, so interiors and the undersides of things darken and sunlit ground warms
- * the shade beside it.
+ * Global illumination from a world-space grid of irradiance probes over the base scene (GiProbes), each holding
+ * the sun or moon light bounced off what its rays hit, as directional irradiance, and how far it sees in each axis
+ * direction, so a surface reads the light on its own side from probes it can actually see; interiors and the
+ * undersides of things darken (the sky's own light, past roofs, overhangs and walls, comes from the composite) and
+ * sunlit ground warms the shade beside it.
  *
  * Everything heavy runs on a worker thread. After a region load the zones' triangles (captured as they upload,
  * GiCapture) are voxelized, per zone so reused zones keep theirs (GiVoxels), and every probe traces its rays once
@@ -28,10 +29,10 @@ import static org.lwjgl.opengl.GL33C.*;
  * happens when the sky cache captures, the sun or moon has moved RELIGHT_DEGREES, the weather or settings change, or
  * every MAX_RELIGHT_MILLIS. The light it needs from the sky is drawn on the GPU into a tiny table (gi_sky_frag.glsl) and
  * read back without stalling. Each new set of probes is uploaded at once (a few
- * kilobytes) and blended in over about the time between relights, like the sky cache, so nothing pops.
+ * megabytes) and blended in over about the time between relights, like the sky cache, so nothing pops.
  *
- * On the GPU the only steady cost is the lookup in the half resolution AO pass (gi.glsl, 13 small texture
- * fetches a pixel), whose result rides along in the AO target to the composite (halfres.glsl). Outside the base
+ * On the GPU the only steady cost is the lookup in the half resolution AO pass (gi.glsl, up to 6 small
+ * texture fetches for each of the 8 probes around a pixel), whose result rides along in the AO target to the composite (halfres.glsl). Outside the base
  * scene, underground, and until the first probes are lit, the composite keeps its plain ambient light.
  */
 class GlobalIllumination
@@ -47,8 +48,11 @@ class GlobalIllumination
 		.add(GL_VERTEX_SHADER, "composite_vert.glsl")
 		.add(GL_FRAGMENT_SHADER, "sky_cache_blend_frag.glsl");
 
-	// one texel per probe: its column across, its level and column row down; alpha is 1 for a usable probe
-	static final int TEX_W = GiProbes.COLUMNS;
+	// TEXELS texels per probe, side by side: its column across (times TEXELS), its level and column row down. The
+	// first three hold the light (GiRelight.SH floats), the next three how far it sees (GiProbes.VISIBILITY floats);
+	// a probe that isn't usable is all zero.
+	static final int TEXELS = (GiRelight.SH + GiProbes.VISIBILITY) / 4;
+	static final int TEX_W = GiProbes.COLUMNS * TEXELS;
 	static final int TEX_H = GiProbes.COLUMNS * GiProbes.LEVELS;
 	static final int SKY_ROWS = GiRelight.SKY_H + 1;
 
@@ -910,28 +914,31 @@ class GlobalIllumination
 		l.baseY = probesBaseY;
 		l.instance = probesInstance;
 		l.meta = p.meta;
-		l.texels = texels(result.shown, p.valid);
+		l.texels = texels(result.shown, p.visibility);
 		lit = l;
 		log.trace("GI relight in {} ms", (System.nanoTime() - start) / 1_000_000);
 	}
 
 
-	private static final short HALF_ONE = 0x3c00;
-
 	/**
-	 * The probes as the probe texture's half floats. Probe i lies at texel i: (its column x, its level * COLUMNS +
-	 * its column z), as GiProbes.probe numbers them. Alpha is 1 for a usable probe, 0 for the rest.
+	 * The probes as the probe texture's half floats. Probe i lies at texels (its column x * TEXELS + 0..TEXELS-1, its
+	 * level * COLUMNS + its column z), as GiProbes.probe numbers them: its light, then its visibility. Probes that
+	 * aren't usable have no light and no visibility, which gi.glsl reads as no probe.
 	 */
-	static short[] texels(float[] light, boolean[] valid)
+	static short[] texels(float[] light, float[] visibility)
 	{
-		short[] out = new short[GiProbes.PROBES * 4];
+		short[] out = new short[TEX_W * TEX_H * 4];
 		for (int i = 0; i < GiProbes.PROBES; ++i)
 		{
-			for (int c = 0; c < 3; ++c)
+			int at = ((i / GiProbes.COLUMNS) * TEX_W + i % GiProbes.COLUMNS * TEXELS) * 4;
+			for (int k = 0; k < GiRelight.SH; ++k)
 			{
-				out[i * 4 + c] = toHalf(light[i * 3 + c]);
+				out[at + k] = toHalf(light[i * GiRelight.SH + k]);
 			}
-			out[i * 4 + 3] = valid[i] ? HALF_ONE : 0;
+			for (int k = 0; k < GiProbes.VISIBILITY; ++k)
+			{
+				out[at + GiRelight.SH + k] = toHalf(visibility[i * GiProbes.VISIBILITY + k]);
+			}
 		}
 		return out;
 	}

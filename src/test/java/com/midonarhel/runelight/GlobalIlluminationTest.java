@@ -433,9 +433,11 @@ public class GlobalIlluminationTest
 		return t;
 	}
 
+	// the mean radiance of a probe's light
 	private static float lum(float[] light, int probe)
 	{
-		return GiRelight.luminance(light[probe * 3], light[probe * 3 + 1], light[probe * 3 + 2]);
+		int o = probe * GiRelight.SH;
+		return GiRelight.luminance(light[o], light[o + 1], light[o + 2]);
 	}
 
 	private static float sum(float[] light)
@@ -490,9 +492,16 @@ public class GlobalIlluminationTest
 		assertTrue(lum(bounced.light, ground) > lum(r.light, ground) * 1.1f);
 		assertTrue(lum(bounced.light, house) > lum(r.light, house));
 		assertTrue(sum(bounced.light) > sum(once.light));
-		for (float v : bounced.shown)
+		for (int i = 0; i < GiProbes.PROBES; ++i)
 		{
-			assertTrue(Float.isFinite(v) && v >= 0);
+			for (int k = 0; k < GiRelight.SH; ++k)
+			{
+				assertTrue(Float.isFinite(bounced.shown[i * GiRelight.SH + k]));
+			}
+			for (int k = 0; k < 3; ++k)
+			{
+				assertTrue(bounced.shown[i * GiRelight.SH + k] >= 0);
+			}
 		}
 	}
 
@@ -556,25 +565,107 @@ public class GlobalIlluminationTest
 	@Test
 	public void texelLayout()
 	{
-		float[] light = new float[GiProbes.PROBES * 3];
-		boolean[] valid = new boolean[GiProbes.PROBES];
+		float[] light = new float[GiProbes.PROBES * GiRelight.SH];
+		float[] visibility = new float[GiProbes.PROBES * GiProbes.VISIBILITY];
 		int probe = GiProbes.probe(5, 7, 2);
-		for (int k = 0; k < 3; ++k)
+		for (int k = 0; k < GiRelight.SH; ++k)
 		{
-			light[probe * 3 + k] = k + 1;
+			light[probe * GiRelight.SH + k] = k + 1;
 		}
-		valid[probe] = true;
-		short[] t = GlobalIllumination.texels(light, valid);
-		// column x 5 across, level 2 and column z 7 down
-		int i = ((2 * GiProbes.COLUMNS + 7) * GlobalIllumination.TEX_W + 5) * 4;
-		float[] got = new float[4];
-		for (int k = 0; k < 4; ++k)
+		for (int k = 0; k < GiProbes.VISIBILITY; ++k)
 		{
-			got[k] = GlobalIllumination.fromHalf(t[i + k]);
+			visibility[probe * GiProbes.VISIBILITY + k] = 20 + k;
 		}
-		assertArrayEquals(new float[]{1, 2, 3, 1}, got, 0);
-		assertEquals(0, t[i + 4 + 3]);
-		assertEquals(GlobalIllumination.TEX_W * GlobalIllumination.TEX_H, GiProbes.PROBES);
+		short[] t = GlobalIllumination.texels(light, visibility);
+		// column x 5 across (TEXELS texels each), level 2 and column z 7 down: three texels of light, three of visibility
+		int i = ((2 * GiProbes.COLUMNS + 7) * GlobalIllumination.TEX_W + 5 * GlobalIllumination.TEXELS) * 4;
+		for (int k = 0; k < GiRelight.SH; ++k)
+		{
+			assertEquals(k + 1, GlobalIllumination.fromHalf(t[i + k]), 0);
+		}
+		for (int k = 0; k < GiProbes.VISIBILITY; ++k)
+		{
+			assertEquals(20 + k, GlobalIllumination.fromHalf(t[i + GiRelight.SH + k]), 0);
+		}
+		// the next probe along is untouched, and so is its first texel's neighbour
+		assertEquals(0, t[i + GlobalIllumination.TEXELS * 4]);
+		assertEquals(GlobalIllumination.TEX_W * GlobalIllumination.TEX_H, GiProbes.PROBES * GlobalIllumination.TEXELS);
+	}
+
+	@Test
+	public void shaderMatchesTheLayout() throws Exception
+	{
+		String glsl = new String(java.nio.file.Files.readAllBytes(
+			java.nio.file.Paths.get("src/main/resources/com/midonarhel/runelight/gi.glsl")));
+		assertEquals(GlobalIllumination.TEXELS, define(glsl, "GI_TEXELS"), 0);
+		assertEquals(GiProbes.SIZE, define(glsl, "GI_SIZE"), 0);
+		assertEquals(GiProbes.LEVELS, define(glsl, "GI_LEVELS"), 0);
+		assertEquals(GiProbes.TILE, define(glsl, "GI_TILE"), 0);
+		assertEquals(GiProbes.LOW, define(glsl, "GI_LOW"), 0);
+		assertEquals(GiProbes.HIGH, define(glsl, "GI_HIGH"), 0);
+		assertEquals(GiGrid.VOXEL, define(glsl, "GI_VOXEL"), 0);
+	}
+
+	private static float define(String glsl, String name)
+	{
+		java.util.regex.Matcher m = java.util.regex.Pattern.compile("#define " + name + " ([0-9.]+)").matcher(glsl);
+		assertTrue(name, m.find());
+		return Float.parseFloat(m.group(1));
+	}
+
+	// gi.glsl's visibility test: the share of the probe's rays that Chebyshev's bound lets reach a point dist voxels
+	// away along unit (dx, dy, dz)
+	private static float visibility(float[] v, int probe, float dx, float dy, float dz, float dist)
+	{
+		int o = probe * GiProbes.VISIBILITY;
+		float[] d = {dx, dy, dz};
+		float mean = 0, variance = 0;
+		for (int axis = 0; axis < 3; ++axis)
+		{
+			int bin = axis * 2 + (d[axis] < 0 ? 1 : 0);
+			mean += d[axis] * d[axis] * v[o + bin];
+			variance += d[axis] * d[axis] * v[o + 6 + bin];
+		}
+		float excess = dist - mean;
+		if (excess <= 0)
+		{
+			return 1;
+		}
+		variance = Math.max(variance, 0.25f);
+		float c = variance / (variance + excess * excess);
+		return c * c * c;
+	}
+
+	@Test
+	public void aWallHidesTheProbeFromTheOtherSide()
+	{
+		GiProbes p = probes();
+		// the house' west wall is at x = 1280 (tile 10's west edge); probes inside at tile 11 and 12, row 12
+		int inside = GiProbes.probe(11 / GiProbes.PITCH, 12 / GiProbes.PITCH, 0);
+		assertTrue(p.valid[inside]);
+		float px = p.position[inside * 3], py = p.position[inside * 3 + 1], pz = p.position[inside * 3 + 2];
+		// a pixel a tile outside the wall, and one hugging it (which the facing test cuts as well)
+		float dist = (px - (1280 - GiProbes.TILE)) / GiGrid.VOXEL;
+		float wall = visibility(p.visibility, inside, -1, 0, 0, dist);
+		assertTrue("behind the wall " + wall, wall < 0.01f);
+		float hugging = visibility(p.visibility, inside, -1, 0, 0, (px - (1280 - 32)) / GiGrid.VOXEL);
+		assertTrue("hugging the wall " + hugging, hugging < 0.25f);
+		// a pixel on the wall's inner side, and one in the room toward the opposite wall, can see it
+		assertEquals(1, visibility(p.visibility, inside, -1, 0, 0, (px - (1280 + 32)) / GiGrid.VOXEL), 1e-6);
+		assertEquals(1, visibility(p.visibility, inside, 1, 0, 0, 3), 1e-6);
+		assertEquals(pz, 12.5f * GiProbes.TILE, 1e-3);
+		assertTrue(py < 0);
+		// out in the open nothing is in the way
+		int open = GiProbes.probe(30 / GiProbes.PITCH, 30 / GiProbes.PITCH, 0);
+		assertTrue(p.valid[open]);
+		assertEquals(1, visibility(p.visibility, open, 1, 0, 0, 3), 1e-6);
+		// an unusable probe has no visibility at all
+		int block = GiProbes.probe(20 / GiProbes.PITCH, 20 / GiProbes.PITCH, 0);
+		assertFalse(p.valid[block]);
+		for (int k = 0; k < GiProbes.VISIBILITY; ++k)
+		{
+			assertEquals(0, p.visibility[block * GiProbes.VISIBILITY + k], 0);
+		}
 	}
 
 	@Test

@@ -76,10 +76,10 @@ public class GiBounceTest
 		// Keep the same world tile when probe spacing changes.
 		int probe = GiProbes.probe(10 / GiProbes.PITCH, 10 / GiProbes.PITCH, 0);
 		assertTrue(p.valid[probe]);
-		float red = r.shown[probe * 3], green = r.shown[probe * 3 + 1], blue = r.shown[probe * 3 + 2];
+		float red = r.shown[probe * GiRelight.SH], green = r.shown[probe * GiRelight.SH + 1], blue = r.shown[probe * GiRelight.SH + 2];
 		assertTrue("green " + red + " " + green + " " + blue, green > red * 1.4f && green > blue * 2f);
 		// the sky is not part of the bounce but is part of the whole light
-		assertTrue(r.light[probe * 3 + 2] > blue * 1.5f);
+		assertTrue(r.light[probe * GiRelight.SH + 2] > blue * 1.5f);
 		// without sun and with nothing lit before, the surfaces give nothing
 		float[] t = new float[GiRelight.TABLE_FLOATS];
 		for (int i = 0; i < GiRelight.SKY_W * GiRelight.SKY_H; ++i)
@@ -92,6 +92,22 @@ public class GiBounceTest
 		{
 			assertEquals(0, v, 0);
 		}
+	}
+
+	@Test
+	public void aProbeOverTheGroundLightsNothingFacingUp()
+	{
+		GiProbes p = probes(greenGrid(null, false));
+		GiRelight.Result r = GiRelight.relight(p, sunlit(), null, 3, GiProbes.ParallelFor.SEQUENTIAL);
+		int probe = GiProbes.probe(10 / GiProbes.PITCH, 10 / GiProbes.PITCH, 0);
+		assertTrue(p.valid[probe]);
+		// the probe sees the green ground all below it: a floor facing up gets none of it, a ceiling facing down gets it
+		float up = GiRelight.irradiance(r.shown, probe, 0, -1, 0, 1);
+		float down = GiRelight.irradiance(r.shown, probe, 0, 1, 0, 1);
+		float side = GiRelight.irradiance(r.shown, probe, 1, 0, 0, 1);
+		assertTrue("down " + down, down > 0.01f);
+		assertTrue("up " + up + " down " + down, up < down * 0.15f);
+		assertTrue("side " + side + " down " + down, side > up && side < down);
 	}
 
 	@Test
@@ -155,13 +171,13 @@ public class GiBounceTest
 		// over the water the light thrown up is blue, over the grass it is green
 		int overWater = GiProbes.probe(14 / GiProbes.PITCH, 14 / GiProbes.PITCH, 0), overGrass = GiProbes.probe(2 / GiProbes.PITCH, 2 / GiProbes.PITCH, 0);
 		assertTrue(p.valid[overWater] && p.valid[overGrass]);
-		float wr = bounce[overWater * 3 + 0];
-		float wg = bounce[overWater * 3 + 1];
-		float wb = bounce[overWater * 3 + 2];
+		float wr = bounce[overWater * GiRelight.SH];
+		float wg = bounce[overWater * GiRelight.SH + 1];
+		float wb = bounce[overWater * GiRelight.SH + 2];
 		assertTrue("water " + wr + " " + wg + " " + wb, wb > wr * 2f && wb > wg * 0.9f);
-		float gr = bounce[overGrass * 3 + 0];
-		float gg = bounce[overGrass * 3 + 1];
-		float gb = bounce[overGrass * 3 + 2];
+		float gr = bounce[overGrass * GiRelight.SH];
+		float gg = bounce[overGrass * GiRelight.SH + 1];
+		float gb = bounce[overGrass * GiRelight.SH + 2];
 		assertTrue("grass " + gr + " " + gg + " " + gb, gg > gb * 2f);
 	}
 

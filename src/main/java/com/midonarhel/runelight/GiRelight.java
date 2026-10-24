@@ -3,9 +3,11 @@ package com.midonarhel.runelight;
 /**
  * Lights the probes from their hit cache (GiProbes): rays that reached the sky bring the sky's radiance where they
  * point, rays that hit a surface bring its albedo times the RGB light on it, which is the sun or moon where the voxels
- * see it, plus the light the probe in front of the voxel had last time, for further bounces. A probe's color is the
- * weighted average of its rays, whichever way they point: surfaces are treated as rough, scattering light everywhere,
- * so no surface gets more from one that faces it than from any other. Runs on the global illumination's worker
+ * see it, plus the light the probe in front of the voxel had last time, for further bounces. A probe keeps the
+ * rays' radiance as first order spherical harmonics, already convolved with the cosine (SH): the irradiance on a
+ * surface facing n, in units of the radiance a uniform sphere would give, is the mean plus the gradient dotted with n.
+ * So a surface reads the light that reaches its own side, and a probe lying over a roof gives the roof nothing of
+ * the roof's own color. Surfaces are treated as rough, scattering light everywhere. Runs on the global illumination's worker
  * whenever the sky or the light changes enough (GlobalIllumination), tens of milliseconds for a whole scene.
  *
  * The sky is part of the light the further bounces build on (scaled so that a probe under the open sky gets what the
@@ -14,6 +16,9 @@ package com.midonarhel.runelight;
  */
 final class GiRelight
 {
+	// floats per probe of light: the mean radiance (RGB), then the gradient (RGB) along x, y and z, which is twice the
+	// mean of radiance times direction; irradiance(n) / pi = mean + gradient . n, from the cosine lobe's L1 terms
+	static final int SH = 12;
 	// the sky table drawn by gi_sky_frag.glsl: SKY_W x SKY_H radiance over the sphere, then one row of light
 	static final int SKY_W = 32, SKY_H = 16;
 	static final int TABLE_FLOATS = SKY_W * (SKY_H + 1) * 4;
@@ -75,7 +80,7 @@ final class GiRelight
 		}
 	}
 
-	/** The probes' light (RGB each), whole and as shown. */
+	/** The probes' light (SH floats each), whole and as shown. */
 	static final class Result
 	{
 		/** Sky and surfaces together: what the next bounces build on. */
@@ -146,10 +151,36 @@ final class GiRelight
 		return Math.max(MIN_SCALE, Math.min(MAX_SCALE, target / open));
 	}
 
-	/** Preserve the incident light's color through each diffuse bounce. */
-	static float incident(float[] caster, float sun, float[] last, int b, int channel)
+	/** One channel of the irradiance probe's light gives a surface facing unit n, never below zero. */
+	static float irradiance(float[] light, int probe, float nx, float ny, float nz, int channel)
 	{
-		return caster[channel] * sun + (last != null && b >= 0 ? last[b * 3 + channel] * INCIDENT_GAIN : 0);
+		int o = probe * SH + channel;
+		return Math.max(0, light[o] + light[o + 3] * nx + light[o + 6] * ny + light[o + 9] * nz);
+	}
+
+	/** Preserve the incident light's color through each diffuse bounce; (nx, ny, nz) is the way the surface faces. */
+	static float incident(float[] caster, float sun, float[] last, int b, float nx, float ny, float nz, int channel)
+	{
+		return caster[channel] * sun + (last != null && b >= 0 ? irradiance(last, b, nx, ny, nz, channel) * INCIDENT_GAIN : 0);
+	}
+
+	private static float smoothstep(float edge0, float edge1, float x)
+	{
+		float t = Math.max(0, Math.min(1, (x - edge0) / (edge1 - edge0)));
+		return t * t * (3 - 2 * t);
+	}
+
+	/** Adds radiance (r, g, b) arriving from unit direction d, with weight w, to the SH sums at light[at..]. */
+	private static void accumulate(float[] light, int at, float r, float g, float b, float dx, float dy, float dz, float w)
+	{
+		float[] c = {r * w, g * w, b * w};
+		for (int k = 0; k < 3; ++k)
+		{
+			light[at + k] += c[k];
+			light[at + 3 + k] += 2 * c[k] * dx;
+			light[at + 6 + k] += 2 * c[k] * dy;
+			light[at + 9 + k] += 2 * c[k] * dz;
+		}
 	}
 
 	/**
@@ -206,8 +237,8 @@ final class GiRelight
 		for (int it = 0; it < Math.max(1, iterations); ++it)
 		{
 			float[] last = out;
-			float[] cur = new float[GiProbes.PROBES * 3];
-			float[] curSurfaces = new float[GiProbes.PROBES * 3];
+			float[] cur = new float[GiProbes.PROBES * SH];
+			float[] curSurfaces = new float[GiProbes.PROBES * SH];
 			// light leaving each one-sided hit voxel
 			parallel.run(p.hits, h ->
 			{
@@ -222,7 +253,7 @@ final class GiRelight
 
 				for (int c = 0; c < 3; ++c)
 				{
-					radiance[h * 3 + c] = p.hitAlbedo[h * 3 + c] * incident(light.caster, sun, last, b, c);
+					radiance[h * 3 + c] = p.hitAlbedo[h * 3 + c] * incident(light.caster, sun, last, b, nx, ny, nz, c);
 				}
 			});
 			parallel.run(GiProbes.PROBES, i ->
@@ -234,17 +265,15 @@ final class GiRelight
 				float[] d = GiProbes.DIRECTIONS[GiProbes.rotation(i)];
 				float[] sr = skyRays[GiProbes.rotation(i)];
 				int base = i * rays;
-				float fr = 0, fg = 0, fb = 0, ur = 0, ug = 0, ub = 0;
 				for (int r = 0; r < rays; ++r)
 				{
 					int code = p.rays[base + r];
 					float w = GiProbes.WEIGHT[r];
+					float dx = d[r * 3], dy = d[r * 3 + 1], dz = d[r * 3 + 2];
 					if (code == GiProbes.MISS)
 					{
 						// the sky is no surface: it counts toward the whole light but not the surfaces'
-						fr += sr[r * 3] * w;
-						fg += sr[r * 3 + 1] * w;
-						fb += sr[r * 3 + 2] * w;
+						accumulate(cur, i * SH, sr[r * 3], sr[r * 3 + 1], sr[r * 3 + 2], dx, dy, dz, w);
 						continue;
 					}
 					if (code == GiProbes.BACK)
@@ -260,33 +289,28 @@ final class GiRelight
 					}
 					else
 					{
-						// a thin surface shows the probe the side facing it
-						float dx = d[r * 3], dy = d[r * 3 + 1], dz = d[r * 3 + 2];
+						// a thin surface shows the probe the side facing it, which takes the light from the probe's side
 						float sun = direct && dx * lx + dy * ly + dz * lz < 0 ? lit[code] : 0;
 						int b = p.hitBounce[code];
-						tr = p.hitAlbedo[code * 3] * incident(light.caster, sun, last, b, 0);
-						tg = p.hitAlbedo[code * 3 + 1] * incident(light.caster, sun, last, b, 1);
-						tb = p.hitAlbedo[code * 3 + 2] * incident(light.caster, sun, last, b, 2);
+						tr = p.hitAlbedo[code * 3] * incident(light.caster, sun, last, b, -dx, -dy, -dz, 0);
+						tg = p.hitAlbedo[code * 3 + 1] * incident(light.caster, sun, last, b, -dx, -dy, -dz, 1);
+						tb = p.hitAlbedo[code * 3 + 2] * incident(light.caster, sun, last, b, -dx, -dy, -dz, 2);
 					}
-					// A smooth local-bounce window, reaching zero at the ray limit (voxel units).
-					float dx = p.hitPos[code * 3] - p.position[i * 3] / GiGrid.VOXEL;
-					float dy = p.hitPos[code * 3 + 1] + p.grid.layer0 - p.position[i * 3 + 1] / GiGrid.VOXEL;
-					float dz = p.hitPos[code * 3 + 2] - p.position[i * 3 + 2] / GiGrid.VOXEL;
-					float t = Math.min(1, (float) Math.sqrt(dx * dx + dy * dy + dz * dz) / GiProbes.MAX_DISTANCE);
-					w *= 1 - t * t * (3 - 2 * t);
-					fr += tr * w;
-					fg += tg * w;
-					fb += tb * w;
-					ur += tr * w;
-					ug += tg * w;
-					ub += tb * w;
+					// A smooth local-bounce window, reaching zero at the ray limit (voxel units), and one that keeps
+					// the surface right next to the probe, which it would only see itself in, out.
+					float hx = p.hitPos[code * 3] - p.position[i * 3] / GiGrid.VOXEL;
+					float hy = p.hitPos[code * 3 + 1] + p.grid.layer0 - p.position[i * 3 + 1] / GiGrid.VOXEL;
+					float hz = p.hitPos[code * 3 + 2] - p.position[i * 3 + 2] / GiGrid.VOXEL;
+					float distance = (float) Math.sqrt(hx * hx + hy * hy + hz * hz);
+					w *= (1 - smoothstep(0, 1, distance / GiProbes.MAX_DISTANCE)) * smoothstep(0, GiProbes.NEAR_HIT, distance);
+					accumulate(cur, i * SH, tr, tg, tb, dx, dy, dz, w);
+					accumulate(curSurfaces, i * SH, tr, tg, tb, dx, dy, dz, w);
 				}
-				cur[i * 3] = fr * inv;
-				cur[i * 3 + 1] = fg * inv;
-				cur[i * 3 + 2] = fb * inv;
-				curSurfaces[i * 3] = ur * inv;
-				curSurfaces[i * 3 + 1] = ug * inv;
-				curSurfaces[i * 3 + 2] = ub * inv;
+				for (int s = i * SH; s < (i + 1) * SH; ++s)
+				{
+					cur[s] *= inv;
+					curSurfaces[s] *= inv;
+				}
 			});
 			out = cur;
 			surfaces = curSurfaces;
