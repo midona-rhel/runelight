@@ -105,7 +105,7 @@ class Weather
 	// on average, showers rain this share of the time (for the weather field, which has no swells)
 	static final float SHOWER_SHARE = 0.6f;
 	static final float WET_BUILD_SECONDS = 25;
-	static final float SNOW_BUILD_SECONDS = 90;
+	static final float SNOW_BUILD_SECONDS = 240;
 	// seconds for wet ground to dry, and for snow cover to melt (rain melts it three times as fast)
 	static final float DRY_SECONDS = 120;
 	static final float MELT_SECONDS = 180;

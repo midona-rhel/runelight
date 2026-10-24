@@ -34,16 +34,14 @@ uniform vec2 particleAmount;   // rain at the player, and the most anywhere in t
 #define RAIN_GUST 1.2          // wind multiplier at a full gust (Weather.RAIN_GUST)
 
 #define SPLASH_HALF 2560.0     // splashes fill a smaller area around layerBox, where they can be seen
-#define CEL_RATE 12.0          // cels per second: the impacts flip between their two drawings this fast
-#define SPLASH_FRAMES 6.0      // cels in an impact's cycle, the first SPLASH_SHOWN of them drawn
-#define SPLASH_SHOWN 4.0
-#define SPLASH_FADE 0.75       // how much the impact has faded by its last cel
-#define SPLASH_SIZE 17.0       // half the sprite's width, world units
-#define SPLASH_ALPHA 0.55
-#define SPLASH_SKY 0.7         // share of the sky's color in the impact's
+#define SPLASH_LIFE 0.12       // seconds an impact shows, fading in and out
+#define SPLASH_CYCLE 0.5       // seconds before an instance lands again somewhere else
+#define SPLASH_SIZE 6.0        // half the sprite's height, world units; it is SPLASH_ASPECT times as wide
+#define SPLASH_ALPHA 0.75
+#define SPLASH_SKY 0.35        // share of the sky's color in the impact's
 
 out vec2 fQuad;                // x across the streak / sprite -1..1, y along it 0..1 (up the sprite)
-flat out int fSplash;           // 0 drop, 1 and 2 the impact's two cels
+flat out int fSplash;           // 0 drop, 1 an impact
 out float fViewZ;
 out float fAlpha;
 flat out vec3 fColor;
@@ -144,12 +142,12 @@ void drop(int id, vec2 corner) {
 }
 
 void splash(int id, vec2 corner) {
-  // Each impact is two hand-drawn cels (rain_frag.glsl) that flip every 1 / CEL_RATE s, for SPLASH_SHOWN of the
-  // SPLASH_FRAMES in its cycle, then it restarts at a new random spot; offsets keep them from flipping together.
+  // Each impact is a small soft blot that fades in and straight out again over SPLASH_LIFE, then the instance lands
+  // somewhere else; offsets keep them from landing together.
   float phase = hash11(float(id) * 7.13 + 1.7);
-  float cycle = time * CEL_RATE / SPLASH_FRAMES + phase;
-  float frame = floor(fract(cycle) * SPLASH_FRAMES);
-  if (frame >= SPLASH_SHOWN) {
+  float cycle = time / SPLASH_CYCLE + phase;
+  float age = fract(cycle) * SPLASH_CYCLE / SPLASH_LIFE;
+  if (age >= 1.0) {
     gl_Position = CULLED;
     return;
   }
@@ -185,21 +183,20 @@ void splash(int id, vec2 corner) {
     return;
   }
 
-  // a sprite standing on the spot, facing the camera, a little bigger each cel
-  float size = SPLASH_SIZE * (0.8 + 0.1 * frame) * pixelScale() / c.w;
+  // a soft blot on the spot, facing the camera, wider than tall
+  float size = SPLASH_SIZE * pixelScale() / c.w;
   float r = max(size, 1.0);
-  vec2 q = vec2(corner.x * (h.z < 0.5 ? -1.0 : 1.0), corner.y);
-  gl_Position = offsetPixels(c, vec2(corner.x, corner.y * SPLASH_ASPECT) * r);
+  gl_Position = offsetPixels(c, vec2(corner.x * SPLASH_ASPECT, corner.y) * r);
 
   vec3 points = weatherPointLights(p, c, vec3(0.0), top);
   float lit = min(dot(points, vec3(0.2126, 0.7152, 0.0722)), 1.0);
-  // fade toward the sides of the splash area, which moves with the camera, and as the cels go
+  // fade toward the sides of the splash area, which moves with the camera, and in and out over its life
   vec2 rel = abs(xz - layerBox.xz) / SPLASH_HALF;
   float edge = 1.0 - smoothstep(0.6, 1.0, max(rel.x, rel.y));
-  float fade = 1.0 - SPLASH_FADE * frame / SPLASH_SHOWN;
+  float fade = sin(age * 3.14159265);
   fAlpha = SPLASH_ALPHA * amount * rainShare(xz) * edge * fade * smoothstep(1.0, 2.5, size) * (1.0 + LIT_ALPHA * lit);
-  fQuad = q;
-  fSplash = 1 + int(mod(frame, 2.0));
+  fQuad = vec2(corner.x, corner.y);
+  fSplash = 1;
   fViewZ = c.w;
   // the sky's own color at the horizon, whitened a little: the impacts melt into it
   fColor = weatherParticleColor(mix(vec3(0.80, 0.84, 0.90), skyHorizonAt(sunAltitude), SPLASH_SKY), points);

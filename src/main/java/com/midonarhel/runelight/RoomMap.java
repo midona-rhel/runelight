@@ -26,7 +26,7 @@ final class RoomMap
 	static final float TILE = 128;
 	// texels in front of the map: the header (rooms.glsl)
 	static final int HEADER_TEXELS = 1;
-	static final int TEXELS_PER_TILE = 4;
+	static final int TEXELS_PER_TILE = 5;
 
 	// the porch id of the outdoors: what lies across an opening from a room tile that has no room beside it
 	static final int OUTSIDE = ANY;
@@ -627,7 +627,8 @@ final class RoomMap
 	 * (room + porch * 4096, negative when the porch is an opening's), the four planes' floor heights (world y), and
 	 * the four planes' walls: the tile's WallMap bits, plus 64 times the half (WallMap.half) the tile's room has,
 	 * plus 128 times the room of the other half of a tile a diagonal wall crosses (0 outdoors; the tile's own room
-	 * when both halves are in it), and the four planes' wall distances at the tile's corners (RoomAmbient).
+	 * when both halves are in it), the four planes' wall distances at the tile's corners (RoomAmbient), and the four
+	 * planes' puddle places ({@link #pool}).
 	 */
 	void texels(FloatBuffer out)
 	{
@@ -668,7 +669,67 @@ final class RoomMap
 					int i = index(p, x, y);
 					out.put(walls != null ? RoomAmbient.pack(walls, p, x, y) : 0);
 				}
+				for (int p = 0; p < PLANES; ++p)
+				{
+					out.put(pool(p, x, y));
+				}
 			}
 		}
+	}
+
+	// how much lower than its neighbours (world units) a tile must lie to collect a full puddle, and the slope
+	// (world units of height across a tile) from which water runs off instead
+	static final float POOL_DEPTH = 24;
+	static final float POOL_FLAT = 4;
+	static final float POOL_STEEP = 24;
+
+	/**
+	 * Where rain water collects on a tile of a storey, 0 to 1: in hollows lower than the tiles around them, and along
+	 * walls, on level ground only (weather_ground.glsl grows its puddles from the highest of these).
+	 */
+	float pool(int p, int x, int y)
+	{
+		float h = floors[index(p, x, y)];
+		float sum = 0;
+		int n = 0;
+		for (int dx = -1; dx <= 1; ++dx)
+		{
+			for (int dy = -1; dy <= 1; ++dy)
+			{
+				int nx = x + dx, ny = y + dy;
+				if ((dx != 0 || dy != 0) && nx >= 0 && ny >= 0 && nx < size && ny < size)
+				{
+					sum += floors[index(p, nx, ny)];
+					n++;
+				}
+			}
+		}
+		// y points down: a hollow's floor is larger than its neighbours'
+		float hollow = n == 0 ? 0 : clamp01((h - sum / n) / POOL_DEPTH);
+		float slope = Math.max(Math.abs(floorAt(p, x + 1, y, h) - floorAt(p, x - 1, y, h)),
+			Math.abs(floorAt(p, x, y + 1, h) - floorAt(p, x, y - 1, h))) * 0.5f;
+		float level = 1 - clamp01((slope - POOL_FLAT) / (POOL_STEEP - POOL_FLAT));
+		float byWall = 0;
+		if (walls != null)
+		{
+			int packed = RoomAmbient.pack(walls, p, x, y);
+			int nearest = 63;
+			for (int c = 0; c < 4; ++c)
+			{
+				nearest = Math.min(nearest, packed >> (c * 6) & 63);
+			}
+			byWall = 1 - nearest / 63f;
+		}
+		return level * Math.max(hollow, 0.75f * byWall);
+	}
+
+	private float floorAt(int p, int x, int y, float fallback)
+	{
+		return x < 0 || y < 0 || x >= size || y >= size ? fallback : floors[index(p, x, y)];
+	}
+
+	private static float clamp01(float v)
+	{
+		return Math.max(0, Math.min(1, v));
 	}
 }

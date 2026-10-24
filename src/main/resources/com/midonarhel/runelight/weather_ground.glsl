@@ -2,10 +2,10 @@
 // lights it. The AO pass leaves how much cover each pixel gets (weather_ground_ao.glsl); this decides where it lies.
 // Snow is blobs of world space noise compared with a level that falls as the cover builds: a blob starts at a noise
 // peak and grows outward, its edge crisp and two-tone like the water's foam, an outer band of shaded snow round the
-// bright snow. Puddles are separate round blobs, one at most to a cell of the ground, most by walls, drawn as a water
-// of their own: the sky and the world beside them reflected. Both edges are distances in pixels, worked out from the
-// noise's gradient and the surface's footprint on screen, so they stay a pixel wide at any angle. Needs frame.glsl,
-// rooms.glsl and water.glsl.
+// bright snow. Puddles grow where water collects, in hollows and along walls (RoomMap.pool), as the ground soaks, their
+// edges pushed around by noise, drawn as a water of their own reflecting the sky. Both edges are distances in pixels,
+// worked out from the gradients and the surface's footprint on screen, so they stay a pixel wide at any angle. Needs
+// frame.glsl, rooms.glsl and water.glsl.
 
 uniform int weatherGroundOn;
 uniform vec2 weatherNoiseOrigin;  // world x and z of local (scene) 0, world units
@@ -14,6 +14,8 @@ uniform vec2 weatherNoiseOrigin;  // world x and z of local (scene) 0, world uni
 #define SNOW_SCALE 640.0
 #define SNOW_FIRST 0.45
 #define SNOW_ALL -0.6
+// the cover moves the snow's edge in this many small steps, not continuously: it spreads in discrete little advances
+#define SNOW_STEPS 16.0
 // the outer band's width in world units, and its least in noise levels (a young blob has nothing else yet)
 #define SNOW_RIM 14.0
 #define SNOW_RIM_MIN 0.02
@@ -29,21 +31,13 @@ uniform vec2 weatherNoiseOrigin;  // world x and z of local (scene) 0, world uni
 #define SNOW_FLAT 0.8
 #define SNOW_SLOPE 2.0
 
-// puddles: the ground's cells (world units) each hold a puddle's place, anywhere in the middle half of the cell, and
-// its largest size; the puddle's size is that times a share by the cover and the noise
-#define PUDDLE_CELL 288.0
-#define PUDDLE_JITTER 0.5
-#define PUDDLE_RADIUS vec2(18.0, 44.0)
-// the lumpiness of the outline: share of the radius, noise wavelength
-#define PUDDLE_LUMPS 0.4
-#define PUDDLE_LUMP_SCALE 90.0
-// the cover at which a puddle starts to grow, from the first place to the last, and how much more it grows over
-#define PUDDLE_FIRST 0.05
-#define PUDDLE_LAST 0.85
-#define PUDDLE_GROW 0.25
-// the share of the cover away from walls; puddles gather within about a tile of one
-#define PUDDLE_OPEN 0.55
-#define PUDDLE_WALL_REACH 0.9
+// puddles: they grow from where water collects (RoomMap.pool: hollows and the feet of walls), the edge pushed around
+// by noise of this wavelength (world units) and strength so they are gloopy rather than round; the pool level at
+// which the first puddles appear and how much lower it reaches when the ground is soaked
+#define PUDDLE_LUMP_SCALE 110.0
+#define PUDDLE_LUMPS 0.22
+#define PUDDLE_FIRST 0.85
+#define PUDDLE_ALL 0.25
 // the up component of the normal of ground water pools on: none below the first, all above the second
 #define PUDDLE_STEEP 0.955
 #define PUDDLE_FLAT 0.995
@@ -53,9 +47,9 @@ uniform vec2 weatherNoiseOrigin;  // world x and z of local (scene) 0, world uni
 #define PUDDLE_DAMP 0.78
 #define PUDDLE_DARKEN 0.5
 #define PUDDLE_RIM_REFLECT 0.2
-// how much the water reflects looking straight down; it rises to all of it at a slant as in the water's
-// FRESNEL_POWER
-#define PUDDLE_REFLECT 0.35
+// how much of the sky the water reflects looking straight down, and at most at a slant: a dull, soft reflection
+#define PUDDLE_REFLECT 0.15
+#define PUDDLE_REFLECT_MAX 0.45
 
 uvec2 groundHash(vec2 cell) {
   uvec2 v = uvec2(ivec2(cell)) * 1664525u + 1013904223u;
@@ -71,12 +65,6 @@ uvec2 groundHash(vec2 cell) {
 vec2 groundGradient(vec2 cell) {
   float a = float(groundHash(cell).x >> 8u) * (6.28318530718 / 16777216.0);
   return vec2(cos(a), sin(a));
-}
-
-// four numbers 0 to 1 for a cell
-vec4 groundRandom(vec2 cell) {
-  uvec2 v = groundHash(cell);
-  return vec4(v.x & 65535u, v.x >> 16u, v.y & 65535u, v.y >> 16u) / 65535.0;
 }
 
 // Perlin noise, about -0.7 to 0.7, and its gradient: x the noise, yz its change per unit of p
@@ -123,38 +111,6 @@ float groundEdge(float f, vec2 df) {
   return smoothstep(-0.7, 0.7, f / max(length(df), 1e-5));
 }
 
-// The puddles at xz: how far inside the nearest one's edge the point is, in world units (negative outside), and the
-// direction that grows. wet 0 to 1, y the ground's height, flatness 0 to 1: how level it is.
-float groundPuddles(vec2 xz, float y, float wet, float flatness, out vec2 grad) {
-  vec2 cell = floor(xz / PUDDLE_CELL);
-  float lumps = 1.0 + PUDDLE_LUMPS * groundPerlin(xz / PUDDLE_LUMP_SCALE).x / 0.7;
-  float depth = -PUDDLE_RADIUS.y;
-  grad = vec2(0.0);
-  for (int j = -1; j <= 1; ++j) {
-    for (int i = -1; i <= 1; ++i) {
-      vec2 id = cell + vec2(i, j);
-      vec4 h = groundRandom(id);
-      vec2 c = (id + 0.5 + (h.xy - 0.5) * PUDDLE_JITTER) * PUDDLE_CELL;
-      float r = mix(PUDDLE_RADIUS.x, PUDDLE_RADIUS.y, h.z);
-      vec2 d = xz - c;
-      float dist = length(d);
-      if (dist > r * (1.0 + PUDDLE_LUMPS)) {
-        continue;
-      }
-      float byWall = 1.0 - smoothstep(0.0, PUDDLE_WALL_REACH,
-        wallDistanceAt(vec3(c.x - weatherNoiseOrigin.x, y, c.y - weatherNoiseOrigin.y)));
-      float level = wet * mix(PUDDLE_OPEN, 1.0, byWall);
-      float start = mix(PUDDLE_FIRST, PUDDLE_LAST, h.w);
-      float inside = r * smoothstep(start, start + PUDDLE_GROW, level) * flatness * lumps - dist;
-      if (inside > depth) {
-        depth = inside;
-        grad = -d / max(dist, 1e-3);
-      }
-    }
-  }
-  return depth;
-}
-
 // Snow and puddles on a surface before lighting: changes the albedo (sRGB) and the normal. p camera-relative, world
 // the same in world space, pc the pixel's center; material: r emissive, b water (0 land terrain, 1 bed), a how much
 // snow settles (materials.glsl); alpha: the transparency layer over it; cover: the AO pass's, upsampled (snow above
@@ -177,7 +133,8 @@ vec2 weatherGroundSurface(inout vec3 color, inout vec3 n, vec3 p, vec3 world, ve
   groundFootprint(pc, p, n, dx, dy);
   if (cover > 0.0) {
     vec3 noise = groundBlobs(xz, SNOW_SCALE);
-    float f = noise.x - mix(SNOW_FIRST, SNOW_ALL, cover) - SNOW_SLOPE * (1.0 - smoothstep(SNOW_STEEP, SNOW_FLAT, up));
+    float steps = ceil(cover * SNOW_STEPS) / SNOW_STEPS;
+    float f = noise.x - mix(SNOW_FIRST, SNOW_ALL, steps) - SNOW_SLOPE * (1.0 - smoothstep(SNOW_STEEP, SNOW_FLAT, up));
     vec2 df = vec2(dot(noise.yz, dx), dot(noise.yz, dy));
     float snow = groundEdge(f, df) * eligible;
     float rim = max(SNOW_RIM * length(noise.yz), SNOW_RIM_MIN);
@@ -190,29 +147,28 @@ vec2 weatherGroundSurface(inout vec3 color, inout vec3 n, vec3 p, vec3 world, ve
     color = mix(color, mix(SNOW_RIM_COLOR, SNOW_COLOR, inner), snow);
     return vec2(0.0);
   }
+  // the pool level the water has reached, lower as the ground soaks, and the edge's noise
   vec2 grad;
-  float depth = groundPuddles(xz, world.y, -cover, smoothstep(PUDDLE_STEEP, PUDDLE_FLAT, up), grad);
+  float pool = puddlePoolAt(world, grad) * smoothstep(PUDDLE_STEEP, PUDDLE_FLAT, up);
+  vec3 lumps = groundPerlin(xz / PUDDLE_LUMP_SCALE);
+  float depth = pool + PUDDLE_LUMPS * lumps.x - mix(PUDDLE_FIRST, PUDDLE_ALL, -cover);
+  grad += PUDDLE_LUMPS * lumps.yz / PUDDLE_LUMP_SCALE;
   vec2 df = vec2(dot(grad, dx), dot(grad, dy));
   float puddle = groundEdge(depth, df) * eligible;
-  float water = groundEdge(depth - PUDDLE_RIM, df);
+  float water = groundEdge(depth - PUDDLE_RIM * length(grad), df);
   color *= mix(1.0, mix(PUDDLE_DAMP, PUDDLE_DARKEN, water), puddle);
   n = normalize(mix(n, vec3(0.0, -1.0, 0.0), puddle));
   return vec2(puddle, water);
 }
 
-// A puddle's water over the ground lit as usual (lit, sRGB): the sky it reflects, by Fresnel, and the world beside
-// it as the water's screen-space reflection finds it (light: the ground's, as lit the world beside it is about the
-// same); the rim keeps a little of it. p camera-relative, pc the pixel's center.
-vec3 weatherPuddleWater(vec3 lit, vec3 p, vec3 light, vec2 puddle, vec2 pc) {
+// A puddle's water over the ground lit as usual (lit, sRGB): a soft reflection of the sky, by Fresnel; the rim keeps
+// a little of it. p camera-relative.
+vec3 weatherPuddleWater(vec3 lit, vec3 p, vec2 puddle) {
   vec3 v = normalize(p);
   // the reflected ray off level water; y is down
   vec3 r = vec3(v.x, -v.y, v.z);
-  float fresnel = mix(PUDDLE_REFLECT, 1.0, pow(1.0 - clamp(v.y, 0.0, 1.0), FRESNEL_POWER));
+  float fresnel = mix(PUDDLE_REFLECT, PUDDLE_REFLECT_MAX, pow(1.0 - clamp(v.y, 0.0, 1.0), FRESNEL_POWER));
   float share = fresnel * puddle.x * mix(PUDDLE_RIM_REFLECT, 1.0, puddle.y);
   vec3 reflection = waterSkyReflection(r);
-  if (waterReflections == 1) {
-    vec4 hit = waterTraceReflection(p, r, light, pc);
-    reflection = mix(reflection, hit.rgb, hit.a);
-  }
   return linearToSrgb(mix(srgbToLinear(lit), reflection, share));
 }
