@@ -134,8 +134,8 @@ float tileWallDistance(int index, int plane, vec2 f) {
 float roomAmbientFill(vec3 world, vec3 normal) {
   vec4 header = roomHeader;
   if (header.x < 1.5) return 0.0;
-  vec3 receiver = world + normal;
-  receiver.y -= max(-normal.y, 0.0) * ROOM_PLANE_MARGIN;
+  // looked up off the surface, as the lights' rooms are: a wall's outer face is outdoors, its inner face in the room
+  vec3 receiver = world + normal * ROOM_NORMAL_BIAS;
   ivec3 room = roomPlaneAt(receiver);
   if (room.x <= 0) return 0.0;
   ivec2 tile = ivec2(floor(receiver.xz / 128.0)) + int(header.z);
