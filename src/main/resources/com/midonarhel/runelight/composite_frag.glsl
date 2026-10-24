@@ -104,9 +104,9 @@ uniform sampler2DArray compositeParts;
 layout(location = 0) out vec4 FragColor;
 
 // ---------------------------------------------------------------------------------------------------------------
-// Global illumination: the sunlight bounced off the surfaces around, gathered by the AO pass's samples (ao_frag.glsl),
-// upsampled with the AO, added to the skylight's ambient (light_occlusion.glsl skylightAmbient)
-uniform float giWeight;  // 0..1: enabled, strength
+// Global illumination (GlobalIllumination.java, gi.glsl): the light bounced off the surfaces around, upsampled with
+// the AO, added to the skylight's ambient (light_occlusion.glsl skylightAmbient)
+uniform float giWeight;  // 0..1: enabled, eased in and out, strength
 
 // ---------------------------------------------------------------------------------------------------------------
 // Ambient occlusion and shadows: 2x2 depth- and normal-aware upsample of the half resolution pass, whose noise the
@@ -416,8 +416,6 @@ vec4 shadeScene(ivec2 px, SceneSample sm, vec4 transparent) {
     }
     shadow = overcastShadow(shadow);
     vec3 caster = sunIsCaster == 1 ? sunLight(sunAltitude) : moonLight(sunAltitude);
-    // the bounce was gathered in units of the caster's light
-    gi.rgb *= caster * envSun;
     float up = max(-n.y, 0.0);
     if (compositePart != 2) {
     vec3 plain = ambientLight(sunAltitude) + skyFill(n, sunAltitude, up);

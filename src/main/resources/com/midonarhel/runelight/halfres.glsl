@@ -3,8 +3,7 @@
 // illumination's weight (4 bits) and red (12), b the octahedral normal (12 + 12), a the global illumination's
 // green and blue (12 + 12, square root encoded). The composite's depth- and normal-aware upsamples of AO, GI and
 // fog read their taps' geometry from here with one small fetch instead of the full resolution depth and normal.
-// The target is RGBA32F (SceneTargets). The denoise writes a copy with the global illumination smoothed, which the
-// composite reads; the AO, which it smooths too, is in the shadow target.
+// The target is RGBA32F (SceneTargets), written once: the AO, which the denoise smooths, is in the shadow target.
 // Needs frame.glsl.
 
 #include "halfmap.glsl"
@@ -51,12 +50,6 @@ vec4 halfPackGeometry(float nearOverDepth, vec3 n, vec3 gi, float giWeight) {
   float w4 = floor(clamp(giWeight, 0.0, 1.0) * 15.0 + 0.5);
   vec2 o = floor(clamp(octEncode(n) * 0.5 + 0.5, 0.0, 1.0) * 4095.0 + 0.5);
   return vec4(halfPack(w4, e.r), nearOverDepth, halfPack(o.x, o.y), halfPack(e.g, e.b));
-}
-
-// the geometry g with its global illumination replaced (the denoise's smoothed one)
-vec4 halfWithGi(vec4 g, vec4 gi) {
-  vec4 e = halfPackGeometry(g.g, vec3(0.0, 0.0, 1.0), gi.rgb, gi.a);
-  return vec4(e.r, g.g, g.b, e.a);
 }
 
 vec3 halfNormal(vec4 g) {
