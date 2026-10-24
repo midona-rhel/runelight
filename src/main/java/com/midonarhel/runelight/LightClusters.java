@@ -437,7 +437,7 @@ class LightClusters
 			// the driver's buffer textures are too small for the map (GL 3.3 only promises 65536 texels)
 			rooms = null;
 		}
-		int texels = rooms != null ? rooms.texelCount() : RoomMap.HEADER_TEXELS;
+		int roomTexels = rooms != null ? rooms.texelCount() : RoomMap.HEADER_TEXELS;
 		LightOcclusion.Atlas grids = atlas;
 		if (grids != uploadedAtlas)
 		{
@@ -450,10 +450,10 @@ class LightClusters
 		if (rooms != uploadedRooms || rooms != null && rooms.getVersion() != uploadedVersion)
 		{
 			// the map changed: lay the buffer out again and send it
-			glBufferData(GL_TEXTURE_BUFFER, (long) (ROOM_BASE + texels) * 4 * Float.BYTES, GL_DYNAMIC_DRAW);
+			glBufferData(GL_TEXTURE_BUFFER, (long) (ROOM_BASE + roomTexels) * 4 * Float.BYTES, GL_DYNAMIC_DRAW);
 			if (rooms != null)
 			{
-				roomStaging = staging(roomStaging, texels * 4);
+				roomStaging = staging(roomStaging, roomTexels * 4);
 				rooms.texels(roomStaging);
 				roomStaging.flip();
 				glBufferSubData(GL_TEXTURE_BUFFER, (long) ROOM_BASE * 4 * Float.BYTES, roomStaging);
