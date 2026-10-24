@@ -402,11 +402,14 @@ class SceneUploader
 		DecorativeObject decorativeObject = t.getDecorativeObject();
 		if (decorativeObject != null && renderCallbackManager.drawObject(scene, decorativeObject))
 		{
+			// what hangs on a wall lies flat on it: drawn in front of it, as the game draws it after the wall
+			objectBias = DECORATION_BIAS;
 			Renderable renderable = decorativeObject.getRenderable();
 			uploadZoneRenderable(renderable, zone, 0, decorativeObject.getX() + decorativeObject.getXOffset(), decorativeObject.getZ(), decorativeObject.getY() + decorativeObject.getYOffset(), -1, -1, -1, -1, decorativeObject.getId(), vertexBuffer, ab);
 
 			Renderable renderable2 = decorativeObject.getRenderable2();
 			uploadZoneRenderable(renderable2, zone, 0, decorativeObject.getX() + decorativeObject.getXOffset2(), decorativeObject.getZ(), decorativeObject.getY() + decorativeObject.getYOffset2(), -1, -1, -1, -1, decorativeObject.getId(), vertexBuffer, ab);
+			objectBias = 0;
 		}
 
 		GroundObject groundObject = t.getGroundObject();
@@ -1142,6 +1145,14 @@ class SceneUploader
 	private final int[] flatNormals = new int[3];
 	private final VertexShading.Normals computedNormals = new VertexShading.Normals();
 
+	// Faces lying exactly on top of each other (a wall's overlay on the wall, a decoration on its wall) would fight over
+	// the depth test pixel by pixel. The game draws them in order instead: a model's faces by render priority, and a
+	// wall's decoration after the wall. Each priority, and a decoration, moves a face this much toward the camera in
+	// the depth test (the game's own face bias units, vert.glsl), on top of its face bias.
+	private static final int PRIORITY_BIAS = 1;
+	private static final int DECORATION_BIAS = 4;
+	private int objectBias;
+
 	private int uploadStaticModel(Model model, int orient, int x, int y, int z, int material, int id, GpuIntBuffer vb, GpuIntBuffer ab)
 	{
 		final int vertexCount = model.getVerticesCount();
@@ -1163,6 +1174,7 @@ class SceneUploader
 
 		final byte[] transparencies = model.getFaceTransparencies();
 		final byte[] bias = model.getFaceBias();
+		final byte[] priorities = model.getFaceRenderPriorities();
 
 		final VertexShading.Normals computed = this.computedNormals;
 		computed.ensure(model.getVerticesCount());
@@ -1317,7 +1329,9 @@ class SceneUploader
 
 			int alphaBias = 0;
 			alphaBias |= transparencies != null ? (transparencies[face] & 0xff) << 24 : 0;
-			alphaBias |= bias != null ? (bias[face] & 0xff) << 16 : 0;
+			int faceBias = (bias != null ? bias[face] & 0xff : 0) + objectBias
+				+ (priorities != null ? (priorities[face] & 0xff) * PRIORITY_BIAS : 0);
+			alphaBias |= Math.min(faceBias, 255) << 16;
 			int texture = faceTextures != null ? faceTextures[face] + 1 : 0;
 			texture |= SurfaceMaterials.face(material, texture - 1, color1);
 			GpuIntBuffer buf = alpha ? ab : vb;
