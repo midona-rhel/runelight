@@ -39,6 +39,8 @@ uniform vec4 skyFieldMap;
 // across that edge is out of doors, they are out of doors too. Facing down they read where they are (an eave's
 // underside sees no sky).
 #define SKY_FOOT_REACH 8.0
+// how much of the traced darkening is kept out of doors
+#define SKY_OUTDOOR_STRENGTH 0.35
 // what a corner behind the surface still counts for, against 1 for one well in front: only enough that a pixel with
 // every corner behind it still has a value
 #define SKY_BEHIND 0.02
@@ -269,6 +271,11 @@ float skylightVisibility(vec3 p, vec3 n) {
   }
   vec2 field = skyFieldOn == 1 ? skyFieldVisibility(o) : vec2(0.0);
   float v = skyGridVisibility(skyGrid, scale, o + skyGridCamera, n);
+  // out of doors the trace only shades gently: the ambient occlusion draws the contact where things meet, and the
+  // grid is too coarse to draw more than a soft darkening near buildings and trees. Under cover (the field's green)
+  // it keeps its full range.
+  float outdoors = skyFieldOn == 1 ? 1.0 - field.g : 1.0;
+  v = mix(v, 1.0 - (1.0 - v) * SKY_OUTDOOR_STRENGTH, outdoors);
   if (skyFieldOn == 1) {
     v = mix(v, max(v, field.r), field.g);
   }
