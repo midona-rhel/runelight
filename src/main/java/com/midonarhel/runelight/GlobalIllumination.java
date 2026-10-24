@@ -16,11 +16,12 @@ import org.slf4j.LoggerFactory;
 import static org.lwjgl.opengl.GL33C.*;
 
 /**
- * Global illumination by radiosity between tile sized patches of floor and wall (GiPatches): each patch is lit by the
+ * Global illumination by radiosity between tile sized patches of floor, wall and roof (GiPatches): each patch is lit by the
  * sun or moon and the sky it sees, and gathers what the patches around it that it can see send on, tinted by their
  * albedos (GiRelight). A pixel reads the patches of the surface it is on, never the space around it (gi.glsl), so
  * interiors and the sides of walls stay apart, and sunlit ground warms the shade beside it, the foot of a wall in
- * particular (the sky's own light, past roofs, overhangs and walls, comes from the composite).
+ * particular, and a red roof the wall of the taller house beside it (the sky's own light, past roofs, overhangs and
+ * walls, comes from the composite).
  *
  * Everything heavy runs on a worker thread. After a region load the zones' triangles (captured as they upload,
  * GiCapture) are voxelized, per zone so reused zones keep theirs (GiVoxels), and the patches are laid out and linked
@@ -31,10 +32,11 @@ import static org.lwjgl.opengl.GL33C.*;
  * read back without stalling. Each new set of light is uploaded at once (a megabyte) and blended in over about the
  * time between relights, like the sky cache, so nothing pops.
  *
- * On the GPU the only steady cost is the lookup in the half resolution AO pass (gi.glsl: nine texture fetches for a
- * floor pixel, one for the ground's height, four for the floor patches around it and four for their light; seven for a
- * wall pixel, which finds its wall face and the next one along it by two and gets the light of two bands of each), whose
- * result rides along in the AO target to the composite (halfres.glsl). Outside the base scene, underground, and until the first patches are lit, the composite
+ * On the GPU the only steady cost is the lookup in the half resolution AO pass (gi.glsl: eight texture fetches for a
+ * floor or roof pixel, four for the heights of the tiles around it and four for the light of their floor or roof
+ * patches; seven for a wall pixel, which finds its floor by one, its wall face and the next one along it by two and
+ * gets the light of two bands of each by four; a few more where a pixel is between floors, or half a wall and half a
+ * floor), whose result rides along in the AO target to the composite (halfres.glsl). Outside the base scene, underground, and until the first patches are lit, the composite
  * keeps its plain ambient light.
  */
 class GlobalIllumination
@@ -854,13 +856,17 @@ class GlobalIllumination
 		patchesBaseY = baseY;
 		patchesInstance = instance;
 		builtGeneration = g;
-		int floors = 0;
-		for (int i = 0; i < GiPatches.FLOOR_SLOTS; ++i)
+		int floors = 0, roofs = 0;
+		for (int i = 0; i < GiPatches.FIXED_SLOTS; ++i)
 		{
-			if (p.exists(i)) ++floors;
+			if (p.exists(i))
+			{
+				if (i < GiPatches.FLOOR_SLOTS) ++floors;
+				else ++roofs;
+			}
 		}
-		log.debug("GI build {}: voxelized {} zones in {} ms, grid {}x{}x{}, {} floor and {} wall patches, {} links, laid out and linked in {} ms",
-			g, voxelized, (voxelTime - start) / 1_000_000, grid.nx, grid.ny, grid.nz, floors, p.count - GiPatches.FLOOR_SLOTS,
+		log.debug("GI build {}: voxelized {} zones in {} ms, grid {}x{}x{}, {} floor, {} roof and {} wall patches, {} links, laid out and linked in {} ms",
+			g, voxelized, (voxelTime - start) / 1_000_000, grid.nx, grid.ny, grid.nz, floors, roofs, p.count - GiPatches.FIXED_SLOTS,
 			p.linkTarget.length, (System.nanoTime() - gridTime) / 1_000_000);
 		if (lastInput != null)
 		{

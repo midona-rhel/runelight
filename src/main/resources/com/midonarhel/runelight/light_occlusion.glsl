@@ -33,9 +33,11 @@ float skyUpsampled = 1.0;
 // bounce's color, 1 adds all of it. Less than 1 keeps the exposure the skylight alone has; the colors still show.
 #define BOUNCE_BRIGHTNESS 1.0
 // The patches' light is the light that reached the surface by bouncing, as irradiance in the units of the ambient light
-// (GiRelight), so it is added as it is. This is the knob for how much stronger or weaker than that the bounce is shown;
-// the albedos it is made of are the game's dim colors.
-#define BOUNCE_GAIN 1.0
+// (GiRelight). The form factors keep it physical, which is faint: a patch standing in sunlit grass gathers about a third
+// of the grass' albedo times the sun's light, and the game's albedos are dim, so the bounce is a few hundredths of the
+// ambient light where the colors should show. This is how many times stronger than that it is shown. It is added after the
+// light has gone through the half resolution target and its range, so it clamps nothing there.
+#define BOUNCE_GAIN 4.0
 
 // plain: the ambient plus sky light a surface would get under the open sky; gi the patches' light and giW their weight.
 // In mode 2 the patches carry only the light bounced off surfaces (GiRelight), in color: the sunlit grass

@@ -516,7 +516,7 @@ public class GlobalIlluminationTest
 	public void patchesLinkOnlyToTheOnesTheyFaceAndSee()
 	{
 		GiPatches p = patches();
-		int links = 0;
+		int links = 0, partly = 0;
 		for (int i = 0; i < p.count; ++i)
 		{
 			for (int l = p.linkStart[i]; l < p.linkStart[i + 1]; ++l)
@@ -532,13 +532,22 @@ public class GlobalIlluminationTest
 				float cosJ = -(p.normal[j * 3] * dx + p.normal[j * 3 + 1] * dy + p.normal[j * 3 + 2] * dz) / r;
 				assertTrue(cosI > 0 && cosJ > 0);
 				assertTrue(r <= GiPatches.REACH);
-				// the point-to-area form factor
-				assertEquals(cosI * cosJ * p.area[j] / ((float) Math.PI * r2 + p.area[j]), p.linkWeight[l], 1e-6);
+				// the point-to-area form factor, times the share of the rays between the patches that get through
+				float factor = cosI * cosJ * p.area[j] / ((float) Math.PI * r2 + p.area[j]);
+				float seen = p.linkWeight[l] / factor;
+				assertTrue(seen > 0.24f && seen < 1.0001f);
+				assertEquals(Math.round(seen * 4) / 4f, seen, 1e-4);
+				if (seen < 0.99f)
+				{
+					partly++;
+				}
 				// both see each other
 				assertTrue(linked(p, j, i));
 			}
 		}
 		assertTrue(links > 1000);
+		// things in the way hide some of the rays and not all
+		assertTrue("partly " + partly, partly > 10);
 		// the floor outside the house's west wall is lit by that wall's outside, not its inside, which is behind it
 		float[] outside = face(p, 0, 9, 12, 1), inside = face(p, 0, 10, 12, 3);
 		int out = floorId(0, 9, 12), in = floorId(0, 11, 12);
@@ -644,21 +653,123 @@ public class GlobalIlluminationTest
 		assertTrue(tree[3] > 0.5f && tree[3] < 1);
 	}
 
+	static int roofId(int x, int z)
+	{
+		return GiPatches.FLOOR_SLOTS + z * GiPatches.SIZE + x;
+	}
+
 	@Test
-	public void roofsAndOtherFloorsAreNotReadThroughTheFloorsBetween()
+	public void roofPatchesAreOnRoofsAndNotOnTreesOrTheGround()
 	{
 		GiPatches p = patches();
+		// the house' flat roof, 384 up, over its tiles 10-13
+		for (int x = 10; x < 14; ++x)
+		{
+			for (int z = 10; z < 14; ++z)
+			{
+				int roof = roofId(x, z);
+				assertTrue(x + " " + z, p.exists(roof));
+				assertEquals(-1, p.normal[roof * 3 + 1], 1e-3);
+				assertEquals(-384, p.position[roof * 3 + 1], GiGrid.VOXEL / 2f);
+				assertEquals((x + 0.5f) * GiPatches.TILE, p.position[roof * 3], 0);
+				assertEquals(GiPatches.TILE * GiPatches.TILE, p.area[roof], 1);
+				assertEquals(p.position[roof * 3 + 1], p.floorTexels[(z * GiPatches.SIZE + x) * 4 + 3], 0);
+			}
+		}
+		// none over open ground, over a tile with nothing built near it, or low objects
+		assertFalse(p.exists(roofId(30, 30)));
+		assertEquals(GiPatches.NO_ROOF, p.floorTexels[(30 * GiPatches.SIZE + 30) * 4 + 3], 0);
+		assertFalse(p.exists(roofId(4, 4)));
+		// the pixels on the roof read the roof patches, those under it the floor's
 		float[] marker = markers(p);
 		float c = GiPatches.TILE;
-		// the roof of the house, facing up, is over the second floor, which is not there
-		float[] roof = GiLookup.irradiance(p, marker, new float[]{12 * c, -390, 12 * c}, new float[]{0, -1, 0});
-		assertEquals(0, roof[3], 0);
-		// the underside of the roof reads the floor of the room, not the roof
-		float[] ceiling = GiLookup.irradiance(p, marker, new float[]{12 * c, -378, 12 * c}, new float[]{0, 1, 0});
+		float[] roof = GiLookup.irradiance(p, marker, new float[]{12.5f * c, -390, 12.5f * c}, new float[]{0, -1, 0});
+		assertEquals(roofId(12, 12), roof[0], 1e-2);
+		assertEquals(1, roof[3], 1e-6);
+		// the underside of the roof is not on it, and the floor it would read is not there on the floor above
+		float[] ceiling = GiLookup.irradiance(p, marker, new float[]{12.5f * c, -378, 12.5f * c}, new float[]{0, 1, 0});
 		assertEquals(0, ceiling[3], 0);
-		// a pixel high above the ground is out of reach of its light
-		float[] high = GiLookup.irradiance(p, marker, new float[]{30.5f * c, -300, 30.5f * c}, new float[]{1, 1, 0});
+		// a pixel high above the ground and no roof is out of reach of any light
+		float[] high = GiLookup.irradiance(p, marker, new float[]{30.5f * c, -400, 30.5f * c}, new float[]{1, 1, 0});
 		assertEquals(0, high[3], 0);
+		// and the roof pixels far above the house, or in its air, read no roof
+		float[] air = GiLookup.irradiance(p, marker, new float[]{12.5f * c, -700, 12.5f * c}, new float[]{0, -1, 0});
+		assertEquals(0, air[3], 0);
+	}
+
+	/**
+	 * A V-shaped roof over tiles 10-13 (zone-local 256-768): from 320 up at the outer edges down to 192 in the middle, so
+	 * the two slopes face each other, with walls of the collision map around it to tell it from a tree.
+	 */
+	private static GiPatches valley()
+	{
+		GiCapture cap = new GiCapture();
+		ground(cap);
+		float s = (float) Math.sqrt(1.25);
+		quad(cap, p(256, -320, 256), p(512, -192, 256), p(512, -192, 768), p(256, -320, 768), 0.5f / s, -1 / s, 0);
+		quad(cap, p(512, -192, 256), p(768, -320, 256), p(768, -320, 768), p(512, -192, 768), -0.5f / s, -1 / s, 0);
+		GiVoxels.Zone[] zones = new GiVoxels.Zone[16];
+		int[] zx = new int[16], zz = new int[16];
+		for (int i = 0; i < 16; ++i)
+		{
+			GiCapture ground = new GiCapture();
+			ground(ground);
+			zones[i] = i == 5 ? GiVoxels.voxelize(cap) : GiVoxels.voxelize(ground);
+			zx[i] = BASE_ZONE + i / 4;
+			zz[i] = BASE_ZONE + i % 4;
+		}
+		int[][][] flags = new int[1][GiPatches.SIZE][GiPatches.SIZE];
+		for (int i = 10; i < 14; ++i)
+		{
+			flags[0][10][i] |= WallMap.LOS_WEST;
+			flags[0][13][i] |= WallMap.LOS_EAST;
+			flags[0][i][10] |= WallMap.LOS_SOUTH;
+			flags[0][i][13] |= WallMap.LOS_NORTH;
+		}
+		GiPatches.Input in = new GiPatches.Input();
+		in.ground = new float[1][GiPatches.SIZE * GiPatches.SIZE];
+		in.walls = WallMap.build(flags, null, GiPatches.SIZE, 0, 0);
+		return GiPatches.build(GiGrid.assemble(zones, zx, zz, BASE_ZONE), in, GiPatches.ParallelFor.SEQUENTIAL);
+	}
+
+	@Test
+	public void slopedRoofsHaveSlopedPatchesThatLightEachOther()
+	{
+		GiPatches p = valley();
+		// 10 and 11 slope down toward +x, 12 and 13 toward -x
+		for (int z = 10; z < 14; ++z)
+		{
+			for (int x = 10; x < 14; ++x)
+			{
+				int roof = roofId(x, z);
+				assertTrue(x + " " + z, p.exists(roof));
+				// the valley's own voxels face straight up, which pulls the middle tiles' patches toward it
+				assertEquals(x < 12 ? 0.447f : -0.447f, p.normal[roof * 3], 0.2);
+				assertTrue(p.normal[roof * 3 + 1] < -0.8f);
+				assertTrue(p.area[roof] > GiPatches.TILE * GiPatches.TILE);
+			}
+		}
+		assertEquals(-256, p.position[roofId(10, 12) * 3 + 1], 40);
+		assertEquals(-224, p.position[roofId(11, 12) * 3 + 1], 40);
+		// the slopes face each other across the valley, and a slope doesn't face itself
+		assertTrue(linked(p, roofId(11, 12), roofId(12, 12)));
+		assertTrue(linked(p, roofId(11, 12), roofId(13, 12)));
+		assertTrue(linked(p, roofId(12, 12), roofId(10, 12)));
+		assertFalse(linked(p, roofId(10, 12), roofId(11, 12)));
+		assertFalse(linked(p, roofId(12, 12), roofId(13, 12)));
+		// the light each gathers is what the other slope gives off: lit by the sun and the sky, both gather some
+		GiRelight.Light sun = GiRelight.Light.fromTable(table(0.3f, 2.6f), sunDir(), true);
+		float[] light = GiRelight.relight(p, sun, GiPatches.ParallelFor.SEQUENTIAL);
+		assertTrue(lum(light, roofId(11, 12)) > 0);
+		assertTrue(lum(light, roofId(12, 12)) > 0);
+		// a pixel on a slope facing as it does reads the patches of the slope's tiles around it, blended
+		float[] marker = markers(p);
+		float c = GiPatches.TILE;
+		float[] pixel = GiLookup.irradiance(p, marker, new float[]{11.5f * c, -224, 12.5f * c}, new float[]{0.447f, -0.894f, 0});
+		assertEquals(roofId(11, 12), pixel[0], 1e-2);
+		assertEquals(1, pixel[3], 1e-6);
+		float[] between = GiLookup.irradiance(p, marker, new float[]{11 * c, -240, 12.5f * c}, new float[]{0.447f, -0.894f, 0});
+		assertEquals((roofId(10, 12) + roofId(11, 12)) / 2f, between[0], 1e-1);
 	}
 
 	@Test
@@ -720,6 +831,156 @@ public class GlobalIlluminationTest
 		// and a pixel far from the diagonal is not on it
 		float[] far = GiLookup.irradiance(p, marker, new float[]{cx - 50, y, cz + 50}, new float[]{-d, 0, d});
 		assertTrue(far[3] == 0 || far[0] < GiPatches.FLOOR_SLOTS);
+	}
+
+	/** A smooth light: a patch's position over 1280, so any interpolation of patches moves smoothly with the point. */
+	static float[] ramp(GiPatches p)
+	{
+		float[] light = new float[p.count * 3];
+		for (int i = 0; i < p.count; ++i)
+		{
+			for (int k = 0; k < 3; ++k)
+			{
+				light[i * 3 + k] = p.position[i * 3 + k] / 1280f;
+			}
+		}
+		return light;
+	}
+
+	/**
+	 * Walk from a to b (world units) with the surface facing n, a step of 2 units at a time, and check that the light
+	 * given moves smoothly: its color by no more than COLOR_STEP between two steps wherever there is light at both, and
+	 * how much of it there is by no more than COVER_STEP.
+	 */
+	private static void smooth(String what, GiPatches p, float[] light, float[] a, float[] b, float[] n)
+	{
+		float length = (float) Math.sqrt((b[0] - a[0]) * (b[0] - a[0]) + (b[1] - a[1]) * (b[1] - a[1])
+			+ (b[2] - a[2]) * (b[2] - a[2]));
+		int steps = (int) Math.ceil(length / 2);
+		float[] last = null;
+		for (int s = 0; s <= steps; ++s)
+		{
+			float t = (float) s / steps;
+			float[] at = {a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t, a[2] + (b[2] - a[2]) * t};
+			float[] gi = GiLookup.irradiance(p, light, at, n);
+			if (last != null)
+			{
+				assertTrue(what + " at " + java.util.Arrays.toString(at) + " cover " + last[3] + " -> " + gi[3],
+					Math.abs(gi[3] - last[3]) <= 0.15f);
+				if (gi[3] > 0.05f && last[3] > 0.05f)
+				{
+					for (int c = 0; c < 3; ++c)
+					{
+						assertTrue(what + " at " + java.util.Arrays.toString(at) + " color " + c + " " + last[c] + " -> " + gi[c],
+							Math.abs(gi[c] - last[c]) <= 0.012f);
+					}
+				}
+			}
+			last = gi;
+		}
+	}
+
+	@Test
+	public void floorLightIsContinuousAcrossTilesAndWhereNeighboursAreMissing()
+	{
+		GiPatches p = patches();
+		float[] light = ramp(p);
+		float c = GiPatches.TILE;
+		float[] up = {0, -1, 0};
+		// open ground, along x and z, and diagonally across several tile corners
+		smooth("open x", p, light, new float[]{24 * c, 0, 30.3f * c}, new float[]{31 * c, 0, 30.3f * c}, up);
+		smooth("open z", p, light, new float[]{28.4f * c, 0, 24 * c}, new float[]{28.4f * c, 0, 31 * c}, up);
+		smooth("diagonal", p, light, new float[]{24 * c, 0, 24 * c}, new float[]{31 * c, 0, 31 * c}, up);
+		// along the solid block's edge, and by the house: neighbors without a floor patch drop out gradually
+		smooth("block", p, light, new float[]{17 * c, 0, 19.6f * c}, new float[]{25 * c, 0, 19.6f * c}, up);
+		smooth("block z", p, light, new float[]{19.6f * c, 0, 17 * c}, new float[]{19.6f * c, 0, 25 * c}, up);
+		smooth("house", p, light, new float[]{5 * c, 0, 9.4f * c}, new float[]{19 * c, 0, 9.4f * c}, up);
+		smooth("inside", p, light, new float[]{10.2f * c, 0, 11.3f * c}, new float[]{13.8f * c, 0, 11.3f * c}, up);
+		// the edge of the ground, where there are no patches beyond
+		smooth("edge", p, light, new float[]{29 * c, 0, 31.2f * c}, new float[]{29 * c, 0, 33.5f * c}, up);
+		// a thing rising from the ground (a tree: a pixel facing sideways) fades out with its height
+		smooth("tree", p, light, new float[]{30.5f * c, 0, 30.5f * c}, new float[]{30.5f * c, -300, 30.5f * c}, new float[]{1, 0, 0});
+		// and a pixel turning from a floor to a wall at the foot of one, or a roof
+		for (float[] at : new float[][]{{10 * c - 6, -60, 12.5f * c}, {12.5f * c, -380, 12.5f * c}})
+		{
+			float[] last = null;
+			for (int degrees = 0; degrees <= 90; ++degrees)
+			{
+				float a = (float) Math.toRadians(degrees);
+				float[] gi = GiLookup.irradiance(p, light, at, new float[]{-(float) Math.sin(a), -(float) Math.cos(a), 0});
+				if (last != null)
+				{
+					assertTrue("turn " + degrees + " cover " + last[3] + " -> " + gi[3], Math.abs(gi[3] - last[3]) <= 0.15f);
+					if (gi[3] > 0.05f && last[3] > 0.05f)
+					{
+						for (int k = 0; k < 3; ++k)
+						{
+							assertTrue("turn " + degrees + " color " + k + " " + last[k] + " -> " + gi[k],
+								Math.abs(gi[k] - last[k]) <= 0.05f);
+						}
+					}
+				}
+				last = gi;
+			}
+		}
+	}
+
+	@Test
+	public void wallLightIsContinuousAlongAndUpTheWall()
+	{
+		GiPatches p = patches();
+		float[] light = ramp(p);
+		float c = GiPatches.TILE;
+		// the west wall's outside, along it over three tile borders, at the height of a band's middle and its border
+		for (float y : new float[]{-30, -60, -122, -180, -230})
+		{
+			smooth("west wall outside y " + y, p, light, new float[]{10 * c - 6, y, 10.6f * c},
+				new float[]{10 * c - 6, y, 13.4f * c}, new float[]{-1, 0, 0});
+			smooth("west wall inside y " + y, p, light, new float[]{10 * c + 12, y, 10.6f * c},
+				new float[]{10 * c + 12, y, 13.4f * c}, new float[]{1, 0, 0});
+		}
+		// up it, at a tile's middle and at a border of two, and a bit out from it and in
+		for (float z : new float[]{12.5f * c, 12 * c})
+		{
+			for (float x : new float[]{10 * c - 2, 10 * c - 20, 10 * c - 40})
+			{
+				smooth("up the wall z " + z + " x " + x, p, light, new float[]{x, 0, z}, new float[]{x, -300, z},
+					new float[]{-1, 0, 0});
+			}
+		}
+		// away from it
+		smooth("away from the wall", p, light, new float[]{10 * c - 80, -100, 12.3f * c}, new float[]{10 * c, -100, 12.3f * c},
+			new float[]{-1, 0, 0});
+		// along the house' south wall, up to the door, where the wall ends
+		smooth("south wall", p, light, new float[]{10.2f * c, -90, 9.9f * c}, new float[]{11.95f * c, -90, 9.9f * c}, new float[]{0, 0, -1});
+	}
+
+	@Test
+	public void roofLightIsContinuousAcrossTheRoof()
+	{
+		GiPatches p = valley();
+		float[] light = ramp(p);
+		float c = GiPatches.TILE;
+		smooth("valley along x", p, light, new float[]{10.2f * c, -300, 12.4f * c}, new float[]{13.8f * c, -300, 12.4f * c},
+			new float[]{0, -1, 0});
+		smooth("valley along z", p, light, new float[]{11.3f * c, -240, 10.1f * c}, new float[]{11.3f * c, -240, 13.9f * c},
+			new float[]{0.447f, -0.894f, 0});
+		// following the slope
+		float[] last = null;
+		for (float x = 10.1f * c; x < 11.95f * c; x += 2)
+		{
+			float y = -320 + 0.5f * (x - 10 * c);
+			float[] gi = GiLookup.irradiance(p, light, new float[]{x, y, 12.5f * c}, new float[]{0.447f, -0.894f, 0});
+			assertTrue("on the slope " + x + " cover " + gi[3], gi[3] > 0.9f);
+			if (last != null)
+			{
+				for (int k = 0; k < 3; ++k)
+				{
+					assertTrue("slope color " + x + " " + last[k] + " -> " + gi[k], Math.abs(gi[k] - last[k]) <= 0.012f);
+				}
+			}
+			last = gi;
+		}
 	}
 
 	private static float[] table(float sky, float caster)
@@ -845,6 +1106,8 @@ public class GlobalIlluminationTest
 	{
 		assertEquals(GiPatches.SIZE, GiLookup.define("GI_SIZE"), 0);
 		assertEquals(GiPatches.TILES, GiLookup.define("GI_TILES"), 0);
+		assertEquals(GiPatches.FLOOR_SLOTS, GiLookup.define("GI_ROOFS"), 0);
+		assertTrue(GiPatches.NO_ROOF >= GiLookup.define("GI_NO_ROOF"));
 		assertEquals(GiPatches.FACES, GiLookup.define("GI_FACES"), 0);
 		assertEquals(GiPatches.TILE, GiLookup.define("GI_TILE"), 0);
 		assertEquals(GlobalIllumination.LIGHT_W, 1 << (int) GiLookup.define("GI_PATCH_BITS"));

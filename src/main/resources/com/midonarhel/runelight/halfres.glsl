@@ -1,6 +1,6 @@
 // Half resolution geometry, written by the AO pass (ao_frag.glsl) for the top-left pixel of every 2x2 block:
 // g NEAR / view depth (0 for sky); r, b and a each hold a whole number, exact in a float: r the global
-// illumination's weight (4 bits) and red (12), b the octahedral normal (12 + 12), a the global illumination's
+// illumination's weight (12 bits) and red (12), b the octahedral normal (12 + 12), a the global illumination's
 // green and blue (12 + 12, square root encoded). The composite's depth- and normal-aware upsamples of AO, GI and
 // fog read their taps' geometry from here with one small fetch instead of the full resolution depth and normal.
 // The target is RGBA32F (SceneTargets), written once: the AO, which the denoise smooths, is in the shadow target.
@@ -47,9 +47,9 @@ vec2 halfUnpack(float v) {
 
 vec4 halfPackGeometry(float nearOverDepth, vec3 n, vec3 gi, float giWeight) {
   vec3 e = floor(sqrt(clamp(gi / HALF_GI_RANGE, 0.0, 1.0)) * 4095.0 + 0.5);
-  float w4 = floor(clamp(giWeight, 0.0, 1.0) * 15.0 + 0.5);
+  float w12 = floor(clamp(giWeight, 0.0, 1.0) * 4095.0 + 0.5);
   vec2 o = floor(clamp(octEncode(n) * 0.5 + 0.5, 0.0, 1.0) * 4095.0 + 0.5);
-  return vec4(halfPack(w4, e.r), nearOverDepth, halfPack(o.x, o.y), halfPack(e.g, e.b));
+  return vec4(halfPack(w12, e.r), nearOverDepth, halfPack(o.x, o.y), halfPack(e.g, e.b));
 }
 
 vec3 halfNormal(vec4 g) {
@@ -60,5 +60,5 @@ vec3 halfNormal(vec4 g) {
 vec4 halfGi(vec4 g) {
   vec2 r = halfUnpack(g.r);
   vec3 e = vec3(r.y, halfUnpack(g.a)) / 4095.0;
-  return vec4(e * e * HALF_GI_RANGE, r.x / 15.0);
+  return vec4(e * e * HALF_GI_RANGE, r.x / 4095.0);
 }

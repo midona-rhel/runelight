@@ -172,9 +172,11 @@ flow to check them. Needs numpy, scipy, scikit-image and Pillow.
 
 Plugin config, Global illumination section. When a region loads, the static scene's opaque triangles (captured as
 the zones upload, `GiCapture.java`) are voxelized into half-tile cubes on a worker thread (`GiVoxels.java`,
-`GiGrid.java`; per zone, so zones reused by the next load keep theirs). Patches (`GiPatches.java`) are built once per load: a floor patch for every tile of every floor, facing up, and the
+`GiGrid.java`; per zone, so zones reused by the next load keep theirs). Patches (`GiPatches.java`) are built once per load: a floor patch for every tile of every floor, facing up, the
 faces of every wall of the collision map (both sides, a diagonal wall too), cut into bands about a tile's width of
-height up to the wall's real top, where the floor above begins; roofs and objects get none. Their albedo is the
+height up to the wall's real top, where the floor above begins, and a roof patch for every tile next to a wall that has
+a roof (the topmost surface of the voxels facing up, high above the ground, facing as it does, so a sloped roof's
+patches are sloped); trees and objects get none. Their albedo is the
 voxels' average, pushed 1.5 times further from gray (`GiPatches.ALBEDO_SATURATION`), which area averaging and textures
 pull toward it. Each patch is linked to the patches within three tiles that face it and that it faces and can see (a
 ray through the voxels), with the point-to-area form factor cos_i cos_j A_j / (pi r^2 + A_j) as the weight, so walls
@@ -185,7 +187,11 @@ each patch gathers is the weighed sum of what its links send: one bounce, a few 
 on the worker whenever the sky or the sun changes enough; new light blends in over a few seconds. The AO pass looks
 the patches' light up at half resolution (`gi.glsl`) by the surface the pixel is on, never by the space around it: a
 floor pixel blends the four floor patches around it, a wall pixel the bands of its own wall face (and the next
-tile's, along the wall), anything else (roofs, trees, people) the floor patch under it, less the higher it is. In the
+tile's, along the wall), a pixel on a roof the roof patches around it, anything else (trees, people) the floor patch
+under it, less the higher it is. Each blends by weights that vary smoothly with the pixel's position, and they fade
+into one another by how much of each there is, so the light varies smoothly along a surface and jumps only where the
+surface itself does. Whether two patches see each other is told by four rays between points spread over them, so a
+link's weight changes by degrees as a thing moves between them. In the
 "Skylight + GI bounce" lighting model (below) the composite adds the result to its plain ambient and sky light
 (`BOUNCE_GAIN`), which stay. Debug view
 "Global illumination" shows the indirect light alone. Outside the base scene and underground the plain ambient

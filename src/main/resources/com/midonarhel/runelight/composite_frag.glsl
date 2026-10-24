@@ -104,7 +104,7 @@ uniform sampler2DArray compositeParts;
 layout(location = 0) out vec4 FragColor;
 
 // ---------------------------------------------------------------------------------------------------------------
-// Global illumination (GlobalIllumination.java, gi.glsl): the light the patches of floor and wall around a surface
+// Global illumination (GlobalIllumination.java, gi.glsl): the light the patches of floor, wall and roof around a surface
 // gather by bouncing, read by the AO pass from the patches of the surface itself, upsampled with the AO like the
 // shadows, and added to the skylight's ambient (light_occlusion.glsl skylightAmbient)
 uniform float giWeight;  // 0..1: enabled, eased in and out, strength
@@ -152,7 +152,9 @@ float upsampleAoFog(ivec2 px, float z, vec3 n, out vec4 fog, out float shadow, o
 
       shSum += texelFetch(sceneShadow, q, 0) * w;
       if (withGi) {
-        giSum += halfGi(g) * w;
+        // weighed by how much light each tap has, so one with none does not dim the color of the others
+        vec4 tapGi = halfGi(g);
+        giSum += vec4(tapGi.rgb * tapGi.a, tapGi.a) * w;
       }
       wsum += w;
     }
@@ -161,7 +163,7 @@ float upsampleAoFog(ivec2 px, float z, vec3 n, out vec4 fog, out float shadow, o
     : fogWsum > 1e-6 ? fogSum / fogWsum : texelFetch(sceneFog, clamp(ivec2(hp + 0.5), ivec2(0), maxAo), 0);
   vec4 sh = wsum > 1e-4 ? shSum / wsum : texelFetch(sceneShadow, clamp(ivec2(hp + 0.5), ivec2(0), maxAo), 0);
   shadow = sh.r;
-  gi = wsum > 1e-4 ? giSum / wsum : vec4(0.0);
+  gi = wsum > 1e-4 && giSum.a > 1e-5 ? vec4(giSum.rgb / giSum.a, giSum.a / wsum) : vec4(0.0);
   ground = sh.b;
   skyUpsampled = sh.a;
   return wsum > 1e-4 ? sh.g : 1.0;
