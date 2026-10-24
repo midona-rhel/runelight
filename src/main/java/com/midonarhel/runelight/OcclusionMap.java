@@ -28,6 +28,8 @@ final class OcclusionMap
 	private final ShadowMap map = new ShadowMap();
 	private boolean wanted;
 	private boolean dirty = true;
+	// counts the redraws: what is worked out from the map is out of date when it changes
+	private int version;
 	// the center the map was drawn for, and the player as of the last follow
 	private float centerX, centerY, centerZ;
 	private int centerPlane = -1;
@@ -76,6 +78,12 @@ final class OcclusionMap
 		return map.isInitialized() && !dirty;
 	}
 
+	/** Changes whenever the map is redrawn. */
+	int version()
+	{
+		return version;
+	}
+
 	/** World to clip matrix of the map as drawn. */
 	float[] lightProj()
 	{
@@ -120,6 +128,7 @@ final class OcclusionMap
 			return;
 		}
 		dirty = false;
+		++version;
 		centerX = focusX;
 		centerY = focusY;
 		centerZ = focusZ;

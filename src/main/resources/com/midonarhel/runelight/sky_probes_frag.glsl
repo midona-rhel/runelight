@@ -4,20 +4,17 @@
 // sky_probe_layout.glsl). A layer's probes cast RAYS rays over the upper hemisphere, each marched against the top-down
 // map of the scenery (OcclusionMap.java), the heightfield: a ray is blocked as soon as the highest scenery over a point
 // of it is above that point. The visibility of the sky over the hemisphere is projected onto L1 spherical harmonics,
-// four coefficients: the constant term and the three linear ones along x, up and z. The rays are different every
-// update (turned, jittered along their length), and the result is blended into the stored one by the blend constant
-// (SkyProbes.BLEND), so it converges on the full integral over a second or two without flicker.
-//
-// Probes new to the window (skySnap) are worked out with more rays and written as they are. The last slice is the
-// columns' ground and top.
+// four coefficients: the constant term and the three linear ones along x, up and z. The scenery is static, so the rays
+// are fixed, the same for every probe: a probe worked out again over the same map gets the same value, and neighbours
+// differ only by what they see, never by noise. Probes new to the window (skySnap) are worked out alone. The last
+// slice is the columns' ground and top.
 
 #include "sky_probe_layout.glsl"
 
 uniform ivec2 skyOrigin;       // the window's lowest probe, in probe steps (world units / SKY_PROBE_SPACING)
 uniform ivec2 skyKnownOrigin;  // the window as of this slice's last update: a probe outside it is new
 uniform int skySlice;          // the layer, or SKY_LAYERS for the columns
-uniform int skySnap;           // 1: only the probes new to the window; 0: every probe, to be blended in
-uniform int skyFrame;          // counts the updates; turns the rays
+uniform int skySnap;           // 1: only the probes new to the window; 0: every probe
 
 // The ground at the corners of the scene's tiles, (x, z) in tiles plus terrainOffset, world y (down)
 uniform sampler2D terrainHeights;
@@ -32,11 +29,10 @@ uniform float occlusionDepthRange;
 
 out vec4 FragSky;
 
-// rays per probe each update, and per probe new to the window
-#define RAYS 24
-#define SNAP_RAYS 32
-// Steps along a ray, from the first to the farthest REACH (32 tiles), each a constant ratio longer than the last. The
-// first is jittered within its stretch, so thin things hidden between steps are found by some updates.
+// rays per probe
+#define RAYS 64
+// Steps along a ray, from the first to the farthest REACH (32 tiles), each a constant ratio longer than the last. Each
+// ray starts at its own point within the first stretch, so between them the rays cover the distances evenly.
 #define STEPS 12
 #define NEAREST_STEP 24.0
 #define REACH 4096.0
@@ -54,16 +50,6 @@ const float STEP_RATIO = pow(REACH / NEAREST_STEP, 1.0 / float(STEPS));
 #define SH_1 0.488603
 // the coefficients of the hemisphere seen whole: (2 pi) SH_0, and along up the integral of SH_1 cos(theta), pi SH_1
 const vec4 OPEN_SKY = vec4(TAU * SH_0, 0.0, 0.5 * TAU * SH_1, 0.0);
-
-uint pcg(uint v) {
-  uint s = v * 747796405u + 2891336453u;
-  uint w = ((s >> ((s >> 28u) + 4u)) ^ s) * 277803737u;
-  return (w >> 22u) ^ w;
-}
-
-float unitFloat(uint v) {
-  return float(v >> 8u) / 16777216.0;
-}
 
 // World y (down) of the highest scenery over a position; huge where nothing is, or past the map
 float sceneryTop(vec2 xz) {
@@ -107,19 +93,15 @@ void main() {
   }
 
   vec3 origin = vec3(center.x, ground - SKY_LAYER_BASE - float(skySlice) * SKY_LAYER_STEP, center.y);
-  int rays = skySnap == 1 ? SNAP_RAYS : RAYS;
-  uint seed = pcg(uint(probe.x) * 73856093u ^ uint(probe.y) * 19349663u ^ uint(skySlice) * 83492791u ^ uint(skyFrame) * 2654435761u);
-  float turn = unitFloat(seed) * TAU;
   // the coefficients of the rays that are blocked
   vec4 blocked = vec4(0.0);
-  for (int j = 0; j < rays; ++j) {
-    uint r = pcg(seed + uint(j) + 1u);
+  for (int j = 0; j < RAYS; ++j) {
     // an even spread over the hemisphere: a stretch of the height of the direction each, a golden angle apart
-    float up = (float(j) + unitFloat(r)) / float(rays);
+    float up = (float(j) + 0.5) / float(RAYS);
     float side = sqrt(1.0 - up * up);
-    float phi = turn + float(j) * GOLDEN_ANGLE;
+    float phi = float(j) * GOLDEN_ANGLE;
     vec3 dir = vec3(side * cos(phi), -up, side * sin(phi));
-    float travel = NEAREST_STEP * pow(STEP_RATIO, unitFloat(pcg(r)));
+    float travel = NEAREST_STEP * pow(STEP_RATIO, fract(float(j) * 0.618034));
     for (int i = 0; i < STEPS; ++i, travel *= STEP_RATIO) {
       vec3 q = origin + dir * travel;
       if (sceneryTop(q.xz) < q.y - RAY_CLEARANCE) {
@@ -128,5 +110,5 @@ void main() {
       }
     }
   }
-  FragSky = OPEN_SKY - blocked * (TAU / float(rays));
+  FragSky = OPEN_SKY - blocked * (TAU / float(RAYS));
 }

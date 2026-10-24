@@ -21,12 +21,11 @@ import static org.lwjgl.opengl.GL33C.*;
  * above it. Where scenery covers a probe the heightfield blocks all its rays: rooms are lit by the SkyField instead.
  *
  * The update is a fragment pass per slice (sky_probes_frag.glsl), one fragment per probe, so it needs nothing newer
- * than GL 3.3. The columns are redone every frame (a few thousand texels); of the layers LAYERS_PER_FRAME are, in turn,
- * which keeps the cost per frame small and gives every probe a new set of rays every LAYERS / LAYERS_PER_FRAME frames.
- * An update is blended into the stored value by BLEND, with the fixed function blender, so the probes converge on the
- * full integral over a second or two and nothing flickers. Probes that enter the window (and every probe after the scene
- * changed) are worked out with more rays and written as they are. The volume is only used once every layer has been
- * worked out for the scene.
+ * than GL 3.3. The scenery is static and the rays are fixed (sky_probes_frag.glsl), so a probe is only worked out
+ * again when what it sees may have changed: when the occlusion map is redrawn (a zone rebuilt, a door, the map
+ * recentered), every layer, LAYERS_PER_FRAME a frame; and the probes that walk into the window as it follows the
+ * player. Otherwise nothing is traced. The columns are redone every frame (a few thousand texels). The volume is only
+ * used once every layer has been worked out for the scene.
  */
 final class SkyProbes
 {
@@ -43,13 +42,11 @@ final class SkyProbes
 	// the layers and the slice of the columns
 	private static final int SLICES = LAYERS + 1;
 	private static final int COLUMNS = LAYERS;
-	// layers updated each frame once all are up to date
+	// layers worked out each frame while any are out of date
 	private static final int LAYERS_PER_FRAME = 2;
-	// the share of a probe's stored value an update replaces
-	static final float BLEND = 0.1f;
 
 	private int program;
-	private int uniOrigin, uniKnownOrigin, uniSlice, uniSnap, uniFrame, uniTerrainOffset, uniOcclusionProj,
+	private int uniOrigin, uniKnownOrigin, uniSlice, uniSnap, uniTerrainOffset, uniOcclusionProj,
 		uniOcclusionCenterY, uniOcclusionDepthRange;
 	private int uniAoOn, uniAoOrigin, uniAoCamera;
 	private int terrainUnit, occlusionUnit;
@@ -60,12 +57,12 @@ final class SkyProbes
 	private int sceneBaseX, sceneBaseY;
 	// the window, in probe steps (world units / SPACING) of its lowest probe
 	private int originX, originZ;
-	// per layer: whether it is up to date for the scene, and the window as of its last update
+	// per layer: whether it has been worked out for the scene, whether for the occlusion map as now drawn, and the
+	// window as of its last update
 	private final boolean[] valid = new boolean[LAYERS];
+	private final boolean[] current = new boolean[LAYERS];
+	private int mapVersion = -1;
 	private final int[] knownX = new int[LAYERS], knownZ = new int[LAYERS];
-	// the next layer to update
-	private int cursor;
-	private int frame;
 	private boolean ready;
 
 	/** Replace the program. The terrain goes on terrainUnit and the occlusion map on occlusionUnit and the next. */
@@ -78,7 +75,6 @@ final class SkyProbes
 		uniKnownOrigin = glGetUniformLocation(program, "skyKnownOrigin");
 		uniSlice = glGetUniformLocation(program, "skySlice");
 		uniSnap = glGetUniformLocation(program, "skySnap");
-		uniFrame = glGetUniformLocation(program, "skyFrame");
 		uniTerrainOffset = glGetUniformLocation(program, "terrainOffset");
 		uniOcclusionProj = glGetUniformLocation(program, "occlusionProj");
 		uniOcclusionCenterY = glGetUniformLocation(program, "occlusionCenterY");
@@ -140,11 +136,16 @@ final class SkyProbes
 			sceneBaseX = scene.getBaseX();
 			sceneBaseY = scene.getBaseY();
 			Arrays.fill(valid, false);
+			Arrays.fill(current, false);
 			ready = false;
+		}
+		if (occlusion.version() != mapVersion)
+		{
+			mapVersion = occlusion.version();
+			Arrays.fill(current, false);
 		}
 		originX = (int) Math.floor(focusX / SPACING) - PROBES / 2;
 		originZ = (int) Math.floor(focusZ / SPACING) - PROBES / 2;
-		++frame;
 
 		glBindFramebuffer(GL_FRAMEBUFFER, fbo);
 		glViewport(0, 0, PROBES, PROBES);
@@ -154,68 +155,49 @@ final class SkyProbes
 		glColorMask(true, true, true, true);
 		glUseProgram(program);
 		glUniform2i(uniOrigin, originX, originZ);
-		glUniform1i(uniFrame, frame);
 		glUniformMatrix4fv(uniOcclusionProj, false, occlusion.lightProj());
 		glUniform1f(uniOcclusionCenterY, occlusion.centerY());
 		glUniform1f(uniOcclusionDepthRange, OcclusionMap.DEPTH_RANGE);
 		glBindTexture(GL_TEXTURE_2D, terrainTexture);
 		occlusion.bindForSampling(occlusionUnit, occlusionUnit + 1);
-		glBlendFunc(GL_CONSTANT_COLOR, GL_ONE_MINUS_CONSTANT_COLOR);
-		glBlendColor(BLEND, BLEND, BLEND, BLEND);
-
 		glDisable(GL_BLEND);
 		glUniform1i(uniSnap, 0);
 		draw(COLUMNS);
-		boolean caughtUp = true;
+		// the layers out of date, a few a frame; then the probes new to the window in the others
+		int redone = 0;
 		for (int layer = 0; layer < LAYERS; ++layer)
 		{
-			if (!valid[layer])
+			if (!current[layer] && redone < LAYERS_PER_FRAME)
 			{
-				updateLayer(layer);
-				caughtUp = false;
+				glUniform1i(uniSnap, 0);
+				draw(layer);
+				current[layer] = valid[layer] = true;
+				++redone;
 			}
-		}
-		if (caughtUp)
-		{
-			for (int i = 0; i < LAYERS_PER_FRAME; ++i)
+			else if (valid[layer] && (knownX[layer] != originX || knownZ[layer] != originZ))
 			{
-				updateLayer(cursor);
-				cursor = (cursor + 1) % LAYERS;
+				glUniform2i(uniKnownOrigin, knownX[layer], knownZ[layer]);
+				glUniform1i(uniSnap, 1);
+				draw(layer);
 			}
+			else
+			{
+				continue;
+			}
+			knownX[layer] = originX;
+			knownZ[layer] = originZ;
 		}
 		ready = true;
+		for (boolean v : valid)
+		{
+			ready &= v;
+		}
 
-		glDisable(GL_BLEND);
-		glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
-		glBlendColor(0, 0, 0, 0);
 		glActiveTexture(GL_TEXTURE0 + terrainUnit);
 		glBindTexture(GL_TEXTURE_2D, 0);
 		glActiveTexture(GL_TEXTURE0);
 		ShadowMap.unbind(occlusionUnit, occlusionUnit + 1);
 		glUseProgram(0);
-	}
-
-	/** Work one layer out: the probes new to the window first, as they are, then every probe, blended in. */
-	private void updateLayer(int layer)
-	{
-		boolean known = valid[layer];
-		if (!known || knownX[layer] != originX || knownZ[layer] != originZ)
-		{
-			// nothing is known of a layer not up to date: the window as of then lies beside this one
-			glUniform2i(uniKnownOrigin, known ? knownX[layer] : originX + PROBES, known ? knownZ[layer] : originZ + PROBES);
-			glDisable(GL_BLEND);
-			glUniform1i(uniSnap, 1);
-			draw(layer);
-		}
-		if (known)
-		{
-			glEnable(GL_BLEND);
-			glUniform1i(uniSnap, 0);
-			draw(layer);
-		}
-		valid[layer] = true;
-		knownX[layer] = originX;
-		knownZ[layer] = originZ;
 	}
 
 	private void draw(int slice)
@@ -324,6 +306,7 @@ final class SkyProbes
 		}
 		terrainHeights = null;
 		Arrays.fill(valid, false);
+		Arrays.fill(current, false);
 		ready = false;
 	}
 }
