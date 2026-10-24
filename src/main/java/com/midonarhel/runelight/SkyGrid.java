@@ -65,6 +65,11 @@ final class SkyGrid
 	private static final float[] NUDGE = {0, -24, 24, -48, 48};
 	// the least height above the ground a point may be moved down to
 	private static final float MIN_HEIGHT = 8;
+	// voxels: a blocker up to NEAR_BLOCKER away hides its share of the sky in full; from there to FAR_BLOCKER it hides
+	// less and less, down to letting FAR_OPEN of it through
+	private static final float NEAR_BLOCKER = 3;
+	private static final float FAR_BLOCKER = 24;
+	private static final float FAR_OPEN = 0.6f;
 
 	// [rotation][ray * 3 + axis], and each ray's weight in each lobe, [rotation][ray * LOBES + lobe], a lobe's adding to 1
 	private static final float[][] DIRECTIONS = new float[ROTATIONS][];
@@ -741,10 +746,20 @@ final class SkyGrid
 			for (int r = 0; keep && r < RAYS; ++r)
 			{
 				int node = members[r % m];
-				int hit = grid.trace(start[node * 3], start[node * 3 + 1], start[node * 3 + 2], dirs[r * 3],
-					dirs[r * 3 + 1], dirs[r * 3 + 2], MAX_DISTANCE, true, (unit * RAYS + r) & 0x7fffffff);
-				if (hit < 0)
-					for (int k = 0; k < LOBES; ++k) acc[k] += weights[r * LOBES + k];
+				float ox = start[node * 3], oy = start[node * 3 + 1], oz = start[node * 3 + 2];
+				int hit = grid.trace(ox, oy, oz, dirs[r * 3], dirs[r * 3 + 1], dirs[r * 3 + 2], MAX_DISTANCE, true,
+					(unit * RAYS + r) & 0x7fffffff);
+				// a blocker far off hides less of the sky than one close by: light comes round it and off what is
+				// around it. A miss counts whole, a hit by how far away it is.
+				float open = 1;
+				if (hit >= 0)
+				{
+					int hx = hit % grid.nx, hz = hit / grid.nx % grid.nz, hy = hit / (grid.nx * grid.nz);
+					float d = (float) Math.sqrt(sq(hx + 0.5f - ox) + sq(hy + 0.5f - oy) + sq(hz + 0.5f - oz));
+					open = smoothstep(NEAR_BLOCKER, FAR_BLOCKER, d) * FAR_OPEN;
+				}
+				if (open > 0)
+					for (int k = 0; k < LOBES; ++k) acc[k] += weights[r * LOBES + k] * open;
 			}
 			if (keep) rays += RAYS;
 			for (int k = 0; k < LOBES; ++k) value[k] = GlobalIllumination.toHalf(acc[k]);
@@ -842,5 +857,16 @@ final class SkyGrid
 		}
 		int cell = grid.cells[grid.index(vx, vy, vz)];
 		return cell != 0 && !GiGrid.foliage(cell);
+	}
+
+	private static float sq(float v)
+	{
+		return v * v;
+	}
+
+	private static float smoothstep(float a, float b, float v)
+	{
+		float t = Math.max(0, Math.min(1, (v - a) / (b - a)));
+		return t * t * (3 - 2 * t);
 	}
 }

@@ -405,7 +405,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 	private static final int SKY_GRID_UNIT = RuneLightPlugin.COMPOSITE_TEXTURE_UNIT + 28;
 	// the weather field's sky (cover, wispiness, darkness around the player) for the clouds
 	private static final int WEATHER_SKY_UNIT = RuneLightPlugin.COMPOSITE_TEXTURE_UNIT + 27;
-	private final SkyGridMap skyGrid = new SkyGridMap(2);
+	private final SkyGridMap skyGrid = new SkyGridMap();
 	// the sky's light flowing in under cover
 	private static final int SKY_FIELD_UNIT = RuneLightPlugin.COMPOSITE_TEXTURE_UNIT + 25;
 	private final SkyFieldMap skyField = new SkyFieldMap();
