@@ -44,9 +44,10 @@ uniform vec4 skyFieldMap;
 // what a corner behind the surface still counts for, against 1 for one well in front: only enough that a pixel with
 // every corner behind it still has a value
 #define SKY_BEHIND 0.02
-// An upward face at the top of the scenery over its tile (a roof, a wall's top: within SKY_TOP_SLACK of the highest
-// traced point) is out of doors, whatever storey's room lies under it.
-#define SKY_TOP_SLACK 48.0
+// An upward face at the top of the scenery over its tile (a roof, a wall's top, a flat roof inside its parapet: within
+// SKY_TOP_SLACK of the highest traced point, fading out over as much again) is out of doors, whatever storey's room
+// lies under it. A storey's ceiling is higher than twice this over its floor.
+#define SKY_TOP_SLACK 96.0
 // world units above a storey's floor over which a face goes from the room to the roof over it (a storey's walls are
 // about 240 high)
 #define SKY_ROOF_ABOVE vec2(190.0, 240.0)

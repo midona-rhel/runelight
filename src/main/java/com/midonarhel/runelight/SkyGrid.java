@@ -441,7 +441,9 @@ final class SkyGrid
 					for (int f = 0; f < RoomMap.PLANES; ++f)
 					{
 						int i = rooms.index(f, rx, rz);
-						if (rooms.rooms[i] != 0 || rooms.across[i] != 0 || rooms.roofed[i]) mask |= 1 << f;
+						// covered by the map's under-roof flags: a room with no roof over it (a walled terrace, a
+						// tower's top) is out of doors
+						if (rooms.roofed[i]) mask |= 1 << f;
 					}
 				}
 				for (int dz = 0; dz < 2; ++dz)
