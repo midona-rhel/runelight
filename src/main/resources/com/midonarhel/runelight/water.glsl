@@ -27,6 +27,7 @@ uniform float waterClarity;       // multiplier on how deep the bed stays visibl
 uniform int waterCaustics;
 uniform int waterDebug;
 uniform int waterSlotType[WATER_SLOTS];  // each look's water type (Water.java)
+uniform ivec4 waterRect;          // the pixels the surface can cover: x0, y0 to x1, y1 exclusive (WaterSurface)
 
 layout(location = 1) out uvec4 WaterShadedOut;
 
@@ -421,8 +422,9 @@ vec3 waterGlitter(ivec2 px, vec3 nrm, vec3 v, float shine, float foam, float sha
 // target's water channel (frag.glsl)
 // Returns the color with the water over it, or lit unchanged; moves p to the water surface for the fog.
 vec3 waterOver(ivec2 px, inout vec3 p, vec3 albedo, float shadow, vec3 lit, float mask) {
-  // land terrain is never under water: the surface runs on under the banks, hidden, and never over land
-  if (waterEnabled == 0 || mask < 0.25)
+  // land terrain is never under water: the surface runs on under the banks, hidden, and never over land; nor is
+  // anything outside the rect
+  if (waterEnabled == 0 || mask < 0.25 || any(lessThan(px, waterRect.xy)) || any(greaterThanEqual(px, waterRect.zw)))
     return lit;
   uvec4 ws = texelFetch(waterSurface, px, 0);
   if (ws.b == 0u)

@@ -199,15 +199,20 @@ class WaterSurface
 
 	/**
 	 * Whether any chunk drawn this frame (within reach of the focal point) is in the view: without one the water's
-	 * passes have nothing to draw. viewProj is camera-relative.
+	 * passes have nothing to draw. viewProj is camera-relative. With one, rect is set to the targets' pixels the chunks
+	 * in view can cover (x0, y0, x1, y1, the ends exclusive): their boxes' projected corners' bounds a pixel wider,
+	 * within the viewport, or all of it when one reaches behind the camera.
 	 */
-	boolean anyVisible(float[] m, float camX, float camY, float camZ, float focusX, float focusZ, float reach)
+	boolean anyVisible(float[] m, int[] viewport, float camX, float camY, float camZ, float focusX, float focusZ,
+		float reach, int[] rect)
 	{
 		Mesh mesh = this.mesh;
 		if (mesh == null)
 		{
 			return false;
 		}
+		boolean any = false;
+		float minX = 1, minY = 1, maxX = -1, maxY = -1;
 		for (int c = 0; c < mesh.chunks; ++c)
 		{
 			if (chunkDistance(focusX, focusZ, mesh.chunkX[c], mesh.chunkY[c]) > reach)
@@ -219,6 +224,7 @@ class WaterSurface
 			float y0 = mesh.chunkMinY[c] - camY, y1 = mesh.chunkMaxY[c] - camY;
 			// outside when all eight corners are beyond the same side of the view, or behind the camera
 			int left = 0, right = 0, below = 0, above = 0, behind = 0;
+			float cMinX = Float.MAX_VALUE, cMinY = Float.MAX_VALUE, cMaxX = -Float.MAX_VALUE, cMaxY = -Float.MAX_VALUE;
 			for (int k = 0; k < 8; ++k)
 			{
 				float x = x0 + ((k & 1) != 0 ? CHUNK * 128f : 0), y = (k & 2) != 0 ? y1 : y0;
@@ -231,13 +237,50 @@ class WaterSurface
 				below += cy < -w ? 1 : 0;
 				above += cy > w ? 1 : 0;
 				behind += w <= 0 ? 1 : 0;
+				if (w > 0)
+				{
+					cMinX = Math.min(cMinX, cx / w);
+					cMaxX = Math.max(cMaxX, cx / w);
+					cMinY = Math.min(cMinY, cy / w);
+					cMaxY = Math.max(cMaxY, cy / w);
+				}
 			}
 			if (left < 8 && right < 8 && below < 8 && above < 8 && behind < 8)
 			{
-				return true;
+				any = true;
+				if (behind > 0)
+				{
+					// its projection is unbounded
+					minX = minY = -1;
+					maxX = maxY = 1;
+					break;
+				}
+				// all in front: the box's projection lies within its corners'
+				minX = Math.min(minX, cMinX);
+				maxX = Math.max(maxX, cMaxX);
+				minY = Math.min(minY, cMinY);
+				maxY = Math.max(maxY, cMaxY);
 			}
 		}
-		return false;
+		if (any)
+		{
+			rect[0] = pixelBelow(minX, viewport[0], viewport[2]);
+			rect[1] = pixelBelow(minY, viewport[1], viewport[3]);
+			rect[2] = pixelAbove(maxX, viewport[0], viewport[2]);
+			rect[3] = pixelAbove(maxY, viewport[1], viewport[3]);
+		}
+		return any;
+	}
+
+	// an NDC coordinate as the targets' pixels a viewport of size at origin puts it at, a pixel out for the rounding
+	private static int pixelBelow(float ndc, int origin, int size)
+	{
+		return Math.max(origin, origin + (int) Math.floor((Math.max(ndc, -1) * 0.5f + 0.5f) * size) - 1);
+	}
+
+	private static int pixelAbove(float ndc, int origin, int size)
+	{
+		return Math.min(origin + size, origin + (int) Math.ceil((Math.min(ndc, 1) * 0.5f + 0.5f) * size) + 1);
 	}
 
 	/**
@@ -350,7 +393,7 @@ class WaterSurface
 
 	/**
 	 * Bind the half resolution shaded target for drawing, sw x sh like the other half resolution targets
-	 * (SceneTargets), with its viewport.
+	 * (SceneTargets), with its viewport, cleared to no water.
 	 */
 	void bindShadedTarget(int sw, int sh)
 	{
@@ -381,6 +424,8 @@ class WaterSurface
 		glBindFramebuffer(GL_FRAMEBUFFER, shadedFbo);
 		glViewport(0, 0, sw, sh);
 		glDisable(GL_BLEND);
+		// draw buffer 1: the program's output 1
+		glClearBufferuiv(GL_COLOR, 1, CLEAR);
 	}
 
 	private void freeShaded()
@@ -438,9 +483,10 @@ class WaterSurface
 	 * @param focusX the focal point, around which the surface moves and is drawn fine
 	 * @param reach  radius of the drawn world around the focal point, world units
 	 * @param params this frame's motion and settings
+	 * @param rect   the pixels the chunks in view can cover (anyVisible)
 	 */
 	void draw(int w, int h, int[] viewport, float[] viewProj, float camX, float camY, float camZ, float focusX,
-		float focusZ, float reach, Water.Frame params)
+		float focusZ, float reach, Water.Frame params, int[] rect)
 	{
 		ensureTarget(w, h);
 		if (!hasMesh())
@@ -491,9 +537,13 @@ class WaterSurface
 		glClearBufferuiv(GL_COLOR, 0, CLEAR);
 		glClearBufferfv(GL_DEPTH, 0, FAR_DEPTH);
 		glViewport(viewport[0], viewport[1], viewport[2], viewport[3]);
+		// the clears stay whole: on a tiled GPU a scissored one loads the targets first
+		glEnable(GL_SCISSOR_TEST);
+		glScissor(rect[0], rect[1], rect[2] - rect[0], rect[3] - rect[1]);
 		glEnable(GL_DEPTH_TEST);
 		glDepthFunc(GL_GREATER);
 		drawChunks(focusX, focusZ, reach, -1);
+		glDisable(GL_SCISSOR_TEST);
 		glBindBuffer(GL_ARRAY_BUFFER, 0);
 		glBindVertexArray(0);
 		glDisable(GL_DEPTH_TEST);

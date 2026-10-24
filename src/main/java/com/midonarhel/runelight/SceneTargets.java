@@ -59,24 +59,26 @@ class SceneTargets
 	private static final int[] OPAQUE_BUFFERS = {GL_COLOR_ATTACHMENT0, GL_COLOR_ATTACHMENT1, GL_NONE, GL_COLOR_ATTACHMENT3};
 	private static final int[] ALPHA_BUFFERS = {GL_NONE, GL_NONE, GL_COLOR_ATTACHMENT2, GL_NONE};
 	private static final int[] ALL_BUFFERS = {GL_COLOR_ATTACHMENT0, GL_COLOR_ATTACHMENT1, GL_COLOR_ATTACHMENT2, GL_COLOR_ATTACHMENT3};
-	private static final int[] AO_BUFFERS = {GL_COLOR_ATTACHMENT0, GL_COLOR_ATTACHMENT1};
-	private static final int[] DENOISE_FOG_BUFFERS = {GL_COLOR_ATTACHMENT0, GL_COLOR_ATTACHMENT1, GL_COLOR_ATTACHMENT2};
+	private static final int[] FIRST_BUFFER = {GL_COLOR_ATTACHMENT0};
+	private static final int[] FIRST_TWO_BUFFERS = {GL_COLOR_ATTACHMENT0, GL_COLOR_ATTACHMENT1};
 	private static final float[] TRANSPARENT = {0, 0, 0, 0};
 	private static final float[] FAR_DEPTH = {0};
 	private final float[] clearColor = {0, 0, 0, 0};
 
-	// ambient occlusion at half resolution, upsampled depth-aware in the composite pass
+	// the AO pass's geometry and global illumination at half resolution (halfres.glsl), for the upsamples
 	private int fboAo, texAo;
-	// sun and moon shadows at half resolution, drawn by the AO pass and upsampled with it, and the weather's ground
+	// sun and moon shadows, AO, the weather's ground and sky visibility at half resolution, drawn by the AO pass and
+	// upsampled depth-aware in the composite pass
 	private int texShadow;
 	private int aoWidth, aoHeight;
 	// scene pixels per texel of the half resolution passes, at every render scale: they shrink with the scene
 	static final float HALF_RATIO = 2;
-	// the same two again, for the first of the denoise's two passes (denoise)
-	private int fboAoTemp, texAoTemp, texShadowTemp;
+	// the denoise's two passes (denoise): the first into the temporary shadow target, the second back into the shadow
+	// target; the geometry is only read
+	private int fboDenoiseTemp, texShadowTemp, fboDenoise;
 	// the volumetric fog at the same size, which the denoise smooths along with the AO and shadows: made when the fog
-	// first runs (fogFbo); fboDenoise holds the final AO, shadow and fog textures together
-	private int fboFog, texFog, texFogTemp, fboDenoise;
+	// first runs (fogFbo), and attached to the denoise's framebuffers next to the shadow targets
+	private int fboFog, texFog, texFogTemp;
 	// the clouds in front of the sky at the AO targets' size, filtered by the composite's sky (composite_frag.glsl)
 	private int fboClouds, texClouds;
 
@@ -106,8 +108,8 @@ class SceneTargets
 		aoHeight = (int) Math.ceil(height / (double) HALF_RATIO);
 		texAo = glGenTextures();
 		glBindTexture(GL_TEXTURE_2D, texAo);
-		// AO and the global illumination plus the half resolution depth and normal the composite's upsamples read;
-		// 32 bit floats, which halfres.glsl packs whole numbers into
+		// the global illumination plus the half resolution depth and normal the composite's upsamples read; 32 bit
+		// floats, which halfres.glsl packs whole numbers into
 		glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA32F, aoWidth, aoHeight, 0, GL_RGBA, GL_FLOAT, 0);
 		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
 		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
@@ -116,7 +118,7 @@ class SceneTargets
 		glBindTexture(GL_TEXTURE_2D, 0);
 		texShadow = glGenTextures();
 		glBindTexture(GL_TEXTURE_2D, texShadow);
-		// r shadow; g and b the snow and wetness the composite's surfaces get (weather_ground_ao.glsl)
+		// r shadow, g AO, b the wetness the composite's surfaces get (weather_ground_ao.glsl), a sky visibility
 		glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, aoWidth, aoHeight, 0, GL_RGBA, GL_UNSIGNED_BYTE, 0);
 		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
 		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
@@ -127,16 +129,19 @@ class SceneTargets
 		glBindFramebuffer(GL_FRAMEBUFFER, fboAo);
 		glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, texAo, 0);
 		glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT1, GL_TEXTURE_2D, texShadow, 0);
-		glDrawBuffers(AO_BUFFERS);
+		glDrawBuffers(FIRST_TWO_BUFFERS);
 		check("ao");
-		texAoTemp = halfTexture(GL_RGBA32F, GL_FLOAT);
 		texShadowTemp = halfTexture(GL_RGBA8, GL_UNSIGNED_BYTE);
-		fboAoTemp = glGenFramebuffers();
-		glBindFramebuffer(GL_FRAMEBUFFER, fboAoTemp);
-		glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, texAoTemp, 0);
-		glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT1, GL_TEXTURE_2D, texShadowTemp, 0);
-		glDrawBuffers(AO_BUFFERS);
-		check("ao temp");
+		fboDenoiseTemp = glGenFramebuffers();
+		glBindFramebuffer(GL_FRAMEBUFFER, fboDenoiseTemp);
+		glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, texShadowTemp, 0);
+		glDrawBuffers(GL_COLOR_ATTACHMENT0);
+		check("denoise temp");
+		fboDenoise = glGenFramebuffers();
+		glBindFramebuffer(GL_FRAMEBUFFER, fboDenoise);
+		glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, texShadow, 0);
+		glDrawBuffers(GL_COLOR_ATTACHMENT0);
+		check("denoise");
 
 		if (samples > 0)
 		{
@@ -174,9 +179,9 @@ class SceneTargets
 		}
 		if (fboAo != 0)
 		{
-			glDeleteFramebuffers(new int[]{fboAo, fboAoTemp});
-			glDeleteTextures(new int[]{texAo, texShadow, texAoTemp, texShadowTemp});
-			fboAo = texAo = texShadow = fboAoTemp = texAoTemp = texShadowTemp = 0;
+			glDeleteFramebuffers(new int[]{fboAo, fboDenoiseTemp, fboDenoise});
+			glDeleteTextures(new int[]{texAo, texShadow, texShadowTemp});
+			fboAo = texAo = texShadow = fboDenoiseTemp = fboDenoise = texShadowTemp = 0;
 		}
 		if (fboResolve != 0)
 		{
@@ -295,15 +300,10 @@ class SceneTargets
 			glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, texFog, 0);
 			glDrawBuffers(GL_COLOR_ATTACHMENT0);
 			check("fog");
-			glBindFramebuffer(GL_FRAMEBUFFER, fboAoTemp);
-			glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT2, GL_TEXTURE_2D, texFogTemp, 0);
-			fboDenoise = glGenFramebuffers();
+			glBindFramebuffer(GL_FRAMEBUFFER, fboDenoiseTemp);
+			glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT1, GL_TEXTURE_2D, texFogTemp, 0);
 			glBindFramebuffer(GL_FRAMEBUFFER, fboDenoise);
-			glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, texAo, 0);
-			glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT1, GL_TEXTURE_2D, texShadow, 0);
-			glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT2, GL_TEXTURE_2D, texFog, 0);
-			glDrawBuffers(DENOISE_FOG_BUFFERS);
-			check("denoise");
+			glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT1, GL_TEXTURE_2D, texFog, 0);
 		}
 		return fboFog;
 	}
@@ -312,35 +312,33 @@ class SceneTargets
 	{
 		if (fboFog != 0)
 		{
-			glDeleteFramebuffers(new int[]{fboFog, fboDenoise});
+			glDeleteFramebuffers(fboFog);
 			glDeleteTextures(new int[]{texFog, texFogTemp});
-			fboFog = fboDenoise = texFog = texFogTemp = 0;
+			fboFog = texFog = texFogTemp = 0;
 		}
 	}
 
 	/**
 	 * Smooth the AO pass's dithered AO and shadow, and the fog if it was rendered this frame (denoise_frag.glsl):
-	 * across into the temporary targets, then down back into the AO, shadow and fog targets. The denoise program in
-	 * use, its axis uniform at axisUniform and fog flag at fogUniform, its sceneAo, sceneShadow and sceneFog samplers
-	 * on aoUnit, shadowUnit and fogUnit; a fullscreen triangle's VAO bound. Leaves the units holding the temporary
-	 * targets: bind the real ones again.
+	 * across into the temporary targets, then down back into the shadow and fog targets. The denoise program in use,
+	 * its axis uniform at axisUniform and fog flag at fogUniform, its sceneAo, sceneShadow and sceneFog samplers on
+	 * aoUnit, shadowUnit and fogUnit; a fullscreen triangle's VAO bound. Leaves the shadow and fog units holding the
+	 * temporary targets: bind the real ones again.
 	 */
 	void denoise(int axisUniform, int fogUniform, int aoUnit, int shadowUnit, int fogUnit, boolean fog)
 	{
 		glViewport(0, 0, aoWidth, aoHeight);
 		glUniform1i(fogUniform, fog ? 1 : 0);
-		glBindFramebuffer(GL_FRAMEBUFFER, fboAoTemp);
-		glDrawBuffers(fog ? DENOISE_FOG_BUFFERS : AO_BUFFERS);
+		glBindFramebuffer(GL_FRAMEBUFFER, fboDenoiseTemp);
+		glDrawBuffers(fog ? FIRST_TWO_BUFFERS : FIRST_BUFFER);
 		bind(aoUnit, texAo);
 		bind(shadowUnit, texShadow);
-		if (fog)
-		{
-			bind(fogUnit, texFog);
-		}
+		// without the fog its unit holds none: texFog may be attached to fboDenoise, unwritten
+		bind(fogUnit, fog ? texFog : 0);
 		glUniform2i(axisUniform, 1, 0);
 		glDrawArrays(GL_TRIANGLES, 0, 3);
-		glBindFramebuffer(GL_FRAMEBUFFER, fog ? fboDenoise : fboAo);
-		bind(aoUnit, texAoTemp);
+		glBindFramebuffer(GL_FRAMEBUFFER, fboDenoise);
+		glDrawBuffers(fog ? FIRST_TWO_BUFFERS : FIRST_BUFFER);
 		bind(shadowUnit, texShadowTemp);
 		if (fog)
 		{

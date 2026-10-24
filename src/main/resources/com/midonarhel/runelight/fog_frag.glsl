@@ -31,15 +31,12 @@ uniform usamplerBuffer clusterData;
 
 #include "light_clusters.glsl"
 
-#include "rooms.glsl"
-
-// inside building rooms (rooms.glsl) the fog's density is multiplied by this; 1 leaves interiors foggy
+// inside building rooms (RoomMap.java, in fogGround) the fog's density is multiplied by this; 1 leaves interiors
+// foggy
 uniform float fogIndoor;
 // and in the rooms whose roof is hidden (OpenRooms.java): open to the sky, so the fog comes back inside and their
-// lamps glow in it. A bit per room id, fogOpenCount rooms; 0 skips all of it.
+// lamps glow in it
 uniform float fogIndoorOpen;
-uniform ivec4 fogOpenRooms[32];
-uniform int fogOpenCount;
 
 // The water (Water.java, water.glsl): a ray down to something under the water ends at the surface, the fog doesn't
 // go on under it
@@ -52,7 +49,8 @@ uniform sampler3D fogNoise;  // tiling value noise, 0..1: r patches, g banks (co
 uniform float fogDensity;    // extinction per world unit at the ground
 uniform float fogHeight;     // world units for the density to drop to 1/e
 uniform float fogHighestY;   // world y of the highest ground within the fog's reach; y points down
-// The terrain the height is measured from (FogGround.java): ground y per tile corner, the planes' pages side by side
+// The terrain the height is measured from (FogGround.java): ground y per tile corner, the planes' pages side by side;
+// gba the rooms (FogGround.texels, fogRoomFactor)
 uniform sampler2D fogGround;
 uniform vec3 fogGroundGrid;  // x: extended tile of local tile 0, y: corners per side, z: texel x of the plane's page
 uniform vec2 fogCenter;      // world x, z the fade is centered on: the player
@@ -130,10 +128,19 @@ out vec4 FragFog;
 #include "halfmap.glsl"
 #include "ign.glsl"
 
-// World y of the ground at a point, the terrain's own slopes between the tile corners; the edge of the scene goes on
-float fogGroundAt(vec2 worldXZ) {
+// The ground at a point: r its world y, the terrain's own slopes between the tile corners, and the rooms there for
+// fogRoomFactor; the edge of the scene goes on
+vec4 fogGroundAt(vec2 worldXZ) {
   vec2 c = clamp(worldXZ / 128.0 + fogGroundGrid.x, vec2(0.0), vec2(fogGroundGrid.y - 1.0));
-  return textureLod(fogGround, (c + vec2(0.5 + fogGroundGrid.z, 0.5)) / vec2(textureSize(fogGround, 0)), 0.0).r;
+  return textureLod(fogGround, (c + vec2(0.5 + fogGroundGrid.z, 0.5)) / vec2(textureSize(fogGround, 0)), 0.0);
+}
+
+// What the rooms leave of the fog's density at world y, from fogGroundAt there: none outdoors, fogIndoor in rooms,
+// fogIndoorOpen in the open ones, up to the top of their storeys (a, y points down). Every corner of a room's
+// outline is in it (g, b), so the remap keeps the room whole and fades it out half a tile outside its walls.
+float fogRoomFactor(vec4 ground, float y) {
+  vec2 inside = clamp(ground.gb * 2.0 - 1.0, 0.0, 1.0) * float(y >= ground.a);
+  return 1.0 + inside.x * (fogIndoor - 1.0) + inside.y * (fogIndoorOpen - fogIndoor);
 }
 
 vec2 fogWaterCell(vec2 worldXZ) {
@@ -171,10 +178,6 @@ float phase(float cosTheta) {
   float g = FOG_PHASE_G;
   float hg = (1.0 - g * g) / pow(1.0 + g * g - 2.0 * g * cosTheta, 1.5);
   return mix(1.0, hg, FOG_PHASE_FORWARD);
-}
-
-bool roomOpen(int room) {
-  return room > 0 && room < ROOM_ANY && ((fogOpenRooms[room >> 7][(room >> 5) & 3] >> (room & 31)) & 1) != 0;
 }
 
 // Light from the point lights scattered toward the camera along the ray dir between t0 and t0 + steps * dt.
@@ -317,12 +320,21 @@ void main() {
   int steps = clamp(fogSteps, 1, FOG_MAX_STEPS);
   float dt = (t1 - t0) / float(steps);
   // Each step is a segment of the ray. Its density is integrated exactly from the height above the ground at its two
-  // ends, so the dense layer at the ground needs no sampling noise; the slow factors (fades, noise patches, rooms)
-  // are taken at its middle. Only the shadow map, for the shafts, is sampled at a jittered point, and that grain the
-  // denoise (denoise_frag.glsl) smooths away.
+  // ends, so the dense layer at the ground needs no sampling noise; the rooms, which come with the ground, are
+  // averaged over the two ends, and the other slow factors (fades, noise patches) are taken at its middle. Only the
+  // shadow map, for the shafts, is sampled at a jittered point, and that grain the denoise (denoise_frag.glsl) smooths
+  // away. Each end's ground and exponential serve both segments it ends and starts.
   float jitter = ign(gl_FragCoord.xy);
   float below = -fogHeight * FOG_BELOW;
-  float hStart = max(fogGroundAt((dir * t0 + cameraPos).xz) - (dir.y * t0 + cameraPos.y), below);
+  float invHeight = 1.0 / fogHeight;
+  vec3 wStart = dir * t0 + cameraPos;
+  vec4 groundStart = fogGroundAt(wStart.xz);
+  float hStart = max(groundStart.r - wStart.y, below);
+  float eStart = exp(-hStart * invHeight);
+  float roomStart = fogRoomFactor(groundStart, wStart.y);
+  // the noise's coordinates are linear along the ray
+  vec3 noiseStart = (cameraPos + FOG_WIND * time) / vec3(FOG_NOISE_SCALE, FOG_NOISE_SCALE_Y, FOG_NOISE_SCALE);
+  vec3 noiseDir = dir / vec3(FOG_NOISE_SCALE, FOG_NOISE_SCALE_Y, FOG_NOISE_SCALE);
   // the flat glow and the sun's shafts apart: the cover limit takes more of the first
   vec3 scatterAmbient = vec3(0.0);
   vec3 scatterSun = vec3(0.0);
@@ -334,17 +346,22 @@ void main() {
   for (int i = 0; i < steps; ++i) {
     float tEnd = t0 + float(i + 1) * dt;
     vec3 wEnd = dir * tEnd + cameraPos;
-    float hEnd = max(fogGroundAt(wEnd.xz) - wEnd.y, below);
+    vec4 groundEnd = fogGroundAt(wEnd.xz);
+    float hEnd = max(groundEnd.r - wEnd.y, below);
     // the integral of exp(-h / H) over the segment, h linear along it, in units of dt
-    float e0 = exp(-hStart / fogHeight);
-    float e1 = exp(-hEnd / fogHeight);
-    float dh = (hEnd - hStart) / fogHeight;
-    float layer = abs(dh) > 1e-3 ? (e0 - e1) / dh : 0.5 * (e0 + e1);
+    float eEnd = exp(-hEnd * invHeight);
+    float dh = (hEnd - hStart) * invHeight;
+    float layer = abs(dh) > 1e-3 ? (eStart - eEnd) / dh : 0.5 * (eStart + eEnd);
+    float roomEnd = fogRoomFactor(groundEnd, wEnd.y);
+    // no fog inside buildings, a little in the ones open to the sky
+    float room = 0.5 * (roomStart + roomEnd);
     hStart = hEnd;
+    eStart = eEnd;
+    roomStart = roomEnd;
 
     float t = tEnd - 0.5 * dt;
     vec3 wp = dir * t + cameraPos;
-    float sigma = density * layer;
+    float sigma = density * layer * room;
     // Thin around the player and right in front of the camera, thickening over fogNear, so the fog sits in the
     // distance instead of over what you're looking at; and the outer edge thins to nothing.
     float centerDist = length(wp.xz - fogCenter);
@@ -353,18 +370,10 @@ void main() {
     sigma *= smoothstep(0.0, fogNear, t);
     sigma *= weatherFogFactor(wp.xz);
     if (fogNoiseAmount > 0.0 || fogBankAmount > 0.0) {
-      vec3 uvw = (wp + FOG_WIND * time) / vec3(FOG_NOISE_SCALE, FOG_NOISE_SCALE_Y, FOG_NOISE_SCALE);
-      vec2 n = texture(fogNoise, uvw).rg;
+      vec2 n = texture(fogNoise, noiseStart + noiseDir * t).rg;
       // both average about 1, so they move fog around without changing how much there is
       sigma *= max(mix(1.0, n.r * 2.0, fogNoiseAmount), 0.0);
       sigma *= mix(1.0, smoothstep(FOG_BANK_LOW, FOG_BANK_HIGH, n.g) * 2.0, fogBankAmount);
-    }
-    if (sigma > 0.0 && (fogIndoor < 1.0 || fogOpenCount > 0)) {
-      int room = roomAt(wp).x;
-      if (room > 0) {
-        // no fog inside buildings, a little in the ones open to the sky
-        sigma *= fogOpenCount > 0 && roomOpen(room) ? fogIndoorOpen : fogIndoor;
-      }
     }
     if (sigma <= 0.0) {
       continue;

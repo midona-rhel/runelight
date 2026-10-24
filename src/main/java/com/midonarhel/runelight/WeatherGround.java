@@ -3,10 +3,10 @@ package com.midonarhel.runelight;
 import static org.lwjgl.opengl.GL33C.*;
 
 /**
- * Wet ground and snow cover as part of the surfaces: the half resolution AO pass works out how much of each a pixel
- * gets (weather_ground_ao.glsl: the region's ground from the weather field, times how open to the sky it is) into the
- * shadow target's spare channels, and the composite turns that into snow patches and wet darkening before lighting
- * (weather_ground.glsl), so both take the AO, the shadows, the global illumination and the point lights like any
+ * Wet ground as part of the surfaces: the half resolution AO pass works out how wet a pixel gets
+ * (weather_ground_ao.glsl: the region's ground from the weather field, times how open to the sky it is) into the
+ * shadow target's blue channel, and the composite turns that into wet darkening before lighting
+ * (weather_ground.glsl), so it takes the AO, the shadows, the global illumination and the point lights like any
  * other surface. This holds the two programs' uniforms.
  */
 final class WeatherGround

@@ -61,7 +61,8 @@ uniform float sunAltitude;  // degrees
 
 // shadows
 uniform int shadowsEnabled;
-uniform sampler2D sceneShadow;  // half resolution, from the AO pass (shadow_pcss.glsl); the water samples the map
+uniform sampler2D sceneShadow;  // half resolution, from the AO pass (ao_frag.glsl): r shadow, g AO, b wetness,
+                                // a sky visibility; the water samples the map
 uniform sampler2DShadow shadowCompare;
 uniform mat4 lightProjRel;  // camera-relative world -> light clip
 uniform float shadowRadius;      // half extent of the shadow map, world units
@@ -102,12 +103,9 @@ float upsampleAoFog(ivec2 px, float z, vec3 n, out vec4 fog, out float shadow, o
   ivec2 base = ivec2(floor(hp));
   ivec2 maxAo = textureSize(sceneAo, 0) - 1;
   bool withFog = volumetricFog == 1;
-  float sum = 0.0;
-  float shadowSum = 0.0;
+  vec4 shSum = vec4(0.0);
   float wsum = 0.0;
   vec4 giSum = vec4(0.0);
-  vec2 groundSum = vec2(0.0);
-  float skySum = 0.0;
   vec4 fogSum = vec4(0.0);
   float fogWsum = 0.0;
   // the 2x2 half-res texels around the pixel, bilinear weights refined by depth and normal: a 4x4 footprint read
@@ -134,22 +132,19 @@ float upsampleAoFog(ivec2 px, float z, vec3 n, out vec4 fog, out float shadow, o
       nd *= nd;
       w *= nd * nd;
 
-      sum += halfAo(g) * w;
-      vec4 sh = texelFetch(sceneShadow, q, 0);
-      shadowSum += sh.r * w;
-      groundSum += sh.gb * w;
-      skySum += sh.a * w;
+      shSum += texelFetch(sceneShadow, q, 0) * w;
       giSum += halfGi(g) * w;
       wsum += w;
     }
   }
   fog = !withFog ? vec4(0.0, 0.0, 0.0, 1.0)
     : fogWsum > 1e-6 ? fogSum / fogWsum : texelFetch(sceneFog, clamp(ivec2(hp + 0.5), ivec2(0), maxAo), 0);
-  shadow = wsum > 1e-4 ? shadowSum / wsum : texelFetch(sceneShadow, clamp(ivec2(hp + 0.5), ivec2(0), maxAo), 0).r;
+  vec4 sh = wsum > 1e-4 ? shSum / wsum : texelFetch(sceneShadow, clamp(ivec2(hp + 0.5), ivec2(0), maxAo), 0);
+  shadow = sh.r;
   gi = wsum > 1e-4 ? giSum / wsum : vec4(0.0);
-  groundUpsampled = wsum > 1e-4 ? groundSum / wsum : texelFetch(sceneShadow, clamp(ivec2(hp + 0.5), ivec2(0), maxAo), 0).gb;
-  skyUpsampled = wsum > 1e-4 ? skySum / wsum : texelFetch(sceneShadow, clamp(ivec2(hp + 0.5), ivec2(0), maxAo), 0).a;
-  return wsum > 1e-4 ? sum / wsum : 1.0;
+  wetUpsampled = sh.b;
+  skyUpsampled = sh.a;
+  return wsum > 1e-4 ? sh.g : 1.0;
 }
 
 // ---------------------------------------------------------------------------------------------------------------

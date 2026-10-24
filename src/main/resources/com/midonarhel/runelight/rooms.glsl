@@ -1,5 +1,5 @@
 // Rooms (RoomMap.java): which building room every tile is in, so point lights stay in their room instead of
-// shining through walls, and the fog stays out of interiors. Stored in the light buffer after the lights, from
+// shining through walls. Stored in the light buffer after the lights, from
 // texel ROOM_BASE: a header (enabled, tiles per side, extended tiles before local tile 0, whether the lights keep to
 // their rooms), then four texels per tile (version 2):
 // the four planes' rooms (room + porch room * 4096, 0 outdoors), the four planes' floor heights (world y, down), and

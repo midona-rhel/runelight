@@ -2449,10 +2449,9 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		boolean points = config.pointLights();
 		BuildingLights buildingRooms = buildingLights;
 		RoomMap rooms = buildingRooms != null && (config.roomLights() || config.noFogIndoors()) ? buildingRooms.getRooms() : null;
-		// the fog finds the rooms in the light buffer too, so it is filled for the fog even without point lights
-		boolean fogRooms = frameFog && config.noFogIndoors() && rooms != null;
+		volumetricFog.rooms = config.noFogIndoors() ? rooms : null;
 		volumetricFog.openRooms = null;
-		if (points || fogRooms || rooms != null)
+		if (points || rooms != null)
 		{
 			if (!lightClusters.isInitialized())
 			{
@@ -2829,7 +2828,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		if (frameFog)
 		{
 			gpuTimer.begin(GpuTimer.FOG);
-			volumetricFog.indoorFactor = config.noFogIndoors() && lightClusters.isInitialized() ? VolumetricFog.INDOOR_DENSITY : 1;
+			volumetricFog.indoorFactor = config.noFogIndoors() ? VolumetricFog.INDOOR_DENSITY : 1;
 			volumetricFog.waterTexture = water.dataTexture(config);
 			int fogFbo = sceneTargets.fogFbo();
 			volumetricFog.render(fogFbo, sceneTargets.getAoWidth(), sceneTargets.getAoHeight(),
@@ -2848,7 +2847,6 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 			gpuTimer.begin(GpuTimer.FILTER);
 			glUseProgram(glDenoiseProgram);
 			sceneTargets.denoise(uniDenoiseAxis, uniDenoiseFog, AO_TEXTURE_UNIT, SCENE_SHADOW_UNIT, FOG_TEXTURE_UNIT, frameFog);
-			sceneTargets.bindAo(AO_TEXTURE_UNIT);
 			sceneTargets.bindShadow(SCENE_SHADOW_UNIT);
 			gpuTimer.end();
 		}

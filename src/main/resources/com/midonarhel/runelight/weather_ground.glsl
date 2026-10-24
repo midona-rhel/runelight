@@ -5,8 +5,8 @@
 uniform int weatherGroundOn;
 uniform vec2 weatherNoiseOrigin;  // unused since the snow cover went; kept so the uniform location stays valid
 
-// the AO pass's snow (x, unused) and wetness (y), upsampled with the AO (composite_frag.glsl's upsampleAoFog)
-vec2 groundUpsampled = vec2(0.0);
+// the AO pass's wetness, upsampled with the AO (composite_frag.glsl's upsampleAoFog)
+float wetUpsampled = 0.0;
 
 #define WET_DARKEN 0.80        // albedo multiplier on fully wet surfaces
 #define WET_SHEEN 0.10         // sky reflection on wet upward surfaces
@@ -17,12 +17,12 @@ float weatherGroundSurface(inout vec3 color, inout vec3 n, vec3 world, float emi
   if (weatherGroundOn == 0) {
     return 0.0;
   }
-  vec2 g = groundUpsampled * ((1.0 - emissive) * (1.0 - step(0.75, waterBed)) * (1.0 - alpha));
-  if (g.y <= 0.002) {
+  float g = wetUpsampled * ((1.0 - emissive) * (1.0 - step(0.75, waterBed)) * (1.0 - alpha));
+  if (g <= 0.002) {
     return 0.0;
   }
   float up = max(-n.y, 0.0);
-  float wet = g.y * mix(0.6, 1.0, up);
+  float wet = g * mix(0.6, 1.0, up);
   color *= mix(1.0, WET_DARKEN, wet);
   return wet;
 }

@@ -61,15 +61,18 @@ class Water
 	private long lastNanos;
 	private double driftX, driftZ, strength;
 	private boolean hasData;
-	// whether any of the water is in view this frame (drawSurface)
+	// whether any of the water is in view this frame (drawSurface), and the pixels it can cover then (x0, y0, x1, y1,
+	// the ends exclusive, WaterSurface.anyVisible): the passes after it skip the rest
 	private boolean visible;
+	private final int[] rect = new int[4];
 	private WaterMap pending;
 	private WaterSurface.Mesh pendingMesh;
 	private boolean pendingSet;
 	private final WaterSurface surface = new WaterSurface();
 	private final Frame frame = new Frame();
 
-	private int uniEnabled, uniTime, uniReflections, uniClarity, uniCaustics, uniDebug, uniPass, uniSlotType, uniAoOn;
+	private int uniEnabled, uniTime, uniReflections, uniClarity, uniCaustics, uniDebug, uniPass, uniSlotType, uniRect,
+		uniAoOn, uniAoRect;
 
 	// A tile's look (WaterSurface.build): its water type and the game's water texture, as a key; up to SLOTS of them a
 	// scene (water.glsl's WATER_SLOTS), whose types the composite gets as uniforms
@@ -105,6 +108,7 @@ class Water
 		uniDebug = glGetUniformLocation(program, "waterDebug");
 		uniPass = glGetUniformLocation(program, "waterPass");
 		uniSlotType = glGetUniformLocation(program, "waterSlotType");
+		uniRect = glGetUniformLocation(program, "waterRect");
 		glUseProgram(program);
 		glUniform1i(glGetUniformLocation(program, "waterSurface"), surfaceUnit);
 		glUniform1i(glGetUniformLocation(program, "waterShaded"), shadedUnit);
@@ -117,6 +121,7 @@ class Water
 	void locateAo(int program, int surfaceUnit)
 	{
 		uniAoOn = glGetUniformLocation(program, "waterAoOn");
+		uniAoRect = glGetUniformLocation(program, "waterAoRect");
 		glUseProgram(program);
 		glUniform1i(glGetUniformLocation(program, "waterAoSurface"), surfaceUnit);
 		glUseProgram(0);
@@ -131,6 +136,7 @@ class Water
 		glUniform1i(uniAoOn, enabled ? 1 : 0);
 		if (enabled)
 		{
+			glUniform4i(uniAoRect, rect[0], rect[1], rect[2], rect[3]);
 			glActiveTexture(GL_TEXTURE0 + surfaceUnit);
 			glBindTexture(GL_TEXTURE_2D, surface.texture());
 			glActiveTexture(GL_TEXTURE0);
@@ -303,10 +309,10 @@ class Water
 		glBindTexture(GL_TEXTURE_2D, texContact);
 		glActiveTexture(GL_TEXTURE0);
 		// no water in view: the surface, its shading and the composite's water are all skipped this frame
-		visible = surface.anyVisible(viewProj, camX, camY, camZ, focusX, focusZ, reach);
+		visible = surface.anyVisible(viewProj, viewport, camX, camY, camZ, focusX, focusZ, reach, rect);
 		if (visible)
 		{
-			surface.draw(width, height, viewport, viewProj, camX, camY, camZ, focusX, focusZ, reach, f);
+			surface.draw(width, height, viewport, viewProj, camX, camY, camZ, focusX, focusZ, reach, f, rect);
 		}
 	}
 
@@ -327,6 +333,7 @@ class Water
 		glUniform1f(uniClarity, config.waterClarity() / 100f);
 		glUniform1i(uniCaustics, config.waterCaustics() ? 1 : 0);
 		glUniform1i(uniDebug, config.waterDebug().ordinal());
+		glUniform4i(uniRect, rect[0], rect[1], rect[2], rect[3]);
 		WaterSurface.Mesh m = surface.mesh();
 		for (int i = 0; i < m.slots; ++i)
 		{
@@ -362,9 +369,14 @@ class Water
 		glBindTexture(GL_TEXTURE_2D, 0);
 		glActiveTexture(GL_TEXTURE0);
 		surface.bindShadedTarget(width, height);
+		// only the texels with a pixel in the rect: texel x reads pixels 2x and 2x + 1 (halfmap.glsl's halfToFull)
+		int x0 = rect[0] >> 1, y0 = rect[1] >> 1;
+		glEnable(GL_SCISSOR_TEST);
+		glScissor(x0, y0, ((rect[2] + 1) >> 1) - x0, ((rect[3] + 1) >> 1) - y0);
 		glUniform1i(uniPass, 1);
 		glDrawArrays(GL_TRIANGLES, 0, 3);
 		glUniform1i(uniPass, 0);
+		glDisable(GL_SCISSOR_TEST);
 		glActiveTexture(GL_TEXTURE0 + shadedUnit);
 		glBindTexture(GL_TEXTURE_2D, surface.shadedTexture());
 		glActiveTexture(GL_TEXTURE0);

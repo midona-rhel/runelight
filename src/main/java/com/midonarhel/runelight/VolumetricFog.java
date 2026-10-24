@@ -41,15 +41,23 @@ class VolumetricFog
 	WeatherField weatherField;
 	float weatherFog = 1;
 	private int waterUnit, groundUnit;
-	// the terrain the fog lies on: built when a scene loads (any thread), uploaded when it swaps in
+	// the terrain the fog lies on: built when a scene loads (any thread), taken when it swaps in
 	private FogGround pendingGround;
 	private FogGround ground;
 	private int texGround;
 	// density left inside building rooms (fog_frag.glsl), and the scene's water to stop the rays at
 	float indoorFactor = 1;
-	// the rooms whose roof is hidden (OpenRooms): lit by their own lamps and thicker than the other rooms
+	// the building rooms (null: none), and those whose roof is hidden (OpenRooms): lit by their own lamps and
+	// thicker than the other rooms. Both go into the ground texture (FogGround.texels), sent again when they change.
+	RoomMap rooms;
 	OpenRooms openRooms;
 	int waterTexture;
+	private static final int[] NONE_OPEN = new int[OpenRooms.WORDS];
+	private FogGround sentGround;
+	private RoomMap sentRooms;
+	private final int[] sentOpen = new int[OpenRooms.WORDS];
+	private float[] groundTexels;
+	private FloatBuffer groundBuffer;
 
 	// the values the pass uses this frame, in world units
 	private float density;
@@ -79,7 +87,7 @@ class VolumetricFog
 		int uniBankAmount, uniCameraPos, uniCasterDir, uniCenter, uniClientSkyColor, uniDensity, uniDepthZeroToOne,
 			uniFade, uniFieldFog, uniFieldRect, uniGroundGrid, uniHalfRatio, uniHeight, uniHighestY, uniIndoor,
 			uniIndoorOpen, uniInvViewProj, uniLight, uniLightProjRel, uniMaxCover, uniNear, uniNoiseAmount,
-			uniOpenCount, uniOpenRooms, uniOutdoors, uniOvercast, uniPointLights, uniProceduralSky,
+			uniOutdoors, uniOvercast, uniPointLights, uniProceduralSky,
 			uniShadowDepthRange, uniShadowsEnabled, uniSteps, uniSunAltitude, uniSunIsCaster, uniSunScatter, uniTime,
 			uniTint, uniViewProj, uniViewport, uniWaterEnabled, uniWaterGrid;
 
@@ -158,8 +166,6 @@ class VolumetricFog
 		glUniform1i(glGetUniformLocation(u.program, "weatherField"), weatherFieldUnit);
 		u.uniIndoor = glGetUniformLocation(u.program, "fogIndoor");
 		u.uniIndoorOpen = glGetUniformLocation(u.program, "fogIndoorOpen");
-		u.uniOpenRooms = glGetUniformLocation(u.program, "fogOpenRooms");
-		u.uniOpenCount = glGetUniformLocation(u.program, "fogOpenCount");
 		u.uniWaterEnabled = glGetUniformLocation(u.program, "waterEnabled");
 		u.uniWaterGrid = glGetUniformLocation(u.program, "waterGrid");
 		glUniform1i(glGetUniformLocation(u.program, "waterData"), waterUnit);
@@ -228,7 +234,7 @@ class VolumetricFog
 	}
 
 	/**
-	 * The loaded scene became the current one: upload its terrain. GL thread.
+	 * The loaded scene became the current one: take its terrain. GL thread.
 	 */
 	void swap()
 	{
@@ -238,11 +244,37 @@ class VolumetricFog
 			g = pendingGround;
 			pendingGround = null;
 		}
-		if (g == null)
+		if (g != null)
+		{
+			ground = g;
+		}
+	}
+
+	/**
+	 * Send the ground with the rooms (FogGround.texels) when any of them changed: a new scene, the rooms rebuilt as
+	 * doors open and close, roofs hidden or shown. GL thread.
+	 */
+	private void sendGround()
+	{
+		FogGround g = ground;
+		RoomMap r = rooms;
+		OpenRooms open = openRooms;
+		int[] bits = open != null ? open.bits : NONE_OPEN;
+		if (g == null || g == sentGround && r == sentRooms && java.util.Arrays.equals(bits, sentOpen))
 		{
 			return;
 		}
-		ground = g;
+		sentGround = g;
+		sentRooms = r;
+		System.arraycopy(bits, 0, sentOpen, 0, sentOpen.length);
+		if (groundTexels == null)
+		{
+			groundTexels = new float[FogGround.WIDTH * FogGround.CORNERS * FogGround.CHANNELS];
+			groundBuffer = BufferUtils.createFloatBuffer(groundTexels.length);
+		}
+		g.texels(r, open, groundTexels);
+		groundBuffer.clear();
+		groundBuffer.put(groundTexels).flip();
 		if (texGround == 0)
 		{
 			texGround = glGenTextures();
@@ -256,10 +288,8 @@ class VolumetricFog
 		{
 			glBindTexture(GL_TEXTURE_2D, texGround);
 		}
-		FloatBuffer buf = BufferUtils.createFloatBuffer(g.texture.length);
-		buf.put(g.texture).flip();
 		// full floats: heights reach thousands of units, where half floats step by 2 to 4
-		glTexImage2D(GL_TEXTURE_2D, 0, GL_R32F, FogGround.WIDTH, FogGround.CORNERS, 0, GL_RED, GL_FLOAT, buf);
+		glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA32F, FogGround.WIDTH, FogGround.CORNERS, 0, GL_RGBA, GL_FLOAT, groundBuffer);
 		glBindTexture(GL_TEXTURE_2D, 0);
 	}
 
@@ -364,12 +394,6 @@ class VolumetricFog
 
 		glUniform1f(u.uniIndoor, indoorFactor);
 		glUniform1f(u.uniIndoorOpen, Math.max(indoorFactor, OPEN_INDOOR_DENSITY));
-		OpenRooms open = openRooms;
-		glUniform1i(u.uniOpenCount, open != null ? open.count() : 0);
-		if (open != null && open.count() > 0)
-		{
-			glUniform4iv(u.uniOpenRooms, open.bits);
-		}
 		glUniform1i(u.uniWaterEnabled, waterTexture != 0 ? 1 : 0);
 		if (waterTexture != 0)
 		{
@@ -379,6 +403,7 @@ class VolumetricFog
 		}
 
 		glActiveTexture(GL_TEXTURE0 + groundUnit);
+		sendGround();
 		glBindTexture(GL_TEXTURE_2D, texGround);
 		glActiveTexture(GL_TEXTURE0 + noiseUnit);
 		glBindTexture(GL_TEXTURE_3D, texNoise);
@@ -415,6 +440,7 @@ class VolumetricFog
 			texGround = 0;
 		}
 		ground = null;
+		sentGround = null;
 		free(fog);
 		fog = null;
 	}
