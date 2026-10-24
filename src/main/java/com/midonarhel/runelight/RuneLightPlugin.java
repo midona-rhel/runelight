@@ -373,6 +373,8 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 	// each region's forecast, temperature and ground, which follow the game clock
 	private final Climate climate = new Climate();
 	private final WeatherGround weatherGround = new WeatherGround();
+	// where players and small NPCs have just walked through rain
+	private final WadeSteps wadeSteps = new WadeSteps();
 	// GameClock's time this frame
 	private long frameGameMillis;
 	// two units: the occlusion map's raw and compare views; their own, since the AO program's compare sampler must
@@ -1733,6 +1735,8 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		// the hitch monitor reads the GPU's times too, but only when someone is reading the debug log
 		gpuTimer.setEnabled(config.gpuPassTimings());
 		captureFrameState(scene, cameraX, cameraY, cameraZ);
+		wadeSteps.update(client.getTopLevelWorldView(), client.getLocalPlayer(), cameraX, cameraZ,
+			weather.groundActive() && client.getGameState() == GameState.LOGGED_IN);
 		updateEdge(scene, cameraX, cameraZ);
 
 		// UBO
@@ -2647,6 +2651,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		c.ground.set(frameGround && groundScene != null,
 			groundScene != null ? groundScene.getBaseX() * (float) Perspective.LOCAL_TILE_SIZE : 0,
 			groundScene != null ? groundScene.getBaseY() * (float) Perspective.LOCAL_TILE_SIZE : 0);
+		c.ground.setWade(wadeSteps.steps(frameCameraX, frameCameraZ));
 		glUniform1i(c.volumetricFog, frameFog ? 1 : 0);
 		clouds.apply(c.clouds);
 		weather.getLightning().bind(c.lightningBolt, frameCameraX, frameCameraZ);
@@ -3082,7 +3087,8 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 			weather.draw(frameViewProj, frameInvViewProj, frameViewport, glCapabilities.OpenGL45,
 				frameCameraX, frameCameraY, frameCameraZ, dayCycle, config.weatherSplashes(), water, config,
 				WEATHER_OCCLUSION_UNIT,
-				config.pointLights() && config.weatherPointLights() && lightClusters.isInitialized(), frameDrawDistance);
+				config.pointLights() && config.weatherPointLights() && lightClusters.isInitialized(), frameDrawDistance,
+				wadeSteps.steps(frameCameraX, frameCameraZ));
 			gpuTimer.end();
 			glViewport(0, 0, sceneWidth, sceneHeight);
 		}

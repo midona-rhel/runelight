@@ -633,6 +633,7 @@ final class RoomMap
 	void texels(FloatBuffer out)
 	{
 		out.put(2).put(size).put(offset).put(1); // Version 2 adds baked room ambient distance.
+		float[] pools = pools();
 		for (int x = 0; x < size; ++x)
 		{
 			for (int y = 0; y < size; ++y)
@@ -671,7 +672,7 @@ final class RoomMap
 				}
 				for (int p = 0; p < PLANES; ++p)
 				{
-					out.put(pool(p, x, y));
+					out.put(pools[index(p, x, y)]);
 				}
 			}
 		}
@@ -682,6 +683,69 @@ final class RoomMap
 	static final float POOL_DEPTH = 24;
 	static final float POOL_FLAT = 4;
 	static final float POOL_STEEP = 24;
+
+	// the most puddles a chunk (8 by 8 tiles, aligned with the world's) gets on each storey, and the least pool a tile
+	// needs to get one
+	static final int POOLS_PER_CHUNK = 3;
+	static final float POOL_MIN = 0.2f;
+
+	/**
+	 * Every tile's {@link #pool}, by {@link #index}, but only the POOLS_PER_CHUNK likeliest tiles of each chunk and
+	 * storey keep theirs: the puddles form there, always the same tiles. Ties (a run of wall) go by a hash of the
+	 * chunk's heights and the tile's place in it, which stay the same whenever the area is loaded.
+	 */
+	float[] pools()
+	{
+		float[] out = new float[PLANES * size * size];
+		float[] score = new float[64], value = new float[64];
+		int[] tile = new int[64];
+		for (int p = 0; p < PLANES; ++p)
+		{
+			// local tile 0 is a chunk corner `offset` extended tiles in
+			for (int cx = Math.floorMod(offset, 8) - 8; cx < size; cx += 8)
+			{
+				for (int cy = Math.floorMod(offset, 8) - 8; cy < size; cy += 8)
+				{
+					int n = 0, seed = 0;
+					for (int t = 0; t < 64; ++t)
+					{
+						int x = cx + (t >> 3), y = cy + (t & 7);
+						if (x >= 0 && y >= 0 && x < size && y < size)
+						{
+							seed = seed * 31 + Math.round(floors[index(p, x, y)]);
+						}
+					}
+					for (int t = 0; t < 64; ++t)
+					{
+						int x = cx + (t >> 3), y = cy + (t & 7);
+						if (x < 0 || y < 0 || x >= size || y >= size)
+						{
+							continue;
+						}
+						float v = pool(p, x, y);
+						if (v >= POOL_MIN)
+						{
+							int h = (seed ^ t * 0x9E3779B9) * 0x85EBCA6B;
+							score[n] = v + ((h >>> 8) & 0xFFFF) * (0.05f / 0xFFFF);
+							value[n] = v;
+							tile[n++] = index(p, x, y);
+						}
+					}
+					for (int k = 0; k < POOLS_PER_CHUNK && k < n; ++k)
+					{
+						int best = 0;
+						for (int j = 1; j < n; ++j)
+						{
+							if (score[j] > score[best]) best = j;
+						}
+						out[tile[best]] = value[best];
+						score[best] = -1;
+					}
+				}
+			}
+		}
+		return out;
+	}
 
 	/**
 	 * Where rain water collects on a tile of a storey, 0 to 1: in hollows lower than the tiles around them, and along

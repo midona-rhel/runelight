@@ -6,6 +6,7 @@
 
 in vec2 fQuad;
 flat in int fSplash;
+flat in float fSoft;
 in float fViewZ;
 in float fAlpha;
 flat in vec3 fColor;
@@ -18,13 +19,13 @@ void main() {
   float scene = sceneViewDepth(gl_FragCoord.xy);
   float a = fAlpha;
   if (fSplash != 0) {
-    // behind something nearer than its foot, it is hidden
-    if (fViewZ * (1.0 - SPLASH_SURFACE_TOLERANCE) - 8.0 > scene) {
-      discard;
-    }
-    // a small, soft, bright flick on the ground, as anime draws rain landing
-    float d = dot(fQuad, fQuad);
-    a *= exp(-5.0 * d) * (1.0 - smoothstep(0.7, 1.0, d));
+    // behind something nearer than its foot, it is hidden, over a short distance so mist doesn't end in an edge
+    float behind = scene - (fViewZ * (1.0 - SPLASH_SURFACE_TOLERANCE) - 8.0);
+    a *= smoothstep(-fSoft, 0.0, behind);
+    // diffuse: a soft, round-edged blob, fullest in the middle, fading smoothly to nothing at its edge
+    vec2 q = vec2(fQuad.x, fQuad.y * 2.0 - 1.0);
+    float falloff = 1.0 - smoothstep(0.0, 1.0, dot(q, q));
+    a *= falloff * falloff;
   } else {
     if (fViewZ > scene) {
       discard;

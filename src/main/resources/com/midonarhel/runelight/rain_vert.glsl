@@ -10,9 +10,12 @@
 #include "weather_common.glsl"
 #include "water_common.glsl"
 #include "wind.glsl"
+#include "weather_wade.glsl"
 
 uniform int dropCount;
 uniform int splashCount;
+uniform int hazeCount;         // mist sprites (drawn on their own, with no drops and no splashes)
+uniform int wadeDroplets;      // 1: the instances are the droplets of wading steps, not drops or splashes
 uniform SCENE_SAMPLER sceneMaterial;  // r emissive, b water bed (frag.glsl)
 uniform usampler2D waterSurface;  // the water pass's pixels, 0 where there is none (water_common.glsl)
 uniform ivec4 waterRect;
@@ -34,14 +37,35 @@ uniform vec2 particleAmount;   // rain at the player, and the most anywhere in t
 #define RAIN_GUST 1.2          // wind multiplier at a full gust (Weather.RAIN_GUST)
 
 #define SPLASH_HALF 2560.0     // splashes fill a smaller area around layerBox, where they can be seen
-#define SPLASH_LIFE 0.12       // seconds an impact shows, fading in and out
-#define SPLASH_CYCLE 0.5       // seconds before an instance lands again somewhere else
-#define SPLASH_SIZE 6.0        // half the sprite's height, world units; it is SPLASH_ASPECT times as wide
-#define SPLASH_ALPHA 0.75
+#define SPLASH_LIFE 0.3        // seconds an impact shows, fading in and out
+#define SPLASH_CYCLE 1.2       // seconds before an instance lands again somewhere else
+#define SPLASH_SIZE 16.0       // height of the sprite, world units; it is SPLASH_ASPECT times as wide
+#define SPLASH_ALPHA 0.5
 #define SPLASH_SKY 0.35        // share of the sky's color in the impact's
+#define FOOT_TAP_PX 4.0        // pixels between the taps that check what the camera sees at a sprite's foot
+
+#define HAZE_LIFE 5.0          // seconds a mist sprite shows, fading in and out
+#define HAZE_CYCLE 7.0         // seconds before it appears somewhere else
+#define HAZE_SIZE 180.0        // half the sprite's height, world units
+#define HAZE_ASPECT 1.5        // half width over half height
+#define HAZE_LIFT 70.0         // world units above the surface that a sprite is centered
+#define HAZE_ALPHA 0.05
+#define HAZE_NEAR 500.0        // sprites this close to the camera fade out, so the haze never fogs the view
+#define HAZE_SOFT 120.0        // world units that mist fades over where nearer scenery cuts it off
+
+// droplets thrown up by a step wading through rain: how many each, how long they fly (seconds), their sideways and
+// upward speeds at most (world units per second), the pull on them, half the sprite's height and its opacity
+#define WADE_DROPLETS 6
+#define WADE_FLIGHT 0.3
+#define WADE_OUT 70.0
+#define WADE_UP 220.0
+#define WADE_GRAVITY 1300.0
+#define WADE_DROPLET_SIZE 1.8
+#define WADE_DROPLET_ALPHA 0.5
 
 out vec2 fQuad;                // x across the streak / sprite -1..1, y along it 0..1 (up the sprite)
-flat out int fSplash;           // 0 drop, 1 an impact
+flat out int fSplash;         // 0 drop, 1 an impact, 2 mist
+flat out float fSoft;          // world units over which an impact or mist hides behind nearer scenery
 out float fViewZ;
 out float fAlpha;
 flat out vec3 fColor;
@@ -141,72 +165,190 @@ void drop(int id, vec2 corner) {
   fColor = weatherParticleColor(vec3(0.62, 0.68, 0.78), points);
 }
 
-void splash(int id, vec2 corner) {
-  // Each impact is a small soft blot that fades in and straight out again over SPLASH_LIFE, then the instance lands
-  // somewhere else; offsets keep them from landing together.
-  float phase = hash11(float(id) * 7.13 + 1.7);
-  float cycle = time / SPLASH_CYCLE + phase;
-  float age = fract(cycle) * SPLASH_CYCLE / SPLASH_LIFE;
-  if (age >= 1.0) {
-    gl_Position = CULLED;
-    return;
+// How much of the surface point at clip position c is what the camera sees there, 0..1: its pixel shows a surface at
+// that depth (not nearer scenery, not sky), not water and not a glowing material. A grid of taps around the foot
+// and soft depth edges make it change gradually as the camera moves, so a sprite fades where this would flip.
+float footVisible(vec4 c) {
+  vec2 ndc = c.xy / c.w;
+  vec2 foot = (ndc * 0.5 + 0.5) * vec2(sceneViewport.zw) + vec2(sceneViewport.xy);
+  float tol = c.w * SPLASH_SURFACE_TOLERANCE + 8.0;
+  ivec2 lo = sceneViewport.xy;
+  ivec2 hi = sceneViewport.xy + sceneViewport.zw - 1;
+  float seen = 0.0;
+  for (int i = 0; i < 9; i++) {
+    vec2 tap = foot + (vec2(i % 3, i / 3) - 1.0) * FOOT_TAP_PX;
+    ivec2 px = clamp(ivec2(tap), lo, hi);
+    float onSurface = 1.0 - smoothstep(tol, tol * 2.0, abs(sceneViewDepth(vec2(px)) - c.w));
+    bool covered = waterSurfaceAt(waterSurface, waterRect, px).b != 0u || texelFetch(sceneMaterial, px, 0).r > 0.01;
+    seen += covered ? 0.0 : onSurface;
   }
-  float seed = float(id) * 17.0 + floor(cycle) * 131.0;
+  // a foot off the screen can't be checked, and its sprite may still be in view
+  return mix(seen / 9.0, 1.0, smoothstep(1.0, 1.15, max(abs(ndc.x), abs(ndc.y))));
+}
+
+// Where instance `index` of a kind is right now. Its place in the world is picked from its cycle number and kept
+// for the whole of its life, and it fades in and out over `life` seconds of each `cycle`. Returns false while it
+// is between lives. `fade` is 0..1 over the life, and `xz` is within the area around layerBox.
+bool impact(int index, float cycleSeconds, float lifeSeconds, float salt, out vec2 xz, out float fade) {
+  float phase = hash11(float(index) * 7.13 + 1.7 + salt);
+  float cycle = time / cycleSeconds + phase;
+  float age = fract(cycle) * cycleSeconds / lifeSeconds;
+  float seed = float(index) * 17.0 + floor(cycle) * 131.0 + salt * 53.0;
   // spread over a world-anchored box that wraps around the player, so an impact stays where it landed
   vec3 h = hash31(seed);
   vec2 lo = layerBox.xz - SPLASH_HALF;
-  vec2 xz = lo + mod(h.xy * SPLASH_HALF * 2.0 - lo, SPLASH_HALF * 2.0);
+  xz = lo + mod(h.xy * SPLASH_HALF * 2.0 - lo, SPLASH_HALF * 2.0);
+  float s = sin(clamp(age, 0.0, 1.0) * 3.14159265);
+  fade = s * s;
+  return age < 1.0;
+}
 
-  // land on the top surface
-  vec3 p = vec3(xz.x, 0.0, xz.y) - cameraPos;
-  float top = occluderTop(p);
-  if (top > 1e8) {
-    gl_Position = CULLED;
-    return;
-  }
+// The surface point under an impact: camera-relative position p and its clip position c. False when there is no
+// scenery to land on or it is off the screen by more than `margin` clip units.
+bool landing(vec2 xz, float margin, out vec3 p, out float top, out vec4 c) {
+  p = vec3(xz.x, 0.0, xz.y) - cameraPos;
+  top = occluderTop(p);
   p.y = top - cameraPos.y;
+  c = viewProj * vec4(p, 1.0);
+  return top < 1e8 && c.w >= NEAR && all(lessThan(abs(c.xy), vec2(c.w * (1.0 + margin))));
+}
 
-  vec4 c = viewProj * vec4(p, 1.0);
-  if (c.w < NEAR || any(greaterThan(abs(c.xy), vec2(c.w)))) {
+// Share of the area's width that is faded out toward its sides, which move with the camera
+float areaEdge(vec2 xz) {
+  vec2 rel = abs(xz - layerBox.xz) / SPLASH_HALF;
+  return 1.0 - smoothstep(0.6, 1.0, max(rel.x, rel.y));
+}
+
+vec3 impactColor(vec3 points) {
+  // the sky's own color at the horizon, whitened a little: the impacts melt into it
+  return weatherParticleColor(mix(vec3(0.80, 0.84, 0.90), skyHorizonAt(sunAltitude), SPLASH_SKY), points);
+}
+
+void splash(int id, vec2 corner) {
+  // Each impact is a soft puff that rises from the spot, fades in and out slowly over SPLASH_LIFE, then the
+  // instance lands somewhere else; offsets keep them from landing together.
+  vec2 xz;
+  float fade;
+  vec3 p;
+  float top;
+  vec4 c;
+  if (!impact(id, SPLASH_CYCLE, SPLASH_LIFE, 0.0, xz, fade) || !landing(xz, 0.1, p, top, c)) {
     gl_Position = CULLED;
     return;
   }
 
   // Only where the camera sees the ground under open sky here (so not on roofs behind walls, or under bridges), not
-  // on water, which has its own rain rings (water_frag.glsl), and not on glowing surfaces such as lava: the pixel at
-  // its foot shows this surface, the water pass has not covered it, and it isn't emissive.
-  vec2 foot = (c.xy / c.w * 0.5 + 0.5) * vec2(sceneViewport.zw) + vec2(sceneViewport.xy);
-  float tol = c.w * SPLASH_SURFACE_TOLERANCE + 8.0;
-  if (abs(sceneViewDepth(foot) - c.w) > tol || waterSurfaceAt(waterSurface, waterRect, ivec2(foot)).b != 0u
-    || texelFetch(sceneMaterial, ivec2(foot), 0).r > 0.01) {
-    gl_Position = CULLED;
-    return;
-  }
+  // on water, which has its own rain rings (water_frag.glsl), and not on glowing surfaces such as lava
+  float visible = footVisible(c);
 
-  // a soft blot on the spot, facing the camera, wider than tall
+  // a soft puff facing the camera, its bottom on the spot and taller than wide
   float size = SPLASH_SIZE * pixelScale() / c.w;
-  float r = max(size, 1.0);
-  gl_Position = offsetPixels(c, vec2(corner.x * SPLASH_ASPECT, corner.y) * r);
+  float height = max(size, 2.0);
+  gl_Position = offsetPixels(c, vec2(corner.x * SPLASH_ASPECT * 0.5, corner.y) * height);
 
   vec3 points = weatherPointLights(p, c, vec3(0.0), top);
   float lit = min(dot(points, vec3(0.2126, 0.7152, 0.0722)), 1.0);
-  // fade toward the sides of the splash area, which moves with the camera, and in and out over its life
-  vec2 rel = abs(xz - layerBox.xz) / SPLASH_HALF;
-  float edge = 1.0 - smoothstep(0.6, 1.0, max(rel.x, rel.y));
-  float fade = sin(age * 3.14159265);
-  fAlpha = SPLASH_ALPHA * amount * rainShare(xz) * edge * fade * smoothstep(1.0, 2.5, size) * (1.0 + LIT_ALPHA * lit);
+  float count = float(splashCount);
+  float added = clamp((count - float(id)) / (count * COUNT_FADE + 1.0), 0.0, 1.0);
+  fAlpha = SPLASH_ALPHA * amount * rainShare(xz) * areaEdge(xz) * fade * visible * added * smoothstep(2.0, 5.0, size)
+    * (1.0 + LIT_ALPHA * lit);
   fQuad = vec2(corner.x, corner.y);
   fSplash = 1;
+  fSoft = 8.0;
   fViewZ = c.w;
-  // the sky's own color at the horizon, whitened a little: the impacts melt into it
+  fColor = impactColor(points);
+}
+
+void haze(int id, vec2 corner) {
+  // A big, faint, slow sprite hanging a little above what the rain hits. Many of them overlap into one soft haze
+  // over the rain-exposed surfaces, and none over what is under a roof, since each rests on the highest scenery of
+  // its column.
+  vec2 xz;
+  float fade;
+  vec3 p;
+  float top;
+  vec4 c;
+  if (!impact(id, HAZE_CYCLE, HAZE_LIFE, 0.37, xz, fade) || !landing(xz, 0.5, p, top, c)) {
+    gl_Position = CULLED;
+    return;
+  }
+  float visible = footVisible(c);
+
+  // centered above the surface; sprites that are wholly off the screen are dropped
+  vec4 mid = viewProj * vec4(p.x, p.y - HAZE_LIFT, p.z, 1.0);
+  float size = HAZE_SIZE * pixelScale() / mid.w;
+  vec2 reach = size * vec2(HAZE_ASPECT, 1.0) / (vec2(sceneViewport.zw) * 0.5);
+  if (mid.w < NEAR || any(greaterThan(abs(mid.xy / mid.w) - reach, vec2(1.0)))) {
+    gl_Position = CULLED;
+    return;
+  }
+  gl_Position = offsetPixels(mid, vec2(corner.x * HAZE_ASPECT, corner.y * 2.0 - 1.0) * size);
+
+  vec3 points = weatherPointLights(p, c, vec3(0.0), top);
+  float lit = min(dot(points, vec3(0.2126, 0.7152, 0.0722)), 1.0);
+  float count = float(hazeCount);
+  float added = clamp((count - float(id)) / (count * COUNT_FADE + 1.0), 0.0, 1.0);
+  float near = smoothstep(HAZE_NEAR, HAZE_NEAR * 3.0, mid.w);
+  fAlpha = HAZE_ALPHA * amount * rainShare(xz) * areaEdge(xz) * fade * visible * added * near
+    * (1.0 + LIT_ALPHA * lit);
+  fQuad = vec2(corner.x, corner.y);
+  fSplash = 2;
+  fSoft = HAZE_SOFT;
+  fViewZ = c.w;
+  fColor = impactColor(points);
+}
+
+// One droplet of a step: thrown up and out from the foot, falling back in a short arc. It is a splash sprite, drawn
+// and hidden like one, only where the camera sees the ground at the step.
+void wadeDroplet(int id, vec2 corner) {
+  vec4 s = wadeSteps[id / WADE_DROPLETS];
+  if (s.w <= 0.0 || s.z >= WADE_FLIGHT) {
+    gl_Position = CULLED;
+    return;
+  }
+  vec3 h = hash31(float(id) * 3.71 + 0.3);
+  float angle = h.x * 6.28318530718;
+  vec2 out2 = vec2(cos(angle), sin(angle)) * (0.3 + 0.7 * h.y) * WADE_OUT;
+  float up = (0.4 + 0.6 * h.z) * WADE_UP;
+  float t = s.z;
+  vec3 foot = vec3(s.x, 0.0, s.y) - cameraPos;
+  float top = occluderTop(foot);
+  if (top > 1e8) {
+    gl_Position = CULLED;
+    return;
+  }
+  foot.y = top - cameraPos.y;
+  vec4 cf = viewProj * vec4(foot, 1.0);
+  vec2 px = (cf.xy / cf.w * 0.5 + 0.5) * vec2(sceneViewport.zw) + vec2(sceneViewport.xy);
+  if (cf.w < NEAR || any(greaterThan(abs(cf.xy), vec2(cf.w))) || abs(sceneViewDepth(px) - cf.w) > cf.w * SPLASH_SURFACE_TOLERANCE + 8.0
+    || waterSurfaceAt(waterSurface, waterRect, ivec2(px)).b != 0u || texelFetch(sceneMaterial, ivec2(px), 0).r > 0.01) {
+    gl_Position = CULLED;
+    return;
+  }
+  // y points down: up is negative
+  vec3 p = foot + vec3(out2.x * t, -(up * t - 0.5 * WADE_GRAVITY * t * t), out2.y * t);
+  p.y = min(p.y, foot.y);
+  vec4 c = viewProj * vec4(p, 1.0);
+  float r = max(WADE_DROPLET_SIZE * pixelScale() / c.w, 1.0);
+  gl_Position = offsetPixels(c, vec2(corner.x * SPLASH_ASPECT, corner.y) * r);
+  vec3 points = weatherPointLights(p, c, vec3(0.0), top);
+  float lit = min(dot(points, vec3(0.2126, 0.7152, 0.0722)), 1.0);
+  fAlpha = WADE_DROPLET_ALPHA * amount * s.w * (1.0 - t / WADE_FLIGHT) * (1.0 + LIT_ALPHA * lit);
+  fQuad = corner;
+  fSplash = 1;
+  fViewZ = c.w;
   fColor = weatherParticleColor(mix(vec3(0.80, 0.84, 0.90), skyHorizonAt(sunAltitude), SPLASH_SKY), points);
 }
 
 void main() {
   int id = gl_InstanceID;
   vec2 corner = CORNERS[gl_VertexID];
-  if (id < dropCount) {
+  if (wadeDroplets != 0) {
+    wadeDroplet(id, corner);
+  } else if (id < dropCount) {
     drop(id, corner);
+  } else if (hazeCount > 0) {
+    haze(id - dropCount, corner);
   } else {
     splash(id - dropCount, corner);
   }

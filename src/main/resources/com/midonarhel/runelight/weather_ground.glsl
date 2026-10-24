@@ -7,6 +7,8 @@
 // worked out from the gradients and the surface's footprint on screen, so they stay a pixel wide at any angle. Needs
 // frame.glsl, rooms.glsl and water.glsl.
 
+#include "weather_wade.glsl"
+
 uniform int weatherGroundOn;
 uniform vec2 weatherNoiseOrigin;  // world x and z of local (scene) 0, world units
 
@@ -50,6 +52,8 @@ uniform vec2 weatherNoiseOrigin;  // world x and z of local (scene) 0, world uni
 // how much of the sky the water reflects looking straight down, and at most at a slant: a dull, soft reflection
 #define PUDDLE_REFLECT 0.15
 #define PUDDLE_REFLECT_MAX 0.45
+// how bright the crest of a ripple is, added to the water (linear)
+#define PUDDLE_CREST 0.25
 
 uvec2 groundHash(vec2 cell) {
   uvec2 v = uvec2(ivec2(cell)) * 1664525u + 1013904223u;
@@ -167,8 +171,11 @@ vec3 weatherPuddleWater(vec3 lit, vec3 p, vec2 puddle) {
   vec3 v = normalize(p);
   // the reflected ray off level water; y is down
   vec3 r = vec3(v.x, -v.y, v.z);
+  // ripples from waded steps tilt it, and their crests catch the light
+  vec2 ripple = puddle.y > 0.0 ? wadeRippleSlope(p.xz + cameraPos.xz) * puddle.y : vec2(0.0);
+  r = normalize(r + vec3(ripple.x, 0.0, ripple.y));
   float fresnel = mix(PUDDLE_REFLECT, PUDDLE_REFLECT_MAX, pow(1.0 - clamp(v.y, 0.0, 1.0), FRESNEL_POWER));
   float share = fresnel * puddle.x * mix(PUDDLE_RIM_REFLECT, 1.0, puddle.y);
   vec3 reflection = waterSkyReflection(r);
-  return linearToSrgb(mix(srgbToLinear(lit), reflection, share));
+  return linearToSrgb(mix(srgbToLinear(lit), reflection, share) + PUDDLE_CREST * length(ripple) * puddle.x);
 }

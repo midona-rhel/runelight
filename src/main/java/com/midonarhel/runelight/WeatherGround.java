@@ -57,12 +57,19 @@ final class WeatherGround
 	/** A composite program's uniforms. */
 	static final class CompositeUniforms
 	{
-		private int on = -1, noiseOrigin = -1;
+		private int on = -1, noiseOrigin = -1, wadeSteps = -1;
 
 		void locate(int program)
 		{
 			on = glGetUniformLocation(program, "weatherGroundOn");
 			noiseOrigin = glGetUniformLocation(program, "weatherNoiseOrigin");
+			wadeSteps = glGetUniformLocation(program, "wadeSteps");
+		}
+
+		/** With the program in use: the steps in the puddles (WadeSteps.steps). */
+		void setWade(float[] steps)
+		{
+			glUniform4fv(wadeSteps, steps);
 		}
 
 		/**
