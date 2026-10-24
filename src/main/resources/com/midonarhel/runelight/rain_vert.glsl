@@ -36,12 +36,12 @@ uniform vec2 particleAmount;   // rain at the player, and the most anywhere in t
 #define RAIN_GUST 1.2          // wind multiplier at a full gust (Weather.RAIN_GUST)
 
 #define SPLASH_HALF 2560.0     // splashes fill a smaller area around layerBox, where they can be seen
-#define SPLASH_LIFE 0.3        // seconds an impact shows, fading in and out
-#define SPLASH_CYCLE 1.2       // seconds before an instance lands again somewhere else
-#define SPLASH_SIZE 28.0       // height of the sprite, world units; it is SPLASH_ASPECT times as wide
-#define SPLASH_LIFT 20.0       // world units above the spot that it floats, centered: the splashes ring what they land
+#define SPLASH_LIFE 0.45       // seconds an impact shows, fading in and out
+#define SPLASH_CYCLE 1.8       // seconds before an instance lands again somewhere else
+#define SPLASH_SIZE 500.0      // height of the sprite, world units; it is SPLASH_ASPECT times as wide
+#define SPLASH_LIFT 200.0      // world units above the spot that it floats, centered: the splashes ring what they land
                                // on in a halo
-#define SPLASH_ALPHA 0.35
+#define SPLASH_ALPHA 0.18
 #define SPLASH_SKY 0.35        // share of the sky's color in the impact's
 #define FOOT_TAP_PX 2.0        // pixels between the taps that check what the camera sees at a sprite's foot
 #define FOOT_TOLERANCE 0.04    // share of the distance, plus FOOT_MARGIN world units, that scenery must stand in
@@ -228,7 +228,7 @@ void splash(int id, vec2 corner) {
   vec3 p;
   float top;
   vec4 c;
-  if (!impact(id, SPLASH_CYCLE, SPLASH_LIFE, 0.0, xz, fade) || !landing(xz, 0.1, p, top, c)) {
+  if (!impact(id, SPLASH_CYCLE, SPLASH_LIFE, 0.0, xz, fade) || !landing(xz, 0.6, p, top, c)) {
     gl_Position = CULLED;
     return;
   }
@@ -252,7 +252,8 @@ void splash(int id, vec2 corner) {
     * (1.0 + LIT_ALPHA * lit);
   fQuad = vec2(corner.x, corner.y);
   fSplash = 1;
-  fSoft = 8.0;
+  // behind nearer scenery it fades out over a share of its size, never in an edge
+  fSoft = SPLASH_SIZE * 0.25;
   fViewZ = c.w;
   fColor = impactColor(points);
 }
@@ -295,6 +296,7 @@ void wadeDroplet(int id, vec2 corner) {
   fAlpha = WADE_DROPLET_ALPHA * amount * s.w * (1.0 - t / WADE_FLIGHT) * (1.0 + LIT_ALPHA * lit);
   fQuad = corner;
   fSplash = 1;
+  fSoft = 8.0;
   fViewZ = c.w;
   fColor = weatherParticleColor(mix(vec3(0.80, 0.84, 0.90), skyHorizonAt(sunAltitude), SPLASH_SKY), points);
 }

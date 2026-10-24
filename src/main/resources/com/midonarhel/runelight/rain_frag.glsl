@@ -22,10 +22,10 @@ void main() {
     // behind something nearer than its foot, it is hidden, over a short distance so it doesn't end in an edge
     float behind = scene - (fViewZ * (1.0 - SPLASH_SURFACE_TOLERANCE) - 8.0);
     a *= smoothstep(-fSoft, 0.0, behind);
-    // diffuse: a soft, round-edged blob, fullest in the middle, fading smoothly to nothing at its edge
+    // shaded like a snowflake: gaussian-like, fullest in the middle and fading smoothly to nothing at its edge
     vec2 q = vec2(fQuad.x, fQuad.y * 2.0 - 1.0);
-    float falloff = 1.0 - smoothstep(0.0, 1.0, dot(q, q));
-    a *= falloff * falloff;
+    float r2 = dot(q, q);
+    a *= exp(-3.5 * r2) * max(1.0 - r2, 0.0);
   } else {
     if (fViewZ > scene) {
       discard;

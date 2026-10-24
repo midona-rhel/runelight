@@ -73,7 +73,7 @@ class Weather
 	// instance counts at 100% intensity: drops and flakes in the nearest layer (LAYER_COUNT_FALLOFF less in each
 	// next one), and splashes
 	static final int LAYER_RAIN_DROPS = 24000;
-	static final int MAX_RAIN_SPLASHES = 9000;
+	static final int MAX_RAIN_SPLASHES = 1200;
 	static final int LAYER_SNOW_FLAKES = 12000;
 
 	// easing time constants, seconds: about three of them for a full change, so a new weather or region blends
