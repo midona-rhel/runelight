@@ -7,8 +7,8 @@ import java.nio.ShortBuffer;
 /**
  * How much of the sky the scene lets through, ray traced through its voxels (GiGrid) for the skylight
  * (skylight_ao.glsl). Values sit at the corners of the base scene's tiles, like the game's terrain heights, at
- * HEIGHTS above the ground of each of FLOORS floors (the probes' floors, GiProbes), and are directional: the sky seen
- * toward up and the four sides (+x, -x, +z, -z), each the share of the directions above the horizon, cosine weighted
+ * HEIGHTS above the ground of each of FLOORS floors (the global illumination's, GiPatches), and are directional: the
+ * sky seen toward up and the four sides (+x, -x, +z, -z), each the share of the directions above the horizon, cosine weighted
  * around that axis, whose rays get out (leave the grid, or go MAX_DISTANCE without meeting anything). Under the open
  * sky every one is 1; a wall under eaves sees the sky sideways while the ground under them doesn't see it overhead.
  *
@@ -37,9 +37,9 @@ import java.nio.ShortBuffer;
  */
 final class SkyGrid
 {
-	static final int SIZE = GiProbes.SIZE;
+	static final int SIZE = GiPatches.SIZE;
 	static final int CORNERS = SIZE + 1;
-	static final int FLOORS = GiProbes.FLOORS;
+	static final int FLOORS = GiPatches.FLOORS;
 	// heights of the values above each floor's ground: between a storey's floor and ceiling voxels (a storey is about
 	// 240 high, a voxel 64), low enough for the floor, high enough for the tops of walls
 	static final float[] HEIGHTS = {40, 112, 184};
@@ -78,7 +78,7 @@ final class SkyGrid
 	static
 	{
 		// the upper half of an even spread over the sphere (y down)
-		float[] sphere = GiProbes.fibonacci(2 * RAYS);
+		float[] sphere = GiPatches.fibonacci(2 * RAYS);
 		float[] base = java.util.Arrays.copyOfRange(sphere, RAYS * 3, RAYS * 6);
 		for (int r = 0; r < ROTATIONS; ++r)
 		{
@@ -343,6 +343,16 @@ final class SkyGrid
 
 	// ---------------------------------------------------------------------------------------------------------
 
+	/** The rotation a unit's rays use: a hash, so the pattern doesn't line up across the scene. */
+	private static int rotation(int unit)
+	{
+		int h = unit * 0x9E3779B1;
+		h ^= h >>> 15;
+		h *= 0x85EBCA77;
+		h ^= h >>> 13;
+		return h & (ROTATIONS - 1);
+	}
+
 	private void layout(int[][][] heights, int offset, byte[] sceneFloors)
 	{
 		float[] g = new float[FLOORS];
@@ -352,10 +362,10 @@ final class SkyGrid
 			{
 				for (int f = 0; f < FLOORS; ++f)
 				{
-					// as GiProbes: a floor's ground is at least FLOOR_GAP over the one below
+					// as GiPatches: a floor's ground is at least FLOOR_GAP over the one below
 					float h = heights != null && f < heights.length ? height(heights[f], (float)cx/resolution + offset, (float)cz/resolution + offset)
-						: f > 0 ? g[f - 1] - GiProbes.FLOOR_GAP : 0;
-					g[f] = f == 0 ? h : Math.min(h, g[f - 1] - GiProbes.FLOOR_GAP);
+						: f > 0 ? g[f - 1] - GiPatches.FLOOR_GAP : 0;
+					g[f] = f == 0 ? h : Math.min(h, g[f - 1] - GiPatches.FLOOR_GAP);
 					ground[(f * corners + cz) * corners + cx] = g[f];
 				}
 			}
@@ -709,7 +719,7 @@ final class SkyGrid
 		}
 
 		int unit = (level * corners + cz) * corners + cx;
-		int rot = GiProbes.rotation(unit);
+		int rot = rotation(unit);
 		float[] dirs = DIRECTIONS[rot], weights = WEIGHTS[rot];
 		int rays = 0;
 		for (int root = 0; root < 8; ++root)

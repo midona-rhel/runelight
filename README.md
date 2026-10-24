@@ -114,7 +114,7 @@ the script's `BIOMES` table.
 
 Plugin config, Hide other areas section: while the player is in one of 117 HD's areas that hide the rest of the map
 (caves, instances, cutscene spots; the mainland's surface too), `AreaHiding.java` takes every other tile out of the
-scene as it loads, so no zone, shadow, water body, light or GI probe ever sees it. Walking into another area loads the
+scene as it loads, so no zone, shadow, water body, light or GI patch ever sees it. Walking into another area loads the
 scene again. The areas come from `area_hiding.json`, built by `tools/import_117hd_areas.py`.
 
 ## Clouds
@@ -172,35 +172,36 @@ flow to check them. Needs numpy, scipy, scikit-image and Pillow.
 
 Plugin config, Global illumination section. When a region loads, the static scene's opaque triangles (captured as
 the zones upload, `GiCapture.java`) are voxelized into half-tile cubes on a worker thread (`GiVoxels.java`,
-`GiGrid.java`; per zone, so zones reused by the next load keep theirs). Probes (`GiProbes.java`) stand where
-geometry is: one over every floor tile, a little above it, and in front of every wall of the collision map (both
-sides, at a few heights up the wall; a solid object gets a couple on each side), so the grass's green reaches the foot
-of a wall. Open air has none. Each probe holds the light around it as directional irradiance (surfaces count as rough),
-and traces 40 rays once, keeping what they hit. Which side of a wall or roof a probe is on is the visibility test's
-job (how far it sees each way), so walls don't leak, while the rays still see out through doors. Relighting (`GiRelight.java`) takes the sky from the sky cache
-(`gi_sky_frag.glsl`, read back without stalling) plus the sun or moon on the hit voxels and the last light for
-further bounces, a few tens of milliseconds on the worker whenever the sky or the sun changes enough; new light
-blends in over a few seconds. The AO pass looks the probes up at half resolution (`gi.glsl`: the pixel's tile
-has a list of the twelve probes nearest its center, of which it weights the nearest few by distance, facing and
-visibility, the point pushed off the surface along its normal) and the
-composite scales its plain ambient and sky light by the result (the probes' light relative to the open sky's), keeping
-a floor of the plain light (Shade floor). Debug view
+`GiGrid.java`; per zone, so zones reused by the next load keep theirs). Patches (`GiPatches.java`) are built once per load: a floor patch for every tile of every floor, facing up, and the
+faces of every wall of the collision map (both sides, a diagonal wall too), cut into bands about a tile's width of
+height up to the wall's real top, where the floor above begins; roofs and objects get none. Their albedo is the
+voxels' average, pushed 1.5 times further from gray (`GiPatches.ALBEDO_SATURATION`), which area averaging and textures
+pull toward it. Each patch is linked to the patches within three tiles that face it and that it faces and can see (a
+ray through the voxels), with the point-to-area form factor cos_i cos_j A_j / (pi r^2 + A_j) as the weight, so walls
+don't leak, and keeps which of 64 directions are open to the sky. Relighting (`GiRelight.java`) takes the sky from the
+sky cache (`gi_sky_frag.glsl`, read back without stalling) and lights every patch directly by the sun or moon (a ray
+through the voxels, softened by the overcast) and the sky it sees; a patch sends on its albedo times that, and what
+each patch gathers is the weighed sum of what its links send: one bounce, a few milliseconds to tens of milliseconds
+on the worker whenever the sky or the sun changes enough; new light blends in over a few seconds. The AO pass looks
+the patches' light up at half resolution (`gi.glsl`) by the surface the pixel is on, never by the space around it: a
+floor pixel blends the four floor patches around it, a wall pixel the bands of its own wall face (and the next
+tile's, along the wall), anything else (roofs, trees, people) the floor patch under it, less the higher it is. In the
+"Skylight + GI bounce" lighting model (below) the composite adds the result to its plain ambient and sky light
+(`BOUNCE_GAIN`), which stay. Debug view
 "Global illumination" shows the indirect light alone. Outside the base scene and underground the plain ambient
 light stays. The water surface joins the voxels as a layer of blue-green ones at its height (`GiWater.java`, from the
 water map), and the sunk bed under it is left out of the capture, so water bounces its color onto the shores and
-nothing bounces from under it. Hit voxels' colors are pushed 1.5 times further from gray (`GiProbes.ALBEDO_SATURATION`),
-which area averaging and textures pull toward it.
+nothing bounces from under it.
 
 ## Skylight and light occlusion
 
-Plugin config, Skylight and light occlusion section. Lighting model Skylight (default) replaces the probes with a
+Plugin config, Skylight and light occlusion section. Lighting model Skylight (default) replaces the patches' own ambient with a
 sky visibility ray traced through the global illumination's voxels (`SkyGrid.java`, `SkyGridMap.java`; built for it
-even with the probes off) on a worker thread, a few thousand rays a frame nearest the player first: at every tile
+even with the global illumination off) on a worker thread, a few thousand rays a frame nearest the player first: at every tile
 corner, three heights above each floor, how much sky is seen toward up and the four sides. Every tile keeps its own
 four corner values, shared with its neighbors only where no wall stands between them, so nothing leaks through walls.
 The AO pass reads a pixel's tile and weighs the directions by its normal (`skylight_ao.glsl`, in the half resolution
-shadow target's alpha), and the composite scales the ambient and sky light by it (`light_occlusion.glsl`). "Skylight + GI bounce" adds, in color, the light the probes find bounced off surfaces (the probes then carry only the
-rays that hit something, no sky), keeping `BOUNCE_BRIGHTNESS` of its brightness so the exposure stays near the plain
+shadow target's alpha), and the composite scales the ambient and sky light by it (`light_occlusion.glsl`). "Skylight + GI bounce" adds, in color, the light the patches gather bounced off surfaces, keeping `BOUNCE_BRIGHTNESS` of its brightness so the exposure stays near the plain
 skylight's while the shade takes the colors of the ground and water beside it.
 Debug view "Skylight" shows it.
 

@@ -16,25 +16,26 @@ import org.slf4j.LoggerFactory;
 import static org.lwjgl.opengl.GL33C.*;
 
 /**
- * Global illumination from irradiance probes laid over the ground and along the walls of the base scene (GiProbes),
- * each holding the sun or moon light bounced off what its rays hit, as directional irradiance, and how far it sees in
- * each axis direction, so a surface reads the light on its own side from probes it can actually see; interiors and
- * the undersides of things darken (the sky's own light, past roofs, overhangs and walls, comes from the composite)
- * and sunlit ground warms the shade beside it, the foot of a wall in particular.
+ * Global illumination by radiosity between tile sized patches of floor and wall (GiPatches): each patch is lit by the
+ * sun or moon and the sky it sees, and gathers what the patches around it that it can see send on, tinted by their
+ * albedos (GiRelight). A pixel reads the patches of the surface it is on, never the space around it (gi.glsl), so
+ * interiors and the sides of walls stay apart, and sunlit ground warms the shade beside it, the foot of a wall in
+ * particular (the sky's own light, past roofs, overhangs and walls, comes from the composite).
  *
  * Everything heavy runs on a worker thread. After a region load the zones' triangles (captured as they upload,
- * GiCapture) are voxelized, per zone so reused zones keep theirs (GiVoxels), and every probe traces its rays once
- * (GiProbes). The skylight traces the same voxels (SkyGrid), so with the probes off the builds still voxelize the
- * scene for it and stop there. Relighting the probes from that hit cache (GiRelight) takes tens of milliseconds and
+ * GiCapture) are voxelized, per zone so reused zones keep theirs (GiVoxels), and the patches are laid out and linked
+ * through the voxels once (GiPatches). The skylight traces the same voxels (SkyGrid), so with the patches off the builds
+ * still voxelize the scene for it and stop there. Relighting the patches (GiRelight) takes tens of milliseconds and
  * happens when the sky cache captures, the sun or moon has moved RELIGHT_DEGREES, the weather or settings change, or
  * every MAX_RELIGHT_MILLIS. The light it needs from the sky is drawn on the GPU into a tiny table (gi_sky_frag.glsl) and
- * read back without stalling. Each new set of probes is uploaded at once (a few
- * megabytes) and blended in over about the time between relights, like the sky cache, so nothing pops.
+ * read back without stalling. Each new set of light is uploaded at once (a megabyte) and blended in over about the
+ * time between relights, like the sky cache, so nothing pops.
  *
- * On the GPU the only steady cost is the lookup in the half resolution AO pass (gi.glsl: the pixel's tile has a list
- * of the probes near it, of which it reads the nearest few, at most 57 texture fetches in all), whose result rides
- * along in the AO target to the composite (halfres.glsl). Outside the base scene, underground, and until the first
- * probes are lit, the composite keeps its plain ambient light.
+ * On the GPU the only steady cost is the lookup in the half resolution AO pass (gi.glsl: nine texture fetches for a
+ * floor pixel, one for the ground's height, four for the floor patches around it and four for their light; seven for a
+ * wall pixel, which finds its wall face and the next one along it by two and gets the light of two bands of each), whose
+ * result rides along in the AO target to the composite (halfres.glsl). Outside the base scene, underground, and until the first patches are lit, the composite
+ * keeps its plain ambient light.
  */
 class GlobalIllumination
 {
@@ -44,42 +45,33 @@ class GlobalIllumination
 		.add(GL_VERTEX_SHADER, "composite_vert.glsl")
 		.add(GL_FRAGMENT_SHADER, "gi_sky_frag.glsl");
 
-	// the probe blend is the sky cache's: a texel for texel mix of two textures
+	// the blend of two lights is the sky cache's: a texel for texel mix of two textures
 	static final Shader BLEND_PROGRAM = new Shader()
 		.add(GL_VERTEX_SHADER, "composite_vert.glsl")
 		.add(GL_FRAGMENT_SHADER, "sky_cache_blend_frag.glsl");
 
-	// TEXELS texels per probe, side by side, ROW probes to a row: probe i at texels (i % ROW * TEXELS + k, i / ROW). The
-	// first three hold the light (GiRelight.SH floats), the next three how far it sees (GiProbes.VISIBILITY floats),
-	// the last where it stands (see texels); a slot without a usable probe is all zero. The size is the same for every
-	// scene, which is what lets the blend mix two lit sets texel for texel.
-	static final int TEXELS = (GiRelight.SH + GiProbes.VISIBILITY) / 4 + 1;
-	static final int ROW = 256;
-	static final int TEX_W = ROW * TEXELS;
-	static final int TEX_H = (GiProbes.MAX_PROBES + ROW) / ROW;
-	// a probe's x and z are stored from the corner of the CHUNK-unit square of the base scene it is in, which half
-	// floats keep to a half unit, and the square's coordinates (x + z * CHUNKS) with them
-	static final int CHUNK = 1024;
-	static final int CHUNKS = 16;
-	// the tile lists (GiProbes.lists) as texels of LIST / 4 indices, a tile's side by side, the tile rows down
-	static final int INDEX_TEXELS = GiProbes.LIST / 4;
-	static final int INDEX_W = GiProbes.SIZE * INDEX_TEXELS;
+	// The patches' light: patch i at texel (i % LIGHT_W, i / LIGHT_W), half floats, the light it gathers (rgb) and 1 for a
+	// patch, 0 for a slot without one. The size is the same for every scene, which is what lets the blend mix two lit
+	// sets texel for texel.
+	static final int LIGHT_W = 512;
+	static final int LIGHT_H = GiPatches.MAX_PATCHES / LIGHT_W;
+	// the floors' heights, one texel per tile, and the wall faces', FACES texels per tile (GiPatches.floorTexels, wallTexels)
+	static final int FLOORS_W = GiPatches.SIZE, FLOORS_H = GiPatches.SIZE;
+	static final int WALLS_W = GiPatches.SIZE * GiPatches.FACES, WALLS_H = GiPatches.SIZE * GiPatches.FLOORS;
 	static final int SKY_ROWS = GiRelight.SKY_H + 1;
 
 	// relight when the light that casts shadows has turned this far
 	static final float RELIGHT_DEGREES = 2;
 	static final long MIN_RELIGHT_MILLIS = 1000;
 	static final long MAX_RELIGHT_MILLIS = 30_000;
-	// a new set of probes blends in over the time since the last, within these bounds
+	// a new light blends in over the time since the last, within these bounds
 	static final float BLEND_SECONDS = 2, MAX_BLEND_SECONDS = 8;
-	// the composite eases between its plain ambient and the probes over this long
+	// the composite eases between its plain ambient and the patches' light over this long
 	static final float WEIGHT_SECONDS = 1.5f;
 	// changed zones (doors, trees cut down) are rebuilt once they have stopped changing for this long, and at most
 	// this often
 	static final long REBUILD_DELAY_MILLIS = 2000;
 	static final long MIN_REBUILD_MILLIS = 10_000;
-	// light bounces the first relight of a new scene computes, with no previous light to build on
-	static final int FIRST_BOUNCES = 3;
 
 	/** Freshly compiled programs, so a hot reload can compile everything before replacing anything. */
 	static final class Programs
@@ -93,17 +85,17 @@ class GlobalIllumination
 		}
 	}
 
-	/** A lit set of probes from the worker. */
+	/** A lit set of patches from the worker. */
 	private static final class Lit
 	{
 		int generation;
 		int baseX, baseY;
 		boolean instance;
-		short[] index;
-		short[] texels;
+		short[] light;
+		float[] floors, walls;
 	}
 
-	/** What the worker lights the probes with. */
+	/** What the worker lights the patches with. */
 	private static final class LightInput
 	{
 		float[] table;
@@ -117,17 +109,17 @@ class GlobalIllumination
 	private int uniBlend;
 	private int uniAoEnabled = -1, uniAoCamera = -1;
 
-	private final int[] probeTextures = new int[3];
-	private int indexTexture, probeFbo, skyTexture, skyFbo, pbo;
+	private final int[] lightTextures = new int[3];
+	private int floorTexture, wallTexture, lightFbo, skyTexture, skyFbo, pbo;
 	private ShortBuffer staging;
 	private final float[] table = new float[GiRelight.TABLE_FLOATS];
 
-	// roles of the probe textures, as in SkyCache: the latest light, the one blending into it, and the one shown
+	// roles of the light textures, as in SkyCache: the latest light, the one blending into it, and the one shown
 	private int latest = -1, from = -1, shown = -1;
 	private boolean blending;
 	private long blendStart, blendMillis;
 	private long lastLitMillis;
-	// what the shown probes belong to
+	// what the shown light belongs to
 	private int shownGeneration = -1;
 	private int shownBaseX, shownBaseY;
 	private boolean shownInstance;
@@ -162,15 +154,13 @@ class GlobalIllumination
 	private volatile Lit lit;
 	private volatile int builtGeneration = -1;
 	// worker-owned
-	private GiProbes probes;
-	private int probesGeneration = -1;
-	private int probesBaseX, probesBaseY;
-	private boolean probesInstance;
-	private float[] lastLight;
-	private int lastLightGeneration = -1;
+	private GiPatches patches;
+	private int patchesGeneration = -1;
+	private int patchesBaseX, patchesBaseY;
+	private boolean patchesInstance;
 	private LightInput lastInput;
-	// whether the last build submitted traces the probes, or only voxelizes the scene for the skylight
-	private boolean submittedProbes;
+	// whether the last build submitted lays out the patches, or only voxelizes the scene for the skylight
+	private boolean submittedPatches;
 	private volatile Voxels voxels;
 
 	/** The scene's voxels as a build left them, for the skylight's grid (SkyGrid). */
@@ -248,14 +238,18 @@ class GlobalIllumination
 		skyProgram = blendProgram = 0;
 	}
 
-	/** Look up the AO program's uniforms; the probes go on probeUnit, the tile lists on probeUnit + 1. */
-	void locateAo(int program, int probeUnit)
+	/**
+	 * Look up the AO program's uniforms; the patches' light goes on patchUnit, the floors' heights on patchUnit + 1 and
+	 * the wall faces on wallUnit.
+	 */
+	void locateAo(int program, int patchUnit, int wallUnit)
 	{
 		uniAoEnabled = glGetUniformLocation(program, "giEnabled");
 		uniAoCamera = glGetUniformLocation(program, "giCamera");
 		glUseProgram(program);
-		glUniform1i(glGetUniformLocation(program, "giProbes"), probeUnit);
-		glUniform1i(glGetUniformLocation(program, "giIndex"), probeUnit + 1);
+		glUniform1i(glGetUniformLocation(program, "giPatches"), patchUnit);
+		glUniform1i(glGetUniformLocation(program, "giFloors"), patchUnit + 1);
+		glUniform1i(glGetUniformLocation(program, "giWalls"), wallUnit);
 		glUseProgram(0);
 	}
 
@@ -275,16 +269,17 @@ class GlobalIllumination
 			worker = null;
 			pool = null;
 		}
-		if (probeFbo != 0)
+		if (lightFbo != 0)
 		{
-			glDeleteFramebuffers(probeFbo);
+			glDeleteFramebuffers(lightFbo);
 			glDeleteFramebuffers(skyFbo);
-			glDeleteTextures(probeTextures);
-			glDeleteTextures(indexTexture);
+			glDeleteTextures(lightTextures);
+			glDeleteTextures(floorTexture);
+			glDeleteTextures(wallTexture);
 			glDeleteTextures(skyTexture);
 			glDeleteBuffers(pbo);
-			probeFbo = skyFbo = indexTexture = skyTexture = pbo = 0;
-			probeTextures[0] = probeTextures[1] = probeTextures[2] = 0;
+			lightFbo = skyFbo = floorTexture = wallTexture = skyTexture = pbo = 0;
+			lightTextures[0] = lightTextures[1] = lightTextures[2] = 0;
 		}
 		if (fence != 0)
 		{
@@ -300,22 +295,20 @@ class GlobalIllumination
 		lit = null;
 		jobs.set(0);
 		builtGeneration = -1;
-		probes = null;
-		probesGeneration = -1;
-		lastLight = null;
-		lastLightGeneration = -1;
+		patches = null;
+		patchesGeneration = -1;
 		lastInput = null;
 		buildRequested = true;
 	}
 
-	/** A new top level scene was swapped in: build its probes. */
+	/** A new top level scene was swapped in: build its patches. */
 	void sceneSwapped()
 	{
 		buildRequested = true;
 		buildAfterMillis = 0;
 	}
 
-	/** A zone was rebuilt: rebuild the probes once the changes settle. */
+	/** A zone was rebuilt: rebuild the patches once the changes settle. */
 	void zonesChanged()
 	{
 		buildRequested = true;
@@ -323,13 +316,13 @@ class GlobalIllumination
 		buildAfterMillis = Math.max(now + REBUILD_DELAY_MILLIS, lastBuildMillis + MIN_REBUILD_MILLIS);
 	}
 
-	/** How much of the probes' light is shown, 0 when they are off. */
+	/** How much of the patches' light is shown, 0 when they are off. */
 	float shownWeight()
 	{
 		return isActive() ? weight : 0;
 	}
 
-	/** Whether the AO pass has probes to look up. */
+	/** Whether the AO pass has patches to look up. */
 	boolean isActive()
 	{
 		return weight > 0 && shown >= 0;
@@ -341,7 +334,7 @@ class GlobalIllumination
 		return generation;
 	}
 
-	/** The build whose probes are on the GPU; a change means an upload happened. */
+	/** The build whose patches are on the GPU; a change means an upload happened. */
 	int shownBuild()
 	{
 		return shownGeneration;
@@ -349,16 +342,16 @@ class GlobalIllumination
 
 	/**
 	 * Once a frame before the AO pass, on the client thread with the GL context: start builds, hand finished
-	 * readbacks to the worker, upload and blend new probes and decide whether to relight. Changes the framebuffer,
+	 * readbacks to the worker, upload and blend new light and decide whether to relight. Changes the framebuffer,
 	 * viewport and program; expects a VAO bound.
 	 *
-	 * @param enabled whether the probes run
-	 * @param voxelsWanted whether the scene's voxels are wanted without the probes too (the skylight): builds then
+	 * @param enabled whether the patches run
+	 * @param voxelsWanted whether the scene's voxels are wanted without the patches too (the skylight): builds then
 	 *                     voxelize the scene and stop there
 	 * @param zones the top level scene's zones, [x][z] in extended zone coordinates
 	 * @param water the scene's water map, null with none
-	 * @param walls the walls of this very scene, null until they are known (the probes' build waits for them)
-	 * @param settings hash of what else the probes' light depends on
+	 * @param walls the walls of this very scene, null until they are known (the patches' build waits for them)
+	 * @param settings hash of what else the patches' light depends on
 	 * @param blendUnit, blendUnit + 1: free units for the blend
 	 */
 	void prepare(boolean enabled, boolean voxelsWanted, boolean outdoors, Scene scene, Zone[][] zones, WaterMap water,
@@ -367,7 +360,7 @@ class GlobalIllumination
 		long now = System.currentTimeMillis();
 		float dt = Math.max(0, Math.min(0.1f, (now - weightMillis) / 1000f));
 		weightMillis = now;
-		// until the new scene's probes are lit the last ones stay, moved to where they belong in it; an instance's
+		// until the new scene's patches are lit the last ones stay, moved to where they belong in it; an instance's
 		// coordinates have nothing to do with the last scene's
 		boolean fits = scene != null && shownInstance == scene.isInstance()
 			&& (!shownInstance || scene.getBaseX() == shownBaseX && scene.getBaseY() == shownBaseY);
@@ -375,7 +368,7 @@ class GlobalIllumination
 		if (toggled)
 		{
 			wasEnabled = enabled;
-			if (enabled && !submittedProbes)
+			if (enabled && !submittedPatches)
 			{
 				// the last build only voxelized the scene
 				buildRequested = true;
@@ -383,7 +376,7 @@ class GlobalIllumination
 			}
 			if (enabled && shown >= 0)
 			{
-				// relight now rather than when the schedule comes round; the probes there are show meanwhile
+				// relight now rather than when the schedule comes round; the light there is shown meanwhile
 				relit = false;
 				lastRelightMillis = 0;
 			}
@@ -400,14 +393,14 @@ class GlobalIllumination
 		{
 			buildRequested = false;
 			lastBuildMillis = now;
-			submittedProbes = enabled;
+			submittedPatches = enabled;
 			submitBuild(scene, zones, water, walls, enabled);
 		}
 		if (!enabled)
 		{
 			return;
 		}
-		if (probeFbo == 0)
+		if (lightFbo == 0)
 		{
 			init();
 		}
@@ -425,12 +418,12 @@ class GlobalIllumination
 			lit = null;
 			if (l.generation != shownGeneration)
 			{
-				// new probes in a new place: shown as they are, there is nothing to blend from
-				log.debug("Look: GI probes replaced, generation {} -> {}, base ({}, {}) -> ({}, {})", shownGeneration,
+				// new patches in a new place: shown as they are, there is nothing to blend from
+				log.debug("Look: GI patches replaced, generation {} -> {}, base ({}, {}) -> ({}, {})", shownGeneration,
 					l.generation, shownBaseX, shownBaseY, l.baseX, l.baseY);
 				int target = shown < 0 ? 0 : (shown + 1) % 3;
-				uploadProbes(l, target);
-				uploadIndex(l.index);
+				uploadLight(l, target);
+				uploadIndex(l);
 				latest = from = shown = target;
 				blending = false;
 				shownGeneration = l.generation;
@@ -443,7 +436,7 @@ class GlobalIllumination
 			{
 				// a blend in progress stops where it is: the shown texture holds it
 				int target = (shown + 1) % 3;
-				uploadProbes(l, target);
+				uploadLight(l, target);
 				from = shown;
 				latest = target;
 				shown = 3 - from - latest;
@@ -472,11 +465,11 @@ class GlobalIllumination
 		{
 			return;
 		}
-		boolean newProbes = builtGeneration > shownGeneration && lit == null;
-		boolean due = !relit || newProbes || settings != lastSettings || day.sunIsCaster != lastSunIsCaster
+		boolean newPatches = builtGeneration > shownGeneration && lit == null;
+		boolean due = !relit || newPatches || settings != lastSettings || day.sunIsCaster != lastSunIsCaster
 			|| skyCaptures != lastSkyCaptures || now - lastRelightMillis >= MAX_RELIGHT_MILLIS
 			|| angle(day.casterDir, lastCasterDir) >= RELIGHT_DEGREES;
-		if (builtGeneration >= 0 && due && (newProbes || now - lastRelightMillis >= MIN_RELIGHT_MILLIS))
+		if (builtGeneration >= 0 && due && (newPatches || now - lastRelightMillis >= MIN_RELIGHT_MILLIS))
 		{
 			readbackWanted = true;
 			relit = true;
@@ -575,12 +568,13 @@ class GlobalIllumination
 	}
 
 	/**
-	 * Before the AO pass: bind the shown probes and set the AO program's uniforms (with it in use).
+	 * Before the AO pass: bind the shown patches and set the AO program's uniforms (with it in use).
 	 *
-	 * @param sceneBaseX, sceneBaseY the current scene's base, world tiles: the shown probes may be from the last
+	 * @param patchUnit, patchUnit + 1, wallUnit the units of the patches' light, the floors' heights and the wall faces
+	 * @param sceneBaseX, sceneBaseY the current scene's base, world tiles: the shown patches may be from the last
 	 *                   one until the new ones are lit
 	 */
-	void bindAo(int probeUnit, float cameraX, float cameraY, float cameraZ, int sceneBaseX, int sceneBaseY)
+	void bindAo(int patchUnit, int wallUnit, float cameraX, float cameraY, float cameraZ, int sceneBaseX, int sceneBaseY)
 	{
 		boolean on = isActive();
 		glUniform1i(uniAoEnabled, on ? 1 : 0);
@@ -588,26 +582,30 @@ class GlobalIllumination
 		{
 			return;
 		}
-		float cornerX = (shownBaseX - sceneBaseX) * (float) GiProbes.TILE;
-		float cornerZ = (shownBaseY - sceneBaseY) * (float) GiProbes.TILE;
+		float cornerX = (shownBaseX - sceneBaseX) * (float) GiPatches.TILE;
+		float cornerZ = (shownBaseY - sceneBaseY) * (float) GiPatches.TILE;
 		glUniform3f(uniAoCamera, cameraX - cornerX, cameraY, cameraZ - cornerZ);
-		glActiveTexture(GL_TEXTURE0 + probeUnit);
-		glBindTexture(GL_TEXTURE_2D, probeTextures[shown]);
-		glActiveTexture(GL_TEXTURE0 + probeUnit + 1);
-		glBindTexture(GL_TEXTURE_2D, indexTexture);
+		glActiveTexture(GL_TEXTURE0 + patchUnit);
+		glBindTexture(GL_TEXTURE_2D, lightTextures[shown]);
+		glActiveTexture(GL_TEXTURE0 + patchUnit + 1);
+		glBindTexture(GL_TEXTURE_2D, floorTexture);
+		glActiveTexture(GL_TEXTURE0 + wallUnit);
+		glBindTexture(GL_TEXTURE_2D, wallTexture);
 		glActiveTexture(GL_TEXTURE0);
 	}
 
-	static void unbind(int probeUnit)
+	static void unbind(int patchUnit, int wallUnit)
 	{
-		glActiveTexture(GL_TEXTURE0 + probeUnit + 1);
+		glActiveTexture(GL_TEXTURE0 + wallUnit);
 		glBindTexture(GL_TEXTURE_2D, 0);
-		glActiveTexture(GL_TEXTURE0 + probeUnit);
+		glActiveTexture(GL_TEXTURE0 + patchUnit + 1);
+		glBindTexture(GL_TEXTURE_2D, 0);
+		glActiveTexture(GL_TEXTURE0 + patchUnit);
 		glBindTexture(GL_TEXTURE_2D, 0);
 		glActiveTexture(GL_TEXTURE0);
 	}
 
-	/** With a composite program in use: how much of the probes' bounced light it adds (its locateComposite). */
+	/** With a composite program in use: how much of the patches' bounced light it adds (its locateComposite). */
 	void setComposite(int location, float strength)
 	{
 		glUniform1f(location, isActive() ? weight * strength : 0);
@@ -619,22 +617,24 @@ class GlobalIllumination
 	private void init()
 	{
 		glBindBuffer(GL_PIXEL_UNPACK_BUFFER, 0);
-		glGenTextures(probeTextures);
-		for (int tex : probeTextures)
+		glGenTextures(lightTextures);
+		for (int tex : lightTextures)
 		{
-			texture(tex, GL_RGBA16F, TEX_W, TEX_H, GL_RGBA, GL_HALF_FLOAT);
+			texture(tex, GL_RGBA16F, LIGHT_W, LIGHT_H, GL_RGBA, GL_HALF_FLOAT);
 		}
-		indexTexture = glGenTextures();
-		texture(indexTexture, GL_RGBA16UI, INDEX_W, GiProbes.SIZE, GL_RGBA_INTEGER, GL_UNSIGNED_SHORT);
+		floorTexture = glGenTextures();
+		texture(floorTexture, GL_RGBA32F, FLOORS_W, FLOORS_H, GL_RGBA, GL_FLOAT);
+		wallTexture = glGenTextures();
+		texture(wallTexture, GL_RGBA32F, WALLS_W, WALLS_H, GL_RGBA, GL_FLOAT);
 		skyTexture = glGenTextures();
 		texture(skyTexture, GL_RGBA32F, GiRelight.SKY_W, SKY_ROWS, GL_RGBA, GL_FLOAT);
 		glBindTexture(GL_TEXTURE_2D, 0);
 
-		probeFbo = glGenFramebuffers();
-		glBindFramebuffer(GL_FRAMEBUFFER, probeFbo);
-		glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, probeTextures[0], 0);
+		lightFbo = glGenFramebuffers();
+		glBindFramebuffer(GL_FRAMEBUFFER, lightFbo);
+		glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, lightTextures[0], 0);
 		glDrawBuffers(GL_COLOR_ATTACHMENT0);
-		check("probe");
+		check("light");
 		skyFbo = glGenFramebuffers();
 		glBindFramebuffer(GL_FRAMEBUFFER, skyFbo);
 		glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, skyTexture, 0);
@@ -646,7 +646,7 @@ class GlobalIllumination
 		glBindBuffer(GL_PIXEL_PACK_BUFFER, pbo);
 		glBufferData(GL_PIXEL_PACK_BUFFER, (long) GiRelight.TABLE_FLOATS * Float.BYTES, GL_STREAM_READ);
 		glBindBuffer(GL_PIXEL_PACK_BUFFER, 0);
-		staging = BufferUtils.createShortBuffer(TEX_W * TEX_H * 4);
+		staging = BufferUtils.createShortBuffer(LIGHT_W * LIGHT_H * 4);
 	}
 
 	private static void texture(int tex, int internal, int w, int h, int format, int type)
@@ -669,24 +669,29 @@ class GlobalIllumination
 		}
 	}
 
-	private void uploadProbes(Lit l, int target)
+	private void uploadLight(Lit l, int target)
 	{
 		staging.clear();
-		staging.put(l.texels);
+		staging.put(l.light);
 		staging.flip();
 		glBindBuffer(GL_PIXEL_UNPACK_BUFFER, 0);
-		glBindTexture(GL_TEXTURE_2D, probeTextures[target]);
-		glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, TEX_W, TEX_H, GL_RGBA, GL_HALF_FLOAT, staging);
+		glBindTexture(GL_TEXTURE_2D, lightTextures[target]);
+		glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, LIGHT_W, LIGHT_H, GL_RGBA, GL_HALF_FLOAT, staging);
 		glBindTexture(GL_TEXTURE_2D, 0);
 	}
 
-	private void uploadIndex(short[] index)
+	/** The floors' heights and the wall faces, which stay the same until the patches are laid out again. */
+	private void uploadIndex(Lit l)
 	{
-		ShortBuffer b = BufferUtils.createShortBuffer(index.length);
-		b.put(index).flip();
 		glBindBuffer(GL_PIXEL_UNPACK_BUFFER, 0);
-		glBindTexture(GL_TEXTURE_2D, indexTexture);
-		glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, INDEX_W, GiProbes.SIZE, GL_RGBA_INTEGER, GL_UNSIGNED_SHORT, b);
+		FloatBuffer floors = BufferUtils.createFloatBuffer(l.floors.length);
+		floors.put(l.floors).flip();
+		glBindTexture(GL_TEXTURE_2D, floorTexture);
+		glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, FLOORS_W, FLOORS_H, GL_RGBA, GL_FLOAT, floors);
+		FloatBuffer walls = BufferUtils.createFloatBuffer(l.walls.length);
+		walls.put(l.walls).flip();
+		glBindTexture(GL_TEXTURE_2D, wallTexture);
+		glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, WALLS_W, WALLS_H, GL_RGBA, GL_FLOAT, walls);
 		glBindTexture(GL_TEXTURE_2D, 0);
 	}
 
@@ -696,15 +701,15 @@ class GlobalIllumination
 		{
 			return;
 		}
-		glBindFramebuffer(GL_FRAMEBUFFER, probeFbo);
-		glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, probeTextures[shown], 0);
-		glViewport(0, 0, TEX_W, TEX_H);
+		glBindFramebuffer(GL_FRAMEBUFFER, lightFbo);
+		glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, lightTextures[shown], 0);
+		glViewport(0, 0, LIGHT_W, LIGHT_H);
 		glUseProgram(blendProgram);
 		glUniform1f(uniBlend, t);
 		glActiveTexture(GL_TEXTURE0 + unit);
-		glBindTexture(GL_TEXTURE_2D, probeTextures[from]);
+		glBindTexture(GL_TEXTURE_2D, lightTextures[from]);
 		glActiveTexture(GL_TEXTURE0 + unit + 1);
-		glBindTexture(GL_TEXTURE_2D, probeTextures[latest]);
+		glBindTexture(GL_TEXTURE_2D, lightTextures[latest]);
 		glDrawArrays(GL_TRIANGLES, 0, 3);
 		glBindTexture(GL_TEXTURE_2D, 0);
 		glActiveTexture(GL_TEXTURE0 + unit);
@@ -747,7 +752,7 @@ class GlobalIllumination
 		});
 	}
 
-	private GiProbes.ParallelFor parallel()
+	private GiPatches.ParallelFor parallel()
 	{
 		ForkJoinPool p = pool;
 		return (n, body) ->
@@ -769,11 +774,11 @@ class GlobalIllumination
 	}
 
 	/** Copy what the build needs from the scene, on the client thread, and queue it. */
-	private void submitBuild(Scene scene, Zone[][] zones, WaterMap waterMap, WallMap walls, boolean withProbes)
+	private void submitBuild(Scene scene, Zone[][] zones, WaterMap waterMap, WallMap walls, boolean withPatches)
 	{
 		int g = ++generation;
 		int baseZone = RuneLightPlugin.SCENE_OFFSET >> 3;
-		int count = GiProbes.SIZE / 8 + 2;
+		int count = GiPatches.SIZE / 8 + 2;
 		Zone[] list = new Zone[count * count];
 		int[] zx = new int[list.length], zz = new int[list.length];
 		int n = 0;
@@ -790,22 +795,22 @@ class GlobalIllumination
 				}
 			}
 		}
-		GiProbes.Input in = new GiProbes.Input();
+		GiPatches.Input in = new GiPatches.Input();
 		GiWater water = GiWater.of(waterMap, scene.getTileHeights(), RuneLightPlugin.SCENE_OFFSET);
-		// the rest is for the probes only
-		in.ground = withProbes ? GiProbes.groundHeights(scene.getTileHeights(), RuneLightPlugin.SCENE_OFFSET) : null;
+		// the rest is for the patches only
+		in.ground = withPatches ? GiPatches.groundHeights(scene.getTileHeights(), RuneLightPlugin.SCENE_OFFSET) : null;
 		in.walls = walls;
 		int baseX = scene.getBaseX(), baseY = scene.getBaseY();
 		boolean instance = scene.isInstance();
 		int[][][] heights = scene.getTileHeights();
 		SkyTerrain terrain = SkyTerrain.capture(scene, RuneLightPlugin.SCENE_OFFSET);
 		int zones2 = n;
-		submit(() -> build(g, list, zx, zz, zones2, baseZone, in, water, baseX, baseY, instance, heights, withProbes,
+		submit(() -> build(g, list, zx, zz, zones2, baseZone, in, water, baseX, baseY, instance, heights, withPatches,
 			terrain));
 	}
 
-	private void build(int g, Zone[] list, int[] zx, int[] zz, int n, int baseZone, GiProbes.Input in, GiWater water,
-		int baseX, int baseY, boolean instance, int[][][] heights, boolean withProbes, SkyTerrain terrain)
+	private void build(int g, Zone[] list, int[] zx, int[] zz, int n, int baseZone, GiPatches.Input in, GiWater water,
+		int baseX, int baseY, boolean instance, int[][][] heights, boolean withPatches, SkyTerrain terrain)
 	{
 		if (g != generation)
 		{
@@ -815,7 +820,7 @@ class GlobalIllumination
 		long start = System.nanoTime();
 		GiVoxels.Zone[] voxels = new GiVoxels.Zone[n];
 		AtomicInteger voxelized = new AtomicInteger();
-		GiProbes.ParallelFor parallel = parallel();
+		GiPatches.ParallelFor parallel = parallel();
 		parallel.run(n, i ->
 		{
 			// zones keep their voxels, so a zone reused by the next region load isn't voxelized again
@@ -838,26 +843,25 @@ class GlobalIllumination
 			g, voxelized.get(), n, (voxelTime - start) / 1_000_000.0, (gridTime - voxelTime) / 1_000_000.0,
 			(gridTime - start) / 1_000_000.0, GiGrid.VOXEL, grid.nx, grid.ny, grid.nz,
 			grid.cells.length * 4L / (1024.0 * 1024.0));
-		if (!withProbes)
+		if (!withPatches)
 		{
 			return;
 		}
-		GiProbes p = GiProbes.build(grid, in, parallel);
-		probes = p;
-		probesGeneration = g;
-		probesBaseX = baseX;
-		probesBaseY = baseY;
-		probesInstance = instance;
-		lastLight = null;
+		GiPatches p = GiPatches.build(grid, in, parallel);
+		patches = p;
+		patchesGeneration = g;
+		patchesBaseX = baseX;
+		patchesBaseY = baseY;
+		patchesInstance = instance;
 		builtGeneration = g;
-		int activeProbes = 0;
-		for (boolean valid : p.valid)
+		int floors = 0;
+		for (int i = 0; i < GiPatches.FLOOR_SLOTS; ++i)
 		{
-			if (valid) ++activeProbes;
+			if (p.exists(i)) ++floors;
 		}
-		log.debug("GI probes: {} of {} candidate spots usable", activeProbes, p.count);
-		log.debug("GI build {}: voxelized {} zones in {} ms, grid {}x{}x{}, {} hit voxels, traced in {} ms", g, voxelized,
-			(voxelTime - start) / 1_000_000, grid.nx, grid.ny, grid.nz, p.hits, (System.nanoTime() - voxelTime) / 1_000_000);
+		log.debug("GI build {}: voxelized {} zones in {} ms, grid {}x{}x{}, {} floor and {} wall patches, {} links, laid out and linked in {} ms",
+			g, voxelized, (voxelTime - start) / 1_000_000, grid.nx, grid.ny, grid.nz, floors, p.count - GiPatches.FLOOR_SLOTS,
+			p.linkTarget.length, (System.nanoTime() - gridTime) / 1_000_000);
 		if (lastInput != null)
 		{
 			relight(lastInput);
@@ -867,72 +871,50 @@ class GlobalIllumination
 	private void relight(LightInput in)
 	{
 		lastInput = in;
-		GiProbes p = probes;
+		GiPatches p = patches;
 		if (p == null)
 		{
 			return;
 		}
 		long start = System.nanoTime();
-		boolean first = lastLightGeneration != probesGeneration || lastLight == null;
 		GiRelight.Light light = GiRelight.Light.fromTable(in.table, in.casterDir, in.bounce);
-		GiRelight.Result result = GiRelight.relight(p, light, first ? null : lastLight, first ? FIRST_BOUNCES : 1,
-			parallel());
-		// the next bounces build on the whole light, whichever part is shown
-		lastLight = result.light;
-		lastLightGeneration = probesGeneration;
+		float[] gathered = GiRelight.relight(p, light, parallel());
 		Lit l = new Lit();
-		l.generation = probesGeneration;
-		l.baseX = probesBaseX;
-		l.baseY = probesBaseY;
-		l.instance = probesInstance;
-		l.index = indexTexels(p.lists);
-		l.texels = texels(p.count, result.shown, p.visibility, p.position);
+		l.generation = patchesGeneration;
+		l.baseX = patchesBaseX;
+		l.baseY = patchesBaseY;
+		l.instance = patchesInstance;
+		l.light = texels(p, gathered);
+		l.floors = p.floorTexels;
+		l.walls = p.wallTexels;
 		lit = l;
 		log.trace("GI relight in {} ms", (System.nanoTime() - start) / 1_000_000);
 	}
 
-
 	/**
-	 * The probes as the probe texture's half floats. Probe i lies at texels (i % ROW * TEXELS + 0..TEXELS-1, i / ROW):
-	 * its light, then its visibility, then where it stands: x and z from the corner of its CHUNK square, y, and the
-	 * square (x + z * CHUNKS). Probes that aren't usable have no visibility, and are in no tile's list.
+	 * The patches' light as the light texture's half floats. Patch i lies at texel (i % LIGHT_W, i / LIGHT_W): the light
+	 * it gathers, and 1 where there is a patch. The floors' empty slots stay zero.
 	 */
-	static short[] texels(int count, float[] light, float[] visibility, float[] position)
+	static short[] texels(GiPatches p, float[] gathered)
 	{
-		short[] out = new short[TEX_W * TEX_H * 4];
-		for (int i = 0; i < count; ++i)
+		short[] out = new short[LIGHT_W * LIGHT_H * 4];
+		short one = toHalf(1);
+		for (int i = 0; i < p.count; ++i)
 		{
-			int at = ((i / ROW) * TEX_W + i % ROW * TEXELS) * 4;
-			for (int k = 0; k < GiRelight.SH; ++k)
+			if (!p.exists(i))
 			{
-				out[at + k] = toHalf(light[i * GiRelight.SH + k]);
+				continue;
 			}
-			for (int k = 0; k < GiProbes.VISIBILITY; ++k)
-			{
-				out[at + GiRelight.SH + k] = toHalf(visibility[i * GiProbes.VISIBILITY + k]);
-			}
-			int p = at + GiRelight.SH + GiProbes.VISIBILITY;
-			int cx = (int) Math.floor(position[i * 3] / CHUNK), cz = (int) Math.floor(position[i * 3 + 2] / CHUNK);
-			out[p] = toHalf(position[i * 3] - cx * CHUNK);
-			out[p + 1] = toHalf(position[i * 3 + 1]);
-			out[p + 2] = toHalf(position[i * 3 + 2] - cz * CHUNK);
-			out[p + 3] = toHalf(cx + cz * CHUNKS);
+			int at = i * 4;
+			out[at] = toHalf(gathered[i * 3]);
+			out[at + 1] = toHalf(gathered[i * 3 + 1]);
+			out[at + 2] = toHalf(gathered[i * 3 + 2]);
+			out[at + 3] = one;
 		}
 		return out;
 	}
 
-	/** The tile lists as the index texture's unsigned shorts: the same order, a tile's LIST indices after another's. */
-	static short[] indexTexels(int[] lists)
-	{
-		short[] out = new short[lists.length];
-		for (int i = 0; i < lists.length; ++i)
-		{
-			out[i] = (short) lists[i];
-		}
-		return out;
-	}
-
-	/** IEEE half float bits of f, rounded to nearest; for the probe textures. */
+	/** IEEE half float bits of f, rounded to nearest; for the light texture. */
 	static short toHalf(float f)
 	{
 		int bits = Float.floatToIntBits(f);

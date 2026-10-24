@@ -40,11 +40,11 @@ public class GiBounceTest
 		return GiGrid.assemble(zones, zx, zz, BASE_ZONE, water);
 	}
 
-	private static GiProbes probes(GiGrid grid)
+	private static GiPatches patches(GiGrid grid)
 	{
-		GiProbes.Input in = new GiProbes.Input();
-		in.ground = new float[1][GiProbes.SIZE * GiProbes.SIZE];
-		return GiProbes.build(grid, in, GiProbes.ParallelFor.SEQUENTIAL);
+		GiPatches.Input in = new GiPatches.Input();
+		in.ground = new float[1][GiPatches.SIZE * GiPatches.SIZE];
+		return GiPatches.build(grid, in, GiPatches.ParallelFor.SEQUENTIAL);
 	}
 
 	private static GiRelight.Light sunlit()
@@ -69,51 +69,21 @@ public class GiBounceTest
 	}
 
 	@Test
-	public void bounceCarriesTheGroundsColorAndNoSky()
+	public void openGroundBouncesNothing()
 	{
-		GiProbes p = probes(greenGrid(null, false));
-		GiRelight.Result r = GiRelight.relight(p, sunlit(), null, 3, GiProbes.ParallelFor.SEQUENTIAL);
-		int probe = GiLookup.ground(p, 10, 10);
-		assertTrue(p.valid[probe]);
-		float red = r.shown[probe * GiRelight.SH], green = r.shown[probe * GiRelight.SH + 1], blue = r.shown[probe * GiRelight.SH + 2];
-		assertTrue("green " + red + " " + green + " " + blue, green > red * 1.4f && green > blue * 2f);
-		// the sky is not part of the bounce but is part of the whole light
-		assertTrue(r.light[probe * GiRelight.SH + 2] > blue * 1.5f);
-		// without sun and with nothing lit before, the surfaces give nothing
-		float[] t = new float[GiRelight.TABLE_FLOATS];
-		for (int i = 0; i < GiRelight.SKY_W * GiRelight.SKY_H; ++i)
-		{
-			t[i * 4] = t[i * 4 + 1] = t[i * 4 + 2] = 0.5f;
-		}
-		t[GiRelight.SKY_W * GiRelight.SKY_H * 4 + 4] = 0.5f;
-		GiRelight.Light dark = GiRelight.Light.fromTable(t, new float[]{0, -1, 0}, true);
-		for (float v : GiRelight.relight(p, dark, null, 1, GiProbes.ParallelFor.SEQUENTIAL).shown)
+		// floors don't see each other, so on flat ground nothing is left to bounce but what the composite lights itself
+		GiPatches p = patches(greenGrid(null, false));
+		for (float v : GiRelight.relight(p, sunlit(), GiPatches.ParallelFor.SEQUENTIAL))
 		{
 			assertEquals(0, v, 0);
 		}
-	}
-
-	@Test
-	public void aProbeOverTheGroundLightsNothingFacingUp()
-	{
-		GiProbes p = probes(greenGrid(null, false));
-		GiRelight.Result r = GiRelight.relight(p, sunlit(), null, 3, GiProbes.ParallelFor.SEQUENTIAL);
-		int probe = GiLookup.ground(p, 10, 10);
-		assertTrue(p.valid[probe]);
-		// the probe sees the green ground all below it: a floor facing up gets none of it, a ceiling facing down gets it
-		float up = GiRelight.irradiance(r.shown, probe, 0, -1, 0, 1);
-		float down = GiRelight.irradiance(r.shown, probe, 0, 1, 0, 1);
-		float side = GiRelight.irradiance(r.shown, probe, 1, 0, 0, 1);
-		assertTrue("down " + down, down > 0.01f);
-		assertTrue("up " + up + " down " + down, up < down * 0.15f);
-		assertTrue("side " + side + " down " + down, side > up && side < down);
 	}
 
 	/**
 	 * Green ground over 4 x 4 zones, and a gray wall 8 units thick on the west edge of tile 10, from tile 10 to 13 and
 	 * 240 high, as the collision map has it.
 	 */
-	private static GiProbes greenWall()
+	private static GiPatches greenWall()
 	{
 		GiVoxels.Zone[] zones = new GiVoxels.Zone[16];
 		int[] zx = new int[16], zz = new int[16];
@@ -129,47 +99,52 @@ public class GiBounceTest
 		cap.add(1024, 0, 0, 1024, 0, 1024, 0, 0, 1024, GREEN);
 		GlobalIlluminationTest.box(cap, 63, 252, -240, 256, 260, 0, 768);
 		zones[5] = GiVoxels.voxelize(cap);
-		GiProbes.Input in = new GiProbes.Input();
-		in.ground = new float[1][GiProbes.SIZE * GiProbes.SIZE];
-		int[][][] flags = new int[1][GiProbes.SIZE][GiProbes.SIZE];
+		GiPatches.Input in = new GiPatches.Input();
+		in.ground = new float[1][GiPatches.SIZE * GiPatches.SIZE];
+		int[][][] flags = new int[1][GiPatches.SIZE][GiPatches.SIZE];
 		for (int z = 10; z < 14; ++z)
 		{
 			flags[0][10][z] |= WallMap.LOS_WEST;
 		}
-		in.walls = WallMap.build(flags, null, GiProbes.SIZE, 0, 0);
-		return GiProbes.build(GiGrid.assemble(zones, zx, zz, BASE_ZONE), in, GiProbes.ParallelFor.SEQUENTIAL);
+		in.walls = WallMap.build(flags, null, GiPatches.SIZE, 0, 0);
+		return GiPatches.build(GiGrid.assemble(zones, zx, zz, BASE_ZONE), in, GiPatches.ParallelFor.SEQUENTIAL);
 	}
 
 	@Test
 	public void theGrassBouncesOntoTheFootOfAWall()
 	{
-		GiProbes p = greenWall();
-		float[] shown = GiRelight.relight(p, sunlit(), null, 3, GiProbes.ParallelFor.SEQUENTIAL).shown;
+		GiPatches p = greenWall();
+		float[] light = GiRelight.relight(p, sunlit(), GiPatches.ParallelFor.SEQUENTIAL);
 		// the wall's west face is at x = 1276; a pixel at its foot on the grass side faces west
-		float[] foot = GiLookup.irradiance(p, shown, new float[]{1275, -10, 12.5f * GiProbes.TILE}, new float[]{-1, 0, 0});
+		float[] foot = GiLookup.irradiance(p, light, new float[]{1275, -10, 12.5f * GiPatches.TILE}, new float[]{-1, 0, 0});
 		assertTrue("coverage " + foot[3], foot[3] > 0.5f);
 		assertTrue("green " + foot[0] + " " + foot[1] + " " + foot[2], foot[1] > foot[0] * 1.4f && foot[1] > foot[2] * 2f);
-		// higher up the wall the green is still what bounces, from the probes up its face
-		float[] high = GiLookup.irradiance(p, shown, new float[]{1275, -170, 12.5f * GiProbes.TILE}, new float[]{-1, 0, 0});
+		// higher up the wall the green is still what bounces
+		float[] high = GiLookup.irradiance(p, light, new float[]{1275, -170, 12.5f * GiPatches.TILE}, new float[]{-1, 0, 0});
 		assertTrue("high coverage " + high[3], high[3] > 0.5f);
 		assertTrue("high green " + high[0] + " " + high[1] + " " + high[2], high[1] > high[0] * 1.4f && high[1] > high[2] * 2f);
-		// both faces have their own probes in front of them
-		assertTrue(GiLookup.wall(p, 9, 12, -1, 0).size() >= 2);
-		assertFalse(GiLookup.wall(p, 10, 12, 1, 0).isEmpty());
+		// the grass at the wall's foot gets the wall's light back, with the green of the grass it was lit on lost to the
+		// wall's own gray; both faces of the wall have their patches
+		assertTrue(GlobalIlluminationTest.face(p, 0, 9, 12, 1)[1] >= 1);
+		assertTrue(GlobalIlluminationTest.face(p, 0, 10, 12, 3)[1] >= 1);
+		int grass = GlobalIlluminationTest.floorId(0, 9, 12);
+		assertTrue(p.exists(grass));
+		float r = light[grass * 3], g = light[grass * 3 + 1];
+		assertTrue("grass " + r + " " + g, r > 0 && g > 0);
 	}
 
 	@Test
 	public void saturationKeepsLuminance()
 	{
 		float[] out = new float[3];
-		GiProbes.saturate(0.15f, 0.25f, 0.12f, out, 0);
+		GiPatches.saturate(0.15f, 0.25f, 0.12f, out, 0);
 		assertEquals(GiRelight.luminance(0.15f, 0.25f, 0.12f), GiRelight.luminance(out[0], out[1], out[2]), 1e-3);
 		assertTrue(out[1] - out[0] > 0.1f * 1.5f - 1e-3f);
-		GiProbes.saturate(0.2f, 0.2f, 0.2f, out, 0);
+		GiPatches.saturate(0.2f, 0.2f, 0.2f, out, 0);
 		assertEquals(0.2f, out[0], 1e-6);
 		assertEquals(0.2f, out[2], 1e-6);
 		// a color that would go below zero stops there
-		GiProbes.saturate(0, 0.3f, 0, out, 0);
+		GiPatches.saturate(0, 0.3f, 0, out, 0);
 		assertTrue(out[0] >= 0 && out[2] >= 0);
 	}
 
@@ -180,15 +155,15 @@ public class GiBounceTest
 		// two tiles of water at world y 40: the voxel layer 0
 		for (int x = 10; x < 12; ++x)
 		{
-			water.type[10 * GiProbes.SIZE + x] = WaterMap.FRESH;
-			water.surface[10 * GiProbes.SIZE + x] = 40;
+			water.type[10 * GiPatches.SIZE + x] = WaterMap.FRESH;
+			water.surface[10 * GiPatches.SIZE + x] = 40;
 		}
 		// one deeper down (y down: larger)
-		water.type[20 * GiProbes.SIZE + 20] = WaterMap.OCEAN;
-		water.surface[20 * GiProbes.SIZE + 20] = 3 * 64 + 10;
+		water.type[20 * GiPatches.SIZE + 20] = WaterMap.OCEAN;
+		water.surface[20 * GiPatches.SIZE + 20] = 3 * 64 + 10;
 		// and one over the ground, which keeps its voxels
-		water.type[3 * GiProbes.SIZE + 3] = WaterMap.FRESH;
-		water.surface[3 * GiProbes.SIZE + 3] = 0;
+		water.type[3 * GiPatches.SIZE + 3] = WaterMap.FRESH;
+		water.surface[3 * GiPatches.SIZE + 3] = 0;
 		GiGrid g = greenGrid(water, true);
 		int cell = g.cells[g.index(20, -g.layer0, 20)];
 		assertNotEquals(0, cell);
@@ -203,29 +178,24 @@ public class GiBounceTest
 	}
 
 	@Test
-	public void waterBounceTintsTheShoreBlue()
+	public void waterPatchesAreBlueAndGrassPatchesGreen()
 	{
 		GiWater water = new GiWater();
 		for (int x = 8; x < 24; ++x)
 		{
 			for (int z = 8; z < 24; ++z)
 			{
-				water.type[z * GiProbes.SIZE + x] = WaterMap.FRESH;
-				water.surface[z * GiProbes.SIZE + x] = 40;
+				water.type[z * GiPatches.SIZE + x] = WaterMap.FRESH;
+				water.surface[z * GiPatches.SIZE + x] = 40;
 			}
 		}
-		GiProbes p = probes(greenGrid(water, true));
-		float[] bounce = GiRelight.relight(p, sunlit(), null, 3, GiProbes.ParallelFor.SEQUENTIAL).shown;
-		// over the water the light thrown up is blue, over the grass it is green
-		int overWater = GiLookup.ground(p, 14, 14), overGrass = GiLookup.ground(p, 2, 2);
-		assertTrue(p.valid[overWater] && p.valid[overGrass]);
-		float wr = bounce[overWater * GiRelight.SH];
-		float wg = bounce[overWater * GiRelight.SH + 1];
-		float wb = bounce[overWater * GiRelight.SH + 2];
+		GiPatches p = patches(greenGrid(water, true));
+		// what a wall at the shore would bounce is the patch's albedo times its light
+		int overWater = GlobalIlluminationTest.floorId(0, 14, 14), overGrass = GlobalIlluminationTest.floorId(0, 2, 2);
+		assertTrue(p.exists(overWater) && p.exists(overGrass));
+		float wr = p.albedo[overWater * 3], wg = p.albedo[overWater * 3 + 1], wb = p.albedo[overWater * 3 + 2];
 		assertTrue("water " + wr + " " + wg + " " + wb, wb > wr * 2f && wb > wg * 0.9f);
-		float gr = bounce[overGrass * GiRelight.SH];
-		float gg = bounce[overGrass * GiRelight.SH + 1];
-		float gb = bounce[overGrass * GiRelight.SH + 2];
+		float gr = p.albedo[overGrass * 3], gg = p.albedo[overGrass * 3 + 1], gb = p.albedo[overGrass * 3 + 2];
 		assertTrue("grass " + gr + " " + gg + " " + gb, gg > gb * 2f);
 	}
 

@@ -42,7 +42,7 @@ class GpuTimer
 
 	static final String[] NAMES = {
 		"scene", "MSAA resolve", "shadow map", "weather occlusion", "AO + skylight/GI", "sky cache", "fog", "sky/fog + final blend",
-		"weather", "UI", "GI probes", "water", "shadow copy", "shadow models", "sky grid upload", "AO/fog filtering", "upscale", "ambient + sky/GI", "sun + cloud shadows", "point lights + blocking", "materials + water blend", "clouds"
+		"weather", "UI", "GI patches", "water", "shadow copy", "shadow models", "sky grid upload", "AO/fog filtering", "upscale", "ambient + sky/GI", "sun + cloud shadows", "point lights + blocking", "materials + water blend", "clouds"
 	};
 
 	private static final int SLOTS = 4;

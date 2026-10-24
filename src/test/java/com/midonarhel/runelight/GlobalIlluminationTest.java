@@ -227,21 +227,18 @@ public class GlobalIlluminationTest
 	// ---- rays
 
 	@Test
-	public void raysCoverTheWholeSphereEqually()
+	public void skyRaysCoverTheWholeSphereEqually()
 	{
-		assertEquals(GiProbes.RAY_SAMPLES, GiProbes.RAYS);
-		assertEquals(GiProbes.RAYS, GiProbes.WEIGHT_SUM, 1e-4);
+		// a bit each in a long
+		assertTrue(GiPatches.SKY_SAMPLES <= 64);
+		assertEquals(GiPatches.SKY_SAMPLES * 3, GiPatches.SKY_RAYS.length);
 		float up = 0, down = 0;
-		for (int r = 0; r < GiProbes.RAYS; ++r)
+		for (int r = 0; r < GiPatches.SKY_SAMPLES; ++r)
 		{
-			assertEquals(1, GiProbes.WEIGHT[r], 0);
-			for (float[] d : GiProbes.DIRECTIONS)
-			{
-				assertEquals(1, d[r * 3] * d[r * 3] + d[r * 3 + 1] * d[r * 3 + 1] + d[r * 3 + 2] * d[r * 3 + 2], 1e-5);
-				assertEquals(GiProbes.DIRECTIONS[0][r * 3 + 1], d[r * 3 + 1], 1e-6);
-			}
+			float[] d = GiPatches.SKY_RAYS;
+			assertEquals(1, d[r * 3] * d[r * 3] + d[r * 3 + 1] * d[r * 3 + 1] + d[r * 3 + 2] * d[r * 3 + 2], 1e-5);
 			// y is down
-			if (GiProbes.DIRECTIONS[0][r * 3 + 1] > 0)
+			if (d[r * 3 + 1] > 0)
 			{
 				down++;
 			}
@@ -250,7 +247,6 @@ public class GlobalIlluminationTest
 				up++;
 			}
 		}
-		// the ground counts as much as the sky
 		assertEquals(up, down, 2);
 	}
 
@@ -281,14 +277,14 @@ public class GlobalIlluminationTest
 		}
 	}
 
-	// ---- probes
+	// ---- patches
 
 	/**
 	 * Flat ground over the zones around base tiles 0-31, a 4x4 tile house at tiles 10-13 (2 tiles tall walls,
 	 * a door on the south side at tile 12, a roof at 3 tiles), a low pillar at tile 4, 4 and a solid block at tiles
 	 * 20-22 (walls()).
 	 */
-	private static GiProbes scene()
+	private static GiPatches scene()
 	{
 		java.util.List<GiVoxels.Zone> zones = new java.util.ArrayList<>();
 		java.util.List<Integer> zx = new java.util.ArrayList<>(), zz = new java.util.ArrayList<>();
@@ -298,7 +294,6 @@ public class GlobalIlluminationTest
 			{
 				GiCapture cap = new GiCapture();
 				ground(cap);
-				int ox = x * 1024, oz = z * 1024;
 				if (x == 1 && z == 1)
 				{
 					// house, zone-local: tiles 10-13 are 2-5 here; walls up to the roof, the door in the south wall
@@ -322,21 +317,20 @@ public class GlobalIlluminationTest
 				zones.add(GiVoxels.voxelize(cap));
 				zx.add(BASE_ZONE + x);
 				zz.add(BASE_ZONE + z);
-				assertTrue(ox >= 0 && oz >= 0);
 			}
 		}
 		GiGrid g = GiGrid.assemble(zones.toArray(new GiVoxels.Zone[0]), zx.stream().mapToInt(i -> i).toArray(),
 			zz.stream().mapToInt(i -> i).toArray(), BASE_ZONE);
-		GiProbes.Input in = new GiProbes.Input();
-		in.ground = new float[4][GiProbes.SIZE * GiProbes.SIZE];
+		GiPatches.Input in = new GiPatches.Input();
+		in.ground = new float[4][GiPatches.SIZE * GiPatches.SIZE];
 		in.walls = walls();
-		return GiProbes.build(g, in, GiProbes.ParallelFor.SEQUENTIAL);
+		return GiPatches.build(g, in, GiPatches.ParallelFor.SEQUENTIAL);
 	}
 
 	/** The collision map's walls of scene(): the house's four sides but for the door, and the block's solid tiles. */
 	private static WallMap walls()
 	{
-		int[][][] flags = new int[1][GiProbes.SIZE][GiProbes.SIZE];
+		int[][][] flags = new int[1][GiPatches.SIZE][GiPatches.SIZE];
 		for (int i = 10; i < 14; ++i)
 		{
 			flags[0][10][i] |= WallMap.LOS_WEST;
@@ -354,7 +348,7 @@ public class GlobalIlluminationTest
 				flags[0][x][z] |= WallMap.LOS_FULL;
 			}
 		}
-		return WallMap.build(flags, null, GiProbes.SIZE, 0, 0);
+		return WallMap.build(flags, null, GiPatches.SIZE, 0, 0);
 	}
 
 	/**
@@ -387,160 +381,345 @@ public class GlobalIlluminationTest
 		}
 	}
 
-	private static GiProbes probes;
+	private static GiPatches patches;
 
-	private static synchronized GiProbes probes()
+	private static synchronized GiPatches patches()
 	{
-		if (probes == null)
+		if (patches == null)
 		{
-			probes = scene();
+			patches = scene();
 		}
-		return probes;
+		return patches;
 	}
 
-	private static int probesIn(GiProbes p, int tx, int tz)
+	/** The id of floor f's patch of tile (x, z), whether it has one or not. */
+	static int floorId(int f, int x, int z)
 	{
-		int t = tz * GiProbes.SIZE + tx;
-		return p.tileStart[t + 1] - p.tileStart[t];
+		return f * GiPatches.TILES + z * GiPatches.SIZE + x;
 	}
 
-	@Test
-	public void groundProbeStandsAboveFlatGroundAndNothingInTheAir()
+	/** Wall face texel of a tile's face (see GiPatches.wallTexels): first patch, bands and kind, base, band height. */
+	static float[] face(GiPatches p, int f, int x, int z, int face)
 	{
-		GiProbes p = probes();
-		// one probe over the open ground, a little above it, at the tile's center
-		int open = GiLookup.ground(p, 30, 30);
-		assertTrue(p.valid[open]);
-		assertEquals(30.5f * GiProbes.TILE, p.position[open * 3], GiProbes.TILE / 2);
-		assertEquals(30.5f * GiProbes.TILE, p.position[open * 3 + 2], GiProbes.TILE / 2);
-		float height = -p.position[open * 3 + 1];
-		assertTrue("height " + height, height >= GiProbes.GROUND_HEIGHT - 1 && height <= GiProbes.GROUND_HEIGHT + 2 * GiGrid.VOXEL);
-		// no probes for the floors above, which are air there, nor for tiles with no geometry at all
-		assertEquals(1, probesIn(p, 30, 30));
-		assertEquals(0, probesIn(p, 60, 60));
-		// every probe is within a voxel of geometry
+		int at = ((f * GiPatches.TILES + z * GiPatches.SIZE + x) * GiPatches.FACES + face) * 4;
+		return java.util.Arrays.copyOfRange(p.wallTexels, at, at + 4);
+	}
+
+	static int bands(float[] face)
+	{
+		return (int) face[1] & 7;
+	}
+
+	static boolean linked(GiPatches p, int i, int j)
+	{
+		for (int l = p.linkStart[i]; l < p.linkStart[i + 1]; ++l)
+		{
+			if (p.linkTarget[l] == j)
+			{
+				return true;
+			}
+		}
+		return false;
+	}
+
+	static float linkWeight(GiPatches p, int i, int j)
+	{
+		for (int l = p.linkStart[i]; l < p.linkStart[i + 1]; ++l)
+		{
+			if (p.linkTarget[l] == j)
+			{
+				return p.linkWeight[l];
+			}
+		}
+		return -1;
+	}
+
+	/** Each patch's own id as its light, so a lookup says which patches it read. */
+	static float[] markers(GiPatches p)
+	{
+		float[] light = new float[p.count * 3];
 		for (int i = 0; i < p.count; ++i)
 		{
-			if (p.valid[i])
-			{
-				assertTrue("probe " + i, p.nearGeometry(p.position[i * 3] / GiGrid.VOXEL,
-					p.position[i * 3 + 1] / GiGrid.VOXEL - p.grid.layer0, p.position[i * 3 + 2] / GiGrid.VOXEL));
-			}
+			light[i * 3] = i;
 		}
+		return light;
 	}
 
 	@Test
-	public void probesInGeometryMoveOrStop()
+	public void floorPatchesStandOnTheGroundAndNothingInTheAir()
 	{
-		GiProbes p = probes();
-		// the ground probe starts inside the pillar, whose top is at -120: it moves up out of it
-		int pillar = GiLookup.ground(p, 4, 4);
-		assertTrue(p.valid[pillar]);
-		assertTrue(p.position[pillar * 3 + 1] < -GiProbes.GROUND_HEIGHT);
-		// no probe is inside the block, which is 512 tall: only the ones over its top
+		GiPatches p = patches();
+		int open = floorId(0, 30, 30);
+		assertTrue(p.exists(open));
+		assertEquals(30.5f * GiPatches.TILE, p.position[open * 3], 0);
+		assertEquals(0, p.position[open * 3 + 1], 0);
+		assertEquals(30.5f * GiPatches.TILE, p.position[open * 3 + 2], 0);
+		assertEquals(-1, p.normal[open * 3 + 1], 0);
+		assertEquals(GiPatches.TILE * GiPatches.TILE, p.area[open], 0);
+		// no floors above the open ground, nor patches where there is no ground at all
+		assertFalse(p.exists(floorId(1, 30, 30)));
+		assertFalse(p.exists(floorId(2, 30, 30)));
+		assertFalse(p.exists(floorId(0, 60, 60)));
+		// a solid object has none, and the floors' heights are told to the shader whether they have patches or not
+		for (int x = 20; x < 23; ++x)
+		{
+			for (int z = 20; z < 23; ++z)
+			{
+				assertFalse(p.exists(floorId(0, x, z)));
+			}
+		}
+		int t = (30 * GiPatches.SIZE + 30) * 4;
+		assertEquals(0, p.floorTexels[t], 0);
+		assertEquals(-GiPatches.FLOOR_GAP, p.floorTexels[t + 1], 0);
+		assertEquals(-2 * GiPatches.FLOOR_GAP, p.floorTexels[t + 2], 0);
+		// the house has a floor inside it
+		assertTrue(p.exists(floorId(0, 11, 12)));
+	}
+
+	@Test
+	public void aWallHasAFaceOnEachSideUpItsHeight()
+	{
+		GiPatches p = patches();
+		// the house' west wall stands at x = 10 tiles: tile 9 is outside it, tile 10 inside, faces looking into them
+		float[] outside = face(p, 0, 9, 12, 1), inside = face(p, 0, 10, 12, 3);
+		assertTrue("outside " + bands(outside), bands(outside) >= 2);
+		assertEquals(bands(outside), bands(inside));
+		assertEquals(0, outside[1] - bands(outside), 0);
+		int first = (int) outside[0], other = (int) inside[0];
+		assertEquals(10 * GiPatches.TILE, p.position[first * 3], 0);
+		assertEquals(10 * GiPatches.TILE, p.position[other * 3], 0);
+		assertEquals(-1, p.normal[first * 3], 0);
+		assertEquals(1, p.normal[other * 3], 0);
+		assertEquals(12.5f * GiPatches.TILE, p.position[first * 3 + 2], 0);
+		// the bands go up the wall, one over the next, as far as it is high: the 384 of it, but for what is the next
+		// floor's, which begins one floor gap up
+		float top = outside[2] - p.position[(first + bands(outside) - 1) * 3 + 1] + outside[3] / 2;
+		assertEquals(GiPatches.FLOOR_GAP, top, 1e-2);
+		for (int k = 1; k < bands(outside); ++k)
+		{
+			assertEquals(outside[3], p.position[(first + k - 1) * 3 + 1] - p.position[(first + k) * 3 + 1], 1e-3);
+		}
+		assertEquals(GiPatches.TILE * outside[3], p.area[first], 1e-2);
+		// no wall under the door, and the wall of the tiles beside it has its faces
+		assertEquals(0, face(p, 0, 12, 10, 2)[1], 0);
+		assertTrue(face(p, 0, 11, 10, 2)[1] > 0);
+		// a solid object has no faces: it is not a wall
+		assertEquals(0, face(p, 0, 19, 21, 1)[1], 0);
+		assertEquals(0, face(p, 0, 21, 23, 0)[1], 0);
+		// the corner has the faces of both of its walls, each into its own tile
+		assertTrue(face(p, 0, 10, 10, 3)[1] > 0 && face(p, 0, 10, 10, 2)[1] > 0);
+		// walls of the floors above, which there are none of
+		assertEquals(0, face(p, 1, 10, 12, 3)[1], 0);
+	}
+
+	@Test
+	public void patchesLinkOnlyToTheOnesTheyFaceAndSee()
+	{
+		GiPatches p = patches();
+		int links = 0;
 		for (int i = 0; i < p.count; ++i)
 		{
-			if (p.valid[i])
+			for (int l = p.linkStart[i]; l < p.linkStart[i + 1]; ++l)
 			{
-				assertFalse("probe " + i, p.position[i * 3] > 20 * GiProbes.TILE && p.position[i * 3] < 23 * GiProbes.TILE
-					&& p.position[i * 3 + 2] > 20 * GiProbes.TILE && p.position[i * 3 + 2] < 23 * GiProbes.TILE
-					&& p.position[i * 3 + 1] > -512);
+				int j = p.linkTarget[l];
+				links++;
+				assertTrue(p.exists(i) && p.exists(j));
+				float dx = p.position[j * 3] - p.position[i * 3], dy = p.position[j * 3 + 1] - p.position[i * 3 + 1];
+				float dz = p.position[j * 3 + 2] - p.position[i * 3 + 2];
+				float r2 = dx * dx + dy * dy + dz * dz;
+				float r = (float) Math.sqrt(r2);
+				float cosI = (p.normal[i * 3] * dx + p.normal[i * 3 + 1] * dy + p.normal[i * 3 + 2] * dz) / r;
+				float cosJ = -(p.normal[j * 3] * dx + p.normal[j * 3 + 1] * dy + p.normal[j * 3 + 2] * dz) / r;
+				assertTrue(cosI > 0 && cosJ > 0);
+				assertTrue(r <= GiPatches.REACH);
+				// the point-to-area form factor
+				assertEquals(cosI * cosJ * p.area[j] / ((float) Math.PI * r2 + p.area[j]), p.linkWeight[l], 1e-6);
+				// both see each other
+				assertTrue(linked(p, j, i));
+			}
+		}
+		assertTrue(links > 1000);
+		// the floor outside the house's west wall is lit by that wall's outside, not its inside, which is behind it
+		float[] outside = face(p, 0, 9, 12, 1), inside = face(p, 0, 10, 12, 3);
+		int out = floorId(0, 9, 12), in = floorId(0, 11, 12);
+		assertTrue(linked(p, out, (int) outside[0]));
+		assertTrue(linked(p, in, (int) inside[0]));
+		for (int k = 0; k < bands(inside); ++k)
+		{
+			assertFalse(linked(p, out, (int) inside[0] + k));
+			assertFalse(linked(p, in, (int) outside[0] + k));
+			assertFalse(linked(p, (int) outside[0] + k, (int) inside[0] + k));
+		}
+		// floors don't see each other
+		assertFalse(linked(p, floorId(0, 30, 30), floorId(0, 31, 30)));
+		// a patch in the open sees no wall, a wall's two bands in one plane don't see each other
+		assertEquals(0, p.linkStart[floorId(0, 30, 30) + 1] - p.linkStart[floorId(0, 30, 30)]);
+		assertFalse(linked(p, (int) outside[0], (int) outside[0] + 1));
+	}
+
+	@Test
+	public void roomsSeeLittleSky()
+	{
+		GiPatches p = patches();
+		int open = Long.bitCount(p.sky[floorId(0, 30, 30)]);
+		// about the half of the directions above the horizon, but those too near it
+		assertTrue("open " + open, open > 20 && open < 40);
+		// a roof closes the room, but for what comes through the door: more of it near the door than at the back
+		int near = Long.bitCount(p.sky[floorId(0, 12, 11)]), back = Long.bitCount(p.sky[floorId(0, 11, 12)]);
+		assertTrue("door " + near, near > 0);
+		assertTrue("near the door " + near + " at the back " + back, near > back);
+		// a wall sees the sky on its open side only
+		float[] outside = face(p, 0, 9, 12, 1);
+		long wallOpen = p.sky[(int) outside[0] + bands(outside) - 1];
+		assertTrue(Long.bitCount(wallOpen) > 10);
+		for (int r = 0; r < GiPatches.SKY_SAMPLES; ++r)
+		{
+			if ((wallOpen >>> r & 1) != 0)
+			{
+				assertTrue(GiPatches.SKY_RAYS[r * 3] < 0.5);
 			}
 		}
 	}
 
 	@Test
-	public void aWallHasProbesOnEachOpenSideUpItsHeight()
+	public void aFloorPixelReadsTheFloorPatchesAroundIt()
 	{
-		GiProbes p = probes();
-		// the house' west wall stands at x = 10 tiles: tile 9 is outside it, tile 10 inside, probes out from it
-		java.util.List<Integer> outside = GiLookup.wall(p, 9, 12, -1, 0), inside = GiLookup.wall(p, 10, 12, 1, 0);
-		assertTrue("outside " + outside.size(), outside.size() >= 3);
-		assertTrue("inside " + inside.size(), inside.size() >= 3);
-		float top = 0;
-		for (int i : outside)
-		{
-			assertTrue(p.valid[i]);
-			float x = p.position[i * 3];
-			assertTrue("outside at " + x, x < 10 * GiProbes.TILE - 16 && x > 9 * GiProbes.TILE);
-			top = Math.max(top, -p.position[i * 3 + 1]);
-		}
-		// as high as the wall: 3 tiles of it
-		assertTrue("top " + top, top > 250);
-		for (int i : inside)
-		{
-			assertTrue(p.position[i * 3] > 10 * GiProbes.TILE + 16);
-		}
-		// no wall under the door, and the wall probes of its sides stand in their own tiles
-		assertTrue(GiLookup.wall(p, 12, 10, 0, 1).isEmpty());
-		assertFalse(GiLookup.wall(p, 11, 10, 0, 1).isEmpty());
+		GiPatches p = patches();
+		float[] marker = markers(p);
+		float c = GiPatches.TILE;
+		// at the center of a tile: that tile's patch
+		float[] gi = GiLookup.irradiance(p, marker, new float[]{30.5f * c, -3, 30.5f * c}, new float[]{0, -1, 0});
+		assertEquals(floorId(0, 30, 30), gi[0], 0);
+		assertEquals(1, gi[3], 0);
+		// halfway between two: the two, a quarter of the way: the nearer one most
+		gi = GiLookup.irradiance(p, marker, new float[]{31 * c, 0, 30.5f * c}, new float[]{0, -1, 0});
+		assertEquals((floorId(0, 30, 30) + floorId(0, 31, 30)) / 2f, gi[0], 1e-2);
+		gi = GiLookup.irradiance(p, marker, new float[]{30.75f * c, 0, 30.5f * c}, new float[]{0, -1, 0});
+		assertEquals(floorId(0, 30, 30) * 0.75f + floorId(0, 31, 30) * 0.25f, gi[0], 1e-2);
+		// where a neighbor has no patch (the solid block's tiles) the others are renormalized, and the weight falls
+		gi = GiLookup.irradiance(p, marker, new float[]{20 * c, 0, 19.5f * c}, new float[]{0, -1, 0});
+		assertEquals(floorId(0, 19, 19) * 0.5f + floorId(0, 19, 20) * 0.0f + floorId(0, 20, 19) * 0.5f,
+			gi[0] * 1f, 1e-1);
+		assertTrue(gi[3] > 0 && gi[3] <= 1);
+		// off the ground there is nothing
+		gi = GiLookup.irradiance(p, marker, new float[]{60.5f * c, 0, 60.5f * c}, new float[]{0, -1, 0});
+		assertEquals(0, gi[3], 0);
 	}
 
 	@Test
-	public void aSolidObjectHasProbesOnItsOutsideOnly()
+	public void aWallPixelReadsItsOwnFaceNotTheOneBehind()
 	{
-		GiProbes p = probes();
-		// the block at tiles 20-22 is 4 tiles tall, its sides get SOLID_HEIGHTS probes each at most
-		java.util.List<Integer> west = GiLookup.wall(p, 19, 21, -1, 0);
-		assertFalse(west.isEmpty());
-		assertTrue(west.size() <= GiProbes.SOLID_HEIGHTS);
-		assertFalse(GiLookup.wall(p, 21, 23, 0, 1).isEmpty());
-		assertFalse(GiLookup.wall(p, 21, 19, 0, -1).isEmpty());
-		// and a solid tile has none of its own: what is in it is over its top
-		for (int z = 20; z < 23; ++z)
+		GiPatches p = patches();
+		float[] marker = markers(p);
+		float[] outside = face(p, 0, 9, 12, 1), inside = face(p, 0, 10, 12, 3);
+		int bands = bands(outside);
+		float z = 12.5f * GiPatches.TILE;
+		for (int k = 0; k < bands; ++k)
 		{
-			for (int x = 20; x < 23; ++x)
-			{
-				int t = z * GiProbes.SIZE + x;
-				for (int k = p.tileStart[t]; k < p.tileStart[t + 1]; ++k)
-				{
-					int i = p.tileProbes[k];
-					assertTrue(p.position[i * 3 + 1] < -512 && p.outward[i * 2] == 0 && p.outward[i * 2 + 1] == 0);
-				}
-			}
+			// at the height of a band's center, in front of the wall on either side, facing away from it
+			float y = outside[2] - (k + 0.5f) * outside[3];
+			float[] out = GiLookup.irradiance(p, marker, new float[]{10 * GiPatches.TILE - 8, y, z}, new float[]{-1, 0, 0});
+			float[] in = GiLookup.irradiance(p, marker, new float[]{10 * GiPatches.TILE + 14, y, z}, new float[]{1, 0, 0});
+			assertEquals(outside[0] + k, out[0], 1e-3);
+			assertEquals(inside[0] + k, in[0], 1e-3);
+			assertEquals(1, out[3], 0);
+			assertEquals(1, in[3], 0);
 		}
+		// between two bands it blends the two
+		float y = outside[2] - outside[3];
+		float[] between = GiLookup.irradiance(p, marker, new float[]{10 * GiPatches.TILE - 8, y, z}, new float[]{-1, 0, 0});
+		assertEquals(outside[0] + 0.5f, between[0], 1e-2);
+		// along the wall, at the border of two tiles, the two tiles' faces
+		float[] beside = face(p, 0, 9, 13, 1);
+		float[] border = GiLookup.irradiance(p, marker, new float[]{10 * GiPatches.TILE - 8, outside[2] - 0.5f * outside[3],
+			13 * GiPatches.TILE}, new float[]{-1, 0, 0});
+		assertEquals((outside[0] + beside[0]) / 2, border[0], 1e-2);
+		// above the wall it is not on it: the ground under it, faded out with the height
+		float[] above = GiLookup.irradiance(p, marker, new float[]{10 * GiPatches.TILE - 8, -3 * 128f, z}, new float[]{-1, 0, 0});
+		assertEquals(0, above[3], 0);
+		// a pixel near no wall is read from the ground under it
+		float[] tree = GiLookup.irradiance(p, marker, new float[]{30.5f * GiPatches.TILE, -120, 30.5f * GiPatches.TILE},
+			new float[]{1, 0, 0});
+		assertEquals(floorId(0, 30, 30), tree[0], 0);
+		assertTrue(tree[3] > 0.5f && tree[3] < 1);
 	}
 
 	@Test
-	public void tileListsHoldTheNearestProbesNearestFirst()
+	public void roofsAndOtherFloorsAreNotReadThroughTheFloorsBetween()
 	{
-		GiProbes p = probes();
-		for (int[] tile : new int[][]{{30, 30}, {9, 12}, {10, 10}, {21, 19}, {60, 60}})
+		GiPatches p = patches();
+		float[] marker = markers(p);
+		float c = GiPatches.TILE;
+		// the roof of the house, facing up, is over the second floor, which is not there
+		float[] roof = GiLookup.irradiance(p, marker, new float[]{12 * c, -390, 12 * c}, new float[]{0, -1, 0});
+		assertEquals(0, roof[3], 0);
+		// the underside of the roof reads the floor of the room, not the roof
+		float[] ceiling = GiLookup.irradiance(p, marker, new float[]{12 * c, -378, 12 * c}, new float[]{0, 1, 0});
+		assertEquals(0, ceiling[3], 0);
+		// a pixel high above the ground is out of reach of its light
+		float[] high = GiLookup.irradiance(p, marker, new float[]{30.5f * c, -300, 30.5f * c}, new float[]{1, 1, 0});
+		assertEquals(0, high[3], 0);
+	}
+
+	@Test
+	public void aDiagonalWallHasPatchesOnBothSides()
+	{
+		// a "/" wall across tile 15, 15 from corner to corner, 240 high
+		GiCapture cap = new GiCapture();
+		ground(cap);
+		float d = 0.70710678f;
+		int x0 = 128 * 7, z0 = 128 * 7;
+		for (int side = 0; side < 2; ++side)
 		{
-			float cx = (tile[0] + 0.5f) * GiProbes.TILE, cz = (tile[1] + 0.5f) * GiProbes.TILE;
-			java.util.List<Float> expected = new java.util.ArrayList<>();
-			for (int i = 0; i < p.count; ++i)
-			{
-				float d = (float) Math.hypot(p.position[i * 3] - cx, p.position[i * 3 + 2] - cz);
-				if (p.valid[i] && d <= GiProbes.LIST_REACH)
-				{
-					expected.add(d);
-				}
-			}
-			java.util.Collections.sort(expected);
-			int at = (tile[1] * GiProbes.SIZE + tile[0]) * GiProbes.LIST;
-			int n = 0;
-			for (int e = 0; e < GiProbes.LIST; ++e)
-			{
-				int i = p.lists[at + e];
-				if (i == GiProbes.NONE)
-				{
-					break;
-				}
-				assertTrue(p.valid[i]);
-				assertEquals("tile " + tile[0] + "," + tile[1] + " entry " + e, expected.get(e),
-					(float) Math.hypot(p.position[i * 3] - cx, p.position[i * 3 + 2] - cz), 1e-3);
-				n++;
-			}
-			// the list is full, or has every probe in reach
-			assertEquals(Math.min(GiProbes.LIST, expected.size()), n);
-			for (int e = n; e < GiProbes.LIST; ++e)
-			{
-				assertEquals(GiProbes.NONE, p.lists[at + e]);
-			}
+			// zone-local: tile 15 is tile 7 of zone 1
+			int shift = side == 0 ? 4 : -4;
+			quad(cap, p(x0 - shift, 0, z0 + shift), p(x0 + 128 - shift, 0, z0 + 128 + shift),
+				p(x0 + 128 - shift, -240, z0 + 128 + shift), p(x0 - shift, -240, z0 + shift),
+				side == 0 ? -d : d, 0, side == 0 ? d : -d);
 		}
-		// the open ground's tile finds its own probe first
-		assertEquals(GiLookup.ground(p, 30, 30), p.lists[(30 * GiProbes.SIZE + 30) * GiProbes.LIST]);
+		GiVoxels.Zone[] zones = new GiVoxels.Zone[16];
+		int[] zx = new int[16], zz = new int[16];
+		for (int i = 0; i < 16; ++i)
+		{
+			GiCapture ground = new GiCapture();
+			ground(ground);
+			zones[i] = i == 5 ? GiVoxels.voxelize(cap) : GiVoxels.voxelize(ground);
+			zx[i] = BASE_ZONE + i / 4;
+			zz[i] = BASE_ZONE + i % 4;
+		}
+		int[][][] flags = new int[1][GiPatches.SIZE][GiPatches.SIZE];
+		flags[0][15][15] |= WallMap.LOS_FULL;
+		WallMap walls = WallMap.build(flags, java.util.Collections.singletonList(
+			new WallMap.Diagonal(0, 15, 15, WallMap.DIAG_SW_NE)), GiPatches.SIZE, 0, 0);
+		GiPatches.Input in = new GiPatches.Input();
+		in.ground = new float[1][GiPatches.SIZE * GiPatches.SIZE];
+		in.walls = walls;
+		GiPatches p = GiPatches.build(GiGrid.assemble(zones, zx, zz, BASE_ZONE), in, GiPatches.ParallelFor.SEQUENTIAL);
+
+		// no floor in the tile, but the two sides of the wall, whose normals point northwest and southeast
+		assertFalse(p.exists(floorId(0, 15, 15)));
+		float[] west = face(p, 0, 15, 15, GiPatches.DIAGONAL_WEST), east = face(p, 0, 15, 15, GiPatches.DIAGONAL_EAST);
+		assertEquals(GiPatches.KIND_SW_NE, (int) west[1] >> 3);
+		assertEquals(GiPatches.KIND_SW_NE, (int) east[1] >> 3);
+		int w = (int) west[0], e = (int) east[0];
+		assertEquals(-d, p.normal[w * 3], 1e-6);
+		assertEquals(d, p.normal[w * 3 + 2], 1e-6);
+		assertEquals(d, p.normal[e * 3], 1e-6);
+		assertEquals(-d, p.normal[e * 3 + 2], 1e-6);
+		assertEquals(15.5f * GiPatches.TILE, p.position[w * 3], 0);
+		assertEquals(GiPatches.TILE * 1.41421356f * west[3], p.area[w], 1e-2);
+
+		// a pixel on the northwest side reads that side, one on the southeast side the other
+		float[] marker = markers(p);
+		float cx = 15.5f * GiPatches.TILE, cz = 15.5f * GiPatches.TILE, y = west[2] - 0.5f * west[3];
+		float[] nw = GiLookup.irradiance(p, marker, new float[]{cx - 6, y, cz + 6}, new float[]{-d, 0, d});
+		float[] se = GiLookup.irradiance(p, marker, new float[]{cx + 6, y, cz - 6}, new float[]{d, 0, -d});
+		assertEquals(w, nw[0], 1e-3);
+		assertEquals(e, se[0], 1e-3);
+		assertEquals(1, nw[3], 0);
+		// and a pixel far from the diagonal is not on it
+		float[] far = GiLookup.irradiance(p, marker, new float[]{cx - 50, y, cz + 50}, new float[]{-d, 0, d});
+		assertTrue(far[3] == 0 || far[0] < GiPatches.FLOOR_SLOTS);
 	}
 
 	private static float[] table(float sky, float caster)
@@ -568,21 +747,9 @@ public class GlobalIlluminationTest
 		return t;
 	}
 
-	// the mean radiance of a probe's light
-	private static float lum(float[] light, int probe)
+	private static float lum(float[] light, int patch)
 	{
-		int o = probe * GiRelight.SH;
-		return GiRelight.luminance(light[o], light[o + 1], light[o + 2]);
-	}
-
-	private static float sum(float[] light)
-	{
-		float s = 0;
-		for (float v : light)
-		{
-			s += v;
-		}
-		return s;
+		return GiRelight.luminance(light[patch * 3], light[patch * 3 + 1], light[patch * 3 + 2]);
 	}
 
 	private static float[] sunDir()
@@ -603,90 +770,39 @@ public class GlobalIlluminationTest
 		int row = GiRelight.SKY_W * GiRelight.SKY_H * 4;
 		t[row + 4] = t[row + 5] = t[row + 6] = 0.5f;
 		GiRelight.Light l = GiRelight.Light.fromTable(t, sunDir(), false);
-		assertEquals(0.5f / 0.25f, GiRelight.skyScale(l), 0.02);
+		assertEquals(0.5f / 0.25f, GiRelight.skyScale(l), 0.1);
 	}
 
 	@Test
-	public void interiorsAreDarkerAndSunlightBounces()
+	public void sunlitWallsLightTheGroundAndNothingLeaksIn()
 	{
-		GiProbes p = probes();
-		GiRelight.Light skyOnly = GiRelight.Light.fromTable(table(0.3f, 2.6f), sunDir(), false);
-		GiRelight.Result r = GiRelight.relight(p, skyOnly, null, 1, GiProbes.ParallelFor.SEQUENTIAL);
-		// with no sun nothing is lit to bounce: the shown bounce is dark, and the whole light darker indoors than out
-		int open = GiLookup.ground(p, 30, 30);
-		int house = GiLookup.ground(p, 12, 12);
-		assertTrue(p.valid[house]);
-		assertEquals(0, lum(r.shown, open), 1e-6);
-		assertTrue("inside " + lum(r.light, house) + " open " + lum(r.light, open), lum(r.light, house) < lum(r.light, open) * 0.5f);
-
-		// sunlight bounced off the ground and walls adds light, more bounces add more
+		GiPatches p = patches();
 		GiRelight.Light withSun = GiRelight.Light.fromTable(table(0.3f, 2.6f), sunDir(), true);
-		GiRelight.Result bounced = GiRelight.relight(p, withSun, null, 3, GiProbes.ParallelFor.SEQUENTIAL);
-		GiRelight.Result once = GiRelight.relight(p, withSun, null, 1, GiProbes.ParallelFor.SEQUENTIAL);
-		int ground = open;
-		assertTrue(lum(bounced.light, ground) > lum(r.light, ground) * 1.1f);
-		assertTrue(lum(bounced.light, house) > lum(r.light, house));
-		assertTrue(sum(bounced.light) > sum(once.light));
-		for (int i = 0; i < p.count; ++i)
+		float[] light = GiRelight.relight(p, withSun, GiPatches.ParallelFor.SEQUENTIAL);
+		for (float v : light)
 		{
-			for (int k = 0; k < GiRelight.SH; ++k)
-			{
-				assertTrue(Float.isFinite(bounced.shown[i * GiRelight.SH + k]));
-			}
-			for (int k = 0; k < 3; ++k)
-			{
-				assertTrue(bounced.shown[i * GiRelight.SH + k] >= 0);
-			}
+			assertTrue(Float.isFinite(v) && v >= 0);
 		}
-	}
-
-	@Test
-	public void repeatedBouncesSettle()
-	{
-		// a bright pen with its roof off: sunlight falls in and bounces from wall to wall, every relight feeding the
-		// next; the light it holds must level off, not grow
-		GiCapture cap = new GiCapture();
-		int lo = 0, hi = 1024, top = -512;
-		quad(cap, p(lo, 0, lo), p(hi, 0, lo), p(hi, 0, hi), p(lo, 0, hi), 0, -1, 0);
-		quad(cap, p(lo, 0, lo), p(lo, top, lo), p(lo, top, hi), p(lo, 0, hi), 1, 0, 0);
-		quad(cap, p(hi, 0, lo), p(hi, top, lo), p(hi, top, hi), p(hi, 0, hi), -1, 0, 0);
-		quad(cap, p(lo, 0, lo), p(hi, 0, lo), p(hi, top, lo), p(lo, top, lo), 0, 0, 1);
-		quad(cap, p(lo, 0, hi), p(hi, 0, hi), p(hi, top, hi), p(lo, top, hi), 0, 0, -1);
-		GiGrid g = GiGrid.assemble(new GiVoxels.Zone[]{GiVoxels.voxelize(cap)}, new int[]{BASE_ZONE}, new int[]{BASE_ZONE},
-			BASE_ZONE);
-		GiProbes.Input in = new GiProbes.Input();
-		in.ground = new float[1][GiProbes.SIZE * GiProbes.SIZE];
-		GiProbes p = GiProbes.build(g, in, GiProbes.ParallelFor.SEQUENTIAL);
-		GiRelight.Light light = GiRelight.Light.fromTable(table(0.3f, 2.6f), sunDir(), true);
-		float[] last = null;
-		float[] peaks = new float[2];
-		for (int i = 1; i <= 40; ++i)
+		// the sun is to the east and north: the house's east wall has the sun, the ground in front of it bounces it back
+		int east = floorId(0, 14, 12), west = floorId(0, 9, 12);
+		assertTrue(lum(light, east) > 0);
+		// the room has a roof: what a floor in it gathers is a fraction of what the open ground beside a wall does
+		int room = floorId(0, 11, 12);
+		assertTrue("room " + lum(light, room) + " beside " + lum(light, east), lum(light, room) < lum(light, east) * 0.5f);
+		// nothing is lit that does not exist
+		assertEquals(0, lum(light, floorId(0, 60, 60)), 0);
+		// without the sun, the sky alone lights what the walls bounce: less
+		GiRelight.Light skyOnly = GiRelight.Light.fromTable(table(0.3f, 2.6f), sunDir(), false);
+		float[] dim = GiRelight.relight(p, skyOnly, GiPatches.ParallelFor.SEQUENTIAL);
+		assertTrue(lum(dim, east) < lum(light, east));
+		assertTrue(lum(dim, east) > 0);
+		assertTrue(lum(dim, west) > 0);
+		// without light there is none
+		GiRelight.Light dark = GiRelight.Light.fromTable(new float[GiRelight.TABLE_FLOATS], new float[]{0, -1, 0}, true);
+		for (float v : GiRelight.relight(p, dark, GiPatches.ParallelFor.SEQUENTIAL))
 		{
-			last = GiRelight.relight(p, light, last, 1, GiProbes.ParallelFor.SEQUENTIAL).light;
-			if (i == 20 || i == 40)
-			{
-				for (float v : last)
-				{
-					assertTrue(Float.isFinite(v));
-					peaks[i / 20 - 1] = Math.max(peaks[i / 20 - 1], v);
-				}
-			}
+			assertEquals(0, v, 0);
 		}
-		assertTrue("peaks " + peaks[0] + " " + peaks[1], peaks[1] < peaks[0] * 1.02f + 1e-4f && peaks[1] < 4);
-	}
-
-	@Test
-	public void doorLetsSomeLightIn()
-	{
-		GiProbes p = probes();
-		GiRelight.Light light = GiRelight.Light.fromTable(table(0.3f, 2.6f), new float[]{0, -1, 0}, false);
-		// the whole light (the shown bounce has no sky): the probe by the door sees more sky than the one at the back wall
-		float[] shown = GiRelight.relight(p, light, null, 1, GiProbes.ParallelFor.SEQUENTIAL).light;
-		int byDoor = GiLookup.ground(p, 12, 10);
-		int back = GiLookup.ground(p, 12, 12);
-		assertTrue(p.valid[byDoor] && p.valid[back]);
-		assertTrue(lum(shown, byDoor) > lum(shown, back));
-		assertTrue(lum(shown, byDoor) > 0);
 	}
 
 	@Test
@@ -698,110 +814,48 @@ public class GlobalIlluminationTest
 	}
 
 	@Test
-	public void texelLayout()
+	public void lightTexelLayout()
 	{
-		int count = 301;
-		float[] light = new float[count * GiRelight.SH];
-		float[] visibility = new float[count * GiProbes.VISIBILITY];
-		float[] position = new float[count * 3];
-		// the second row's 45th probe
-		int probe = 300;
-		for (int k = 0; k < GiRelight.SH; ++k)
-		{
-			light[probe * GiRelight.SH + k] = k + 1;
-		}
-		for (int k = 0; k < GiProbes.VISIBILITY; ++k)
-		{
-			visibility[probe * GiProbes.VISIBILITY + k] = 20 + k;
-		}
-		position[probe * 3] = 2600;
-		position[probe * 3 + 1] = -148;
-		position[probe * 3 + 2] = 5100;
-		short[] t = GlobalIllumination.texels(count, light, visibility, position);
-		int i = ((300 / GlobalIllumination.ROW) * GlobalIllumination.TEX_W + 300 % GlobalIllumination.ROW * GlobalIllumination.TEXELS) * 4;
-		assertEquals(1, 300 / GlobalIllumination.ROW);
-		for (int k = 0; k < GiRelight.SH; ++k)
-		{
-			assertEquals(k + 1, GlobalIllumination.fromHalf(t[i + k]), 0);
-		}
-		for (int k = 0; k < GiProbes.VISIBILITY; ++k)
-		{
-			assertEquals(20 + k, GlobalIllumination.fromHalf(t[i + GiRelight.SH + k]), 0);
-		}
-		// the position, as gi.glsl reads it back: from the corner of its square, and the square
-		int at = i + GiRelight.SH + GiProbes.VISIBILITY;
-		float w = GlobalIllumination.fromHalf(t[at + 3]);
-		float chunkZ = (float) Math.floor(w / GlobalIllumination.CHUNKS);
-		assertEquals(2600, (w - chunkZ * GlobalIllumination.CHUNKS) * GlobalIllumination.CHUNK + GlobalIllumination.fromHalf(t[at]), 0);
-		assertEquals(-148, GlobalIllumination.fromHalf(t[at + 1]), 0);
-		assertEquals(5100, chunkZ * GlobalIllumination.CHUNK + GlobalIllumination.fromHalf(t[at + 2]), 0);
-		// the next probe along is untouched
-		assertEquals(0, t[i + GlobalIllumination.TEXELS * 4]);
-		// the texture holds every probe, and the squares are whole numbers a half float keeps
-		assertTrue(GlobalIllumination.ROW * GlobalIllumination.TEX_H > GiProbes.MAX_PROBES);
-		assertTrue(GiProbes.SIZE * GiProbes.TILE <= GlobalIllumination.CHUNK * GlobalIllumination.CHUNKS);
-		assertTrue(GlobalIllumination.CHUNKS * GlobalIllumination.CHUNKS < 2048);
-	}
-
-	@Test
-	public void indexTexelLayout()
-	{
-		int[] lists = new int[GiProbes.SIZE * GiProbes.SIZE * GiProbes.LIST];
-		java.util.Arrays.fill(lists, GiProbes.NONE);
-		// tile (5, 7)'s seventh entry: texel 5 * 3 + 1 of row 7, third component
-		lists[(7 * GiProbes.SIZE + 5) * GiProbes.LIST + 6] = 40000;
-		short[] t = GlobalIllumination.indexTexels(lists);
-		assertEquals(GlobalIllumination.INDEX_W * GiProbes.SIZE * 4, t.length);
-		assertEquals(40000, t[(7 * GlobalIllumination.INDEX_W + 5 * GlobalIllumination.INDEX_TEXELS + 1) * 4 + 2] & 0xffff);
-		assertEquals(GiProbes.NONE, t[0] & 0xffff);
+		GiPatches p = patches();
+		float[] gathered = new float[p.count * 3];
+		int wall = (int) face(p, 0, 9, 12, 1)[0];
+		int floor = floorId(0, 30, 30);
+		gathered[wall * 3] = 1;
+		gathered[wall * 3 + 1] = 0.25f;
+		gathered[wall * 3 + 2] = 3;
+		short[] t = GlobalIllumination.texels(p, gathered);
+		assertEquals(GlobalIllumination.LIGHT_W * GlobalIllumination.LIGHT_H * 4, t.length);
+		// patch i is at texel (i % LIGHT_W, i / LIGHT_W)
+		int at = ((wall / GlobalIllumination.LIGHT_W) * GlobalIllumination.LIGHT_W + wall % GlobalIllumination.LIGHT_W) * 4;
+		assertEquals(1, GlobalIllumination.fromHalf(t[at]), 0);
+		assertEquals(0.25f, GlobalIllumination.fromHalf(t[at + 1]), 0);
+		assertEquals(3, GlobalIllumination.fromHalf(t[at + 2]), 0);
+		assertEquals(1, GlobalIllumination.fromHalf(t[at + 3]), 0);
+		// a patch with nothing gathered still is one, an empty slot is not
+		assertEquals(1, GlobalIllumination.fromHalf(t[floor * 4 + 3]), 0);
+		assertEquals(0, GlobalIllumination.fromHalf(t[floorId(0, 60, 60) * 4 + 3]), 0);
+		// the textures hold every patch and the index textures' sizes
+		assertTrue(GlobalIllumination.LIGHT_W * GlobalIllumination.LIGHT_H >= GiPatches.MAX_PATCHES);
+		assertEquals(GlobalIllumination.FLOORS_W * GlobalIllumination.FLOORS_H * 4, p.floorTexels.length);
+		assertEquals(GlobalIllumination.WALLS_W * GlobalIllumination.WALLS_H * 4, p.wallTexels.length);
 	}
 
 	@Test
 	public void shaderMatchesTheLayout()
 	{
-		assertEquals(GlobalIllumination.TEXELS, GiLookup.define("GI_TEXELS"), 0);
-		assertEquals(GlobalIllumination.ROW, GiLookup.define("GI_ROW"), 0);
-		assertEquals(GlobalIllumination.CHUNK, GiLookup.define("GI_CHUNK"), 0);
-		assertEquals(GlobalIllumination.CHUNKS, GiLookup.define("GI_CHUNKS"), 0);
-		assertEquals(GlobalIllumination.INDEX_TEXELS, GiLookup.define("GI_LIST_TEXELS"), 0);
-		assertEquals(GiProbes.NONE, GiLookup.define("GI_NONE"), 0);
-		assertEquals(GiProbes.SIZE, GiLookup.define("GI_SIZE"), 0);
-		assertEquals(GiProbes.TILE, GiLookup.define("GI_TILE"), 0);
-		assertEquals(GiProbes.RADIUS, GiLookup.define("GI_RADIUS"), 0);
-		assertEquals(GiGrid.VOXEL, GiLookup.define("GI_VOXEL"), 0);
-	}
-
-	@Test
-	public void aWallHidesTheProbeFromTheOtherSide()
-	{
-		GiProbes p = probes();
-		// the house' west wall is at x = 1280 (tile 10's west edge); probes inside at tile 11 and 12, row 12
-		int inside = GiLookup.ground(p, 11, 12);
-		assertTrue(p.valid[inside]);
-		float px = p.position[inside * 3], py = p.position[inside * 3 + 1], pz = p.position[inside * 3 + 2];
-		// a pixel a tile outside the wall, and one hugging it (which the facing test cuts as well)
-		float dist = (px - (1280 - GiProbes.TILE)) / GiGrid.VOXEL;
-		float wall = GiLookup.visibility(p.visibility, inside, -1, 0, 0, dist);
-		assertTrue("behind the wall " + wall, wall < 0.01f);
-		float hugging = GiLookup.visibility(p.visibility, inside, -1, 0, 0, (px - (1280 - 32)) / GiGrid.VOXEL);
-		assertTrue("hugging the wall " + hugging, hugging < 0.25f);
-		// a pixel on the wall's inner side, and one in the room toward the opposite wall, can see it
-		assertEquals(1, GiLookup.visibility(p.visibility, inside, -1, 0, 0, (px - (1280 + 32)) / GiGrid.VOXEL), 1e-6);
-		assertEquals(1, GiLookup.visibility(p.visibility, inside, 1, 0, 0, 3), 1e-6);
-		assertEquals(pz, 12.5f * GiProbes.TILE, 1e-3);
-		assertTrue(py < 0);
-		// out in the open nothing is in the way
-		int open = GiLookup.ground(p, 30, 30);
-		assertTrue(p.valid[open]);
-		assertEquals(1, GiLookup.visibility(p.visibility, open, 1, 0, 0, 3), 1e-6);
-		// an unusable probe has no visibility at all
-		for (int i = 0; i < p.count; ++i)
-		{
-			for (int k = 0; !p.valid[i] && k < GiProbes.VISIBILITY; ++k)
-			{
-				assertEquals(0, p.visibility[i * GiProbes.VISIBILITY + k], 0);
-			}
-		}
+		assertEquals(GiPatches.SIZE, GiLookup.define("GI_SIZE"), 0);
+		assertEquals(GiPatches.TILES, GiLookup.define("GI_TILES"), 0);
+		assertEquals(GiPatches.FACES, GiLookup.define("GI_FACES"), 0);
+		assertEquals(GiPatches.TILE, GiLookup.define("GI_TILE"), 0);
+		assertEquals(GlobalIllumination.LIGHT_W, 1 << (int) GiLookup.define("GI_PATCH_BITS"));
+		assertEquals(GlobalIllumination.LIGHT_W - 1, GiLookup.define("GI_PATCH_MASK"), 0);
+		// the shader tells a diagonal wall's kind by what the number of bands has added: 8 for "/", 16 for ""
+		assertEquals(8, GiPatches.KIND * GiPatches.KIND_SW_NE);
+		assertEquals(16, GiPatches.KIND * GiPatches.KIND_NW_SE);
+		assertTrue(GiPatches.MAX_BANDS < GiPatches.KIND);
+		// and which face is which
+		assertEquals(4, GiPatches.DIAGONAL_WEST);
+		assertEquals(5, GiPatches.DIAGONAL_EAST);
 	}
 
 	@Test

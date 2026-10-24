@@ -1,24 +1,19 @@
 package com.midonarhel.runelight;
 
 /**
- * Lights the probes from their hit cache (GiProbes): rays that reached the sky bring the sky's radiance where they
- * point, rays that hit a surface bring its albedo times the RGB light on it, which is the sun or moon where the voxels
- * see it, plus the light the probe in front of the voxel had last time, for further bounces. A probe keeps the
- * rays' radiance as first order spherical harmonics, already convolved with the cosine (SH): the irradiance on a
- * surface facing n, in units of the radiance a uniform sphere would give, is the mean plus the gradient dotted with n.
- * So a surface reads the light that reaches its own side, and a probe lying over a roof gives the roof nothing of
- * the roof's own color. Surfaces are treated as rough, scattering light everywhere. Runs on the global illumination's worker
- * whenever the sky or the light changes enough (GlobalIllumination), tens of milliseconds for a whole scene.
+ * Lights the patches (GiPatches): radiosity, one bounce. Every patch is lit directly, by the sun or moon where a ray
+ * through the voxels reaches it (softened by the overcast, as the composite softens shadows) and by the sky it sees,
+ * and sends on albedo times that light, the light it leaves with. What a patch gathers is the sum of what the patches
+ * linked to it leave with, each weighed by its form factor: the light that reached it by bouncing, which is all that is
+ * sent to the GPU, since the composite lights the surface with the sun and sky itself. Surfaces are treated as rough,
+ * scattering light everywhere. Runs on the global illumination's worker whenever the sky or the light changes enough
+ * (GlobalIllumination), a few tens of milliseconds for a whole scene.
  *
- * The sky is part of the light the further bounces build on (scaled so that a probe under the open sky gets what the
- * composite's plain ambient and sky light give a surface facing up), but what is shown is the light of the rays that
- * hit surfaces alone: the composite adds that to its skylight, which already has the sky's own.
+ * The sky is scaled so that a patch under the open sky, facing up, gets what the composite's plain ambient and sky light
+ * give a surface facing up.
  */
 final class GiRelight
 {
-	// floats per probe of light: the mean radiance (RGB), then the gradient (RGB) along x, y and z, which is twice the
-	// mean of radiance times direction; irradiance(n) / pi = mean + gradient . n, from the cosine lobe's L1 terms
-	static final int SH = 12;
 	// the sky table drawn by gi_sky_frag.glsl: SKY_W x SKY_H radiance over the sphere, then one row of light
 	static final int SKY_W = 32, SKY_H = 16;
 	static final int TABLE_FLOATS = SKY_W * (SKY_H + 1) * 4;
@@ -26,13 +21,10 @@ final class GiRelight
 	static final float SUN_DISTANCE = 128;
 	// the open-sky normalization stays within this range, so a broken table can't blow the light up
 	static final float MIN_SCALE = 0.02f, MAX_SCALE = 64;
-	// sun and moon light bounced off what they fall on, relative to the light itself: above 1 because the voxels'
-	// albedos are the dim vertex and texture colors, and the bounce is what makes sunlit ground warm the shade
-	static final float SUN_BOUNCE = 1.4f;
-	// Do not amplify energy on successive bounces.
-	static final float INCIDENT_GAIN = 1.0f;
+	// the sun's rays start this far (voxels) toward the light, as well as off the surface, so they clear what it is on
+	static final float SUN_LIFT = 0.5f;
 
-	/** What lights the probes this time. */
+	/** What lights the patches this time. */
 	static final class Light
 	{
 		final float[] sky = new float[SKY_W * SKY_H * 3];
@@ -45,6 +37,7 @@ final class GiRelight
 		/**
 		 * @param table gi_sky_frag.glsl's output, rgba floats row by row
 		 * @param casterDir toward the light that casts shadows
+		 * @param bounce whether the sun or moon lights the patches; if not, only the sky does
 		 */
 		static Light fromTable(float[] table, float[] casterDir, boolean bounce)
 		{
@@ -65,10 +58,6 @@ final class GiRelight
 			}
 			l.shadow0 = Math.max(0, Math.min(1, finite(table[row + 8])));
 			l.shadow1 = Math.max(0, Math.min(1, Float.isFinite(table[row + 12]) ? table[row + 12] : 1));
-			for (int c = 0; c < 3; ++c)
-			{
-				l.caster[c] *= SUN_BOUNCE;
-			}
 			System.arraycopy(casterDir, 0, l.dir, 0, 3);
 			l.bounce = bounce;
 			return l;
@@ -77,21 +66,6 @@ final class GiRelight
 		private static float finite(float v)
 		{
 			return Float.isFinite(v) ? Math.max(0, v) : 0;
-		}
-	}
-
-	/** The probes' light (SH floats each), whole and as shown. */
-	static final class Result
-	{
-		/** Sky and surfaces together: what the next bounces build on. */
-		final float[] light;
-		/** What goes to the GPU: the light the rays that hit surfaces bring alone, in the composite's units. */
-		final float[] shown;
-
-		Result(float[] light, float[] shown)
-		{
-			this.light = light;
-			this.shown = shown;
 		}
 	}
 
@@ -126,23 +100,26 @@ final class GiRelight
 	}
 
 	/**
-	 * How much the table's sky radiance is scaled: the irradiance on a surface facing up, under the open sky, matches
-	 * the old ambient plus sky light facing up (the mean radiance plus twice the mean radiance along the normal).
+	 * How much the table's sky radiance is scaled: the irradiance on a patch facing up, under the open sky, matches the
+	 * old ambient plus sky light facing up. The irradiance on a patch, in the units of the radiance a uniform sky would
+	 * have, is four times the mean over the sphere's directions of radiance times the cosine with its normal, for the
+	 * ones above its horizon.
 	 */
 	static float skyScale(Light light)
 	{
-		float[] d = GiProbes.SKY_RAYS;
-		int n = d.length / 3;
+		float[] d = GiPatches.SKY_RAYS;
 		float[] rgb = new float[3];
-		float mean = 0, along = 0;
-		for (int i = 0; i < n; ++i)
+		float open = 0;
+		for (int i = 0; i < GiPatches.SKY_SAMPLES; ++i)
 		{
-			sky(light.sky, d[i * 3], d[i * 3 + 1], d[i * 3 + 2], rgb);
-			float l = luminance(rgb[0], rgb[1], rgb[2]);
-			mean += l;
-			along -= l * d[i * 3 + 1];
+			float up = -d[i * 3 + 1];
+			if (up >= GiPatches.SKY_MIN_COS)
+			{
+				sky(light.sky, d[i * 3], d[i * 3 + 1], d[i * 3 + 2], rgb);
+				open += luminance(rgb[0], rgb[1], rgb[2]) * up;
+			}
 		}
-		float open = (mean + 2 * along) / n;
+		open *= 4f / GiPatches.SKY_SAMPLES;
 		float target = luminance(light.oldUp[0], light.oldUp[1], light.oldUp[2]);
 		if (open < 1e-6f || target <= 0)
 		{
@@ -151,172 +128,82 @@ final class GiRelight
 		return Math.max(MIN_SCALE, Math.min(MAX_SCALE, target / open));
 	}
 
-	/** One channel of the irradiance probe's light gives a surface facing unit n, never below zero. */
-	static float irradiance(float[] light, int probe, float nx, float ny, float nz, int channel)
-	{
-		int o = probe * SH + channel;
-		return Math.max(0, light[o] + light[o + 3] * nx + light[o + 6] * ny + light[o + 9] * nz);
-	}
-
-	/** Preserve the incident light's color through each diffuse bounce; (nx, ny, nz) is the way the surface faces. */
-	static float incident(float[] caster, float sun, float[] last, int b, float nx, float ny, float nz, int channel)
-	{
-		return caster[channel] * sun + (last != null && b >= 0 ? irradiance(last, b, nx, ny, nz, channel) * INCIDENT_GAIN : 0);
-	}
-
-	private static float smoothstep(float edge0, float edge1, float x)
-	{
-		float t = Math.max(0, Math.min(1, (x - edge0) / (edge1 - edge0)));
-		return t * t * (3 - 2 * t);
-	}
-
-	/** Adds radiance (r, g, b) arriving from unit direction d, with weight w, to the SH sums at light[at..]. */
-	private static void accumulate(float[] light, int at, float r, float g, float b, float dx, float dy, float dz, float w)
-	{
-		float[] c = {r * w, g * w, b * w};
-		for (int k = 0; k < 3; ++k)
-		{
-			light[at + k] += c[k];
-			light[at + 3 + k] += 2 * c[k] * dx;
-			light[at + 6 + k] += 2 * c[k] * dy;
-			light[at + 9 + k] += 2 * c[k] * dz;
-		}
-	}
-
 	/**
-	 * Light every valid probe. prev: the probes' last whole light for the bounces (null for none yet); each further
-	 * iteration bounces once more from the one before.
-	 *
+	 * The light every patch gathers, rgb per patch: zero for the floors' empty slots, and for patches no other sees.
 	 */
-	static Result relight(GiProbes p, Light light, float[] prev, int iterations, GiProbes.ParallelFor parallel)
+	static float[] relight(GiPatches p, Light light, GiPatches.ParallelFor parallel)
 	{
-		float k = skyScale(light);
-		int rays = GiProbes.RAYS;
-		float[][] skyRays = new float[GiProbes.ROTATIONS][rays * 3];
+		float k = skyScale(light) * 4f / GiPatches.SKY_SAMPLES;
+		// the sky's radiance toward each of the directions patches look for it in, scaled by the factor irradiance has
+		float[] skyRays = new float[GiPatches.SKY_SAMPLES * 3];
 		float[] rgb = new float[3];
-		for (int r = 0; r < GiProbes.ROTATIONS; ++r)
+		for (int r = 0; r < GiPatches.SKY_SAMPLES; ++r)
 		{
-			float[] d = GiProbes.DIRECTIONS[r];
-			for (int i = 0; i < rays; ++i)
+			float[] d = GiPatches.SKY_RAYS;
+			sky(light.sky, d[r * 3], d[r * 3 + 1], d[r * 3 + 2], rgb);
+			for (int c = 0; c < 3; ++c)
 			{
-				sky(light.sky, d[i * 3], d[i * 3 + 1], d[i * 3 + 2], rgb);
-				for (int c = 0; c < 3; ++c)
-				{
-					skyRays[r][i * 3 + c] = rgb[c] * k;
-				}
+				skyRays[r * 3 + c] = rgb[c] * k;
 			}
 		}
-
-		// sun or moon on each hit voxel, with the overcast's softening of shadows
-		float[] lit = new float[p.hits];
 		float lx = light.dir[0], ly = light.dir[1], lz = light.dir[2];
 		boolean direct = light.bounce && luminance(light.caster[0], light.caster[1], light.caster[2]) > 1e-5f;
-		if (direct)
-		{
-			parallel.run(p.hits, h ->
-			{
-				float nx = p.hitNormal[h * 3], ny = p.hitNormal[h * 3 + 1], nz = p.hitNormal[h * 3 + 2];
-				boolean two = p.hitTwoSided[h];
-				if (!two && nx * lx + ny * ly + nz * lz <= 0)
-				{
-					return;
-				}
-				float off = two ? 0.75f : 0.5f;
-				float ox = p.hitPos[h * 3] + (nx + lx) * off;
-				float oy = p.hitPos[h * 3 + 1] + (ny + ly) * off;
-				float oz = p.hitPos[h * 3 + 2] + (nz + lz) * off;
-				boolean seen = p.grid.trace(ox, oy, oz, lx, ly, lz, SUN_DISTANCE, true, h) < 0;
-				lit[h] = seen ? light.shadow1 : light.shadow0;
-			});
-		}
 
-		float[] out = prev;
-		float[] radiance = new float[p.hits * 3];
-		float[] surfaces = null;
-		float inv = 1f / GiProbes.WEIGHT_SUM;
-		for (int it = 0; it < Math.max(1, iterations); ++it)
+		// the light leaving each patch: its albedo times the light on it
+		float[] leaving = new float[p.count * 3];
+		parallel.run(p.count, i ->
 		{
-			float[] last = out;
-			float[] cur = new float[p.count * SH];
-			float[] curSurfaces = new float[p.count * SH];
-			// light leaving each one-sided hit voxel
-			parallel.run(p.hits, h ->
+			if (!p.exists(i))
 			{
-				if (p.hitTwoSided[h])
+				return;
+			}
+			float nx = p.normal[i * 3], ny = p.normal[i * 3 + 1], nz = p.normal[i * 3 + 2];
+			float on = 0;
+			float ndl = nx * lx + ny * ly + nz * lz;
+			if (direct && ndl > 0)
+			{
+				// sun or moon, with the overcast's softening of shadows
+				float[] o = new float[3];
+				p.origin(i, o);
+				boolean seen = p.grid.trace(o[0] + lx * SUN_LIFT, o[1] + ly * SUN_LIFT, o[2] + lz * SUN_LIFT, lx, ly, lz,
+					SUN_DISTANCE, true, i) < 0;
+				on = ndl * (seen ? light.shadow1 : light.shadow0);
+			}
+			float[] e = {light.caster[0] * on, light.caster[1] * on, light.caster[2] * on};
+			// the sky in the directions the patch sees it in
+			long open = p.sky[i];
+			for (int r = 0; open != 0; ++r, open >>>= 1)
+			{
+				if ((open & 1) != 0)
 				{
-					return;
+					float cos = GiPatches.SKY_RAYS[r * 3] * nx + GiPatches.SKY_RAYS[r * 3 + 1] * ny
+						+ GiPatches.SKY_RAYS[r * 3 + 2] * nz;
+					for (int c = 0; c < 3; ++c)
+					{
+						e[c] += skyRays[r * 3 + c] * cos;
+					}
 				}
-				float nx = p.hitNormal[h * 3], ny = p.hitNormal[h * 3 + 1], nz = p.hitNormal[h * 3 + 2];
-				// lit or not, whatever angle the light comes in at: the bounce is the color of what is lit around
-				float sun = direct && nx * lx + ny * ly + nz * lz > 0 ? lit[h] : 0;
-				int b = p.hitBounce[h];
+			}
+			for (int c = 0; c < 3; ++c)
+			{
+				leaving[i * 3 + c] = p.albedo[i * 3 + c] * e[c];
+			}
+		});
 
+		// the light each patch gathers
+		float[] gathered = new float[p.count * 3];
+		parallel.run(p.count, i ->
+		{
+			for (int l = p.linkStart[i]; l < p.linkStart[i + 1]; ++l)
+			{
+				int j = p.linkTarget[l];
+				float w = p.linkWeight[l];
 				for (int c = 0; c < 3; ++c)
 				{
-					radiance[h * 3 + c] = p.hitAlbedo[h * 3 + c] * incident(light.caster, sun, last, b, nx, ny, nz, c);
+					gathered[i * 3 + c] += w * leaving[j * 3 + c];
 				}
-			});
-			parallel.run(p.count, i ->
-			{
-				if (!p.valid[i])
-				{
-					return;
-				}
-				float[] d = GiProbes.DIRECTIONS[GiProbes.rotation(i)];
-				float[] sr = skyRays[GiProbes.rotation(i)];
-				int base = i * rays;
-				for (int r = 0; r < rays; ++r)
-				{
-					int code = p.rays[base + r];
-					float w = GiProbes.WEIGHT[r];
-					float dx = d[r * 3], dy = d[r * 3 + 1], dz = d[r * 3 + 2];
-					if (code == GiProbes.MISS)
-					{
-						// the sky is no surface: it counts toward the whole light but not the surfaces'
-						accumulate(cur, i * SH, sr[r * 3], sr[r * 3 + 1], sr[r * 3 + 2], dx, dy, dz, w);
-						continue;
-					}
-					if (code == GiProbes.BACK)
-					{
-						continue;
-					}
-					float tr, tg, tb;
-					if (!p.hitTwoSided[code])
-					{
-						tr = radiance[code * 3];
-						tg = radiance[code * 3 + 1];
-						tb = radiance[code * 3 + 2];
-					}
-					else
-					{
-						// a thin surface shows the probe the side facing it, which takes the light from the probe's side
-						float sun = direct && dx * lx + dy * ly + dz * lz < 0 ? lit[code] : 0;
-						int b = p.hitBounce[code];
-						tr = p.hitAlbedo[code * 3] * incident(light.caster, sun, last, b, -dx, -dy, -dz, 0);
-						tg = p.hitAlbedo[code * 3 + 1] * incident(light.caster, sun, last, b, -dx, -dy, -dz, 1);
-						tb = p.hitAlbedo[code * 3 + 2] * incident(light.caster, sun, last, b, -dx, -dy, -dz, 2);
-					}
-					// A smooth local-bounce window, reaching zero at the ray limit (voxel units). The ground right
-					// under a probe counts in full: it is what lights the foot of the walls beside it (grass green),
-					// and the light's direction keeps it off the ground itself.
-					float hx = p.hitPos[code * 3] - p.position[i * 3] / GiGrid.VOXEL;
-					float hy = p.hitPos[code * 3 + 1] + p.grid.layer0 - p.position[i * 3 + 1] / GiGrid.VOXEL;
-					float hz = p.hitPos[code * 3 + 2] - p.position[i * 3 + 2] / GiGrid.VOXEL;
-					float distance = (float) Math.sqrt(hx * hx + hy * hy + hz * hz);
-					w *= 1 - smoothstep(0, 1, distance / GiProbes.MAX_DISTANCE);
-					accumulate(cur, i * SH, tr, tg, tb, dx, dy, dz, w);
-					accumulate(curSurfaces, i * SH, tr, tg, tb, dx, dy, dz, w);
-				}
-				for (int s = i * SH; s < (i + 1) * SH; ++s)
-				{
-					cur[s] *= inv;
-					curSurfaces[s] *= inv;
-				}
-			});
-			out = cur;
-			surfaces = curSurfaces;
-		}
-		return new Result(out, surfaces);
+			}
+		});
+		return gathered;
 	}
-
 }

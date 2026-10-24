@@ -1384,7 +1384,7 @@ public interface RuneLightConfig extends Config
 		name = "Lighting model",
 		description = "Where the ambient light comes from. Skylight: how much sky each spot sees, ray traced through "
 			+ "the scenery in the background; cheap, interiors and overhangs darken. Skylight + GI bounce: the same, plus the colored "
-			+ "light bounced into the shade by the global illumination's probes, which also need Global illumination on.",
+			+ "light bounced into the shade by the global illumination's patches, which also need Global illumination on.",
 		section = lightOcclusionSection,
 		position = 801
 	)

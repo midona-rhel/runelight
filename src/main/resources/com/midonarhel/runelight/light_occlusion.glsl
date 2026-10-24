@@ -1,7 +1,7 @@
 // The composite's half of the skylight and the light occlusion.
 //
 // Skylight (skylight_ao.glsl): the sky visibility upsampled with the AO scales the ambient and sky light, so
-// interiors, overhangs and the shade under trees darken without the probes; with the probes on too
+// interiors, overhangs and the shade under trees darken without the global illumination; with its patches on too
 // (skylightMode 2) they add the light bounced off surfaces, with its colors.
 //
 // Point lights: a static light's occlusion grid (LightOcclusion.java) dims it behind walls, and a light under a roof
@@ -9,7 +9,7 @@
 // the lights (LightOcclusion.texel) carries both, and whether the walls already decide where the light reaches on
 // its own storey. Needs lightData, cluster_config, cameraPos and rooms.glsl.
 
-uniform int skylightMode;    // 1 skylight, 2 skylight and the probes' bounce
+uniform int skylightMode;    // 1 skylight, 2 skylight and the patches' bounce
 uniform int skylightOn;      // 1 when the AO pass worked the sky visibility out this frame
 uniform float skylightFloor; // share of the ambient light kept where no sky is seen
 
@@ -32,13 +32,13 @@ float skyUpsampled = 1.0;
 // How much of the bounced light's brightness is added on top of the skylight in mode 2: 0 only gives the shade the
 // bounce's color, 1 adds all of it. Less than 1 keeps the exposure the skylight alone has; the colors still show.
 #define BOUNCE_BRIGHTNESS 1.0
-// The probes average their light over the whole sphere; a wall or a person beside the ground gets it over half of
-// theirs, the half facing it, and the albedos are the game's dim colors: the bounce they get is this many times the
-// probes' light.
-#define BOUNCE_GAIN 5.0
+// The patches' light is the light that reached the surface by bouncing, as irradiance in the units of the ambient light
+// (GiRelight), so it is added as it is. This is the knob for how much stronger or weaker than that the bounce is shown;
+// the albedos it is made of are the game's dim colors.
+#define BOUNCE_GAIN 1.0
 
-// plain: the ambient plus sky light a surface would get under the open sky; gi the probes' light and giW their weight.
-// In mode 2 the probes carry only the light bounced off surfaces (GiRelight), in color: the sunlit grass
+// plain: the ambient plus sky light a surface would get under the open sky; gi the patches' light and giW their weight.
+// In mode 2 the patches carry only the light bounced off surfaces (GiRelight), in color: the sunlit grass
 // that greens the wall in its shade, the red roof that warms the ground beside it, the water that blues its banks.
 vec3 skylightAmbient(vec3 plain, vec3 gi, float giW) {
   float v = skylightOn == 1 ? skyUpsampled : 1.0;

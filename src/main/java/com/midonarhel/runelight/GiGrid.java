@@ -172,7 +172,7 @@ final class GiGrid
 			{
 				continue;
 			}
-			int tx = i % GiProbes.SIZE, tz = i / GiProbes.SIZE;
+			int tx = i % GiPatches.SIZE, tz = i / GiPatches.SIZE;
 			for (int dz = 0; dz < perTile; ++dz)
 			{
 				for (int dx = 0; dx < perTile; ++dx)
