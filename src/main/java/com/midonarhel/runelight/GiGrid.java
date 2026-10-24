@@ -19,6 +19,8 @@ final class GiGrid
 	// bit 31: mostly swaying foliage, which rays pass with this chance
 	static final int FOLIAGE = 1 << 31;
 	static final float FOLIAGE_PASS = 0.4f;
+	// square world units of surface touching a voxel below which it doesn't count as occupied: a quarter of a face
+	static final float THIN_AREA = VOXEL * VOXEL / 4f;
 
 	final int nx, ny, nz;
 	final int layer0;
@@ -127,6 +129,12 @@ final class GiGrid
 				}
 				int o = k * GiVoxels.STRIDE;
 				float[] d = z.data;
+				// a voxel holding only a little surface (a lamp on a wall, a sign, a fence's rail) would block as much
+				// as a solid wall, half a tile of it: it is left empty
+				if (d[o] < THIN_AREA)
+				{
+					continue;
+				}
 				int idx = g.index(x, y, zz);
 				int cell = pack(d[o], d[o + 1], d[o + 2], d[o + 3], d[o + 4], d[o + 5], d[o + 6]);
 				if (d[o + 7] > d[o] * 0.5f)
