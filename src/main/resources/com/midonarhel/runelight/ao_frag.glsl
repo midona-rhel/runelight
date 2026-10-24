@@ -17,7 +17,7 @@ uniform float aoRadius;  // world units
 uniform int aoSamples;   // 0: only the geometry for the upsamples (AO off, fog on)
 uniform int shadowsEnabled;
 uniform vec3 casterDir;  // toward the light that casts shadows
-uniform sampler2D sceneMaterial;  // r emissive, g transmissive, b water, a snow (frag.glsl)
+uniform SCENE_SAMPLER sceneMaterial;  // r emissive, g transmissive, b water, a snow (frag.glsl)
 uniform usampler2D waterAoSurface;  // the water surface pass's target (water_frag.glsl)
 uniform int waterAoOn;
 uniform ivec4 waterAoRect;  // the pixels the surface can cover (water.glsl's waterRect)
@@ -41,10 +41,9 @@ void main() {
     FragShadow = vec4(1.0, 1.0, GROUND_NONE, 1.0);
     return;
   }
-  // a pixel partly covering the sky holds that share of its normal and material, the rest cleared to 0
-  // (the color target's alpha is that share: SceneTargets clears it to 0, geometry writes 1)
-  float cover = max(texelFetch(sceneColor, px, 0).a, 1.0 / 255.0);
-  vec3 n = decodeNormal(texelFetch(sceneNormal, px, 0).rgb / cover);
+  // sample 0 of the pixel, as in every pass but the composite, which shades the pixels that sample 0 doesn't stand for
+  // by each of their samples (composite_frag.glsl)
+  vec3 n = decodeNormal(texelFetch(sceneNormal, px, 0).rgb);
   float nearOverDepth = NEAR / viewDepth(d);
   FragAo = halfPackGeometry(nearOverDepth, n, vec3(0.0), 0.0);
   FragShadow = vec4(1.0, 1.0, GROUND_NONE, 1.0);
@@ -59,7 +58,7 @@ void main() {
   float noise = ign(gl_FragCoord.xy);
   FragShadow.a = skylightVisibility(p, n);
   if (shadowsEnabled == 1) {
-    vec2 m = texelFetch(sceneMaterial, px, 0).rg / cover;
+    vec2 m = texelFetch(sceneMaterial, px, 0).rg;
     // emissive surfaces show no shading; a leaf lit from behind looks up its shadow on the lit side
     if (m.r < 0.999) {
       FragShadow.r = shadowFactor(p, dot(n, casterDir) < 0.0 && m.g > 0.0 ? -n : n, noise);
@@ -71,7 +70,7 @@ void main() {
   // land terrain is never under water: the surface runs on under the banks, hidden (water.glsl)
   float keep = 1.0;
   if (waterAoOn == 1 && all(greaterThanEqual(px, waterAoRect.xy)) && all(lessThan(px, waterAoRect.zw))
-    && texelFetch(sceneMaterial, px, 0).b / cover >= 0.25) {
+    && texelFetch(sceneMaterial, px, 0).b >= 0.25) {
     keep = 1.0 - smoothstep(0.0, AO_WATER_DEPTH, waterDepthUnder(waterAoSurface, waterAoRect, px, p));
     if (keep <= 0.0) {
       return;

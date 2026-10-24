@@ -405,7 +405,7 @@ vec3 waterGlitter(ivec2 px, vec3 nrm, vec3 v, float shine, float foam, float sha
   vec3 tAlong = vec3(fwd.x, 0.0, fwd.y), tAcross = vec3(-fwd.y, 0.0, fwd.x);
   float glitter = 0.5 * waterGlitterAt(nrm, v, tAlong, tAcross);
   float w = 0.5;
-  ivec2 last = textureSize(sceneDepth, 0) - 1;
+  ivec2 last = sceneTextureSize() - 1;
   for (int i = 0; i < 4; ++i) {
     ivec2 q = clamp(px + ivec2(i == 0 ? 1 : i == 1 ? -1 : 0, i == 2 ? 1 : i == 3 ? -1 : 0), ivec2(0), last);
     uvec4 ws = waterSurfaceAt(waterSurface, waterRect, q);

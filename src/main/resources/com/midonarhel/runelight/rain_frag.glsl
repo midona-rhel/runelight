@@ -10,7 +10,7 @@ in float fViewZ;
 in float fAlpha;
 flat in vec3 fColor;
 
-uniform sampler2D sceneMaterial;  // b: 1 on the water bed; rain on water makes rings there instead (water.glsl)
+uniform SCENE_SAMPLER sceneMaterial;  // b: 1 on the water bed; rain on water makes rings there instead (water.glsl)
 
 out vec4 FragColor;
 

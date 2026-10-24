@@ -3,9 +3,10 @@ package com.midonarhel.runelight;
 import static org.lwjgl.opengl.GL33C.*;
 
 /**
- * The scene render targets: color, world-space normal and depth, as textures later passes can sample.
- * With MSAA the scene draws into multisampled renderbuffers and is resolved into the textures once per frame;
- * without MSAA it draws into the textures directly.
+ * The scene render targets: color, world-space normal, depth and material, as textures later passes can sample.
+ * With MSAA they are multisample textures that stay unresolved: the composite lights each sample of the pixels
+ * where the surface changes (composite_frag.glsl), and every other pass reads sample 0. Only the transparency layer,
+ * which is lit as it is drawn, is resolved, into a plain texture.
  */
 class SceneTargets
 {
@@ -46,15 +47,15 @@ class SceneTargets
 		glViewport(0, 0, width, height);
 	}
 
-	// what the scene draws into: fboMsaa when multisampled, else fboResolve
-	private int fboMsaa;
-	private int rboColor, rboNormal, rboDepth, rboAlpha, rboMaterial;
-
-	private int fboResolve;
-	private int texColor, texNormal, texDepth;
-	// transparent geometry, lit as it is drawn, premultiplied; blended over the lit opaque scene by the composite
+	// what the scene draws into
+	private int fboScene;
+	// GL_TEXTURE_2D, or GL_TEXTURE_2D_MULTISAMPLE with MSAA
+	private int target = GL_TEXTURE_2D;
+	private int texColor, texNormal, texDepth, texMaterial;
+	// transparent geometry, lit as it is drawn, premultiplied; blended over the lit opaque scene by the composite.
+	// With MSAA it is drawn into texAlphaMs and resolved into texAlpha by resolveAlpha.
 	private int texAlpha;
-	private int texMaterial;
+	private int texAlphaMs, fboAlpha;
 
 	private static final int[] OPAQUE_BUFFERS = {GL_COLOR_ATTACHMENT0, GL_COLOR_ATTACHMENT1, GL_NONE, GL_COLOR_ATTACHMENT3};
 	private static final int[] ALPHA_BUFFERS = {GL_NONE, GL_NONE, GL_COLOR_ATTACHMENT2, GL_NONE};
@@ -99,21 +100,31 @@ class SceneTargets
 		this.height = height;
 		this.samples = samples;
 
-		texColor = texture(COLOR_FORMAT, GL_RGBA, GL_UNSIGNED_BYTE);
-		texNormal = texture(NORMAL_FORMAT, GL_RGBA, GL_UNSIGNED_INT_2_10_10_10_REV);
-		texDepth = texture(DEPTH_FORMAT, GL_DEPTH_COMPONENT, GL_FLOAT);
-		texAlpha = texture(COLOR_FORMAT, GL_RGBA, GL_UNSIGNED_BYTE);
-		texMaterial = texture(MATERIAL_FORMAT, GL_RGBA, GL_UNSIGNED_BYTE);
+		target = samples > 0 ? GL_TEXTURE_2D_MULTISAMPLE : GL_TEXTURE_2D;
+		texColor = texture(target, COLOR_FORMAT, GL_RGBA, GL_UNSIGNED_BYTE);
+		texNormal = texture(target, NORMAL_FORMAT, GL_RGBA, GL_UNSIGNED_INT_2_10_10_10_REV);
+		texDepth = texture(target, DEPTH_FORMAT, GL_DEPTH_COMPONENT, GL_FLOAT);
+		texMaterial = texture(target, MATERIAL_FORMAT, GL_RGBA, GL_UNSIGNED_BYTE);
+		texAlpha = texture(GL_TEXTURE_2D, COLOR_FORMAT, GL_RGBA, GL_UNSIGNED_BYTE);
+		texAlphaMs = samples > 0 ? texture(target, COLOR_FORMAT, GL_RGBA, GL_UNSIGNED_BYTE) : 0;
 
-		fboResolve = glGenFramebuffers();
-		glBindFramebuffer(GL_FRAMEBUFFER, fboResolve);
-		glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, texColor, 0);
-		glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT1, GL_TEXTURE_2D, texNormal, 0);
-		glFramebufferTexture2D(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_TEXTURE_2D, texDepth, 0);
-		glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT2, GL_TEXTURE_2D, texAlpha, 0);
-		glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT3, GL_TEXTURE_2D, texMaterial, 0);
+		fboScene = glGenFramebuffers();
+		glBindFramebuffer(GL_FRAMEBUFFER, fboScene);
+		glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, target, texColor, 0);
+		glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT1, target, texNormal, 0);
+		glFramebufferTexture2D(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, target, texDepth, 0);
+		glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT3, target, texMaterial, 0);
+		glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT2, target, samples > 0 ? texAlphaMs : texAlpha, 0);
 		glDrawBuffers(OPAQUE_BUFFERS);
-		check("resolve");
+		check("scene");
+		if (samples > 0)
+		{
+			fboAlpha = glGenFramebuffers();
+			glBindFramebuffer(GL_FRAMEBUFFER, fboAlpha);
+			glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, texAlpha, 0);
+			glDrawBuffers(GL_COLOR_ATTACHMENT0);
+			check("alpha");
+		}
 
 		aoWidth = (int) Math.ceil(width / (double) halfRatio);
 		aoHeight = (int) Math.ceil(height / (double) halfRatio);
@@ -142,25 +153,6 @@ class SceneTargets
 		glDrawBuffers(GL_COLOR_ATTACHMENT0);
 		check("denoise");
 		denoiseFog = false;
-
-		if (samples > 0)
-		{
-			fboMsaa = glGenFramebuffers();
-			glBindFramebuffer(GL_FRAMEBUFFER, fboMsaa);
-			rboColor = renderbuffer(COLOR_FORMAT);
-			rboNormal = renderbuffer(NORMAL_FORMAT);
-			rboDepth = renderbuffer(DEPTH_FORMAT);
-			rboAlpha = renderbuffer(COLOR_FORMAT);
-			rboMaterial = renderbuffer(MATERIAL_FORMAT);
-			glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_RENDERBUFFER, rboColor);
-			glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT1, GL_RENDERBUFFER, rboNormal);
-			glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_RENDERBUFFER, rboDepth);
-			glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT2, GL_RENDERBUFFER, rboAlpha);
-			glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT3, GL_RENDERBUFFER, rboMaterial);
-			glDrawBuffers(OPAQUE_BUFFERS);
-			check("msaa");
-			glBindRenderbuffer(GL_RENDERBUFFER, 0);
-		}
 	}
 
 	void free()
@@ -171,34 +163,34 @@ class SceneTargets
 		glDeleteFramebuffers(partFbos);
 		java.util.Arrays.fill(partTextures, 0);
 		java.util.Arrays.fill(partFbos, 0);
-		if (fboMsaa != 0)
-		{
-			glDeleteFramebuffers(fboMsaa);
-			glDeleteRenderbuffers(new int[]{rboColor, rboNormal, rboDepth, rboAlpha, rboMaterial});
-			fboMsaa = rboColor = rboNormal = rboDepth = rboAlpha = rboMaterial = 0;
-		}
 		if (fboAo != 0)
 		{
 			glDeleteFramebuffers(new int[]{fboAo, fboDenoise});
 			glDeleteTextures(new int[]{texAo, texShadowRaw, texShadow});
 			fboAo = texAo = texShadowRaw = texShadow = fboDenoise = 0;
 		}
-		if (fboResolve != 0)
+		if (fboScene != 0)
 		{
-			glDeleteFramebuffers(fboResolve);
+			glDeleteFramebuffers(fboScene);
 			glDeleteTextures(new int[]{texColor, texNormal, texDepth, texAlpha, texMaterial});
-			fboResolve = texColor = texNormal = texDepth = texAlpha = texMaterial = 0;
+			fboScene = texColor = texNormal = texDepth = texAlpha = texMaterial = 0;
+		}
+		if (fboAlpha != 0)
+		{
+			glDeleteFramebuffers(fboAlpha);
+			glDeleteTextures(texAlphaMs);
+			fboAlpha = texAlphaMs = 0;
 		}
 	}
 
 	boolean isInitialized()
 	{
-		return fboResolve != 0;
+		return fboScene != 0;
 	}
 
 	int getRenderFbo()
 	{
-		return samples > 0 ? fboMsaa : fboResolve;
+		return fboScene;
 	}
 
 	int getWidth()
@@ -417,41 +409,26 @@ class SceneTargets
 	}
 
 	/**
-	 * Resolve the multisampled scene into the sampleable textures. No-op without MSAA.
+	 * Resolve the transparency layer, the one target a pass reads averaged: it is lit already, so its samples average
+	 * to the pixel's. No-op without MSAA.
 	 */
-	void resolve()
+	void resolveAlpha()
 	{
 		if (samples == 0)
 		{
 			return;
 		}
-		glBindFramebuffer(GL_READ_FRAMEBUFFER, fboMsaa);
-		glBindFramebuffer(GL_DRAW_FRAMEBUFFER, fboResolve);
-
-		glReadBuffer(GL_COLOR_ATTACHMENT0);
-		glDrawBuffers(GL_COLOR_ATTACHMENT0);
-		glBlitFramebuffer(0, 0, width, height, 0, 0, width, height, GL_COLOR_BUFFER_BIT, GL_NEAREST);
-
-		glReadBuffer(GL_COLOR_ATTACHMENT1);
-		glDrawBuffers(GL_COLOR_ATTACHMENT1);
-		glBlitFramebuffer(0, 0, width, height, 0, 0, width, height, GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT, GL_NEAREST);
-
+		glBindFramebuffer(GL_READ_FRAMEBUFFER, fboScene);
+		glBindFramebuffer(GL_DRAW_FRAMEBUFFER, fboAlpha);
 		glReadBuffer(GL_COLOR_ATTACHMENT2);
-		glDrawBuffers(GL_COLOR_ATTACHMENT2);
 		glBlitFramebuffer(0, 0, width, height, 0, 0, width, height, GL_COLOR_BUFFER_BIT, GL_NEAREST);
-
-		glReadBuffer(GL_COLOR_ATTACHMENT3);
-		glDrawBuffers(GL_COLOR_ATTACHMENT3);
-		glBlitFramebuffer(0, 0, width, height, 0, 0, width, height, GL_COLOR_BUFFER_BIT, GL_NEAREST);
-
 		glReadBuffer(GL_COLOR_ATTACHMENT0);
-		glDrawBuffers(OPAQUE_BUFFERS);
 	}
 
 	/**
-	 * Clear every target for a new frame, once each: color to the sky color with alpha 0 (geometry writes 1, so the
-	 * resolved alpha is how much of each pixel it covers), the rest to 0, depth to far (reverse-z). Call with the
-	 * render framebuffer bound.
+	 * Clear every target for a new frame, once each: color to the sky color with alpha 0 (geometry writes 1, so a
+	 * sample's alpha says whether geometry covers it), the rest to 0, depth to far (reverse-z). Call with the render
+	 * framebuffer bound.
 	 */
 	void clear(float r, float g, float b)
 	{
@@ -460,8 +437,6 @@ class SceneTargets
 		clearColor[1] = g;
 		clearColor[2] = b;
 		glClearBufferfv(GL_COLOR, 0, clearColor);
-		// The normal and material at 0: a pixel the geometry only partly covers resolves to that share of its
-		// values, which the composite divides back out by the color target's alpha, the coverage.
 		glClearBufferfv(GL_COLOR, 1, TRANSPARENT);
 		glClearBufferfv(GL_COLOR, 2, TRANSPARENT);
 		glClearBufferfv(GL_COLOR, 3, TRANSPARENT);
@@ -480,7 +455,14 @@ class SceneTargets
 	void bindMaterial(int unit)
 	{
 		glActiveTexture(GL_TEXTURE0 + unit);
-		glBindTexture(GL_TEXTURE_2D, texMaterial);
+		glBindTexture(target, texMaterial);
+		glActiveTexture(GL_TEXTURE0);
+	}
+
+	void unbindMaterial(int unit)
+	{
+		glActiveTexture(GL_TEXTURE0 + unit);
+		glBindTexture(target, 0);
 		glActiveTexture(GL_TEXTURE0);
 	}
 
@@ -497,11 +479,11 @@ class SceneTargets
 	void bindTextures(int firstUnit)
 	{
 		glActiveTexture(GL_TEXTURE0 + firstUnit);
-		glBindTexture(GL_TEXTURE_2D, texColor);
+		glBindTexture(target, texColor);
 		glActiveTexture(GL_TEXTURE0 + firstUnit + 1);
-		glBindTexture(GL_TEXTURE_2D, texNormal);
+		glBindTexture(target, texNormal);
 		glActiveTexture(GL_TEXTURE0 + firstUnit + 2);
-		glBindTexture(GL_TEXTURE_2D, texDepth);
+		glBindTexture(target, texDepth);
 		glActiveTexture(GL_TEXTURE0);
 	}
 
@@ -510,30 +492,30 @@ class SceneTargets
 		for (int i = 0; i < 3; ++i)
 		{
 			glActiveTexture(GL_TEXTURE0 + firstUnit + i);
-			glBindTexture(GL_TEXTURE_2D, 0);
+			glBindTexture(target, 0);
 		}
 		glActiveTexture(GL_TEXTURE0);
 	}
 
-	private int texture(int internalFormat, int format, int type)
+	private int texture(int target, int internalFormat, int format, int type)
 	{
 		int tex = glGenTextures();
-		glBindTexture(GL_TEXTURE_2D, tex);
-		glTexImage2D(GL_TEXTURE_2D, 0, internalFormat, width, height, 0, format, type, 0);
-		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
-		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
-		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
-		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-		glBindTexture(GL_TEXTURE_2D, 0);
+		glBindTexture(target, tex);
+		if (target == GL_TEXTURE_2D_MULTISAMPLE)
+		{
+			// fixed sample locations: every attachment of the framebuffer must agree on them
+			glTexImage2DMultisample(target, samples, internalFormat, width, height, true);
+		}
+		else
+		{
+			glTexImage2D(target, 0, internalFormat, width, height, 0, format, type, 0);
+			glTexParameteri(target, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+			glTexParameteri(target, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+			glTexParameteri(target, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+			glTexParameteri(target, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+		}
+		glBindTexture(target, 0);
 		return tex;
-	}
-
-	private int renderbuffer(int internalFormat)
-	{
-		int rbo = glGenRenderbuffers();
-		glBindRenderbuffer(GL_RENDERBUFFER, rbo);
-		glRenderbufferStorageMultisample(GL_RENDERBUFFER, samples, internalFormat, width, height);
-		return rbo;
 	}
 
 	private static void check(String which)

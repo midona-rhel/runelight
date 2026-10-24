@@ -10,7 +10,8 @@
 
 #include "water_common.glsl"
 
-uniform sampler2D sceneDepth;  // the opaque scene, resolved
+#include "scene_samplers.glsl"
+uniform SCENE_SAMPLER sceneDepth;  // the opaque scene (sample 0)
 uniform sampler2D waterData;    // WaterMap.texture (water_vert.glsl)
 uniform sampler2D waterContact; // WaterMap.contact: how close something standing in the water is, 4 texels a tile
 uniform vec3 waterWind;

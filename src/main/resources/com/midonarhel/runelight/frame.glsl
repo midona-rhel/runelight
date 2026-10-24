@@ -1,9 +1,10 @@
 // Shared by the full-screen passes: scene buffers, camera data and position reconstruction.
 // Positions are camera-relative world space (world minus camera), in game units: 128 per tile, y points down.
 
-uniform sampler2D sceneColor;
-uniform sampler2D sceneNormal;  // world space, n * 0.5 + 0.5
-uniform sampler2D sceneDepth;   // reverse-z, far = 0
+#include "scene_samplers.glsl"
+uniform SCENE_SAMPLER sceneColor;  // a: 1 where geometry was drawn, 0 on the clear
+uniform SCENE_SAMPLER sceneNormal;  // world space, n * 0.5 + 0.5
+uniform SCENE_SAMPLER sceneDepth;   // reverse-z, far = 0
 
 uniform mat4 viewProj;          // camera-relative world -> clip
 uniform mat4 invViewProj;

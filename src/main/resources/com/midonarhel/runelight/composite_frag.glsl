@@ -46,7 +46,7 @@ uniform sampler2D cloudHalf;
 #define TILE_SIZE 128.0
 
 uniform sampler2D sceneAlpha;  // transparent geometry, already lit, premultiplied
-uniform sampler2D sceneMaterial;  // r emissive, g transmissive, b water, a snow (frag.glsl)
+uniform SCENE_SAMPLER sceneMaterial;  // r emissive, g transmissive, b water, a snow (frag.glsl)
 #include debug_view
 uniform int aoEnabled;
 uniform float aoStrength;
@@ -272,26 +272,15 @@ vec4 overTransparent(vec4 a, vec4 base) {
 
 // ---------------------------------------------------------------------------------------------------------------
 
-// The opaque target's alpha is how much of the pixel geometry covers (the MSAA samples resolved; SceneTargets
-// clears it to 0): at silhouettes against the sky the color, normal and material hold that share of the
-// geometry's, the rest is the clear values. Undone here, so the geometry is lit as itself and blended over the sky
-// by its coverage, and edges stay as smooth as the antialiasing made them. The resolved depth is one sample's, so
-// an edge pixel whose depth missed the geometry borrows a neighbor's.
-float borrowDepth(ivec2 px) {
-  float best = 0.0;
-  bool found = false;
-  ivec2 last = textureSize(sceneDepth, 0) - 1;
-  for (int y = -1; y <= 1; ++y) {
-    for (int x = -1; x <= 1; ++x) {
-      float q = texelFetch(sceneDepth, clamp(px + ivec2(x, y), ivec2(0), last), 0).r;
-      // reverse-z: the nearest has the largest depth
-      if (!isSky(q) && (!found || q > best)) {
-        best = q;
-        found = true;
-      }
+// Whether the sky can show in the scene pixel q: through a sample no geometry covers, or (sample 0's) the world's fade
+// at its edge. With MSAA the sky shows behind a silhouette through the samples that miss.
+bool skyShowsAt(ivec2 q) {
+  for (int s = 0; s < SCENE_SAMPLES; ++s) {
+    if (isSky(texelFetch(sceneDepth, q, s).r) || texelFetch(sceneColor, q, s).a < 0.996) {
+      return true;
     }
   }
-  return found ? best : -1.0;
+  return edgeFadeAmount(reconstructPosition(vec2(q) + 0.5, texelFetch(sceneDepth, q, 0).r) + cameraPos) > 0.002;
 }
 
 // The half resolution clouds (into cloudHalf). The pass is scissored to the rows that can hold cloud
@@ -307,14 +296,12 @@ vec4 cloudsHalf() {
     return vec4(0.0, 0.0, 0.0, 1.0);
   }
   // Only where the sky shows: in the scene pixels this texel covers and the ones next to them, which the filtering
-  // reaches, or behind geometry's partly covered edges or its fade at the edge of the world. Elsewhere clear sky.
+  // reaches, or behind geometry's edges or its fade at the edge of the world. Elsewhere clear sky.
   bool needed = false;
-  ivec2 last = textureSize(sceneDepth, 0) - 1;
+  ivec2 last = sceneTextureSize() - 1;
   for (int i = 0; i < 4 && !needed; ++i) {
-    ivec2 q = clamp(ivec2(c + vec2(i & 1, i >> 1) * (halfRatio + 2.0) - (halfRatio * 0.5 + 1.0)), ivec2(0), last);
-    float qd = texelFetch(sceneDepth, q, 0).r;
-    needed = isSky(qd) || texelFetch(sceneColor, q, 0).a < 0.996
-      || edgeFadeAmount(reconstructPosition(vec2(q) + 0.5, qd) + cameraPos) > 0.002;
+    needed = skyShowsAt(clamp(ivec2(c + vec2(i & 1, i >> 1) * (halfRatio + 2.0) - (halfRatio * 0.5 + 1.0)),
+      ivec2(0), last));
   }
   if (!needed) {
     return vec4(0.0, 0.0, 0.0, 1.0);
@@ -326,21 +313,24 @@ vec4 cloudsHalf() {
     CLOUD_STEPS);
 }
 
-void main() {
-#if COMPOSITE_PASS != COMPOSITE_FULL
-  // the half resolution passes: the clouds, the water's surface (water.glsl), or both
-#if COMPOSITE_PASS != COMPOSITE_WATER
-  FragColor = cloudsHalf();
-#endif
-#if COMPOSITE_PASS != COMPOSITE_CLOUDS
-  waterShadeHalf(ivec2(gl_FragCoord.xy));
-#endif
-#else
-  ivec2 px = ivec2(gl_FragCoord.xy);
-  vec4 color = texelFetch(sceneColor, px, 0);
-  float d = texelFetch(sceneDepth, px, 0).r;
-  // transparent geometry over this pixel: the wet ground's coverage test and the final blend both read it
-  vec4 transparent = texelFetch(sceneAlpha, px, 0);
+// What the scene holds for one sample of a pixel
+struct SceneSample {
+  vec4 color;     // a: 1 where geometry was drawn, 0 on the clear
+  float depth;
+  vec3 normal;    // as stored, n * 0.5 + 0.5
+  vec4 material;
+};
+
+SceneSample sceneSample(ivec2 px, int s) {
+  return SceneSample(texelFetch(sceneColor, px, s), texelFetch(sceneDepth, px, s).r, texelFetch(sceneNormal, px, s).rgb,
+    texelFetch(sceneMaterial, px, s));
+}
+
+// Lights one scene sample of the pixel px: sky or surface, then the transparent layer over it, then the fog.
+// transparent is the pixel's, already lit, premultiplied: the wet ground's coverage test and the final blend read it.
+vec4 shadeScene(ivec2 px, SceneSample sm, vec4 transparent) {
+  vec4 color = sm.color;
+  float d = sm.depth;
   bool inside = inViewport(px);
   bool sunAndSky = outdoors == 1;
   // the procedural sky shows; a black void or a cave shows the fog color instead
@@ -352,58 +342,38 @@ void main() {
   if (debugView == DEBUG_DEPTH) {
     // log scale from the near plane out to ~100 tiles
     float v = isSky(d) ? 1.0 : clamp(log(viewDepth(d) / NEAR) / log(12800.0 / NEAR), 0.0, 1.0);
-    FragColor = vec4(vec3(v), 1.0);
-    return;
+    return vec4(vec3(v), 1.0);
   }
 
   if (debugView == DEBUG_NORMALS) {
-    FragColor = vec4(texelFetch(sceneNormal, px, 0).rgb, 1.0);
-    return;
+    return vec4(sm.normal, 1.0);
   }
 
-  // where the composite draws the sky itself, geometry is blended over it by coverage
+  // where the composite draws the sky itself, a sample no geometry covers shows it
   bool replaceSky = inside && (openSky || voidSky);
-  float cover = replaceSky ? clamp(color.a, 0.0, 1.0) : 1.0;
-  if (isSky(d) && replaceSky && cover > 0.004) {
-    d = borrowDepth(px);
-    if (d < 0.0) {
-      cover = 0.0;
-      d = 0.0;
-    }
-  }
-  vec3 behind = vec3(0.0);
-  if ((compositePart == 0 || compositePart == 5) && replaceSky && (cover < 0.996 || isSky(d))) {
-    // a point on the near plane gives the view ray; the camera is at the origin of camera-relative space
-    vec3 dir = normalize(reconstructPosition(vec2(px) + 0.5, 1.0));
-    behind = openSky ? skyBehind(vec2(px) + 0.5, dir, fogColor, true) : fogColor;
-    // looking steeply down past the world (into a trapdoor, off a cliff) there is no sky, only the dark under it
-    behind *= 1.0 - voidBelow(dir);
-  }
-
-  if (isSky(d) || cover <= 0.004) {
-    if (compositePart > 0 && compositePart < 5) { FragColor = vec4(0.0); return; }
+  if (isSky(d) || (replaceSky && color.a <= 0.004)) {
+    if (compositePart > 0 && compositePart < 5) { return vec4(0.0); }
     if (replaceSky) {
-      color.rgb = behind;
+      // a point on the near plane gives the view ray; the camera is at the origin of camera-relative space
+      vec3 dir = normalize(reconstructPosition(vec2(px) + 0.5, 1.0));
+      color.rgb = openSky ? skyBehind(vec2(px) + 0.5, dir, fogColor, true) : fogColor;
+      // looking steeply down past the world (into a trapdoor, off a cliff) there is no sky, only the dark under it
+      color.rgb *= 1.0 - voidBelow(dir);
     }
-    // the color target's alpha is coverage; the window wants opaque
-    FragColor = overTransparent(transparent, vec4(color.rgb, 1.0));
+    // the color target's alpha says whether geometry covers it; the window wants opaque
+    vec4 result = overTransparent(transparent, vec4(color.rgb, 1.0));
     // 0 is sky in both depth conventions
-    FragColor.rgb = applyVolumetricFog(px, FragColor.rgb, 0.0);
+    result.rgb = applyVolumetricFog(px, result.rgb, 0.0);
     // the sky's broad gradients band in the 8-bit window: a triangular dither of one step hides it
     vec2 q = vec2(px);
-    FragColor.rgb += (fract(52.9829189 * fract(dot(q, vec2(0.06711056, 0.00583715))))
+    result.rgb += (fract(52.9829189 * fract(dot(q, vec2(0.06711056, 0.00583715))))
       - fract(52.9829189 * fract(dot(q + 0.5, vec2(0.00583715, 0.06711056))))) / 255.0;
-    return;
+    return result;
   }
 
-  // the geometry's own share of an edge pixel
-  float inv = 1.0 / max(cover, 1.0 / 255.0);
-  if (cover < 0.996) {
-    color.rgb = clamp((color.rgb - (1.0 - cover) * clientSkyColor) * inv, 0.0, 1.0);
-  }
-  vec3 n = decodeNormal(cover < 0.996 ? texelFetch(sceneNormal, px, 0).rgb * inv : texelFetch(sceneNormal, px, 0).rgb);
+  vec3 n = decodeNormal(sm.normal);
   vec3 p = reconstructPosition(vec2(px) + 0.5, d);
-  vec4 material = texelFetch(sceneMaterial, px, 0) * (cover < 0.996 ? inv : 1.0);
+  vec4 material = sm.material;
   float emissive = material.r;
   float transmissive = material.g;
 
@@ -470,8 +440,8 @@ void main() {
     indirect = light;
   }
 
-  if (compositePart == 1) { FragColor = vec4(indirect, 0.0); return; }
-  if (compositePart == 2) { FragColor = vec4(light - indirect, shadow); return; }
+  if (compositePart == 1) { return vec4(indirect, 0.0); }
+  if (compositePart == 2) { return vec4(light - indirect, shadow); }
   if (compositePart == 3) light = vec3(0.0);
   int cluster = clusterAt(px, viewDepth(d));
   if ((compositePart == 0 || compositePart == 3) && pointLightsEnabled == 1 && inside) {
@@ -480,7 +450,7 @@ void main() {
     // the canopy interior SSAO darkens is exactly where light inside a tree shines through
     light += through;
   }
-  if (compositePart == 3) { FragColor = vec4(light, 0.0); return; }
+  if (compositePart == 3) { return vec4(light, 0.0); }
   if (compositePart == 4) {
     vec4 sun = texelFetch(compositeParts, ivec3(px, 1), 0);
     light = texelFetch(compositeParts, ivec3(px, 0), 0).rgb + sun.rgb
@@ -493,38 +463,31 @@ void main() {
   if (debugView == DEBUG_LIGHT_CLUSTERS) {
     // lights evaluated per pixel: blue 0, green ~4, red 8+
     float c = pointLightsEnabled == 1 ? float(clusterLightCount(cluster)) / 8.0 : 0.0;
-    FragColor = vec4(clamp(vec3(c * 2.0 - 1.0, 1.0 - abs(c * 2.0 - 1.0), 1.0 - c * 2.0), 0.0, 1.0), 1.0);
-    return;
+    return vec4(clamp(vec3(c * 2.0 - 1.0, 1.0 - abs(c * 2.0 - 1.0), 1.0 - c * 2.0), 0.0, 1.0), 1.0);
   }
 
   if (debugView == DEBUG_MATERIALS) {
     // emissive red, transmissive green, over the dimmed scene
     vec3 tint = vec3(emissive, transmissive, 0.0);
-    FragColor = vec4(mix(color.rgb * 0.35, tint, max(emissive, transmissive) * 0.8), 1.0);
-    return;
+    return vec4(mix(color.rgb * 0.35, tint, max(emissive, transmissive) * 0.8), 1.0);
   }
 
   if (debugView == DEBUG_AO) {
-    FragColor = vec4(vec3(ao), 1.0);
-    return;
+    return vec4(vec3(ao), 1.0);
   }
   if (debugView == DEBUG_GI) {
     // the indirect light alone, as a white surface would show it
-    FragColor = vec4(linearToSrgb(clamp(indirect, 0.0, 1.0)), 1.0);
-    return;
+    return vec4(linearToSrgb(clamp(indirect, 0.0, 1.0)), 1.0);
   }
   if (debugView == DEBUG_SKYLIGHT) {
     // sky visibility, red where it isn't worked out
-    FragColor = vec4(skylightOn == 1 ? vec3(skyUpsampled) : vec3(0.5, 0.0, 0.0), 1.0);
-    return;
+    return vec4(skylightOn == 1 ? vec3(skyUpsampled) : vec3(0.5, 0.0, 0.0), 1.0);
   }
   if (debugView == DEBUG_SHADOWS) {
-    FragColor = vec4(vec3(shadow), 1.0);
-    return;
+    return vec4(vec3(shadow), 1.0);
   }
   if (debugView == DEBUG_LIGHTING) {
-    FragColor = vec4(linearToSrgb(clamp(light * 0.35, 0.0, 1.0)), 1.0);
-    return;
+    return vec4(linearToSrgb(clamp(light * 0.35, 0.0, 1.0)), 1.0);
   }
 
   vec3 lit;
@@ -533,7 +496,7 @@ void main() {
   bool linearLit = false;
   if (compositePart != 5) {
     lit = shadeLinear(color.rgb, light);
-    linearLit = fogDone && compositePart == 0 && wet <= 0.0 && cover >= 1.0 && transparent == vec4(0.0)
+    linearLit = fogDone && compositePart == 0 && wet <= 0.0 && transparent == vec4(0.0)
       && !waterUnder(px, material.b);
     if (!linearLit) {
       lit = linearToSrgb(lit);
@@ -541,7 +504,7 @@ void main() {
         lit = weatherWetSheen(lit, p, n, wet, ao, skyHorizon(sunAltitude));
       }
       lit = waterOver(px, p, color.rgb, shadow, lit, material.b);
-      if (compositePart == 4) { FragColor = vec4(lit, 1.0); return; }
+      if (compositePart == 4) { return vec4(lit, 1.0); }
     }
   } else {
     lit = texelFetch(compositeParts, ivec3(px, 0), 0).rgb;
@@ -551,8 +514,7 @@ void main() {
   float edge = inside ? edgeFadeAmount(p + cameraPos) : 0.0;
   if (linearLit) {
     if (distanceFog <= 0.0 && edge <= 0.002) {
-      FragColor = vec4(applyFogLinear(lit, fog), 1.0);
-      return;
+      return vec4(applyFogLinear(lit, fog), 1.0);
     }
     lit = linearToSrgb(lit);
   }
@@ -560,9 +522,79 @@ void main() {
   if (edge > 0.002) {
     lit = mix(lit, skyBehind(vec2(px) + 0.5, normalize(p), fogColor, sunAndSky), edge);
   }
-  // over the sky by the geometry's coverage
-  lit = mix(behind, lit, cover);
-  FragColor = overTransparent(transparent, vec4(lit, 1.0));
-  FragColor.rgb = fogDone ? applyFogSample(FragColor.rgb, fog) : applyVolumetricFog(px, FragColor.rgb, d);
+  vec4 result = overTransparent(transparent, vec4(lit, 1.0));
+  result.rgb = fogDone ? applyFogSample(result.rgb, fog) : applyVolumetricFog(px, result.rgb, d);
+  return result;
+}
+
+#if MSAA_SAMPLES > 0
+// The samples of a pixel are one surface when their depth, normal and material agree within these: a view depth
+// relative to the sample's (a plane at a grazing angle spans ~0.2% over a pixel's samples), the stored normal's and
+// material's channels. Their colors may differ, as the triangles meeting inside a flat surface's pixel do.
+#define MSAA_DEPTH_TOLERANCE 0.005
+#define MSAA_NORMAL_TOLERANCE 0.03
+#define MSAA_MATERIAL_TOLERANCE 0.05
+
+// The scene pixel, shaded by its distinct surfaces: the samples that agree with the first one not yet taken (depth,
+// normal and material) are one surface, shaded once with the mean of their colors and counted for as many samples,
+// and the result is the mean over the samples. Where the pixel is one surface that is the single shading the no-MSAA
+// path does, with the colors antialiased; at a silhouette against the sky, or a fold between faces, each side is lit
+// with its own depth, normal and material, and the half resolution inputs are upsampled for them. It is the lit
+// results that are averaged, not the normals and materials.
+vec4 shadeSamples(ivec2 px, vec4 transparent) {
+  vec4 sum = vec4(0.0);
+  int todo = (1 << MSAA_SAMPLES) - 1;
+  while (todo != 0) {
+    int s = 0;
+    while ((todo >> s & 1) == 0) {
+      ++s;
+    }
+    todo &= ~(1 << s);
+    SceneSample sm = sceneSample(px, s);
+    vec4 colors = sm.color;
+    float count = 1.0;
+    float vz = viewDepth(sm.depth);
+    for (int t = s + 1; t < MSAA_SAMPLES; ++t) {
+      if ((todo >> t & 1) == 0) {
+        continue;
+      }
+      // the cheapest test first: a pixel of one surface passes all, but the fetches stop at the first that fails
+      float dt = texelFetch(sceneDepth, px, t).r;
+      if (isSky(dt) != isSky(sm.depth) || (!isSky(dt) && abs(viewDepth(dt) - vz) > MSAA_DEPTH_TOLERANCE * vz)) {
+        continue;
+      }
+      if (any(greaterThan(abs(texelFetch(sceneNormal, px, t).rgb - sm.normal), vec3(MSAA_NORMAL_TOLERANCE)))
+        || any(greaterThan(abs(texelFetch(sceneMaterial, px, t) - sm.material), vec4(MSAA_MATERIAL_TOLERANCE)))) {
+        continue;
+      }
+      todo &= ~(1 << t);
+      colors += texelFetch(sceneColor, px, t);
+      count += 1.0;
+    }
+    sm.color = colors / count;
+    sum += shadeScene(px, sm, transparent) * count;
+  }
+  return sum / float(MSAA_SAMPLES);
+}
+#endif
+
+void main() {
+#if COMPOSITE_PASS != COMPOSITE_FULL
+  // the half resolution passes: the clouds, the water's surface (water.glsl), or both
+#if COMPOSITE_PASS != COMPOSITE_WATER
+  FragColor = cloudsHalf();
+#endif
+#if COMPOSITE_PASS != COMPOSITE_CLOUDS
+  waterShadeHalf(ivec2(gl_FragCoord.xy));
+#endif
+#else
+  ivec2 px = ivec2(gl_FragCoord.xy);
+  // transparent geometry over this pixel (drawn as MSAA samples, resolved: it is lit as it is drawn)
+  vec4 transparent = texelFetch(sceneAlpha, px, 0);
+#if MSAA_SAMPLES > 0
+  FragColor = shadeSamples(px, transparent);
+#else
+  FragColor = shadeScene(px, sceneSample(px, 0), transparent);
+#endif
 #endif
 }

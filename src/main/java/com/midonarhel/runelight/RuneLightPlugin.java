@@ -1040,6 +1040,25 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		checkGLErrors();
 	}
 
+	// the scene targets' sample count the shaders are compiled for: they read multisample textures with MSAA
+	private int shaderSamples;
+
+	/**
+	 * Samples per pixel of the scene targets, 0 for none: the antialiasing mode's, or the window's when the driver
+	 * forces its own, within what the multisample textures can hold.
+	 */
+	private int sceneSamples()
+	{
+		// bind the default framebuffer to check whether anti-aliasing is forced
+		glBindFramebuffer(GL_FRAMEBUFFER, awtContext.getFramebuffer(false));
+		final int forced = glGetInteger(GL_SAMPLES);
+		final int max = Math.min(glGetInteger(GL_MAX_SAMPLES),
+			Math.min(glGetInteger(GL_MAX_COLOR_TEXTURE_SAMPLES), glGetInteger(GL_MAX_DEPTH_TEXTURE_SAMPLES)));
+		final int samples = Math.min(forced != 0 ? forced : config.antiAliasingMode().getSamples(), max);
+		log.debug("AA samples: {}, max samples: {}, forced samples: {}", samples, max, forced);
+		return samples > 1 ? samples : 0;
+	}
+
 	private Template createTemplate()
 	{
 		Template template = new Template();
@@ -1065,6 +1084,9 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 					// Changing this diagnostic property requires a shader reload.
 					return Boolean.parseBoolean(System.getProperty("runelight.compositeCombined", "true"))
 						? "const int compositePart = 0;\n" : "uniform int compositePart;\n";
+				case "msaa_config":
+					// the scene targets' samples (scene_samplers.glsl): the programs are compiled for them
+					return "#define MSAA_SAMPLES " + shaderSamples + "\n";
 				case "colorblind_mode":
 					return "#define COLORBLIND_MODE " + config.colorBlindMode().ordinal() + "\n";
 				case "debug_view":
@@ -1091,6 +1113,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 
 	private void initProgram() throws ShaderException
 	{
+		shaderSamples = sceneSamples();
 		// macOS core profile has no default VAO, so the shaders won't validate unless a VAO is bound
 		glBindVertexArray(vaoUiHandle);
 
@@ -1341,7 +1364,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 	 * Recompile every program. On failure the previous programs stay in use, so a typo while editing
 	 * a shader shows an error instead of taking down the renderer.
 	 */
-	private void reloadShaders()
+	private boolean reloadShaders()
 	{
 		glBindVertexArray(vaoUiHandle);
 		Template template = createTemplate();
@@ -1415,7 +1438,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 				log.error("Shader reload failed:\n{}", msg);
 				chat("Shader error: " + firstLines(msg, 3));
 			}
-			return;
+			return false;
 		}
 		finally
 		{
@@ -1457,6 +1480,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		}
 		shaderError = null;
 		log.info("Shaders reloaded");
+		return true;
 	}
 
 	String getShaderError()
@@ -1753,14 +1777,17 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 			{
 				shutdownFbo();
 
-				// Bind default FBO to check whether anti-aliasing is forced
-				glBindFramebuffer(GL_FRAMEBUFFER, awtContext.getFramebuffer(false));
-				final int forcedAASamples = glGetInteger(GL_SAMPLES);
-				final int maxSamples = glGetInteger(GL_MAX_SAMPLES);
-				final int samples = forcedAASamples != 0 ? forcedAASamples :
-					Math.min(antiAliasingMode.getSamples(), maxSamples);
-
-				log.debug("AA samples: {}, max samples: {}, forced samples: {}", samples, maxSamples, forcedAASamples);
+				int samples = sceneSamples();
+				if (samples != shaderSamples)
+				{
+					// the programs read the scene as multisample textures or not: recompiled to match
+					final int compiled = shaderSamples;
+					shaderSamples = samples;
+					if (!reloadShaders())
+					{
+						shaderSamples = samples = compiled;
+					}
+				}
 
 				initFbo(stretchedCanvasWidth, stretchedCanvasHeight, samples, renderFactor);
 
@@ -1953,7 +1980,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		cpuTimer.end(CpuTimer.CLIENT_SCENE);
 
 		gpuTimer.begin(GpuTimer.RESOLVE);
-		sceneTargets.resolve();
+		sceneTargets.resolveAlpha();
 		try
 		{
 			if (frameShadows)
@@ -2832,7 +2859,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		final boolean ao = config.ambientOcclusion();
 
 		sceneTargets.bindTextures(COMPOSITE_TEXTURE_UNIT);
-		// the water surface into its own target, against the resolved depth, before the composite reads it
+		// the water surface into its own target, against the scene's depth, before the composite reads it
 		weather.getWaterWind(waterWind);
 		gpuTimer.begin(GpuTimer.WATER);
 		water.drawSurface(config, waterWind, weather.waterRain(), frameOutdoors, sceneTargets.getWidth(),
@@ -3083,9 +3110,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		LightClusters.unbind(LIGHT_DATA_UNIT, CLUSTER_DATA_UNIT, LIGHT_VIS_UNIT);
 		glActiveTexture(GL_TEXTURE0 + ALPHA_LAYER_UNIT);
 		glBindTexture(GL_TEXTURE_2D, 0);
-		glActiveTexture(GL_TEXTURE0 + MATERIAL_UNIT);
-		glBindTexture(GL_TEXTURE_2D, 0);
-		glActiveTexture(GL_TEXTURE0);
+		sceneTargets.unbindMaterial(MATERIAL_UNIT);
 		VolumetricFog.unbind(FOG_TEXTURE_UNIT);
 		Clouds.unbind(CLOUD_NOISE_UNIT);
 		WeatherField.unbind(WEATHER_FIELD_UNIT, WEATHER_FIELD_UNIT + 1, WEATHER_SKY_UNIT);

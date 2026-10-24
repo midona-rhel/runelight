@@ -15,7 +15,7 @@ import static org.lwjgl.opengl.GL33C.*;
  * Why its own target rather than the scene's: the composite lights the scene and needs both what is under the
  * water (the bed's depth, color and normal in the scene targets) and the surface in front of it, and it has no
  * sampler to spare, so the surface goes into one RGBA16UI texture (64 bits) that takes the water data's unit there. The pass
- * runs after the MSAA resolve against the resolved depth, so it is drawn once per pixel; it has its own depth buffer
+ * runs against sample 0 of the scene's depth, so it is drawn once per pixel, not per MSAA sample; it has its own depth buffer
  * so the waves hide each other, and drops what is behind the scene in its fragment shader.
  *
  * The mesh: one instance per tile (the scene's water tiles and the land tiles around them, where the surface runs on
@@ -477,7 +477,7 @@ class WaterSurface
 
 	/**
 	 * Draw the surface into the target (the rect's pixels of targets of w x h) within the scene's viewport. The
-	 * scene's resolved depth must be bound on the program's depth unit, the water data and noise on theirs. Leaves
+	 * scene's depth (sample 0) must be bound on the program's depth unit, the water data and noise on theirs. Leaves
 	 * the framebuffer and VAO bindings changed and depth testing off.
 	 *
 	 * @param focusX the focal point, around which the surface moves and is drawn fine
