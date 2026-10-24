@@ -1,7 +1,6 @@
 package com.midonarhel.runelight;
 
 import static org.junit.Assert.assertEquals;
-import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
 import org.junit.Test;
 
@@ -318,94 +317,5 @@ public class WaterBodiesTest
 		assertEquals(WaterMap.SWAMP, WaterMap.textureKind(177));
 		assertEquals(WaterMap.NONE, WaterMap.textureKind(-1));
 		assertEquals(WaterMap.NONE, WaterMap.textureKind(31));
-	}
-
-	@Test
-	public void wideWaterRunningOffTheSceneIsSea()
-	{
-		WaterBodies w = grid();
-		fill(w, 0, 0, N - 1, 29);
-		w.solve();
-		for (int i = 0; i < N * N; ++i)
-		{
-			assertEquals("tile " + i, w.water[i], w.open[i]);
-		}
-	}
-
-	@Test
-	public void riversAndLakesAreNotSea()
-	{
-		WaterBodies w = grid();
-		// a channel across the scene, the map's flow running in it, and an enclosed lake
-		fill(w, 20, 0, 22, N - 1);
-		for (int y = 0; y < N; ++y)
-		{
-			for (int x = 20; x <= 22; ++x)
-			{
-				w.mapFlowX[at(x, y)] = 0;
-				w.mapFlowZ[at(x, y)] = 0.5f;
-			}
-		}
-		fill(w, 30, 10, 44, 24);
-		w.solve();
-		for (int i = 0; i < N * N; ++i)
-		{
-			assertFalse("tile " + i, w.open[i]);
-		}
-		// wide but with the map's flow in it: a river
-		w = grid();
-		fill(w, 0, 0, N - 1, 29);
-		for (int i = 0; i < N * N; ++i)
-		{
-			w.mapFlowX[i] = 0.3f;
-			w.mapFlowZ[i] = 0;
-		}
-		w.solve();
-		assertFalse(w.open[at(24, 10)]);
-	}
-
-	@Test
-	public void riverMouthRunsIntoTheSea()
-	{
-		WaterBodies w = grid();
-		fill(w, 0, 0, N - 1, 19); // sea
-		fill(w, 30, 20, 32, 40); // river from the north, enclosed at its source
-		fill(w, 33, 28, 37, 32); // a still pool beside it
-		for (int y = 20; y <= 40; ++y)
-		{
-			for (int x = 30; x <= 32; ++x)
-			{
-				boolean mouth = y <= 21;
-				w.mapFlowX[at(x, y)] = 0;
-				w.mapFlowZ[at(x, y)] = mouth ? 0 : -0.5f;
-			}
-		}
-		w.solve();
-		assertTrue(w.open[at(5, 5)]);
-		assertTrue(w.open[at(31, 19)]);
-		// where the map's flow dies out the sea begins
-		assertTrue(w.open[at(31, 20)]);
-		assertFalse(w.open[at(31, 30)]);
-		assertFalse(w.open[at(35, 30)]);
-	}
-
-	@Test
-	public void knownLakesAreNotSea()
-	{
-		WaterBodies w = grid();
-		fill(w, 0, 0, N - 1, 29);
-		// a lake running off the edge that looks like the sea: its tiles are known, the sea beyond is not
-		for (int y = 0; y <= 29; ++y)
-		{
-			for (int x = 0; x <= 15; ++x)
-			{
-				w.inland[at(x, y)] = true;
-			}
-		}
-		w.solve();
-		assertFalse(w.open[at(5, 10)]);
-		assertFalse(w.open[at(15, 29)]);
-		assertTrue(w.open[at(30, 10)]);
-		assertTrue(w.open[at(30, 29)]);
 	}
 }

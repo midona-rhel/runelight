@@ -92,14 +92,11 @@ layout(location = 1) out vec4 WaveOut;    // the wave map: slope xy, foam
 #define TURB_WAVES 0.6
 #define TURB_FOAM vec2(0.35, 0.9)
 #define FOAM 0.45
-// running water foams along its banks: from BANK_FOAM_FLOW.x world units a second, fully at .y, up to BANK_FOAM, in
-// streaks along the flow and fading out between BANK_FOAM_REACH's shore distance (tiles; 1 right at the bank)
-#define BANK_FOAM_FLOW vec2(15.0, 60.0)
-#define BANK_FOAM 0.55
-#define BANK_FOAM_REACH vec2(1.0, 1.8)
-// the foam of streaks and wakes: world units per repeat of the cells, how many times as long along the flow
-#define STREAK_SCALE 192.0
-#define STREAK_STRETCH 3.0
+// running water foams along its banks: from BANK_FOAM_FLOW.x world units a second, fully at .y, as much as BANK_FOAM
+// of the rapids' churn, fading out between BANK_FOAM_REACH's tiles from the shore
+#define BANK_FOAM_FLOW vec2(25.0, 80.0)
+#define BANK_FOAM 0.7
+#define BANK_FOAM_REACH vec2(0.4, 1.3)
 // caustics (water.glsl has the strength): world units per repeat, seconds per cycle of each copy on still water;
 // mean and line values of the kept copy; drawn out along water faster than CAUSTIC_STRETCH_SPEED by up to
 // CAUSTIC_STRETCH seconds of the flow
@@ -111,24 +108,11 @@ layout(location = 1) out vec4 WaveOut;    // the wave map: slope xy, foam
 #define CAUSTIC_STRETCH 0.45
 // the furthest the distance target reaches (16 bits): past it water is clamped there
 #define WATER_REACH 20480.0
-// around things standing in the water (WaterMap.contact): a ring of foam, solid to CONTACT_RING close to them and
-// lacy up to CONTACT_FOAM beyond (STILL_CONTACT of that in still water), and waves up to 1 + CONTACT_WAVES as rough.
-// Running water (from WAKE_FLOW's world units a second) trails a wake of foam off them, WAKE_LENGTH tiles long and
-// opening to WAKE_SPREAD tiles to each side, up to WAKE_FOAM
-#define CONTACT_FOAM 0.85
-#define CONTACT_RING 0.6
-#define STILL_CONTACT 0.5
+// around things standing in the water (WaterMap.contact): the rapids' foam, up to CONTACT_FOAM of it over a faint
+// CONTACT_FILM, and waves up to 1 + CONTACT_WAVES as rough
+#define CONTACT_FOAM 0.3
+#define CONTACT_FILM 0.06
 #define CONTACT_WAVES 0.8
-#define WAKE_FLOW vec2(6.0, 30.0)
-#define WAKE_LENGTH 3.0
-#define WAKE_SPREAD 0.4
-#define WAKE_FOAM 0.7
-// the ocean's surf: lines of foam on the swell's crests (SWELL_*), SURF_FOAM at most, from the beach out to
-// SURF_REACH.y tiles (full to .x), thicker toward the beach, with the wash up the beach itself to SURF_WASH.y
-#define SURF_FOAM 0.8
-#define SURF_REACH vec2(2.2, 3.4)
-#define SURF_WASH vec2(1.0, 1.5)
-#define SURF_LACE 0.45
 // rain rings: cell size (world units), rings per cell per second
 #define RAIN_CELL 72.0
 #define RAIN_RATE 1.3
@@ -289,18 +273,6 @@ uint pack01(float v, float bits) {
   return uint(clamp(v, 0.0, 1.0) * bits + 0.5);
 }
 
-// The swell's phase at xz, `shore` tiles from the beach: a crest every whole turn, running in toward the beach. The
-// crests wander off the shore distance's lines (tiles, so straight), never ruled straight along a bank.
-float swellPhase(vec2 xz, float shore) {
-  return WATER_TAU * (shore / SWELL_LENGTH + waterCycle(SWELL_PERIOD)
-    + 0.45 * waveNoise(xz / (SWELL_LENGTH * WATER_TILE * 1.3)));
-}
-
-// How close something standing in the water is at xz, 0-1 (WaterMap.contact)
-float contactAt(vec2 xz) {
-  return textureLod(waterContact, (xz / WATER_TILE + waterGrid.x) / (waterGrid.y - 1.0), 0.0).r;
-}
-
 // The waves' slope at xz and the foam on them (the wave map's, WaterSurface.bake), for water of this type and flow
 void waterWaveField(vec2 xz, int type, vec2 flow, out vec2 slope, out float foam) {
   float speed = WATER_FLOW_SPEED[type];
@@ -338,8 +310,8 @@ void waterWaveField(vec2 xz, int type, vec2 flow, out vec2 slope, out float foam
   } else {
     slope = ripples(xz, base, footprint, stillSlow, STILL_WAVE_SIZE, WAVE_DIR);
   }
-  float near = contactAt(xz);
-  float contact = near * near;
+  float contact = textureLod(waterContact, (xz / WATER_TILE + waterGrid.x) / (waterGrid.y - 1.0), 0.0).r;
+  contact *= contact;
   slope *= look.w * waterWaves * (0.7 + 0.5 * wind) * (0.75 + 0.35 * energy) * (1.0 + TURB_WAVES * turb)
     * mix(STILL_WAVES, FAST_WAVES, smoothstep(FLOW_MIN * 0.5, FAST_FLOW, flowSpeed)) * (1.0 + CONTACT_WAVES * contact)
     * mix(SHORE_WAVES, 1.0, smoothstep(0.0, SHORE_CALM, data.r) * smoothstep(0.5, 1.0, data.b));
@@ -352,14 +324,21 @@ void waterWaveField(vec2 xz, int type, vec2 flow, out vec2 slope, out float foam
       vec2 g = vec2(waterPage1(waterData, c + vec2(0.5, 0.0)).r - waterPage1(waterData, c - vec2(0.5, 0.0)).r,
         waterPage1(waterData, c + vec2(0.0, 0.5)).r - waterPage1(waterData, c - vec2(0.0, 0.5)).r);
       float patch = textureLod(waterNoise, vec3(xz / SWELL_PATCH, 0.0), 8.0).b;
-      slope += g / max(length(g), 1e-3) * (SWELL_SLOPE * cos(swellPhase(xz, shore)) * reach * (1.0 - flowing) * (0.4 + 1.2 * patch)
+      // the crests wander off the shore distance's lines (tiles, so straight), never ruled straight along a bank
+      float phase = WATER_TAU * (shore / SWELL_LENGTH + waterCycle(SWELL_PERIOD)
+        + 0.45 * waveNoise(xz / (SWELL_LENGTH * WATER_TILE * 1.3)));
+      slope += g / max(length(g), 1e-3) * (SWELL_SLOPE * cos(phase) * reach * (1.0 - flowing) * (0.4 + 1.2 * patch)
         * waterWaves);
     }
   }
-  // soft foam on rapids: the large cells' rims, carried with the flow
+  // soft foam on rapids and around things standing in the water: the large cells' rims, carried with the flow
   foam = 0.0;
-  float churn = smoothstep(TURB_FOAM.x, TURB_FOAM.y, turb);
-  if (churn > 0.0) {
+  // fast water foams a little along its banks: by the flow before it slows toward them (water_vert.glsl)
+  float fast = length(waterPage0(waterData, xz / WATER_TILE + waterGrid.x).gb) * WATER_TILE * waterSpeed * speed;
+  float bankFoam = smoothstep(BANK_FOAM_FLOW.x, BANK_FOAM_FLOW.y, fast)
+    * (1.0 - smoothstep(BANK_FOAM_REACH.x, BANK_FOAM_REACH.y, data.r));
+  float churn = max(smoothstep(TURB_FOAM.x, TURB_FOAM.y, turb), bankFoam * BANK_FOAM);
+  if (churn > 0.0 || contact > 0.0) {
     float h = textureLod(waterNoise, vec3((xz - m0) / CELL_SCALE_B, 2.0), lodFoam).b * w0
       + textureLod(waterNoise, vec3((xz + vec2(173.0, 91.0) - m1) / CELL_SCALE_B, 2.0), lodFoam).b * (1.0 - w0);
     if (flowing < 1.0) {
@@ -368,55 +347,8 @@ void waterWaveField(vec2 xz, int type, vec2 flow, out vec2 slope, out float foam
         + textureLod(waterNoise, vec3(uv.yx + vec2(0.37, -waterCycle(FOAM_STILL_PERIOD * 1.37)), 2.0), lodFoam).b);
       h = mix(still, h, flowing);
     }
-    foam = (1.0 - smoothstep(0.15, 0.55, h)) * churn * FOAM;
-  }
-
-  // fast water foams a little along its banks: by the flow before it slows toward them (water_vert.glsl)
-  float fast = length(waterPage0(waterData, xz / WATER_TILE + waterGrid.x).gb) * WATER_TILE * waterSpeed * speed;
-  float bank = smoothstep(BANK_FOAM_FLOW.x, BANK_FOAM_FLOW.y, fast)
-    * (1.0 - smoothstep(BANK_FOAM_REACH.x, BANK_FOAM_REACH.y, data.r));
-  // around things standing in the water: a ring, and in running water a wake trailing off them with the flow (the
-  // contact map upstream, over a fan of taps)
-  float ring = smoothstep(0.1, 0.55, near);
-  float wake = 0.0;
-  vec2 dir = flowSpeed > 1e-3 ? flow / flowSpeed : vec2(1.0, 0.0);
-  vec2 side = vec2(-dir.y, dir.x);
-  if (flowing > 0.0) {
-    for (int k = 1; k <= 6; ++k) {
-      float d = float(k) / 6.0;
-      for (int j = -1; j <= 1; ++j) {
-        vec2 q = xz - (dir * (d * WAKE_LENGTH) + side * (float(j) * d * WAKE_SPREAD)) * WATER_TILE;
-        wake = max(wake, smoothstep(0.2, 0.7, contactAt(q)) * (1.0 - 0.75 * d));
-      }
-    }
-    wake *= flowing * smoothstep(WAKE_FLOW.x, WAKE_FLOW.y, flowSpeed);
-  }
-  if (bank > 0.0 || ring > 0.0 || wake > 0.0) {
-    // streaks: the cells drawn out along the flow, carried with it
-    float lodStreak = waterLod(footprint, STREAK_SCALE);
-    vec2 o1 = vec2(173.0, 91.0);
-    vec2 q0 = xz - m0, q1 = xz + o1 - m1;
-    float h = textureLod(waterNoise, vec3(vec2(dot(q0, dir) / STREAK_STRETCH, dot(q0, side)) / STREAK_SCALE, 2.0),
-      lodStreak).b * w0
-      + textureLod(waterNoise, vec3(vec2(dot(q1, dir) / STREAK_STRETCH, dot(q1, side)) / STREAK_SCALE, 2.0),
-      lodStreak).b * (1.0 - w0);
-    float lace = 1.0 - smoothstep(0.1, 0.7, h);
-    float solid = smoothstep(0.45, 0.85, near) * CONTACT_RING;
-    float stand = max(solid, lace * max(ring * CONTACT_FOAM, wake * WAKE_FOAM))
-      * mix(STILL_CONTACT, 1.0, smoothstep(WAKE_FLOW.x, WAKE_FLOW.y, flowSpeed));
-    foam = max(foam, max(stand, bank * lace * BANK_FOAM));
-  }
-
-  if (ocean) {
-    // the surf: lines of foam on the swell's crests, thicker and lacier toward the beach, and the wash up it
-    float crest = 0.5 + 0.5 * sin(swellPhase(xz, data.r));
-    float lace = 0.5 + 0.3 * waveNoise(xz / (WATER_TILE * 0.4)) + 0.2 * waveNoise(xz.yx / (WATER_TILE * 0.17) + 3.1);
-    float patch = textureLod(waterNoise, vec3(xz / SWELL_PATCH, 0.0), 8.0).b;
-    float width = mix(0.5, 0.25, smoothstep(SURF_WASH.y, SURF_REACH.y, data.r));
-    float line = smoothstep(1.0 - width, 1.0 - 0.4 * width, crest - SURF_LACE * (1.0 - lace))
-      * (1.0 - smoothstep(SURF_REACH.x, SURF_REACH.y, data.r));
-    float wash = (1.0 - smoothstep(SURF_WASH.x, SURF_WASH.y, data.r)) * (0.3 + 0.5 * crest) * lace;
-    foam = max(foam, max(line, wash * 0.6) * SURF_FOAM * (0.6 + 0.8 * patch));
+    float rim = 1.0 - smoothstep(0.15, 0.55, h);
+    foam = max(rim * churn * FOAM, contact * (rim * CONTACT_FOAM + CONTACT_FILM));
   }
 }
 

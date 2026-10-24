@@ -96,9 +96,10 @@ class RuneLightOverlay extends OverlayPanel
 		int missing = 0;
 		for (int stage = 0; stage < GpuTimer.STAGES; stage++)
 			if (!Double.isFinite(gpu.getReadMs(stage))) missing++;
-		line(missing == 0 ? "GPU measured passes" : "GPU subtotal (" + missing + " missing)", gpuResult(gpu, -1), Color.CYAN);
+		if (gpu.isEnabled())
+			line(missing == 0 ? "GPU measured passes" : "GPU subtotal (" + missing + " missing)", gpuResult(gpu, -1), Color.CYAN);
 		// Stable pass order: once measured, keep the last valid result and show its age.
-		for (int stage = 0; stage < GpuTimer.STAGES; stage++)
+		for (int stage = 0; gpu.isEnabled() && stage < GpuTimer.STAGES; stage++)
 		{
 			double value = gpu.getMs(stage);
 			if (Double.isFinite(value))
@@ -121,7 +122,8 @@ class RuneLightOverlay extends OverlayPanel
 		line("Between frames", ms(cpu.getMs(CpuTimer.OUTSIDE)), Color.WHITE);
 		line("Point lights", Integer.toString(plugin.getPointLightCount()), Color.WHITE);
 		line("CPU: largest 4 steps", "CPU/GPU overlap", Color.GRAY);
-		line("GPU values", "last valid run + age", Color.GRAY);
+		if (gpu.isEnabled())
+			line("GPU values", "last valid run + age", Color.GRAY);
 	}
 
 	private static String gpuResult(GpuTimer timer, int stage)

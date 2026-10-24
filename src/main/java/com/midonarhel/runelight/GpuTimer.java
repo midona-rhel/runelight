@@ -55,12 +55,9 @@ class GpuTimer
 	private int slot;
 	private boolean active;
 	private boolean initialized;
-	// off unless the timings are shown: the queries and their readback cost the CPU a little every frame
+	// off unless asked for (Time GPU passes): on Apple's driver ending a query makes the CPU wait for the GPU, which
+	// stutters the frames being measured
 	private boolean enabled = true;
-	// Only one frame in TIMED_EVERY is timed. On Apple's driver ending a query blocks the client thread for a while,
-	// a large share of its time with every pass timed every frame, so the overlay would mostly measure itself.
-	private static final int TIMED_EVERY = 8;
-	private boolean timing = true;
 
 	private final double[] frame = new double[STAGES];
 	// Last valid execution of each stage, milliseconds; cached jobs retain their result.
@@ -125,7 +122,7 @@ class GpuTimer
 	 */
 	void begin(int stage)
 	{
-		if (!initialized || !enabled || !timing)
+		if (!initialized || !enabled)
 		{
 			return;
 		}
@@ -163,7 +160,6 @@ class GpuTimer
 		++frames;
 		readFrame = -1;
 		end();
-		timing = frames % TIMED_EVERY == 0;
 		slot = (slot + 1) % SLOTS;
 		int n = used[slot];
 		if (n == 0)

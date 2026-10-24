@@ -535,46 +535,47 @@ vec4 shadeScene(ivec2 px, SceneSample sm, vec4 transparent) {
 #define MSAA_NORMAL_TOLERANCE 0.03
 #define MSAA_MATERIAL_TOLERANCE 0.05
 
-// The scene pixel, shaded by its distinct surfaces: the samples that agree with the first one not yet taken (depth,
-// normal and material) are one surface, shaded once with the mean of their colors and counted for as many samples,
-// and the result is the mean over the samples. Where the pixel is one surface that is the single shading the no-MSAA
-// path does, with the colors antialiased; at a silhouette against the sky, or a fold between faces, each side is lit
-// with its own depth, normal and material, and the half resolution inputs are upsampled for them. It is the lit
-// results that are averaged, not the normals and materials.
-vec4 shadeSamples(ivec2 px, vec4 transparent) {
-  vec4 sum = vec4(0.0);
-  int todo = (1 << MSAA_SAMPLES) - 1;
-  while (todo != 0) {
-    int s = 0;
-    while ((todo >> s & 1) == 0) {
-      ++s;
-    }
-    todo &= ~(1 << s);
-    SceneSample sm = sceneSample(px, s);
-    vec4 colors = sm.color;
-    float count = 1.0;
-    float vz = viewDepth(sm.depth);
-    for (int t = s + 1; t < MSAA_SAMPLES; ++t) {
-      if ((todo >> t & 1) == 0) {
-        continue;
-      }
-      // the cheapest test first: a pixel of one surface passes all, but the fetches stop at the first that fails
-      float dt = texelFetch(sceneDepth, px, t).r;
-      if (isSky(dt) != isSky(sm.depth) || (!isSky(dt) && abs(viewDepth(dt) - vz) > MSAA_DEPTH_TOLERANCE * vz)) {
-        continue;
-      }
-      if (any(greaterThan(abs(texelFetch(sceneNormal, px, t).rgb - sm.normal), vec3(MSAA_NORMAL_TOLERANCE)))
-        || any(greaterThan(abs(texelFetch(sceneMaterial, px, t) - sm.material), vec4(MSAA_MATERIAL_TOLERANCE)))) {
-        continue;
-      }
-      todo &= ~(1 << t);
-      colors += texelFetch(sceneColor, px, t);
-      count += 1.0;
-    }
-    sm.color = colors / count;
-    sum += shadeScene(px, sm, transparent) * count;
+// The scene pixel, shaded by its surfaces: the samples that agree with sample 0 (depth, normal and material) are one
+// surface, all the others a second, each shaded once with the mean of its samples' colors (the second with its first
+// sample's depth, normal and material) and weighted by its share of the samples. Where the pixel is one surface that is
+// the single shading the no-MSAA path does, with the colors antialiased; at a silhouette against the sky, or a fold
+// between faces, each side is lit with its own values and the lit results are averaged, not the normals. Two surfaces
+// at most, and no loop around the shading: the full shading inlined once more stays cheap for the compiler, a loop
+// around it made every pixel pay for it.
+bool sameSurface(SceneSample a, float vz, ivec2 px, int t) {
+  float dt = texelFetch(sceneDepth, px, t).r;
+  if (isSky(dt) != isSky(a.depth) || (!isSky(dt) && abs(viewDepth(dt) - vz) > MSAA_DEPTH_TOLERANCE * vz)) {
+    return false;
   }
-  return sum / float(MSAA_SAMPLES);
+  return all(lessThanEqual(abs(texelFetch(sceneNormal, px, t).rgb - a.normal), vec3(MSAA_NORMAL_TOLERANCE)))
+    && all(lessThanEqual(abs(texelFetch(sceneMaterial, px, t) - a.material), vec4(MSAA_MATERIAL_TOLERANCE)));
+}
+
+vec4 shadeSamples(ivec2 px, vec4 transparent) {
+  SceneSample first = sceneSample(px, 0);
+  float vz = viewDepth(first.depth);
+  vec4 colorsA = first.color;
+  vec4 colorsB = vec4(0.0);
+  int countA = 1;
+  int other = -1;
+  for (int t = 1; t < MSAA_SAMPLES; ++t) {
+    if (sameSurface(first, vz, px, t)) {
+      colorsA += texelFetch(sceneColor, px, t);
+      ++countA;
+    } else {
+      colorsB += texelFetch(sceneColor, px, t);
+      other = other < 0 ? t : other;
+    }
+  }
+  first.color = colorsA / float(countA);
+  vec4 lit = shadeScene(px, first, transparent);
+  if (other < 0) {
+    return lit;
+  }
+  SceneSample second = sceneSample(px, other);
+  int countB = MSAA_SAMPLES - countA;
+  second.color = colorsB / float(countB);
+  return (lit * float(countA) + shadeScene(px, second, transparent) * float(countB)) / float(MSAA_SAMPLES);
 }
 #endif
 

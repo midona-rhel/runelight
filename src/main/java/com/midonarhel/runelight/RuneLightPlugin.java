@@ -1731,7 +1731,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		float cameraX, float cameraY, float cameraZ, float cameraPitch, float cameraYaw)
 	{
 		// the hitch monitor reads the GPU's times too, but only when someone is reading the debug log
-		gpuTimer.setEnabled(config.showTimings() || log.isDebugEnabled());
+		gpuTimer.setEnabled(config.gpuPassTimings());
 		captureFrameState(scene, cameraX, cameraY, cameraZ);
 		updateEdge(scene, cameraX, cameraZ);
 
