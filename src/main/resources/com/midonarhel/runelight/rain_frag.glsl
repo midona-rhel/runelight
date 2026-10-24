@@ -19,7 +19,7 @@ void main() {
   float scene = sceneViewDepth(gl_FragCoord.xy);
   float a = fAlpha;
   if (fSplash != 0) {
-    // behind something nearer than its foot, it is hidden, over a short distance so mist doesn't end in an edge
+    // behind something nearer than its foot, it is hidden, over a short distance so it doesn't end in an edge
     float behind = scene - (fViewZ * (1.0 - SPLASH_SURFACE_TOLERANCE) - 8.0);
     a *= smoothstep(-fSoft, 0.0, behind);
     // diffuse: a soft, round-edged blob, fullest in the middle, fading smoothly to nothing at its edge

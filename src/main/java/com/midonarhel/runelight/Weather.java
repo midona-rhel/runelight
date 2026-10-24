@@ -71,10 +71,9 @@ class Weather
 	private static final float[] UP = {0, -1, 0};
 
 	// instance counts at 100% intensity: drops and flakes in the nearest layer (LAYER_COUNT_FALLOFF less in each
-	// next one), splashes, and mist sprites
+	// next one), and splashes
 	static final int LAYER_RAIN_DROPS = 24000;
 	static final int MAX_RAIN_SPLASHES = 4400;
-	static final int MAX_RAIN_HAZE = 3000;
 	static final int LAYER_SNOW_FLAKES = 12000;
 
 	// easing time constants, seconds: about three of them for a full change, so a new weather or region blends
@@ -148,7 +147,7 @@ class Weather
 		int viewProj, invViewProj, viewport, depthZeroToOne;
 		int occlusionProjRel, occlusionCenterY, occlusionDepthRange;
 		int cameraPos, focusPos, time, sunAltitude, casterDir, sunIsCaster, amount;
-		int dropCount, splashCount, hazeCount, wadeDroplets, wadeSteps, waterRect, wind, windOffset, gust, overcast,
+		int dropCount, splashCount, wadeDroplets, wadeSteps, waterRect, wind, windOffset, gust, overcast,
 			pointLights;
 		int particleAmount, layerBox, layerSpan, layerBand, particleReach;
 		int light, rainStyle, flakeStyle, flakeColor, fallTime;
@@ -187,7 +186,6 @@ class Weather
 			amount = glGetUniformLocation(p, "amount");
 			dropCount = glGetUniformLocation(p, "dropCount");
 			splashCount = glGetUniformLocation(p, "splashCount");
-			hazeCount = glGetUniformLocation(p, "hazeCount");
 			wadeDroplets = glGetUniformLocation(p, "wadeDroplets");
 			wadeSteps = glGetUniformLocation(p, "wadeSteps");
 			waterRect = glGetUniformLocation(p, "waterRect");
@@ -923,21 +921,13 @@ class Weather
 				aheadX, aheadZ);
 			float impacts = rainShown * Math.min(1, wetShown);
 			int splashCount = splashes ? Math.round(MAX_RAIN_SPLASHES * impacts) : 0;
-			int hazeCount = splashes ? Math.round(MAX_RAIN_HAZE * impacts) : 0;
-			if (splashCount > 0 || hazeCount > 0)
+			if (splashCount > 0)
 			{
-				// splashes and the mist over what the rain hits are only seen up close: around the player, where the
-				// camera looks. The mist goes first, under the splashes.
+				// splashes are only seen up close: around the player, where the camera looks
 				glUniform4f(rain.layerBox, focusX, focusY, focusZ, SPLASH_HALF);
 				glUniform1i(rain.dropCount, 0);
-				glUniform1i(rain.splashCount, 0);
-				glUniform1i(rain.hazeCount, hazeCount);
-				if (hazeCount > 0)
-					glDrawArraysInstanced(GL_TRIANGLES, 0, 6, hazeCount);
 				glUniform1i(rain.splashCount, splashCount);
-				glUniform1i(rain.hazeCount, 0);
-				if (splashCount > 0)
-					glDrawArraysInstanced(GL_TRIANGLES, 0, 6, splashCount);
+				glDrawArraysInstanced(GL_TRIANGLES, 0, 6, splashCount);
 				// and the droplets thrown up by steps: the same sprites, one range of instances for every step
 				glUniform4fv(rain.wadeSteps, wadeSteps);
 				glUniform1i(rain.wadeDroplets, 1);

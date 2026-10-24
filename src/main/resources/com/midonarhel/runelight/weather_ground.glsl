@@ -47,11 +47,13 @@ uniform vec2 weatherNoiseOrigin;  // world x and z of local (scene) 0, world uni
 // reflection the rim keeps
 #define PUDDLE_RIM 9.0
 #define PUDDLE_DAMP 0.78
-#define PUDDLE_DARKEN 0.5
+#define PUDDLE_DARKEN 0.35
 #define PUDDLE_RIM_REFLECT 0.2
-// how much of the sky the water reflects looking straight down, and at most at a slant: a dull, soft reflection
-#define PUDDLE_REFLECT 0.15
-#define PUDDLE_REFLECT_MAX 0.45
+// how much the water reflects looking straight down, and at most at a slant; how much of the world it shows over
+// the sky where a screen-space ray finds it (dimmer than a mirror: muddy, rippled water)
+#define PUDDLE_REFLECT 0.55
+#define PUDDLE_REFLECT_MAX 0.85
+#define PUDDLE_WORLD 0.6
 // how bright the crest of a ripple is, added to the water (linear)
 #define PUDDLE_CREST 0.25
 
@@ -165,17 +167,21 @@ vec2 weatherGroundSurface(inout vec3 color, inout vec3 n, vec3 p, vec3 world, ve
   return vec2(puddle, water);
 }
 
-// A puddle's water over the ground lit as usual (lit, sRGB): a soft reflection of the sky, by Fresnel; the rim keeps
-// a little of it. p camera-relative.
-vec3 weatherPuddleWater(vec3 lit, vec3 p, vec2 puddle) {
+// A puddle's water over the ground lit as usual (lit, sRGB): the sky, and the world where a screen-space ray finds it
+// (light: the surface's light, linear, for the world it shows), by Fresnel; the rim keeps a little of it. Ripples from
+// waded steps tilt it, and their crests catch the light. p camera-relative, pc the pixel's center.
+vec3 weatherPuddleWater(vec3 lit, vec3 p, vec3 light, vec2 puddle, vec2 pc) {
   vec3 v = normalize(p);
   // the reflected ray off level water; y is down
   vec3 r = vec3(v.x, -v.y, v.z);
-  // ripples from waded steps tilt it, and their crests catch the light
   vec2 ripple = puddle.y > 0.0 ? wadeRippleSlope(p.xz + cameraPos.xz) * puddle.y : vec2(0.0);
   r = normalize(r + vec3(ripple.x, 0.0, ripple.y));
   float fresnel = mix(PUDDLE_REFLECT, PUDDLE_REFLECT_MAX, pow(1.0 - clamp(v.y, 0.0, 1.0), FRESNEL_POWER));
   float share = fresnel * puddle.x * mix(PUDDLE_RIM_REFLECT, 1.0, puddle.y);
   vec3 reflection = waterSkyReflection(r);
+  if (waterReflections == 1) {
+    vec4 hit = waterTraceReflection(p, r, light, pc);
+    reflection = mix(reflection, hit.rgb, hit.a * PUDDLE_WORLD);
+  }
   return linearToSrgb(mix(srgbToLinear(lit), reflection, share) + PUDDLE_CREST * length(ripple) * puddle.x);
 }
