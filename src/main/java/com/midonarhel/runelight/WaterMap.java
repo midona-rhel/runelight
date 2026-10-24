@@ -4,6 +4,7 @@ import net.runelite.api.Constants;
 import net.runelite.api.DecorativeObject;
 import net.runelite.api.DynamicObject;
 import net.runelite.api.GameObject;
+import net.runelite.api.GroundObject;
 import net.runelite.api.Model;
 import net.runelite.api.Perspective;
 import net.runelite.api.Renderable;
@@ -84,6 +85,9 @@ final class WaterMap
 	static final int CONTACT_REACH = 3;
 	// world units (one a few millimetres) above the surface that a model may end and still count as in the water
 	private static final float CONTACT_TOLERANCE = 2f;
+	// how far above the surface (world units) the foot of a model may hover and still stand in it: on a bank tile the
+	// corners climb, and the model sits at their mean
+	private static final float CONTACT_HOVER = 48f;
 	// at a corner right by one the flow keeps 1 - CONTACT_SLOW of itself and churns at least CONTACT_TURB (rougher
 	// waves, short of the rapids' foam)
 	private static final float CONTACT_SLOW = 0.6f;
@@ -676,41 +680,14 @@ final class WaterMap
 					{
 						continue;
 					}
-					GameObject[] objects = t.getGameObjects();
-					for (int k = 0; objects != null && k < objects.length; ++k)
+					// the bridge tile under a deck holds what stands in the water below it (piers)
+					for (Tile u = t; u != null; u = u.getBridge())
 					{
-						GameObject o = objects[k];
-						if (o != null && o.getSceneMinLocation().equals(t.getSceneLocation()))
-						{
-							any |= crossings(o.getId(), o.getRenderable(), o.getModelOrientation(), o.getX(), o.getZ(), o.getY(), surfaceY,
-								marked);
-						}
-					}
-					WallObject w = t.getWallObject();
-					if (w != null)
-					{
-						any |= crossings(w.getId(), w.getRenderable1(), 0, w.getX(), w.getZ(), w.getY(), surfaceY, marked);
-						any |= crossings(w.getId(), w.getRenderable2(), 0, w.getX(), w.getZ(), w.getY(), surfaceY, marked);
-					}
-					DecorativeObject d = t.getDecorativeObject();
-					if (d != null)
-					{
-						any |= crossings(d.getId(), d.getRenderable(), 0, d.getX() + d.getXOffset(), d.getZ(), d.getY() + d.getYOffset(),
-							surfaceY, marked);
-						any |= crossings(d.getId(), d.getRenderable2(), 0, d.getX() + d.getXOffset2(), d.getZ(),
-							d.getY() + d.getYOffset2(), surfaceY, marked);
+						any |= markTile(u, surfaceY, marked);
 					}
 				}
 			}
 		}
-		int cells = 0;
-		for (boolean m : marked)
-		{
-			cells += m ? 1 : 0;
-		}
-		// TEMP diagnostic: is the contact map (foam round things in the water) empty?
-		org.slf4j.LoggerFactory.getLogger(WaterMap.class).info("Water contact: {} cells marked, previous map {}", cells,
-			contact != null ? "kept" : "none");
 		if (!any)
 		{
 			return;
@@ -742,6 +719,44 @@ final class WaterMap
 			}
 		}
 		contact = c;
+	}
+
+	/**
+	 * Mark where the objects on one tile cross the surface.
+	 */
+	private static boolean markTile(Tile t, float[] surfaceY, boolean[] marked)
+	{
+		boolean any = false;
+		GameObject[] objects = t.getGameObjects();
+		for (int k = 0; objects != null && k < objects.length; ++k)
+		{
+			GameObject o = objects[k];
+			if (o != null && o.getSceneMinLocation().equals(t.getSceneLocation()))
+			{
+				any |= crossings(o.getId(), o.getRenderable(), o.getModelOrientation(), o.getX(), o.getZ(), o.getY(), surfaceY,
+					marked);
+			}
+		}
+		GroundObject g = t.getGroundObject();
+		if (g != null)
+		{
+			any |= crossings(g.getId(), g.getRenderable(), 0, g.getX(), g.getZ(), g.getY(), surfaceY, marked);
+		}
+		WallObject w = t.getWallObject();
+		if (w != null)
+		{
+			any |= crossings(w.getId(), w.getRenderable1(), 0, w.getX(), w.getZ(), w.getY(), surfaceY, marked);
+			any |= crossings(w.getId(), w.getRenderable2(), 0, w.getX(), w.getZ(), w.getY(), surfaceY, marked);
+		}
+		DecorativeObject d = t.getDecorativeObject();
+		if (d != null)
+		{
+			any |= crossings(d.getId(), d.getRenderable(), 0, d.getX() + d.getXOffset(), d.getZ(), d.getY() + d.getYOffset(),
+				surfaceY, marked);
+			any |= crossings(d.getId(), d.getRenderable2(), 0, d.getX() + d.getXOffset2(), d.getZ(),
+				d.getY() + d.getYOffset2(), surfaceY, marked);
+		}
+		return any;
 	}
 
 	/**
@@ -821,8 +836,8 @@ final class WaterMap
 
 	/**
 	 * Mark where the faces of an object's model cross the water's surface: the model as the scene uploader places it
-	 * (scene local x, height and z, turned by orient), its faces over water tiles cut at their surface level. Plants
-	 * swaying in the wind (reeds) are left out.
+	 * (scene local x, height and z, turned by orient), its faces over water tiles cut at their surface level (or just
+	 * above its foot where that hovers over it, CONTACT_HOVER at most). Plants swaying in the wind (reeds) are left out.
 	 */
 	private static boolean crossings(int id, Renderable r, int orient, int x, int height, int z, float[] surfaceY,
 		boolean[] marked)
@@ -839,6 +854,11 @@ final class WaterMap
 		float sin = orient != 0 ? Perspective.SINE[orient] / 65536f : 0;
 		float cos = orient != 0 ? Perspective.COSINE[orient] / 65536f : 1;
 		float ox = x + (RuneLightPlugin.SCENE_OFFSET << 7), oz = z + (RuneLightPlugin.SCENE_OFFSET << 7);
+		float foot = Float.NEGATIVE_INFINITY;
+		for (int v = 0; v < m.getVerticesCount(); ++v)
+		{
+			foot = Math.max(foot, vy[v] + height);
+		}
 		float[] px = new float[3], py = new float[3], pz = new float[3];
 		float[] cx = new float[2], cz = new float[2];
 		boolean any = false;
@@ -862,6 +882,15 @@ final class WaterMap
 			}
 			// cut a hair above the surface (y down), so what ends right at it counts as standing in it
 			float s = surfaceY[ty * SIZE + tx] - CONTACT_TOLERANCE;
+			if (foot < s)
+			{
+				// a foot above the surface: standing in it if it hovers only a little, else clear of it
+				if (s - foot > CONTACT_HOVER)
+				{
+					continue;
+				}
+				s = foot - CONTACT_TOLERANCE;
+			}
 			int n = 0;
 			for (int k = 0; k < 3 && n < 2; ++k)
 			{
