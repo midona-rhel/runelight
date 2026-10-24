@@ -320,7 +320,8 @@ class Water
 	}
 
 	/**
-	 * Bind the surface for the composite, after {@link #drawSurface}. Then {@link #shadeHalf}.
+	 * Bind the surface for the composite, after {@link #drawSurface}, before its half resolution pass
+	 * ({@link #scissorHalf}).
 	 */
 	void bind(RuneLightConfig config, int surfaceUnit)
 	{
@@ -364,28 +365,14 @@ class Water
 	}
 
 	/**
-	 * With the composite's water program in use, its uniforms set and everything bound for it (after {@link #bind}),
-	 * when {@link #enabled}: its half resolution water pass into the shaded target, then that target bound on
-	 * shadedUnit for the full resolution composite. Leaves the framebuffer and viewport changed.
-	 *
-	 * @param width  the half resolution targets' size (SceneTargets)
+	 * Scissor the composite's half resolution water pass (water.glsl's waterShadeHalf) to the texels with a pixel in
+	 * the surface's rect: texel x reads pixels 2x and 2x + 1 (halfmap.glsl's halfToFull). Enables the scissor test.
 	 */
-	void shadeHalf(int width, int height, int shadedUnit)
+	void scissorHalf()
 	{
-		// not bound while it is drawn into
-		glActiveTexture(GL_TEXTURE0 + shadedUnit);
-		glBindTexture(GL_TEXTURE_2D, 0);
-		glActiveTexture(GL_TEXTURE0);
-		surface.bindShadedTarget(width, height);
-		// only the texels with a pixel in the rect: texel x reads pixels 2x and 2x + 1 (halfmap.glsl's halfToFull)
 		int x0 = rect[0] >> 1, y0 = rect[1] >> 1;
 		glEnable(GL_SCISSOR_TEST);
 		glScissor(x0, y0, ((rect[2] + 1) >> 1) - x0, ((rect[3] + 1) >> 1) - y0);
-		glDrawArrays(GL_TRIANGLES, 0, 3);
-		glDisable(GL_SCISSOR_TEST);
-		glActiveTexture(GL_TEXTURE0 + shadedUnit);
-		glBindTexture(GL_TEXTURE_2D, surface.shadedTexture());
-		glActiveTexture(GL_TEXTURE0);
 	}
 
 	/**

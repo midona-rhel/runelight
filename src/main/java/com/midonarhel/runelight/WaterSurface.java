@@ -96,8 +96,6 @@ class WaterSurface
 	private int vao, vboTiles, ebo;
 	private Mesh mesh;
 	private int fbo, texSurface, rboDepth, width, height;
-	// the composite's half resolution water pass (water.glsl's waterShadeHalf): RGBA32UI, its fragment output 1
-	private int shadedFbo, texShaded, shadedWidth, shadedHeight;
 
 	private static final int[] CLEAR = {0, 0, 0, 0};
 	private static final float[] FAR_DEPTH = {0};
@@ -386,62 +384,6 @@ class WaterSurface
 		return mesh;
 	}
 
-	int shadedTexture()
-	{
-		return texShaded;
-	}
-
-	/**
-	 * Bind the half resolution shaded target for drawing, sw x sh like the other half resolution targets
-	 * (SceneTargets), with its viewport, cleared to no water.
-	 */
-	void bindShadedTarget(int sw, int sh)
-	{
-		if (shadedFbo == 0 || sw != shadedWidth || sh != shadedHeight)
-		{
-			freeShaded();
-			shadedWidth = sw;
-			shadedHeight = sh;
-			texShaded = glGenTextures();
-			glBindTexture(GL_TEXTURE_2D, texShaded);
-			glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA32UI, sw, sh, 0, GL_RGBA_INTEGER, GL_UNSIGNED_INT, (ByteBuffer) null);
-			glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
-			glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
-			glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
-			glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-			glBindTexture(GL_TEXTURE_2D, 0);
-			shadedFbo = glGenFramebuffers();
-			glBindFramebuffer(GL_FRAMEBUFFER, shadedFbo);
-			glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, texShaded, 0);
-			// the composite's output 0 is the scene color, which this pass doesn't write
-			glDrawBuffers(new int[]{GL_NONE, GL_COLOR_ATTACHMENT0});
-			int status = glCheckFramebufferStatus(GL_FRAMEBUFFER);
-			if (status != GL_FRAMEBUFFER_COMPLETE)
-			{
-				throw new IllegalStateException("water shaded framebuffer incomplete: " + status);
-			}
-		}
-		glBindFramebuffer(GL_FRAMEBUFFER, shadedFbo);
-		glViewport(0, 0, sw, sh);
-		glDisable(GL_BLEND);
-		// draw buffer 1: the program's output 1
-		glClearBufferuiv(GL_COLOR, 1, CLEAR);
-	}
-
-	private void freeShaded()
-	{
-		if (shadedFbo != 0)
-		{
-			glDeleteFramebuffers(shadedFbo);
-			shadedFbo = 0;
-		}
-		if (texShaded != 0)
-		{
-			glDeleteTextures(texShaded);
-			texShaded = 0;
-		}
-	}
-
 	private void ensureTarget(int w, int h)
 	{
 		if (fbo != 0 && w == width && h == height)
@@ -703,7 +645,6 @@ class WaterSurface
 	void free()
 	{
 		freeTarget();
-		freeShaded();
 		for (int i = 0; i < 3; ++i)
 		{
 			if (waveFbo[i] != 0)

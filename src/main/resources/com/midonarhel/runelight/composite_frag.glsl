@@ -2,10 +2,11 @@
 
 // Runs once per pixel over the finished scene: sky, lighting, shadows, AO and fog. Compiled once for each of its
 // passes (RuneLightPlugin.CompositeProgram), so that each program holds only its own path: the full resolution
-// composite, and at half resolution the clouds and the water.
+// composite, and at half resolution the clouds and the water, apart or, when both are drawn, in one pass.
 #define COMPOSITE_FULL 0
 #define COMPOSITE_CLOUDS 1
 #define COMPOSITE_WATER 2
+#define COMPOSITE_CLOUDS_WATER 3
 #include composite_pass
 
 #include "frame.glsl"
@@ -293,11 +294,8 @@ float borrowDepth(ivec2 px) {
   return found ? best : -1.0;
 }
 
-void main() {
-#if COMPOSITE_PASS == COMPOSITE_WATER
-  // the half resolution water pass (water.glsl)
-  waterShadeHalf(ivec2(gl_FragCoord.xy));
-#elif COMPOSITE_PASS == COMPOSITE_CLOUDS
+// The half resolution clouds (into cloudHalf)
+vec4 cloudsHalf() {
   // the ray through the middle of the scene pixels this texel covers
   vec2 c = gl_FragCoord.xy * halfRatio;
   // Only where the sky shows: in the scene pixels this texel covers and the ones next to them, which the filtering
@@ -311,15 +309,25 @@ void main() {
       || edgeFadeAmount(reconstructPosition(vec2(q) + 0.5, qd) + cameraPos) > 0.002;
   }
   if (!needed) {
-    FragColor = vec4(0.0, 0.0, 0.0, 1.0);
-    return;
+    return vec4(0.0, 0.0, 0.0, 1.0);
   }
   vec3 dir = normalize(reconstructPosition(c, 1.0));
   float pixelAngle = length(normalize(reconstructPosition(c + vec2(0.0, 1.0), 1.0)) - dir);
   // jittered per cloud texel: the noise is only even at a stride of one texel, at a scene pixel stride of two
   // it ramps across the sky and combs the clouds into bands
-  FragColor = cloudLayer(cloudSkyDir(dir), cameraPos, sunDir, moonDir, sunAltitude, pixelAngle,
+  return cloudLayer(cloudSkyDir(dir), cameraPos, sunDir, moonDir, sunAltitude, pixelAngle,
     cloudJitter(gl_FragCoord.xy), CLOUD_STEPS);
+}
+
+void main() {
+#if COMPOSITE_PASS != COMPOSITE_FULL
+  // the half resolution passes: the clouds, the water's surface (water.glsl), or both
+#if COMPOSITE_PASS != COMPOSITE_WATER
+  FragColor = cloudsHalf();
+#endif
+#if COMPOSITE_PASS != COMPOSITE_CLOUDS
+  waterShadeHalf(ivec2(gl_FragCoord.xy));
+#endif
 #else
   ivec2 px = ivec2(gl_FragCoord.xy);
   vec4 color = texelFetch(sceneColor, px, 0);

@@ -4,11 +4,14 @@ import java.awt.Color;
 import java.awt.Dimension;
 import java.awt.Graphics2D;
 import java.awt.image.BufferedImage;
+import java.util.ArrayList;
+import java.util.List;
 import javax.inject.Inject;
 import net.runelite.api.Client;
 import net.runelite.client.ui.overlay.OverlayPanel;
 import net.runelite.client.ui.overlay.OverlayPosition;
 import net.runelite.client.ui.overlay.components.ImageComponent;
+import net.runelite.client.ui.overlay.components.LayoutableRenderableEntity;
 import net.runelite.client.ui.overlay.components.LineComponent;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -20,6 +23,11 @@ class RuneLightOverlay extends OverlayPanel
 	private final Client client;
 	private final RuneLightPlugin plugin;
 	private final RuneLightConfig config;
+	// The timings are only built a few times a second and shown again in between: formatting the ~35 lines into new
+	// components every frame was steady garbage on the client thread, for numbers too quick to read anyway.
+	private static final long TIMINGS_NANOS = 250_000_000L;
+	private final List<LayoutableRenderableEntity> timings = new ArrayList<>();
+	private long timingsBuilt;
 
 	@Inject
 	RuneLightOverlay(Client client, RuneLightPlugin plugin, RuneLightConfig config)
@@ -42,20 +50,28 @@ class RuneLightOverlay extends OverlayPanel
 
 		if (config.showTimings())
 		{
-			try
+			panelComponent.setPreferredSize(new Dimension(310, 0));
+			long now = System.nanoTime();
+			if (timings.isEmpty() || now - timingsBuilt >= TIMINGS_NANOS)
 			{
-				timingLines();
+				timingsBuilt = now;
+				timings.clear();
+				try
+				{
+					timingLines();
+				}
+				catch (RuntimeException ex)
+				{
+					// an overlay that throws is logged by the client every frame
+					logLimiter.warn(log, "overlay " + ex, "Timings overlay failed", ex);
+				}
 			}
-			catch (RuntimeException ex)
-			{
-				// an overlay that throws is logged by the client every frame
-				logLimiter.warn(log, "overlay " + ex, "Timings overlay failed", ex);
-			}
+			panelComponent.getChildren().addAll(timings);
 		}
 
 		if (shaderError != null)
 		{
-			line("Shaders", "compile error", Color.RED);
+			panelComponent.getChildren().add(lineComponent("Shaders", "compile error", Color.RED));
 		}
 
 		if (config.weatherFieldMap())
@@ -72,7 +88,6 @@ class RuneLightOverlay extends OverlayPanel
 
 	private void timingLines()
 	{
-		panelComponent.setPreferredSize(new Dimension(310, 0));
 		GpuTimer gpu = plugin.gpuTimer;
 		CpuTimer cpu = plugin.cpuTimer;
 		double frame = plugin.getSwapIntervalMs();
@@ -188,11 +203,16 @@ class RuneLightOverlay extends OverlayPanel
 
 	private void line(String left, String right, Color color)
 	{
-		panelComponent.getChildren().add(LineComponent.builder()
+		timings.add(lineComponent(left, right, color));
+	}
+
+	private static LineComponent lineComponent(String left, String right, Color color)
+	{
+		return LineComponent.builder()
 			.left(left)
 			.right(right)
 			.rightColor(color)
-			.build());
+			.build();
 	}
 
 	private static String ms(double v)

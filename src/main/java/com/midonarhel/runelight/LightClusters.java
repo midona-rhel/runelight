@@ -45,13 +45,18 @@ class LightClusters
 	// then the fog columns
 	static final int CLUSTER_ENTRIES = CLUSTER_COUNT + COLUMN_COUNT;
 
-	private int lightBuffer, lightTexture;
-	private int clusterBuffer, clusterTexture;
-	// The light buffer: the lights and the room map after them. The map is sent when it changes, each frame only the
-	// lights; the map's header goes to the shaders as a uniform (getRoomHeader).
-	private RoomMap roomMap, uploadedRooms;
+	// Both buffers rotate through SETS copies, one written a frame: writing a buffer an earlier frame's draws still
+	// read stalls or copies it on Apple's GL. Each copy is brought up to date when it comes round again.
+	private static final int SETS = 3;
+	private final int[] lightBuffers = new int[SETS], lightTextures = new int[SETS];
+	private final int[] clusterBuffers = new int[SETS], clusterTextures = new int[SETS];
+	private int set;
+	// The light buffer: the lights and the room map after them. The map is sent to a copy when it changed since that
+	// copy got it, each frame only the lights; the map's header goes to the shaders as a uniform (getRoomHeader).
+	private RoomMap roomMap;
+	private final RoomMap[] uploadedRooms = new RoomMap[SETS];
+	private final int[] uploadedVersion = new int[SETS];
 	private boolean roomLights;
-	private int uploadedVersion = -1;
 	private int maxTexels;
 	private FloatBuffer roomStaging;
 	private final float[] roomHeader = new float[4];
@@ -72,10 +77,10 @@ class LightClusters
 	// lights listed per entry, held to MAX_LIGHTS_PER_CLUSTER
 	private final byte[] counts = new byte[CLUSTER_ENTRIES];
 	private int texels = 1;
-	// The table is only rebuilt when what it depends on changed, and each half only sent then; the buffer is laid out
-	// again only when the texels per entry change (the shaders find them from its size).
-	private int bufferTexels;
-	private boolean clustersDirty, columnsDirty;
+	// The table is only rebuilt when what it depends on changed, and each half only sent to a copy that has not had
+	// that build; a copy is laid out again only when the texels per entry change (the shaders find them from its size).
+	private int clustersBuilt, columnsBuilt;
+	private final int[] bufferTexels = new int[SETS], clustersSent = new int[SETS], columnsSent = new int[SETS];
 	// per light in view: camera-relative center and radius, as last culled, and its cluster range x0, y0, x1, y1, z0, z1
 	private final float[] spheres = new float[MAX_LIGHTS * 4];
 	private final int[] ranges = new int[MAX_LIGHTS * 6];
@@ -109,21 +114,28 @@ class LightClusters
 	void init()
 	{
 		maxTexels = glGetInteger(GL_MAX_TEXTURE_BUFFER_SIZE);
-		lightBuffer = glGenBuffers();
-		glBindBuffer(GL_TEXTURE_BUFFER, lightBuffer);
-		glBufferData(GL_TEXTURE_BUFFER, (long) (ROOM_BASE + RoomMap.HEADER_TEXELS) * 4 * Float.BYTES, GL_DYNAMIC_DRAW);
-		lightTexture = glGenTextures();
-		glBindTexture(GL_TEXTURE_BUFFER, lightTexture);
-		glTexBuffer(GL_TEXTURE_BUFFER, GL_RGBA32F, lightBuffer);
+		glGenBuffers(lightBuffers);
+		glGenTextures(lightTextures);
+		glGenBuffers(clusterBuffers);
+		glGenTextures(clusterTextures);
+		for (int i = 0; i < SETS; ++i)
+		{
+			glBindBuffer(GL_TEXTURE_BUFFER, lightBuffers[i]);
+			glBufferData(GL_TEXTURE_BUFFER, (long) (ROOM_BASE + RoomMap.HEADER_TEXELS) * 4 * Float.BYTES, GL_DYNAMIC_DRAW);
+			glBindTexture(GL_TEXTURE_BUFFER, lightTextures[i]);
+			glTexBuffer(GL_TEXTURE_BUFFER, GL_RGBA32F, lightBuffers[i]);
+			uploadedRooms[i] = null;
+			uploadedVersion[i] = -1;
 
-		clusterBuffer = glGenBuffers();
-		glBindBuffer(GL_TEXTURE_BUFFER, clusterBuffer);
-		bufferTexels = texels;
-		glBufferData(GL_TEXTURE_BUFFER, (long) CLUSTER_ENTRIES * bufferTexels * 4 * Integer.BYTES, GL_DYNAMIC_DRAW);
-		clustersDirty = columnsDirty = true;
-		clusterTexture = glGenTextures();
-		glBindTexture(GL_TEXTURE_BUFFER, clusterTexture);
-		glTexBuffer(GL_TEXTURE_BUFFER, GL_RGBA32UI, clusterBuffer);
+			glBindBuffer(GL_TEXTURE_BUFFER, clusterBuffers[i]);
+			bufferTexels[i] = texels;
+			glBufferData(GL_TEXTURE_BUFFER, (long) CLUSTER_ENTRIES * texels * 4 * Integer.BYTES, GL_DYNAMIC_DRAW);
+			// the masks as they are, whether built yet or not, have not been sent
+			clustersSent[i] = clustersBuilt - 1;
+			columnsSent[i] = columnsBuilt - 1;
+			glBindTexture(GL_TEXTURE_BUFFER, clusterTextures[i]);
+			glTexBuffer(GL_TEXTURE_BUFFER, GL_RGBA32UI, clusterBuffers[i]);
+		}
 
 		glBindTexture(GL_TEXTURE_BUFFER, 0);
 		glBindBuffer(GL_TEXTURE_BUFFER, 0);
@@ -140,21 +152,26 @@ class LightClusters
 
 	void free()
 	{
-		if (lightBuffer != 0)
+		if (lightBuffers[0] != 0)
 		{
-			glDeleteTextures(new int[]{lightTexture, clusterTexture, visTexture});
-			glDeleteBuffers(new int[]{lightBuffer, clusterBuffer});
-			lightBuffer = lightTexture = clusterBuffer = clusterTexture = visTexture = 0;
+			glDeleteTextures(lightTextures);
+			glDeleteTextures(clusterTextures);
+			glDeleteTextures(visTexture);
+			glDeleteBuffers(lightBuffers);
+			glDeleteBuffers(clusterBuffers);
+			Arrays.fill(lightBuffers, 0);
+			Arrays.fill(lightTextures, 0);
+			Arrays.fill(clusterBuffers, 0);
+			Arrays.fill(clusterTextures, 0);
+			visTexture = 0;
 		}
-		uploadedRooms = null;
 		uploadedAtlas = null;
-		uploadedVersion = -1;
 		boundsValid = false;
 	}
 
 	boolean isInitialized()
 	{
-		return lightBuffer != 0;
+		return lightBuffers[0] != 0;
 	}
 
 	int getLightCount()
@@ -351,7 +368,7 @@ class LightClusters
 				}
 			}
 		}
-		clustersDirty = true;
+		++clustersBuilt;
 	}
 
 	private void addFogCandidate(int index, float brightness)
@@ -415,7 +432,7 @@ class LightClusters
 				}
 			}
 		}
-		columnsDirty = true;
+		++columnsBuilt;
 	}
 
 	/** The light masks as cull left them, CLUSTER_ENTRIES entries of {@link #clusterTexels} * 4 words. */
@@ -446,10 +463,11 @@ class LightClusters
 			glBindTexture(GL_TEXTURE_2D, 0);
 			uploadedAtlas = grids;
 		}
-		glBindBuffer(GL_TEXTURE_BUFFER, lightBuffer);
-		if (rooms != uploadedRooms || rooms != null && rooms.getVersion() != uploadedVersion)
+		set = (set + 1) % SETS;
+		glBindBuffer(GL_TEXTURE_BUFFER, lightBuffers[set]);
+		if (rooms != uploadedRooms[set] || rooms != null && rooms.getVersion() != uploadedVersion[set])
 		{
-			// the map changed: lay the buffer out again and send it
+			// the map changed since this copy got it: lay the buffer out again and send it
 			glBufferData(GL_TEXTURE_BUFFER, (long) (ROOM_BASE + roomTexels) * 4 * Float.BYTES, GL_DYNAMIC_DRAW);
 			if (rooms != null)
 			{
@@ -458,8 +476,8 @@ class LightClusters
 				roomStaging.flip();
 				glBufferSubData(GL_TEXTURE_BUFFER, (long) ROOM_BASE * 4 * Float.BYTES, roomStaging);
 			}
-			uploadedRooms = rooms;
-			uploadedVersion = rooms != null ? rooms.getVersion() : -1;
+			uploadedRooms[set] = rooms;
+			uploadedVersion[set] = rooms != null ? rooms.getVersion() : -1;
 		}
 		if (lightCount > 0)
 		{
@@ -472,24 +490,23 @@ class LightClusters
 		roomHeader[2] = rooms != null ? rooms.offset : 0;
 		roomHeader[3] = rooms != null && roomLights ? 1 : 0;
 
-		glBindBuffer(GL_TEXTURE_BUFFER, clusterBuffer);
+		glBindBuffer(GL_TEXTURE_BUFFER, clusterBuffers[set]);
 		int words = texels * 4;
-		if (texels != bufferTexels)
+		boolean clusters = clustersSent[set] != clustersBuilt, columns = columnsSent[set] != columnsBuilt;
+		if (texels != bufferTexels[set])
 		{
 			glBufferData(GL_TEXTURE_BUFFER, (long) CLUSTER_ENTRIES * words * Integer.BYTES, GL_DYNAMIC_DRAW);
-			bufferTexels = texels;
-			clustersDirty = columnsDirty = true;
+			bufferTexels[set] = texels;
+			clusters = columns = true;
 		}
-		if (clustersDirty)
+		// the columns follow the clusters: both halves in one call
+		if (clusters || columns)
 		{
-			sendMasks(0, CLUSTER_COUNT * words);
-			clustersDirty = false;
+			int from = clusters ? 0 : CLUSTER_COUNT * words;
+			sendMasks(from, (columns ? CLUSTER_ENTRIES : CLUSTER_COUNT) * words - from);
 		}
-		if (columnsDirty)
-		{
-			sendMasks(CLUSTER_COUNT * words, COLUMN_COUNT * words);
-			columnsDirty = false;
-		}
+		clustersSent[set] = clustersBuilt;
+		columnsSent[set] = columnsBuilt;
 		glBindBuffer(GL_TEXTURE_BUFFER, 0);
 	}
 
@@ -559,9 +576,9 @@ class LightClusters
 	void bind(int lightUnit, int clusterUnit, int visUnit)
 	{
 		glActiveTexture(GL_TEXTURE0 + lightUnit);
-		glBindTexture(GL_TEXTURE_BUFFER, lightTexture);
+		glBindTexture(GL_TEXTURE_BUFFER, lightTextures[set]);
 		glActiveTexture(GL_TEXTURE0 + clusterUnit);
-		glBindTexture(GL_TEXTURE_BUFFER, clusterTexture);
+		glBindTexture(GL_TEXTURE_BUFFER, clusterTextures[set]);
 		glActiveTexture(GL_TEXTURE0 + visUnit);
 		glBindTexture(GL_TEXTURE_2D, visTexture);
 		glActiveTexture(GL_TEXTURE0);

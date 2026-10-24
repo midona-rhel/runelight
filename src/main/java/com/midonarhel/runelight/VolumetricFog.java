@@ -10,8 +10,9 @@ import static org.lwjgl.opengl.GL33C.*;
 /**
  * Lightweight volumetric fog. A half resolution pass (fog_frag.glsl) marches each view ray a fixed number of steps
  * through a height fog layer around the player, its height measured from the terrain ({@link FogGround}), and writes
- * in-scattered light and transmittance into {@link SceneTargets}' fog target; the denoise smooths it with the AO and
- * shadows (denoise_frag.glsl) and the composite upsamples it depth-aware and applies it (fog_apply.glsl).
+ * in-scattered light and transmittance into {@link SceneTargets}' fog target; the denoise smooths its sun shafts'
+ * grain with the AO and shadows (denoise_frag.glsl) and the composite upsamples it depth-aware and applies it
+ * (fog_apply.glsl).
  *
  * All fog parameters are set in {@link #updateParameters}, so a later per-area environment system only has to
  * change the values there (or the {@code area*} multipliers).
@@ -305,6 +306,17 @@ class VolumetricFog
 	float getRadius()
 	{
 		return fadeEnd;
+	}
+
+	/**
+	 * Whether {@link #render} with these outdoors and shadows draws the sun shafts (fog_frag.glsl's shafts), the only
+	 * part of the fog with grain: the shadow map is sampled at jittered points along each ray. The shader also leaves
+	 * them out while the caster's light is nil, which the day cycle never quite reaches: at its switch from the sun to
+	 * the moon both are faint, but not 0.
+	 */
+	boolean hasShafts(boolean outdoors, ShadowMap shadows)
+	{
+		return outdoors && shadows != null && sunScatter > 0;
 	}
 
 	/**

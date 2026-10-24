@@ -258,20 +258,32 @@ class ShadowMap
 
 	/**
 	 * Make the front static map this frame's map: its matrices, and its depth copied into the sampled texture, ready
-	 * for the moving models to be drawn over it. Leaves the sampled map's framebuffer bound for drawing.
+	 * for the moving models to be drawn over it. The copy is a fullscreen triangle (copyProgram, shadow_copy_frag.glsl)
+	 * in the same pass as the models rather than a blit, which on Apple's GL is a pass of its own after which the map
+	 * is loaded back in. Expects the shadow pass's state (depth test and writes on, GL_LESS, polygon offset) with a VAO
+	 * bound, and leaves it so with the sampled map's framebuffer bound and its viewport set, but copyProgram in use.
 	 */
-	void useFront(float cameraX, float cameraY, float cameraZ)
+	void useFront(float cameraX, float cameraY, float cameraZ, int copyProgram)
 	{
 		View v = views[front];
 		radius = v.radius;
 		depthRange = v.depthRange;
 		System.arraycopy(v.proj, 0, lightProj, 0, 16);
 		relative(lightProj, lightProjRel, cameraX, cameraY, cameraZ);
-		glBindFramebuffer(GL_READ_FRAMEBUFFER, staticFbo[front]);
-		glBindFramebuffer(GL_DRAW_FRAMEBUFFER, fbo);
-		glBlitFramebuffer(0, 0, size, size, 0, 0, size, size, GL_DEPTH_BUFFER_BIT, GL_NEAREST);
-		glBindFramebuffer(GL_READ_FRAMEBUFFER, 0);
 		glBindFramebuffer(GL_FRAMEBUFFER, fbo);
+		glViewport(0, 0, size, size);
+		// every texel is overwritten: clearing first only spares loading the old map
+		glClearDepth(1.0);
+		glClear(GL_DEPTH_BUFFER_BIT);
+		glDisable(GL_POLYGON_OFFSET_FILL);
+		glDepthFunc(GL_ALWAYS);
+		glUseProgram(copyProgram);
+		glActiveTexture(GL_TEXTURE0);
+		glBindTexture(GL_TEXTURE_2D, staticTex[front]);
+		glDrawArrays(GL_TRIANGLES, 0, 3);
+		glBindTexture(GL_TEXTURE_2D, 0);
+		glDepthFunc(GL_LESS);
+		glEnable(GL_POLYGON_OFFSET_FILL);
 	}
 
 	/**

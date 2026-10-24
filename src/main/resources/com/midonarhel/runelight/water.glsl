@@ -8,10 +8,10 @@
 // shading what is seen through it; at a slant the surface turns into the sky, clouds and all, by Fresnel, with sharp
 // reflections of the world. Sharp glints from the sun and moon, lamps' streaks, foam.
 //
-// Two passes of the composite. The first (COMPOSITE_WATER) runs at half resolution over the water only and works
-// out the surface (waterShadeHalf), into waterShaded. The second, the full resolution composite, lights the bed
-// as any ground and only blends: the bed tinted by its depth under the surface, then the surface over it (waterOver),
-// using the full resolution surface for the edges.
+// Two passes of the composite. The first (COMPOSITE_WATER, or COMPOSITE_CLOUDS_WATER along with the clouds) runs at
+// half resolution over the water only and works out the surface (waterShadeHalf), into waterShaded. The second, the
+// full resolution composite, lights the bed as any ground and only blends: the bed tinted by its depth under the
+// surface, then the surface over it (waterOver), using the full resolution surface for the edges.
 // Included by composite_frag.glsl after its lighting helpers (shadows, point light clusters).
 
 #include "water_common.glsl"
@@ -241,7 +241,9 @@ vec3 waterShoulder(vec3 c) {
 // (linear), packed by waterPackShaded. 0 where there is no water.
 void waterShadeHalf(ivec2 hpx) {
   WaterShadedOut = uvec4(0u);
-  if (waterEnabled == 0)
+  // only the texels with a pixel in the rect: texel x reads pixels 2x and 2x + 1 (halfToFull); the water's own pass
+  // is scissored to them as well, the one with the clouds covers every texel
+  if (waterEnabled == 0 || any(lessThan(hpx, waterRect.xy >> 1)) || any(greaterThanEqual(hpx, (waterRect.zw + 1) >> 1)))
     return;
   ivec2 last = textureSize(waterSurface, 0) - 1;
   uvec4 ws = uvec4(0u);
