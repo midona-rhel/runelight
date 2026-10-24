@@ -113,16 +113,6 @@ layout(location = 1) out vec4 WaveOut;    // the wave map: slope xy, foam
 #define CONTACT_FOAM 0.3
 #define CONTACT_FILM 0.06
 #define CONTACT_WAVES 0.8
-// and foam lying round them in crisp two-tone blobs, as snow lies on the ground: noise of this wavelength (world
-// units), slowly shifting over BLOB_PERIOD seconds, cut at a level the contact raises; inside a band of BLOB_RIM
-// noise levels round the edge the foam is the lighter shade, BLOB_OUTER of it, and BLOB_INNER further in
-#define BLOB_SCALE 150.0
-#define BLOB_PERIOD 30.0
-#define BLOB_LEVEL 0.55
-#define BLOB_REACH 1.1
-#define BLOB_RIM 0.12
-#define BLOB_OUTER 0.45
-#define BLOB_INNER 0.85
 // rain rings: cell size (world units), rings per cell per second
 #define RAIN_CELL 72.0
 #define RAIN_RATE 1.3
@@ -140,38 +130,6 @@ float waterHash(vec3 p) {
   p = fract(p * 0.1031);
   p += dot(p, p.zyx + 31.32);
   return fract((p.x + p.y) * p.z);
-}
-
-// Gradient noise, about -0.7 to 0.7
-float blobNoise(vec2 p) {
-  vec2 i = floor(p);
-  vec2 f = p - i;
-  vec2 u = f * f * f * (f * (f * 6.0 - 15.0) + 10.0);
-  float a[4];
-  for (int k = 0; k < 4; ++k) {
-    vec2 c = vec2(k & 1, k >> 1);
-    float h = 6.28318530718 * waterHash(vec3(i + c, 7.0));
-    a[k] = dot(vec2(cos(h), sin(h)), f - c);
-  }
-  return mix(mix(a[0], a[1], u.x), mix(a[2], a[3], u.x), u.y);
-}
-
-// The foam blobs round things standing in the water (contact, WaterMap.contact), 0 to 1: BLOB_OUTER on their rims,
-// BLOB_INNER inside; their edges a pixel wide.
-float contactBlobs(vec2 xz, float contact) {
-  vec2 q = xz / BLOB_SCALE;
-  // two copies of the noise, each fading out and moving on while the other is in full, so the blobs shift but never
-  // jump; kept at full contrast while both are in
-  float t = waterTime / BLOB_PERIOD;
-  float a = 1.0 - abs(2.0 * fract(t) - 1.0);
-  float n = (a * blobNoise(q + floor(t) * vec2(5.3, 1.7))
-    + (1.0 - a) * blobNoise(q.yx + floor(t + 0.5) * vec2(2.9, 6.1) + 31.0)) * inversesqrt(a * a + (1.0 - a) * (1.0 - a));
-  float f = n + BLOB_REACH * contact - BLOB_LEVEL;
-  float px = max(fwidth(f), 1e-4);
-  float blob = smoothstep(-0.7, 0.7, f / px);
-  float inner = smoothstep(-0.7, 0.7, (f - BLOB_RIM) / px);
-  // (worked out everywhere, so the derivatives are; none where nothing stands near)
-  return blob * mix(BLOB_OUTER, BLOB_INNER, inner) * smoothstep(0.0, 0.15, contact);
 }
 
 float waterLod(float footprint, float repeat) {
@@ -449,8 +407,6 @@ void main() {
   vec3 nrm = normalize(vec3(-slope.x, -1.0, -slope.y));
 
   foam = max(foam, rain.z * RAIN_FOAM);
-  float contact = textureLod(waterContact, (xz / WATER_TILE + waterGrid.x) / (waterGrid.y - 1.0), 0.0).r;
-  foam = max(foam, contactBlobs(xz, contact));
 
   // ---- the caustics on the bed below, carried by the flow
   float caustic = 0.0;
