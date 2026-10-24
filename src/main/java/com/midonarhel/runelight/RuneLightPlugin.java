@@ -2933,7 +2933,8 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 			{
 				weatherGround.setAoOff();
 			}
-			frameSkylight = skyGrid.bindAo(SKY_GRID_UNIT, aoScene, frameCameraX, frameCameraY, frameCameraZ);
+			frameSkylight = skyGrid.bindAo(SKY_GRID_UNIT, aoScene, frameCameraX, frameCameraY, frameCameraZ,
+				config.skylightOutdoors());
 			skyField.bindAo(SKY_FIELD_UNIT, frameCameraX, frameCameraZ);
 			gpuTimer.begin(GpuTimer.AO);
 			glDrawArrays(GL_TRIANGLES, 0, 3);

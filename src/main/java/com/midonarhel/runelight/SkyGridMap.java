@@ -56,7 +56,7 @@ final class SkyGridMap
 	private int[] pending;
 	private boolean pendingMove;
 	private int framesSinceUpload;
-	private int uniOn, uniCamera;
+	private int uniOn, uniOutdoors, uniCamera;
 
 	/**
 	 * Once a frame on the client thread with the GL context: hand the worker the newest voxels and walls and the next
@@ -271,6 +271,7 @@ final class SkyGridMap
 	void locateAo(int program, int unit)
 	{
 		uniOn = glGetUniformLocation(program, "skylightOn");
+		uniOutdoors = glGetUniformLocation(program, "skylightOutdoors");
 		uniCamera = glGetUniformLocation(program, "skyGridCamera");
 		glUseProgram(program);
 		glUniform1i(glGetUniformLocation(program, "skyGrid"), unit);
@@ -282,10 +283,11 @@ final class SkyGridMap
 	 * With the AO program in use: switch the skylight on (binding the texture on unit) when it is ready, else off.
 	 * {@link #unbind} after the pass.
 	 */
-	boolean bindAo(int unit, Scene scene, float cameraX, float cameraY, float cameraZ)
+	boolean bindAo(int unit, Scene scene, float cameraX, float cameraY, float cameraZ, boolean outdoors)
 	{
 		boolean on = isReady(scene);
 		glUniform1i(uniOn, on ? 1 : 0);
+		glUniform1i(uniOutdoors, outdoors ? 1 : 0);
 		if (on)
 		{
 			// the camera in the texture's place, which lags the scene's for a moment after a move

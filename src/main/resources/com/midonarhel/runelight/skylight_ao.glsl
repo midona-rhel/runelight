@@ -7,6 +7,7 @@
 // Needs frame.glsl.
 
 uniform int skylightOn;
+uniform int skylightOutdoors;  // 0: out of doors the trace doesn't shade at all (RuneLightConfig.skylightOutdoors)
 // RGBA16F: four horizontal parts, two per triangle half (up/+x/-x/+z, then -z).
 // Slice 0: floor heights/diagonals, floor flags, room floor heights, protected room bits.
 // The final slice samples above captured geometry. Visibility slices store sample x/y/z in the -z part's g/b/a.
@@ -282,7 +283,7 @@ float skylightVisibility(vec3 p, vec3 n) {
   // out of doors (a roof top, a terrace) is not under cover, whatever the flags say.
   float cover = skyFieldOn == 1 ? field.g * (1.0 - skyExterior) : 0.0;
   float outdoors = 1.0 - cover;
-  v = mix(v, 1.0 - (1.0 - v) * SKY_OUTDOOR_STRENGTH, outdoors);
+  v = mix(v, 1.0 - (1.0 - v) * (skylightOutdoors == 1 ? SKY_OUTDOOR_STRENGTH : 0.0), outdoors);
   if (skyFieldOn == 1) {
     v = mix(v, max(v, field.r), cover);
   }

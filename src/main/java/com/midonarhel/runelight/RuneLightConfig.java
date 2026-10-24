@@ -1472,6 +1472,19 @@ public interface RuneLightConfig extends Config
 		return 3;
 	}
 
+	@ConfigItem(
+		keyName = "skylightOutdoors",
+		name = "Skylight outdoors",
+		description = "Let the traced skylight shade outdoor surfaces near buildings and trees. Off, only covered spots "
+			+ "get skylight shading.",
+		section = lightOcclusionSection,
+		position = 808
+	)
+	default boolean skylightOutdoors()
+	{
+		return true;
+	}
+
 	@ConfigSection(
 		name = "Hide other areas",
 		description = "What shows of the map around instances, caves and other areas of their own",
