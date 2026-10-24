@@ -50,19 +50,10 @@ public class GiBounceTest
 	private static GiRelight.Light sunlit()
 	{
 		float[] t = new float[GiRelight.TABLE_FLOATS];
-		for (int i = 0; i < GiRelight.SKY_W * GiRelight.SKY_H; ++i)
-		{
-			t[i * 4] = 0.3f;
-			t[i * 4 + 1] = 0.4f;
-			t[i * 4 + 2] = 0.6f;
-		}
 		int row = GiRelight.SKY_W * GiRelight.SKY_H * 4;
 		t[row] = 2.9f;
 		t[row + 1] = 2.6f;
 		t[row + 2] = 2.2f;
-		t[row + 4] = 0.5f;
-		t[row + 5] = 0.55f;
-		t[row + 6] = 0.7f;
 		t[row + 12] = 1;
 		float l = (float) Math.sqrt(0.25 + 0.49 + 0.25);
 		return GiRelight.Light.fromTable(t, new float[]{0.5f / l, -0.7f / l, 0.5f / l}, true);
@@ -110,27 +101,48 @@ public class GiBounceTest
 		return GiPatches.build(GiGrid.assemble(zones, zx, zz, BASE_ZONE), in, GiPatches.ParallelFor.SEQUENTIAL);
 	}
 
+	/** What the composite does with a lookup: the tint at luminance 1 and how much of it applies (light_occlusion.glsl giTint). */
+	static float[] tint(float[] gi)
+	{
+		float l = GiRelight.luminance(gi[0], gi[1], gi[2]);
+		if (l < 1e-4f)
+		{
+			return new float[]{1, 1, 1, 0};
+		}
+		return new float[]{gi[0] / l, gi[1] / l, gi[2] / l, Math.min(1, l) * gi[3]};
+	}
+
 	@Test
-	public void theGrassBouncesOntoTheFootOfAWall()
+	public void theGrassGreensTheFootOfAWallAndFadesUp()
 	{
 		GiPatches p = greenWall();
 		float[] light = GiRelight.relight(p, sunlit(), GiPatches.ParallelFor.SEQUENTIAL);
-		// the wall's west face is at x = 1276; a pixel at its foot on the grass side faces west
-		float[] foot = GiLookup.irradiance(p, light, new float[]{1275, -10, 12.5f * GiPatches.TILE}, new float[]{-1, 0, 0});
-		assertTrue("coverage " + foot[3], foot[3] > 0.5f);
-		assertTrue("green " + foot[0] + " " + foot[1] + " " + foot[2], foot[1] > foot[0] * 1.4f && foot[1] > foot[2] * 2f);
-		// higher up the wall the green is still what bounces
-		float[] high = GiLookup.irradiance(p, light, new float[]{1275, -170, 12.5f * GiPatches.TILE}, new float[]{-1, 0, 0});
-		assertTrue("high coverage " + high[3], high[3] > 0.5f);
-		assertTrue("high green " + high[0] + " " + high[1] + " " + high[2], high[1] > high[0] * 1.4f && high[1] > high[2] * 2f);
-		// the grass at the wall's foot gets the wall's light back, with the green of the grass it was lit on lost to the
-		// wall's own gray; both faces of the wall have their patches
+		// the wall's east face looks at the sunlit grass, at x = 1284; the sun is to the east, so its west face is in the
+		// wall's own shadow
+		float[][] at = new float[3][];
+		int k = 0;
+		for (float y : new float[]{-10, -100, -200})
+		{
+			float[] gi = GiLookup.irradiance(p, light, new float[]{1286, y, 12.5f * GiPatches.TILE}, new float[]{1, 0, 0});
+			at[k] = tint(gi);
+			System.err.println("wall at " + -y + " up: tint " + java.util.Arrays.toString(at[k]) + " lookup " + java.util.Arrays.toString(gi));
+			k++;
+		}
+		// green at the foot, and a good deal of it
+		assertTrue("foot " + java.util.Arrays.toString(at[0]), at[0][1] > at[0][0] * 1.5f && at[0][1] > at[0][2] * 1.5f);
+		assertTrue("amount at the foot " + at[0][3], at[0][3] > 0.5f);
+		// and less of it higher up, still green
+		assertTrue("100 up " + at[1][3] + " foot " + at[0][3], at[1][3] < at[0][3] * 0.6f && at[1][3] > 0);
+		assertTrue("200 up " + at[2][3] + " 100 up " + at[1][3], at[2][3] < at[1][3] * 0.6f);
+		assertTrue(at[1][1] > at[1][0] && at[1][1] > at[1][2]);
+		// both faces have patches
 		assertTrue(GlobalIlluminationTest.face(p, 0, 9, 12, 1)[1] >= 1);
 		assertTrue(GlobalIlluminationTest.face(p, 0, 10, 12, 3)[1] >= 1);
-		int grass = GlobalIlluminationTest.floorId(0, 9, 12);
+		// the grass beside the wall is lit by the wall alone, which is gray: white, no tint of green
+		int grass = GlobalIlluminationTest.floorId(0, 10, 12);
 		assertTrue(p.exists(grass));
-		float r = light[grass * 3], g = light[grass * 3 + 1];
-		assertTrue("grass " + r + " " + g, r > 0 && g > 0);
+		float[] t = tint(new float[]{light[grass * 3], light[grass * 3 + 1], light[grass * 3 + 2], 1});
+		assertTrue("grass " + java.util.Arrays.toString(t), t[0] > 0.7f && t[2] > 0.7f && t[1] < 1.3f);
 	}
 
 	@Test

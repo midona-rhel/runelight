@@ -16,19 +16,19 @@ import org.slf4j.LoggerFactory;
 import static org.lwjgl.opengl.GL33C.*;
 
 /**
- * Global illumination by radiosity between tile sized patches of floor, wall and roof (GiPatches): each patch is lit by the
- * sun or moon and the sky it sees, and gathers what the patches around it that it can see send on, tinted by their
- * albedos (GiRelight). A pixel reads the patches of the surface it is on, never the space around it (gi.glsl), so
- * interiors and the sides of walls stay apart, and sunlit ground warms the shade beside it, the foot of a wall in
- * particular, and a red roof the wall of the taller house beside it (the sky's own light, past roofs, overhangs and
- * walls, comes from the composite).
+ * Global illumination as a colour transfer between tile sized patches of floor, wall and roof (GiPatches): each patch
+ * emits its albedo's colour as much as it is lit by the sun or moon and the sky it sees, and gathers the average colour
+ * of the patches around it that it can see (GiRelight). A pixel reads the patches of the surface it is on, never the
+ * space around it (gi.glsl), so interiors and the sides of walls stay apart, and the composite tints its light with
+ * what it reads: sunlit grass greens the foot of the wall beside it, however dim the grass is (the light itself, past
+ * roofs, overhangs and walls, comes from the composite).
  *
  * Everything heavy runs on a worker thread. After a region load the zones' triangles (captured as they upload,
  * GiCapture) are voxelized, per zone so reused zones keep theirs (GiVoxels), and the patches are laid out and linked
  * through the voxels once (GiPatches). The skylight traces the same voxels (SkyGrid), so with the patches off the builds
- * still voxelize the scene for it and stop there. Relighting the patches (GiRelight) takes tens of milliseconds and
+ * still voxelize the scene for it and stop there. Relighting the patches (GiRelight) takes a few milliseconds and
  * happens when the sky cache captures, the sun or moon has moved RELIGHT_DEGREES, the weather or settings change, or
- * every MAX_RELIGHT_MILLIS. The light it needs from the sky is drawn on the GPU into a tiny table (gi_sky_frag.glsl) and
+ * every MAX_RELIGHT_MILLIS. The light it needs is drawn on the GPU into a tiny table (gi_sky_frag.glsl) and
  * read back without stalling. Each new set of light is uploaded at once (a megabyte) and blended in over about the
  * time between relights, like the sky cache, so nothing pops.
  *
@@ -607,7 +607,7 @@ class GlobalIllumination
 		glActiveTexture(GL_TEXTURE0);
 	}
 
-	/** With a composite program in use: how much of the patches' bounced light it adds (its locateComposite). */
+	/** With a composite program in use: how much of the patches' tint it applies (its locateComposite). */
 	void setComposite(int location, float strength)
 	{
 		glUniform1f(location, isActive() ? weight * strength : 0);

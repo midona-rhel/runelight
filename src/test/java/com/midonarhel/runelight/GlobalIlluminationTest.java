@@ -629,20 +629,20 @@ public class GlobalIlluminationTest
 			float y = outside[2] - (k + 0.5f) * outside[3];
 			float[] out = GiLookup.irradiance(p, marker, new float[]{10 * GiPatches.TILE - 8, y, z}, new float[]{-1, 0, 0});
 			float[] in = GiLookup.irradiance(p, marker, new float[]{10 * GiPatches.TILE + 14, y, z}, new float[]{1, 0, 0});
-			assertEquals(outside[0] + k, out[0], 1e-3);
-			assertEquals(inside[0] + k, in[0], 1e-3);
+			assertEquals(outside[0] + k, unrise(out[0], outside[2], y), 0.05);
+			assertEquals(inside[0] + k, unrise(in[0], outside[2], y), 0.05);
 			assertEquals(1, out[3], 0);
 			assertEquals(1, in[3], 0);
 		}
 		// between two bands it blends the two
 		float y = outside[2] - outside[3];
 		float[] between = GiLookup.irradiance(p, marker, new float[]{10 * GiPatches.TILE - 8, y, z}, new float[]{-1, 0, 0});
-		assertEquals(outside[0] + 0.5f, between[0], 1e-2);
+		assertEquals(outside[0] + 0.5f, unrise(between[0], outside[2], y), 0.1);
 		// along the wall, at the border of two tiles, the two tiles' faces
 		float[] beside = face(p, 0, 9, 13, 1);
 		float[] border = GiLookup.irradiance(p, marker, new float[]{10 * GiPatches.TILE - 8, outside[2] - 0.5f * outside[3],
 			13 * GiPatches.TILE}, new float[]{-1, 0, 0});
-		assertEquals((outside[0] + beside[0]) / 2, border[0], 1e-2);
+		assertEquals((outside[0] + beside[0]) / 2, unrise(border[0], outside[2], outside[2] - 0.5f * outside[3]), 0.1);
 		// above the wall it is not on it: the ground under it, faded out with the height
 		float[] above = GiLookup.irradiance(p, marker, new float[]{10 * GiPatches.TILE - 8, -3 * 128f, z}, new float[]{-1, 0, 0});
 		assertEquals(0, above[3], 0);
@@ -651,6 +651,12 @@ public class GlobalIlluminationTest
 			new float[]{1, 0, 0});
 		assertEquals(floorId(0, 30, 30), tree[0], 0);
 		assertTrue(tree[3] > 0.5f && tree[3] < 1);
+	}
+
+	/** A lookup of the markers undone of the colour's fade with the height above a wall's foot (gi.glsl GI_RISE). */
+	static float unrise(float marker, float base, float y)
+	{
+		return marker / (float) Math.exp(-Math.max(base - y, 0) / GiLookup.define("GI_RISE"));
 	}
 
 	static int roofId(int x, int z)
@@ -758,7 +764,7 @@ public class GlobalIlluminationTest
 		assertFalse(linked(p, roofId(10, 12), roofId(11, 12)));
 		assertFalse(linked(p, roofId(12, 12), roofId(13, 12)));
 		// the light each gathers is what the other slope gives off: lit by the sun and the sky, both gather some
-		GiRelight.Light sun = GiRelight.Light.fromTable(table(0.3f, 2.6f), sunDir(), true);
+		GiRelight.Light sun = GiRelight.Light.fromTable(table(2.6f), sunDir(), true);
 		float[] light = GiRelight.relight(p, sun, GiPatches.ParallelFor.SEQUENTIAL);
 		assertTrue(lum(light, roofId(11, 12)) > 0);
 		assertTrue(lum(light, roofId(12, 12)) > 0);
@@ -825,8 +831,8 @@ public class GlobalIlluminationTest
 		float cx = 15.5f * GiPatches.TILE, cz = 15.5f * GiPatches.TILE, y = west[2] - 0.5f * west[3];
 		float[] nw = GiLookup.irradiance(p, marker, new float[]{cx - 6, y, cz + 6}, new float[]{-d, 0, d});
 		float[] se = GiLookup.irradiance(p, marker, new float[]{cx + 6, y, cz - 6}, new float[]{d, 0, -d});
-		assertEquals(w, nw[0], 1e-3);
-		assertEquals(e, se[0], 1e-3);
+		assertEquals(w, unrise(nw[0], west[2], y), 0.05);
+		assertEquals(e, unrise(se[0], west[2], y), 0.05);
 		assertEquals(1, nw[3], 0);
 		// and a pixel far from the diagonal is not on it
 		float[] far = GiLookup.irradiance(p, marker, new float[]{cx - 50, y, cz + 50}, new float[]{-d, 0, d});
@@ -854,6 +860,12 @@ public class GlobalIlluminationTest
 	 */
 	private static void smooth(String what, GiPatches p, float[] light, float[] a, float[] b, float[] n)
 	{
+		smooth(what, p, light, a, b, n, 0.012f);
+	}
+
+	/** ... with colorStep the most the color moves between two steps. */
+	private static void smooth(String what, GiPatches p, float[] light, float[] a, float[] b, float[] n, float colorStep)
+	{
 		float length = (float) Math.sqrt((b[0] - a[0]) * (b[0] - a[0]) + (b[1] - a[1]) * (b[1] - a[1])
 			+ (b[2] - a[2]) * (b[2] - a[2]));
 		int steps = (int) Math.ceil(length / 2);
@@ -872,7 +884,7 @@ public class GlobalIlluminationTest
 					for (int c = 0; c < 3; ++c)
 					{
 						assertTrue(what + " at " + java.util.Arrays.toString(at) + " color " + c + " " + last[c] + " -> " + gi[c],
-							Math.abs(gi[c] - last[c]) <= 0.012f);
+							Math.abs(gi[c] - last[c]) <= colorStep);
 					}
 				}
 			}
@@ -944,13 +956,15 @@ public class GlobalIlluminationTest
 		{
 			for (float x : new float[]{10 * c - 2, 10 * c - 20, 10 * c - 40})
 			{
+				// the colour fades up the wall by 1/e in 96 units, 2% of its value in a step, and the ramp is as big as 1.5
 				smooth("up the wall z " + z + " x " + x, p, light, new float[]{x, 0, z}, new float[]{x, -300, z},
-					new float[]{-1, 0, 0});
+					new float[]{-1, 0, 0}, 0.04f);
 			}
 		}
 		// away from it
+		// where the wall's colour gives way to the ground's over the last 46 units, 100 up where the wall's light has faded to a third of the ground's
 		smooth("away from the wall", p, light, new float[]{10 * c - 80, -100, 12.3f * c}, new float[]{10 * c, -100, 12.3f * c},
-			new float[]{-1, 0, 0});
+			new float[]{-1, 0, 0}, 0.12f);
 		// along the house' south wall, up to the door, where the wall ends
 		smooth("south wall", p, light, new float[]{10.2f * c, -90, 9.9f * c}, new float[]{11.95f * c, -90, 9.9f * c}, new float[]{0, 0, -1});
 	}
@@ -983,26 +997,11 @@ public class GlobalIlluminationTest
 		}
 	}
 
-	private static float[] table(float sky, float caster)
+	private static float[] table(float caster)
 	{
 		float[] t = new float[GiRelight.TABLE_FLOATS];
-		for (int y = 0; y < GiRelight.SKY_H; ++y)
-		{
-			float s = (y + 0.5f) / GiRelight.SKY_H * 2 - 1;
-			for (int x = 0; x < GiRelight.SKY_W; ++x)
-			{
-				int i = (y * GiRelight.SKY_W + x) * 4;
-				float v = s > 0 ? sky : sky * 0.3f;
-				t[i] = v * 0.8f;
-				t[i + 1] = v * 0.9f;
-				t[i + 2] = v;
-			}
-		}
 		int row = GiRelight.SKY_W * GiRelight.SKY_H * 4;
 		t[row] = t[row + 1] = t[row + 2] = caster;
-		t[row + 4] = 0.5f;
-		t[row + 5] = 0.55f;
-		t[row + 6] = 0.7f;
 		t[row + 8] = 0;
 		t[row + 12] = 1;
 		return t;
@@ -1020,50 +1019,59 @@ public class GlobalIlluminationTest
 	}
 
 	@Test
-	public void skyScaleMatchesTheOldAmbient()
+	public void chromaIsTheColourAtUnitLuminance()
 	{
-		// a sky of the same radiance everywhere lights a surface facing up with that radiance
-		float[] t = new float[GiRelight.TABLE_FLOATS];
-		for (int i = 0; i < GiRelight.SKY_W * GiRelight.SKY_H; ++i)
-		{
-			t[i * 4] = t[i * 4 + 1] = t[i * 4 + 2] = 0.25f;
-		}
-		int row = GiRelight.SKY_W * GiRelight.SKY_H * 4;
-		t[row + 4] = t[row + 5] = t[row + 6] = 0.5f;
-		GiRelight.Light l = GiRelight.Light.fromTable(t, sunDir(), false);
-		assertEquals(0.5f / 0.25f, GiRelight.skyScale(l), 0.1);
+		float[] out = new float[3];
+		GiRelight.chroma(0.05f, 0.2f, 0.04f, out, 0);
+		assertEquals(1, GiRelight.luminance(out[0], out[1], out[2]), 1e-4);
+		assertTrue(out[1] > out[0] * 2 && out[1] > out[2] * 2);
+		// as strong for a dark color as for a bright one of the same hue
+		float[] bright = new float[3];
+		GiRelight.chroma(0.5f, 2f, 0.4f, bright, 0);
+		assertArrayEquals(out, bright, 1e-4f);
+		// gray gives white, which tints nothing, and black does too
+		GiRelight.chroma(0.4f, 0.4f, 0.4f, out, 0);
+		assertArrayEquals(new float[]{1, 1, 1}, out, 1e-4f);
+		GiRelight.chroma(0.001f, 0.002f, 0, out, 0);
+		assertArrayEquals(new float[]{1, 1, 1}, out, 0);
+		// a pure green is held to MAX_CHROMA in a channel, at the same luminance
+		GiRelight.chroma(0, 0, 0.5f, out, 0);
+		assertEquals(GiRelight.MAX_CHROMA, out[2], 1e-4);
+		assertEquals(1, GiRelight.luminance(out[0], out[1], out[2]), 1e-4);
+		assertTrue(out[0] > 0 && out[1] > 0);
 	}
 
 	@Test
-	public void sunlitWallsLightTheGroundAndNothingLeaksIn()
+	public void patchesGatherTheColourOfWhatLitPatchesAroundThem()
 	{
 		GiPatches p = patches();
-		GiRelight.Light withSun = GiRelight.Light.fromTable(table(0.3f, 2.6f), sunDir(), true);
+		GiRelight.Light withSun = GiRelight.Light.fromTable(table(2.6f), sunDir(), true);
 		float[] light = GiRelight.relight(p, withSun, GiPatches.ParallelFor.SEQUENTIAL);
 		for (float v : light)
 		{
 			assertTrue(Float.isFinite(v) && v >= 0);
 		}
-		// the sun is to the east and north: the house's east wall has the sun, the ground in front of it bounces it back
-		int east = floorId(0, 14, 12), west = floorId(0, 9, 12);
-		assertTrue(lum(light, east) > 0);
-		// the room has a roof: what a floor in it gathers is a fraction of what the open ground beside a wall does
-		int room = floorId(0, 11, 12);
+		// what a patch gathers is never brighter than 1: a tint's luminance is how lit and how covered it is
+		for (int i = 0; i < p.count; ++i)
+		{
+			assertTrue(lum(light, i) <= 1.0001f);
+		}
+		// the open ground beside a wall sees it for a good part of its view; the room's floor, under a roof, sees walls
+		// that are lit by what comes in at the door alone
+		int east = floorId(0, 14, 12), room = floorId(0, 11, 12);
+		assertTrue(lum(light, east) > 0.2f);
 		assertTrue("room " + lum(light, room) + " beside " + lum(light, east), lum(light, room) < lum(light, east) * 0.5f);
 		// nothing is lit that does not exist
 		assertEquals(0, lum(light, floorId(0, 60, 60)), 0);
-		// without the sun, the sky alone lights what the walls bounce: less
-		GiRelight.Light skyOnly = GiRelight.Light.fromTable(table(0.3f, 2.6f), sunDir(), false);
+		// without the sun, the sky alone lights the patches: less
+		GiRelight.Light skyOnly = GiRelight.Light.fromTable(table(2.6f), sunDir(), false);
 		float[] dim = GiRelight.relight(p, skyOnly, GiPatches.ParallelFor.SEQUENTIAL);
 		assertTrue(lum(dim, east) < lum(light, east));
 		assertTrue(lum(dim, east) > 0);
-		assertTrue(lum(dim, west) > 0);
-		// without light there is none
+		// and in no light at all, the sky's share still lights what sees the sky
 		GiRelight.Light dark = GiRelight.Light.fromTable(new float[GiRelight.TABLE_FLOATS], new float[]{0, -1, 0}, true);
-		for (float v : GiRelight.relight(p, dark, GiPatches.ParallelFor.SEQUENTIAL))
-		{
-			assertEquals(0, v, 0);
-		}
+		float[] sky = GiRelight.relight(p, dark, GiPatches.ParallelFor.SEQUENTIAL);
+		assertTrue(lum(sky, east) > 0 && lum(sky, east) < lum(dim, east) * 1.01f);
 	}
 
 	@Test
@@ -1119,17 +1127,5 @@ public class GlobalIlluminationTest
 		// and which face is which
 		assertEquals(4, GiPatches.DIAGONAL_WEST);
 		assertEquals(5, GiPatches.DIAGONAL_EAST);
-	}
-
-	@Test
-	public void skyTableSampling()
-	{
-		float[] t = table(0.3f, 1);
-		GiRelight.Light l = GiRelight.Light.fromTable(t, new float[]{0, -1, 0}, true);
-		float[] out = new float[3];
-		GiRelight.sky(l.sky, 0, -1, 0, out);
-		assertEquals(0.3f, out[2], 1e-4);
-		GiRelight.sky(l.sky, 0.3f, 0.95f, 0.1f, out);
-		assertEquals(0.09f, out[2], 1e-4);
 	}
 }

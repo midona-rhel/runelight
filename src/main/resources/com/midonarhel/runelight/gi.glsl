@@ -4,11 +4,13 @@
 // pixel reads the patches of its own wall face, a pixel facing up the roof patches around it, and anything else (floors,
 // trees, objects, people) the floor patches under it, less the higher it is above them. Every lookup blends the patches
 // around the pixel by how close they are, and the lookups fade into one another by how much of each there is, so the
-// light varies smoothly along a surface and jumps only where the surface itself does (a wall's corner, where it meets
-// the floor). The composite blends the result with its plain ambient light. Needs frame.glsl.
+// tint varies smoothly along a surface and jumps only where the surface itself does (a wall's corner, where it meets
+// the floor). On a wall it also fades with the height above the wall's foot, so what the floor gives it hugs the bottom.
+// The composite tints its light with the result. Needs frame.glsl.
 
-// RGBA16F, patch i at (i & GI_PATCH_MASK, i >> GI_PATCH_BITS): rgb the light the patch gathers by bouncing, in the units of
-// the composite's ambient light, a 1 for a patch and 0 for none. The first patches are the floors', one slot per floor
+// RGBA16F, patch i at (i & GI_PATCH_MASK, i >> GI_PATCH_BITS): rgb the colour the patch sees in the surfaces around it
+// (GiRelight), as a tint whose luminance, 0 to 1, is how lit those are and how much of its view they are, a 1 for a patch
+// and 0 for none. The first patches are the floors', one slot per floor
 // and tile: floor f's tile (x, z) is patch f * GI_TILES + z * GI_SIZE + x; then the roofs', one per tile: patch
 // GI_ROOFS + z * GI_SIZE + x.
 uniform sampler2D giPatches;
@@ -47,6 +49,8 @@ uniform vec3 giCamera;       // camera position relative to the patches' grid co
 #define GI_WALL_REACH 48.0
 // the light fades out over this much (bands) above the top of the wall
 #define GI_WALL_TOP 0.5
+// the colour a wall gets from the floor fades with the height above the wall's foot, by 1/e over this many world units
+#define GI_RISE 96.0
 // A floor is under a pixel when it is at most this far (world units) below it; on a wall, which ends where the floor
 // above begins, only just. A pixel is wholly on the highest floor under it when it is that far or more above its
 // slack, the floor's patches count for less the nearer it is to being under it, and the floor below counts for the rest.
@@ -244,7 +248,9 @@ vec4 giWallFace(float y, ivec2 own, int face, int kind, ivec2 alongTile, float a
   if (wsum <= 0.0) {
     return vec4(0.0);
   }
-  return vec4((w0.rgb * a0 + w1.rgb * a1) / wsum, clamp(wsum / GI_FULL_WEIGHT, 0.0, 1.0));
+  // the colour fades with the height, not the wall: what is left of the pixel's view is not filled in with the floor's
+  float rise = (a0 * exp(-max(e0.b - y, 0.0) / GI_RISE) + a1 * exp(-max(e1.b - y, 0.0) / GI_RISE)) / wsum;
+  return vec4((w0.rgb * a0 + w1.rgb * a1) / wsum * rise, clamp(wsum / GI_FULL_WEIGHT, 0.0, 1.0));
 }
 
 // The light on a pixel at world position world on the wall face that its normal n (mostly horizontal) points away from:
@@ -312,8 +318,8 @@ vec4 giWall(vec3 world, vec3 n) {
   return vec4(layer.rgb, layer.a * reach);
 }
 
-// Indirect light on a surface at camera-relative p facing n: rgb the patches' light (the light that bounced onto the
-// surface, in the units of the composite's ambient), a how much of it to use (0 outside the grid, or where the surface has
+// The tint on a surface at camera-relative p facing n: rgb the patches' tint (the colour of the surfaces it sees, as light
+// of luminance 0 to 1), a how much of it to use (0 outside the grid, or where the surface has
 // no patches near it).
 vec4 giIrradiance(vec3 p, vec3 n) {
   vec3 world = p + giCamera;

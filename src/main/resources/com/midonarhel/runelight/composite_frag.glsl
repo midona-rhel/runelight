@@ -106,8 +106,8 @@ layout(location = 0) out vec4 FragColor;
 // ---------------------------------------------------------------------------------------------------------------
 // Global illumination (GlobalIllumination.java, gi.glsl): the light the patches of floor, wall and roof around a surface
 // gather by bouncing, read by the AO pass from the patches of the surface itself, upsampled with the AO like the
-// shadows, and added to the ambient light (light_occlusion.glsl giBounce)
-uniform float giWeight;  // 0..1: enabled, eased in and out, strength
+// shadows, and tints the light (light_occlusion.glsl giTint)
+uniform float giWeight;  // 0..2: enabled, eased in and out, strength
 
 // ---------------------------------------------------------------------------------------------------------------
 // Ambient occlusion and shadows: 2x2 depth- and normal-aware upsample of the half resolution pass, whose noise the
@@ -392,6 +392,8 @@ vec4 shadeScene(ivec2 px, SceneSample sm, vec4 transparent) {
   float halfShadow = 1.0;
   vec4 fog;
   vec4 gi = vec4(0.0);
+  // the global illumination's tint of this surface's light, and how much of it there is
+  vec4 giT = vec4(1.0, 1.0, 1.0, 0.0);
   float ground = 0.0;
   vec3 indirect = vec3(0.0);
   bool fogDone = false;
@@ -418,14 +420,17 @@ vec4 shadeScene(ivec2 px, SceneSample sm, vec4 transparent) {
       shadow *= cloudShadow(p + cameraPos, casterDir);
     }
     shadow = overcastShadow(shadow);
+    giT = giTint(gi.rgb, gi.a * giWeight);
     vec3 caster = sunIsCaster == 1 ? sunLight(sunAltitude) : moonLight(sunAltitude);
     float up = max(-n.y, 0.0);
     if (compositePart != 2) {
     vec3 plain = ambientLight(sunAltitude) + skyFill(n, sunAltitude, up);
-    indirect = skylightAmbient(plain) * envAmbient * ao + giBounce(gi.rgb, gi.a * giWeight);
+    indirect = skylightAmbient(plain) * envAmbient * ao;
     // Retain the later skylight daylight fill and the tuned indoor ambient floor.
     float daylightFill = skylightOn == 1 ? 0.7 * clamp(skyUpsampled, 0.0, 1.0) : 0.0;
     indirect += caster * envSun * max(ndl, 0.0) * (1.0 - shadow) * daylightFill * ao;
+    // the colour of the surfaces around it
+    indirect *= giFactor(giT, 1.0);
     float roomFill = roomAmbientFill(p + cameraPos, n);
     if (roomFill > 0.0) {
       // how closed in the spot is: a room with its roof hidden still counts, a covered gateway open at both ends
@@ -440,7 +445,7 @@ vec4 shadeScene(ivec2 px, SceneSample sm, vec4 transparent) {
     }
     }
     light = indirect
-      + caster * envSun * max(ndl, 0.0) * shadow * mix(1.0, ao, AO_DIRECT);
+      + caster * envSun * max(ndl, 0.0) * shadow * mix(1.0, ao, AO_DIRECT) * giFactor(giT, GI_SUN_TINT);
     if (transmissive > 0.0) {
       // light through the leaf isn't occluded by the creases SSAO sees on its front
       light += caster * envSun * transmission(ndl, dot(-casterDir, normalize(-p)), transmissive) * shadow;
@@ -488,8 +493,8 @@ vec4 shadeScene(ivec2 px, SceneSample sm, vec4 transparent) {
     return vec4(vec3(ao), 1.0);
   }
   if (debugView == DEBUG_GI) {
-    // the bounced light alone, as a white surface would get it: exactly what the lighting adds, so its color shows
-    return vec4(linearToSrgb(clamp(giBounce(gi.rgb, gi.a * giWeight), 0.0, 1.0)), 1.0);
+    // the tint the light gets: white where there is none, exactly what the lighting multiplies its ambient light by
+    return vec4(linearToSrgb(clamp(giFactor(giTint(gi.rgb, gi.a * giWeight), 1.0), 0.0, 1.0)), 1.0);
   }
   if (debugView == DEBUG_SKYLIGHT) {
     // sky visibility, red where it isn't worked out

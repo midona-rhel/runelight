@@ -29,16 +29,13 @@ float skyUpsampled = 1.0;
 #define LIGHT_ROOF_FACING_LOW 0.05
 #define LIGHT_ROOF_FACING_HIGH 0.35
 
-// The patches' light is the light that reached the surface by bouncing, as irradiance in the units of the ambient light
-// (GiRelight). The form factors keep it physical, which is faint: a wall standing in sunlit grass gathers about a third
-// of the grass' albedo times the sun's light, and the game's grass is dark (albedo ~0.07), so it gets ~0.04, against an
-// ambient plus daylight fill of 0.5 to 2 on a wall in shade. This is how many times stronger it is shown, so that the
-// grass' bounce is as strong as the rest of the light there and its color shows. Bright surfaces would bounce far more
-// at that gain: the bounce's brightness is held to BOUNCE_MAX (luminance) before the strength setting scales it, which
-// keeps their color and stops a white courtyard from glowing. Added after the half resolution target and its range, so
-// it clamps nothing there.
-#define BOUNCE_GAIN 40.0
-#define BOUNCE_MAX 1.2
+// The global illumination is a colour transfer, not light (GiRelight): what the patches around a surface give it is the
+// colour of what they see, as a tint whose luminance, 0 to 1, is how lit that is and how much of the surface's view it
+// is, and the looked up colour fades with the surface's height above a wall's foot (gi.glsl). The surface's light is
+// multiplied by mix(white, that colour at luminance 1, how much of it there is), so the grass' green stands on the foot of
+// the wall beside it, however dim the grass is, and the light's brightness stays as it was. The sun's light is tinted by this
+// share of it, so the colour still shows on a sunlit wall.
+#define GI_SUN_TINT 0.25
 
 // plain: the ambient plus sky light a surface would get under the open sky
 vec3 skylightAmbient(vec3 plain) {
@@ -46,17 +43,19 @@ vec3 skylightAmbient(vec3 plain) {
   return plain * mix(skylightFloor, 1.0, v);
 }
 
-// The light bounced onto a surface in mode 2, gi the patches' light and giW its weight, in color: the sunlit grass that
-// greens the wall in its shade, the red roof that warms the ground beside it, the water that blues its banks. It is
-// sunlight, so it goes with the area's sun (envSun), not its ambient, and the AO doesn't darken it: the creases the AO
-// finds are where the surfaces it comes off meet.
-vec3 giBounce(vec3 gi, float giW) {
-  if (skylightMode != 2) {
-    return vec3(0.0);
+// The tint in mode 2, gi the patches' tint and giW how much of it there is (the strength setting too): rgb the colour at
+// luminance 1, a how much of it to apply.
+vec4 giTint(vec3 gi, float giW) {
+  float l = overcastLuma(gi);
+  if (skylightMode != 2 || l < 1e-4) {
+    return vec4(1.0, 1.0, 1.0, 0.0);
   }
-  vec3 b = gi * BOUNCE_GAIN;
-  float l = overcastLuma(b);
-  return b * (min(l, BOUNCE_MAX) / max(l, 1e-4)) * giW * envSun;
+  return vec4(gi / l, clamp(l, 0.0, 1.0) * giW);
+}
+
+// What the tint multiplies the light by, share of it: never negative, however strong the setting.
+vec3 giFactor(vec4 tint, float share) {
+  return max(mix(vec3(1.0), tint.rgb, tint.a * share), vec3(0.0));
 }
 
 // Inside a building the skylight is the light flowed in through its openings (SkyField), and what comes in through a

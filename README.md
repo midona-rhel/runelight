@@ -180,21 +180,26 @@ patches are sloped); trees and objects get none. Their albedo is the
 voxels' average, pushed 1.5 times further from gray (`GiPatches.ALBEDO_SATURATION`), which area averaging and textures
 pull toward it. Each patch is linked to the patches within three tiles that face it and that it faces and can see (a
 ray through the voxels), with the point-to-area form factor cos_i cos_j A_j / (pi r^2 + A_j) as the weight, so walls
-don't leak, and keeps which of 64 directions are open to the sky. Relighting (`GiRelight.java`) takes the sky from the
-sky cache (`gi_sky_frag.glsl`, read back without stalling) and lights every patch directly by the sun or moon (a ray
-through the voxels, softened by the overcast) and the sky it sees; a patch sends on its albedo times that, and what
-each patch gathers is the weighed sum of what its links send: one bounce, a few milliseconds to tens of milliseconds
-on the worker whenever the sky or the sun changes enough; new light blends in over a few seconds. The AO pass looks
+don't leak, and keeps which of 64 directions are open to the sky. Relighting (`GiRelight.java`) transfers colour, not energy: it takes the sun or moon from the
+sky cache (`gi_sky_frag.glsl`, read back without stalling) and gives every patch a lit-ness from 0 to 1, the light's
+cosine times its visibility (a ray through the voxels, softened by the overcast), plus a quarter of the sky it sees
+(only that when "Sun bounce" is off). A patch emits its albedo's hue at unit luminance (neutral for a nearly black
+one, no channel above 2.5) times its lit-ness, so dark grass in the sun sends as much green as bright stone; what each
+patch stores is the weighed average of what its links send, and how much of its surroundings those links cover
+(2.5 times their weights, up to 1), on the worker whenever the sky or the sun changes enough; new light blends in over
+a few seconds. The AO pass looks
 the patches' light up at half resolution (`gi.glsl`) by the surface the pixel is on, never by the space around it: a
 floor pixel blends the four floor patches around it, a wall pixel the bands of its own wall face (and the next
 tile's, along the wall), a pixel on a roof the roof patches around it, anything else (trees, people) the floor patch
 under it, less the higher it is. Each blends by weights that vary smoothly with the pixel's position, and they fade
 into one another by how much of each there is, so the light varies smoothly along a surface and jumps only where the
 surface itself does. Whether two patches see each other is told by four rays between points spread over them, so a
-link's weight changes by degrees as a thing moves between them. In the
-"Skylight + GI bounce" lighting model (below) the composite adds the result to its plain ambient and sky light
-(`BOUNCE_GAIN`), which stay. Debug view
-"Global illumination" shows the indirect light alone. Outside the base scene and underground the plain ambient
+link's weight changes by degrees as a thing moves between them. On a wall the colour also
+fades with the height above the face's foot, by 1/e in 96 units (`GI_RISE`), so grass tints a band at the wall's foot.
+In the "Skylight + GI bounce" lighting model (below) the composite multiplies the indirect light (sky ambient and
+daylight fill) by mix(1, tint, amount), the tint being the looked-up colour at unit luminance and the amount its
+coverage times its lit-ness times Strength (up to 200%), and the direct sun by the same at a quarter of the amount;
+it never adds light. Debug view "Global illumination" shows that factor. Outside the base scene and underground the plain ambient
 light stays. The water surface joins the voxels as a layer of blue-green ones at its height (`GiWater.java`, from the
 water map), and the sunk bed under it is left out of the capture, so water bounces its color onto the shores and
 nothing bounces from under it.
@@ -207,8 +212,8 @@ even with the global illumination off) on a worker thread, a few thousand rays a
 corner, three heights above each floor, how much sky is seen toward up and the four sides. Every tile keeps its own
 four corner values, shared with its neighbors only where no wall stands between them, so nothing leaks through walls.
 The AO pass reads a pixel's tile and weighs the directions by its normal (`skylight_ao.glsl`, in the half resolution
-shadow target's alpha), and the composite scales the ambient and sky light by it (`light_occlusion.glsl`). "Skylight + GI bounce" adds, in color, the light the patches gather bounced off surfaces, keeping `BOUNCE_BRIGHTNESS` of its brightness so the exposure stays near the plain
-skylight's while the shade takes the colors of the ground and water beside it.
+shadow target's alpha), and the composite scales the ambient and sky light by it (`light_occlusion.glsl`). "Skylight + GI bounce" tints it with the colors of the ground and water beside it (above), so the exposure stays the plain
+skylight's.
 Debug view "Skylight" shows it.
 
 Walls (`WallMap.java`) come from the collision map's line-of-sight edges plus the diagonal wall objects; rooms split

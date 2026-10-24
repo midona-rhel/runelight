@@ -272,8 +272,10 @@ final class GiLookup
 		{
 			return new float[4];
 		}
-		return new float[]{(w0[0] * a0 + w1[0] * a1) / wsum, (w0[1] * a0 + w1[1] * a1) / wsum,
-			(w0[2] * a0 + w1[2] * a1) / wsum, Math.min(1, wsum / define("GI_FULL_WEIGHT"))};
+		float rise = (a0 * (float) Math.exp(-Math.max(e0[2] - y, 0) / define("GI_RISE"))
+			+ a1 * (float) Math.exp(-Math.max(e1[2] - y, 0) / define("GI_RISE"))) / wsum;
+		return new float[]{(w0[0] * a0 + w1[0] * a1) / wsum * rise, (w0[1] * a0 + w1[1] * a1) / wsum * rise,
+			(w0[2] * a0 + w1[2] * a1) / wsum * rise, Math.min(1, wsum / define("GI_FULL_WEIGHT"))};
 	}
 
 	/** giWall. */
