@@ -142,9 +142,9 @@ public class WindTest
 	@Test
 	public void weatherDrivesTheWind()
 	{
-		Weather calm = new Weather(new OcclusionMap());
+		Weather calm = new Weather();
 		WeatherTestData.drive(calm, WeatherMode.CLEAR, true);
-		Weather gale = new Weather(new OcclusionMap());
+		Weather gale = new Weather();
 		WeatherTestData.drive(gale, WeatherMode.GALE, true);
 		assertTrue(gale.getWind().getStrength() > 3 * calm.getWind().getStrength());
 		assertTrue(gale.getWind().getGustiness() > calm.getWind().getGustiness());
@@ -155,7 +155,7 @@ public class WindTest
 		assertTrue(b[2] > a[2]);
 		assertEquals(1, Math.hypot(b[0], b[1]), 1e-5);
 		// underground the air is still for anything that sways
-		Weather cave = new Weather(new OcclusionMap());
+		Weather cave = new Weather();
 		WeatherTestData.drive(cave, WeatherMode.GALE, false);
 		assertTrue(cave.isWindStill());
 		cave.getWaterWind(a);
@@ -165,7 +165,7 @@ public class WindTest
 	@Test
 	public void weatherSetsItsLook()
 	{
-		Weather w = new Weather(new OcclusionMap());
+		Weather w = new Weather();
 		float[] o = new float[7];
 		WeatherTestData.drive(w, WeatherMode.HARSH_SUN, true);
 		w.getOvercast(o);

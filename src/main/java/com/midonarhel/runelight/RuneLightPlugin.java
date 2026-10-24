@@ -369,9 +369,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 	final EnvironmentManager environmentManager = new EnvironmentManager();
 	private final EnvironmentUniforms sceneEnvUniforms = new EnvironmentUniforms();
 	private final ShadowMap shadowMap = new ShadowMap();
-	// the top-down map of the scenery that the weather and the sky probes read
-	private final OcclusionMap occlusionMap = new OcclusionMap();
-	private final Weather weather = new Weather(occlusionMap);
+	private final Weather weather = new Weather();
 	// each region's forecast, temperature and ground, which follow the game clock
 	private final Climate climate = new Climate();
 	private final WeatherGround weatherGround = new WeatherGround();
@@ -403,21 +401,20 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 	// before it
 	private static final int GI_PROBE_UNIT = RuneLightPlugin.COMPOSITE_TEXTURE_UNIT + 20;
 	private final float[] giOvercast = new float[7];
-	// the skylight's sky probes for the AO pass, and the static lights' occlusion; the probes' update reads the scene's
-	// terrain heights from the same unit, which is free until the AO pass
-	private static final int SKY_PROBES_UNIT = RuneLightPlugin.COMPOSITE_TEXTURE_UNIT + 28;
+	// the skylight's traced sky visibility for the AO pass, and the static lights' occlusion
+	private static final int SKY_GRID_UNIT = RuneLightPlugin.COMPOSITE_TEXTURE_UNIT + 28;
 	// the weather field's sky (cover, wispiness, darkness around the player) for the clouds
 	private static final int WEATHER_SKY_UNIT = RuneLightPlugin.COMPOSITE_TEXTURE_UNIT + 27;
-	private final SkyProbes skyProbes = new SkyProbes();
+	private final SkyGridMap skyGrid = new SkyGridMap(2);
 	// the sky's light flowing in under cover
 	private static final int SKY_FIELD_UNIT = RuneLightPlugin.COMPOSITE_TEXTURE_UNIT + 25;
 	private final SkyFieldMap skyField = new SkyFieldMap();
 	private final LightOcclusion lightOcclusion = new LightOcclusion();
 	// whether the AO pass worked the sky visibility out this frame; whether it is wanted (under the open sky, logged
-	// in), and where the player is (local units) for the sky probes to follow
+	// in), and where the player is for the sky grid's tracing (world tiles)
 	private boolean frameSkylight;
 	private boolean frameSkylightWanted;
-	private float frameSkylightX, frameSkylightZ;
+	private float frameSkylightTileX, frameSkylightTileZ;
 	// when the plugin started; animations count from here (the day, the seasons and the weather follow GameClock)
 	private long startMillis = System.currentTimeMillis();
 
@@ -854,8 +851,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 				shadowMap.free();
 				ShadowMap.freeEmpty();
 				weather.free();
-				occlusionMap.free();
-				skyProbes.free();
+				skyGrid.free();
 				skyField.free();
 				lightClusters.free();
 				volumetricFog.free();
@@ -1142,7 +1138,6 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 			LIGHT_DATA_UNIT, CLUSTER_DATA_UNIT, WATER_DATA_UNIT, WEATHER_FIELD_UNIT);
 		skyCache.setPrograms(skyCache.compile(template), CLOUD_NOISE_UNIT, WEATHER_SKY_UNIT, SKY_CACHE_UNIT);
 		globalIllumination.setPrograms(globalIllumination.compile(template), SKY_CACHE_UNIT, GI_PROBE_UNIT);
-		skyProbes.setProgram(SkyProbes.PROGRAM.compile(template), SKY_PROBES_UNIT, WEATHER_OCCLUSION_UNIT);
 		upscaler.setProgram(Upscaler.PROGRAM.compile(template));
 
 		glBindVertexArray(0);
@@ -1224,7 +1219,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		bindSceneSamplers(glAoProgram);
 		globalIllumination.locateAo(glAoProgram, GI_PROBE_UNIT);
 		weatherGround.locate(glAoProgram, WEATHER_OCCLUSION_UNIT, WEATHER_FIELD_UNIT);
-		skyProbes.locateAo(glAoProgram, SKY_PROBES_UNIT);
+		skyGrid.locateAo(glAoProgram, SKY_GRID_UNIT);
 		skyField.locateAo(glAoProgram, SKY_FIELD_UNIT);
 		water.locateAo(glAoProgram, WATER_DATA_UNIT);
 		// the shadow samplers' units hold an empty depth map until their maps are bound
@@ -1364,7 +1359,6 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		water.freeSurfaceProgram();
 		skyCache.freePrograms();
 		globalIllumination.freePrograms();
-		skyProbes.freeProgram();
 		upscaler.freeProgram();
 	}
 
@@ -1376,8 +1370,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 	{
 		glBindVertexArray(vaoUiHandle);
 		Template template = createTemplate();
-		int scene = 0, ui = 0, ao = 0, denoise = 0, shadow = 0, shadowCopy = 0, shadowMax = 0, fog = 0, waterSurface = 0, upscale = 0,
-			skyProbesProgram = 0;
+		int scene = 0, ui = 0, ao = 0, denoise = 0, shadow = 0, shadowCopy = 0, shadowMax = 0, fog = 0, waterSurface = 0, upscale = 0;
 		int[] composite = new int[composites.length];
 		Weather.Programs weatherPrograms;
 		SkyCache.Programs skyCachePrograms;
@@ -1398,7 +1391,6 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 			fog = VolumetricFog.PROGRAM.compile(template);
 			waterSurface = WaterSurface.PROGRAM.compile(template);
 			upscale = Upscaler.PROGRAM.compile(template);
-			skyProbesProgram = SkyProbes.PROGRAM.compile(template);
 			weatherPrograms = weather.compile(template);
 			try
 			{
@@ -1441,7 +1433,6 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 			glDeleteProgram(fog);
 			glDeleteProgram(waterSurface);
 			glDeleteProgram(upscale);
-			glDeleteProgram(skyProbesProgram);
 			String msg = ex.getMessage();
 			if (!msg.equals(shaderError))
 			{
@@ -1475,7 +1466,6 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 			LIGHT_DATA_UNIT, CLUSTER_DATA_UNIT, WATER_DATA_UNIT, WEATHER_FIELD_UNIT);
 		skyCache.setPrograms(skyCachePrograms, CLOUD_NOISE_UNIT, WEATHER_SKY_UNIT, SKY_CACHE_UNIT);
 		globalIllumination.setPrograms(giPrograms, SKY_CACHE_UNIT, GI_PROBE_UNIT);
-		skyProbes.setProgram(skyProbesProgram, SKY_PROBES_UNIT, WEATHER_OCCLUSION_UNIT);
 		upscaler.setProgram(upscale);
 		initUniforms();
 
@@ -2005,10 +1995,13 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 				cpuTimer.end(CpuTimer.SHADOW_SUBMIT);
 			}
 			cpuTimer.begin(CpuTimer.OCCLUSION);
-			// usually nothing: the map is only redrawn after the player moves far or the scenery changes
-			gpuTimer.begin(GpuTimer.OCCLUSION);
-			occlusionMap.render(root, glShadowProgram, uniShadowLightProj,
-				uniShadowEntityProj, uniShadowBase, uniShadowTexturesReady, textureArrayId != -1, glCapabilities.OpenGL45);
+			if (weather.isActive())
+			{
+				// usually nothing: the map is only redrawn after the player moves far or the scenery changes
+				gpuTimer.begin(GpuTimer.OCCLUSION);
+				weather.renderOcclusion(root, glShadowProgram, uniShadowLightProj,
+					uniShadowEntityProj, uniShadowBase, uniShadowTexturesReady, textureArrayId != -1, glCapabilities.OpenGL45);
+			}
 			cpuTimer.end(CpuTimer.OCCLUSION);
 		}
 		catch (RuntimeException ex)
@@ -2122,27 +2115,22 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 	}
 
 	/**
-	 * Whether the skylight (or the roof rule for lights) is wanted this frame, and what that needs: the occlusion map,
-	 * which the weather needs when it is active too, around the player; the light flowing in under cover follows the
-	 * walls.
+	 * Whether the skylight (or the roof rule for lights) is wanted this frame and where the player is, for the sky
+	 * grid; the light flowing in under cover follows the walls.
 	 */
 	private void updateSkylight()
 	{
 		WorldView wv = client.getTopLevelWorldView();
+		boolean wanted = wv != null && frameOutdoors && client.getGameState() == GameState.LOGGED_IN;
+		frameSkylightWanted = wanted;
 		int plane = wv != null ? wv.getPlane() : 0;
 		Player player = client.getLocalPlayer();
 		LocalPoint lp = player != null ? player.getLocalLocation() : null;
-		boolean wanted = wv != null && lp != null && frameOutdoors && client.getGameState() == GameState.LOGGED_IN;
-		frameSkylightWanted = wanted;
-		if (lp != null && (wanted || weather.isActive()))
+		Scene scene = wv != null ? wv.getScene() : null;
+		if (wanted && lp != null && scene != null)
 		{
-			frameSkylightX = lp.getX();
-			frameSkylightZ = lp.getY();
-			occlusionMap.follow(true, frameSkylightX, Perspective.getTileHeight(client, lp, plane), frameSkylightZ, plane);
-		}
-		else
-		{
-			occlusionMap.follow(false, 0, 0, 0, plane);
+			frameSkylightTileX = scene.getBaseX() + lp.getX() / (float) Perspective.LOCAL_TILE_SIZE;
+			frameSkylightTileZ = scene.getBaseY() + lp.getY() / (float) Perspective.LOCAL_TILE_SIZE;
 		}
 		BuildingLights buildings = buildingLights;
 		if (wanted && config.skylightFlow() && buildings != null)
@@ -2840,7 +2828,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		{
 			int builds = globalIllumination.builds();
 			int shown = globalIllumination.shownBuild();
-			globalIllumination.prepare(giEnabled(), frameOutdoors, scene,
+			globalIllumination.prepare(giEnabled(), frameSkylightWanted, frameOutdoors, scene,
 				root != null ? root.zones : null, clientUploader.water, dayCycle, skyCache.getCaptures(), settings,
 				GI_PROBE_UNIT);
 			if (builds != globalIllumination.builds())
@@ -2890,26 +2878,23 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		cpuTimer.begin(CpuTimer.GI);
 		final boolean gi = prepareGlobalIllumination();
 		cpuTimer.end(CpuTimer.GI);
+		gpuTimer.begin(GpuTimer.SKY_GRID);
+		cpuTimer.begin(CpuTimer.SKY_GRID);
+		BuildingLights buildings = buildingLights;
+		skyGrid.update(frameSkylightWanted, globalIllumination.getVoxels(), buildings != null ? buildings.getWalls() : null,
+			frameSkylightTileX, frameSkylightTileZ, buildings != null ? buildings.getFloors() : null,
+			buildings != null ? buildings.getRooms() : null);
+		cpuTimer.end(CpuTimer.SKY_GRID);
+		gpuTimer.end();
+
 		// the AO pass also writes the half resolution depth and normals that the fog's upsample reads, and the
 		// shadows and the global illumination's light
 		WorldView aoView = client.getTopLevelWorldView();
 		Scene aoScene = aoView != null ? aoView.getScene() : null;
-		gpuTimer.begin(GpuTimer.SKY_PROBES);
-		try
-		{
-			skyProbes.update(frameSkylightWanted, aoScene, occlusionMap, frameSkylightX, frameSkylightZ);
-		}
-		catch (RuntimeException ex)
-		{
-			// e.g. a framebuffer the driver won't take: the skylight stays off
-			logLimiter.warn(log, "sky probes " + ex, "Sky probes failed", ex);
-			skyProbes.free();
-		}
-		gpuTimer.end();
 		final boolean shadows = frameShadows && shadowMap.isInitialized();
 		final boolean ground = config.weatherSurfaces() && weather.groundActive();
 		frameGround = ground;
-		final boolean sky = skyProbes.isReady(aoScene);
+		final boolean sky = skyGrid.isReady(aoScene);
 		frameSkylight = false;
 		final boolean halfPass = ao || frameFog || shadows || gi || ground || sky;
 		if (halfPass)
@@ -2948,13 +2933,13 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 			{
 				weatherGround.setAoOff();
 			}
-			frameSkylight = skyProbes.bindAo(SKY_PROBES_UNIT, aoScene, frameCameraX, frameCameraY, frameCameraZ);
+			frameSkylight = skyGrid.bindAo(SKY_GRID_UNIT, aoScene, frameCameraX, frameCameraY, frameCameraZ);
 			skyField.bindAo(SKY_FIELD_UNIT, frameCameraX, frameCameraZ);
 			gpuTimer.begin(GpuTimer.AO);
 			glDrawArrays(GL_TRIANGLES, 0, 3);
 			gpuTimer.end();
 			GlobalIllumination.unbind(GI_PROBE_UNIT);
-			SkyProbes.unbind(SKY_PROBES_UNIT);
+			SkyGridMap.unbind(SKY_GRID_UNIT);
 			SkyFieldMap.unbind(SKY_FIELD_UNIT);
 			// the sky cache takes the occlusion map's unit next, without its sampler objects
 			ShadowMap.unbind(WEATHER_OCCLUSION_UNIT, WEATHER_OCCLUSION_UNIT + 1);
@@ -3481,7 +3466,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 				if (ctx == root)
 				{
 					hitchMonitor.job(HitchMonitor.ZONE_REBUILD);
-					occlusionMap.invalidate();
+					weather.invalidateOcclusion();
 					shadowMap.refreshCache();
 					globalIllumination.zonesChanged();
 				}
@@ -4240,7 +4225,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 
 		ctx.zones = nextZones;
 		nextZones = null;
-		occlusionMap.invalidate();
+		weather.invalidateOcclusion();
 		shadowStaticDirty = true;
 		globalIllumination.sceneSwapped();
 		water.swap();

@@ -2,6 +2,7 @@ package com.midonarhel.runelight;
 
 import com.midonarhel.runelight.config.WeatherMode;
 import com.midonarhel.runelight.template.Template;
+import java.util.Collections;
 import net.runelite.api.Scene;
 import static org.lwjgl.opengl.GL33C.*;
 
@@ -20,8 +21,10 @@ import static org.lwjgl.opengl.GL33C.*;
  * adds what the cells do not have: showers, swells, gusts and the wind (Wind.java), which drives the rain's slant,
  * the snow's drift, the clouds and the water.
  *
- * Shelter comes from the occlusion map (OcclusionMap): a point is under the open sky when nothing in its column is
- * above it.
+ * Shelter comes from an "occlusion map": a top-down orthographic depth map of all static scenery around the
+ * player, drawn with every roof and every level, including roofs the game (or a roof hiding plugin) hides from the
+ * camera. A point is under the open sky when nothing in its column is above it. The map is only redrawn when the
+ * player walks away from its center, the scene loads or a zone changes, so it costs nothing on most frames.
  *
  * Away from the player the weather is the field's there: the passes add its difference from the player's to the
  * player's own, the clouds look it up where the view ray crosses them. Wet ground and snow cover reach over the whole
@@ -33,6 +36,14 @@ import static org.lwjgl.opengl.GL33C.*;
  */
 class Weather
 {
+	// occlusion map: OCCLUSION_SIZE^2 texels over +-OCCLUSION_RADIUS world units, 1/8 tile per texel, 4 MB
+	private static final int OCCLUSION_SIZE = 1024;
+	private static final float OCCLUSION_RADIUS = 64 * 128;
+	// world units above and below the player's ground that the map captures
+	private static final float OCCLUSION_DEPTH_RANGE = 4096;
+	// redraw once the player is this far from the map center; past the map, particles fall to the ground (hidden by
+	// the scene) instead of stopping on roofs, which is too small to see there
+	private static final float OCCLUSION_RECENTER = 24 * 128;
 	// Particle layers. The nearest owns distances up to LAYER_NEAR from the camera, each next one twice as far; a
 	// layer's box is that distance across each way, centered a little ahead of the camera (LAYER_AHEAD of its half
 	// width, as far as the camera looks sideways rather than down), so it covers its band of what the camera sees.
@@ -57,6 +68,7 @@ class Weather
 	// half width of the area around the player whose wetness decides the rain's mist and droplets
 	private static final float SPLASH_HALF = 2560;
 	// straight up: the "light" looks straight down
+	private static final float[] UP = {0, -1, 0};
 
 	// instance counts at 100% intensity: drops and flakes in the nearest layer (LAYER_COUNT_FALLOFF less in each
 	// next one)
@@ -204,8 +216,7 @@ class Weather
 	private final Uniforms snow = new Uniforms();
 	private final WeatherField field = new WeatherField();
 
-	// the top-down map of the scenery that tells what is sheltered; the plugin keeps it current
-	private final OcclusionMap occlusion;
+	private final ShadowMap occlusion = new ShadowMap();
 	// particles have no vertex attributes; an empty VAO keeps drivers from fetching unrelated buffers
 	private int vao;
 
@@ -216,6 +227,9 @@ class Weather
 	private final int[] mistTex = new int[2], mistFbo = new int[2];
 	private int mistWidth, mistHeight;
 	private final float[] occlusionProjRel = Mat4.identity();
+	private boolean occlusionDirty = true;
+	private float occlusionX, occlusionY, occlusionZ;
+	private int occlusionPlane = -1;
 
 	// per frame
 	private boolean active;
@@ -259,11 +273,7 @@ class Weather
 	// the prevailing wind is the same for everyone; it wanders with the clock (GameClock), not the session
 	private final Wind windSim = new Wind(1);
 	private float focusX, focusY, focusZ;
-
-	Weather(OcclusionMap occlusion)
-	{
-		this.occlusion = occlusion;
-	}
+	private int focusPlane;
 
 	Programs compile(Template template) throws ShaderException
 	{
@@ -308,7 +318,9 @@ class Weather
 	 */
 	void free()
 	{
+		occlusion.free();
 		field.free();
+		occlusionDirty = true;
 		if (vao != 0)
 		{
 			glDeleteVertexArrays(vao);
@@ -378,6 +390,14 @@ class Weather
 		glUniform1i(rain.mistStage, 0);
 		glBindTexture(GL_TEXTURE_2D, 0);
 		glActiveTexture(GL_TEXTURE0);
+	}
+
+	/**
+	 * Scenery changed (scene load, zone rebuild): redraw the occlusion map before it is next used.
+	 */
+	void invalidateOcclusion()
+	{
+		occlusionDirty = true;
 	}
 
 	boolean isActive()
@@ -553,7 +573,8 @@ class Weather
 
 	/**
 	 * Take this frame's weather from the field at the player, advance the variation, the wind and the lightning, and
-	 * decide whether rain or snow is drawn. Underground the weather goes on but nothing is drawn. Call after {@link #updateField}, with the same focus.
+	 * decide whether rain or snow is drawn. Underground the weather goes on but nothing is drawn, and the occlusion
+	 * map is freed once nothing is left to draw. Call after {@link #updateField}, with the same focus.
 	 *
 	 * @param varying whether intensity and wind wander over time
 	 * @param overcastPercent how much the cover grays the sky and changes the light
@@ -591,6 +612,15 @@ class Weather
 
 		boolean anything = rainAmount > 0 || snowAmount > 0 || wetness > 0 || snowCover > 0 || field.hasAnything();
 		active = anything && outdoors;
+		if (!anything)
+		{
+			if (occlusion.isInitialized())
+			{
+				occlusion.free();
+				occlusionDirty = true;
+			}
+			return false;
+		}
 		if (!active)
 		{
 			return false;
@@ -599,6 +629,14 @@ class Weather
 		focusX = fx;
 		focusY = fy;
 		focusZ = fz;
+		focusPlane = plane;
+		if (plane != occlusionPlane
+			|| Math.abs(fx - occlusionX) > OCCLUSION_RECENTER
+			|| Math.abs(fz - occlusionZ) > OCCLUSION_RECENTER
+			|| Math.abs(fy - occlusionY) > OCCLUSION_DEPTH_RANGE / 4)
+		{
+			occlusionDirty = true;
+		}
 		return true;
 	}
 
@@ -802,6 +840,93 @@ class Weather
 	}
 
 	/**
+	 * Redraw the occlusion map if needed, with the shadow program: same vertex formats, and it keeps alpha
+	 * tested holes (leaves, grates) open.
+	 */
+	void renderOcclusion(RuneLightPlugin.SceneContext ctx, int program, int uniLightProj, int uniEntityProj,
+		int uniBase, int uniTexturesReady, boolean texturesReady, boolean zeroToOne)
+	{
+		if (!active || program == 0 || ctx == null)
+		{
+			return;
+		}
+		if (!occlusion.isInitialized())
+		{
+			occlusion.init(OCCLUSION_SIZE);
+			occlusionDirty = true;
+		}
+		if (!occlusionDirty)
+		{
+			return;
+		}
+		occlusionDirty = false;
+		occlusionX = focusX;
+		occlusionY = focusY;
+		occlusionZ = focusZ;
+		occlusionPlane = focusPlane;
+		occlusion.update(UP, focusX, focusY, focusZ, 0, 0, 0, OCCLUSION_RADIUS, OCCLUSION_DEPTH_RANGE, zeroToOne);
+
+		glBindFramebuffer(GL_FRAMEBUFFER, occlusion.getFbo());
+		glViewport(0, 0, OCCLUSION_SIZE, OCCLUSION_SIZE);
+		glClearDepth(1.0);
+		glClear(GL_DEPTH_BUFFER_BIT);
+		glEnable(GL_DEPTH_TEST);
+		// smaller window depth is higher up: keep the topmost surface in each column
+		glDepthFunc(GL_LESS);
+		glDepthMask(true);
+		glDisable(GL_BLEND);
+		glDisable(GL_CULL_FACE);
+
+		glUseProgram(program);
+		glUniformMatrix4fv(uniLightProj, false, occlusion.lightProj);
+		glUniform1i(uniTexturesReady, texturesReady ? 1 : 0);
+		glUniformMatrix4fv(uniEntityProj, false, RuneLightPlugin.IDENTITY);
+		final int uniFoliageOpen = glGetUniformLocation(program, "foliageOpen");
+		glUniform1i(uniFoliageOpen, 1);
+
+		// Zone draws through the plugin's shared uniform location
+		final int savedBase = RuneLightPlugin.uniBase;
+		RuneLightPlugin.uniBase = uniBase;
+		try
+		{
+			int offset = RuneLightPlugin.SCENE_OFFSET >> 3;
+			float reach = OCCLUSION_RADIUS + 1024;
+			for (int x = 0; x < ctx.sizeX; ++x)
+			{
+				float cx = ((x - offset) << 10) + 512;
+				if (Math.abs(cx - focusX) > reach)
+				{
+					continue;
+				}
+				for (int z = 0; z < ctx.sizeZ; ++z)
+				{
+					float cz = ((z - offset) << 10) + 512;
+					if (Math.abs(cz - focusZ) > reach)
+					{
+						continue;
+					}
+					Zone zone = ctx.zones[x][z];
+					if (zone.initialized && zone.sizeO > 0)
+					{
+						// every level and every roof, whether or not the camera sees it
+						zone.renderOpaque(x - offset, z - offset, 0, 0, 3, Collections.emptySet());
+					}
+				}
+			}
+		}
+		finally
+		{
+			RuneLightPlugin.uniBase = savedBase;
+			glUniform1i(uniFoliageOpen, 0);
+		}
+
+		glBindVertexArray(0);
+		glDepthFunc(GL_GREATER);
+		glDisable(GL_DEPTH_TEST);
+		glUseProgram(0);
+	}
+
+	/**
 	 * Draw this frame's falling weather over the composited scene in the bound framebuffer. The scene textures, the
 	 * transparency layer, the water surface, the light clusters (with pointLights) and the weather field
 	 * ({@link #bindField}) must still be bound on the units given to setPrograms, as they are right after the
@@ -824,7 +949,7 @@ class Weather
 		{
 			vao = glGenVertexArrays();
 		}
-		relativeTo(occlusion.lightProj(), cameraX, cameraY, cameraZ, occlusionProjRel);
+		relativeTo(occlusion.lightProj, cameraX, cameraY, cameraZ, occlusionProjRel);
 		occlusion.bindForSampling(occlusionUnit, occlusionUnit + 1);
 		glBindVertexArray(vao);
 		glDisable(GL_DEPTH_TEST);
@@ -970,7 +1095,7 @@ class Weather
 	 */
 	boolean groundActive()
 	{
-		if (!active || !occlusion.isCurrent())
+		if (!active || !occlusion.isInitialized() || occlusionDirty)
 		{
 			return false;
 		}
@@ -988,10 +1113,10 @@ class Weather
 	 */
 	void bindGround(WeatherGround g, int occlusionUnit, int fieldUnit, float cameraX, float cameraY, float cameraZ)
 	{
-		relativeTo(occlusion.lightProj(), cameraX, cameraY, cameraZ, occlusionProjRel);
+		relativeTo(occlusion.lightProj, cameraX, cameraY, cameraZ, occlusionProjRel);
 		occlusion.bindForSampling(occlusionUnit, occlusionUnit + 1);
 		field.bind(fieldUnit, fieldUnit + 1);
-		g.setAo(occlusionProjRel, OcclusionMap.DEPTH_RANGE, field, cameraX, cameraZ, wetness, snowCover);
+		g.setAo(occlusionProjRel, OCCLUSION_DEPTH_RANGE, field, cameraX, cameraZ, wetness, snowCover);
 	}
 
 	/**
@@ -1024,8 +1149,8 @@ class Weather
 		glUniform4i(u.viewport, viewport[0], viewport[1], viewport[2], viewport[3]);
 		glUniform1i(u.depthZeroToOne, zeroToOne ? 1 : 0);
 		glUniformMatrix4fv(u.occlusionProjRel, false, occlusionProjRel);
-		glUniform1f(u.occlusionCenterY, occlusion.centerY());
-		glUniform1f(u.occlusionDepthRange, OcclusionMap.DEPTH_RANGE);
+		glUniform1f(u.occlusionCenterY, occlusionY);
+		glUniform1f(u.occlusionDepthRange, OCCLUSION_DEPTH_RANGE);
 		glUniform3f(u.cameraPos, cameraX, cameraY, cameraZ);
 		glUniform3f(u.focusPos, focusX, focusY, focusZ);
 		glUniform1f(u.time, time);

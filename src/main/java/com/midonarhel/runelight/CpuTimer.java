@@ -29,12 +29,14 @@ class CpuTimer
 	static final int GI = 12;
 	static final int SKY_CACHE = 13;
 	static final int OCCLUSION = 14;
-	static final int STAGES = 15;
+	// handing the skylight's grid its next rays and uploading what it traced (the tracing is on its worker)
+	static final int SKY_GRID = 15;
+	static final int STAGES = 16;
 
 	static final String[] NAMES = {
 		"client scene", "environment", "weather", "light collection", "light clusters", "shadow submit",
 		"UI upload", "swap wait", "outside frame", "client UI + overlays",
-		"buffer map", "light upload", "global illumination", "sky capture", "occlusion maps"
+		"buffer map", "light upload", "global illumination", "sky capture", "occlusion maps", "sky grid"
 	};
 
 	private final long[] start = new long[STAGES];
