@@ -2882,8 +2882,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		cpuTimer.begin(CpuTimer.SKY_GRID);
 		BuildingLights buildings = buildingLights;
 		skyGrid.update(frameSkylightWanted, globalIllumination.getVoxels(), buildings != null ? buildings.getWalls() : null,
-			frameSkylightTileX, frameSkylightTileZ, buildings != null ? buildings.getFloors() : null,
-			buildings != null ? buildings.getRooms() : null);
+			frameSkylightTileX, frameSkylightTileZ, buildings != null ? buildings.getFloors() : null);
 		cpuTimer.end(CpuTimer.SKY_GRID);
 		gpuTimer.end();
 

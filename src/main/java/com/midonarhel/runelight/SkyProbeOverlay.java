@@ -4,9 +4,7 @@ import java.awt.Color;
 import java.awt.Dimension;
 import java.awt.Graphics2D;
 import java.util.ArrayList;
-import java.util.HashSet;
 import java.util.List;
-import java.util.Set;
 import java.util.function.BiFunction;
 import java.util.function.BooleanSupplier;
 import net.runelite.api.Client;
@@ -81,43 +79,13 @@ final class SkyProbeOverlay extends Overlay
 	}
 
 	/** Called only between tracing jobs; never reads the worker's buffers concurrently. */
-	static List<float[]> samples(SkyGrid sky, WallMap walls, boolean[] dirty, float px, float pz)
+	static List<float[]> samples(SkyGrid sky, float px, float pz)
 	{
-		List<float[]> result = new ArrayList<>();
-		Set<Long> seen = new HashSet<>();
-		float localX = px-sky.baseX()*128, localZ = pz-sky.baseY()*128;
-		int x0 = Math.max(0, (int)(localX/sky.spacing)-11*sky.resolution), x1 = Math.min(sky.size, (int)(localX/sky.spacing)+11*sky.resolution);
-		int z0 = Math.max(0, (int)(localZ/sky.spacing)-11*sky.resolution), z1 = Math.min(sky.size, (int)(localZ/sky.spacing)+11*sky.resolution);
-		for (int level = 0; level < SkyGrid.LEVELS; level++)
-		for (int cz = z0; cz <= z1; cz++)
-		for (int cx = x0; cx <= x1; cx++)
+		List<float[]> result = sky.tracedProbes(px - sky.baseX() * 128, pz - sky.baseY() * 128, 11);
+		for (float[] p : result)
 		{
-			int unit = (level*sky.corners+cz)*sky.corners+cx;
-			if (dirty[unit] || !sky.active[unit]) continue;
-			for (int dz = 0; dz <= 1; dz++)
-			for (int dx = 0; dx <= 1; dx++)
-			{
-				int tx = cx-dx, tz = cz-dz;
-				if (tx < 0 || tz < 0 || tx >= sky.size || tz >= sky.size) continue;
-				int bits = walls == null || level == SkyGrid.SURFACE_LEVEL ? 0
-					: sky.wallBits(level/SkyGrid.HEIGHTS.length, tx, tz);
-				int hx = WallMap.half(bits, dx == 1 ? WallMap.EAST : WallMap.WEST);
-				int hz = WallMap.half(bits, dz == 1 ? WallMap.NORTH : WallMap.SOUTH);
-				for (int half = 0; half < 2; half++)
-				{
-					if (half != hx && half != hz) continue;
-					int index = (((level+1)*sky.textureHeight+2*tz+dz)*sky.textureWidth
-						+ (half*4+2)*sky.size+2*tx+dx)*4;
-					if (GlobalIllumination.fromHalf(sky.texels.get(index-2*sky.size*4)) < 0) continue;
-					float x = cx*sky.spacing + GlobalIllumination.fromHalf(sky.texels.get(index+1));
-					float y = GlobalIllumination.fromHalf(sky.texels.get(index+2));
-					float z = cz*sky.spacing + GlobalIllumination.fromHalf(sky.texels.get(index+3));
-					if ((x-localX)*(x-localX)+(z-localZ)*(z-localZ) > 1280*1280) continue;
-					long key = ((long)Math.round(x*16) << 40)
-						| ((long)(Math.round(y*16)&0xfffff) << 20) | (Math.round(z*16)&0xfffff);
-					if (seen.add(key)) result.add(new float[]{x+sky.baseX()*128, y, z+sky.baseY()*128});
-				}
-			}
+			p[0] += sky.baseX() * 128;
+			p[2] += sky.baseY() * 128;
 		}
 		return result;
 	}

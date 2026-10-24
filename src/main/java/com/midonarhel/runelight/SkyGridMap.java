@@ -13,7 +13,7 @@ import static org.lwjgl.opengl.GL33C.*;
  * The skylight's ray traced sky visibility (SkyGrid) as a 3D texture for the AO pass (skylight_ao.glsl). A worker
  * thread traces in time-bounded chunks through the global illumination's voxels (GlobalIllumination.getVoxels),
  * nearest the player first; what changed is uploaded every UPLOAD_FRAMES frames. A new place is shown once the
- * corners within READY_RINGS of the player are traced; until then, and after a move into the next region until its
+ * tiles within READY_RINGS of the player are traced; until then, and after a move into the next region until its
  * voxels are built, the last texture stays, moved to where it belongs, as the probes do.
  */
 final class SkyGridMap
@@ -23,20 +23,12 @@ final class SkyGridMap
 	// Rays between deadline checks; each worker job spends up to 8 ms tracing, plus its final batch.
 	static final int RAY_BUDGET = 4096;
 	static final int UPLOAD_FRAMES = 6;
-	// rings of corners around the player traced before a new place is shown
+	// rings of tiles around the player traced before a new place is shown
 	static final int READY_RINGS = 16;
 
 	// Worker-only timing totals, reported at most once a second and when tracing finishes.
 	private long timingStart, setupNanos, traceNanos, maxBatchNanos, tracedRays;
 	private int timedBatches;
-
-	private final int resolution;
-
-	SkyGridMap() { this(1); }
-	SkyGridMap(int resolution)
-	{
-		this.resolution=resolution;
-	}
 
 	private SkyGrid sky;
 	private ExecutorService worker;
@@ -65,7 +57,7 @@ final class SkyGridMap
 	 * @param voxels the newest voxels, null before the first build
 	 * @param worldTileX, worldTileZ the player, in world tiles
 	 */
-	void update(boolean wanted, GlobalIllumination.Voxels voxels, WallMap walls, float worldTileX, float worldTileZ, byte[] floors, RoomMap rooms)
+	void update(boolean wanted, GlobalIllumination.Voxels voxels, WallMap walls, float worldTileX, float worldTileZ, byte[] floors)
 	{
 		this.wanted = wanted;
 		if (!wanted)
@@ -93,7 +85,7 @@ final class SkyGridMap
 		}
 		if (sky == null)
 		{
-			sky = new SkyGrid(resolution);
+			sky = new SkyGrid();
 			worker = Executors.newSingleThreadExecutor(r ->
 			{
 				Thread t = new Thread(r, "RuneLight sky grid");
@@ -119,17 +111,17 @@ final class SkyGridMap
 				{
 					s.setWalls(walls);
 				}
-				if (newVoxels && s.setGrid(voxels.grid, voxels.heights, RuneLightPlugin.SCENE_OFFSET, voxels.baseX,
-					voxels.baseY, voxels.instance, floors))
+				if (newVoxels)
 				{
-					jobFresh = true;
-				}
-				if (newVoxels) s.terrain = voxels.terrain;
-				if (newVoxels || newWalls)
-				{
-					s.setRooms(rooms);
-					log.info("Skylight grid ({}x): {} candidate corners, {} legacy support corners, {} culled before tracing",
-						resolution, s.nearbyUnits, s.supportUnits, s.active.length-s.nearbyUnits-s.supportUnits);
+					// the ground heights at the tiles' centres follow the terrain's triangles
+					s.terrain = voxels.terrain;
+					if (s.setGrid(voxels.grid, voxels.heights, RuneLightPlugin.SCENE_OFFSET, voxels.baseX,
+						voxels.baseY, voxels.instance, floors))
+					{
+						jobFresh = true;
+					}
+					log.info("Skylight grid: {} of {} probe units near geometry, the rest open sky",
+						s.activeCount(), s.active.length);
 				}
 				long traceStart = System.nanoTime();
 				setupNanos += traceStart - start;
@@ -161,12 +153,6 @@ final class SkyGridMap
 		});
 	}
 
-	java.util.List<float[]> debugProbes(float x, float z)
-	{
-		if (job != null && !job.isDone()) return null;
-		return sky == null ? java.util.Collections.emptyList() : SkyProbeOverlay.samples(sky, handedWalls, sky.dirty, x, z);
-	}
-
 	private void collect()
 	{
 		if (jobFresh)
@@ -181,7 +167,7 @@ final class SkyGridMap
 			pending = pending == null ? c : new int[]{Math.min(pending[0], c[0]), Math.min(pending[1], c[1]),
 				Math.max(pending[2], c[2]), Math.max(pending[3], c[3]), Math.min(pending[4], c[4]), Math.max(pending[5], c[5])};
 		}
-		if (!ready && sky.clearRings() >= READY_RINGS*resolution)
+		if (!ready && sky.clearRings() >= READY_RINGS)
 		{
 			ready = true;
 			// shown now: upload what is traced at once
@@ -199,10 +185,11 @@ final class SkyGridMap
 		{
 			texture = glGenTextures();
 			glBindTexture(GL_TEXTURE_3D, texture);
-			glTexImage3D(GL_TEXTURE_3D, 0, GL_RGBA16F, sky.textureWidth, sky.textureHeight, SkyGrid.TEX_D, 0, GL_RGBA, GL_HALF_FLOAT,
+			glTexImage3D(GL_TEXTURE_3D, 0, GL_RGBA16F, SkyGrid.TEX_W, SkyGrid.TEX_H, SkyGrid.TEX_D, 0, GL_RGBA, GL_HALF_FLOAT,
 				(ByteBuffer) null);
-			glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-			glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+			// the shader fetches probes one by one: the walls decide what blends
+			glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+			glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
 			glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
 			glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
 			glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_WRAP_R, GL_CLAMP_TO_EDGE);
@@ -211,17 +198,15 @@ final class SkyGridMap
 		{
 			glBindTexture(GL_TEXTURE_3D, texture);
 		}
-		glPixelStorei(GL_UNPACK_ROW_LENGTH, sky.textureWidth);
-		glPixelStorei(GL_UNPACK_IMAGE_HEIGHT, sky.textureHeight);
-		int w = 2 * (c[2] - c[0] + 1), h = 2 * (c[3] - c[1] + 1), d = c[5] - c[4] + 1;
-		for (int part = 0; part < 4; ++part)
-		{
-			int x = part * 2 * sky.size + 2 * c[0];
-			glPixelStorei(GL_UNPACK_SKIP_PIXELS, x);
-			glPixelStorei(GL_UNPACK_SKIP_ROWS, 2 * c[1]);
-			glPixelStorei(GL_UNPACK_SKIP_IMAGES, c[4]);
-			glTexSubImage3D(GL_TEXTURE_3D, 0, x, 2 * c[1], c[4], w, h, d, GL_RGBA, GL_HALF_FLOAT, sky.texels);
-		}
+		glPixelStorei(GL_UNPACK_ROW_LENGTH, SkyGrid.TEX_W);
+		glPixelStorei(GL_UNPACK_IMAGE_HEIGHT, SkyGrid.TEX_H);
+		// a tile is two texels wide, one for each half
+		int x = 2 * c[0];
+		glPixelStorei(GL_UNPACK_SKIP_PIXELS, x);
+		glPixelStorei(GL_UNPACK_SKIP_ROWS, c[1]);
+		glPixelStorei(GL_UNPACK_SKIP_IMAGES, c[4]);
+		glTexSubImage3D(GL_TEXTURE_3D, 0, x, c[1], c[4], 2 * (c[2] - c[0] + 1), c[3] - c[1] + 1, c[5] - c[4] + 1, GL_RGBA,
+			GL_HALF_FLOAT, sky.texels);
 		glPixelStorei(GL_UNPACK_ROW_LENGTH, 0);
 		glPixelStorei(GL_UNPACK_IMAGE_HEIGHT, 0);
 		glPixelStorei(GL_UNPACK_SKIP_PIXELS, 0);
@@ -274,7 +259,6 @@ final class SkyGridMap
 		uniCamera = glGetUniformLocation(program, "skyGridCamera");
 		glUseProgram(program);
 		glUniform1i(glGetUniformLocation(program, "skyGrid"), unit);
-		glUniform1f(glGetUniformLocation(program, "skyGridScale"), resolution);
 		glUseProgram(0);
 	}
 
