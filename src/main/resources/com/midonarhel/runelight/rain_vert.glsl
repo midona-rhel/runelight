@@ -38,9 +38,9 @@ uniform vec2 particleAmount;   // rain at the player, and the most anywhere in t
 #define SPLASH_HALF 2560.0     // splashes fill a smaller area around layerBox, where they can be seen
 #define SPLASH_LIFE 0.45       // seconds an impact shows, fading in and out
 #define SPLASH_CYCLE 1.8       // seconds before an instance lands again somewhere else
-#define SPLASH_SIZE 260.0      // height of the sprite, world units
-#define SPLASH_WIDTH 300.0     // and its width
-#define SPLASH_LIFT 90.0       // world units above the spot that it floats, centered: the splashes ring what they land
+#define SPLASH_SIZE 130.0      // height of the sprite, world units
+#define SPLASH_WIDTH 150.0     // and its width
+#define SPLASH_LIFT 45.0       // world units above the spot that it floats, centered: the splashes ring what they land
                                // on in a halo
 #define SPLASH_ALPHA 0.18
 #define SPLASH_SKY 0.35        // share of the sky's color in the impact's
