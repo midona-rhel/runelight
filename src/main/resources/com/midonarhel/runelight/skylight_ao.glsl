@@ -215,7 +215,8 @@ float skylightVisibility(vec3 p, vec3 n) {
   }
   vec3 o = p + n * SKY_NORMAL_OFFSET;
   float scale = max(skyGridScale, 1.0);
-  float tileSize = 128.0 / scale;
+  // walls stand on the tiles' edges, whatever the grid's resolution
+  float tileSize = 128.0;
   vec3 g = o + skyGridCamera;
   bool wall = abs(n.x) > 0.5 || abs(n.z) > 0.5;
   for (int axis = 0; axis < 2; ++axis) {
