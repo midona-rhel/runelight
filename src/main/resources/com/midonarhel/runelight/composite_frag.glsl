@@ -106,7 +106,7 @@ layout(location = 0) out vec4 FragColor;
 // ---------------------------------------------------------------------------------------------------------------
 // Global illumination (GlobalIllumination.java, gi.glsl): the light the patches of floor, wall and roof around a surface
 // gather by bouncing, read by the AO pass from the patches of the surface itself, upsampled with the AO like the
-// shadows, and added to the skylight's ambient (light_occlusion.glsl skylightAmbient)
+// shadows, and added to the ambient light (light_occlusion.glsl giBounce)
 uniform float giWeight;  // 0..1: enabled, eased in and out, strength
 
 // ---------------------------------------------------------------------------------------------------------------
@@ -422,7 +422,7 @@ vec4 shadeScene(ivec2 px, SceneSample sm, vec4 transparent) {
     float up = max(-n.y, 0.0);
     if (compositePart != 2) {
     vec3 plain = ambientLight(sunAltitude) + skyFill(n, sunAltitude, up);
-    indirect = skylightAmbient(plain, gi.rgb, gi.a * giWeight) * envAmbient * ao;
+    indirect = skylightAmbient(plain) * envAmbient * ao + giBounce(gi.rgb, gi.a * giWeight);
     // Retain the later skylight daylight fill and the tuned indoor ambient floor.
     float daylightFill = skylightOn == 1 ? 0.7 * clamp(skyUpsampled, 0.0, 1.0) : 0.0;
     indirect += caster * envSun * max(ndl, 0.0) * (1.0 - shadow) * daylightFill * ao;
@@ -488,9 +488,8 @@ vec4 shadeScene(ivec2 px, SceneSample sm, vec4 transparent) {
     return vec4(vec3(ao), 1.0);
   }
   if (debugView == DEBUG_GI) {
-    // the bounced light alone, as a white surface would get it, at its strength in the ambient light: none of the
-    // sky's own, so what the bounce adds (and what color) shows
-    return vec4(linearToSrgb(clamp(gi.rgb * (gi.a * giWeight * BOUNCE_GAIN), 0.0, 1.0)), 1.0);
+    // the bounced light alone, as a white surface would get it: exactly what the lighting adds, so its color shows
+    return vec4(linearToSrgb(clamp(giBounce(gi.rgb, gi.a * giWeight), 0.0, 1.0)), 1.0);
   }
   if (debugView == DEBUG_SKYLIGHT) {
     // sky visibility, red where it isn't worked out

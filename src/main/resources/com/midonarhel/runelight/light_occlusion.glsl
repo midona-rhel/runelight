@@ -29,9 +29,6 @@ float skyUpsampled = 1.0;
 #define LIGHT_ROOF_FACING_LOW 0.05
 #define LIGHT_ROOF_FACING_HIGH 0.35
 
-// How much of the bounced light's brightness is added on top of the skylight in mode 2: 0 only gives the shade the
-// bounce's color, 1 adds all of it. Less than 1 keeps the exposure the skylight alone has; the colors still show.
-#define BOUNCE_BRIGHTNESS 1.0
 // The patches' light is the light that reached the surface by bouncing, as irradiance in the units of the ambient light
 // (GiRelight). The form factors keep it physical, which is faint: a patch standing in sunlit grass gathers about a third
 // of the grass' albedo times the sun's light, and the game's albedos are dim, so the bounce is a few hundredths of the
@@ -39,19 +36,18 @@ float skyUpsampled = 1.0;
 // light has gone through the half resolution target and its range, so it clamps nothing there.
 #define BOUNCE_GAIN 4.0
 
-// plain: the ambient plus sky light a surface would get under the open sky; gi the patches' light and giW their weight.
-// In mode 2 the patches carry only the light bounced off surfaces (GiRelight), in color: the sunlit grass
-// that greens the wall in its shade, the red roof that warms the ground beside it, the water that blues its banks.
-vec3 skylightAmbient(vec3 plain, vec3 gi, float giW) {
+// plain: the ambient plus sky light a surface would get under the open sky
+vec3 skylightAmbient(vec3 plain) {
   float v = skylightOn == 1 ? skyUpsampled : 1.0;
-  vec3 s = plain * mix(skylightFloor, 1.0, v);
-  if (skylightMode == 2 && giW > 0.0) {
-    vec3 bounce = gi * (giW * BOUNCE_GAIN);
-    float lb = overcastLuma(bounce);
-    float ls = overcastLuma(s);
-    s = (s + bounce) * ((ls + BOUNCE_BRIGHTNESS * lb) / max(ls + lb, 1e-4));
-  }
-  return s;
+  return plain * mix(skylightFloor, 1.0, v);
+}
+
+// The light bounced onto a surface in mode 2, gi the patches' light and giW its weight, in color: the sunlit grass that
+// greens the wall in its shade, the red roof that warms the ground beside it, the water that blues its banks. It is
+// sunlight, so it goes with the area's sun (envSun), not its ambient, and the AO doesn't darken it: the creases the AO
+// finds are where the surfaces it comes off meet.
+vec3 giBounce(vec3 gi, float giW) {
+  return skylightMode == 2 ? gi * (giW * BOUNCE_GAIN) * envSun : vec3(0.0);
 }
 
 // Inside a building the skylight is the light flowed in through its openings (SkyField), and what comes in through a
