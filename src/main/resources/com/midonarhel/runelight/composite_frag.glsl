@@ -480,8 +480,9 @@ vec4 shadeScene(ivec2 px, SceneSample sm, vec4 transparent) {
     return vec4(vec3(ao), 1.0);
   }
   if (debugView == DEBUG_GI) {
-    // the indirect light alone, as a white surface would show it
-    return vec4(linearToSrgb(clamp(indirect, 0.0, 1.0)), 1.0);
+    // the bounced light alone, as a white surface would get it, at its strength in the ambient light: none of the
+    // sky's own, so what the bounce adds (and what color) shows
+    return vec4(linearToSrgb(clamp(gi.rgb * (gi.a * giWeight * BOUNCE_GAIN), 0.0, 1.0)), 1.0);
   }
   if (debugView == DEBUG_SKYLIGHT) {
     // sky visibility, red where it isn't worked out
