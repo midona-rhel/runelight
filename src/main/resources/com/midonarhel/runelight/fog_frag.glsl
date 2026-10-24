@@ -182,7 +182,7 @@ float phase(float cosTheta) {
 
 // Light from the point lights scattered toward the camera along the ray dir between t0 and t0 + steps * dt.
 // weight[i]: scattering per unit length in step i (transmittance to the step times the share it scatters, over
-// dt), so each light's integral is split over the steps its sphere spans. No shadowing, and no walls: a glow cut off
+// dt), taken where each light's glow peaks. No shadowing, and no walls: a glow cut off
 // at them showed the rooms' square outlines.
 vec3 pointGlow(ivec2 px, vec3 dir, float t0, float dt, int steps, float weight[FOG_MAX_STEPS]) {
   LightMask lights = clusterLights(columnEntry((vec2(px) + 0.5 - vec2(sceneViewport.xy)) / vec2(sceneViewport.zw)));
@@ -208,17 +208,15 @@ vec3 pointGlow(ivec2 px, vec3 dir, float t0, float dt, int steps, float weight[F
     float m = c2 / (c2 + r2);
     float k1 = c2 / q;
     vec4 color = texelFetch(lightData, li * 2 + 1);
-    int i0 = clamp(int((a - t0) / dt), 0, steps - 1);
-    int i1 = clamp(int((b - t0) / dt), 0, steps - 1);
-    float glow = 0.0;
+    // The glow's kernel peaks where the ray passes the light, so its integral over [a, b] is taken in one piece and
+    // weighted where it peaks, between the two nearest steps' weights: one pair of atan per light rather than one per
+    // step, which with dozens of lights per column made the glow the fog's largest cost.
     float s0 = a - tc;
-    float f0 = k1 * atan(s0 / q) - m * s0;
-    for (int i = i0; i <= i1; ++i) {
-      float s1 = min(t0 + dt * float(i + 1), b) - tc;
-      float f1 = k1 * atan(s1 / q) - m * s1;
-      glow += (f1 - f0) * weight[i];
-      f0 = f1;
-    }
+    float s1 = b - tc;
+    float at = clamp((clamp(tc, a, b) - t0) / dt - 0.5, 0.0, float(steps - 1));
+    int i = int(at);
+    float w = mix(weight[i], weight[min(i + 1, steps - 1)], at - float(i));
+    float glow = (k1 * (atan(s1 / q) - atan(s0 / q)) - m * (s1 - s0)) * w;
     sum += color.rgb * (glow / (1.0 - m));
   }
   return sum * FOG_POINT_LIGHT_SCALE;
