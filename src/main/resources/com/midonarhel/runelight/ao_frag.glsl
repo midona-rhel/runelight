@@ -27,6 +27,8 @@ layout(location = 1) out vec4 FragShadow;  // r: lit share, 1 unshadowed; g AO, 
                                            // puddles (weather_ground_ao.glsl); a sky visibility (skylight_ao.glsl)
 // sine of the minimum angle above the surface for an occluder to count; higher ignores more of the shallow folds
 #define AO_ANGLE_BIAS 0.10
+// how far behind an occluder's front (share of the radius) a sample still counts as inside it, fading out at twice that
+#define AO_THICKNESS 0.5
 // none under water: it fades out over this depth below the surface (no hard line at the waterline), and isn't worked
 // out below it
 #define AO_WATER_DEPTH 8.0
@@ -117,6 +119,10 @@ void main() {
     }
     // ignore occluders far in front of the sample, e.g. a wall between the camera and the floor
     float range = smoothstep(0.0, 1.0, aoRadius / max(abs(diff), 1e-3));
+    // Thickness: the depth buffer has only the front of things, so a sample well behind an occluder is taken to be
+    // inside it. For a wall or the ground that holds; a staff, an arm or a fence post is thin, and the ground behind it
+    // would get its silhouette as a dark copy beside it. Occluders count less the further the sample is behind them.
+    range *= 1.0 - smoothstep(aoRadius * AO_THICKNESS, aoRadius * AO_THICKNESS * 2.0, diff);
     // Angle bias: an occluder that sits nearly in this surface's own tangent plane is just the neighboring
     // face of a shallow fold in the same low-poly mesh, not something casting a contact shadow.
     vec3 q = reconstructPosition(vec2(sp) + 0.5, sd);
