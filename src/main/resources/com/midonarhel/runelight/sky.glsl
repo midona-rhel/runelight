@@ -96,6 +96,13 @@ uniform vec4 weatherLight;
 #define LIGHTNING_COLOR vec3(0.80, 0.86, 1.00)
 #define LIGHTNING_SKY 0.12
 
+// The ambient and sky fill light are this much dimmer at a full flash, so the bolt's light and its shadows stand out
+#define FLASH_AMBIENT_DIP 0.35
+
+float flashDip() {
+  return 1.0 - FLASH_AMBIENT_DIP * weatherOvercast.z;
+}
+
 // While a strike's bolt is brighter than the sun or moon it takes over the light that casts shadows (Lightning.java),
 // which casterDir then points along: x is 1 then, else 0; y is the bolt's light, pure white, how bright it is (the
 // one brightness knob is Lightning.BRIGHTNESS). Both 0 is no strike.
@@ -271,7 +278,7 @@ vec3 moonLightAt(float alt) {
 }
 
 vec3 ambientLightAt(float alt) {
-  return ambientCover(alt, weatherOvercast.x);
+  return ambientCover(alt, weatherOvercast.x) * flashDip();
 }
 
 // How much the sky light is raised under cloud, so that a sunlit, level surface gets OVERCAST_TARGET_BRIGHTNESS of
@@ -312,13 +319,13 @@ vec3 skyLightAt(float alt) {
   if (weatherOvercast.z > 0.0) {
     lin += srgbToLinear(base + LIGHTNING_COLOR * (LIGHTNING_SKY * weatherOvercast.z)) - srgbToLinear(base);
   }
-  return lin * SKY_LIGHT;
+  return lin * SKY_LIGHT * flashDip();
 }
 
 float skyBoostAt(float alt) {
   float boost;
   skyLightBase(alt, boost);
-  return boost;
+  return boost * flashDip();
 }
 
 // the lightning flash's part of skyLightAt, for light that leaves it out (atmosphere.glsl's sky cache)

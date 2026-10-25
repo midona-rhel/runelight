@@ -11,7 +11,10 @@ public class LightningTest
 	private static final class Strike
 	{
 		float prepared = -1, firstTakeover = -1, lastTakeover = -1, endAt, flashAbove, maxFlash;
-		int pulses, takeovers;
+		int peaks, takeovers;
+		// the flash at each top, and the lowest it fell to between the first two
+		final float[] top = new float[2];
+		float dip = 1;
 		boolean sunFaded;
 		float continuityGap;
 		final float[] dir = new float[3];
@@ -26,7 +29,8 @@ public class LightningTest
 		float[] casterDir = new float[3];
 		float t = 0;
 		int frames = 0;
-		boolean started = false, taken = false, flashing = false;
+		boolean started = false, taken = false;
+		float previous = 0, before = 0, sinceFirstTop = -1;
 		l.setSunStrength(sunStrength);
 		for (int guard = 0; guard < 120 * 3600; ++guard)
 		{
@@ -59,15 +63,22 @@ public class LightningTest
 			{
 				s.flashAbove += DT;
 			}
-			if (f > 0 && !flashing)
+			if (f > 0 && s.prepared < 0)
 			{
-				++s.pulses;
-				if (s.prepared < 0)
-				{
-					s.prepared = t;
-				}
+				s.prepared = t;
 			}
-			flashing = f > 0;
+			// a top is a local maximum of the flash
+			if (previous > before && previous >= f && previous > 0.3f && s.peaks < 2)
+			{
+				s.top[s.peaks++] = previous;
+				sinceFirstTop = s.peaks == 1 ? 0 : sinceFirstTop;
+			}
+			if (s.peaks == 1 && sinceFirstTop >= 0)
+			{
+				s.dip = Math.min(s.dip, f);
+			}
+			before = previous;
+			previous = f;
 			boolean now = l.aim(casterDir);
 			if (!now)
 			{
@@ -110,20 +121,27 @@ public class LightningTest
 		{
 			// a storm's dim sun: the bolt passes it early in the rise
 			Strike s = run(l, 0.8f, 4);
-			assertTrue(s.pulses == 1 || s.pulses == 2);
-			one |= s.pulses == 1;
-			two |= s.pulses == 2;
-			assertEquals(s.pulses, s.takeovers);
+			assertTrue(s.peaks == 1 || s.peaks == 2);
+			one |= s.peaks == 1;
+			two |= s.peaks == 2;
+			if (s.peaks == 2)
+			{
+				// the second flare is quick, tops a little under the first, and starts from 40 to 60% of it (the dip a little lower, as the flare takes 0.04 s to overtake)
+				assertTrue("second " + s.top[1] / s.top[0], s.top[1] / s.top[0] >= 0.69f && s.top[1] / s.top[0] <= 0.91f);
+				assertTrue("dip " + s.dip / s.top[0], s.dip / s.top[0] >= 0.33f && s.dip / s.top[0] <= 0.62f);
+			}
+			// one flash, one takeover: the bolt stays the light across the dip, so the maps are swapped once each way
+			assertEquals(1, s.takeovers);
 			// no dark gap and no wait beyond the map's few frames
 			assertTrue("prepared " + s.prepared, s.prepared > 0 && s.prepared < 0.1f);
 			assertTrue("takeover " + (s.firstTakeover - s.prepared), s.firstTakeover - s.prepared < 0.05f);
 			double elevation = Math.toDegrees(Math.asin(-s.dir[1]));
 			assertTrue("elevation " + elevation, elevation >= 29.99 && elevation <= 40.01);
 			// each pulse is on screen well over half a second at more than half strength
-			assertTrue("bright " + s.flashAbove / s.pulses, s.flashAbove / s.pulses > 0.45f);
+			assertTrue("bright " + s.flashAbove, s.flashAbove > 0.45f);
 			assertTrue(s.maxFlash >= 0.8f && s.maxFlash <= 1);
-			// at most one pulse a second
-			assertTrue(s.endAt < 0.1f + 0.85f + (s.pulses - 1) * 1.1f + 0.05f);
+			// the whole flash is over in 0.85 s, or 1.15 s with a flicker
+			assertTrue(s.endAt < 0.1f + 0.85f + (s.peaks - 1) * 0.3f + 0.05f);
 		}
 		assertTrue(one && two);
 	}
@@ -175,6 +193,22 @@ public class LightningTest
 		{
 			assertTrue(Lightning.pulse(t) <= previous + 1e-6f);
 			previous = Lightning.pulse(t);
+		}
+	}
+
+	@Test
+	public void flareIsQuick()
+	{
+		assertEquals(0, Lightning.flare(0), 0);
+		assertEquals(1, Lightning.flare(0.04f), 1e-6f);
+		assertEquals(1, Lightning.flare(0.12f), 0);
+		assertEquals(0, Lightning.flare(0.47f), 1e-6f);
+		// a pulse that has fallen to half is half way through its fall, and the share maps back to its time
+		assertEquals(0.5f, Lightning.fallTime(0.5f), 1e-5f);
+		for (float share = 0.4f; share <= 0.6f; share += 0.05f)
+		{
+			float x = Lightning.fallTime(share);
+			assertEquals(share, 1 - x * x * (3 - 2 * x), 1e-4f);
 		}
 	}
 

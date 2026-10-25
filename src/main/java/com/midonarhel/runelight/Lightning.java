@@ -18,7 +18,8 @@ import static org.lwjgl.opengl.GL33C.*;
  * and both stay drawn: taking over and handing back are each a swap of the two (ShadowMap.swapFront), never a
  * redraw, so the light and its shadows change in the same frame.
  *
- * A strike is a pulse or two about a second apart, so a viewer sees at most about one flash a second.
+ * A strike is one flash, which may flicker once: a second flare rises while the first is still falling. A viewer
+ * sees at most about one flash a second.
  */
 class Lightning
 {
@@ -34,11 +35,19 @@ class Lightning
 	static final float BRIGHTNESS = 4;
 	// seconds to draw the bolt's shadow map before the flash, at most; a strike that can't is dropped
 	private static final float PREPARE_MAX = 1;
-	// seconds for a pulse to rise, to hold at its top and to fall, and from the start of one pulse to the next
+	// seconds for the flash to rise, to hold at its top and to fall
 	private static final float PULSE_RISE = 0.05f;
 	private static final float PULSE_HOLD = 0.4f;
 	private static final float PULSE_FALL = 0.4f;
-	private static final float PULSE_STEP = 1.1f;
+	// A flicker is a second, quicker flare that starts while the flash is falling, when it has fallen to this share
+	// of its top (least, most), and rises to this share of the top, then holds and falls in these seconds.
+	private static final float FLARE_START_MIN = 0.4f;
+	private static final float FLARE_START_MAX = 0.6f;
+	private static final float FLARE_PEAK_MIN = 0.7f;
+	private static final float FLARE_PEAK_MAX = 0.9f;
+	private static final float FLARE_RISE = 0.04f;
+	private static final float FLARE_HOLD = 0.08f;
+	private static final float FLARE_FALL = 0.35f;
 	// the bolt's light is this high over the horizon, degrees, and how far from the player it comes down, world
 	// units. Not lower than DayCycle's lowest sun: the shadow map's bias is tuned for it, and a lower light shadows
 	// level ground with its own texels.
@@ -54,8 +63,9 @@ class Lightning
 	private Phase phase = Phase.OFF;
 	// seconds into the phase
 	private float age;
-	private final float[] pulseAmp = new float[2];
-	private int pulses;
+	// the flash's top, and for a flicker the second flare's start and top
+	private float peak, flareAt, flarePeak;
+	private boolean flicker;
 	// the bolt's light: its direction (toward it, y down like DayCycle.casterDir) and where it comes down
 	private final float[] boltDir = new float[3];
 	private float boltX, boltZ, boltSeed;
@@ -130,10 +140,10 @@ class Lightning
 			return;
 		}
 
-		flash = 0;
-		for (int i = 0; i < pulses; ++i)
+		flash = peak * pulse(age);
+		if (flicker)
 		{
-			flash = Math.max(flash, pulseAmp[i] * pulse(age - i * PULSE_STEP));
+			flash = Math.max(flash, flarePeak * flare(age - flareAt));
 		}
 		boolean now = boltMapReady && flash * BRIGHTNESS > sunStrength;
 		if (now != takeover && log.isDebugEnabled())
@@ -143,7 +153,7 @@ class Lightning
 				+ ", shadow map for the bolt " + (boltMapReady ? "drawn" : "not drawn"));
 		}
 		takeover = now;
-		if (age >= (pulses - 1) * PULSE_STEP + PULSE_RISE + PULSE_HOLD + PULSE_FALL)
+		if (age >= (flicker ? flareAt + FLARE_RISE + FLARE_HOLD + FLARE_FALL : PULSE_RISE + PULSE_HOLD + PULSE_FALL))
 		{
 			stop();
 		}
@@ -168,10 +178,14 @@ class Lightning
 		age = 0;
 		frame = 0;
 		boltMapReady = false;
-		pulses = 1 + random.nextInt(2);
-		for (int i = 0; i < pulses; ++i)
+		peak = 0.8f + 0.2f * random.nextFloat();
+		flicker = random.nextBoolean();
+		if (flicker)
 		{
-			pulseAmp[i] = 0.8f + 0.2f * random.nextFloat();
+			// the flash has fallen to this share of its top when the flare starts
+			float share = FLARE_START_MIN + (FLARE_START_MAX - FLARE_START_MIN) * random.nextFloat();
+			flareAt = PULSE_RISE + PULSE_HOLD + PULSE_FALL * fallTime(share);
+			flarePeak = peak * (FLARE_PEAK_MIN + (FLARE_PEAK_MAX - FLARE_PEAK_MIN) * random.nextFloat());
 		}
 		double angle = random.nextDouble() * 2 * Math.PI;
 		float distance = BOLT_MIN_DISTANCE + (BOLT_MAX_DISTANCE - BOLT_MIN_DISTANCE) * random.nextFloat();
@@ -184,7 +198,8 @@ class Lightning
 		boltDir[2] = (float) (Math.sin(angle) * Math.cos(elevation));
 		if (log.isDebugEnabled())
 		{
-			log("PREPARE begins: " + pulses + " pulses, bolt at " + Math.round(boltX) + ", " + Math.round(boltZ)
+			log("PREPARE begins: " + (flicker ? "a flash with a flicker at " + Math.round(flareAt * 1000) + " ms" : "a single flash")
+				+ ", bolt at " + Math.round(boltX) + ", " + Math.round(boltZ)
 				+ ", elevation " + Math.round(Math.toDegrees(elevation)) + " degrees");
 		}
 	}
@@ -193,6 +208,13 @@ class Lightning
 	private void log(String what)
 	{
 		log.debug("lightning +{} ms: {}", (System.nanoTime() - startedAt) / 1000000, what);
+	}
+
+	/** How far into its fall (0 to 1) a pulse is when it has fallen to this share of its top. */
+	static float fallTime(float share)
+	{
+		// the inverse of smooth(): smooth(x) = 1 - share
+		return 0.5f - (float) Math.sin(Math.asin(1 - 2 * (1 - share)) / 3);
 	}
 
 	private static float smooth(float x)
@@ -205,6 +227,12 @@ class Lightning
 	static float pulse(float t)
 	{
 		return t < PULSE_RISE + PULSE_HOLD ? smooth(t / PULSE_RISE) : 1 - smooth((t - PULSE_RISE - PULSE_HOLD) / PULSE_FALL);
+	}
+
+	/** The flicker's second flare at t seconds from its start: a very quick rise, a short hold, a fall. */
+	static float flare(float t)
+	{
+		return t < FLARE_RISE + FLARE_HOLD ? smooth(t / FLARE_RISE) : 1 - smooth((t - FLARE_RISE - FLARE_HOLD) / FLARE_FALL);
 	}
 
 	/**
