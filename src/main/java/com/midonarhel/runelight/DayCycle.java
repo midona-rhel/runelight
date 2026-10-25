@@ -21,15 +21,6 @@ final class DayCycle
 	private static final double MAX_SUN_CAST_ELEVATION = 68;
 	private static final double MAX_MOON_CAST_ELEVATION = 58;
 
-	// a bolt's light is taken from this high above the player's ground, world units, whatever its distance, so a near
-	// strike lights from steeper above; the elevation stays within the sun's limits so the shadow map suits it
-	private static final double BOLT_HEIGHT = 1500;
-
-	// what casts shadows (casterKind in the shaders)
-	static final int CASTER_MOON = 0;
-	static final int CASTER_SUN = 1;
-	static final int CASTER_BOLT = 2;
-
 	// below this sun altitude the moon takes over as the shadow caster; both lights are near zero there
 	static final double CASTER_SWITCH_ALTITUDE = -3;
 
@@ -40,7 +31,7 @@ final class DayCycle
 	final float[] moonDir = new float[3];
 	final float[] casterDir = new float[3];
 	float sunAltitude;
-	int caster;
+	boolean sunIsCaster;
 	double phase;
 
 	/**
@@ -61,9 +52,8 @@ final class DayCycle
 		direction(sunDir, azimuth, Math.toRadians(alt));
 		direction(moonDir, azimuth + Math.PI, Math.toRadians(-alt));
 
-		boolean sun = alt > CASTER_SWITCH_ALTITUDE;
-		caster = sun ? CASTER_SUN : CASTER_MOON;
-		if (sun)
+		sunIsCaster = alt > CASTER_SWITCH_ALTITUDE;
+		if (sunIsCaster)
 		{
 			direction(casterDir, azimuth, Math.toRadians(clamp(alt, MIN_CAST_ELEVATION, MAX_SUN_CAST_ELEVATION)));
 		}
@@ -71,24 +61,6 @@ final class DayCycle
 		{
 			direction(casterDir, azimuth + Math.PI, Math.toRadians(clamp(-alt, MIN_CAST_ELEVATION, MAX_MOON_CAST_ELEVATION)));
 		}
-	}
-
-	/**
-	 * Direction toward a lightning bolt at (dx, dz) from the player, like casterDir.
-	 */
-	static void boltDirection(float[] out, float dx, float dz)
-	{
-		double elevation = Math.atan2(BOLT_HEIGHT, Math.hypot(dx, dz));
-		direction(out, Math.atan2(-dz, dx), clamp(elevation, Math.toRadians(MIN_CAST_ELEVATION), Math.toRadians(MAX_SUN_CAST_ELEVATION)));
-	}
-
-	/**
-	 * A bolt strikes: it casts the shadows instead of the sun or moon until the next update.
-	 */
-	void castFromBolt(float[] dir)
-	{
-		System.arraycopy(dir, 0, casterDir, 0, 3);
-		caster = CASTER_BOLT;
 	}
 
 	/**

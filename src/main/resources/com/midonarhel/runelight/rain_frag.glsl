@@ -123,9 +123,9 @@ void main() {
       discard;
     }
     a *= clamp((scene - fViewZ) / SOFT_DEPTH, 0.0, 1.0);
-    // round the streak across; a bright head and a tail that fades out to nothing, its tip rounded off
+    // round the streak across and taper its ends
     a *= 1.0 - fQuad.x * fQuad.x;
-    a *= fQuad.y * fQuad.y * (1.0 - smoothstep(0.93, 1.0, fQuad.y));
+    a *= smoothstep(0.0, 0.3, fQuad.y) * (1.0 - smoothstep(0.85, 1.0, fQuad.y));
   }
   if (a < 0.003) {
     discard;

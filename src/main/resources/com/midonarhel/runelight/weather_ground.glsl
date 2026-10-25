@@ -4,14 +4,13 @@
 // peak and grows outward, its edge crisp and two-tone like the water's foam, an outer band of shaded snow round the
 // bright snow. Puddles grow where water collects, in hollows and along walls (RoomMap.pool), as the ground soaks, their
 // edges pushed around by noise, drawn as a water of their own reflecting the sky. Both edges are distances in pixels,
-// worked out from the gradients and the surface's footprint on screen, so they stay a pixel wide at any angle. Raindrops
-// land in the puddles as rings that spread over the water. Needs frame.glsl, rooms.glsl and water.glsl.
+// worked out from the gradients and the surface's footprint on screen, so they stay a pixel wide at any angle. Needs
+// frame.glsl, rooms.glsl and water.glsl.
 
 #include "weather_wade.glsl"
 
 uniform int weatherGroundOn;
 uniform vec2 weatherNoiseOrigin;  // world x and z of local (scene) 0, world units
-uniform float rainRate;           // how hard it rains here, 0 to 1 and over: the rings in the puddles
 
 // snow: noise wavelength in world units, and the noise level its blobs start at (peaks) and end at (all covered)
 #define SNOW_SCALE 640.0
@@ -39,12 +38,11 @@ uniform float rainRate;           // how hard it rains here, 0 to 1 and over: th
 // which the first puddles appear and how much lower it reaches when the ground is soaked
 #define PUDDLE_LUMP_SCALE 110.0
 #define PUDDLE_LUMPS 0.22
-#define PUDDLE_FIRST 0.7
-#define PUDDLE_ALL 0.15
-// the up component of the normal of ground water pools on: none below the first, all above the second (ground is
-// rarely dead level: a gentle roll of a few degrees still holds water)
-#define PUDDLE_STEEP 0.93
-#define PUDDLE_FLAT 0.98
+#define PUDDLE_FIRST 0.85
+#define PUDDLE_ALL 0.25
+// the up component of the normal of ground water pools on: none below the first, all above the second
+#define PUDDLE_STEEP 0.955
+#define PUDDLE_FLAT 0.995
 // the rim: its width in world units, the albedo multipliers of the damp rim and of the water, how much of the
 // reflection the rim keeps
 #define PUDDLE_RIM 9.0
@@ -58,20 +56,6 @@ uniform float rainRate;           // how hard it rains here, 0 to 1 and over: th
 #define PUDDLE_WORLD 0.6
 // how bright the crest of a ripple is, added to the water (linear)
 #define PUDDLE_CREST 0.25
-// raindrop rings: the ground's cells (world units) each hold one drop at a time, anywhere in the middle half of the
-// cell, so the four cells nearest a point hold every ring that can reach it (a ring reaches RAIN_RING_SPEED *
-// RAIN_RING_LIFE, within three quarters of a cell). A drop lands every so many seconds (least, most) if a hash of the
-// cell and the cycle is under how hard it rains. The ring spreads at a speed in world units per second and fades out
-// over its life in seconds; it is this wide, and tilts the water's surface by this much at most.
-#define RAIN_RING_CELL 64.0
-#define RAIN_RING_PERIOD vec2(1.3, 2.6)
-#define RAIN_RING_LIFE 1.1
-#define RAIN_RING_SPEED 36.0
-#define RAIN_RING_WIDTH 3.5
-#define RAIN_RING_SLOPE 0.5
-// the share of the water's rain that reaches it: from the cover under which the water is too little to be rained on
-// to the cover at which it is all there
-#define RAIN_RING_REACH vec2(0.05, 0.3)
 
 uvec2 groundHash(vec2 cell) {
   uvec2 v = uvec2(ivec2(cell)) * 1664525u + 1013904223u;
@@ -87,36 +71,6 @@ uvec2 groundHash(vec2 cell) {
 vec2 groundGradient(vec2 cell) {
   float a = float(groundHash(cell).x >> 8u) * (6.28318530718 / 16777216.0);
   return vec2(cos(a), sin(a));
-}
-
-// Slope of the water's surface from the raindrops landing on it at world xz: the rings of the four cells around it, a
-// gaussian ring's derivative as the waded steps' (weather_wade.glsl). Round on the ground from any camera angle,
-// since it is worked out in the ground's own coordinates.
-vec2 rainRingSlope(vec2 xz) {
-  vec2 base = floor(xz / RAIN_RING_CELL - 0.5);
-  vec2 slope = vec2(0.0);
-  for (int k = 0; k < 4; ++k) {
-    vec2 id = base + vec2(k & 1, k >> 1);
-    uvec2 h = groundHash(id);
-    float period = mix(RAIN_RING_PERIOD.x, RAIN_RING_PERIOD.y, float(h.x & 255u) / 255.0);
-    float t = time / period + float(h.y & 255u) / 255.0;
-    float cycle = floor(t);
-    float age = (t - cycle) * period;
-    if (age >= RAIN_RING_LIFE) {
-      continue;
-    }
-    uvec2 g = groundHash(id + vec2(cycle * 7.0, cycle * 13.0));
-    if (float(g.y & 65535u) / 65535.0 >= rainRate) {
-      continue;
-    }
-    vec2 centre = (id + 0.25 + 0.5 * vec2(g.x & 65535u, g.x >> 16u) / 65535.0) * RAIN_RING_CELL;
-    vec2 away = xz - centre;
-    float d = length(away);
-    float x = (d - RAIN_RING_SPEED * age) / RAIN_RING_WIDTH;
-    float fade = 1.0 - age / RAIN_RING_LIFE;
-    slope += away / max(d, 1e-3) * (-x * exp(-x * x) * fade * fade * RAIN_RING_SLOPE);
-  }
-  return slope;
 }
 
 // Perlin noise, about -0.7 to 0.7, and its gradient: x the noise, yz its change per unit of p
@@ -166,19 +120,18 @@ float groundEdge(float f, vec2 df) {
 // Snow and puddles on a surface before lighting: changes the albedo (sRGB) and the normal. p camera-relative, world
 // the same in world space, pc the pixel's center; material: r emissive, b water (0 land terrain, 1 bed), a how much
 // snow settles (materials.glsl); alpha: the transparency layer over it; cover: the AO pass's, upsampled (snow above
-// 0, standing water below). Returns the puddle: x its coverage, y how much of that is water, not rim, z how much of the
-// rain reaches it, for weatherPuddleWater. The cover is the water times the sky the AO pass found open above the
-// pixel (the occlusion map), so none is left under a roof or a canopy to be rained on.
-vec3 weatherGroundSurface(inout vec3 color, inout vec3 n, vec3 p, vec3 world, vec2 pc, vec4 material, float alpha,
+// 0, standing water below). Returns the puddle: x its coverage, y how much of that is water, not rim, for
+// weatherPuddleWater.
+vec2 weatherGroundSurface(inout vec3 color, inout vec3 n, vec3 p, vec3 world, vec2 pc, vec4 material, float alpha,
   float cover) {
   // nothing settles on glowing surfaces (lava, fire) or the water's bed
   float eligible = (1.0 - step(0.01, material.r)) * (1.0 - step(0.75, material.b)) * (1.0 - alpha);
   if (weatherGroundOn == 0 || abs(cover) < 0.01 || eligible <= 0.0) {
-    return vec3(0.0);
+    return vec2(0.0);
   }
   bool land = material.b < 0.25;
   if (cover < 0.0 && !land) {
-    return vec3(0.0);
+    return vec2(0.0);
   }
   float up = max(-n.y, 0.0);
   vec2 xz = world.xz + weatherNoiseOrigin;
@@ -198,7 +151,7 @@ vec3 weatherGroundSurface(inout vec3 color, inout vec3 n, vec3 p, vec3 world, ve
       snow *= material.a * SNOW_SCENERY;
     }
     color = mix(color, mix(SNOW_RIM_COLOR, SNOW_COLOR, inner), snow);
-    return vec3(0.0);
+    return vec2(0.0);
   }
   // the pool level the water has reached, lower as the ground soaks, and the edge's noise
   vec2 grad;
@@ -211,25 +164,17 @@ vec3 weatherGroundSurface(inout vec3 color, inout vec3 n, vec3 p, vec3 world, ve
   float water = groundEdge(depth - PUDDLE_RIM * length(grad), df);
   color *= mix(1.0, mix(PUDDLE_DAMP, PUDDLE_DARKEN, water), puddle);
   n = normalize(mix(n, vec3(0.0, -1.0, 0.0), puddle));
-  return vec3(puddle, water, smoothstep(RAIN_RING_REACH.x, RAIN_RING_REACH.y, -cover));
+  return vec2(puddle, water);
 }
 
 // A puddle's water over the ground lit as usual (lit, sRGB): the sky, and the world where a screen-space ray finds it
 // (light: the surface's light, linear, for the world it shows), by Fresnel; the rim keeps a little of it. Ripples from
-// waded steps and from the raindrops tilt it, and their crests catch the light. p camera-relative, pc the pixel's
-// center.
-vec3 weatherPuddleWater(vec3 lit, vec3 p, vec3 light, vec3 puddle, vec2 pc) {
+// waded steps tilt it, and their crests catch the light. p camera-relative, pc the pixel's center.
+vec3 weatherPuddleWater(vec3 lit, vec3 p, vec3 light, vec2 puddle, vec2 pc) {
   vec3 v = normalize(p);
   // the reflected ray off level water; y is down
   vec3 r = vec3(v.x, -v.y, v.z);
-  vec2 ripple = vec2(0.0);
-  if (puddle.y > 0.0) {
-    ripple = wadeRippleSlope(p.xz + cameraPos.xz);
-    if (rainRate > 0.0 && puddle.z > 0.0) {
-      ripple += rainRingSlope(p.xz + cameraPos.xz + weatherNoiseOrigin) * puddle.z;
-    }
-    ripple *= puddle.y;
-  }
+  vec2 ripple = puddle.y > 0.0 ? wadeRippleSlope(p.xz + cameraPos.xz) * puddle.y : vec2(0.0);
   r = normalize(r + vec3(ripple.x, 0.0, ripple.y));
   float fresnel = mix(PUDDLE_REFLECT, PUDDLE_REFLECT_MAX, pow(1.0 - clamp(v.y, 0.0, 1.0), FRESNEL_POWER));
   float share = fresnel * puddle.x * mix(PUDDLE_RIM_REFLECT, 1.0, puddle.y);

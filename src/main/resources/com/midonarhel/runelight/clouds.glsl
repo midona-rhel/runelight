@@ -36,7 +36,6 @@ uniform vec4 cloudSkyRect;
 // around the focal point; w: the camera's height above the focal point, 0 to keep the sky's horizon level
 uniform vec4 cloudEye;
 uniform float cloudGround;     // world y of the focal point: the cloud shadows hang at a fixed height above it
-uniform float cloudRain;       // 0..1 (over for downpours): how hard it rains anywhere in view, for the rain shafts
 
 // slab altitudes in world units above the eye (cloudEye)
 #define CLOUD_BOTTOM 3500.0
@@ -239,59 +238,6 @@ vec3 cloudShoulder(vec3 c) {
   return mix(c, 1.0 - (1.0 - SHOULDER) * exp(-(c - SHOULDER) / (1.0 - SHOULDER)), step(SHOULDER, c));
 }
 
-#ifdef RAIN_SHAFTS
-// Rain shafts: the grey veils that hang under distant rain clouds, vertical columns below the dense cores down to the
-// ground. A few samples along the ray below the cloud base add up the columns' noise at the places the ray passes,
-// so the veils come out streaky and vertical without a third dimension; the clouds' drift moves them. Only where the
-// sky weather is rainy (cloud darkness) and only beyond the rain particles' reach, in the half resolution cloud pass.
-#define SHAFT_SAMPLES 4
-// cloud darkness (the weather's rain) from no shafts to the most
-#define SHAFT_RAIN vec2(0.45, 0.8)
-// noise repeats per CLOUD_TILE: the columns, and the streaks within them
-#define SHAFT_COLUMNS 3.0
-#define SHAFT_STREAKS 13.0
-// share of the dense cores that hang a shaft, in light rain and in the heaviest
-#define SHAFT_CORE vec2(0.8, 0.45)
-// horizontal distance over which the shafts fade in, world units
-#define SHAFT_NEAR vec2(7000.0, 16000.0)
-// opacity of the veils at most, and how fast the columns thicken
-#define SHAFT_OPACITY 0.7
-#define SHAFT_DENSITY 0.45
-// how much of the horizon's luminance they keep: veils are grayer and darker than the sky behind
-#define SHAFT_LIGHT 0.75
-
-// Veil in front of the clouds: rgb color (linear), a opacity. t0: where the ray reaches the cloud base; cwNear, cw0:
-// cloudLocalCover a third of the way there and at the base; fade: the clouds' own distance fade
-vec4 rainShafts(vec3 dir, vec2 origin, float t0, vec3 cwNear, vec3 cw0, float fade, float noise, float lod,
-  vec3 horizonColor) {
-  float rain = smoothstep(SHAFT_RAIN.x, SHAFT_RAIN.y, max(cw0.z, cwNear.z)) * min(cloudRain, 1.0);
-  if (rain <= 0.0) {
-    return vec4(0.0);
-  }
-  float core = mix(SHAFT_CORE.x, SHAFT_CORE.y, rain);
-  float len = length(dir.xz);
-  float sum = 0.0;
-  for (int i = 0; i < SHAFT_SAMPLES; ++i) {
-    float f = (float(i) + noise) / float(SHAFT_SAMPLES);
-    float t = t0 * f;
-    vec2 xz = origin + dir.xz * t;
-    vec3 cw = mix(cwNear, cw0, smoothstep(0.33, 1.0, f));
-    float wet = smoothstep(SHAFT_RAIN.x, SHAFT_RAIN.y, cw.z);
-    vec2 uv = xz / CLOUD_TILE;
-    float shape = textureLod(cloudNoise, uv, lod).r;
-    vec4 columns = textureLod(cloudNoise, uv * SHAFT_COLUMNS, lod + log2(SHAFT_COLUMNS));
-    float streaks = textureLod(cloudNoise, uv * SHAFT_STREAKS, lod + log2(SHAFT_STREAKS)).b;
-    // columns under the denser cores, ragged at their edges, striped across
-    float mask = smoothstep(core, core + 0.12, shape * 0.7 + columns.g * 0.3 + 0.1) * (0.45 + 0.55 * streaks);
-    // thinning toward the ground, none near the camera
-    sum += mask * wet * mix(0.4, 1.0, f) * smoothstep(SHAFT_NEAR.x, SHAFT_NEAR.y, t * len);
-  }
-  float a = SHAFT_OPACITY * (1.0 - exp(-SHAFT_DENSITY * sum)) * rain * fade;
-  float luma = dot(horizonColor, vec3(0.2126, 0.7152, 0.0722)) * SHAFT_LIGHT;
-  return vec4(vec3(luma) * vec3(0.92, 0.97, 1.05) + LIGHTNING_COLOR * (0.3 * weatherOvercast.z), a);
-}
-#endif
-
 // The clouds in front of the sky along dir (a cloudSkyDir). rgb: light scattered toward the camera (linear),
 // a: transmittance. camPos: world position of the camera, which the clouds are seen from offset by cloudEye;
 // sunDir, moonDir: the visual sun and moon; alt: sun altitude, degrees;
@@ -314,9 +260,6 @@ vec4 cloudLayer(vec3 dir, vec3 camPos, vec3 sunDir, vec3 moonDir, float alt, flo
   // rather than to the ray, so clouds keep their size as the camera turns
   vec3 cw0 = cloudLocalCover(origin + dir.xz * t0, cloudSkyWeather(eye + dir.xz * t0));
   vec3 cw1 = cloudLocalCover(origin + dir.xz * t1, cloudSkyWeather(eye + dir.xz * t1));
-#ifdef RAIN_SHAFTS
-  vec3 cwNear = cloudLocalCover(origin + dir.xz * (t0 * 0.33), cloudSkyWeather(eye + dir.xz * (t0 * 0.33)));
-#endif
   cw0.x = cloudSlantCover(cw0.x, across);
   cw1.x = cloudSlantCover(cw1.x, across);
   if (max(cw0.x, cw1.x) <= 0.0) {
@@ -390,13 +333,7 @@ vec4 cloudLayer(vec3 dir, vec3 camPos, vec3 sunDir, vec3 moonDir, float alt, flo
       break;
     }
   }
-  vec4 result = vec4(scattered * fade, mix(1.0, transmittance, fade));
-#ifdef RAIN_SHAFTS
-  // the shafts hang below the cloud base, nearer than the clouds along the ray
-  vec4 veil = rainShafts(dir, origin, t0, cwNear, cw0, fade, noise, lod, horizonColor);
-  result = vec4(result.rgb * (1.0 - veil.a) + veil.rgb * veil.a, result.a * (1.0 - veil.a));
-#endif
-  return result;
+  return vec4(scattered * fade, mix(1.0, transmittance, fade));
 }
 
 // The procedural sky (sRGB) with the clouds in front of it. px: pixel center in target coordinates; lightDir: the

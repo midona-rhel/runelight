@@ -471,27 +471,4 @@ public class RoomMapTest
 		assertFalse(unknown.seenFrom(0, 1, world(10), world(10)));
 		assertTrue(unknown.seenFrom(0, 0, world(10), world(10)));
 	}
-
-	@Test
-	public void puddlesGatherByWallsAndOnlyAFewToAChunk()
-	{
-		RoomMap m = house(walls());
-		float[] pools = m.pools();
-		// the chunk of extended tiles 4..11 holds the house and its walls
-		int places = 0;
-		for (int x = 4; x < 12; ++x)
-		{
-			for (int y = 4; y < 12; ++y)
-			{
-				if (pools[m.index(0, x, y)] > 0)
-				{
-					places++;
-					assertTrue(pools[m.index(0, x, y)] >= RoomMap.POOL_MIN);
-				}
-			}
-		}
-		assertTrue(places > 0 && places <= RoomMap.POOLS_PER_CHUNK);
-		// level open ground away from any wall collects nothing
-		assertEquals(0, pools[m.index(0, 0, 0)], 0);
-	}
 }

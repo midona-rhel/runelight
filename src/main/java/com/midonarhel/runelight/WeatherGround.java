@@ -57,14 +57,13 @@ final class WeatherGround
 	/** A composite program's uniforms. */
 	static final class CompositeUniforms
 	{
-		private int on = -1, noiseOrigin = -1, wadeSteps = -1, rainRate = -1;
+		private int on = -1, noiseOrigin = -1, wadeSteps = -1;
 
 		void locate(int program)
 		{
 			on = glGetUniformLocation(program, "weatherGroundOn");
 			noiseOrigin = glGetUniformLocation(program, "weatherNoiseOrigin");
 			wadeSteps = glGetUniformLocation(program, "wadeSteps");
-			rainRate = glGetUniformLocation(program, "rainRate");
 		}
 
 		/** With the program in use: the steps in the puddles (WadeSteps.steps). */
@@ -77,13 +76,11 @@ final class WeatherGround
 		 * With the program in use.
 		 *
 		 * @param originX world x of local (scene) x 0, world units, so snow and puddles stay put when the scene reloads
-		 * @param rain how hard it rains, for the raindrop rings in the puddles (Weather.getRainRate)
 		 */
-		void set(boolean enabled, float originX, float originZ, float rain)
+		void set(boolean enabled, float originX, float originZ)
 		{
 			glUniform1i(on, enabled ? 1 : 0);
 			glUniform2f(noiseOrigin, originX, originZ);
-			glUniform1f(rainRate, rain);
 		}
 	}
 }

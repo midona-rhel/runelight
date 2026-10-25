@@ -93,10 +93,6 @@ class Weather
 	static final float COVER_SLOPE = 0.8f;
 	// varying intensity may peak this far over 100%, as a share of the instance counts
 	private static final float MAX_EFFECTIVE = 1.2f;
-	// Rain heavier than this adds drops only at DENSE_SLOPE of the rate, so the downpours stay readable: a drop count
-	// rising with the rain keeps adding streaks until they merge into a wall
-	private static final float DENSE_RAIN = 0.85f;
-	private static final float DENSE_SLOPE = 0.25f;
 	// wind multiplier at a full gust
 	private static final float RAIN_GUST = 1.2f;
 	private static final float SNOW_GUST = 1.5f;
@@ -149,7 +145,7 @@ class Weather
 		int program;
 		int viewProj, invViewProj, viewport, depthZeroToOne;
 		int occlusionProjRel, occlusionCenterY, occlusionDepthRange;
-		int cameraPos, focusPos, time, sunAltitude, casterDir, casterKind, amount;
+		int cameraPos, focusPos, time, sunAltitude, casterDir, sunIsCaster, amount;
 		int dropCount, mist, mistStage, wadeDroplets, wadeSteps, waterRect, wind, windOffset, gust, overcast,
 			pointLights;
 		int particleAmount, layerBox, layerSpan, layerBand, particleReach;
@@ -185,7 +181,7 @@ class Weather
 			time = glGetUniformLocation(p, "time");
 			sunAltitude = glGetUniformLocation(p, "sunAltitude");
 			casterDir = glGetUniformLocation(p, "casterDir");
-			casterKind = glGetUniformLocation(p, "casterKind");
+			sunIsCaster = glGetUniformLocation(p, "sunIsCaster");
 			amount = glGetUniformLocation(p, "amount");
 			dropCount = glGetUniformLocation(p, "dropCount");
 			mist = glGetUniformLocation(p, "mist");
@@ -676,22 +672,6 @@ class Weather
 		field.getFocus(WeatherField.FLAKE_STYLE, flakeStyle);
 	}
 
-	/** how hard it rains at the player, 0-1 and over, for the rings of the drops landing in puddles */
-	float getRainRate()
-	{
-		return rainEffective;
-	}
-
-	/** how hard it rains anywhere in the scene, 0-1 and over, for the shafts under the distant rain clouds (clouds.glsl) */
-	float getDistantRain()
-	{
-		if (!field.isEnabled())
-		{
-			return rainEffective;
-		}
-		return Math.max(rainEffective, Math.min(rainEffective + field.max(WeatherField.RAIN) - field.getFocus(WeatherField.RAIN), MAX_EFFECTIVE));
-	}
-
 	/** wet ground and snow cover at the player, 0-1 */
 	float getWetness()
 	{
@@ -1009,7 +989,7 @@ class Weather
 			glUniform1f(rain.particleReach, drawDistance);
 			glUniform1i(rain.mistStage, 0);
 			water.setRect(config, rain.waterRect);
-			drawLayers(rain, LAYER_RAIN_DROPS * dropRain(rainShown), RAIN_ABOVE, RAIN_BELOW, out, height, cameraX, cameraZ,
+			drawLayers(rain, LAYER_RAIN_DROPS * rainShown, RAIN_ABOVE, RAIN_BELOW, out, height, cameraX, cameraZ,
 				aheadX, aheadZ);
 			float impacts = splashes ? rainShown * Math.min(1, wetShown) : 0;
 			if (impacts > 0)
@@ -1074,12 +1054,6 @@ class Weather
 			glDrawArraysInstanced(GL_TRIANGLES, 0, 6, count);
 			first = false;
 		}
-	}
-
-	/** The rain the drop count follows: the rain itself, with the heaviest eased (DENSE_RAIN). */
-	static float dropRain(float rain)
-	{
-		return rain <= DENSE_RAIN ? rain : DENSE_RAIN + (rain - DENSE_RAIN) * DENSE_SLOPE;
 	}
 
 	/** How far from the camera layer k's band reaches. */
@@ -1182,7 +1156,7 @@ class Weather
 		glUniform1f(u.time, time);
 		glUniform1f(u.sunAltitude, day.sunAltitude);
 		glUniform3fv(u.casterDir, day.casterDir);
-		glUniform1i(u.casterKind, day.caster);
+		glUniform1i(u.sunIsCaster, day.sunIsCaster ? 1 : 0);
 		setOvercastUniform(u.overcast);
 		setLightUniform(u.light);
 		field.apply(u.field);

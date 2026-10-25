@@ -26,26 +26,15 @@ uniform vec3 windOffset;       // world units the wind has carried everything so
 uniform vec2 particleAmount;   // rain at the player, and the most anywhere in the box that the drop count follows
 
 #define FALL_SPEED 2000.0      // world units per second
-#define DROP_LENGTH 110.0      // streak length at rest, times the layer's size scale; the tail fades out (rain_frag.glsl)
+#define DROP_LENGTH 40.0       // streak length at rest, times the layer's size scale
 #define DROP_WIDTH 1.6         // world units; streaks are at least a pixel wide, thinner ones fade instead
-#define DROP_ALPHA 0.5         // at the head
-#define MIN_STREAK_PX 8.0      // streaks are at least this long on screen, whatever the camera pitch
+#define DROP_ALPHA 0.32
+#define MIN_STREAK_PX 5.0      // streaks are at least this long on screen, whatever the camera pitch
 #define MIN_STREAK_DIM 0.55    // brightness of a streak stretched from nothing to that, against a full one
 #define NEAR_FADE 250.0        // drops this close to the camera fade out so they don't smear the view
 #define COUNT_FADE 0.1         // as the drop count changes, the last tenth of drops fade instead of popping
 #define LIT_ALPHA 0.8          // drops in bright point light show up to this much more
 #define RAIN_GUST 1.2          // wind multiplier at a full gust (Weather.RAIN_GUST)
-// Waves in the rain's fall: three octaves of low-frequency sines that travel with the wind (the gust fronts' phase),
-// each with its own wavelength along the wind and across it, speed and phase. The fall speed (and the streak with
-// it), the slant and the height of the sheets of rain vary with them, so neighbouring rain leans and falls differently
-// and the difference sweeps across the scene.
-#define WAVE_LENGTH vec3(3200.0, 1300.0, 520.0)  // world units along the wind
-#define WAVE_WIDTH vec3(5200.0, 2300.0, 900.0)   // across it, which bends the fronts
-#define WAVE_SPEED vec3(1.0, 1.35, 1.9)          // times the gust fronts' speed
-#define WAVE_WEIGHT vec3(0.5, 0.3, 0.2)
-#define WAVE_FALL 0.22         // fall speed varies by this share at most
-#define WAVE_SLANT 0.55        // so does the wind's push on the drops
-#define WAVE_SHIFT 220.0       // sheets of rain rise and sink this many world units at most
 
 #define SPLASH_SKY 0.35        // share of the sky's color in the droplets' and the mist's
 #define FOOT_TAP_PX 2.0        // pixels between the taps that check what the camera sees at a sprite's foot
@@ -63,7 +52,7 @@ uniform vec2 particleAmount;   // rain at the player, and the most anywhere in t
 #define WADE_DROPLET_SIZE 1.8
 #define WADE_DROPLET_ALPHA 0.5
 
-out vec2 fQuad;                // x across the streak / sprite -1..1, y along it 0..1 (tail to head; up the sprite)
+out vec2 fQuad;                // x across the streak / sprite -1..1, y along it 0..1 (up the sprite)
 flat out int fSplash;          // 0 drop, 1 a droplet, 2 the mist
 flat out float fSoft;          // world units over which a droplet hides behind nearer scenery
 out float fViewZ;
@@ -74,16 +63,6 @@ flat out vec3 fColor;
 // rain the drop count is for. The box can reach from a dry region into a rainy one.
 float rainShare(vec2 worldXZ) {
   return clamp((particleAmount.x + weatherFieldDelta(worldXZ).g) / max(particleAmount.y, 1e-3), 0.0, 1.0);
-}
-
-// Two waves in -1..1 at a world xz: .x for the fall speed and the height, .y for the slant, the same octaves at other phases
-vec2 rainWaves(vec2 worldXZ) {
-  float along = dot(worldXZ, windDir);
-  float across = worldXZ.y * windDir.x - worldXZ.x * windDir.y;
-  vec3 phase = along / WAVE_LENGTH - windFront * WAVE_SPEED / WAVE_LENGTH + 0.6 * sin(across / WAVE_WIDTH + vec3(0.0, 2.1, 4.2));
-  vec3 a = sin(6.28318530718 * fract(phase));
-  vec3 b = sin(6.28318530718 * fract(phase + vec3(0.37, 0.61, 0.13)));
-  return vec2(dot(a, WAVE_WEIGHT), dot(b, WAVE_WEIGHT));
 }
 
 // corners of the two triangles: (side, end)
@@ -115,19 +94,16 @@ void drop(int id, vec2 corner) {
     gl_Position = CULLED;
     return;
   }
-  vec2 waves = rainWaves(world.xz);
-  world.y += WAVE_SHIFT * waves.x;
   vec3 head = world - cameraPos;
-  // slanted harder where a gust is passing, and with the waves
-  float gustHere = (1.0 + RAIN_GUST * windGustAt(world.xz)) * (1.0 + WAVE_SLANT * waves.y);
-  float fallHere = 1.0 + WAVE_FALL * waves.x;
-  vec3 vel = vec3(wind.x * gustHere, FALL_SPEED * speedScale * rainStyle.y * fallHere, wind.z * gustHere);
+  // slanted harder where a gust is passing
+  float gustHere = 1.0 + RAIN_GUST * windGustAt(world.xz);
+  vec3 vel = vec3(wind.x * gustHere, FALL_SPEED * speedScale * rainStyle.y, wind.z * gustHere);
 
   // stop on whatever is above the ground: drops below the top surface of their column are hidden, and the
   // streak is cut where it enters the surface
   float roofY = occluderTop(head);
   float top = roofY - cameraPos.y;
-  float len = DROP_LENGTH * speedScale * fallHere * rainStyle.x * layerSpan.z;
+  float len = DROP_LENGTH * speedScale * rainStyle.x * layerSpan.z;
   vec3 dir = normalize(vel);
   vec3 tail = head - dir * len;
   if (tail.y >= top) {

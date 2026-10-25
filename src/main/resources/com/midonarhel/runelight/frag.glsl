@@ -69,7 +69,7 @@ uniform int alphaPass;
 uniform int outdoors;
 uniform int proceduralSky;
 uniform vec3 casterDir;
-uniform int casterKind;
+uniform int sunIsCaster;
 uniform float sunAltitude;
 
 #include "sky.glsl"
@@ -152,7 +152,7 @@ void main() {
   if (alphaPass == 1) {
     vec3 light;
     if (outdoors == 1) {
-      vec3 caster = casterLight(sunAltitude, casterKind);
+      vec3 caster = sunIsCaster == 1 ? sunLight(sunAltitude) : moonLight(sunAltitude);
       float ndl = dot(n, casterDir);
       vec3 viewDir = normalize(vec3(cameraX, cameraY, cameraZ) - fWorldPos);
       light = (ambientLight(sunAltitude) + skyLight(sunAltitude) * max(-n.y, 0.0)) * envAmbient

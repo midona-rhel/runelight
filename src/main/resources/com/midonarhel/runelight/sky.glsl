@@ -91,13 +91,10 @@ uniform vec4 weatherLight;
 // harsh sun: shadows this much deeper per unit of extra strength, for crisp contrast
 #define HARSH_SHADOW 0.6
 
-// a lightning flash: cool white, added to the sky (sRGB) and to the ambient light (linear) at a full flash, and, as
-// the light that casts shadows while a bolt strikes (casterKind 2), its strength (linear) at a full flash. The key
-// is what the flash shows: the ambient only fills in the shadows it casts.
+// a lightning flash: cool white, added to the sky (sRGB) and to the ambient light (linear) at a full flash
 #define LIGHTNING_COLOR vec3(0.80, 0.86, 1.00)
 #define LIGHTNING_SKY 0.45
-#define LIGHTNING_AMBIENT 0.6
-#define LIGHTNING_KEY 2.2
+#define LIGHTNING_AMBIENT 1.0
 
 // the overcast sky's tint and brightness relative to the clear sky's luminance: dark slate in rain, soft white in snow
 #define OVERCAST_RAIN_TINT vec3(0.86, 0.93, 1.05)
@@ -359,14 +356,6 @@ vec3 cloudLight(float alt) { return cloudLightAt(alt); }
 vec3 skyZenithLinear(float alt) { return srgbToLinear(skyZenithAt(alt)); }
 vec3 skyHorizonLinear(float alt) { return srgbToLinear(skyHorizonAt(alt)); }
 #endif
-
-// The light that casts shadows, linear: the sun (casterKind 1), the moon (0) or, while a bolt strikes (2), the bolt
-vec3 casterLight(float alt, int kind) {
-  if (kind == 2) {
-    return LIGHTNING_COLOR * (LIGHTNING_KEY * weatherOvercast.z);
-  }
-  return kind == 1 ? sunLight(alt) : moonLight(alt);
-}
 
 // Underground: no sun, so a fixed soft key light from above keeps shapes readable. y points down.
 #define CAVE_AMBIENT 0.50
