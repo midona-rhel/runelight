@@ -35,7 +35,10 @@ float skyUpsampled = 1.0;
 // multiplied by mix(white, that colour at luminance 1, how much of it there is), so the grass' green stands on the foot of
 // the wall beside it, however dim the grass is, and the light's brightness stays as it was. The sun's light is tinted by this
 // share of it, so the colour still shows on a sunlit wall.
-#define GI_SUN_TINT 0.25
+#define GI_SUN_TINT 0.6
+// The game's colours are muted (grass is olive): the tint's saturation is raised this many times, so the colour that
+// lands on the wall reads as the grass' green rather than a pale cast
+#define GI_SATURATION 2.5
 
 // plain: the ambient plus sky light a surface would get under the open sky
 vec3 skylightAmbient(vec3 plain) {
@@ -50,7 +53,9 @@ vec4 giTint(vec3 gi, float giW) {
   if (skylightMode != 2 || l < 1e-4) {
     return vec4(1.0, 1.0, 1.0, 0.0);
   }
-  return vec4(gi / l, clamp(l, 0.0, 1.0) * giW);
+  // a square root, so a surface that sees a little lit colour still shows it
+  vec3 tint = max(mix(vec3(1.0), gi / l, GI_SATURATION), vec3(0.0));
+  return vec4(tint / max(overcastLuma(tint), 1e-4), sqrt(clamp(l, 0.0, 1.0)) * giW);
 }
 
 // What the tint multiplies the light by, share of it: never negative, however strong the setting.
