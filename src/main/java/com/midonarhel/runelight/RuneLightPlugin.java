@@ -125,6 +125,9 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 	private Client client;
 
 	@Inject
+	private ConfigManager configManager;
+
+	@Inject
 	private ClientUI clientUI;
 
 	@Inject
@@ -915,6 +918,15 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		if (configChanged.getGroup().equals(RuneLightConfig.GROUP))
 		{
 			glErrorChecks = config.glErrorChecks();
+			if (configChanged.getKey().equals("strikeLightning"))
+			{
+				if (config.strikeLightning())
+				{
+					weather.getLightning().strikeNow();
+					configManager.setConfiguration(RuneLightConfig.GROUP, "strikeLightning", false);
+				}
+				return;
+			}
 			if (configChanged.getKey().equals("unlockFps")
 				|| configChanged.getKey().equals("vsyncMode")
 				|| configChanged.getKey().equals("fpsTarget"))
@@ -1984,7 +1996,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 				renderShadowMap();
 				cpuTimer.end(CpuTimer.SHADOW_SUBMIT);
 			}
-			weather.getLightning().setShadowsReady(!frameShadows || shadowsMatchLight());
+			weather.getLightning().setShadowsReady(!frameShadows || shadowsMatchLight(), dayCycle.casterDir);
 			cpuTimer.begin(CpuTimer.OCCLUSION);
 			if (weather.isActive())
 			{

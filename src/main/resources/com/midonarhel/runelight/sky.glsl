@@ -68,9 +68,9 @@ vec3 skyHorizonClear(float alt) {
 // Overcast: rain and snow gray the sky, dim and soften the sun and moon and let the sky's fill light take over.
 // Everything that uses the sky palette or the light colors above goes through here, so the scene, the
 // transparency layer, the fog and the weather particles all agree. Neutral (clear) at weatherOvercast.x = 0.
-// Lightning flashes (weatherOvercast.z) go through the same functions, so everything flashes together.
+// Lightning's flash (weatherOvercast.z) brightens the sky a little through the same functions.
 
-uniform vec3 weatherOvercast;  // x: 0 clear .. 1 fully overcast, y: 0 rain .. 1 snow, z: lightning flash 0..1 (Weather.java)
+uniform vec3 weatherOvercast;  // x: 0 clear .. 1 fully overcast, y: 0 rain .. 1 snow, z: lightning's sky flash 0..1 (Weather.java)
 // The weather's light (WeatherType): x sun strength - 1 (harsh sun above 0), y haze 0..1 (a milky sky, softer
 // light and shadows), z warmth -1 cold .. 1 amber (dust, ash, heat), w sky saturation offset. All 0 is neutral.
 uniform vec4 weatherLight;
@@ -91,19 +91,26 @@ uniform vec4 weatherLight;
 // harsh sun: shadows this much deeper per unit of extra strength, for crisp contrast
 #define HARSH_SHADOW 0.6
 
-// a lightning flash: cool white, added to the sky (sRGB) and to the ambient light (linear) at a full flash
+// a lightning flash: cool white, a faint brightening of the sky (sRGB) at a full flash. The scene is lit by the
+// bolt's own light (strikeLight), not by a flash over everything.
 #define LIGHTNING_COLOR vec3(0.80, 0.86, 1.00)
-#define LIGHTNING_SKY 0.45
-#define LIGHTNING_AMBIENT 0.5
+#define LIGHTNING_SKY 0.12
 
 // A strike takes over the light that casts shadows while it flashes (Lightning.java), which casterDir then points
 // along: x is the share of the sun's or moon's own light taken away, y the bolt's light, pure white, at its full
 // strength. Both 0 is no strike.
 uniform vec2 strikeLight;
-#define STRIKE_LIGHT vec3(3.0)
+// a strong sun: about one and a half times the noon sun's
+#define STRIKE_LIGHT vec3(4.0)
 
 vec3 strikeCaster(vec3 light) {
   return light * (1.0 - strikeLight.x) + STRIKE_LIGHT * strikeLight.y;
+}
+
+// For what the light scatters in or glitters on (fog, drops, the water's shine): the bolt lights surfaces only, so
+// those just lose the sun's light during a strike
+vec3 strikeSun(vec3 light) {
+  return light * (1.0 - strikeLight.x);
 }
 
 // the overcast sky's tint and brightness relative to the clear sky's luminance: dark slate in rain, soft white in snow
@@ -266,7 +273,7 @@ vec3 moonLightAt(float alt) {
 }
 
 vec3 ambientLightAt(float alt) {
-  return ambientCover(alt, weatherOvercast.x) + LIGHTNING_COLOR * (LIGHTNING_AMBIENT * weatherOvercast.z);
+  return ambientCover(alt, weatherOvercast.x);
 }
 
 // How much the sky light is raised under cloud, so that a sunlit, level surface gets OVERCAST_TARGET_BRIGHTNESS of

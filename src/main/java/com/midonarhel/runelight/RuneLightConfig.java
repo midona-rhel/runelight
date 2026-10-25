@@ -915,6 +915,18 @@ public interface RuneLightConfig extends Config
 	}
 
 	@ConfigItem(
+		keyName = "strikeLightning",
+		name = "Strike lightning",
+		description = "One lightning strike now, in any weather. Unticks itself.",
+		section = developmentSection,
+		position = 105
+	)
+	default boolean strikeLightning()
+	{
+		return false;
+	}
+
+	@ConfigItem(
 		keyName = "debugView",
 		name = "Debug view",
 		description = "Show one of the scene buffers instead of the final image.",

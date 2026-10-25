@@ -5,7 +5,7 @@
 uniform vec4 lightningBolt;  // xy: strike xz relative to the camera, world units; z: bolt visibility 0..1; w: seed
 
 // light added inside the clouds near the strike at a full flash (linear), and how far it spreads, world units
-#define LIGHTNING_CLOUD_GLOW 2.5
+#define LIGHTNING_CLOUD_GLOW 0.6
 #define LIGHTNING_GLOW_RADIUS 7000.0
 // the bolt runs from the cloud base (clouds.glsl's CLOUD_BOTTOM, above the camera) to this far below the camera
 #define BOLT_RISE 3500.0

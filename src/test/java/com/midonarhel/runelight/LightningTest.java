@@ -55,7 +55,7 @@ public class LightningTest
 				}
 			}
 			++sinceTurn;
-			l.setShadowsReady(sinceTurn > drawFrames);
+			l.setShadowsReady(sinceTurn > drawFrames, casterDir);
 			l.update(DT, 1, true, 0, 0);
 			l.getStrike(strike);
 			t += DT;
@@ -98,7 +98,7 @@ public class LightningTest
 			float len = (float) Math.sqrt(s.dir[0] * s.dir[0] + s.dir[1] * s.dir[1] + s.dir[2] * s.dir[2]);
 			assertEquals(1, len, 1e-4f);
 			double elevation = Math.toDegrees(Math.asin(-s.dir[1]));
-			assertTrue("elevation " + elevation, elevation >= 9.99 && elevation <= 20.01);
+			assertTrue("elevation " + elevation, elevation >= 29.99 && elevation <= 40.01);
 			// the flash is at full strength, only with the sun out, after the map is drawn for the new light
 			assertEquals(0, s.flashWhileLit, 1e-3f);
 			assertTrue(s.maxFlash >= 0.8f && s.maxFlash <= 1);
@@ -109,7 +109,7 @@ public class LightningTest
 			// the light is back on the sun after the last pulse, and the sun is back within 0.3 s of the map
 			assertTrue(s.returnAt >= s.lastFlashAt - DT);
 			assertTrue(s.endAt - s.returnAt < 0.5f);
-			assertTrue("strike " + s.endAt, s.endAt < 1.4f);
+			assertTrue("strike " + s.endAt, s.endAt < 2.5f);
 		}
 		assertTrue(one && two);
 	}
@@ -122,7 +122,7 @@ public class LightningTest
 		assertTrue(slow.firstFlashAt - slow.aimAt > quick.firstFlashAt - quick.aimAt + 0.2f);
 		// the map never being ready (shadows off or indoors) holds the dark for the longest wait only
 		Strike never = run(new Lightning(), Integer.MAX_VALUE / 2);
-		assertEquals(0.6f, never.firstFlashAt - never.aimAt, 3 * DT);
+		assertEquals(1f, never.firstFlashAt - never.aimAt, 3 * DT);
 	}
 
 	@Test
@@ -141,6 +141,30 @@ public class LightningTest
 		{
 			assertTrue(Lightning.pulse(t) <= previous + 1e-6f);
 			previous = Lightning.pulse(t);
+		}
+	}
+
+	@Test
+	public void strikeOnRequestInAnyWeather()
+	{
+		Lightning l = new Lightning();
+		float[] strike = new float[2];
+		l.update(DT, 0, false, 0, 0);
+		l.getStrike(strike);
+		assertEquals(0, strike[0], 0);
+		l.strikeNow();
+		l.update(DT, 0, false, 0, 0);
+		l.getStrike(strike);
+		assertTrue(strike[0] > 0);
+		// a request during a strike is dropped, not queued
+		l.strikeNow();
+		Strike s = run(l, 4);
+		assertTrue(s.pulses >= 1);
+		for (int i = 0; i < 600; ++i)
+		{
+			l.update(DT, 0, false, 0, 0);
+			l.getStrike(strike);
+			assertEquals(0, strike[0], 0);
 		}
 	}
 

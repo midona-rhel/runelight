@@ -435,7 +435,7 @@ vec3 waterGlitter(ivec2 px, vec3 nrm, vec3 v, float shine, float foam, float sha
   float along = sqrt(rough * rough * 2.56 + footprint), across = sqrt(rough * rough + footprint);
   float glitter = waterGlint(steep, casterDir, -v, tAlong, tAcross, along, across);
   glitter *= GLITTER * GLINT_SUN_SIZE * GLINT_SUN_SIZE;
-  vec3 caster = strikeCaster(sunIsCaster == 1 ? sunLight(sunAltitude) : moonLight(sunAltitude)) * envSun;
+  vec3 caster = strikeSun(sunIsCaster == 1 ? sunLight(sunAltitude) : moonLight(sunAltitude)) * envSun;
   return caster * (glitter * shadow * shine * (1.0 - foam) * (sunIsCaster == 1 ? 1.0 : MOON_SPECULAR));
 }
 
@@ -508,7 +508,7 @@ vec3 waterOver(ivec2 px, inout vec3 p, vec3 albedo, float shadow, vec3 lit, floa
   // the bed, lit by the composite and wet, with the caustics, fading into the depth color
   vec3 caustics = vec3(0.0);
   if (waterCaustics == 1 && outdoors == 1 && lightingEnabled == 1 && WATER_LOOK[type].x < 0.7) {
-    vec3 caster = strikeCaster(sunIsCaster == 1 ? sunLight(sunAltitude) : moonLight(sunAltitude)) * envSun;
+    vec3 caster = strikeSun(sunIsCaster == 1 ? sunLight(sunAltitude) : moonLight(sunAltitude)) * envSun;
     float k = max(-casterDir.y, 0.0) * shadow * CAUSTICS * (sunIsCaster == 1 ? 1.0 : CAUSTIC_MOON)
       * smoothstep(0.0, CAUSTIC_EDGE, depth) * (1.0 - smoothstep(CAUSTIC_FADE.x, CAUSTIC_FADE.y, depth));
     float dark = CAUSTIC_RANGE.x * smoothstep(0.0, CAUSTIC_DARK, depth);

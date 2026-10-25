@@ -1,6 +1,8 @@
 package com.midonarhel.runelight;
 
 import java.util.Random;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import static org.lwjgl.opengl.GL33C.*;
 
 /**
@@ -12,7 +14,7 @@ import static org.lwjgl.opengl.GL33C.*;
  * light that casts shadows, so that everything in range throws long, sharp shadows away from the bolt.
  *
  * 1. The sun's or moon's light fades out, leaving the ambient light alone (FADE_OUT).
- * 2. The light turns to the bolt, low over the horizon, while it is out; the shadow map is drawn for that direction
+ * 2. The light turns to the bolt, low over the horizon (30 to 40 degrees), while it is out; the shadow map is drawn for that direction
  *    in the dark (AIM waits for it).
  * 3. One or two pulses of pure white light, each rising and falling smoothly, with the sky's flash in step.
  * 4. The light turns back to the sun or moon, still dark, and the shadow map is drawn for that again (RETURN),
@@ -23,6 +25,8 @@ import static org.lwjgl.opengl.GL33C.*;
  */
 class Lightning
 {
+	private static final Logger log = LoggerFactory.getLogger(Lightning.class);
+
 	// seconds between strikes in a full storm; longer while the storm builds or eases
 	private static final float MIN_INTERVAL = 5;
 	private static final float MAX_INTERVAL = 25;
@@ -33,14 +37,16 @@ class Lightning
 	private static final float FADE_IN = 0.3f;
 	// seconds the dark waits at least, and at most, for the shadow map to be drawn for the light's new direction
 	private static final float TURN_MIN = 0.1f;
-	private static final float TURN_MAX = 0.6f;
+	private static final float TURN_MAX = 1;
 	// seconds for a pulse to rise and to fall, and from the start of one to the next
 	private static final float PULSE_RISE = 0.05f;
 	private static final float PULSE_FALL = 0.15f;
 	private static final float PULSE_STEP = 0.3f;
-	// the bolt's light is this low over the horizon, degrees, and how far from the player it comes down, world units
-	private static final float MIN_ELEVATION = 10;
-	private static final float MAX_ELEVATION = 20;
+	// the bolt's light is this high over the horizon, degrees, and how far from the player it comes down, world
+	// units. Not lower than DayCycle's lowest sun: the shadow map's bias is tuned for it, and a lower light shadows
+	// level ground with its own texels.
+	private static final float MIN_ELEVATION = 30;
+	private static final float MAX_ELEVATION = 40;
 	private static final float BOLT_MIN_DISTANCE = 3000;
 	private static final float BOLT_MAX_DISTANCE = 9000;
 
@@ -58,6 +64,12 @@ class Lightning
 	private float boltX, boltZ, boltSeed;
 	// whether the shadow map was drawn for the light's direction as of last frame (RuneLightPlugin)
 	private boolean shadowsReady;
+	// the light's direction as the plugin has it, for the log
+	private float[] actualDir;
+	private boolean requested;
+	// for the log: when the strike began, and the frames of this phase
+	private long startedAt;
+	private int frames;
 
 	// this frame
 	private float darkness;
@@ -71,25 +83,34 @@ class Lightning
 	{
 		if (phase == Phase.OFF)
 		{
-			if (!enabled || storm < STORM_THRESHOLD)
+			if (requested)
+			{
+				strike(focusX, focusZ);
+			}
+			else if (!enabled || storm < STORM_THRESHOLD)
 			{
 				untilNext = -1;
 				return;
 			}
-			if (untilNext < 0)
+			else
 			{
+				if (untilNext < 0)
+				{
+					untilNext = interval(storm);
+				}
+				untilNext -= dt;
+				if (untilNext > 0)
+				{
+					return;
+				}
 				untilNext = interval(storm);
+				strike(focusX, focusZ);
 			}
-			untilNext -= dt;
-			if (untilNext > 0)
-			{
-				return;
-			}
-			untilNext = interval(storm);
-			strike(focusX, focusZ);
 		}
+		requested = false;
 
 		age += dt;
+		++frames;
 		switch (phase)
 		{
 			case FADE_OUT:
@@ -135,8 +156,19 @@ class Lightning
 		}
 	}
 
+	/** Strike on the next update, in any weather. */
+	void strikeNow()
+	{
+		requested = true;
+	}
+
 	private void enter(Phase next)
 	{
+		if (log.isDebugEnabled())
+		{
+			log(next.name() + " after " + phase.name() + " " + frames + " frames, " + Math.round(age * 1000) + " ms");
+		}
+		frames = 0;
 		phase = next;
 		age = 0;
 		// the map drawn for the old direction doesn't count for the new one
@@ -151,8 +183,10 @@ class Lightning
 
 	private void strike(float focusX, float focusZ)
 	{
+		startedAt = System.nanoTime();
 		phase = Phase.FADE_OUT;
 		age = 0;
+		frames = 0;
 		shadowsReady = false;
 		pulses = 1 + random.nextInt(2);
 		for (int i = 0; i < pulses; ++i)
@@ -168,6 +202,19 @@ class Lightning
 		boltDir[0] = (float) (Math.cos(angle) * Math.cos(elevation));
 		boltDir[1] = (float) -Math.sin(elevation);
 		boltDir[2] = (float) (Math.sin(angle) * Math.cos(elevation));
+		if (log.isDebugEnabled())
+		{
+			log("FADE_OUT begins: " + pulses + " pulses, bolt at " + Math.round(boltX) + ", " + Math.round(boltZ)
+				+ ", elevation " + Math.round(Math.toDegrees(elevation)) + " degrees");
+		}
+	}
+
+	// one line per phase change: the time since the strike began, the light's direction and whether its shadow map is drawn
+	private void log(String what)
+	{
+		float[] d = actualDir != null ? actualDir : boltDir;
+		log.debug("lightning +{} ms: {}; light dir {}, {}, {}; shadow map {} for it", (System.nanoTime() - startedAt) / 1000000,
+			what, d[0], d[1], d[2], shadowsReady ? "drawn" : "not drawn");
 	}
 
 	private static float smooth(float x)
@@ -197,10 +244,14 @@ class Lightning
 		return true;
 	}
 
-	/** Whether the shadow map is drawn for the light's direction now; call each frame after drawing it. */
-	void setShadowsReady(boolean ready)
+	/**
+	 * Whether the shadow map is drawn for the light's direction now (casterDir, the direction in use, for the log);
+	 * call each frame after drawing it.
+	 */
+	void setShadowsReady(boolean ready, float[] casterDir)
 	{
 		shadowsReady = ready;
+		actualDir = casterDir;
 	}
 
 	/** 0 to 1: how bright the flash is this frame. */
@@ -211,6 +262,10 @@ class Lightning
 
 	void stop()
 	{
+		if (phase != Phase.OFF && log.isDebugEnabled())
+		{
+			log("OFF after " + phase.name() + " " + frames + " frames, " + Math.round(age * 1000) + " ms");
+		}
 		phase = Phase.OFF;
 		untilNext = -1;
 		darkness = 0;
