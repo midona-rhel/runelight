@@ -41,7 +41,10 @@ Point light placements come from 117 HD's light definitions, converted with `too
 Plugin config, Weather section: rain or snow with an intensity, puddles / snow cover, rain splashes and a
 gradual buildup. Shelter comes from a top-down depth map of all static scenery around the player, drawn with every
 roof (also roofs hidden by the game or a plugin), redrawn only after the player walks ~24 tiles or the scenery
-changes. Tuning constants are `#define`s at the top of `rain_vert.glsl`, `snow_vert.glsl` and
+changes. Rain also sounds (`WeatherAudio.java`, `AudioMixer.java`, "Weather sounds" volume): a loop that follows how hard
+it rains around the player, muffled and reverberant inside building rooms, and a clap of thunder with each lightning
+flash. The CC0 sounds and where they come from are in `sounds/CREDITS.txt`; `tools/make_weather_sounds.py` makes them.
+Tuning constants are `#define`s at the top of `rain_vert.glsl`, `snow_vert.glsl` and
 `weather_ground.glsl`; counts and timings are at the top of `Weather.java`. With varying intensity the
 rain or snow swells, eases off and gusts around the set intensity (`WeatherVariation.java`). The cloud cover follows
 it slowly and grays the sky and softens the sun and moon everywhere through `weatherOvercast` in `sky.glsl` (its

@@ -58,6 +58,7 @@ import net.runelite.api.Model;
 import net.runelite.api.ObjectComposition;
 import net.runelite.api.Perspective;
 import net.runelite.api.Player;
+import net.runelite.api.Preferences;
 import net.runelite.api.Projection;
 import net.runelite.api.Renderable;
 import net.runelite.api.Scene;
@@ -382,6 +383,8 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 	private final EnvironmentUniforms sceneEnvUniforms = new EnvironmentUniforms();
 	private final ShadowMap shadowMap = new ShadowMap();
 	private final Weather weather = new Weather();
+	private volatile WeatherAudio weatherAudio;
+	private final float[] thunderStrike = new float[2];
 	// each region's forecast, temperature and ground, which follow the game clock
 	private final Climate climate = new Climate();
 	private final WeatherGround weatherGround = new WeatherGround();
@@ -640,6 +643,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		WindSway.load(gson);
 		eventBus.register(sceneLights);
 		clientThread.invoke(sceneLights::rebuild);
+		weatherAudio = new WeatherAudio();
 		buildingLights = new BuildingLights(client);
 		eventBus.register(buildingLights);
 		clientThread.invoke(buildingLights::rebuild);
@@ -831,6 +835,11 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		overlayManager.remove(buildingOverlay);
 		lightOcclusion.shutdown();
 		hitchMonitor.stop();
+		if (weatherAudio != null)
+		{
+			weatherAudio.shutDown();
+			weatherAudio = null;
+		}
 		if (buildingLights != null)
 		{
 			eventBus.unregister(buildingLights);
@@ -2172,6 +2181,34 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		weather.update(config.weatherBuildup(), config.weatherVarying(), config.weatherOvercast(),
 			config.weatherLightning(), sky, fx, fy, fz, plane);
 		weather.getOvercast(volumetricFog.overcast);
+		updateWeatherAudio(fx, fy, fz);
+	}
+
+	/**
+	 * Hand the weather's sounds this frame's rain, whether the player is indoors, the volume (the setting times the
+	 * game's own sound effects volume) and any thunder that has just begun.
+	 */
+	private void updateWeatherAudio(float x, float y, float z)
+	{
+		WeatherAudio audio = weatherAudio;
+		if (audio == null)
+		{
+			return;
+		}
+		float volume = 0;
+		if (client.getGameState() == GameState.LOGGED_IN)
+		{
+			Preferences prefs = client.getPreferences();
+			volume = config.weatherSounds() / 100f * (prefs != null ? Math.min(1, prefs.getSoundEffectVolume() / 127f) : 1);
+		}
+		BuildingLights buildings = buildingLights;
+		// a little above the floor
+		boolean indoors = WeatherAudio.indoors(buildings != null ? buildings.getRooms() : null, x, y - 40, z);
+		audio.update(weather.rainLoudness(), indoors, volume);
+		if (weather.getLightning().takeThunder(thunderStrike) && volume > 0)
+		{
+			audio.thunder(thunderStrike[0], thunderStrike[1]);
+		}
 	}
 
 	/**

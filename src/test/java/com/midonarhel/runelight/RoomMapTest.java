@@ -12,7 +12,7 @@ public class RoomMapTest
 	private static final float TILE = 128;
 
 	// a 4x4 house on plane 0 at extended tiles 8..11, flat ground at y 0, storeys 240 apart
-	private static RoomMap house(int[][][] flags)
+	static RoomMap house(int[][][] flags)
 	{
 		byte[][][] settings = new byte[4][SIZE][SIZE];
 		for (int x = 8; x < 12; ++x)
@@ -37,13 +37,13 @@ public class RoomMapTest
 	}
 
 	// local world position of the center of extended tile (x, y)
-	private static float world(int t)
+	static float world(int t)
 	{
 		return (t - OFFSET + 0.5f) * TILE;
 	}
 
 	/** Walls all around the house except a doorway on its west side at y = 9. */
-	private static int[][][] walls()
+	static int[][][] walls()
 	{
 		int[][][] f = new int[4][LOCAL][LOCAL];
 		for (int x = 8; x < 12; ++x)

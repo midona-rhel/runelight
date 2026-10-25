@@ -65,14 +65,16 @@ class Weather
 	private static final float LAYER_HEIGHT_MAX = 6144;
 	// droplets thrown up by one step (WADE_DROPLETS in rain_vert.glsl)
 	private static final int WADE_DROPLETS = 6;
-	// half width of the area around the player whose wetness decides the rain's mist and droplets
+	// half width of the area around the player whose wetness decides the rain's mist, impacts and droplets, and where
+	// the impacts land (IMPACT_HALF in rain_vert.glsl)
 	private static final float SPLASH_HALF = 2560;
 	// straight up: the "light" looks straight down
 	private static final float[] UP = {0, -1, 0};
 
 	// instance counts at 100% intensity: drops and flakes in the nearest layer (LAYER_COUNT_FALLOFF less in each
-	// next one)
+	// next one), and rain impacts on the ground
 	static final int LAYER_RAIN_DROPS = 24000;
+	static final int MAX_RAIN_IMPACTS = 4400;
 	static final int LAYER_SNOW_FLAKES = 12000;
 
 	// easing time constants, seconds: about three of them for a full change, so a new weather or region blends
@@ -927,6 +929,38 @@ class Weather
 		glUseProgram(0);
 	}
 
+	// rings of places around the player whose rain is heard (WeatherAudio.rainLoudness): distances, world units, and
+	// how many places on each
+	private static final float[] SOUND_RINGS = {1200, 2800, 4800};
+	private static final int SOUND_DIRECTIONS = 8;
+
+	/**
+	 * How hard it rains for the ears, 0 to 1: the rain at the player, or, with the weather field, the rain at places
+	 * around them heard from the distance, so rain swells as the player walks toward it. 0 where there is no sky.
+	 */
+	float rainLoudness()
+	{
+		if (!openSky)
+		{
+			return 0;
+		}
+		float distant = 0;
+		if (field.isEnabled())
+		{
+			float variation = rainAmount > 1e-3f ? rainEffective / rainAmount : 1;
+			for (float r : SOUND_RINGS)
+			{
+				for (int k = 0; k < SOUND_DIRECTIONS; ++k)
+				{
+					double a = k * 2 * Math.PI / SOUND_DIRECTIONS;
+					float rain = field.sample(WeatherField.RAIN, focusX + (float) Math.cos(a) * r, focusZ + (float) Math.sin(a) * r);
+					distant = Math.max(distant, rain * variation * WeatherAudio.distantWeight(r));
+				}
+			}
+		}
+		return WeatherAudio.rainLoudness(rainEffective, distant);
+	}
+
 	/**
 	 * Draw this frame's falling weather over the composited scene in the bound framebuffer. The scene textures, the
 	 * transparency layer, the water surface, the light clusters (with pointLights) and the weather field
@@ -997,6 +1031,10 @@ class Weather
 			{
 				// the mist the rain beats up over what it hits
 				drawMist(impacts, viewport);
+				// the impacts, only seen up close: around the player, where the camera looks
+				glUniform4f(rain.layerBox, focusX, focusY, focusZ, SPLASH_HALF);
+				glUniform1i(rain.dropCount, 0);
+				glDrawArraysInstanced(GL_TRIANGLES, 0, 6, Math.round(MAX_RAIN_IMPACTS * impacts));
 				// and the droplets thrown up by steps, one range of instances for every step
 				glUniform1i(rain.dropCount, 0);
 				glUniform4fv(rain.wadeSteps, wadeSteps);

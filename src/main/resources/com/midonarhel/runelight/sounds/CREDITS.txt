@@ -1,0 +1,15 @@
+Weather sounds. All four recordings are CC0 1.0 (public domain, https://creativecommons.org/publicdomain/zero/1.0/).
+They were made into the files here by tools/make_weather_sounds.py (mono, 22.05 kHz, 16 bit; the rain looped, its
+indoor twin low-passed and reverberated offline, the thunder trimmed and faded).
+
+rain.wav, rain_indoor.wav
+  "Soft rain.WAV" by barkenov, https://freesound.org/people/barkenov/sounds/640655/ (CC0-1.0)
+  Taken from DNAABR/ambient-sounds-library, release v0.1.0-preview, rain-soft.wav (sha256
+  bfd2eceddd04eeac960c5cdbada2da3b2c880d0382d2165f4fa35796bc173f7d), whose manifest.json records the creator, the
+  source and the licence CC0-1.0.
+
+thunder1.wav  "Thunder Clap2" by roboroo, https://freesound.org/people/roboroo/sounds/436794/ (CC0-1.0)
+thunder2.wav  "Thunder 1 (No Reverb)" by Terry93D, https://freesound.org/people/Terry93D/sounds/327986/ (CC0-1.0)
+thunder3.wav  "thunder3.ogg" by Josh74000MC, https://freesound.org/people/Josh74000MC/sounds/475094/ (CC0-1.0)
+  Taken from kocheck/Graphium, macos/App/Graphium/Sounds, whose ledger.json records each one's creator, source and
+  licence CC0-1.0 (checked 2026-10-18).

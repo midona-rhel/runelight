@@ -250,6 +250,44 @@ public class LightningTest
 	}
 
 	@Test
+	public void everyStrikeHasOneClapAtItsFlash()
+	{
+		Lightning l = new Lightning();
+		float[] thunder = new float[2];
+		for (int i = 0; i < 20; ++i)
+		{
+			l.strikeNow();
+			int claps = 0;
+			float flashAtClap = -1;
+			boolean started = false;
+			for (int f = 0; f < 120 * 10; ++f)
+			{
+				l.update(DT, 0, false, 0, 0);
+				if (l.getBoltDir() != null)
+				{
+					started = true;
+					l.setShadowMaps(f > 3, true);
+				}
+				else if (started)
+				{
+					break;
+				}
+				if (l.takeThunder(thunder))
+				{
+					++claps;
+					flashAtClap = l.getFlash();
+					// from the player to a bolt that comes down 3000 to 9000 units away, with the flash's top as strength
+					assertTrue(thunder[0] >= 3000 && thunder[0] <= 9000);
+					assertTrue(thunder[1] >= 0.8f && thunder[1] <= 1);
+				}
+			}
+			assertEquals(1, claps);
+			// as the flash begins: it is still at its very start
+			assertTrue(flashAtClap < 0.1f);
+		}
+	}
+
+	@Test
 	public void noStormNoStrike()
 	{
 		Lightning l = new Lightning();

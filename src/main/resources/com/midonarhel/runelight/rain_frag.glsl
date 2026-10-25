@@ -114,10 +114,16 @@ void main() {
     // behind something nearer than its foot, it is hidden, over a short distance so it doesn't end in an edge
     float behind = scene - (fViewZ * (1.0 - SPLASH_SURFACE_TOLERANCE) - 8.0);
     a *= smoothstep(-fSoft, 0.0, behind);
-    // a droplet, shaded like a snowflake: gaussian-like, fullest in the middle and fading smoothly to nothing at its edge
-    vec2 q = vec2(fQuad.x, fQuad.y * 2.0 - 1.0);
-    float r2 = dot(q, q);
-    a *= exp(-3.5 * r2) * max(1.0 - r2, 0.0);
+    if (fSplash == 3) {
+      // a ring, soft on both edges
+      float r = length(fQuad);
+      a *= (1.0 - smoothstep(0.75, 1.0, r)) * smoothstep(0.25, 0.6, r);
+    } else {
+      // a droplet, shaded like a snowflake: gaussian-like, fullest in the middle and fading smoothly to nothing at its edge
+      vec2 q = vec2(fQuad.x, fQuad.y * 2.0 - 1.0);
+      float r2 = dot(q, q);
+      a *= exp(-3.5 * r2) * max(1.0 - r2, 0.0);
+    }
   } else {
     if (fViewZ > scene) {
       discard;

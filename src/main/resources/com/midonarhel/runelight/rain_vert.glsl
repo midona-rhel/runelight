@@ -12,7 +12,7 @@
 #include "wind.glsl"
 #include "weather_wade.glsl"
 
-uniform int dropCount;
+uniform int dropCount;         // the instances before this many are drops; the rest are impacts on the ground
 uniform int mistStage;         // > 0: one of the mist's stages (rain_frag.glsl), one triangle over the target
 uniform float mist;            // how strong the mist is
 uniform int wadeDroplets;      // 1: the instances are the droplets of wading steps, not drops or splashes
@@ -48,6 +48,13 @@ uniform vec2 particleAmount;   // rain at the player, and the most anywhere in t
 #define WAVE_SHIFT 220.0       // sheets of rain rise and sink this many world units at most
 
 #define SPLASH_SKY 0.35        // share of the sky's color in the droplets' and the mist's
+// rain impacts: rings that open and fade where the rain hits the ground, spread over a box this wide (Weather's
+// SPLASH_HALF) around the player; each lives this many seconds, opens to this radius at most (world units) and is
+// this opaque
+#define IMPACT_HALF 2560.0
+#define IMPACT_PERIOD 0.42
+#define IMPACT_SIZE 14.0
+#define IMPACT_ALPHA 0.40
 #define FOOT_TAP_PX 2.0        // pixels between the taps that check what the camera sees at a sprite's foot
 #define FOOT_TOLERANCE 0.04    // share of the distance, plus FOOT_MARGIN world units, that scenery must stand in
 #define FOOT_MARGIN 24.0       // front of a foot to hide it
@@ -64,7 +71,7 @@ uniform vec2 particleAmount;   // rain at the player, and the most anywhere in t
 #define WADE_DROPLET_ALPHA 0.5
 
 out vec2 fQuad;                // x across the streak / sprite -1..1, y along it 0..1 (tail to head; up the sprite)
-flat out int fSplash;          // 0 drop, 1 a droplet, 2 the mist
+flat out int fSplash;          // 0 drop, 1 a droplet, 2 the mist, 3 an impact
 flat out float fSoft;          // world units over which a droplet hides behind nearer scenery
 out float fViewZ;
 out float fAlpha;
@@ -226,6 +233,53 @@ void wadeDroplet(int id, vec2 corner) {
   fColor = impactColor(points);
 }
 
+// One rain impact: a ring that opens as it fades, lying flat on the ground it hits, so the view foreshortens it like
+// the ground: round from above, flattened at a low angle. It restarts at a new random spot every period, and only
+// shows where the camera sees dry ground there (not hidden roofs, not water, which has its own rings).
+void impact(int id, vec2 corner) {
+  // offsets keep the impacts from pulsing together
+  float phase = hash11(float(id) * 7.13 + 1.7);
+  float cycle = time / IMPACT_PERIOD + phase;
+  float f = fract(cycle);
+  float seed = float(id) * 17.0 + floor(cycle) * 131.0;
+  // spread over a world-anchored box that wraps around the player, so an impact stays where it landed
+  vec2 h = hash31(seed).xy;
+  vec2 lo = layerBox.xz - IMPACT_HALF;
+  vec2 xz = lo + mod(h * IMPACT_HALF * 2.0 - lo, IMPACT_HALF * 2.0);
+
+  vec3 p = vec3(xz.x, 0.0, xz.y) - cameraPos;
+  float top = occluderTop(p);
+  if (top > 1e8) {
+    gl_Position = CULLED;
+    return;
+  }
+  p.y = top - cameraPos.y;
+  vec4 cf = viewProj * vec4(p, 1.0);
+  vec2 px = (cf.xy / cf.w * 0.5 + 0.5) * vec2(sceneViewport.zw) + vec2(sceneViewport.xy);
+  if (cf.w < NEAR || any(greaterThan(abs(cf.xy), vec2(cf.w))) || abs(sceneViewDepth(px) - cf.w) > cf.w * SPLASH_SURFACE_TOLERANCE + 8.0
+    || waterSurfaceAt(waterSurface, waterRect, ivec2(px)).b != 0u || texelFetch(sceneMaterial, ivec2(px), 0).b > 0.75) {
+    gl_Position = CULLED;
+    return;
+  }
+  // at least a pixel across
+  float r = max(IMPACT_SIZE * (0.4 + 0.8 * f), cf.w / pixelScale());
+  vec2 q = vec2(corner.x, corner.y * 2.0 - 1.0);
+  vec4 c = viewProj * vec4(p + vec3(q.x, 0.0, q.y) * r, 1.0);
+  gl_Position = c;
+
+  vec3 points = weatherPointLights(p, cf, vec3(0.0), top);
+  float lit = min(dot(points, vec3(0.2126, 0.7152, 0.0722)), 1.0);
+  // fade toward the sides of the box, which moves with the camera
+  vec2 rel = abs(xz - layerBox.xz) / IMPACT_HALF;
+  float edge = 1.0 - smoothstep(0.6, 1.0, max(rel.x, rel.y));
+  fAlpha = IMPACT_ALPHA * amount * rainShare(xz) * edge * (1.0 - f) * (1.0 - f) * (1.0 + LIT_ALPHA * lit);
+  fQuad = q;
+  fSplash = 3;
+  fSoft = 8.0;
+  fViewZ = c.w;
+  fColor = impactColor(points);
+}
+
 void main() {
   int id = gl_InstanceID;
   vec2 corner = CORNERS[gl_VertexID];
@@ -241,7 +295,9 @@ void main() {
     fColor = impactColor(vec3(0.0));
   } else if (wadeDroplets != 0) {
     wadeDroplet(id, corner);
-  } else {
+  } else if (id < dropCount) {
     drop(id, corner);
+  } else {
+    impact(id - dropCount, corner);
   }
 }

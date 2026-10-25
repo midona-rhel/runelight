@@ -70,6 +70,9 @@ class Lightning
 	private final float[] boltDir = new float[3];
 	private float boltX, boltZ, boltSeed;
 	private boolean requested;
+	// the strike's thunder, waiting for the plugin to play it: how far the bolt came down, world units
+	private boolean thunderPending;
+	private float boltDistance;
 	// from the plugin, each frame: the brightness of the sun's or moon's light, whether a shadow map for the bolt's
 	// direction is drawn, and whether the map in use is for the light in use (the latter for the log)
 	private float sunStrength;
@@ -131,6 +134,7 @@ class Lightning
 				}
 				phase = Phase.PULSES;
 				age = 0;
+				thunderPending = true;
 			}
 			else if (age >= PREPARE_MAX)
 			{
@@ -191,6 +195,7 @@ class Lightning
 		float distance = BOLT_MIN_DISTANCE + (BOLT_MAX_DISTANCE - BOLT_MIN_DISTANCE) * random.nextFloat();
 		boltX = focusX + (float) Math.cos(angle) * distance;
 		boltZ = focusZ + (float) Math.sin(angle) * distance;
+		boltDistance = distance;
 		boltSeed = random.nextFloat() * 100;
 		double elevation = Math.toRadians(MIN_ELEVATION + (MAX_ELEVATION - MIN_ELEVATION) * random.nextFloat());
 		boltDir[0] = (float) (Math.cos(angle) * Math.cos(elevation));
@@ -250,6 +255,22 @@ class Lightning
 		return true;
 	}
 
+	/**
+	 * The thunder of a strike whose flash has just begun, once: how far the bolt came down (world units) and how
+	 * strong the flash is (0 to 1). False when there is none to play.
+	 */
+	boolean takeThunder(float[] out)
+	{
+		if (!thunderPending)
+		{
+			return false;
+		}
+		thunderPending = false;
+		out[0] = boltDistance;
+		out[1] = peak;
+		return true;
+	}
+
 	/** The bolt's direction while a strike needs a shadow map for it, else null. */
 	float[] getBoltDir()
 	{
@@ -291,6 +312,7 @@ class Lightning
 		phase = Phase.OFF;
 		untilNext = -1;
 		takeover = false;
+		thunderPending = false;
 		flash = 0;
 	}
 

@@ -831,6 +831,19 @@ public interface RuneLightConfig extends Config
 		return true;
 	}
 
+	@Range(max = 100)
+	@ConfigItem(
+		keyName = "weatherSounds",
+		name = "Weather sounds",
+		description = "Volume of the rain and the thunder, on top of the game's sound effects volume. 0 turns them off.",
+		section = weatherSection,
+		position = 410
+	)
+	default int weatherSounds()
+	{
+		return 50;
+	}
+
 	@ConfigItem(
 		keyName = "weatherFieldMap",
 		name = "Show weather map",
