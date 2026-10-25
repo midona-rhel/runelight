@@ -894,7 +894,17 @@ class GlobalIllumination
 		l.floors = p.floorTexels;
 		l.walls = p.wallTexels;
 		lit = l;
-		log.trace("GI relight in {} ms", (System.nanoTime() - start) / 1_000_000);
+		int tinted = 0;
+		float most = 0;
+		for (int i = 0; i < p.count; ++i)
+		{
+			float y = 0.2126f * gathered[i * 3] + 0.7152f * gathered[i * 3 + 1] + 0.0722f * gathered[i * 3 + 2];
+			tinted += y > 0.05f ? 1 : 0;
+			most = Math.max(most, y);
+		}
+		log.debug("GI relight in {} ms: {} of {} patches tinted, strongest {}, caster {} {} {}, shadow {} / {}",
+			(System.nanoTime() - start) / 1_000_000, tinted, p.count, most, light.caster[0], light.caster[1],
+			light.caster[2], light.shadow0, light.shadow1);
 	}
 
 	/**
