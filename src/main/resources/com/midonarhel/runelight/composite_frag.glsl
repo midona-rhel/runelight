@@ -65,7 +65,7 @@ uniform int lightingEnabled;
 uniform vec3 sunDir;        // visual positions, toward the light
 uniform vec3 moonDir;
 uniform vec3 casterDir;     // the light that casts shadows, elevation clamped
-uniform int sunIsCaster;
+uniform int casterKind;     // 0 moon, 1 sun, 2 lightning bolt
 uniform float sunAltitude;  // degrees
 
 // shadows
@@ -385,8 +385,8 @@ vec4 shadeScene(ivec2 px, SceneSample sm, vec4 transparent) {
     fogDone = volumetricFog == 1;
   }
   // snow and puddles change the surface itself, before it is lit
-  vec2 wet = compositePart != 5 && inside && weatherGroundOn == 1
-    ? weatherGroundSurface(color.rgb, n, p, p + cameraPos, vec2(px) + 0.5, material, transparent.a, ground) : vec2(0.0);
+  vec3 wet = compositePart != 5 && inside && weatherGroundOn == 1
+    ? weatherGroundSurface(color.rgb, n, p, p + cameraPos, vec2(px) + 0.5, material, transparent.a, ground) : vec3(0.0);
 
   float shadow = 1.0;
   vec3 light = vec3(ao);
@@ -397,11 +397,14 @@ vec4 shadeScene(ivec2 px, SceneSample sm, vec4 transparent) {
     if (shadowsEnabled == 1 && emissive < 1.0) {
       shadow = halfShadow;
     }
-    if (needShadow) {
-      shadow *= cloudShadow(p + cameraPos, casterDir);
+    if (casterKind != 2) {
+      // a bolt's light is below the clouds: they neither shade nor soften its shadows
+      if (needShadow) {
+        shadow *= cloudShadow(p + cameraPos, casterDir);
+      }
+      shadow = overcastShadow(shadow);
     }
-    shadow = overcastShadow(shadow);
-    vec3 caster = sunIsCaster == 1 ? sunLight(sunAltitude) : moonLight(sunAltitude);
+    vec3 caster = casterLight(sunAltitude, casterKind);
     float up = max(-n.y, 0.0);
     if (compositePart != 2) {
     vec3 plain = ambientLight(sunAltitude) + skyFill(n, sunAltitude, up);

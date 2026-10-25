@@ -100,7 +100,7 @@ class VolumetricFog
 			uniFade, uniFieldFog, uniFieldRect, uniGroundGrid, uniHalfRatio, uniHeight, uniHighestY, uniIndoor,
 			uniIndoorOpen, uniInvViewProj, uniLight, uniLightProjRel, uniMaxCover, uniNear, uniNoiseAmount,
 			uniOutdoors, uniOvercast, uniPointLights, uniProceduralSky,
-			uniShadowDepthRange, uniShadowsEnabled, uniSteps, uniSunAltitude, uniSunIsCaster, uniSunScatter, uniTime,
+			uniShadowDepthRange, uniShadowsEnabled, uniSteps, uniSunAltitude, uniCasterKind, uniSunScatter, uniTime,
 			uniTint, uniViewProj, uniViewport, uniWaterEnabled, uniWaterGrid;
 
 		Locations(int program)
@@ -140,7 +140,7 @@ class VolumetricFog
 		u.uniProceduralSky = glGetUniformLocation(u.program, "proceduralSky");
 		u.uniClientSkyColor = glGetUniformLocation(u.program, "clientSkyColor");
 		u.uniCasterDir = glGetUniformLocation(u.program, "casterDir");
-		u.uniSunIsCaster = glGetUniformLocation(u.program, "sunIsCaster");
+		u.uniCasterKind = glGetUniformLocation(u.program, "casterKind");
 		u.uniSunAltitude = glGetUniformLocation(u.program, "sunAltitude");
 		u.uniOvercast = glGetUniformLocation(u.program, "weatherOvercast");
 		u.uniLight = glGetUniformLocation(u.program, "weatherLight");
@@ -404,7 +404,7 @@ class VolumetricFog
 		glUniform3f(u.uniClientSkyColor,
 			(skyColor >> 16 & 0xFF) / 255f, (skyColor >> 8 & 0xFF) / 255f, (skyColor & 0xFF) / 255f);
 		glUniform3fv(u.uniCasterDir, day.casterDir);
-		glUniform1i(u.uniSunIsCaster, day.sunIsCaster ? 1 : 0);
+		glUniform1i(u.uniCasterKind, day.caster);
 		glUniform1f(u.uniSunAltitude, day.sunAltitude);
 		glUniform3f(u.uniOvercast, overcast[0], overcast[1], overcast[2]);
 		// sky.glsl's weatherLight follows weatherOvercast (Weather.getOvercast)

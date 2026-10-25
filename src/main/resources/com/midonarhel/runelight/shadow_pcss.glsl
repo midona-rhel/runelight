@@ -9,7 +9,7 @@ uniform mat4 lightProjRel;  // camera-relative world -> light clip
 uniform float shadowRadius;      // half extent of the shadow map, world units
 uniform float shadowDepthRange;
 uniform float shadowMapSize;
-uniform int sunIsCaster;
+uniform int casterKind;  // 0 moon, 1 sun, 2 lightning bolt
 // The static map's greatest depth within the filter's reach of each tile of shadowMaxTile texels (ShadowMap.buildMax);
 // 0 tiles: none
 uniform sampler2D shadowMax;
@@ -76,7 +76,7 @@ float shadowFactor(vec3 p, vec3 n, float rotation) {
   }
 
   float gapWorld = (z - blockerSum / blockers) * 2.0 * shadowDepthRange;
-  float softness = sunIsCaster == 1 ? SUN_SOFTNESS : MOON_SOFTNESS;
+  float softness = casterKind != 0 ? SUN_SOFTNESS : MOON_SOFTNESS;
   float penumbraWorld = clamp(gapWorld * softness, texelWorld, MAX_PENUMBRA_WORLD);
   float penumbra = penumbraWorld * worldToUv;
   // a kernel within a texel or two of hardware filtered compares needs no more than half the taps

@@ -232,7 +232,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		final int pass;
 		int program;
 		int part, aoEnabled, aoStrength;
-		int cameraPos, time, outdoors, proceduralSky, lightingEnabled, sunDir, moonDir, casterDir, sunIsCaster,
+		int cameraPos, time, outdoors, proceduralSky, lightingEnabled, sunDir, moonDir, casterDir, casterKind,
 			sunAltitude, overcast, weatherLight;
 		int shadowsEnabled, lightProjRel, shadowRadius, shadowDepthRange, shadowMapSize;
 		int pointLights, lightVisSize, roomHeader, interiorLight, skylightOn, skylightFloor;
@@ -280,7 +280,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 	private int uniAoRadius;
 	private int uniAoSamples;
 	private int uniAoShadowsEnabled, uniAoLightProjRel, uniAoShadowRadius, uniAoShadowDepthRange, uniAoShadowMapSize,
-		uniAoShadowMaxTile, uniAoCasterDir, uniAoSunIsCaster;
+		uniAoShadowMaxTile, uniAoCasterDir, uniAoCasterKind;
 	// the half resolution shadows the AO pass draws, for the composite
 	private static final int SCENE_SHADOW_UNIT = RuneLightPlugin.COMPOSITE_TEXTURE_UNIT + 18;
 	// Static scenery is drawn into a cached shadow map, redrawn only as the light turns or the player walks
@@ -315,7 +315,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 	private int uniSceneOutdoors;
 	private int uniSceneProceduralSky;
 	private int uniSceneCasterDir;
-	private int uniSceneSunIsCaster;
+	private int uniSceneCasterKind;
 	private int uniSceneSunAltitude;
 	private int uniSceneOvercast;
 	private int uniSceneWeatherLight;
@@ -378,6 +378,11 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 	final EnvironmentManager environmentManager = new EnvironmentManager();
 	private final EnvironmentUniforms sceneEnvUniforms = new EnvironmentUniforms();
 	private final ShadowMap shadowMap = new ShadowMap();
+	// the shadow map of the lightning bolt's direction, drawn once for a strike ahead of its first pulse (Lightning),
+	// and kept while storms strike
+	private final ShadowMap boltShadow = new ShadowMap();
+	// the map the composite, the AO and the fog sample this frame: the sun's or moon's, or while a bolt strikes, its
+	private ShadowMap activeShadow = shadowMap;
 	private final Weather weather = new Weather();
 	// each region's forecast, temperature and ground, which follow the game clock
 	private final Climate climate = new Climate();
@@ -855,6 +860,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 			{
 				gpuTimer.free();
 				shadowMap.free();
+				boltShadow.free();
 				ShadowMap.freeEmpty();
 				weather.free();
 				skyGrid.free();
@@ -1186,7 +1192,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		uniSceneOutdoors = glGetUniformLocation(glProgram, "outdoors");
 		uniSceneProceduralSky = glGetUniformLocation(glProgram, "proceduralSky");
 		uniSceneCasterDir = glGetUniformLocation(glProgram, "casterDir");
-		uniSceneSunIsCaster = glGetUniformLocation(glProgram, "sunIsCaster");
+		uniSceneCasterKind = glGetUniformLocation(glProgram, "casterKind");
 		uniSceneSunAltitude = glGetUniformLocation(glProgram, "sunAltitude");
 		uniSceneOvercast = glGetUniformLocation(glProgram, "weatherOvercast");
 		uniSceneWeatherLight = glGetUniformLocation(glProgram, "weatherLight");
@@ -1213,7 +1219,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		uniAoShadowMapSize = glGetUniformLocation(glAoProgram, "shadowMapSize");
 		uniAoShadowMaxTile = glGetUniformLocation(glAoProgram, "shadowMaxTile");
 		uniAoCasterDir = glGetUniformLocation(glAoProgram, "casterDir");
-		uniAoSunIsCaster = glGetUniformLocation(glAoProgram, "sunIsCaster");
+		uniAoCasterKind = glGetUniformLocation(glAoProgram, "casterKind");
 		glUseProgram(glAoProgram);
 		glUniform1i(glGetUniformLocation(glAoProgram, "shadowRaw"), SHADOW_RAW_UNIT);
 		glUniform1i(glGetUniformLocation(glAoProgram, "shadowCompare"), SHADOW_COMPARE_UNIT);
@@ -1262,7 +1268,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		c.sunDir = glGetUniformLocation(p, "sunDir");
 		c.moonDir = glGetUniformLocation(p, "moonDir");
 		c.casterDir = glGetUniformLocation(p, "casterDir");
-		c.sunIsCaster = glGetUniformLocation(p, "sunIsCaster");
+		c.casterKind = glGetUniformLocation(p, "casterKind");
 		c.sunAltitude = glGetUniformLocation(p, "sunAltitude");
 		c.overcast = glGetUniformLocation(p, "weatherOvercast");
 		c.weatherLight = glGetUniformLocation(p, "weatherLight");
@@ -1854,7 +1860,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		glUniform1i(uniSceneOutdoors, frameOutdoors ? 1 : 0);
 		glUniform1i(uniSceneProceduralSky, proceduralSky() ? 1 : 0);
 		glUniform3fv(uniSceneCasterDir, dayCycle.casterDir);
-		glUniform1i(uniSceneSunIsCaster, dayCycle.sunIsCaster ? 1 : 0);
+		glUniform1i(uniSceneCasterKind, dayCycle.caster);
 		glUniform1f(uniSceneSunAltitude, dayCycle.sunAltitude);
 		weather.setOvercastUniform(uniSceneOvercast);
 		weather.setLightUniform(uniSceneWeatherLight);
@@ -2041,6 +2047,11 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 
 		cpuTimer.begin(CpuTimer.WEATHER);
 		updateWeather(cameraX, cameraY, cameraZ);
+		if (frameOutdoors && weather.getLightning().isKey())
+		{
+			// the flash is lit from the bolt, shadows and all
+			dayCycle.castFromBolt(weather.getLightning().getDirection());
+		}
 		updateSkylight();
 		cpuTimer.end(CpuTimer.WEATHER);
 
@@ -2184,22 +2195,42 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 	}
 
 	/**
-	 * Draw the opaque scene near the player from the sun or moon. Runs after the main scene so it can reuse the
-	 * dynamic models already uploaded this frame; the composite pass then shadows the visible pixels.
+	 * Draw the opaque scene near the player from the sun or moon, or while a lightning bolt is the light that casts
+	 * shadows (DayCycle.castFromBolt), from the bolt. Runs after the main scene so it can reuse the dynamic models
+	 * already uploaded this frame; the composite pass then shadows the visible pixels.
+	 *
+	 * The bolt has a shadow map of its own, so the sun's or moon's stays as it was: its static part is drawn over a few
+	 * frames while the strike is announced (Lightning.LEAD), and the flash only copies it and draws the moving models
+	 * over it, like any frame.
 	 */
 	private void renderShadowMap()
 	{
+		activeShadow = shadowMap;
 		SceneContext ctx = root;
 		if (ctx == null || ctx.hideRoofIds == null || glShadowProgram == 0)
 		{
 			return;
 		}
 
+		final Lightning lightning = weather.getLightning();
+		if (boltShadow.isInitialized() && !lightning.isStorming())
+		{
+			boltShadow.free();
+		}
+		// the strike is announced or under way: the bolt's static map is drawn; from the first pulse on, the bolt is the
+		// caster (captureFrameState) and its map is the one sampled
+		final boolean striking = lightning.isStriking();
+		final boolean key = dayCycle.caster == DayCycle.CASTER_BOLT;
 		int size = config.shadowResolution().getSize();
 		if (!shadowMap.isInitialized() || shadowMap.getSize() != size)
 		{
 			shadowMap.free();
 			shadowMap.init(size);
+		}
+		if (lightning.isStorming() && (!boltShadow.isInitialized() || boltShadow.getSize() != size))
+		{
+			boltShadow.free();
+			boltShadow.init(size);
 		}
 
 		float fx = frameCameraX, fy = frameCameraY, fz = frameCameraZ;
@@ -2217,13 +2248,22 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 
 		float radius = config.shadowDistance() * Perspective.LOCAL_TILE_SIZE;
 		float depthRange = radius + 4096;
+		final ShadowMap map = key ? boltShadow : shadowMap;
+		final ShadowBuild build = key ? boltBuild : sunBuild;
+		activeShadow = map;
 		final boolean cache = SHADOW_CACHE;
+		if (shadowStaticDirty)
+		{
+			shadowStaticDirty = false;
+			shadowMap.invalidateCache();
+			boltShadow.invalidateCache();
+		}
 		if (!cache)
 		{
-			shadowMap.freeCache();
-			shadowMap.update(dayCycle.casterDir, fx, fy, fz, frameCameraX, frameCameraY, frameCameraZ,
+			map.freeCache();
+			map.update(dayCycle.casterDir, fx, fy, fz, frameCameraX, frameCameraY, frameCameraZ,
 				radius, depthRange, glCapabilities.OpenGL45);
-			glBindFramebuffer(GL_FRAMEBUFFER, shadowMap.getFbo());
+			glBindFramebuffer(GL_FRAMEBUFFER, map.getFbo());
 			glViewport(0, 0, size, size);
 			glClearDepth(1.0);
 			glClear(GL_DEPTH_BUFFER_BIT);
@@ -2259,14 +2299,20 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		{
 			if (cache)
 			{
-				renderStaticShadows(ctx, size, fx, fy, fz, radius, depthRange, swayShadows);
+				renderStaticShadows(ctx, map, build, dayCycle.casterDir, size, fx, fy, fz, radius, depthRange, swayShadows);
+				if (striking && !key)
+				{
+					// ahead of the first pulse: only the bolt's static map, this frame's share of it
+					renderStaticShadows(ctx, boltShadow, boltBuild, lightning.getDirection(), size, fx, fy, fz, radius,
+						depthRange, swayShadows);
+				}
 				// this frame's map starts as a copy of the static one
 				gpuTimer.begin(GpuTimer.SHADOW_COPY);
 				glBindVertexArray(vaoUiHandle);
-				shadowMap.useFront(frameCameraX, frameCameraY, frameCameraZ, glShadowCopyProgram);
+				map.useFront(frameCameraX, frameCameraY, frameCameraZ, glShadowCopyProgram);
 				glUseProgram(glShadowProgram);
 				gpuTimer.begin(GpuTimer.SHADOW);
-				glUniformMatrix4fv(uniShadowLightProj, false, shadowMap.lightProj);
+				glUniformMatrix4fv(uniShadowLightProj, false, map.lightProj);
 				if (swayShadows)
 				{
 					shadowZones(ctx, fx, fz, radius, null, 0, Integer.MAX_VALUE, Zone.SWAY_ONLY);
@@ -2274,7 +2320,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 			}
 			else
 			{
-				glUniformMatrix4fv(uniShadowLightProj, false, shadowMap.lightProj);
+				glUniformMatrix4fv(uniShadowLightProj, false, map.lightProj);
 				shadowZones(ctx, fx, fz, radius, null, 0, Integer.MAX_VALUE, Zone.SWAY_ALL);
 			}
 
@@ -2316,71 +2362,78 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 	private static final float SHADOW_CACHE_TEXELS = 1.0f;
 
 	private boolean shadowStaticDirty;
+	// the zones being collected for a static map (shadowZones)
 	private int[] shadowBuildZones = new int[64];
-	private int shadowBuildCount, shadowBuildNext, shadowBuildPerFrame;
+	private int shadowBuildCount;
+
+	/** How far a static map's drawing has got: the zones to draw, the next one and how many each frame. */
+	private static final class ShadowBuild
+	{
+		int[] zones = new int[0];
+		int next, perFrame;
+	}
+
+	private final ShadowBuild sunBuild = new ShadowBuild();
+	private final ShadowBuild boltBuild = new ShadowBuild();
 
 	/**
-	 * Keep the static shadow map current: start a new one when the light has turned or the player has walked out of
-	 * the snapped cell, and draw this frame's share of it.
+	 * Keep a static shadow map current for a light's direction: start a new one when the light has turned or the
+	 * player has walked out of the snapped cell, and draw this frame's share of it.
 	 */
-	private void renderStaticShadows(SceneContext ctx, int size, float fx, float fy, float fz, float radius,
-		float depthRange, boolean swayShadows)
+	private void renderStaticShadows(SceneContext ctx, ShadowMap map, ShadowBuild build, float[] dir, int size, float fx,
+		float fy, float fz, float radius, float depthRange, boolean swayShadows)
 	{
 		final int sway = swayShadows ? Zone.SWAY_EXCLUDE : Zone.SWAY_ALL;
 		final boolean roofShadows = config.roofShadows();
 		int key = java.util.Objects.hash(System.identityHashCode(ctx), ctx.minLevel, ctx.level, ctx.maxLevel,
 			roofShadows, roofShadows ? 0 : ctx.hideRoofIds.hashCode(), config.emissiveMaterials(), textureArrayId != -1,
 			size, radius, sway);
-		shadowMap.checkCacheKey(key);
-		if (shadowStaticDirty)
-		{
-			shadowStaticDirty = false;
-			shadowMap.invalidateCache();
-		}
+		map.checkCacheKey(key);
 
-		ShadowMap.View front = shadowMap.frontView();
-		if (!shadowMap.isBuilding()
-			&& (front == null || shadowMap.isStale() || shadowStale(front, fx, fy, fz, radius, size)))
+		ShadowMap.View front = map.frontView();
+		if (!map.isBuilding()
+			&& (front == null || map.isStale() || shadowStale(front, dir, fx, fy, fz, radius, size)))
 		{
 			float sx = Math.round(fx / SHADOW_CACHE_SNAP) * (float) SHADOW_CACHE_SNAP;
 			float sz = Math.round(fz / SHADOW_CACHE_SNAP) * (float) SHADOW_CACHE_SNAP;
 			hitchMonitor.job(HitchMonitor.STATIC_SHADOWS);
-			shadowMap.startBuild(dayCycle.casterDir, sx, fy, sz, radius + SHADOW_CACHE_SNAP,
-				depthRange + SHADOW_CACHE_SNAP, glCapabilities.OpenGL45);
+			map.startBuild(dir, sx, fy, sz, radius + SHADOW_CACHE_SNAP, depthRange + SHADOW_CACHE_SNAP,
+				glCapabilities.OpenGL45);
 			shadowBuildCount = 0;
 			shadowZones(ctx, sx, sz, radius + SHADOW_CACHE_SNAP, null, 0, 0, sway);
-			shadowBuildNext = 0;
+			build.zones = Arrays.copyOf(shadowBuildZones, shadowBuildCount);
+			build.next = 0;
 			// the first map is needed at once
 			int frames = front == null ? 1 : SHADOW_BUILD_FRAMES;
-			shadowBuildPerFrame = (shadowBuildCount + frames - 1) / frames;
+			build.perFrame = (build.zones.length + frames - 1) / frames;
 		}
-		if (!shadowMap.isBuilding())
+		if (!map.isBuilding())
 		{
 			return;
 		}
 
-		ShadowMap.View v = shadowMap.buildingView();
-		glBindFramebuffer(GL_FRAMEBUFFER, shadowMap.getBuildFbo());
+		ShadowMap.View v = map.buildingView();
+		glBindFramebuffer(GL_FRAMEBUFFER, map.getBuildFbo());
 		glViewport(0, 0, size, size);
 		glUniformMatrix4fv(uniShadowLightProj, false, v.proj);
-		int end = Math.min(shadowBuildNext + shadowBuildPerFrame, shadowBuildCount);
-		shadowZones(ctx, v.focusX, v.focusZ, v.radius, shadowBuildZones, shadowBuildNext, end, sway);
-		shadowBuildNext = end;
-		if (shadowBuildNext >= shadowBuildCount)
+		int end = Math.min(build.next + build.perFrame, build.zones.length);
+		shadowZones(ctx, v.focusX, v.focusZ, v.radius, build.zones, build.next, end, sway);
+		build.next = end;
+		if (build.next >= build.zones.length)
 		{
 			glBindVertexArray(vaoUiHandle);
-			shadowMap.finishBuild(glShadowMaxProgram);
+			map.finishBuild(glShadowMaxProgram);
+			glUseProgram(glShadowProgram);
 		}
 	}
 
-	private boolean shadowStale(ShadowMap.View v, float fx, float fy, float fz, float radius, int size)
+	private boolean shadowStale(ShadowMap.View v, float[] d, float fx, float fy, float fz, float radius, int size)
 	{
 		float half = SHADOW_CACHE_SNAP * 0.5f;
 		if (Math.abs(fx - v.focusX) > half || Math.abs(fz - v.focusZ) > half || Math.abs(fy - v.focusY) > SHADOW_CACHE_SNAP)
 		{
 			return true;
 		}
-		float[] d = dayCycle.casterDir;
 		// sine of the angle between the light now and when the map was drawn
 		float cx = d[1] * v.dir[2] - d[2] * v.dir[1];
 		float cy = d[2] * v.dir[0] - d[0] * v.dir[2];
@@ -2513,9 +2566,9 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 	 */
 	private void prepareLighting()
 	{
-		if (frameShadows && shadowMap.isInitialized())
+		if (frameShadows && activeShadow.isInitialized())
 		{
-			shadowMap.bindForSampling(SHADOW_RAW_UNIT, SHADOW_COMPARE_UNIT);
+			activeShadow.bindForSampling(SHADOW_RAW_UNIT, SHADOW_COMPARE_UNIT);
 		}
 
 		boolean points = config.pointLights();
@@ -2588,20 +2641,20 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		glUniform3fv(c.sunDir, dayCycle.sunDir);
 		glUniform3fv(c.moonDir, dayCycle.moonDir);
 		glUniform3fv(c.casterDir, dayCycle.casterDir);
-		glUniform1i(c.sunIsCaster, dayCycle.sunIsCaster ? 1 : 0);
+		glUniform1i(c.casterKind, dayCycle.caster);
 		glUniform1f(c.sunAltitude, dayCycle.sunAltitude);
 		weather.setOvercastUniform(c.overcast);
 		weather.setLightUniform(c.weatherLight);
 		setEnvironmentUniforms(c.env);
 
-		boolean shadows = frameShadows && shadowMap.isInitialized();
+		boolean shadows = frameShadows && activeShadow.isInitialized();
 		glUniform1i(c.shadowsEnabled, shadows ? 1 : 0);
 		if (shadows)
 		{
-			glUniformMatrix4fv(c.lightProjRel, false, shadowMap.lightProjRel);
-			glUniform1f(c.shadowRadius, shadowMap.getRadius());
-			glUniform1f(c.shadowDepthRange, shadowMap.getDepthRange());
-			glUniform1f(c.shadowMapSize, shadowMap.getSize());
+			glUniformMatrix4fv(c.lightProjRel, false, activeShadow.lightProjRel);
+			glUniform1f(c.shadowRadius, activeShadow.getRadius());
+			glUniform1f(c.shadowDepthRange, activeShadow.getDepthRange());
+			glUniform1f(c.shadowMapSize, activeShadow.getSize());
 		}
 
 		if (frameLightClusters)
@@ -2640,7 +2693,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		Scene groundScene = client.getTopLevelWorldView().getScene();
 		c.ground.set(frameGround && groundScene != null,
 			groundScene != null ? groundScene.getBaseX() * (float) Perspective.LOCAL_TILE_SIZE : 0,
-			groundScene != null ? groundScene.getBaseY() * (float) Perspective.LOCAL_TILE_SIZE : 0);
+			groundScene != null ? groundScene.getBaseY() * (float) Perspective.LOCAL_TILE_SIZE : 0, weather.getRainRate());
 		c.ground.setWade(wadeSteps.steps(frameCameraX, frameCameraZ));
 		glUniform1i(c.volumetricFog, frameFog ? 1 : 0);
 		clouds.apply(c.clouds);
@@ -2705,7 +2758,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 
 	ShadowMap getShadowMap()
 	{
-		return shadowMap;
+		return activeShadow;
 	}
 
 	int getPointLightCount()
@@ -2864,7 +2917,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		// shadows
 		WorldView aoView = client.getTopLevelWorldView();
 		Scene aoScene = aoView != null ? aoView.getScene() : null;
-		final boolean shadows = frameShadows && shadowMap.isInitialized();
+		final boolean shadows = frameShadows && activeShadow.isInitialized();
 		final boolean ground = config.weatherSurfaces() && weather.groundActive();
 		frameGround = ground;
 		final boolean sky = skyGrid.isReady(aoScene);
@@ -2884,14 +2937,14 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 			glUniform1i(uniAoShadowsEnabled, shadows ? 1 : 0);
 			if (shadows)
 			{
-				glUniformMatrix4fv(uniAoLightProjRel, false, shadowMap.lightProjRel);
-				glUniform1f(uniAoShadowRadius, shadowMap.getRadius());
-				glUniform1f(uniAoShadowDepthRange, shadowMap.getDepthRange());
-				glUniform1f(uniAoShadowMapSize, shadowMap.getSize());
+				glUniformMatrix4fv(uniAoLightProjRel, false, activeShadow.lightProjRel);
+				glUniform1f(uniAoShadowRadius, activeShadow.getRadius());
+				glUniform1f(uniAoShadowDepthRange, activeShadow.getDepthRange());
+				glUniform1f(uniAoShadowMapSize, activeShadow.getSize());
 				glUniform3fv(uniAoCasterDir, dayCycle.casterDir);
-				glUniform1i(uniAoSunIsCaster, dayCycle.sunIsCaster ? 1 : 0);
-				shadowMap.bindForSampling(SHADOW_RAW_UNIT, SHADOW_COMPARE_UNIT);
-				glUniform1i(uniAoShadowMaxTile, shadowMap.bindMax(SHADOW_MAX_UNIT));
+				glUniform1i(uniAoCasterKind, dayCycle.caster);
+				activeShadow.bindForSampling(SHADOW_RAW_UNIT, SHADOW_COMPARE_UNIT);
+				glUniform1i(uniAoShadowMaxTile, activeShadow.bindMax(SHADOW_MAX_UNIT));
 			}
 			sceneTargets.bindMaterial(MATERIAL_UNIT);
 			water.bindAo(config, WATER_DATA_UNIT);
@@ -2946,7 +2999,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 			volumetricFog.waterTexture = water.dataTexture(config);
 			// in a void the sun doesn't light the fog: it would glow over the black around the scene
 			final boolean fogSun = frameOutdoors && !frameSkyVoid;
-			final ShadowMap fogShadows = shadows ? shadowMap : null;
+			final ShadowMap fogShadows = shadows ? activeShadow : null;
 			denoiseFog = denoise && volumetricFog.hasShafts(fogSun, fogShadows);
 			volumetricFog.render(sceneTargets.fogFbo(denoiseFog), sceneTargets.getAoWidth(),
 				sceneTargets.getAoHeight(), sceneTargets.getHalfRatio(), FOG_NOISE_UNIT,
@@ -3461,6 +3514,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 					hitchMonitor.job(HitchMonitor.ZONE_REBUILD);
 					weather.invalidateOcclusion();
 					shadowMap.refreshCache();
+					boltShadow.refreshCache();
 					voxelBuilder.zonesChanged();
 				}
 

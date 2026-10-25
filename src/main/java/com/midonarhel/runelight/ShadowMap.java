@@ -3,8 +3,8 @@ package com.midonarhel.runelight;
 import static org.lwjgl.opengl.GL33C.*;
 
 /**
- * Orthographic shadow map for the single directional caster (sun or moon), centered on a focus point near
- * the player. Depth is stored linearly in both clip conventions: window depth = (z + depthRange) / (2 depthRange)
+ * Orthographic shadow map for the single directional caster (sun, moon or lightning bolt), centered on a focus
+ * point near the player. Depth is stored linearly in both clip conventions: window depth = (z + depthRange) / (2 depthRange)
  * where z is the distance along the light direction from the focus.
  */
 class ShadowMap

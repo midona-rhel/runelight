@@ -19,7 +19,7 @@ uniform int outdoors;
 uniform int proceduralSky;
 uniform vec3 clientSkyColor;
 uniform vec3 casterDir;
-uniform int sunIsCaster;
+uniform int casterKind;
 uniform float sunAltitude;
 
 uniform int shadowsEnabled;
@@ -304,7 +304,7 @@ void main() {
     vec3 horizon = proceduralSky == 1 ? skyHorizon(sunAltitude) : clientSkyColor;
     ambient = srgbToLinear(horizon) * FOG_HORIZON + ambientLight(sunAltitude) * FOG_AMBIENT_FILL;
     ambientFar = srgbToLinear(horizon);
-    vec3 caster = sunIsCaster == 1 ? sunLight(sunAltitude) : moonLight(sunAltitude);
+    vec3 caster = casterLight(sunAltitude, casterKind);
     float luma = dot(caster, vec3(0.2126, 0.7152, 0.0722));
     caster = max(mix(vec3(luma), caster, FOG_SUN_SATURATION), 0.0);
     sun = caster * phase(dot(dir, casterDir)) * (fogSunScatter * FOG_SUN_SCALE);

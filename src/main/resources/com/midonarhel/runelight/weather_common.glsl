@@ -16,7 +16,7 @@ uniform vec3 focusPos;             // player ground position, world
 uniform float time;                // seconds, wraps every 10 minutes
 uniform float sunAltitude;
 uniform vec3 casterDir;
-uniform int sunIsCaster;
+uniform int casterKind;
 uniform float amount;              // 0-1: fade in for particles, buildup for surfaces
 
 // The weather over the whole scene (WeatherField.java), one bilinear texel per chunk: r cloud cover, g rain,
@@ -102,7 +102,7 @@ float smoothExposure(vec3 p, float bias) {
 
 // Light falling on weather: sky ambient plus a bit of the sun or moon, linear like the composite
 vec3 weatherParticleLight() {
-  vec3 caster = sunIsCaster == 1 ? sunLight(sunAltitude) : moonLight(sunAltitude);
+  vec3 caster = casterLight(sunAltitude, casterKind);
   return ambientLight(sunAltitude) + skyLight(sunAltitude) + caster * 0.35;
 }
 

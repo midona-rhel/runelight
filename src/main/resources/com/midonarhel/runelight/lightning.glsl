@@ -1,6 +1,7 @@
 // Lightning (Lightning.java): a glow inside the clouds around a strike and, for some strikes, a jagged bolt below
 // the clouds. Sky pixels of the composite only, so scenery hides it for free. The flash itself, which lights
-// everything else, is weatherOvercast.z in sky.glsl. Needs sky.glsl.
+// everything else, is weatherOvercast.z in sky.glsl, which also makes the bolt the light that casts shadows
+// (casterLight, casterKind 2) while it strikes. Needs sky.glsl.
 
 uniform vec4 lightningBolt;  // xy: strike xz relative to the camera, world units; z: bolt visibility 0..1; w: seed
 

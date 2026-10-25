@@ -681,13 +681,13 @@ final class RoomMap
 	// how much lower than its neighbours (world units) a tile must lie to collect a full puddle, and the slope
 	// (world units of height across a tile) from which water runs off instead
 	static final float POOL_DEPTH = 24;
-	static final float POOL_FLAT = 4;
-	static final float POOL_STEEP = 24;
+	static final float POOL_FLAT = 10;
+	static final float POOL_STEEP = 40;
 
 	// the most puddles a chunk (8 by 8 tiles, aligned with the world's) gets on each storey, and the least pool a tile
 	// needs to get one
-	static final int POOLS_PER_CHUNK = 3;
-	static final float POOL_MIN = 0.2f;
+	static final int POOLS_PER_CHUNK = 8;
+	static final float POOL_MIN = 0.15f;
 
 	/**
 	 * Every tile's {@link #pool}, by {@link #index}, but only the POOLS_PER_CHUNK likeliest tiles of each chunk and

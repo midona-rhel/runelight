@@ -26,10 +26,10 @@ uniform vec3 windOffset;       // world units the wind has carried everything so
 uniform vec2 particleAmount;   // rain at the player, and the most anywhere in the box that the drop count follows
 
 #define FALL_SPEED 2000.0      // world units per second
-#define DROP_LENGTH 40.0       // streak length at rest, times the layer's size scale
+#define DROP_LENGTH 110.0      // streak length at rest, times the layer's size scale; the tail fades out (rain_frag.glsl)
 #define DROP_WIDTH 1.6         // world units; streaks are at least a pixel wide, thinner ones fade instead
-#define DROP_ALPHA 0.32
-#define MIN_STREAK_PX 5.0      // streaks are at least this long on screen, whatever the camera pitch
+#define DROP_ALPHA 0.5         // at the head
+#define MIN_STREAK_PX 8.0      // streaks are at least this long on screen, whatever the camera pitch
 #define MIN_STREAK_DIM 0.55    // brightness of a streak stretched from nothing to that, against a full one
 #define NEAR_FADE 250.0        // drops this close to the camera fade out so they don't smear the view
 #define COUNT_FADE 0.1         // as the drop count changes, the last tenth of drops fade instead of popping
@@ -52,7 +52,7 @@ uniform vec2 particleAmount;   // rain at the player, and the most anywhere in t
 #define WADE_DROPLET_SIZE 1.8
 #define WADE_DROPLET_ALPHA 0.5
 
-out vec2 fQuad;                // x across the streak / sprite -1..1, y along it 0..1 (up the sprite)
+out vec2 fQuad;                // x across the streak / sprite -1..1, y along it 0..1 (tail to head; up the sprite)
 flat out int fSplash;          // 0 drop, 1 a droplet, 2 the mist
 flat out float fSoft;          // world units over which a droplet hides behind nearer scenery
 out float fViewZ;

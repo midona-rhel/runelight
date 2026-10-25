@@ -145,7 +145,7 @@ class Weather
 		int program;
 		int viewProj, invViewProj, viewport, depthZeroToOne;
 		int occlusionProjRel, occlusionCenterY, occlusionDepthRange;
-		int cameraPos, focusPos, time, sunAltitude, casterDir, sunIsCaster, amount;
+		int cameraPos, focusPos, time, sunAltitude, casterDir, casterKind, amount;
 		int dropCount, mist, mistStage, wadeDroplets, wadeSteps, waterRect, wind, windOffset, gust, overcast,
 			pointLights;
 		int particleAmount, layerBox, layerSpan, layerBand, particleReach;
@@ -181,7 +181,7 @@ class Weather
 			time = glGetUniformLocation(p, "time");
 			sunAltitude = glGetUniformLocation(p, "sunAltitude");
 			casterDir = glGetUniformLocation(p, "casterDir");
-			sunIsCaster = glGetUniformLocation(p, "sunIsCaster");
+			casterKind = glGetUniformLocation(p, "casterKind");
 			amount = glGetUniformLocation(p, "amount");
 			dropCount = glGetUniformLocation(p, "dropCount");
 			mist = glGetUniformLocation(p, "mist");
@@ -672,6 +672,12 @@ class Weather
 		field.getFocus(WeatherField.FLAKE_STYLE, flakeStyle);
 	}
 
+	/** how hard it rains at the player, 0-1 and over, for the rings of the drops landing in puddles */
+	float getRainRate()
+	{
+		return rainEffective;
+	}
+
 	/** wet ground and snow cover at the player, 0-1 */
 	float getWetness()
 	{
@@ -1156,7 +1162,7 @@ class Weather
 		glUniform1f(u.time, time);
 		glUniform1f(u.sunAltitude, day.sunAltitude);
 		glUniform3fv(u.casterDir, day.casterDir);
-		glUniform1i(u.sunIsCaster, day.sunIsCaster ? 1 : 0);
+		glUniform1i(u.casterKind, day.caster);
 		setOvercastUniform(u.overcast);
 		setLightUniform(u.light);
 		field.apply(u.field);
