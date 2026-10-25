@@ -28,7 +28,8 @@ out vec4 FragColor;
 #define MIST_DOWN 4            // scene pixels per mist texel, each way (Weather.MIST_DOWN)
 #define MIST_HEIGHT 70.0       // world units: the band's thickness
 #define MIST_DENSITY 0.004     // per world unit through it
-#define MIST_SLANT 0.12        // the flattest view of the band counted: past it the path through it stops growing
+#define MIST_SLANT 0.35        // the flattest view of the band counted: past it the path through it stops growing,
+                               // so at a grazing angle over the ground it stays a veil, not a wall
 #define MIST_WALLS 0.35        // what a face that isn't level keeps of its mist
 #define MIST_NEAR 150.0        // none closer to the camera than this
 #define MIST_FAR 3000.0        // and it has faded out by here
