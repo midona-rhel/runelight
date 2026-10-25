@@ -169,7 +169,6 @@ class TextureManager
 		glBindTexture(GL_TEXTURE_2D_ARRAY, textureArrayId);
 
 		int cnt = 0;
-		float[] albedo = GiVoxels.newTextureAlbedo(textures.length);
 		for (int textureId = 0; textureId < textures.length; textureId++)
 		{
 			Texture texture = textures[textureId];
@@ -192,7 +191,6 @@ class TextureManager
 					continue;
 				}
 
-				GiVoxels.textureAverage(textureId, srcPixels, albedo);
 				byte[] pixels = convertPixels(srcPixels, TEXTURE_SIZE, TEXTURE_SIZE, TEXTURE_SIZE, TEXTURE_SIZE);
 				ByteBuffer pixelBuffer = ByteBuffer.allocateDirect(pixels.length);
 				pixelBuffer.put(pixels);
@@ -202,7 +200,6 @@ class TextureManager
 			}
 		}
 
-		GiVoxels.textureAlbedo = albedo;
 		log.debug("Uploaded textures {}", cnt);
 	}
 

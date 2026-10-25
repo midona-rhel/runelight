@@ -1,15 +1,13 @@
 // The composite's half of the skylight and the light occlusion.
 //
 // Skylight (skylight_ao.glsl): the sky visibility upsampled with the AO scales the ambient and sky light, so
-// interiors, overhangs and the shade under trees darken without the global illumination; with its volume on too
-// (skylightMode 2) the light takes the colors of the surfaces around it.
+// interiors, overhangs and the shade under trees darken.
 //
 // Point lights: a static light's occlusion grid (LightOcclusion.java) dims it behind walls, and a light under a roof
 // leaves the tops of things open to the sky above it dark: roofs aren't lit from inside. The per-light texel after
 // the lights (LightOcclusion.texel) carries both, and whether the walls already decide where the light reaches on
 // its own storey. Needs lightData, cluster_config, cameraPos and rooms.glsl.
 
-uniform int skylightMode;    // 1 skylight, 2 skylight and the volume's tint
 uniform int skylightOn;      // 1 when the AO pass worked the sky visibility out this frame
 uniform float skylightFloor; // share of the ambient light kept where no sky is seen
 
@@ -29,38 +27,10 @@ float skyUpsampled = 1.0;
 #define LIGHT_ROOF_FACING_LOW 0.05
 #define LIGHT_ROOF_FACING_HIGH 0.35
 
-// The global illumination is a colour transfer, not light (GiRelight): what the volume holds in front of a surface is the
-// colour of the surfaces near it, as a tint whose luminance, 0 to 1, is how lit they are and how near, fading with the
-// distance from them (gi.glsl). The surface's light is multiplied by mix(white, that colour at luminance 1, how much of it
-// there is), so the grass' green stands on the foot of the wall beside it, however dim the grass is, and the light's
-// brightness stays as it was. The sun's light is tinted by this share of it, so the colour still shows on a sunlit wall.
-#define GI_SUN_TINT 0.6
-// The tint's saturation is raised by this much from the surfaces' own colours: a voxel averages everything in it, a
-// texture's detail included, which pulls its colour toward gray. Little, so the tint stays the colour the surfaces
-// have on screen.
-#define GI_SATURATION 1.2
-
 // plain: the ambient plus sky light a surface would get under the open sky
 vec3 skylightAmbient(vec3 plain) {
   float v = skylightOn == 1 ? skyUpsampled : 1.0;
   return plain * mix(skylightFloor, 1.0, v);
-}
-
-// The tint in mode 2, gi the volume's tint and giW how much of it there is (the strength setting too): rgb the colour at
-// luminance 1, a how much of it to apply.
-vec4 giTint(vec3 gi, float giW) {
-  float l = overcastLuma(gi);
-  if (skylightMode != 2 || l < 1e-4) {
-    return vec4(1.0, 1.0, 1.0, 0.0);
-  }
-  // a square root, so a surface that sees a little lit colour still shows it
-  vec3 tint = max(mix(vec3(1.0), gi / l, GI_SATURATION), vec3(0.0));
-  return vec4(tint / max(overcastLuma(tint), 1e-4), sqrt(clamp(l, 0.0, 1.0)) * giW);
-}
-
-// What the tint multiplies the light by, share of it: never negative, however strong the setting.
-vec3 giFactor(vec4 tint, float share) {
-  return max(mix(vec3(1.0), tint.rgb, tint.a * share), vec3(0.0));
 }
 
 // Inside a building the skylight is the light flowed in through its openings (SkyField), and what comes in through a

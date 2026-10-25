@@ -5,7 +5,7 @@ import java.nio.ByteOrder;
 import java.nio.ShortBuffer;
 
 /**
- * How much of the sky the scene lets through, ray traced through its voxels (GiGrid) for the skylight
+ * How much of the sky the scene lets through, ray traced through its voxels (VoxelGrid) for the skylight
  * (skylight_ao.glsl). Values sit at the corners of the base scene's tiles, like the game's terrain heights, at
  * HEIGHTS above the ground of each of FLOORS floors (the game's levels), and are directional: the
  * sky seen toward up and the four sides (+x, -x, +z, -z), each the share of the directions above the horizon, cosine weighted
@@ -37,7 +37,7 @@ import java.nio.ShortBuffer;
  */
 final class SkyGrid
 {
-	static final int SIZE = GiGrid.SCENE_TILES;
+	static final int SIZE = VoxelGrid.SCENE_TILES;
 	static final int CORNERS = SIZE + 1;
 	static final int FLOORS = 3;
 	// the least two floors' grounds are apart
@@ -56,13 +56,13 @@ final class SkyGrid
 	// rays that go this many voxels without a hit see the sky: 16 tiles
 	static final float MAX_DISTANCE = 32;
 	// tiles around a changed voxel whose rays may have met it
-	static final int REACH = (int) Math.ceil(MAX_DISTANCE * GiGrid.VOXEL / TILE);
+	static final int REACH = (int) Math.ceil(MAX_DISTANCE * VoxelGrid.VOXEL / TILE);
 	static final int LOBES = 5;
 	// corners per side of the blocks tracing goes by
 	static final int BLOCK = 4;
 	static final int TEX_W = 8 * SIZE, TEX_H = 2 * SIZE, TEX_D = 1 + LEVELS;
 
-	private static final short HALF_ONE = GlobalIllumination.toHalf(1);
+	private static final short HALF_ONE = Half.toHalf(1);
 	// where a quadrant's point may move when its voxel is taken: up and down (world units, y down)
 	private static final float[] NUDGE = {0, -24, 24, -48, 48};
 	// the least height above the ground a point may be moved down to
@@ -80,7 +80,7 @@ final class SkyGrid
 	static
 	{
 		// the upper half of an even spread over the sphere (y down)
-		float[] sphere = GiGrid.fibonacci(2 * RAYS);
+		float[] sphere = VoxelGrid.fibonacci(2 * RAYS);
 		float[] base = java.util.Arrays.copyOfRange(sphere, RAYS * 3, RAYS * 6);
 		for (int r = 0; r < ROTATIONS; ++r)
 		{
@@ -136,7 +136,7 @@ final class SkyGrid
 
 	final ShortBuffer texels;
 
-	private GiGrid grid;
+	private VoxelGrid grid;
 	SkyTerrain terrain;
 	private int baseX, baseY;
 	private boolean instance;
@@ -200,9 +200,9 @@ final class SkyGrid
 	 * @param offset extended tiles before local tile 0
 	 * @return whether it starts over
 	 */
-	boolean setGrid(GiGrid g, int[][][] heights, int offset, int bx, int by, boolean inst, byte[] sceneFloors)
+	boolean setGrid(VoxelGrid g, int[][][] heights, int offset, int bx, int by, boolean inst, byte[] sceneFloors)
 	{
-		GiGrid old = grid;
+		VoxelGrid old = grid;
 		int dx = (bx - baseX)*resolution, dz = (by - baseY)*resolution;
 		boolean fresh = old == null || inst != instance || inst && (dx != 0 || dz != 0)
 			|| Math.abs(dx) >= size || Math.abs(dz) >= size;
@@ -430,10 +430,10 @@ final class SkyGrid
 				int t = texel(2 * tx + i, 2 * tz + j, 0);
 				for (int f = 0; f < FLOORS; ++f)
 				{
-					texels.put(t + f, GlobalIllumination.toHalf(ground(f, tx + i, tz + j)));
+					texels.put(t + f, Half.toHalf(ground(f, tx + i, tz + j)));
 				}
-				texels.put(t + 3, GlobalIllumination.toHalf(code));
-				texels.put(texel(2 * tx + i + 2 * size, 2 * tz + j, 0), GlobalIllumination.toHalf(bits));
+				texels.put(t + 3, Half.toHalf(code));
+				texels.put(texel(2 * tx + i + 2 * size, 2 * tz + j, 0), Half.toHalf(bits));
 			}
 		}
 	}
@@ -463,8 +463,8 @@ final class SkyGrid
 					{
 						int a = texel(2 * x + dx + 4 * size, 2 * z + dz, 0);
 						for (int f = 0; f < RoomMap.PLANES; ++f)
-							texels.put(a + f, GlobalIllumination.toHalf(known ? rooms.floors[rooms.index(f, rx, rz)] : 0));
-						texels.put(texel(2 * x + dx + 6 * size, 2 * z + dz, 0), GlobalIllumination.toHalf(mask));
+							texels.put(a + f, Half.toHalf(known ? rooms.floors[rooms.index(f, rx, rz)] : 0));
+						texels.put(texel(2 * x + dx + 6 * size, 2 * z + dz, 0), Half.toHalf(mask));
 					}
 			}
 		selectNearbySamples();
@@ -520,7 +520,7 @@ final class SkyGrid
 			int tx=cx-dx,tz=cz-dz;
 			if(tx<0||tz<0||tx>=size||tz>=size)continue;
 			for(int half=0;half<2;half++)
-				texels.put(texel(half*4*size+2*tx+dx,2*tz+dz,level+1),GlobalIllumination.toHalf(-1));
+				texels.put(texel(half*4*size+2*tx+dx,2*tz+dz,level+1),Half.toHalf(-1));
 			change(tx,tz,tx,tz,level+1,level+1);
 		}
 	}
@@ -603,7 +603,7 @@ final class SkyGrid
 	}
 
 	/** Mark the corners within reach of every tile whose voxels differ between two grids of the same place. */
-	private void markChanged(GiGrid a, GiGrid b)
+	private void markChanged(VoxelGrid a, VoxelGrid b)
 	{
 		if (a.nx != b.nx || a.ny != b.ny || a.nz != b.nz || a.layer0 != b.layer0)
 		{
@@ -735,7 +735,7 @@ final class SkyGrid
 			for (int k = 0; followTerrain && k < m; ++k)
 			{
 				int q = members[k] / 2, tx = cx + QX[q], tz = cz + QZ[q];
-				int mask = (int) GlobalIllumination.fromHalf(texels.get(texel(2 * tx + 6 * size, 2 * tz, 0)));
+				int mask = (int) Half.fromHalf(texels.get(texel(2 * tx + 6 * size, 2 * tz, 0)));
 				if ((mask & 1) != 0) followTerrain = false;
 			}
 			if (followTerrain)
@@ -751,11 +751,11 @@ final class SkyGrid
 				py += start[node * 3 + 1];
 				pz += start[node * 3 + 2];
 			}
-			short sampleX = GlobalIllumination.toHalf(px * GiGrid.VOXEL / m - cx * spacing);
-			short sampleY = GlobalIllumination.toHalf((py / m + grid.layer0) * GiGrid.VOXEL);
-			short sampleZ = GlobalIllumination.toHalf(pz * GiGrid.VOXEL / m - cz * spacing);
-			boolean keep = nearGeometry(cx*spacing+GlobalIllumination.fromHalf(sampleX),
-				GlobalIllumination.fromHalf(sampleY),cz*spacing+GlobalIllumination.fromHalf(sampleZ),64);
+			short sampleX = Half.toHalf(px * VoxelGrid.VOXEL / m - cx * spacing);
+			short sampleY = Half.toHalf((py / m + grid.layer0) * VoxelGrid.VOXEL);
+			short sampleZ = Half.toHalf(pz * VoxelGrid.VOXEL / m - cz * spacing);
+			boolean keep = nearGeometry(cx*spacing+Half.fromHalf(sampleX),
+				Half.fromHalf(sampleY),cz*spacing+Half.fromHalf(sampleZ),64);
 			java.util.Arrays.fill(acc, 0);
 			for (int r = 0; keep && r < RAYS; ++r)
 			{
@@ -776,8 +776,8 @@ final class SkyGrid
 					for (int k = 0; k < LOBES; ++k) acc[k] += weights[r * LOBES + k] * open;
 			}
 			if (keep) rays += RAYS;
-			for (int k = 0; k < LOBES; ++k) value[k] = GlobalIllumination.toHalf(acc[k]);
-			if (!keep) value[0] = GlobalIllumination.toHalf(-1);
+			for (int k = 0; k < LOBES; ++k) value[k] = Half.toHalf(acc[k]);
+			if (!keep) value[0] = Half.toHalf(-1);
 			for (int k = 0; k < m; ++k)
 			{
 				int node = members[k], q = node / 2, half = node % 2;
@@ -844,33 +844,33 @@ final class SkyGrid
 	// the extra sample belongs above the canopy, not inside its occupied volume.
 	private float surfaceY(int cx, int cz)
 	{
-		int vx = cx * (int) spacing / GiGrid.VOXEL, vz = cz * (int) spacing / GiGrid.VOXEL;
+		int vx = cx * (int) spacing / VoxelGrid.VOXEL, vz = cz * (int) spacing / VoxelGrid.VOXEL;
 		for (int y = 0; y < grid.ny; ++y)
 			for (int z = Math.max(0, vz - 1); z < Math.min(grid.nz, vz + 1); ++z)
 				for (int x = Math.max(0, vx - 1); x < Math.min(grid.nx, vx + 1); ++x)
 					if (grid.cells[grid.index(x, y, z)] != 0)
-						return (y + grid.layer0) * GiGrid.VOXEL - 8;
+						return (y + grid.layer0) * VoxelGrid.VOXEL - 8;
 		return ground(0, cx, cz) - HEIGHTS[0];
 	}
 
 	private void setStart(int q, float x, float y, float z)
 	{
-		start[q * 3] = x / GiGrid.VOXEL;
-		start[q * 3 + 1] = y / GiGrid.VOXEL - grid.layer0;
-		start[q * 3 + 2] = z / GiGrid.VOXEL;
+		start[q * 3] = x / VoxelGrid.VOXEL;
+		start[q * 3 + 1] = y / VoxelGrid.VOXEL - grid.layer0;
+		start[q * 3 + 2] = z / VoxelGrid.VOXEL;
 	}
 
 	// a voxel that isn't foliage: rays start in foliage (a point under a tree's crown)
 	private boolean solid(float x, float y, float z)
 	{
-		int vx = (int) Math.floor(x / GiGrid.VOXEL), vy = (int) Math.floor(y / GiGrid.VOXEL) - grid.layer0;
-		int vz = (int) Math.floor(z / GiGrid.VOXEL);
+		int vx = (int) Math.floor(x / VoxelGrid.VOXEL), vy = (int) Math.floor(y / VoxelGrid.VOXEL) - grid.layer0;
+		int vz = (int) Math.floor(z / VoxelGrid.VOXEL);
 		if (vx < 0 || vy < 0 || vz < 0 || vx >= grid.nx || vy >= grid.ny || vz >= grid.nz)
 		{
 			return false;
 		}
 		int cell = grid.cells[grid.index(vx, vy, vz)];
-		return cell != 0 && !GiGrid.foliage(cell);
+		return cell != 0 && !VoxelGrid.foliage(cell);
 	}
 
 	private static float sq(float v)

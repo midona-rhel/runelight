@@ -16,7 +16,7 @@ import org.slf4j.LoggerFactory;
  * boxes it unhides, so instances, cutscene spots and islands don't show the unrelated map around them.
  *
  * The tiles are taken out of the scene as it loads, before anything reads it, so the zones, the shadows, the water,
- * the lights and the global illumination never see them. A scene has to be loaded again when the player walks into
+ * the lights and the voxels never see them. A scene has to be loaded again when the player walks into
  * another area, which {@link #changed} asks for.
  */
 final class AreaHiding

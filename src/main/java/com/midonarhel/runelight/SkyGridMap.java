@@ -11,7 +11,7 @@ import static org.lwjgl.opengl.GL33C.*;
 
 /**
  * The skylight's ray traced sky visibility (SkyGrid) as a 3D texture for the AO pass (skylight_ao.glsl). A worker
- * thread traces in time-bounded chunks through the global illumination's voxels (GlobalIllumination.getVoxels),
+ * thread traces in time-bounded chunks through the base scene's voxels (VoxelBuilder.getVoxels),
  * nearest the player first; what changed is uploaded every UPLOAD_FRAMES frames. A new place is shown once the
  * corners within READY_RINGS of the player are traced; until then, and after a move into the next region until its
  * voxels are built, the last texture stays, moved to where it belongs, as the probes do.
@@ -42,7 +42,7 @@ final class SkyGridMap
 	private ExecutorService worker;
 	private Future<?> job;
 	// what the last job was handed, and what it said
-	private GlobalIllumination.Voxels handedVoxels;
+	private SceneVoxels handedVoxels;
 	private WallMap handedWalls;
 	private byte[] handedFloors;
 	private volatile boolean jobFresh;
@@ -65,7 +65,7 @@ final class SkyGridMap
 	 * @param voxels the newest voxels, null before the first build
 	 * @param worldTileX, worldTileZ the player, in world tiles
 	 */
-	void update(boolean wanted, GlobalIllumination.Voxels voxels, WallMap walls, float worldTileX, float worldTileZ, byte[] floors, RoomMap rooms)
+	void update(boolean wanted, SceneVoxels voxels, WallMap walls, float worldTileX, float worldTileZ, byte[] floors, RoomMap rooms)
 	{
 		this.wanted = wanted;
 		if (!wanted)

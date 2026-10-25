@@ -21,8 +21,8 @@ layout(location = 1) out vec4 FragFog;
 
 void main() {
   ivec2 px = ivec2(gl_FragCoord.xy);
-  vec4 g = texelFetch(sceneAo, px, 0);
-  bool sky = g.g <= 0.0;
+  vec2 g = texelFetch(sceneAo, px, 0).rg;
+  bool sky = g.x <= 0.0;
   // the sky has no AO or shadow to smooth, only fog
   if (sky && denoiseFog == 0) {
     FragShadow = texelFetch(sceneShadow, px, 0);
@@ -45,9 +45,9 @@ void main() {
       // centre, next to it, diagonal, two away, a knight's move
       float k = a.x + a.y == 0 ? 1.0 : a.x + a.y == 1 ? 1.08 : a.x == a.y ? 0.71 : a.x + a.y == 2 ? 0.79 : 0.78;
       ivec2 q = clamp(px + ivec2(x, y), ivec2(0), last);
-      vec4 gq = texelFetch(sceneAo, q, 0);
+      vec2 gq = texelFetch(sceneAo, q, 0).rg;
       // the sky is smoothed with the sky, the scenery with the scenery
-      if ((gq.g <= 0.0) != sky) {
+      if ((gq.x <= 0.0) != sky) {
         continue;
       }
       float w = k / (1.0 + abs(halfViewDepth(gq) - z) / (z * 0.02 + 1.0));

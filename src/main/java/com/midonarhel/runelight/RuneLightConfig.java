@@ -34,7 +34,6 @@ import static com.midonarhel.runelight.RuneLightPlugin.MAX_FOG_DEPTH;
 import com.midonarhel.runelight.config.AntiAliasingMode;
 import com.midonarhel.runelight.config.ColorBlindMode;
 import com.midonarhel.runelight.config.DebugView;
-import com.midonarhel.runelight.config.LightingModel;
 import com.midonarhel.runelight.config.Quality;
 import com.midonarhel.runelight.config.RenderScale;
 import com.midonarhel.runelight.config.ShadowResolution;
@@ -1279,53 +1278,6 @@ public interface RuneLightConfig extends Config
 	}
 
 	@ConfigSection(
-		name = "Global illumination",
-		description = "Light from the sky and the colours of the surfaces around it",
-		position = 700
-	)
-	String giSection = "globalIllumination";
-
-	@ConfigItem(
-		keyName = "globalIllumination",
-		name = "Global illumination",
-		description = "Light from the sky only reaches what can see the sky, and surfaces take the colour of the ones "
-			+ "around them: interiors and overhangs darken, sunlit grass greens the foot of the wall beside it. Worked "
-			+ "out in the background whenever a region loads.",
-		section = giSection,
-		position = 701
-	)
-	default boolean globalIllumination()
-	{
-		return true;
-	}
-
-	@Range(max = 200)
-	@ConfigItem(
-		keyName = "giStrength",
-		name = "Strength",
-		description = "How much of their colour the surfaces around a surface give it, in percent.",
-		section = giSection,
-		position = 702
-	)
-	default int giStrength()
-	{
-		return 100;
-	}
-
-	@ConfigItem(
-		keyName = "giSunBounce",
-		name = "Sun bounce",
-		description = "Surfaces lit by the sun or moon give their colour to the ones around them. "
-			+ "Off, only the sky lights the surfaces that do.",
-		section = giSection,
-		position = 703
-	)
-	default boolean giSunBounce()
-	{
-		return true;
-	}
-
-	@ConfigSection(
 		name = "Rooms",
 		description = "Keep light and fog where they belong: lamps inside buildings, fog outside them",
 		position = 750
@@ -1377,20 +1329,6 @@ public interface RuneLightConfig extends Config
 		position = 800
 	)
 	String lightOcclusionSection = "lightOcclusion";
-
-	@ConfigItem(
-		keyName = "lightingModel",
-		name = "Lighting model",
-		description = "Where the ambient light comes from. Skylight: how much sky each spot sees, ray traced through "
-			+ "the scenery in the background; cheap, interiors and overhangs darken. Skylight + GI bounce: the same, plus the colour "
-			+ "the surfaces around give each other (the grass' green on the wall beside it), which needs Global illumination on.",
-		section = lightOcclusionSection,
-		position = 801
-	)
-	default LightingModel lightingModel()
-	{
-		return LightingModel.SKYLIGHT_GI;
-	}
 
 	@Range(max = 100)
 	@ConfigItem(

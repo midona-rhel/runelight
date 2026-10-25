@@ -39,8 +39,7 @@ uniform sampler2D cloudHalf;
 #define DEBUG_LIGHTING 5
 #define DEBUG_LIGHT_CLUSTERS 6
 #define DEBUG_MATERIALS 7
-#define DEBUG_GI 8
-#define DEBUG_SKYLIGHT 9
+#define DEBUG_SKYLIGHT 8
 
 #define TAU 6.28318530718
 
@@ -104,26 +103,17 @@ uniform sampler2DArray compositeParts;
 layout(location = 0) out vec4 FragColor;
 
 // ---------------------------------------------------------------------------------------------------------------
-// Global illumination (GlobalIllumination.java, gi.glsl): the colour of the surfaces around a surface, read by the AO
-// pass from the volume of tint in front of the pixel, upsampled with the AO like the shadows, and tints the light
-// (light_occlusion.glsl giTint)
-uniform float giWeight;  // 0..2: enabled, eased in and out, strength
-
-// ---------------------------------------------------------------------------------------------------------------
 // Ambient occlusion and shadows: 2x2 depth- and normal-aware upsample of the half resolution pass, whose noise the
 // denoise (denoise_frag.glsl) has smoothed. The volumetric fog's upsample uses the same taps, so it is done in the
 // same loop when the fog is on.
 
-float upsampleAoFog(ivec2 px, float z, vec3 n, out vec4 fog, out float shadow, out vec4 gi, out float ground) {
+float upsampleAoFog(ivec2 px, float z, vec3 n, out vec4 fog, out float shadow, out float ground) {
   vec2 hp = fullToHalf(px);
   ivec2 base = ivec2(floor(hp));
   ivec2 maxAo = textureSize(sceneAo, 0) - 1;
   bool withFog = volumetricFog == 1;
-  // without its weight the global illumination is never used
-  bool withGi = giWeight > 0.0;
   vec4 shSum = vec4(0.0);
   float wsum = 0.0;
-  vec4 giSum = vec4(0.0);
   vec4 fogSum = vec4(0.0);
   float fogWsum = 0.0;
   // the 2x2 half-res texels around the pixel, bilinear weights refined by depth and normal: a 4x4 footprint read
@@ -131,7 +121,7 @@ float upsampleAoFog(ivec2 px, float z, vec3 n, out vec4 fog, out float shadow, o
   for (int y = 0; y < 2; ++y) {
     for (int x = 0; x < 2; ++x) {
       ivec2 q = clamp(base + ivec2(x, y), ivec2(0), maxAo);
-      vec4 g = texelFetch(sceneAo, q, 0);
+      vec2 g = texelFetch(sceneAo, q, 0).rg;
       float qz = halfViewDepth(g);
       vec2 bl = max(1.0 - abs(vec2(q) - hp), 0.0);
       float spatial = bl.x * bl.y + 1e-3;
@@ -140,7 +130,7 @@ float upsampleAoFog(ivec2 px, float z, vec3 n, out vec4 fog, out float shadow, o
         fogSum += texelFetch(sceneFog, q, 0) * fw;
         fogWsum += fw;
       }
-      if (g.g <= 0.0) {
+      if (g.x <= 0.0) {
         continue;
       }
       vec3 qn = halfNormal(g);
@@ -151,11 +141,6 @@ float upsampleAoFog(ivec2 px, float z, vec3 n, out vec4 fog, out float shadow, o
       w *= nd * nd;
 
       shSum += texelFetch(sceneShadow, q, 0) * w;
-      if (withGi) {
-        // weighed by how much light each tap has, so one with none does not dim the color of the others
-        vec4 tapGi = halfGi(g);
-        giSum += vec4(tapGi.rgb * tapGi.a, tapGi.a) * w;
-      }
       wsum += w;
     }
   }
@@ -163,7 +148,6 @@ float upsampleAoFog(ivec2 px, float z, vec3 n, out vec4 fog, out float shadow, o
     : fogWsum > 1e-6 ? fogSum / fogWsum : texelFetch(sceneFog, clamp(ivec2(hp + 0.5), ivec2(0), maxAo), 0);
   vec4 sh = wsum > 1e-4 ? shSum / wsum : texelFetch(sceneShadow, clamp(ivec2(hp + 0.5), ivec2(0), maxAo), 0);
   shadow = sh.r;
-  gi = wsum > 1e-4 && giSum.a > 1e-5 ? vec4(giSum.rgb / giSum.a, giSum.a / wsum) : vec4(0.0);
   ground = sh.b;
   skyUpsampled = sh.a;
   return wsum > 1e-4 ? sh.g : 1.0;
@@ -391,15 +375,12 @@ vec4 shadeScene(ivec2 px, SceneSample sm, vec4 transparent) {
   float ao = 1.0;
   float halfShadow = 1.0;
   vec4 fog;
-  vec4 gi = vec4(0.0);
-  // the global illumination's tint of this surface's light, and how much of it there is
-  vec4 giT = vec4(1.0, 1.0, 1.0, 0.0);
   float ground = 0.0;
   vec3 indirect = vec3(0.0);
   bool fogDone = false;
-  if ((aoEnabled == 1 || shadowsEnabled == 1 || volumetricFog == 1 || giWeight > 0.0 || weatherGroundOn == 1
+  if ((aoEnabled == 1 || shadowsEnabled == 1 || volumetricFog == 1 || weatherGroundOn == 1
     || skylightOn == 1) && inside) {
-    ao = upsampleAoFog(px, viewDepth(d), n, fog, halfShadow, gi, ground);
+    ao = upsampleAoFog(px, viewDepth(d), n, fog, halfShadow, ground);
     ao = aoEnabled == 1 ? clamp(1.0 - (1.0 - ao) * aoStrength, 0.0, 1.0) : 1.0;
     fogDone = volumetricFog == 1;
   }
@@ -420,7 +401,6 @@ vec4 shadeScene(ivec2 px, SceneSample sm, vec4 transparent) {
       shadow *= cloudShadow(p + cameraPos, casterDir);
     }
     shadow = overcastShadow(shadow);
-    giT = giTint(gi.rgb, gi.a * giWeight);
     vec3 caster = sunIsCaster == 1 ? sunLight(sunAltitude) : moonLight(sunAltitude);
     float up = max(-n.y, 0.0);
     if (compositePart != 2) {
@@ -429,8 +409,6 @@ vec4 shadeScene(ivec2 px, SceneSample sm, vec4 transparent) {
     // Retain the later skylight daylight fill and the tuned indoor ambient floor.
     float daylightFill = skylightOn == 1 ? 0.7 * clamp(skyUpsampled, 0.0, 1.0) : 0.0;
     indirect += caster * envSun * max(ndl, 0.0) * (1.0 - shadow) * daylightFill * ao;
-    // the colour of the surfaces around it
-    indirect *= giFactor(giT, 1.0);
     float roomFill = roomAmbientFill(p + cameraPos, n);
     if (roomFill > 0.0) {
       // how closed in the spot is: a room with its roof hidden still counts, a covered gateway open at both ends
@@ -445,7 +423,7 @@ vec4 shadeScene(ivec2 px, SceneSample sm, vec4 transparent) {
     }
     }
     light = indirect
-      + caster * envSun * max(ndl, 0.0) * shadow * mix(1.0, ao, AO_DIRECT) * giFactor(giT, GI_SUN_TINT);
+      + caster * envSun * max(ndl, 0.0) * shadow * mix(1.0, ao, AO_DIRECT);
     if (transmissive > 0.0) {
       // light through the leaf isn't occluded by the creases SSAO sees on its front
       light += caster * envSun * transmission(ndl, dot(-casterDir, normalize(-p)), transmissive) * shadow;
@@ -491,10 +469,6 @@ vec4 shadeScene(ivec2 px, SceneSample sm, vec4 transparent) {
 
   if (debugView == DEBUG_AO) {
     return vec4(vec3(ao), 1.0);
-  }
-  if (debugView == DEBUG_GI) {
-    // the tint the light gets: white where there is none, exactly what the lighting multiplies its ambient light by
-    return vec4(linearToSrgb(clamp(giFactor(giTint(gi.rgb, gi.a * giWeight), 1.0), 0.0, 1.0)), 1.0);
   }
   if (debugView == DEBUG_SKYLIGHT) {
     // sky visibility, red where it isn't worked out

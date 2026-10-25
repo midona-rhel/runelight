@@ -1,9 +1,8 @@
 // Half resolution geometry, written by the AO pass (ao_frag.glsl) for the top-left pixel of every 2x2 block:
-// g NEAR / view depth (0 for sky); r, b and a each hold a whole number, exact in a float: r the global
-// illumination's weight (12 bits) and red (12), b the octahedral normal (12 + 12), a the global illumination's
-// green and blue (12 + 12, square root encoded). The composite's depth- and normal-aware upsamples of AO, GI and
-// fog read their taps' geometry from here with one small fetch instead of the full resolution depth and normal.
-// The target is RGBA32F (SceneTargets), written once: the AO, which the denoise smooths, is in the shadow target.
+// r NEAR / view depth (0 for sky), g the octahedral normal, two 12 bit numbers in one float, exact in it. The
+// composite's depth- and normal-aware upsamples of AO and fog read their taps' geometry from here with one small
+// fetch instead of the full resolution depth and normal. The target is RG32F (SceneTargets), written once: the AO,
+// which the denoise smooths, is in the shadow target.
 // Needs frame.glsl.
 
 #include "halfmap.glsl"
@@ -28,12 +27,9 @@ vec3 octDecode(vec2 e) {
   return normalize(n);
 }
 
-float halfViewDepth(vec4 g) {
-  return g.g > 0.0 ? NEAR / g.g : HALF_SKY_DEPTH;
+float halfViewDepth(vec2 g) {
+  return g.x > 0.0 ? NEAR / g.x : HALF_SKY_DEPTH;
 }
-
-// irradiance the 12 bit square root encoding reaches (linear light units)
-#define HALF_GI_RANGE 4.0
 
 // two whole numbers 0..4095 into one float, exactly
 float halfPack(float hi, float lo) {
@@ -45,20 +41,11 @@ vec2 halfUnpack(float v) {
   return vec2(hi, v - hi * 4096.0);
 }
 
-vec4 halfPackGeometry(float nearOverDepth, vec3 n, vec3 gi, float giWeight) {
-  vec3 e = floor(sqrt(clamp(gi / HALF_GI_RANGE, 0.0, 1.0)) * 4095.0 + 0.5);
-  float w12 = floor(clamp(giWeight, 0.0, 1.0) * 4095.0 + 0.5);
+vec2 halfPackGeometry(float nearOverDepth, vec3 n) {
   vec2 o = floor(clamp(octEncode(n) * 0.5 + 0.5, 0.0, 1.0) * 4095.0 + 0.5);
-  return vec4(halfPack(w12, e.r), nearOverDepth, halfPack(o.x, o.y), halfPack(e.g, e.b));
+  return vec2(nearOverDepth, halfPack(o.x, o.y));
 }
 
-vec3 halfNormal(vec4 g) {
-  return octDecode(halfUnpack(g.b) / 4095.0 * 2.0 - 1.0);
-}
-
-// rgb the global illumination's irradiance, a its weight
-vec4 halfGi(vec4 g) {
-  vec2 r = halfUnpack(g.r);
-  vec3 e = vec3(r.y, halfUnpack(g.a)) / 4095.0;
-  return vec4(e * e * HALF_GI_RANGE, r.x / 4095.0);
+vec3 halfNormal(vec2 g) {
+  return octDecode(halfUnpack(g.y) / 4095.0 * 2.0 - 1.0);
 }

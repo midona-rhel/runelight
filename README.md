@@ -49,7 +49,7 @@ it slowly and grays the sky and softens the sun and moon everywhere through `wea
 (`weather_common.glsl`). Snow cover and rain puddles are part of the surfaces: the half resolution AO pass works out
 how much cover a pixel gets (`weather_ground_ao.glsl`: the region's ground times how open to the sky it is) into
 the shadow target's blue channel, and the composite changes the albedo and normal before
-lighting (`weather_ground.glsl`), so they take the AO, shadows, GI and point lights like any other surface. Snow is
+lighting (`weather_ground.glsl`), so they take the AO, shadows and point lights like any other surface. Snow is
 blobs of world-space Perlin noise compared with a level that falls as the cover builds, so a blob starts at a peak and
 grows outward and melts back the same way; its edge is crisp and two-tone like the water's foam (a shaded outer band
 round the bright snow), antialiased to a pixel from the noise's gradient and the surface's footprint on screen. Snow
@@ -114,7 +114,7 @@ the script's `BIOMES` table.
 
 Plugin config, Hide other areas section: while the player is in one of 117 HD's areas that hide the rest of the map
 (caves, instances, cutscene spots; the mainland's surface too), `AreaHiding.java` takes every other tile out of the
-scene as it loads, so no zone, shadow, water body, light or GI voxel ever sees it. Walking into another area loads the
+scene as it loads, so no zone, shadow, water body, light or voxel ever sees it. Walking into another area loads the
 scene again. The areas come from `area_hiding.json`, built by `tools/import_117hd_areas.py`.
 
 ## Clouds
@@ -168,60 +168,20 @@ cache dir, finds the water, and computes the flow; `tools/water/annotations.json
 gets wrong (sources, outlets, still canals), and `tools/water/crop.py` renders map crops with a tile grid and the
 flow to check them. Needs numpy, scipy, scikit-image and Pillow.
 
-## Global illumination
-
-Plugin config, Global illumination section. When a region loads, the static scene's opaque triangles (captured as
-the zones upload, `GiCapture.java`) are voxelized into half-tile cubes on a worker thread (`GiVoxels.java`,
-`GiGrid.java`; per zone, so zones reused by the next load keep theirs), each voxel with the average albedo and normal
-of what passes through it and where its surface lies inside it. A textured face is its texture's average colour (a
-scrolling water texture's too), any other the mean of its three vertices' colours, which the game shades it with. The
-global illumination is a volume of tint over those voxels (`GiEmitters.java`, `GiRelight.java`), a colour transfer
-rather than light: a filled voxel with an empty one beside it that its surface faces gives that empty voxel, and the
-empty ones in a straight line beyond it, its albedo's hue at unit luminance (neutral for a nearly black one, no channel
-above 2.5), as much as it is lit: the sun or moon (from the sky cache, `gi_sky_frag.glsl`, read back without stalling)
-where a ray through the voxels reaches it, softened by the overcast, plus a quarter of the sky it sees (only that when
-"Sun bounce" is off). So dark grass in the sun sends as much green as bright stone. The sun's rays are blurred over the
-faces around each (a tent over three voxels each way), so a surface fades out over a voxel or two at the edge of a
-shadow, and the bits of shadow a stepped wall or a tree throws on itself blend in. The share falls smoothly from all of
-it at the surface to none at `GiEmitters.REACH` (192 units, three voxels) from it, by the surface's true distance, which
-the voxels know to a fraction of their size, so a wall's tint does not depend on where the grid happened to cut the
-ground; it is 1 at the surface, 0.55 at 64 units, 0.07 at 128 and 0 at 192 (one minus smoothstep, squared), and the
-tint a pixel shows goes with its square root. It goes through empty voxels only, so a wall gives nothing to what is
-behind it. Surfaces give into three fields of the volume by how steeply they lie, upright, slanted at 45 degrees and
-level (a surface between gives to the two, by the angle, and one within 15 degrees of a slope lies at it exactly), and a
-pixel reads each by how unlike its own slope it is, the sine squared of the angle between: a floor reads the walls' and
-none of the floors', a wall the floors' and none of the walls', a roof half of each, and a slope in between a part of each
-that changes smoothly with it, so no surface takes its own colour a second time, a stair's treads and risers (whose
-voxels face diagonally) read the same, and nothing switches at a slope. A wall takes no colour from the walls beside it,
-since which way along the ground a surface faces is not kept. Relighting runs on the worker whenever the sky or the sun
-changes enough, tens of milliseconds for a whole scene (the faces and the voxels they reach are found once per load); a
-new volume replaces the one shown at once when the grid changed and blends in over a few seconds otherwise.
-
-The volume is a 3D texture (`GL_RGBA8`, linear, clamped: the grid's voxels across in x and z, three times its layers
-deep, the upright field first), twelve bytes a voxel of the grid. The AO pass looks it up at half resolution
-(`gi.glsl`): two filtered fetches (three on a slope, twice that while a blend runs) at the pixel's position plus 40 units
-along its normal, so what is read lies in front of the surface and never behind a wall. A texel's alpha says whether the
-field gives that voxel any colour, which every empty voxel is, and the lookup divides by the filtered alpha, so the filled
-voxels the surface looks away from are left out of the average; the colour is stored as its square root so the weak tail of
-the reach has bytes of its own. The tint fades out toward the edges of the grid. In the "Skylight + GI bounce" lighting
-model (below) the composite multiplies the indirect light (sky ambient and daylight fill) by mix(1, tint, amount), the
-tint being the looked-up colour at unit luminance, a little more saturated (`GI_SATURATION`), and the amount its weight
-times Strength (up to 200%), and the direct sun by the same at a part of the amount (`GI_SUN_TINT`); it never adds
-light. Debug view "Global illumination" shows that factor. Outside the base scene and underground the plain ambient
-light stays. The water surface joins the voxels as a layer of blue-green ones at its height (`GiWater.java`, from the
-water map), and the sunk bed under it is left out of the capture, so water gives its colour to the shores and nothing
-is given from under it.
-
 ## Skylight and light occlusion
 
-Plugin config, Skylight and light occlusion section. Lighting model Skylight (default) replaces the volume's own ambient with a
-sky visibility ray traced through the global illumination's voxels (`SkyGrid.java`, `SkyGridMap.java`; built for it
-even with the global illumination off) on a worker thread, a few thousand rays a frame nearest the player first: at every tile
-corner, three heights above each floor, how much sky is seen toward up and the four sides. Every tile keeps its own
+Plugin config, Skylight and light occlusion section. The skylight scales the ambient and sky light by how much sky a
+spot sees, ray traced through the scene's voxels. When a region loads, the static scene's opaque triangles (captured as
+the zones upload, `VoxelCapture.java`) are voxelized into half-tile cubes on a worker thread (`Voxelizer.java`,
+`VoxelGrid.java`, `VoxelBuilder.java`; per zone, so zones reused by the next load keep theirs), a voxel being filled
+when enough surface passes through it and foliage when swaying plants make up most of that. The water surface joins as a
+layer of voxels at its height (`VoxelWater.java`, from the water map) and the sunk bed under it is left out of the
+capture. The voxels are built only while the skylight is wanted. The sky visibility is traced
+(`SkyGrid.java`, `SkyGridMap.java`) on a worker thread, a few thousand rays a frame nearest the player first: at every
+tile corner, three heights above each floor, how much sky is seen toward up and the four sides. Every tile keeps its own
 four corner values, shared with its neighbors only where no wall stands between them, so nothing leaks through walls.
 The AO pass reads a pixel's tile and weighs the directions by its normal (`skylight_ao.glsl`, in the half resolution
-shadow target's alpha), and the composite scales the ambient and sky light by it (`light_occlusion.glsl`). "Skylight + GI bounce" tints it with the colors of the ground and water beside it (above), so the exposure stays the plain
-skylight's.
+shadow target's alpha), and the composite scales the ambient and sky light by it (`light_occlusion.glsl`).
 Debug view "Skylight" shows it.
 
 Walls (`WallMap.java`) come from the collision map's line-of-sight edges plus the diagonal wall objects; rooms split

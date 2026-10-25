@@ -27,12 +27,11 @@ final class HitchMonitor
 	static final int SCENE_SWAP = 1 << 2;
 	static final int SHADER_RELOAD = 1 << 3;
 	static final int AREA_HIDING = 1 << 4;
-	static final int GI_BUILD = 1 << 5;
-	static final int GI_UPLOAD = 1 << 6;
-	static final int SKY_CAPTURE = 1 << 7;
+	static final int VOXEL_BUILD = 1 << 5;
+	static final int SKY_CAPTURE = 1 << 6;
 
 	private static final String[] NAMES = {
-		"static shadow rebuild", "zone rebuild", "scene swap", "shader reload", "area hiding", "GI build", "GI upload",
+		"static shadow rebuild", "zone rebuild", "scene swap", "shader reload", "area hiding", "voxel build",
 		"sky capture"
 	};
 

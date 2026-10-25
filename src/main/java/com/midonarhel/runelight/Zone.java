@@ -82,9 +82,9 @@ class Zone
 	int[] swayRanges = new int[0];
 	int swayRangeCount; // ints used, 2 per range
 
-	// the global illumination's copy of the opaque triangles (SceneUploader), until its worker turns it into voxels
-	GiCapture giCapture;
-	GiVoxels.Zone giVoxels;
+	// the skylight's copy of the opaque triangles (SceneUploader), until the voxel worker turns it into voxels
+	VoxelCapture voxelCapture;
+	Voxelizer.Zone voxels;
 
 	// what renderOpaque draws of the swaying ranges
 	static final int SWAY_ALL = 0, SWAY_EXCLUDE = 1, SWAY_ONLY = 2;

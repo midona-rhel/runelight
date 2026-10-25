@@ -3,36 +3,26 @@ package com.midonarhel.runelight;
 import java.util.Arrays;
 
 /**
- * The global illumination's voxel proxy of the static scene: zone triangles (GiCapture) rasterized
- * conservatively into half-tile cubes, each with the area weighted average albedo (linear, unshaded) and normal of
- * what passes through it. Zones are voxelized once and the result kept with the zone, so a reused zone after a
- * region load isn't redone; the scene's grid (GiGrid) is assembled from them. A voxel also remembers how far the
- * surface lies from its center, which the volume of tint (GiEmitters) needs to tell a surface a bit above a voxel's
- * center from one a bit below it.
+ * The voxel proxy of the static scene, which the skylight traces (SkyGrid): zone triangles (VoxelCapture) rasterized
+ * conservatively into half-tile cubes, each remembering how much surface and how much of it swaying foliage passes
+ * through it. Zones are voxelized once and the result kept with the zone, so a reused zone after a region load isn't
+ * redone; the scene's grid (VoxelGrid) is assembled from them.
  */
-final class GiVoxels
+final class Voxelizer
 {
-	static final int VOXEL = GiGrid.VOXEL;
+	static final int VOXEL = VoxelGrid.VOXEL;
 	// floats per voxel in Zone.data
-	static final int STRIDE = 9;
+	static final int STRIDE = 2;
 	// zone-local voxel coordinates may reach this far past the zone (big models overhang it)
 	private static final int MARGIN = 32;
 	private static final int LAYER_BIAS = 2048;
-	// albedo of textured faces until the textures' average colors are known
-	private static final float DEFAULT_ALBEDO = 0.2f;
 
-	/**
-	 * Average color of each game texture, linear rgb interleaved; set when the textures upload (TextureManager).
-	 */
-	static volatile float[] textureAlbedo;
-
-	/** One zone's voxels: sums of weight, albedo * weight, normal * weight and plane distance * weight. */
+	/** One zone's voxels: sums of the surface area and of the foliage's. */
 	static final class Zone
 	{
 		// (lx + MARGIN) | (lz + MARGIN) << 7 | (layer + LAYER_BIAS) << 14
 		int[] keys;
-		// w, r, g, b, nx, ny, nz, foliage w, and the signed distance from the voxel's center to the surface, along its
-		// normal and positive in front of it, times w, per voxel
+		// the surface area (square world units) in the voxel, and the part of it that is foliage, per voxel
 		float[] data;
 		int count;
 
@@ -52,129 +42,16 @@ final class GiVoxels
 		}
 	}
 
-	private GiVoxels()
+	private Voxelizer()
 	{
-	}
-
-	/** An array for {@link #textureAverage} with no texture known yet. */
-	static float[] newTextureAlbedo(int textures)
-	{
-		float[] a = new float[textures * 3];
-		Arrays.fill(a, -1);
-		return a;
-	}
-
-	/** Store a texture's average linear color (ARGB pixels, 0 for holes) into out. */
-	static void textureAverage(int textureId, int[] pixels, float[] out)
-	{
-		double r = 0, g = 0, b = 0;
-		int n = 0;
-		for (int p : pixels)
-		{
-			if (p == 0)
-			{
-				continue;
-			}
-			r += srgbToLinear((p >> 16 & 0xff) / 255f);
-			g += srgbToLinear((p >> 8 & 0xff) / 255f);
-			b += srgbToLinear((p & 0xff) / 255f);
-			n++;
-		}
-		if (n > 0 && textureId * 3 + 2 < out.length)
-		{
-			out[textureId * 3] = (float) (r / n);
-			out[textureId * 3 + 1] = (float) (g / n);
-			out[textureId * 3 + 2] = (float) (b / n);
-		}
-	}
-
-	static float srgbToLinear(float c)
-	{
-		return c <= 0.04045f ? c / 12.92f : (float) Math.pow((c + 0.055) / 1.055, 2.4);
 	}
 
 	/**
-	 * Linear albedo of a captured triangle into out[0..2]: its texture's average color if it has one (the light of a
-	 * textured face is its texture times a lightness, which tints nothing, so the average is its color, a scrolling water
-	 * texture's included), else the mean of its three vertices' colors, which the game shades a face with (color is
-	 * GiCapture.color, color12 GiCapture.color12).
+	 * Voxelize a zone's triangles: every voxel a triangle touches gets the triangle's area.
 	 */
-	static void albedo(int color, int color12, float[] out)
-	{
-		int tex = color >>> 16 & 0x3ff;
-		if (tex > 0)
-		{
-			float[] a = textureAlbedo;
-			int i = (tex - 1) * 3;
-			if (a != null && i + 2 < a.length && a[i] >= 0)
-			{
-				out[0] = a[i];
-				out[1] = a[i + 1];
-				out[2] = a[i + 2];
-			}
-			else
-			{
-				out[0] = out[1] = out[2] = DEFAULT_ALBEDO;
-			}
-			return;
-		}
-		float[] vertex = new float[3];
-		out[0] = out[1] = out[2] = 0;
-		for (int k = 0; k < 3; ++k)
-		{
-			hslToRgb((k == 0 ? color : color12 >>> (k - 1) * 16) & 0xffff, vertex);
-			for (int c = 0; c < 3; ++c)
-			{
-				out[c] += srgbToLinear(vertex[c]) / 3;
-			}
-		}
-	}
-
-	/** The game's packed hsl to sRGB, as hsl_to_rgb.glsl. */
-	static void hslToRgb(int hsl, float[] out)
-	{
-		float hue = (hsl >> 10 & 63) / 64f + 0.0078125f;
-		float sat = (hsl >> 7 & 7) / 8f + 0.0625f;
-		float lum = (hsl & 127) / 128f;
-		float q = lum < 0.5f ? lum * (1 + sat) : lum + sat - lum * sat;
-		float p = 2 * lum - q;
-		out[0] = hue(p, q, hue + 1 / 3f);
-		out[1] = hue(p, q, hue);
-		out[2] = hue(p, q, hue - 1 / 3f);
-	}
-
-	private static float hue(float p, float q, float t)
-	{
-		if (t > 1)
-		{
-			t -= 1;
-		}
-		if (t < 0)
-		{
-			t += 1;
-		}
-		if (6 * t < 1)
-		{
-			return p + (q - p) * 6 * t;
-		}
-		if (2 * t < 1)
-		{
-			return q;
-		}
-		if (3 * t < 2)
-		{
-			return p + (q - p) * (2 / 3f - t) * 6;
-		}
-		return p;
-	}
-
-	/**
-	 * Voxelize a zone's triangles: every voxel a triangle touches gets the triangle's area as weight.
-	 */
-	static Zone voxelize(GiCapture cap)
+	static Zone voxelize(VoxelCapture cap)
 	{
 		Accumulator acc = new Accumulator(Math.max(64, cap.count * 2));
-		float[] rgb = new float[3];
 		float[] v = new float[9];
 		short[] pos = cap.pos;
 		for (int t = 0; t < cap.count; ++t)
@@ -192,18 +69,12 @@ final class GiVoxels
 				// degenerate: a sliver can't block light
 				continue;
 			}
-			float area = len * 0.5f;
-			nx /= len;
-			ny /= len;
-			nz /= len;
-			albedo(cap.color[t], cap.color12[t], rgb);
-			rasterize(v, nx, ny, nz, area, rgb, (cap.color[t] & GiCapture.FOLIAGE) != 0, acc);
+			rasterize(v, len * 0.5f, cap.foliage[t], acc);
 		}
 		return acc.toZone();
 	}
 
-	private static void rasterize(float[] v, float nx, float ny, float nz, float area, float[] rgb, boolean foliage,
-		Accumulator acc)
+	private static void rasterize(float[] v, float area, boolean foliage, Accumulator acc)
 	{
 		float minX = Math.min(v[0], Math.min(v[3], v[6])), maxX = Math.max(v[0], Math.max(v[3], v[6]));
 		float minY = Math.min(v[1], Math.min(v[4], v[7])), maxY = Math.max(v[1], Math.max(v[4], v[7]));
@@ -227,10 +98,7 @@ final class GiVoxels
 					{
 						continue;
 					}
-					int key = (x + MARGIN) | (z + MARGIN) << 7 | (y + LAYER_BIAS) << 14;
-					float plane = nx * ((x + 0.5f) * VOXEL - v[0]) + ny * ((y + 0.5f) * VOXEL - v[1])
-						+ nz * ((z + 0.5f) * VOXEL - v[2]);
-					acc.add(key, area, rgb, nx, ny, nz, foliage, plane);
+					acc.add((x + MARGIN) | (z + MARGIN) << 7 | (y + LAYER_BIAS) << 14, area, foliage);
 				}
 			}
 		}
@@ -323,7 +191,7 @@ final class GiVoxels
 			data = new float[cap * STRIDE];
 		}
 
-		void add(int key, float w, float[] rgb, float nx, float ny, float nz, boolean foliage, float plane)
+		void add(int key, float w, boolean foliage)
 		{
 			if (size * 2 >= keys.length)
 			{
@@ -342,17 +210,10 @@ final class GiVoxels
 			}
 			int o = i * STRIDE;
 			data[o] += w;
-			data[o + 1] += rgb[0] * w;
-			data[o + 2] += rgb[1] * w;
-			data[o + 3] += rgb[2] * w;
-			data[o + 4] += nx * w;
-			data[o + 5] += ny * w;
-			data[o + 6] += nz * w;
 			if (foliage)
 			{
-				data[o + 7] += w;
+				data[o + 1] += w;
 			}
-			data[o + 8] += plane * w;
 		}
 
 		private static int mix(int k)

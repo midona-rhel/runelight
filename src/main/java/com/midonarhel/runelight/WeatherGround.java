@@ -6,7 +6,7 @@ import static org.lwjgl.opengl.GL33C.*;
  * Snow and rain puddles as part of the surfaces: the half resolution AO pass works out how much cover a pixel gets
  * (weather_ground_ao.glsl: the region's ground from the weather field, times how open to the sky it is) into the
  * shadow target's blue channel, and the composite lays it out as blobs of noise before lighting
- * (weather_ground.glsl), so it takes the AO, the shadows, the global illumination and the point lights like any
+ * (weather_ground.glsl), so it takes the AO, the shadows and the point lights like any
  * other surface. This holds the two programs' uniforms.
  */
 final class WeatherGround

@@ -24,25 +24,24 @@ class GpuTimer
 	static final int COMPOSITE = 7;
 	static final int WEATHER = 8;
 	static final int UI = 9;
-	static final int GI = 10;
-	static final int WATER = 11;
+	static final int WATER = 10;
 	// parts of the shadow map: copying the cached static map in, the moving models
-	static final int SHADOW_COPY = 12;
-	static final int SHADOW_MODELS = 13;
+	static final int SHADOW_COPY = 11;
+	static final int SHADOW_MODELS = 12;
 	// uploading the skylight's traced grid
-	static final int SKY_GRID = 14;
-	static final int FILTER = 15;
-	static final int UPSCALE = 16;
-	static final int AMBIENT = 17;
-	static final int SUN = 18;
-	static final int POINT_LIGHTS = 19;
-	static final int SURFACES = 20;
-	static final int CLOUDS = 21;
-	static final int STAGES = 22;
+	static final int SKY_GRID = 13;
+	static final int FILTER = 14;
+	static final int UPSCALE = 15;
+	static final int AMBIENT = 16;
+	static final int SUN = 17;
+	static final int POINT_LIGHTS = 18;
+	static final int SURFACES = 19;
+	static final int CLOUDS = 20;
+	static final int STAGES = 21;
 
 	static final String[] NAMES = {
-		"scene", "MSAA resolve", "shadow map", "weather occlusion", "AO + skylight/GI", "sky cache", "fog", "sky/fog + final blend",
-		"weather", "UI", "GI volume", "water", "shadow copy", "shadow models", "sky grid upload", "AO/fog filtering", "upscale", "ambient + sky/GI", "sun + cloud shadows", "point lights + blocking", "materials + water blend", "clouds"
+		"scene", "MSAA resolve", "shadow map", "weather occlusion", "AO + skylight", "sky cache", "fog", "sky/fog + final blend",
+		"weather", "UI", "water", "shadow copy", "shadow models", "sky grid upload", "AO/fog filtering", "upscale", "ambient + sky", "sun + cloud shadows", "point lights + blocking", "materials + water blend", "clouds"
 	};
 
 	private static final int SLOTS = 4;

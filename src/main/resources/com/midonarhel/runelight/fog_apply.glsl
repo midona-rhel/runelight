@@ -25,7 +25,7 @@ vec4 upsampleFog(ivec2 px, float z) {
     for (int x = 0; x < 2; ++x) {
       ivec2 q = clamp(base + ivec2(x, y), ivec2(0), maxFog);
       vec2 bl = max(1.0 - abs(vec2(q) - hp), 0.0);
-      float w = (bl.x * bl.y + 1e-3) * fogDepthWeight(halfViewDepth(texelFetch(sceneAo, q, 0)), z);
+      float w = (bl.x * bl.y + 1e-3) * fogDepthWeight(halfViewDepth(texelFetch(sceneAo, q, 0).rg), z);
       sum += texelFetch(sceneFog, q, 0) * w;
       wsum += w;
     }

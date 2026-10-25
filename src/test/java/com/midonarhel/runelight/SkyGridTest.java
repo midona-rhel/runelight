@@ -16,12 +16,12 @@ public class SkyGridTest
 	// world y -640 up to 128 down: ground at 0 fills layer 10
 	private static final int LAYER0 = -10, LAYERS = 12;
 	private static final int GROUND = 10;
-	private static final int CELL = GiGrid.pack(1, 0.3f, 0.3f, 0.3f, 0, -1, 0);
+	private static final int CELL = 1;
 	private static final int UP = 0, PLUS_X = 1, MINUS_X = 2, PLUS_Z = 3, MINUS_Z = 4;
 
-	private static GiGrid flat()
+	private static VoxelGrid flat()
 	{
-		GiGrid g = new GiGrid(N, LAYERS, N, LAYER0);
+		VoxelGrid g = new VoxelGrid(N, LAYERS, N, LAYER0);
 		for (int z = 0; z < N; ++z)
 		{
 			for (int x = 0; x < N; ++x)
@@ -33,9 +33,9 @@ public class SkyGridTest
 	}
 
 	/** Fill voxels x0..x1, z0..z1 (inclusive) between world heights top and bottom above the ground (y up here). */
-	private static void box(GiGrid g, int x0, int z0, int x1, int z1, int bottom, int top)
+	private static void box(VoxelGrid g, int x0, int z0, int x1, int z1, int bottom, int top)
 	{
-		for (int y = -top / GiGrid.VOXEL; y < -bottom / GiGrid.VOXEL; ++y)
+		for (int y = -top / VoxelGrid.VOXEL; y < -bottom / VoxelGrid.VOXEL; ++y)
 		{
 			for (int z = z0; z <= z1; ++z)
 			{
@@ -47,7 +47,7 @@ public class SkyGridTest
 		}
 	}
 
-	private static SkyGrid traced(GiGrid g, WallMap walls)
+	private static SkyGrid traced(VoxelGrid g, WallMap walls)
 	{
 		SkyGrid s = new SkyGrid();
 		s.setWalls(walls);
@@ -63,17 +63,17 @@ public class SkyGridTest
 	private static float value(SkyGrid s, int tx, int tz, int i, int j, int height, int lobe)
 	{
 		int meta = ((2 * tz) * SkyGrid.TEX_W + 2 * tx) * 4 + 3;
-		int half = GlobalIllumination.fromHalf(s.texels.get(meta)) % 3 != 0 && j == 0 ? 1 : 0;
+		int half = Half.fromHalf(s.texels.get(meta)) % 3 != 0 && j == 0 ? 1 : 0;
 		int x = half * 4 * SkyGrid.SIZE + (lobe == MINUS_Z ? 2 * SkyGrid.SIZE : 0) + 2 * tx + i, y = 2 * tz + j;
 		int t = (((1 + height) * SkyGrid.TEX_H + y) * SkyGrid.TEX_W + x) * 4 + (lobe == MINUS_Z ? 0 : lobe);
-		return GlobalIllumination.fromHalf(s.texels.get(t));
+		return Half.fromHalf(s.texels.get(t));
 	}
 
 	// a closed 4x4 house on tiles 50..53 with walls on its edges (their voxels just inside), a door in the middle of
 	// the south wall at tile 51 and a flat roof at 256
-	private static GiGrid house()
+	private static VoxelGrid house()
 	{
-		GiGrid g = flat();
+		VoxelGrid g = flat();
 		box(g, 100, 100, 100, 107, 0, 256);
 		box(g, 107, 100, 107, 107, 0, 256);
 		box(g, 100, 107, 107, 107, 0, 256);
@@ -122,7 +122,7 @@ public class SkyGridTest
 	{
 		// a wall on the edge x = 60 tiles (its voxels on the east side) from z 80 to 100, 320 high, with eaves one tile
 		// deep over the west side at 192..256
-		GiGrid g = flat();
+		VoxelGrid g = flat();
 		box(g, 120, 160, 120, 201, 0, 320);
 		box(g, 118, 160, 119, 201, 192, 256);
 		int[][][] f = new int[1][SkyGrid.SIZE][SkyGrid.SIZE];
@@ -164,7 +164,7 @@ public class SkyGridTest
 	public void diagonalWallsSplitTheirTile()
 	{
 		// a "/" wall across tile (30, 30), its voxels on the diagonal, a roof over the north-west half
-		GiGrid g = flat();
+		VoxelGrid g = flat();
 		box(g, 60, 60, 60, 60, 0, 256);
 		box(g, 61, 61, 61, 61, 0, 256);
 		box(g, 56, 61, 60, 66, 192, 256);
@@ -178,7 +178,7 @@ public class SkyGridTest
 		assertTrue("north " + north + " south " + south, north < 0.4f && south > 0.6f);
 		// the tile's diagonal on the ground floor is in its corner's meta texels
 		int t = ((2 * 30) * SkyGrid.TEX_W + 2 * 30) * 4 + 3;
-		assertEquals(1, GlobalIllumination.fromHalf(s.texels.get(t)), 0);
+		assertEquals(1, Half.fromHalf(s.texels.get(t)), 0);
 	}
 
 	@Test
@@ -187,7 +187,7 @@ public class SkyGridTest
 		SkyGrid s = traced(house(), houseWalls());
 		float inside = value(s, 52, 52, 0, 0, 0, UP);
 		// the next region: the same house 8 tiles west and south in the new base's coordinates
-		GiGrid g = flat();
+		VoxelGrid g = flat();
 		s.setGrid(g, new int[1][SkyGrid.CORNERS][SkyGrid.CORNERS], 0, 8, 8, false, null);
 		assertEquals(inside, value(s, 44, 44, 0, 0, 0, UP), 0);
 		// what came in at the far edge is open sky until traced
@@ -201,7 +201,7 @@ public class SkyGridTest
 	public void changedVoxelsTraceAgainAroundThem()
 	{
 		SkyGrid s = traced(house(), houseWalls());
-		GiGrid g = house();
+		VoxelGrid g = house();
 		// the door gets a roof over the porch
 		box(g, 96, 92, 109, 99, 256, 320);
 		s.setGrid(g, new int[1][SkyGrid.CORNERS][SkyGrid.CORNERS], 0, 0, 0, false, null);
@@ -234,7 +234,7 @@ public class SkyGridTest
 	{
 		// a busy scene: houses of random size every few tiles, trees, hills
 		Random r = new Random(7);
-		GiGrid g = new GiGrid(N, 24, N, -20);
+		VoxelGrid g = new VoxelGrid(N, 24, N, -20);
 		for (int z = 0; z < N; ++z)
 		{
 			for (int x = 0; x < N; ++x)

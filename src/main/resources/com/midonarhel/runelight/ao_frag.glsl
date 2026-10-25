@@ -8,7 +8,6 @@
 #include "halfres.glsl"
 #include "ign.glsl"
 #include "shadow_pcss.glsl"
-#include "gi.glsl"
 #include "weather_ground_ao.glsl"
 #include "skylight_ao.glsl"
 #include "water_common.glsl"
@@ -22,7 +21,7 @@ uniform usampler2D waterAoSurface;  // the water surface pass's target (water_fr
 uniform int waterAoOn;
 uniform ivec4 waterAoRect;  // the pixels the surface can cover (water.glsl's waterRect)
 
-layout(location = 0) out vec4 FragAo;  // the geometry, see halfres.glsl
+layout(location = 0) out vec2 FragAo;  // the geometry, see halfres.glsl
 layout(location = 1) out vec4 FragShadow;  // r: lit share, 1 unshadowed; g AO, 1 unoccluded; b snow and
                                            // puddles (weather_ground_ao.glsl); a sky visibility (skylight_ao.glsl)
 // sine of the minimum angle above the surface for an occluder to count; higher ignores more of the shallow folds
@@ -39,7 +38,7 @@ void main() {
   ivec2 px = halfToFull(ivec2(gl_FragCoord.xy));
   float d = texelFetch(sceneDepth, px, 0).r;
   if (isSky(d)) {
-    FragAo = halfPackGeometry(0.0, vec3(0.0, 0.0, 1.0), vec3(0.0), 0.0);
+    FragAo = halfPackGeometry(0.0, vec3(0.0, 0.0, 1.0));
     FragShadow = vec4(1.0, 1.0, 0.0, 1.0);
     return;
   }
@@ -47,7 +46,7 @@ void main() {
   // by each of their samples (composite_frag.glsl)
   vec3 n = decodeNormal(texelFetch(sceneNormal, px, 0).rgb);
   float nearOverDepth = NEAR / viewDepth(d);
-  FragAo = halfPackGeometry(nearOverDepth, n, vec3(0.0), 0.0);
+  FragAo = halfPackGeometry(nearOverDepth, n);
   FragShadow = vec4(1.0, 1.0, 0.0, 1.0);
   if (!inViewport(px)) {
     return;
@@ -55,8 +54,6 @@ void main() {
 
   vec3 p = reconstructPosition(vec2(px) + 0.5, d);
   FragShadow.b = weatherGroundAo(p, n);
-  vec4 gi = giEnabled == 1 ? giIrradiance(p, n) : vec4(0.0);
-  FragAo = halfPackGeometry(nearOverDepth, n, gi.rgb, gi.a);
   float noise = ign(gl_FragCoord.xy);
   FragShadow.a = skylightVisibility(p, n);
   if (shadowsEnabled == 1) {

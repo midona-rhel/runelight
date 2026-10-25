@@ -66,7 +66,7 @@ class SceneTargets
 	private static final float[] FAR_DEPTH = {0};
 	private final float[] clearColor = {0, 0, 0, 0};
 
-	// the AO pass's geometry and global illumination at half resolution (halfres.glsl), for the upsamples
+	// the AO pass's geometry at half resolution (halfres.glsl), for the upsamples
 	private int fboAo, texAo;
 	// sun and moon shadows, AO, the weather's ground and sky visibility at half resolution: drawn by the AO pass into
 	// texShadowRaw, smoothed by the denoise (denoise) into texShadow and upsampled depth-aware in the composite pass
@@ -130,9 +130,9 @@ class SceneTargets
 		aoHeight = (int) Math.ceil(height / (double) halfRatio);
 		texAo = glGenTextures();
 		glBindTexture(GL_TEXTURE_2D, texAo);
-		// the global illumination plus the half resolution depth and normal the composite's upsamples read; 32 bit
-		// floats, which halfres.glsl packs whole numbers into
-		glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA32F, aoWidth, aoHeight, 0, GL_RGBA, GL_FLOAT, 0);
+		// the half resolution depth and normal the composite's upsamples read; 32 bit floats, which halfres.glsl packs
+		// whole numbers into
+		glTexImage2D(GL_TEXTURE_2D, 0, GL_RG32F, aoWidth, aoHeight, 0, GL_RG, GL_FLOAT, 0);
 		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
 		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
 		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);

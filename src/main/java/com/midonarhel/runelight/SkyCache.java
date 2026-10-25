@@ -337,18 +337,12 @@ class SkyCache
 		glUniform1f(u.stars, stars);
 	}
 
-	// finished captures, for the global illumination, which relights with the sky
+	// finished captures, for the hitch monitor
 	private int captures;
 
 	int getCaptures()
 	{
 		return captures;
-	}
-
-	/** How much of the sky light comes from the cache, as the composite last used it. */
-	float getLightWeight()
-	{
-		return shown >= 0 ? weight : 0;
 	}
 
 	/** Linear ease of the cache weight toward target over WEIGHT_SECONDS. */

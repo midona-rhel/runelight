@@ -20,7 +20,7 @@ final class LookMonitor
 		"fogColorR", "fogColorG", "fogColorB", "fogColorWeight", "fogDepth", "haze",
 		"weatherFog", "weatherFogHeight", "weatherAreaFog", "weatherDistanceFog", "skyHaze",
 		"overcast", "snowiness", "weatherSun", "weatherHaze", "weatherWarmth", "weatherSaturation",
-		"fogTintR", "fogTintG", "fogTintB", "wetness", "snowCover", "giWeight", "pointLights"
+		"fogTintR", "fogTintG", "fogTintB", "wetness", "snowCover", "pointLights"
 	};
 	// a jump bigger than this in one frame is logged; most values are 0..1
 	private static final float DEFAULT_THRESHOLD = 0.03f;
@@ -58,7 +58,7 @@ final class LookMonitor
 	 *
 	 * @param world focal world tile (x, y, plane), -1 when unknown
 	 */
-	void frame(EnvironmentUniforms env, Weather weather, GlobalIllumination gi, int pointLights, int[] world,
+	void frame(EnvironmentUniforms env, Weather weather, int pointLights, int[] world,
 		String biome)
 	{
 		float[] v = now;
@@ -78,7 +78,6 @@ final class LookMonitor
 		i += 3;
 		v[i++] = weather.getWetness();
 		v[i++] = weather.getSnowCover();
-		v[i++] = gi.shownWeight();
 		v[i] = pointLights;
 
 		if (primed)

@@ -25,8 +25,8 @@ class CpuTimer
 	static final int BUFFER_MAP = 10;
 	// sending the light and cluster tables to the GPU (part of light clusters before)
 	static final int LIGHT_UPLOAD = 11;
-	// global illumination's build submit, readback poll and upload; the sky capture; the occlusion map redraws
-	static final int GI = 12;
+	// the voxel build's submit; the sky capture; the occlusion map redraws
+	static final int VOXELS = 12;
 	static final int SKY_CACHE = 13;
 	static final int OCCLUSION = 14;
 	// handing the skylight's grid its next rays and uploading what it traced (the tracing is on its worker)
@@ -36,7 +36,7 @@ class CpuTimer
 	static final String[] NAMES = {
 		"client scene", "environment", "weather", "light collection", "light clusters", "shadow submit",
 		"UI upload", "swap wait", "outside frame", "client UI + overlays",
-		"buffer map", "light upload", "global illumination", "sky capture", "occlusion maps", "sky grid"
+		"buffer map", "light upload", "scene voxels", "sky capture", "occlusion maps", "sky grid"
 	};
 
 	private final long[] start = new long[STAGES];

@@ -108,10 +108,10 @@ final class SkyProbeOverlay extends Overlay
 					if (half != hx && half != hz) continue;
 					int index = (((level+1)*sky.textureHeight+2*tz+dz)*sky.textureWidth
 						+ (half*4+2)*sky.size+2*tx+dx)*4;
-					if (GlobalIllumination.fromHalf(sky.texels.get(index-2*sky.size*4)) < 0) continue;
-					float x = cx*sky.spacing + GlobalIllumination.fromHalf(sky.texels.get(index+1));
-					float y = GlobalIllumination.fromHalf(sky.texels.get(index+2));
-					float z = cz*sky.spacing + GlobalIllumination.fromHalf(sky.texels.get(index+3));
+					if (Half.fromHalf(sky.texels.get(index-2*sky.size*4)) < 0) continue;
+					float x = cx*sky.spacing + Half.fromHalf(sky.texels.get(index+1));
+					float y = Half.fromHalf(sky.texels.get(index+2));
+					float z = cz*sky.spacing + Half.fromHalf(sky.texels.get(index+3));
 					if ((x-localX)*(x-localX)+(z-localZ)*(z-localZ) > 1280*1280) continue;
 					long key = ((long)Math.round(x*16) << 40)
 						| ((long)(Math.round(y*16)&0xfffff) << 20) | (Math.round(z*16)&0xfffff);
