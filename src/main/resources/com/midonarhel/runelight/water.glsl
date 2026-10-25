@@ -70,6 +70,9 @@ layout(location = 1) out uvec4 WaterShadedOut;
 // How big the sun is in the water, as a multiple of its true size: the glints show over that much wider an area around
 // the sun's mirror point. Slopes and lobe grow together, so each glint keeps its size, and its peak its brightness.
 #define GLINT_SUN_SIZE 3.0
+// how much of the normal's change across a pixel widens a glint's lobe (a share of the squared change: the lobe's
+// variance grows by the slope's spread over the pixel)
+#define GLITTER_FOOTPRINT 0.25
 #define MOON_SPECULAR 0.35
 // lamps: their streak's width along and across, strength, and the most one adds (linear)
 #define LAMP_ALONG 0.03
@@ -372,7 +375,7 @@ void waterShadeHalf(ivec2 hpx) {
   }
 
   // ---- highlights: a faint sheen from the sun or moon, lamp streaks (the sharp glints are the full resolution
-  // blend's, waterGlitter: at half resolution each was a block)
+  // blend's, waterGlitter)
   vec3 spec = min(lampSpec * LAMP_SPECULAR, vec3(LAMP_MAX));
   if (outdoors == 1 && lightOn) {
     vec3 h = normalize(casterDir + toCamera);
@@ -392,39 +395,46 @@ void waterShadeHalf(ivec2 hpx) {
   WaterShadedOut = waterPackShaded(surface, covered, spec);
 }
 
-// How much a facet with normal nrm glints toward the camera (-v): it catches the sun where its slope is within
-// GLITTER_ROUGH of the half vector's. The slopes taken GLINT_SUN_SIZE times as large reach that from GLINT_SUN_SIZE
-// times farther from the mirror point, and the lobe as wide keeps the slope band, so the glint, as small as before;
-// its Ward norm 1/(along*across) is squared back.
-float waterGlitterAt(vec3 nrm, vec3 v, vec3 tAlong, vec3 tAcross) {
-  vec3 steep = normalize(vec3(nrm.x * GLITTER_SLOPE * GLINT_SUN_SIZE, nrm.y, nrm.z * GLITTER_SLOPE * GLINT_SUN_SIZE));
-  float rough = GLITTER_ROUGH * GLINT_SUN_SIZE;
-  return waterGlint(steep, casterDir, -v, tAlong, tAcross, rough * 1.6, rough);
+// A facet's normal taken GLITTER_SLOPE * GLINT_SUN_SIZE times as steep: the slopes that large reach the sun's
+// mirror condition from GLINT_SUN_SIZE times farther from the mirror point, so the glints spread over that much more
+// of the water, each as small as before (waterGlitter widens the lobe as much and squares its Ward norm back).
+vec3 waterGlitterNormal(vec3 nrm) {
+  return normalize(vec3(nrm.x * GLITTER_SLOPE * GLINT_SUN_SIZE, nrm.y, nrm.z * GLITTER_SLOPE * GLINT_SUN_SIZE));
 }
 
-// The sharp glints of the sun or moon on the surface at full resolution (at half resolution each was a block): v the
-// view direction, shadow the sun's. The pixel's glint is averaged with its four neighbours' (half and an eighth each):
-// a facet's glint is about a pixel, and alone the sparkle broke up into specks.
+// The normal the water pass left at pixel q, or none (y = 0) where there is no water
+vec3 waterNormalAt(ivec2 q) {
+  uvec4 ws = waterSurfaceAt(waterSurface, waterRect, q);
+  if (ws.b == 0u)
+    return vec3(0.0);
+  uint a = ws.r | ws.g << 16;
+  float nx = float(a & 511u) / 511.0 * 2.0 - 1.0;
+  float nz = float(a >> 9 & 511u) / 511.0 * 2.0 - 1.0;
+  return vec3(nx, -sqrt(max(1.0 - nx * nx - nz * nz, 0.0)), nz);
+}
+
+// The sharp glints of the sun or moon on the surface at full resolution: v the view direction, shadow the sun's. A
+// glint is a facet catching the sun, often smaller than a pixel: the lobe is widened by how much the (steepened)
+// normal changes across the pixel, from its neighbours to the right and below, so the pixel shows the glint averaged
+// over its footprint. Where the waves are fine against the pixels (far off, or at a low render scale) the glints are
+// softer and dimmer instead of aliasing into specks or blocks; up close they stay pinpoints.
 vec3 waterGlitter(ivec2 px, vec3 nrm, vec3 v, float shine, float foam, float shadow) {
   if (outdoors == 0 || lightingEnabled == 0)
     return vec3(0.0);
   vec2 fwd = v.xz * inversesqrt(max(dot(v.xz, v.xz), 1e-6));
   vec3 tAlong = vec3(fwd.x, 0.0, fwd.y), tAcross = vec3(-fwd.y, 0.0, fwd.x);
-  float glitter = 0.5 * waterGlitterAt(nrm, v, tAlong, tAcross);
-  float w = 0.5;
+  vec3 steep = waterGlitterNormal(nrm);
   ivec2 last = sceneTextureSize() - 1;
-  for (int i = 0; i < 4; ++i) {
-    ivec2 q = clamp(px + ivec2(i == 0 ? 1 : i == 1 ? -1 : 0, i == 2 ? 1 : i == 3 ? -1 : 0), ivec2(0), last);
-    uvec4 ws = waterSurfaceAt(waterSurface, waterRect, q);
-    if (ws.b == 0u)
-      continue;
-    uint a = ws.r | ws.g << 16;
-    float nx = float(a & 511u) / 511.0 * 2.0 - 1.0;
-    float nz = float(a >> 9 & 511u) / 511.0 * 2.0 - 1.0;
-    glitter += 0.125 * waterGlitterAt(vec3(nx, -sqrt(max(1.0 - nx * nx - nz * nz, 0.0)), nz), v, tAlong, tAcross);
-    w += 0.125;
-  }
-  glitter *= GLITTER * GLINT_SUN_SIZE * GLINT_SUN_SIZE / w;
+  vec3 nx = waterNormalAt(min(px + ivec2(1, 0), last));
+  vec3 ny = waterNormalAt(min(px + ivec2(0, 1), last));
+  // the slope's change over the pixel, squared; a neighbour off the water counts as no change
+  vec3 dx = nx.y != 0.0 ? waterGlitterNormal(nx) - steep : vec3(0.0);
+  vec3 dy = ny.y != 0.0 ? waterGlitterNormal(ny) - steep : vec3(0.0);
+  float footprint = (dot(dx, dx) + dot(dy, dy)) * GLITTER_FOOTPRINT;
+  float rough = GLITTER_ROUGH * GLINT_SUN_SIZE;
+  float along = sqrt(rough * rough * 2.56 + footprint), across = sqrt(rough * rough + footprint);
+  float glitter = waterGlint(steep, casterDir, -v, tAlong, tAcross, along, across);
+  glitter *= GLITTER * GLINT_SUN_SIZE * GLINT_SUN_SIZE;
   vec3 caster = (sunIsCaster == 1 ? sunLight(sunAltitude) : moonLight(sunAltitude)) * envSun;
   return caster * (glitter * shadow * shine * (1.0 - foam) * (sunIsCaster == 1 ? 1.0 : MOON_SPECULAR));
 }
