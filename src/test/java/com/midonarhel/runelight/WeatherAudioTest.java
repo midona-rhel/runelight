@@ -10,15 +10,16 @@ public class WeatherAudioTest
 	private static AudioMixer mixer() throws Exception
 	{
 		float[][] thunder = {WeatherAudio.load("thunder1.wav"), WeatherAudio.load("thunder2.wav"), WeatherAudio.load("thunder3.wav")};
-		return new AudioMixer(WeatherAudio.load("rain.wav"), thunder);
+		return new AudioMixer(WeatherAudio.load("rain_light.wav"), WeatherAudio.load("rain.wav"), thunder);
 	}
 
-	/** A mixer with a rain loop of constant samples (0.4) to read the levels off. */
+	/** A mixer with rain loops of constant samples (light 0.4, heavy 0.2) to read the levels off. */
 	private static AudioMixer flat()
 	{
-		float[] rain = new float[1000];
-		java.util.Arrays.fill(rain, 0.4f);
-		return new AudioMixer(rain, new float[][]{new float[RATE]});
+		float[] light = new float[1000], heavy = new float[1000];
+		java.util.Arrays.fill(light, 0.4f);
+		java.util.Arrays.fill(heavy, 0.2f);
+		return new AudioMixer(light, heavy, new float[][]{new float[RATE]});
 	}
 
 	private static float[] noise(int length, long seed)
@@ -57,10 +58,13 @@ public class WeatherAudioTest
 	@Test
 	public void bundledSoundsLoad() throws Exception
 	{
-		float[] rain = WeatherAudio.load("rain.wav");
-		// a few seconds long
+		float[] rain = WeatherAudio.load("rain.wav"), light = WeatherAudio.load("rain_light.wav");
+		// a few seconds long, and the same length so that the two stay in step
 		assertTrue(rain.length >= 5 * RATE && rain.length <= 15 * RATE);
-		for (String name : new String[]{"rain.wav", "thunder1.wav", "thunder2.wav", "thunder3.wav"})
+		assertEquals(rain.length, light.length);
+		// the light rain is the quieter
+		assertTrue(energy(light, 0, light.length) < 0.5f * energy(rain, 0, rain.length));
+		for (String name : new String[]{"rain.wav", "rain_light.wav", "thunder1.wav", "thunder2.wav", "thunder3.wav"})
 		{
 			float[] x = WeatherAudio.load(name);
 			float peak = 0;
@@ -68,28 +72,56 @@ public class WeatherAudioTest
 			{
 				peak = Math.max(peak, Math.abs(v));
 			}
-			assertTrue(name + " peak " + peak, peak > 0.2f && peak < 1);
+			assertTrue(name + " peak " + peak, peak > (name.startsWith("rain") ? 0.02f : 0.2f) && peak < 1);
 		}
 	}
 
-	/** Steady rain: no 100 ms of the loop stands out of the rest (a drop from a roof, a wiper, a voice), and it loops without a step. */
+	/** Steady rain: no 100 ms of a loop stands out of the rest (a drop from a roof, a wiper, a voice), and it loops without a step. */
 	@Test
-	public void rainLoopIsSteady() throws Exception
+	public void rainLoopsAreSteady() throws Exception
 	{
-		float[] rain = WeatherAudio.load("rain.wav");
-		int block = RATE / 10, n = rain.length / block;
-		float[] levels = new float[n];
-		for (int k = 0; k < n; ++k)
+		for (String name : new String[]{"rain.wav", "rain_light.wav"})
 		{
-			levels[k] = (float) Math.sqrt(energy(rain, k * block, (k + 1) * block) / block);
+			float[] rain = WeatherAudio.load(name);
+			int block = RATE / 10, n = rain.length / block;
+			float[] levels = new float[n];
+			for (int k = 0; k < n; ++k)
+			{
+				levels[k] = (float) Math.sqrt(energy(rain, k * block, (k + 1) * block) / block);
+			}
+			float[] sorted = levels.clone();
+			java.util.Arrays.sort(sorted);
+			float median = sorted[n / 2];
+			assertTrue(name + " loudest " + sorted[n - 1] + " median " + median, sorted[n - 1] < 1.3f * median && sorted[0] > 0.75f * median);
+			// the seam is a step like any between neighbouring samples of the noise
+			float step = Math.abs(rain[0] - rain[rain.length - 1]);
+			assertTrue(name + " seam " + step, step < 4 * median);
 		}
-		float[] sorted = levels.clone();
-		java.util.Arrays.sort(sorted);
-		float median = sorted[n / 2];
-		assertTrue("loudest " + sorted[n - 1] + " median " + median, sorted[n - 1] < 1.5f * median && sorted[0] > 0.6f * median);
-		// the seam is no louder a step than the samples next to it
-		float step = Math.abs(rain[0] - rain[rain.length - 1]);
-		assertTrue("seam " + step, step < 0.5f);
+	}
+
+	@Test
+	public void rainBlendsFromLightToHeavy()
+	{
+		// light only up to LIGHT_UNTIL, heavy only from HEAVY_FROM, the same power all the way between
+		assertEquals(1, AudioMixer.lightShare(0), 1e-6f);
+		assertEquals(1, AudioMixer.lightShare(AudioMixer.LIGHT_UNTIL), 1e-6f);
+		assertEquals(0, AudioMixer.heavyShare(AudioMixer.LIGHT_UNTIL), 1e-6f);
+		assertEquals(1, AudioMixer.heavyShare(AudioMixer.HEAVY_FROM), 1e-6f);
+		assertEquals(0, AudioMixer.lightShare(1), 1e-6f);
+		float last = 0;
+		for (float h = 0; h <= 1; h += 0.05f)
+		{
+			float l = AudioMixer.lightShare(h), v = AudioMixer.heavyShare(h);
+			assertEquals(1, l * l + v * v, 1e-5f);
+			assertTrue(v >= last);
+			last = v;
+		}
+		// through the mixer: light's 0.4 at a low loudness, heavy's 0.2 at the top, both at half the level
+		AudioMixer m = flat();
+		m.setTargets(0.5f, 0.2f, 0, 1);
+		assertEquals(0.2f, render(m, 3 * RATE)[3 * RATE - 1], 0.005f);
+		m.setTargets(0.5f, 1, 0, 1);
+		assertEquals(0.1f, render(m, 3 * RATE)[3 * RATE - 1], 0.005f);
 	}
 
 	@Test
@@ -97,7 +129,7 @@ public class WeatherAudioTest
 	{
 		float open = AudioMixer.rainCutoff(0), shut = AudioMixer.rainCutoff(1);
 		assertTrue(open > 10000);
-		assertEquals(1000, shut, 1);
+		assertEquals(2000, shut, 1);
 		float last = open;
 		for (float indoor = 0.1f; indoor <= 1; indoor += 0.1f)
 		{
@@ -108,14 +140,14 @@ public class WeatherAudioTest
 	}
 
 	@Test
-	public void rainIsMuffledAndQuieterIndoors()
+	public void rainIsMuffledAndMadeUpIndoors() throws Exception
 	{
-		float[] loop = noise(RATE, 3);
+		float[] loop = WeatherAudio.load("rain.wav");
 		float[][] seen = new float[2][];
 		for (int indoors = 0; indoors < 2; ++indoors)
 		{
-			AudioMixer m = new AudioMixer(loop, new float[][]{new float[RATE]});
-			m.setTargets(0.5f, indoors, 1);
+			AudioMixer m = new AudioMixer(loop, loop, new float[][]{new float[RATE]});
+			m.setTargets(0.5f, 1, indoors, 1);
 			render(m, 4 * RATE);
 			seen[indoors] = render(m, RATE);
 		}
@@ -126,18 +158,20 @@ public class WeatherAudioTest
 			outdoorsHigh += (seen[0][i] - seen[0][i - 1]) * (seen[0][i] - seen[0][i - 1]);
 			indoorsHigh += (seen[1][i] - seen[1][i - 1]) * (seen[1][i] - seen[1][i - 1]);
 		}
-		// quieter, and far duller: most of the hiss above the cutoff is gone
-		assertTrue(indoorsEnergy < 0.3f * outdoorsEnergy);
-		assertTrue(indoorsHigh / indoorsEnergy < 0.3f * outdoorsHigh / outdoorsEnergy);
+		// about 60% as loud (the low-pass takes most of the energy, the makeup gain gives some back), and far duller:
+		// most of the hiss above the cutoff is gone
+		float loudness = (float) Math.sqrt(indoorsEnergy / outdoorsEnergy);
+		assertTrue("indoors " + loudness, loudness > 0.5f && loudness < 0.7f);
+		assertTrue(indoorsHigh / indoorsEnergy < 0.5f * outdoorsHigh / outdoorsEnergy);
 	}
 
 	@Test
 	public void rainFollowsItsTargetsSmoothly()
 	{
 		AudioMixer m = flat();
-		m.setTargets(0.5f, 0, 1);
+		m.setTargets(0.5f, 0, 0, 1);
 		float[] out = render(m, 3 * RATE);
-		// outdoors at 0.5: the loop's 0.4 times the level, once it has settled
+		// outdoors at 0.5: the light loop's 0.4 times the level, once it has settled
 		assertEquals(0.2f, out[out.length - 1], 0.005f);
 		// it came up without a jump
 		float jump = 0;
@@ -146,10 +180,10 @@ public class WeatherAudioTest
 			jump = Math.max(jump, Math.abs(out[i] - out[i - 1]));
 		}
 		assertTrue("jump " + jump, jump < 0.001f);
-		// indoors a steady level passes the low-pass but is a little quieter: 0.8 of it
-		m.setTargets(0.5f, 1, 1);
+		// indoors a steady level passes the low-pass and gets the makeup gain: 1.8 of it
+		m.setTargets(0.5f, 0, 1, 1);
 		out = render(m, 4 * RATE);
-		assertEquals(0.16f, out[out.length - 1], 0.005f);
+		assertEquals(0.36f, out[out.length - 1], 0.005f);
 	}
 
 	@Test
@@ -238,8 +272,8 @@ public class WeatherAudioTest
 		float[] energies = new float[3];
 		for (int case_ = 0; case_ < 3; ++case_)
 		{
-			AudioMixer m = new AudioMixer(new float[10], new float[][]{noise});
-			m.setTargets(0, case_ == 2 ? 1 : 0, 1);
+			AudioMixer m = new AudioMixer(new float[10], new float[10], new float[][]{noise});
+			m.setTargets(0, 0, case_ == 2 ? 1 : 0, 1);
 			// let the master and the indoor mix settle first
 			render(m, RATE);
 			m.thunder(0, 0.8f, case_ == 1 ? 700 : 9500, 1);
@@ -256,8 +290,8 @@ public class WeatherAudioTest
 		assertTrue(energies[1] < 0.1f * energies[0]);
 		assertTrue(energies[2] < 0.1f * energies[0]);
 		// and it is over: the mixer goes quiet
-		AudioMixer m = new AudioMixer(new float[10], new float[][]{noise});
-		m.setTargets(0, 0, 1);
+		AudioMixer m = new AudioMixer(new float[10], new float[10], new float[][]{noise});
+		m.setTargets(0, 0, 0, 1);
 		m.thunder(0, 1, 9500, 1);
 		render(m, 2 * RATE);
 		assertFalse(m.audible());
@@ -267,7 +301,7 @@ public class WeatherAudioTest
 	public void manyClapsAreCapped() throws Exception
 	{
 		AudioMixer m = mixer();
-		m.setTargets(0, 0, 1);
+		m.setTargets(0, 0, 0, 1);
 		for (int i = 0; i < 20; ++i)
 		{
 			m.thunder(i, 1, 9500, 1);
@@ -284,10 +318,10 @@ public class WeatherAudioTest
 	{
 		AudioMixer m = flat();
 		assertFalse(m.audible());
-		m.setTargets(0.3f, 0, 1);
+		m.setTargets(0.3f, 0.3f, 0, 1);
 		assertTrue(m.audible());
 		render(m, RATE);
-		m.setTargets(0, 0, 1);
+		m.setTargets(0, 0, 0, 1);
 		render(m, 4 * RATE);
 		assertFalse(m.audible());
 		float[] out = render(m, 512);

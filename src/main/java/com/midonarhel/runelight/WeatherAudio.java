@@ -13,8 +13,9 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 /**
- * The weather's sounds: a rain loop whose level follows how hard it rains around the player, and a clap of thunder
- * with every lightning strike, the moment its flash begins; both are muffled inside buildings. No wind.
+ * The weather's sounds: rain, a light loop at first and a heavy one as it builds, whose level follows how hard it
+ * rains around the player, and a clap of thunder with every lightning strike, the moment its flash begins; both are
+ * muffled inside buildings. No wind.
  *
  * One thread mixes (AudioMixer) into one SourceDataLine, opened when there is something to hear and closed after a
  * quiet spell, so the client thread only sets a few numbers and never waits on the device. The sounds are CC0
@@ -63,7 +64,7 @@ final class WeatherAudio
 	{
 		try
 		{
-			mixer = new AudioMixer(load("rain.wav"), loadThunders());
+			mixer = new AudioMixer(load("rain_light.wav"), load("rain.wav"), loadThunders());
 		}
 		catch (IOException | RuntimeException | javax.sound.sampled.UnsupportedAudioFileException e)
 		{
@@ -122,7 +123,7 @@ final class WeatherAudio
 			return;
 		}
 		float rain = rainGain(loudness);
-		mixer.setTargets(rain, indoors ? 1 : 0, volume);
+		mixer.setTargets(rain, loudness, indoors ? 1 : 0, volume);
 		if (rain > 0 && volume > 0)
 		{
 			start();

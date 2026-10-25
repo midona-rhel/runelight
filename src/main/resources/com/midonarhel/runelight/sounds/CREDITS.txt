@@ -1,12 +1,11 @@
-Weather sounds. All four recordings are CC0 1.0 (public domain, https://creativecommons.org/publicdomain/zero/1.0/).
-They were made into the files here by tools/make_weather_sounds.py (mono, 22.05 kHz, 16 bit; the rain looped, the
-thunder trimmed and faded). The player muffles the rain and the thunder indoors as it mixes (AudioMixer).
+Weather sounds. All recordings are CC0 1.0 (public domain, https://creativecommons.org/publicdomain/zero/1.0/).
+They were made into the files here by tools/make_weather_sounds.py (mono, 22.05 kHz, 16 bit). The player muffles the
+rain and the thunder indoors as it mixes (AudioMixer).
 
-rain.wav
-  "Rain heavy 1 (rural)" by jmbphilmes, https://freesound.org/people/jmbphilmes/sounds/200270/ (CC0)
-  Taken from grinich/rainbar, Resources/Audio/HeavyRuralRain.mp3 (the Freesound preview, 400 s), whose
-  Resources/AudioCredits.txt names the creator, the source and the licence CC0 (checked 2026-10-25). The loop is the
-  steady 10 s cut from 174.5 s of it.
+rain.wav, rain_light.wav
+  "Rain 1" by DledeSOUND, https://freesound.org/people/DledeSOUND/sounds/875651/ (CC0, licence read from the Freesound
+  page; the 185 kbps preview MP3 was used). The light loop is the source pitched down and cut at 3.5 kHz, layered; the
+  heavy one is a spectral wash of the source layered many times and compressed.
 
 thunder1.wav  "Thunder Clap2" by roboroo, https://freesound.org/people/roboroo/sounds/436794/ (CC0-1.0)
 thunder2.wav  "Thunder 1 (No Reverb)" by Terry93D, https://freesound.org/people/Terry93D/sounds/327986/ (CC0-1.0)
