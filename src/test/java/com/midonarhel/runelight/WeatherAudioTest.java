@@ -249,8 +249,8 @@ public class WeatherAudioTest
 		assertTrue(near[0] > mid[0] && mid[0] > far[0]);
 		assertTrue(near[1] > mid[1] && mid[1] > far[1]);
 		assertTrue(near[2] > far[2]);
-		assertEquals(1, near[0], 1e-5f);
-		assertEquals(9500, near[1], 1);
+		assertEquals(0.45f, near[0], 1e-5f);
+		assertEquals(2500, near[1], 1);
 		assertEquals(700, far[1], 1);
 		// closer than the nearest strike is the same as the nearest, farther the same as the farthest
 		assertArrayEquals(near, WeatherAudio.thunderShape(0, 1), 1e-5f);

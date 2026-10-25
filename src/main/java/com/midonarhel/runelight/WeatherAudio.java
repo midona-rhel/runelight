@@ -45,11 +45,13 @@ final class WeatherAudio
 	static final float RAIN_REACH = 6400;
 	static final float DISTANT_RAIN = 0.8f;
 	// thunder: strikes come down this far from the player, world units, and are loudest and brightest at the near end;
-	// the level at the far end, and the cutoff (Hz) of its low-pass at either end
+	// the level at the near and the far end, and the cutoff (Hz) of its low-pass at either end. Even the nearest is a
+	// distant rumble, not a crack overhead: a close clap at full level was far too loud
 	static final float NEAR_STRIKE = 2000;
 	static final float FAR_STRIKE = 10000;
-	private static final float FAR_THUNDER_GAIN = 0.3f;
-	private static final float NEAR_CUTOFF = 9500;
+	private static final float NEAR_THUNDER_GAIN = 0.45f;
+	private static final float FAR_THUNDER_GAIN = 0.25f;
+	private static final float NEAR_CUTOFF = 2500;
 	private static final float FAR_CUTOFF = 700;
 	// how much slower far thunder plays, and the random spread of every clap's pitch and level
 	private static final float FAR_PITCH = 0.9f;
@@ -291,7 +293,7 @@ final class WeatherAudio
 	{
 		float x = Math.max(0, Math.min(1, (distance - NEAR_STRIKE) / (FAR_STRIKE - NEAR_STRIKE)));
 		float near = 1 - x * x * (3 - 2 * x);
-		float gain = (FAR_THUNDER_GAIN + (1 - FAR_THUNDER_GAIN) * near) * Math.max(0, Math.min(1, strength));
+		float gain = (FAR_THUNDER_GAIN + (NEAR_THUNDER_GAIN - FAR_THUNDER_GAIN) * near) * Math.max(0, Math.min(1, strength));
 		float cutoff = FAR_CUTOFF * (float) Math.pow(NEAR_CUTOFF / FAR_CUTOFF, near);
 		float pitch = FAR_PITCH + (1 - FAR_PITCH) * near;
 		return new float[]{gain, cutoff, pitch};

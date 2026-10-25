@@ -70,6 +70,9 @@ layout(location = 1) out uvec4 WaterShadedOut;
 // How big the sun is in the water, as a multiple of its true size: the glints show over that much wider an area around
 // the sun's mirror point. Slopes and lobe grow together, so each glint keeps its size, and its peak its brightness.
 #define GLINT_SUN_SIZE 3.0
+// The sun's mirror image on the water needs the sun's disc: under cloud it is spread over the whole sky, so the glints
+// and the sheen fade out as the overcast closes, from the first cover to the second
+#define GLINT_OVERCAST vec2(0.15, 0.6)
 // how much of the normal's change across a pixel widens a glint's lobe (a share of the squared change: the lobe's
 // variance grows by the slope's spread over the pixel)
 #define GLITTER_FOOTPRINT 0.25
@@ -380,7 +383,8 @@ void waterShadeHalf(ivec2 hpx) {
   if (outdoors == 1 && lightOn) {
     vec3 h = normalize(casterDir + toCamera);
     float sheen = pow(max(dot(nrm, h), 0.0), SHEEN_GLOSS) * (SHEEN_GLOSS + 8.0) / 25.0 * SHEEN * fresnel;
-    spec += caster * (sheen * shadow * look.z * (1.0 - foam) * (sunIsCaster == 1 ? 1.0 : MOON_SPECULAR));
+    spec += caster * (sheen * shadow * look.z * (1.0 - foam) * (sunIsCaster == 1 ? 1.0 : MOON_SPECULAR)
+      * (1.0 - smoothstep(GLINT_OVERCAST.x, GLINT_OVERCAST.y, weatherOvercast.x)));
   }
 
   // the surface (117 HD): its own color lit, mostly the sky's reflection; foam over it, folded in as waterOver would
@@ -436,7 +440,8 @@ vec3 waterGlitter(ivec2 px, vec3 nrm, vec3 v, float shine, float foam, float sha
   float glitter = waterGlint(steep, casterDir, -v, tAlong, tAcross, along, across);
   glitter *= GLITTER * GLINT_SUN_SIZE * GLINT_SUN_SIZE;
   vec3 caster = strikeSun(sunIsCaster == 1 ? sunLight(sunAltitude) : moonLight(sunAltitude)) * envSun;
-  return caster * (glitter * shadow * shine * (1.0 - foam) * (sunIsCaster == 1 ? 1.0 : MOON_SPECULAR));
+  return caster * (glitter * shadow * shine * (1.0 - foam) * (sunIsCaster == 1 ? 1.0 : MOON_SPECULAR)
+    * (1.0 - smoothstep(GLINT_OVERCAST.x, GLINT_OVERCAST.y, weatherOvercast.x)));
 }
 
 // ---------------------------------------------------------------------------------------------------------------
