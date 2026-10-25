@@ -42,13 +42,13 @@ uniform vec4 skyFieldMap;
 // what a corner behind the surface still counts for, against 1 for one well in front: only enough that a pixel with
 // every corner behind it still has a value
 #define SKY_BEHIND 0.02
-// An upward face at the top of the scenery over its tile (a roof, a wall's top, a flat roof inside its parapet: within
-// SKY_TOP_SLACK of the highest traced point, fading out over as much again) is out of doors, whatever storey's room
-// lies under it. A storey's ceiling is higher than twice this over its floor.
-#define SKY_TOP_SLACK 96.0
-// world units above a storey's floor over which a face goes from the room to the roof over it (a storey's walls are
-// about 240 high)
-#define SKY_ROOF_ABOVE vec2(190.0, 240.0)
+// An upward face on the top of the scenery over its tile (a roof, a wall's top, a flat roof inside its parapet) is out
+// of doors, whatever storey's room lies under it: it is within SKY_TOP_SLACK world units of the highest surface found
+// over its tile (SkyGrid.topAt: exact heights, blended between the tile's corners like the values), and the fade to
+// indoors takes SKY_TOP_FADE more. What stands under the roof is below that: a ladder's top rung, a ledge or a
+// beam, however near the ceiling it is.
+#define SKY_TOP_SLACK 8.0
+#define SKY_TOP_FADE 16.0
 
 // Read one height without crossing a tile's wall. Diagonal halves have their own three actual corners. A corner counts
 // by how far its traced point lies in front of the surface (w, grid coordinates, along n): one behind the surface or
@@ -160,30 +160,10 @@ float skyGridVisibility(sampler3D grid, float scale, vec3 w, vec3 n) {
   // normal offset already selects the exposed side. Do not move a roof lip into the room below.
   for (int k = 1; k < 4; ++k) if (w.y <= roomFloors[k]) roomPlane = k;
   float exterior = (roomMask & (1 << roomPlane)) == 0 ? 1.0 : 0.0;
-  // A face turned up, higher above its storey's floor than a storey's walls stand, is on the roof over that storey:
-  // out of doors, however low it slopes down. (A wall's upper part indoors faces sideways and stays in.)
   if (exterior < 1.0 && n.y < -0.3) {
-    exterior = smoothstep(SKY_ROOF_ABOVE.x, SKY_ROOF_ABOVE.y, roomFloors[roomPlane] - w.y);
-  }
-  if (exterior < 1.0 && n.y < -0.3) {
-    // an upward face near the top of the scenery is out of doors, whatever room lies under it (a roof, a wall's
-    // top). The top is the highest traced point over the tile, blended between its corners like the values, and
-    // the face goes out of doors gradually over SKY_TOP_SLACK below it, so a sloping roof has no step.
-    float surfaceZ = (1.5 + 9.0) / SKY_GRID_D;
-    vec4 cornerWeights = vec4((1.0 - f.x) * (1.0 - f.y), f.x * (1.0 - f.y), (1.0 - f.x) * f.y, f.x * f.y);
-    float top = 0.0, topWeight = 0.0;
-    for (int k = 0; k < 4; ++k) {
-      vec2 cuv = (2.0 * tile + 0.5 + vec2(k & 1, k >> 1)) / (vec2(SKY_GRID_W, SKY_GRID_H) * scale);
-      if (textureLod(grid, vec3(cuv, surfaceZ), 0.0).x >= 0.0) {
-        top += cornerWeights[k] * textureLod(grid, vec3(cuv + vec2(0.25, 0.0), surfaceZ), 0.0).b;
-        topWeight += cornerWeights[k];
-      }
-    }
-    if (topWeight > 0.0001) {
-      top /= topWeight;
-      exterior = max(exterior, (1.0 - smoothstep(top + SKY_TOP_SLACK, top + 2.0 * SKY_TOP_SLACK, w.y))
-        * smoothstep(0.3, 0.7, -n.y));
-    }
+    // the highest surface over the tile, blended between its corners like the values (slice 0, part 1, g)
+    float top = textureLod(grid, vec3(uv + vec2(0.25, 0.0), 0.5 / SKY_GRID_D), 0.0).g;
+    exterior = (1.0 - smoothstep(top + SKY_TOP_SLACK, top + SKY_TOP_SLACK + SKY_TOP_FADE, w.y)) * smoothstep(0.3, 0.7, -n.y);
   }
   float lower = skyGridLevel(grid, scale, tile, f, lo, loDiagonal, n, w);
   float original;

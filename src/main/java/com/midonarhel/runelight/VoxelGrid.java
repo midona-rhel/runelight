@@ -5,6 +5,9 @@ package com.midonarhel.runelight;
  * MAX_LAYERS half-tile layers from the highest geometry down, and HEADROOM empty ones above it. A cell is 0 when
  * empty, else 1, with bit 31 set for foliage.
  *
+ * Besides the cells, each column keeps the world y of the highest surface found in it (top), which is how high a
+ * roof stands, finer than a voxel.
+ *
  * Voxel space: x = world x / VOXEL, y = world y / VOXEL - layer0, z = world z / VOXEL; world is the client's local
  * coordinates of the scene (base tile 0 at 0), y down.
  */
@@ -26,6 +29,8 @@ final class VoxelGrid
 	final int nx, ny, nz;
 	final int layer0;
 	final int[] cells;
+	// per column (z * nx + x): the world y (down) of the highest surface in an occupied voxel, +infinity where none
+	final float[] top;
 
 	VoxelGrid(int nx, int ny, int nz, int layer0)
 	{
@@ -34,6 +39,8 @@ final class VoxelGrid
 		this.nz = nz;
 		this.layer0 = layer0;
 		cells = new int[nx * ny * nz];
+		top = new float[nx * nz];
+		java.util.Arrays.fill(top, Float.POSITIVE_INFINITY);
 	}
 
 	int index(int x, int y, int z)
@@ -116,6 +123,7 @@ final class VoxelGrid
 					continue;
 				}
 				int cell = d[o + 1] > d[o] * 0.5f ? 1 | FOLIAGE : 1;
+				g.top[zz * g.nx + x] = Math.min(g.top[zz * g.nx + x], d[o + 2]);
 				// zones overlap only where models overhang their zone: a voxel is foliage if it is in both
 				int idx = g.index(x, y, zz);
 				g.cells[idx] = g.cells[idx] == 0 ? cell : cell & g.cells[idx] | 1;

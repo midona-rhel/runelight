@@ -5,14 +5,14 @@ import java.util.Arrays;
 /**
  * The voxel proxy of the static scene, which the skylight traces (SkyGrid): zone triangles (VoxelCapture) rasterized
  * conservatively into half-tile cubes, each remembering how much surface and how much of it swaying foliage passes
- * through it. Zones are voxelized once and the result kept with the zone, so a reused zone after a region load isn't
+ * through it, and how high the surface reaches in it (the roof's height is read from that). Zones are voxelized once and the result kept with the zone, so a reused zone after a region load isn't
  * redone; the scene's grid (VoxelGrid) is assembled from them.
  */
 final class Voxelizer
 {
 	static final int VOXEL = VoxelGrid.VOXEL;
 	// floats per voxel in Zone.data
-	static final int STRIDE = 2;
+	static final int STRIDE = 3;
 	// zone-local voxel coordinates may reach this far past the zone (big models overhang it)
 	private static final int MARGIN = 32;
 	private static final int LAYER_BIAS = 2048;
@@ -22,7 +22,8 @@ final class Voxelizer
 	{
 		// (lx + MARGIN) | (lz + MARGIN) << 7 | (layer + LAYER_BIAS) << 14
 		int[] keys;
-		// the surface area (square world units) in the voxel, and the part of it that is foliage, per voxel
+		// per voxel: the surface area (square world units) in it, the part of it that is foliage, and the world y of
+		// the highest point of the surface found in it (y down, so the least), +infinity if none was found
 		float[] data;
 		int count;
 
@@ -98,10 +99,46 @@ final class Voxelizer
 					{
 						continue;
 					}
-					acc.add((x + MARGIN) | (z + MARGIN) << 7 | (y + LAYER_BIAS) << 14, area, foliage);
+					acc.add((x + MARGIN) | (z + MARGIN) << 7 | (y + LAYER_BIAS) << 14, area, foliage, highest(x, y, z, v));
 				}
 			}
 		}
+	}
+
+	/**
+	 * The world y of the highest point of the triangle that can be found in voxel (x, y, z): its corners inside the
+	 * voxel's footprint and height, and the plane's height at the voxel's centre if the triangle covers it. Exact for
+	 * a flat roof and a roof's slope, which is a plane; +infinity if none lies in the voxel.
+	 */
+	static float highest(int x, int y, int z, float[] v)
+	{
+		float lo = y * VOXEL, hi = lo + VOXEL;
+		float x0 = x * VOXEL, x1 = x0 + VOXEL, z0 = z * VOXEL, z1 = z0 + VOXEL;
+		float best = Float.POSITIVE_INFINITY;
+		for (int i = 0; i < 9; i += 3)
+		{
+			if (v[i] >= x0 && v[i] <= x1 && v[i + 2] >= z0 && v[i + 2] <= z1 && v[i + 1] >= lo && v[i + 1] <= hi)
+			{
+				best = Math.min(best, v[i + 1]);
+			}
+		}
+		// the plane through the triangle, y as a function of x and z, at the voxel's centre
+		float cx = x0 + VOXEL * 0.5f, cz = z0 + VOXEL * 0.5f;
+		float ax = v[3] - v[0], ay = v[4] - v[1], az = v[5] - v[2];
+		float bx = v[6] - v[0], by = v[7] - v[1], bz = v[8] - v[2];
+		// barycentric coordinates of the centre in x and z: (cx, cz) = v0 + s * a + t * b
+		float det = ax * bz - az * bx;
+		if (Math.abs(det) > 1e-3f)
+		{
+			float px = cx - v[0], pz = cz - v[2];
+			float s = (px * bz - pz * bx) / det, t = (ax * pz - az * px) / det;
+			float py = v[1] + s * ay + t * by;
+			if (s >= 0 && t >= 0 && s + t <= 1 && py >= lo && py <= hi)
+			{
+				best = Math.min(best, py);
+			}
+		}
+		return best;
 	}
 
 	/**
@@ -191,7 +228,7 @@ final class Voxelizer
 			data = new float[cap * STRIDE];
 		}
 
-		void add(int key, float w, boolean foliage)
+		void add(int key, float w, boolean foliage, float highest)
 		{
 			if (size * 2 >= keys.length)
 			{
@@ -206,10 +243,12 @@ final class Voxelizer
 			if (keys[i] == -1)
 			{
 				keys[i] = key;
+				data[i * STRIDE + 2] = Float.POSITIVE_INFINITY;
 				size++;
 			}
 			int o = i * STRIDE;
 			data[o] += w;
+			data[o + 2] = Math.min(data[o + 2], highest);
 			if (foliage)
 			{
 				data[o + 1] += w;

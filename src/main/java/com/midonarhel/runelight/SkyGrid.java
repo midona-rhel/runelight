@@ -29,6 +29,8 @@ import java.nio.ShortBuffer;
  * The 3D RGBA16F texture has four horizontal parts: half 0's up/+x/-x/+z and -z, then the same for half 1.
  * Each tile is a 2x2 block of actual corners. Slice 0 stores three floor heights and packed diagonal kinds in
  * part 0, actual floor flags in part 1, room floor heights in part 2 and protected room bits in part 3.
+ * Part 1 also keeps, in g, the world y of the highest surface at each corner (topAt), which tells a roof top from
+ * what stands under the roof.
  * Slice 1 + floor * HEIGHTS.length + height stores visibility; the final slice stores exterior visibility.
  * The -z parts' spare channels store the sample's x/z offset from its corner and its world y (g/b/a = x/y/z).
  *
@@ -419,6 +421,30 @@ final class SkyGrid
 		return b;
 	}
 
+	/**
+	 * World y (down) of the highest surface at a corner: the mean of the highest surfaces of the four voxel columns
+	 * around it that have one (VoxelGrid.top), exact for a roof; the ground's height where there is none.
+	 */
+	float topAt(int cx, int cz)
+	{
+		int vx = (int) (cx * spacing / VoxelGrid.VOXEL), vz = (int) (cz * spacing / VoxelGrid.VOXEL);
+		float sum = 0;
+		int n = 0;
+		for (int z = Math.max(0, vz - 1); z <= Math.min(grid.nz - 1, vz); ++z)
+		{
+			for (int x = Math.max(0, vx - 1); x <= Math.min(grid.nx - 1, vx); ++x)
+			{
+				float t = grid.top[z * grid.nx + x];
+				if (t < Float.POSITIVE_INFINITY)
+				{
+					sum += t;
+					++n;
+				}
+			}
+		}
+		return n > 0 ? sum / n : ground(0, cx, cz);
+	}
+
 	private void writeMeta(int tx, int tz)
 	{
 		int code = diagonal(0, tx, tz) + 3 * diagonal(1, tx, tz) + 9 * diagonal(2, tx, tz);
@@ -433,7 +459,9 @@ final class SkyGrid
 					texels.put(t + f, Half.toHalf(ground(f, tx + i, tz + j)));
 				}
 				texels.put(t + 3, Half.toHalf(code));
-				texels.put(texel(2 * tx + i + 2 * size, 2 * tz + j, 0), Half.toHalf(bits));
+				int flags = texel(2 * tx + i + 2 * size, 2 * tz + j, 0);
+				texels.put(flags, Half.toHalf(bits));
+				texels.put(flags + 1, Half.toHalf(topAt(tx + i, tz + j)));
 			}
 		}
 	}
@@ -538,7 +566,7 @@ final class SkyGrid
 	 * half. The texels are written by another thread: a value may be one trace behind, never torn.
 	 *
 	 * @param x, y, z base scene local units, y down
-	 * @return -1 outside the grid, or where the corners have no value
+	 * @return -1 outside the grid, or where no level has a value
 	 */
 	float upVisibility(float x, float y, float z)
 	{
@@ -586,7 +614,22 @@ final class SkyGrid
 		}
 		float blend = lo == hi ? 0 : Math.max(0, Math.min(1, (loY - y) / Math.max(loY - hiY, 1)));
 		float below = levelVisibility(ix, iz, fx, fz, lo), above = levelVisibility(ix, iz, fx, fz, hi);
-		return below < 0 ? above : above < 0 ? below : below + (above - below) * blend;
+		if (below >= 0 || above >= 0)
+		{
+			return below < 0 ? above : above < 0 ? below : below + (above - below) * blend;
+		}
+		// neither has a value (empty air far from anything is not traced): the nearest level that has
+		float best = -1, bestDistance = Float.MAX_VALUE;
+		for (int k = first; k <= last; ++k)
+		{
+			float v = levelVisibility(ix, iz, fx, fz, k), d = Math.abs(y - levelY(meta, k));
+			if (v >= 0 && d < bestDistance)
+			{
+				best = v;
+				bestDistance = d;
+			}
+		}
+		return best;
 	}
 
 	/** World y of a level's samples: above its floor's ground (y down). */
