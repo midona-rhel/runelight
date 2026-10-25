@@ -118,6 +118,7 @@ uniform samplerBuffer lightData;     // per light: (camera-relative position, ra
 uniform usamplerBuffer clusterData;  // per cluster: a bit per light in view (light_clusters.glsl)
 
 #include "light_clusters.glsl"
+#include "light_volume.glsl"
 
 // particles are lit at their center, once per vertex; global trim against the surface lighting
 #define WEATHER_POINT_LIGHT_SCALE 1.0
@@ -155,7 +156,9 @@ vec3 weatherPointLights(vec3 p, vec4 clip, vec3 n, float roofY) {
   vec3 view = normalize(p);
   float roof = roofY - cameraPos.y + WEATHER_ROOF_BIAS;
   bool overRoof = p.y < roof;
-  vec3 sum = vec3(0.0);
+  // the baked lights (light_volume.glsl): the lights the block holds are left out of the loop below
+  float blockEpoch = lightBlockEpochAt(p + cameraPos);
+  vec3 sum = lightVolumeOmni(p + cameraPos);
   LightMask lights = clusterLights(entry);
   int li;
   while (nextLight(lights, li)) {
@@ -167,7 +170,7 @@ vec3 weatherPointLights(vec3 p, vec4 clip, vec3 n, float roofY) {
     vec3 l = posRadius.xyz - p;
     float d2 = dot(l, l);
     float r2 = posRadius.w * posRadius.w;
-    if (d2 >= r2) {
+    if (d2 >= r2 || lightHeld(texelFetch(lightData, LIGHT_BAKED_BASE + li).x, blockEpoch)) {
       continue;
     }
     // 117 HD's falloff, as in the composite

@@ -32,6 +32,7 @@ uniform samplerBuffer lightData;
 uniform usamplerBuffer clusterData;
 
 #include "light_clusters.glsl"
+#include "light_volume.glsl"
 
 // inside building rooms (RoomMap.java, in fogGround) the fog's density is multiplied by this; 1 leaves interiors
 // foggy
@@ -199,6 +200,10 @@ vec3 pointGlow(ivec2 px, vec3 dir, float t0, float dt, int steps, float weight[F
     if (h2 >= r2) {
       continue;
     }
+    // a light the baked volume has where it stands glows from there (light_volume.glsl)
+    if (lightHeld(texelFetch(lightData, LIGHT_BAKED_BASE + li).x, lightBlockEpochAt(posRadius.xyz + cameraPos))) {
+      continue;
+    }
     float hc = sqrt(r2 - h2);
     float a = max(tc - hc, t0);
     float b = min(tc + hc, tEnd);
@@ -346,6 +351,8 @@ void main() {
   // the flat glow and the sun's shafts apart: the cover limit takes more of the first
   vec3 scatterAmbient = vec3(0.0);
   vec3 scatterSun = vec3(0.0);
+  // the baked lights' glow, which the steps pick up where they are
+  vec3 scatterBaked = vec3(0.0);
   float trans = 1.0;
   float weight[FOG_MAX_STEPS];
   for (int i = 0; i < FOG_MAX_STEPS; ++i) {
@@ -410,9 +417,12 @@ void main() {
     scatterSun += direct * ((1.0 - far) * scattered);
     // the point lights' share fades into the far color like the rest of the light
     weight[i] = scattered * (1.0 - far) / dt;
+    if (glow) {
+      scatterBaked += lightVolumeOmni(wp) * (scattered * (1.0 - far));
+    }
     trans *= stepTrans;
   }
-  vec3 lamps = glow ? pointGlow(px, dir, t0, dt, steps, weight) : vec3(0.0);
+  vec3 lamps = glow ? pointGlow(px, dir, t0, dt, steps, weight) + scatterBaked * FOG_POINT_LIGHT_SCALE : vec3(0.0);
 
   // Limit how much of the view the fog hides where the ray ends. The flat glow shrinks with the cover; the light
   // from the sun and the lamps mostly stays, so thick fog still shows where it is lit.

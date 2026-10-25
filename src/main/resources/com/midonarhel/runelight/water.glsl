@@ -340,6 +340,14 @@ void waterShadeHalf(ivec2 hpx) {
     int entry = clusterAt(px, viewZ);
     // lights in buildings stay there (rooms.glsl)
     ivec2 room = clusterHasLights(entry) ? lightRoomAt(s + cameraPos - vec3(0.0, ROOM_NORMAL_BIAS, 0.0)) : ivec2(-1, 0);
+    // the baked lights (light_volume.glsl) all together, from the direction most of their light comes from
+    float blockEpoch = lightBlockEpochAt(s + cameraPos);
+    if (blockEpoch > 0.0) {
+      vec3 bakedDir;
+      vec3 baked = lightVolumeOmniDir(s + cameraPos, bakedDir);
+      surfaceLight += baked * (max(-bakedDir.y, 0.2) * LAMP_SURFACE);
+      lampSpec += baked * waterGlint(nrm, bakedDir, toCamera, tAlong, tAcross, LAMP_ALONG, LAMP_ACROSS);
+    }
     LightMask lights = clusterLights(entry);
     int li;
     while (nextLight(lights, li)) {
@@ -348,6 +356,8 @@ void waterShadeHalf(ivec2 hpx) {
       float d2 = dot(l, l);
       float r2 = posRadius.w * posRadius.w;
       if (d2 >= r2)
+        continue;
+      if (lightHeld(texelFetch(lightData, LIGHT_BAKED_BASE + li).x, blockEpoch))
         continue;
       vec4 colorCode = texelFetch(lightData, li * 2 + 1);
       vec3 color = colorCode.rgb * roomShare(colorCode.w, room);

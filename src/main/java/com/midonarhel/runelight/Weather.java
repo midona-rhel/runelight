@@ -152,11 +152,12 @@ class Weather
 			pointLights;
 		int particleAmount, layerBox, layerSpan, layerBand, particleReach;
 		int light, rainStyle, flakeStyle, flakeColor, fallTime;
+		final LightVolumeMap.Uniforms lightVolume = new LightVolumeMap.Uniforms();
 		WeatherField.Locations field;
 		Wind.Locations windLocations;
 
 		void locate(int p, int sceneUnit, int materialUnit, int occlusionUnit, int shadowCompareUnit, int alphaLayerUnit,
-			int lightDataUnit, int clusterDataUnit, int waterUnit, int fieldUnit)
+			int lightDataUnit, int clusterDataUnit, int waterUnit, int fieldUnit, int lightVolumeUnit)
 		{
 			program = p;
 			field = WeatherField.locate(p, fieldUnit, fieldUnit + 1);
@@ -197,6 +198,7 @@ class Weather
 			gust = glGetUniformLocation(p, "gust");
 			overcast = glGetUniformLocation(p, "weatherOvercast");
 			pointLights = glGetUniformLocation(p, "pointLightsEnabled");
+			lightVolume.locate(p, lightVolumeUnit);
 
 			glUseProgram(p);
 			glUniform1i(glGetUniformLocation(p, "sceneColor"), sceneUnit);
@@ -300,13 +302,13 @@ class Weather
 	 * Replace the current programs, deleting the old ones.
 	 */
 	void setPrograms(Programs p, int sceneUnit, int materialUnit, int occlusionUnit, int shadowCompareUnit, int alphaLayerUnit,
-		int lightDataUnit, int clusterDataUnit, int waterUnit, int fieldUnit)
+		int lightDataUnit, int clusterDataUnit, int waterUnit, int fieldUnit, int lightVolumeUnit)
 	{
 		freePrograms();
 		rain.locate(p.rain, sceneUnit, materialUnit, occlusionUnit, occlusionUnit + 1, alphaLayerUnit, lightDataUnit, clusterDataUnit,
-			waterUnit, fieldUnit);
+			waterUnit, fieldUnit, lightVolumeUnit);
 		snow.locate(p.snow, sceneUnit, materialUnit, occlusionUnit, occlusionUnit + 1, alphaLayerUnit, lightDataUnit, clusterDataUnit,
-			waterUnit, fieldUnit);
+			waterUnit, fieldUnit, lightVolumeUnit);
 	}
 
 	void freePrograms()
@@ -970,11 +972,13 @@ class Weather
 	 * @param splashes   draw the rain's impacts on the ground, not on water (it has its own rings)
 	 * @param wadeSteps  the steps of those wading through puddles (WadeSteps.steps): a few droplets leap from each
 	 * @param pointLights light particles with this frame's light clusters
+	 * @param lightVolume the baked lights, which the particles also take their light from
 	 * @param drawDistance world units from the player: how far the particles reach
 	 */
 	void draw(float[] viewProj, float[] invViewProj, int[] viewport, boolean zeroToOne,
 		float cameraX, float cameraY, float cameraZ, DayCycle day, boolean splashes, Water water,
-		RuneLightConfig config, int occlusionUnit, boolean pointLights, float drawDistance, float[] wadeSteps)
+		RuneLightConfig config, int occlusionUnit, boolean pointLights, LightVolumeMap lightVolume, float drawDistance,
+		float[] wadeSteps)
 	{
 		if (!active || !occlusion.isInitialized() || rain.program == 0)
 		{
@@ -1018,7 +1022,7 @@ class Weather
 		{
 			glUseProgram(rain.program);
 			setParticles(rain, Math.max(rainAmount, rainShown), viewProj, invViewProj, viewport, zeroToOne, cameraX,
-				cameraY, cameraZ, day, time, pointLights);
+				cameraY, cameraZ, day, time, pointLights, lightVolume);
 			glUniform1f(rain.fallTime, rainFall);
 			glUniform2f(rain.particleAmount, rainEffective, rainShown);
 			glUniform1f(rain.particleReach, drawDistance);
@@ -1047,7 +1051,7 @@ class Weather
 		{
 			glUseProgram(snow.program);
 			setParticles(snow, Math.max(snowAmount, snowShown), viewProj, invViewProj, viewport, zeroToOne, cameraX,
-				cameraY, cameraZ, day, time, pointLights);
+				cameraY, cameraZ, day, time, pointLights, lightVolume);
 			glUniform1f(snow.fallTime, snowFall);
 			glUniform2f(snow.particleAmount, snowEffective, snowShown);
 			glUniform1f(snow.particleReach, drawDistance);
@@ -1169,12 +1173,14 @@ class Weather
 	}
 
 	private void setParticles(Uniforms u, float kindAmount, float[] viewProj, float[] invViewProj, int[] viewport,
-		boolean zeroToOne, float cameraX, float cameraY, float cameraZ, DayCycle day, float time, boolean pointLights)
+		boolean zeroToOne, float cameraX, float cameraY, float cameraZ, DayCycle day, float time, boolean pointLights,
+		LightVolumeMap lightVolume)
 	{
 		setCommon(u, viewProj, invViewProj, viewport, zeroToOne, cameraX, cameraY, cameraZ, day, time);
 		// the count already follows the amount; only the last trickle also fades
 		glUniform1f(u.amount, Math.min(1, kindAmount / 0.1f));
 		glUniform1i(u.pointLights, pointLights ? 1 : 0);
+		lightVolume.apply(u.lightVolume);
 		glUniform3f(u.wind, windX, 0, windZ);
 		glUniform3f(u.windOffset, windOffsetX, 0, windOffsetZ);
 		glUniform1f(u.gust, gust);

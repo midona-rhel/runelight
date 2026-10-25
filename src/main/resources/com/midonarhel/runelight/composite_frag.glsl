@@ -96,6 +96,7 @@ uniform usamplerBuffer clusterData;  // per cluster: a bit per light in view (li
 #include "light_clusters.glsl"
 #include "rooms.glsl"
 #include "light_occlusion.glsl"
+#include "light_volume.glsl"
 
 // 0 legacy/debug, 1 ambient, 2 sun, 3 points, 4 surfaces, 5 atmosphere.
 #include "composite_mode"
@@ -206,6 +207,18 @@ vec3 pointLights(int entry, vec3 p, vec3 n, float transmissive, out vec3 through
   vec3 viewDir = transmissive > 0.0 ? normalize(-p) : vec3(0.0);
   vec3 through = vec3(0.0);
   vec3 sum = vec3(0.0);
+  // The baked lights (light_volume.glsl) are looked up once, at the surface's block: the lights the block holds are
+  // left out of the loop below, which keeps the rest.
+  vec3 bakedAt = p + cameraPos + n * LIGHT_VOLUME_BIAS;
+  float blockEpoch = lightBlockEpochAt(bakedAt);
+  if (blockEpoch > 0.0) {
+    sum += lightVolumeLight(bakedAt, n) * POINT_LIGHT_SCALE;
+    if (transmissive > 0.0) {
+      // thin foliage is also lit from behind: what shines on its back, looking the way it goes
+      through += lightVolumeLight(p + cameraPos - n * LIGHT_VOLUME_BIAS, -n)
+        * (transmissive * transmissionStrength * TRANSMISSION * LIGHT_VOLUME_FORWARD * POINT_LIGHT_SCALE);
+    }
+  }
   // lights only reach the room they are in, or the outdoors (rooms.glsl): looked up at the first light that reaches
   // the point, as most pixels of a cluster lie outside all its lights' radii
   ivec3 room;
@@ -219,6 +232,9 @@ vec3 pointLights(int entry, vec3 p, vec3 n, float transmissive, out vec3 through
     float d2 = dot(l, l);
     float r2 = posRadius.w * posRadius.w;
     if (d2 >= r2) {
+      continue;
+    }
+    if (lightHeld(texelFetch(lightData, LIGHT_BAKED_BASE + li).x, blockEpoch)) {
       continue;
     }
     vec3 ld = l * inversesqrt(max(d2, 1.0));

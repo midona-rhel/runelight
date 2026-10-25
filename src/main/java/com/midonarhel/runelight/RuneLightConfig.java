@@ -928,6 +928,19 @@ public interface RuneLightConfig extends Config
 	}
 
 	@ConfigItem(
+		keyName = "bakedPointLights",
+		name = "Baked point lights",
+		description = "Light the scene from its static lamps and torches with a volume baked in the background, shadowed by"
+			+ " the scene, instead of the clustered lights. Untick to compare.",
+		section = developmentSection,
+		position = 106
+	)
+	default boolean bakedPointLights()
+	{
+		return true;
+	}
+
+	@ConfigItem(
 		keyName = "strikeLightning",
 		name = "Strike lightning",
 		description = "One lightning strike now, in any weather. Unticks itself.",

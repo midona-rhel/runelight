@@ -37,11 +37,13 @@ class GpuTimer
 	static final int POINT_LIGHTS = 18;
 	static final int SURFACES = 19;
 	static final int CLOUDS = 20;
-	static final int STAGES = 21;
+	// uploading the baked point lights
+	static final int LIGHT_VOLUME = 21;
+	static final int STAGES = 22;
 
 	static final String[] NAMES = {
 		"scene", "MSAA resolve", "shadow map", "weather occlusion", "AO + skylight", "sky cache", "fog", "sky/fog + final blend",
-		"weather", "UI", "water", "shadow copy", "shadow models", "sky grid upload", "AO/fog filtering", "upscale", "ambient + sky", "sun + cloud shadows", "point lights + blocking", "materials + water blend", "clouds"
+		"weather", "UI", "water", "shadow copy", "shadow models", "sky grid upload", "AO/fog filtering", "upscale", "ambient + sky", "sun + cloud shadows", "point lights + blocking", "materials + water blend", "clouds", "light volume upload"
 	};
 
 	private static final int SLOTS = 4;

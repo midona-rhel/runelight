@@ -239,6 +239,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		int cameraPos, time, outdoors, proceduralSky, lightingEnabled, sunDir, moonDir, casterDir, sunIsCaster,
 			strikeLight, sunAltitude, overcast, weatherLight;
 		int shadowsEnabled, lightProjRel, shadowRadius, shadowDepthRange, shadowMapSize;
+		final LightVolumeMap.Uniforms lightVolume = new LightVolumeMap.Uniforms();
 		int pointLights, lightVisSize, roomHeader, interiorLight, skylightOn, skylightFloor;
 		int skyVoid, useFog, fogDepth, drawDistance, expandedChunks, clientSkyColor;
 		int lightningBolt, volumetricFog;
@@ -308,6 +309,9 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 	private static final int CLOUD_HALF_UNIT = RuneLightPlugin.COMPOSITE_TEXTURE_UNIT + 23;
 
 	private final LightClusters lightClusters = new LightClusters();
+	// the static lights baked into a volume around the player (LightVolume); read by the composite, the fog and the weather
+	private static final int LIGHT_VOLUME_UNIT = RuneLightPlugin.COMPOSITE_TEXTURE_UNIT + 20;
+	private final LightVolumeMap lightVolumeMap = new LightVolumeMap();
 	private final OpenRooms openRooms = new OpenRooms();
 	// repeating errors are logged once per interval
 	private final LogLimiter logLimiter = new LogLimiter(10_000);
@@ -874,6 +878,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 				skyGrid.free();
 				skyField.free();
 				lightClusters.free();
+				lightVolumeMap.free();
 				volumetricFog.free();
 				clouds.free();
 				water.free();
@@ -1109,7 +1114,10 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 						+ "#define CLUSTER_NEAR " + LightClusters.NEAR + "\n"
 						+ "#define CLUSTER_FAR " + LightClusters.FAR + "\n"
 						+ "#define ROOM_BASE " + LightClusters.ROOM_BASE + "\n"
-						+ "#define LIGHT_EXTRA_BASE " + LightClusters.LIGHT_EXTRA_BASE + "\n";
+						+ "#define LIGHT_EXTRA_BASE " + LightClusters.LIGHT_EXTRA_BASE + "\n"
+						+ "#define LIGHT_BAKED_BASE " + LightClusters.LIGHT_BAKED_BASE + "\n";
+				case "light_volume_config":
+					return LightVolume.shaderConfig();
 				case "composite_mode":
 					// Compile out the diagnostic branches and intermediate samplers in normal rendering.
 					// Changing this diagnostic property requires a shader reload.
@@ -1164,7 +1172,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		water.setSurfaceProgram(WaterSurface.PROGRAM.compile(template), COMPOSITE_TEXTURE_UNIT + 2, WATER_DATA_UNIT,
 			WATER_NOISE_UNIT, WATER_CONTACT_UNIT, WATER_WAVES_UNIT_A, WATER_WAVES_UNIT_B);
 		weather.setPrograms(weather.compile(template), COMPOSITE_TEXTURE_UNIT, MATERIAL_UNIT, WEATHER_OCCLUSION_UNIT, SHADOW_COMPARE_UNIT, ALPHA_LAYER_UNIT,
-			LIGHT_DATA_UNIT, CLUSTER_DATA_UNIT, WATER_DATA_UNIT, WEATHER_FIELD_UNIT);
+			LIGHT_DATA_UNIT, CLUSTER_DATA_UNIT, WATER_DATA_UNIT, WEATHER_FIELD_UNIT, LIGHT_VOLUME_UNIT);
 		skyCache.setPrograms(skyCache.compile(template), CLOUD_NOISE_UNIT, WEATHER_SKY_UNIT, SKY_CACHE_UNIT);
 		upscaler.setProgram(Upscaler.PROGRAM.compile(template));
 
@@ -1300,6 +1308,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		c.pointLights = glGetUniformLocation(p, "pointLightsEnabled");
 		c.lightVisSize = glGetUniformLocation(p, "lightVisSize");
 		c.roomHeader = glGetUniformLocation(p, "roomHeader");
+		c.lightVolume.locate(p, LIGHT_VOLUME_UNIT);
 		c.interiorLight = glGetUniformLocation(p, "interiorLight");
 		c.skylightOn = glGetUniformLocation(p, "skylightOn");
 		c.skylightFloor = glGetUniformLocation(p, "skylightFloor");
@@ -1342,7 +1351,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 	private void setFogProgram(int program)
 	{
 		volumetricFog.setProgram(program, COMPOSITE_TEXTURE_UNIT + 2, SHADOW_COMPARE_UNIT, LIGHT_DATA_UNIT,
-			CLUSTER_DATA_UNIT, FOG_NOISE_UNIT, WEATHER_FIELD_UNIT, WATER_DATA_UNIT, FOG_GROUND_UNIT);
+			CLUSTER_DATA_UNIT, FOG_NOISE_UNIT, WEATHER_FIELD_UNIT, WATER_DATA_UNIT, FOG_GROUND_UNIT, LIGHT_VOLUME_UNIT);
 	}
 
 	private static void bindSceneSamplers(int program)
@@ -1476,7 +1485,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		water.setSurfaceProgram(waterSurface, COMPOSITE_TEXTURE_UNIT + 2, WATER_DATA_UNIT, WATER_NOISE_UNIT,
 			WATER_CONTACT_UNIT, WATER_WAVES_UNIT_A, WATER_WAVES_UNIT_B);
 		weather.setPrograms(weatherPrograms, COMPOSITE_TEXTURE_UNIT, MATERIAL_UNIT, WEATHER_OCCLUSION_UNIT, SHADOW_COMPARE_UNIT, ALPHA_LAYER_UNIT,
-			LIGHT_DATA_UNIT, CLUSTER_DATA_UNIT, WATER_DATA_UNIT, WEATHER_FIELD_UNIT);
+			LIGHT_DATA_UNIT, CLUSTER_DATA_UNIT, WATER_DATA_UNIT, WEATHER_FIELD_UNIT, LIGHT_VOLUME_UNIT);
 		skyCache.setPrograms(skyCachePrograms, CLOUD_NOISE_UNIT, WEATHER_SKY_UNIT, SKY_CACHE_UNIT);
 		upscaler.setProgram(upscale);
 		initUniforms();
@@ -2651,6 +2660,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 			else
 			{
 				frameLights.clear();
+				lightVolumeMap.free();
 			}
 			cpuTimer.end(CpuTimer.LIGHTS);
 			lightClusters.setRooms(rooms, config.roomLights());
@@ -2677,6 +2687,11 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 			cpuTimer.end(CpuTimer.LIGHT_UPLOAD);
 			lightClusters.bind(LIGHT_DATA_UNIT, CLUSTER_DATA_UNIT, LIGHT_VIS_UNIT);
 		}
+		else
+		{
+			lightVolumeMap.free();
+		}
+		lightVolumeMap.bind(LIGHT_VOLUME_UNIT);
 	}
 
 	/**
@@ -2728,6 +2743,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 			glUniform4f(c.roomHeader, 0, 0, 0, 0);
 		}
 		glUniform1i(c.pointLights, framePointLights ? 1 : 0);
+		lightVolumeMap.apply(c.lightVolume);
 		glUniform1i(c.skylightOn, frameSkylight ? 1 : 0);
 		glUniform1f(c.skylightFloor, config.skylightFloor() / 100f);
 		// the inside of buildings at night, as if their lamps were lit; caves and dungeons have no buildings, and
@@ -2798,6 +2814,33 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 			}
 		}
 		lightOcclusion.assign(frameLights, config.lightWallOcclusion());
+		updateLightVolume();
+	}
+
+	/**
+	 * Bake the static lights this frame has into the volume and send the blocks that are ready; the lights it holds
+	 * leave the list for the clusters. Without the option, or voxels, every light stays with the clusters.
+	 */
+	private void updateLightVolume()
+	{
+		WorldView wv = client.getTopLevelWorldView();
+		Scene scene = wv != null ? wv.getScene() : null;
+		Player player = client.getLocalPlayer();
+		LocalPoint lp = player != null ? player.getLocalLocation() : null;
+		boolean wanted = bakedLightsWanted() && scene != null && lp != null;
+		gpuTimer.begin(GpuTimer.LIGHT_VOLUME);
+		cpuTimer.begin(CpuTimer.LIGHT_VOLUME);
+		lightVolumeMap.update(wanted, frameLights, voxelBuilder.getVoxels(), wanted ? scene.getBaseX() : 0,
+			wanted ? scene.getBaseY() : 0, wanted && scene.isInstance(), edgeFade.focalX,
+			wanted ? Perspective.getTileHeight(client, lp, wv.getPlane()) : 0, edgeFade.focalZ);
+		cpuTimer.end(CpuTimer.LIGHT_VOLUME);
+		gpuTimer.end();
+	}
+
+	/** Whether the static lights are baked this frame, so that the scene's voxels are wanted. */
+	private boolean bakedLightsWanted()
+	{
+		return config.bakedPointLights() && config.pointLights() && client.getGameState() == GameState.LOGGED_IN;
 	}
 
 	int getLightDefinitionCount()
@@ -2924,7 +2967,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		try
 		{
 			int builds = voxelBuilder.builds();
-			voxelBuilder.prepare(frameSkylightWanted, scene, root != null ? root.zones : null, clientUploader.water);
+			voxelBuilder.prepare(frameSkylightWanted || bakedLightsWanted(), scene, root != null ? root.zones : null, clientUploader.water);
 			if (builds != voxelBuilder.builds())
 			{
 				hitchMonitor.job(HitchMonitor.VOXEL_BUILD);
@@ -3067,7 +3110,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 				frameViewProj, frameInvViewProj, frameViewport, glCapabilities.OpenGL45,
 				frameCameraX, frameCameraY, frameCameraZ, (System.currentTimeMillis() - startMillis) / 1000f,
 				fogSun, proceduralSky(), frameSkyColor, dayCycle, fogShadows,
-				config.pointLights() && lightClusters.isInitialized() && lightClusters.hasFogLights());
+				config.pointLights() && lightClusters.isInitialized() && lightClusters.hasFogLights(), lightVolumeMap);
 			gpuTimer.end();
 		}
 		// the AO, the shadows and the fog's sun shafts are all dithered: smoothed together at half resolution before
@@ -3194,8 +3237,8 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 			weather.draw(frameViewProj, frameInvViewProj, frameViewport, glCapabilities.OpenGL45,
 				frameCameraX, frameCameraY, frameCameraZ, dayCycle, config.weatherSplashes(), water, config,
 				WEATHER_OCCLUSION_UNIT,
-				config.pointLights() && config.weatherPointLights() && lightClusters.isInitialized(), frameDrawDistance,
-				wadeSteps.steps(frameCameraX, frameCameraZ));
+				config.pointLights() && config.weatherPointLights() && lightClusters.isInitialized(),
+				lightVolumeMap, frameDrawDistance, wadeSteps.steps(frameCameraX, frameCameraZ));
 			gpuTimer.end();
 			glViewport(0, 0, sceneWidth, sceneHeight);
 		}
@@ -3213,6 +3256,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		}
 
 		glBindVertexArray(0);
+		LightVolumeMap.unbind(LIGHT_VOLUME_UNIT);
 		sceneTargets.unbindTextures(COMPOSITE_TEXTURE_UNIT);
 		glActiveTexture(GL_TEXTURE0 + AO_TEXTURE_UNIT);
 		glBindTexture(GL_TEXTURE_2D, 0);

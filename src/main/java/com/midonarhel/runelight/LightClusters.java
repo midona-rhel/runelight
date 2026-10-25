@@ -32,8 +32,11 @@ class LightClusters
 	// a third texel per light after the two per light: its occlusion grid and whether it is covered
 	// (LightOcclusion.texel, light_occlusion.glsl)
 	static final int LIGHT_EXTRA_BASE = MAX_LIGHTS * 2;
+	// a fourth: the epoch the light volume took the light in at (PointLight.bakeEpoch, 0 for none), in x
+	// (light_volume.glsl)
+	static final int LIGHT_BAKED_BASE = MAX_LIGHTS * 3;
 	// the room map (RoomMap.texels) follows, from this texel on (rooms.glsl)
-	static final int ROOM_BASE = MAX_LIGHTS * 3;
+	static final int ROOM_BASE = MAX_LIGHTS * 4;
 
 	private static final int CLUSTER_COUNT = CLUSTERS_X * CLUSTERS_Y * CLUSTERS_Z;
 	// Fog columns, stored after the clusters: per screen tile, the lights that glow in the fog anywhere along its
@@ -67,6 +70,7 @@ class LightClusters
 	private int visTexture, visWidth = 1, visHeight = 1;
 	private ByteBuffer visStaging;
 	private final FloatBuffer extraData = BufferUtils.createFloatBuffer(MAX_LIGHTS * 4);
+	private final FloatBuffer bakedData = BufferUtils.createFloatBuffer(MAX_LIGHTS * 4);
 	// the view the cluster bounds were computed for: they only change with the camera
 	private final float[] boundsViewProj = new float[16];
 	private boolean boundsValid;
@@ -254,6 +258,7 @@ class LightClusters
 	{
 		lightData.clear();
 		extraData.clear();
+		bakedData.clear();
 		fogCandidates = 0;
 		// the clusters only change with the view and the spheres of the lights in it
 		boolean changed = !boundsValid || !Arrays.equals(viewProj, boundsViewProj);
@@ -309,6 +314,7 @@ class LightClusters
 			lightData.put(l.r * l.intensity).put(l.g * l.intensity).put(l.b * l.intensity).put(code);
 			LightOcclusion.texel(l.occlusion, grids,
 				roofLights && rooms != null && rooms.covered(l.x, l.z, l.plane), l.plane, l.radius, extraData);
+			bakedData.put(l.bakeEpoch).put(0).put(0).put(0);
 
 			if (fogColumns && (!indoor || openRooms != null && openRooms.isOpen(RoomMap.roomOf(code))))
 			{
@@ -325,6 +331,7 @@ class LightClusters
 		lightCount = kept;
 		lightData.flip();
 		extraData.flip();
+		bakedData.flip();
 		if (changed)
 		{
 			texels = Math.max(1, (kept + LIGHTS_PER_TEXEL - 1) / LIGHTS_PER_TEXEL);
@@ -496,6 +503,7 @@ class LightClusters
 		{
 			glBufferSubData(GL_TEXTURE_BUFFER, 0, lightData);
 			glBufferSubData(GL_TEXTURE_BUFFER, (long) LIGHT_EXTRA_BASE * 4 * Float.BYTES, extraData);
+			glBufferSubData(GL_TEXTURE_BUFFER, (long) LIGHT_BAKED_BASE * 4 * Float.BYTES, bakedData);
 		}
 		// the map's header: whether there is a map, and whether the lights keep to their rooms or only the fog uses it
 		roomHeader[0] = rooms != null ? 2 : 0;
