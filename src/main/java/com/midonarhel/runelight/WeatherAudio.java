@@ -13,13 +13,12 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 /**
- * The weather's sounds: a rain loop whose level follows how hard it rains around the player, heard muffled and
- * reverberant (a second recording of the same loop) inside buildings, and a clap of thunder with every lightning
- * strike, the moment its flash begins. No wind.
+ * The weather's sounds: a rain loop whose level follows how hard it rains around the player, and a clap of thunder
+ * with every lightning strike, the moment its flash begins; both are muffled inside buildings. No wind.
  *
  * One thread mixes (AudioMixer) into one SourceDataLine, opened when there is something to hear and closed after a
  * quiet spell, so the client thread only sets a few numbers and never waits on the device. The sounds are CC0
- * recordings (sounds/CREDITS.txt), the indoor rain made from the outdoor one by tools/make_weather_sounds.py.
+ * recordings (sounds/CREDITS.txt), made into these files by tools/make_weather_sounds.py.
  */
 final class WeatherAudio
 {
@@ -64,7 +63,7 @@ final class WeatherAudio
 	{
 		try
 		{
-			mixer = new AudioMixer(load("rain.wav"), load("rain_indoor.wav"), loadThunders());
+			mixer = new AudioMixer(load("rain.wav"), loadThunders());
 		}
 		catch (IOException | RuntimeException | javax.sound.sampled.UnsupportedAudioFileException e)
 		{

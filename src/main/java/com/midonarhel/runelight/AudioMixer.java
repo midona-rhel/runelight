@@ -5,9 +5,9 @@ import java.util.List;
 import java.util.concurrent.ConcurrentLinkedQueue;
 
 /**
- * Mixes the weather's sounds into blocks of samples: the rain loop, outdoors and indoors, crossfaded as the player
- * walks in and out of buildings, and the thunder claps, each low-passed by how far away it is and by the walls
- * between. No audio device in here (WeatherAudio plays the blocks), so it can be tested.
+ * Mixes the weather's sounds into blocks of samples: the rain loop and the thunder claps. Indoors both are muffled by
+ * the same low-pass, which closes as the player walks into a building; each clap is also low-passed by how far away
+ * it is. No audio device in here (WeatherAudio plays the blocks), so it can be tested.
  *
  * The targets are set from the client thread; render runs on the mixer thread. Everything the mixer changes it
  * moves toward its target smoothly, sample by sample, so nothing clicks.
@@ -15,13 +15,18 @@ import java.util.concurrent.ConcurrentLinkedQueue;
 final class AudioMixer
 {
 	static final int RATE = 22050;
-	// seconds for the rain's level, and the crossfade between outdoors and indoors, to cover most of a change
+	// seconds for the rain's level, and the muffling between outdoors and indoors, to cover most of a change
 	private static final float RAIN_SECONDS = 0.6f;
 	private static final float INDOOR_SECONDS = 0.8f;
 	private static final float MASTER_SECONDS = 0.05f;
-	// thunder indoors: the cutoff it is low-passed to is this share of the outdoor one, and it is this much quieter
+	// indoors the thunder's cutoff is this share of the outdoor one, and it is this much quieter
 	private static final float INDOOR_CUTOFF = 0.3f;
 	private static final float INDOOR_THUNDER = 0.65f;
+	// the rain's cutoff, Hz: open outdoors, closing to the second indoors (geometrically, so the change sounds even),
+	// where it is this much quieter besides
+	private static final float RAIN_OPEN = RATE * 0.49f;
+	private static final float RAIN_INDOOR_CUTOFF = 1000;
+	private static final float INDOOR_RAIN = 0.8f;
 	// the most claps heard at once; a new one takes the oldest's place
 	private static final int MAX_VOICES = 4;
 	// below this the sound counts as silent
@@ -29,7 +34,7 @@ final class AudioMixer
 	// above this the output is rounded off instead of clipping
 	private static final float KNEE = 0.75f;
 
-	private final float[] rain, rainIndoor;
+	private final float[] rain;
 	private final float[][] thunder;
 	private final ConcurrentLinkedQueue<Voice> incoming = new ConcurrentLinkedQueue<>();
 	private final List<Voice> voices = new ArrayList<>();
@@ -39,7 +44,7 @@ final class AudioMixer
 
 	// the mixer thread's: where in the loops it is, and the smoothed levels
 	private int position;
-	private float rainLevel, indoorMix, master;
+	private float rainLevel, indoorMix, master, rainLow1, rainLow2;
 
 	/** A thunder clap playing. */
 	private static final class Voice
@@ -59,18 +64,16 @@ final class AudioMixer
 	}
 
 	/**
-	 * @param rain       the outdoor rain loop
-	 * @param rainIndoor the same loop heard indoors, the same length so that the two stay in step
-	 * @param thunder    the claps
+	 * @param rain    the rain loop
+	 * @param thunder the claps
 	 */
-	AudioMixer(float[] rain, float[] rainIndoor, float[][] thunder)
+	AudioMixer(float[] rain, float[][] thunder)
 	{
-		if (rain.length != rainIndoor.length || rain.length == 0)
+		if (rain.length == 0)
 		{
-			throw new IllegalArgumentException("the rain loops must be the same length");
+			throw new IllegalArgumentException("the rain loop is empty");
 		}
 		this.rain = rain;
-		this.rainIndoor = rainIndoor;
 		this.thunder = thunder;
 	}
 
@@ -121,17 +124,18 @@ final class AudioMixer
 		final float rainGoal = rainTarget, indoorGoal = indoorTarget, masterGoal = masterTarget;
 		final int length = rain.length;
 		final float masterFrom = master;
+		// the rain's low-pass follows how far indoors the player is at the start of the block, as the claps' do
+		final float rainA = lowpassCoefficient(rainCutoff(indoorMix), RATE);
+		final float rainGain = 1 - (1 - INDOOR_RAIN) * indoorMix;
 		for (int i = 0; i < frames; ++i)
 		{
 			rainLevel += (rainGoal - rainLevel) * rainK;
 			indoorMix += (indoorGoal - indoorMix) * indoorK;
 			master += (masterGoal - master) * masterK;
-			float sample = 0;
-			if (rainLevel > SILENT / 4)
-			{
-				sample = rainLevel * (rain[position] * outdoorShare(indoorMix) + rainIndoor[position] * indoorShare(indoorMix));
-			}
-			out[i] = sample;
+			// the filter runs on silence too, so it is at rest when the rain comes back
+			rainLow1 += rainA * (rain[position] - rainLow1);
+			rainLow2 += rainA * (rainLow1 - rainLow2);
+			out[i] = rainLevel > SILENT / 4 ? rainLevel * rainGain * rainLow2 : 0;
 			position = position + 1 == length ? 0 : position + 1;
 		}
 		// the claps: the cutoff follows how far indoors the player is now
@@ -175,15 +179,10 @@ final class AudioMixer
 		return 1 - (float) Math.exp(-3.0 / (seconds * RATE));
 	}
 
-	/** Share of the outdoor sound when the indoor mix is 0 to 1: the two shares always sum to the same power. */
-	static float outdoorShare(float indoor)
+	/** The rain's low-pass cutoff, Hz, when the indoor mix is 0 to 1: open outdoors, RAIN_INDOOR_CUTOFF indoors. */
+	static float rainCutoff(float indoor)
 	{
-		return (float) Math.cos(Math.PI / 2 * indoor);
-	}
-
-	static float indoorShare(float indoor)
-	{
-		return (float) Math.sin(Math.PI / 2 * indoor);
+		return RAIN_OPEN * (float) Math.pow(RAIN_INDOOR_CUTOFF / RAIN_OPEN, indoor);
 	}
 
 	/** One-pole low-pass coefficient (y += a * (x - y)) for a cutoff at a sample rate. */
