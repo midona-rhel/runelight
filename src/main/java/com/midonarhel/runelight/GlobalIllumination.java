@@ -3,6 +3,7 @@ package com.midonarhel.runelight;
 import com.midonarhel.runelight.template.Template;
 import java.nio.ByteBuffer;
 import java.nio.FloatBuffer;
+import java.util.Arrays;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ForkJoinPool;
@@ -28,13 +29,13 @@ import static org.lwjgl.opengl.GL33C.*;
  * global illumination off the builds still voxelize the scene for it and stop there. Relighting (GiRelight) takes
  * tens of milliseconds and happens when the sky cache captures, the sun or moon has moved RELIGHT_DEGREES, the weather
  * or settings change, or every MAX_RELIGHT_MILLIS. The light it needs is drawn on the GPU into a tiny table
- * (gi_sky_frag.glsl) and read back without stalling. The volume is a 3D texture two fields tall (flat surfaces' colour, then
- * standing ones'), a few megabytes of bytes; each new one is uploaded at once and blended with the last in the lookup over
- * about the time between relights, so nothing pops.
+ * (gi_sky_frag.glsl) and read back without stalling. The volume is a 3D texture three fields tall (the colour that
+ * upright surfaces give, then slanted ones', then level ones'), twelve bytes a voxel of the grid; each new one is uploaded at once
+ * and blended with the last in the lookup over about the time between relights, so nothing pops.
  *
- * On the GPU the only steady cost is the lookup in the half resolution AO pass (gi.glsl: one filtered fetch of the
- * volume for a pixel on a wall or a floor, two where it is on a slope between them, and twice that while a new volume
- * blends in), whose result rides along in the AO target to the composite (halfres.glsl). Outside the base scene,
+ * On the GPU the only steady cost is the lookup in the half resolution AO pass (gi.glsl: two filtered fetches of the
+ * volume for a pixel on a wall or a floor, three where it is on a slope, and twice that while a new volume blends in),
+ * whose result rides along in the AO target to the composite (halfres.glsl). Outside the base scene,
  * underground, and until the first volume is lit, the composite keeps its plain ambient light.
  */
 class GlobalIllumination
@@ -96,6 +97,8 @@ class GlobalIllumination
 	private int uniAoEnabled = -1, uniAoCamera = -1, uniAoGrid = -1, uniAoLayer0 = -1, uniAoBlend = -1;
 
 	private final int[] volumeTextures = new int[2];
+	// what each is allocated as: nx, nz, depth
+	private final int[][] volumeSize = new int[2][3];
 	private int skyTexture, skyFbo, pbo;
 	private ByteBuffer staging;
 	private final float[] table = new float[GiRelight.TABLE_FLOATS];
@@ -250,6 +253,8 @@ class GlobalIllumination
 			glDeleteBuffers(pbo);
 			skyFbo = skyTexture = pbo = 0;
 			volumeTextures[0] = volumeTextures[1] = 0;
+			Arrays.fill(volumeSize[0], 0);
+			Arrays.fill(volumeSize[1], 0);
 		}
 		if (fence != 0)
 		{
@@ -621,7 +626,10 @@ class GlobalIllumination
 		glBindBuffer(GL_PIXEL_PACK_BUFFER, 0);
 	}
 
-	/** Put the volume in volumeTextures[target], whose size follows the grid's: nx by nz texels, ny layers of each field. */
+	/**
+	 * Put the volume in volumeTextures[target], whose size follows the grid's: nx by nz texels, ny layers of each of the
+	 * fields. A texture that is that size already is written over rather than allocated again.
+	 */
 	private void uploadVolume(Lit l, int target)
 	{
 		if (staging == null || staging.capacity() < l.texels.length)
@@ -633,7 +641,18 @@ class GlobalIllumination
 		staging.flip();
 		glBindBuffer(GL_PIXEL_UNPACK_BUFFER, 0);
 		glBindTexture(GL_TEXTURE_3D, volumeTextures[target]);
-		glTexImage3D(GL_TEXTURE_3D, 0, GL_RGBA8, l.nx, l.nz, 2 * l.ny, 0, GL_RGBA, GL_UNSIGNED_BYTE, staging);
+		int depth = GiRelight.FIELDS * l.ny;
+		if (volumeSize[target][0] == l.nx && volumeSize[target][1] == l.nz && volumeSize[target][2] == depth)
+		{
+			glTexSubImage3D(GL_TEXTURE_3D, 0, 0, 0, 0, l.nx, l.nz, depth, GL_RGBA, GL_UNSIGNED_BYTE, staging);
+		}
+		else
+		{
+			glTexImage3D(GL_TEXTURE_3D, 0, GL_RGBA8, l.nx, l.nz, depth, 0, GL_RGBA, GL_UNSIGNED_BYTE, staging);
+			volumeSize[target][0] = l.nx;
+			volumeSize[target][1] = l.nz;
+			volumeSize[target][2] = depth;
+		}
 		glBindTexture(GL_TEXTURE_3D, 0);
 	}
 
@@ -801,8 +820,8 @@ class GlobalIllumination
 		l.texels = texels;
 		lit = l;
 		float[] stats = GiRelight.stats(e, texels);
-		log.debug("GI relight in {} ms: {} of {} voxels tinted, strongest {}, caster {} {} {}, shadow {} / {}",
-			(System.nanoTime() - start) / 1_000_000, (int) stats[0], e.cellCount * 2, stats[1], light.caster[0],
+		log.debug("GI relight in {} ms: {} of {} voxel fields tinted, strongest {}, caster {} {} {}, shadow {} / {}",
+			(System.nanoTime() - start) / 1_000_000, (int) stats[0], e.cellCount * GiRelight.FIELDS, stats[1], light.caster[0],
 			light.caster[1], light.caster[2], light.shadow0, light.shadow1);
 	}
 

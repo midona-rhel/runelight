@@ -8,22 +8,32 @@ import java.util.Arrays;
  * (GiVoxels), which is built later on its worker thread. Positions are zone-local x and z and world y, as in the
  * static vertex format; each triangle keeps the color of its first vertex. Triangles are stored with their front
  * face (cross(b - a, c - a), which points up for ground with y down) turned the way the vertex normals point, so
- * the voxels know which side of a surface is its front.
+ * the voxels know which side of a surface is its front. Each triangle keeps the colors of its three vertices, which
+ * the game shades a face with and so differ across it (the edge of a path), and the texture of a textured one.
  */
 final class GiCapture
 {
 	short[] pos = new short[9 * 256];
-	// per triangle: hsl (16 bits) | texture id + 1 (10 bits) << 16 | FOLIAGE
+	// per triangle: the first vertex' hsl (16 bits) | texture id + 1 (10 bits) << 16 | FOLIAGE
 	int[] color = new int[256];
+	// per triangle: the second vertex' hsl | the third's << 16
+	int[] color12 = new int[256];
 	// the triangle belongs to swaying foliage, which lets some light through
 	static final int FOLIAGE = 1 << 26;
 	int count;
 
+	/** A triangle of one color. */
 	void add(int x0, int y0, int z0, int x1, int y1, int z1, int x2, int y2, int z2, int color)
+	{
+		add(x0, y0, z0, x1, y1, z1, x2, y2, z2, color, (color & 0xffff) * 0x10001);
+	}
+
+	void add(int x0, int y0, int z0, int x1, int y1, int z1, int x2, int y2, int z2, int color, int color12)
 	{
 		if (count == this.color.length)
 		{
 			this.color = Arrays.copyOf(this.color, count * 2);
+			this.color12 = Arrays.copyOf(this.color12, count * 2);
 			pos = Arrays.copyOf(pos, count * 2 * 9);
 		}
 		int o = count * 9;
@@ -36,6 +46,7 @@ final class GiCapture
 		pos[o + 6] = (short) x2;
 		pos[o + 7] = (short) y2;
 		pos[o + 8] = (short) z2;
+		this.color12[count] = color12;
 		this.color[count++] = color;
 	}
 
@@ -43,6 +54,7 @@ final class GiCapture
 	void trim()
 	{
 		color = Arrays.copyOf(color, count);
+		color12 = Arrays.copyOf(color12, count);
 		pos = Arrays.copyOf(pos, count * 9);
 	}
 
@@ -106,13 +118,14 @@ final class GiCapture
 			{
 				color |= FOLIAGE;
 			}
+			int color12 = vc[1] & 0xffff | vc[2] << 16;
 			if (frontMatchesNormals(vx, vy, vz, vn))
 			{
-				capture.add(vx[0], vy[0], vz[0], vx[1], vy[1], vz[1], vx[2], vy[2], vz[2], color);
+				capture.add(vx[0], vy[0], vz[0], vx[1], vy[1], vz[1], vx[2], vy[2], vz[2], color, color12);
 			}
 			else
 			{
-				capture.add(vx[0], vy[0], vz[0], vx[2], vy[2], vz[2], vx[1], vy[1], vz[1], color);
+				capture.add(vx[0], vy[0], vz[0], vx[2], vy[2], vz[2], vx[1], vy[1], vz[1], color, color12);
 			}
 		}
 	}

@@ -7,7 +7,8 @@ package com.midonarhel.runelight;
  * it, softened by the overcast, plus a share of the sky it sees, so shaded surfaces bleed a little too). A dark green
  * grass and a bright white wall then give their colour equally strongly, and a gray one gives plain white, which tints
  * nothing. The air is given that colour, thinning out with the distance (GiEmitters), and what a voxel holds is the sum of
- * what it is given: the colour of what is near it, as a tint whose brightness is how lit that is and how near. The
+ * what it is given: the colour of what is near it, as a tint whose brightness is how lit that is and how near. The colour
+ * a surface gives is its albedo's, as the voxels hold it. The
  * composite tints its light with it (see light_occlusion.glsl giTint). Runs on the global illumination's worker whenever
  * the sky or the light changes enough (GlobalIllumination), tens of milliseconds for a whole scene.
  *
@@ -32,6 +33,8 @@ final class GiRelight
 	// A volume texel's red, green and blue are the square root of the sum of colour a voxel is given, over this, so the
 	// small sums at the edge of the reach have a byte to themselves; 1 over this is the greatest they reach.
 	static final float TEXEL_RANGE = 4;
+	// the fields of the volume, by the slope of the surfaces that give the colour: upright, slanted, level (GiEmitters)
+	static final int FIELDS = 3;
 
 	/** What lights the faces this time. */
 	static final class Light
@@ -99,11 +102,12 @@ final class GiRelight
 	}
 
 	/**
-	 * The volume's texels, RGBA bytes. The grid's voxels x fastest, then z, then y, as the grid holds them, twice: first
-	 * the field of the colour flat surfaces give (floors, roofs), then the one of the standing ones'; y is the layer, so
-	 * the field of the standing surfaces' starts at layer ny. rgb is the square root of the sum of colour a voxel is
-	 * given, over TEXEL_RANGE, times 255, and a is 255 where a voxel is given any of the field's and 0 where not: the
-	 * lookup reads between texels and takes the average of the ones that are (gi.glsl).
+	 * The volume's texels, RGBA bytes. The grid's voxels x fastest, then z, then y, as the grid holds them, FIELDS times:
+	 * the field of the colour that upright surfaces give first, then slanted ones', then level ones'; y is the layer, so
+	 * field f starts at layer f * ny. rgb is the square root of the sum of colour a voxel is given, over TEXEL_RANGE, times 255,
+	 * and a is 255 where a voxel is given colour in the field, whatever little, and 0 where it is not: the lookup reads
+	 * between texels and takes the average of the ones that are (gi.glsl). Every empty voxel is, and a filled one that a
+	 * face of the field's kind looks away from is not.
 	 */
 	static byte[] relight(GiEmitters e, Light light, GiEmitters.ParallelFor parallel)
 	{
@@ -112,6 +116,7 @@ final class GiRelight
 		GiGrid grid = e.grid;
 
 		// what each face emits: its surface's chroma times how lit it is
+		float[] seen = direct ? sunShare(e, light, parallel) : null;
 		float[] emitted = new float[e.faceCount * 3];
 		parallel.run(e.faceCount, f ->
 		{
@@ -120,12 +125,7 @@ final class GiRelight
 			float ndl = nx * lx + ny * ly + nz * lz;
 			if (direct && ndl > 0)
 			{
-				// sun or moon, with the overcast's softening of shadows, from the middle of the voxel the face looks into
-				int c = e.faceCell[f];
-				float ox = grid.cellX(c) + 0.5f + lx * SUN_LIFT, oy = grid.cellY(c) + 0.5f + ly * SUN_LIFT;
-				float oz = grid.cellZ(c) + 0.5f + lz * SUN_LIFT;
-				boolean seen = grid.trace(ox, oy, oz, lx, ly, lz, SUN_DISTANCE, true, f) < 0;
-				lit = ndl * (seen ? light.shadow1 : light.shadow0);
+				lit = ndl * seen[f];
 			}
 			lit = Math.min(1, lit + SKY_SHARE * e.faceSky[f]);
 			for (int c = 0; c < 3; ++c)
@@ -136,41 +136,101 @@ final class GiRelight
 
 		// what each voxel is given: the sum over the faces that reach it
 		int cells = grid.cells.length;
-		byte[] texels = new byte[cells * 2 * 4];
+		byte[] texels = new byte[cells * FIELDS * 4];
+		parallel.run(grid.ny * FIELDS, layer ->
+		{
+			int field = layer / grid.ny;
+			int from = (field * cells + layer % grid.ny * grid.nx * grid.nz) * 4;
+			int to = from + grid.nx * grid.nz * 4;
+			int cell = layer % grid.ny * grid.nx * grid.nz;
+			for (int at = from + 3; at < to; at += 4, ++cell)
+			{
+				texels[at] = grid.cells[cell] == 0 ? (byte) 255 : 0;
+			}
+		});
 		parallel.run(e.cellCount, i ->
 		{
-			int at = e.cellIndex[i] * 4;
-			float[] flat = new float[3], standing = new float[3];
-			boolean hasFlat = false, hasStanding = false;
+			float[][] sum = new float[FIELDS][3];
+			boolean[] given = new boolean[FIELDS];
 			for (int k = e.inStart[i]; k < e.inStart[i + 1]; ++k)
 			{
 				int f = e.inFace[k];
-				float wf = e.inFlat[k], ws = e.inStanding[k];
-				hasFlat |= wf > 0;
-				hasStanding |= ws > 0;
-				for (int c = 0; c < 3; ++c)
+				for (int a = 0; a < FIELDS; ++a)
 				{
-					flat[c] += wf * emitted[f * 3 + c];
-					standing[c] += ws * emitted[f * 3 + c];
+					float w = e.inWeight[k * FIELDS + a];
+					given[a] |= w > 0;
+					for (int c = 0; c < 3; ++c)
+					{
+						sum[a][c] += w * emitted[f * 3 + c];
+					}
 				}
 			}
-			encode(texels, at, flat, hasFlat);
-			encode(texels, at + cells * 4, standing, hasStanding);
+			for (int a = 0; a < FIELDS; ++a)
+			{
+				encode(texels, (e.cellIndex[i] + a * cells) * 4, sum[a], given[a]);
+			}
 		});
 		return texels;
 	}
 
+	/**
+	 * The share of the light that casts shadows that reaches each face turned toward it, 0 to 1: a ray from the middle of the
+	 * voxel the face looks into, with the overcast's softening of shadows (Light.shadow0 where the ray is stopped, shadow1 where it is
+	 * not), blurred over the faces around it in the plane of its own (GiEmitters.BESIDE, a tent over three voxels each
+	 * way). A surface then fades out over a voxel or two at the edge of a shadow rather than going dark from one voxel to
+	 * the next, and the bits of shadow a stepped wall or a tree throws on itself, a voxel across, blend into the lit
+	 * surface around them.
+	 */
+	static float[] sunShare(GiEmitters e, Light light, GiEmitters.ParallelFor parallel)
+	{
+		GiGrid grid = e.grid;
+		float lx = light.dir[0], ly = light.dir[1], lz = light.dir[2];
+		float[] ray = new float[e.faceCount];
+		parallel.run(e.faceCount, f ->
+		{
+			// a face turned from the light is not lit by it, and is not counted among those beside the faces that are
+			if (e.faceNormal[f * 3] * lx + e.faceNormal[f * 3 + 1] * ly + e.faceNormal[f * 3 + 2] * lz <= 0)
+			{
+				ray[f] = -1;
+				return;
+			}
+			int c = e.faceCell[f];
+			float ox = grid.cellX(c) + 0.5f + lx * SUN_LIFT, oy = grid.cellY(c) + 0.5f + ly * SUN_LIFT;
+			float oz = grid.cellZ(c) + 0.5f + lz * SUN_LIFT;
+			ray[f] = grid.trace(ox, oy, oz, lx, ly, lz, SUN_DISTANCE, true, f) < 0 ? light.shadow1 : light.shadow0;
+		});
+		float[] share = new float[e.faceCount];
+		parallel.run(e.faceCount, f ->
+		{
+			if (ray[f] < 0)
+			{
+				return;
+			}
+			float sum = GiEmitters.BESIDE_SELF * ray[f], weight = GiEmitters.BESIDE_SELF;
+			for (int k = 0; k < GiEmitters.BESIDE.length; ++k)
+			{
+				int beside = e.faceBeside[f * GiEmitters.BESIDE.length + k];
+				if (beside >= 0 && ray[beside] >= 0)
+				{
+					sum += GiEmitters.BESIDE_WEIGHT[k] * ray[beside];
+					weight += GiEmitters.BESIDE_WEIGHT[k];
+				}
+			}
+			share[f] = sum / weight;
+		});
+		return share;
+	}
+
 	private static void encode(byte[] texels, int at, float[] sum, boolean given)
 	{
-		if (!given)
-		{
-			return;
-		}
 		for (int c = 0; c < 3; ++c)
 		{
 			texels[at + c] = (byte) Math.round(Math.sqrt(Math.max(0, Math.min(1, sum[c] / TEXEL_RANGE))) * 255);
 		}
-		texels[at + 3] = (byte) 255;
+		if (given)
+		{
+			texels[at + 3] = (byte) 255;
+		}
 	}
 
 	/** What a texel's rgb holds: the sum of colour, out of the square root over TEXEL_RANGE. */
@@ -181,7 +241,7 @@ final class GiRelight
 	}
 
 	/**
-	 * How many of the volume's voxels are tinted by more than 0.05 of luminance, in either field, and the greatest luminance
+	 * How many of the volume's voxels are tinted by more than 0.05 of luminance, in any field, and the greatest luminance
 	 * of any, for the log.
 	 */
 	static float[] stats(GiEmitters e, byte[] texels)
@@ -191,7 +251,7 @@ final class GiRelight
 		float most = 0;
 		for (int i = 0; i < e.cellCount; ++i)
 		{
-			for (int field = 0; field < 2; ++field)
+			for (int field = 0; field < FIELDS; ++field)
 			{
 				int at = (e.cellIndex[i] + field * cells) * 4;
 				float y = luminance(decode(texels[at]), decode(texels[at + 1]), decode(texels[at + 2]));

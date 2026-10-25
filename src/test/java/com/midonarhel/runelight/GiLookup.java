@@ -47,7 +47,7 @@ final class GiLookup
 	/** texture(): the trilinear read at (x, y, z) texels (a texel's center at .5), clamped to the edge. */
 	private static float[] texture(GiGrid g, byte[] texels, float x, float y, float z)
 	{
-		int depth = 2 * g.ny;
+		int depth = GiRelight.FIELDS * g.ny;
 		float fx = x - 0.5f, fy = y - 0.5f, fz = z - 0.5f;
 		int x0 = (int) Math.floor(fx), y0 = (int) Math.floor(fy), z0 = (int) Math.floor(fz);
 		float tx = fx - x0, ty = fy - y0, tz = fz - z0;
@@ -70,7 +70,7 @@ final class GiLookup
 		return Math.max(0, Math.min(n - 1, v));
 	}
 
-	/** giFetch: the sum of colour in field 0 or 1 at cell (voxels from the grid's corner), and how far it is given. */
+	/** giFetch: the sum of colour in field 0 to 2 (upright, slanted, level) at cell (voxels from the grid's corner) times how far it is given, and that. */
 	private static float[] fetch(GiGrid g, byte[] texels, float[] cell, int field)
 	{
 		float layer = field * g.ny + Math.max(0.5f, Math.min(g.ny - 0.5f, cell[1]));
@@ -87,7 +87,12 @@ final class GiLookup
 			float u = t[c] / t[3];
 			out[c] = range * u * u;
 		}
-		out[3] = smoothstep(min, define("GI_GIVEN_FULL"), t[3]);
+		float given = smoothstep(min, define("GI_GIVEN_FULL"), t[3]);
+		for (int c = 0; c < 3; ++c)
+		{
+			out[c] *= given;
+		}
+		out[3] = given;
 		return out;
 	}
 
@@ -111,20 +116,23 @@ final class GiLookup
 		}
 		float voxel = define("GI_VOXEL"), lookup = define("GI_LOOKUP");
 		float[] cell = {(p[0] + n[0] * lookup) / voxel, (p[1] + n[1] * lookup) / voxel - g.layer0, (p[2] + n[2] * lookup) / voxel};
-		float flatness = smoothstep(define("GI_FLAT_MIN"), define("GI_FLAT_MAX"), Math.abs(n[1]));
+		float slack = define("GI_SLOPE_SLACK");
+		float y = Math.abs(n[1]);
+		float[] across = {y * y, 0.5f - y * (float) Math.sqrt(Math.max(1 - y * y, 0)), 1 - y * y};
 		float[] acc = new float[4];
-		for (int field = 0; field < 2; ++field)
+		for (int field = 0; field < GiRelight.FIELDS; ++field)
 		{
-			float weight = field == 0 ? 1 - flatness : flatness;
+			float weight = Math.max(across[field] - slack, 0) / (1 - slack);
 			if (weight <= 0)
 			{
 				continue;
 			}
 			float[] a = fetch(g, from, cell, field), b = fetch(g, to, cell, field);
-			for (int c = 0; c < 4; ++c)
+			for (int c = 0; c < 3; ++c)
 			{
 				acc[c] += weight * (a[c] + (b[c] - a[c]) * blend);
 			}
+			acc[3] = Math.max(acc[3], a[3] + (b[3] - a[3]) * blend);
 		}
 		acc[3] *= fade;
 		return acc;

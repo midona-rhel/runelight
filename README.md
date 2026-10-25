@@ -173,36 +173,44 @@ flow to check them. Needs numpy, scipy, scikit-image and Pillow.
 Plugin config, Global illumination section. When a region loads, the static scene's opaque triangles (captured as
 the zones upload, `GiCapture.java`) are voxelized into half-tile cubes on a worker thread (`GiVoxels.java`,
 `GiGrid.java`; per zone, so zones reused by the next load keep theirs), each voxel with the average albedo and normal
-of what passes through it and where its surface lies inside it. The global illumination is a volume of tint over those
-voxels (`GiEmitters.java`, `GiRelight.java`), a colour transfer rather than light: a filled voxel with an empty one
-beside it that its surface faces gives that empty voxel, and the empty ones in a straight line beyond it, its albedo's
-hue at unit luminance (the albedo pushed 1.5 times further from gray, `GiEmitters.ALBEDO_SATURATION`, which area
-averaging and textures pull toward it; neutral for a nearly black one, no channel above 2.5), as much as it is lit:
-the sun or moon (from the sky cache, `gi_sky_frag.glsl`, read back without stalling) where a ray through the voxels
-reaches it, softened by the overcast, plus a quarter of the sky it sees (only that when "Sun bounce" is off). So dark
-grass in the sun sends as much green as bright stone. The share falls smoothly from all of it at the surface to none
-at `GiEmitters.REACH` (192 units, three voxels) from it, by the surface's true distance, which the voxels know to a
-fraction of their size, so a wall's tint does not depend on where the grid happened to cut the ground; the share is
-1 at the surface, 0.55 at 64 units, 0.07 at 128 and 0 at 192 (one minus smoothstep, squared). It goes through empty voxels only, so a wall gives nothing to what is behind it. Surfaces that lie
-flat (floors, roofs) and ones that stand (walls) give into two fields of the volume, and a pixel reads the other kind's
-(a wall the floors', a floor the walls', a slope both in proportion), so no surface takes its own colour a second time.
-Relighting runs on the worker whenever the sky or the sun changes enough, tens of milliseconds for a whole scene (the
-faces and the voxels they reach are found once per load); a new volume replaces the one shown at once when the grid
-changed and blends in over a few seconds otherwise.
+of what passes through it and where its surface lies inside it. A textured face is its texture's average colour (a
+scrolling water texture's too), any other the mean of its three vertices' colours, which the game shades it with. The
+global illumination is a volume of tint over those voxels (`GiEmitters.java`, `GiRelight.java`), a colour transfer
+rather than light: a filled voxel with an empty one beside it that its surface faces gives that empty voxel, and the
+empty ones in a straight line beyond it, its albedo's hue at unit luminance (neutral for a nearly black one, no channel
+above 2.5), as much as it is lit: the sun or moon (from the sky cache, `gi_sky_frag.glsl`, read back without stalling)
+where a ray through the voxels reaches it, softened by the overcast, plus a quarter of the sky it sees (only that when
+"Sun bounce" is off). So dark grass in the sun sends as much green as bright stone. The sun's rays are blurred over the
+faces around each (a tent over three voxels each way), so a surface fades out over a voxel or two at the edge of a
+shadow, and the bits of shadow a stepped wall or a tree throws on itself blend in. The share falls smoothly from all of
+it at the surface to none at `GiEmitters.REACH` (192 units, three voxels) from it, by the surface's true distance, which
+the voxels know to a fraction of their size, so a wall's tint does not depend on where the grid happened to cut the
+ground; it is 1 at the surface, 0.55 at 64 units, 0.07 at 128 and 0 at 192 (one minus smoothstep, squared), and the
+tint a pixel shows goes with its square root. It goes through empty voxels only, so a wall gives nothing to what is
+behind it. Surfaces give into three fields of the volume by how steeply they lie, upright, slanted at 45 degrees and
+level (a surface between gives to the two, by the angle, and one within 15 degrees of a slope lies at it exactly), and a
+pixel reads each by how unlike its own slope it is, the sine squared of the angle between: a floor reads the walls' and
+none of the floors', a wall the floors' and none of the walls', a roof half of each, and a slope in between a part of each
+that changes smoothly with it, so no surface takes its own colour a second time, a stair's treads and risers (whose
+voxels face diagonally) read the same, and nothing switches at a slope. A wall takes no colour from the walls beside it,
+since which way along the ground a surface faces is not kept. Relighting runs on the worker whenever the sky or the sun
+changes enough, tens of milliseconds for a whole scene (the faces and the voxels they reach are found once per load); a
+new volume replaces the one shown at once when the grid changed and blends in over a few seconds otherwise.
 
-The volume is a 3D texture (`GL_RGBA8`, linear, clamped: the grid's voxels across in x and z, twice its layers deep,
-the flat field first). The AO pass looks it up at half resolution (`gi.glsl`), one filtered fetch per field (two while
-a blend runs) at the pixel's position plus a voxel and a half along its normal, so what is read lies in front of the
-surface and never behind a wall. A texel's alpha says whether the field gives that voxel any colour, and the lookup
-divides by the filtered alpha, so filled voxels and empty ones beyond the reach are left out of the average; the colour
-is stored as its square root so the weak tail of the reach has bytes of its own. The tint fades out toward the edges
-of the grid. In the "Skylight + GI bounce" lighting model (below) the composite multiplies the indirect light (sky
-ambient and daylight fill) by mix(1, tint, amount), the tint being the looked-up colour at unit luminance and the
-amount its weight times Strength (up to 200%), and the direct sun by the same at a part of the amount
-(`GI_SUN_TINT`); it never adds light. Debug view "Global illumination" shows that factor. Outside the base scene and
-underground the plain ambient light stays. The water surface joins the voxels as a layer of blue-green ones at its
-height (`GiWater.java`, from the water map), and the sunk bed under it is left out of the capture, so water gives its
-colour to the shores and nothing is given from under it.
+The volume is a 3D texture (`GL_RGBA8`, linear, clamped: the grid's voxels across in x and z, three times its layers
+deep, the upright field first), twelve bytes a voxel of the grid. The AO pass looks it up at half resolution
+(`gi.glsl`): two filtered fetches (three on a slope, twice that while a blend runs) at the pixel's position plus 40 units
+along its normal, so what is read lies in front of the surface and never behind a wall. A texel's alpha says whether the
+field gives that voxel any colour, which every empty voxel is, and the lookup divides by the filtered alpha, so the filled
+voxels the surface looks away from are left out of the average; the colour is stored as its square root so the weak tail of
+the reach has bytes of its own. The tint fades out toward the edges of the grid. In the "Skylight + GI bounce" lighting
+model (below) the composite multiplies the indirect light (sky ambient and daylight fill) by mix(1, tint, amount), the
+tint being the looked-up colour at unit luminance, a little more saturated (`GI_SATURATION`), and the amount its weight
+times Strength (up to 200%), and the direct sun by the same at a part of the amount (`GI_SUN_TINT`); it never adds
+light. Debug view "Global illumination" shows that factor. Outside the base scene and underground the plain ambient
+light stays. The water surface joins the voxels as a layer of blue-green ones at its height (`GiWater.java`, from the
+water map), and the sunk bed under it is left out of the capture, so water gives its colour to the shores and nothing
+is given from under it.
 
 ## Skylight and light occlusion
 

@@ -17,6 +17,7 @@ public class GiTintTest
 	// the game's packed hsl of a mid green and of a red
 	private static final int GREEN = 21 << 10 | 5 << 7 | 60;
 	private static final int RED = 6 << 7 | 50;
+	private static final int YELLOW = 11 << 10 | 5 << 7 | 60;
 	private static final int GRAY = 63;
 	private static final float MIDDLE = (FIRST + 1) * 1024;
 
@@ -188,15 +189,48 @@ public class GiTintTest
 	}
 
 	@Test
-	public void aSurfaceIsFlatOrStandsAndBetweenBoth()
+	public void aFaceGivesItsColourToTheFieldsOfItsSlope()
 	{
-		assertEquals(1, GiEmitters.flat(-1), 0);
-		assertEquals(1, GiEmitters.flat(1), 0);
-		assertEquals(0, GiEmitters.flat(0), 0);
-		assertEquals(0, GiEmitters.flat(GiEmitters.HORIZONTAL_MIN), 1e-6);
-		assertEquals(1, GiEmitters.flat(-GiEmitters.HORIZONTAL_MAX), 1e-6);
-		float mid = GiEmitters.flat(0.6f);
-		assertTrue(mid > 0 && mid < 1);
+		GiGrid g = greenYard(32);
+		GiEmitters e = GiEmitters.build(g, GiEmitters.ParallelFor.SEQUENTIAL);
+		boolean ground = false, wall = false;
+		for (int f = 0; f < e.faceCount; ++f)
+		{
+			assertEquals(1, e.share(f, 0) + e.share(f, 1) + e.share(f, 2), 1e-3);
+			// the ground gives to the level field, the wall to the upright one
+			if (e.faceNormal[f * 3 + 1] < -0.99f)
+			{
+				assertEquals(1, e.share(f, 2), 0.02);
+				ground = true;
+			}
+			if (Math.abs(e.faceNormal[f * 3 + 1]) < 0.02f)
+			{
+				assertEquals(1, e.share(f, 0), 0.02);
+				wall = true;
+			}
+		}
+		assertTrue(ground && wall);
+		// within the snap of a slope it lies at it exactly, and in between, to the two it lies between, as the angle goes
+		float[] out = new float[3];
+		for (float degrees : new float[]{0, 5, 15})
+		{
+			GiEmitters.bands((float) -Math.sin(Math.toRadians(degrees)), out, 0);
+			assertArrayEquals(new float[]{1, 0, 0}, out, 1e-5f);
+		}
+		for (float degrees : new float[]{30, 45, 60})
+		{
+			GiEmitters.bands((float) -Math.sin(Math.toRadians(degrees)), out, 0);
+			assertArrayEquals(new float[]{0, 1, 0}, out, 1e-5f);
+		}
+		for (float degrees : new float[]{75, 90})
+		{
+			GiEmitters.bands((float) Math.sin(Math.toRadians(degrees)), out, 0);
+			assertArrayEquals(new float[]{0, 0, 1}, out, 1e-5f);
+		}
+		GiEmitters.bands((float) -Math.sin(Math.toRadians(22.5)), out, 0);
+		assertArrayEquals(new float[]{0.5f, 0.5f, 0}, out, 1e-5f);
+		GiEmitters.bands((float) Math.sin(Math.toRadians(67.5)), out, 0);
+		assertArrayEquals(new float[]{0, 0.5f, 0.5f}, out, 1e-5f);
 	}
 
 	@Test
@@ -300,6 +334,119 @@ public class GiTintTest
 		assertTrue("shaded " + shaded + " lit " + at[0][3], shaded < at[0][3]);
 	}
 
+	/**
+	 * Gray ground at height y with a flight of eight steps on it, rising toward +x from x = 192 (zone-local): treads 32
+	 * deep and risers 32 high, yellow treads and red risers, 128 wide in z from 384. The sun is east, so the treads are
+	 * lit and the risers, which face west, are not.
+	 */
+	private static GiGrid stairs(int y)
+	{
+		return grid((x, z) ->
+		{
+			GiCapture cap = new GiCapture();
+			ground(cap, GRAY, 0, 0, 1024, 1024, y);
+			if (x == 1 && z == 1)
+			{
+				for (int i = 0; i < 8; ++i)
+				{
+					int top = y - 32 * (i + 1), x0 = 192 + 32 * i;
+					GlobalIlluminationTest.quad(cap, YELLOW, new int[]{x0, top, 384}, new int[]{x0 + 32, top, 384},
+						new int[]{x0 + 32, top, 512}, new int[]{x0, top, 512}, 0, -1, 0);
+					GlobalIlluminationTest.quad(cap, RED, new int[]{x0, top, 384}, new int[]{x0, top + 32, 384},
+						new int[]{x0, top + 32, 512}, new int[]{x0, top, 512}, -1, 0, 0);
+				}
+			}
+			return cap;
+		});
+	}
+
+	@Test
+	public void aFlightOfStairsIsTintedTheSameOnTreadsAndRisers()
+	{
+		for (int y : new int[]{0, 16, 32, 48})
+		{
+			GiGrid g = stairs(y);
+			byte[] volume = relight(g, sunlit(true));
+			float[][] tread = new float[8][], riser = new float[8][];
+			StringBuilder out = new StringBuilder("stairs on ground " + y + ", tint amount tread / riser:");
+			for (int i = 0; i < 8; ++i)
+			{
+				int top = y - 32 * (i + 1), x0 = 192 + 32 * i;
+				tread[i] = tint(GiLookup.irradiance(g, volume, new float[]{MIDDLE + x0 + 16, top, MIDDLE + 448}, new float[]{0, -1, 0}));
+				riser[i] = tint(GiLookup.irradiance(g, volume, new float[]{MIDDLE + x0, top + 16, MIDDLE + 448}, new float[]{-1, 0, 0}));
+				out.append(String.format(" %.2f/%.2f", tread[i][3], riser[i][3]));
+			}
+			System.err.println(out);
+			// up the flight (the lowest risers see the gray ground, and the top steps have fewer above them) a tread and the
+			// riser beside it are tinted alike, in strength and in hue, and one step is tinted as the next: no bands
+			for (int i = 3; i < 6; ++i)
+			{
+				String at = "step " + i + " on ground " + y + " tread " + java.util.Arrays.toString(tread[i]) + " riser " + java.util.Arrays.toString(riser[i]);
+				assertEquals(at, tread[i][3], riser[i][3], 0.03);
+				assertEquals(at, tread[i][0] / tread[i][1], riser[i][0] / riser[i][1], 0.05);
+				if (i < 5)
+				{
+					assertEquals(at, tread[i][3], tread[i + 1][3], 0.03);
+					assertEquals(at, riser[i][3], riser[i + 1][3], 0.03);
+				}
+			}
+		}
+	}
+
+	@Test
+	public void theTintIsContinuousInThePixelsNormal()
+	{
+		// a pixel by the foot of the green wall, turned from facing the wall's side through to facing up
+		GiGrid g = greenYard(20);
+		byte[] volume = relight(g, sunlit(true));
+		float[] last = null;
+		for (int degrees = 0; degrees <= 90; ++degrees)
+		{
+			double a = Math.toRadians(degrees);
+			float[] gi = GiLookup.irradiance(g, volume, new float[]{MIDDLE + 540, 20 - 6, MIDDLE + 500},
+				new float[]{(float) Math.cos(a), (float) -Math.sin(a), 0});
+			float[] t = tint(gi);
+			if (last != null)
+			{
+				assertEquals("at " + degrees + " degrees", last[3], t[3], 0.04);
+				assertEquals("at " + degrees + " degrees", last[1], t[1], 0.06);
+			}
+			last = t;
+		}
+	}
+
+	@Test
+	public void theRiseUpAWallIsSmoothWhereverTheGridCutsTheGround()
+	{
+		for (int y : new int[]{0, 12, 24, 36, 48, 60})
+		{
+			GiGrid g = greenYard(y);
+			byte[] volume = relight(g, sunlit(true));
+			float[] amount = new float[61];
+			for (int i = 0; i < amount.length; ++i)
+			{
+				amount[i] = tint(GiLookup.irradiance(g, volume, new float[]{MIDDLE + 513, y - 4 * i, MIDDLE + 500}, new float[]{1, 0, 0}))[3];
+			}
+			StringBuilder out = new StringBuilder("rise up a wall, ground " + y + ":");
+			for (int h : new int[]{0, 32, 64, 96, 128, 160, 192})
+			{
+				out.append(String.format(" %d: %.2f", h, amount[h / 4]));
+			}
+			System.err.println(out);
+			// strong at the foot, about half of it by a hundred units up (half a wall), none by the reach, and nowhere a step:
+			// it falls without rising and the bend in it, over steps of 4 units, is a few hundredths at most
+			assertTrue(out.toString(), amount[0] > 0.8f && amount[0] < 1);
+			assertEquals(out.toString(), 0.45f, amount[96 / 4], 0.12);
+			assertEquals(out.toString(), 0, amount[192 / 4], 0.05);
+			assertEquals(out.toString(), 0, amount[224 / 4], 0.01);
+			for (int i = 1; i < amount.length - 1; ++i)
+			{
+				assertTrue(out.toString(), amount[i] <= amount[i - 1] + 0.01f);
+				assertEquals(out.toString() + " at " + i * 4, 0, amount[i + 1] - 2 * amount[i] + amount[i - 1], 0.03);
+			}
+		}
+	}
+
 	@Test
 	public void theColourDoesNotGoThroughAWall()
 	{
@@ -347,6 +494,41 @@ public class GiTintTest
 		byte[] volume2 = relight(wall, sunlit(true));
 		float[] face = tint(GiLookup.irradiance(wall, volume2, new float[]{MIDDLE + 513, 32 - 150, MIDDLE + 500}, new float[]{1, 0, 0}));
 		assertTrue("wall " + java.util.Arrays.toString(face), face[1] < face[0] * 1.1f && face[1] < face[2] * 1.1f);
+	}
+
+	@Test
+	public void theSunFadesOutOverAVoxelAtTheEdgeOfAShadow()
+	{
+		GiGrid g = greenYard(32);
+		GiEmitters e = GiEmitters.build(g, GiEmitters.ParallelFor.SEQUENTIAL);
+		float[] share = GiRelight.sunShare(e, sunlit(true), GiEmitters.ParallelFor.SEQUENTIAL);
+		// the ground along x in the wall's shadow, which falls west of it
+		float[] visible = new float[g.nx];
+		java.util.Arrays.fill(visible, -1);
+		int z = (int) (MIDDLE + 500) / GiGrid.VOXEL;
+		for (int f = 0; f < e.faceCount; ++f)
+		{
+			if (e.faceDirection[f] == 3 && g.cellZ(e.faceSolid[f]) == z)
+			{
+				visible[g.cellX(e.faceSolid[f])] = share[f];
+			}
+		}
+		int partly = 0;
+		StringBuilder out = new StringBuilder("sun along x:");
+		for (int x = (int) MIDDLE / GiGrid.VOXEL; x < (int) (MIDDLE + 448) / GiGrid.VOXEL; ++x)
+		{
+			out.append(String.format(" %.2f", visible[x]));
+			partly += visible[x] > 0.01f && visible[x] < 0.99f ? 1 : 0;
+			if (x > (int) MIDDLE / GiGrid.VOXEL)
+			{
+				// no voxel goes from lit to dark in one step
+				assertEquals(out.toString(), visible[x - 1], visible[x], 0.5f);
+			}
+		}
+		System.err.println(out);
+		assertEquals(out.toString(), 1, visible[(int) MIDDLE / GiGrid.VOXEL], 0);
+		assertEquals(out.toString(), 0, visible[(int) (MIDDLE + 447) / GiGrid.VOXEL], 0);
+		assertTrue(out.toString(), partly >= 1);
 	}
 
 	@Test
@@ -438,39 +620,51 @@ public class GiTintTest
 		GiGrid g = greenYard(32);
 		GiEmitters e = GiEmitters.build(g, GiEmitters.ParallelFor.SEQUENTIAL);
 		byte[] volume = GiRelight.relight(e, sunlit(true), GiEmitters.ParallelFor.SEQUENTIAL);
-		// two fields of the grid's cells, four bytes each
-		assertEquals(g.cells.length * 2 * 4, volume.length);
-		int given = 0;
-		for (int i = 0; i < e.cellCount; ++i)
-		{
-			int idx = e.cellIndex[i];
-			int flat = idx * 4, standing = (idx + g.cells.length) * 4;
-			// a field is given where a face gives to it, whole
-			assertTrue((volume[flat + 3] & 0xff) == 0 || (volume[flat + 3] & 0xff) == 255);
-			given += (volume[flat + 3] & 0xff) + (volume[standing + 3] & 0xff) > 0 ? 1 : 0;
-		}
-		assertEquals(e.cellCount, given);
-		// and everything else is nothing
+		// three fields of the grid's cells, four bytes each
+		assertEquals(g.cells.length * 3 * 4, volume.length);
+		int cells = g.cells.length;
 		java.util.BitSet touched = new java.util.BitSet();
 		for (int i = 0; i < e.cellCount; ++i)
 		{
 			touched.set(e.cellIndex[i]);
 		}
-		for (int idx = 0; idx < g.cells.length; ++idx)
+		for (int idx = 0; idx < cells; ++idx)
 		{
-			if (!touched.get(idx))
+			for (int field = 0; field < 3; ++field)
 			{
-				assertEquals(0, volume[idx * 4 + 3]);
-				assertEquals(0, volume[(idx + g.cells.length) * 4 + 3]);
+				int alpha = volume[(idx + field * cells) * 4 + 3] & 0xff;
+				// a field is given whole: everywhere in the air, and in a filled voxel only where a face gives to it
+				assertTrue(alpha == 0 || alpha == 255);
+				if (g.cells[idx] == 0)
+				{
+					assertEquals(255, alpha);
+				}
+				else if (!touched.get(idx))
+				{
+					assertEquals(0, alpha);
+				}
 			}
 		}
+		// the ground gives to the level field alone: a filled voxel with a face looking up is given in it and not in the others
+		int ground = -1;
+		for (int y = 0; y < g.ny; ++y)
+		{
+			if (g.cells[g.index((int) (MIDDLE + 200) / GiGrid.VOXEL, y, (int) (MIDDLE + 200) / GiGrid.VOXEL)] != 0)
+			{
+				ground = g.index((int) (MIDDLE + 200) / GiGrid.VOXEL, y, (int) (MIDDLE + 200) / GiGrid.VOXEL);
+			}
+		}
+		assertTrue(ground >= 0);
+		assertEquals(0, volume[ground * 4 + 3]);
+		assertEquals(0, volume[(ground + cells) * 4 + 3]);
+		assertEquals(255, volume[(ground + 2 * cells) * 4 + 3] & 0xff);
 		// the red of the grass' tint is a good deal less than its green
 		float[] sum = new float[3];
 		for (int i = 0; i < e.cellCount; ++i)
 		{
 			for (int c = 0; c < 3; ++c)
 			{
-				sum[c] += GiRelight.decode(volume[e.cellIndex[i] * 4 + c]);
+				sum[c] += GiRelight.decode(volume[(e.cellIndex[i] + 2 * cells) * 4 + c]);
 			}
 		}
 		assertTrue(sum[1] > sum[0] * 1.5f && sum[1] > sum[2] * 1.5f);
@@ -483,14 +677,19 @@ public class GiTintTest
 		GiEmitters e = GiEmitters.build(g, GiEmitters.ParallelFor.SEQUENTIAL);
 		for (int i = 0; i < e.cellCount; ++i)
 		{
-			float flat = 0, standing = 0;
+			float[] sum = new float[3];
 			for (int k = e.inStart[i]; k < e.inStart[i + 1]; ++k)
 			{
-				flat += e.inFlat[k];
-				standing += e.inStanding[k];
-				assertTrue(e.inFlat[k] >= 0 && e.inStanding[k] >= 0);
+				for (int a = 0; a < 3; ++a)
+				{
+					sum[a] += e.inWeight[k * 3 + a];
+					assertTrue(e.inWeight[k * 3 + a] >= 0);
+				}
 			}
-			assertTrue(flat <= 1 + 1e-4f && standing <= 1 + 1e-4f);
+			for (int a = 0; a < 3; ++a)
+			{
+				assertTrue(sum[a] <= 1 + 1e-4f);
+			}
 		}
 	}
 
@@ -520,18 +719,70 @@ public class GiTintTest
 	}
 
 	@Test
-	public void saturationKeepsLuminance()
+	public void aFaceGivesItsAlbedosOwnChroma()
 	{
-		float[] out = new float[3];
-		GiEmitters.saturate(0.15f, 0.25f, 0.12f, out, 0);
-		assertEquals(GiRelight.luminance(0.15f, 0.25f, 0.12f), GiRelight.luminance(out[0], out[1], out[2]), 1e-3);
-		assertTrue(out[1] - out[0] > 0.1f * 1.5f - 1e-3f);
-		GiEmitters.saturate(0.2f, 0.2f, 0.2f, out, 0);
-		assertEquals(0.2f, out[0], 1e-6);
-		assertEquals(0.2f, out[2], 1e-6);
-		// a color that would go below zero stops there
-		GiEmitters.saturate(0, 0.3f, 0, out, 0);
-		assertTrue(out[0] >= 0 && out[2] >= 0);
+		GiGrid g = greenYard(32);
+		GiEmitters e = GiEmitters.build(g, GiEmitters.ParallelFor.SEQUENTIAL);
+		float[] want = new float[3];
+		boolean checked = false;
+		for (int f = 0; f < e.faceCount; ++f)
+		{
+			int cell = g.cells[e.faceSolid[f]];
+			GiRelight.chroma(GiGrid.albedo(cell, 0), GiGrid.albedo(cell, 1), GiGrid.albedo(cell, 2), want, 0);
+			assertArrayEquals(want, java.util.Arrays.copyOfRange(e.faceChroma, f * 3, f * 3 + 3), 1e-5f);
+			checked = true;
+		}
+		assertTrue(checked);
+	}
+
+	@Test
+	public void anUntexturedTriangleHoldsTheMeanOfItsVerticesColours()
+	{
+		int blue = 42 << 10 | 6 << 7 | 50;
+		float[] out = new float[3], vertex = new float[3], mean = new float[3];
+		for (int c : new int[]{GREEN, RED, blue})
+		{
+			GiVoxels.hslToRgb(c, vertex);
+			for (int i = 0; i < 3; ++i)
+			{
+				mean[i] += GiVoxels.srgbToLinear(vertex[i]) / 3;
+			}
+		}
+		GiVoxels.albedo(GREEN, RED | blue << 16, out);
+		assertArrayEquals(mean, out, 1e-5f);
+		// a triangle of one color is that color
+		GiVoxels.hslToRgb(RED, vertex);
+		GiVoxels.albedo(RED, RED | RED << 16, out);
+		for (int i = 0; i < 3; ++i)
+		{
+			assertEquals(GiVoxels.srgbToLinear(vertex[i]), out[i], 1e-5);
+		}
+	}
+
+	@Test
+	public void aTexturedTriangleHoldsItsTexturesAverageColour()
+	{
+		float[] before = GiVoxels.textureAlbedo;
+		try
+		{
+			float[] textures = GiVoxels.newTextureAlbedo(4);
+			// texture 2 is a bluish green on average (the second ARGB pixel is a hole), whatever the lightness the face is lit with
+			GiVoxels.textureAverage(2, new int[]{0xff208060, 0, 0xff40a0c0}, textures);
+			GiVoxels.textureAlbedo = textures;
+			float[] out = new float[3];
+			GiVoxels.albedo(3 << 16 | 90, 90 | 90 << 16, out);
+			assertEquals((GiVoxels.srgbToLinear(0x20 / 255f) + GiVoxels.srgbToLinear(0x40 / 255f)) / 2, out[0], 1e-5);
+			assertEquals((GiVoxels.srgbToLinear(0x80 / 255f) + GiVoxels.srgbToLinear(0xa0 / 255f)) / 2, out[1], 1e-5);
+			assertEquals((GiVoxels.srgbToLinear(0x60 / 255f) + GiVoxels.srgbToLinear(0xc0 / 255f)) / 2, out[2], 1e-5);
+			// and a texture whose pixels are not known yet is a neutral gray, which tints nothing
+			GiVoxels.albedo(1 << 16, 0, out);
+			assertEquals(out[0], out[1], 0);
+			assertEquals(out[1], out[2], 0);
+		}
+		finally
+		{
+			GiVoxels.textureAlbedo = before;
+		}
 	}
 
 	@Test
@@ -561,11 +812,11 @@ public class GiTintTest
 		assertEquals(GiGrid.TILE, GiLookup.define("GI_TILE"), 0);
 		assertEquals(GiGrid.VOXEL, GiLookup.define("GI_VOXEL"), 0);
 		assertEquals(GiRelight.TEXEL_RANGE, GiLookup.define("GI_RANGE"), 0);
-		assertEquals(GiEmitters.HORIZONTAL_MIN, GiLookup.define("GI_FLAT_MIN"), 0);
-		assertEquals(GiEmitters.HORIZONTAL_MAX, GiLookup.define("GI_FLAT_MAX"), 0);
-		// a pixel reads more than a voxel and less than two in front of itself: past the half voxel a surface can be off the
-		// center of its own, and not as far as the voxel behind a wall one voxel thick
-		assertTrue(GiLookup.define("GI_LOOKUP") > 1.25f * GiGrid.VOXEL && GiLookup.define("GI_LOOKUP") < 2 * GiGrid.VOXEL);
+		// the snap of the shader's weights is the one the faces' shares are given
+		assertEquals(Math.pow(Math.sin(Math.toRadians(GiEmitters.SLOPE_SNAP)), 2), GiLookup.define("GI_SLOPE_SLACK"), 0.001);
+		// a pixel reads past the half voxel a surface can be off the center of its own and short of the voxel, so the point it
+		// reads is in front of its surface and between the first voxels of air
+		assertTrue(GiLookup.define("GI_LOOKUP") > 0.5f * GiGrid.VOXEL && GiLookup.define("GI_LOOKUP") < GiGrid.VOXEL);
 		// the reach is within the tiles the grid fades over
 		assertTrue(GiEmitters.REACH < GiLookup.define("GI_EDGE_FADE") * GiGrid.TILE);
 	}

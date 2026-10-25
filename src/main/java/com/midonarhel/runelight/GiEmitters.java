@@ -22,12 +22,18 @@ import java.util.function.IntConsumer;
  * be whatever the grid happened to cut the ground at. The filled voxel gets its share too, which is what a pixel
  * between it and the first empty voxel reads, and no other filled voxel gets any.
  *
- * Two fields are kept, the colour surfaces that lie flat give (floors, roofs) and the colour the ones that stand give
- * (walls): a pixel never reads its own kind, whose colour it already has, and a wall shows the floors', a floor the
- * walls'. A sloped surface is partly of each kind (HORIZONTAL_MIN, HORIZONTAL_MAX), as is what it reads.
+ * What a pixel reads is kept in three fields of the volume, by how steeply the surfaces that gave it lie: upright (walls),
+ * slanted at 45 degrees (roofs, stairs, steep ground) and level (floors, ground). A face gives its colour to the
+ * two fields its slope lies between, by the angle (bands), and a pixel reads the fields by how unlike its own slope their
+ * slopes are, the sine squared of the angle between (gi.glsl): a floor reads none of the level colour and all the upright,
+ * a wall none of the upright and all the level, a roof half of each and none of the slanted, and a slope between a part of
+ * each that changes smoothly with it. A surface then never reads the colour it gives itself, and a stair's treads and risers,
+ * whose voxels face diagonally, read the same. Which way along the ground a surface faces is not told, so a wall takes no
+ * colour from the walls beside it.
  *
  * What a face puts into a voxel is kept as a list per voxel, to be added up on every relight; where the weights of
- * what a voxel is given add up to more than one they are scaled to one, so a corner is not brighter than a wall.
+ * what a voxel is given in a field add up to more than one they are scaled to one, so a corner is not brighter than a
+ * wall.
  */
 final class GiEmitters
 {
@@ -36,19 +42,24 @@ final class GiEmitters
 	static final float REACH = 192;
 	// the least cosine a voxel's normal has toward a neighbour for that neighbour to be given its colour
 	static final float FACING_COS = 0.2f;
-	// A surface facing no more up or down than the first (the y of its normal) stands, more than the second lies flat,
-	// and between them it is both.
-	static final float HORIZONTAL_MIN = 0.5f, HORIZONTAL_MAX = 0.7f;
 	// directions around a face to see the sky in, the least cosine with its normal that counts, and how far they look,
 	// in voxels; beyond, the sky
 	static final int SKY_SAMPLES = 64;
 	static final float SKY_MIN_COS = 0.1f;
 	static final float SKY_DISTANCE = 32;
-	// The voxels' colors are pushed this far from their gray: a voxel averages the colors of everything in it, the
-	// texture detail included, which pulls them toward gray.
-	static final float ALBEDO_SATURATION = 1.5f;
+	// surfaces this many degrees from upright, from 45 degrees or from level lie at it exactly
+	static final float SLOPE_SNAP = 15;
 	// weights below this are left out
 	private static final float MIN_WEIGHT = 0.002f;
+	// A filled voxel is given a field's colour only if the share of its surface's colour that goes to the field is at least
+	// this: a voxel that holds a little of it would read as the air next to it, but darker, to the filter that reads
+	// between them (gi.glsl), so a wall a little off true does not dim the colour at its foot.
+	private static final float SOLID_SHARE = 0.25f;
+	// the voxels around a face's own, across its plane: along the first of the two axes across it, along the second; the
+	// weight of each in blurring over them (GiRelight), and 4 for the face itself
+	static final int[][] BESIDE = {{-1, -1}, {0, -1}, {1, -1}, {-1, 0}, {1, 0}, {-1, 1}, {0, 1}, {1, 1}};
+	static final float[] BESIDE_WEIGHT = {1, 2, 1, 2, 2, 1, 2, 1};
+	static final float BESIDE_SELF = 4;
 	private static final int[][] DIRECTIONS = {{1, 0, 0}, {-1, 0, 0}, {0, 1, 0}, {0, -1, 0}, {0, 0, 1}, {0, 0, -1}};
 	// an even spread over the whole sphere, to measure the sky with
 	static final float[] SKY_RAYS = GiGrid.fibonacci(SKY_SAMPLES);
@@ -71,7 +82,7 @@ final class GiEmitters
 
 	// per face: the filled voxel and the direction it looks, an index of DIRECTIONS; the empty voxel it looks into (where
 	// its light is measured from); the direction it faces (the normal of a one-sided voxel, else the axis); the colour its
-	// surface gives at unit luminance; and the share of the directions it faces that see the sky
+	// surface gives at unit luminance (its albedo's); and the share of the directions it faces that see the sky
 	int faceCount;
 	int[] faceSolid;
 	byte[] faceDirection;
@@ -79,16 +90,20 @@ final class GiEmitters
 	float[] faceNormal;
 	float[] faceChroma;
 	float[] faceSky;
+	// per face, the share of its colour that goes to each field (bands)
+	float[] faceShare;
+	// per face, the faces beside it in the plane of its own that look the same way: the eight voxels around its own on
+	// its layer (BESIDE), the face of each or -1 for none
+	int[] faceBeside;
 
 	// per voxel that is given any colour, cellIndex its index in the grid; the faces that give it some are the entries
-	// inStart[i] to inStart[i + 1], each its face and its weight in the field of flat surfaces (inFlat) and in the one
-	// of standing ones (inStanding)
+	// inStart[i] to inStart[i + 1], each its face and its weight in the three fields (inWeight[entry * 3 + field], the
+	// fields in the order upright, slanted, level)
 	int cellCount;
 	int[] cellIndex;
 	int[] inStart;
 	int[] inFace;
-	float[] inFlat;
-	float[] inStanding;
+	float[] inWeight;
 
 	private GiEmitters(GiGrid grid)
 	{
@@ -101,22 +116,6 @@ final class GiEmitters
 		float t = Math.max(0, Math.min(1, distance / REACH));
 		float s = t * t * (3 - 2 * t);
 		return (1 - s) * (1 - s);
-	}
-
-	/** How much a surface with normal y component ny lies flat rather than stands, 0 to 1. */
-	static float flat(float ny)
-	{
-		float t = Math.max(0, Math.min(1, (Math.abs(ny) - HORIZONTAL_MIN) / (HORIZONTAL_MAX - HORIZONTAL_MIN)));
-		return t * t * (3 - 2 * t);
-	}
-
-	/** Linear color (r, g, b) moved ALBEDO_SATURATION times as far from its luminance, same luminance, into out[at..]. */
-	static void saturate(float r, float g, float b, float[] out, int at)
-	{
-		float l = GiRelight.luminance(r, g, b);
-		out[at] = Math.max(0, l + (r - l) * ALBEDO_SATURATION);
-		out[at + 1] = Math.max(0, l + (g - l) * ALBEDO_SATURATION);
-		out[at + 2] = Math.max(0, l + (b - l) * ALBEDO_SATURATION);
 	}
 
 	static GiEmitters build(GiGrid grid, ParallelFor parallel)
@@ -173,6 +172,7 @@ final class GiEmitters
 		faceNormal = new float[n * 3];
 		faceChroma = new float[n * 3];
 		faceSky = new float[n];
+		faceShare = new float[n * 3];
 		faceSolid = Arrays.copyOf(solid, n);
 		faceDirection = Arrays.copyOf(dir, n);
 		parallel.run(n, f ->
@@ -184,9 +184,8 @@ final class GiEmitters
 			faceCell[f] = grid.index(x + v[0], y + v[1], z + v[2]);
 			float[] normal = GiGrid.twoSided(cell) ? new float[]{v[0], v[1], v[2]} : GiGrid.normal(cell);
 			System.arraycopy(normal, 0, faceNormal, f * 3, 3);
-			float[] rgb = new float[3];
-			saturate(GiGrid.albedo(cell, 0), GiGrid.albedo(cell, 1), GiGrid.albedo(cell, 2), rgb, 0);
-			GiRelight.chroma(rgb[0], rgb[1], rgb[2], faceChroma, f * 3);
+			bands(normal[1], faceShare, f * 3);
+			GiRelight.chroma(GiGrid.albedo(cell, 0), GiGrid.albedo(cell, 1), GiGrid.albedo(cell, 2), faceChroma, f * 3);
 			// the share of the directions it faces that see the sky
 			float ox = x + v[0] + 0.5f, oy = y + v[1] + 0.5f, oz = z + v[2] + 0.5f;
 			int facing = 0, open = 0;
@@ -205,6 +204,35 @@ final class GiEmitters
 			}
 			faceSky[f] = facing > 0 ? (float) open / facing : 0;
 		});
+
+		// the faces beside each, found among the faces in order of their voxel and direction
+		int[] key = new int[n];
+		for (int f = 0; f < n; ++f)
+		{
+			key[f] = faceSolid[f] * DIRECTIONS.length + faceDirection[f];
+		}
+		faceBeside = new int[n * BESIDE.length];
+		parallel.run(n, f ->
+		{
+			int idx = faceSolid[f];
+			int[] at = {grid.cellX(idx), grid.cellY(idx), grid.cellZ(idx)};
+			int[] size = {grid.nx, grid.ny, grid.nz};
+			int across = faceDirection[f] / 2;
+			int u = (across + 1) % 3, v = (across + 2) % 3;
+			for (int k = 0; k < BESIDE.length; ++k)
+			{
+				int[] to = at.clone();
+				to[u] += BESIDE[k][0];
+				to[v] += BESIDE[k][1];
+				int found = -1;
+				if (to[u] >= 0 && to[u] < size[u] && to[v] >= 0 && to[v] < size[v])
+				{
+					int i = Arrays.binarySearch(key, grid.index(to[0], to[1], to[2]) * DIRECTIONS.length + faceDirection[f]);
+					found = Math.max(i, -1);
+				}
+				faceBeside[f * BESIDE.length + k] = found;
+			}
+		});
 	}
 
 	/** The list per voxel: where each face puts its colour, and how much. */
@@ -213,8 +241,7 @@ final class GiEmitters
 		int cells = grid.cells.length;
 		int[] face = new int[4096];
 		int[] at = new int[4096];
-		float[] byFlat = new float[4096];
-		float[] byStanding = new float[4096];
+		float[] along = new float[4096];
 		int n = 0;
 		for (int f = 0; f < faceCount; ++f)
 		{
@@ -225,7 +252,6 @@ final class GiEmitters
 			// how much the face looks along the direction, and how far in front of the surface the filled voxel's center is
 			float facing = twoSided ? 1 : faceNormal[f * 3] * v[0] + faceNormal[f * 3 + 1] * v[1] + faceNormal[f * 3 + 2] * v[2];
 			float distance = twoSided ? 0 : grid.planeDistance(idx);
-			float lies = flat(faceNormal[f * 3 + 1]);
 			int x = grid.cellX(idx), y = grid.cellY(idx), z = grid.cellZ(idx);
 			for (int k = twoSided ? 1 : 0;; ++k)
 			{
@@ -249,25 +275,20 @@ final class GiEmitters
 				{
 					face = Arrays.copyOf(face, n * 2);
 					at = Arrays.copyOf(at, n * 2);
-					byFlat = Arrays.copyOf(byFlat, n * 2);
-					byStanding = Arrays.copyOf(byStanding, n * 2);
+					along = Arrays.copyOf(along, n * 2);
 				}
 				face[n] = f;
 				at[n] = grid.index(cx, cy, cz);
-				byFlat[n] = w * lies;
-				byStanding[n] = w * (1 - lies);
+				along[n] = w;
 				n++;
 			}
 		}
 
-		// what each voxel is given in all, to scale it to one at most, and the voxels in order of their index
-		float[] sumFlat = new float[cells], sumStanding = new float[cells];
+		// the voxels that are given anything, in order of their index
 		int[] compact = new int[cells];
 		Arrays.fill(compact, -1);
 		for (int i = 0; i < n; ++i)
 		{
-			sumFlat[at[i]] += byFlat[i];
-			sumStanding[at[i]] += byStanding[i];
 			compact[at[i]] = 0;
 		}
 		int count = 0;
@@ -288,25 +309,62 @@ final class GiEmitters
 				cellIndex[compact[i]] = i;
 			}
 		}
+		// what each voxel is given in each field in all, to scale it to one at most
+		float[] sum = new float[count * 3];
 		for (int i = 0; i < n; ++i)
 		{
 			inStart[compact[at[i]] + 1]++;
+			for (int a = 0; a < 3; ++a)
+			{
+				sum[compact[at[i]] * 3 + a] += given(face[i], a, along[i], grid.cells[at[i]] != 0);
+			}
 		}
 		for (int i = 0; i < count; ++i)
 		{
 			inStart[i + 1] += inStart[i];
 		}
 		inFace = new int[n];
-		inFlat = new float[n];
-		inStanding = new float[n];
+		inWeight = new float[n * 3];
 		int[] fill = Arrays.copyOf(inStart, count);
 		for (int i = 0; i < n; ++i)
 		{
-			int c = at[i];
-			int o = fill[compact[c]]++;
+			int c = compact[at[i]];
+			int o = fill[c]++;
 			inFace[o] = face[i];
-			inFlat[o] = byFlat[i] / Math.max(1, sumFlat[c]);
-			inStanding[o] = byStanding[i] / Math.max(1, sumStanding[c]);
+			for (int a = 0; a < 3; ++a)
+			{
+				inWeight[o * 3 + a] = given(face[i], a, along[i], grid.cells[at[i]] != 0) / Math.max(1, sum[c * 3 + a]);
+			}
 		}
+	}
+
+	/**
+	 * How a surface with normal y component ny divides its colour among the fields (upright, slanted, level) into
+	 * out[at..]: a surface lying at 0, 45 or 90 degrees from upright gives it to the field of that slope, and in between
+	 * to the two, in proportion to the angle. A surface within SLOPE_SNAP of a field's slope lies at it exactly, so the
+	 * normals of the voxels, which are a little off true, give nothing to the others.
+	 */
+	static void bands(float ny, float[] out, int at)
+	{
+		float slope = (float) Math.toDegrees(Math.asin(Math.min(1, Math.abs(ny))));
+		boolean upper = slope >= 45;
+		float snap = SLOPE_SNAP / 45;
+		float t = Math.max(0, Math.min(1, ((upper ? slope - 45 : slope) / 45 - snap) / (1 - 2 * snap)));
+		out[at] = upper ? 0 : 1 - t;
+		out[at + 1] = upper ? 1 - t : t;
+		out[at + 2] = upper ? t : 0;
+	}
+
+	/** How much of face f's colour goes to field a. */
+	float share(int f, int a)
+	{
+		return faceShare[f * 3 + a];
+	}
+
+	// what face f puts into the field of axis a of a voxel (filled or not), where it reaches it with weight w
+	private float given(int f, int a, float w, boolean filled)
+	{
+		float share = share(f, a);
+		return filled && share < SOLID_SHARE ? 0 : w * share;
 	}
 }

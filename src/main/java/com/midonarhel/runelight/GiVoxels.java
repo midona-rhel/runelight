@@ -93,8 +93,13 @@ final class GiVoxels
 		return c <= 0.04045f ? c / 12.92f : (float) Math.pow((c + 0.055) / 1.055, 2.4);
 	}
 
-	/** Linear albedo of a captured triangle's color into out[0..2]. */
-	static void albedo(int color, float[] out)
+	/**
+	 * Linear albedo of a captured triangle into out[0..2]: its texture's average color if it has one (the light of a
+	 * textured face is its texture times a lightness, which tints nothing, so the average is its color, a scrolling water
+	 * texture's included), else the mean of its three vertices' colors, which the game shades a face with (color is
+	 * GiCapture.color, color12 GiCapture.color12).
+	 */
+	static void albedo(int color, int color12, float[] out)
 	{
 		int tex = color >>> 16 & 0x3ff;
 		if (tex > 0)
@@ -113,10 +118,15 @@ final class GiVoxels
 			}
 			return;
 		}
-		hslToRgb(color & 0xffff, out);
-		for (int c = 0; c < 3; ++c)
+		float[] vertex = new float[3];
+		out[0] = out[1] = out[2] = 0;
+		for (int k = 0; k < 3; ++k)
 		{
-			out[c] = srgbToLinear(out[c]);
+			hslToRgb((k == 0 ? color : color12 >>> (k - 1) * 16) & 0xffff, vertex);
+			for (int c = 0; c < 3; ++c)
+			{
+				out[c] += srgbToLinear(vertex[c]) / 3;
+			}
 		}
 	}
 
@@ -186,7 +196,7 @@ final class GiVoxels
 			nx /= len;
 			ny /= len;
 			nz /= len;
-			albedo(cap.color[t], rgb);
+			albedo(cap.color[t], cap.color12[t], rgb);
 			rasterize(v, nx, ny, nz, area, rgb, (cap.color[t] & GiCapture.FOLIAGE) != 0, acc);
 		}
 		return acc.toZone();
