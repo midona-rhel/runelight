@@ -473,7 +473,7 @@ public class RoomMapTest
 	}
 
 	@Test
-	public void puddlesGatherOutdoorsAndOnlyAFewToAChunk()
+	public void puddlesGatherByWallsAndOnlyAFewToAChunk()
 	{
 		RoomMap m = house(walls());
 		float[] pools = m.pools();
@@ -483,28 +483,15 @@ public class RoomMapTest
 		{
 			for (int y = 4; y < 12; ++y)
 			{
-				float v = pools[m.index(0, x, y)];
-				if (v > 0)
+				if (pools[m.index(0, x, y)] > 0)
 				{
 					places++;
-					assertTrue(v >= RoomMap.POOL_MIN);
-					// the house's own tiles are under its roof: the rain doesn't fall there
-					assertFalse("indoors " + x + "," + y, x >= 8 && y >= 8);
+					assertTrue(pools[m.index(0, x, y)] >= RoomMap.POOL_MIN);
 				}
 			}
 		}
 		assertTrue(places > 0 && places <= RoomMap.POOLS_PER_CHUNK);
-		// flat open ground is never quite level: some of it collects water, the same tiles every time
-		float[] again = m.pools();
-		int open = 0;
-		for (int x = 12; x < 20; ++x)
-		{
-			for (int y = 12; y < 20; ++y)
-			{
-				open += pools[m.index(0, x, y)] > 0 ? 1 : 0;
-				assertEquals(pools[m.index(0, x, y)], again[m.index(0, x, y)], 0);
-			}
-		}
-		assertTrue(open > 0 && open <= RoomMap.POOLS_PER_CHUNK);
+		// level open ground away from any wall collects nothing
+		assertEquals(0, pools[m.index(0, 0, 0)], 0);
 	}
 }

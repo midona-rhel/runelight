@@ -316,7 +316,6 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 	private int uniSceneProceduralSky;
 	private int uniSceneCasterDir;
 	private int uniSceneCasterKind;
-	private int uniSceneGroundSnow, uniSceneNoiseOrigin;
 	private int uniSceneSunAltitude;
 	private int uniSceneOvercast;
 	private int uniSceneWeatherLight;
@@ -1194,8 +1193,6 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		uniSceneProceduralSky = glGetUniformLocation(glProgram, "proceduralSky");
 		uniSceneCasterDir = glGetUniformLocation(glProgram, "casterDir");
 		uniSceneCasterKind = glGetUniformLocation(glProgram, "casterKind");
-		uniSceneGroundSnow = glGetUniformLocation(glProgram, "groundSnowOn");
-		uniSceneNoiseOrigin = glGetUniformLocation(glProgram, "weatherNoiseOrigin");
 		uniSceneSunAltitude = glGetUniformLocation(glProgram, "sunAltitude");
 		uniSceneOvercast = glGetUniformLocation(glProgram, "weatherOvercast");
 		uniSceneWeatherLight = glGetUniformLocation(glProgram, "weatherLight");
@@ -1864,10 +1861,6 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		glUniform1i(uniSceneProceduralSky, proceduralSky() ? 1 : 0);
 		glUniform3fv(uniSceneCasterDir, dayCycle.casterDir);
 		glUniform1i(uniSceneCasterKind, dayCycle.caster);
-		Scene snowScene = client.getTopLevelWorldView().getScene();
-		glUniform1i(uniSceneGroundSnow, config.weatherSurfaces() && weather.snowOnGround() ? 1 : 0);
-		glUniform2f(uniSceneNoiseOrigin, snowScene != null ? snowScene.getBaseX() * (float) Perspective.LOCAL_TILE_SIZE : 0,
-			snowScene != null ? snowScene.getBaseY() * (float) Perspective.LOCAL_TILE_SIZE : 0);
 		glUniform1f(uniSceneSunAltitude, dayCycle.sunAltitude);
 		weather.setOvercastUniform(uniSceneOvercast);
 		weather.setLightUniform(uniSceneWeatherLight);

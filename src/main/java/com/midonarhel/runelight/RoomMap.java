@@ -686,10 +686,8 @@ final class RoomMap
 
 	// the most puddles a chunk (8 by 8 tiles, aligned with the world's) gets on each storey, and the least pool a tile
 	// needs to get one
-	static final int POOLS_PER_CHUNK = 2;
+	static final int POOLS_PER_CHUNK = 8;
 	static final float POOL_MIN = 0.15f;
-	// level open ground is never quite level: a tile in a flat yard collects up to this much, by a hash of its place
-	static final float POOL_UNEVEN = 0.45f;
 
 	/**
 	 * Every tile's {@link #pool}, by {@link #index}, but only the POOLS_PER_CHUNK likeliest tiles of each chunk and
@@ -724,11 +722,10 @@ final class RoomMap
 						{
 							continue;
 						}
-						int h = (seed ^ t * 0x9E3779B9) * 0x85EBCA6B;
-						float v = Math.max(pool(p, x, y), outdoors(p, x, y)
-							? level(p, x, y) * POOL_UNEVEN * (((h >>> 12) & 0xFFFF) / (float) 0xFFFF) : 0);
+						float v = pool(p, x, y);
 						if (v >= POOL_MIN)
 						{
+							int h = (seed ^ t * 0x9E3779B9) * 0x85EBCA6B;
 							score[n] = v + ((h >>> 8) & 0xFFFF) * (0.05f / 0xFFFF);
 							value[n] = v;
 							tile[n++] = index(p, x, y);
@@ -750,33 +747,12 @@ final class RoomMap
 		return out;
 	}
 
-	/** Whether rain falls on a tile of a storey: it is neither in a room nor under a roof. */
-	private boolean outdoors(int p, int x, int y)
-	{
-		int i = index(p, x, y);
-		return rooms[i] == 0 && !roofed[i];
-	}
-
-	/** How level a tile is, 1 for ground that holds water to 0 where it runs off. */
-	private float level(int p, int x, int y)
-	{
-		float h = floors[index(p, x, y)];
-		float slope = Math.max(Math.abs(floorAt(p, x + 1, y, h) - floorAt(p, x - 1, y, h)),
-			Math.abs(floorAt(p, x, y + 1, h) - floorAt(p, x, y - 1, h))) * 0.5f;
-		return 1 - clamp01((slope - POOL_FLAT) / (POOL_STEEP - POOL_FLAT));
-	}
-
 	/**
 	 * Where rain water collects on a tile of a storey, 0 to 1: in hollows lower than the tiles around them, and along
-	 * walls, on level ground only, and only where the rain falls: none in rooms or under roofs (weather_ground.glsl
-	 * grows its puddles from the highest of these).
+	 * walls, on level ground only (weather_ground.glsl grows its puddles from the highest of these).
 	 */
 	float pool(int p, int x, int y)
 	{
-		if (!outdoors(p, x, y))
-		{
-			return 0;
-		}
 		float h = floors[index(p, x, y)];
 		float sum = 0;
 		int n = 0;
@@ -794,6 +770,9 @@ final class RoomMap
 		}
 		// y points down: a hollow's floor is larger than its neighbours'
 		float hollow = n == 0 ? 0 : clamp01((h - sum / n) / POOL_DEPTH);
+		float slope = Math.max(Math.abs(floorAt(p, x + 1, y, h) - floorAt(p, x - 1, y, h)),
+			Math.abs(floorAt(p, x, y + 1, h) - floorAt(p, x, y - 1, h))) * 0.5f;
+		float level = 1 - clamp01((slope - POOL_FLAT) / (POOL_STEEP - POOL_FLAT));
 		float byWall = 0;
 		if (walls != null)
 		{
@@ -805,7 +784,7 @@ final class RoomMap
 			}
 			byWall = 1 - nearest / 63f;
 		}
-		return level(p, x, y) * Math.max(hollow, 0.75f * byWall);
+		return level * Math.max(hollow, 0.75f * byWall);
 	}
 
 	private float floorAt(int p, int x, int y, float fallback)

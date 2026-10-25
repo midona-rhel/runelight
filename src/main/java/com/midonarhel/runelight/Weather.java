@@ -1127,22 +1127,9 @@ class Weather
 		}
 		boolean f = field.isEnabled();
 		float wet = f ? wetness + field.max(WeatherField.WET) - field.getFocus(WeatherField.WET) : wetness;
-		return wet > 0.002f || snowOnGround();
-	}
-
-	/**
-	 * Whether snow lies anywhere in the scene, for the scene pass to lay out the snow on scenery
-	 * (the pattern frag.glsl stores).
-	 */
-	boolean snowOnGround()
-	{
-		if (!active)
-		{
-			return false;
-		}
-		float snowy = field.isEnabled()
-			? snowCover + field.max(WeatherField.SNOW_COVER) - field.getFocus(WeatherField.SNOW_COVER) : snowCover;
-		return snowy > 0.002f;
+		float snowy = f ? snowCover + field.max(WeatherField.SNOW_COVER) - field.getFocus(WeatherField.SNOW_COVER)
+			: snowCover;
+		return wet > 0.002f || snowy > 0.002f;
 	}
 
 	/**

@@ -20,40 +20,26 @@ uniform float weatherFieldOn;
 #define GROUND_EXPOSURE_BIAS 40.0
 // world units between the exposure taps: shelter edges fade over about a tile and a half
 #define GROUND_EXPOSURE_STEP 64.0
-// world units between the point and the taps that say it is open itself
-#define GROUND_EXPOSURE_HERE 24.0
 // offset along the normal, so walls right below an edge aren't covered by themselves
 #define GROUND_NORMAL_OFFSET 12.0
 
-// Whether the sky is open above a camera-relative point, 0 to 1: a bilinear compare in the occlusion map. Past the map
-// nothing is known to cover a point: it counts as open.
-float groundOpen(vec3 p) {
-  vec4 c = occlusionProjRel * vec4(p, 1.0);
-  vec2 uv = c.xy * 0.5 + 0.5;
-  float depth = depthZeroToOne == 1 ? c.z : c.z * 0.5 + 0.5;
-  if (all(greaterThanEqual(uv, vec2(0.0))) && all(lessThanEqual(uv, vec2(1.0)))) {
-    return texture(occlusionCompare, vec3(uv, depth - GROUND_EXPOSURE_BIAS / (2.0 * occlusionDepthRange)));
-  }
-  return 1.0;
-}
-
-// 1 under the open sky, 0 sheltered, smooth between: bilinear compares in a 3x3 tent, so shelter fades out over about
-// a tile and a half into the open. The point itself has to be open too, by four taps close around it: the tent
-// reaches across a wall, and without this the open ground on its far side lets snow and rain into the room, over a
-// roof's edge, and onto its walls.
+// 1 under the open sky, 0 sheltered, smooth between: bilinear compares in a 3x3 tent. Past the map nothing is known
+// to cover a point: it counts as open.
 float groundExposure(vec3 p) {
   float sum = 0.0;
   for (int x = -1; x <= 1; ++x) {
     for (int z = -1; z <= 1; ++z) {
-      sum += (x == 0 ? 2.0 : 1.0) * (z == 0 ? 2.0 : 1.0) * groundOpen(p + vec3(float(x), 0.0, float(z)) * GROUND_EXPOSURE_STEP);
+      vec4 c = occlusionProjRel * vec4(p + vec3(float(x), 0.0, float(z)) * GROUND_EXPOSURE_STEP, 1.0);
+      vec2 uv = c.xy * 0.5 + 0.5;
+      float depth = depthZeroToOne == 1 ? c.z : c.z * 0.5 + 0.5;
+      float e = 1.0;
+      if (all(greaterThanEqual(uv, vec2(0.0))) && all(lessThanEqual(uv, vec2(1.0)))) {
+        e = texture(occlusionCompare, vec3(uv, depth - GROUND_EXPOSURE_BIAS / (2.0 * occlusionDepthRange)));
+      }
+      sum += (x == 0 ? 2.0 : 1.0) * (z == 0 ? 2.0 : 1.0) * e;
     }
   }
-  float here = 0.0;
-  for (int k = 0; k < 4; ++k) {
-    here += groundOpen(p + vec3(k < 2 ? -GROUND_EXPOSURE_HERE : GROUND_EXPOSURE_HERE, 0.0,
-      (k & 1) == 0 ? -GROUND_EXPOSURE_HERE : GROUND_EXPOSURE_HERE));
-  }
-  return sum / 16.0 * smoothstep(0.25, 0.75, here * 0.25);
+  return sum / 16.0;
 }
 
 // snow cover that keeps the puddles away: they are gone once this much has settled

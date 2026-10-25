@@ -1,32 +1,35 @@
 // Snow and rain puddles on the surfaces themselves (WeatherGround.java), applied to the albedo before the composite
 // lights it. The AO pass leaves how much cover each pixel gets (weather_ground_ao.glsl); this decides where it lies.
-// Snow is the water foam's pattern (ground_pattern.glsl) compared with a level that rises smoothly as the cover builds:
-// it starts in the gaps between cells and spreads over their crowns until everything is covered, the edge as soft as
-// the foam's. The ground's pattern is worked out here; scenery brings its own from the scene pass, laid out on the
-// model at rest so it doesn't slide as plants sway. Puddles grow where water collects, in hollows and along walls
-// (RoomMap.pool), as the ground soaks, their edges pushed around by noise, drawn as a water of their own reflecting the
-// sky, with a damp rim. Their edge is a distance in pixels, worked out from the gradients and the
-// surface's footprint on screen, so it stays a pixel wide at any angle. Raindrops land in the puddles as rings that
-// spread over the water. Needs frame.glsl, rooms.glsl and water.glsl.
+// Snow is blobs of world space noise compared with a level that falls as the cover builds: a blob starts at a noise
+// peak and grows outward, its edge crisp and two-tone like the water's foam, an outer band of shaded snow round the
+// bright snow. Puddles grow where water collects, in hollows and along walls (RoomMap.pool), as the ground soaks, their
+// edges pushed around by noise, drawn as a water of their own reflecting the sky. Both edges are distances in pixels,
+// worked out from the gradients and the surface's footprint on screen, so they stay a pixel wide at any angle. Raindrops
+// land in the puddles as rings that spread over the water. Needs frame.glsl, rooms.glsl and water.glsl.
 
 #include "weather_wade.glsl"
-#include "ground_pattern.glsl"
 
 uniform int weatherGroundOn;
 uniform vec2 weatherNoiseOrigin;  // world x and z of local (scene) 0, world units
 uniform float rainRate;           // how hard it rains here, 0 to 1 and over: the rings in the puddles
 
-// snow: the pattern level at which it starts to settle (nothing yet) and at which everything is covered, and the foam's
-// edge: a surface is covered where the level is this far above the pattern
-#define SNOW_FIRST 0.0
-#define SNOW_ALL 1.9
-#define SNOW_EDGE 0.4
+// snow: noise wavelength in world units, and the noise level its blobs start at (peaks) and end at (all covered)
+#define SNOW_SCALE 640.0
+#define SNOW_FIRST 0.45
+#define SNOW_ALL -0.6
+// the cover moves the snow's edge in this many small steps, not continuously: it spreads in discrete little advances
+#define SNOW_STEPS 16.0
+// the outer band's width in world units, and its least in noise levels (a young blob has nothing else yet)
+#define SNOW_RIM 14.0
+#define SNOW_RIM_MIN 0.02
+// how white the tops of scenery get
+#define SNOW_SCENERY 0.8
 #define SNOW_COLOR vec3(0.94, 0.96, 0.99)
+#define SNOW_RIM_COLOR vec3(0.72, 0.8, 0.92)
 // how far a snow covered surface's normal is rounded toward up
 #define SNOW_ROUND 0.7
 // the steepest ground snow settles on: none at the first, all of it at the second (up component of the normal); a
-// steeper face is SNOW_SLOPE levels further from snow, so the cells' gaps shrink on it. Foliage is not steep: its
-// faces stand every way, the leaves covered whole
+// steeper face is SNOW_SLOPE noise levels further from snow, so the blobs shrink on it
 #define SNOW_STEEP 0.55
 #define SNOW_FLAT 0.8
 #define SNOW_SLOPE 2.0
@@ -69,6 +72,17 @@ uniform float rainRate;           // how hard it rains here, 0 to 1 and over: th
 // the share of the water's rain that reaches it: from the cover under which the water is too little to be rained on
 // to the cover at which it is all there
 #define RAIN_RING_REACH vec2(0.05, 0.3)
+
+uvec2 groundHash(vec2 cell) {
+  uvec2 v = uvec2(ivec2(cell)) * 1664525u + 1013904223u;
+  v.x += v.y * 1664525u;
+  v.y += v.x * 1664525u;
+  v ^= v >> 16u;
+  v.x += v.y * 1664525u;
+  v.y += v.x * 1664525u;
+  v ^= v >> 16u;
+  return v;
+}
 
 vec2 groundGradient(vec2 cell) {
   float a = float(groundHash(cell).x >> 8u) * (6.28318530718 / 16777216.0);
@@ -120,6 +134,15 @@ vec3 groundPerlin(vec2 p) {
     ga + u.x * (gb - ga) + u.y * (gc - ga) + u.x * u.y * (ga - gb - gc + gd) + du * (u.yx * k + vec2(vb, vc) - va));
 }
 
+// the snow's noise: a wavelength of `scale` world units and a rougher octave on it; x the noise, yz its change per
+// world unit
+vec3 groundBlobs(vec2 world, float scale) {
+  vec2 q = world / scale;
+  vec3 a = groundPerlin(q);
+  vec3 b = groundPerlin(q * 2.3 + 17.0);
+  return vec3(0.7 * a.x + 0.3 * b.x, (0.7 * a.yz + 0.69 * b.yz) / scale);
+}
+
 // How far the surface's world position (xz) moves across one pixel on screen, right and down: the ground plane
 // through p with normal n cut by the neighbouring pixels' rays. pc this pixel's center.
 void groundFootprint(vec2 pc, vec3 p, vec3 n, out vec2 dx, out vec2 dy) {
@@ -141,12 +164,11 @@ float groundEdge(float f, vec2 df) {
 }
 
 // Snow and puddles on a surface before lighting: changes the albedo (sRGB) and the normal. p camera-relative, world
-// the same in world space, pc the pixel's center; material: r emissive, g transmissive, b water (0 land terrain, 1
-// bed), a for scenery the snow pattern at rest plus its class (frag.glsl); alpha: the transparency layer over it;
-// cover: the AO pass's, upsampled (snow above 0, standing water below). Returns the puddle: x its coverage, y how much
-// of that is water, not rim, z how much of the rain reaches it, for weatherPuddleWater. The
-// cover is the water times the sky the AO pass found open above the pixel (the occlusion map), so none is left under
-// a roof or a canopy to be rained on.
+// the same in world space, pc the pixel's center; material: r emissive, b water (0 land terrain, 1 bed), a how much
+// snow settles (materials.glsl); alpha: the transparency layer over it; cover: the AO pass's, upsampled (snow above
+// 0, standing water below). Returns the puddle: x its coverage, y how much of that is water, not rim, z how much of the
+// rain reaches it, for weatherPuddleWater. The cover is the water times the sky the AO pass found open above the
+// pixel (the occlusion map), so none is left under a roof or a canopy to be rained on.
 vec3 weatherGroundSurface(inout vec3 color, inout vec3 n, vec3 p, vec3 world, vec2 pc, vec4 material, float alpha,
   float cover) {
   // nothing settles on glowing surfaces (lava, fire) or the water's bed
@@ -163,23 +185,19 @@ vec3 weatherGroundSurface(inout vec3 color, inout vec3 n, vec3 p, vec3 world, ve
   vec2 dx, dy;
   groundFootprint(pc, p, n, dx, dy);
   if (cover > 0.0) {
-    float level = mix(SNOW_FIRST, SNOW_ALL, cover);
-    if (material.g < 0.5) {
-      level -= SNOW_SLOPE * (1.0 - smoothstep(SNOW_STEEP, SNOW_FLAT, up));
-    }
-    float height = material.a * SNOW_STORED;
-    float edge = SNOW_EDGE;
-    if (land) {
-      vec3 pattern = snowPattern(xz);
-      height = pattern.x;
-      // never sharper than a pixel
-      edge = max(SNOW_EDGE, 1.4 * length(vec2(dot(pattern.yz, dx), dot(pattern.yz, dy))));
-    }
-    float snow = smoothstep(0.0, edge, level - height) * eligible;
+    vec3 noise = groundBlobs(xz, SNOW_SCALE);
+    float steps = ceil(cover * SNOW_STEPS) / SNOW_STEPS;
+    float f = noise.x - mix(SNOW_FIRST, SNOW_ALL, steps) - SNOW_SLOPE * (1.0 - smoothstep(SNOW_STEEP, SNOW_FLAT, up));
+    vec2 df = vec2(dot(noise.yz, dx), dot(noise.yz, dy));
+    float snow = groundEdge(f, df) * eligible;
+    float rim = max(SNOW_RIM * length(noise.yz), SNOW_RIM_MIN);
+    float inner = groundEdge(f - rim, df);
     if (land) {
       n = normalize(mix(n, vec3(0.0, -1.0, 0.0), SNOW_ROUND * snow));
+    } else {
+      snow *= material.a * SNOW_SCENERY;
     }
-    color = mix(color, SNOW_COLOR, snow);
+    color = mix(color, mix(SNOW_RIM_COLOR, SNOW_COLOR, inner), snow);
     return vec3(0.0);
   }
   // the pool level the water has reached, lower as the ground soaks, and the edge's noise
@@ -197,7 +215,7 @@ vec3 weatherGroundSurface(inout vec3 color, inout vec3 n, vec3 p, vec3 world, ve
 }
 
 // A puddle's water over the ground lit as usual (lit, sRGB): the sky, and the world where a screen-space ray finds it
-// (light: the surface's light, linear, for the world it shows), by Fresnel; the damp ground keeps a little of it. Ripples from
+// (light: the surface's light, linear, for the world it shows), by Fresnel; the rim keeps a little of it. Ripples from
 // waded steps and from the raindrops tilt it, and their crests catch the light. p camera-relative, pc the pixel's
 // center.
 vec3 weatherPuddleWater(vec3 lit, vec3 p, vec3 light, vec3 puddle, vec2 pc) {
