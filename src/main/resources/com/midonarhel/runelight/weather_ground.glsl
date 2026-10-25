@@ -5,7 +5,7 @@
 // the foam's. The ground's pattern is worked out here; scenery brings its own from the scene pass, laid out on the
 // model at rest so it doesn't slide as plants sway. Puddles grow where water collects, in hollows and along walls
 // (RoomMap.pool), as the ground soaks, their edges pushed around by noise, drawn as a water of their own reflecting the
-// sky, with a damp band round them. Their edge is a distance in pixels, worked out from the gradients and the
+// sky, with a damp rim. Their edge is a distance in pixels, worked out from the gradients and the
 // surface's footprint on screen, so it stays a pixel wide at any angle. Raindrops land in the puddles as rings that
 // spread over the water. Needs frame.glsl, rooms.glsl and water.glsl.
 
@@ -32,21 +32,19 @@ uniform float rainRate;           // how hard it rains here, 0 to 1 and over: th
 #define SNOW_SLOPE 2.0
 
 // puddles: they grow from where water collects (RoomMap.pool: hollows and the feet of walls), the edge pushed around
-// by two octaves of noise, their wavelengths (world units) and strengths, so they are irregular and broken rather than
-// round; the pool level at which the first puddles appear and how much lower it reaches when the ground is soaked
-#define PUDDLE_LUMP_SCALE vec2(95.0, 34.0)
-#define PUDDLE_LUMPS vec2(0.34, 0.16)
+// by noise of this wavelength (world units) and strength so they are gloopy rather than round; the pool level at
+// which the first puddles appear and how much lower it reaches when the ground is soaked
+#define PUDDLE_LUMP_SCALE 110.0
+#define PUDDLE_LUMPS 0.22
 #define PUDDLE_FIRST 0.7
 #define PUDDLE_ALL 0.15
 // the up component of the normal of ground water pools on: none below the first, all above the second (ground is
 // rarely dead level: a gentle roll of a few degrees still holds water)
 #define PUDDLE_STEEP 0.93
 #define PUDDLE_FLAT 0.98
-// the pool levels over which the water deepens from damp ground to open water, how far outside the puddle the damp band
-// reaches, the albedo multipliers of the damp ground and of the water, how much of the reflection the damp ground
-// keeps
-#define PUDDLE_DEEPEN 0.3
-#define PUDDLE_HALO 0.22
+// the rim: its width in world units, the albedo multipliers of the damp rim and of the water, how much of the
+// reflection the rim keeps
+#define PUDDLE_RIM 9.0
 #define PUDDLE_DAMP 0.78
 #define PUDDLE_DARKEN 0.35
 #define PUDDLE_RIM_REFLECT 0.2
@@ -145,8 +143,8 @@ float groundEdge(float f, vec2 df) {
 // Snow and puddles on a surface before lighting: changes the albedo (sRGB) and the normal. p camera-relative, world
 // the same in world space, pc the pixel's center; material: r emissive, g transmissive, b water (0 land terrain, 1
 // bed), a for scenery the snow pattern at rest plus its class (frag.glsl); alpha: the transparency layer over it;
-// cover: the AO pass's, upsampled (snow above 0, standing water below). Returns the puddle: x its coverage, y how deep
-// the water is there, 0 at its edge and 1 in the open, z how much of the rain reaches it, for weatherPuddleWater. The
+// cover: the AO pass's, upsampled (snow above 0, standing water below). Returns the puddle: x its coverage, y how much
+// of that is water, not rim, z how much of the rain reaches it, for weatherPuddleWater. The
 // cover is the water times the sky the AO pass found open above the pixel (the occlusion map), so none is left under
 // a roof or a canopy to be rained on.
 vec3 weatherGroundSurface(inout vec3 color, inout vec3 n, vec3 p, vec3 world, vec2 pc, vec4 material, float alpha,
@@ -187,15 +185,13 @@ vec3 weatherGroundSurface(inout vec3 color, inout vec3 n, vec3 p, vec3 world, ve
   // the pool level the water has reached, lower as the ground soaks, and the edge's noise
   vec2 grad;
   float pool = puddlePoolAt(world, grad) * smoothstep(PUDDLE_STEEP, PUDDLE_FLAT, up);
-  vec3 lumps = groundPerlin(xz / PUDDLE_LUMP_SCALE.x);
-  vec3 fine = groundPerlin(xz / PUDDLE_LUMP_SCALE.y + 31.0);
-  float depth = pool + PUDDLE_LUMPS.x * lumps.x + PUDDLE_LUMPS.y * fine.x - mix(PUDDLE_FIRST, PUDDLE_ALL, -cover);
-  grad += PUDDLE_LUMPS.x * lumps.yz / PUDDLE_LUMP_SCALE.x + PUDDLE_LUMPS.y * fine.yz / PUDDLE_LUMP_SCALE.y;
+  vec3 lumps = groundPerlin(xz / PUDDLE_LUMP_SCALE);
+  float depth = pool + PUDDLE_LUMPS * lumps.x - mix(PUDDLE_FIRST, PUDDLE_ALL, -cover);
+  grad += PUDDLE_LUMPS * lumps.yz / PUDDLE_LUMP_SCALE;
   vec2 df = vec2(dot(grad, dx), dot(grad, dy));
   float puddle = groundEdge(depth, df) * eligible;
-  float damp = smoothstep(-PUDDLE_HALO, 0.0, depth) * eligible;
-  float water = smoothstep(0.0, PUDDLE_DEEPEN, depth);
-  color *= mix(1.0, PUDDLE_DAMP, damp) * mix(1.0, PUDDLE_DARKEN / PUDDLE_DAMP, water * puddle);
+  float water = groundEdge(depth - PUDDLE_RIM * length(grad), df);
+  color *= mix(1.0, mix(PUDDLE_DAMP, PUDDLE_DARKEN, water), puddle);
   n = normalize(mix(n, vec3(0.0, -1.0, 0.0), puddle));
   return vec3(puddle, water, smoothstep(RAIN_RING_REACH.x, RAIN_RING_REACH.y, -cover));
 }
