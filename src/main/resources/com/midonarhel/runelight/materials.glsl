@@ -8,8 +8,12 @@ uniform float transmissionStrength;  // 0 turns foliage transmission off
 #define EMISSIVE_LIGHT 1.2
 // 117 HD's thin sheet factor
 #define TRANSMISSION 1.5
-// share of the snow that settles on scenery with an action
-#define SNOW_REDUCED 0.4
+// how far above the snow's pattern (ground_pattern.glsl) things to interact with sit, so less snow settles on them, and
+// items and actors, which none reaches
+#define SNOW_REDUCED 0.35
+#define SNOW_NEVER 2.5
+// the scene pass stores that plus the pattern in the material target, over this
+#define SNOW_STORED 2.5
 
 float materialEmissive(int m) {
   return float(m & 3) / 3.0;
@@ -19,11 +23,12 @@ float materialTransmissive(int m) {
   return float(m >> 2 & 1);
 }
 
-// How much snow settles on the surface (SurfaceMaterials.java): all, reduced on things to interact with, none on
-// items and actors. Snow covers only upward faces, and terrain takes it all.
-float materialSnow(int m) {
+// How far above the snow's pattern a surface sits (SurfaceMaterials.java): 0 for scenery, SNOW_REDUCED for things to
+// interact with, SNOW_NEVER for items and actors. Flat faces (up: the normal's up component) are the ground the
+// object lies on, a farming patch or a floor tile, and take all of it.
+float materialSnowOffset(int m, float up) {
   int c = m >> 5 & 3;
-  return c == 0 ? 1.0 : c == 1 ? SNOW_REDUCED : 0.0;
+  return c == 0 ? 0.0 : c == 1 ? SNOW_REDUCED * (1.0 - smoothstep(0.85, 0.99, up)) : SNOW_NEVER;
 }
 
 // Light reaching the eye through a thin sheet lit from behind, after 117 HD's thinSheetTransmission.

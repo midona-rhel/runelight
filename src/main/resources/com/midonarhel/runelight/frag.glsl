@@ -41,6 +41,7 @@ flat in int fTextureId;
 in vec2 fUv;
 in float fFogAmount;
 in vec3 fWorldPos;
+in vec2 fRestXZ;
 in vec3 fNormal;
 in float fNormalValid;
 in vec4 fBorderColor;
@@ -71,9 +72,12 @@ uniform int proceduralSky;
 uniform vec3 casterDir;
 uniform int casterKind;
 uniform float sunAltitude;
+uniform int groundSnowOn;          // 1 while snow lies somewhere (Weather.snowOnGround)
+uniform vec2 weatherNoiseOrigin;   // world x and z of local (scene) 0, world units
 
 #include "sky.glsl"
 #include "materials.glsl"
+#include "ground_pattern.glsl"
 #include "environment.glsl"
 #include "edge_fade.glsl"
 
@@ -90,6 +94,9 @@ float linear_depth(float depth) {
   return 1 - z / 10000;  // we don't have a far plane, but the client uses 10000
 }
 #endif
+
+// the least up component of a scenery face's normal that the snow is worked out for
+#define SNOW_SCENERY_UP 0.4
 
 void main() {
   vec4 c;
@@ -147,7 +154,15 @@ void main() {
   // alpha 1 marks the sample as covered by geometry (SceneTargets.clear); the opaque pass writes without blending
   // water: 1 bed (always under the water), 0 land terrain (never), 0.5 anything else (if below the surface)
   float water = (fMaterial & 8) != 0 ? 1.0 : (fMaterial & 16) != 0 ? 0.0 : 0.5;
-  FragMaterial = vec4(materialEmissive(fMaterial), materialTransmissive(fMaterial), water, materialSnow(fMaterial));
+  // Snow on scenery: where the pattern lies on the model at rest, so it stays on the leaves as the plant sways, and its
+  // class, for the composite to compare with the cover (weather_ground.glsl). 1: none settles. Faces that stand steep
+  // are left out, except foliage's, whose faces stand every way.
+  float snow = 1.0;
+  float up = max(-n.y, 0.0);
+  if (groundSnowOn == 1 && alphaPass == 0 && water == 0.5 && (up > SNOW_SCENERY_UP || materialTransmissive(fMaterial) > 0.0)) {
+    snow = min((snowPattern(fRestXZ + weatherNoiseOrigin).x + materialSnowOffset(fMaterial, up)) / SNOW_STORED, 1.0);
+  }
+  FragMaterial = vec4(materialEmissive(fMaterial), materialTransmissive(fMaterial), water, snow);
 
   if (alphaPass == 1) {
     vec3 light;

@@ -70,6 +70,7 @@ flat out int fTextureId;
 out vec2 fUv;
 out float fFogAmount;
 out vec3 fWorldPos;
+out vec2 fRestXZ;       // where the vertex is without the sway of plants: the snow keeps to the model
 out vec3 fNormal;       // smooth vertex normal, world space; only meaningful when fNormalValid is 1
 out float fNormalValid;
 out vec4 fBorderColor;  // color * border weight, border weight
@@ -112,6 +113,7 @@ void main() {
     fNormal = vec3(0.0);
     fNormalValid = 0.0;
   }
+  fRestXZ = worldPos.xz;
   worldPos.xyz += windDisplacement(vertf.w, worldPos.xyz, fNormal, packedNormal != 0);
   vec4 screenPos = worldProj * worldPos;
   fWorldPos = worldPos.xyz;
