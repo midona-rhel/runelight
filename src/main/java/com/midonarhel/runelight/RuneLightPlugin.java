@@ -2209,9 +2209,14 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		float sky = skyGrid.upVisibility(wv != null ? wv.getScene() : null, x, y - WEATHER_HEAD, z);
 		float indoors = WeatherAudio.indoorMix(sky, buildings != null ? buildings.getRooms() : null, x, y - 40, z);
 		audio.update(weather.rainLoudness(), indoors, volume);
-		if (weather.getLightning().takeThunder(thunderStrike) && volume > 0)
+		// the thunder plays at any volume above 0; the light follows its rumble either way
+		if (weather.getLightning().takeThunder(thunderStrike))
 		{
-			audio.thunder(thunderStrike[0], thunderStrike[1]);
+			Rumble rumble = audio.thunder(thunderStrike[0], thunderStrike[1], volume > 0);
+			if (rumble != null)
+			{
+				weather.getLightning().rumble(rumble);
+			}
 		}
 	}
 

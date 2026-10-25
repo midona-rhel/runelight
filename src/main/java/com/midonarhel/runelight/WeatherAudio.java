@@ -14,7 +14,7 @@ import org.slf4j.LoggerFactory;
 
 /**
  * The weather's sounds: rain, a light loop at first and a heavy one as it builds, whose level follows how hard it
- * rains around the player, and a clap of thunder with every lightning strike, the moment its flash begins; both are
+ * rains around the player, and a rumble of thunder with every lightning strike, the moment its flash begins; both are
  * muffled inside buildings. No wind.
  *
  * One thread mixes (AudioMixer) into one SourceDataLine, opened when there is something to hear and closed after a
@@ -30,6 +30,8 @@ final class WeatherAudio
 	// frames mixed at a time, and the device's buffer, in bytes of 16-bit mono: about 23 ms and 93 ms
 	private static final int BLOCK = 512;
 	private static final int BUFFER_BYTES = 4096;
+	// seconds from mixing a block to hearing it: the device's buffer
+	private static final float DEVICE_LATENCY = BUFFER_BYTES / 2f / AudioMixer.RATE;
 	// seconds of silence before the device is closed
 	private static final float IDLE_SECONDS = 5;
 
@@ -60,6 +62,8 @@ final class WeatherAudio
 
 	private final Random random = new Random();
 	private AudioMixer mixer;
+	// each clap's envelope for the light to follow (Rumble), null if the sounds did not load
+	private float[][] envelopes;
 	private volatile boolean running = true;
 	private volatile boolean failed;
 	private Thread thread;
@@ -69,7 +73,13 @@ final class WeatherAudio
 	{
 		try
 		{
-			mixer = new AudioMixer(load("rain_light.wav"), load("rain.wav"), loadThunders());
+			float[][] claps = loadThunders();
+			mixer = new AudioMixer(load("rain_light.wav"), load("rain.wav"), claps);
+			envelopes = new float[THUNDERS][];
+			for (int i = 0; i < THUNDERS; ++i)
+			{
+				envelopes[i] = Rumble.envelope(claps[i], AudioMixer.RATE);
+			}
 		}
 		catch (IOException | RuntimeException | javax.sound.sampled.UnsupportedAudioFileException e)
 		{
@@ -136,22 +146,32 @@ final class WeatherAudio
 	}
 
 	/**
-	 * A clap of thunder, now.
+	 * A rumble of thunder, now: picks one and, if sound is wanted, plays it. The light follows the returned clip
+	 * (Lightning.rumble), whether or not it sounds.
 	 *
 	 * @param distance from the player to the strike, world units
 	 * @param strength the flash's top, 0 to 1
+	 * @param sound    whether to play it (not at volume 0)
+	 * @return the clip's loudness for the light, null if the sounds did not load
 	 */
-	void thunder(float distance, float strength)
+	Rumble thunder(float distance, float strength, boolean sound)
 	{
-		if (failed)
+		if (envelopes == null)
 		{
-			return;
+			return null;
 		}
 		float[] shape = thunderShape(distance, strength);
 		float spread = 1 + PITCH_SPREAD * (2 * random.nextFloat() - 1);
 		float loud = 1 + GAIN_SPREAD * (2 * random.nextFloat() - 1);
-		mixer.thunder(random.nextInt(THUNDERS), shape[0] * loud, shape[1], shape[2] * spread);
-		start();
+		int variant = random.nextInt(THUNDERS);
+		float gain = shape[0] * loud, pitch = shape[2] * spread;
+		boolean plays = sound && !failed;
+		if (plays)
+		{
+			mixer.thunder(variant, gain, shape[1], pitch);
+			start();
+		}
+		return new Rumble(envelopes[variant], Math.min(1, gain / NEAR_THUNDER_GAIN), pitch, plays ? DEVICE_LATENCY : 0);
 	}
 
 	/** Stop the mixer thread and close the device; waits briefly for it. */

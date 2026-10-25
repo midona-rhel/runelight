@@ -9,6 +9,6 @@ rain.wav, rain_light.wav
 
 thunder1.wav  "Thunder Clap2" by roboroo, https://freesound.org/people/roboroo/sounds/436794/ (CC0-1.0)
 thunder2.wav  "Thunder 1 (No Reverb)" by Terry93D, https://freesound.org/people/Terry93D/sounds/327986/ (CC0-1.0)
-thunder3.wav  "thunder3.ogg" by Josh74000MC, https://freesound.org/people/Josh74000MC/sounds/475094/ (CC0-1.0)
+thunder3.wav  the same recording as thunder2.wav, played at 0.7 speed (slower and lower)
   Taken from kocheck/Graphium, macos/App/Graphium/Sounds, whose ledger.json records each one's creator, source and
-  licence CC0-1.0 (checked 2026-10-18).
+  licence CC0-1.0 (checked 2026-10-18). Each is faded in over 0.3 s by tools/make_weather_sounds.py.

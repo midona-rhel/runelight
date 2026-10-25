@@ -9,12 +9,14 @@ Make RuneLight's weather sounds (src/main/resources/com/midonarhel/runelight/sou
                     rain's start is the same loop faded in (AudioMixer)
                     Both are seamless loops of LOOP_SECONDS, mono, 22.05 kHz, 16 bit, the source pitched down (a
                     sample-rate change: rain has no tempo to keep)
-  thunder1..3.wav   the three claps, mono, 22.05 kHz, trimmed where they die away and faded out
+  thunder1..3.wav   three rumbles, mono, 22.05 kHz, each rolling on for seconds from a soft onset, trimmed where it
+                    dies away and faded out. The first two are recordings; the third is the second slowed down and
+                    lower. (A short, loud clap does not make one.)
 
 The rain's indoor muffling and the thunder's distance are not made here: the player filters them as it mixes
 (AudioMixer).
 
-Usage: make_weather_sounds.py RAIN_FILE THUNDER_FILE... OUT_DIR (RAIN_FILE: DledeSOUND's "Rain 1", 48 kHz)
+Usage: make_weather_sounds.py RAIN_FILE ROLLING_THUNDER SECOND_THUNDER OUT_DIR (RAIN_FILE: DledeSOUND's "Rain 1", 48 kHz)
 Needs ffmpeg and numpy.
 """
 import subprocess
@@ -40,7 +42,10 @@ LEVEL_RATIO = 4.0
 # the odd drop is much louder than the hiss: peaks past this many times the loudness are rounded off
 RAIN_PEAKS = 2.5
 THUNDER_PEAK = 0.9
-THUNDER_MAX_SECONDS = 5
+THUNDER_MAX_SECONDS = 5.5
+# the onset is faded in over this many seconds, so there is no crack; the third rumble is the second at this speed
+THUNDER_ONSET = 0.3
+THUNDER_SLOWED = 0.7
 THUNDER_END_DB = -48
 
 
@@ -164,7 +169,7 @@ def light_rain(path):
 
 def thunder(x):
     x = x - np.mean(x)
-    x = x[:THUNDER_MAX_SECONDS * RATE]
+    x = x[:int(THUNDER_MAX_SECONDS * RATE)]
     block = RATE // 20
     levels = np.array([rms(x[i:i + block]) for i in range(0, len(x) - block, block)])
     peak = max(levels.max(), 1e-9)
@@ -172,15 +177,23 @@ def thunder(x):
     x = x[:(loud[-1] + 2) * block]
     fade = min(len(x), RATE)
     x[-fade:] *= np.linspace(1, 0, fade) ** 2
+    onset = int(THUNDER_ONSET * RATE)
+    x[:onset] *= np.sin(np.linspace(0, np.pi / 2, onset)) ** 2
     return x * (THUNDER_PEAK / np.abs(x).max())
+
+
+def slowed(x, speed):
+    """x played at this speed: slower and lower, by resampling."""
+    return np.interp(np.arange(0, len(x) - 1, speed), np.arange(len(x)), x)
 
 
 def main():
     rain_path, thunders, out = sys.argv[1], sys.argv[2:-1], sys.argv[-1]
     write(out + "/rain.wav", heavy_rain(rain_path))
     write(out + "/rain_light.wav", light_rain(rain_path))
-    for i, path in enumerate(thunders, 1):
-        write("%s/thunder%d.wav" % (out, i), thunder(decode(path)))
+    first, second = decode(thunders[0]), decode(thunders[1])
+    for i, x in enumerate([first, second, slowed(second, THUNDER_SLOWED)], 1):
+        write("%s/thunder%d.wav" % (out, i), thunder(x))
 
 
 main()

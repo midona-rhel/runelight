@@ -241,6 +241,105 @@ public class WeatherAudioTest
 		assertEquals(-AudioMixer.softClip(3), AudioMixer.softClip(-3), 0);
 	}
 
+	/** The bundled thunder is all rumble: a soft onset, rolling on for seconds, no short loud crack. */
+	@Test
+	public void bundledThunderRollsOn() throws Exception
+	{
+		for (String name : new String[]{"thunder1.wav", "thunder2.wav", "thunder3.wav"})
+		{
+			float[] x = WeatherAudio.load(name);
+			assertTrue(name + " seconds " + x.length / (float) RATE, x.length >= 4.5f * RATE);
+			float sum = 0, peak = 0;
+			for (float v : x)
+			{
+				sum += v * v;
+				peak = Math.max(peak, Math.abs(v));
+			}
+			// not a spike over the body: the peak is a small multiple of the RMS
+			assertTrue(name + " crest " + peak / Math.sqrt(sum / x.length), peak < 8 * Math.sqrt(sum / x.length));
+			// a soft onset: next to nothing in the first 100 ms, and little of the energy in the first 200
+			assertTrue(name + " onset", energy(x, 0, RATE / 10) < 0.002f * sum);
+			assertTrue(name + " first 200 ms", energy(x, 0, RATE / 5) < 0.02f * sum);
+			// and it rolls: the envelope stays above a tenth of its peak for most of the clip
+			float[] envelope = Rumble.envelope(x, RATE);
+			int loud = 0;
+			for (float e : envelope)
+			{
+				loud += e > 0.1f ? 1 : 0;
+			}
+			assertTrue(name + " rolls " + loud, loud > 3.5f * Rumble.RATE);
+		}
+	}
+
+	@Test
+	public void envelopeIsTheSmoothedLoudnessScaledToItsPeak()
+	{
+		// silence, then a tone at 0.5 for a second, then silence
+		float[] clip = new float[3 * RATE];
+		for (int i = RATE; i < 2 * RATE; ++i)
+		{
+			clip[i] = 0.5f * (float) Math.sin(i * 0.3);
+		}
+		float[] e = Rumble.envelope(clip, RATE);
+		assertEquals(3 * Rumble.RATE, e.length);
+		float peak = 0;
+		for (float v : e)
+		{
+			peak = Math.max(peak, v);
+			assertTrue(v >= 0 && v <= 1 + 1e-6f);
+		}
+		assertEquals(1, peak, 1e-6f);
+		// quiet before and after, loud in the middle
+		assertTrue(e[Rumble.RATE / 4] < 0.05f);
+		assertTrue(e[3 * Rumble.RATE / 2] > 0.95f);
+		assertTrue(e[2 * Rumble.RATE + Rumble.RATE / 2] < 0.05f);
+		// smooth: it never moves faster than a few Hz allows (no step bigger than 0.5 per sample at 100 per second)
+		for (int i = 1; i < e.length; ++i)
+		{
+			assertTrue(Math.abs(e[i] - e[i - 1]) < 0.25f);
+		}
+		// silence has no envelope to scale
+		assertEquals(0, Rumble.envelope(new float[RATE], RATE)[10], 0);
+	}
+
+	@Test
+	public void thunderGivesTheLightItsRumbleEvenWhenMute()
+	{
+		WeatherAudio audio = new WeatherAudio();
+		try
+		{
+			// no sound wanted: nothing plays (no device is opened), and the light has its clip, without a device delay
+			Rumble near = audio.thunder(2000, 1, false), far = audio.thunder(10000, 1, false);
+			assertNotNull(near);
+			assertNotNull(far);
+			assertTrue(near.duration() > 4 && far.duration() > 4);
+			// every variant is a clip with a rumble: loud somewhere in its first seconds, in the near one more so
+			assertTrue(near.level(0.8f) >= 0 && near.level(0.8f) <= 1);
+			for (int i = 0; i < 50; ++i)
+			{
+				Rumble r = audio.thunder(2000, 1, false);
+				float most = 0;
+				for (float t = 0; t < 3; t += 0.05f)
+				{
+					most = Math.max(most, r.level(t));
+				}
+				assertTrue(most > 0.5f && most <= 1);
+			}
+			// a far strike is heard less, and so lights less
+			float nearMost = 0, farMost = 0;
+			for (float t = 0; t < 5; t += 0.05f)
+			{
+				nearMost = Math.max(nearMost, near.level(t));
+				farMost = Math.max(farMost, far.level(t));
+			}
+			assertTrue(farMost < nearMost + 0.3f && farMost < 0.75f);
+		}
+		finally
+		{
+			audio.shutDown();
+		}
+	}
+
 	@Test
 	public void thunderIsQuieterAndDullerFarAway()
 	{

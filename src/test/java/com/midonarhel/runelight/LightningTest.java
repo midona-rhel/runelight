@@ -287,6 +287,145 @@ public class LightningTest
 		}
 	}
 
+	/** A strike's rumble of a constant envelope, for this many seconds. */
+	private static Rumble steady(float seconds, float strength)
+	{
+		float[] envelope = new float[(int) (seconds * Rumble.RATE)];
+		java.util.Arrays.fill(envelope, 1);
+		return new Rumble(envelope, strength, 1, 0);
+	}
+
+	@Test
+	public void rumbleGlowsAfterTheFlashAndIsCapped()
+	{
+		Lightning l = new Lightning();
+		float[] thunder = new float[2];
+		l.strikeNow();
+		boolean rumbling = false, flashed = false;
+		float after = 0, most = 0;
+		for (int f = 0; f < 120 * 12; ++f)
+		{
+			l.update(DT, 0, false, 0, 0);
+			if (l.getBoltDir() != null)
+			{
+				l.setShadowMaps(f > 3, true);
+			}
+			if (!rumbling && l.takeThunder(thunder))
+			{
+				l.rumble(steady(5, 1));
+				rumbling = true;
+			}
+			most = Math.max(most, l.getFlash());
+			assertTrue(l.getFlash() <= 1);
+			if (rumbling && l.getBoltDir() == null && f > 120 * 2)
+			{
+				flashed = true;
+				after = l.getFlash();
+				break;
+			}
+		}
+		// the flash is over, and the light still glows with the thunder, no more than the cap
+		assertTrue(flashed);
+		assertEquals(Lightning.RUMBLE_FLICKER, after, 1e-4f);
+		assertTrue(most <= 1);
+		// and when the thunder has gone the light is out
+		for (int f = 0; f < 120 * 6; ++f)
+		{
+			l.update(DT, 0, false, 0, 0);
+		}
+		assertEquals(0, l.getFlash(), 0);
+	}
+
+	@Test
+	public void rumbleFollowsTheClipsEnvelopeAndStrength()
+	{
+		// a clip that is silent, then loud, then silent; a strike heard at half strength
+		float[] envelope = new float[Rumble.RATE * 3];
+		java.util.Arrays.fill(envelope, Rumble.RATE, 2 * Rumble.RATE, 1);
+		Rumble r = new Rumble(envelope, 0.5f, 1, 0.1f);
+		assertEquals(0, r.level(0.5f), 0);
+		assertEquals(0.5f, r.level(1.6f), 1e-6f);
+		assertEquals(0, r.level(2.9f), 0);
+		// the device's delay shifts it; a clip played faster is over sooner
+		assertEquals(0, r.level(1.05f), 0);
+		assertEquals(3.1f, r.duration(), 1e-5f);
+		assertEquals(1.5f + 0.1f, new Rumble(envelope, 1, 2, 0.1f).duration(), 1e-5f);
+	}
+
+	@Test
+	public void rumbleNeverStartsATakeover()
+	{
+		// no strike: the rumble alone, at full strength, never takes the caster, and the bolt's light stays off
+		Lightning l = new Lightning();
+		l.setSunStrength(0);
+		l.rumble(steady(5, 1));
+		float[] strike = new float[2], dir = new float[3];
+		for (int f = 0; f < 120 * 5; ++f)
+		{
+			l.update(DT, 0, true, 0, 0);
+			l.setShadowMaps(true, true);
+			assertFalse(l.aim(dir));
+			l.getStrike(strike);
+			assertEquals(0, strike[0], 0);
+			assertEquals(0, strike[1], 0);
+		}
+		// a strike too weak to pass a bright sun: the glow brightens the sky, the caster stays the sun's
+		l = new Lightning();
+		l.setSunStrength(100);
+		l.strikeNow();
+		float[] thunder = new float[2];
+		boolean glowed = false;
+		for (int f = 0; f < 120 * 8; ++f)
+		{
+			l.update(DT, 0, false, 0, 0);
+			if (l.getBoltDir() != null)
+			{
+				l.setShadowMaps(f > 3, true);
+			}
+			if (l.takeThunder(thunder))
+			{
+				l.rumble(steady(5, 1));
+			}
+			assertFalse(l.aim(dir));
+			l.getStrike(strike);
+			assertEquals(0, strike[0], 0);
+			glowed |= l.getFlash() > 0;
+		}
+		assertTrue(glowed);
+	}
+
+	@Test
+	public void boltLightGlowsOnlyWhilePastTheSun()
+	{
+		// the sun at 2: the bolt (4 at its top) holds the caster while its curve is above 2
+		Lightning l = new Lightning();
+		l.setSunStrength(2);
+		l.strikeNow();
+		float[] thunder = new float[2], strike = new float[2];
+		boolean taken = false;
+		for (int f = 0; f < 120 * 4; ++f)
+		{
+			l.update(DT, 0, false, 0, 0);
+			if (l.getBoltDir() != null)
+			{
+				l.setShadowMaps(f > 3, true);
+			}
+			if (l.takeThunder(thunder))
+			{
+				l.rumble(steady(5, 1));
+			}
+			l.getStrike(strike);
+			if (strike[0] == 1)
+			{
+				taken = true;
+				// never less than the sun's, which it passed to take the caster, and never more than the cap allows
+				assertTrue(strike[1] >= 2 - 1e-3f);
+				assertTrue(strike[1] <= (1 + Lightning.RUMBLE_FLICKER) * Lightning.BRIGHTNESS + 1e-3f);
+			}
+		}
+		assertTrue(taken);
+	}
+
 	@Test
 	public void noStormNoStrike()
 	{

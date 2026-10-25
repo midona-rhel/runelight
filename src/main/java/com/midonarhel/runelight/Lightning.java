@@ -18,6 +18,10 @@ import static org.lwjgl.opengl.GL33C.*;
  * and both stay drawn: taking over and handing back are each a swap of the two (ShadowMap.swapFront), never a
  * redraw, so the light and its shadows change in the same frame.
  *
+ * The thunder's rumble goes on after the flash and the light follows it: its loudness (Rumble) adds a little to the
+ * sky and ambient flash, and to the bolt's light while the bolt holds the caster. Only the flash curve decides who
+ * holds the caster; the rumble never starts a takeover.
+ *
  * A strike is one flash, which may flicker once: a second flare rises while the first is still falling. A viewer
  * sees at most about one flash a second.
  */
@@ -56,6 +60,10 @@ class Lightning
 	private static final float BOLT_MIN_DISTANCE = 3000;
 	private static final float BOLT_MAX_DISTANCE = 9000;
 
+	// the most the rumble adds to the flash, as a share of a full flash: the light flickers up and down with the
+	// thunder's loudness (smoothed to a few Hz, Rumble), never past this
+	static final float RUMBLE_FLICKER = 0.35f;
+
 	private enum Phase { OFF, PREPARE, PULSES }
 
 	private final Random random = new Random();
@@ -70,6 +78,10 @@ class Lightning
 	private final float[] boltDir = new float[3];
 	private float boltX, boltZ, boltSeed;
 	private boolean requested;
+	// the rumble of the strike's thunder, which the light follows after the flash (seconds since it began), and the
+	// glow it gives this frame, 0 to RUMBLE_FLICKER
+	private Rumble rumble;
+	private float rumbleAge, glow;
 	// the strike's thunder, waiting for the plugin to play it: how far the bolt came down, world units
 	private boolean thunderPending;
 	private float boltDistance;
@@ -92,6 +104,19 @@ class Lightning
 	 */
 	void update(float dt, float storm, boolean enabled, float focusX, float focusZ)
 	{
+		if (rumble != null)
+		{
+			rumbleAge += dt;
+			if (rumbleAge >= rumble.duration())
+			{
+				rumble = null;
+				glow = 0;
+			}
+			else
+			{
+				glow = RUMBLE_FLICKER * rumble.level(rumbleAge);
+			}
+		}
 		if (phase == Phase.OFF)
 		{
 			if (requested)
@@ -271,6 +296,18 @@ class Lightning
 		return true;
 	}
 
+	/**
+	 * The strike's thunder has begun to play: the light follows its loudness from now on. This adds to the flash, in
+	 * the sky and the ambient light, and to the bolt's own light while the bolt holds the caster; it never takes the
+	 * caster over, which only the flash curve does.
+	 */
+	void rumble(Rumble rumble)
+	{
+		this.rumble = rumble;
+		rumbleAge = 0;
+		glow = 0;
+	}
+
 	/** The bolt's direction while a strike needs a shadow map for it, else null. */
 	float[] getBoltDir()
 	{
@@ -297,10 +334,10 @@ class Lightning
 		mapMatchesLight = matchesLight;
 	}
 
-	/** 0 to 1: how bright the flash is this frame. */
+	/** 0 to 1: how bright the flash is this frame, with the rumble's glow after it. */
 	float getFlash()
 	{
-		return flash;
+		return Math.min(1, flash + glow);
 	}
 
 	void stop()
@@ -320,7 +357,10 @@ class Lightning
 	void getStrike(float[] out)
 	{
 		out[0] = takeover ? 1 : 0;
-		out[1] = takeover ? flash * BRIGHTNESS : 0;
+		// the rumble's glow brightens the bolt's light only as far as the bolt's light is past the sun's, so handing
+		// the caster back has no step
+		float past = Math.max(0, Math.min(1, (flash * BRIGHTNESS - sunStrength) / Math.max(sunStrength, 0.1f)));
+		out[1] = takeover ? (flash + glow * past) * BRIGHTNESS : 0;
 	}
 
 	/**
