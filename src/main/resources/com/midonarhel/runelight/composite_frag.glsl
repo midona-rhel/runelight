@@ -401,7 +401,7 @@ vec4 shadeScene(ivec2 px, SceneSample sm, vec4 transparent) {
       shadow *= cloudShadow(p + cameraPos, casterDir);
     }
     shadow = overcastShadow(shadow);
-    vec3 caster = sunIsCaster == 1 ? sunLight(sunAltitude) : moonLight(sunAltitude);
+    vec3 caster = strikeCaster(sunIsCaster == 1 ? sunLight(sunAltitude) : moonLight(sunAltitude));
     float up = max(-n.y, 0.0);
     if (compositePart != 2) {
     vec3 plain = ambientLight(sunAltitude) + skyFill(n, sunAltitude, up);

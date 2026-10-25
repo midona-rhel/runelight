@@ -352,9 +352,10 @@ vec3 cloudsOverSky(vec3 sky, vec2 px, vec3 dir, vec3 camPos, vec3 lightDir, floa
   return linearToSrgb(clamp(lin, 0.0, 1.0));
 }
 
-// How much sunlight reaches world position p through the clouds, 1 without clouds or their shadows
+// How much sunlight reaches world position p through the clouds, 1 without clouds or their shadows, and under a
+// bolt's light (sky.glsl's strikeLight), which is below them
 float cloudShadow(vec3 p, vec3 lightDir) {
-  if (cloudsEnabled == 0 || cloudShadowsEnabled == 0 || cloudWeather >= 1.0) {
+  if (cloudsEnabled == 0 || cloudShadowsEnabled == 0 || cloudWeather >= 1.0 || strikeLight.y > 0.0) {
     return 1.0;
   }
   float t = max(CLOUD_SHADOW_ALTITUDE - cloudGround + p.y, 0.0) / max(-lightDir.y, 0.15);

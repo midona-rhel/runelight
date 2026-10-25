@@ -233,7 +233,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		int program;
 		int part, aoEnabled, aoStrength;
 		int cameraPos, time, outdoors, proceduralSky, lightingEnabled, sunDir, moonDir, casterDir, sunIsCaster,
-			sunAltitude, overcast, weatherLight;
+			strikeLight, sunAltitude, overcast, weatherLight;
 		int shadowsEnabled, lightProjRel, shadowRadius, shadowDepthRange, shadowMapSize;
 		int pointLights, lightVisSize, roomHeader, interiorLight, skylightOn, skylightFloor;
 		int skyVoid, useFog, fogDepth, drawDistance, expandedChunks, clientSkyColor;
@@ -280,7 +280,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 	private int uniAoRadius;
 	private int uniAoSamples;
 	private int uniAoShadowsEnabled, uniAoLightProjRel, uniAoShadowRadius, uniAoShadowDepthRange, uniAoShadowMapSize,
-		uniAoShadowMaxTile, uniAoCasterDir, uniAoSunIsCaster;
+		uniAoShadowMaxTile, uniAoCasterDir, uniAoSunIsCaster, uniAoStrikeLight;
 	// the half resolution shadows the AO pass draws, for the composite
 	private static final int SCENE_SHADOW_UNIT = RuneLightPlugin.COMPOSITE_TEXTURE_UNIT + 18;
 	// Static scenery is drawn into a cached shadow map, redrawn only as the light turns or the player walks
@@ -315,7 +315,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 	private int uniSceneOutdoors;
 	private int uniSceneProceduralSky;
 	private int uniSceneCasterDir;
-	private int uniSceneSunIsCaster;
+	private int uniSceneSunIsCaster, uniSceneStrikeLight;
 	private int uniSceneSunAltitude;
 	private int uniSceneOvercast;
 	private int uniSceneWeatherLight;
@@ -1187,6 +1187,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		uniSceneProceduralSky = glGetUniformLocation(glProgram, "proceduralSky");
 		uniSceneCasterDir = glGetUniformLocation(glProgram, "casterDir");
 		uniSceneSunIsCaster = glGetUniformLocation(glProgram, "sunIsCaster");
+		uniSceneStrikeLight = glGetUniformLocation(glProgram, "strikeLight");
 		uniSceneSunAltitude = glGetUniformLocation(glProgram, "sunAltitude");
 		uniSceneOvercast = glGetUniformLocation(glProgram, "weatherOvercast");
 		uniSceneWeatherLight = glGetUniformLocation(glProgram, "weatherLight");
@@ -1214,6 +1215,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		uniAoShadowMaxTile = glGetUniformLocation(glAoProgram, "shadowMaxTile");
 		uniAoCasterDir = glGetUniformLocation(glAoProgram, "casterDir");
 		uniAoSunIsCaster = glGetUniformLocation(glAoProgram, "sunIsCaster");
+		uniAoStrikeLight = glGetUniformLocation(glAoProgram, "strikeLight");
 		glUseProgram(glAoProgram);
 		glUniform1i(glGetUniformLocation(glAoProgram, "shadowRaw"), SHADOW_RAW_UNIT);
 		glUniform1i(glGetUniformLocation(glAoProgram, "shadowCompare"), SHADOW_COMPARE_UNIT);
@@ -1263,6 +1265,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		c.moonDir = glGetUniformLocation(p, "moonDir");
 		c.casterDir = glGetUniformLocation(p, "casterDir");
 		c.sunIsCaster = glGetUniformLocation(p, "sunIsCaster");
+		c.strikeLight = glGetUniformLocation(p, "strikeLight");
 		c.sunAltitude = glGetUniformLocation(p, "sunAltitude");
 		c.overcast = glGetUniformLocation(p, "weatherOvercast");
 		c.weatherLight = glGetUniformLocation(p, "weatherLight");
@@ -1855,6 +1858,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		glUniform1i(uniSceneProceduralSky, proceduralSky() ? 1 : 0);
 		glUniform3fv(uniSceneCasterDir, dayCycle.casterDir);
 		glUniform1i(uniSceneSunIsCaster, dayCycle.sunIsCaster ? 1 : 0);
+		glUniform2fv(uniSceneStrikeLight, dayCycle.strikeLight);
 		glUniform1f(uniSceneSunAltitude, dayCycle.sunAltitude);
 		weather.setOvercastUniform(uniSceneOvercast);
 		weather.setLightUniform(uniSceneWeatherLight);
@@ -1980,6 +1984,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 				renderShadowMap();
 				cpuTimer.end(CpuTimer.SHADOW_SUBMIT);
 			}
+			weather.getLightning().setShadowsReady(!frameShadows || shadowsMatchLight());
 			cpuTimer.begin(CpuTimer.OCCLUSION);
 			if (weather.isActive())
 			{
@@ -2041,6 +2046,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 
 		cpuTimer.begin(CpuTimer.WEATHER);
 		updateWeather(cameraX, cameraY, cameraZ);
+		dayCycle.applyStrike(weather.getLightning());
 		updateSkylight();
 		cpuTimer.end(CpuTimer.WEATHER);
 
@@ -2373,6 +2379,20 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		}
 	}
 
+	// cosine of the angle within which the static shadow map counts as drawn for the light (a strike's turns)
+	private static final float SHADOW_MATCH = 0.99999f;
+
+	/**
+	 * Whether the static shadow map is drawn, and for the light's direction now. A strike waits in the dark for it.
+	 */
+	private boolean shadowsMatchLight()
+	{
+		ShadowMap.View front = shadowMap.frontView();
+		float[] d = dayCycle.casterDir;
+		return front != null && !shadowMap.isBuilding()
+			&& d[0] * front.dir[0] + d[1] * front.dir[1] + d[2] * front.dir[2] > SHADOW_MATCH;
+	}
+
 	private boolean shadowStale(ShadowMap.View v, float fx, float fy, float fz, float radius, int size)
 	{
 		float half = SHADOW_CACHE_SNAP * 0.5f;
@@ -2589,6 +2609,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		glUniform3fv(c.moonDir, dayCycle.moonDir);
 		glUniform3fv(c.casterDir, dayCycle.casterDir);
 		glUniform1i(c.sunIsCaster, dayCycle.sunIsCaster ? 1 : 0);
+		glUniform2fv(c.strikeLight, dayCycle.strikeLight);
 		glUniform1f(c.sunAltitude, dayCycle.sunAltitude);
 		weather.setOvercastUniform(c.overcast);
 		weather.setLightUniform(c.weatherLight);
@@ -2890,6 +2911,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 				glUniform1f(uniAoShadowMapSize, shadowMap.getSize());
 				glUniform3fv(uniAoCasterDir, dayCycle.casterDir);
 				glUniform1i(uniAoSunIsCaster, dayCycle.sunIsCaster ? 1 : 0);
+				glUniform2fv(uniAoStrikeLight, dayCycle.strikeLight);
 				shadowMap.bindForSampling(SHADOW_RAW_UNIT, SHADOW_COMPARE_UNIT);
 				glUniform1i(uniAoShadowMaxTile, shadowMap.bindMax(SHADOW_MAX_UNIT));
 			}

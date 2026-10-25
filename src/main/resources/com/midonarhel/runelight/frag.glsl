@@ -152,7 +152,7 @@ void main() {
   if (alphaPass == 1) {
     vec3 light;
     if (outdoors == 1) {
-      vec3 caster = sunIsCaster == 1 ? sunLight(sunAltitude) : moonLight(sunAltitude);
+      vec3 caster = strikeCaster(sunIsCaster == 1 ? sunLight(sunAltitude) : moonLight(sunAltitude));
       float ndl = dot(n, casterDir);
       vec3 viewDir = normalize(vec3(cameraX, cameraY, cameraZ) - fWorldPos);
       light = (ambientLight(sunAltitude) + skyLight(sunAltitude) * max(-n.y, 0.0)) * envAmbient

@@ -145,7 +145,7 @@ class Weather
 		int program;
 		int viewProj, invViewProj, viewport, depthZeroToOne;
 		int occlusionProjRel, occlusionCenterY, occlusionDepthRange;
-		int cameraPos, focusPos, time, sunAltitude, casterDir, sunIsCaster, amount;
+		int cameraPos, focusPos, time, sunAltitude, casterDir, sunIsCaster, strikeLight, amount;
 		int dropCount, mist, mistStage, wadeDroplets, wadeSteps, waterRect, wind, windOffset, gust, overcast,
 			pointLights;
 		int particleAmount, layerBox, layerSpan, layerBand, particleReach;
@@ -182,6 +182,7 @@ class Weather
 			sunAltitude = glGetUniformLocation(p, "sunAltitude");
 			casterDir = glGetUniformLocation(p, "casterDir");
 			sunIsCaster = glGetUniformLocation(p, "sunIsCaster");
+			strikeLight = glGetUniformLocation(p, "strikeLight");
 			amount = glGetUniformLocation(p, "amount");
 			dropCount = glGetUniformLocation(p, "dropCount");
 			mist = glGetUniformLocation(p, "mist");
@@ -1157,6 +1158,7 @@ class Weather
 		glUniform1f(u.sunAltitude, day.sunAltitude);
 		glUniform3fv(u.casterDir, day.casterDir);
 		glUniform1i(u.sunIsCaster, day.sunIsCaster ? 1 : 0);
+		glUniform2fv(u.strikeLight, day.strikeLight);
 		setOvercastUniform(u.overcast);
 		setLightUniform(u.light);
 		field.apply(u.field);

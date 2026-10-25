@@ -10,6 +10,7 @@ uniform float shadowRadius;      // half extent of the shadow map, world units
 uniform float shadowDepthRange;
 uniform float shadowMapSize;
 uniform int sunIsCaster;
+uniform vec2 strikeLight;  // sky.glsl: y above 0 while a bolt's light is on
 // The static map's greatest depth within the filter's reach of each tile of shadowMaxTile texels (ShadowMap.buildMax);
 // 0 tiles: none
 uniform sampler2D shadowMax;
@@ -29,6 +30,8 @@ const vec2 POISSON[16] = vec2[](
 // world units of penumbra per world unit between occluder and receiver: the light's apparent size
 #define SUN_SOFTNESS 0.08
 #define MOON_SOFTNESS 0.14
+// and a bolt's: a point of light, so only the filter's minimum is left
+#define STRIKE_SOFTNESS 0.0
 #define BLOCKER_SEARCH_WORLD 160.0
 // with the POISSON points, the filter's reach ShadowMap.FILTER_REACH_WORLD bounds the shadow under
 #define MAX_PENUMBRA_WORLD 112.0
@@ -76,7 +79,7 @@ float shadowFactor(vec3 p, vec3 n, float rotation) {
   }
 
   float gapWorld = (z - blockerSum / blockers) * 2.0 * shadowDepthRange;
-  float softness = sunIsCaster == 1 ? SUN_SOFTNESS : MOON_SOFTNESS;
+  float softness = strikeLight.y > 0.0 ? STRIKE_SOFTNESS : sunIsCaster == 1 ? SUN_SOFTNESS : MOON_SOFTNESS;
   float penumbraWorld = clamp(gapWorld * softness, texelWorld, MAX_PENUMBRA_WORLD);
   float penumbra = penumbraWorld * worldToUv;
   // a kernel within a texel or two of hardware filtered compares needs no more than half the taps

@@ -102,7 +102,7 @@ float smoothExposure(vec3 p, float bias) {
 
 // Light falling on weather: sky ambient plus a bit of the sun or moon, linear like the composite
 vec3 weatherParticleLight() {
-  vec3 caster = sunIsCaster == 1 ? sunLight(sunAltitude) : moonLight(sunAltitude);
+  vec3 caster = strikeCaster(sunIsCaster == 1 ? sunLight(sunAltitude) : moonLight(sunAltitude));
   return ambientLight(sunAltitude) + skyLight(sunAltitude) + caster * 0.35;
 }
 

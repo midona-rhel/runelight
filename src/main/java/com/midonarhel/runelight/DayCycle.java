@@ -32,7 +32,21 @@ final class DayCycle
 	final float[] casterDir = new float[3];
 	float sunAltitude;
 	boolean sunIsCaster;
+	// sky.glsl's strikeLight, from applyStrike
+	final float[] strikeLight = new float[2];
 	double phase;
+
+	/**
+	 * Let a lightning strike take over the light that casts shadows for this frame, after update().
+	 */
+	void applyStrike(Lightning lightning)
+	{
+		if (lightning.aim(casterDir))
+		{
+			sunIsCaster = true;
+		}
+		lightning.getStrike(strikeLight);
+	}
 
 	/**
 	 * @param gameMillis the game clock (GameClock)

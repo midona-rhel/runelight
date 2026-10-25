@@ -94,7 +94,17 @@ uniform vec4 weatherLight;
 // a lightning flash: cool white, added to the sky (sRGB) and to the ambient light (linear) at a full flash
 #define LIGHTNING_COLOR vec3(0.80, 0.86, 1.00)
 #define LIGHTNING_SKY 0.45
-#define LIGHTNING_AMBIENT 1.0
+#define LIGHTNING_AMBIENT 0.5
+
+// A strike takes over the light that casts shadows while it flashes (Lightning.java), which casterDir then points
+// along: x is the share of the sun's or moon's own light taken away, y the bolt's light, pure white, at its full
+// strength. Both 0 is no strike.
+uniform vec2 strikeLight;
+#define STRIKE_LIGHT vec3(3.0)
+
+vec3 strikeCaster(vec3 light) {
+  return light * (1.0 - strikeLight.x) + STRIKE_LIGHT * strikeLight.y;
+}
 
 // the overcast sky's tint and brightness relative to the clear sky's luminance: dark slate in rain, soft white in snow
 #define OVERCAST_RAIN_TINT vec3(0.86, 0.93, 1.05)
@@ -183,9 +193,9 @@ vec3 overcastAmbient(vec3 c, float o) {
   return mix(c, a, o) * (1.0 + HAZE_AMBIENT * weatherLight.y) * weatherTint(WARMTH_FILL);
 }
 
-// sun or moon shadow term under cover
+// sun or moon shadow term under cover; a bolt's shadows stay sharp
 float overcastShadow(float shadow) {
-  float soft = clamp(weatherOvercast.x * OVERCAST_SHADOW + weatherLight.y * HAZE_SHADOW, 0.0, 1.0);
+  float soft = clamp(weatherOvercast.x * OVERCAST_SHADOW + weatherLight.y * HAZE_SHADOW, 0.0, 1.0) * (1.0 - strikeLight.y);
   shadow = mix(shadow, 1.0, soft);
   return clamp(shadow - max(weatherLight.x, 0.0) * HARSH_SHADOW * (1.0 - shadow), 0.0, 1.0);
 }
