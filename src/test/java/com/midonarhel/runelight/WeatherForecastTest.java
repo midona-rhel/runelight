@@ -396,7 +396,6 @@ public class WeatherForecastTest
 	public void lightningIsGentle()
 	{
 		Lightning l = new Lightning();
-		float[] strike = new float[2];
 		float dt = 1 / 60f;
 		int frames = 3600 * 60;
 		int strikes = 0;
@@ -414,9 +413,9 @@ public class WeatherForecastTest
 			l.update(dt, 1, true, 0, 0);
 			float f = l.getFlash();
 			assertTrue(f >= 0 && f <= 1);
-			// a strike is the time the sun is out, which holds its pulses
-			l.getStrike(strike);
-			boolean lit = strike[0] > 0;
+			// a strike is from its decision, which holds its pulses
+			boolean lit = l.getBoltDir() != null;
+			l.setShadowMaps(true, true);
 			if (lit && !wasLit)
 			{
 				strikes++;

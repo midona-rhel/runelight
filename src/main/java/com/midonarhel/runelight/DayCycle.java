@@ -37,6 +37,30 @@ final class DayCycle
 	double phase;
 
 	/**
+	 * How bright the light that casts shadows is, linear luminance: sky.glsl's sunLightCover and moonLightCover, in
+	 * round numbers, under this much overcast and snow. The bolt takes over once it is brighter (Lightning).
+	 */
+	float directStrength(float cover, float snow)
+	{
+		// sky.glsl's OVERCAST_DIRECT_RAIN and OVERCAST_DIRECT_SNOW
+		float overcast = 1 + cover * (-1 + 0.30f + (0.42f - 0.30f) * snow);
+		if (sunIsCaster)
+		{
+			// SUN_INTENSITY times the luminance of the sun's warm and noon colors
+			float noon = smoothstep(2, 28, sunAltitude);
+			return 2.9f * (0.52f + (0.92f - 0.52f) * noon) * smoothstep(-4, 10, sunAltitude) * overcast;
+		}
+		// MOON_INTENSITY times the luminance of the moon's color
+		return 0.675f * 0.55f * smoothstep(-2, -14, sunAltitude) * overcast;
+	}
+
+	private static float smoothstep(float a, float b, float x)
+	{
+		float t = Math.max(0, Math.min(1, (x - a) / (b - a)));
+		return t * t * (3 - 2 * t);
+	}
+
+	/**
 	 * Let a lightning strike take over the light that casts shadows for this frame, after update().
 	 */
 	void applyStrike(Lightning lightning)

@@ -1996,7 +1996,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 				renderShadowMap();
 				cpuTimer.end(CpuTimer.SHADOW_SUBMIT);
 			}
-			weather.getLightning().setShadowsReady(!frameShadows || shadowsMatchLight(), dayCycle.casterDir);
+			reportShadowMaps();
 			cpuTimer.begin(CpuTimer.OCCLUSION);
 			if (weather.isActive())
 			{
@@ -2057,6 +2057,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		VAO.recordShadowDraws = frameShadows;
 
 		cpuTimer.begin(CpuTimer.WEATHER);
+		weather.getLightning().setSunStrength(dayCycle.directStrength(volumetricFog.overcast[0], volumetricFog.overcast[1]));
 		updateWeather(cameraX, cameraY, cameraZ);
 		dayCycle.applyStrike(weather.getLightning());
 		updateSkylight();
@@ -2336,6 +2337,8 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 	private boolean shadowStaticDirty;
 	private int[] shadowBuildZones = new int[64];
 	private int shadowBuildCount, shadowBuildNext, shadowBuildPerFrame;
+	// the map being drawn is kept beside the one in use, not used (a strike's bolt)
+	private boolean shadowBuildHeld;
 
 	/**
 	 * Keep the static shadow map current: start a new one when the light has turned or the player has walked out of
@@ -2357,13 +2360,30 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		}
 
 		ShadowMap.View front = shadowMap.frontView();
-		if (!shadowMap.isBuilding()
-			&& (front == null || shadowMap.isStale() || shadowStale(front, fx, fy, fz, radius, size)))
+		if (!shadowMap.isBuilding() && front != null && shadowStale(front, fx, fy, fz, radius, size))
 		{
+			// the light turned to where the held map (a lightning strike's, or the sun's it left) is drawn for: use it
+			ShadowMap.View held = shadowMap.heldView();
+			if (held != null && !shadowStale(held, fx, fy, fz, radius, size))
+			{
+				glBindVertexArray(vaoUiHandle);
+				shadowMap.swapFront(glShadowMaxProgram);
+				return;
+			}
+		}
+		// a strike needs the map for its bolt drawn before its flash, beside the one in use
+		float[] bolt = weather.getLightning().getBoltDir();
+		boolean holdBolt = !shadowMap.isBuilding() && front != null && bolt != null && !shadowMap.isStale()
+			&& !shadowStale(front, fx, fy, fz, radius, size)
+			&& !directionMatches(front, bolt) && !directionMatches(shadowMap.heldView(), bolt);
+		if (!shadowMap.isBuilding()
+			&& (front == null || shadowMap.isStale() || shadowStale(front, fx, fy, fz, radius, size) || holdBolt))
+		{
+			shadowBuildHeld = holdBolt;
 			float sx = Math.round(fx / SHADOW_CACHE_SNAP) * (float) SHADOW_CACHE_SNAP;
 			float sz = Math.round(fz / SHADOW_CACHE_SNAP) * (float) SHADOW_CACHE_SNAP;
 			hitchMonitor.job(HitchMonitor.STATIC_SHADOWS);
-			shadowMap.startBuild(dayCycle.casterDir, sx, fy, sz, radius + SHADOW_CACHE_SNAP,
+			shadowMap.startBuild(holdBolt ? bolt : dayCycle.casterDir, sx, fy, sz, radius + SHADOW_CACHE_SNAP,
 				depthRange + SHADOW_CACHE_SNAP, glCapabilities.OpenGL45);
 			shadowBuildCount = 0;
 			shadowZones(ctx, sx, sz, radius + SHADOW_CACHE_SNAP, null, 0, 0, sway);
@@ -2387,22 +2407,36 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		if (shadowBuildNext >= shadowBuildCount)
 		{
 			glBindVertexArray(vaoUiHandle);
-			shadowMap.finishBuild(glShadowMaxProgram);
+			if (shadowBuildHeld)
+			{
+				shadowMap.holdBuild();
+			}
+			else
+			{
+				shadowMap.finishBuild(glShadowMaxProgram);
+			}
 		}
 	}
 
-	// cosine of the angle within which the static shadow map counts as drawn for the light (a strike's turns)
-	private static final float SHADOW_MATCH = 0.99999f;
+	// cosine of the angle within which a static shadow map counts as drawn for a light
+	private static final float SHADOW_MATCH = 0.9999f;
+
+	private static boolean directionMatches(ShadowMap.View v, float[] d)
+	{
+		return v != null && d[0] * v.dir[0] + d[1] * v.dir[1] + d[2] * v.dir[2] > SHADOW_MATCH;
+	}
 
 	/**
-	 * Whether the static shadow map is drawn, and for the light's direction now. A strike waits in the dark for it.
+	 * Tell a strike what the shadow maps came to this frame: whether one is drawn for the bolt, and whether the map
+	 * in use is for the light in use. Without shadows, both are true.
 	 */
-	private boolean shadowsMatchLight()
+	private void reportShadowMaps()
 	{
+		float[] bolt = weather.getLightning().getBoltDir();
 		ShadowMap.View front = shadowMap.frontView();
-		float[] d = dayCycle.casterDir;
-		return front != null && !shadowMap.isBuilding()
-			&& d[0] * front.dir[0] + d[1] * front.dir[1] + d[2] * front.dir[2] > SHADOW_MATCH;
+		boolean ready = !frameShadows
+			|| bolt != null && (directionMatches(front, bolt) || directionMatches(shadowMap.heldView(), bolt));
+		weather.getLightning().setShadowMaps(ready, !frameShadows || directionMatches(front, dayCycle.casterDir));
 	}
 
 	private boolean shadowStale(ShadowMap.View v, float fx, float fy, float fz, float radius, int size)

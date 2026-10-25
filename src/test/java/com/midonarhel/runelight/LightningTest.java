@@ -5,139 +5,173 @@ import static org.junit.Assert.*;
 
 public class LightningTest
 {
-	private static final float DT = 1 / 60f;
+	private static final float DT = 1 / 120f;
 
-	/** One strike, frame by frame, with the shadow map drawn this many frames after the light turns. */
+	/** One strike, frame by frame. */
 	private static final class Strike
 	{
-		float darkAt = -1, fullDarkAt = -1, aimAt = -1, firstFlashAt = -1, lastFlashAt = -1, returnAt = -1, endAt = -1;
-		int pulses;
-		float maxFlash, elevation, flashWhileLit;
+		float prepared = -1, firstTakeover = -1, lastTakeover = -1, endAt, flashAbove, maxFlash;
+		int pulses, takeovers;
+		boolean sunFaded;
+		float continuityGap;
 		final float[] dir = new float[3];
+		final float[] startsOfTakeover = new float[2];
 	}
 
-	private static Strike run(Lightning l, int drawFrames)
+	/** Follow the strike the plugin would: the bolt's map is ready this many frames after the strike is decided. */
+	private static Strike run(Lightning l, float sunStrength, int drawFrames)
 	{
 		Strike s = new Strike();
 		float[] strike = new float[2];
 		float[] casterDir = new float[3];
 		float t = 0;
-		boolean aiming = false, wasFlashing = false;
-		int sinceTurn = 0;
-		for (int guard = 0; guard < 60 * 3600; ++guard)
+		int frames = 0;
+		boolean started = false, taken = false, flashing = false;
+		l.setSunStrength(sunStrength);
+		for (int guard = 0; guard < 120 * 3600; ++guard)
 		{
 			l.update(DT, 1, true, 0, 0);
-			l.getStrike(strike);
-			t += DT;
-			if (strike[0] > 0)
+			float[] bolt = l.getBoltDir();
+			if (bolt != null)
+			{
+				if (!started)
+				{
+					started = true;
+					t = 0;
+					frames = 0;
+				}
+				++frames;
+				l.setShadowMaps(frames > drawFrames, true);
+			}
+			else if (started)
 			{
 				break;
 			}
-		}
-		assertTrue(strike[0] > 0);
-		s.darkAt = 0;
-		t = 0;
-		while (strike[0] > 0)
-		{
-			boolean now = l.aim(casterDir);
-			if (now != aiming)
+			if (!started)
 			{
-				aiming = now;
-				sinceTurn = 0;
-				if (now)
-				{
-					s.aimAt = t;
-					System.arraycopy(casterDir, 0, s.dir, 0, 3);
-				}
-				else
-				{
-					s.returnAt = t;
-				}
+				continue;
 			}
-			++sinceTurn;
-			l.setShadowsReady(sinceTurn > drawFrames, casterDir);
-			l.update(DT, 1, true, 0, 0);
-			l.getStrike(strike);
 			t += DT;
-			if (strike[0] >= 1 && s.fullDarkAt < 0)
+			l.getStrike(strike);
+			float f = l.getFlash();
+			s.maxFlash = Math.max(s.maxFlash, f);
+			if (f > 0.5f)
 			{
-				s.fullDarkAt = t;
+				s.flashAbove += DT;
 			}
-			boolean flashing = strike[1] > 0;
-			if (flashing)
+			if (f > 0 && !flashing)
 			{
-				s.maxFlash = Math.max(s.maxFlash, strike[1]);
-				s.flashWhileLit = Math.max(s.flashWhileLit, 1 - strike[0]);
-				if (s.firstFlashAt < 0)
+				++s.pulses;
+				if (s.prepared < 0)
 				{
-					s.firstFlashAt = t;
-				}
-				s.lastFlashAt = t;
-				if (!wasFlashing)
-				{
-					++s.pulses;
+					s.prepared = t;
 				}
 			}
-			wasFlashing = flashing;
+			flashing = f > 0;
+			boolean now = l.aim(casterDir);
+			if (!now)
+			{
+				// the sun is never faded: only the bolt's flag and light are ever set
+				assertEquals(0, strike[0], 0);
+				assertEquals(0, strike[1], 0);
+			}
+			else
+			{
+				assertEquals(1, strike[0], 0);
+				// the bolt takes over once it is the brighter light, and its light is then the flash times the knob
+				assertEquals(f * Lightning.BRIGHTNESS, strike[1], 1e-4f);
+				assertTrue(strike[1] > sunStrength);
+				System.arraycopy(casterDir, 0, s.dir, 0, 3);
+			}
+			if (now && !taken)
+			{
+				++s.takeovers;
+				if (s.firstTakeover < 0)
+				{
+					s.firstTakeover = t;
+				}
+			}
+			if (now)
+			{
+				s.lastTakeover = t;
+			}
+			taken = now;
 		}
 		s.endAt = t;
 		return s;
 	}
 
 	@Test
-	public void strikeTakesOverTheLight()
+	public void boltTakesOverWhenBrighter()
 	{
 		boolean one = false, two = false;
 		Lightning l = new Lightning();
 		for (int i = 0; i < 30; ++i)
 		{
-			Strike s = run(l, 4);
-			// the sun is out within 0.15 s and the light turns to the bolt then, low over the horizon
-			assertEquals(0.15f, s.fullDarkAt, 2 * DT);
-			assertEquals(0.15f, s.aimAt, 2 * DT);
-			float len = (float) Math.sqrt(s.dir[0] * s.dir[0] + s.dir[1] * s.dir[1] + s.dir[2] * s.dir[2]);
-			assertEquals(1, len, 1e-4f);
-			double elevation = Math.toDegrees(Math.asin(-s.dir[1]));
-			assertTrue("elevation " + elevation, elevation >= 29.99 && elevation <= 40.01);
-			// the flash is at full strength, only with the sun out, after the map is drawn for the new light
-			assertEquals(0, s.flashWhileLit, 1e-3f);
-			assertTrue(s.maxFlash >= 0.8f && s.maxFlash <= 1);
-			assertTrue(s.firstFlashAt - s.aimAt >= 0.1f && s.firstFlashAt - s.aimAt < 0.2f);
+			// a storm's dim sun: the bolt passes it early in the rise
+			Strike s = run(l, 0.8f, 4);
 			assertTrue(s.pulses == 1 || s.pulses == 2);
 			one |= s.pulses == 1;
 			two |= s.pulses == 2;
-			// the light is back on the sun after the last pulse, and the sun is back within 0.3 s of the map
-			assertTrue(s.returnAt >= s.lastFlashAt - DT);
-			assertTrue(s.endAt - s.returnAt < 0.5f);
-			assertTrue("strike " + s.endAt, s.endAt < 2.5f);
+			assertEquals(s.pulses, s.takeovers);
+			// no dark gap and no wait beyond the map's few frames
+			assertTrue("prepared " + s.prepared, s.prepared > 0 && s.prepared < 0.1f);
+			assertTrue("takeover " + (s.firstTakeover - s.prepared), s.firstTakeover - s.prepared < 0.05f);
+			double elevation = Math.toDegrees(Math.asin(-s.dir[1]));
+			assertTrue("elevation " + elevation, elevation >= 29.99 && elevation <= 40.01);
+			// each pulse is on screen well over half a second at more than half strength
+			assertTrue("bright " + s.flashAbove / s.pulses, s.flashAbove / s.pulses > 0.45f);
+			assertTrue(s.maxFlash >= 0.8f && s.maxFlash <= 1);
+			// at most one pulse a second
+			assertTrue(s.endAt < 0.1f + 0.85f + (s.pulses - 1) * 1.1f + 0.05f);
 		}
 		assertTrue(one && two);
 	}
 
 	@Test
-	public void strikeWaitsForTheShadowsButNotForever()
+	public void brightSunIsOnlyBeatenAtTheTop()
 	{
-		Strike quick = run(new Lightning(), 3);
-		Strike slow = run(new Lightning(), 20);
-		assertTrue(slow.firstFlashAt - slow.aimAt > quick.firstFlashAt - quick.aimAt + 0.2f);
-		// the map never being ready (shadows off or indoors) holds the dark for the longest wait only
-		Strike never = run(new Lightning(), Integer.MAX_VALUE / 2);
-		assertEquals(1f, never.firstFlashAt - never.aimAt, 3 * DT);
+		// a clear noon: the bolt (4) passes the sun (2.6) at 65% of the flash, so less of each pulse
+		Strike storm = run(new Lightning(), 0.8f, 4);
+		Strike clear = run(new Lightning(), 2.6f, 4);
+		float stormTaken = storm.lastTakeover - storm.firstTakeover;
+		float clearTaken = clear.lastTakeover - clear.firstTakeover;
+		assertTrue(clear.takeovers > 0);
+		assertTrue(clearTaken > 0.1f);
+		// and never at all against a sun brighter than the bolt can be
+		Strike blinding = run(new Lightning(), 5, 4);
+		assertEquals(0, blinding.takeovers);
+		assertTrue(stormTaken > 0 || storm.takeovers > 0);
 	}
 
 	@Test
-	public void pulseRisesAndFallsSmoothly()
+	public void flashWaitsForTheBoltsMapAndGivesUp()
+	{
+		Strike quick = run(new Lightning(), 0.8f, 3);
+		Strike slow = run(new Lightning(), 0.8f, 40);
+		assertTrue(slow.prepared > quick.prepared + 0.25f);
+		// a map that never gets drawn drops the strike: no flash, no takeover
+		Strike never = run(new Lightning(), 0.8f, Integer.MAX_VALUE / 2);
+		assertEquals(0, never.takeovers);
+		assertEquals(0, never.maxFlash, 0);
+		assertEquals(1f, never.endAt, 0.05f);
+	}
+
+	@Test
+	public void pulseRisesHoldsAndFalls()
 	{
 		assertEquals(0, Lightning.pulse(0), 0);
 		assertEquals(1, Lightning.pulse(0.05f), 1e-6f);
-		assertEquals(0, Lightning.pulse(0.2f), 1e-6f);
+		assertEquals(1, Lightning.pulse(0.3f), 0);
+		assertEquals(1, Lightning.pulse(0.45f), 0);
+		assertEquals(0, Lightning.pulse(0.85f), 1e-6f);
 		float previous = 0;
 		for (float t = 0; t <= 0.05f; t += 0.001f)
 		{
 			assertTrue(Lightning.pulse(t) >= previous);
 			previous = Lightning.pulse(t);
 		}
-		for (float t = 0.05f; t <= 0.2f; t += 0.001f)
+		for (float t = 0.45f; t <= 0.85f; t += 0.001f)
 		{
 			assertTrue(Lightning.pulse(t) <= previous + 1e-6f);
 			previous = Lightning.pulse(t);
@@ -145,26 +179,39 @@ public class LightningTest
 	}
 
 	@Test
+	public void directStrengthOfTheSunAndMoon()
+	{
+		DayCycle day = new DayCycle();
+		day.sunIsCaster = true;
+		day.sunAltitude = 60;
+		assertEquals(2.67f, day.directStrength(0, 0), 0.05f);
+		// a full rain overcast keeps 30%, snow 42%
+		assertEquals(0.3f * day.directStrength(0, 0), day.directStrength(1, 0), 1e-4f);
+		assertEquals(0.42f * day.directStrength(0, 0), day.directStrength(1, 1), 1e-4f);
+		day.sunAltitude = 0;
+		assertTrue(day.directStrength(0, 0) < 1);
+		day.sunIsCaster = false;
+		day.sunAltitude = -30;
+		assertEquals(0.37f, day.directStrength(0, 0), 0.01f);
+	}
+
+	@Test
 	public void strikeOnRequestInAnyWeather()
 	{
 		Lightning l = new Lightning();
-		float[] strike = new float[2];
 		l.update(DT, 0, false, 0, 0);
-		l.getStrike(strike);
-		assertEquals(0, strike[0], 0);
+		assertNull(l.getBoltDir());
 		l.strikeNow();
 		l.update(DT, 0, false, 0, 0);
-		l.getStrike(strike);
-		assertTrue(strike[0] > 0);
+		assertNotNull(l.getBoltDir());
 		// a request during a strike is dropped, not queued
 		l.strikeNow();
-		Strike s = run(l, 4);
-		assertTrue(s.pulses >= 1);
-		for (int i = 0; i < 600; ++i)
+		Strike s = run(l, 0.8f, 4);
+		assertTrue(s.takeovers >= 1);
+		for (int i = 0; i < 1200; ++i)
 		{
 			l.update(DT, 0, false, 0, 0);
-			l.getStrike(strike);
-			assertEquals(0, strike[0], 0);
+			assertNull(l.getBoltDir());
 		}
 	}
 
@@ -176,12 +223,13 @@ public class LightningTest
 		float[] dir = new float[3];
 		for (int i = 0; i < 600 * 60; ++i)
 		{
-			l.update(DT, 0.3f, true, 0, 0);
-			l.update(DT, 1, false, 0, 0);
+			l.update(1 / 60f, 0.3f, true, 0, 0);
+			l.update(1 / 60f, 1, false, 0, 0);
 			l.getStrike(strike);
 			assertEquals(0, strike[0], 0);
 			assertEquals(0, strike[1], 0);
 			assertFalse(l.aim(dir));
+			assertNull(l.getBoltDir());
 		}
 	}
 }

@@ -6,22 +6,19 @@ import org.slf4j.LoggerFactory;
 import static org.lwjgl.opengl.GL33C.*;
 
 /**
- * Lightning in storms: now and then a strike that briefly lights the sky, the clouds and the scene, and a bolt
- * below the clouds (lightning.glsl). The flash reaches every pass through sky.glsl's weatherOvercast.z, so the
- * scene, the transparency layer, the fog and the particles all light up together.
+ * Lightning in storms: now and then a strike that lights the sky a little, shows a bolt below the clouds
+ * (lightning.glsl) and, for the length of its flash, lights the scene itself.
  *
- * The strike lights the scene through the sun's own shadow system, one shadow map and no other: it takes over the
- * light that casts shadows, so that everything in range throws long, sharp shadows away from the bolt.
+ * The scene is lit through the sun's own shadow system, one shadow map and no other. Each pulse of the flash rises,
+ * holds and falls. While the bolt's light is brighter than the sun's or moon's, the bolt is the light that casts
+ * shadows: the direction is the bolt's, 30 to 40 degrees over the horizon, the light pure white, the shadows sharp
+ * and long. Below it, the sun is back. The sun is never faded out.
  *
- * 1. The sun's or moon's light fades out, leaving the ambient light alone (FADE_OUT).
- * 2. The light turns to the bolt, low over the horizon (30 to 40 degrees), while it is out; the shadow map is drawn for that direction
- *    in the dark (AIM waits for it).
- * 3. One or two pulses of pure white light, each rising and falling smoothly, with the sky's flash in step.
- * 4. The light turns back to the sun or moon, still dark, and the shadow map is drawn for that again (RETURN),
- *    then the sun fades back in (FADE_IN).
+ * The shadow map for the bolt's direction is drawn before the flash begins (PREPARE, a few frames), beside the sun's,
+ * and both stay drawn: taking over and handing back are each a swap of the two (ShadowMap.swapFront), never a
+ * redraw, so the light and its shadows change in the same frame.
  *
- * The map is drawn over a few frames while the old one stays in use (RuneLightPlugin.renderStaticShadows), so a
- * rebuild costs no more than the sun's own slow turning does, twice a strike.
+ * A strike is a pulse or two about a second apart, so a viewer sees at most about one flash a second.
  */
 class Lightning
 {
@@ -32,16 +29,16 @@ class Lightning
 	private static final float MAX_INTERVAL = 25;
 	// storm strength (Weather) below which nothing strikes
 	private static final float STORM_THRESHOLD = 0.6f;
-	// seconds for the sun to fade out and back in
-	private static final float FADE_OUT = 0.15f;
-	private static final float FADE_IN = 0.3f;
-	// seconds the dark waits at least, and at most, for the shadow map to be drawn for the light's new direction
-	private static final float TURN_MIN = 0.1f;
-	private static final float TURN_MAX = 1;
-	// seconds for a pulse to rise and to fall, and from the start of one to the next
+	// the bolt's light at the top of a pulse, linear: the one brightness knob (sky.glsl's strikeLight.y). The noon
+	// sun is about 2.6, so this is a strong sun's.
+	static final float BRIGHTNESS = 4;
+	// seconds to draw the bolt's shadow map before the flash, at most; a strike that can't is dropped
+	private static final float PREPARE_MAX = 1;
+	// seconds for a pulse to rise, to hold at its top and to fall, and from the start of one pulse to the next
 	private static final float PULSE_RISE = 0.05f;
-	private static final float PULSE_FALL = 0.15f;
-	private static final float PULSE_STEP = 0.3f;
+	private static final float PULSE_HOLD = 0.4f;
+	private static final float PULSE_FALL = 0.4f;
+	private static final float PULSE_STEP = 1.1f;
 	// the bolt's light is this high over the horizon, degrees, and how far from the player it comes down, world
 	// units. Not lower than DayCycle's lowest sun: the shadow map's bias is tuned for it, and a lower light shadows
 	// level ground with its own texels.
@@ -50,7 +47,7 @@ class Lightning
 	private static final float BOLT_MIN_DISTANCE = 3000;
 	private static final float BOLT_MAX_DISTANCE = 9000;
 
-	private enum Phase { OFF, FADE_OUT, AIM, PULSES, RETURN, FADE_IN }
+	private enum Phase { OFF, PREPARE, PULSES }
 
 	private final Random random = new Random();
 	private float untilNext = -1;
@@ -62,18 +59,19 @@ class Lightning
 	// the bolt's light: its direction (toward it, y down like DayCycle.casterDir) and where it comes down
 	private final float[] boltDir = new float[3];
 	private float boltX, boltZ, boltSeed;
-	// whether the shadow map was drawn for the light's direction as of last frame (RuneLightPlugin)
-	private boolean shadowsReady;
-	// the light's direction as the plugin has it, for the log
-	private float[] actualDir;
 	private boolean requested;
-	// for the log: when the strike began, and the frames of this phase
+	// from the plugin, each frame: the brightness of the sun's or moon's light, whether a shadow map for the bolt's
+	// direction is drawn, and whether the map in use is for the light in use (the latter for the log)
+	private float sunStrength;
+	private boolean boltMapReady;
+	private boolean mapMatchesLight = true;
+	// for the log: when the strike began, and the frames since
 	private long startedAt;
-	private int frames;
+	private int frame, prepareFrames;
 
 	// this frame
-	private float darkness;
 	private float flash;
+	private boolean takeover;
 
 	/**
 	 * @param storm Weather's storm strength, 0 to 1
@@ -110,49 +108,44 @@ class Lightning
 		requested = false;
 
 		age += dt;
-		++frames;
-		switch (phase)
+		++frame;
+		if (phase == Phase.PREPARE)
 		{
-			case FADE_OUT:
-				darkness = smooth(age / FADE_OUT);
-				if (age >= FADE_OUT)
+			if (boltMapReady)
+			{
+				prepareFrames = frame;
+				if (log.isDebugEnabled())
 				{
-					enter(Phase.AIM);
+					log("PULSES begin, the bolt's shadow map drawn after " + frame + " frames, " + Math.round(age * 1000)
+						+ " ms");
 				}
-				break;
-			case AIM:
-				if (age >= TURN_MIN && (shadowsReady || age >= TURN_MAX))
-				{
-					enter(Phase.PULSES);
-				}
-				break;
-			case PULSES:
-				flash = 0;
-				for (int i = 0; i < pulses; ++i)
-				{
-					flash = Math.max(flash, pulseAmp[i] * pulse(age - i * PULSE_STEP));
-				}
-				if (age >= (pulses - 1) * PULSE_STEP + PULSE_RISE + PULSE_FALL)
-				{
-					flash = 0;
-					enter(Phase.RETURN);
-				}
-				break;
-			case RETURN:
-				if (age >= TURN_MIN && (shadowsReady || age >= TURN_MAX))
-				{
-					enter(Phase.FADE_IN);
-				}
-				break;
-			case FADE_IN:
-				darkness = 1 - smooth(age / FADE_IN);
-				if (age >= FADE_IN)
-				{
-					stop();
-				}
-				break;
-			default:
-				break;
+				phase = Phase.PULSES;
+				age = 0;
+			}
+			else if (age >= PREPARE_MAX)
+			{
+				log("dropped: no shadow map for the bolt after " + frame + " frames");
+				stop();
+			}
+			return;
+		}
+
+		flash = 0;
+		for (int i = 0; i < pulses; ++i)
+		{
+			flash = Math.max(flash, pulseAmp[i] * pulse(age - i * PULSE_STEP));
+		}
+		boolean now = boltMapReady && flash * BRIGHTNESS > sunStrength;
+		if (now != takeover && log.isDebugEnabled())
+		{
+			log("TAKEOVER " + (now ? "on" : "off") + " at frame " + frame + " (" + (frame - prepareFrames)
+				+ " into the flash): bolt light " + flash * BRIGHTNESS + ", sun or moon light " + sunStrength
+				+ ", shadow map for the bolt " + (boltMapReady ? "drawn" : "not drawn"));
+		}
+		takeover = now;
+		if (age >= (pulses - 1) * PULSE_STEP + PULSE_RISE + PULSE_HOLD + PULSE_FALL)
+		{
+			stop();
 		}
 	}
 
@@ -160,19 +153,6 @@ class Lightning
 	void strikeNow()
 	{
 		requested = true;
-	}
-
-	private void enter(Phase next)
-	{
-		if (log.isDebugEnabled())
-		{
-			log(next.name() + " after " + phase.name() + " " + frames + " frames, " + Math.round(age * 1000) + " ms");
-		}
-		frames = 0;
-		phase = next;
-		age = 0;
-		// the map drawn for the old direction doesn't count for the new one
-		shadowsReady = false;
 	}
 
 	private float interval(float storm)
@@ -184,10 +164,10 @@ class Lightning
 	private void strike(float focusX, float focusZ)
 	{
 		startedAt = System.nanoTime();
-		phase = Phase.FADE_OUT;
+		phase = Phase.PREPARE;
 		age = 0;
-		frames = 0;
-		shadowsReady = false;
+		frame = 0;
+		boltMapReady = false;
 		pulses = 1 + random.nextInt(2);
 		for (int i = 0; i < pulses; ++i)
 		{
@@ -204,17 +184,15 @@ class Lightning
 		boltDir[2] = (float) (Math.sin(angle) * Math.cos(elevation));
 		if (log.isDebugEnabled())
 		{
-			log("FADE_OUT begins: " + pulses + " pulses, bolt at " + Math.round(boltX) + ", " + Math.round(boltZ)
+			log("PREPARE begins: " + pulses + " pulses, bolt at " + Math.round(boltX) + ", " + Math.round(boltZ)
 				+ ", elevation " + Math.round(Math.toDegrees(elevation)) + " degrees");
 		}
 	}
 
-	// one line per phase change: the time since the strike began, the light's direction and whether its shadow map is drawn
+	// one line per event: the time since the strike began, and the state of the shadows
 	private void log(String what)
 	{
-		float[] d = actualDir != null ? actualDir : boltDir;
-		log.debug("lightning +{} ms: {}; light dir {}, {}, {}; shadow map {} for it", (System.nanoTime() - startedAt) / 1000000,
-			what, d[0], d[1], d[2], shadowsReady ? "drawn" : "not drawn");
+		log.debug("lightning +{} ms: {}", (System.nanoTime() - startedAt) / 1000000, what);
 	}
 
 	private static float smooth(float x)
@@ -223,20 +201,20 @@ class Lightning
 		return x * x * (3 - 2 * x);
 	}
 
-	/** One pulse at t seconds from its start: a smooth rise, then a smooth fall. */
+	/** One pulse at t seconds from its start: a quick rise, a hold at the top, a long fall. */
 	static float pulse(float t)
 	{
-		return t < PULSE_RISE ? smooth(t / PULSE_RISE) : 1 - smooth((t - PULSE_RISE) / PULSE_FALL);
+		return t < PULSE_RISE + PULSE_HOLD ? smooth(t / PULSE_RISE) : 1 - smooth((t - PULSE_RISE - PULSE_HOLD) / PULSE_FALL);
 	}
 
 	/**
-	 * While the light is turned to the bolt, set the direction of the light that casts shadows to it.
+	 * While the bolt's light is the one that casts shadows, set the direction of that light to it.
 	 *
 	 * @return whether it did, in which case the caster counts as the sun
 	 */
 	boolean aim(float[] casterDir)
 	{
-		if (phase != Phase.AIM && phase != Phase.PULSES)
+		if (!takeover)
 		{
 			return false;
 		}
@@ -244,14 +222,30 @@ class Lightning
 		return true;
 	}
 
-	/**
-	 * Whether the shadow map is drawn for the light's direction now (casterDir, the direction in use, for the log);
-	 * call each frame after drawing it.
-	 */
-	void setShadowsReady(boolean ready, float[] casterDir)
+	/** The bolt's direction while a strike needs a shadow map for it, else null. */
+	float[] getBoltDir()
 	{
-		shadowsReady = ready;
-		actualDir = casterDir;
+		return phase == Phase.OFF ? null : boltDir;
+	}
+
+	/** The brightness of the sun's or moon's light (DayCycle.directStrength), which the bolt has to pass. */
+	void setSunStrength(float strength)
+	{
+		sunStrength = strength;
+	}
+
+	/**
+	 * What the plugin made of the shadow maps this frame, after drawing them: whether one is drawn for the bolt's
+	 * direction, and whether the one in use is for the light in use.
+	 */
+	void setShadowMaps(boolean boltReady, boolean matchesLight)
+	{
+		if (phase != Phase.OFF && matchesLight != mapMatchesLight && log.isDebugEnabled())
+		{
+			log("shadow map " + (matchesLight ? "matches" : "does not match") + " the light at frame " + frame);
+		}
+		boltMapReady = boltReady;
+		mapMatchesLight = matchesLight;
 	}
 
 	/** 0 to 1: how bright the flash is this frame. */
@@ -264,19 +258,19 @@ class Lightning
 	{
 		if (phase != Phase.OFF && log.isDebugEnabled())
 		{
-			log("OFF after " + phase.name() + " " + frames + " frames, " + Math.round(age * 1000) + " ms");
+			log("OFF after " + frame + " frames");
 		}
 		phase = Phase.OFF;
 		untilNext = -1;
-		darkness = 0;
+		takeover = false;
 		flash = 0;
 	}
 
-	/** sky.glsl's strikeLight: how much of the sun's light is out and how bright the bolt's is. */
+	/** sky.glsl's strikeLight: 1 while the bolt casts shadows, and then how bright its light is. */
 	void getStrike(float[] out)
 	{
-		out[0] = darkness;
-		out[1] = flash;
+		out[0] = takeover ? 1 : 0;
+		out[1] = takeover ? flash * BRIGHTNESS : 0;
 	}
 
 	/**

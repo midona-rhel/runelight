@@ -42,6 +42,8 @@ class ShadowMap
 	// the static map in use, -1 for none; the one being drawn while building
 	private int front = -1;
 	private int building = -1;
+	// a drawn map kept beside the front one for another light (a lightning strike's), -1 for none
+	private int held = -1;
 	// the scenery changed under the front map: redraw it, but keep showing it meanwhile
 	private boolean stale;
 	private int cacheKey;
@@ -188,14 +190,14 @@ class ShadowMap
 			glDeleteTextures(maxSpareTex);
 			maxFbo = maxTex = maxSpareTex = maxSize = 0;
 		}
-		front = building = -1;
+		front = building = held = -1;
 		stale = false;
 	}
 
 	/** Forget the static map: the scenery, levels or settings changed. */
 	void invalidateCache()
 	{
-		front = building = -1;
+		front = building = held = -1;
 		stale = false;
 	}
 
@@ -249,6 +251,7 @@ class ShadowMap
 			initCache();
 		}
 		building = front == 0 ? 1 : 0;
+		held = -1;
 		stale = false;
 		++builds;
 		View v = views[building];
@@ -276,6 +279,31 @@ class ShadowMap
 	{
 		front = building;
 		building = -1;
+		buildMax(maxProgram);
+	}
+
+	/** The new static map is drawn: keep it beside the front one instead of using it (swapFront). */
+	void holdBuild()
+	{
+		held = building;
+		building = -1;
+	}
+
+	/** The map kept beside the front one, or null. */
+	View heldView()
+	{
+		return held >= 0 ? views[held] : null;
+	}
+
+	/**
+	 * Use the held map and keep the front one in its place, so the light can turn back at once: no map is drawn.
+	 * Like finishBuild, with a VAO bound.
+	 */
+	void swapFront(int maxProgram)
+	{
+		int next = held;
+		held = front;
+		front = next;
 		buildMax(maxProgram);
 	}
 

@@ -96,19 +96,17 @@ uniform vec4 weatherLight;
 #define LIGHTNING_COLOR vec3(0.80, 0.86, 1.00)
 #define LIGHTNING_SKY 0.12
 
-// A strike takes over the light that casts shadows while it flashes (Lightning.java), which casterDir then points
-// along: x is the share of the sun's or moon's own light taken away, y the bolt's light, pure white, at its full
-// strength. Both 0 is no strike.
+// While a strike's bolt is brighter than the sun or moon it takes over the light that casts shadows (Lightning.java),
+// which casterDir then points along: x is 1 then, else 0; y is the bolt's light, pure white, how bright it is (the
+// one brightness knob is Lightning.BRIGHTNESS). Both 0 is no strike.
 uniform vec2 strikeLight;
-// a strong sun: about one and a half times the noon sun's
-#define STRIKE_LIGHT vec3(4.0)
 
 vec3 strikeCaster(vec3 light) {
-  return light * (1.0 - strikeLight.x) + STRIKE_LIGHT * strikeLight.y;
+  return light * (1.0 - strikeLight.x) + vec3(strikeLight.y);
 }
 
 // For what the light scatters in or glitters on (fog, drops, the water's shine): the bolt lights surfaces only, so
-// those just lose the sun's light during a strike
+// those just lose the sun's light while the bolt has taken over
 vec3 strikeSun(vec3 light) {
   return light * (1.0 - strikeLight.x);
 }
@@ -202,7 +200,7 @@ vec3 overcastAmbient(vec3 c, float o) {
 
 // sun or moon shadow term under cover; a bolt's shadows stay sharp
 float overcastShadow(float shadow) {
-  float soft = clamp(weatherOvercast.x * OVERCAST_SHADOW + weatherLight.y * HAZE_SHADOW, 0.0, 1.0) * (1.0 - strikeLight.y);
+  float soft = clamp(weatherOvercast.x * OVERCAST_SHADOW + weatherLight.y * HAZE_SHADOW, 0.0, 1.0) * (1.0 - strikeLight.x);
   shadow = mix(shadow, 1.0, soft);
   return clamp(shadow - max(weatherLight.x, 0.0) * HARSH_SHADOW * (1.0 - shadow), 0.0, 1.0);
 }
