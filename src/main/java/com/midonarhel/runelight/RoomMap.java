@@ -686,7 +686,7 @@ final class RoomMap
 
 	// the most puddles a chunk (8 by 8 tiles, aligned with the world's) gets on each storey, and the least pool a tile
 	// needs to get one
-	static final int POOLS_PER_CHUNK = 4;
+	static final int POOLS_PER_CHUNK = 2;
 	static final float POOL_MIN = 0.15f;
 	// level open ground is never quite level: a tile in a flat yard collects up to this much, by a hash of its place
 	static final float POOL_UNEVEN = 0.45f;
