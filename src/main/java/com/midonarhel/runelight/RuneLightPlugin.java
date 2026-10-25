@@ -417,6 +417,8 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 	// the weather field's sky (cover, wispiness, darkness around the player) for the clouds
 	private static final int WEATHER_SKY_UNIT = RuneLightPlugin.COMPOSITE_TEXTURE_UNIT + 27;
 	private final SkyGridMap skyGrid = new SkyGridMap();
+	// world units from the player's feet to the head, where the sky overhead is read for the weather sounds
+	private static final float WEATHER_HEAD = 120;
 	// the sky's light flowing in under cover
 	private static final int SKY_FIELD_UNIT = RuneLightPlugin.COMPOSITE_TEXTURE_UNIT + 25;
 	private final SkyFieldMap skyField = new SkyFieldMap();
@@ -2185,7 +2187,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 	}
 
 	/**
-	 * Hand the weather's sounds this frame's rain, whether the player is indoors, the volume (the setting times the
+	 * Hand the weather's sounds this frame's rain, how far indoors the player is, the volume (the setting times the
 	 * game's own sound effects volume) and any thunder that has just begun.
 	 */
 	private void updateWeatherAudio(float x, float y, float z)
@@ -2202,8 +2204,10 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 			volume = config.weatherSounds() / 100f * (prefs != null ? Math.min(1, prefs.getSoundEffectVolume() / 127f) : 1);
 		}
 		BuildingLights buildings = buildingLights;
-		// a little above the floor
-		boolean indoors = WeatherAudio.indoors(buildings != null ? buildings.getRooms() : null, x, y - 40, z);
+		// the sky seen straight up at the player's head, from the skylight's grid; the room map where there is none
+		WorldView wv = client.getTopLevelWorldView();
+		float sky = skyGrid.upVisibility(wv != null ? wv.getScene() : null, x, y - WEATHER_HEAD, z);
+		float indoors = WeatherAudio.indoorMix(sky, buildings != null ? buildings.getRooms() : null, x, y - 40, z);
 		audio.update(weather.rainLoudness(), indoors, volume);
 		if (weather.getLightning().takeThunder(thunderStrike) && volume > 0)
 		{

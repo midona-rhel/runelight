@@ -525,9 +525,91 @@ final class SkyGrid
 		}
 	}
 
-	private int texel(int x, int y, int slice)
+	int texel(int x, int y, int slice)
 	{
 		return ((slice * textureHeight + y) * textureWidth + x) * 4;
+	}
+
+	/**
+	 * The sky seen straight up at a point, 0 to 1, read from the texels as skylight_ao.glsl's skyGridVisibility does
+	 * for an upward normal: the tile's four corner values blended bilinearly, at the two heights over the floor that
+	 * enclose the point, blended by its height. A corner with no value (-1) drops out. It ignores what the shader
+	 * adds for diagonal walls and for faces on roofs, which a point in the air has none of, and uses the tile's first
+	 * half. The texels are written by another thread: a value may be one trace behind, never torn.
+	 *
+	 * @param x, y, z base scene local units, y down
+	 * @return -1 outside the grid, or where the corners have no value
+	 */
+	float upVisibility(float x, float y, float z)
+	{
+		float tx = x / TILE * resolution, tz = z / TILE * resolution;
+		if (!(tx >= 0 && tz >= 0 && tx < size && tz < size))
+		{
+			return -1;
+		}
+		int ix = (int) tx, iz = (int) tz;
+		float fx = tx - ix, fz = tz - iz;
+		// the floors' ground heights, bilinear over the tile's 2 x 2 texels, and which floors exist
+		float[] meta = new float[FLOORS];
+		for (int f = 0; f < FLOORS; ++f)
+		{
+			float a = Half.fromHalf(texels.get(texel(2 * ix, 2 * iz, 0) + f)), b = Half.fromHalf(texels.get(texel(2 * ix + 1, 2 * iz, 0) + f));
+			float c = Half.fromHalf(texels.get(texel(2 * ix, 2 * iz + 1, 0) + f)), d = Half.fromHalf(texels.get(texel(2 * ix + 1, 2 * iz + 1, 0) + f));
+			meta[f] = (a + (b - a) * fx) * (1 - fz) + (c + (d - c) * fx) * fz;
+		}
+		int floorMask = (int) (Half.fromHalf(texels.get(texel(2 * ix + (fx >= 0.5f ? 1 : 0) + 2 * size, 2 * iz + (fz >= 0.5f ? 1 : 0), 0))) + 0.5f);
+		// the levels between the floors the point is on
+		int first = 0, last = LEVELS - 2;
+		for (int f = 1; f < FLOORS; ++f)
+		{
+			if ((floorMask & (1 << f)) == 0)
+			{
+				continue;
+			}
+			if (y < meta[f])
+			{
+				first = f * HEIGHTS.length;
+			}
+			else
+			{
+				last = Math.min(last, f * HEIGHTS.length - 1);
+			}
+		}
+		int lo = first, hi = first;
+		float loY = levelY(meta, first), hiY = loY;
+		for (int k = first + 1; k <= last && y < hiY; ++k)
+		{
+			lo = hi;
+			loY = hiY;
+			hi = k;
+			hiY = levelY(meta, k);
+		}
+		float blend = lo == hi ? 0 : Math.max(0, Math.min(1, (loY - y) / Math.max(loY - hiY, 1)));
+		float below = levelVisibility(ix, iz, fx, fz, lo), above = levelVisibility(ix, iz, fx, fz, hi);
+		return below < 0 ? above : above < 0 ? below : below + (above - below) * blend;
+	}
+
+	/** World y of a level's samples: above its floor's ground (y down). */
+	private static float levelY(float[] ground, int level)
+	{
+		return ground[level / HEIGHTS.length] - HEIGHTS[level % HEIGHTS.length];
+	}
+
+	/** The up visibility at a level, blended over the tile's corners; -1 where none has a value. */
+	private float levelVisibility(int ix, int iz, float fx, float fz, int level)
+	{
+		float sum = 0, weights = 0;
+		for (int k = 0; k < 4; ++k)
+		{
+			float w = ((k & 1) == 0 ? 1 - fx : fx) * ((k >> 1) == 0 ? 1 - fz : fz);
+			float v = w > 0 ? Half.fromHalf(texels.get(texel(2 * ix + (k & 1), 2 * iz + (k >> 1), level + 1))) : -1;
+			if (v >= 0)
+			{
+				sum += v * w;
+				weights += w;
+			}
+		}
+		return weights > 1e-5f ? sum / weights : -1;
 	}
 
 	/** Open sky in both parts of a slice's tiles x0..x1 - 1 by z0..z1 - 1. */

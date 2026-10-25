@@ -244,6 +244,23 @@ final class SkyGridMap
 			&& (!shownInstance || scene.getBaseX() == shownBaseX && scene.getBaseY() == shownBaseY);
 	}
 
+	/**
+	 * The sky seen straight up at a point (SkyGrid.upVisibility) from the traced values the AO pass shows, so the same
+	 * place; -1 when the skylight is off or not ready in this scene, or the point lies outside the grid. Client thread.
+	 *
+	 * @param x, y, z in the scene's local units, y down
+	 */
+	float upVisibility(Scene scene, float x, float y, float z)
+	{
+		SkyGrid s = sky;
+		if (s == null || !isReady(scene))
+		{
+			return -1;
+		}
+		// the texels may be of a place the scene has moved on from
+		return s.upVisibility(x - (shownBaseX - scene.getBaseX()) * SkyGrid.TILE, y, z - (shownBaseY - scene.getBaseY()) * SkyGrid.TILE);
+	}
+
 	void free()
 	{
 		if (worker != null)

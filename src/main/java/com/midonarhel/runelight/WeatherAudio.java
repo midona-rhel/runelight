@@ -38,6 +38,9 @@ final class WeatherAudio
 	private static final float RAIN_CURVE = 0.7f;
 	// below this loudness the rain fades to nothing
 	private static final float RAIN_FLOOR = 0.05f;
+	// the sky seen overhead, 0 to 1, at and below which the player is fully indoors, and at and above which outdoors
+	static final float FULLY_INDOORS = 0.15f;
+	static final float FULLY_OUTDOORS = 0.6f;
 	// rain this far away (world units) is not heard; nearer is, the more so the nearer, up to this share of its loudness
 	static final float RAIN_REACH = 6400;
 	static final float DISTANT_RAIN = 0.8f;
@@ -113,17 +116,17 @@ final class WeatherAudio
 	 * Every frame, from the client thread.
 	 *
 	 * @param loudness how hard it rains for the ears, 0 to 1 (Weather.rainLoudness)
-	 * @param indoors  whether the player is inside a building
+	 * @param indoors  how far indoors the player is, 0 to 1 (indoorMix)
 	 * @param volume   everything's level, 0 to 1
 	 */
-	void update(float loudness, boolean indoors, float volume)
+	void update(float loudness, float indoors, float volume)
 	{
 		if (failed)
 		{
 			return;
 		}
 		float rain = rainGain(loudness);
-		mixer.setTargets(rain, loudness, indoors ? 1 : 0, volume);
+		mixer.setTargets(rain, loudness, indoors, volume);
 		if (rain > 0 && volume > 0)
 		{
 			start();
@@ -295,12 +298,22 @@ final class WeatherAudio
 	}
 
 	/**
-	 * Whether a point is inside a building: in a room of the room map. Under a roof alone (a gateway, a tree) is not.
+	 * How far indoors the player is, 0 to 1, from the share of the sky seen straight up at their head: a room sees
+	 * none and is fully indoors, a gateway or a tree's canopy some and muffles in part, open ground is outdoors.
+	 * Without that (the skylight is off or not traced here: a negative visibility) it is the room map's: in a room
+	 * or not.
 	 *
-	 * @param y the point's height; a little above the floor
+	 * @param visibility the sky overhead, 0 to 1, or negative if unknown
+	 * @param rooms      the room map, null if there is none
+	 * @param y          a little above the floor, for the room map
 	 */
-	static boolean indoors(RoomMap rooms, float x, float y, float z)
+	static float indoorMix(float visibility, RoomMap rooms, float x, float y, float z)
 	{
-		return rooms != null && rooms.roomAt(x, y, z)[0] > 0;
+		if (visibility < 0)
+		{
+			return rooms != null && rooms.roomAt(x, y, z)[0] > 0 ? 1 : 0;
+		}
+		float t = Math.max(0, Math.min(1, (visibility - FULLY_INDOORS) / (FULLY_OUTDOORS - FULLY_INDOORS)));
+		return 1 - t * t * (3 - 2 * t);
 	}
 }

@@ -367,15 +367,78 @@ public class WeatherAudioTest
 	}
 
 	@Test
-	public void insideARoomIsIndoorsButAGatewayIsNot()
+	public void indoorMixFollowsTheSkyOverhead()
+	{
+		// a room sees none of it: fully indoors; open ground sees all; a canopy or a gateway in between is partly
+		assertEquals(1, WeatherAudio.indoorMix(0, null, 0, 0, 0), 0);
+		assertEquals(1, WeatherAudio.indoorMix(WeatherAudio.FULLY_INDOORS, null, 0, 0, 0), 0);
+		assertEquals(0, WeatherAudio.indoorMix(WeatherAudio.FULLY_OUTDOORS, null, 0, 0, 0), 0);
+		assertEquals(0, WeatherAudio.indoorMix(1, null, 0, 0, 0), 0);
+		float middle = (WeatherAudio.FULLY_INDOORS + WeatherAudio.FULLY_OUTDOORS) / 2;
+		assertEquals(0.5f, WeatherAudio.indoorMix(middle, null, 0, 0, 0), 1e-5f);
+		float last = 1;
+		for (float v = 0; v <= 1; v += 0.02f)
+		{
+			float m = WeatherAudio.indoorMix(v, null, 0, 0, 0);
+			assertTrue(m <= last + 1e-6f);
+			last = m;
+		}
+	}
+
+	@Test
+	public void withoutTheSkyTheRoomMapDecides()
 	{
 		RoomMap m = RoomMapTest.house(RoomMapTest.walls());
 		// inside the house, a little above its floor; its yard; and a place with no room map
-		assertTrue(WeatherAudio.indoors(m, RoomMapTest.world(10), -40, RoomMapTest.world(10)));
-		assertFalse(WeatherAudio.indoors(m, RoomMapTest.world(14), -40, RoomMapTest.world(14)));
-		assertFalse(WeatherAudio.indoors(null, RoomMapTest.world(10), -40, RoomMapTest.world(10)));
+		assertEquals(1, WeatherAudio.indoorMix(-1, m, RoomMapTest.world(10), -40, RoomMapTest.world(10)), 0);
+		assertEquals(0, WeatherAudio.indoorMix(-1, m, RoomMapTest.world(14), -40, RoomMapTest.world(14)), 0);
+		assertEquals(0, WeatherAudio.indoorMix(-1, null, RoomMapTest.world(10), -40, RoomMapTest.world(10)), 0);
 		// off the map it is outdoors
-		assertFalse(WeatherAudio.indoors(m, -100000, -40, 100000));
+		assertEquals(0, WeatherAudio.indoorMix(-1, m, -100000, -40, 100000), 0);
+		// and a known sky overrides the room map: open sky over a room's tile is outdoors
+		assertEquals(0, WeatherAudio.indoorMix(1, m, RoomMapTest.world(10), -40, RoomMapTest.world(10)), 0);
+	}
+
+	/** Write one level's up visibility at a tile's four corners (SW, SE, NW, NE). */
+	private static void putLevel(SkyGrid g, int tx, int tz, int level, float... corners)
+	{
+		for (int k = 0; k < 4; ++k)
+		{
+			g.texels.put(g.texel(2 * tx + (k & 1), 2 * tz + (k >> 1), level + 1), Half.toHalf(corners[k]));
+		}
+	}
+
+	@Test
+	public void skyLookupReadsTheGridsTexels()
+	{
+		SkyGrid g = new SkyGrid();
+		int tx = 10, tz = 20;
+		// one floor, its ground at y 0; no upper floors
+		for (int k = 0; k < 4; ++k)
+		{
+			g.texels.put(g.texel(2 * tx + (k & 1), 2 * tz + (k >> 1), 0), Half.toHalf(0));
+		}
+		// level 0 (40 up) sees none at its west corners and all at its east; level 1 (112 up) sees all everywhere
+		putLevel(g, tx, tz, 0, 0, 1, 0, 1);
+		putLevel(g, tx, tz, 1, 1, 1, 1, 1);
+		float x = (tx + 0.25f) * SkyGrid.TILE, z = (tz + 0.5f) * SkyGrid.TILE;
+		// at a level's own height: bilinear over the corners, a quarter of the way east
+		assertEquals(0.25f, g.upVisibility(x, -40, z), 1e-3f);
+		// at the next level's: all of it
+		assertEquals(1, g.upVisibility(x, -112, z), 1e-3f);
+		// halfway between: halfway
+		assertEquals(0.625f, g.upVisibility(x, -76, z), 1e-3f);
+		// lower than the first level: that level's
+		assertEquals(0.25f, g.upVisibility(x, -10, z), 1e-3f);
+		// a corner without a value drops out of the blend: the east ones are all that is left on the north side
+		putLevel(g, tx, tz, 0, -1, 1, -1, 1);
+		assertEquals(1, g.upVisibility(x, -40, z), 1e-3f);
+		// all four without: the other level's, where the point lies between the two
+		putLevel(g, tx, tz, 0, -1, -1, -1, -1);
+		assertEquals(1, g.upVisibility(x, -60, z), 1e-3f);
+		// outside the grid, nothing to say
+		assertEquals(-1, g.upVisibility(-5, -40, z), 0);
+		assertEquals(-1, g.upVisibility(x, -40, SkyGrid.SIZE * SkyGrid.TILE + 1), 0);
 	}
 
 	@Test
