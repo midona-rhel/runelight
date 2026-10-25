@@ -93,6 +93,10 @@ class Weather
 	static final float COVER_SLOPE = 0.8f;
 	// varying intensity may peak this far over 100%, as a share of the instance counts
 	private static final float MAX_EFFECTIVE = 1.2f;
+	// Rain heavier than this adds drops only at DENSE_SLOPE of the rate, so the downpours stay readable: a drop count
+	// rising with the rain keeps adding streaks until they merge into a wall
+	private static final float DENSE_RAIN = 0.85f;
+	private static final float DENSE_SLOPE = 0.25f;
 	// wind multiplier at a full gust
 	private static final float RAIN_GUST = 1.2f;
 	private static final float SNOW_GUST = 1.5f;
@@ -678,6 +682,16 @@ class Weather
 		return rainEffective;
 	}
 
+	/** how hard it rains anywhere in the scene, 0-1 and over, for the shafts under the distant rain clouds (clouds.glsl) */
+	float getDistantRain()
+	{
+		if (!field.isEnabled())
+		{
+			return rainEffective;
+		}
+		return Math.max(rainEffective, Math.min(rainEffective + field.max(WeatherField.RAIN) - field.getFocus(WeatherField.RAIN), MAX_EFFECTIVE));
+	}
+
 	/** wet ground and snow cover at the player, 0-1 */
 	float getWetness()
 	{
@@ -995,7 +1009,7 @@ class Weather
 			glUniform1f(rain.particleReach, drawDistance);
 			glUniform1i(rain.mistStage, 0);
 			water.setRect(config, rain.waterRect);
-			drawLayers(rain, LAYER_RAIN_DROPS * rainShown, RAIN_ABOVE, RAIN_BELOW, out, height, cameraX, cameraZ,
+			drawLayers(rain, LAYER_RAIN_DROPS * dropRain(rainShown), RAIN_ABOVE, RAIN_BELOW, out, height, cameraX, cameraZ,
 				aheadX, aheadZ);
 			float impacts = splashes ? rainShown * Math.min(1, wetShown) : 0;
 			if (impacts > 0)
@@ -1060,6 +1074,12 @@ class Weather
 			glDrawArraysInstanced(GL_TRIANGLES, 0, 6, count);
 			first = false;
 		}
+	}
+
+	/** The rain the drop count follows: the rain itself, with the heaviest eased (DENSE_RAIN). */
+	static float dropRain(float rain)
+	{
+		return rain <= DENSE_RAIN ? rain : DENSE_RAIN + (rain - DENSE_RAIN) * DENSE_SLOPE;
 	}
 
 	/** How far from the camera layer k's band reaches. */

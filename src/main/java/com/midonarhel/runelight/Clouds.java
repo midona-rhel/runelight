@@ -35,7 +35,7 @@ class Clouds
 	{
 		int enabled, shadows, weather, offset, detail, type;
 		int base, skyRect;
-		int eye, ground;
+		int eye, ground, rain;
 	}
 
 	private int texNoise;
@@ -44,7 +44,7 @@ class Clouds
 
 	// this frame's values, from update()
 	private boolean enabled, shadows;
-	private float coverage, weather, detail, base;
+	private float coverage, weather, detail, base, rain;
 	private WeatherField field;
 	private float offsetX, offsetZ;
 	private double originX, originZ;
@@ -217,6 +217,7 @@ class Clouds
 		l.skyRect = glGetUniformLocation(program, "cloudSkyRect");
 		l.eye = glGetUniformLocation(program, "cloudEye");
 		l.ground = glGetUniformLocation(program, "cloudGround");
+		l.rain = glGetUniformLocation(program, "cloudRain");
 		glUseProgram(program);
 		glUniform1i(glGetUniformLocation(program, "cloudNoise"), noiseUnit);
 		glUniform1i(glGetUniformLocation(program, "weatherSkyTex"), skyUnit);
@@ -227,11 +228,12 @@ class Clouds
 	 * Advance the wind and decide this frame's cloud values. Call once per frame, before {@link #apply}.
 	 *
 	 * @param cloudCover Weather.cloudCover(), 0 clear to 1 overcast
+	 * @param rain Weather.getDistantRain(): how hard it rains anywhere in view, for the shafts under the rain clouds
 	 * @param baseX world x of the scene's origin, in world units, so clouds stay put when the scene reloads
 	 * @param field the weather around the player: rain clouds over rainy regions, clear sky over clear ones
 	 */
 	void update(boolean enabled, boolean shadows, int coveragePercent, int speedPercent, int detailPercent,
-		float cloudCover, long baseX, long baseZ, WeatherField field)
+		float cloudCover, float rain, long baseX, long baseZ, WeatherField field)
 	{
 		this.field = field;
 		long now = System.nanoTime();
@@ -249,6 +251,7 @@ class Clouds
 		base = coveragePercent / 100f;
 		coverage = base + (1 - base) * cloudCover;
 		weather = cloudCover;
+		this.rain = rain;
 		detail = detailPercent / 100f;
 		// the shader adds camera-relative scene positions; take the scene origin and the drift away from the noise
 		offsetX = (float) Math.floorMod(baseX, (long) WRAP) - (float) windX;
@@ -271,6 +274,7 @@ class Clouds
 		glUniform1f(l.base, base);
 		glUniform4f(l.eye, eyeX, eyeZ, eyeRadius, eyeHeight);
 		glUniform1f(l.ground, ground);
+		glUniform1f(l.rain, rain);
 		field.setSkyRect(l.skyRect);
 	}
 

@@ -81,7 +81,7 @@
 	"THUNDERSTORM": {
 		"name": "Thunderstorm",
 		"cover": 1.0, "cloudDark": 0.4, "rain": 1.0,
-		"dropLength": 1.2, "dropWidth": 1.2, "slant": 1.3,
+		"dropLength": 1.2, "dropWidth": 1.1, "dropAlpha": 0.9, "slant": 1.3,
 		"wind": 1.0, "gustiness": 0.9,
 		"fog": 1.1, "areaFog": 0.9, "distanceFog": 1.25, "morningMist": 0.0,
 		"lightning": 1.0, "persistence": 1.2
@@ -90,7 +90,7 @@
 		"name": "Tropical downpour",
 		"temperature": -1,
 		"cover": 1.0, "cloudDark": 0.5, "rain": 1.3,
-		"dropLength": 1.4, "dropSpeed": 1.15, "dropWidth": 1.4, "dropAlpha": 1.15, "slant": 1.6,
+		"dropLength": 1.25, "dropSpeed": 1.15, "dropWidth": 1.2, "dropAlpha": 0.8, "slant": 1.6,
 		"wind": 0.8, "gustiness": 0.8,
 		"fog": 1.4, "areaFog": 1.0, "distanceFog": 1.4, "morningMist": 0.0,
 		"warmth": 0.1, "lightning": 0.75, "wetRate": 2.0, "persistence": 1.4

@@ -16,6 +16,8 @@
 
 #include "frame.glsl"
 #define SKY_FRAME_CONSTANTS
+// rain shafts under the distant rain clouds (clouds.glsl), in the half resolution cloud pass
+#define RAIN_SHAFTS
 #include "sky.glsl"
 #include "materials.glsl"
 #include "environment.glsl"
