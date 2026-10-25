@@ -19,7 +19,7 @@ uniform int wadeDroplets;      // 1: the instances are the droplets of wading st
 uniform SCENE_SAMPLER sceneMaterial;  // r emissive, b water bed (frag.glsl)
 uniform usampler2D waterSurface;  // the water pass's pixels, 0 where there is none (water_common.glsl)
 uniform ivec4 waterRect;
-uniform vec3 wind;             // steady wind on the drops, world units per second; with the gust where a drop is, its slant
+uniform vec3 wind;             // steady wind on the drops, world units per second; with the gust, the carry and the slant
 uniform float fallTime;        // seconds of fall at the weather's drop speed so far (it varies, so not time)
 uniform vec4 rainStyle;        // the weather's drops as multiples of the defaults: length, speed, width, opacity
 uniform vec3 windOffset;       // world units the wind has carried everything so far (it varies, so not wind * time)
@@ -35,17 +35,17 @@ uniform vec2 particleAmount;   // rain at the player, and the most anywhere in t
 #define COUNT_FADE 0.1         // as the drop count changes, the last tenth of drops fade instead of popping
 #define LIT_ALPHA 0.8          // drops in bright point light show up to this much more
 #define RAIN_GUST 1.2          // wind multiplier at a full gust (Weather.RAIN_GUST)
-// Waves in the rain's fall: three octaves of low-frequency sines that travel with the wind (the gust fronts' phase),
-// each with its own wavelength along the wind and across it, speed and phase. The fall speed (and the streak with
-// it), the slant and the height of the sheets of rain vary with them, so neighbouring rain leans and falls differently
-// and the difference sweeps across the scene.
-#define WAVE_LENGTH vec3(3200.0, 1300.0, 520.0)  // world units along the wind
-#define WAVE_WIDTH vec3(5200.0, 2300.0, 900.0)   // across it, which bends the fronts
-#define WAVE_SPEED vec3(1.0, 1.35, 1.9)          // times the gust fronts' speed
-#define WAVE_WEIGHT vec3(0.5, 0.3, 0.2)
-#define WAVE_FALL 0.22         // fall speed varies by this share at most
-#define WAVE_SLANT 0.55        // so does the wind's push on the drops
-#define WAVE_SHIFT 220.0       // sheets of rain rise and sink this many world units at most
+// Wind field over the ground, which makes neighbouring rain lean and drift differently. Every node of a grid
+// (FIELD_CELL world units) has its own sway of the rain's horizontal velocity, a sine in time with the node's own
+// direction, size and phase; between nodes the field blends bilinearly. A drop reads it once, where it entered the
+// box, and its velocity then follows that node blend's sine as time goes on, so it eases up or down over its fall.
+// Its displacement is the integral of that velocity over its age, in closed form: its path is smooth, however the
+// field changes around it. The periods divide the clock's wrap (time), so nothing jumps there.
+#define FIELD_CELL 256.0       // world units between nodes: two tiles
+#define FIELD_ALONG 0.7        // sway along the wind, times the steady wind (at least FIELD_FLOOR)
+#define FIELD_ACROSS 0.3       // and across it
+#define FIELD_FLOOR 60.0       // world units per second: even in calm air the rain sways a little
+#define FIELD_PERIOD vec2(12.0, 7.5)  // seconds of the along and the across sway
 
 #define SPLASH_SKY 0.35        // share of the sky's color in the droplets' and the mist's
 // rain impacts: rings that open and fade where the rain hits the ground, spread over a box this wide (Weather's
@@ -83,14 +83,31 @@ float rainShare(vec2 worldXZ) {
   return clamp((particleAmount.x + weatherFieldDelta(worldXZ).g) / max(particleAmount.y, 1e-3), 0.0, 1.0);
 }
 
-// Two waves in -1..1 at a world xz: .x for the fall speed and the height, .y for the slant, the same octaves at other phases
-vec2 rainWaves(vec2 worldXZ) {
-  float along = dot(worldXZ, windDir);
-  float across = worldXZ.y * windDir.x - worldXZ.x * windDir.y;
-  vec3 phase = along / WAVE_LENGTH - windFront * WAVE_SPEED / WAVE_LENGTH + 0.6 * sin(across / WAVE_WIDTH + vec3(0.0, 2.1, 4.2));
-  vec3 a = sin(6.28318530718 * fract(phase));
-  vec3 b = sin(6.28318530718 * fract(phase + vec3(0.37, 0.61, 0.13)));
-  return vec2(dot(a, WAVE_WEIGHT), dot(b, WAVE_WEIGHT));
+// The rain's extra horizontal velocity (.xy) and displacement over the last `age` seconds (.zw) at a point, as a blend
+// of the grid's four nodes. anchor: where the drop entered the box.
+vec4 rainField(vec2 anchor, float age) {
+  vec2 cell = anchor / FIELD_CELL;
+  vec2 base = floor(cell);
+  vec2 f = cell - base;
+  vec2 speed = vec2(0.0);
+  vec2 shift = vec2(0.0);
+  vec2 turn = 6.28318530718 / FIELD_PERIOD;
+  for (int i = 0; i < 4; ++i) {
+    vec2 corner = vec2(float(i & 1), float(i >> 1));
+    vec2 node = mod(base + corner, 1024.0);
+    vec3 h = hash31(node.x + node.y * 1024.0 + 0.5);
+    vec2 weight = mix(1.0 - f, f, corner);
+    // sway sizes in -1..1 along and across; the sine of the clock at the node's phase, and its integral over the age
+    vec2 a = (h.xy * 2.0 - 1.0) * weight.x * weight.y;
+    vec2 angle = turn * time + 6.28318530718 * h.z;
+    speed += a * sin(angle);
+    shift += a * (cos(angle - turn * age) - cos(angle)) / turn;
+  }
+  vec2 size = vec2(FIELD_ALONG, FIELD_ACROSS) * max(length(wind.xz), FIELD_FLOOR);
+  speed *= size;
+  shift *= size;
+  vec2 across = vec2(-windDir.y, windDir.x);
+  return vec4(windDir * speed.x + across * speed.y, windDir * shift.x + across * shift.y);
 }
 
 // corners of the two triangles: (side, end)
@@ -114,27 +131,30 @@ void drop(int id, vec2 corner) {
   float speedScale = 0.85 + 0.3 * hash11(seed * 1.37 + 3.1);
   vec3 travel = vec3(windOffset.x, FALL_SPEED * speedScale * fallTime, windOffset.z);
 
-  // head of the drop: random start plus travel, wrapped into the layer's box
+  // head of the drop: random start plus the wind's carry, wrapped into the layer's box, plus the field's sway.
+  // The field is read at the drop's entry point, where the carry has not yet moved it: the box top, so back along
+  // the carry by the drop's age (the gust, which slowly changes, is the only part of it that moves the point).
   vec3 world = layerPosition(h, travel);
+  float fallSpeed = FALL_SPEED * speedScale * rainStyle.y;
+  float age = (world.y - (layerBox.y - layerSpan.x)) / fallSpeed;
+  float gustHere = 1.0 + RAIN_GUST * windGust;
+  vec4 field = rainField(world.xz - wind.xz * gustHere * age, age);
+  world.xz += field.zw;
   float weight = layerWeight(world);
   float share = weight > 0.0 ? rainShare(world.xz) : 0.0;
   if (share <= 0.0) {
     gl_Position = CULLED;
     return;
   }
-  vec2 waves = rainWaves(world.xz);
-  world.y += WAVE_SHIFT * waves.x;
   vec3 head = world - cameraPos;
-  // slanted harder where a gust is passing, and with the waves
-  float gustHere = (1.0 + RAIN_GUST * windGustAt(world.xz)) * (1.0 + WAVE_SLANT * waves.y);
-  float fallHere = 1.0 + WAVE_FALL * waves.x;
-  vec3 vel = vec3(wind.x * gustHere, FALL_SPEED * speedScale * rainStyle.y * fallHere, wind.z * gustHere);
+  // the streak follows the drop's own velocity: the wind's carry, the field's sway now, and the fall
+  vec3 vel = vec3(wind.x * gustHere + field.x, fallSpeed, wind.z * gustHere + field.y);
 
   // stop on whatever is above the ground: drops below the top surface of their column are hidden, and the
   // streak is cut where it enters the surface
   float roofY = occluderTop(head);
   float top = roofY - cameraPos.y;
-  float len = DROP_LENGTH * speedScale * fallHere * rainStyle.x * layerSpan.z;
+  float len = DROP_LENGTH * speedScale * rainStyle.x * layerSpan.z;
   vec3 dir = normalize(vel);
   vec3 tail = head - dir * len;
   if (tail.y >= top) {
