@@ -33,6 +33,8 @@ RAIN_SOURCE_RATE = 48000
 # the wash and of the layered recording in the mix; light: the same, lower and duller, fewer layers
 HEAVY_SEMITONES, HEAVY_CUTOFF, RAIN_LAYERS, HEAVY_WASH, HEAVY_LAYERED = 1.5, 6500, 14, 0.8, 0.35
 LIGHT_SEMITONES, LIGHT_CUTOFF, LIGHT_LAYERS = 3, 3500, 3
+# no frequency of the rain source may rise above this many times its usual level (detonal)
+TONE_CAP = 2.5
 # the compressor that levels the heavy rain: above the median loudness, 1 / this of the excess gets through
 LEVEL_RATIO = 4.0
 # the odd drop is much louder than the hiss: peaks past this many times the loudness are rounded off
@@ -51,9 +53,28 @@ def decode(path, filters=None):
 
 
 def pitched(path, semitones, cutoff):
-    """The rain source pitched down and low-passed, at RATE."""
-    return decode(path, "asetrate=%d*%f,aresample=%d,lowpass=f=%d"
-                  % (RAIN_SOURCE_RATE, 2 ** (-semitones / 12), RATE, cutoff))
+    """The rain source pitched down and low-passed, at RATE, without its tones (detonal)."""
+    return detonal(decode(path, "asetrate=%d*%f,aresample=%d,lowpass=f=%d"
+                          % (RAIN_SOURCE_RATE, 2 ** (-semitones / 12), RATE, cutoff)))
+
+
+def detonal(x, n=2048, cap=TONE_CAP):
+    """Rain is noise: anything with a pitch in it (a frog, a bird) is something else. Each frequency is held to cap
+    times its usual (median) level over the recording, short-time, so a croak or a chirp sinks into the rain while
+    the rain itself, never that far above its median, passes unchanged."""
+    hop = n // 4
+    window = np.hanning(n)
+    pad = np.concatenate([np.zeros(n), x, np.zeros(n)])
+    frames = np.array([np.fft.rfft(pad[i:i + n] * window) for i in range(0, len(pad) - n, hop)])
+    magnitude = np.abs(frames)
+    limit = cap * np.median(magnitude, axis=0)
+    frames *= np.minimum(1.0, limit / np.maximum(magnitude, 1e-12))
+    out = np.zeros(len(pad))
+    norm = np.zeros(len(pad))
+    for k, frame in enumerate(frames):
+        out[k * hop:k * hop + n] += np.fft.irfft(frame, n) * window
+        norm[k * hop:k * hop + n] += window ** 2
+    return (out / np.maximum(norm, 1e-9))[n:n + len(x)]
 
 
 def write(path, x):
