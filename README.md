@@ -114,7 +114,7 @@ the script's `BIOMES` table.
 
 Plugin config, Hide other areas section: while the player is in one of 117 HD's areas that hide the rest of the map
 (caves, instances, cutscene spots; the mainland's surface too), `AreaHiding.java` takes every other tile out of the
-scene as it loads, so no zone, shadow, water body, light or GI patch ever sees it. Walking into another area loads the
+scene as it loads, so no zone, shadow, water body, light or GI voxel ever sees it. Walking into another area loads the
 scene again. The areas come from `area_hiding.json`, built by `tools/import_117hd_areas.py`.
 
 ## Clouds
@@ -172,41 +172,41 @@ flow to check them. Needs numpy, scipy, scikit-image and Pillow.
 
 Plugin config, Global illumination section. When a region loads, the static scene's opaque triangles (captured as
 the zones upload, `GiCapture.java`) are voxelized into half-tile cubes on a worker thread (`GiVoxels.java`,
-`GiGrid.java`; per zone, so zones reused by the next load keep theirs). Patches (`GiPatches.java`) are built once per load: a floor patch for every tile of every floor, facing up, the
-faces of every wall of the collision map (both sides, a diagonal wall too), cut into bands about a tile's width of
-height up to the wall's real top, where the floor above begins, and a roof patch for every tile next to a wall that has
-a roof (the topmost surface of the voxels facing up, high above the ground, facing as it does, so a sloped roof's
-patches are sloped); trees and objects get none. Their albedo is the
-voxels' average, pushed 1.5 times further from gray (`GiPatches.ALBEDO_SATURATION`), which area averaging and textures
-pull toward it. Each patch is linked to the patches within three tiles that face it and that it faces and can see (a
-ray through the voxels), with the point-to-area form factor cos_i cos_j A_j / (pi r^2 + A_j) as the weight, so walls
-don't leak, and keeps which of 64 directions are open to the sky. Relighting (`GiRelight.java`) transfers colour, not energy: it takes the sun or moon from the
-sky cache (`gi_sky_frag.glsl`, read back without stalling) and gives every patch a lit-ness from 0 to 1, the light's
-cosine times its visibility (a ray through the voxels, softened by the overcast), plus a quarter of the sky it sees
-(only that when "Sun bounce" is off). A patch emits its albedo's hue at unit luminance (neutral for a nearly black
-one, no channel above 2.5) times its lit-ness, so dark grass in the sun sends as much green as bright stone; what each
-patch stores is the weighed average of what its links send, and how much of its surroundings those links cover
-(2.5 times their weights, up to 1), on the worker whenever the sky or the sun changes enough; new light blends in over
-a few seconds. The AO pass looks
-the patches' light up at half resolution (`gi.glsl`) by the surface the pixel is on, never by the space around it: a
-floor pixel blends the four floor patches around it, a wall pixel the bands of its own wall face (and the next
-tile's, along the wall), a pixel on a roof the roof patches around it, anything else (trees, people) the floor patch
-under it, less the higher it is. Each blends by weights that vary smoothly with the pixel's position, and they fade
-into one another by how much of each there is, so the light varies smoothly along a surface and jumps only where the
-surface itself does. Whether two patches see each other is told by four rays between points spread over them, so a
-link's weight changes by degrees as a thing moves between them. On a wall the colour also
-fades with the height above the face's foot, by 1/e in 96 units (`GI_RISE`), so grass tints a band at the wall's foot.
-In the "Skylight + GI bounce" lighting model (below) the composite multiplies the indirect light (sky ambient and
-daylight fill) by mix(1, tint, amount), the tint being the looked-up colour at unit luminance and the amount its
-coverage times its lit-ness times Strength (up to 200%), and the direct sun by the same at a quarter of the amount;
-it never adds light. Debug view "Global illumination" shows that factor. Outside the base scene and underground the plain ambient
-light stays. The water surface joins the voxels as a layer of blue-green ones at its height (`GiWater.java`, from the
-water map), and the sunk bed under it is left out of the capture, so water bounces its color onto the shores and
-nothing bounces from under it.
+`GiGrid.java`; per zone, so zones reused by the next load keep theirs), each voxel with the average albedo and normal
+of what passes through it and where its surface lies inside it. The global illumination is a volume of tint over those
+voxels (`GiEmitters.java`, `GiRelight.java`), a colour transfer rather than light: a filled voxel with an empty one
+beside it that its surface faces gives that empty voxel, and the empty ones in a straight line beyond it, its albedo's
+hue at unit luminance (the albedo pushed 1.5 times further from gray, `GiEmitters.ALBEDO_SATURATION`, which area
+averaging and textures pull toward it; neutral for a nearly black one, no channel above 2.5), as much as it is lit:
+the sun or moon (from the sky cache, `gi_sky_frag.glsl`, read back without stalling) where a ray through the voxels
+reaches it, softened by the overcast, plus a quarter of the sky it sees (only that when "Sun bounce" is off). So dark
+grass in the sun sends as much green as bright stone. The share falls smoothly from all of it at the surface to none
+at `GiEmitters.REACH` (192 units, three voxels) from it, by the surface's true distance, which the voxels know to a
+fraction of their size, so a wall's tint does not depend on where the grid happened to cut the ground; the share is
+1 at the surface, 0.55 at 64 units, 0.07 at 128 and 0 at 192 (one minus smoothstep, squared). It goes through empty voxels only, so a wall gives nothing to what is behind it. Surfaces that lie
+flat (floors, roofs) and ones that stand (walls) give into two fields of the volume, and a pixel reads the other kind's
+(a wall the floors', a floor the walls', a slope both in proportion), so no surface takes its own colour a second time.
+Relighting runs on the worker whenever the sky or the sun changes enough, tens of milliseconds for a whole scene (the
+faces and the voxels they reach are found once per load); a new volume replaces the one shown at once when the grid
+changed and blends in over a few seconds otherwise.
+
+The volume is a 3D texture (`GL_RGBA8`, linear, clamped: the grid's voxels across in x and z, twice its layers deep,
+the flat field first). The AO pass looks it up at half resolution (`gi.glsl`), one filtered fetch per field (two while
+a blend runs) at the pixel's position plus a voxel and a half along its normal, so what is read lies in front of the
+surface and never behind a wall. A texel's alpha says whether the field gives that voxel any colour, and the lookup
+divides by the filtered alpha, so filled voxels and empty ones beyond the reach are left out of the average; the colour
+is stored as its square root so the weak tail of the reach has bytes of its own. The tint fades out toward the edges
+of the grid. In the "Skylight + GI bounce" lighting model (below) the composite multiplies the indirect light (sky
+ambient and daylight fill) by mix(1, tint, amount), the tint being the looked-up colour at unit luminance and the
+amount its weight times Strength (up to 200%), and the direct sun by the same at a part of the amount
+(`GI_SUN_TINT`); it never adds light. Debug view "Global illumination" shows that factor. Outside the base scene and
+underground the plain ambient light stays. The water surface joins the voxels as a layer of blue-green ones at its
+height (`GiWater.java`, from the water map), and the sunk bed under it is left out of the capture, so water gives its
+colour to the shores and nothing is given from under it.
 
 ## Skylight and light occlusion
 
-Plugin config, Skylight and light occlusion section. Lighting model Skylight (default) replaces the patches' own ambient with a
+Plugin config, Skylight and light occlusion section. Lighting model Skylight (default) replaces the volume's own ambient with a
 sky visibility ray traced through the global illumination's voxels (`SkyGrid.java`, `SkyGridMap.java`; built for it
 even with the global illumination off) on a worker thread, a few thousand rays a frame nearest the player first: at every tile
 corner, three heights above each floor, how much sky is seen toward up and the four sides. Every tile keeps its own

@@ -20,9 +20,9 @@ final class GiWater
 		{0, 0, 0}, {0.000f, 0.459f, 0.557f}, {0.000f, 0.420f, 0.560f}, {0.000f, 0.360f, 0.520f},
 		{0.060f, 0.520f, 0.600f}, {0.161f, 0.322f, 0.102f}, {0.042f, 0.144f, 0.162f}};
 
-	// per base tile, [z * GiPatches.SIZE + x]: the water type (WaterMap.NONE for none) and the surface's world y
-	final byte[] type = new byte[GiPatches.SIZE * GiPatches.SIZE];
-	final float[] surface = new float[GiPatches.SIZE * GiPatches.SIZE];
+	// per base tile, [z * GiGrid.SCENE_TILES + x]: the water type (WaterMap.NONE for none) and the surface's world y
+	final byte[] type = new byte[GiGrid.SCENE_TILES * GiGrid.SCENE_TILES];
+	final float[] surface = new float[GiGrid.SCENE_TILES * GiGrid.SCENE_TILES];
 
 	/**
 	 * The water of a scene with water map map and terrain heights ([level][extended x][extended z]); null when it
@@ -36,9 +36,9 @@ final class GiWater
 		}
 		GiWater w = new GiWater();
 		boolean any = false;
-		for (int z = 0; z < GiPatches.SIZE; ++z)
+		for (int z = 0; z < GiGrid.SCENE_TILES; ++z)
 		{
-			for (int x = 0; x < GiPatches.SIZE; ++x)
+			for (int x = 0; x < GiGrid.SCENE_TILES; ++x)
 			{
 				int ex = x + offset, ez = z + offset;
 				int i = ez * WaterMap.SIZE + ex;
@@ -48,9 +48,9 @@ final class GiWater
 				}
 				int[][] h = heights[map.level[i]];
 				// the surface lies at the tile's lowest corner (y down: the largest), as WaterMap.buildTexture takes it
-				w.surface[z * GiPatches.SIZE + x] = Math.max(Math.max(h[ex][ez], h[ex + 1][ez]),
+				w.surface[z * GiGrid.SCENE_TILES + x] = Math.max(Math.max(h[ex][ez], h[ex + 1][ez]),
 					Math.max(h[ex][ez + 1], h[ex + 1][ez + 1]));
-				w.type[z * GiPatches.SIZE + x] = map.type[i];
+				w.type[z * GiGrid.SCENE_TILES + x] = map.type[i];
 				any = true;
 			}
 		}

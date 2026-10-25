@@ -1,16 +1,17 @@
 package com.midonarhel.runelight;
 
 /**
- * Works out the colour the patches give each other, not the light: the global illumination here is a colour transfer,
- * the grass' green on the wall beside it, however dim the grass is. A patch emits its albedo's chroma, the albedo scaled
- * to a luminance of 1, times how lit it is (0 to 1: the sun or moon where a ray through the voxels reaches it, softened
- * by the overcast, plus a share of the sky it sees, so shaded surfaces bleed a little too). A dark green grass and a
- * bright white wall then give their colour equally strongly, and a gray one gives plain white, which tints nothing.
- * What a patch gathers is the average of what the patches linked to it emit, weighed by their form factors, times how
- * much of its view is other surfaces (the sum of the weights, scaled and held to 1): the colour of what it sees, as a
- * tint whose brightness is how lit that is and how much of it there is. The composite tints its light with it (see
- * light_occlusion.glsl giTint). Runs on the global illumination's worker whenever the sky or the light changes enough
- * (GlobalIllumination), a few milliseconds for a whole scene.
+ * Works out the colour the surfaces give the air around them, not the light: the global illumination here is a colour
+ * transfer, the grass' green on the wall beside it, however dim the grass is. A face emits its surface's chroma, the
+ * albedo scaled to a luminance of 1, times how lit it is (0 to 1: the sun or moon where a ray through the voxels reaches
+ * it, softened by the overcast, plus a share of the sky it sees, so shaded surfaces bleed a little too). A dark green
+ * grass and a bright white wall then give their colour equally strongly, and a gray one gives plain white, which tints
+ * nothing. The air is given that colour, thinning out with the distance (GiEmitters), and what a voxel holds is the sum of
+ * what it is given: the colour of what is near it, as a tint whose brightness is how lit that is and how near. The
+ * composite tints its light with it (see light_occlusion.glsl giTint). Runs on the global illumination's worker whenever
+ * the sky or the light changes enough (GlobalIllumination), tens of milliseconds for a whole scene.
+ *
+ * The result is the texels of the volume the shader reads, see texels.
  */
 final class GiRelight
 {
@@ -22,17 +23,17 @@ final class GiRelight
 	static final float SUN_DISTANCE = 128;
 	// the sun's rays start this far (voxels) toward the light, as well as off the surface, so they clear what it is on
 	static final float SUN_LIFT = 0.5f;
-	// how lit a patch is by the open sky it faces, against by the sun facing it squarely
+	// how lit a face is by the open sky it faces, against by the sun facing it squarely
 	static final float SKY_SHARE = 0.25f;
 	// an albedo with less luminance than this has no chroma worth the name and emits white
 	static final float MIN_LUMA = 0.01f;
 	// no channel of the chroma is more than this, so a pure green does not give light that is all green
 	static final float MAX_CHROMA = 2.5f;
-	// a patch whose view is this share of the sum of its weights (the weights of a wall's lowest band beside open ground
-	// sum to about 0.4) is wholly covered
-	static final float COVERAGE_GAIN = 2.5f;
+	// A volume texel's red, green and blue are the square root of the sum of colour a voxel is given, over this, so the
+	// small sums at the edge of the reach have a byte to themselves; 1 over this is the greatest they reach.
+	static final float TEXEL_RANGE = 4;
 
-	/** What lights the patches this time. */
+	/** What lights the faces this time. */
 	static final class Light
 	{
 		final float[] caster = new float[3];
@@ -43,7 +44,7 @@ final class GiRelight
 		/**
 		 * @param table gi_sky_frag.glsl's output, rgba floats row by row
 		 * @param casterDir toward the light that casts shadows
-		 * @param bounce whether the sun or moon lights the patches; if not, only the sky does
+		 * @param bounce whether the sun or moon lights the faces; if not, only the sky does
 		 */
 		static Light fromTable(float[] table, float[] casterDir, boolean bounce)
 		{
@@ -98,81 +99,106 @@ final class GiRelight
 	}
 
 	/**
-	 * What every patch gathers, rgb per patch: the average colour of what it sees times how much of its view that is (see
-	 * above), zero for the floors' and roofs' empty slots and for patches no other sees.
+	 * The volume's texels, RGBA bytes. The grid's voxels x fastest, then z, then y, as the grid holds them, twice: first
+	 * the field of the colour flat surfaces give (floors, roofs), then the one of the standing ones'; y is the layer, so
+	 * the field of the standing surfaces' starts at layer ny. rgb is the square root of the sum of colour a voxel is
+	 * given, over TEXEL_RANGE, times 255, and a is 255 where a voxel is given any of the field's and 0 where not: the
+	 * lookup reads between texels and takes the average of the ones that are (gi.glsl).
 	 */
-	static float[] relight(GiPatches p, Light light, GiPatches.ParallelFor parallel)
+	static byte[] relight(GiEmitters e, Light light, GiEmitters.ParallelFor parallel)
 	{
 		float lx = light.dir[0], ly = light.dir[1], lz = light.dir[2];
 		boolean direct = light.bounce && luminance(light.caster[0], light.caster[1], light.caster[2]) > 1e-5f;
+		GiGrid grid = e.grid;
 
-		// what each patch emits: its albedo's chroma times how lit it is
-		float[] emitted = new float[p.count * 3];
-		parallel.run(p.count, i ->
+		// what each face emits: its surface's chroma times how lit it is
+		float[] emitted = new float[e.faceCount * 3];
+		parallel.run(e.faceCount, f ->
 		{
-			if (!p.exists(i))
-			{
-				return;
-			}
-			float nx = p.normal[i * 3], ny = p.normal[i * 3 + 1], nz = p.normal[i * 3 + 2];
+			float nx = e.faceNormal[f * 3], ny = e.faceNormal[f * 3 + 1], nz = e.faceNormal[f * 3 + 2];
 			float lit = 0;
 			float ndl = nx * lx + ny * ly + nz * lz;
 			if (direct && ndl > 0)
 			{
-				// sun or moon, with the overcast's softening of shadows
-				float[] o = new float[3];
-				p.origin(i, o);
-				boolean seen = p.grid.trace(o[0] + lx * SUN_LIFT, o[1] + ly * SUN_LIFT, o[2] + lz * SUN_LIFT, lx, ly, lz,
-					SUN_DISTANCE, true, i) < 0;
+				// sun or moon, with the overcast's softening of shadows, from the middle of the voxel the face looks into
+				int c = e.faceCell[f];
+				float ox = grid.cellX(c) + 0.5f + lx * SUN_LIFT, oy = grid.cellY(c) + 0.5f + ly * SUN_LIFT;
+				float oz = grid.cellZ(c) + 0.5f + lz * SUN_LIFT;
+				boolean seen = grid.trace(ox, oy, oz, lx, ly, lz, SUN_DISTANCE, true, f) < 0;
 				lit = ndl * (seen ? light.shadow1 : light.shadow0);
 			}
-			// the share of the directions it faces that see the sky
-			int facing = 0, open = 0;
-			for (int r = 0; r < GiPatches.SKY_SAMPLES; ++r)
-			{
-				float[] d = GiPatches.SKY_RAYS;
-				if (d[r * 3] * nx + d[r * 3 + 1] * ny + d[r * 3 + 2] * nz >= GiPatches.SKY_MIN_COS)
-				{
-					facing++;
-					open += (int) (p.sky[i] >>> r & 1);
-				}
-			}
-			if (facing > 0)
-			{
-				lit += SKY_SHARE * open / facing;
-			}
-			lit = Math.min(1, lit);
-			chroma(p.albedo[i * 3], p.albedo[i * 3 + 1], p.albedo[i * 3 + 2], emitted, i * 3);
+			lit = Math.min(1, lit + SKY_SHARE * e.faceSky[f]);
 			for (int c = 0; c < 3; ++c)
 			{
-				emitted[i * 3 + c] *= lit;
+				emitted[f * 3 + c] = e.faceChroma[f * 3 + c] * lit;
 			}
 		});
 
-		// what each patch gathers: the average of what the patches it sees emit, as much of it as it sees
-		float[] gathered = new float[p.count * 3];
-		parallel.run(p.count, i ->
+		// what each voxel is given: the sum over the faces that reach it
+		int cells = grid.cells.length;
+		byte[] texels = new byte[cells * 2 * 4];
+		parallel.run(e.cellCount, i ->
 		{
-			float sum = 0;
-			for (int l = p.linkStart[i]; l < p.linkStart[i + 1]; ++l)
+			int at = e.cellIndex[i] * 4;
+			float[] flat = new float[3], standing = new float[3];
+			boolean hasFlat = false, hasStanding = false;
+			for (int k = e.inStart[i]; k < e.inStart[i + 1]; ++k)
 			{
-				int j = p.linkTarget[l];
-				float w = p.linkWeight[l];
-				sum += w;
+				int f = e.inFace[k];
+				float wf = e.inFlat[k], ws = e.inStanding[k];
+				hasFlat |= wf > 0;
+				hasStanding |= ws > 0;
 				for (int c = 0; c < 3; ++c)
 				{
-					gathered[i * 3 + c] += w * emitted[j * 3 + c];
+					flat[c] += wf * emitted[f * 3 + c];
+					standing[c] += ws * emitted[f * 3 + c];
 				}
 			}
-			if (sum > 0)
-			{
-				float k = Math.min(1, sum * COVERAGE_GAIN) / sum;
-				for (int c = 0; c < 3; ++c)
-				{
-					gathered[i * 3 + c] *= k;
-				}
-			}
+			encode(texels, at, flat, hasFlat);
+			encode(texels, at + cells * 4, standing, hasStanding);
 		});
-		return gathered;
+		return texels;
+	}
+
+	private static void encode(byte[] texels, int at, float[] sum, boolean given)
+	{
+		if (!given)
+		{
+			return;
+		}
+		for (int c = 0; c < 3; ++c)
+		{
+			texels[at + c] = (byte) Math.round(Math.sqrt(Math.max(0, Math.min(1, sum[c] / TEXEL_RANGE))) * 255);
+		}
+		texels[at + 3] = (byte) 255;
+	}
+
+	/** What a texel's rgb holds: the sum of colour, out of the square root over TEXEL_RANGE. */
+	static float decode(byte texel)
+	{
+		float u = (texel & 0xff) / 255f;
+		return u * u * TEXEL_RANGE;
+	}
+
+	/**
+	 * How many of the volume's voxels are tinted by more than 0.05 of luminance, in either field, and the greatest luminance
+	 * of any, for the log.
+	 */
+	static float[] stats(GiEmitters e, byte[] texels)
+	{
+		int cells = e.grid.cells.length;
+		int tinted = 0;
+		float most = 0;
+		for (int i = 0; i < e.cellCount; ++i)
+		{
+			for (int field = 0; field < 2; ++field)
+			{
+				int at = (e.cellIndex[i] + field * cells) * 4;
+				float y = luminance(decode(texels[at]), decode(texels[at + 1]), decode(texels[at + 2]));
+				tinted += y > 0.05f ? 1 : 0;
+				most = Math.max(most, y);
+			}
+		}
+		return new float[]{tinted, most};
 	}
 }

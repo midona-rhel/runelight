@@ -104,9 +104,9 @@ uniform sampler2DArray compositeParts;
 layout(location = 0) out vec4 FragColor;
 
 // ---------------------------------------------------------------------------------------------------------------
-// Global illumination (GlobalIllumination.java, gi.glsl): the light the patches of floor, wall and roof around a surface
-// gather by bouncing, read by the AO pass from the patches of the surface itself, upsampled with the AO like the
-// shadows, and tints the light (light_occlusion.glsl giTint)
+// Global illumination (GlobalIllumination.java, gi.glsl): the colour of the surfaces around a surface, read by the AO
+// pass from the volume of tint in front of the pixel, upsampled with the AO like the shadows, and tints the light
+// (light_occlusion.glsl giTint)
 uniform float giWeight;  // 0..2: enabled, eased in and out, strength
 
 // ---------------------------------------------------------------------------------------------------------------

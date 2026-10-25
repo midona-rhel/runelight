@@ -1303,7 +1303,7 @@ public interface RuneLightConfig extends Config
 	@ConfigItem(
 		keyName = "giStrength",
 		name = "Strength",
-		description = "How much of the colour of the surfaces around they give a surface, in percent.",
+		description = "How much of their colour the surfaces around a surface give it, in percent.",
 		section = giSection,
 		position = 702
 	)

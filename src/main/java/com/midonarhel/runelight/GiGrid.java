@@ -2,9 +2,10 @@ package com.midonarhel.runelight;
 
 /**
  * Dense voxel grid over the base scene for the global illumination's rays: 208 x 208 half-tile columns, up to
- * MAX_LAYERS half-tile layers from the highest geometry down. A cell is 0 when empty, else packed: bit 0 set,
- * bit 1 two-sided (its faces point both ways, as a thin wall's do), albedo sqrt-encoded 5 bits per channel from
- * bit 2, octahedral normal 7 bits per axis from bit 17, bit 31 foliage.
+ * MAX_LAYERS half-tile layers from the highest geometry down, and HEADROOM empty ones above it. A cell is 0 when
+ * empty, else packed: bit 0 set, bit 1 two-sided (its faces point both ways, as a thin wall's do), albedo
+ * sqrt-encoded 5 bits per channel from bit 2, octahedral normal 7 bits per axis from bit 17, bit 31 foliage. A
+ * second array holds, for the same cells, how far the surface in the cell lies from its center (see plane).
  *
  * Voxel space: x = world x / VOXEL, y = world y / VOXEL - layer0, z = world z / VOXEL; world is the client's local
  * coordinates of the scene (base tile 0 at 0), y down.
@@ -12,8 +13,13 @@ package com.midonarhel.runelight;
 final class GiGrid
 {
 	static final int VOXEL = 64;
+	// the scene is this many tiles of TILE world units square, SIZE voxels
+	static final int SCENE_TILES = 104;
+	static final int TILE = 128;
 	static final int SIZE = 208;
 	static final int MAX_LAYERS = 96;
+	// empty layers over the highest geometry, which the colour its top surfaces give goes into (GiEmitters.REACH)
+	static final int HEADROOM = 3;
 	// normals shorter than this (averaged over the voxel) mean faces pointing both ways
 	static final float TWO_SIDED = 0.35f;
 	// bit 31: mostly swaying foliage, which rays pass with this chance
@@ -22,9 +28,15 @@ final class GiGrid
 	// square world units of surface touching a voxel below which it doesn't count as occupied: a quarter of a face
 	static final float THIN_AREA = VOXEL * VOXEL / 4f;
 
+	// the signed distance from a cell's center to its surface is held in bytes, this far (world units) at most
+	static final float PLANE_RANGE = VOXEL;
+
 	final int nx, ny, nz;
 	final int layer0;
 	final int[] cells;
+	// per cell: the surface's distance from the cell's center along its normal, positive in front of it, PLANE_RANGE / 127
+	// a step; 0 for a two-sided cell, which has no front
+	final byte[] plane;
 
 	GiGrid(int nx, int ny, int nz, int layer0)
 	{
@@ -33,6 +45,18 @@ final class GiGrid
 		this.nz = nz;
 		this.layer0 = layer0;
 		cells = new int[nx * ny * nz];
+		plane = new byte[cells.length];
+	}
+
+	/** Distance, in world units, from the center of cell idx to its surface, along the normal, positive in front of it. */
+	float planeDistance(int idx)
+	{
+		return plane[idx] * (PLANE_RANGE / 127);
+	}
+
+	static byte encodePlane(float distance)
+	{
+		return (byte) Math.round(Math.max(-1, Math.min(1, distance / PLANE_RANGE)) * 127);
 	}
 
 	int index(int x, int y, int z)
@@ -108,7 +132,7 @@ final class GiGrid
 			return new GiGrid(SIZE, 1, SIZE, 0);
 		}
 		// with more layers than fit, keep those down to the lowest geometry: the ground and what stands on it
-		lo = Math.max(lo, hi - MAX_LAYERS + 1);
+		lo = Math.max(lo, hi - MAX_LAYERS + 1) - HEADROOM;
 		GiGrid g = new GiGrid(SIZE, hi - lo + 1, SIZE, lo);
 		for (int i = 0; i < zones.length; ++i)
 		{
@@ -141,8 +165,18 @@ final class GiGrid
 				{
 					cell |= FOLIAGE;
 				}
+				byte plane = twoSided(cell) ? 0 : encodePlane(d[o + 8] / d[o]);
 				// zones overlap only where models overhang their zone: average the two
-				g.cells[idx] = g.cells[idx] == 0 ? cell : merge(g.cells[idx], cell);
+				if (g.cells[idx] == 0)
+				{
+					g.cells[idx] = cell;
+					g.plane[idx] = plane;
+				}
+				else
+				{
+					g.plane[idx] = (byte) ((g.plane[idx] + plane) / 2);
+					g.cells[idx] = merge(g.cells[idx], cell);
+				}
 			}
 		}
 		if (water != null)
@@ -172,7 +206,9 @@ final class GiGrid
 			{
 				continue;
 			}
-			int tx = i % GiPatches.SIZE, tz = i / GiPatches.SIZE;
+			int tx = i % SCENE_TILES, tz = i / SCENE_TILES;
+			// the surface faces up (y down) at the water's height
+			byte plane = encodePlane(water.surface[i] - (y + g.layer0 + 0.5f) * VOXEL);
 			for (int dz = 0; dz < perTile; ++dz)
 			{
 				for (int dx = 0; dx < perTile; ++dx)
@@ -181,6 +217,7 @@ final class GiGrid
 					if (g.cells[idx] == 0)
 					{
 						g.cells[idx] = cellOfType[type];
+						g.plane[idx] = plane;
 					}
 				}
 			}
@@ -398,6 +435,23 @@ final class GiGrid
 				tz += ddz;
 			}
 		}
+	}
+
+	/** An even spread of count unit directions over the whole sphere. */
+	static float[] fibonacci(int count)
+	{
+		float[] d = new float[count * 3];
+		double golden = Math.PI * (3 - Math.sqrt(5));
+		for (int i = 0; i < count; ++i)
+		{
+			double y = 1 - (i + 0.5) * 2.0 / count;
+			double r = Math.sqrt(Math.max(0, 1 - y * y));
+			double a = golden * i;
+			d[i * 3] = (float) (Math.cos(a) * r);
+			d[i * 3 + 1] = (float) y;
+			d[i * 3 + 2] = (float) (Math.sin(a) * r);
+		}
+		return d;
 	}
 
 	private static int clamp(int v, int n)

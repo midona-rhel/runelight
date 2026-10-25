@@ -1,10 +1,10 @@
 #version 330
 
-// The light the global illumination's patches are relit with (GiRelight.java), drawn into a 32 x 17 float target
+// The light the global illumination's volume is relit with (GiRelight.java), drawn into a 32 x 17 float target
 // and read back to the CPU: rows 0-15 the sky's radiance over the whole sphere (u the azimuth, v the sine of the
 // elevation from -1 to 1), from the sky cache where it is in use like sky_irradiance_frag.glsl, else the analytic
 // sky; row 16 the light that casts shadows, the plain ambient plus sky light on a surface facing up (the level the
-// sky's light on a patch under the open sky is scaled to), and the overcast's softening of shadows (overcastShadow of
+// sky's light on a surface under the open sky is scaled to), and the overcast's softening of shadows (overcastShadow of
 // 0 and 1).
 
 #include "frame.glsl"

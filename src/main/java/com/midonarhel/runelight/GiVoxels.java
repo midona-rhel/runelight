@@ -6,13 +6,15 @@ import java.util.Arrays;
  * The global illumination's voxel proxy of the static scene: zone triangles (GiCapture) rasterized
  * conservatively into half-tile cubes, each with the area weighted average albedo (linear, unshaded) and normal of
  * what passes through it. Zones are voxelized once and the result kept with the zone, so a reused zone after a
- * region load isn't redone; the scene's grid (GiGrid) is assembled from them.
+ * region load isn't redone; the scene's grid (GiGrid) is assembled from them. A voxel also remembers how far the
+ * surface lies from its center, which the volume of tint (GiEmitters) needs to tell a surface a bit above a voxel's
+ * center from one a bit below it.
  */
 final class GiVoxels
 {
 	static final int VOXEL = GiGrid.VOXEL;
 	// floats per voxel in Zone.data
-	static final int STRIDE = 8;
+	static final int STRIDE = 9;
 	// zone-local voxel coordinates may reach this far past the zone (big models overhang it)
 	private static final int MARGIN = 32;
 	private static final int LAYER_BIAS = 2048;
@@ -24,12 +26,13 @@ final class GiVoxels
 	 */
 	static volatile float[] textureAlbedo;
 
-	/** One zone's voxels: sums of weight, albedo * weight and normal * weight. */
+	/** One zone's voxels: sums of weight, albedo * weight, normal * weight and plane distance * weight. */
 	static final class Zone
 	{
 		// (lx + MARGIN) | (lz + MARGIN) << 7 | (layer + LAYER_BIAS) << 14
 		int[] keys;
-		// w, r, g, b, nx, ny, nz, foliage w per voxel
+		// w, r, g, b, nx, ny, nz, foliage w, and the signed distance from the voxel's center to the surface, along its
+		// normal and positive in front of it, times w, per voxel
 		float[] data;
 		int count;
 
@@ -215,7 +218,9 @@ final class GiVoxels
 						continue;
 					}
 					int key = (x + MARGIN) | (z + MARGIN) << 7 | (y + LAYER_BIAS) << 14;
-					acc.add(key, area, rgb, nx, ny, nz, foliage);
+					float plane = nx * ((x + 0.5f) * VOXEL - v[0]) + ny * ((y + 0.5f) * VOXEL - v[1])
+						+ nz * ((z + 0.5f) * VOXEL - v[2]);
+					acc.add(key, area, rgb, nx, ny, nz, foliage, plane);
 				}
 			}
 		}
@@ -308,7 +313,7 @@ final class GiVoxels
 			data = new float[cap * STRIDE];
 		}
 
-		void add(int key, float w, float[] rgb, float nx, float ny, float nz, boolean foliage)
+		void add(int key, float w, float[] rgb, float nx, float ny, float nz, boolean foliage, float plane)
 		{
 			if (size * 2 >= keys.length)
 			{
@@ -337,6 +342,7 @@ final class GiVoxels
 			{
 				data[o + 7] += w;
 			}
+			data[o + 8] += plane * w;
 		}
 
 		private static int mix(int k)

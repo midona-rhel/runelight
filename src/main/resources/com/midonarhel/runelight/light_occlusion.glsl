@@ -1,15 +1,15 @@
 // The composite's half of the skylight and the light occlusion.
 //
 // Skylight (skylight_ao.glsl): the sky visibility upsampled with the AO scales the ambient and sky light, so
-// interiors, overhangs and the shade under trees darken without the global illumination; with its patches on too
-// (skylightMode 2) they add the light bounced off surfaces, with its colors.
+// interiors, overhangs and the shade under trees darken without the global illumination; with its volume on too
+// (skylightMode 2) the light takes the colors of the surfaces around it.
 //
 // Point lights: a static light's occlusion grid (LightOcclusion.java) dims it behind walls, and a light under a roof
 // leaves the tops of things open to the sky above it dark: roofs aren't lit from inside. The per-light texel after
 // the lights (LightOcclusion.texel) carries both, and whether the walls already decide where the light reaches on
 // its own storey. Needs lightData, cluster_config, cameraPos and rooms.glsl.
 
-uniform int skylightMode;    // 1 skylight, 2 skylight and the patches' bounce
+uniform int skylightMode;    // 1 skylight, 2 skylight and the volume's tint
 uniform int skylightOn;      // 1 when the AO pass worked the sky visibility out this frame
 uniform float skylightFloor; // share of the ambient light kept where no sky is seen
 
@@ -29,12 +29,11 @@ float skyUpsampled = 1.0;
 #define LIGHT_ROOF_FACING_LOW 0.05
 #define LIGHT_ROOF_FACING_HIGH 0.35
 
-// The global illumination is a colour transfer, not light (GiRelight): what the patches around a surface give it is the
-// colour of what they see, as a tint whose luminance, 0 to 1, is how lit that is and how much of the surface's view it
-// is, and the looked up colour fades with the surface's height above a wall's foot (gi.glsl). The surface's light is
-// multiplied by mix(white, that colour at luminance 1, how much of it there is), so the grass' green stands on the foot of
-// the wall beside it, however dim the grass is, and the light's brightness stays as it was. The sun's light is tinted by this
-// share of it, so the colour still shows on a sunlit wall.
+// The global illumination is a colour transfer, not light (GiRelight): what the volume holds in front of a surface is the
+// colour of the surfaces near it, as a tint whose luminance, 0 to 1, is how lit they are and how near, fading with the
+// distance from them (gi.glsl). The surface's light is multiplied by mix(white, that colour at luminance 1, how much of it
+// there is), so the grass' green stands on the foot of the wall beside it, however dim the grass is, and the light's
+// brightness stays as it was. The sun's light is tinted by this share of it, so the colour still shows on a sunlit wall.
 #define GI_SUN_TINT 0.6
 // The game's colours are muted (grass is olive): the tint's saturation is raised this many times, so the colour that
 // lands on the wall reads as the grass' green rather than a pale cast
@@ -46,7 +45,7 @@ vec3 skylightAmbient(vec3 plain) {
   return plain * mix(skylightFloor, 1.0, v);
 }
 
-// The tint in mode 2, gi the patches' tint and giW how much of it there is (the strength setting too): rgb the colour at
+// The tint in mode 2, gi the volume's tint and giW how much of it there is (the strength setting too): rgb the colour at
 // luminance 1, a how much of it to apply.
 vec4 giTint(vec3 gi, float giW) {
   float l = overcastLuma(gi);

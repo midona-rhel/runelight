@@ -7,7 +7,7 @@ import java.nio.ShortBuffer;
 /**
  * How much of the sky the scene lets through, ray traced through its voxels (GiGrid) for the skylight
  * (skylight_ao.glsl). Values sit at the corners of the base scene's tiles, like the game's terrain heights, at
- * HEIGHTS above the ground of each of FLOORS floors (the global illumination's, GiPatches), and are directional: the
+ * HEIGHTS above the ground of each of FLOORS floors (the game's levels), and are directional: the
  * sky seen toward up and the four sides (+x, -x, +z, -z), each the share of the directions above the horizon, cosine weighted
  * around that axis, whose rays get out (leave the grid, or go MAX_DISTANCE without meeting anything). Under the open
  * sky every one is 1; a wall under eaves sees the sky sideways while the ground under them doesn't see it overhead.
@@ -37,9 +37,11 @@ import java.nio.ShortBuffer;
  */
 final class SkyGrid
 {
-	static final int SIZE = GiPatches.SIZE;
+	static final int SIZE = GiGrid.SCENE_TILES;
 	static final int CORNERS = SIZE + 1;
-	static final int FLOORS = GiPatches.FLOORS;
+	static final int FLOORS = 3;
+	// the least two floors' grounds are apart
+	static final float FLOOR_GAP = 240;
 	// heights of the values above each floor's ground: between a storey's floor and ceiling voxels (a storey is about
 	// 240 high, a voxel 64), low enough for the floor, high enough for the tops of walls
 	static final float[] HEIGHTS = {40, 112, 184};
@@ -78,7 +80,7 @@ final class SkyGrid
 	static
 	{
 		// the upper half of an even spread over the sphere (y down)
-		float[] sphere = GiPatches.fibonacci(2 * RAYS);
+		float[] sphere = GiGrid.fibonacci(2 * RAYS);
 		float[] base = java.util.Arrays.copyOfRange(sphere, RAYS * 3, RAYS * 6);
 		for (int r = 0; r < ROTATIONS; ++r)
 		{
@@ -362,10 +364,10 @@ final class SkyGrid
 			{
 				for (int f = 0; f < FLOORS; ++f)
 				{
-					// as GiPatches: a floor's ground is at least FLOOR_GAP over the one below
+					// a floor's ground is at least FLOOR_GAP over the one below
 					float h = heights != null && f < heights.length ? height(heights[f], (float)cx/resolution + offset, (float)cz/resolution + offset)
-						: f > 0 ? g[f - 1] - GiPatches.FLOOR_GAP : 0;
-					g[f] = f == 0 ? h : Math.min(h, g[f - 1] - GiPatches.FLOOR_GAP);
+						: f > 0 ? g[f - 1] - FLOOR_GAP : 0;
+					g[f] = f == 0 ? h : Math.min(h, g[f - 1] - FLOOR_GAP);
 					ground[(f * corners + cz) * corners + cx] = g[f];
 				}
 			}

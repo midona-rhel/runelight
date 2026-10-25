@@ -3,7 +3,6 @@ package com.midonarhel.runelight;
 import com.midonarhel.runelight.template.Template;
 import java.nio.ByteBuffer;
 import java.nio.FloatBuffer;
-import java.nio.ShortBuffer;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ForkJoinPool;
@@ -16,28 +15,27 @@ import org.slf4j.LoggerFactory;
 import static org.lwjgl.opengl.GL33C.*;
 
 /**
- * Global illumination as a colour transfer between tile sized patches of floor, wall and roof (GiPatches): each patch
- * emits its albedo's colour as much as it is lit by the sun or moon and the sky it sees, and gathers the average colour
- * of the patches around it that it can see (GiRelight). A pixel reads the patches of the surface it is on, never the
- * space around it (gi.glsl), so interiors and the sides of walls stay apart, and the composite tints its light with
- * what it reads: sunlit grass greens the foot of the wall beside it, however dim the grass is (the light itself, past
- * roofs, overhangs and walls, comes from the composite).
+ * Global illumination as a colour transfer through a volume of tint: every surface of the base scene gives the air in
+ * front of it its colour, as much as it is lit by the sun or moon and the sky it sees, and less and less the farther from
+ * it (GiEmitters, GiRelight). A pixel looks the volume up a little in front of itself (gi.glsl), so a wall greens at its
+ * foot beside sunlit grass and no higher than the grass' colour reaches, and the composite tints its light with what it
+ * reads (the light itself, past roofs, overhangs and walls, comes from the composite). The colour goes through air only,
+ * so interiors and the far sides of walls stay apart from it.
  *
  * Everything heavy runs on a worker thread. After a region load the zones' triangles (captured as they upload,
- * GiCapture) are voxelized, per zone so reused zones keep theirs (GiVoxels), and the patches are laid out and linked
- * through the voxels once (GiPatches). The skylight traces the same voxels (SkyGrid), so with the patches off the builds
- * still voxelize the scene for it and stop there. Relighting the patches (GiRelight) takes a few milliseconds and
- * happens when the sky cache captures, the sun or moon has moved RELIGHT_DEGREES, the weather or settings change, or
- * every MAX_RELIGHT_MILLIS. The light it needs is drawn on the GPU into a tiny table (gi_sky_frag.glsl) and
- * read back without stalling. Each new set of light is uploaded at once (a megabyte) and blended in over about the
- * time between relights, like the sky cache, so nothing pops.
+ * GiCapture) are voxelized, per zone so reused zones keep theirs (GiVoxels), and the faces that give colour and the
+ * voxels they give it to are found once (GiEmitters). The skylight traces the same voxels (SkyGrid), so with the
+ * global illumination off the builds still voxelize the scene for it and stop there. Relighting (GiRelight) takes
+ * tens of milliseconds and happens when the sky cache captures, the sun or moon has moved RELIGHT_DEGREES, the weather
+ * or settings change, or every MAX_RELIGHT_MILLIS. The light it needs is drawn on the GPU into a tiny table
+ * (gi_sky_frag.glsl) and read back without stalling. The volume is a 3D texture two fields tall (flat surfaces' colour, then
+ * standing ones'), a few megabytes of bytes; each new one is uploaded at once and blended with the last in the lookup over
+ * about the time between relights, so nothing pops.
  *
- * On the GPU the only steady cost is the lookup in the half resolution AO pass (gi.glsl: eight texture fetches for a
- * floor or roof pixel, four for the heights of the tiles around it and four for the light of their floor or roof
- * patches; seven for a wall pixel, which finds its floor by one, its wall face and the next one along it by two and
- * gets the light of two bands of each by four; a few more where a pixel is between floors, or half a wall and half a
- * floor), whose result rides along in the AO target to the composite (halfres.glsl). Outside the base scene, underground, and until the first patches are lit, the composite
- * keeps its plain ambient light.
+ * On the GPU the only steady cost is the lookup in the half resolution AO pass (gi.glsl: one filtered fetch of the
+ * volume for a pixel on a wall or a floor, two where it is on a slope between them, and twice that while a new volume
+ * blends in), whose result rides along in the AO target to the composite (halfres.glsl). Outside the base scene,
+ * underground, and until the first volume is lit, the composite keeps its plain ambient light.
  */
 class GlobalIllumination
 {
@@ -47,28 +45,15 @@ class GlobalIllumination
 		.add(GL_VERTEX_SHADER, "composite_vert.glsl")
 		.add(GL_FRAGMENT_SHADER, "gi_sky_frag.glsl");
 
-	// the blend of two lights is the sky cache's: a texel for texel mix of two textures
-	static final Shader BLEND_PROGRAM = new Shader()
-		.add(GL_VERTEX_SHADER, "composite_vert.glsl")
-		.add(GL_FRAGMENT_SHADER, "sky_cache_blend_frag.glsl");
-
-	// The patches' light: patch i at texel (i % LIGHT_W, i / LIGHT_W), half floats, the light it gathers (rgb) and 1 for a
-	// patch, 0 for a slot without one. The size is the same for every scene, which is what lets the blend mix two lit
-	// sets texel for texel.
-	static final int LIGHT_W = 512;
-	static final int LIGHT_H = GiPatches.MAX_PATCHES / LIGHT_W;
-	// the floors' heights, one texel per tile, and the wall faces', FACES texels per tile (GiPatches.floorTexels, wallTexels)
-	static final int FLOORS_W = GiPatches.SIZE, FLOORS_H = GiPatches.SIZE;
-	static final int WALLS_W = GiPatches.SIZE * GiPatches.FACES, WALLS_H = GiPatches.SIZE * GiPatches.FLOORS;
 	static final int SKY_ROWS = GiRelight.SKY_H + 1;
 
 	// relight when the light that casts shadows has turned this far
 	static final float RELIGHT_DEGREES = 2;
 	static final long MIN_RELIGHT_MILLIS = 1000;
 	static final long MAX_RELIGHT_MILLIS = 30_000;
-	// a new light blends in over the time since the last, within these bounds
+	// a new volume blends in over the time since the last, within these bounds
 	static final float BLEND_SECONDS = 2, MAX_BLEND_SECONDS = 8;
-	// the composite eases between its plain ambient and the patches' light over this long
+	// the composite eases between its plain ambient and the volume's tint over this long
 	static final float WEIGHT_SECONDS = 1.5f;
 	// changed zones (doors, trees cut down) are rebuilt once they have stopped changing for this long, and at most
 	// this often
@@ -78,26 +63,26 @@ class GlobalIllumination
 	/** Freshly compiled programs, so a hot reload can compile everything before replacing anything. */
 	static final class Programs
 	{
-		final int sky, blend;
+		final int sky;
 
-		Programs(int sky, int blend)
+		Programs(int sky)
 		{
 			this.sky = sky;
-			this.blend = blend;
 		}
 	}
 
-	/** A lit set of patches from the worker. */
+	/** A lit volume from the worker, with what it belongs to. */
 	private static final class Lit
 	{
 		int generation;
 		int baseX, baseY;
 		boolean instance;
-		short[] light;
-		float[] floors, walls;
+		// the grid's size in voxels and the layer its first holds
+		int nx, ny, nz, layer0;
+		byte[] texels;
 	}
 
-	/** What the worker lights the patches with. */
+	/** What the worker lights the volume with. */
 	private static final class LightInput
 	{
 		float[] table;
@@ -105,26 +90,28 @@ class GlobalIllumination
 		boolean bounce;
 	}
 
-	private int skyProgram, blendProgram;
+	private int skyProgram;
 	private int uniSkySunDir, uniSkySunAltitude, uniSkySunIsCaster, uniSkyOvercast, uniSkyLight, uniSkyCacheMode,
 		uniSkyCacheWeight;
-	private int uniBlend;
-	private int uniAoEnabled = -1, uniAoCamera = -1;
+	private int uniAoEnabled = -1, uniAoCamera = -1, uniAoGrid = -1, uniAoLayer0 = -1, uniAoBlend = -1;
 
-	private final int[] lightTextures = new int[3];
-	private int floorTexture, wallTexture, lightFbo, skyTexture, skyFbo, pbo;
-	private ShortBuffer staging;
+	private final int[] volumeTextures = new int[2];
+	private int skyTexture, skyFbo, pbo;
+	private ByteBuffer staging;
 	private final float[] table = new float[GiRelight.TABLE_FLOATS];
 
-	// roles of the light textures, as in SkyCache: the latest light, the one blending into it, and the one shown
-	private int latest = -1, from = -1, shown = -1;
+	// The volume shown is volumeTextures[shown]; while a newer one blends in over it, volumeTextures[next] is that one and
+	// blendT is how far in it is, 0 to 1.
+	private int shown = -1, next = -1;
 	private boolean blending;
+	private float blendT;
 	private long blendStart, blendMillis;
 	private long lastLitMillis;
-	// what the shown light belongs to
+	// what the shown volume belongs to
 	private int shownGeneration = -1;
 	private int shownBaseX, shownBaseY;
 	private boolean shownInstance;
+	private int shownNx, shownNy, shownNz, shownLayer0;
 	private float weight;
 	private long weightMillis;
 	// the config switch last frame
@@ -156,13 +143,13 @@ class GlobalIllumination
 	private volatile Lit lit;
 	private volatile int builtGeneration = -1;
 	// worker-owned
-	private GiPatches patches;
-	private int patchesGeneration = -1;
-	private int patchesBaseX, patchesBaseY;
-	private boolean patchesInstance;
+	private GiEmitters emitters;
+	private int emittersGeneration = -1;
+	private int emittersBaseX, emittersBaseY;
+	private boolean emittersInstance;
 	private LightInput lastInput;
-	// whether the last build submitted lays out the patches, or only voxelizes the scene for the skylight
-	private boolean submittedPatches;
+	// whether the last build submitted finds the emitters, or only voxelizes the scene for the skylight
+	private boolean submittedEmitters;
 	private volatile Voxels voxels;
 
 	/** The scene's voxels as a build left them, for the skylight's grid (SkyGrid). */
@@ -193,27 +180,17 @@ class GlobalIllumination
 
 	Programs compile(Template template) throws ShaderException
 	{
-		int s = SKY_PROGRAM.compile(template);
-		try
-		{
-			return new Programs(s, BLEND_PROGRAM.compile(template));
-		}
-		catch (ShaderException ex)
-		{
-			glDeleteProgram(s);
-			throw ex;
-		}
+		return new Programs(SKY_PROGRAM.compile(template));
 	}
 
 	/**
 	 * Replace the programs. The sky pass reads the sky cache and its irradiance from skyCacheUnit and
 	 * skyCacheUnit + 1.
 	 */
-	void setPrograms(Programs p, int skyCacheUnit, int blendUnit)
+	void setPrograms(Programs p, int skyCacheUnit)
 	{
 		freePrograms();
 		skyProgram = p.sky;
-		blendProgram = p.blend;
 		uniSkySunDir = glGetUniformLocation(skyProgram, "sunDir");
 		uniSkySunAltitude = glGetUniformLocation(skyProgram, "sunAltitude");
 		uniSkySunIsCaster = glGetUniformLocation(skyProgram, "sunIsCaster");
@@ -224,10 +201,6 @@ class GlobalIllumination
 		glUseProgram(skyProgram);
 		glUniform1i(glGetUniformLocation(skyProgram, "skyCache"), skyCacheUnit);
 		glUniform1i(glGetUniformLocation(skyProgram, "skyIrradiance"), skyCacheUnit + 1);
-		uniBlend = glGetUniformLocation(blendProgram, "blend");
-		glUseProgram(blendProgram);
-		glUniform1i(glGetUniformLocation(blendProgram, "cacheFrom"), blendUnit);
-		glUniform1i(glGetUniformLocation(blendProgram, "cacheTo"), blendUnit + 1);
 		glUseProgram(0);
 		// a new shader may compute a different sky
 		relit = false;
@@ -236,22 +209,20 @@ class GlobalIllumination
 	void freePrograms()
 	{
 		glDeleteProgram(skyProgram);
-		glDeleteProgram(blendProgram);
-		skyProgram = blendProgram = 0;
+		skyProgram = 0;
 	}
 
-	/**
-	 * Look up the AO program's uniforms; the patches' light goes on patchUnit, the floors' heights on patchUnit + 1 and
-	 * the wall faces on wallUnit.
-	 */
-	void locateAo(int program, int patchUnit, int wallUnit)
+	/** Look up the AO program's uniforms; the volume goes on volumeUnit, the one blending into it on volumeUnit + 1. */
+	void locateAo(int program, int volumeUnit)
 	{
 		uniAoEnabled = glGetUniformLocation(program, "giEnabled");
 		uniAoCamera = glGetUniformLocation(program, "giCamera");
+		uniAoGrid = glGetUniformLocation(program, "giGrid");
+		uniAoLayer0 = glGetUniformLocation(program, "giLayer0");
+		uniAoBlend = glGetUniformLocation(program, "giBlend");
 		glUseProgram(program);
-		glUniform1i(glGetUniformLocation(program, "giPatches"), patchUnit);
-		glUniform1i(glGetUniformLocation(program, "giFloors"), patchUnit + 1);
-		glUniform1i(glGetUniformLocation(program, "giWalls"), wallUnit);
+		glUniform1i(glGetUniformLocation(program, "giVolume"), volumeUnit);
+		glUniform1i(glGetUniformLocation(program, "giVolumeTo"), volumeUnit + 1);
 		glUseProgram(0);
 	}
 
@@ -271,17 +242,14 @@ class GlobalIllumination
 			worker = null;
 			pool = null;
 		}
-		if (lightFbo != 0)
+		if (skyFbo != 0)
 		{
-			glDeleteFramebuffers(lightFbo);
 			glDeleteFramebuffers(skyFbo);
-			glDeleteTextures(lightTextures);
-			glDeleteTextures(floorTexture);
-			glDeleteTextures(wallTexture);
+			glDeleteTextures(volumeTextures);
 			glDeleteTextures(skyTexture);
 			glDeleteBuffers(pbo);
-			lightFbo = skyFbo = floorTexture = wallTexture = skyTexture = pbo = 0;
-			lightTextures[0] = lightTextures[1] = lightTextures[2] = 0;
+			skyFbo = skyTexture = pbo = 0;
+			volumeTextures[0] = volumeTextures[1] = 0;
 		}
 		if (fence != 0)
 		{
@@ -289,7 +257,7 @@ class GlobalIllumination
 			fence = 0;
 		}
 		readbackPending = readbackWanted = false;
-		latest = from = shown = -1;
+		shown = next = -1;
 		blending = false;
 		shownGeneration = -1;
 		weight = 0;
@@ -297,20 +265,20 @@ class GlobalIllumination
 		lit = null;
 		jobs.set(0);
 		builtGeneration = -1;
-		patches = null;
-		patchesGeneration = -1;
+		emitters = null;
+		emittersGeneration = -1;
 		lastInput = null;
 		buildRequested = true;
 	}
 
-	/** A new top level scene was swapped in: build its patches. */
+	/** A new top level scene was swapped in: build its volume. */
 	void sceneSwapped()
 	{
 		buildRequested = true;
 		buildAfterMillis = 0;
 	}
 
-	/** A zone was rebuilt: rebuild the patches once the changes settle. */
+	/** A zone was rebuilt: rebuild the volume once the changes settle. */
 	void zonesChanged()
 	{
 		buildRequested = true;
@@ -318,13 +286,13 @@ class GlobalIllumination
 		buildAfterMillis = Math.max(now + REBUILD_DELAY_MILLIS, lastBuildMillis + MIN_REBUILD_MILLIS);
 	}
 
-	/** How much of the patches' light is shown, 0 when they are off. */
+	/** How much of the volume's tint is shown, 0 when it is off. */
 	float shownWeight()
 	{
 		return isActive() ? weight : 0;
 	}
 
-	/** Whether the AO pass has patches to look up. */
+	/** Whether the AO pass has a volume to look up. */
 	boolean isActive()
 	{
 		return weight > 0 && shown >= 0;
@@ -336,7 +304,7 @@ class GlobalIllumination
 		return generation;
 	}
 
-	/** The build whose patches are on the GPU; a change means an upload happened. */
+	/** The build whose volume is on the GPU; a change means an upload happened. */
 	int shownBuild()
 	{
 		return shownGeneration;
@@ -344,25 +312,23 @@ class GlobalIllumination
 
 	/**
 	 * Once a frame before the AO pass, on the client thread with the GL context: start builds, hand finished
-	 * readbacks to the worker, upload and blend new light and decide whether to relight. Changes the framebuffer,
-	 * viewport and program; expects a VAO bound.
+	 * readbacks to the worker, upload new volumes and decide whether to relight. Changes the framebuffer, viewport and
+	 * program; expects a VAO bound.
 	 *
-	 * @param enabled whether the patches run
-	 * @param voxelsWanted whether the scene's voxels are wanted without the patches too (the skylight): builds then
+	 * @param enabled whether the volume runs
+	 * @param voxelsWanted whether the scene's voxels are wanted without the volume too (the skylight): builds then
 	 *                     voxelize the scene and stop there
 	 * @param zones the top level scene's zones, [x][z] in extended zone coordinates
 	 * @param water the scene's water map, null with none
-	 * @param walls the walls of this very scene, null until they are known (the patches' build waits for them)
-	 * @param settings hash of what else the patches' light depends on
-	 * @param blendUnit, blendUnit + 1: free units for the blend
+	 * @param settings hash of what else the volume's light depends on
 	 */
 	void prepare(boolean enabled, boolean voxelsWanted, boolean outdoors, Scene scene, Zone[][] zones, WaterMap water,
-		WallMap walls, DayCycle day, int skyCaptures, int settings, int blendUnit)
+		DayCycle day, int skyCaptures, int settings)
 	{
 		long now = System.currentTimeMillis();
 		float dt = Math.max(0, Math.min(0.1f, (now - weightMillis) / 1000f));
 		weightMillis = now;
-		// until the new scene's patches are lit the last ones stay, moved to where they belong in it; an instance's
+		// until the new scene's volume is lit the last one stays, moved to where it belongs in it; an instance's
 		// coordinates have nothing to do with the last scene's
 		boolean fits = scene != null && shownInstance == scene.isInstance()
 			&& (!shownInstance || scene.getBaseX() == shownBaseX && scene.getBaseY() == shownBaseY);
@@ -370,7 +336,7 @@ class GlobalIllumination
 		if (toggled)
 		{
 			wasEnabled = enabled;
-			if (enabled && !submittedPatches)
+			if (enabled && !submittedEmitters)
 			{
 				// the last build only voxelized the scene
 				buildRequested = true;
@@ -391,18 +357,18 @@ class GlobalIllumination
 		{
 			return;
 		}
-		if (buildRequested && now >= buildAfterMillis && scene != null && zones != null && (walls != null || !enabled))
+		if (buildRequested && now >= buildAfterMillis && scene != null && zones != null)
 		{
 			buildRequested = false;
 			lastBuildMillis = now;
-			submittedPatches = enabled;
-			submitBuild(scene, zones, water, walls, enabled);
+			submittedEmitters = enabled;
+			submitBuild(scene, zones, water, enabled);
 		}
 		if (!enabled)
 		{
 			return;
 		}
-		if (lightFbo == 0)
+		if (skyFbo == 0)
 		{
 			init();
 		}
@@ -415,34 +381,36 @@ class GlobalIllumination
 		pollReadback();
 
 		Lit l = lit;
-		if (l != null)
+		// a volume that comes while another blends in waits for it, so what is shown never jumps
+		if (l != null && (!blending || l.generation != shownGeneration))
 		{
 			lit = null;
 			if (l.generation != shownGeneration)
 			{
-				// new patches in a new place: shown as they are, there is nothing to blend from
-				log.debug("Look: GI patches replaced, generation {} -> {}, base ({}, {}) -> ({}, {})", shownGeneration,
+				// a new volume in a new place: shown as it is, there is nothing to blend from
+				log.debug("Look: GI volume replaced, generation {} -> {}, base ({}, {}) -> ({}, {})", shownGeneration,
 					l.generation, shownBaseX, shownBaseY, l.baseX, l.baseY);
-				int target = shown < 0 ? 0 : (shown + 1) % 3;
-				uploadLight(l, target);
-				uploadIndex(l);
-				latest = from = shown = target;
+				int target = shown < 0 ? 0 : 1 - shown;
+				uploadVolume(l, target);
+				shown = target;
+				next = -1;
 				blending = false;
 				shownGeneration = l.generation;
 				shownBaseX = l.baseX;
 				shownBaseY = l.baseY;
 				shownInstance = l.instance;
+				shownNx = l.nx;
+				shownNy = l.ny;
+				shownNz = l.nz;
+				shownLayer0 = l.layer0;
 				lastLitMillis = now;
 			}
 			else
 			{
-				// a blend in progress stops where it is: the shown texture holds it
-				int target = (shown + 1) % 3;
-				uploadLight(l, target);
-				from = shown;
-				latest = target;
-				shown = 3 - from - latest;
+				next = 1 - shown;
+				uploadVolume(l, next);
 				blending = true;
+				blendT = 0;
 				blendStart = now;
 				long gap = now - lastLitMillis;
 				blendMillis = (long) (Math.max(BLEND_SECONDS, Math.min(MAX_BLEND_SECONDS, gap / 1000f)) * 1000);
@@ -451,15 +419,12 @@ class GlobalIllumination
 		}
 		if (blending)
 		{
-			float t = (now - blendStart) / (float) blendMillis;
-			if (t >= 1)
+			blendT = Math.min(1, (now - blendStart) / (float) blendMillis);
+			if (blendT >= 1)
 			{
 				blending = false;
-				shown = latest;
-			}
-			else
-			{
-				blend(t, blendUnit);
+				shown = next;
+				next = -1;
 			}
 		}
 
@@ -467,11 +432,11 @@ class GlobalIllumination
 		{
 			return;
 		}
-		boolean newPatches = builtGeneration > shownGeneration && lit == null;
-		boolean due = !relit || newPatches || settings != lastSettings || day.sunIsCaster != lastSunIsCaster
+		boolean newVolume = builtGeneration > shownGeneration && lit == null;
+		boolean due = !relit || newVolume || settings != lastSettings || day.sunIsCaster != lastSunIsCaster
 			|| skyCaptures != lastSkyCaptures || now - lastRelightMillis >= MAX_RELIGHT_MILLIS
 			|| angle(day.casterDir, lastCasterDir) >= RELIGHT_DEGREES;
-		if (builtGeneration >= 0 && due && (newPatches || now - lastRelightMillis >= MIN_RELIGHT_MILLIS))
+		if (builtGeneration >= 0 && due && (newVolume || now - lastRelightMillis >= MIN_RELIGHT_MILLIS))
 		{
 			readbackWanted = true;
 			relit = true;
@@ -570,13 +535,13 @@ class GlobalIllumination
 	}
 
 	/**
-	 * Before the AO pass: bind the shown patches and set the AO program's uniforms (with it in use).
+	 * Before the AO pass: bind the shown volume and set the AO program's uniforms (with it in use).
 	 *
-	 * @param patchUnit, patchUnit + 1, wallUnit the units of the patches' light, the floors' heights and the wall faces
-	 * @param sceneBaseX, sceneBaseY the current scene's base, world tiles: the shown patches may be from the last
-	 *                   one until the new ones are lit
+	 * @param volumeUnit, volumeUnit + 1 the units of the volume shown and of the one blending into it
+	 * @param sceneBaseX, sceneBaseY the current scene's base, world tiles: the shown volume may be from the last
+	 *                   scene until the new one is lit
 	 */
-	void bindAo(int patchUnit, int wallUnit, float cameraX, float cameraY, float cameraZ, int sceneBaseX, int sceneBaseY)
+	void bindAo(int volumeUnit, float cameraX, float cameraY, float cameraZ, int sceneBaseX, int sceneBaseY)
 	{
 		boolean on = isActive();
 		glUniform1i(uniAoEnabled, on ? 1 : 0);
@@ -584,30 +549,29 @@ class GlobalIllumination
 		{
 			return;
 		}
-		float cornerX = (shownBaseX - sceneBaseX) * (float) GiPatches.TILE;
-		float cornerZ = (shownBaseY - sceneBaseY) * (float) GiPatches.TILE;
+		float cornerX = (shownBaseX - sceneBaseX) * (float) GiGrid.TILE;
+		float cornerZ = (shownBaseY - sceneBaseY) * (float) GiGrid.TILE;
 		glUniform3f(uniAoCamera, cameraX - cornerX, cameraY, cameraZ - cornerZ);
-		glActiveTexture(GL_TEXTURE0 + patchUnit);
-		glBindTexture(GL_TEXTURE_2D, lightTextures[shown]);
-		glActiveTexture(GL_TEXTURE0 + patchUnit + 1);
-		glBindTexture(GL_TEXTURE_2D, floorTexture);
-		glActiveTexture(GL_TEXTURE0 + wallUnit);
-		glBindTexture(GL_TEXTURE_2D, wallTexture);
+		glUniform3f(uniAoGrid, shownNx, shownNy, shownNz);
+		glUniform1f(uniAoLayer0, shownLayer0);
+		glUniform1f(uniAoBlend, blending ? blendT : 1);
+		glActiveTexture(GL_TEXTURE0 + volumeUnit);
+		glBindTexture(GL_TEXTURE_3D, volumeTextures[shown]);
+		glActiveTexture(GL_TEXTURE0 + volumeUnit + 1);
+		glBindTexture(GL_TEXTURE_3D, volumeTextures[blending ? next : shown]);
 		glActiveTexture(GL_TEXTURE0);
 	}
 
-	static void unbind(int patchUnit, int wallUnit)
+	static void unbind(int volumeUnit)
 	{
-		glActiveTexture(GL_TEXTURE0 + wallUnit);
-		glBindTexture(GL_TEXTURE_2D, 0);
-		glActiveTexture(GL_TEXTURE0 + patchUnit + 1);
-		glBindTexture(GL_TEXTURE_2D, 0);
-		glActiveTexture(GL_TEXTURE0 + patchUnit);
-		glBindTexture(GL_TEXTURE_2D, 0);
+		glActiveTexture(GL_TEXTURE0 + volumeUnit + 1);
+		glBindTexture(GL_TEXTURE_3D, 0);
+		glActiveTexture(GL_TEXTURE0 + volumeUnit);
+		glBindTexture(GL_TEXTURE_3D, 0);
 		glActiveTexture(GL_TEXTURE0);
 	}
 
-	/** With a composite program in use: how much of the patches' tint it applies (its locateComposite). */
+	/** With a composite program in use: how much of the volume's tint it applies (its locateComposite). */
 	void setComposite(int location, float strength)
 	{
 		glUniform1f(location, isActive() ? weight * strength : 0);
@@ -619,105 +583,58 @@ class GlobalIllumination
 	private void init()
 	{
 		glBindBuffer(GL_PIXEL_UNPACK_BUFFER, 0);
-		glGenTextures(lightTextures);
-		for (int tex : lightTextures)
+		glGenTextures(volumeTextures);
+		for (int tex : volumeTextures)
 		{
-			texture(tex, GL_RGBA16F, LIGHT_W, LIGHT_H, GL_RGBA, GL_HALF_FLOAT);
+			glBindTexture(GL_TEXTURE_3D, tex);
+			glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+			glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+			glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+			glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+			glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_WRAP_R, GL_CLAMP_TO_EDGE);
 		}
-		floorTexture = glGenTextures();
-		texture(floorTexture, GL_RGBA32F, FLOORS_W, FLOORS_H, GL_RGBA, GL_FLOAT);
-		wallTexture = glGenTextures();
-		texture(wallTexture, GL_RGBA32F, WALLS_W, WALLS_H, GL_RGBA, GL_FLOAT);
+		glBindTexture(GL_TEXTURE_3D, 0);
 		skyTexture = glGenTextures();
-		texture(skyTexture, GL_RGBA32F, GiRelight.SKY_W, SKY_ROWS, GL_RGBA, GL_FLOAT);
+		glBindTexture(GL_TEXTURE_2D, skyTexture);
+		glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA32F, GiRelight.SKY_W, SKY_ROWS, 0, GL_RGBA, GL_FLOAT, (ByteBuffer) null);
+		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
 		glBindTexture(GL_TEXTURE_2D, 0);
 
-		lightFbo = glGenFramebuffers();
-		glBindFramebuffer(GL_FRAMEBUFFER, lightFbo);
-		glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, lightTextures[0], 0);
-		glDrawBuffers(GL_COLOR_ATTACHMENT0);
-		check("light");
 		skyFbo = glGenFramebuffers();
 		glBindFramebuffer(GL_FRAMEBUFFER, skyFbo);
 		glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, skyTexture, 0);
 		glDrawBuffers(GL_COLOR_ATTACHMENT0);
-		check("sky");
+		int status = glCheckFramebufferStatus(GL_FRAMEBUFFER);
+		if (status != GL_FRAMEBUFFER_COMPLETE)
+		{
+			glBindFramebuffer(GL_FRAMEBUFFER, 0);
+			throw new RuntimeException("GI sky framebuffer incomplete, status 0x" + Integer.toHexString(status));
+		}
 		glBindFramebuffer(GL_FRAMEBUFFER, 0);
 
 		pbo = glGenBuffers();
 		glBindBuffer(GL_PIXEL_PACK_BUFFER, pbo);
 		glBufferData(GL_PIXEL_PACK_BUFFER, (long) GiRelight.TABLE_FLOATS * Float.BYTES, GL_STREAM_READ);
 		glBindBuffer(GL_PIXEL_PACK_BUFFER, 0);
-		staging = BufferUtils.createShortBuffer(LIGHT_W * LIGHT_H * 4);
 	}
 
-	private static void texture(int tex, int internal, int w, int h, int format, int type)
+	/** Put the volume in volumeTextures[target], whose size follows the grid's: nx by nz texels, ny layers of each field. */
+	private void uploadVolume(Lit l, int target)
 	{
-		glBindTexture(GL_TEXTURE_2D, tex);
-		glTexImage2D(GL_TEXTURE_2D, 0, internal, w, h, 0, format, type, (ByteBuffer) null);
-		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
-		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
-		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
-		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-	}
-
-	private static void check(String what)
-	{
-		int status = glCheckFramebufferStatus(GL_FRAMEBUFFER);
-		if (status != GL_FRAMEBUFFER_COMPLETE)
+		if (staging == null || staging.capacity() < l.texels.length)
 		{
-			glBindFramebuffer(GL_FRAMEBUFFER, 0);
-			throw new RuntimeException("GI " + what + " framebuffer incomplete, status 0x" + Integer.toHexString(status));
+			staging = BufferUtils.createByteBuffer(l.texels.length);
 		}
-	}
-
-	private void uploadLight(Lit l, int target)
-	{
 		staging.clear();
-		staging.put(l.light);
+		staging.put(l.texels);
 		staging.flip();
 		glBindBuffer(GL_PIXEL_UNPACK_BUFFER, 0);
-		glBindTexture(GL_TEXTURE_2D, lightTextures[target]);
-		glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, LIGHT_W, LIGHT_H, GL_RGBA, GL_HALF_FLOAT, staging);
-		glBindTexture(GL_TEXTURE_2D, 0);
-	}
-
-	/** The floors' heights and the wall faces, which stay the same until the patches are laid out again. */
-	private void uploadIndex(Lit l)
-	{
-		glBindBuffer(GL_PIXEL_UNPACK_BUFFER, 0);
-		FloatBuffer floors = BufferUtils.createFloatBuffer(l.floors.length);
-		floors.put(l.floors).flip();
-		glBindTexture(GL_TEXTURE_2D, floorTexture);
-		glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, FLOORS_W, FLOORS_H, GL_RGBA, GL_FLOAT, floors);
-		FloatBuffer walls = BufferUtils.createFloatBuffer(l.walls.length);
-		walls.put(l.walls).flip();
-		glBindTexture(GL_TEXTURE_2D, wallTexture);
-		glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, WALLS_W, WALLS_H, GL_RGBA, GL_FLOAT, walls);
-		glBindTexture(GL_TEXTURE_2D, 0);
-	}
-
-	private void blend(float t, int unit)
-	{
-		if (blendProgram == 0)
-		{
-			return;
-		}
-		glBindFramebuffer(GL_FRAMEBUFFER, lightFbo);
-		glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, lightTextures[shown], 0);
-		glViewport(0, 0, LIGHT_W, LIGHT_H);
-		glUseProgram(blendProgram);
-		glUniform1f(uniBlend, t);
-		glActiveTexture(GL_TEXTURE0 + unit);
-		glBindTexture(GL_TEXTURE_2D, lightTextures[from]);
-		glActiveTexture(GL_TEXTURE0 + unit + 1);
-		glBindTexture(GL_TEXTURE_2D, lightTextures[latest]);
-		glDrawArrays(GL_TRIANGLES, 0, 3);
-		glBindTexture(GL_TEXTURE_2D, 0);
-		glActiveTexture(GL_TEXTURE0 + unit);
-		glBindTexture(GL_TEXTURE_2D, 0);
-		glActiveTexture(GL_TEXTURE0);
-		glBindFramebuffer(GL_FRAMEBUFFER, 0);
+		glBindTexture(GL_TEXTURE_3D, volumeTextures[target]);
+		glTexImage3D(GL_TEXTURE_3D, 0, GL_RGBA8, l.nx, l.nz, 2 * l.ny, 0, GL_RGBA, GL_UNSIGNED_BYTE, staging);
+		glBindTexture(GL_TEXTURE_3D, 0);
 	}
 
 	// ---------------------------------------------------------------------------------------------------------
@@ -754,7 +671,7 @@ class GlobalIllumination
 		});
 	}
 
-	private GiPatches.ParallelFor parallel()
+	private GiEmitters.ParallelFor parallel()
 	{
 		ForkJoinPool p = pool;
 		return (n, body) ->
@@ -776,11 +693,11 @@ class GlobalIllumination
 	}
 
 	/** Copy what the build needs from the scene, on the client thread, and queue it. */
-	private void submitBuild(Scene scene, Zone[][] zones, WaterMap waterMap, WallMap walls, boolean withPatches)
+	private void submitBuild(Scene scene, Zone[][] zones, WaterMap waterMap, boolean withEmitters)
 	{
 		int g = ++generation;
 		int baseZone = RuneLightPlugin.SCENE_OFFSET >> 3;
-		int count = GiPatches.SIZE / 8 + 2;
+		int count = GiGrid.SCENE_TILES / 8 + 2;
 		Zone[] list = new Zone[count * count];
 		int[] zx = new int[list.length], zz = new int[list.length];
 		int n = 0;
@@ -797,22 +714,18 @@ class GlobalIllumination
 				}
 			}
 		}
-		GiPatches.Input in = new GiPatches.Input();
 		GiWater water = GiWater.of(waterMap, scene.getTileHeights(), RuneLightPlugin.SCENE_OFFSET);
-		// the rest is for the patches only
-		in.ground = withPatches ? GiPatches.groundHeights(scene.getTileHeights(), RuneLightPlugin.SCENE_OFFSET) : null;
-		in.walls = walls;
 		int baseX = scene.getBaseX(), baseY = scene.getBaseY();
 		boolean instance = scene.isInstance();
 		int[][][] heights = scene.getTileHeights();
 		SkyTerrain terrain = SkyTerrain.capture(scene, RuneLightPlugin.SCENE_OFFSET);
 		int zones2 = n;
-		submit(() -> build(g, list, zx, zz, zones2, baseZone, in, water, baseX, baseY, instance, heights, withPatches,
+		submit(() -> build(g, list, zx, zz, zones2, baseZone, water, baseX, baseY, instance, heights, withEmitters,
 			terrain));
 	}
 
-	private void build(int g, Zone[] list, int[] zx, int[] zz, int n, int baseZone, GiPatches.Input in, GiWater water,
-		int baseX, int baseY, boolean instance, int[][][] heights, boolean withPatches, SkyTerrain terrain)
+	private void build(int g, Zone[] list, int[] zx, int[] zz, int n, int baseZone, GiWater water,
+		int baseX, int baseY, boolean instance, int[][][] heights, boolean withEmitters, SkyTerrain terrain)
 	{
 		if (g != generation)
 		{
@@ -822,7 +735,7 @@ class GlobalIllumination
 		long start = System.nanoTime();
 		GiVoxels.Zone[] voxels = new GiVoxels.Zone[n];
 		AtomicInteger voxelized = new AtomicInteger();
-		GiPatches.ParallelFor parallel = parallel();
+		GiEmitters.ParallelFor parallel = parallel();
 		parallel.run(n, i ->
 		{
 			// zones keep their voxels, so a zone reused by the next region load isn't voxelized again
@@ -845,29 +758,20 @@ class GlobalIllumination
 			g, voxelized.get(), n, (voxelTime - start) / 1_000_000.0, (gridTime - voxelTime) / 1_000_000.0,
 			(gridTime - start) / 1_000_000.0, GiGrid.VOXEL, grid.nx, grid.ny, grid.nz,
 			grid.cells.length * 4L / (1024.0 * 1024.0));
-		if (!withPatches)
+		if (!withEmitters)
 		{
 			return;
 		}
-		GiPatches p = GiPatches.build(grid, in, parallel);
-		patches = p;
-		patchesGeneration = g;
-		patchesBaseX = baseX;
-		patchesBaseY = baseY;
-		patchesInstance = instance;
+		GiEmitters e = GiEmitters.build(grid, parallel);
+		emitters = e;
+		emittersGeneration = g;
+		emittersBaseX = baseX;
+		emittersBaseY = baseY;
+		emittersInstance = instance;
 		builtGeneration = g;
-		int floors = 0, roofs = 0;
-		for (int i = 0; i < GiPatches.FIXED_SLOTS; ++i)
-		{
-			if (p.exists(i))
-			{
-				if (i < GiPatches.FLOOR_SLOTS) ++floors;
-				else ++roofs;
-			}
-		}
-		log.debug("GI build {}: voxelized {} zones in {} ms, grid {}x{}x{}, {} floor, {} roof and {} wall patches, {} links, laid out and linked in {} ms",
-			g, voxelized, (voxelTime - start) / 1_000_000, grid.nx, grid.ny, grid.nz, floors, roofs, p.count - GiPatches.FIXED_SLOTS,
-			p.linkTarget.length, (System.nanoTime() - gridTime) / 1_000_000);
+		log.debug("GI build {}: voxelized {} zones in {} ms, grid {}x{}x{}, {} faces give colour to {} voxels ({} entries), found in {} ms",
+			g, voxelized, (voxelTime - start) / 1_000_000, grid.nx, grid.ny, grid.nz, e.faceCount, e.cellCount,
+			e.inFace.length, (System.nanoTime() - gridTime) / 1_000_000);
 		if (lastInput != null)
 		{
 			relight(lastInput);
@@ -877,60 +781,32 @@ class GlobalIllumination
 	private void relight(LightInput in)
 	{
 		lastInput = in;
-		GiPatches p = patches;
-		if (p == null)
+		GiEmitters e = emitters;
+		if (e == null)
 		{
 			return;
 		}
 		long start = System.nanoTime();
 		GiRelight.Light light = GiRelight.Light.fromTable(in.table, in.casterDir, in.bounce);
-		float[] gathered = GiRelight.relight(p, light, parallel());
+		byte[] texels = GiRelight.relight(e, light, parallel());
 		Lit l = new Lit();
-		l.generation = patchesGeneration;
-		l.baseX = patchesBaseX;
-		l.baseY = patchesBaseY;
-		l.instance = patchesInstance;
-		l.light = texels(p, gathered);
-		l.floors = p.floorTexels;
-		l.walls = p.wallTexels;
+		l.generation = emittersGeneration;
+		l.baseX = emittersBaseX;
+		l.baseY = emittersBaseY;
+		l.instance = emittersInstance;
+		l.nx = e.grid.nx;
+		l.ny = e.grid.ny;
+		l.nz = e.grid.nz;
+		l.layer0 = e.grid.layer0;
+		l.texels = texels;
 		lit = l;
-		int tinted = 0;
-		float most = 0;
-		for (int i = 0; i < p.count; ++i)
-		{
-			float y = 0.2126f * gathered[i * 3] + 0.7152f * gathered[i * 3 + 1] + 0.0722f * gathered[i * 3 + 2];
-			tinted += y > 0.05f ? 1 : 0;
-			most = Math.max(most, y);
-		}
-		log.debug("GI relight in {} ms: {} of {} patches tinted, strongest {}, caster {} {} {}, shadow {} / {}",
-			(System.nanoTime() - start) / 1_000_000, tinted, p.count, most, light.caster[0], light.caster[1],
-			light.caster[2], light.shadow0, light.shadow1);
+		float[] stats = GiRelight.stats(e, texels);
+		log.debug("GI relight in {} ms: {} of {} voxels tinted, strongest {}, caster {} {} {}, shadow {} / {}",
+			(System.nanoTime() - start) / 1_000_000, (int) stats[0], e.cellCount * 2, stats[1], light.caster[0],
+			light.caster[1], light.caster[2], light.shadow0, light.shadow1);
 	}
 
-	/**
-	 * The patches' light as the light texture's half floats. Patch i lies at texel (i % LIGHT_W, i / LIGHT_W): the light
-	 * it gathers, and 1 where there is a patch. The floors' empty slots stay zero.
-	 */
-	static short[] texels(GiPatches p, float[] gathered)
-	{
-		short[] out = new short[LIGHT_W * LIGHT_H * 4];
-		short one = toHalf(1);
-		for (int i = 0; i < p.count; ++i)
-		{
-			if (!p.exists(i))
-			{
-				continue;
-			}
-			int at = i * 4;
-			out[at] = toHalf(gathered[i * 3]);
-			out[at + 1] = toHalf(gathered[i * 3 + 1]);
-			out[at + 2] = toHalf(gathered[i * 3 + 2]);
-			out[at + 3] = one;
-		}
-		return out;
-	}
-
-	/** IEEE half float bits of f, rounded to nearest; for the light texture. */
+	/** IEEE half float bits of f, rounded to nearest; for the sky grid's texels. */
 	static short toHalf(float f)
 	{
 		int bits = Float.floatToIntBits(f);
