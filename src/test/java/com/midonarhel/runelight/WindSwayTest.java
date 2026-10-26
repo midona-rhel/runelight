@@ -169,7 +169,7 @@ public class WindSwayTest
 		assertTrue(WindSway.sways(m));
 		assertTrue(!WindSway.sways(SurfaceMaterials.TRANSMISSIVE | SurfaceMaterials.EMISSIVE_FULL | SurfaceMaterials.FIRE));
 		// SurfaceMaterials ignores the wind bits
-		assertEquals(SurfaceMaterials.face(0, -1, 0), SurfaceMaterials.face(m, -1, 0));
+		assertEquals(SurfaceMaterials.face(0, -1, 0, 255), SurfaceMaterials.face(m, -1, 0, 255));
 	}
 
 	@Test

@@ -294,7 +294,7 @@ class ModelUploader
 					alphaBias |= faceTransparency(modelTransparency, transparencies != null ? transparencies[faceIdx] & 0xff : 0) << 24;
 					alphaBias |= bias != null ? (bias[faceIdx] & 0xff) << 16 : 0;
 					int texture = faceTextures != null ? faceTextures[faceIdx] + 1 : 0;
-					texture |= SurfaceMaterials.face(material, texture - 1, color1);
+					texture |= SurfaceMaterials.face(material, texture - 1, color1, SurfaceMaterials.opacity(transparencies, faceIdx));
 
 					int vbOff = faceIdx * FACE_SIZE;
 					vertexBuffer[vbOff++] = Float.floatToIntBits(modelLocalX[v1]);
@@ -728,7 +728,7 @@ class ModelUploader
 			alphaBias |= transparencies != null ? (transparencies[face] & 0xff) << 24 : 0;
 			alphaBias |= bias != null ? (bias[face] & 0xff) << 16 : 0;
 			int texture = faceTextures != null ? faceTextures[face] + 1 : 0;
-			texture |= SurfaceMaterials.face(material, texture - 1, color1);
+			texture |= SurfaceMaterials.face(material, texture - 1, color1, SurfaceMaterials.opacity(transparencies, face));
 
 			putfff4(buffer, vx1, vy1, vz1, alphaBias | color1);
 			put2222(buffer, texture, su0, sv0, n1);

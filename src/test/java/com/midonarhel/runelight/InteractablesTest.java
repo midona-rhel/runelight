@@ -67,11 +67,11 @@ public class InteractablesTest
 	public void snowClassRidesInTheFaceBits()
 	{
 		int hsl = 0;
-		assertEquals(0, SurfaceMaterials.face(0, -1, hsl) >> SurfaceMaterials.SNOW_SHIFT);
-		assertEquals(1, SurfaceMaterials.face(SurfaceMaterials.SNOW_REDUCED, -1, hsl) >> SurfaceMaterials.SNOW_SHIFT);
-		assertEquals(2, SurfaceMaterials.face(SurfaceMaterials.SNOW_NONE | 3, -1, hsl) >> SurfaceMaterials.SNOW_SHIFT);
+		assertEquals(0, SurfaceMaterials.face(0, -1, hsl, 255) >> SurfaceMaterials.SNOW_SHIFT);
+		assertEquals(1, SurfaceMaterials.face(SurfaceMaterials.SNOW_REDUCED, -1, hsl, 255) >> SurfaceMaterials.SNOW_SHIFT);
+		assertEquals(2, SurfaceMaterials.face(SurfaceMaterials.SNOW_NONE | 3, -1, hsl, 255) >> SurfaceMaterials.SNOW_SHIFT);
 		// the top of the texture id short, clear of the terrain flags and the texture id
-		int face = SurfaceMaterials.face(SurfaceMaterials.SNOW_NONE, -1, hsl);
+		int face = SurfaceMaterials.face(SurfaceMaterials.SNOW_NONE, -1, hsl, 255);
 		assertTrue(face < 1 << 16);
 		assertEquals(0, face & (SurfaceMaterials.TEXTURE_MASK | WaterMap.BED_FLAG | WaterMap.LAND_FLAG));
 		assertEquals(WaterMap.LAND_FLAG << 1, 1 << SurfaceMaterials.SNOW_SHIFT);

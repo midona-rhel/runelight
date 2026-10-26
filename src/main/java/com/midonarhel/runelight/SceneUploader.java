@@ -1351,7 +1351,7 @@ class SceneUploader
 				+ (priorities != null ? (priorities[face] & 0xff) * PRIORITY_BIAS : 0);
 			alphaBias |= Math.min(faceBias, 255) << 16;
 			int texture = faceTextures != null ? faceTextures[face] + 1 : 0;
-			texture |= SurfaceMaterials.face(material, texture - 1, color1);
+			texture |= SurfaceMaterials.face(material, texture - 1, color1, SurfaceMaterials.opacity(transparencies, face));
 			GpuIntBuffer buf = alpha ? ab : vb;
 
 			buf.put22224(vx1, vy1, vz1, sway ? swayCodes[triangleA] : 0, alphaBias | color1);

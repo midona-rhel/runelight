@@ -5,6 +5,10 @@ import com.google.gson.annotations.SerializedName;
 import java.io.InputStream;
 import java.io.InputStreamReader;
 import java.nio.charset.StandardCharsets;
+import java.util.Arrays;
+import java.util.List;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 import net.runelite.api.DynamicObject;
 import net.runelite.api.GraphicsObject;
 import net.runelite.api.NPC;
@@ -25,6 +29,8 @@ import static org.lwjgl.opengl.GL33C.glUniform1f;
  *   bit  11     transmissive: thin foliage that is also lit through from behind
  *   bits 12-13  the water bed and land terrain flags (WaterMap)
  *   bits 14-15  how much snow settles on it: all, reduced (things to interact with) or none (items, actors)
+ * Models whose 117 HD override lights only some faces name an emissive group (bits 6-13 of the model flags), which
+ * decides each face by its color, alpha and whether it is textured.
  * The flags are always baked; the config toggles only change shader uniforms, so no scene reload is needed.
  */
 final class SurfaceMaterials
@@ -35,7 +41,7 @@ final class SurfaceMaterials
 	static final int TEXTURE_MASK = (1 << SHIFT) - 1;
 	static final int SNOW_SHIFT = SHIFT + 5;
 
-	// model-level flags: emissive level in bits 0-1, then the bits below
+	// model-level flags: emissive level in bits 0-1, then the bits below (wind sway has the bits from 16 up)
 	static final int EMISSIVE_MASK = 3;
 	static final int TRANSMISSIVE = 1 << 2;
 	// emissive applies only to hot-colored faces (flames, not the logs under them)
@@ -47,6 +53,9 @@ final class SurfaceMaterials
 	static final int SNOW_REDUCED = 1 << SNOW_MODEL_SHIFT;
 	static final int SNOW_NONE = 2 << SNOW_MODEL_SHIFT;
 	private static final int SNOW_MASK = 3 << SNOW_MODEL_SHIFT;
+	// model-level emissive group in bits 6-13: 1 + its index in groups, 0 for none
+	private static final int GROUP_SHIFT = 6;
+	private static final int GROUP_MASK = 0xff;
 
 	// Foliage objects are whole trees: these HSL limits keep brown and grey faces (bark, trunks, rocks) opaque.
 	// OSRS hue runs 0-63 (0 red, ~8 brown/orange, ~11 yellow, ~21 green, ~42 blue), saturation 0-7.
@@ -59,9 +68,10 @@ final class SurfaceMaterials
 	private static final int FIRE_MIN_SATURATION = 4;
 	private static final int FIRE_MIN_LIGHTNESS = 45;
 
-	private static byte[] objects = new byte[0];
-	private static byte[] npcs = new byte[0];
-	private static byte[] spotanims = new byte[0];
+	private static int[] objects = new int[0];
+	private static int[] npcs = new int[0];
+	private static int[] spotanims = new int[0];
+	private static Group[] groups = new Group[0];
 	// per texture id: the face bits (already shifted)
 	private static int[] textures = new int[0];
 
@@ -98,11 +108,112 @@ final class SurfaceMaterials
 		int[] transmissiveObjects;
 		int[][] emissiveTextures;
 		int[][] emissiveObjects;
+		Group[] emissiveGroups;
 		int[][] fireObjects;
 		int[][] emissiveNpcs;
 		@SerializedName("emissiveSpotanims")
 		int[][] emissiveSpotanims;
 	}
+
+	/**
+	 * Models with only some faces emissive, from the colorOverrides of a 117 HD model override: textured faces take
+	 * their own level, the others the level of the first rule whose condition their color meets, else the base level.
+	 */
+	static final class Group
+	{
+		int[] objects;
+		int[] npcs;
+		int untextured;
+		int textured;
+		Rule[] rules;
+
+		private int level(int texture, int hsl, int opacity)
+		{
+			if (texture >= 0)
+			{
+				return textured;
+			}
+			for (Rule r : rules)
+			{
+				if (r.matches(hsl, opacity))
+				{
+					return r.level;
+				}
+			}
+			return untextured;
+		}
+	}
+
+	static final class Rule
+	{
+		int level;
+		// clauses of terms like "h==5" or "a<255", as 117 HD's expressions over the face's hue (0-63), saturation
+		// (0-7), lightness (0-127), alpha (255 minus its transparency) or packed hsl; a face meets the rule when
+		// it meets every term of any one clause
+		String[][] when;
+		private transient int[][][] clauses;
+
+		private void compile()
+		{
+			clauses = new int[when.length][][];
+			for (int i = 0; i < when.length; i++)
+			{
+				clauses[i] = new int[when[i].length][];
+				for (int t = 0; t < when[i].length; t++)
+				{
+					Matcher m = TERM.matcher(when[i][t]);
+					if (!m.matches())
+					{
+						throw new IllegalArgumentException("materials.json condition " + when[i][t]);
+					}
+					clauses[i][t] = new int[]{VARIABLES.indexOf(m.group(1)), OPERATORS.indexOf(m.group(2)),
+						Integer.parseInt(m.group(3))};
+				}
+			}
+		}
+
+		private boolean matches(int hsl, int opacity)
+		{
+			int[] v = {hsl >> 10 & 63, hsl >> 7 & 7, hsl & 127, opacity, hsl & 0xffff};
+			for (int[][] clause : clauses)
+			{
+				boolean all = true;
+				for (int i = 0; all && i < clause.length; i++)
+				{
+					int x = v[clause[i][0]], c = clause[i][2];
+					switch (clause[i][1])
+					{
+						case 0:
+							all = x == c;
+							break;
+						case 1:
+							all = x != c;
+							break;
+						case 2:
+							all = x <= c;
+							break;
+						case 3:
+							all = x >= c;
+							break;
+						case 4:
+							all = x < c;
+							break;
+						default:
+							all = x > c;
+					}
+				}
+				if (all)
+				{
+					return true;
+				}
+			}
+			return false;
+		}
+	}
+
+	private static final List<String> VARIABLES = Arrays.asList("h", "s", "l", "a", "hsl");
+	private static final List<String> OPERATORS = Arrays.asList("==", "!=", "<=", ">=", "<", ">");
+	private static final Pattern TERM = Pattern.compile("(hsl|h|s|l|a)(==|!=|<=|>=|<|>)(\\d+)");
 
 	static void load(Gson gson)
 	{
@@ -122,15 +233,37 @@ final class SurfaceMaterials
 			return;
 		}
 
-		byte[] obj = new byte[maxId(d.transmissiveObjects, d.emissiveObjects, d.fireObjects) + 1];
+		Group[] g = d.emissiveGroups != null ? d.emissiveGroups : new Group[0];
+		if (g.length > GROUP_MASK)
+		{
+			log.error("materials.json has {} emissive groups, more than the {} a model can name", g.length, GROUP_MASK);
+			g = Arrays.copyOf(g, GROUP_MASK);
+		}
+		int[] obj = new int[maxId(d.transmissiveObjects, d.emissiveObjects, d.fireObjects, g, true) + 1];
 		set(obj, d.transmissiveObjects, TRANSMISSIVE);
 		setLevels(obj, d.emissiveObjects, 0);
 		setLevels(obj, d.fireObjects, FIRE);
 
-		byte[] npc = new byte[maxId(null, d.emissiveNpcs, null) + 1];
+		int[] npc = new int[maxId(null, d.emissiveNpcs, null, g, false) + 1];
 		setLevels(npc, d.emissiveNpcs, 0);
 
-		byte[] spot = new byte[maxId(null, d.emissiveSpotanims, null) + 1];
+		for (int i = 0; i < g.length; i++)
+		{
+			for (Rule r : g[i].rules)
+			{
+				r.compile();
+			}
+			for (int id : g[i].objects)
+			{
+				obj[id] |= (i + 1) << GROUP_SHIFT;
+			}
+			for (int id : g[i].npcs)
+			{
+				npc[id] |= (i + 1) << GROUP_SHIFT;
+			}
+		}
+
+		int[] spot = new int[maxId(null, d.emissiveSpotanims, null, g, false) + 1];
 		setLevels(spot, d.emissiveSpotanims, 0);
 
 		int[] tex = new int[TextureManager.TEXTURE_COUNT];
@@ -158,12 +291,20 @@ final class SurfaceMaterials
 		objects = obj;
 		npcs = npc;
 		spotanims = spot;
+		groups = g;
 		textures = tex;
 	}
 
-	private static int maxId(int[] plain, int[][] a, int[][] b)
+	private static int maxId(int[] plain, int[][] a, int[][] b, Group[] g, boolean objectGroups)
 	{
 		int max = -1;
+		for (Group e : g)
+		{
+			for (int id : objectGroups ? e.objects : e.npcs)
+			{
+				max = Math.max(max, id);
+			}
+		}
 		if (plain != null)
 		{
 			for (int id : plain)
@@ -184,7 +325,7 @@ final class SurfaceMaterials
 		return max;
 	}
 
-	private static void set(byte[] table, int[] ids, int flag)
+	private static void set(int[] table, int[] ids, int flag)
 	{
 		if (ids != null)
 		{
@@ -195,18 +336,18 @@ final class SurfaceMaterials
 		}
 	}
 
-	private static void setLevels(byte[] table, int[][] entries, int flag)
+	private static void setLevels(int[] table, int[][] entries, int flag)
 	{
 		if (entries != null)
 		{
 			for (int[] e : entries)
 			{
-				table[e[0]] = (byte) ((table[e[0]] & ~EMISSIVE_MASK) | (e[1] & EMISSIVE_MASK) | flag);
+				table[e[0]] = (table[e[0]] & ~EMISSIVE_MASK) | (e[1] & EMISSIVE_MASK) | flag;
 			}
 		}
 	}
 
-	private static int lookup(byte[] table, int id)
+	private static int lookup(int[] table, int id)
 	{
 		return id >= 0 && id < table.length ? table[id] : 0;
 	}
@@ -284,8 +425,9 @@ final class SurfaceMaterials
 	 * @param model   model flags from {@link #forObject} or {@link #forRenderable}
 	 * @param texture the face's texture id, -1 for none
 	 * @param hsl     the face's packed HSL color (ignored for textured faces)
+	 * @param opacity the face's alpha, 255 minus its transparency (see {@link #opacity})
 	 */
-	static int face(int model, int texture, int hsl)
+	static int face(int model, int texture, int hsl, int opacity)
 	{
 		int bits = 0;
 		if (texture >= 0)
@@ -303,7 +445,21 @@ final class SurfaceMaterials
 		{
 			bits = (bits & ~(EMISSIVE_MASK << SHIFT)) | Math.max(level, bits >> SHIFT & EMISSIVE_MASK) << SHIFT;
 		}
+		int group = model >> GROUP_SHIFT & GROUP_MASK;
+		if (group != 0)
+		{
+			level = groups[group - 1].level(texture, hsl, opacity);
+			bits = (bits & ~(EMISSIVE_MASK << SHIFT)) | Math.max(level, bits >> SHIFT & EMISSIVE_MASK) << SHIFT;
+		}
 		return bits | (model & SNOW_MASK) >> SNOW_MODEL_SHIFT << SNOW_SHIFT;
+	}
+
+	/**
+	 * The opacity face() wants, from a model's face transparencies (null for none).
+	 */
+	static int opacity(byte[] transparencies, int face)
+	{
+		return 255 - (transparencies != null ? transparencies[face] & 0xff : 0);
 	}
 
 	/**
