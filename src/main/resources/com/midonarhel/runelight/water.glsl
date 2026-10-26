@@ -607,21 +607,20 @@ uniform int waterFakeOn;  // the water setting: off draws the faces as their typ
 // a face is a fall when its normal's vertical part is below the second and not a pool's at all below the first
 #define FALL_STEEP vec2(0.5, 0.85)
 // A fall is real water, running straight down at FALL_FLOW world units a second (its ripples stretched by FALL_STRETCH
-// along the flow), and the rapids' foam pours over its lip: the same cells at the same size as the water above's
-// (water_frag.glsl), cut to the same two flat tones, across the fall as along the lip and down it by a foam coordinate
-// that grows as the square root of the distance fallen (stretched by FALL_FALL units at the lip), so the cells
-// stretch into longer streaks the faster they fall, each part of the fall stretching a little differently
-// (FALL_VARY). The coordinate scrolls FALL_SPEED cells a second, and the foam is churned over the whole fall (FALL_CHURN)
-// and fully at its foot (FALL_FOOT tiles deep), where it lands in the pool's.
+// along the flow), with the contact foam dragged down it: the same cells at the same size as on flat water, one to
+// one, across the fall and down it, drifting across each other as still water's foam does (FALL_DRIFT seconds a cell)
+// and the whole pattern scrolling down FALL_SPEED cells a second. Cut to two flat tones with hard edges, covering
+// the contact foam's own shapes and thresholds (waterFoamRim), as near the lip and the foot (FALL_NEAR tiles) as at things in
+// the water, shrinking to little between: the shapes shrink, never fade.
 #define FALL_FLOW 320.0
 #define FALL_STRETCH 0.4
-#define FALL_FALL 40.0
-#define FALL_VARY 0.4
-#define FALL_SPEED 1.6
-#define FALL_CHURN 0.7
-#define FALL_FOOT 0.5
+#define FALL_SPEED 2.0
+#define FALL_DRIFT 40.0
+#define FALL_NEAR 1.0
+// how much cell height is added to the foam's in the middle of a fall and at its lip and foot
+#define FALL_SHIFT vec2(0.15, -0.2)
 // the foam's cells (Water.CELLS across CELL_SCALE_B world units, water_frag.glsl)
-#define FALL_CELL (0.65 * 520.0 / 6.0)
+#define FALL_CELL (520.0 / 6.0)
 
 // The slope of level fake water at world xz: two octaves of the sea's waves, running both ways
 vec2 waterFakeSlope(vec2 xz) {
@@ -665,16 +664,18 @@ vec3 waterFake(ivec2 px, vec3 p, vec3 faceN, vec3 albedo, float shadow, vec2 spa
   vec3 nrm = faceN + mix(vec3(-slope.x, 0.0, -slope.y), vec3(-slope.x * tang.x, -slope.y, -slope.x * tang.y), down);
   float foam = 0.0;
   if (fall > 0.0) {
-    // the foam's cells, in cells: across the fall, and down it by the distance fallen (the packed span)
-    float across = dot(world.xz, tang) / FALL_CELL;
-    float stretch = 1.0 + FALL_VARY * (0.6 * sin(WATER_TAU * across / 2.9 + 1.0) + 0.4 * sin(WATER_TAU * across / 1.7 + 2.0));
-    float fell = 2.0 * sqrt(FALL_FALL * (span.y + FALL_FALL)) / FALL_CELL * stretch;
-    float h = waterFoamCells(vec2(across, fell - 64.0 * waterCycle(64.0 / FALL_SPEED)));
-    float churn = max(FALL_CHURN, 1.0 - span.x / (WATER_TILE * FALL_FOOT));
-    // two flat tones with hard edges: the rim of the cells (waterFoamRim) as the pool's foam, its inner part brighter
+    // the foam's cells, in cells (one to one with flat water's): across the fall, and down it
+    vec2 uv = vec2(dot(world.xz, tang), world.y) / FALL_CELL - vec2(0.0, 64.0 * waterCycle(64.0 / FALL_SPEED));
+    float h = 0.5 * (waterFoamCells(uv + vec2(waterCycle(FALL_DRIFT), 0.0))
+      + waterFoamCells(uv.yx + vec2(0.37, -waterCycle(FALL_DRIFT * 1.37))));
+    // how near the lip and the foot are: the cell height raised in the middle of the fall, shrinking its shapes, and lowered
+    // at them, swelling them
+    float near = clamp(max(1.0 - span.y / (WATER_TILE * FALL_NEAR), 1.0 - span.x / (WATER_TILE * FALL_NEAR)), 0.0, 1.0);
+    h += mix(FALL_SHIFT.x, FALL_SHIFT.y, near);
+    // the contact foam's rim (waterFoamRim) cut flat: its tint where it is half gone, its core where it begins
     float aa = max(fwidth(h), 1e-4);
-    float rim = waterEdge(0.45 - h, aa), core = waterEdge(0.2 - h, aa);
-    foam = mix(FOAM_TINT * rim, FOAM_CORE, core) * churn * fall;
+    float rim = waterEdge(0.5 * (FOAM_RIM.x + FOAM_RIM.y) - h, aa), core = waterEdge(FOAM_RIM.x - h, aa);
+    foam = mix(FOAM_TINT * rim, FOAM_CORE, core) * fall;
   }
   nrm = normalize(nrm);
 

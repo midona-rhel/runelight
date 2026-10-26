@@ -341,7 +341,10 @@ void waterWaveField(vec2 xz, int type, vec2 flow, out vec2 slope, out float foam
       h = mix(still, h, flowing);
     }
     float rim = waterFoamRim(h);
-    foam = max(rim * churn * FOAM, contact * (rim * CONTACT_FOAM + CONTACT_FILM));
+    // the shapes around things standing in the water shrink with the distance from them (CONTACT_SHRINK), not fade
+    float near = sqrt(contact);
+    float rimNear = waterFoamRim(h + CONTACT_SHRINK * (1.0 - near));
+    foam = max(rim * churn * FOAM, step(0.001, near) * rimNear * CONTACT_FOAM + contact * CONTACT_FILM);
   }
 }
 

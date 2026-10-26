@@ -191,8 +191,12 @@ float waterHash(vec3 p) {
 // The foam on rapids, and on a fall's lip and foot: the rims of the large ripple cells (height h, Water.cells), as much
 // of the water's foam colour as FOAM of it where the water is fully churned
 #define FOAM 0.45
+// the cells' height the foam's rim fades out over, and how far its shapes shrink away from things in the water (a
+// cell's height raised by this much at no closeness, none at full)
+#define FOAM_RIM vec2(0.15, 0.55)
+#define CONTACT_SHRINK 0.5
 float waterFoamRim(float h) {
-  return 1.0 - smoothstep(0.15, 0.55, h);
+  return 1.0 - smoothstep(FOAM_RIM.x, FOAM_RIM.y, h);
 }
 
 // The ripple cells' height at p, in cells, as Water.cells makes them for the water pass's texture: the domes of the
