@@ -2,7 +2,7 @@ package com.midonarhel.runelight;
 
 /**
  * What stops a static light, as one scene's snapshot for the baking threads (LightMapBake): the walls and the tiles
- * a solid object fills (WallMap), the models at light height (ModelBlockers), and the floors of the storeys, for
+ * a solid object fills (WallMap), the models at the light's height (ModelBlockers), and the floors of the storeys, for
  * the light that passes between them. Immutable once made; arrays are [plane][x][y] in extended scene tiles, like
  * RoomMap's, and cells are the light map's, a quarter tile each (CELLS_PER_TILE).
  */
@@ -30,11 +30,16 @@ final class LightBlockers
 		cells = size * CELLS_PER_TILE;
 	}
 
-	/** Whether the cell stops light: a tile filled by a solid object, or a model at light height. */
-	boolean blocked(int plane, int gx, int gz)
+	/**
+	 * Whether a solid object stops the light on the cell, the whole of it. With the models known the object is what
+	 * they say stands at the light's height (ModelBlockers.box), not its whole tile: a crate that fills its tile to
+	 * the knee does not shade a torch above it. So only without models, or for a storey other than the light's own
+	 * (where no one height is the light's), it is the tile.
+	 */
+	boolean solid(int plane, int gx, int gz, boolean heightKnown)
 	{
 		return walls.solid(plane, Math.floorDiv(gx, CELLS_PER_TILE), Math.floorDiv(gz, CELLS_PER_TILE))
-			|| models != null && models.blocked(plane, gx, gz);
+			&& !(heightKnown && models != null);
 	}
 
 	/** The height (world y, down) of the storey's floor on a tile. */

@@ -6,27 +6,32 @@ import java.util.Arrays;
  * How far one static light reaches, per cell of the light map (LightMap): the share of the light that arrives, 0 to
  * 1, with 117 HD's falloff (1 - d / r)^2 in it. GL-free; runs on the baking threads.
  *
- * A cell is a quarter tile. What stops light is in LightBlockers: wall edges (and diagonal walls), and cells (solid
- * objects, models at light height). On the light's own storey:
+ * A cell is a quarter tile. What stops light is in LightBlockers: wall edges (and diagonal walls), the tiles of solid
+ * objects, and the boxes of the models that stand at the light's height (ModelBlockers.box, as big as the model is in
+ * the cell). On the light's own storey:
  *
  * - Soft line of sight. A light isn't a point: SAMPLES points are spread over a disc LIGHT_WIDTH_TILES wide, each swept
  *   exactly. A sweep from a point finds, for each of BINS directions around it, the distance to the nearest blocker
  *   (every blocker edge in reach is walked once, over the directions it covers), then every cell is seen when it is
- *   nearer than that in its direction. The cost is the edges plus the cells. The share of the samples that see a cell
- *   is its visibility, and the falloff by the straight distance to the light goes with it. (One pass of neighbour
+ *   nearer than that in its direction, looked at in SUBS x SUBS places of the cell so that an edge falling inside a
+ *   cell gives it a part. The cost is the edges plus the cells. The share of the looks that see a cell is its
+ *   visibility, and the falloff by the straight distance to the light goes with it. (One pass of neighbour
  *   propagation was tried instead and a light between two nearby blockers got trapped.)
  * - Wrap. Light walks around corners and through doors and stands in for bounce light: a flood fill over the cells,
  *   blocked by the same blockers, gives each the path distance from the light, and WRAP times the falloff by that
  *   distance is a floor under the direct light.
- * - Blur. A smoothing of about BLUR_TILES that never takes a cell's light from across a blocker.
- * - A light inside the footprint of its own object (a brazier, a caged lantern, a wall torch) casts from the nearest
- *   open cell, on the side it is nearest to, and a little way from the walls of that cell, so a fixture never traps its
- *   own light. The light's real position still gives the distance.
+ * - Blur. A Gaussian of BLUR_SIGMA_CELLS that never takes a cell's light from across a wall, a solid object or a model
+ *   that fills its cell (DENSE_BOX), so shadows have soft edges and no cell shows. The floor under a model's box takes its
+ *   neighbours' light, and wrap does not go through a model that fills its cell.
+ * - A light inside the footprint of its own object (a brazier, a caged lantern, a wall torch) is not shaded by the
+ *   boxes it stands in or next to (FIXTURE), and casts from the nearest open cell when it is in a solid tile, a little
+ *   way from the walls of that cell, so a fixture never traps its own light. The light's real position still gives
+ *   the distance.
  *
  * The other storeys get the light that passes through the openings between them: the line from the light to a point
  * of the cell, at a few heights above its floor, has to cross every floor between them where the storey has no floor
  * or roof tile, from the light to the first opening as visible as it is on its own storey, and past the walls of the
- * storeys it goes through.
+ * storeys it goes through. (Models are not followed onto the other storeys: no one height of theirs is the light's.)
  */
 final class LightMapBake
 {
@@ -37,8 +42,16 @@ final class LightMapBake
 	static final int SAMPLES = 16;
 	/** The share of the falloff by path distance that stays where the light only gets around corners. */
 	static final float WRAP = 0.35f;
-	/** The blur reaches this far (a quarter tile is a cell); only the neighbouring cells' lights are mixed in. */
-	static final float BLUR_TILES = 0.25f;
+	/** The blur's Gaussian, in cells (a quarter tile): about half a tile. */
+	static final float BLUR_SIGMA_CELLS = 2;
+	/** Places looked at along each side of a cell, for its visibility. */
+	static final int SUBS = 2;
+	/** Models closer than this (world units) to a light are its own fixture and do not shade it. */
+	static final float FIXTURE = 10;
+	/** A model whose box fills this much of a cell (the share of its area) is a solid for the wrap of light. */
+	static final float DENSE_BOX = 0.5f;
+	/** The thinnest a model's box is taken to be (world units): a leaf of a door stops light across its length. */
+	static final float MIN_BOX = 4;
 	/** Lights reach this far at most, world units. */
 	static final float MAX_RADIUS = 3200;
 	/** Directions a sweep tells apart: at the far end of a big light still a few world units a direction. */
@@ -50,12 +63,18 @@ final class LightMapBake
 	/** The heights above a storey's floor the light is followed to, on the storeys it shines onto through openings. */
 	static final float[] CROSS_HEIGHTS = {32, 96, 160};
 
+	private static final int BLUR_REACH = (int) Math.ceil(2.5f * BLUR_SIGMA_CELLS);
+	private static final float[] BLUR = new float[BLUR_REACH + 1];
 	private static final float GOLDEN_ANGLE = 2.3999632f;
 	private static final float SQRT2 = 1.4142135f;
 	private static final float[] BIN_DX = new float[BINS], BIN_DZ = new float[BINS];
 
 	static
 	{
+		for (int d = 0; d <= BLUR_REACH; ++d)
+		{
+			BLUR[d] = (float) Math.exp(-d * d / (2.0 * BLUR_SIGMA_CELLS * BLUR_SIGMA_CELLS));
+		}
 		for (int k = 0; k < BINS; ++k)
 		{
 			// the pseudo angle at the bin's middle, as a direction
@@ -122,6 +141,15 @@ final class LightMapBake
 		// diagonal walls as segments: x0, z0, x1, z1
 		float[] diagonals = new float[16];
 		int diagonalCount;
+		// the cells with a model's box (the light's own storey): per cell the box + 1 (0: none), the boxes as x0, z0,
+		// x1, z1 in cells of the layer, and the cells that have one
+		int[] boxOf = new int[0], boxCells = new int[16];
+		float[] boxes = new float[64];
+		int boxCount, boxCellCount;
+		// the cell's middle is inside its box
+		boolean[] covered = new boolean[0];
+		// the box fills most of the cell: wrap does not go through
+		boolean[] dense = new boolean[0];
 
 		void reset(int w, int h)
 		{
@@ -132,10 +160,49 @@ final class LightMapBake
 				free = new boolean[w * h];
 				east = new boolean[w * h];
 				north = new boolean[w * h];
+				boxOf = new int[w * h];
+				covered = new boolean[w * h];
+				dense = new boolean[w * h];
 			}
 			Arrays.fill(east, 0, w * h, true);
 			Arrays.fill(north, 0, w * h, true);
+			Arrays.fill(boxOf, 0, w * h, 0);
+			Arrays.fill(covered, 0, w * h, false);
+			Arrays.fill(dense, 0, w * h, false);
 			diagonalCount = 0;
+			boxCount = 0;
+			boxCellCount = 0;
+		}
+
+		void addBox(int cell, float x0, float z0, float x1, float z1)
+		{
+			if (boxCount * 4 == boxes.length)
+			{
+				boxes = Arrays.copyOf(boxes, boxes.length * 2);
+			}
+			if (boxCellCount == boxCells.length)
+			{
+				boxCells = Arrays.copyOf(boxCells, boxCellCount * 2);
+			}
+			int o = boxCount * 4;
+			boxes[o] = x0;
+			boxes[o + 1] = z0;
+			boxes[o + 2] = x1;
+			boxes[o + 3] = z1;
+			boxOf[cell] = ++boxCount;
+			boxCells[boxCellCount++] = cell;
+		}
+
+		/** Whether a point is inside a model's box. */
+		boolean inBox(float x, float z)
+		{
+			int i = (int) Math.floor(x), j = (int) Math.floor(z);
+			if (i < 0 || j < 0 || i >= w || j >= h || boxOf[j * w + i] == 0)
+			{
+				return false;
+			}
+			int o = (boxOf[j * w + i] - 1) * 4;
+			return x >= boxes[o] && x <= boxes[o + 2] && z >= boxes[o + 1] && z <= boxes[o + 3];
 		}
 
 		void addDiagonal(float x0, float z0, float x1, float z1)
@@ -162,6 +229,7 @@ final class LightMapBake
 		private int[] candidates = new int[0];
 		private int candidateCount;
 		private short[] hits = new short[0];
+		private byte[] runBefore = new byte[0], runAfter = new byte[0];
 		private float[] vis = new float[0], value = new float[0], value2 = new float[0], mix = new float[0], dist = new float[0];
 		private final Heap heap = new Heap();
 		private long visits;
@@ -170,6 +238,8 @@ final class LightMapBake
 		{
 			if (vis.length < cells)
 			{
+				runBefore = new byte[cells];
+				runAfter = new byte[cells];
 				candidates = new int[cells];
 				hits = new short[cells];
 				vis = new float[cells];
@@ -204,13 +274,17 @@ final class LightMapBake
 		int w = x1 - x0 + 1, h = z1 - z0 + 1;
 		s.size(w * h);
 		Layer own = s.own;
-		load(own, b, light.plane, x0, z0, w, h);
+		int lightBin = ModelBlockers.bin(b.floor(light.plane, (int) Math.floor(light.x / 128) + b.offset,
+			(int) Math.floor(light.z / 128) + b.offset) - light.y);
+		load(own, b, light.plane, x0, z0, w, h, lightBin);
 		float sx = lx - x0, sz = lz - z0;
 		float[] source = new float[2];
 		if (!source(own, sx, sz, source))
 		{
 			return new Result(new Grid[0], 0);
 		}
+		dropFixture(own, sx, sz);
+		dropFixture(own, source[0], source[1]);
 		collectSegments(s, own);
 		gatherCandidates(s, own, sx, sz, rc);
 		float[] value = s.value;
@@ -230,6 +304,7 @@ final class LightMapBake
 			float d = s.dist[k] * CELL * invRadius;
 			value[k] = Math.max(value[k], WRAP * falloff(d));
 		}
+		fillCovered(own, value);
 		blur(s, own, value);
 		dilate(own, value);
 
@@ -268,14 +343,35 @@ final class LightMapBake
 	// ---------------------------------------------------------------------------------------------------------
 	// A storey's blockers
 
-	private static void load(Layer l, LightBlockers b, int plane, int x0, int z0, int w, int h)
+	/**
+	 * @param bin the light's height bin when this is the light's own storey, where models are followed; -1 on any other
+	 */
+	private static void load(Layer l, LightBlockers b, int plane, int x0, int z0, int w, int h, int bin)
 	{
 		l.reset(w, h);
+		float[] box = new float[4];
+		float thin = MIN_BOX / CELL;
 		for (int j = 0; j < h; ++j)
 		{
 			for (int i = 0; i < w; ++i)
 			{
-				l.free[j * w + i] = !b.blocked(plane, x0 + i, z0 + j);
+				l.free[j * w + i] = !b.solid(plane, x0 + i, z0 + j, bin >= 0);
+				if (bin >= 0 && b.models != null && b.models.box(plane, x0 + i, z0 + j, bin, box))
+				{
+					// as thin as MIN_BOX at the least, inside the cell
+					for (int a = 0; a < 2; ++a)
+					{
+						if (box[a + 2] - box[a] < thin)
+						{
+							float mid = (box[a] + box[a + 2]) * 0.5f;
+							box[a] = Math.max(0, Math.min(1 - thin, mid - thin * 0.5f));
+							box[a + 2] = box[a] + thin;
+						}
+					}
+					l.addBox(j * w + i, i + box[0], j + box[1], i + box[2], j + box[3]);
+					l.covered[j * w + i] = box[0] <= 0.5f && box[2] >= 0.5f && box[1] <= 0.5f && box[3] >= 0.5f;
+					l.dense[j * w + i] = (box[2] - box[0]) * (box[3] - box[1]) >= DENSE_BOX;
+				}
 			}
 		}
 		WallMap walls = b.walls;
@@ -398,6 +494,33 @@ final class LightMapBake
 	}
 
 	/**
+	 * The light's own fixture does not shade it: the boxes of the cell the point is in and the cells around it, that the
+	 * point is inside or within FIXTURE of, are left out.
+	 */
+	private static void dropFixture(Layer l, float px, float pz)
+	{
+		float m = FIXTURE / CELL;
+		int ci = (int) Math.floor(px), cj = (int) Math.floor(pz);
+		for (int j = cj - 1; j <= cj + 1; ++j)
+		{
+			for (int i = ci - 1; i <= ci + 1; ++i)
+			{
+				if (i < 0 || j < 0 || i >= l.w || j >= l.h || l.boxOf[j * l.w + i] == 0)
+				{
+					continue;
+				}
+				int o = (l.boxOf[j * l.w + i] - 1) * 4;
+				if (px >= l.boxes[o] - m && px <= l.boxes[o + 2] + m && pz >= l.boxes[o + 1] - m && pz <= l.boxes[o + 3] + m)
+				{
+					l.boxOf[j * l.w + i] = 0;
+					l.covered[j * l.w + i] = false;
+					l.dense[j * l.w + i] = false;
+				}
+			}
+		}
+	}
+
+	/**
 	 * Where the light is cast from, local cells, in out: its own place in an open cell, kept SOURCE_CLEARANCE off the
 	 * cell's walls; from a blocked cell the nearest point of the nearest open one. False when there is none.
 	 */
@@ -515,6 +638,19 @@ final class LightMapBake
 		{
 			addSegment(s, l.diagonals[d * 4], l.diagonals[d * 4 + 1], l.diagonals[d * 4 + 2], l.diagonals[d * 4 + 3]);
 		}
+		for (int n = 0; n < l.boxCellCount; ++n)
+		{
+			int b = l.boxOf[l.boxCells[n]];
+			if (b == 0)
+			{
+				continue;
+			}
+			float x0 = l.boxes[(b - 1) * 4], z0 = l.boxes[(b - 1) * 4 + 1], x1 = l.boxes[(b - 1) * 4 + 2], z1 = l.boxes[(b - 1) * 4 + 3];
+			addSegment(s, x0, z0, x1, z0);
+			addSegment(s, x1, z0, x1, z1);
+			addSegment(s, x1, z1, x0, z1);
+			addSegment(s, x0, z1, x0, z0);
+		}
 	}
 
 	private static void addSegment(Scratch s, float x0, float z0, float x1, float z1)
@@ -565,7 +701,7 @@ final class LightMapBake
 			float r = half * (float) Math.sqrt((k + 0.5f) / SAMPLES), a = k * GOLDEN_ANGLE;
 			float x = px + r * (float) Math.cos(a), z = pz + r * (float) Math.sin(a);
 			int ci = (int) Math.floor(x), cj = (int) Math.floor(z);
-			if (x < 0 || z < 0 || ci >= l.w || cj >= l.h || !l.free[cj * l.w + ci] || crossesAny(s, px, pz, x, z))
+			if (x < 0 || z < 0 || ci >= l.w || cj >= l.h || !l.free[cj * l.w + ci] || l.inBox(x, z) || crossesAny(s, px, pz, x, z))
 			{
 				continue;
 			}
@@ -578,7 +714,7 @@ final class LightMapBake
 			sweep(s, l, px, pz);
 			samples = 1;
 		}
-		float inv = 1f / samples;
+		float inv = 1f / (samples * SUBS * SUBS);
 		for (int n = 0; n < s.candidateCount; ++n)
 		{
 			int c = s.candidates[n];
@@ -680,21 +816,29 @@ final class LightMapBake
 		for (int n = 0; n < s.candidateCount; ++n)
 		{
 			int k = s.candidates[n];
-			float dx = k % w + 0.5f - px, dz = k / w + 0.5f - pz;
-			float d2 = dx * dx + dz * dz;
-			if (d2 < 1e-6f)
+			int seen = 0;
+			for (int sj = 0; sj < SUBS; ++sj)
 			{
-				s.hits[k]++;
-				continue;
+				for (int si = 0; si < SUBS; ++si)
+				{
+					float dx = k % w + (si + 0.5f) / SUBS - px, dz = k / w + (sj + 0.5f) / SUBS - pz;
+					float d2 = dx * dx + dz * dz;
+					if (d2 < 1e-6f)
+					{
+						seen++;
+						continue;
+					}
+					int bin = Math.min(BINS - 1, (int) (pseudoAngle(dx, dz) * (BINS / 4f)));
+					float limit = depth[bin];
+					if (limit == Float.POSITIVE_INFINITY || d2 < limit * limit)
+					{
+						seen++;
+					}
+				}
 			}
-			int bin = Math.min(BINS - 1, (int) (pseudoAngle(dx, dz) * (BINS / 4f)));
-			float limit = depth[bin];
-			if (limit == Float.POSITIVE_INFINITY || d2 < limit * limit)
-			{
-				s.hits[k]++;
-			}
+			s.hits[k] += seen;
 		}
-		s.visits += s.candidateCount;
+		s.visits += s.candidateCount * SUBS * SUBS;
 	}
 
 	// ---------------------------------------------------------------------------------------------------------
@@ -735,7 +879,7 @@ final class LightMapBake
 					}
 					int nk = k + dj * w + di;
 					float nd = d + (di != 0 && dj != 0 ? SQRT2 : 1);
-					if (nd < rc + 1 && nd < s.dist[nk])
+					if (nd < rc + 1 && nd < s.dist[nk] && !l.dense[nk])
 					{
 						s.dist[nk] = nd;
 						heap.push(nd, nk);
@@ -764,60 +908,97 @@ final class LightMapBake
 	// Smoothing
 
 	/**
-	 * Smooth the open cells with 1 2 1 along each axis, a cell mixing in only the neighbours it is joined to: the
-	 * blur never takes light across a blocker.
+	 * Smooth the open cells with a Gaussian of BLUR_SIGMA_CELLS along each axis in turn, a cell mixing in only the cells
+	 * it is joined to by open steps, and taking the mean of those: the blur never takes light across a wall or a solid
+	 * object, and does not darken what stands beside one.
 	 */
 	private static void blur(Scratch s, Layer l, float[] value)
 	{
 		int w = l.w, h = l.h;
 		float[] tmp = s.mix;
-		for (int j = 0; j < h; ++j)
+		byte[] before = s.runBefore, after = s.runAfter;
+		for (int pass = 0; pass < 2; ++pass)
 		{
-			for (int i = 0; i < w; ++i)
+			boolean x = pass == 0;
+			float[] from = x ? value : tmp, to = x ? tmp : value;
+			int stride = x ? 1 : w;
+			// how many open steps lead on from each cell, either way along the axis (up to the blur's reach)
+			for (int j = 0; j < h; ++j)
 			{
-				int k = j * w + i;
-				if (!l.free[k])
+				for (int i = 0; i < w; ++i)
 				{
-					continue;
+					int k = j * w + i;
+					int pi = x ? i - 1 : i, pj = x ? j : j - 1;
+					before[k] = (byte) (pi >= 0 && pj >= 0 && l.free[k] && !l.dense[k] && openStep(l, i, j, pi - i, pj - j)
+						? Math.min(BLUR_REACH, before[k - stride] + 1) : 0);
 				}
-				float sum = 2 * value[k], weight = 2;
-				if (i > 0 && joined(l, i, j, -1, 0))
-				{
-					sum += value[k - 1];
-					weight++;
-				}
-				if (i + 1 < w && joined(l, i, j, 1, 0))
-				{
-					sum += value[k + 1];
-					weight++;
-				}
-				tmp[k] = sum / weight;
 			}
-		}
-		for (int j = 0; j < h; ++j)
-		{
-			for (int i = 0; i < w; ++i)
+			for (int j = h - 1; j >= 0; --j)
 			{
-				int k = j * w + i;
-				if (!l.free[k])
+				for (int i = w - 1; i >= 0; --i)
+				{
+					int k = j * w + i;
+					int ni = x ? i + 1 : i, nj = x ? j : j + 1;
+					after[k] = (byte) (ni < w && nj < h && l.free[k] && !l.dense[k] && openStep(l, i, j, ni - i, nj - j)
+						? Math.min(BLUR_REACH, after[k + stride] + 1) : 0);
+				}
+			}
+			for (int k = 0; k < w * h; ++k)
+			{
+				if (!l.free[k] || l.dense[k])
 				{
 					continue;
 				}
-				float sum = 2 * tmp[k], weight = 2;
-				if (j > 0 && joined(l, i, j, 0, -1))
+				float sum = from[k], weight = 1;
+				for (int d = 1; d <= before[k]; ++d)
 				{
-					sum += tmp[k - w];
-					weight++;
+					sum += BLUR[d] * from[k - d * stride];
+					weight += BLUR[d];
 				}
-				if (j + 1 < h && joined(l, i, j, 0, 1))
+				for (int d = 1; d <= after[k]; ++d)
 				{
-					sum += tmp[k + w];
-					weight++;
+					sum += BLUR[d] * from[k + d * stride];
+					weight += BLUR[d];
 				}
-				value[k] = sum / weight;
+				to[k] = sum / weight;
 			}
 		}
 		s.visits += w * h;
+	}
+
+	/** Whether the blur passes from cell (i, j) to the neighbour one step away: open, and not a model that fills its cell. */
+	private static boolean openStep(Layer l, int i, int j, int di, int dj)
+	{
+		return joined(l, i, j, di, dj) && !l.dense[(j + dj) * l.w + i + di];
+	}
+
+	/** The floor in the middle of a model's box is lit like the open cells beside it. */
+	private static void fillCovered(Layer l, float[] value)
+	{
+		int w = l.w, h = l.h;
+		for (int n = 0; n < l.boxCellCount; ++n)
+		{
+			int k = l.boxCells[n];
+			if (!l.covered[k])
+			{
+				continue;
+			}
+			int i = k % w, j = k / w;
+			float best = 0;
+			for (int d = 0; d < 4; ++d)
+			{
+				int ni = i + (d == 0 ? 1 : d == 1 ? -1 : 0), nj = j + (d == 2 ? 1 : d == 3 ? -1 : 0);
+				if (ni >= 0 && nj >= 0 && ni < w && nj < h && l.free[nj * w + ni] && !l.covered[nj * w + ni]
+					&& edgeOpen(l, ni, nj, i - ni, j - nj))
+				{
+					best = Math.max(best, value[nj * w + ni]);
+				}
+			}
+			if (best > value[k])
+			{
+				value[k] = best;
+			}
+		}
 	}
 
 	/**
@@ -905,7 +1086,7 @@ final class LightMapBake
 			return null;
 		}
 		Layer l = s.other;
-		load(l, b, plane, x0, z0, w, h);
+		load(l, b, plane, x0, z0, w, h, -1);
 		float[] value = s.value2;
 		Arrays.fill(value, 0, w * h, 0);
 		boolean any = false;

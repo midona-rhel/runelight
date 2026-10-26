@@ -248,6 +248,35 @@ final class WallMap
 	}
 
 	/**
+	 * Mark the light map's cells (a quarter tile) of every tile whose walls or solid objects differ from another map of
+	 * the same size, and the cell around them: a wall stands on its tile's edge.
+	 */
+	void diff(WallMap o, CellChanges changes)
+	{
+		int n = LightBlockers.CELLS_PER_TILE;
+		for (int plane = 0; plane < PLANES; ++plane)
+		{
+			for (int x = 0; x < size; ++x)
+			{
+				int i = index(plane, x, 0);
+				for (int y = 0; y < size; ++y, ++i)
+				{
+					if (bits[i] != o.bits[i] || full[i] != o.full[i])
+					{
+						for (int dz = 0; dz < n; ++dz)
+						{
+							for (int dx = 0; dx < n; ++dx)
+							{
+								changes.mark(x * n + dx, y * n + dz, 1);
+							}
+						}
+					}
+				}
+			}
+		}
+	}
+
+	/**
 	 * Which diagonal a diagonal wall's model runs along, from its vertices (model space, x east and z north, before
 	 * the object's model orientation, which is applied here the way SceneUploader does): the sign of the x-z
 	 * covariance. DIAG_SW_NE when x and z grow together; the rotation's parity when the model says nothing.

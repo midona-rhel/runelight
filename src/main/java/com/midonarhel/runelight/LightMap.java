@@ -7,8 +7,6 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.PriorityBlockingQueue;
-import java.util.concurrent.atomic.AtomicInteger;
-import java.util.concurrent.atomic.AtomicLong;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -18,11 +16,15 @@ import org.slf4j.LoggerFactory;
  * the weather read the map instead of looping over the lights). What a cell holds, in two layers per storey:
  *
  * - A, filtered: the summed colour of the lights, each its colour times its strength times its share of the cell; and
- *   the dominant light's share of it (the weight of the brightest of them), in alpha.
- * - B, read as it is: the dominant light's table index, its place relative to the cell's middle (x, z) and its height
- *   (world y). The shading takes its direction and its vertical falloff from it, and its flicker from the table
+ *   how far the brightest of them is ahead of the next one (their luminances' difference), in alpha.
+ * - B, filtered but for its alpha: where the lights are, as their mean place weighted by their luminance, premultiplied
+ *   by it so that it filters: the sum of luminance times the place from the cell's middle (x, z) and the height (world
+ *   y), in sixteenths of a unit; and, to be read as it is, the table index of the brightest light.
+ *   The shading takes its direction and its vertical falloff from the mean place, and the flicker from the table
  *   (light_map.glsl): the table holds, for each baked light, how strong it is now against how strong it was baked, and
- *   its radius. So only the dominant light of a cell flickers, and a pulse changes its strength but not its radius.
+ *   its radius. So only the brightest light of a cell flickers, by as much as it is ahead of the others (so that
+ *   where the brightest changes from one light to another, nothing steps), and a pulse changes a strength but not a
+ *   radius.
  *
  * The bakes run on background threads, nearest light first, and the cells are put together by 32 x 32 blocks from the
  * lights' results, again on the threads; the render thread only sends the finished blocks (the nearest first, a few a
@@ -30,10 +32,14 @@ import org.slf4j.LoggerFactory;
  * light is the clusters', so nothing pops to black; and a light that goes is taken out of the blocks before its table
  * entry is reused.
  *
- * Changes: when the walls, the solid objects or the models near a light change (doors, spawns), the lights whose box
- * holds the change are baked again (setBlockers). A light that is night-only, or has a night multiplier, is put into the
- * blocks at its strength for the night as of sixteen steps of it; between the steps, and for flicker, the table's
- * strength against the baked one makes up the difference for the dominant light only.
+ * Changes: when the walls, the solid objects or the models change (doors, spawns), the lights whose reach holds a cell
+ * that differs are baked again (setBlockers), and one that comes out as it was changes nothing downstream. A light that
+ * is night-only, or has a night multiplier, is put into the blocks at its strength for the night as of sixteen steps of
+ * it; between the steps, and for flicker, the table's strength against the baked one makes up the difference for the
+ * brightest light of a cell only.
+ *
+ * Each stretch of work (a scene load, a teleport, a door) is told in the log once it is all sent: the lights baked, the
+ * time from the start until every block was sent, the work and the threads.
  */
 final class LightMap
 {
@@ -41,11 +47,15 @@ final class LightMap
 
 	/** Cells per block side. */
 	static final int BLOCK = 32;
+	/** The places in layer B are stored in this many units to the world unit (they are sums). */
+	static final float PLACE_SCALE = 1 / 16f;
 	/** Table entries; 0 is no light. */
 	static final int TABLE_TEXELS = 2048;
 	static final int STORIES = WallMap.PLANES;
 	/** The steps the night is quantized to for the baked strengths. */
 	static final int NIGHT_STEPS = 16;
+	/** Work on this many lights is told in the log at info level, less at debug. */
+	static final int INFO_LIGHTS = 16;
 	/** A light further than this (world units) outside the view's reach is let go of. */
 	static final float EVICT_MARGIN = 2560;
 
@@ -168,9 +178,26 @@ final class LightMap
 	private final float[] table = new float[TABLE_TEXELS * 4];
 	private int tableUsed = 1;
 
-	private final AtomicInteger queued = new AtomicInteger(), finished = new AtomicInteger();
-	private final AtomicLong bakeNanos = new AtomicLong(), bakeVisits = new AtomicLong(), combined = new AtomicLong();
-	private volatile long batchStart;
+	/** The work since the map was idle: what was baked, why, and what it took, for the log. */
+	private static final class Batch
+	{
+		final long start;
+		boolean scene;
+		int lights, fresh, changed, byWalls, byModels, unchanged, blocks;
+		long bakeNanos, blockNanos, visits;
+
+		Batch(long start, boolean scene)
+		{
+			this.start = start;
+			this.scene = scene;
+		}
+	}
+
+	// guarded by lock
+	private Batch batch;
+	private boolean sceneLoad;
+	private long sceneLoadNanos;
+	private int bakesPending, combinesQueued;
 
 	/** @param threads the baking threads; 0 for none: the work is then done by {@link #runTasks} */
 	LightMap(int threads)
@@ -286,52 +313,69 @@ final class LightMap
 			{
 				for (Source s : sources)
 				{
-					rebake(s);
+					rebake(s, false);
 				}
 				return;
 			}
-			int[] rect = changedCells(old, next);
-			if (rect == null)
+			CellChanges walls = new CellChanges(next.cells), models = new CellChanges(next.cells);
+			if (old.walls != next.walls)
+			{
+				next.walls.diff(old.walls, walls);
+			}
+			if (old.models != next.models)
+			{
+				if (next.models != null)
+				{
+					next.models.diff(old.models, models);
+				}
+				else
+				{
+					models.markAll();
+				}
+			}
+			if (walls.isEmpty() && models.isEmpty())
 			{
 				return;
 			}
 			int off = next.offset * LightBlockers.CELLS_PER_TILE;
+			int again = 0;
 			for (Source s : sources)
 			{
-				if (s.registered && !s.retired && touches(s, rect, off))
+				if (!s.registered || s.retired)
 				{
-					rebake(s);
+					continue;
 				}
+				// the reason is the walls', when both reach it
+				boolean byWalls = touches(s, walls, off);
+				if (byWalls || touches(s, models, off))
+				{
+					rebake(s, false);
+					again++;
+					if (byWalls)
+					{
+						batch.byWalls++;
+					}
+					else
+					{
+						batch.byModels++;
+					}
+				}
+			}
+			if (again > 0 && log.isDebugEnabled())
+			{
+				log.debug("Light map: {} lights baked again, {} cells of walls or solid objects and {} cells of models changed",
+					again, walls.count(), models.count());
 			}
 		}
 	}
 
-	/** The rectangle of cells (x0, z0, x1, z1) that differ between two snapshots, null when none. */
-	private static int[] changedCells(LightBlockers a, LightBlockers b)
-	{
-		int[] walls = a.walls == b.walls ? null : b.walls.diff(a.walls);
-		int[] models = a.models == b.models ? null : b.models != null ? b.models.diff(a.models) : a.models.diff(null);
-		int[] rect = null;
-		int n = LightBlockers.CELLS_PER_TILE;
-		if (walls != null)
-		{
-			// a wall is on the edge of its tile: the cells of the tiles next to it too
-			rect = new int[]{(walls[0] - 1) * n, (walls[1] - 1) * n, (walls[2] + 2) * n - 1, (walls[3] + 2) * n - 1};
-		}
-		if (models != null)
-		{
-			rect = rect == null ? models : new int[]{Math.min(rect[0], models[0]), Math.min(rect[1], models[1]),
-				Math.max(rect[2], models[2]), Math.max(rect[3], models[3])};
-		}
-		return rect;
-	}
-
-	/** Whether a light's reach (its box) holds any of the cells of the rectangle, a storey apart or not. */
-	private static boolean touches(Source s, int[] rect, int off)
+	/** Whether a cell of the light's reach (its box, a storey apart or not) differs. */
+	private static boolean touches(Source s, CellChanges changes, int off)
 	{
 		float r = Math.min(s.radius, LightMapBake.MAX_RADIUS) / LightMapBake.CELL;
 		float cx = s.x / LightMapBake.CELL + off, cz = s.z / LightMapBake.CELL + off;
-		return rect[2] >= cx - r - 1 && rect[0] <= cx + r + 1 && rect[3] >= cz - r - 1 && rect[1] <= cz + r + 1;
+		return changes.any((int) Math.floor(cx - r) - 1, (int) Math.floor(cz - r) - 1, (int) Math.floor(cx + r) + 1,
+			(int) Math.floor(cz + r) + 1);
 	}
 
 	/**
@@ -390,7 +434,7 @@ final class LightMap
 			sources.add(s);
 			if (blockers != null)
 			{
-				rebake(s);
+				rebake(s, true);
 			}
 			return true;
 		}
@@ -444,6 +488,12 @@ final class LightMap
 
 	private void dropAll()
 	{
+		sceneLoad = true;
+		sceneLoadNanos = System.nanoTime();
+		if (batch != null)
+		{
+			batch.scene = true;
+		}
 		for (Source s : sources)
 		{
 			// they can come back
@@ -534,14 +584,27 @@ final class LightMap
 	// ---------------------------------------------------------------------------------------------------------
 	// Bakes
 
-	private void rebake(Source s)
+	/** Bake a light (the lock is held). */
+	private void rebake(Source s, boolean fresh)
 	{
 		int gen = ++s.generation;
 		float dx = s.x - focusX, dz = s.z - focusZ;
-		if (queued.getAndIncrement() == finished.get())
+		if (batch == null)
 		{
-			batchStart = System.nanoTime();
+			// a new scene counts from when it was loaded
+			batch = new Batch(sceneLoad ? sceneLoadNanos : System.nanoTime(), sceneLoad);
+			sceneLoad = false;
 		}
+		batch.lights++;
+		if (fresh)
+		{
+			batch.fresh++;
+		}
+		else
+		{
+			batch.changed++;
+		}
+		bakesPending++;
 		submit(dx * dx + dz * dz, () -> bake(s, gen));
 	}
 
@@ -549,49 +612,102 @@ final class LightMap
 
 	private void bake(Source s, int gen)
 	{
-		LightBlockers b;
-		synchronized (lock)
+		try
 		{
-			if (s.retired || s.generation != gen || blockers == null)
+			LightBlockers b;
+			synchronized (lock)
 			{
-				done();
-				return;
-			}
-			b = blockers;
-		}
-		long start = System.nanoTime();
-		LightMapBake.Result r = LightMapBake.bake(new LightMapBake.Light(s.plane, s.x, s.y, s.z, s.radius), b, scratch.get());
-		long took = System.nanoTime() - start;
-		bakeNanos.addAndGet(took);
-		bakeVisits.addAndGet(r.cellVisits);
-		if (log.isDebugEnabled())
-		{
-			log.debug("Light map: light at {}, {} (storey {}, radius {}) baked in {} ms, {} cell visits, {} storeys",
-				Math.round(s.x), Math.round(s.z), s.plane, Math.round(s.radius), took / 1e6, r.cellVisits, r.grids.length);
-		}
-		synchronized (lock)
-		{
-			if (!s.retired && s.generation == gen)
-			{
-				dirty(s.grids, r.grids);
-				s.grids = r.grids;
-				s.needKeys = keysOf(r.grids);
-				s.needSeqs = new int[s.needKeys.length];
-				for (int i = 0; i < s.needKeys.length; ++i)
+				if (s.retired || s.generation != gen || blockers == null)
 				{
-					s.needSeqs[i] = seq[s.needKeys[i]];
+					return;
+				}
+				b = blockers;
+			}
+			long start = System.nanoTime();
+			LightMapBake.Result r = LightMapBake.bake(new LightMapBake.Light(s.plane, s.x, s.y, s.z, s.radius), b, scratch.get());
+			long took = System.nanoTime() - start;
+			if (log.isDebugEnabled())
+			{
+				log.debug("Light map: light at {}, {} (storey {}, radius {}) baked in {} ms, {} cell visits, {} storeys",
+					Math.round(s.x), Math.round(s.z), s.plane, Math.round(s.radius), took / 1e6, r.cellVisits, r.grids.length);
+			}
+			synchronized (lock)
+			{
+				if (batch != null)
+				{
+					batch.bakeNanos += took;
+					batch.visits += r.cellVisits;
+				}
+				if (!s.retired && s.generation == gen)
+				{
+					if (s.grids != null && same(s.grids, r.grids))
+					{
+						// baked again to the same result: nothing changes for the blocks
+						if (batch != null)
+						{
+							batch.unchanged++;
+						}
+						return;
+					}
+					dirty(s.grids, r.grids);
+					s.grids = r.grids;
+					s.needKeys = keysOf(r.grids);
+					s.needSeqs = new int[s.needKeys.length];
+					for (int i = 0; i < s.needKeys.length; ++i)
+					{
+						s.needSeqs[i] = seq[s.needKeys[i]];
+					}
 				}
 			}
 		}
-		done();
+		finally
+		{
+			synchronized (lock)
+			{
+				bakesPending--;
+			}
+		}
 	}
 
-	private void done()
+	private static boolean same(LightMapBake.Grid[] a, LightMapBake.Grid[] b)
 	{
-		if (finished.incrementAndGet() == queued.get() && log.isDebugEnabled())
+		if (a.length != b.length)
 		{
-			log.debug("Light map: {} bakes done in {} ms of waiting, {} ms of work, {} cell visits; {} blocks put together",
-				finished.get(), (System.nanoTime() - batchStart) / 1e6, bakeNanos.get() / 1e6, bakeVisits.get(), combined.get());
+			return false;
+		}
+		for (int i = 0; i < a.length; ++i)
+		{
+			if (a[i].plane != b[i].plane || a[i].x0 != b[i].x0 || a[i].z0 != b[i].z0 || a[i].w != b[i].w || a[i].h != b[i].h
+				|| !Arrays.equals(a[i].c, b[i].c))
+			{
+				return false;
+			}
+		}
+		return true;
+	}
+
+	/** When all the work is done and sent: say what it was. The lock is held. */
+	private void endBatch()
+	{
+		Batch b = batch;
+		if (b == null || bakesPending > 0 || combinesQueued > 0 || !ready.isEmpty())
+		{
+			return;
+		}
+		batch = null;
+		double wall = (System.nanoTime() - b.start) / 1e6;
+		String what = "{} lights baked ({} new, {} again: {} for walls or solid objects, {} for models; {} of them came out the same), {} ms from {} until every block was sent, "
+			+ "{} ms of work on {} threads ({} ms baking, {} ms putting blocks together), {} cell visits, {} blocks sent";
+		Object[] args = {b.lights, b.fresh, b.changed, b.byWalls, b.byModels, b.unchanged, Math.round(wall), b.scene ? "the scene load" : "the first bake",
+			Math.round((b.bakeNanos + b.blockNanos) / 1e6), threadCount, Math.round(b.bakeNanos / 1e6), Math.round(b.blockNanos / 1e6),
+			b.visits, b.blocks};
+		if (b.scene || b.lights >= INFO_LIGHTS)
+		{
+			log.info("Light map: " + what, args);
+		}
+		else if (log.isDebugEnabled())
+		{
+			log.debug("Light map: " + what, args);
 		}
 	}
 
@@ -660,6 +776,7 @@ final class LightMap
 		if (!combinePending[k])
 		{
 			combinePending[k] = true;
+			combinesQueued++;
 			// the blocks first: they are quick and the bakes wait for them
 			submit(-1, () -> combine(k));
 		}
@@ -686,6 +803,21 @@ final class LightMap
 	}
 
 	private void combine(int k)
+	{
+		try
+		{
+			put(k);
+		}
+		finally
+		{
+			synchronized (lock)
+			{
+				combinesQueued--;
+			}
+		}
+	}
+
+	private void put(int k)
 	{
 		List<Part> parts = new ArrayList<>();
 		int plane, bx, bz, seqNow, perSide, off;
@@ -719,10 +851,14 @@ final class LightMap
 				}
 			}
 		}
+		long start = System.nanoTime();
 		Block block = build(k, plane, bx, bz, seqNow, off, parts);
-		combined.incrementAndGet();
 		synchronized (lock)
 		{
+			if (batch != null)
+			{
+				batch.blockNanos += System.nanoTime() - start;
+			}
 			Block old = ready.get(k);
 			if (old == null || old.seq <= block.seq)
 			{
@@ -734,9 +870,10 @@ final class LightMap
 	private static Block build(int key, int plane, int bx, int bz, int seq, int off, List<Part> parts)
 	{
 		int n = BLOCK * BLOCK;
-		float[] sum = new float[n * 3], best = new float[n];
+		// per cell: the colour sum, the sum of luminance times the place of the light (x, z, y), the luminance, the
+		// brightest and the next brightest, and the brightest light
+		float[] sum = new float[n * 3], at = new float[n * 3], total = new float[n], best = new float[n], second = new float[n];
 		Part[] dominant = new Part[n];
-		float[] total = new float[n];
 		boolean any = false;
 		for (Part p : parts)
 		{
@@ -759,10 +896,18 @@ final class LightMap
 					sum[i * 3 + 2] += lb;
 					float lum = 0.2126f * lr + 0.7152f * lg + 0.0722f * lb;
 					total[i] += lum;
+					at[i * 3] += lum * p.x;
+					at[i * 3 + 1] += lum * p.z;
+					at[i * 3 + 2] += lum * p.y;
 					if (lum > best[i])
 					{
+						second[i] = best[i];
 						best[i] = lum;
 						dominant[i] = p;
+					}
+					else if (lum > second[i])
+					{
+						second[i] = lum;
 					}
 					any = true;
 				}
@@ -778,20 +923,21 @@ final class LightMap
 			for (int i = 0; i < BLOCK; ++i)
 			{
 				int c = j * BLOCK + i;
+				Part d = dominant[c];
+				if (d == null)
+				{
+					continue;
+				}
 				a[c * 4] = Half.toHalf(sum[c * 3]);
 				a[c * 4 + 1] = Half.toHalf(sum[c * 3 + 1]);
 				a[c * 4 + 2] = Half.toHalf(sum[c * 3 + 2]);
-				Part d = dominant[c];
-				if (d != null)
-				{
-					a[c * 4 + 3] = Half.toHalf(total[c] > 0 ? best[c] / total[c] : 0);
-					// the light's place from the cell's middle, in world units
-					float cx = (bx * BLOCK + i + 0.5f - off) * LightMapBake.CELL, cz = (bz * BLOCK + j + 0.5f - off) * LightMapBake.CELL;
-					b[c * 4] = Half.toHalf(d.id);
-					b[c * 4 + 1] = Half.toHalf(d.x - cx);
-					b[c * 4 + 2] = Half.toHalf(d.z - cz);
-					b[c * 4 + 3] = Half.toHalf(d.y);
-				}
+				a[c * 4 + 3] = Half.toHalf(best[c] - second[c]);
+				// the mean place from the cell's middle, times the luminance, in sixteenths of a unit
+				float cx = (bx * BLOCK + i + 0.5f - off) * LightMapBake.CELL, cz = (bz * BLOCK + j + 0.5f - off) * LightMapBake.CELL;
+				b[c * 4] = Half.toHalf((at[c * 3] - total[c] * cx) * PLACE_SCALE);
+				b[c * 4 + 1] = Half.toHalf((at[c * 3 + 1] - total[c] * cz) * PLACE_SCALE);
+				b[c * 4 + 2] = Half.toHalf(at[c * 3 + 2] * PLACE_SCALE);
+				b[c * 4 + 3] = Half.toHalf(d.id);
 			}
 		}
 		return new Block(key, plane, bx, bz, seq, a, b);
@@ -849,6 +995,10 @@ final class LightMap
 		}
 		synchronized (lock)
 		{
+			if (batch != null)
+			{
+				batch.blocks += sent;
+			}
 			for (Source s : sources)
 			{
 				if (!s.live && s.grids != null && sent(s.needKeys, s.needSeqs))
@@ -856,6 +1006,7 @@ final class LightMap
 					s.live = true;
 				}
 			}
+			endBatch();
 		}
 		synchronized (lock)
 		{
@@ -889,14 +1040,5 @@ final class LightMap
 	{
 		float x = (b.bx * BLOCK + BLOCK / 2f - off) * LightMapBake.CELL - fx, z = (b.bz * BLOCK + BLOCK / 2f - off) * LightMapBake.CELL - fz;
 		return x * x + z * z;
-	}
-
-	/** Blocks put together and not sent yet, and bakes not done: zero when the map is up to date. */
-	int pending()
-	{
-		synchronized (lock)
-		{
-			return ready.size() + queued.get() - finished.get() + tasks.size();
-		}
 	}
 }

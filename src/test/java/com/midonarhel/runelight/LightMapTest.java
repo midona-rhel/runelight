@@ -36,14 +36,27 @@ public class LightMapTest
 			return a[plane][(int) (ty * 4)][(int) (tx * 4) * 4];
 		}
 
-		float share(int plane, float tx, float ty)
+		/** How far the brightest light is ahead of the rest, as a share of all the light. */
+		float lead(int plane, float tx, float ty)
 		{
-			return a[plane][(int) (ty * 4)][(int) (tx * 4) * 4 + 3];
+			float[] c = a[plane][(int) (ty * 4)];
+			int i = (int) (tx * 4) * 4;
+			return c[i + 3] / (0.2126f * c[i] + 0.7152f * c[i + 1] + 0.0722f * c[i + 2]);
+		}
+
+		/** The lights' mean place (x, y, z; world units) as the shader works it out from the cell. */
+		float[] place(int plane, float tx, float ty)
+		{
+			int gx = (int) (tx * 4), gz = (int) (ty * 4);
+			float[] c = a[plane][gz], d = b[plane][gz];
+			float total = 0.2126f * c[gx * 4] + 0.7152f * c[gx * 4 + 1] + 0.0722f * c[gx * 4 + 2];
+			float midX = (gx + 0.5f - BakeScene.OFFSET * 4) * 32, midZ = (gz + 0.5f - BakeScene.OFFSET * 4) * 32;
+			return new float[]{midX + d[gx * 4] * 16 / total, d[gx * 4 + 2] * 16 / total, midZ + d[gx * 4 + 1] * 16 / total};
 		}
 
 		float id(int plane, float tx, float ty)
 		{
-			return b[plane][(int) (ty * 4)][(int) (tx * 4) * 4];
+			return b[plane][(int) (ty * 4)][(int) (tx * 4) * 4 + 3];
 		}
 	}
 
@@ -75,7 +88,11 @@ public class LightMapTest
 		assertTrue(LightMap.isLive(s));
 		assertEquals("colour times strength at the light", 2 * 1, m.red(0, 24.6f, 24.6f), 0.5f);
 		assertEquals(0.5f * m.red(0, 24.6f, 24.6f), m.a[0][(int) (24.6f * 4)][(int) (24.6f * 4) * 4 + 1], 0.01f);
-		assertEquals("alone, it is the whole", 1, m.share(0, 24.6f, 24.6f), 0.01f);
+		assertEquals("alone, it is the whole", 1, m.lead(0, 24.6f, 24.6f), 0.01f);
+		float[] at = m.place(0, 24.6f, 24.6f);
+		assertEquals("the light's place", s.x, at[0], 2);
+		assertEquals(s.y, at[1], 1);
+		assertEquals(s.z, at[2], 2);
 		assertEquals(0, m.red(0, 40.5f, 24.5f), 0);
 	}
 
@@ -97,24 +114,51 @@ public class LightMapTest
 	}
 
 	@Test
-	public void theDominantLightAndItsShare()
+	public void theLightsMeanPlaceAndTheLeadOfTheBrightest()
 	{
 		LightMap map = new LightMap(0);
 		map.setBlockers(new BakeScene().blockers());
-		LightMap.Source strong = source(0, 24.5f, 24.5f, 40, 8, 3), weak = source(0, 28.5f, 24.5f, 40, 8, 1);
+		LightMap.Source strong = source(0, 24.5f, 24.5f, 40, 8, 3), weak = source(0, 28.5f, 24.5f, 100, 8, 1);
 		map.add(weak);
 		map.add(strong);
 		Mirror m = new Mirror();
 		settle(map, m);
-		// at the strong light's end the strong light has most of it; at the weak one's, still the stronger
-		float shareNearStrong = m.share(0, 23.5f, 24.5f);
-		assertTrue("share " + shareNearStrong, shareNearStrong > 0.5f && shareNearStrong < 1);
+		// near the strong light it is ahead, but not all the light; the mean place is between them, nearer the strong one
+		float lead = m.lead(0, 23.5f, 24.5f);
+		assertTrue("lead " + lead, lead > 0.2f && lead < 1);
 		assertEquals(strong.id, Math.round(m.id(0, 23.5f, 24.5f)));
-		// the offset of the dominant light from the cell's middle and its height
-		int gx = (int) (23.5f * 4), gz = (int) (24.5f * 4);
-		float cx = (gx + 0.5f - BakeScene.OFFSET * 4) * 32;
-		assertEquals(strong.x - cx, m.b[0][gz][gx * 4 + 1], 1);
-		assertEquals(strong.y, m.b[0][gz][gx * 4 + 3], 1);
+		float[] at = m.place(0, 23.5f, 24.5f);
+		assertTrue("x " + at[0], at[0] > strong.x && at[0] < weak.x);
+		assertTrue("y " + at[1], at[1] < strong.y && at[1] > weak.y);
+		// halfway between, where they are as bright: no lead, whichever is read
+		float mid = 0;
+		for (float x = 24.5f; x < 28.5f; x += 0.25f)
+		{
+			mid = Math.min(mid == 0 ? 1 : mid, m.lead(0, x, 24.5f));
+		}
+		assertTrue("the lead goes through zero or near it where the brightest changes: " + mid, mid < 0.15f);
+	}
+
+	@Test
+	public void theMeanPlaceChangesSmoothlyFromCellToCell()
+	{
+		LightMap map = new LightMap(0);
+		map.setBlockers(new BakeScene().blockers());
+		LightMap.Source a = source(0, 20.5f, 24.5f, 100, 8, 2), b = source(0, 30.5f, 24.5f, 40, 8, 2);
+		map.add(a);
+		map.add(b);
+		Mirror m = new Mirror();
+		settle(map, m);
+		float last = Float.NaN;
+		for (float x = 18.5f; x < 32; x += 0.25f)
+		{
+			float[] at = m.place(0, x, 24.5f);
+			if (!Float.isNaN(last))
+			{
+				assertTrue("x " + x + " place " + at[0] + " after " + last, Math.abs(at[0] - last) < 180);
+			}
+			last = at[0];
+		}
 	}
 
 	@Test
@@ -270,5 +314,62 @@ public class LightMapTest
 		settle(map, m);
 		assertTrue(m.red(1, 24.6f, 24.6f) > 0);
 		assertEquals(0, m.red(0, 24.6f, 24.6f), 0);
+	}
+
+	@Test
+	public void onlyAChangeInTheReachOfALightBakesItAgain()
+	{
+		// two doors, far apart, and a light between them out of reach of both: the box round the two would hold it
+		BakeScene before = new BakeScene().verticalWall(0, 8, 6, 10).verticalWall(0, 40, 38, 42);
+		BakeScene after = new BakeScene().verticalWall(0, 8, 6, 10, 8).verticalWall(0, 40, 38, 42, 40);
+		LightMap map = new LightMap(0);
+		map.setBlockers(before.blockers(1));
+		LightMap.Source middle = source(0, 24.5f, 24.5f, 40, 6, 2), byDoor = source(0, 5.5f, 8.5f, 40, 6, 2);
+		map.add(middle);
+		map.add(byDoor);
+		Mirror m = new Mirror();
+		settle(map, m);
+		int middleBakes = middle.generation, doorBakes = byDoor.generation;
+		map.setBlockers(after.blockers(2));
+		settle(map, m);
+		assertEquals("the middle light is out of reach of both", middleBakes, middle.generation);
+		assertEquals("the one by the door is baked again", doorBakes + 1, byDoor.generation);
+	}
+
+	@Test
+	public void aSnapshotThatIsTheSameBakesNothing()
+	{
+		BakeScene scene = new BakeScene().verticalWall(0, 20, 14, 26);
+		LightMap map = new LightMap(0);
+		map.setBlockers(scene.blockers(1));
+		LightMap.Source s = source(0, 17.5f, 20.5f, 40, 8, 2);
+		map.add(s);
+		Mirror m = new Mirror();
+		settle(map, m);
+		int bakes = s.generation;
+		// the walls and the models are rebuilt every tick and every voxel build: equal ones are no change
+		map.setBlockers(new BakeScene().verticalWall(0, 20, 14, 26).blockers(2));
+		settle(map, m);
+		assertEquals(bakes, s.generation);
+	}
+
+	@Test
+	public void aLightBakedAgainToTheSameResultSendsNothing()
+	{
+		// a model at 200 units appears in the light's reach, which has a fire at 40 units: it is baked again, and the
+		// result is what it was
+		LightMap map = new LightMap(0);
+		map.setBlockers(new BakeScene().modelBox(0, 4 * 30, 4 * 24, 0, 0, 32, 32, 0, 30).blockers(1));
+		LightMap.Source s = source(0, 24.5f, 24.5f, 40, 6, 2);
+		map.add(s);
+		Mirror m = new Mirror();
+		settle(map, m);
+		int bakes = s.generation, blocks = m.blocks;
+		map.setBlockers(new BakeScene().modelBox(0, 4 * 30, 4 * 24, 0, 0, 32, 32, 0, 30).modelBox(0, 4 * 25, 4 * 24, 0, 0, 32, 32, 200, 230)
+			.blockers(2));
+		settle(map, m);
+		assertEquals(bakes + 1, s.generation);
+		assertEquals(blocks, m.blocks);
+		assertTrue(LightMap.isLive(s));
 	}
 }

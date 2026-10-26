@@ -55,9 +55,14 @@ public class LightMapBakeTest
 	@Test
 	public void furnaceWithDoorsMakesACone()
 	{
-		// a 3 x 2 tile solid, the light just in front of it, and a thin door leaf either side, 0.75 tile long
+		// a 3 x 2 tile solid with its body (a model all the way up), the light just in front of it, and a thin door leaf
+		// either side, 0.75 tile long
 		BakeScene s = new BakeScene().solid(0, 20, 20, 22, 21);
-		s.modelCells(0, 83, 77, 83, 79).modelCells(0, 88, 77, 88, 79);
+		s.modelCells(0, 80, 80, 91, 87);
+		for (int z = 77; z <= 79; ++z)
+		{
+			s.modelBox(0, 83, z, 12, 0, 16, 32, 0, 200).modelBox(0, 88, z, 12, 0, 16, 32, 0, 200);
+		}
 		LightMapBake.Result r = bake(s, BakeScene.light(0, 21.5f, 19.75f, 40, 9));
 		float axis = BakeScene.atTile(r, 0, 21.5f, 14.5f);
 		float side = BakeScene.atTile(r, 0, 26.5f, 14.5f);
@@ -69,7 +74,7 @@ public class LightMapBakeTest
 		float behindDoor = BakeScene.at(r, 0, 80, 78);
 		float openAtSameRange = BakeScene.at(r, 0, 86, 75);
 		assertTrue("behind " + behindDoor + " open " + openAtSameRange, behindDoor < openAtSameRange);
-		// the furnace itself is dark, and behind it only the little that wraps round
+		// the furnace itself is dark inside, and behind it only the little that wraps round
 		assertEquals(0, BakeScene.atTile(r, 0, 21.5f, 21.0f), 0);
 		assertTrue(BakeScene.atTile(r, 0, 21.5f, 22.5f) < BakeScene.atTile(r, 0, 21.5f, 17.0f) * 0.5f);
 	}
@@ -159,5 +164,102 @@ public class LightMapBakeTest
 		LightMapBake.Result r = bake(s, BakeScene.light(1, 20.9f, 20.5f, 40, 10));
 		assertTrue(BakeScene.atTile(r, 0, 22.5f, 20.5f) > 0);
 		assertEquals(0, BakeScene.atTile(r, 0, 25.5f, 20.5f), 0);
+	}
+
+	/** The share along a row of cells (z fixed), from gx0 to gx1. */
+	private static float[] row(LightMapBake.Result r, int plane, int gx0, int gx1, int gz)
+	{
+		float[] out = new float[gx1 - gx0 + 1];
+		for (int x = gx0; x <= gx1; ++x)
+		{
+			out[x - gx0] = BakeScene.at(r, plane, x, gz);
+		}
+		return out;
+	}
+
+	/** The biggest step between neighbours of a row, as a share of the biggest value in it. */
+	private static float biggestStep(float[] row)
+	{
+		float max = 0, step = 0;
+		for (int i = 0; i < row.length; ++i)
+		{
+			max = Math.max(max, row[i]);
+			if (i > 0)
+			{
+				step = Math.max(step, Math.abs(row[i] - row[i - 1]));
+			}
+		}
+		return step / max;
+	}
+
+	@Test
+	public void aStraightEdgeOfShadowIsAGradientNotSteps()
+	{
+		// a wall on the line x = 24 from y 24 to 34, a light 7.5 tiles west of it, 1.5 south of its end: the edge of the
+		// shadow runs slantwise over the floor east of the wall, where cells could show as steps
+		BakeScene s = new BakeScene().verticalWall(0, 24, 24, 34);
+		LightMapBake.Result r = bake(s, BakeScene.light(0, 16.5f, 22.5f, 40, 20));
+		// a column across the edge, 6 tiles east of the wall
+		float[] col = new float[37];
+		for (int i = 0; i < col.length; ++i)
+		{
+			col[i] = BakeScene.at(r, 0, 30 * 4, 22 * 4 + i);
+		}
+		float top = col[0], bottom = col[col.length - 1];
+		assertTrue("lit " + top + " shadow " + bottom, top > bottom * 10);
+		assertTrue("no step of more than a sixth of it: " + biggestStep(col), biggestStep(col) < 1 / 6f);
+		int between = 0;
+		for (float v : col)
+		{
+			between += v > 0.1f * top && v < 0.7f * top ? 1 : 0;
+		}
+		assertTrue("cells in the edge: " + between, between >= 6);
+		// along a row, from the lit side past the edge
+		float[] row = row(r, 0, 25 * 4, 31 * 4, 25 * 4 + 1);
+		assertTrue("row step " + biggestStep(row), biggestStep(row) < 1 / 6f);
+	}
+
+	@Test
+	public void aBarrelBesideATorchShadesNothingAboveItButAFireBehindIt()
+	{
+		// a barrel (a box 22 units across, up to 70 high) two tiles east of the light
+		BakeScene s = new BakeScene();
+		s.modelBox(0, 4 * 24 + 2, 4 * 24, 5, 5, 27, 27, 0, 70);
+		LightMapBake.Result torch = bake(s, BakeScene.light(0, 22.5f, 24.5f, 150, 10));
+		LightMapBake.Result bare = bake(new BakeScene(), BakeScene.light(0, 22.5f, 24.5f, 150, 10));
+		for (float x = 25.5f; x < 30; x += 0.5f)
+		{
+			assertEquals("behind the barrel, x " + x, BakeScene.atTile(bare, 0, x, 24.5f), BakeScene.atTile(torch, 0, x, 24.5f), 1e-6f);
+		}
+		LightMapBake.Result fire = bake(s, BakeScene.light(0, 22.5f, 24.5f, 40, 10));
+		LightMapBake.Result fireBare = bake(new BakeScene(), BakeScene.light(0, 22.5f, 24.5f, 40, 10));
+		// right behind it: the light is wide, and only a barrel wide of it is gone
+		float shaded = BakeScene.at(fire, 0, 101, 98), open = BakeScene.at(fireBare, 0, 101, 98);
+		assertTrue("shaded " + shaded + " open " + open, shaded < open * 0.95f && shaded > open * 0.5f);
+	}
+
+	@Test
+	public void aPillarShadeIsSoftAndItsSizeIsItsOwn()
+	{
+		// a pillar 12 units across stands in the middle of a cell; a cell-sized block would be 32
+		BakeScene s = new BakeScene();
+		s.modelBox(0, 4 * 24 + 2, 4 * 24, 10, 10, 22, 22, 0, 200);
+		LightMapBake.Result r = bake(s, BakeScene.light(0, 22.5f, 24.5f, 100, 10));
+		float[] row = row(r, 0, 4 * 24 + 3, 4 * 31, 4 * 24);
+		float[] column = new float[16];
+		for (int i = 0; i < column.length; ++i)
+		{
+			column[i] = BakeScene.at(r, 0, 4 * 27, 4 * 24 - 8 + i);
+		}
+		// the shadow is shallow and wide on the other side of it, and no cell is much darker than its neighbours
+		float low = Float.MAX_VALUE, high = 0;
+		for (float v : column)
+		{
+			low = Math.min(low, v);
+			high = Math.max(high, v);
+		}
+		assertTrue("dip " + low + " of " + high, low < high * 0.95f && low > high * 0.4f);
+		assertTrue("step " + biggestStep(column), biggestStep(column) < 0.15f);
+		assertTrue(row.length > 0);
 	}
 }

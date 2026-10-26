@@ -6,13 +6,13 @@ import org.lwjgl.BufferUtils;
 import static org.lwjgl.opengl.GL33C.*;
 
 /**
- * The light map's textures (LightMap): one RGBA16F array, two layers per storey (the filtered sums, then the dominant
- * lights), cells * cells texels a layer: 736 x 736 for the largest scene, 34.7 MB all told. Zero from the start, so a
+ * The light map's textures (LightMap): one RGBA16F array, two layers per storey (the sums of colour and lead, then the
+ * lights' mean place and brightest light; both filtered), cells * cells texels a layer: 736 x 736 for the largest scene, 34.7 MB all told. Zero from the start, so a
  * cell nothing was sent for is dark; blocks are sent into it as LightMap bakes them.
  */
 final class LightMapTexture implements LightMap.Sink
 {
-	/** Layers per storey: the sums, and the dominant lights. */
+	/** Layers per storey: the sums of colour, and the lights' places. */
 	static final int LAYERS = 2;
 
 	private int texture;

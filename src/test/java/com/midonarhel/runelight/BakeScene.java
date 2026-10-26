@@ -73,21 +73,40 @@ final class BakeScene
 		return this;
 	}
 
-	/** Cells (not tiles) blocked by a thin model on a storey, inclusive. */
+	/** Cells (not tiles) filled by a model at every height, whole, on a storey, inclusive. */
 	BakeScene modelCells(int plane, int gx0, int gz0, int gx1, int gz1)
 	{
-		int cells = SIZE * LightBlockers.CELLS_PER_TILE;
-		if (models == null)
-		{
-			models = new ModelBlockers(cells);
-		}
 		for (int z = gz0; z <= gz1; ++z)
 		{
 			for (int x = gx0; x <= gx1; ++x)
 			{
-				models.mask[z * cells + x] |= (byte) (1 << plane);
+				modelBox(plane, x, z, 0, 0, 32, 32, 0, 239);
 			}
 		}
+		return this;
+	}
+
+	/** A model in a cell: its box in the cell (units, 0 to 32) and the heights above the floor it reaches. */
+	BakeScene modelBox(int plane, int gx, int gz, int x0, int z0, int x1, int z1, float low, float high)
+	{
+		if (models == null)
+		{
+			models = new ModelBlockers(SIZE * LightBlockers.CELLS_PER_TILE);
+		}
+		int mask = 0;
+		for (int bin = ModelBlockers.bin(low); bin <= ModelBlockers.bin(high); ++bin)
+		{
+			mask |= 1 << bin;
+		}
+		byte[] box = new byte[16];
+		for (int band = 0; band < 4; ++band)
+		{
+			box[band * 4] = (byte) x0;
+			box[band * 4 + 1] = (byte) z0;
+			box[band * 4 + 2] = (byte) x1;
+			box[band * 4 + 3] = (byte) z1;
+		}
+		models.set(plane, gx, gz, (short) mask, box, 0);
 		return this;
 	}
 

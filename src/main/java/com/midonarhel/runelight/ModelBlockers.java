@@ -3,68 +3,177 @@ package com.midonarhel.runelight;
 import java.util.Arrays;
 
 /**
- * The static models that stand in the way of a light, as cells of the light map (LightMap): a quarter tile each, per
- * storey. They come from the same zone triangles the skylight voxelizes (VoxelCapture), rasterized conservatively: a
- * cell is blocked on a storey when a triangle crosses the cell somewhere between BAND_LOW and BAND_HIGH above that
- * storey's floor.
+ * The static models that stand in the way of a light, per cell of the light map (LightMap, a quarter tile) and per
+ * storey, from the same zone triangles the skylight voxelizes (VoxelCapture). A cell remembers where in height the
+ * models are, and where in the cell:
  *
- * Why that band: lights.json puts most lights at 20 to 50 units above the ground (fires, braziers) and torches and
- * lanterns from 100 to 250. A tabletop, a counter, a fence, a crate or a barrel reaches 70 at most and must not stop
- * light, which passes over them; a pillar, a bookcase, an open furnace door, a statue, a tree trunk or a bush is in
- * the way of a torch at body height. From 80 to 128 units (about two thirds of a tile to a whole one) a model is
- * either tall enough to shade the room or isn't, and the band stays well under the ceilings and canopies (240 and
- * more), so a lamp isn't shut in by its own roof. A triangle only has to touch the band, whatever its height
- * otherwise: a shelf board at 100 units blocks, as does a thin door leaf, because the clip keeps it however narrow.
+ * - a mask of HEIGHT_BINS bins of BIN_HEIGHT units above the storey's floor, set for the bins a model reaches;
+ * - for each BAND (a quarter of the bins), the box in the cell (to the unit) that the models of the band fill.
+ *
+ * A light is only stopped by what stands at its own height (ModelBlockers.box): the bins within one of its own. A
+ * barrel, a crate, a table or a counter never shades a torch that hangs above it, a pillar, a bookcase, an open furnace
+ * door or a statue does shade a lamp at their height, and a box is only as big as the model is in the cell, so what
+ * stops the light is the model's own size and not a cell's. Walls are the wall map's.
+ *
+ * Triangles that lie flat (floors, tabletops, ceilings, stair treads) are left out: they stop no light going along the
+ * ground, and a ceiling would shut every lamp in. The bins reach to 16 * 15 = 240 units, where a storey's ceiling is.
  *
  * GL-free. Zones are rasterized once and keep their cells (Zone.modelBlockers); the scene's cells are assembled from
  * them.
  */
 final class ModelBlockers
 {
-	// heights above a storey's floor (world units) where a model blocks light
-	static final float BAND_LOW = 80, BAND_HIGH = 128;
 	static final int PLANES = WallMap.PLANES;
+	static final int HEIGHT_BINS = 16;
+	static final float BIN_HEIGHT = 15;
+	static final int BANDS = 4;
+	private static final int BINS_PER_BAND = HEIGHT_BINS / BANDS;
+	/** Numbers per cell and band in a box: x0, z0, x1, z1 in units of the cell (0 to 32). */
+	private static final int BOX = 4;
+	private static final int RECORD = BANDS * BOX;
+	// flatter than this (cosine of the angle to the horizontal) and a triangle is a floor
+	private static final float FLAT = 0.95f;
 	// cells per zone side (a zone is 8 tiles), and how far a model may overhang its zone
 	static final int ZONE_CELLS = 32;
 	private static final int MARGIN = 16;
 	private static final int SIDE = ZONE_CELLS + 2 * MARGIN;
 	private static final float CELL = 32;
+	private static final int BLOCK = LightMap.BLOCK;
 
-	/** One zone's blocked cells: (cx + MARGIN) | (cz + MARGIN) << 7 | storeys' bits << 14, zone-local. */
+	/** One zone's cells with models: key (cx + MARGIN) | (cz + MARGIN) << 7 | storey << 14, the bins' mask, the boxes. */
 	static final class Zone
 	{
 		final int[] keys;
+		final short[] masks;
+		final byte[] boxes;
 
-		Zone(int[] keys)
+		Zone(int[] keys, short[] masks, byte[] boxes)
 		{
 			this.keys = keys;
+			this.masks = masks;
+			this.boxes = boxes;
 		}
 	}
 
-	/** Per cell, a bit per storey that the cell is blocked on; cells * cells, row (z) by row. */
-	final byte[] mask;
 	final int cells;
+	private final int perSide;
+	// per storey and block of BLOCK * BLOCK cells, the record of each cell plus one (0: none); null for a block without
+	private final int[][] index;
+	private short[] masks = new short[64];
+	private byte[] boxes = new byte[64 * RECORD];
+	private int records;
 
 	ModelBlockers(int cells)
 	{
 		this.cells = cells;
-		mask = new byte[cells * cells];
+		perSide = (cells + BLOCK - 1) / BLOCK;
+		index = new int[PLANES * perSide * perSide][];
 	}
 
-	boolean blocked(int plane, int gx, int gz)
+	/** Put a cell's record in: its mask and RECORD box numbers from boxes at offset. */
+	void set(int plane, int gx, int gz, short mask, byte[] box, int offset)
 	{
-		return gx >= 0 && gz >= 0 && gx < cells && gz < cells && (mask[gz * cells + gx] >> plane & 1) != 0;
+		if (gx < 0 || gz < 0 || gx >= cells || gz >= cells || mask == 0)
+		{
+			return;
+		}
+		int b = (plane * perSide + gz / BLOCK) * perSide + gx / BLOCK;
+		if (index[b] == null)
+		{
+			index[b] = new int[BLOCK * BLOCK];
+		}
+		int cell = gz % BLOCK * BLOCK + gx % BLOCK;
+		int r = index[b][cell] - 1;
+		if (r < 0)
+		{
+			if (records == masks.length)
+			{
+				masks = Arrays.copyOf(masks, records * 2);
+				boxes = Arrays.copyOf(boxes, records * 2 * RECORD);
+			}
+			r = records++;
+			index[b][cell] = r + 1;
+		}
+		masks[r] = mask;
+		System.arraycopy(box, offset, boxes, r * RECORD, RECORD);
+	}
+
+	private int record(int plane, int gx, int gz)
+	{
+		if (gx < 0 || gz < 0 || gx >= cells || gz >= cells)
+		{
+			return -1;
+		}
+		int[] block = index[(plane * perSide + gz / BLOCK) * perSide + gx / BLOCK];
+		return block == null ? -1 : block[gz % BLOCK * BLOCK + gx % BLOCK] - 1;
+	}
+
+	/** The bins a model reaches in the cell, a bit each; 0 without any. */
+	int heights(int plane, int gx, int gz)
+	{
+		int r = record(plane, gx, gz);
+		return r < 0 ? 0 : masks[r] & 0xffff;
 	}
 
 	/**
-	 * The cells of the zone's triangles that block light.
+	 * The box (x0, z0, x1, z1, in units of the cell, 0 to 1) of what stands in the cell at a light's height: in the
+	 * light's bin or the one either side of it.
+	 *
+	 * @param out the box
+	 * @return false when nothing does
+	 */
+	boolean box(int plane, int gx, int gz, int bin, float[] out)
+	{
+		int r = record(plane, gx, gz);
+		if (r < 0)
+		{
+			return false;
+		}
+		int window = ((1 << Math.min(HEIGHT_BINS, bin + 2)) - 1) & ~((1 << Math.max(0, bin - 1)) - 1);
+		int mask = masks[r] & window;
+		if (mask == 0)
+		{
+			return false;
+		}
+		float x0 = CELL, z0 = CELL, x1 = 0, z1 = 0;
+		for (int band = 0; band < BANDS; ++band)
+		{
+			if ((mask >> band * BINS_PER_BAND & (1 << BINS_PER_BAND) - 1) != 0)
+			{
+				int o = r * RECORD + band * BOX;
+				x0 = Math.min(x0, boxes[o]);
+				z0 = Math.min(z0, boxes[o + 1]);
+				x1 = Math.max(x1, boxes[o + 2]);
+				z1 = Math.max(z1, boxes[o + 3]);
+			}
+		}
+		out[0] = x0 / CELL;
+		out[1] = z0 / CELL;
+		out[2] = x1 / CELL;
+		out[3] = z1 / CELL;
+		return true;
+	}
+
+	/** The bin a height above the floor (world units) is in. */
+	static int bin(float height)
+	{
+		return Math.max(0, Math.min(HEIGHT_BINS - 1, (int) Math.floor(height / BIN_HEIGHT)));
+	}
+
+	/**
+	 * The cells of the zone's triangles.
 	 *
 	 * @param floors the zone's tiles' floor heights (world y, down), per storey, tile x * 8 + z: PLANES * 64 values
 	 */
 	static Zone rasterize(VoxelCapture cap, float[] floors)
 	{
-		byte[] acc = new byte[SIDE * SIDE];
-		// the heights where a triangle can touch the band anywhere in the zone, per storey
+		// per cell and storey, the slot of its record + 1
+		int[] slot = new int[SIDE * SIDE * PLANES];
+		int slots = 0;
+		int[] keys = new int[64];
+		short[] masks = new short[64];
+		byte[] boxes = new byte[64 * RECORD];
+		// the heights where a triangle can reach the bins anywhere in the zone, per storey
 		float[] top = new float[PLANES], bottom = new float[PLANES];
 		for (int p = 0; p < PLANES; ++p)
 		{
@@ -74,8 +183,8 @@ final class ModelBlockers
 				lo = Math.min(lo, floors[p * 64 + t]);
 				hi = Math.max(hi, floors[p * 64 + t]);
 			}
-			top[p] = lo - BAND_HIGH;
-			bottom[p] = hi - BAND_LOW;
+			top[p] = lo - HEIGHT_BINS * BIN_HEIGHT;
+			bottom[p] = hi;
 		}
 		float[] poly = new float[8 * 3], tmp = new float[8 * 3];
 		short[] pos = cap.pos;
@@ -89,7 +198,7 @@ final class ModelBlockers
 			{
 				near = maxY >= top[p] && minY <= bottom[p];
 			}
-			if (!near)
+			if (!near || flat(pos, o))
 			{
 				continue;
 			}
@@ -127,37 +236,66 @@ final class ModelBlockers
 					}
 					// the floor of the tile the cell is in
 					int tile = Math.max(0, Math.min(7, cx >> 2)) * 8 + Math.max(0, Math.min(7, cz >> 2));
-					int bits = 0;
+					int bx0 = (int) Math.floor(px0 - cx * CELL), bx1 = (int) Math.ceil(px1 - cx * CELL);
+					int bz0 = (int) Math.floor(pz0 - cz * CELL), bz1 = (int) Math.ceil(pz1 - cz * CELL);
 					for (int p = 0; p < PLANES; ++p)
 					{
-						float floor = floors[p * 64 + tile];
-						if (y1 >= floor - BAND_HIGH && y0 <= floor - BAND_LOW)
+						// heights above the floor: y is down
+						float lo = floors[p * 64 + tile] - y1, hi = floors[p * 64 + tile] - y0;
+						if (hi < 0 || lo >= HEIGHT_BINS * BIN_HEIGHT)
 						{
-							bits |= 1 << p;
+							continue;
+						}
+						int b0 = bin(lo), b1 = bin(hi);
+						int cell = ((cz + MARGIN) * SIDE + cx + MARGIN) * PLANES + p;
+						int s = slot[cell] - 1;
+						if (s < 0)
+						{
+							if (slots == masks.length)
+							{
+								keys = Arrays.copyOf(keys, slots * 2);
+								masks = Arrays.copyOf(masks, slots * 2);
+								boxes = Arrays.copyOf(boxes, slots * 2 * RECORD);
+							}
+							s = slots++;
+							slot[cell] = s + 1;
+							keys[s] = cx + MARGIN | cz + MARGIN << 7 | p << 14;
+							masks[s] = 0;
+							for (int i = 0; i < RECORD; i += BOX)
+							{
+								boxes[s * RECORD + i] = (byte) CELL;
+								boxes[s * RECORD + i + 1] = (byte) CELL;
+								boxes[s * RECORD + i + 2] = 0;
+								boxes[s * RECORD + i + 3] = 0;
+							}
+						}
+						for (int bin = b0; bin <= b1; ++bin)
+						{
+							masks[s] |= (short) (1 << bin);
+						}
+						for (int band = b0 / BINS_PER_BAND; band <= b1 / BINS_PER_BAND; ++band)
+						{
+							int q = s * RECORD + band * BOX;
+							boxes[q] = (byte) Math.min(boxes[q], bx0);
+							boxes[q + 1] = (byte) Math.min(boxes[q + 1], bz0);
+							boxes[q + 2] = (byte) Math.max(boxes[q + 2], bx1);
+							boxes[q + 3] = (byte) Math.max(boxes[q + 3], bz1);
 						}
 					}
-					acc[(cz + MARGIN) * SIDE + cx + MARGIN] |= (byte) bits;
 				}
 			}
 		}
-		int count = 0;
-		for (byte b : acc)
-		{
-			if (b != 0)
-			{
-				++count;
-			}
-		}
-		int[] keys = new int[count];
-		int k = 0;
-		for (int i = 0; i < acc.length; ++i)
-		{
-			if (acc[i] != 0)
-			{
-				keys[k++] = i % SIDE | i / SIDE << 7 | (acc[i] & 15) << 14;
-			}
-		}
-		return new Zone(keys);
+		return new Zone(Arrays.copyOf(keys, slots), Arrays.copyOf(masks, slots), Arrays.copyOf(boxes, slots * RECORD));
+	}
+
+	/** Whether the triangle at o lies flat, or has no area. */
+	private static boolean flat(short[] pos, int o)
+	{
+		float ux = pos[o + 3] - pos[o], uy = pos[o + 4] - pos[o + 1], uz = pos[o + 5] - pos[o + 2];
+		float vx = pos[o + 6] - pos[o], vy = pos[o + 7] - pos[o + 1], vz = pos[o + 8] - pos[o + 2];
+		float nx = uy * vz - uz * vy, ny = uz * vx - ux * vz, nz = ux * vy - uy * vx;
+		float len2 = nx * nx + ny * ny + nz * nz;
+		return len2 == 0 || ny * ny >= FLAT * FLAT * len2;
 	}
 
 	/**
@@ -225,44 +363,73 @@ final class ModelBlockers
 				continue;
 			}
 			int ox = zoneX[i] * ZONE_CELLS, oz = zoneZ[i] * ZONE_CELLS;
-			for (int key : z.keys)
+			for (int k = 0; k < z.keys.length; ++k)
 			{
+				int key = z.keys[k];
 				int gx = ox + (key & 0x7f) - MARGIN, gz = oz + (key >> 7 & 0x7f) - MARGIN;
-				if (gx >= 0 && gz >= 0 && gx < cells && gz < cells)
+				int plane = key >> 14 & 3;
+				// zones overlap where models overhang: the boxes and heights of both
+				int r = m.record(plane, gx, gz);
+				if (r < 0)
 				{
-					m.mask[gz * cells + gx] |= (byte) (key >> 14);
+					m.set(plane, gx, gz, z.masks[k], z.boxes, k * RECORD);
+				}
+				else
+				{
+					m.merge(r, z.masks[k], z.boxes, k * RECORD);
 				}
 			}
 		}
 		return m;
 	}
 
-	/** The rectangle of cells, {x0, z0, x1, z1}, that differ from another scene's, null when none do. */
-	int[] diff(ModelBlockers o)
+	private void merge(int r, short mask, byte[] box, int offset)
 	{
-		if (o == null || o.cells != cells)
+		masks[r] |= mask;
+		for (int i = 0; i < RECORD; i += BOX)
 		{
-			return new int[]{0, 0, cells - 1, cells - 1};
-		}
-		int x0 = Integer.MAX_VALUE, z0 = Integer.MAX_VALUE, x1 = -1, z1 = -1;
-		for (int z = 0; z < cells; ++z)
-		{
-			int row = z * cells;
-			if (Arrays.equals(mask, row, row + cells, o.mask, row, row + cells))
+			int q = r * RECORD + i;
+			if (box[offset + i + 2] < box[offset + i] || box[offset + i + 3] < box[offset + i + 1])
 			{
 				continue;
 			}
-			for (int x = 0; x < cells; ++x)
+			boxes[q] = (byte) Math.min(boxes[q], box[offset + i]);
+			boxes[q + 1] = (byte) Math.min(boxes[q + 1], box[offset + i + 1]);
+			boxes[q + 2] = (byte) Math.max(boxes[q + 2], box[offset + i + 2]);
+			boxes[q + 3] = (byte) Math.max(boxes[q + 3], box[offset + i + 3]);
+		}
+	}
+
+	private boolean same(int r, ModelBlockers o, int q)
+	{
+		return masks[r] == o.masks[q] && Arrays.equals(boxes, r * RECORD, (r + 1) * RECORD, o.boxes, q * RECORD, (q + 1) * RECORD);
+	}
+
+	/** Mark the cells (of every storey) that differ from another scene's. */
+	void diff(ModelBlockers o, CellChanges changes)
+	{
+		if (o == null || o.cells != cells)
+		{
+			changes.markAll();
+			return;
+		}
+		for (int b = 0; b < index.length; ++b)
+		{
+			int[] mine = index[b], theirs = o.index[b];
+			if (mine == null && theirs == null)
 			{
-				if (mask[row + x] != o.mask[row + x])
+				continue;
+			}
+			int bx = b % perSide, bz = b / perSide % perSide;
+			for (int c = 0; c < BLOCK * BLOCK; ++c)
+			{
+				int r = mine == null ? 0 : mine[c], q = theirs == null ? 0 : theirs[c];
+				if (r == 0 && q == 0 || r != 0 && q != 0 && same(r - 1, o, q - 1))
 				{
-					x0 = Math.min(x0, x);
-					x1 = Math.max(x1, x);
-					z0 = Math.min(z0, z);
-					z1 = Math.max(z1, z);
+					continue;
 				}
+				changes.mark(bx * BLOCK + c % BLOCK, bz * BLOCK + c / BLOCK, 0);
 			}
 		}
-		return x1 < 0 ? null : new int[]{x0, z0, x1, z1};
 	}
 }

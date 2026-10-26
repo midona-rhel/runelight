@@ -9,6 +9,9 @@ public class LightMapTimingTest
 {
 	private static final int SIZE = 184, OFFSET = 40, LOCAL = 104;
 
+	// a barrel: a box 20 units wide in the cell, up to 90 high
+	private static final byte[] BARREL = {6, 6, 26, 26, 6, 6, 26, 26, 6, 6, 26, 26, 6, 6, 26, 26};
+
 	private static LightBlockers town(Random rnd)
 	{
 		int[][][] flags = new int[4][LOCAL][LOCAL];
@@ -78,7 +81,7 @@ public class LightMapTimingTest
 			for (int k = 0; k < 6; ++k)
 			{
 				int gx = (OFFSET + x0 + rnd.nextInt(w)) * 4 + rnd.nextInt(4), gz = (OFFSET + y0 + rnd.nextInt(h)) * 4 + rnd.nextInt(4);
-				models.mask[gz * SIZE * 4 + gx] |= 1;
+				models.set(0, gx, gz, (short) 0x3f, BARREL, 0);
 			}
 		}
 		WallMap walls = WallMap.build(flags, null, SIZE, OFFSET, 1);
