@@ -32,8 +32,8 @@ class LightClusters
 	// a third texel per light after the two per light: its occlusion grid and whether it is covered
 	// (LightOcclusion.texel, light_occlusion.glsl)
 	static final int LIGHT_EXTRA_BASE = MAX_LIGHTS * 2;
-	// the light map's table follows (LightMap.table, light_map.glsl): TABLE_TEXELS entries of the baked lights'
-	// strength against the strength they were baked with, and radius
+	// the light map's table follows (LightMap.table, light_map.glsl): TABLE_TEXELS texels, two to a baked light: its place
+	// and radius now, and its colour times its strength now
 	static final int LIGHT_MAP_TABLE_BASE = MAX_LIGHTS * 3;
 	// the rooms' fill follows (RoomLight.table, rooms.glsl): a texel per room id, x the fill's luminance
 	static final int ROOM_FILL_BASE = LIGHT_MAP_TABLE_BASE + LightMap.TABLE_TEXELS;
@@ -546,8 +546,9 @@ class LightClusters
 		LightMap baked = lightMap;
 		if (baked != null)
 		{
-			tableStaging = staging(tableStaging, baked.tableUsed() * 4);
-			tableStaging.put(baked.table(), 0, baked.tableUsed() * 4).flip();
+			int floats = baked.tableUsed() * LightMap.TABLE_STRIDE * 4;
+			tableStaging = staging(tableStaging, floats);
+			tableStaging.put(baked.table(), 0, floats).flip();
 			glBufferSubData(GL_TEXTURE_BUFFER, (long) LIGHT_MAP_TABLE_BASE * 4 * Float.BYTES, tableStaging);
 		}
 		// the map's header: whether there is a map (3: and the light map), and whether the lights keep to their rooms or

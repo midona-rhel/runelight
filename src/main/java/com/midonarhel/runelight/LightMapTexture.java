@@ -1,33 +1,36 @@
 package com.midonarhel.runelight;
 
 import java.nio.ByteBuffer;
-import java.nio.ShortBuffer;
 import org.lwjgl.BufferUtils;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import static org.lwjgl.opengl.GL33C.*;
 
 /**
- * The light map's texture (LightMap): one RGBA16F 3D texture, cells * cells texels in each of its slices, LAYERS of
- * them for each storey's colour sums and lead (the height layers, filtered across) and then one for each storey's
- * lights' mean place and brightest light (never filtered across): 736 x 736 for the largest scene, 86.7 MB all told.
- * Zero from the start, so a cell nothing was sent for is dark; blocks are sent into it as LightMap bakes them.
+ * The light map's texture (LightMap): one RGBA8 3D texture, cells * cells texels in each of its slices: LAYERS of them
+ * for each storey's visibility (a channel per slot; the height layers, filtered across), then INDEX_SLICES for each
+ * storey's index of the lights in the slots (read as it is): 736 x 736 for the largest scene, 52 MB all told. Zero from
+ * the start, so a cell nothing was sent for is dark; blocks are sent into it as LightMap bakes them.
  */
-final class LightMapTexture implements LightMap.Sink
+final class LightMapTexture
 {
-	/** Slices of colour for a storey: the height layers. */
+	private static final Logger log = LoggerFactory.getLogger(LightMapTexture.class);
+
+	/** Slices of visibility for a storey: the height layers. */
 	static final int LAYERS = LightMapBake.HEIGHT_LAYERS;
-	/** Slices in all: the colour of each layer of each storey, then each storey's places. */
-	static final int SLICES = (LAYERS + 1) * WallMap.PLANES;
+	/** Slices in all: the visibility of each layer of each storey, then each storey's index. */
+	static final int SLICES = (LAYERS + LightMap.INDEX_SLICES) * WallMap.PLANES;
 
 	private int texture;
 	private int cells;
-	private final ShortBuffer staging = BufferUtils.createShortBuffer(LAYERS * LightMap.BLOCK * LightMap.BLOCK * 4);
+	private final ByteBuffer staging = BufferUtils.createByteBuffer(LAYERS * LightMap.BLOCK * LightMap.BLOCK * 4);
 	private int uploads;
 	private int generation;
 
 	/** Bytes the texture takes on the GPU. */
 	static long bytes(int cells)
 	{
-		return (long) cells * cells * 8 * SLICES;
+		return (long) cells * cells * 4 * SLICES;
 	}
 
 	/** Make the texture the size the scene needs; it starts empty. False when there is no scene. */
@@ -43,6 +46,7 @@ final class LightMapTexture implements LightMap.Sink
 		}
 		free();
 		this.cells = cells;
+		log.info("Light map texture: {} x {} cells, {} slices of RGBA8, {} MB", cells, cells, SLICES, Math.round(bytes(cells) / 1e6));
 		texture = glGenTextures();
 		++generation;
 		glBindTexture(GL_TEXTURE_3D, texture);
@@ -53,30 +57,30 @@ final class LightMapTexture implements LightMap.Sink
 		glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_BORDER);
 		glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_WRAP_R, GL_CLAMP_TO_EDGE);
 		glTexParameterfv(GL_TEXTURE_3D, GL_TEXTURE_BORDER_COLOR, new float[4]);
-		glTexImage3D(GL_TEXTURE_3D, 0, GL_RGBA16F, cells, cells, SLICES, 0, GL_RGBA, GL_HALF_FLOAT, (ByteBuffer) null);
+		glTexImage3D(GL_TEXTURE_3D, 0, GL_RGBA8, cells, cells, SLICES, 0, GL_RGBA, GL_UNSIGNED_BYTE, (ByteBuffer) null);
 		// glTexImage3D leaves it undefined: zero a slice at a time
-		ByteBuffer zero = BufferUtils.createByteBuffer(cells * cells * 8);
+		ByteBuffer zero = BufferUtils.createByteBuffer(cells * cells * 4);
 		for (int slice = 0; slice < SLICES; ++slice)
 		{
-			glTexSubImage3D(GL_TEXTURE_3D, 0, 0, 0, slice, cells, cells, 1, GL_RGBA, GL_HALF_FLOAT, zero);
+			glTexSubImage3D(GL_TEXTURE_3D, 0, 0, 0, slice, cells, cells, 1, GL_RGBA, GL_UNSIGNED_BYTE, zero);
 		}
 		glBindTexture(GL_TEXTURE_3D, 0);
 		return true;
 	}
 
-	@Override
-	public void block(int plane, int bx, int bz, short[] a, short[] b)
+	/** A block of the light map is sent (LightMap.Sink): null clears it. */
+	void block(int plane, int bx, int bz, byte[] vis, byte[] index)
 	{
 		glBindTexture(GL_TEXTURE_3D, texture);
-		send(plane * LAYERS, LAYERS, bx, bz, a);
-		send(LAYERS * WallMap.PLANES + plane, 1, bx, bz, b);
+		send(plane * LAYERS, LAYERS, bx, bz, vis);
+		send(LAYERS * WallMap.PLANES + plane * LightMap.INDEX_SLICES, LightMap.INDEX_SLICES, bx, bz, index);
 		glBindTexture(GL_TEXTURE_3D, 0);
 		uploads++;
 	}
 
-	private void send(int slice, int slices, int bx, int bz, short[] data)
+	private void send(int slice, int slices, int bx, int bz, byte[] data)
 	{
-		int shorts = slices * LightMap.BLOCK * LightMap.BLOCK * 4;
+		int bytes = slices * LightMap.BLOCK * LightMap.BLOCK * 4;
 		staging.clear();
 		if (data != null)
 		{
@@ -84,14 +88,14 @@ final class LightMapTexture implements LightMap.Sink
 		}
 		else
 		{
-			for (int i = 0; i < shorts; ++i)
+			for (int i = 0; i < bytes; ++i)
 			{
-				staging.put((short) 0);
+				staging.put((byte) 0);
 			}
 		}
 		staging.flip();
 		glTexSubImage3D(GL_TEXTURE_3D, 0, bx * LightMap.BLOCK, bz * LightMap.BLOCK, slice, LightMap.BLOCK,
-			LightMap.BLOCK, slices, GL_RGBA, GL_HALF_FLOAT, staging);
+			LightMap.BLOCK, slices, GL_RGBA, GL_UNSIGNED_BYTE, staging);
 	}
 
 	/** Changes whenever the texture is made, empty. */

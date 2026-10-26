@@ -2,6 +2,7 @@ package com.midonarhel.runelight;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertTrue;
+import java.util.Arrays;
 import org.junit.Test;
 
 public class RoomLightTest
@@ -21,14 +22,29 @@ public class RoomLightTest
 	}
 
 	/** A block of the light map with this much light in every cell, null for none. */
-	private static short[] glow(float lum)
+	private static float[] glow(float lum)
 	{
-		short[] a = new short[LightMap.BLOCK * LightMap.BLOCK * 4];
-		for (int c = 0; c < LightMap.BLOCK * LightMap.BLOCK; ++c)
-		{
-			a[c * 4] = a[c * 4 + 1] = a[c * 4 + 2] = Half.toHalf(lum);
-		}
+		float[] a = new float[LightMap.BLOCK * LightMap.BLOCK];
+		Arrays.fill(a, lum);
 		return a;
+	}
+
+	/** The light map's sink for the rooms' light alone. */
+	private static LightMap.Sink floors(RoomLight l)
+	{
+		return new LightMap.Sink()
+		{
+			@Override
+			public void block(int plane, int bx, int bz, byte[] vis, byte[] index)
+			{
+			}
+
+			@Override
+			public void floor(int plane, int bx, int bz, float[] floor)
+			{
+				l.floor(plane, bx, bz, floor);
+			}
+		};
 	}
 
 	private static float night(RoomLight l)
@@ -67,11 +83,11 @@ public class RoomLightTest
 	public void aRoomLitByTorchesGetsNoFill()
 	{
 		RoomLight l = light();
-		l.block(0, 1, 1, glow(2), null);
+		l.floor(0, 1, 1, glow(2));
 		assertEquals(1, l.lightScore(1), 1e-3);
 		assertEquals(0, night(l), 0);
 		RoomLight day = light();
-		day.block(0, 1, 1, glow(2), null);
+		day.floor(0, 1, 1, glow(2));
 		day.update(0, RoomLight.target(DAY, true, 1), DAY);
 		assertTrue("by day too " + day.fillOf(1), day.fillOf(1) < 0.02f);
 	}
@@ -81,12 +97,12 @@ public class RoomLightTest
 	{
 		RoomLight l = light();
 		// one cell in sixteen, very bright: counts for no more than the cap
-		short[] a = new short[LightMap.BLOCK * LightMap.BLOCK * 4];
+		float[] a = new float[LightMap.BLOCK * LightMap.BLOCK];
 		for (int c = 0; c < LightMap.BLOCK * LightMap.BLOCK; c += 16)
 		{
-			a[c * 4] = a[c * 4 + 1] = a[c * 4 + 2] = Half.toHalf(1000);
+			a[c] = 1000;
 		}
-		l.block(0, 1, 1, a, null);
+		l.floor(0, 1, 1, a);
 		assertTrue(l.lightScore(1) <= RoomLight.CELL_CAP / 8);
 		assertTrue(night(l) > 0.5f * RoomLight.TARGET_NIGHT);
 	}
@@ -165,11 +181,11 @@ public class RoomLightTest
 		RoomLight l = light();
 		assertEquals(RoomLight.TARGET_NIGHT, night(l), 1e-5);
 		// the room's lights are baked: its blocks are sent
-		l.block(0, 1, 1, glow(2), null);
+		l.floor(0, 1, 1, glow(2));
 		l.update(10, RoomLight.target(NIGHT, true, 1), NIGHT);
 		assertEquals(0, l.fillOf(1), 1e-3);
 		// a door opens, the lights are baked again with the room shut off from them: the blocks are cleared
-		l.block(0, 1, 1, null, null);
+		l.floor(0, 1, 1, null);
 		l.update(10, RoomLight.target(NIGHT, true, 1), NIGHT);
 		assertEquals(RoomLight.TARGET_NIGHT, l.fillOf(1), 1e-3);
 		// brightness scales the target; without the day setting there is no target by day
@@ -184,7 +200,7 @@ public class RoomLightTest
 	{
 		RoomLight l = new RoomLight();
 		l.setCells(CELLS);
-		l.block(0, 1, 1, glow(2), null);
+		l.floor(0, 1, 1, glow(2));
 		l.setRooms(RoomMapTest.house(new int[4][LOCAL][LOCAL]));
 		assertEquals(1, l.lightScore(1), 1e-3);
 	}
@@ -194,7 +210,7 @@ public class RoomLightTest
 	{
 		RoomLight l = light();
 		l.update(0, RoomLight.target(NIGHT, true, 1), NIGHT);
-		l.block(0, 1, 1, glow(2), null);
+		l.floor(0, 1, 1, glow(2));
 		float target = RoomLight.target(NIGHT, true, 1);
 		l.update(0.1f, target, NIGHT);
 		assertTrue("part of the way", l.fillOf(1) > 0 && l.fillOf(1) < target);
@@ -249,7 +265,7 @@ public class RoomLightTest
 				strength, false, 1, 0));
 		}
 		map.runTasks();
-		map.update(100000, l);
+		map.update(100000, floors(l));
 		return l;
 	}
 
@@ -285,7 +301,7 @@ public class RoomLightTest
 		map.setBlockers(scene.blockers());
 		map.add(new LightMap.Source(0, BakeScene.world(30), -100, BakeScene.world(23), 4 * 128, 1, 0.58f, 0.01f, 9, false, 1, 0));
 		map.runTasks();
-		map.update(100000, l);
+		map.update(100000, floors(l));
 		assertEquals(0, l.lightScore(1), 1e-3);
 	}
 }

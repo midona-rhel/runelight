@@ -3,11 +3,12 @@ package com.midonarhel.runelight;
 import java.util.Arrays;
 
 /**
- * How far one static light reaches, per cell of the light map (LightMap) and per height layer in it: the share of the
- * light that arrives, 0 to 1, with 117 HD's falloff (1 - d / r)^2 in it, d the straight distance from the light to the
- * layer's height above the cell. HEIGHT_LAYERS layers cover a storey's height, each worked out for the height of its
- * middle, so a light low in a room lights the foot of a wall more than its top and none of a wall's height above the
- * light's reach. GL-free; runs on the baking threads.
+ * How much of a static light a cell of the light map (LightMap) sees, per height layer in it: the share of the
+ * light that is not stopped on its way to the layer's height above the cell, 0 to 1, with no falloff in it: the shader
+ * has the light's position and works the falloff out for every pixel (what a flat, per-cell falloff could not show was
+ * the shape of what it lit). HEIGHT_LAYERS layers cover a storey's height, each worked out for the height of its
+ * middle, so what the models and the floors above stop is stopped at the heights it stands. Cells farther than the
+ * light's radius are 0. GL-free; runs on the baking threads.
  *
  * A cell is a quarter tile. What stops light is in LightBlockers: wall edges (and diagonal walls), the tiles of solid
  * objects, and the boxes of the models (ModelBlockers.runs, a box for each run of heights, as big as the model is in
@@ -18,7 +19,7 @@ import java.util.Arrays;
  *   (every blocker edge in reach is walked once, over the directions it covers), then every cell is seen when it is
  *   nearer than that in its direction, looked at in SUBS x SUBS places of the cell so that an edge falling inside a
  *   cell gives it a part. The cost is the edges plus the cells. The share of the looks that see a cell is its
- *   visibility, and the falloff by the straight distance to the light goes with it. (One pass of neighbour
+ *   visibility. (One pass of neighbour
  *   propagation was tried instead and a light between two nearby blockers got trapped.) Walls stop the light at every
  *   height; a model stops it at the heights it stands: its box stops the line from the light to a layer where that line
  *   passes it within the heights of the model. A model that stands at the light's height but not at the layer's
@@ -27,7 +28,7 @@ import java.util.Arrays;
  *   layer, and again only for the directions and the layers where a model's box differs.
  * - Wrap. Light walks around corners and through doors and stands in for bounce light: a flood fill over the cells,
  *   blocked by the same blockers, gives each the path distance from the light, and WRAP times the falloff by that
- *   distance is a floor under the direct light. It is the same flood for every layer.
+ *   distance, as a share of the falloff straight from the light, is a floor under the direct light's visibility. It is the same flood for every layer.
  * - Blur. A Gaussian of BLUR_SIGMA_CELLS that never takes a cell's light from across a wall, a solid object or a model
  *   that fills its cell (DENSE_BOX), so shadows have soft edges and no cell shows. The floor under a model's box takes its
  *   neighbours' light, and wrap does not go through a model that fills its cell.
@@ -49,7 +50,7 @@ final class LightMapBake
 	/** How wide a light is, in tiles: its samples are spread over a disc this wide. */
 	static final float LIGHT_WIDTH_TILES = 0.8f;
 	static final int SAMPLES = 16;
-	/** The share of the falloff by path distance that stays where the light only gets around corners. */
+	/** The share of the falloff by path distance that stays where the light only gets around corners (of the falloff straight from the light, at most this much). */
 	static final float WRAP = 0.35f;
 	/** The blur's Gaussian, in cells (a quarter tile): about half a tile. */
 	static final float BLUR_SIGMA_CELLS = 2;
@@ -152,7 +153,7 @@ final class LightMapBake
 	}
 
 	/**
-	 * A storey's share of a light per cell and layer, a rectangle of the scene's cells: c[((z - z0) * w + x - x0) *
+	 * A storey's visibility of a light per cell and layer, a rectangle of the scene's cells: c[((z - z0) * w + x - x0) *
 	 * HEIGHT_LAYERS + layer]. The rectangle holds a ring of cells without light round the lit ones.
 	 */
 	static final class Grid
@@ -472,7 +473,7 @@ final class LightMapBake
 			for (int layer = 0; layer < HEIGHT_LAYERS; ++layer)
 			{
 				float vis = (seen + (s.layerDiffers[layer] ? s.delta[layer][k] : 0)) * inv;
-				value[k * HEIGHT_LAYERS + layer] = vis * falloff(hypot(flat, up[layer]) * invRadius);
+				value[k * HEIGHT_LAYERS + layer] = vis;
 			}
 			s.vis[k] = (seen + (s.layerDiffers[HEIGHT_LAYERS - 1] ? s.delta[HEIGHT_LAYERS - 1][k] : 0)) * inv;
 		}
@@ -485,12 +486,31 @@ final class LightMapBake
 			for (int layer = 0; layer < HEIGHT_LAYERS; ++layer)
 			{
 				int i = k * HEIGHT_LAYERS + layer;
-				value[i] = Math.max(value[i], WRAP * falloff(hypot(path, up[layer]) * invRadius));
+				float flat = hypot(k % w + 0.5f - sx, k / w + 0.5f - sz) * CELL;
+				float direct = falloff(hypot(flat, up[layer]) * invRadius);
+				if (direct > 0)
+				{
+					// the light that wraps round, as a share of the light that would arrive straight
+					float wrapped = Math.min(1, WRAP * falloff(hypot(path, up[layer]) * invRadius) / direct);
+					value[i] = Math.max(value[i], wrapped);
+				}
 			}
 		}
 		fillCovered(own, value);
 		blur(s, own, value);
 		dilate(own, value);
+		// the blur spread the light past its radius: there is none there
+		for (int k = 0; k < w * h; ++k)
+		{
+			float flat = hypot(k % w + 0.5f - sx, k / w + 0.5f - sz) * CELL;
+			for (int layer = 0; layer < HEIGHT_LAYERS; ++layer)
+			{
+				if (hypot(flat, up[layer]) >= radius)
+				{
+					value[k * HEIGHT_LAYERS + layer] = 0;
+				}
+			}
+		}
 
 		Grid[] grids = new Grid[WallMap.PLANES];
 		int count = 0;
@@ -1909,7 +1929,7 @@ final class LightMapBake
 					float v = 0;
 					if ((double) d2 * d2 + (double) dy * dy < reach)
 					{
-						v = through(light, b, s, plane, crossings, ltx, lty, cx, cz, dy, x0, z0, off) * falloff(hypot(d2, dy) / radius);
+						v = through(light, b, s, plane, crossings, ltx, lty, cx, cz, dy, x0, z0, off);
 					}
 					value[(j * w + i) * HEIGHT_LAYERS + layer] = v;
 					lit |= v > 0;
@@ -1937,6 +1957,23 @@ final class LightMapBake
 		j0 = Math.max(0, j0 - 1);
 		j1 = Math.min(h - 1, j1 + 1);
 		dilate(l, value, i0, j0, i1, j1);
+		// the blur spread the light past its radius: there is none there
+		for (int j = j0; j <= j1; ++j)
+		{
+			for (int i = i0; i <= i1; ++i)
+			{
+				float cx = (x0 + i + 0.5f - off) * CELL, cz = (z0 + j + 0.5f - off) * CELL;
+				float flat = hypot(cx - light.x, cz - light.z);
+				float floorY = b.floorAt(plane, b.tileIndex((int) Math.floor(cx / 128) + tOff, (int) Math.floor(cz / 128) + tOff));
+				for (int layer = 0; layer < HEIGHT_LAYERS; ++layer)
+				{
+					if (hypot(flat, floorY - layerHeight(layer) - light.y) >= radius)
+					{
+						value[(j * w + i) * HEIGHT_LAYERS + layer] = 0;
+					}
+				}
+			}
+		}
 		return crop(plane, x0, z0, w, h, value, i0, j0, i1, j1);
 	}
 

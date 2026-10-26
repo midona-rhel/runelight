@@ -330,10 +330,19 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 	private final LightMapTexture lightMapTexture = new LightMapTexture();
 	// how much light each building room gets and the fill it lacks (RoomLight); it reads the blocks sent to the texture
 	private final RoomLight roomLight = new RoomLight();
-	private final LightMap.Sink lightMapSink = (plane, bx, bz, a, b) ->
+	private final LightMap.Sink lightMapSink = new LightMap.Sink()
 	{
-		lightMapTexture.block(plane, bx, bz, a, b);
-		roomLight.block(plane, bx, bz, a, b);
+		@Override
+		public void block(int plane, int bx, int bz, byte[] vis, byte[] index)
+		{
+			lightMapTexture.block(plane, bx, bz, vis, index);
+		}
+
+		@Override
+		public void floor(int plane, int bx, int bz, float[] floor)
+		{
+			roomLight.floor(plane, bx, bz, floor);
+		}
 	};
 	private int roomLightTexture;
 	private long roomLightNanos;

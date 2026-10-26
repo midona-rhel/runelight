@@ -5,7 +5,6 @@ import java.lang.management.ThreadInfo;
 import java.lang.management.ThreadMXBean;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
-import java.nio.ShortBuffer;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashMap;
@@ -115,28 +114,28 @@ public class LightMapLoadTest
 	/** Records what is sent. */
 	static final class Recorder implements LightMap.Sink
 	{
-		final Map<Integer, short[][]> blocks = new HashMap<>();
-		final ShortBuffer staging = ByteBuffer.allocateDirect(32 * 32 * 4 * 2 * LightMapBake.HEIGHT_LAYERS).order(ByteOrder.nativeOrder()).asShortBuffer();
+		final Map<Integer, long[]> blocks = new HashMap<>();
+		final ByteBuffer staging = ByteBuffer.allocateDirect(32 * 32 * 4 * (LightMapBake.HEIGHT_LAYERS + LightMap.INDEX_SLICES));
 		int sent;
 		long last, first = -1;
 		long start;
 
 		@Override
-		public void block(int plane, int bx, int bz, short[] a, short[] b)
+		public void block(int plane, int bx, int bz, byte[] vis, byte[] index)
 		{
 			// what the texture upload does on this side of GL: copy both to a staging buffer
 			staging.clear();
-			if (a != null) staging.put(a);
+			if (vis != null) staging.put(vis);
 			staging.clear();
-			if (b != null) staging.put(b);
+			if (index != null) staging.put(index);
 			int key = (plane * 64 + bz) * 64 + bx;
-			if (a == null)
+			if (vis == null)
 			{
 				blocks.remove(key);
 			}
 			else
 			{
-				blocks.put(key, new short[][] {a, b});
+				blocks.put(key, signature(vis, index));
 			}
 			sent++;
 			last = System.nanoTime() - start;
@@ -145,6 +144,39 @@ public class LightMapLoadTest
 				first = last;
 			}
 		}
+
+		@Override
+		public void floor(int plane, int bx, int bz, float[] floor)
+		{
+		}
+	}
+
+	/**
+	 * A block as what it says of each cell, whichever slots the lights are in: per cell the sum, over its lights, of a hash of
+	 * the light's id and its visibility at every layer.
+	 */
+	static long[] signature(byte[] vis, byte[] index)
+	{
+		int n = LightMap.BLOCK * LightMap.BLOCK;
+		long[] out = new long[n];
+		for (int i = 0; i < n; ++i)
+		{
+			for (int slot = 0; slot < LightMap.SLOTS; ++slot)
+			{
+				int at = ((slot >> 1) * n + i) * 4 + (slot & 1) * 2;
+				int id = (index[at] & 255) + 256 * (index[at + 1] & 255);
+				if (id != 0)
+				{
+					long h = id;
+					for (int layer = 0; layer < LightMapBake.HEIGHT_LAYERS; ++layer)
+					{
+						h = h * 1_000_003L + (vis[(layer * n + i) * 4 + slot] & 255);
+					}
+					out[i] += h * 0x9E3779B97F4A7C15L;
+				}
+			}
+		}
+		return out;
 	}
 
 	// ---- the calls that differ between the two versions of the map (see runBaseline in the notes)
@@ -283,7 +315,7 @@ public class LightMapLoadTest
 	}
 
 	/** The map after one bake with every blocker, all blocks sent. */
-	static Map<Integer, short[][]> reference(Town t)
+	static Map<Integer, long[]> reference(Town t)
 	{
 		LightMap map = new LightMap(0);
 		map.setFocus(52 * 128, 52 * 128);
@@ -301,8 +333,8 @@ public class LightMapLoadTest
 	@Test
 	public void finalBlocksAreWhatOneBakeWithEveryBlockerMakes() throws Exception
 	{
-		Town t = town(5, 40);
-		Map<Integer, short[][]> expected = reference(t);
+		Town t = town(5, 14);
+		Map<Integer, long[]> expected = reference(t);
 		assertTrue(expected.size() > 20);
 		// the models arrive after the wait ended, before it, and never being waited for
 		long[] arrivals = {50, 400, 1600};
@@ -313,17 +345,16 @@ public class LightMapLoadTest
 				Load l = load(t, 2, 4, await, true, at);
 				assertEquals("blocks, models at " + at + " awaited " + await, expected.keySet(), l.rec.blocks.keySet());
 				int bad = 0;
-				for (Map.Entry<Integer, short[][]> e : expected.entrySet())
+				for (Map.Entry<Integer, long[]> e : expected.entrySet())
 				{
-					short[][] got = l.rec.blocks.get(e.getKey());
-					bad += Arrays.equals(e.getValue()[0], got[0]) && Arrays.equals(e.getValue()[1], got[1]) ? 0 : 1;
+					long[] got = l.rec.blocks.get(e.getKey());
+					bad += Arrays.equals(e.getValue(), got) ? 0 : 1;
 				}
 				System.out.println("DIFF models at " + at + " awaited " + await + ": " + bad + " of " + expected.size() + " blocks differ");
-				for (Map.Entry<Integer, short[][]> e : expected.entrySet())
+				for (Map.Entry<Integer, long[]> e : expected.entrySet())
 				{
-					short[][] got = l.rec.blocks.get(e.getKey());
-					assertTrue("block a " + e.getKey() + " models at " + at + " awaited " + await, Arrays.equals(e.getValue()[0], got[0]));
-					assertTrue("block b " + e.getKey() + " models at " + at + " awaited " + await, Arrays.equals(e.getValue()[1], got[1]));
+					long[] got = l.rec.blocks.get(e.getKey());
+					assertTrue("block " + e.getKey() + " models at " + at + " awaited " + await, Arrays.equals(e.getValue(), got));
 				}
 			}
 		}

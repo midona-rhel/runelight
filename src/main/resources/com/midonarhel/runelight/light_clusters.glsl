@@ -57,3 +57,10 @@ bool clusterHasLights(int entry) {
   int li;
   return nextLight(m, li);
 }
+
+// 117 HD's falloff of a point light, from the squared distance to it and its squared radius (below 1 inside it): the clusters'
+// lights and the light map's lights are worked out with it alike (light_map.glsl)
+float pointLightFalloff(float d2, float r2) {
+  float att = 1.0 - sqrt(d2 / r2);
+  return att * att;
+}

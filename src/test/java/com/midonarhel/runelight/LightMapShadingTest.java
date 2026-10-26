@@ -6,21 +6,23 @@ import static org.junit.Assert.assertTrue;
 
 /**
  * The shader's reading of the light map (light_map.glsl), on the CPU: what a floor point is lit with, point to point.
- * Lights of very different range and height side by side, one of them well above its baked strength: nothing read from
- * the nearest cell (the brightest light's index) may cut the light at a range, as the vertical falloff by its radius did.
+ * Lights of very different range and height side by side, one of them well above its baked strength: each is worked out
+ * for the point itself (its falloff by the distance, from the table), times the map's visibility, so nothing is cut at a
+ * range and nothing steps from cell to cell.
  */
 public class LightMapShadingTest
 {
 	private static final int CELLS = BakeScene.SIZE * 4;
+	private static final int OFFSET_CELLS = BakeScene.OFFSET * 4;
 
 	private static final class Mirror implements LightMap.Sink
 	{
-		// the ground floor: A per height layer, and B
-		final float[][][] a = new float[LightMapBake.HEIGHT_LAYERS][CELLS][CELLS * 4];
-		final float[][] b = new float[CELLS][CELLS * 4];
+		// the ground floor: visibility per height layer (a channel per slot), and the index
+		final float[][][] vis = new float[LightMapBake.HEIGHT_LAYERS][CELLS][CELLS * 4];
+		final int[][] index = new int[CELLS][CELLS * 4];
 
 		@Override
-		public void block(int plane, int bx, int bz, short[] sa, short[] sb)
+		public void block(int plane, int bx, int bz, byte[] v, byte[] ix)
 		{
 			if (plane != 0)
 			{
@@ -35,16 +37,22 @@ public class LightMapShadingTest
 					{
 						for (int layer = 0; layer < LightMapBake.HEIGHT_LAYERS; ++layer)
 						{
-							a[layer][bz * 32 + j][(bx * 32 + i) * 4 + c] = sa == null ? 0 : Half.fromHalf(sa[(layer * n + j * 32 + i) * 4 + c]);
+							vis[layer][bz * 32 + j][(bx * 32 + i) * 4 + c] = v == null ? 0 : (v[(layer * n + j * 32 + i) * 4 + c] & 255) / 255f;
 						}
-						b[bz * 32 + j][(bx * 32 + i) * 4 + c] = sb == null ? 0 : Half.fromHalf(sb[(j * 32 + i) * 4 + c]);
+						int at = ((c >> 1) * n + j * 32 + i) * 4 + (c & 1) * 2;
+						index[bz * 32 + j][(bx * 32 + i) * 4 + c] = ix == null ? 0 : (ix[at] & 255) + 256 * (ix[at + 1] & 255);
 					}
 				}
 			}
 		}
 
-		/** Bilinear read of channel c of the texture t (z, x) at cell coordinates (texel centres at +0.5). */
-		float linear(float[][] t, float x, float z, int c)
+		@Override
+		public void floor(int plane, int bx, int bz, float[] floor)
+		{
+		}
+
+		/** Bilinear read of the slot's visibility at the layer, at cell coordinates (texel centres at +0.5). */
+		float linear(int layer, float x, float z, int slot)
 		{
 			float fx = x - 0.5f, fz = z - 0.5f;
 			int ix = (int) Math.floor(fx), iz = (int) Math.floor(fz);
@@ -58,30 +66,44 @@ public class LightMapShadingTest
 					float w = (dx == 0 ? 1 - tx : tx) * (dz == 0 ? 1 - tz : tz);
 					if (px >= 0 && pz >= 0 && px < CELLS && pz < CELLS)
 					{
-						v += w * t[pz][px * 4 + c];
+						v += w * vis[layer][pz][px * 4 + slot];
 					}
 				}
 			}
 			return v;
 		}
 
-		/** The luminance of the light a floor point at the cell coordinates gets, as light_map.glsl works it out. */
-		float shade(LightMap map, float x, float z)
+		/**
+		 * The light a point (world units) gets, read at the cell coordinates (x, z), as composite_frag.glsl works it out:
+		 * each light of the cell, its colour from the table times its falloff by the distance and its visibility. The
+		 * normal is the given direction (0 for none: the light as it is).
+		 */
+		float shade(LightMap map, int layer, float x, float z, float wx, float wy, float wz, float nx, float ny, float nz)
 		{
-			float[][] a = this.a[0];
-			float total = 0.2126f * linear(a, x, z, 0) + 0.7152f * linear(a, x, z, 1) + 0.0722f * linear(a, x, z, 2);
-			if (total <= 0)
+			float sum = 0;
+			int cx = (int) Math.floor(x), cz = (int) Math.floor(z);
+			float[] t = map.table();
+			for (int slot = 0; slot < LightMap.SLOTS; ++slot)
 			{
-				return 0;
+				int id = index[cz][cx * 4 + slot];
+				if (id == 0)
+				{
+					continue;
+				}
+				int at = id * LightMap.TABLE_STRIDE * 4;
+				float lx = t[at] - wx, ly = t[at + 1] - wy, lz = t[at + 2] - wz;
+				float d2 = lx * lx + ly * ly + lz * lz, r2 = t[at + 3] * t[at + 3];
+				if (d2 >= r2)
+				{
+					continue;
+				}
+				float d = (float) Math.sqrt(Math.max(d2, 1));
+				float ndl = nx == 0 && ny == 0 && nz == 0 ? 1 : Math.max((lx * nx + ly * ny + lz * nz) / d, 0);
+				float att = 1 - (float) Math.sqrt(d2 / r2);
+				float luminance = 0.2126f * t[at + 4] + 0.7152f * t[at + 5] + 0.0722f * t[at + 6];
+				sum += luminance * linear(layer, x, z, slot) * att * att * ndl;
 			}
-			int id = Math.round(b[(int) Math.floor(z)][(int) Math.floor(x) * 4 + 3]);
-			float swing = 1;
-			if (id > 0)
-			{
-				float lead = Math.max(0, Math.min(1, linear(a, x, z, 3) / total));
-				swing = 1 - lead + lead * map.table()[id * 4];
-			}
-			return total * swing;
+			return sum;
 		}
 	}
 
@@ -119,7 +141,7 @@ public class LightMapShadingTest
 		Mirror m = new Mirror();
 		map.runTasks();
 		map.update(100000, m);
-		map.setLevel(side, 4.2f);
+		map.setLevel(side, 4.2f, side.radius);
 		// along rows and a diagonal through the middle, a point every quarter of a cell
 		for (int line = 0; line < 3; ++line)
 		{
@@ -127,7 +149,7 @@ public class LightMapShadingTest
 			for (int i = 0; i < v.length; ++i)
 			{
 				float x = 4 * 14 + i * 0.5f, z = 4 * 24.5f + (line == 0 ? 0 : line == 1 ? 6 : i * 0.5f - 40);
-				v[i] = m.shade(map, x, z);
+				v[i] = m.shade(map, 0, x, z, (x - OFFSET_CELLS) * 32, 0, (z - OFFSET_CELLS) * 32, 0, 0, 0);
 			}
 			assertTrue("line " + line + " step " + biggestStep(v), biggestStep(v) < 0.1f);
 		}
@@ -153,34 +175,25 @@ public class LightMapShadingTest
 
 	/**
 	 * What a pixel of the wall (facing north, +z) at this distance along it and this height takes of the light, as the
-	 * shader works it out: the light read in front of the wall, along the direction to its mean place, and N.L with the
+	 * shader works it out: the visibility read in front of the wall, each light worked out for the pixel, and N.L with the
 	 * wall's face normal.
 	 */
-	private static float wallPixel(Mirror m, float along, float height)
+	private static float wallPixel(LightMap map, Mirror m, float along, float height)
 	{
 		float zw = BakeScene.world(24), lx = BakeScene.world(24.5f);
 		float wx = lx + along, wy = -height, wz = zw + 0.01f;
 		float ax = wx, az = wz + 20;
-		float cx = ax / 32 + 16, cz = az / 32 + 16;
-		float[][] a = m.a[(int) (height / LightMapBake.LAYER_HEIGHT)];
-		float total = 0.2126f * m.linear(a, cx, cz, 0) + 0.7152f * m.linear(a, cx, cz, 1) + 0.0722f * m.linear(a, cx, cz, 2);
-		if (total <= 0)
-		{
-			return 0;
-		}
-		float mx = m.linear(m.b, cx, cz, 0) * 16, my = m.linear(m.b, cx, cz, 2) * 16, mz = m.linear(m.b, cx, cz, 1) * 16;
-		float lxv = ax + mx - wx, lyv = my - wy, lzv = az + mz - wz;
-		float d = (float) Math.sqrt(lxv * lxv + lyv * lyv + lzv * lzv);
-		return total * Math.max(lzv / d, 0);
+		float cx = ax / 32 + OFFSET_CELLS, cz = az / 32 + OFFSET_CELLS;
+		return m.shade(map, (int) (height / LightMapBake.LAYER_HEIGHT), cx, cz, wx, wy, wz, 0, 0, 1);
 	}
 
 	/** The biggest jump between neighbouring samples along the wall, over their mean. */
-	private static float biggestJump(Mirror m, float from, float to, float height)
+	private static float biggestJump(LightMap map, Mirror m, float from, float to, float height)
 	{
-		float worst = 0, previous = wallPixel(m, from, height);
+		float worst = 0, previous = wallPixel(map, m, from, height);
 		for (float along = from + 4; along <= to; along += 4)
 		{
-			float v = wallPixel(m, along, height);
+			float v = wallPixel(map, m, along, height);
 			worst = Math.max(worst, Math.abs(v - previous) / Math.max((v + previous) / 2, 1e-4f));
 			previous = v;
 		}
@@ -194,7 +207,7 @@ public class LightMapShadingTest
 		Mirror m = wallAndLight(map, 24.3f);
 		for (float height : new float[]{30, 70})
 		{
-			float jump = biggestJump(m, 64, 320, height);
+			float jump = biggestJump(map, m, 64, 320, height);
 			assertTrue("jump " + jump + " at " + height, jump < 0.25f);
 		}
 	}

@@ -144,7 +144,9 @@ class SceneLights
 			this.life = new LightLife(def, fadesIn);
 			this.object = object;
 			this.auto = auto;
-			float reach = def.kind == LightDefinition.FLICKER ? def.radius * 1.5f : def.radius;
+			// the most the light's radius is (see emit)
+			float reach = def.kind == LightDefinition.FLICKER ? def.radius * 1.5f
+				: def.kind == LightDefinition.PULSE && def.duration > 0 ? def.radius * (1 + def.range / 100f) : def.radius;
 			// a light that reaches further than the bake does would end at its edge: it stays with the clusters
 			this.bake = def.outdoorLighting || def.animationSpecific() || def.fixedDespawnTime || reach > LightMapBake.MAX_RADIUS ? null
 				: new LightMap.Source(plane, x, y, z, reach, def.red, def.green, def.blue, def.strength, def.nightOnly,
@@ -1389,7 +1391,7 @@ class SceneLights
 		}
 		if (mapped)
 		{
-			lightMap.setLevel(bake, strength);
+			lightMap.setLevel(bake, strength, radius);
 			return;
 		}
 		float red = d.red, green = d.green, blue = d.blue;

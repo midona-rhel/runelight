@@ -11,9 +11,9 @@ import org.slf4j.LoggerFactory;
  * black, nor lit more than it needs.
  *
  * A room's score is what its floor receives, as luminance of the light on a surface, averaged over the floor:
- * - the light map's point lights (the blocks as they are sent to the GPU, {@link #block}): each floor cell's light
- *   times FLOOR_NDL (a floor is lit at a slant), at most CELL_CAP, so that a torch's hot spot cannot hide a room's dark
- *   rest. The light map is baked for the time of day, so a night-only light counts only at night;
+ * - the light map's point lights (the floors of the blocks as they are sent to the GPU, {@link #floor}): each floor cell's
+ *   light (the lights' luminances times their visibility and falloff) times FLOOR_NDL (a floor is lit at a slant), at most CELL_CAP, so that a torch's hot spot cannot hide a room's dark
+ *   rest. It is worked out for the time of day, so a night-only light counts only at night;
  * - the sky coming in: how much of the room's floor the sky light reaches through its doors and openings (SkyField, as
  *   the skylight spreads it; found on a worker whenever the walls change), times what a floor the sky reaches in full
  *   gets of the daylight now ({@link #skyLuminance}).
@@ -37,7 +37,7 @@ import org.slf4j.LoggerFactory;
  *   as its fire makes it. Before this a pub by day read 11 percent of the grass outside; a fully lit room still does
  *   as it did.
  */
-final class RoomLight implements LightMap.Sink
+final class RoomLight
 {
 	private static final Logger log = LoggerFactory.getLogger(RoomLight.class);
 
@@ -186,9 +186,8 @@ final class RoomLight implements LightMap.Sink
 		}
 	}
 
-	/** A block of the light map is sent (LightMap.Sink): a null a is cleared. */
-	@Override
-	public void block(int plane, int bx, int bz, short[] a, short[] b)
+	/** The light on the floor in a block of the light map's cells (LightMap.Sink): null is none. */
+	void floor(int plane, int bx, int bz, float[] light)
 	{
 		RoomMap map = rooms;
 		int side = LightMap.BLOCK;
@@ -198,7 +197,7 @@ final class RoomLight implements LightMap.Sink
 		}
 		if (grid[plane] == null)
 		{
-			if (a == null)
+			if (light == null)
 			{
 				return;
 			}
@@ -220,13 +219,9 @@ final class RoomLight implements LightMap.Sink
 					break;
 				}
 				float score = 0;
-				if (a != null)
+				if (light != null)
 				{
-					// the first height layer, the floor's
-					int c = (j * side + i) * 4;
-					float lum = 0.2126f * Half.fromHalf(a[c]) + 0.7152f * Half.fromHalf(a[c + 1])
-						+ 0.0722f * Half.fromHalf(a[c + 2]);
-					score = Math.min(lum * FLOOR_NDL, CELL_CAP);
+					score = Math.min(light[j * side + i] * FLOOR_NDL, CELL_CAP);
 				}
 				int k = z * cells + x;
 				float old = g[k];

@@ -222,20 +222,27 @@ vec3 pointLights(int entry, vec3 p, vec3 n, float transmissive, out vec3 through
   vec3 through = vec3(0.0);
   vec3 sum = vec3(0.0);
 #if LIGHT_MAP
-  // the static lights baked into the map (light_map.glsl): one lookup for all of them, lit from the direction of the
-  // brightest. The lights below are the others: those that move, and those not baked yet.
+  // the static lights baked into the map (light_map.glsl): the lights that reach the point, each worked out as below,
+  // times its visibility. The lights below are the others: those that move, and those not baked yet.
   int mapPlane = 0;
   if (lightMapOn()) {
     vec3 world = p + cameraPos;
     mapPlane = lightMapPlane(world + n * ROOM_NORMAL_BIAS);
-    vec3 toLight;
-    float lightY;
-    vec3 baked = lightMapLight(world, world + n * LIGHT_MAP_NORMAL_BIAS, mapPlane, toLight, lightY);
-    float bakedNdl = dot(n, toLight);
-    // Opaque back faces receive neither diffuse light nor foliage transmission.
-    if (bakedNdl > 0.0 || transmissive > 0.0) {
-      sum += baked * (max(bakedNdl, 0.0) * POINT_LIGHT_SCALE);
-      through += baked * (transmission(bakedNdl, dot(-toLight, viewDir), transmissive) * POINT_LIGHT_SCALE);
+    vec4 vis;
+    ivec4 ids;
+    if (lightMapSlots(world, world + n * LIGHT_MAP_NORMAL_BIAS, mapPlane, vis, ids)) {
+      for (int k = 0; k < 4; ++k) {
+        vec3 color, ld;
+        float lightY;
+        if (lightMapLight(ids[k], vis[k], world, color, ld, lightY)) {
+          float ndl = dot(n, ld);
+          // Opaque back faces receive neither diffuse light nor foliage transmission.
+          if (ndl > 0.0 || transmissive > 0.0) {
+            sum += color * (max(ndl, 0.0) * POINT_LIGHT_SCALE);
+            through += color * (transmission(ndl, dot(-ld, viewDir), transmissive) * POINT_LIGHT_SCALE);
+          }
+        }
+      }
     }
   }
 #endif
@@ -277,8 +284,7 @@ vec3 pointLights(int entry, vec3 p, vec3 n, float transmissive, out vec3 through
     vec3 color = colorCode.rgb * share * lightOcclusion(extra, posRadius.xyz, p, n);
 
     // 117 HD's falloff; we light in linear space like it does
-    float att = 1.0 - sqrt(d2 / r2);
-    att *= att;
+    float att = pointLightFalloff(d2, r2);
     sum += color * att * max(ndl, 0.0) * POINT_LIGHT_SCALE;
     // thin foliage is also lit from behind: magic tree canopies glow around the lights inside them
     through += color * att * transmission(ndl, dot(-ld, viewDir), transmissive) * POINT_LIGHT_SCALE;

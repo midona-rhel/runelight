@@ -160,18 +160,22 @@ vec3 weatherPointLights(vec3 p, vec4 clip, vec3 n, float roofY) {
   bool overRoof = p.y < roof;
   vec3 sum = vec3(0.0);
 #if LIGHT_MAP
-  // the baked lights (light_map.glsl), one lookup at the point; not when the light is below the roof it is over, as
-  // below. Weather is outside: the map's light is what reaches it through the doors and over the walls.
+  // the baked lights (light_map.glsl), each as below, at most four. Weather is outside: the map's light is what reaches it
+  // through the doors and over the walls.
   if (lightMapOn()) {
     vec3 world = p + cameraPos;
-    vec3 toLight;
-    float lightY;
-    vec3 baked = lightMapLight(world, world, lightMapPlane(world), toLight, lightY);
-    // the dominant light's height stands for the lights' (the cell's)
-    if (!(overRoof && lightY - cameraPos.y > roof)) {
-      float k = particle ? 1.0 + WEATHER_FORWARD_SCATTER * pow(max(dot(toLight, view), 0.0), WEATHER_FORWARD_POWER)
-        : max(dot(n, toLight), 0.0);
-      sum += baked * k;
+    vec4 vis;
+    ivec4 ids;
+    if (lightMapSlots(world, world, lightMapPlane(world), vis, ids)) {
+      for (int j = 0; j < 4; ++j) {
+        vec3 color, ld;
+        float lightY;
+        if (lightMapLight(ids[j], vis[j], world, color, ld, lightY) && !(overRoof && lightY - cameraPos.y > roof)) {
+          float k = particle ? 1.0 + WEATHER_FORWARD_SCATTER * pow(max(dot(ld, view), 0.0), WEATHER_FORWARD_POWER)
+            : max(dot(n, ld), 0.0);
+          sum += color * k;
+        }
+      }
     }
   }
 #endif
@@ -190,8 +194,7 @@ vec3 weatherPointLights(vec3 p, vec4 clip, vec3 n, float roofY) {
       continue;
     }
     // 117 HD's falloff, as in the composite
-    float att = 1.0 - sqrt(d2 / r2);
-    att *= att;
+    float att = pointLightFalloff(d2, r2);
     vec3 ld = l * inversesqrt(max(d2, 1.0));
     // drops between the camera and a light glow against it
     float k = particle ? 1.0 + WEATHER_FORWARD_SCATTER * pow(max(dot(ld, view), 0.0), WEATHER_FORWARD_POWER)

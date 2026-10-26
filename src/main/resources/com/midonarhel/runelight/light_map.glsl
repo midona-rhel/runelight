@@ -1,18 +1,15 @@
-// The light map (LightMap.java, LightMapTexture.java): the static lights baked per storey into cells of a quarter tile, one
-// 3D texture. Per storey LIGHT_MAP_LAYERS slices of
-//   A: the lights' summed colour, each its colour times its strength times its share of the cell at the height of the slice's
-//      middle (LIGHT_MAP_LAYER_HEIGHT apart from the storey's floor, walls stop the light at all of them, models at the heights they
-//      stand at), and in alpha how far the brightest light is ahead of the next, in luminance. Read filtered, across the
-//      layers too: the pixel's height above its storey's floor picks the place between two of them.
-// and after all the storeys' A, per storey a slice
-//   B: the lights' mean place, weighted by their luminance over the layers, from the cell's middle (x, z) and the height (y),
-//      in sixteenths of a unit; and in alpha the table index of the brightest light, which is read as it is (texelFetch).
-//      Read filtered across the cell but never across the slices; the cells round the lit ones carry the place too, so that
-//      it needs no weighting.
-// The table, in lightData from LIGHT_MAP_TABLE_BASE, has per light its strength now over the strength it was baked with
-// (flicker, pulse, fades) and its radius, for what is higher than the layers. The brightest light of a cell flickers by its lead over the others, so where
-// the brightest changes from one light to another the flicker changes smoothly with it.
-// A read never takes light across a wall, filtered or not: the cells of a tile are joined by the tile's wall bits
+// The light map (LightMap.java, LightMapTexture.java): which of the static lights reach a point and how visible each is, per
+// storey in cells of a quarter tile, one RGBA8 3D texture. Per storey LIGHT_MAP_LAYERS slices of
+//   visibility: a channel per slot, how much of the light in that slot (a light has one slot all over) is not stopped on its way
+//      to the cell, at the height of the slice's middle (LIGHT_MAP_LAYER_HEIGHT apart from the storey's floor; walls stop the light
+//      at all of them, models at the heights they stand at). Read filtered, across the layers too: the pixel's height above its
+//      storey's floor picks the place between two of them.
+// and after all the storeys' visibility, per storey two slices
+//   index: the table ids of the lights in the four slots, 16 bits each, read as they are (texelFetch).
+// The table, in lightData from LIGHT_MAP_TABLE_BASE, has two texels to an id: the light's place (world) and its radius now, and its
+// colour times its strength now (flicker, pulse, night and fades are in it). The light on a point is worked out as the clusters do
+// theirs, for each light of the point's cell, times its visibility: lightMapLight. Nothing in the map is shading.
+// A read never takes visibility across a wall, filtered or not: the cells of a tile are joined by the tile's wall bits
 // (rooms.glsl), and where a filtered read would take from a cell the wall cuts it off from, it reads where it stands.
 // Needs lightData, cluster_config, light_map_config and rooms.glsl. The map is there when the room map's header says 3.
 
@@ -24,10 +21,9 @@ uniform sampler3D lightMap;
 // it, in the cell the light fell on
 #define LIGHT_MAP_NORMAL_BIAS 20.0
 #define LIGHT_MAP_CELL 32.0
-// the places in B are in this many world units to a stored unit
-#define LIGHT_MAP_PLACE_UNIT 16.0
-// the slices of the texture: the colour of every layer of the four storeys, then the places of the four
-#define LIGHT_MAP_SLICES float((LIGHT_MAP_LAYERS + 1) * 4)
+// the slices of the texture: the visibility of every layer of the four storeys, then the index of the four
+#define LIGHT_MAP_INDEX_BASE (LIGHT_MAP_LAYERS * 4)
+#define LIGHT_MAP_SLICES float((LIGHT_MAP_LAYERS + 2) * 4)
 
 bool lightMapOn() {
   return roomHeader.x > 2.5;
@@ -156,90 +152,70 @@ bool lightMapTaps(inout vec2 c, ivec2 o, int plane, out ivec2 cell[4], out vec4 
   return false;
 }
 
-// The baked lights' light at the world point w, read at `at` (the point itself, or off its surface) on a storey: the
-// colour, with the brightest light's flicker in it, in toLight the unit direction from w to
-// the lights' mean place and in lightY its height (world y). Black, and toLight straight up, where no light reaches.
-vec3 lightMapLight(vec3 w, vec3 at, int plane, out vec3 toLight, out float lightY) {
-  toLight = vec3(0.0, -1.0, 0.0);
-  lightY = w.y;
+// The lights the map holds at a point: their visibility in vis, their table ids in ids (0: none), per slot. w is the point,
+// at where it is read (the point itself, or off its surface), on a storey. False where no light reaches.
+bool lightMapSlots(vec3 w, vec3 at, int plane, out vec4 vis, out ivec4 ids) {
+  vis = vec4(0.0);
+  ids = ivec4(0);
   float cells = roomHeader.y * 4.0;
   vec2 c = at.xz * (1.0 / LIGHT_MAP_CELL) + roomHeader.z * 4.0;
   ivec2 cell = ivec2(floor(c));
   if (any(lessThan(cell, ivec2(0))) || any(greaterThanEqual(cell, ivec2(int(cells))))) {
-    return vec3(0.0);
+    return false;
+  }
+  // the lights of the cell the point is in; a cell next to a light's has it too, empty, so that filtering takes from it
+  vec4 low = texelFetch(lightMap, ivec3(cell, LIGHT_MAP_INDEX_BASE + plane * 2), 0) * 255.0 + 0.5;
+  vec4 high = texelFetch(lightMap, ivec3(cell, LIGHT_MAP_INDEX_BASE + plane * 2 + 1), 0) * 255.0 + 0.5;
+  ids = ivec4(int(low.x) + int(low.y) * 256, int(low.z) + int(low.w) * 256, int(high.x) + int(high.y) * 256,
+    int(high.z) + int(high.w) * 256);
+  if (all(equal(ids, ivec4(0)))) {
+    return false;
   }
   // the height above the storey's floor, as a place between the layers' middles (the first and the last layer
   // stand for what is below and above them)
   float height = texelFetch(lightData, lightMapTile(cell, 1))[plane] - w.y;
   float layer = clamp(height * (1.0 / LIGHT_MAP_LAYER_HEIGHT) - 0.5, 0.0, float(LIGHT_MAP_LAYERS - 1));
-  vec3 uv = vec3(c / cells, (float(plane * LIGHT_MAP_LAYERS) + layer + 0.5) / LIGHT_MAP_SLICES);
-  vec4 a = textureLod(lightMap, uv, 0.0);
-  const vec3 LUMA = vec3(0.2126, 0.7152, 0.0722);
-  if (dot(a.rgb, LUMA) <= 0.0) {
-    return vec3(0.0);
-  }
-  // lit: the filter taking only from the cells that are not walled off. What it takes from is what it took from before, or
-  // less, so that what was dark stays dark
+  // the filter taking only from the cells that are not walled off
   ivec2 taps[4];
   vec4 share;
-  vec3 place;
-  int id;
-  float total;
   if (lightMapTaps(c, cell, plane, taps, share)) {
-    uv.xy = c / cells;
-    a = textureLod(lightMap, uv, 0.0);
-    vec4 b = textureLod(lightMap, vec3(uv.xy, (float(LIGHT_MAP_LAYERS * 4 + plane) + 0.5) / LIGHT_MAP_SLICES), 0.0);
-    // the mean place of the lights: from the point read, which the filtered offsets are from
-    place = vec3((c.x - roomHeader.z * 4.0) * LIGHT_MAP_CELL + b.x * LIGHT_MAP_PLACE_UNIT, b.z * LIGHT_MAP_PLACE_UNIT,
-      (c.y - roomHeader.z * 4.0) * LIGHT_MAP_CELL + b.y * LIGHT_MAP_PLACE_UNIT);
-    // the brightest light, the one read as it is: its flicker by its lead. Nothing read as it is may be a range or a
-    // distance (a cut at one light's radius, a cell at a time): the reach of the lights is in the cells, filtered.
-    id = int(texelFetch(lightMap, ivec3(ivec2(floor(c)), LIGHT_MAP_LAYERS * 4 + plane), 0).w + 0.5);
+    vis = textureLod(lightMap, vec3(c / cells, (float(plane * LIGHT_MAP_LAYERS) + layer + 0.5) / LIGHT_MAP_SLICES), 0.0);
   } else {
-    // cell by cell: the layers' filter by hand, the places from the cells' middles
+    // cell by cell: the layers' filter by hand
     float below = floor(layer);
     float above = min(below + 1.0, float(LIGHT_MAP_LAYERS - 1));
     int slice = plane * LIGHT_MAP_LAYERS;
-    a = vec4(0.0);
-    place = vec3(0.0);
-    float best = -1.0;
     for (int k = 0; k < 4; ++k) {
       if (share[k] > 0.0) {
-        a += share[k] * mix(texelFetch(lightMap, ivec3(taps[k], slice + int(below)), 0),
+        vis += share[k] * mix(texelFetch(lightMap, ivec3(taps[k], slice + int(below)), 0),
           texelFetch(lightMap, ivec3(taps[k], slice + int(above)), 0), layer - below);
-        vec4 b = texelFetch(lightMap, ivec3(taps[k], LIGHT_MAP_LAYERS * 4 + plane), 0);
-        place += share[k] * vec3((float(taps[k].x) + 0.5 - roomHeader.z * 4.0) * LIGHT_MAP_CELL + b.x * LIGHT_MAP_PLACE_UNIT,
-          b.z * LIGHT_MAP_PLACE_UNIT, (float(taps[k].y) + 0.5 - roomHeader.z * 4.0) * LIGHT_MAP_CELL + b.y * LIGHT_MAP_PLACE_UNIT);
-        if (share[k] > best) {
-          best = share[k];
-          id = int(b.w + 0.5);
-        }
       }
     }
   }
-  total = dot(a.rgb, LUMA);
-  if (total <= 0.0) {
-    return vec3(0.0);
+  return true;
+}
+
+// A baked light's light at the world point w, the light with table id id and visibility vis there, worked out as the
+// clusters do theirs (composite_frag.glsl pointLights): 117 HD's falloff by the distance. The colour (with the falloff and
+// the visibility in it), the unit direction to the light and its height (world y). False where it adds none.
+bool lightMapLight(int id, float vis, vec3 w, out vec3 color, out vec3 toLight, out float lightY) {
+  color = vec3(0.0);
+  toLight = vec3(0.0, -1.0, 0.0);
+  lightY = w.y;
+  if (id == 0 || vis <= 0.0) {
+    return false;
   }
-  vec3 l = place - w;
-  toLight = l / max(length(l), 1.0);
-  lightY = place.y;
-  float swing = 1.0;
-  float reach = 1.0;
-  if (id > 0) {
-    vec4 entry = texelFetch(lightData, LIGHT_MAP_TABLE_BASE + id);
-    float lead = clamp(a.a / total, 0.0, 1.0);
-    swing = 1.0 - lead + lead * entry.x;
-    // above the top layer's middle the map holds nothing more (what is higher than a storey is an outdoor facade's upper
-    // wall): the light goes on falling with the distance, from what the top layer has, as the brightest light's reach does
-    float over = height - (float(LIGHT_MAP_LAYERS) - 0.5) * LIGHT_MAP_LAYER_HEIGHT;
-    if (over > 0.0) {
-      float near = max(1.0 - length(vec3(l.x, l.y - over, l.z)) / entry.y, 0.0);
-      float far = max(1.0 - length(l) / entry.y, 0.0);
-      reach = near > 0.0 ? min((far * far) / (near * near), 1.0) : 0.0;
-    }
+  vec4 posRadius = texelFetch(lightData, LIGHT_MAP_TABLE_BASE + id * 2);
+  vec3 l = posRadius.xyz - w;
+  float d2 = dot(l, l);
+  float r2 = posRadius.w * posRadius.w;
+  if (d2 >= r2) {
+    return false;
   }
-  return a.rgb * (swing * reach);
+  toLight = l * inversesqrt(max(d2, 1.0));
+  lightY = posRadius.y;
+  color = texelFetch(lightData, LIGHT_MAP_TABLE_BASE + id * 2 + 1).rgb * (vis * pointLightFalloff(d2, r2));
+  return true;
 }
 
 #endif

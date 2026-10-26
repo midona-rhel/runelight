@@ -424,9 +424,19 @@ void main() {
     weight[i] = scattered * (1.0 - far) / dt;
 #if LIGHT_MAP
     if (mapGlow) {
-      vec3 toLight;
-      float lightY;
-      scatterMap += lightMapLight(wp, wp, lightMapPlane(wp), toLight, lightY) * (scattered * (1.0 - far));
+      vec4 vis;
+      ivec4 ids;
+      if (lightMapSlots(wp, wp, lightMapPlane(wp), vis, ids)) {
+        vec3 glowHere = vec3(0.0);
+        for (int k = 0; k < 4; ++k) {
+          vec3 color, toLight;
+          float lightY;
+          if (lightMapLight(ids[k], vis[k], wp, color, toLight, lightY)) {
+            glowHere += color;
+          }
+        }
+        scatterMap += glowHere * (scattered * (1.0 - far));
+      }
     }
 #endif
     trans *= stepTrans;

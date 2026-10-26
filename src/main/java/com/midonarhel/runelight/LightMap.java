@@ -4,8 +4,10 @@ import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.PriorityBlockingQueue;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -13,23 +15,26 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 /**
- * The static point lights, baked into a light map: per storey, a grid of quarter-tile cells holding the light that
- * reaches the cell from all the baked lights together (LightMapBake works one light out; the composite, the fog and
- * the weather read the map instead of looping over the lights). What a cell holds, per storey:
+ * The static point lights' visibility, baked into a light map: per storey, a grid of quarter-tile cells that holds, for
+ * each baked light that reaches the cell, how much of the light is not stopped on its way there (LightMapBake works one
+ * light out). Nothing else about a light is in the map: the composite, the fog, the weather and the water read which
+ * lights reach a point and how visible each is, fetch the lights' places, radii and colours from the table (below) and
+ * work the light out exactly as the clusters do (117 HD's falloff by the distance, N.L, flicker), times the visibility.
+ * Shading by a grid of cells is what drew its staircases, bands and rectangles; visibility alone is smooth. What a cell
+ * holds, per storey:
  *
- * - A, HEIGHT_LAYERS layers over the storey's height, filtered across the layers too: the summed colour of the
- *   lights, each its colour times its strength times its share of the cell at the layer's height; and how far the
- *   brightest of them (the one in B) is ahead of the next one (their luminances' difference), in alpha.
- * - B, filtered across the cell but never across the layers, one for all of them: where the lights are, as their mean
- *   place weighted by their luminance over the layers, from the cell's middle (x, z) and the height (world y), in
- *   sixteenths of a unit, so that it filters as the place of a light does; the cells round the lit ones, where the
- *   colour is filtered down to nothing, carry the place of the lights that reach their neighbours; and, to be read
- *   as it is, the table index of the brightest light.
- *   The shading takes its direction and height from the mean place, and the flicker from the table (light_map.glsl):
- *   the table holds, for each baked light, how strong it is now against how strong it was baked. So only the brightest
- *   light of a cell flickers, by as much as it is ahead of the others (so that where the brightest changes from one
- *   light to another, nothing steps), and a pulse changes a strength but not a radius. Nothing read as it is is a
- *   range or a distance: a light's reach is in the cells alone, which fade to exactly zero at its radius.
+ * - Visibility: HEIGHT_LAYERS layers over the storey's height, filtered across the layers too, RGBA8: a channel per slot.
+ * - Index: the table ids of the lights in the slots, 16 bits each, over two texels read as they are (nearest).
+ *
+ * A light has one slot (0 to SLOTS - 1) for as far as it reaches, chosen so that the lights that share a slot never
+ * reach cells next to each other: in the cells a light is in (and the one ring of cells round them, where a filtered
+ * read takes from it) its slot's channel is only its own, whichever way a read filters. Where more lights than slots
+ * overlap, a light is left out of the cells whose slots are taken (the first to hold a cell keeps it, and the nearest
+ * lights are baked first), and the count of those is told in the log for each scene.
+ *
+ * The table, in lightData from LIGHT_MAP_TABLE_BASE, has two texels per id: the light's place and its radius now, and its
+ * colour times its strength now (flicker, pulse, night and fades are all in it, per frame: setLevel). So a light that
+ * flickers does so in every cell it reaches, and nothing in the map is a strength.
  *
  * The bakes run on background threads, nearest light first, and the cells are put together by 32 x 32 blocks from the
  * lights' results, again on the threads; the render thread only sends the finished blocks (the nearest first, a few a
@@ -38,10 +43,7 @@ import org.slf4j.LoggerFactory;
  * entry is reused.
  *
  * Changes: when the walls, the solid objects or the models change (doors, spawns), the lights whose reach holds a cell
- * that differs are baked again (setBlockers), and one that comes out as it was changes nothing downstream. A light that
- * is night-only, or has a night multiplier, is put into the blocks at its strength for the night as of sixteen steps of
- * it; between the steps, and for flicker, the table's strength against the baked one makes up the difference for the
- * brightest light of a cell only.
+ * that differs are baked again (setBlockers), and one that comes out as it was changes nothing downstream.
  *
  * Each stretch of work (a scene load, a teleport, a door) is told in the log once it is all sent: the lights baked, the
  * time from the start until every block was sent, the work and the threads.
@@ -52,13 +54,18 @@ final class LightMap
 
 	/** Cells per block side. */
 	static final int BLOCK = 32;
-	/** The places in layer B are stored in this many units to the world unit (they are sums). */
-	static final float PLACE_SCALE = 1 / 16f;
-	/** Table entries; 0 is no light. */
-	static final int TABLE_TEXELS = 2048;
-	static final int STORIES = WallMap.PLANES;
-	/** The steps the night is quantized to for the baked strengths. */
+	/** The steps the night is quantized to for the rooms' light. */
 	static final int NIGHT_STEPS = 16;
+	/** The lights a cell can hold: the channels of its visibility. */
+	static final int SLOTS = 4;
+	/** Slices of the index in a storey: SLOTS ids of 16 bits in texels of 4 bytes. */
+	static final int INDEX_SLICES = SLOTS / 2;
+	/** Table ids; 0 is no light. */
+	static final int TABLE_IDS = 2048;
+	/** Texels of the table to an id: place and radius, colour and strength. */
+	static final int TABLE_STRIDE = 2;
+	static final int TABLE_TEXELS = TABLE_IDS * TABLE_STRIDE;
+	static final int STORIES = WallMap.PLANES;
 	/** Work on this many lights is told in the log at info level, less at debug. */
 	static final int INFO_LIGHTS = 16;
 	/** A light further than this (world units) outside the view's reach is let go of. */
@@ -86,6 +93,7 @@ final class LightMap
 		final int owner;
 		final float x, y, z, radius;
 		final float red, green, blue, strength;
+		// for the rooms' light only (RoomLight): what the light is at a night, which the map's visibility does not hold
 		final boolean nightOnly;
 		final float nightMultiplier;
 
@@ -97,6 +105,10 @@ final class LightMap
 		boolean held;
 		int generation;
 		LightMapBake.Grid[] grids;
+		// per grid, the cells the light holds in its slot: those it is in and the ring round them (see the class's doc)
+		boolean[][] holds;
+		// the slot its cells are in
+		int slot;
 		int[] needKeys = new int[0], needSeqs = new int[0];
 		// whether the map carries the light: its blocks have been sent
 		volatile boolean live;
@@ -123,7 +135,7 @@ final class LightMap
 			return nightOnly || nightMultiplier != 1;
 		}
 
-		/** The strength the light is baked with at a night (0 to 1). */
+		/** The strength the rooms' light is worked out with at a night (0 to 1). */
 		float baked(float night)
 		{
 			float s = strength * (1 + (nightMultiplier - 1) * night);
@@ -135,25 +147,35 @@ final class LightMap
 	static final class Block
 	{
 		final int key, plane, bx, bz, seq;
-		// RGBA half floats: a is HEIGHT_LAYERS layers of BLOCK * BLOCK cells, b one; null when the block holds no light
-		final short[] a, b;
+		// RGBA bytes: the visibility, HEIGHT_LAYERS layers of BLOCK * BLOCK cells, and the index, INDEX_SLICES of them; null
+		// when the block holds no light
+		final byte[] vis, index;
+		// per cell, the light on a floor there (RoomLight), luminance; null as vis is
+		final float[] floor;
+		// only floor changed: the textures hold the block as it is
+		final boolean floorOnly;
 
-		Block(int key, int plane, int bx, int bz, int seq, short[] a, short[] b)
+		Block(int key, int plane, int bx, int bz, int seq, byte[] vis, byte[] index, float[] floor, boolean floorOnly)
 		{
 			this.key = key;
 			this.plane = plane;
 			this.bx = bx;
 			this.bz = bz;
 			this.seq = seq;
-			this.a = a;
-			this.b = b;
+			this.vis = vis;
+			this.index = index;
+			this.floor = floor;
+			this.floorOnly = floorOnly;
 		}
 	}
 
 	interface Sink
 	{
-		/** Send a block into the textures; a null a (and b) clears it. */
-		void block(int plane, int bx, int bz, short[] a, short[] b);
+		/** Send a block into the textures; a null vis (and index) clears it. */
+		void block(int plane, int bx, int bz, byte[] vis, byte[] index);
+
+		/** The light on a floor per cell of a block, as of the lights' strengths now (null: none), for the rooms. */
+		void floor(int plane, int bx, int bz, float[] floor);
 	}
 
 	/** Work for a thread: lowest priority first. */
@@ -189,27 +211,33 @@ final class LightMap
 	private int[] seq = new int[0];
 	private boolean[] combinePending = new boolean[0];
 	private final List<Source> sources = new ArrayList<>();
+	private int night;
+	// blocks that only the rooms' light changed in, since they were put together last: not sent to the textures
+	private boolean[] floorOnly = new boolean[0];
 	private final ArrayDeque<Integer> freeIds = new ArrayDeque<>();
 	// the table entries of lights that were taken off, with the blocks that must be sent before they are free: id,
 	// then the keys and the seqs
 	private final List<int[]> releases = new ArrayList<>();
-	private int night;
 	private final Map<Integer, Block> ready = new HashMap<>();
 	// render thread
 	private int[] uploaded = new int[0];
 	private boolean[] onGpu = new boolean[0];
 	private float focusX, focusZ;
 
-	// the table: per id, (strength now over the baked, the radius, 0, 0)
+	// the table: per id, the light's place and radius now, then its colour times its strength now (and 0)
 	private final float[] table = new float[TABLE_TEXELS * 4];
 	private int tableUsed = 1;
+	// per storey and slot, per cell: the id of the light that holds the cell in the slot, 0 for none; and the lights by id; guarded by lock
+	private short[][] holder = new short[STORIES * SLOTS][0];
+	private final Source[] byId = new Source[TABLE_IDS];
 
 	/** The work since the map was idle: what was baked, why, and what it took, for the log. */
 	private static final class Batch
 	{
 		final long start;
 		boolean scene;
-		int lights, fresh, changed, byWalls, byModels, unchanged, blocks;
+		int lights, fresh, changed, byWalls, byModels, unchanged, blocks, lostLights;
+		long lostCells, litCells;
 		long bakeNanos, blockNanos, visits;
 
 		Batch(long start, boolean scene)
@@ -248,7 +276,7 @@ final class LightMap
 	private void resetIds()
 	{
 		freeIds.clear();
-		for (int i = 1; i < TABLE_TEXELS; ++i)
+		for (int i = 1; i < TABLE_IDS; ++i)
 		{
 			freeIds.add(i);
 		}
@@ -447,6 +475,8 @@ final class LightMap
 				blocksPerSide = perSide;
 				seq = new int[STORIES * perSide * perSide];
 				combinePending = new boolean[seq.length];
+				floorOnly = new boolean[seq.length];
+				holder = new short[STORIES * SLOTS][next.cells * next.cells];
 				uploaded = new int[seq.length];
 				onGpu = new boolean[seq.length];
 			}
@@ -552,8 +582,8 @@ final class LightMap
 	}
 
 	/**
-	 * The night (0 to 1) as of now. Lights that depend on it are put into the blocks again when it has moved on by a
-	 * step of NIGHT_STEPS.
+	 * The night (0 to 1) as of now. The rooms' light of lights that depend on it is worked out again when it has moved on
+	 * by a step of NIGHT_STEPS; the textures hold none of it.
 	 */
 	void setNight(float value)
 	{
@@ -569,7 +599,19 @@ final class LightMap
 			{
 				if (s.nightDependent() && s.grids != null && !s.retired)
 				{
+					// a block the textures hold as it is now: only its floor is put together again
+					int[] keys = keysOf(s.grids);
+					boolean[] clean = new boolean[keys.length];
+					for (int i = 0; i < keys.length; ++i)
+					{
+						int k = keys[i];
+						clean[i] = floorOnly[k] || !combinePending[k] && !ready.containsKey(k) && uploaded[k] >= seq[k];
+					}
 					dirty(s.grids, null);
+					for (int i = 0; i < keys.length; ++i)
+					{
+						floorOnly[keys[i]] |= clean[i];
+					}
 				}
 			}
 		}
@@ -603,8 +645,8 @@ final class LightMap
 			maxRadius = Math.max(maxRadius, s.radius);
 			s.id = freeIds.poll();
 			tableUsed = Math.max(tableUsed, s.id + 1);
-			table[s.id * 4] = 1;
-			table[s.id * 4 + 1] = s.radius;
+			byId[s.id] = s;
+			setLevel(s, s.strength, s.radius);
 			sources.add(s);
 			if (blockers != null)
 			{
@@ -635,6 +677,8 @@ final class LightMap
 			s.live = false;
 			s.generation++;
 			sources.remove(s);
+			unhold(s);
+			byId[s.id] = null;
 			int[] keys = dirty(s.grids, null);
 			int[] seqs = new int[keys.length];
 			for (int i = 0; i < keys.length; ++i)
@@ -647,6 +691,7 @@ final class LightMap
 			System.arraycopy(seqs, 0, release, 1 + keys.length, keys.length);
 			releases.add(release);
 			s.grids = null;
+			s.holds = null;
 			s.id = 0;
 		}
 	}
@@ -675,9 +720,15 @@ final class LightMap
 			s.live = false;
 			s.generation++;
 			s.grids = null;
+			s.holds = null;
 			s.id = 0;
 		}
 		sources.clear();
+		for (short[] cells : holder)
+		{
+			Arrays.fill(cells, (short) 0);
+		}
+		Arrays.fill(byId, null);
 		resetIds();
 		tableUsed = 1;
 		releases.clear();
@@ -694,18 +745,26 @@ final class LightMap
 	}
 
 	/**
-	 * Say how strong the light is now: its table entry holds this against the strength it is baked with.
+	 * Say what the light is like now: its table entry holds its place, this radius, and its colour times this.
 	 *
 	 * @param intensity colour is multiplied by this (flicker, pulse, night, fades, all of it)
+	 * @param radius the light's reach now (flicker, pulse), at most the reach it is baked for
 	 */
-	void setLevel(Source s, float intensity)
+	void setLevel(Source s, float intensity, float radius)
 	{
 		if (!s.registered || s.retired)
 		{
 			return;
 		}
-		float base = s.baked(night / (float) NIGHT_STEPS);
-		table[s.id * 4] = base > 1e-6f ? intensity / base : 0;
+		int t = s.id * TABLE_STRIDE * 4;
+		table[t] = s.x;
+		table[t + 1] = s.y;
+		table[t + 2] = s.z;
+		table[t + 3] = radius;
+		table[t + 4] = s.red * intensity;
+		table[t + 5] = s.green * intensity;
+		table[t + 6] = s.blue * intensity;
+		table[t + 7] = 0;
 	}
 
 	/** Whether the map carries the light, so the clusters mustn't. */
@@ -714,13 +773,13 @@ final class LightMap
 		return s.live;
 	}
 
-	/** The table, for the shaders: per id (strength now over baked, the radius, 0, 0). */
+	/** The table, for the shaders: per id, TABLE_STRIDE texels (place and radius, colour and 0). */
 	float[] table()
 	{
 		return table;
 	}
 
-	/** The table's entries in use: ids below this. */
+	/** The table's ids in use: ids below this. */
 	int tableUsed()
 	{
 		return tableUsed;
@@ -864,6 +923,8 @@ final class LightMap
 						return;
 					}
 					dirty(s.grids, r.grids);
+					unhold(s);
+					hold(s, r.grids);
 					s.grids = r.grids;
 					s.needKeys = keysOf(r.grids);
 					s.needSeqs = new int[s.needKeys.length];
@@ -881,6 +942,222 @@ final class LightMap
 				bakesPending--;
 			}
 		}
+	}
+
+	/**
+	 * Give the light its cells in a slot (the lock is held): the slot where the least light is lost, to the lights that hold
+	 * cells in it already. The light it holds is those it is in and the ring round them. A cell that is taken goes to the
+	 * brighter of the two lights there (what it gives the cell: its luminance times its visibility and its falloff there), and
+	 * the other is left out of it: the weakest light is the one dropped.
+	 */
+	private void hold(Source s, LightMapBake.Grid[] grids)
+	{
+		int cells = blockers.cells;
+		boolean[][] holds = new boolean[grids.length][];
+		long litCells = 0;
+		for (int i = 0; i < grids.length; ++i)
+		{
+			holds[i] = ring(grids[i]);
+			for (int c = 0; c < grids[i].w * grids[i].h; ++c)
+			{
+				litCells += lit(grids[i], c) ? 1 : 0;
+			}
+		}
+		int slot = 0;
+		float fewest = Float.MAX_VALUE;
+		for (int k = 0; k < SLOTS && fewest > 0; ++k)
+		{
+			float lost = 0;
+			for (int i = 0; i < grids.length; ++i)
+			{
+				LightMapBake.Grid g = grids[i];
+				short[] holder = this.holder[g.plane * SLOTS + k];
+				for (int j = 0; j < g.h; ++j)
+				{
+					for (int x = 0; x < g.w; ++x)
+					{
+						int c = j * g.w + x, at = (g.z0 + j) * cells + g.x0 + x;
+						if (holds[i][c] && holder[at] != 0)
+						{
+							Source other = byId[holder[at]];
+							lost += Math.min(weight(s, g, x, j), other != null ? weightAt(other, g.plane, g.x0 + x, g.z0 + j) : 0);
+						}
+					}
+				}
+			}
+			if (lost < fewest)
+			{
+				fewest = lost;
+				slot = k;
+			}
+		}
+		int lostLit = 0;
+		Set<Integer> changed = new HashSet<>();
+		for (int i = 0; i < grids.length; ++i)
+		{
+			LightMapBake.Grid g = grids[i];
+			short[] holder = this.holder[g.plane * SLOTS + slot];
+			for (int j = 0; j < g.h; ++j)
+			{
+				for (int x = 0; x < g.w; ++x)
+				{
+					int c = j * g.w + x, at = (g.z0 + j) * cells + g.x0 + x;
+					if (!holds[i][c])
+					{
+						continue;
+					}
+					Source other = holder[at] != 0 ? byId[holder[at]] : null;
+					if (other != null && weightAt(other, g.plane, g.x0 + x, g.z0 + j) >= weight(s, g, x, j))
+					{
+						holds[i][c] = false;
+						lostLit += lit(g, c) ? 1 : 0;
+						continue;
+					}
+					if (other != null)
+					{
+						lostLit += drop(other, g.plane, g.x0 + x, g.z0 + j, changed);
+					}
+					holder[at] = (short) s.id;
+				}
+			}
+		}
+		for (int k : changed)
+		{
+			// the lights that lost a cell are put into the blocks again
+			seq[k]++;
+			floorOnly[k] = false;
+			schedule(k);
+		}
+		s.slot = slot;
+		s.holds = holds;
+		if (batch != null)
+		{
+			batch.litCells += litCells;
+			if (lostLit > 0)
+			{
+				batch.lostLights++;
+				batch.lostCells += lostLit;
+			}
+		}
+	}
+
+	/** The luminance of a light's colour at its strength. */
+	private static float luminance(Source s)
+	{
+		return (0.2126f * s.red + 0.7152f * s.green + 0.0722f * s.blue) * s.strength;
+	}
+
+	/**
+	 * What the light gives a cell of its grid (gx, gz in the grid), as the most of its layers: the light's luminance times
+	 * its visibility there and its falloff by the distance.
+	 */
+	private float weight(Source s, LightMapBake.Grid g, int gx, int gz)
+	{
+		float most = 0;
+		for (int layer = 0; layer < LightMapBake.HEIGHT_LAYERS; ++layer)
+		{
+			most = Math.max(most, g.c[(gz * g.w + gx) * LightMapBake.HEIGHT_LAYERS + layer]);
+		}
+		if (most <= 0)
+		{
+			return 0;
+		}
+		int off = blockers.offset * LightBlockers.CELLS_PER_TILE, x = g.x0 + gx, z = g.z0 + gz;
+		float flat = (float) Math.hypot((x + 0.5f - off) * LightMapBake.CELL - s.x, (z + 0.5f - off) * LightMapBake.CELL - s.z);
+		float dy = blockers.floor(g.plane, x / LightMapBake.CELLS_PER_TILE, z / LightMapBake.CELLS_PER_TILE)
+			- LightMapBake.layerHeight(1) - s.y;
+		return luminance(s) * most * LightMapBake.falloff((float) Math.hypot(flat, dy) / s.radius);
+	}
+
+	/** What a light that holds a cell (x, z) of a storey gives it. */
+	private float weightAt(Source s, int plane, int x, int z)
+	{
+		for (LightMapBake.Grid g : s.grids)
+		{
+			if (g.plane == plane && x >= g.x0 && z >= g.z0 && x < g.x0 + g.w && z < g.z0 + g.h)
+			{
+				return weight(s, g, x - g.x0, z - g.z0);
+			}
+		}
+		return 0;
+	}
+
+	/** A light that held a cell loses it (to a brighter one), and the block of it is to be put together again. Returns 1 if it was lit. */
+	private int drop(Source s, int plane, int x, int z, Set<Integer> changed)
+	{
+		for (int i = 0; i < s.grids.length; ++i)
+		{
+			LightMapBake.Grid g = s.grids[i];
+			if (g.plane == plane && x >= g.x0 && z >= g.z0 && x < g.x0 + g.w && z < g.z0 + g.h)
+			{
+				int c = (z - g.z0) * g.w + x - g.x0;
+				s.holds[i][c] = false;
+				changed.add(key(plane, x / BLOCK, z / BLOCK));
+				return lit(g, c) ? 1 : 0;
+			}
+		}
+		return 0;
+	}
+
+	/** The light lets go of its cells (the lock is held). */
+	private void unhold(Source s)
+	{
+		if (s.holds == null || s.grids == null || blockers == null)
+		{
+			return;
+		}
+		int cells = blockers.cells;
+		for (int i = 0; i < s.grids.length; ++i)
+		{
+			LightMapBake.Grid g = s.grids[i];
+			short[] holder = this.holder[g.plane * SLOTS + s.slot];
+			for (int j = 0; j < g.h; ++j)
+			{
+				for (int x = 0; x < g.w; ++x)
+				{
+					if (s.holds[i][j * g.w + x])
+					{
+						holder[(g.z0 + j) * cells + g.x0 + x] = 0;
+					}
+				}
+			}
+		}
+		s.holds = null;
+	}
+
+	private static boolean lit(LightMapBake.Grid g, int cell)
+	{
+		for (int layer = 0; layer < LightMapBake.HEIGHT_LAYERS; ++layer)
+		{
+			if (g.c[cell * LightMapBake.HEIGHT_LAYERS + layer] > 0)
+			{
+				return true;
+			}
+		}
+		return false;
+	}
+
+	/** The cells of a grid with any light, and the ring of cells round them. */
+	static boolean[] ring(LightMapBake.Grid g)
+	{
+		boolean[] out = new boolean[g.w * g.h];
+		for (int j = 0; j < g.h; ++j)
+		{
+			for (int x = 0; x < g.w; ++x)
+			{
+				if (lit(g, j * g.w + x))
+				{
+					for (int dj = Math.max(0, j - 1); dj <= Math.min(g.h - 1, j + 1); ++dj)
+					{
+						for (int dx = Math.max(0, x - 1); dx <= Math.min(g.w - 1, x + 1); ++dx)
+						{
+							out[dj * g.w + dx] = true;
+						}
+					}
+				}
+			}
+		}
+		return out;
 	}
 
 	private static boolean same(LightMapBake.Grid[] a, LightMapBake.Grid[] b)
@@ -922,6 +1199,18 @@ final class LightMap
 		else if (log.isDebugEnabled())
 		{
 			log.debug("Light map: " + what, args);
+		}
+		if (b.lostCells > 0)
+		{
+			String lost = "Light map: {} lights have no room for {} of their {} lit cells, where more than {} lights overlap";
+			if (b.scene)
+			{
+				log.info(lost, b.lostLights, b.lostCells, b.litCells, SLOTS);
+			}
+			else if (log.isDebugEnabled())
+			{
+				log.debug(lost, b.lostLights, b.lostCells, b.litCells, SLOTS);
+			}
 		}
 	}
 
@@ -980,6 +1269,7 @@ final class LightMap
 		for (int k : all)
 		{
 			seq[k]++;
+			floorOnly[k] = false;
 			schedule(k);
 		}
 		return all;
@@ -1004,20 +1294,22 @@ final class LightMap
 	private static final class Part
 	{
 		final LightMapBake.Grid g;
-		final float r, gr, b;
-		final int id;
-		final float x, y, z;
+		final boolean[] holds;
+		final int id, slot;
+		// for the light on a floor: where the light is, how far it reaches and its luminance
+		final float x, y, z, radius, luminance;
 
-		Part(LightMapBake.Grid g, Source s, float strength)
+		Part(LightMapBake.Grid g, boolean[] holds, Source s, float strength)
 		{
 			this.g = g;
-			r = s.red * strength;
-			gr = s.green * strength;
-			b = s.blue * strength;
+			this.holds = holds;
 			id = s.id;
+			slot = s.slot;
 			x = s.x;
 			y = s.y;
 			z = s.z;
+			radius = s.radius;
+			luminance = (0.2126f * s.red + 0.7152f * s.green + 0.0722f * s.blue) * strength;
 		}
 	}
 
@@ -1039,7 +1331,9 @@ final class LightMap
 	private void put(int k)
 	{
 		List<Part> parts = new ArrayList<>();
-		int plane, bx, bz, seqNow, perSide, off;
+		int plane, bx, bz, seqNow, perSide;
+		boolean floorOnlyNow;
+		LightBlockers b;
 		synchronized (lock)
 		{
 			combinePending[k] = false;
@@ -1052,7 +1346,8 @@ final class LightMap
 			bz = k / perSide % perSide;
 			bx = k % perSide;
 			seqNow = seq[k];
-			off = blockers.offset * LightBlockers.CELLS_PER_TILE;
+			floorOnlyNow = floorOnly[k];
+			b = blockers;
 			float n = night / (float) NIGHT_STEPS;
 			for (Source s : sources)
 			{
@@ -1060,18 +1355,19 @@ final class LightMap
 				{
 					continue;
 				}
-				for (LightMapBake.Grid g : s.grids)
+				for (int gi = 0; gi < s.grids.length; ++gi)
 				{
+					LightMapBake.Grid g = s.grids[gi];
 					if (g.plane == plane && g.x0 < (bx + 1) * BLOCK && g.x0 + g.w > bx * BLOCK
 						&& g.z0 < (bz + 1) * BLOCK && g.z0 + g.h > bz * BLOCK)
 					{
-						parts.add(new Part(g, s, s.baked(n)));
+						parts.add(new Part(g, s.holds[gi], s, s.baked(n)));
 					}
 				}
 			}
 		}
 		long start = System.nanoTime();
-		Block block = build(k, plane, bx, bz, seqNow, off, parts);
+		Block block = build(k, plane, bx, bz, seqNow, floorOnlyNow, parts, b);
 		synchronized (lock)
 		{
 			totalCombines++;
@@ -1094,125 +1390,57 @@ final class LightMap
 		}
 	}
 
-	private static Block build(int key, int plane, int bx, int bz, int seq, int off, List<Part> parts)
+	/**
+	 * A block's visibility and index: per cell, the lights that hold it each in its slot, the visibility of each layer in
+	 * the slot's channel and the id in the slot's place in the index. And the light on the floor there, for the rooms: the
+	 * lights' luminances at the strengths of the night as of now, each times its visibility and its falloff, at the height of
+	 * the first layer.
+	 */
+	private static Block build(int key, int plane, int bx, int bz, int seq, boolean floorOnly, List<Part> parts,
+		LightBlockers b)
 	{
 		int n = BLOCK * BLOCK, layers = LightMapBake.HEIGHT_LAYERS;
-		// per cell and layer: the colour sum, the luminance, the brightest, the next brightest and the brightest light;
-		// per cell: the sum of luminance times the place of the light (x, z, y), the brightest light over all the layers,
-		// and the sum of the places of the lights whose rectangle holds the cell without any of their light in it
-		float[] sum = new float[n * layers * 3], total = new float[n * layers], best = new float[n * layers], second = new float[n * layers];
-		Part[] brightest = new Part[n * layers];
-		float[] at = new float[n * 3], all = new float[n], most = new float[n], ring = new float[n * 3];
-		int[] ringCount = new int[n];
-		Part[] dominant = new Part[n];
+		byte[] vis = new byte[n * layers * 4], index = new byte[n * INDEX_SLICES * 4];
+		float[] floor = new float[n];
 		boolean any = false;
+		float up = LightMapBake.layerHeight(0);
 		for (Part p : parts)
 		{
 			LightMapBake.Grid g = p.g;
 			int x0 = Math.max(g.x0, bx * BLOCK), x1 = Math.min(g.x0 + g.w, (bx + 1) * BLOCK);
 			int z0 = Math.max(g.z0, bz * BLOCK), z1 = Math.min(g.z0 + g.h, (bz + 1) * BLOCK);
+			float lx = p.x / LightMapBake.CELL + b.offset * LightBlockers.CELLS_PER_TILE;
+			float lz = p.z / LightMapBake.CELL + b.offset * LightBlockers.CELLS_PER_TILE;
 			for (int z = z0; z < z1; ++z)
 			{
 				for (int x = x0; x < x1; ++x)
 				{
+					int from = (z - g.z0) * g.w + x - g.x0;
+					if (!p.holds[from])
+					{
+						continue;
+					}
 					int i = (z - bz * BLOCK) * BLOCK + x - bx * BLOCK;
-					int from = ((z - g.z0) * g.w + x - g.x0) * layers;
-					float lumAll = 0;
+					int at = ((p.slot >> 1) * n + i) * 4 + (p.slot & 1) * 2;
+					index[at] = (byte) p.id;
+					index[at + 1] = (byte) (p.id >> 8);
 					for (int layer = 0; layer < layers; ++layer)
 					{
-						float c = g.c[from + layer];
-						if (c <= 0)
-						{
-							continue;
-						}
-						int j = i * layers + layer;
-						float lr = p.r * c, lg = p.gr * c, lb = p.b * c;
-						sum[j * 3] += lr;
-						sum[j * 3 + 1] += lg;
-						sum[j * 3 + 2] += lb;
-						float lum = 0.2126f * lr + 0.7152f * lg + 0.0722f * lb;
-						total[j] += lum;
-						lumAll += lum;
-						if (lum > best[j])
-						{
-							second[j] = best[j];
-							best[j] = lum;
-							brightest[j] = p;
-						}
-						else if (lum > second[j])
-						{
-							second[j] = lum;
-						}
+						vis[(layer * n + i) * 4 + p.slot] = (byte) Math.round(g.c[from * layers + layer] * 255);
 					}
-					if (lumAll > 0)
+					float v = g.c[from * layers];
+					if (v > 0)
 					{
-						all[i] += lumAll;
-						at[i * 3] += lumAll * p.x;
-						at[i * 3 + 1] += lumAll * p.z;
-						at[i * 3 + 2] += lumAll * p.y;
-						if (lumAll > most[i])
-						{
-							most[i] = lumAll;
-							dominant[i] = p;
-						}
-					}
-					else
-					{
-						ring[i * 3] += p.x;
-						ring[i * 3 + 1] += p.z;
-						ring[i * 3 + 2] += p.y;
-						ringCount[i]++;
+						float flat = (float) Math.hypot(x + 0.5f - lx, z + 0.5f - lz) * LightMapBake.CELL;
+						float dy = b.floor(g.plane, x / LightMapBake.CELLS_PER_TILE, z / LightMapBake.CELLS_PER_TILE) - up - p.y;
+						floor[i] += p.luminance * v * LightMapBake.falloff((float) Math.hypot(flat, dy) / p.radius);
 					}
 					any = true;
 				}
 			}
 		}
-		if (!any)
-		{
-			return new Block(key, plane, bx, bz, seq, null, null);
-		}
-		short[] a = new short[n * layers * 4], b = new short[n * 4];
-		for (int j = 0; j < BLOCK; ++j)
-		{
-			for (int i = 0; i < BLOCK; ++i)
-			{
-				int c = j * BLOCK + i;
-				Part d = dominant[c];
-				float mx, mz, my;
-				if (d != null)
-				{
-					mx = at[c * 3] / all[c];
-					mz = at[c * 3 + 1] / all[c];
-					my = at[c * 3 + 2] / all[c];
-					for (int layer = 0; layer < layers; ++layer)
-					{
-						int k = c * layers + layer, o = (layer * n + c) * 4;
-						a[o] = Half.toHalf(sum[k * 3]);
-						a[o + 1] = Half.toHalf(sum[k * 3 + 1]);
-						a[o + 2] = Half.toHalf(sum[k * 3 + 2]);
-						// how far the light the flicker is read for is ahead, where it is the brightest
-						a[o + 3] = Half.toHalf(brightest[k] == d ? best[k] - second[k] : 0);
-					}
-				}
-				else if (ringCount[c] > 0)
-				{
-					mx = ring[c * 3] / ringCount[c];
-					mz = ring[c * 3 + 1] / ringCount[c];
-					my = ring[c * 3 + 2] / ringCount[c];
-				}
-				else
-				{
-					continue;
-				}
-				// the mean place from the cell's middle, in sixteenths of a unit
-				float cx = (bx * BLOCK + i + 0.5f - off) * LightMapBake.CELL, cz = (bz * BLOCK + j + 0.5f - off) * LightMapBake.CELL;
-				b[c * 4] = Half.toHalf((mx - cx) * PLACE_SCALE);
-				b[c * 4 + 1] = Half.toHalf((mz - cz) * PLACE_SCALE);
-				b[c * 4 + 2] = Half.toHalf(my * PLACE_SCALE);
-				b[c * 4 + 3] = Half.toHalf(d == null ? 0 : d.id);
-			}
-		}
-		return new Block(key, plane, bx, bz, seq, a, b);
+		return any ? new Block(key, plane, bx, bz, seq, vis, index, floor, floorOnly)
+			: new Block(key, plane, bx, bz, seq, null, null, null, floorOnly);
 	}
 
 	// ---------------------------------------------------------------------------------------------------------
@@ -1270,12 +1498,16 @@ final class LightMap
 						continue;
 					}
 				}
-				boolean empty = bl.a == null;
-				if (!empty || onGpu[bl.key])
+				boolean empty = bl.vis == null;
+				if (!bl.floorOnly)
 				{
-					sink.block(bl.plane, bl.bx, bl.bz, bl.a, bl.b);
+					if (!empty || onGpu[bl.key])
+					{
+						sink.block(bl.plane, bl.bx, bl.bz, bl.vis, bl.index);
+					}
+					onGpu[bl.key] = !empty;
 				}
-				onGpu[bl.key] = !empty;
+				sink.floor(bl.plane, bl.bx, bl.bz, bl.floor);
 				uploaded[bl.key] = Math.max(uploaded[bl.key], bl.seq);
 				sent++;
 			}

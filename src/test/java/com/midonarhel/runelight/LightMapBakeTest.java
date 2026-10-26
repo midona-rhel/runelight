@@ -13,12 +13,13 @@ public class LightMapBakeTest
 	}
 
 	@Test
-	public void openFloorFallsOffWithDistance()
+	public void openFloorIsFullyVisibleUpToTheRadius()
 	{
 		BakeScene s = new BakeScene();
 		LightMapBake.Result r = bake(s, BakeScene.light(0, 24.5f, 24.5f, 40, 8));
 		float near = BakeScene.atTile(r, 0, 25.5f, 24.5f), far = BakeScene.atTile(r, 0, 29.5f, 24.5f);
-		assertTrue(near > far && far > 0);
+		assertEquals(1, near, 0.01f);
+		assertEquals(1, far, 0.01f);
 		assertEquals(0, BakeScene.atTile(r, 0, 34.5f, 24.5f), 0);
 		assertTrue(r.cellVisits > 0);
 	}
@@ -207,7 +208,7 @@ public class LightMapBakeTest
 			col[i] = BakeScene.at(r, 0, 30 * 4, 22 * 4 + i);
 		}
 		float top = col[0], bottom = col[col.length - 1];
-		assertTrue("lit " + top + " shadow " + bottom, top > bottom * 10);
+		assertTrue("lit " + top + " shadow " + bottom, top > bottom * 5);
 		assertTrue("no step of more than a sixth of it: " + biggestStep(col), biggestStep(col) < 1 / 6f);
 		int between = 0;
 		for (float v : col)
@@ -267,9 +268,10 @@ public class LightMapBakeTest
 	}
 
 	@Test
-	public void aLightFadesToExactlyNothingAtItsRadius()
+	public void visibilityEndsAtTheRadiusWithoutAStep()
 	{
-		// high up, on open floor: along a row and along a diagonal out past the radius, no step and nothing left over
+		// high up, on open floor: along a row and along a diagonal out past the radius, it is seen all the way and then
+		// gone in a few cells, whatever the direction
 		LightMapBake.Result r = bake(new BakeScene(), BakeScene.light(0, 24.5f, 24.5f, 150, 6));
 		for (int line = 0; line < 2; ++line)
 		{
@@ -278,23 +280,21 @@ public class LightMapBakeTest
 			{
 				v[i] = line == 0 ? BakeScene.at(r, 0, 98 + i, 98) : BakeScene.at(r, 0, 98 + i * 3 / 4, 98 + i * 3 / 4);
 			}
-			assertTrue("line " + line + " step " + biggestStep(v), biggestStep(v) < 0.15f);
+			assertEquals(1, v[10], 0.01f);
 			// the radius is 24 cells from the light: past it, nothing
 			assertEquals(0, v[v.length - 1], 0);
-			assertTrue("just inside the radius it is nearly gone: " + v[line == 0 ? 22 : 21], v[line == 0 ? 22 : 21] < 0.02f);
+			assertEquals(0, v[line == 0 ? 25 : 33], 0);
 		}
 	}
 
 	@Test
-	public void eachLayerIsLitFromItsOwnHeight()
+	public void eachLayerIsSeenFromItsOwnHeight()
 	{
-		// a lamp 30 up: close beside it the layer at its height is the brightest, the top layer, 180 higher, the least
-		LightMapBake.Result r = bake(new BakeScene(), BakeScene.light(0, 24.5f, 24.5f, 30, 8));
-		float low = BakeScene.at(r, 0, 0, 4 * 25, 4 * 24 + 2), top = BakeScene.at(r, 0, 3, 4 * 25, 4 * 24 + 2);
-		assertTrue("low " + low + " top " + top, low > top * 1.2f && top > 0);
-		// far out the same, in less
-		float far = BakeScene.at(r, 0, 0, 4 * 29, 4 * 24 + 2);
-		assertTrue(far > 0 && far < low);
+		// a lamp 30 up with a short reach: the layer at its height is seen further out than the top layer, 180 higher
+		LightMapBake.Result r = bake(new BakeScene(), BakeScene.light(0, 24.5f, 24.5f, 30, 2));
+		float low = BakeScene.at(r, 0, 0, 98 + 7, 98), top = BakeScene.at(r, 0, 3, 98 + 7, 98);
+		assertTrue("low " + low + " top " + top, low > 0.5f && top == 0);
+		assertEquals(1, BakeScene.at(r, 0, 3, 98 + 3, 98), 0.01f);
 	}
 
 	@Test
