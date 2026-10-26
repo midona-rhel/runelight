@@ -82,22 +82,18 @@ layout(location = 1) out vec4 WaveOut;    // the wave map: slope xy, foam
 #define BANK_FOAM_FLOW vec2(25.0, 80.0)
 #define BANK_FOAM 0.7
 #define BANK_FOAM_REACH vec2(0.4, 1.3)
-// Shore waves, on open sea only (WaterMap page 2): bands of foam rolling in toward the shore as sine waves,
-// SHORE_SPACING tiles apart, one every SHORE_PERIOD seconds (a divisor of waterTime's wrap, so they never jump), SHORE_WIDTH
-// of the spacing wide (the sine's crest between its two smoothsteps). A band comes in over SHORE_FAR's tiles from
-// the shore, starts breaking into blobs at SHORE_BREAK.x (noise cells SHORE_BLOB tiles across, thresholded
-// higher the nearer the shore) that shrink away by SHORE_BREAK.y; the next band is already behind it. Along the
-// shore each crest wanders SHORE_WANDER tiles, and its strength varies SHORE_PATCH of itself. SHORE_FOAM: the
-// foam at most.
+// Shore waves, on open sea only (WaterMap page 2), in the style of a cartoon sea: crisp white crest lines, sine curves
+// that follow the shore without keeping parallel to it (they wander SHORE_WOBBLE tiles with the position along it),
+// SHORE_SPACING tiles apart and one coming in every SHORE_PERIOD seconds (a divisor of waterTime's wrap, so they never
+// jump). A crest is SHORE_LINE tiles half wide and thins away to nothing by SHORE_FAR's tiles from the shore. Nearing it,
+// from SHORE_BREAK.x to .y tiles, it widens and breaks into round blobs, the domes of the same ripple cells the rapids'
+// foam is made of, which shrink to nothing before the next crest arrives.
 #define SHORE_SPACING 4.5
 #define SHORE_PERIOD 8.0
-#define SHORE_FAR vec2(10.0, 13.0)
-#define SHORE_BREAK vec2(6.5, 1.0)
-#define SHORE_WIDTH vec2(0.7, 0.95)
-#define SHORE_BLOB 1.6
-#define SHORE_WANDER 0.4
-#define SHORE_PATCH 0.4
-#define SHORE_FOAM 0.6
+#define SHORE_FAR vec2(9.0, 12.0)
+#define SHORE_BREAK vec2(5.5, 0.9)
+#define SHORE_LINE 0.24
+#define SHORE_WOBBLE 0.8
 // caustics (water.glsl has the strength): world units per repeat, seconds per cycle of each copy on still water;
 // mean and line values of the kept copy; drawn out along water faster than CAUSTIC_STRETCH_SPEED by up to
 // CAUSTIC_STRETCH seconds of the flow
@@ -231,26 +227,30 @@ uint pack01(float v, float bits) {
 
 // The foam of the shore waves at xz: 0 away from open sea and its shores
 float shoreFoam(vec2 xz) {
-  vec4 field = waterPage2(waterData, xz / WATER_TILE + waterGrid.x);
-  float open = smoothstep(0.5, 1.0, field.g);
-  if (open <= 0.0 || field.r >= SHORE_FAR.y)
+  vec2 c = xz / WATER_TILE;
+  vec4 field = waterPage2(waterData, c + waterGrid.x);
+  if (field.g < 0.5 || field.r >= SHORE_FAR.y + SHORE_SPACING)
     return 0.0;
-  // this crest's phase: the distance to shore, wandering along the shore, plus the time; its wave counts up as
-  // the bands come in
-  vec2 along = xz / (WATER_TILE * SHORE_BLOB * 1.7);
-  float q = (field.r + SHORE_WANDER * waveNoise(along)) / SHORE_SPACING + waterTime / SHORE_PERIOD;
+  // the crest's phase: the distance to shore plus a sine of the position along it, and the time; its wave counts up as
+  // the crests come in
+  float wobble = SHORE_WOBBLE * (sin(dot(c, vec2(0.45, 0.27))) + 0.6 * sin(dot(c, vec2(-0.2, 0.6)) + 1.7));
+  float q = (field.r + wobble) / SHORE_SPACING + waterTime / SHORE_PERIOD;
   float wave = floor(q), f = q - wave;
-  // the distance from shore of this band's middle, which only shrinks with time
-  float middle = field.r + (0.5 - f) * SHORE_SPACING;
-  float band = smoothstep(SHORE_WIDTH.x, SHORE_WIDTH.y, 0.5 + 0.5 * cos(WATER_TAU * (f - 0.5)));
+  // how far this crest is from the shore: it only shrinks as the time goes on
+  float middle = field.r + wobble + (0.5 - f) * SHORE_SPACING;
+  float s = abs(f - 0.5) * SHORE_SPACING;
   float life = clamp((SHORE_BREAK.x - middle) / (SHORE_BREAK.x - SHORE_BREAK.y), 0.0, 1.0);
-  vec2 blobAt = xz / (WATER_TILE * SHORE_BLOB) + vec2(wave * 5.31, wave * 2.17);
-  float n = 0.65 * waveNoise(blobAt) + 0.35 * waveNoise(blobAt * 2.3 + 17.0);
-  float threshold = mix(-0.3, 0.55, smoothstep(0.0, 1.0, life));
-  float blobs = smoothstep(threshold, threshold + 0.2, n);
-  float strength = 1.0 - SHORE_PATCH * waterHash(vec3(wave, floor(along.x * 0.5), floor(along.y * 0.5)));
-  return open * band * blobs * strength * SHORE_FOAM * (1.0 - smoothstep(0.75, 1.0, life))
+  // each crest its own width, pinching and swelling along itself, and wider as it breaks
+  float crestHalf = SHORE_LINE * (0.75 + 0.5 * waterHash(vec3(wave, 7.0, 2.0)))
+    * (0.7 + 0.3 * sin(dot(c, vec2(0.37, -0.22)) + wave * 2.3)) * (1.0 + 1.8 * life)
     * (1.0 - smoothstep(SHORE_FAR.x, SHORE_FAR.y, middle));
+  float aa = max(fwidth(s), 0.01);
+  float line = 1.0 - smoothstep(crestHalf - aa, crestHalf + aa, s);
+  // the blobs: the ripple cells' domes (layer 2, as the rapids' foam), shrinking as the crest nears the shore
+  float h = textureLod(waterNoise, vec3(xz / CELL_SCALE_B + vec2(wave * 0.37, wave * 0.61), 2.0), 0.0).b;
+  float t = mix(-0.1, 0.7, life);
+  float e = max(fwidth(h), 0.02);
+  return line * smoothstep(t - e, t + e, h);
 }
 
 // The waves' slope at xz and the foam on them (the wave map's, WaterSurface.bake), for water of this type and flow

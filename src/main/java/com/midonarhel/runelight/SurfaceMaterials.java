@@ -35,7 +35,7 @@ import static org.lwjgl.opengl.GL33C.glUniform1f;
  * (bed and land terrain, which no model face has otherwise): the composite shades them as real water (water.glsl
  * waterFake). They are the faces with the game's water textures, and the faces of a fake water group (bits 23-30 of
  * the model flags) that its rules pick out. The uploaders make them opaque, drop their texture and put their height
- * above the foot of the model's water in the u coordinate (see {@link #fakeFoot}).
+ * above the foot of the model's water in the u coordinate (see {@link #fakeSpan}).
  * The flags are always baked; the config toggles only change shader uniforms, so no scene reload is needed.
  */
 final class SurfaceMaterials
@@ -510,13 +510,16 @@ final class SurfaceMaterials
 		return (faceBits & FAKE_WATER) == FAKE_WATER;
 	}
 
+	private static final float[] NO_SPAN = {Float.NaN, Float.NaN};
+
 	/**
 	 * Where the water of a model with fake water stands: the largest y (lowest point, y down) of the vertices of its
-	 * fake faces, or NaN when it has none. {@code material} the model flags, the arrays the model's (faces whose third
-	 * color is -2 are not drawn). The uploaders put each vertex's height above it, in world units, into the u
-	 * coordinate of its fake faces, which the shader foams the foot of falls by.
+	 * fake faces, its foot, and the smallest, its top; both NaN when it has none. {@code material} the model flags, the
+	 * arrays the model's (faces whose third color is -2 are not drawn). The uploaders put each vertex's height above the
+	 * foot, in world units, into the u coordinate of its fake faces and its depth below the top into v, which the shader
+	 * foams the foot and the lip of falls by.
 	 */
-	static float fakeFoot(int material, short[] textures, int faceCount, int[] colors, byte[] transparencies,
+	static float[] fakeSpan(int material, short[] textures, int faceCount, int[] colors, byte[] transparencies,
 		int[] indices1, int[] indices2, int[] indices3, float[] vertexY)
 	{
 		boolean any = (material >> FAKE_SHIFT & GROUP_MASK) != 0;
@@ -526,19 +529,21 @@ final class SurfaceMaterials
 		}
 		if (!any)
 		{
-			return Float.NaN;
+			return NO_SPAN;
 		}
-		float foot = Float.NaN;
+		float foot = Float.NaN, top = Float.NaN;
 		for (int f = 0; f < faceCount; ++f)
 		{
 			int texture = textures != null ? textures[f] : -1;
 			if (isFake(face(material, texture, colors[f] & 0xffff, opacity(transparencies, f))))
 			{
-				foot = Math.max(Float.isNaN(foot) ? -Float.MAX_VALUE : foot,
-					Math.max(vertexY[indices1[f]], Math.max(vertexY[indices2[f]], vertexY[indices3[f]])));
+				float low = Math.max(vertexY[indices1[f]], Math.max(vertexY[indices2[f]], vertexY[indices3[f]]));
+				float high = Math.min(vertexY[indices1[f]], Math.min(vertexY[indices2[f]], vertexY[indices3[f]]));
+				foot = Float.isNaN(foot) ? low : Math.max(foot, low);
+				top = Float.isNaN(top) ? high : Math.min(top, high);
 			}
 		}
-		return foot;
+		return foot == foot ? new float[]{foot, top} : NO_SPAN;
 	}
 
 	private static boolean isWaterTexture(int texture)
@@ -554,7 +559,7 @@ final class SurfaceMaterials
 	}
 
 	/**
-	 * A fake water vertex's height above the foot (see {@link #fakeFoot}), for the u coordinate: whole world units.
+	 * A fake water vertex's distance from one end of the water's span (see {@link #fakeSpan}): its height above the foot, for the u coordinate, or its depth below the top, for v; whole world units.
 	 */
 	static int fakeHeight(float foot, float vertexY)
 	{

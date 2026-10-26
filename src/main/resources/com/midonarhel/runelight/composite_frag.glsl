@@ -334,13 +334,13 @@ struct SceneSample {
   vec3 normal;    // as stored, n * 0.5 + 0.5
   vec4 material;  // materialUnpack
   vec3 faceNormal;
-  float foot;     // fake water: its height above the foot of the model's water, world units
+  vec2 span;      // fake water: its height above the foot of the model's water and its depth below the top, world units
 };
 
 SceneSample sceneSample(ivec2 px, int s) {
   vec4 target = texelFetch(sceneMaterial, px, s);
   return SceneSample(texelFetch(sceneColor, px, s), texelFetch(sceneDepth, px, s).r, texelFetch(sceneNormal, px, s).rgb,
-    materialUnpack(target), materialFaceNormal(target), materialFoot(target));
+    materialUnpack(target), materialFaceNormal(target), materialSpan(target));
 }
 
 // Lights one scene sample of the pixel px: sky or surface, then the transparent layer over it, then the fog.
@@ -520,7 +520,7 @@ vec4 shadeScene(ivec2 px, SceneSample sm, vec4 transparent) {
       }
       lit = waterOver(px, p, color.rgb, shadow, lit, material.b);
       if (materialFakeWater(material)) {
-        lit = waterFake(px, p, sm.faceNormal, color.rgb, shadow, sm.foot, lit);
+        lit = waterFake(px, p, sm.faceNormal, color.rgb, shadow, sm.span, lit);
       }
       if (compositePart == 4) { return vec4(lit, 1.0); }
     }

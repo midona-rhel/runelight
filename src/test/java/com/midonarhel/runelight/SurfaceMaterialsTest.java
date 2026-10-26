@@ -132,17 +132,19 @@ public class SurfaceMaterialsTest
 	}
 
 	@Test
-	public void theFootIsTheLowestFakeVertex()
+	public void theSpanIsTheLowestAndHighestFakeVertex()
 	{
 		// three faces, the second the only one that is not water; y is down, so the foot is the largest
 		short[] textures = {1, -1, 1};
 		int[] colors = {0, 0, 0};
 		int[] a = {0, 3, 6}, b = {1, 4, 7}, c = {2, 5, 8};
 		float[] y = {-100, -80, -60, 40, 50, 60, -40, -30, -20};
-		assertEquals(-20, SurfaceMaterials.fakeFoot(0, textures, 3, colors, null, a, b, c, y), 0);
+		float[] span = SurfaceMaterials.fakeSpan(0, textures, 3, colors, null, a, b, c, y);
+		assertEquals(-20, span[0], 0);
+		assertEquals(-100, span[1], 0);
 		// no water faces and no group: no foot
-		assertTrue(Float.isNaN(SurfaceMaterials.fakeFoot(0, new short[]{-1, -1, -1}, 3, colors, null, a, b, c, y)));
-		assertTrue(Float.isNaN(SurfaceMaterials.fakeFoot(0, null, 3, colors, null, a, b, c, y)));
+		assertTrue(Float.isNaN(SurfaceMaterials.fakeSpan(0, new short[]{-1, -1, -1}, 3, colors, null, a, b, c, y)[0]));
+		assertTrue(Float.isNaN(SurfaceMaterials.fakeSpan(0, null, 3, colors, null, a, b, c, y)[1]));
 		assertEquals(80, SurfaceMaterials.fakeHeight(-20, -100));
 		assertEquals(0, SurfaceMaterials.fakeHeight(-20, 40));
 	}

@@ -146,7 +146,7 @@ void main() {
   }
   FragNormal = vec4(n * 0.5 + 0.5, c.a);
   // alpha 1 marks the sample as covered by geometry (SceneTargets.clear); the opaque pass writes without blending
-  FragMaterial = materialPack(fMaterial, faceNormal, fUv.x * 256.0);
+  FragMaterial = materialPack(fMaterial, faceNormal, fUv * 256.0);
 
   if (alphaPass == 1) {
     vec3 light;

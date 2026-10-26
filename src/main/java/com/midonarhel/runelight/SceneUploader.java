@@ -1267,8 +1267,8 @@ class SceneUploader
 			modelLocalZI[v] = vz;
 		}
 
-		// fake water: faces drawn as real water, with their height above the foot of the model's water in u
-		final float foot = SurfaceMaterials.fakeFoot(material, faceTextures, triangleCount, color1s, transparencies,
+		// fake water: faces drawn as real water, with their height above the foot of the model's water in u and below the top of it in v
+		final float[] span = SurfaceMaterials.fakeSpan(material, faceTextures, triangleCount, color1s, transparencies,
 			indices1, indices2, indices3, vertexY);
 		int len = 0;
 		for (int face = 0; face < triangleCount; ++face)
@@ -1362,10 +1362,12 @@ class SceneUploader
 			{
 				texture = 0;
 				alphaBias &= 0xffffff;
-				su0 = SurfaceMaterials.fakeHeight(foot, vertexY[triangleA]);
-				su1 = SurfaceMaterials.fakeHeight(foot, vertexY[triangleB]);
-				su2 = SurfaceMaterials.fakeHeight(foot, vertexY[triangleC]);
-				sv0 = sv1 = sv2 = 0;
+				su0 = SurfaceMaterials.fakeHeight(span[0], vertexY[triangleA]);
+				su1 = SurfaceMaterials.fakeHeight(span[0], vertexY[triangleB]);
+				su2 = SurfaceMaterials.fakeHeight(span[0], vertexY[triangleC]);
+				sv0 = SurfaceMaterials.fakeHeight(vertexY[triangleA], span[1]);
+				sv1 = SurfaceMaterials.fakeHeight(vertexY[triangleB], span[1]);
+				sv2 = SurfaceMaterials.fakeHeight(vertexY[triangleC], span[1]);
 			}
 			texture |= bits;
 			GpuIntBuffer buf = alpha && !fake ? ab : vb;
