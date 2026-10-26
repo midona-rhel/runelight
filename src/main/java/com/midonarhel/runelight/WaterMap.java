@@ -317,6 +317,30 @@ final class WaterMap
 	}
 
 	/**
+	 * Write what the water is drawn from, for the scene dump: the tiles' type, game texture and level, then the data
+	 * texture and the contact map (none, as a zero length, without).
+	 */
+	void write(java.io.DataOutputStream out) throws java.io.IOException
+	{
+		out.write(type);
+		for (short t : waterTexture)
+		{
+			out.writeShort(t);
+		}
+		out.write(level);
+		out.writeInt(texture.length);
+		for (float f : texture)
+		{
+			out.writeFloat(f);
+		}
+		out.writeInt(contact != null ? contact.length : 0);
+		if (contact != null)
+		{
+			out.write(contact);
+		}
+	}
+
+	/**
 	 * The world flow map's flow at extended scene tile (ex, ey), turned into scene directions (instances are built
 	 * from rotated chunks of the real map), tiles per second x and z into flow.
 	 */
@@ -705,24 +729,23 @@ final class WaterMap
 		}
 		boolean[] marked = new boolean[CONTACT_SIZE * CONTACT_SIZE];
 		boolean any = eachModel(tiles, (id, r, orient, x, height, z) -> crossings(id, r, orient, x, height, z, surfaceY, marked));
-		// the waterfalls' lips are contact too, and their feet, which reach farther
-		boolean[] landed = new boolean[marked.length];
-		for (float[] l : lips)
-		{
-			markLine(l, marked);
-		}
-		for (float[] f : feet)
-		{
-			markLine(f, landed);
-		}
 		if (!any && lips.isEmpty() && feet.isEmpty())
 		{
 			return;
 		}
 		// each crossing raises the closeness of the cells within CONTACT_REACH of it
 		byte[] c = new byte[marked.length];
-		spread(landed, FOOT_REACH, c);
 		spread(marked, CONTACT_REACH, c);
+		// the lips and feet of the waterfalls count only on the water at their own level: the upper pool by the lip, the
+		// lower one by the foot
+		for (float[] l : lips)
+		{
+			spreadLine(l, CONTACT_REACH, surfaceY, c);
+		}
+		for (float[] f : feet)
+		{
+			spreadLine(f, FOOT_REACH, surfaceY, c);
+		}
 		contact = c;
 	}
 
@@ -735,32 +758,49 @@ final class WaterMap
 		{
 			for (int cx = 0; cx < CONTACT_SIZE; ++cx)
 			{
-				if (!marked[cy * CONTACT_SIZE + cx])
+				if (marked[cy * CONTACT_SIZE + cx])
 				{
-					continue;
-				}
-				for (int dy = -reach; dy <= reach; ++dy)
-				{
-					for (int dx = -reach; dx <= reach; ++dx)
-					{
-						int x = cx + dx, y = cy + dy;
-						float near = 1 - (float) Math.sqrt(dx * dx + dy * dy) / reach;
-						if (near <= 0 || x < 0 || y < 0 || x >= CONTACT_SIZE || y >= CONTACT_SIZE)
-						{
-							continue;
-						}
-						int j = y * CONTACT_SIZE + x;
-						c[j] = (byte) Math.max(c[j] & 255, Math.round(near * 255));
-					}
+					spreadCell(cx, cy, reach, c, null, 0);
 				}
 			}
 		}
 	}
 
 	/**
-	 * Mark the cells along a segment {x0, z0, x1, z1, ...} (world units), half a cell at a time.
+	 * Raise the closeness in c around cell (cx, cy), within reach cells; with a surfaceY (per tile, NaN where none) only
+	 * the cells over water within LIP_LEVEL of {@code level} of it.
 	 */
-	private static void markLine(float[] l, boolean[] marked)
+	private static void spreadCell(int cx, int cy, int reach, byte[] c, float[] surfaceY, float level)
+	{
+		for (int dy = -reach; dy <= reach; ++dy)
+		{
+			for (int dx = -reach; dx <= reach; ++dx)
+			{
+				int x = cx + dx, y = cy + dy;
+				float near = 1 - (float) Math.sqrt(dx * dx + dy * dy) / reach;
+				if (near <= 0 || x < 0 || y < 0 || x >= CONTACT_SIZE || y >= CONTACT_SIZE)
+				{
+					continue;
+				}
+				if (surfaceY != null)
+				{
+					float s = surfaceY[y / CONTACT_RES * SIZE + x / CONTACT_RES];
+					if (!(Math.abs(s - level) <= LIP_LEVEL))
+					{
+						continue;
+					}
+				}
+				int j = y * CONTACT_SIZE + x;
+				c[j] = (byte) Math.max(c[j] & 255, Math.round(near * 255));
+			}
+		}
+	}
+
+	/**
+	 * Raise the closeness in c around a segment {x0, z0, x1, z1, y} (world units) of a waterfall's lip or foot, on the
+	 * water at its level (surfaceY, per tile) only.
+	 */
+	static void spreadLine(float[] l, int reach, float[] surfaceY, byte[] c)
 	{
 		float cell = 128f / CONTACT_RES;
 		int steps = 1 + (int) (Math.hypot(l[2] - l[0], l[3] - l[1]) / (cell * 0.5f));
@@ -771,7 +811,7 @@ final class WaterMap
 			int gz = (int) ((l[1] + (l[3] - l[1]) * t) / cell);
 			if (gx >= 0 && gz >= 0 && gx < CONTACT_SIZE && gz < CONTACT_SIZE)
 			{
-				marked[gz * CONTACT_SIZE + gx] = true;
+				spreadCell(gx, gz, reach, c, surfaceY, l[4]);
 			}
 		}
 	}

@@ -242,4 +242,29 @@ public class WaterMapTest
 		// the pull points back at the lip from the other side too
 		assertTrue(pz[12 * n + 6] < 0f);
 	}
+
+	@Test
+	public void aFallsContactMarksOnlyTheWaterAtItsLevel()
+	{
+		// a lip at height 100 along z = 5 tiles, the pool above it (z < 5) at 100 and the one below it at 400
+		float[] surface = new float[N * N];
+		for (int y = 0; y < N; ++y)
+		{
+			for (int x = 0; x < N; ++x)
+			{
+				surface[y * N + x] = y < 5 ? 100f : y < 10 ? 400f : Float.NaN;
+			}
+		}
+		byte[] c = new byte[WaterMap.CONTACT_SIZE * WaterMap.CONTACT_SIZE];
+		WaterMap.spreadLine(new float[]{4 * 128f, 5 * 128f, 6 * 128f, 5 * 128f, 100f}, 8, surface, c);
+		int cells = WaterMap.CONTACT_RES;
+		// the cell just above the lip is marked, the one just below it, over the lower pool, is not
+		assertTrue((c[(5 * cells - 1) * WaterMap.CONTACT_SIZE + 5 * cells] & 255) > 0);
+		assertEquals(0, c[(5 * cells + 1) * WaterMap.CONTACT_SIZE + 5 * cells] & 255);
+		// a foot at 400 marks the lower pool and leaves the upper one
+		java.util.Arrays.fill(c, (byte) 0);
+		WaterMap.spreadLine(new float[]{4 * 128f, 5 * 128f, 6 * 128f, 5 * 128f, 400f}, 8, surface, c);
+		assertEquals(0, c[(5 * cells - 1) * WaterMap.CONTACT_SIZE + 5 * cells] & 255);
+		assertTrue((c[(5 * cells + 1) * WaterMap.CONTACT_SIZE + 5 * cells] & 255) > 0);
+	}
 }

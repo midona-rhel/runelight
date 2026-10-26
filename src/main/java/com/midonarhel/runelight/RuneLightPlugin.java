@@ -42,6 +42,7 @@ import java.io.DataOutputStream;
 import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.nio.FloatBuffer;
+import java.nio.IntBuffer;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.LocalDateTime;
@@ -104,6 +105,7 @@ import net.runelite.client.ui.ClientUI;
 import net.runelite.client.ui.DrawManager;
 import net.runelite.client.ui.overlay.OverlayManager;
 import net.runelite.rlawt.AWTContext;
+import org.lwjgl.BufferUtils;
 import org.lwjgl.opengl.GL;
 import static org.lwjgl.opengl.GL33C.*;
 import static org.lwjgl.opengl.GL43C.GL_DEBUG_SOURCE_API;
@@ -2940,7 +2942,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 	// zones either side of the player's that the scene dump holds the models of
 	private static final int DUMP_ZONES = 3;
 	// opens a scene dump, which is a gzip stream
-	private static final int SCENE_DUMP_MAGIC = 0x524c4432;
+	private static final int SCENE_DUMP_MAGIC = 0x524c4433;
 
 	/**
 	 * Write what the light map is made from around the player to a file (Dump scene): the zones' vertices as drawn, the
@@ -2948,7 +2950,9 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 	 * in order: the magic, the player's storey and local x and z, the scene's min, current and max level, the camera's
 	 * position, the viewport's size and the view-projection (without the camera's translation), the night, whether it is
 	 * outdoors, the sun's altitude, whether it casts, the sun's, the moon's and the caster's direction, the focal point,
-	 * the light map's blockers (LightBlockers.write), the lights (SceneLights.write) and the zones' vertices.
+	 * the light map's blockers (LightBlockers.write), the lights (SceneLights.write), the zones' vertices, the water
+	 * (whether there is any, then WaterMap.write) and the player's model as drawn (its local x, y and z, the count of
+	 * its vertices, then each as ModelUploader.uploadTempModel packs it).
 	 */
 	private void dumpScene(float night)
 	{
@@ -3027,12 +3031,45 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 					v.get(bytes);
 					out.write(bytes);
 				}
+				WaterMap waterMap = water.map();
+				out.writeBoolean(waterMap != null);
+				if (waterMap != null)
+				{
+					waterMap.write(out);
+				}
+				writePlayer(out, player, ctx);
 			}
 			log.info("Scene dump written to {}", file);
 		}
 		catch (IOException e)
 		{
 			log.warn("Scene dump to {} failed", file, e);
+		}
+	}
+
+	/**
+	 * The local player's model where and as it is drawn: its position, then its vertices (none without a model).
+	 */
+	private void writePlayer(DataOutputStream out, Player player, SceneContext ctx) throws IOException
+	{
+		LocalPoint lp = player.getLocalLocation();
+		int y = Perspective.getTileHeight(client, lp, client.getTopLevelWorldView().getPlane());
+		out.writeInt(lp.getX());
+		out.writeInt(y);
+		out.writeInt(lp.getY());
+		Model model = player.getModel();
+		if (model == null)
+		{
+			out.writeInt(0);
+			return;
+		}
+		IntBuffer buffer = BufferUtils.createIntBuffer(model.getFaceCount() * 3 * (VAO.VERT_SIZE >> 2));
+		int vertices = new ModelUploader().uploadTempModel(model, player.getCurrentOrientation(), lp.getX(), y, lp.getY(),
+			ctx.cameraX, ctx.cameraY, ctx.cameraZ, buffer, 0);
+		out.writeInt(vertices);
+		for (int i = 0; i < vertices * (VAO.VERT_SIZE >> 2); ++i)
+		{
+			out.writeInt(buffer.get(i));
 		}
 	}
 

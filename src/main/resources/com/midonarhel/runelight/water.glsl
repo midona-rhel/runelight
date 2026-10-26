@@ -566,7 +566,8 @@ vec3 waterOver(ivec2 px, inout vec3 p, vec3 albedo, float shadow, vec3 lit, floa
   vec2 slope = nrm.xz / nrm.y;
   under *= max(1.0 + WAVE_SHADE * dot(slope, v.xz) / max(length(v.xz), 0.25), 0.0);
   float alpha = max(WATER_LOOK[type].x * smoothstep(0.0, SURFACE_DEPTH, colorDepth), surface.a);
-  // the shore waves' foam, in the flat tones the falls have, over the water as it is lit from above
+  // the shore waves' foam and the foam around things standing in the water, in the flat tones the falls have, over the
+  // water as it is lit from above
   vec2 shore = waterShoreOf(ws);
   if (shore.x > 0.0) {
     vec3 up = vec3(0.0, -1.0, 0.0);
@@ -590,8 +591,8 @@ vec3 waterOver(ivec2 px, inout vec3 p, vec3 albedo, float shadow, vec3 lit, floa
 
 // ---------------------------------------------------------------------------------------------------------------
 // Fake water: the faces models draw as water (fountains, wells, troughs, sinks, waterfalls; SurfaceMaterials marks
-// them, the scene pass writes them as water 3 in the material target with their height above the foot of the
-// model's water). The composite replaces their lit color with water shaded as the real surface is, from the face
+// them, the scene pass writes them as water 3 in the material target with their distance from the nearer end of
+// the model's water). The composite replaces their lit color with water shaded as the real surface is, from the face
 // itself: its own normal and the world position, no texture. Level faces get the ripples and reflections of still
 // water; steep ones are falls, the same water running down, streaked and foaming at its lip and foot.
 // Everything here is ALU: the composite has no sampler to spare.
@@ -606,21 +607,26 @@ uniform int waterFakeOn;  // the water setting: off draws the faces as their typ
 #define FAKE_PERIOD 9.0
 // a face is a fall when its normal's vertical part is below the second and not a pool's at all below the first
 #define FALL_STEEP vec2(0.5, 0.85)
-// A fall is real water, running straight down at FALL_FLOW world units a second (its ripples stretched by FALL_STRETCH
-// along the flow), with the contact foam dragged down it: the same cells at the same size as on flat water, one to
-// one, across the fall and down it, drifting across each other as still water's foam does (FALL_DRIFT seconds a cell)
-// and the whole pattern scrolling down FALL_SPEED cells a second. Cut to two flat tones with hard edges, covering
-// the contact foam's own shapes and thresholds (waterFoamRim), as near the lip and the foot (FALL_NEAR tiles) as at things in
-// the water, shrinking to little between: the shapes shrink, never fade.
+// A fall is real water, running straight down it at FALL_FLOW world units a second (its ripples stretched by FALL_STRETCH
+// along the flow), its foam a connected web: the edges of the foam cells (waterFoamEdges), stretched FALL_LONG times
+// along the flow, in cells FALL_CELL world units across, drifting in small circles (FALL_DRIFT seconds a turn) and the
+// whole web scrolling down FALL_SPEED cells a second. Two flat tones with hard edges: a core the line's FALL_LINE.x wide
+// and a rim FALL_LINE.y wide (cells), swelling to FALL_SWELL times that at the lip and the foot (FALL_NEAR tiles) where
+// the web runs into the pool's contact foam: the pool's own cells (waterFoamCells, the contact foam's size), cut as
+// theirs are, shrinking away from the lip and the foot, never fading.
 #define FALL_FLOW 320.0
 #define FALL_STRETCH 0.4
 #define FALL_SPEED 2.0
 #define FALL_DRIFT 40.0
 #define FALL_NEAR 1.0
-// how much cell height is added to the foam's in the middle of a fall and at its lip and foot
-#define FALL_SHIFT vec2(0.15, -0.2)
-// the foam's cells (Water.CELLS across CELL_SCALE_B world units, water_frag.glsl)
-#define FALL_CELL (520.0 / 6.0)
+#define FALL_CELL 70.0
+#define FALL_LONG 1.75
+#define FALL_LINE vec2(0.035, 0.09)
+#define FALL_SWELL 2.5
+// how much cell height is added to the pool's cells' in the middle of a fall and at its lip and foot
+#define FALL_SHIFT vec2(0.6, -0.2)
+// the pool's foam cells (Water.CELLS across CELL_SCALE_B world units, water_frag.glsl)
+#define POOL_CELL (520.0 / 6.0)
 
 // The slope of level fake water at world xz: two octaves of the sea's waves, running both ways
 vec2 waterFakeSlope(vec2 xz) {
@@ -640,8 +646,8 @@ vec2 waterFakeSlope(vec2 xz) {
 }
 
 // The fake water face at pixel px (camera-relative p, facing camera normal faceN, color albedo (sRGB), the sun's
-// shadow, span: its height above the foot of its water and below its top), lit as lit (sRGB): its color as water, sRGB.
-vec3 waterFake(ivec2 px, vec3 p, vec3 faceN, vec3 albedo, float shadow, vec2 span, vec3 lit) {
+// shadow, end: its distance from the foot or the top of its water, whichever is nearer), lit as lit (sRGB): its color as water, sRGB.
+vec3 waterFake(ivec2 px, vec3 p, vec3 faceN, vec3 albedo, float shadow, float end, vec3 lit) {
   // the slimy greens are swamp water, the rest fresh
   int type = albedo.g > albedo.b * 1.15 ? 5 : 1;
   vec4 look = WATER_LOOK[type];
@@ -664,17 +670,24 @@ vec3 waterFake(ivec2 px, vec3 p, vec3 faceN, vec3 albedo, float shadow, vec2 spa
   vec3 nrm = faceN + mix(vec3(-slope.x, 0.0, -slope.y), vec3(-slope.x * tang.x, -slope.y, -slope.x * tang.y), down);
   float foam = 0.0;
   if (fall > 0.0) {
-    // the foam's cells, in cells (one to one with flat water's): across the fall, and down it
-    vec2 uv = vec2(dot(world.xz, tang), world.y) / FALL_CELL - vec2(0.0, 64.0 * waterCycle(64.0 / FALL_SPEED));
-    float h = 0.5 * (waterFoamCells(uv + vec2(waterCycle(FALL_DRIFT), 0.0))
-      + waterFoamCells(uv.yx + vec2(0.37, -waterCycle(FALL_DRIFT * 1.37))));
-    // how near the lip and the foot are: the cell height raised in the middle of the fall, shrinking its shapes, and lowered
-    // at them, swelling them
-    float near = clamp(max(1.0 - span.y / (WATER_TILE * FALL_NEAR), 1.0 - span.x / (WATER_TILE * FALL_NEAR)), 0.0, 1.0);
-    h += mix(FALL_SHIFT.x, FALL_SHIFT.y, near);
-    // the contact foam's rim (waterFoamRim) cut flat: its tint where it is half gone, its core where it begins
-    float aa = max(fwidth(h), 1e-4);
-    float rim = waterEdge(0.5 * (FOAM_RIM.x + FOAM_RIM.y) - h, aa), core = waterEdge(FOAM_RIM.x - h, aa);
+    float across = dot(world.xz, tang);
+    // how near the lip and the foot are
+    float near = clamp(1.0 - end / (WATER_TILE * FALL_NEAR), 0.0, 1.0);
+    // the web: the cells' edges, scrolling down and drifting in small circles
+    float turn = WATER_TAU * waterCycle(FALL_DRIFT);
+    vec2 web = vec2(across, world.y / FALL_LONG) / FALL_CELL - vec2(0.0, 64.0 * waterCycle(64.0 / FALL_SPEED))
+      + 0.35 * vec2(sin(turn), cos(turn));
+    float edge = waterFoamEdges(web);
+    float aa = max(fwidth(edge), 1e-4);
+    float swell = mix(1.0, FALL_SWELL, near);
+    float rim = waterEdge(FALL_LINE.y * swell - edge, aa), core = waterEdge(FALL_LINE.x * swell - edge, aa);
+    // the pool's cells at the lip and the foot, as the contact foam cuts them
+    vec2 pool = vec2(across, world.y) / POOL_CELL - vec2(0.0, 64.0 * waterCycle(64.0 / FALL_SPEED));
+    float h = 0.5 * (waterFoamCells(pool + 0.35 * vec2(sin(turn), cos(turn)))
+      + waterFoamCells(pool.yx + vec2(0.37, 0.0) + 0.35 * vec2(cos(turn), sin(turn)))) + mix(FALL_SHIFT.x, FALL_SHIFT.y, near);
+    float ha = max(fwidth(h), 1e-4);
+    rim = max(rim, waterEdge(FOAM_CUT.y - h, ha));
+    core = max(core, waterEdge(FOAM_CUT.x - h, ha));
     foam = mix(FOAM_TINT * rim, FOAM_CORE, core) * fall;
   }
   nrm = normalize(nrm);

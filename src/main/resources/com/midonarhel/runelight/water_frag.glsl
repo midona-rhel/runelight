@@ -109,10 +109,7 @@ layout(location = 1) out vec4 WaveOut;    // the wave map: slope xy, foam
 #define CAUSTIC_STRETCH 0.45
 // the furthest the distance target reaches (16 bits): past it water is clamped there
 #define WATER_REACH 20480.0
-// around things standing in the water (WaterMap.contact): the rapids' foam, up to CONTACT_FOAM of it over a faint
-// CONTACT_FILM, and waves up to 1 + CONTACT_WAVES as rough
-#define CONTACT_FOAM 0.3
-#define CONTACT_FILM 0.06
+// around things standing in the water (WaterMap.contact): waves up to 1 + CONTACT_WAVES as rough, and foam (contactFoam)
 #define CONTACT_WAVES 0.8
 // rain rings: cell size (world units), rings per cell per second
 #define RAIN_CELL 72.0
@@ -267,6 +264,30 @@ vec2 shoreFoam(vec2 xz) {
   return vec2(tint, core);
 }
 
+// The foam cells' height at xz (layer 2 of the noise, in cells), carried with the flow as running water's ripples are:
+// two copies drifting across each other on still water. lod: the mip to read.
+float waterFoamHeight(vec2 xz, vec2 base, vec2 m0, vec2 m1, float w0, float flowing, float lod) {
+  float h = textureLod(waterNoise, vec3((xz - m0) / CELL_SCALE_B, 2.0), lod).b * w0
+    + textureLod(waterNoise, vec3((xz + vec2(173.0, 91.0) - m1) / CELL_SCALE_B, 2.0), lod).b * (1.0 - w0);
+  if (flowing < 1.0) {
+    vec2 uv = (xz - base) / CELL_SCALE_B;
+    float still = 0.5 * (textureLod(waterNoise, vec3(uv + vec2(waterCycle(FOAM_STILL_PERIOD), 0.0), 2.0), lod).b
+      + textureLod(waterNoise, vec3(uv.yx + vec2(0.37, -waterCycle(FOAM_STILL_PERIOD * 1.37)), 2.0), lod).b);
+    h = mix(still, h, flowing);
+  }
+  return h;
+}
+
+// The foam around things standing in the water (WaterMap.contact) at xz, as hard edged coverage like shoreFoam's (the
+// water pass is at the screen's resolution): x the tint, y the core, from the foam cells' height h. The cells' shapes
+// shrink with the distance from the thing (CONTACT_SHRINK), never fade.
+vec2 contactFoam(vec2 xz, float h) {
+  float near = textureLod(waterContact, (xz / WATER_TILE + waterGrid.x) / (waterGrid.y - 1.0), 0.0).r;
+  float hn = h + CONTACT_SHRINK * (1.0 - near);
+  float aa = max(fwidth(hn), 1e-4);
+  return step(0.001, near) * vec2(waterEdge(FOAM_CUT.y - hn, aa), waterEdge(FOAM_CUT.x - hn, aa));
+}
+
 // The waves' slope at xz and the foam on them (the wave map's, WaterSurface.bake), for water of this type and flow
 void waterWaveField(vec2 xz, int type, vec2 flow, out vec2 slope, out float foam) {
   float speed = WATER_FLOW_SPEED[type];
@@ -324,27 +345,16 @@ void waterWaveField(vec2 xz, int type, vec2 flow, out vec2 slope, out float foam
       slope += g / max(length(g), 1e-3) * (SWELL_SLOPE * cos(phase) * reach * (1.0 - flowing) * (0.4 + 1.2 * patch));
     }
   }
-  // soft foam on rapids and around things standing in the water: the large cells' rims, carried with the flow
+  // soft foam on rapids: the large cells' rims, carried with the flow
   foam = 0.0;
   // fast water foams a little along its banks: by the flow before it slows toward them (water_vert.glsl)
   float fast = length(waterPage0(waterData, xz / WATER_TILE + waterGrid.x).gb) * WATER_TILE * speed;
   float bankFoam = smoothstep(BANK_FOAM_FLOW.x, BANK_FOAM_FLOW.y, fast)
     * (1.0 - smoothstep(BANK_FOAM_REACH.x, BANK_FOAM_REACH.y, data.r));
   float churn = max(smoothstep(TURB_FOAM.x, TURB_FOAM.y, turb), bankFoam * BANK_FOAM);
-  if (churn > 0.0 || contact > 0.0) {
-    float h = textureLod(waterNoise, vec3((xz - m0) / CELL_SCALE_B, 2.0), lodFoam).b * w0
-      + textureLod(waterNoise, vec3((xz + vec2(173.0, 91.0) - m1) / CELL_SCALE_B, 2.0), lodFoam).b * (1.0 - w0);
-    if (flowing < 1.0) {
-      vec2 uv = (xz - base) / CELL_SCALE_B;
-      float still = 0.5 * (textureLod(waterNoise, vec3(uv + vec2(waterCycle(FOAM_STILL_PERIOD), 0.0), 2.0), lodFoam).b
-        + textureLod(waterNoise, vec3(uv.yx + vec2(0.37, -waterCycle(FOAM_STILL_PERIOD * 1.37)), 2.0), lodFoam).b);
-      h = mix(still, h, flowing);
-    }
-    float rim = waterFoamRim(h);
-    // the shapes around things standing in the water shrink with the distance from them (CONTACT_SHRINK), not fade
-    float near = sqrt(contact);
-    float rimNear = waterFoamRim(h + CONTACT_SHRINK * (1.0 - near));
-    foam = max(rim * churn * FOAM, step(0.001, near) * rimNear * CONTACT_FOAM + contact * CONTACT_FILM);
+  if (churn > 0.0) {
+    float h = waterFoamHeight(xz, base, m0, m1, w0, flowing, lodFoam);
+    foam = waterFoamRim(h) * churn * FOAM;
   }
 }
 
@@ -450,7 +460,9 @@ void main() {
       | pack01(foam, 7.0) << 23 | pack01(sqrt(nominalDepth(data.r) / 512.0), 63.0) << 26;
   }
   // distance (16 bits), caustics: -1 to 3 (8 bits), the shore waves' rim and core coverage (4 bits each)
-  vec2 shore = shoreFoam(xz);
+  // hard edged foam, the shore waves' and around things standing in the water (the composite lays both in the same two tones)
+  float cells = waterFoamHeight(xz, base, m0, m1, w0, flowing, waterLod(footprint, CELL_SCALE_B));
+  vec2 shore = max(shoreFoam(xz), contactFoam(xz, cells));
   bits.y = pack01(length(vRel) / WATER_REACH, 65535.0) | pack01((caustic + 1.0) / 4.0, 255.0) << 16
     | pack01(shore.x, 15.0) << 24 | pack01(shore.y, 15.0) << 28;
   // never 0, which is no water

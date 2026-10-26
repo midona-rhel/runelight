@@ -66,6 +66,8 @@ class Water
 	private boolean visible;
 	private final int[] rect = new int[4];
 	private WaterMap pending;
+	// the map of the scene drawn now, for the scene dump
+	private WaterMap current;
 	private WaterSurface.Mesh pendingMesh;
 	private boolean pendingSet;
 	private final WaterSurface surface = new WaterSurface();
@@ -190,6 +192,12 @@ class Water
 		}
 	}
 
+	/** The water of the scene drawn now, null without; any thread. */
+	WaterMap map()
+	{
+		return current;
+	}
+
 	/**
 	 * The loaded scene became the current one: upload its water. GL thread.
 	 */
@@ -211,6 +219,7 @@ class Water
 		}
 
 		hasData = map != null && map.hasWater && map.texture != null;
+		current = hasData ? map : null;
 		surface.upload(hasData ? mesh : null);
 		if (!hasData)
 		{
