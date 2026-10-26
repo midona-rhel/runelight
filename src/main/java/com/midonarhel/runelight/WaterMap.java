@@ -185,11 +185,6 @@ final class WaterMap
 		}
 	}
 
-	static boolean isSeaTexture(int texture)
-	{
-		return texture >= 130 && texture <= 189 || texture == 208;
-	}
-
 	static boolean isWaterTexture(int texture)
 	{
 		return textureKind(texture) != NONE;
@@ -197,17 +192,17 @@ final class WaterMap
 
 	static WaterMap build(Scene scene, WaterOverrides overrides)
 	{
-		return build(scene, overrides, WaterFlow.world());
+		return build(scene, overrides, WaterFlow.world(), OceanMap.world());
 	}
 
-	static WaterMap build(Scene scene, WaterOverrides overrides, WaterFlow flowMap)
+	static WaterMap build(Scene scene, WaterOverrides overrides, WaterFlow flowMap, OceanMap oceanMap)
 	{
 		WaterMap m = new WaterMap();
-		m.load(scene, overrides, flowMap);
+		m.load(scene, overrides, flowMap, oceanMap);
 		return m;
 	}
 
-	private void load(Scene scene, WaterOverrides overrides, WaterFlow flowMap)
+	private void load(Scene scene, WaterOverrides overrides, WaterFlow flowMap, OceanMap oceanMap)
 	{
 		Tile[][][] tiles = scene.getExtendedTiles();
 		int[][][] heights = scene.getTileHeights();
@@ -283,14 +278,16 @@ final class WaterMap
 				waterTexture[i] = (short) tileTexture(water);
 				// its type as 117 HD gives it, tile by tile: by its tile override where one gives water, else by its
 				// texture
-				int over = overrides == null || !EnvironmentManager.toWorld(scene, x - RuneLightPlugin.SCENE_OFFSET,
-					y - RuneLightPlugin.SCENE_OFFSET, lvl, world) ? NONE
+				boolean placed = EnvironmentManager.toWorld(scene, x - RuneLightPlugin.SCENE_OFFSET,
+					y - RuneLightPlugin.SCENE_OFFSET, lvl, world);
+				int over = overrides == null || !placed ? NONE
 					: overrides.tileType(world[0], world[1], world[2], scene.getOverlayIds()[lvl][x][y],
 					scene.getUnderlayIds()[lvl][x][y]);
 				type[i] = (byte) (over != NONE ? over : k);
 				bedHsl[i] = (short) bedColor(type[i]);
 				b.water[i] = true;
-				b.sea[i] = isSea(water);
+				// the sea is the world's, not the scene's: the surface only, instances through their template chunks
+				b.ocean[i] = oceanMap != null && placed && world[2] == 0 && oceanMap.contains(world[0], world[1]);
 				int[][] h = heights[lvl];
 				b.surface[i] = (h[x][y] + h[x + 1][y] + h[x][y + 1] + h[x + 1][y + 1]) * 0.25f;
 				if (flowMap != null && mapFlow(scene, x, y, plane, flowMap, world, flow))
@@ -452,24 +449,6 @@ final class WaterMap
 			}
 		}
 		return -1;
-	}
-
-	private static boolean isSea(Tile t)
-	{
-		SceneTilePaint paint = t.getSceneTilePaint();
-		if (paint != null)
-		{
-			return isSeaTexture(paint.getTexture());
-		}
-		int[] tex = t.getSceneTileModel().getTriangleTextureId();
-		for (int id : tex)
-		{
-			if (isSeaTexture(id))
-			{
-				return true;
-			}
-		}
-		return false;
 	}
 
 	private static void landCorners(boolean[] land, int x, int y)

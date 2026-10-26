@@ -24,6 +24,19 @@ public class WaterBodiesTest
 		}
 	}
 
+	// water the world ocean mask marks as open sea
+	private static void sea(WaterBodies w, int x0, int y0, int x1, int y1)
+	{
+		fill(w, x0, y0, x1, y1);
+		for (int y = y0; y <= y1; ++y)
+		{
+			for (int x = x0; x <= x1; ++x)
+			{
+				w.ocean[y * N + x] = true;
+			}
+		}
+	}
+
 	private static int at(int x, int y)
 	{
 		return y * N + x;
@@ -220,7 +233,7 @@ public class WaterBodiesTest
 	public void seaKeepsItsPushUnderTheWorldMap()
 	{
 		WaterBodies w = grid();
-		fill(w, 0, 0, N - 1, 29);
+		sea(w, 0, 0, N - 1, 29);
 		// the map says the sea is still
 		for (int i = 0; i < N * 30; ++i)
 		{
@@ -237,7 +250,7 @@ public class WaterBodiesTest
 	{
 		WaterBodies w = grid();
 		// the whole south of the scene is sea, the shore runs along y = 30
-		fill(w, 0, 0, N - 1, 29);
+		sea(w, 0, 0, N - 1, 29);
 		w.solve();
 		assertEquals(WaterBodies.OCEAN, w.bodyClass[0]);
 		int i = at(24, 29);
@@ -252,7 +265,7 @@ public class WaterBodiesTest
 	public void riverRunsIntoSea()
 	{
 		WaterBodies w = grid();
-		fill(w, 0, 0, N - 1, 19); // sea
+		sea(w, 0, 0, N - 1, 19);
 		fill(w, 30, 20, 32, 40); // river from the north, enclosed at its source
 		w.solve();
 		assertEquals(1, w.bodies);
@@ -320,43 +333,45 @@ public class WaterBodiesTest
 	}
 
 	@Test
-	public void openSeaIsTheOnlyOcean()
+	public void oceanIsWhereTheMaskSaysAndNowhereElse()
 	{
 		WaterBodies w = grid();
-		fill(w, 0, 0, N - 1, 19); // sea along the north
-		fill(w, 30, 20, 32, 40); // a river running into it
+		sea(w, 0, 0, N - 1, 19); // sea along the north
+		fill(w, 30, 20, 32, 40); // a river running into it, the mask cuts it at the mouth
 		fill(w, 5, 30, 9, 34); // a pond
 		w.solve();
 		assertTrue(w.ocean[at(24, 10)]);
 		assertTrue(w.ocean[at(24, 19)]);
-		// the river is part of the ocean body, but a channel too narrow to be open sea
+		// the river is part of the ocean body, but not open sea
 		assertEquals(WaterBodies.OCEAN, w.bodyClass[0]);
 		assertTrue(!w.ocean[at(31, 35)]);
 		assertTrue(!w.ocean[at(7, 32)]);
 	}
 
 	@Test
-	public void lakesAndPoolsHaveNoOpenSea()
+	public void waterTheMaskDoesNotMarkIsNeverOcean()
 	{
+		// open water running off the scene edge, as wide as a bay: a river that opens up, as far as the scene can tell
 		WaterBodies w = grid();
-		fill(w, 10, 10, 30, 30); // a lake well inside the scene
+		fill(w, 0, 0, N - 1, 19);
+		// and a lake well inside the scene
+		fill(w, 10, 30, 30, 45);
 		w.solve();
 		for (int i = 0; i < N * N; ++i)
 		{
 			assertTrue(!w.ocean[i]);
 		}
+		assertEquals(WaterBodies.LAKE, w.bodyClass[w.body[at(24, 10)]]);
+		assertEquals(WaterBodies.LAKE, w.bodyClass[w.body[at(20, 40)]]);
 	}
 
 	@Test
-	public void seaTexturesMakeOpenSeaAtAnyWidth()
+	public void narrowStraitTheMaskMarksIsOcean()
 	{
 		WaterBodies w = grid();
-		fill(w, 0, 0, N - 1, 1); // two tiles of sea along the edge, as a narrow strait
-		for (int i = 0; i < N * 2; ++i)
-		{
-			w.sea[i] = true;
-		}
+		sea(w, 0, 0, N - 1, 1);
 		w.solve();
+		assertEquals(WaterBodies.OCEAN, w.bodyClass[0]);
 		assertTrue(w.ocean[at(24, 0)]);
 	}
 }

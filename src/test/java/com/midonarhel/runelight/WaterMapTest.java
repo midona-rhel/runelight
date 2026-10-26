@@ -57,6 +57,11 @@ public class WaterMapTest
 	 */
 	private static WaterMap lake(int texture)
 	{
+		return lake(texture, null);
+	}
+
+	private static WaterMap lake(int texture, OceanMap sea)
+	{
 		Tile[][][] tiles = new Tile[4][N][N];
 		for (int x = 0; x < N; ++x)
 		{
@@ -78,11 +83,38 @@ public class WaterMapTest
 				case "getBaseX":
 				case "getBaseY":
 					return 3200;
+				case "isInstance":
+					return false;
 				default:
 					return null;
 			}
 		});
-		return WaterMap.build(scene, null, null);
+		return WaterMap.build(scene, null, null, sea);
+	}
+
+	@Test
+	public void theWorldOceanMaskMakesOpenSeaOfTheTilesItMarks()
+	{
+		// the lake's west half, world x 3240 - 3249 (the lake is scene tiles 80 - 99, the scene starts OFF tiles before
+		// its base), is sea in the mask
+		byte[] bits = new byte[512];
+		for (int y = 0; y < 64; ++y)
+		{
+			for (int x = 3240 - 3200; x < 3250 - 3200; ++x)
+			{
+				bits[(y * 64 + x) >> 3] |= 1 << (x & 7);
+			}
+		}
+		java.util.Map<Integer, byte[]> regions = new java.util.HashMap<>();
+		regions.put(50 << 8 | 50, bits);
+		WaterMap m = lake(1, new OceanMap(regions));
+		assertTrue(m.bodies.ocean[90 * N + 80]);
+		assertTrue(m.bodies.ocean[90 * N + 89]);
+		assertFalse(m.bodies.ocean[90 * N + 90]);
+		assertFalse(m.bodies.ocean[10 * N + 10]);
+		assertEquals(WaterBodies.OCEAN, m.bodies.bodyClass[m.bodies.body[90 * N + 90]]);
+		// no mask, no sea
+		assertFalse(lake(1).bodies.ocean[90 * N + 80]);
 	}
 
 	@Test
@@ -307,11 +339,13 @@ public class WaterMapTest
 				case "getBaseX":
 				case "getBaseY":
 					return 3200;
+				case "isInstance":
+					return false;
 				default:
 					return null;
 			}
 		});
-		return WaterMap.build(scene, null, null);
+		return WaterMap.build(scene, null, null, null);
 	}
 
 	@Test

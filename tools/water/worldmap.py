@@ -13,12 +13,16 @@ import urllib.request
 
 import numpy as np
 from PIL import Image
+from scipy import ndimage
 
 COMMIT = "1937ccfa4007345ef62f7694e773509deac8a1d7"
 URL = "https://raw.githubusercontent.com/Explv/osrs_map_tiles/" + COMMIT + "/generated_images/current-map-image-0.png"
 PX = 4
 X0 = 960      # world x of the first column
 YTOP = 12607  # world y of the first row
+MIN_VOTES = 8          # of 16 pixels
+CLOSE_RADIUS = 2       # tiles of land a river may be interrupted by (bridges, icons)
+MIN_SPECK = 10         # smaller water specks are map icons
 
 
 def download(cache):
@@ -80,6 +84,38 @@ def water_votes(cache):
         votes[r // PX:r // PX + rows] = water.reshape(rows, PX, w // PX, PX).sum(axis=(1, 3))
     np.save(npy, votes)
     return votes
+
+
+def mapped_tiles(cache):
+    """Per tile (row = YTOP - y, col = x - X0): whether the map draws anything there; unmapped squares are black."""
+    npy = os.path.join(cache, "mapped.npy")
+    if os.path.exists(npy):
+        return np.load(npy)
+    full = full_image(cache)
+    h, w, _ = full.shape
+    mapped = np.zeros((h // PX, w // PX), bool)
+    for r in range(0, h, 4096):
+        drawn = full[r:r + 4096].any(axis=2)
+        rows = drawn.shape[0] // PX
+        mapped[r // PX:r // PX + rows] = drawn.reshape(rows, PX, w // PX, PX).any(axis=(1, 3))
+    np.save(npy, mapped)
+    return mapped
+
+
+def disk(r):
+    y, x = np.ogrid[-r:r + 1, -r:r + 1]
+    return x * x + y * y <= r * r + r
+
+
+def water_tiles(cache):
+    """Water per tile (row = YTOP - y, col = x - X0): voted per tile, closed over bridges, docks and map icons so a
+    river stays one piece, and specks smaller than an icon dropped."""
+    votes = water_votes(cache)
+    raw = votes >= MIN_VOTES
+    water = ndimage.binary_closing(raw, structure=disk(CLOSE_RADIUS)) | raw
+    labels, n = ndimage.label(water, structure=np.ones((3, 3)))
+    sizes = ndimage.sum_labels(water, labels, np.arange(n + 1))
+    return water & (sizes[labels] >= MIN_SPECK)
 
 
 def tile_slice(x0, y0, x1, y1):

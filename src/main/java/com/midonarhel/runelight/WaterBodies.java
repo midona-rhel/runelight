@@ -27,18 +27,12 @@ final class WaterBodies
 	static final int LAKE = 2;
 	// narrow and running off the scene edge
 	static final int RIVER = 3;
-	// large, or open water running off the scene edge, or tiles the game marks as sea
+	// has open sea in it: tiles the world ocean mask marks
 	static final int OCEAN = 4;
 
 	// tiles from shore where water counts as open: rivers flow into it
 	static final int OPEN_LAKE = 3;
 	static final int OPEN_OCEAN = 4;
-	// a body running off the scene edge with water this far from any shore is sea: a long river can be as big as a
-	// bay, but never this wide
-	static final int OCEAN_SHORE = 6;
-	// open sea inside an ocean body: its channel's middle at least this far from the bank (tiles), so the arms and
-	// river mouths that join the sea don't count
-	static final float OPEN_SEA_RIDGE = 3f;
 	private static final int MAX_DISTANCE = 64;
 
 	// tiles per second
@@ -69,8 +63,9 @@ final class WaterBodies
 	final boolean[] water;
 	// surface height of each tile, y down (larger is lower)
 	final float[] surface;
-	// tiles the game's own textures mark as open sea
-	final boolean[] sea;
+	// tiles of open sea, the only water with shore waves: set by the caller from the world ocean mask, which knows
+	// the sea from the rivers and lakes running into it where a scene can't
+	final boolean[] ocean;
 	// tiles the scene doesn't have (not loaded): neither land nor water, the water may go on there
 	final boolean[] unknown;
 	// flow from the world flow map in tiles per second, NaN where it has none
@@ -88,8 +83,6 @@ final class WaterBodies
 	final float[] turbulence;
 	// distance to shore of the middle of the channel each tile is in, tiles
 	final float[] ridge;
-	// tiles of open sea (see openSea): the only water with shore waves
-	final boolean[] ocean;
 	// how much faster than the map's flow each tile with map flow runs after shaping (1 where still)
 	final float[] gain;
 	// the sea's push toward its shores, added to the flow after smoothing
@@ -107,7 +100,7 @@ final class WaterBodies
 		int n = size * size;
 		water = new boolean[n];
 		surface = new float[n];
-		sea = new boolean[n];
+		ocean = new boolean[n];
 		unknown = new boolean[n];
 		mapFlowX = new float[n];
 		mapFlowZ = new float[n];
@@ -122,7 +115,6 @@ final class WaterBodies
 		energy = new float[n];
 		turbulence = new float[n];
 		ridge = new float[n];
-		ocean = new boolean[n];
 		gain = new float[n];
 		queue = new int[n];
 		dist = new int[n];
@@ -151,7 +143,6 @@ final class WaterBodies
 		}
 		smoothFlow();
 		shapeFlow();
-		openSea();
 		for (int i = 0; i < water.length; ++i)
 		{
 			flowX[i] += pushX[i];
@@ -280,7 +271,7 @@ final class WaterBodies
 	{
 		bodyClass = new int[bodies];
 		boolean[] edge = new boolean[bodies];
-		boolean[] hasSea = new boolean[bodies];
+		boolean[] hasOcean = new boolean[bodies];
 		int[] maxShore = new int[bodies];
 		for (int i = 0; i < water.length; ++i)
 		{
@@ -290,12 +281,12 @@ final class WaterBodies
 				continue;
 			}
 			edge[b] |= edge(i);
-			hasSea[b] |= sea[i];
+			hasOcean[b] |= ocean[i];
 			maxShore[b] = Math.max(maxShore[b], shore[i]);
 		}
 		for (int b = 0; b < bodies; ++b)
 		{
-			if (hasSea[b] || edge[b] && maxShore[b] >= OCEAN_SHORE)
+			if (hasOcean[b])
 			{
 				bodyClass[b] = OCEAN;
 			}
@@ -717,21 +708,6 @@ final class WaterBodies
 		float down = surfaceAt(x + sx, y + sz, i) - surface[i];
 		float up = surface[i] - surfaceAt(x - sx, y - sz, i);
 		return Math.max(0, Math.max(down, up));
-	}
-
-	/**
-	 * Which water is open sea: the tiles the game marks as sea, and the tiles of an ocean body (water running off the
-	 * scene that is large or far from every shore, see {@link #classify}) in a channel wide enough, by its ridge, that
-	 * it isn't a river or an inlet running into the sea. Rivers, lakes and ponds that don't run off the scene are never
-	 * sea.
-	 */
-	private void openSea()
-	{
-		for (int i = 0; i < water.length; ++i)
-		{
-			int b = body[i];
-			ocean[i] = b >= 0 && bodyClass[b] == OCEAN && (sea[i] || ridge[i] >= OPEN_SEA_RIDGE);
-		}
 	}
 
 	private void energies()

@@ -43,9 +43,6 @@ import worldmap
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 
-MIN_VOTES = 8          # of 16 pixels
-CLOSE_RADIUS = 2       # tiles of land a river may be interrupted by (bridges, icons)
-MIN_SPECK = 10         # smaller water specks are map icons
 OPEN_RADIUS = 5        # tiles from shore for open water
 SINK_AREA = 400        # open area (tiles) of a sea or lake rivers run into
 SHALLOWS = 6           # geodesic tiles from open water where a channel's mouth begins
@@ -62,11 +59,6 @@ SEA_SHALLOWS = 5       # geodesic tiles from open water that are the sea's shall
 CALM_FROM, CALM_TO = 1.0, 5.0  # geodesic tiles from open water over which a river's current dies away
 SUB = 2                # samples per tile each way in the output
 UNKNOWN = -128
-
-
-def disk(r):
-    y, x = np.ogrid[-r:r + 1, -r:r + 1]
-    return x * x + y * y <= r * r + r
 
 
 def load_annotations():
@@ -114,12 +106,7 @@ def box_slice(box):
 class World:
     def __init__(self, cache):
         self.cache = cache
-        votes = worldmap.water_votes(cache)
-        raw = votes >= MIN_VOTES
-        water = ndimage.binary_closing(raw, structure=disk(CLOSE_RADIUS)) | raw
-        labels, n = ndimage.label(water, structure=np.ones((3, 3)))
-        sizes = ndimage.sum_labels(water, labels, np.arange(n + 1))
-        water &= sizes[labels] >= MIN_SPECK
+        water = worldmap.water_tiles(cache)
         print("water tiles", int(water.sum()))
         self.water = water
         self.shore = ndimage.distance_transform_edt(water)
