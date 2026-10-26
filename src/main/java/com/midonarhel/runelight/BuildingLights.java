@@ -22,9 +22,9 @@ import org.slf4j.LoggerFactory;
 
 /**
  * The scene's buildings: their rooms (BuildingDetector, RoomMap), found from the map's roof data, and the walls
- * (WallMap) they are split along, which follow doors as they open and close; and how brightly the inside of
- * buildings is lit at night, as if their lamps were lit: a soft fill the composite spreads over each room, darker
- * toward its walls (composite_frag.glsl), instead of point lights. Everything runs on the client thread.
+ * (WallMap) they are split along, which follow doors as they open and close; and the soft fill the composite
+ * spreads over each room that lacks light (RoomLight), darker toward its walls (composite_frag.glsl), instead of point
+ * lights. Everything runs on the client thread.
  */
 class BuildingLights
 {
@@ -33,11 +33,8 @@ class BuildingLights
 	// the color of a tile paint that isn't drawn
 	private static final int HIDDEN_HSL = 12345678;
 
-	// the fill's light at full brightness, linear: warm incandescent (sRGB 255, 196, 132), about what the ceiling
-	// lights it replaces gave a room on average
-	static final float[] FILL = {0.5f, 0.5f * 0.552f, 0.5f * 0.231f};
-	// share of the night strength used by day when lights are on in the daytime too
-	static final float DAY_FACTOR = 0.35f;
+	// the color of a room's fill, linear, of luminance 1: warm incandescent (sRGB 255, 196, 132); RoomLight says how much
+	static final float[] FILL_TINT = tint(1f, 0.552f, 0.231f);
 	// sun altitudes (degrees) over which the lights fade in at dusk
 	static final float FADE_START_ALTITUDE = 6;
 	static final float FADE_END_ALTITUDE = -6;
@@ -58,6 +55,12 @@ class BuildingLights
 	private byte[] filledTiles;
 	private int wallScene;
 	private volatile boolean splitRooms = true;
+
+	private static float[] tint(float r, float g, float b)
+	{
+		float luminance = 0.2126f * r + 0.7152f * g + 0.0722f * b;
+		return new float[]{r / luminance, g / luminance, b / luminance};
+	}
 
 	BuildingLights(Client client)
 	{

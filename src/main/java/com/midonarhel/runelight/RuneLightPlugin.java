@@ -239,7 +239,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		int cameraPos, time, outdoors, proceduralSky, lightingEnabled, sunDir, moonDir, casterDir, sunIsCaster,
 			strikeLight, sunAltitude, overcast, weatherLight;
 		int shadowsEnabled, lightProjRel, shadowRadius, shadowDepthRange, shadowMapSize;
-		int pointLights, lightVisSize, roomHeader, interiorLight, skylightOn, skylightFloor;
+		int pointLights, lightVisSize, roomHeader, interiorTint, skylightOn, skylightFloor;
 		int skyVoid, useFog, fogDepth, drawDistance, expandedChunks, clientSkyColor;
 		int lightningBolt, volumetricFog;
 		final FrameUniforms frame = new FrameUniforms();
@@ -313,6 +313,15 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 	private static final int LIGHT_MAP_BLOCKS_PER_FRAME = 24;
 	private final LightMap lightMap = new LightMap(LightMap.defaultThreads());
 	private final LightMapTexture lightMapTexture = new LightMapTexture();
+	// how much light each building room gets and the fill it lacks (RoomLight); it reads the blocks sent to the texture
+	private final RoomLight roomLight = new RoomLight();
+	private final LightMap.Sink lightMapSink = (plane, bx, bz, a, b) ->
+	{
+		lightMapTexture.block(plane, bx, bz, a, b);
+		roomLight.block(plane, bx, bz, a, b);
+	};
+	private int roomLightTexture;
+	private long roomLightNanos;
 	// what the light map was last given to stop light, and what that was made from
 	private LightBlockers lightBlockers;
 	private WallMap blockerWalls;
@@ -889,6 +898,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 				weather.free();
 				skyGrid.free();
 				skyField.free();
+				roomLight.free();
 				lightClusters.free();
 				lightMapTexture.free();
 				volumetricFog.free();
@@ -1125,6 +1135,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 						+ "#define CLUSTER_ENTRIES " + LightClusters.CLUSTER_ENTRIES + "\n"
 						+ "#define CLUSTER_NEAR " + LightClusters.NEAR + "\n"
 						+ "#define CLUSTER_FAR " + LightClusters.FAR + "\n"
+						+ "#define ROOM_FILL_BASE " + LightClusters.ROOM_FILL_BASE + "\n"
 						+ "#define ROOM_BASE " + LightClusters.ROOM_BASE + "\n"
 						+ "#define LIGHT_EXTRA_BASE " + LightClusters.LIGHT_EXTRA_BASE + "\n"
 						+ "#define LIGHT_MAP_TABLE_BASE " + LightClusters.LIGHT_MAP_TABLE_BASE + "\n";
@@ -1321,7 +1332,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		c.pointLights = glGetUniformLocation(p, "pointLightsEnabled");
 		c.lightVisSize = glGetUniformLocation(p, "lightVisSize");
 		c.roomHeader = glGetUniformLocation(p, "roomHeader");
-		c.interiorLight = glGetUniformLocation(p, "interiorLight");
+		c.interiorTint = glGetUniformLocation(p, "interiorTint");
 		c.skylightOn = glGetUniformLocation(p, "skylightOn");
 		c.skylightFloor = glGetUniformLocation(p, "skylightFloor");
 		c.skyVoid = glGetUniformLocation(p, "skyVoid");
@@ -2679,6 +2690,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 			}
 			cpuTimer.end(CpuTimer.LIGHTS);
 			lightClusters.setRooms(rooms, config.roomLights());
+			updateRoomLight(config.buildingLights() ? rooms : null);
 			lightClusters.setLightMap(frameLightMap ? lightMap : null);
 			SceneContext roofCtx = root;
 			boolean openRoofs = frameFog && rooms != null && config.roomLights() && config.openRoofFog() && roofCtx != null;
@@ -2710,6 +2722,28 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 	}
 
 	/**
+	 * Work out the fill the rooms are given for the time of day, and hand it to the light buffer. Caves and dungeons
+	 * have no buildings, and frameOutdoors stands in until areas are classified.
+	 */
+	private void updateRoomLight(RoomMap rooms)
+	{
+		long now = System.nanoTime();
+		float dt = roomLightNanos == 0 ? 0 : Math.min((now - roomLightNanos) / 1e9f, 0.5f);
+		roomLightNanos = now;
+		BuildingLights buildings = buildingLights;
+		roomLight.setRooms(rooms);
+		if (rooms != null && buildings != null)
+		{
+			roomLight.followWalls(buildings.getWalls(), buildings.getFloors(), config.skylightReach());
+		}
+		float night = BuildingLights.nightFactor(dayCycle.sunAltitude);
+		float target = config.buildingLights() && frameOutdoors
+			? RoomLight.target(night, config.buildingLightsByDay(), config.buildingLightBrightness() / 100f) : 0;
+		roomLight.update(dt, target, night);
+		lightClusters.setRoomFill(rooms != null ? roomLight : null);
+	}
+
+	/**
 	 * Give the light map the scene's walls, solid objects and models, the time of day and the view, and send the blocks
 	 * it has baked. Before the lights are collected: the ones it carries leave the list.
 	 *
@@ -2734,6 +2768,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 			{
 				lightMapTexture.free();
 			}
+			roomLight.setCells(0);
 			return false;
 		}
 		cpuTimer.begin(CpuTimer.LIGHT_MAP);
@@ -2751,9 +2786,16 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		lightMap.setFocus(edgeFade.focalX, edgeFade.focalZ);
 		gpuTimer.begin(GpuTimer.LIGHT_MAP);
 		boolean ready = lightMapTexture.ensure(lightMap.cells());
+		if (lightMapTexture.generation() != roomLightTexture)
+		{
+			// a new, empty texture
+			roomLightTexture = lightMapTexture.generation();
+			roomLight.clearLight();
+		}
+		roomLight.setCells(ready ? lightMap.cells() : 0);
 		if (ready)
 		{
-			lightMap.update(LIGHT_MAP_BLOCKS_PER_FRAME, lightMapTexture);
+			lightMap.update(LIGHT_MAP_BLOCKS_PER_FRAME, lightMapSink);
 		}
 		gpuTimer.end();
 		cpuTimer.end(CpuTimer.LIGHT_MAP);
@@ -2812,17 +2854,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		glUniform1i(c.pointLights, framePointLights ? 1 : 0);
 		glUniform1i(c.skylightOn, frameSkylight ? 1 : 0);
 		glUniform1f(c.skylightFloor, config.skylightFloor() / 100f);
-		// the inside of buildings at night, as if their lamps were lit; caves and dungeons have no buildings, and
-		// frameOutdoors stands in until areas are classified
-		float interior = 0;
-		if (config.buildingLights() && frameOutdoors)
-		{
-			float night = BuildingLights.nightFactor(dayCycle.sunAltitude);
-			interior = (config.buildingLightsByDay() ? BuildingLights.DAY_FACTOR + (1 - BuildingLights.DAY_FACTOR) * night
-				: night) * config.buildingLightBrightness() / 100f;
-		}
-		glUniform3f(c.interiorLight, BuildingLights.FILL[0] * interior, BuildingLights.FILL[1] * interior,
-			BuildingLights.FILL[2] * interior);
+		glUniform3f(c.interiorTint, BuildingLights.FILL_TINT[0], BuildingLights.FILL_TINT[1], BuildingLights.FILL_TINT[2]);
 
 		glUniform1i(c.useFog, frameFogDepth > 0 ? 1 : 0);
 		glUniform1i(c.fogDepth, frameFogDepth);

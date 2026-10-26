@@ -155,8 +155,9 @@ float upsampleAoFog(ivec2 px, float z, vec3 n, out vec4 fog, out float shadow, o
   return wsum > 1e-4 ? sh.g : 1.0;
 }
 
-// the inside of buildings at night (BuildingLights.FILL, linear), and how much of it is left at a room's walls
-uniform vec3 interiorLight;
+// the color of a room's fill, linear, of luminance 1 (BuildingLights.FILL_TINT), and how much of it is left at a
+// room's walls
+uniform vec3 interiorTint;
 #define INTERIOR_WALL 0.35
 // sky visibility at which a spot counts as fully indoors, and as not indoors at all
 #define INTERIOR_SKY_CLOSED 0.1
@@ -433,7 +434,8 @@ vec4 shadeScene(ivec2 px, SceneSample sm, vec4 transparent) {
     // Retain the later skylight daylight fill and the tuned indoor ambient floor.
     float daylightFill = skylightOn == 1 ? 0.7 * clamp(skyUpsampled, 0.0, 1.0) : 0.0;
     indirect += caster * envSun * max(ndl, 0.0) * (1.0 - shadow) * daylightFill * ao;
-    float roomFill = roomAmbientFill(p + cameraPos, n);
+    int roomId;
+    float roomFill = roomAmbientFill(p + cameraPos, n, roomId);
     if (roomFill > 0.0) {
       // how closed in the spot is: a room with its roof hidden still counts, a covered gateway open at both ends
       // doesn't, and the fill fades out toward a room's doorways and open sides instead of ending at its tiles' edge
@@ -442,8 +444,9 @@ vec4 shadeScene(ivec2 px, SceneSample sm, vec4 transparent) {
       vec3 roomDaylight = ambientLight(sunAltitude) + skyFill(vec3(0.0, -1.0, 0.0), sunAltitude, 1.0)
         + caster * envSun * (0.7 * max(-casterDir.y, 0.0));
       indirect = max(indirect, roomDaylight * envAmbient * roomFill * enclosed * 0.3 * ao);
-      // the room's lamps at night: a soft fill over the whole room, darker toward its walls (BuildingLights)
-      indirect += interiorLight * mix(INTERIOR_WALL, 1.0, clamp((roomFill - 0.6) / 0.4, 0.0, 1.0)) * enclosed * ao;
+      // what the room lacks of the least light a room should have, from its lamps and its sky (RoomLight): a soft fill
+      // over the whole room, darker toward its walls
+      indirect += interiorTint * roomFillLevel(roomId) * mix(INTERIOR_WALL, 1.0, clamp((roomFill - 0.6) / 0.4, 0.0, 1.0)) * enclosed * ao;
     }
     }
     light = indirect

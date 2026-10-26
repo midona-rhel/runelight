@@ -130,14 +130,23 @@ float tileWallDistance(int index, int plane, vec2 f) {
   return distance;
 }
 
-// Version 2 bakes wall distance; older running clients have no ambient field yet.
-float roomAmbientFill(vec3 world, vec3 normal) {
+// The fill a room is given (RoomLight.java), in luminance: what its lights and the sky leave short of the least light a
+// room should have. In lightData from ROOM_FILL_BASE, a texel a room id.
+float roomFillLevel(int room) {
+  return texelFetch(lightData, ROOM_FILL_BASE + room).x;
+}
+
+// Version 2 bakes wall distance; older running clients have no ambient field yet. The shaping, 0.6 to 1, of how far
+// the point is from the walls; the room it is in is `room` (0 for none).
+float roomAmbientFill(vec3 world, vec3 normal, out int roomId) {
   vec4 header = roomHeader;
+  roomId = 0;
   if (header.x < 1.5) return 0.0;
   // looked up off the surface, as the lights' rooms are: a wall's outer face is outdoors, its inner face in the room
   vec3 receiver = world + normal * ROOM_NORMAL_BIAS;
   ivec3 room = roomPlaneAt(receiver);
   if (room.x <= 0) return 0.0;
+  roomId = room.x;
   ivec2 tile = ivec2(floor(receiver.xz / 128.0)) + int(header.z);
   int index = ROOM_BASE + 1 + (tile.x * int(header.y) + tile.y) * ROOM_TEXELS;
   float distance = tileWallDistance(index, room.z, fract(receiver.xz / 128.0));

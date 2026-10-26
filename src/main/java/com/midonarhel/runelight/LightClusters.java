@@ -35,8 +35,10 @@ class LightClusters
 	// the light map's table follows (LightMap.table, light_map.glsl): TABLE_TEXELS entries of the baked lights'
 	// strength against the strength they were baked with, and radius
 	static final int LIGHT_MAP_TABLE_BASE = MAX_LIGHTS * 3;
+	// the rooms' fill follows (RoomLight.table, rooms.glsl): a texel per room id, x the fill's luminance
+	static final int ROOM_FILL_BASE = LIGHT_MAP_TABLE_BASE + LightMap.TABLE_TEXELS;
 	// the room map (RoomMap.texels) follows, from this texel on (rooms.glsl)
-	static final int ROOM_BASE = LIGHT_MAP_TABLE_BASE + LightMap.TABLE_TEXELS;
+	static final int ROOM_BASE = ROOM_FILL_BASE + RoomMap.ANY;
 
 	private static final int CLUSTER_COUNT = CLUSTERS_X * CLUSTERS_Y * CLUSTERS_Z;
 	// Fog columns, stored after the clusters: per screen tile, the lights that glow in the fog anywhere along its
@@ -60,9 +62,12 @@ class LightClusters
 	private RoomMap roomMap;
 	private final RoomMap[] uploadedRooms = new RoomMap[SETS];
 	private final int[] uploadedVersion = new int[SETS];
+	// the rooms' fill, and the version each copy of the buffer has
+	private RoomLight roomFill;
+	private final int[] uploadedFill = new int[SETS];
 	private boolean roomLights;
 	private int maxTexels;
-	private FloatBuffer roomStaging, tableStaging;
+	private FloatBuffer roomStaging, tableStaging, fillStaging;
 	private final float[] roomHeader = new float[4];
 	// the static lights' occlusion grids (LightOcclusion), in a texture of their own: one filtered fetch a lookup
 	private LightOcclusion.Atlas atlas, uploadedAtlas;
@@ -132,6 +137,7 @@ class LightClusters
 			glTexBuffer(GL_TEXTURE_BUFFER, GL_RGBA32F, lightBuffers[i]);
 			uploadedRooms[i] = null;
 			uploadedVersion[i] = -1;
+			uploadedFill[i] = -1;
 
 			glBindBuffer(GL_TEXTURE_BUFFER, clusterBuffers[i]);
 			bufferTexels[i] = texels;
@@ -229,6 +235,12 @@ class LightClusters
 	{
 		roomMap = rooms;
 		roomLights = lightsUseRooms;
+	}
+
+	/** The fill the rooms get (null: none), which goes up with the lights. */
+	void setRoomFill(RoomLight fill)
+	{
+		roomFill = fill;
 	}
 
 	/**
@@ -515,6 +527,16 @@ class LightClusters
 			}
 			uploadedRooms[set] = rooms;
 			uploadedVersion[set] = rooms != null ? rooms.getVersion() : -1;
+			// the buffer was laid out again, and its fill is gone
+			uploadedFill[set] = -1;
+		}
+		RoomLight fill = roomFill;
+		if (fill != null && rooms != null && fill.version() != uploadedFill[set])
+		{
+			fillStaging = staging(fillStaging, fill.used() * 4);
+			fillStaging.put(fill.table(), 0, fill.used() * 4).flip();
+			glBufferSubData(GL_TEXTURE_BUFFER, (long) ROOM_FILL_BASE * 4 * Float.BYTES, fillStaging);
+			uploadedFill[set] = fill.version();
 		}
 		if (lightCount > 0)
 		{

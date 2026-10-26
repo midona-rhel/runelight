@@ -19,6 +19,7 @@ final class LightMapTexture implements LightMap.Sink
 	private int cells;
 	private final ShortBuffer staging = BufferUtils.createShortBuffer(LightMap.BLOCK * LightMap.BLOCK * 4);
 	private int uploads;
+	private int generation;
 
 	/** Bytes the texture takes on the GPU. */
 	static long bytes(int cells)
@@ -40,6 +41,7 @@ final class LightMapTexture implements LightMap.Sink
 		free();
 		this.cells = cells;
 		texture = glGenTextures();
+		++generation;
 		glBindTexture(GL_TEXTURE_2D_ARRAY, texture);
 		glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
 		glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
@@ -86,6 +88,12 @@ final class LightMapTexture implements LightMap.Sink
 		staging.flip();
 		glTexSubImage3D(GL_TEXTURE_2D_ARRAY, 0, bx * LightMap.BLOCK, bz * LightMap.BLOCK, layer, LightMap.BLOCK,
 			LightMap.BLOCK, 1, GL_RGBA, GL_HALF_FLOAT, staging);
+	}
+
+	/** Changes whenever the texture is made, empty. */
+	int generation()
+	{
+		return generation;
 	}
 
 	/** Blocks sent so far. */

@@ -465,7 +465,7 @@ public interface RuneLightConfig extends Config
 
 	@ConfigSection(
 		name = "Buildings",
-		description = "Soft overhead light inside buildings at night",
+		description = "Soft light inside buildings that lack light",
 		position = 450
 	)
 	String buildingsSection = "buildings";
@@ -473,8 +473,9 @@ public interface RuneLightConfig extends Config
 	@ConfigItem(
 		keyName = "buildingLights",
 		name = "Building lights",
-		description = "Light the inside of buildings softly at night, as if their lamps were lit, found from the map's "
-			+ "roof data.",
+		description = "Lift the rooms of buildings that are too dark, softly, as if from ambient bounce: a room with "
+			+ "lights or open to the day gets little or none, a closed-in one is lifted to a dim but readable level. "
+			+ "Rooms are found from the map's roof data.",
 		section = buildingsSection,
 		position = 451
 	)
@@ -507,7 +508,7 @@ public interface RuneLightConfig extends Config
 	@ConfigItem(
 		keyName = "buildingLightBrightness",
 		name = "Brightness",
-		description = "How brightly the inside of buildings is lit, in percent.",
+		description = "The least light a room of a building gets, in percent.",
 		section = buildingsSection,
 		position = 452
 	)
@@ -519,13 +520,13 @@ public interface RuneLightConfig extends Config
 	@ConfigItem(
 		keyName = "buildingLightsByDay",
 		name = "Also by day",
-		description = "Keep the inside of buildings dimly lit during the day too.",
+		description = "Lift dark rooms by day too, a little more than at night.",
 		section = buildingsSection,
 		position = 453
 	)
 	default boolean buildingLightsByDay()
 	{
-		return false;
+		return true;
 	}
 
 	@ConfigItem(
