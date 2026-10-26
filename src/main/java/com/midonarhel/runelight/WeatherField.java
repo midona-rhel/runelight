@@ -674,6 +674,7 @@ final class WeatherField
 		{
 			glActiveTexture(GL_TEXTURE0 + unit);
 			glBindTexture(GL_TEXTURE_2D, 0);
+			glBindSampler(unit, 0);
 		}
 		glActiveTexture(GL_TEXTURE0);
 	}

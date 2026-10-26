@@ -115,7 +115,6 @@ import static org.lwjgl.opengl.GL43C.glDebugMessageControl;
 import static org.lwjgl.opengl.GL45C.GL_ZERO_TO_ONE;
 import static org.lwjgl.opengl.GL45C.glClipControl;
 import org.lwjgl.opengl.GLCapabilities;
-import org.lwjgl.opengl.GLUtil;
 import org.lwjgl.system.Callback;
 import org.lwjgl.system.Configuration;
 
@@ -214,6 +213,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 	private Canvas canvas;
 	private AWTContext awtContext;
 	private Callback debugCallback;
+	private final GlDebugLog glDebugLog = new GlDebugLog();
 
 	private boolean lwjglInitted = false;
 	private GLCapabilities glCapabilities;
@@ -446,7 +446,8 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 	private final WadeSteps wadeSteps = new WadeSteps();
 	// GameClock's time this frame
 	private long frameGameMillis;
-	// two units: the occlusion map's raw and compare views; their own, since the AO program's compare sampler must
+	// two units (this and the next, which nothing else may use: WEATHER_SKY_UNIT was there, a color texture under the
+	// compare sampler): the occlusion map's raw and compare views; their own, since the AO program's compare sampler must
 	// never find another program's color texture left on its unit (the sky cache and the water contact were there)
 	private static final int WEATHER_OCCLUSION_UNIT = RuneLightPlugin.COMPOSITE_TEXTURE_UNIT + 26;
 	// the water: data and noise for its surface pass, then the surface and its half resolution shading for the
@@ -468,8 +469,9 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 	private final VoxelBuilder voxelBuilder = new VoxelBuilder();
 	// the skylight's traced sky visibility for the AO pass, and the static lights' occlusion
 	private static final int SKY_GRID_UNIT = RuneLightPlugin.COMPOSITE_TEXTURE_UNIT + 28;
-	// the weather field's sky (cover, wispiness, darkness around the player) for the clouds
-	private static final int WEATHER_SKY_UNIT = RuneLightPlugin.COMPOSITE_TEXTURE_UNIT + 27;
+	// the weather field's sky (a color texture: never on the occlusion map's compare unit, WEATHER_OCCLUSION_UNIT + 1)
+	// (cover, wispiness, darkness around the player) for the clouds
+	private static final int WEATHER_SKY_UNIT = RuneLightPlugin.COMPOSITE_TEXTURE_UNIT + 20;
 	private final SkyGridMap skyGrid = new SkyGridMap();
 	// world units from the player's feet to the head, where the sky overhead is read for the weather sounds
 	private static final float WEATHER_HEAD = 120;
@@ -759,7 +761,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 				checkGLErrors();
 				if (log.isDebugEnabled() && glCapabilities.glDebugMessageControl != 0)
 				{
-					debugCallback = GLUtil.setupDebugMessageCallback();
+					debugCallback = glDebugLog.install(log);
 					if (debugCallback != null)
 					{
 						// [LWJGL] OpenGL debug message
@@ -954,7 +956,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 
 			if (debugCallback != null)
 			{
-				debugCallback.free();
+				glDebugLog.free(log, debugCallback);
 				debugCallback = null;
 			}
 
