@@ -191,6 +191,28 @@ vec3 skyBehind(vec2 px, vec3 dir, vec3 fogColor, bool sunAndSky) {
 // lights.json colors are linear and strengths are 117 HD's, used as they are; this is only a global trim
 #define POINT_LIGHT_SCALE 1.0
 
+// How much of a point light a surface takes by its angle to it, N.L. Smooth vertex normals tilt a wall's face by
+// several degrees across each tile, which for a light close to the wall, at a grazing angle, flips N.L from lit to
+// dark in bands a tile wide with the triangles' diagonal edges. A fire is not a point either: so near a light N.L has
+// a floor, NDL_NEAR_FLOOR at the light and less to nothing at NDL_NEAR_END, which the angle only exceeds, smoothly (a
+// knee NDL_KNEE wide, closing with the distance). A wall beside a light glows in a gradient; a face turned well
+// away (below NDL_AWAY_LOW) stays dark, and a surface that faces the light, or is far from it, is lit as it was.
+#define NDL_NEAR_FULL 48.0
+#define NDL_NEAR_END 640.0
+#define NDL_NEAR_FLOOR 0.5
+#define NDL_KNEE 0.2
+#define NDL_AWAY_LOW -0.35
+#define NDL_AWAY_HIGH 0.05
+float pointLightNdl(float ndl, float dist) {
+  float near = 1.0 - smoothstep(NDL_NEAR_FULL, NDL_NEAR_END, dist);
+  float facing = smoothstep(NDL_AWAY_LOW, NDL_AWAY_HIGH, ndl);
+  float floorNdl = near * NDL_NEAR_FLOOR;
+  float knee = max(near * NDL_KNEE, 1e-3);
+  float s = max(ndl, 0.0) - floorNdl;
+  float lifted = s >= knee ? s : s <= -knee ? 0.0 : (s + knee) * (s + knee) / (4.0 * knee);
+  return facing * (floorNdl + lifted);
+}
+
 int clusterAt(ivec2 px, float z) {
   return clusterEntry((vec2(px) + 0.5 - vec2(sceneViewport.xy)) / vec2(sceneViewport.zw), z);
 }
@@ -217,12 +239,13 @@ vec3 pointLights(int entry, vec3 p, vec3 n, float transmissive, out vec3 through
     vec3 world = p + cameraPos;
     mapPlane = lightMapPlane(world + n * ROOM_NORMAL_BIAS);
     vec3 toLight;
-    float lightY;
-    vec3 baked = lightMapLight(world, world + n * LIGHT_MAP_NORMAL_BIAS, mapPlane, toLight, lightY);
+    float lightY, lightDistance;
+    vec3 baked = lightMapLight(world, world + n * LIGHT_MAP_NORMAL_BIAS, mapPlane, toLight, lightY, lightDistance);
     float bakedNdl = dot(n, toLight);
+    float bakedTaken = pointLightNdl(bakedNdl, lightDistance);
     // Opaque back faces receive neither diffuse light nor foliage transmission.
-    if (bakedNdl > 0.0 || transmissive > 0.0) {
-      sum += baked * (max(bakedNdl, 0.0) * POINT_LIGHT_SCALE);
+    if (bakedTaken > 0.0 || transmissive > 0.0) {
+      sum += baked * (bakedTaken * POINT_LIGHT_SCALE);
       through += baked * (transmission(bakedNdl, dot(-toLight, viewDir), transmissive) * POINT_LIGHT_SCALE);
     }
   }
@@ -244,8 +267,9 @@ vec3 pointLights(int entry, vec3 p, vec3 n, float transmissive, out vec3 through
     }
     vec3 ld = l * inversesqrt(max(d2, 1.0));
     float ndl = dot(n, ld);
+    float taken = pointLightNdl(ndl, sqrt(d2));
     // Opaque back faces receive neither diffuse light nor foliage transmission.
-    if (ndl <= 0.0 && transmissive <= 0.0) {
+    if (taken <= 0.0 && transmissive <= 0.0) {
       continue;
     }
     if (!roomKnown) {
@@ -267,7 +291,7 @@ vec3 pointLights(int entry, vec3 p, vec3 n, float transmissive, out vec3 through
     // 117 HD's falloff; we light in linear space like it does
     float att = 1.0 - sqrt(d2 / r2);
     att *= att;
-    sum += color * att * max(ndl, 0.0) * POINT_LIGHT_SCALE;
+    sum += color * att * taken * POINT_LIGHT_SCALE;
     // thin foliage is also lit from behind: magic tree canopies glow around the lights inside them
     through += color * att * transmission(ndl, dot(-ld, viewDir), transmissive) * POINT_LIGHT_SCALE;
   }

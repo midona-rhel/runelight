@@ -15,21 +15,27 @@ import org.slf4j.LoggerFactory;
  *   times FLOOR_NDL (a floor is lit at a slant), at most CELL_CAP, so that a torch's hot spot cannot hide a room's dark
  *   rest. The light map is baked for the time of day, so a night-only light counts only at night;
  * - the sky coming in: how much of the room's floor the sky light reaches through its doors and openings (SkyField, as
- *   the skylight spreads it; found on a worker whenever the walls change), times SKY_LUMINANCE, the daylight a floor
- *   under a clear sky's noon gets in composite_frag.glsl's room daylight, times how much of that there is now.
+ *   the skylight spreads it; found on a worker whenever the walls change), times what a floor the sky reaches in full
+ *   gets of the daylight now ({@link #skyLuminance}).
  *
  * The fill is the shortfall against a target, with a soft knee: fill = target * knee((target - score) / target). The
- * target is the "minimum room light", TARGET_NIGHT at night and a little more by day, scaled by the Brightness setting.
- * {@link #update} works the fills out and eases them in time (a room whose lights have just been baked does not pop).
- * {@link #table} is what the shader reads by room id (rooms.glsl), x being the fill's luminance.
+ * target is the "minimum room light" ({@link #target}): TARGET_NIGHT at night, by day DAY_SHARE of the light a sunlit
+ * floor outdoors gets ({@link #outdoorLight}), scaled by the Brightness setting. {@link #update} works the fills out
+ * and eases them in time (a room whose lights have just been baked does not pop). {@link #table} is what the shader
+ * reads by room id (rooms.glsl), x being the fill's luminance.
  *
- * Calibration: a fully dark room (score 0) gets TARGET_NIGHT at night, 0.30 in luminance, which is what the constant
- * fill it replaces gave at its centre (BuildingLights.FILL_TINT of luminance 0.312), so a windowless storeroom looks as
- * before. A room with a hearth or torches scores past the target (a torch of strength 9 and radius 500 gives the
- * floor within three tiles of it more than the target) and gets none; a candle in a corner lifts only its own corner.
- * By day the sky term counts: SKY_LUMINANCE is the room daylight of composite_frag.glsl at a clear noon (sun 2.9 times
- * 0.7 of its height, plus the ambient and sky light, times its 0.3), so a room open on a wide side or a door left open
- * scores near or past TARGET_DAY and gets little.
+ * Calibration, in the composite's light on an upward surface (linear luminance; outdoors at 45 degrees of sun about
+ * 2.7: the sun's 2.64 times its height, plus the ambient and sky light 0.8):
+ * - Night: a fully dark room gets TARGET_NIGHT, 0.30, what the constant fill it replaces gave at its centre
+ *   (BuildingLights.FILL_TINT of luminance 0.312). A room with a hearth or torches scores past it (a torch of strength 9
+ *   and radius 500 gives the floor within three tiles of it more) and gets none.
+ * - Day: the target is DAY_SHARE, 0.32, of the outdoor light: 0.86 at 45 degrees. The fill's shaping (composite_frag.glsl)
+ *   gives a room's middle all of it and its walls a third, so a room reads about 25 to 30 percent of the outdoors on
+ *   average: a windowless room is lifted to that (score 0, fill 0.86); one with a door open to the day scores the
+ *   SKY_SHARE (0.22) of the outdoors the doorway's share of its floor gets, 0.59 at most, and is lifted by the rest, a
+ *   fifth of the outdoors with the door wide open; a room with a hearth (score past 1) gets nothing, and stays as lit
+ *   as its fire makes it. Before this a pub by day read 11 percent of the grass outside; a fully lit room still does
+ *   as it did.
  */
 final class RoomLight implements LightMap.Sink
 {
@@ -37,18 +43,24 @@ final class RoomLight implements LightMap.Sink
 
 	/** The least light a room gets at night, in luminance: the old constant fill's, dim but readable. */
 	static final float TARGET_NIGHT = 0.30f;
-	/** By day the eye is used to more, so interiors need a little more to read. */
-	static final float TARGET_DAY = 0.36f;
+	/** By day interiors are lifted to this share of the light a sunlit floor outdoors gets: dimmer than outside, legible. */
+	static final float DAY_SHARE = 0.32f;
 	/** Of the target (the shortfall) over which the fill eases in: no fill at a score of target * (1 + KNEE). */
 	static final float KNEE = 0.25f;
 	/** How much of the light map's cell light a floor takes: the cosine of the light's angle, averaged. */
 	static final float FLOOR_NDL = 0.5f;
-	/** The most a cell counts for, in luminance: twice the target. */
-	static final float CELL_CAP = 0.6f;
-	/** The luminance of a floor the sky reaches in full, under a clear noon (composite_frag.glsl's room daylight). */
-	static final float SKY_LUMINANCE = 0.6f;
-	/** The share of that left at night: the moon and the night sky. */
-	static final float SKY_NIGHT = 0.15f;
+	/** The most a cell counts for, in luminance: about twice the day's target. */
+	static final float CELL_CAP = 1.5f;
+	/**
+	 * The share of the outdoor light a floor the sky reaches in full gets: composite_frag.glsl's room daylight, 0.3 of the
+	 * ambient, sky and 0.7 of the sun's light, over the outdoor light.
+	 */
+	static final float SKY_SHARE = 0.22f;
+	/** What it gets at night, from the moon and the night sky, in luminance. */
+	static final float SKY_NIGHT_LUMINANCE = 0.09f;
+	/** What the sun gives a floor outdoors at its brightest (the sun's strength 2.9, in luminance), and the ambient and sky light. */
+	static final float SUN_LUMINANCE = 2.64f;
+	static final float DAY_AMBIENT_LUMINANCE = 0.8f;
 	/** Seconds in which a fill follows its target. */
 	static final float EASE_SECONDS = 0.4f;
 	/** Seconds after the rooms are known that the summary is told in the log. */
@@ -75,7 +87,7 @@ final class RoomLight implements LightMap.Sink
 	private boolean fresh;
 	private float age = Float.NaN;
 	private boolean summarized;
-	private float lastTarget, lastSky;
+	private float lastTarget;
 
 	// the sky's share per room, found for the walls
 	private ExecutorService worker;
@@ -243,28 +255,47 @@ final class RoomLight implements LightMap.Sink
 		return room > 0 && room < sky.length ? sky[room] : 0;
 	}
 
-	/** The room's score now: its light plus the sky coming in at a time of day (see skyLevel). */
-	float score(int room, float skyLevel)
+	/** The room's score now: its light plus the sky coming in, which gives a floor it reaches in full skyLuminance. */
+	float score(int room, float skyLuminance)
 	{
-		return lightScore(room) + skyShare(room) * SKY_LUMINANCE * skyLevel;
-	}
-
-	/** How much of the clear noon's sky light there is at night (0) to day (1): SKY_NIGHT to 1. */
-	static float skyLevel(float night)
-	{
-		return SKY_NIGHT + (1 - SKY_NIGHT) * (1 - night);
+		return lightScore(room) + skyShare(room) * skyLuminance;
 	}
 
 	/**
-	 * The target for the time of day, 0 for off.
+	 * The light on an upward surface outdoors in the open, from the sun's height (degrees) as sky.glsl has the sun and
+	 * ambient rise and fall; clear weather.
+	 */
+	static float outdoorLight(float sunAltitude)
+	{
+		float sun = SUN_LUMINANCE * smoothstep(-4, 10, sunAltitude) * Math.max((float) Math.sin(Math.toRadians(sunAltitude)), 0);
+		return sun + DAY_AMBIENT_LUMINANCE * smoothstep(-10, 15, sunAltitude);
+	}
+
+	/** What a floor the sky reaches in full gets of the light now. */
+	static float skyLuminance(float sunAltitude)
+	{
+		return Math.max(SKY_NIGHT_LUMINANCE, SKY_SHARE * outdoorLight(sunAltitude));
+	}
+
+	private static float smoothstep(float a, float b, float v)
+	{
+		float t = Math.max(0, Math.min(1, (v - a) / (b - a)));
+		return t * t * (3 - 2 * t);
+	}
+
+	/**
+	 * The minimum room light for the time of day, 0 for off: by day DAY_SHARE of the outdoor light (never less than the
+	 * night's), easing to TARGET_NIGHT as the sun sets.
 	 *
-	 * @param night 0 by day to 1 at night
+	 * @param sunAltitude degrees
 	 * @param byDay whether there is a target by day too
 	 * @param brightness the setting, 1 for 100%
 	 */
-	static float target(float night, boolean byDay, float brightness)
+	static float target(float sunAltitude, boolean byDay, float brightness)
 	{
-		float t = byDay ? TARGET_DAY + (TARGET_NIGHT - TARGET_DAY) * night : TARGET_NIGHT * night;
+		float night = BuildingLights.nightFactor(sunAltitude);
+		float day = Math.max(TARGET_NIGHT, DAY_SHARE * outdoorLight(sunAltitude));
+		float t = byDay ? day + (TARGET_NIGHT - day) * night : TARGET_NIGHT * night;
 		return t * Math.max(0, brightness);
 	}
 
@@ -426,14 +457,13 @@ final class RoomLight implements LightMap.Sink
 	 *
 	 * @param dt seconds since the last call
 	 * @param target the minimum room light now ({@link #target}), 0 for no fill
-	 * @param night 0 by day to 1 at night
+	 * @param sunAltitude degrees, for the sky's light
 	 * @return whether the table changed
 	 */
-	boolean update(float dt, float target, float night)
+	boolean update(float dt, float target, float sunAltitude)
 	{
-		float level = skyLevel(night);
+		float level = skyLuminance(sunAltitude);
 		lastTarget = target;
-		lastSky = level;
 		boolean changed = false;
 		float ease = fresh ? 1 : 1 - (float) Math.exp(-Math.max(dt, 0) / EASE_SECONDS);
 		for (int room = 1; room < used; ++room)
@@ -468,8 +498,8 @@ final class RoomLight implements LightMap.Sink
 			{
 				summarized = true;
 				int[] s = summary();
-				log.info("Room light: {} rooms, target {} (night {}); fill none in {}, some in {}, the full target in {}; "
-						+ "mean score {}", s[0] + s[1] + s[2], target, night, s[0], s[1], s[2], meanScore(level));
+				log.info("Room light: {} rooms, target {} (sun {} degrees); fill none in {}, some in {}, the full target in {}; "
+						+ "mean score {}", s[0] + s[1] + s[2], target, sunAltitude, s[0], s[1], s[2], meanScore(level));
 			}
 		}
 		return changed;

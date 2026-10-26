@@ -2739,10 +2739,9 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		{
 			roomLight.followWalls(buildings.getWalls(), buildings.getFloors(), config.skylightReach());
 		}
-		float night = BuildingLights.nightFactor(dayCycle.sunAltitude);
 		float target = config.buildingLights() && frameOutdoors
-			? RoomLight.target(night, config.buildingLightsByDay(), config.buildingLightBrightness() / 100f) : 0;
-		roomLight.update(dt, target, night);
+			? RoomLight.target(dayCycle.sunAltitude, config.buildingLightsByDay(), config.buildingLightBrightness() / 100f) : 0;
+		roomLight.update(dt, target, dayCycle.sunAltitude);
 		lightClusters.setRoomFill(rooms != null ? roomLight : null);
 	}
 

@@ -45,9 +45,10 @@ int lightMapPlane(vec3 w) {
 // The baked lights' light at the world point w, read at `at` (the point itself, or off its surface) on a storey: the
 // colour, with the brightest light's flicker in it, in toLight the unit direction from w to
 // the lights' mean place and in lightY its height (world y). Black, and toLight straight up, where no light reaches.
-vec3 lightMapLight(vec3 w, vec3 at, int plane, out vec3 toLight, out float lightY) {
+vec3 lightMapLight(vec3 w, vec3 at, int plane, out vec3 toLight, out float lightY, out float lightDistance) {
   toLight = vec3(0.0, -1.0, 0.0);
   lightY = w.y;
+  lightDistance = 1e5;
   float cells = roomHeader.y * 4.0;
   vec2 c = at.xz * (1.0 / LIGHT_MAP_CELL) + roomHeader.z * 4.0;
   vec3 uv = vec3(c / cells, float(plane * 2));
@@ -65,6 +66,7 @@ vec3 lightMapLight(vec3 w, vec3 at, int plane, out vec3 toLight, out float light
   vec3 mean = vec3(b.x, b.z, b.y) * (LIGHT_MAP_PLACE_UNIT / total);
   vec3 l = vec3(at.x + mean.x, mean.y, at.z + mean.z) - w;
   float d3 = length(l);
+  lightDistance = d3;
   toLight = l / max(d3, 1.0);
   lightY = mean.y;
   // the brightest light, the one read as it is: its flicker by its lead. Nothing read as it is may be a range or a
@@ -76,6 +78,11 @@ vec3 lightMapLight(vec3 w, vec3 at, int plane, out vec3 toLight, out float light
     swing = 1.0 - lead + lead * texelFetch(lightData, LIGHT_MAP_TABLE_BASE + id).x;
   }
   return a.rgb * swing;
+}
+
+vec3 lightMapLight(vec3 w, vec3 at, int plane, out vec3 toLight, out float lightY) {
+  float distance;
+  return lightMapLight(w, at, plane, toLight, lightY, distance);
 }
 
 #endif
