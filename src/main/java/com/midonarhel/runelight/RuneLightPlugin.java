@@ -37,13 +37,24 @@ import java.awt.Image;
 import java.awt.geom.AffineTransform;
 import java.awt.image.BufferedImage;
 import java.awt.image.DataBufferInt;
+import java.io.BufferedOutputStream;
+import java.io.DataOutputStream;
+import java.io.IOException;
+import java.nio.ByteBuffer;
 import java.nio.FloatBuffer;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.time.LocalDateTime;
+import java.time.format.DateTimeFormatter;
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.CountDownLatch;
+import java.util.zip.GZIPOutputStream;
 import javax.inject.Inject;
 import javax.inject.Named;
 import javax.swing.SwingUtilities;
@@ -71,6 +82,7 @@ import net.runelite.api.events.CommandExecuted;
 import net.runelite.api.events.GameStateChanged;
 import net.runelite.api.events.PostClientTick;
 import net.runelite.api.hooks.DrawCallbacks;
+import net.runelite.client.RuneLite;
 import net.runelite.client.callback.ClientThread;
 import net.runelite.client.chat.ChatMessageManager;
 import net.runelite.client.chat.QueuedMessage;
@@ -327,6 +339,8 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 	private long roomLightNanos;
 	// what the light map was last given to stop light, and what that was made from
 	private LightBlockers lightBlockers;
+	// the Dump scene checkbox was ticked; set on the config thread, taken by the next frame
+	private volatile boolean dumpSceneRequested;
 	private WallMap blockerWalls;
 	private ModelBlockers blockerModels;
 	private RoomMap blockerRooms;
@@ -959,6 +973,16 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		if (configChanged.getGroup().equals(RuneLightConfig.GROUP))
 		{
 			glErrorChecks = config.glErrorChecks();
+			if (configChanged.getKey().equals("dumpScene"))
+			{
+				if (config.dumpScene())
+				{
+					// written in the next frame, which has the scene's buffers and the light map's inputs
+					dumpSceneRequested = true;
+					configManager.setConfiguration(RuneLightConfig.GROUP, "dumpScene", false);
+				}
+				return;
+			}
 			if (configChanged.getKey().equals("strikeLightning"))
 			{
 				if (config.strikeLightning())
@@ -2898,6 +2922,11 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		float night = frameOutdoors ? t * t * (3 - 2 * t) : 1;
 		// the light map takes the static lights' place, and the occlusion grids with it
 		frameLightMap = updateLightMap(night);
+		if (dumpSceneRequested)
+		{
+			dumpSceneRequested = false;
+			dumpScene(night);
+		}
 		lightOcclusion.update(!frameLightMap && walls != null && config.lightWallOcclusion() ? walls.getWalls() : null);
 		SceneLights lights = sceneLights;
 		if (lights != null)
@@ -2920,6 +2949,105 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 			}
 		}
 		lightOcclusion.assign(frameLights, config.lightWallOcclusion() && !frameLightMap);
+	}
+
+	// zones either side of the player's that the scene dump holds the models of
+	private static final int DUMP_ZONES = 3;
+	// opens a scene dump, which is a gzip stream
+	private static final int SCENE_DUMP_MAGIC = 0x524c4431;
+
+	/**
+	 * Write what the light map is made from around the player to a file (Dump scene): the zones' vertices as drawn, the
+	 * blockers (walls, models, floors), every light, the camera and the time of day. Read back offline. A gzip stream of,
+	 * in order: the magic, the player's storey and local x and z, the scene's min, current and max level, the camera's
+	 * position, the viewport's size and the view-projection (without the camera's translation), the night, whether it is
+	 * outdoors, the sun's altitude, whether it casts, the sun's, the moon's and the caster's direction, the focal point,
+	 * the light map's blockers (LightBlockers.write), the lights (SceneLights.write) and the zones' vertices.
+	 */
+	private void dumpScene(float night)
+	{
+		Player player = client.getLocalPlayer();
+		SceneContext ctx = root;
+		LightBlockers blockers = lightBlockers;
+		if (player == null || ctx == null || blockers == null || sceneLights == null)
+		{
+			log.warn("Scene dump: there is no scene with a light map to write yet");
+			return;
+		}
+		Path file = RuneLite.RUNELITE_DIR.toPath().resolve("runelight-dumps")
+			.resolve(DateTimeFormatter.ofPattern("yyyyMMdd-HHmmss").format(LocalDateTime.now()) + ".bin.gz");
+		int offset = SCENE_OFFSET >> 3;
+		LocalPoint lp = player.getLocalLocation();
+		try
+		{
+			Files.createDirectories(file.getParent());
+			try (DataOutputStream out = new DataOutputStream(new BufferedOutputStream(new GZIPOutputStream(Files.newOutputStream(file)))))
+			{
+				out.writeInt(SCENE_DUMP_MAGIC);
+				out.writeInt(player.getWorldLocation().getPlane());
+				out.writeInt(lp.getX());
+				out.writeInt(lp.getY());
+				out.writeInt(ctx.minLevel);
+				out.writeInt(ctx.level);
+				out.writeInt(ctx.maxLevel);
+				out.writeFloat(frameCameraX);
+				out.writeFloat(frameCameraY);
+				out.writeFloat(frameCameraZ);
+				out.writeInt(client.getViewportWidth());
+				out.writeInt(client.getViewportHeight());
+				for (float f : frameViewProj)
+				{
+					out.writeFloat(f);
+				}
+				out.writeFloat(night);
+				out.writeBoolean(frameOutdoors);
+				out.writeFloat(dayCycle.sunAltitude);
+				out.writeBoolean(dayCycle.sunIsCaster);
+				for (float[] v : new float[][]{dayCycle.sunDir, dayCycle.moonDir, dayCycle.casterDir})
+				{
+					for (float f : v)
+					{
+						out.writeFloat(f);
+					}
+				}
+				out.writeFloat(edgeFade.focalX);
+				out.writeFloat(edgeFade.focalZ);
+				blockers.write(out);
+				sceneLights.write(out);
+				int px = (lp.getX() >> 10) + offset, pz = (lp.getY() >> 10) + offset;
+				List<int[]> zones = new ArrayList<>();
+				List<ByteBuffer> vertices = new ArrayList<>();
+				for (int x = Math.max(0, px - DUMP_ZONES); x <= Math.min(ctx.sizeX - 1, px + DUMP_ZONES); ++x)
+				{
+					for (int z = Math.max(0, pz - DUMP_ZONES); z <= Math.min(ctx.sizeZ - 1, pz + DUMP_ZONES); ++z)
+					{
+						ByteBuffer v = ctx.zones[x][z].initialized
+							? ctx.zones[x][z].readOpaque(ctx.minLevel, ctx.level, ctx.maxLevel, ctx.hideRoofIds) : null;
+						if (v != null && v.remaining() > 0)
+						{
+							zones.add(new int[]{x - offset, z - offset});
+							vertices.add(v);
+						}
+					}
+				}
+				out.writeInt(zones.size());
+				for (int i = 0; i < zones.size(); ++i)
+				{
+					out.writeInt(zones.get(i)[0]);
+					out.writeInt(zones.get(i)[1]);
+					ByteBuffer v = vertices.get(i);
+					out.writeInt(v.remaining());
+					byte[] bytes = new byte[v.remaining()];
+					v.get(bytes);
+					out.write(bytes);
+				}
+			}
+			log.info("Scene dump written to {}", file);
+		}
+		catch (IOException e)
+		{
+			log.warn("Scene dump to {} failed", file, e);
+		}
 	}
 
 	int getLightDefinitionCount()

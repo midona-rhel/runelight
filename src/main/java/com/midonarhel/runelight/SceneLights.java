@@ -1,6 +1,8 @@
 package com.midonarhel.runelight;
 
 import com.google.gson.Gson;
+import java.io.DataOutputStream;
+import java.io.IOException;
 import java.io.InputStream;
 import java.io.InputStreamReader;
 import java.nio.charset.StandardCharsets;
@@ -1155,6 +1157,63 @@ class SceneLights
 			objectLights, worldLights.size(), countAuto(), f.hidden, f.otherPlane, f.outOfReach, f.nightOff, frameNight,
 			f.mapped, f.pending, f.clusters, f.strengths[0], f.strengths[1], f.strengths[2], f.strengths[3], total,
 			LightClusters.MAX_LIGHTS, Math.max(0, autoLights.size() - Math.max(0, room)));
+	}
+
+	/**
+	 * Every light of the scene as it is placed, for the scene dump: the fixed ones (on objects, in the world, fading
+	 * out) with the owner and whether the light map bakes them, then the ones that follow an actor, a projectile or an
+	 * effect.
+	 */
+	void write(DataOutputStream out) throws IOException
+	{
+		List<Placed> fixed = new ArrayList<>(worldLights);
+		fixed.addAll(orphans);
+		for (TrackedObject t : objects.values())
+		{
+			fixed.addAll(t.lights);
+		}
+		List<Live> live = new ArrayList<>();
+		for (List<Live> l : attached.values())
+		{
+			live.addAll(l);
+		}
+		live.addAll(fading);
+		out.writeInt(fixed.size() + live.size());
+		for (Placed p : fixed)
+		{
+			write(out, p.def, p.plane, p.x, p.y, p.z, p.object == null ? 0 : VoxelCapture.ownerOf(p.object),
+				p.bake != null, p.auto);
+		}
+		for (Live l : live)
+		{
+			write(out, l.def, l.plane, l.x, l.y, l.z, 0, false, false);
+		}
+	}
+
+	private static void write(DataOutputStream out, LightDefinition d, int plane, float x, float y, float z, int owner,
+		boolean baked, boolean auto) throws IOException
+	{
+		out.writeUTF(d.description == null ? "" : d.description);
+		out.writeInt(plane);
+		out.writeFloat(x);
+		out.writeFloat(y);
+		out.writeFloat(z);
+		out.writeInt(owner);
+		out.writeBoolean(baked);
+		out.writeBoolean(auto);
+		out.writeInt(d.kind);
+		out.writeFloat(d.radius);
+		out.writeFloat(d.red);
+		out.writeFloat(d.green);
+		out.writeFloat(d.blue);
+		out.writeFloat(d.strength);
+		out.writeFloat(d.duration);
+		out.writeFloat(d.range);
+		out.writeBoolean(d.nightOnly);
+		out.writeFloat(d.nightMultiplier);
+		out.writeBoolean(d.outdoorLighting);
+		out.writeBoolean(d.animationSpecific());
+		out.writeBoolean(d.fixedDespawnTime);
 	}
 
 	private int countAuto()

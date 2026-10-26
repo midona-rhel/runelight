@@ -1,5 +1,7 @@
 package com.midonarhel.runelight;
 
+import java.io.DataOutputStream;
+import java.io.IOException;
 import java.util.Arrays;
 
 /**
@@ -124,6 +126,33 @@ final class ModelBlockers
 			}
 		}
 		merge(r, mask, box, offset);
+	}
+
+	/** Every record as the scene dump has it: storey, cell x and z, object, mask, the boxes; then a storey of -1. */
+	void write(DataOutputStream out) throws IOException
+	{
+		out.writeInt(cells);
+		for (int b = 0; b < index.length; ++b)
+		{
+			if (index[b] == null)
+			{
+				continue;
+			}
+			int plane = b / (perSide * perSide), bz = b / perSide % perSide, bx = b % perSide;
+			for (int cell = 0; cell < index[b].length; ++cell)
+			{
+				for (int r = index[b][cell] - 1; r >= 0; r = next[r] - 1)
+				{
+					out.writeInt(plane);
+					out.writeInt(bx * BLOCK + cell % BLOCK);
+					out.writeInt(bz * BLOCK + cell / BLOCK);
+					out.writeInt(owners[r]);
+					out.writeShort(masks[r]);
+					out.write(boxes, r * RECORD, RECORD);
+				}
+			}
+		}
+		out.writeInt(-1);
 	}
 
 	/** The first record of a cell, -1 for none. */

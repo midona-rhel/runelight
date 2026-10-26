@@ -26,6 +26,7 @@ package com.midonarhel.runelight;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import java.nio.ByteBuffer;
 import java.nio.IntBuffer;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
@@ -262,6 +263,24 @@ class Zone
 		{
 			return;
 		}
+		pushLevels(minLevel, currentLevel, maxLevel, hiddenRoofIds);
+		if (sway != SWAY_ALL && swayRangeCount > 0)
+		{
+			filterSway(sway == SWAY_ONLY);
+		}
+		convertForDraw(VERT_SIZE);
+
+		if (drawOff.limit() > 0)
+		{
+			glUniform3i(uniBase, zx << 10, 0, zz << 10);
+			glBindVertexArray(glVao);
+			glMultiDrawArrays(GL_TRIANGLES, drawOff, drawEnd);
+		}
+	}
+
+	/** Fill the draw ranges (in ints) with what the levels show: whole levels, and above the current one the roofs not hidden. */
+	private void pushLevels(int minLevel, int currentLevel, int maxLevel, Set<Integer> hiddenRoofIds)
+	{
 		drawOff.clear();
 		drawEnd.clear();
 
@@ -308,19 +327,37 @@ class Zone
 			// draw the non roofs
 			pushRange(endpos, this.levelOffsets[level]);
 		}
+	}
 
-		if (sway != SWAY_ALL && swayRangeCount > 0)
+	/**
+	 * The vertices renderOpaque draws now, as the buffer holds them (VERT_SIZE bytes each), for the scene dump.
+	 *
+	 * @return null when the zone has no buffer to read
+	 */
+	ByteBuffer readOpaque(int minLevel, int currentLevel, int maxLevel, Set<Integer> hiddenRoofIds)
+	{
+		if (vboO == null || vboO.mapped)
 		{
-			filterSway(sway == SWAY_ONLY);
+			return null;
 		}
-		convertForDraw(VERT_SIZE);
-
-		if (drawOff.limit() > 0)
+		pushLevels(minLevel, currentLevel, maxLevel, hiddenRoofIds);
+		int ints = 0;
+		for (int i = 0; i < drawOff.position(); ++i)
 		{
-			glUniform3i(uniBase, zx << 10, 0, zz << 10);
-			glBindVertexArray(glVao);
-			glMultiDrawArrays(GL_TRIANGLES, drawOff, drawEnd);
+			ints += drawEnd.get(i) - drawOff.get(i);
 		}
+		ByteBuffer out = BufferUtils.createByteBuffer(ints * 4);
+		glBindBuffer(GL_ARRAY_BUFFER, vboO.bufId);
+		for (int i = 0; i < drawOff.position(); ++i)
+		{
+			int length = (drawEnd.get(i) - drawOff.get(i)) * 4;
+			out.limit(out.position() + length);
+			glGetBufferSubData(GL_ARRAY_BUFFER, drawOff.get(i) * 4L, out.slice());
+			out.position(out.limit());
+		}
+		glBindBuffer(GL_ARRAY_BUFFER, 0);
+		out.flip();
+		return out;
 	}
 
 	private static final int[] filterOff = new int[NUM_DRAW_RANGES];

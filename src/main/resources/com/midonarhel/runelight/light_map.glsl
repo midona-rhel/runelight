@@ -10,7 +10,7 @@
 //      Read filtered across the cell but never across the slices; the cells round the lit ones carry the place too, so that
 //      it needs no weighting.
 // The table, in lightData from LIGHT_MAP_TABLE_BASE, has per light its strength now over the strength it was baked with
-// (flicker, pulse, fades). The brightest light of a cell flickers by its lead over the others, so where
+// (flicker, pulse, fades) and its radius, for what is higher than the layers. The brightest light of a cell flickers by its lead over the others, so where
 // the brightest changes from one light to another the flicker changes smoothly with it.
 // A read never takes light across a wall, filtered or not: the cells of a tile are joined by the tile's wall bits
 // (rooms.glsl), and where a filtered read would take from a cell the wall cuts it off from, it reads where it stands.
@@ -26,9 +26,6 @@ uniform sampler3D lightMap;
 #define LIGHT_MAP_CELL 32.0
 // the places in B are in this many world units to a stored unit
 #define LIGHT_MAP_PLACE_UNIT 16.0
-// above the top layer's storey height the light fades out over this much: the map knows nothing of what is higher (the eaves
-// and roofs above it, an outdoor facade's upper storeys)
-#define LIGHT_MAP_FADE 60.0
 // the slices of the texture: the colour of every layer of the four storeys, then the places of the four
 #define LIGHT_MAP_SLICES float((LIGHT_MAP_LAYERS + 1) * 4)
 
@@ -66,62 +63,97 @@ int lightMapWalls(ivec2 cell, int plane) {
 }
 
 // whether a diagonal wall of the tile (walls: its bits) runs through the cell: the baked light of such a cell is
-// the best of the cells beside it, whichever side they are on, and is never read
+// the best of the cells beside it, whichever side they are on, and is never read as the cell's
 bool lightMapCut(int walls, ivec2 cell) {
   ivec2 l = cell & 3;
   return ((walls & ROOM_WALL_SW_NE) != 0 && l.x == l.y) || ((walls & ROOM_WALL_NW_SE) != 0 && l.x + l.y == 3);
 }
 
-// whether light gets from cell a (walls: its tile's bits) to the cell b beside it: no wall on the edge between, a tile's
-// edge being the tile's own bit, and no diagonal wall through either
-bool lightMapJoined(ivec2 a, int wallsA, ivec2 b, int plane) {
-  int wallsB = wallsA;
-  if (a >> 2 != b >> 2) {
-    ivec2 d = b - a;
-    int side = d.x > 0 ? ROOM_WALL_EAST : d.x < 0 ? ROOM_WALL_WEST : d.y > 0 ? ROOM_WALL_NORTH : ROOM_WALL_SOUTH;
-    if ((wallsA & side) != 0) {
-      return false;
-    }
-    wallsB = lightMapWalls(b, plane);
+// whether no wall of the tile's edge stands between cell a (walls: its tile's bits) and the cell b beside it
+bool lightMapOpen(ivec2 a, int wallsA, ivec2 b) {
+  if (a >> 2 == b >> 2) {
+    return true;
   }
-  return !lightMapCut(wallsA, a) && !lightMapCut(wallsB, b);
+  ivec2 d = b - a;
+  int side = d.x > 0 ? ROOM_WALL_EAST : d.x < 0 ? ROOM_WALL_WEST : d.y > 0 ? ROOM_WALL_NORTH : ROOM_WALL_SOUTH;
+  return (wallsA & side) == 0;
 }
 
 // Where a filtered read at c (cell coordinates, o the cell it is in) takes its light from, so that it does not take it from
-// across a wall: the filter mixes the cell with the ones it is nearest, one along each axis and the one between, and
-// where a wall stands between it and one of them, the read stays in the cell's middle on that axis.
-vec2 lightMapSide(vec2 c, ivec2 o, int plane) {
-  int walls = lightMapWalls(o, plane);
+// across a wall: the filter mixes the cell with the ones it is nearest, one along each axis and the one between.
+//
+// Where a wall stands between the cell and one of them, that one is left out and the others take its share (the read stays
+// in the cell's middle on that axis). Returns true, c moved so that the one filtered read of the texture does it.
+//
+// Where a diagonal wall runs through some of the four (lightMapCut), the read is made cell by cell instead: a diagonal
+// wall's cell is of no side, so it stands for the cell above it on the side of the wall the read is on (below it on the
+// other), whichever way the read goes; what lies across the wall is left out; the shares are what is left, over their sum.
+// A cell then has the one value however it is read, so the light is smooth along the wall, where taking it from the cell
+// the read is in would step from cell to cell. Returns false, the cells and their shares in cell and share.
+bool lightMapTaps(inout vec2 c, ivec2 o, int plane, out ivec2 cell[4], out vec4 share) {
   vec2 f = c - (vec2(o) + 0.5);
-  if (lightMapCut(walls, o)) {
-    // in a cell a diagonal wall runs through: its light is of no side, the nearest cell on the side of the point's has it
-    bool slash = (walls & ROOM_WALL_SW_NE) != 0 && (o & 3).x == (o & 3).y;
-    float side = slash ? f.y - f.x : f.x + f.y;
-    ivec2 s = slash ? (side > 0.0 ? ivec2(-1, 1) : ivec2(1, -1)) : (side > 0.0 ? ivec2(1, 1) : ivec2(-1, -1));
-    return vec2(f.x * float(s.x) > f.y * float(s.y) ? o + ivec2(s.x, 0) : o + ivec2(0, s.y)) + 0.5;
-  }
   ivec2 s = ivec2(f.x < 0.0 ? -1 : 1, f.y < 0.0 ? -1 : 1);
-  ivec2 h = o + ivec2(s.x, 0), v = o + ivec2(0, s.y);
-  bool hOpen = lightMapJoined(o, walls, h, plane), vOpen = lightMapJoined(o, walls, v, plane);
-  if (!hOpen) {
-    f.x = 0.0;
+  cell[0] = o;
+  cell[1] = o + ivec2(s.x, 0);
+  cell[2] = o + ivec2(0, s.y);
+  cell[3] = o + s;
+  int walls[4];
+  walls[0] = lightMapWalls(o, plane);
+  bool cut = lightMapCut(walls[0], o);
+  for (int k = 1; k < 4; ++k) {
+    walls[k] = cell[k] >> 2 == o >> 2 ? walls[0] : lightMapWalls(cell[k], plane);
+    cut = cut || lightMapCut(walls[k], cell[k]);
   }
-  if (!vOpen) {
-    f.y = 0.0;
-  }
-  if (hOpen && vOpen) {
-    // the one between is the filter's only if both ways round to it are open
-    ivec2 d = o + s;
-    int wallsH = h >> 2 == o >> 2 ? walls : lightMapWalls(h, plane), wallsV = v >> 2 == o >> 2 ? walls : lightMapWalls(v, plane);
-    if (!lightMapJoined(h, wallsH, d, plane) || !lightMapJoined(v, wallsV, d, plane)) {
+  bool hOpen = lightMapOpen(o, walls[0], cell[1]), vOpen = lightMapOpen(o, walls[0], cell[2]);
+  bool dOpen = hOpen && vOpen && lightMapOpen(cell[1], walls[1], cell[3]) && lightMapOpen(cell[2], walls[2], cell[3])
+    && !lightMapCut(walls[1], cell[1]) && !lightMapCut(walls[2], cell[2]);
+  if (!cut) {
+    if (!hOpen) {
+      f.x = 0.0;
+    }
+    if (!vOpen) {
+      f.y = 0.0;
+    }
+    if (hOpen && vOpen && !dOpen) {
+      // the one between is the filter's only if both ways round to it are open
       if (abs(f.x) < abs(f.y)) {
         f.x = 0.0;
       } else {
         f.y = 0.0;
       }
     }
+    c = vec2(o) + 0.5 + f;
+    return true;
   }
-  return vec2(o) + 0.5 + f;
+  vec2 a = abs(f);
+  share = vec4((1.0 - a.x) * (1.0 - a.y), a.x * (1.0 - a.y), (1.0 - a.x) * a.y, a.x * a.y);
+  share.yw *= hOpen ? 1.0 : 0.0;
+  share.zw *= vOpen ? 1.0 : 0.0;
+  share.w *= dOpen ? 1.0 : 0.0;
+  for (int j = 0; j < 4; ++j) {
+    // across a diagonal wall of the tile of any of the four: on the other side of its line from the read
+    ivec2 origin = cell[j] >> 2 << 2;
+    vec2 at = c - vec2(origin);
+    for (int k = 0; k < 4; ++k) {
+      vec2 l = vec2(cell[k] - origin);
+      if ((walls[j] & ROOM_WALL_SW_NE) != 0 && (l.y - l.x) * (at.y - at.x) < 0.0) {
+        share[k] = 0.0;
+      }
+      if ((walls[j] & ROOM_WALL_NW_SE) != 0 && (l.x + l.y - 3.0) * (at.x + at.y - 4.0) < 0.0) {
+        share[k] = 0.0;
+      }
+    }
+  }
+  for (int k = 0; k < 4; ++k) {
+    if (lightMapCut(walls[k], cell[k])) {
+      vec2 at = c - vec2(cell[k] >> 2 << 2);
+      bool slash = (walls[k] & ROOM_WALL_SW_NE) != 0 && (cell[k] & 3).x == (cell[k] & 3).y;
+      cell[k].y += (slash ? at.y - at.x : at.x + at.y - 4.0) >= 0.0 ? 1 : -1;
+    }
+  }
+  float total = dot(share, vec4(1.0));
+  share = total > 0.0 ? share / total : vec4(1.0, 0.0, 0.0, 0.0);
+  return false;
 }
 
 // The baked lights' light at the world point w, read at `at` (the point itself, or off its surface) on a storey: the
@@ -139,10 +171,6 @@ vec3 lightMapLight(vec3 w, vec3 at, int plane, out vec3 toLight, out float light
   // the height above the storey's floor, as a place between the layers' middles (the first and the last layer
   // stand for what is below and above them)
   float height = texelFetch(lightData, lightMapTile(cell, 1))[plane] - w.y;
-  float fade = 1.0 - smoothstep(LIGHT_MAP_LAYERS * LIGHT_MAP_LAYER_HEIGHT, LIGHT_MAP_LAYERS * LIGHT_MAP_LAYER_HEIGHT + LIGHT_MAP_FADE, height);
-  if (fade <= 0.0) {
-    return vec3(0.0);
-  }
   float layer = clamp(height * (1.0 / LIGHT_MAP_LAYER_HEIGHT) - 0.5, 0.0, float(LIGHT_MAP_LAYERS - 1));
   vec3 uv = vec3(c / cells, (float(plane * LIGHT_MAP_LAYERS) + layer + 0.5) / LIGHT_MAP_SLICES);
   vec4 a = textureLod(lightMap, uv, 0.0);
@@ -152,28 +180,66 @@ vec3 lightMapLight(vec3 w, vec3 at, int plane, out vec3 toLight, out float light
   }
   // lit: the filter taking only from the cells that are not walled off. What it takes from is what it took from before, or
   // less, so that what was dark stays dark
-  c = lightMapSide(c, cell, plane);
-  uv.xy = c / cells;
-  a = textureLod(lightMap, uv, 0.0);
-  float total = dot(a.rgb, LUMA);
+  ivec2 taps[4];
+  vec4 share;
+  vec3 place;
+  int id;
+  float total;
+  if (lightMapTaps(c, cell, plane, taps, share)) {
+    uv.xy = c / cells;
+    a = textureLod(lightMap, uv, 0.0);
+    vec4 b = textureLod(lightMap, vec3(uv.xy, (float(LIGHT_MAP_LAYERS * 4 + plane) + 0.5) / LIGHT_MAP_SLICES), 0.0);
+    // the mean place of the lights: from the point read, which the filtered offsets are from
+    place = vec3((c.x - roomHeader.z * 4.0) * LIGHT_MAP_CELL + b.x * LIGHT_MAP_PLACE_UNIT, b.z * LIGHT_MAP_PLACE_UNIT,
+      (c.y - roomHeader.z * 4.0) * LIGHT_MAP_CELL + b.y * LIGHT_MAP_PLACE_UNIT);
+    // the brightest light, the one read as it is: its flicker by its lead. Nothing read as it is may be a range or a
+    // distance (a cut at one light's radius, a cell at a time): the reach of the lights is in the cells, filtered.
+    id = int(texelFetch(lightMap, ivec3(ivec2(floor(c)), LIGHT_MAP_LAYERS * 4 + plane), 0).w + 0.5);
+  } else {
+    // cell by cell: the layers' filter by hand, the places from the cells' middles
+    float below = floor(layer);
+    float above = min(below + 1.0, float(LIGHT_MAP_LAYERS - 1));
+    int slice = plane * LIGHT_MAP_LAYERS;
+    a = vec4(0.0);
+    place = vec3(0.0);
+    float best = -1.0;
+    for (int k = 0; k < 4; ++k) {
+      if (share[k] > 0.0) {
+        a += share[k] * mix(texelFetch(lightMap, ivec3(taps[k], slice + int(below)), 0),
+          texelFetch(lightMap, ivec3(taps[k], slice + int(above)), 0), layer - below);
+        vec4 b = texelFetch(lightMap, ivec3(taps[k], LIGHT_MAP_LAYERS * 4 + plane), 0);
+        place += share[k] * vec3((float(taps[k].x) + 0.5 - roomHeader.z * 4.0) * LIGHT_MAP_CELL + b.x * LIGHT_MAP_PLACE_UNIT,
+          b.z * LIGHT_MAP_PLACE_UNIT, (float(taps[k].y) + 0.5 - roomHeader.z * 4.0) * LIGHT_MAP_CELL + b.y * LIGHT_MAP_PLACE_UNIT);
+        if (share[k] > best) {
+          best = share[k];
+          id = int(b.w + 0.5);
+        }
+      }
+    }
+  }
+  total = dot(a.rgb, LUMA);
   if (total <= 0.0) {
     return vec3(0.0);
   }
-  vec4 b = textureLod(lightMap, vec3(uv.xy, (float(LIGHT_MAP_LAYERS * 4 + plane) + 0.5) / LIGHT_MAP_SLICES), 0.0);
-  // the mean place of the lights: from the point read, which the filtered offsets are from
-  vec3 mean = vec3(b.x, b.z, b.y) * LIGHT_MAP_PLACE_UNIT;
-  vec3 l = vec3((c.x - roomHeader.z * 4.0) * LIGHT_MAP_CELL + mean.x, mean.y, (c.y - roomHeader.z * 4.0) * LIGHT_MAP_CELL + mean.z) - w;
+  vec3 l = place - w;
   toLight = l / max(length(l), 1.0);
-  lightY = mean.y;
-  // the brightest light, the one read as it is: its flicker by its lead. Nothing read as it is may be a range or a
-  // distance (a cut at one light's radius, a cell at a time): the reach of the lights is in the cells, filtered.
-  int id = int(texelFetch(lightMap, ivec3(ivec2(floor(c)), LIGHT_MAP_LAYERS * 4 + plane), 0).w + 0.5);
+  lightY = place.y;
   float swing = 1.0;
+  float reach = 1.0;
   if (id > 0) {
+    vec4 entry = texelFetch(lightData, LIGHT_MAP_TABLE_BASE + id);
     float lead = clamp(a.a / total, 0.0, 1.0);
-    swing = 1.0 - lead + lead * texelFetch(lightData, LIGHT_MAP_TABLE_BASE + id).x;
+    swing = 1.0 - lead + lead * entry.x;
+    // above the top layer's middle the map holds nothing more (what is higher than a storey is an outdoor facade's upper
+    // wall): the light goes on falling with the distance, from what the top layer has, as the brightest light's reach does
+    float over = height - (float(LIGHT_MAP_LAYERS) - 0.5) * LIGHT_MAP_LAYER_HEIGHT;
+    if (over > 0.0) {
+      float near = max(1.0 - length(vec3(l.x, l.y - over, l.z)) / entry.y, 0.0);
+      float far = max(1.0 - length(l) / entry.y, 0.0);
+      reach = near > 0.0 ? min((far * far) / (near * near), 1.0) : 0.0;
+    }
   }
-  return a.rgb * (swing * fade);
+  return a.rgb * (swing * reach);
 }
 
 #endif

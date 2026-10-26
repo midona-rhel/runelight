@@ -200,7 +200,7 @@ final class LightMap
 	private boolean[] onGpu = new boolean[0];
 	private float focusX, focusZ;
 
-	// the table: per id, (strength now over the baked, 0, 0, 0)
+	// the table: per id, (strength now over the baked, the radius, 0, 0)
 	private final float[] table = new float[TABLE_TEXELS * 4];
 	private int tableUsed = 1;
 
@@ -604,6 +604,7 @@ final class LightMap
 			s.id = freeIds.poll();
 			tableUsed = Math.max(tableUsed, s.id + 1);
 			table[s.id * 4] = 1;
+			table[s.id * 4 + 1] = s.radius;
 			sources.add(s);
 			if (blockers != null)
 			{
@@ -713,7 +714,7 @@ final class LightMap
 		return s.live;
 	}
 
-	/** The table, for the shaders: per id (strength now over baked, 0, 0, 0). */
+	/** The table, for the shaders: per id (strength now over baked, the radius, 0, 0). */
 	float[] table()
 	{
 		return table;

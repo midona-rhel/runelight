@@ -104,6 +104,7 @@ public class LightMapTest
 		assertEquals(s.y, at[1], 1);
 		assertEquals(s.z, at[2], 2);
 		assertEquals(0, m.red(0, 40.5f, 24.5f), 0);
+		assertEquals("the table has its radius, for the light above the layers", s.radius, map.table()[(int) m.id(0, 24.6f, 24.6f) * 4 + 1], 0);
 	}
 
 	@Test

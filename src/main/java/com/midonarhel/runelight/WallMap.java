@@ -1,5 +1,7 @@
 package com.midonarhel.runelight;
 
+import java.io.DataOutputStream;
+import java.io.IOException;
 import java.util.Arrays;
 import java.util.Collection;
 
@@ -77,6 +79,19 @@ final class WallMap
 		this.scene = scene;
 		bits = new byte[PLANES * size * size];
 		full = new boolean[PLANES * size * size];
+	}
+
+	/** The map as the scene dump has it: its size, offset and scene, the wall bits and the solid tiles. */
+	void write(DataOutputStream out) throws IOException
+	{
+		out.writeInt(size);
+		out.writeInt(offset);
+		out.writeInt(scene);
+		out.write(bits);
+		for (boolean f : full)
+		{
+			out.writeBoolean(f);
+		}
 	}
 
 	/** A map without walls. */

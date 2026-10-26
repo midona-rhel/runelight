@@ -12,6 +12,7 @@ final class BakeScene
 	final int[][][] flags = new int[4][LOCAL][LOCAL];
 	final float[] floors = new float[4 * SIZE * SIZE];
 	final byte[] filled = new byte[SIZE * SIZE];
+	final java.util.List<WallMap.Diagonal> diagonals = new java.util.ArrayList<>();
 	ModelBlockers models;
 	private boolean explicitFloors;
 
@@ -70,6 +71,14 @@ final class BakeScene
 				flags[plane][x - OFFSET][y - OFFSET] |= WallMap.LOS_FULL;
 			}
 		}
+		return this;
+	}
+
+	/** A diagonal wall through tile (x, y): kind is WallMap.DIAG_SW_NE or DIAG_NW_SE. The tile blocks sight, as the game's does. */
+	BakeScene diagonal(int plane, int x, int y, int kind)
+	{
+		flags[plane][x - OFFSET][y - OFFSET] |= WallMap.LOS_FULL;
+		diagonals.add(new WallMap.Diagonal(plane, x, y, kind));
 		return this;
 	}
 
@@ -148,7 +157,7 @@ final class BakeScene
 
 	LightBlockers blockers(int scene)
 	{
-		WallMap walls = WallMap.build(flags, null, SIZE, OFFSET, scene);
+		WallMap walls = WallMap.build(flags, diagonals, SIZE, OFFSET, scene);
 		return new LightBlockers(walls, models, floors, filled);
 	}
 

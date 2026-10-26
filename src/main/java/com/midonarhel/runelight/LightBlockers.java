@@ -1,5 +1,8 @@
 package com.midonarhel.runelight;
 
+import java.io.DataOutputStream;
+import java.io.IOException;
+
 /**
  * What stops a static light, as one scene's snapshot for the baking threads (LightMapBake): the walls and the tiles
  * a solid object fills (WallMap), the models at the light's height (ModelBlockers), and the floors of the storeys, for
@@ -45,6 +48,22 @@ final class LightBlockers
 			}
 			wallSums[plane] = sum;
 		}
+	}
+
+	/** The walls, the models, the floors and the storeys that have one, as the scene dump has them. */
+	void write(DataOutputStream out) throws IOException
+	{
+		walls.write(out);
+		out.writeBoolean(models != null);
+		if (models != null)
+		{
+			models.write(out);
+		}
+		for (float f : floors)
+		{
+			out.writeFloat(f);
+		}
+		out.write(filled);
 	}
 
 	/** Whether a storey has a wall on a tile within the cell rectangle (inclusive, scene cells), or three tiles of it. */
