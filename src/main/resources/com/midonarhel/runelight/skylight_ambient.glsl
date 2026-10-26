@@ -2,7 +2,8 @@
 // ambient and sky light, so interiors, overhangs and the shade under trees darken. Needs rooms.glsl.
 
 uniform int skylightOn;      // 1 when the AO pass worked the sky visibility out this frame
-uniform float skylightFloor; // share of the ambient light kept where no sky is seen
+// share of the ambient light kept where no sky is seen, such as deep inside buildings
+#define SKYLIGHT_FLOOR 0.4
 
 // sky visibility of this pixel, from upsampleAoFog; 1 when unknown
 float skyUpsampled = 1.0;
@@ -10,7 +11,7 @@ float skyUpsampled = 1.0;
 // plain: the ambient plus sky light a surface would get under the open sky
 vec3 skylightAmbient(vec3 plain) {
   float v = skylightOn == 1 ? skyUpsampled : 1.0;
-  return plain * mix(skylightFloor, 1.0, v);
+  return plain * mix(SKYLIGHT_FLOOR, 1.0, v);
 }
 
 // Inside a building the skylight is the light flowed in through its openings (SkyField), and what comes in through a

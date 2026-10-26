@@ -38,8 +38,8 @@ Point light placements come from 117 HD's light definitions, converted with `too
 
 ## Weather
 
-Plugin config, Weather section: rain or snow with an intensity, puddles / snow cover, rain splashes and a
-gradual buildup. Shelter comes from a top-down depth map of all static scenery around the player, drawn with every
+Plugin config, Weather section: rain or snow with an intensity and a gradual buildup, with puddles / snow cover and
+rain splashes always on. Shelter comes from a top-down depth map of all static scenery around the player, drawn with every
 roof (also roofs hidden by the game or a plugin), redrawn only after the player walks ~24 tiles or the scenery
 changes. Rain also sounds (`WeatherAudio.java`, `AudioMixer.java`, "Weather sounds" volume): a loop that follows how hard
 it rains around the player, and a clap of thunder with each lightning flash; both
@@ -65,7 +65,7 @@ reflecting the sky (`waterSkyReflection`) and, with the water's reflections on, 
 (`waterTraceReflection`); outside them the ground is not darkened.
 
 Time (`GameClock.java`) is a function of the real clock from a fixed epoch: with the default 24 minute day one game
-hour per real minute, seasons of "Days per season" game days. The time of day, the season, the forecast and the
+hour per real minute, seasons of `Climate.SEASON_DAYS` (7) game days. The time of day, the season, the forecast and the
 wind's wander are the same whenever and wherever the client runs. Each region has a temperature (`Climate.java`:
 the biome's per-season mean and day/night swing from `weather_climate.json`'s `temperature`, damped by cloud, cooled
 by whatever falls, the type's own `temperature` offset, and a slow wander; arctic and mountain regions never thaw).
@@ -82,7 +82,7 @@ row of `weather_types.json` (cloud cover and look, rain/snow amounts and drop/fl
 gustiness, fog and its tint, sun strength, haze, warmth and sky saturation, lightning, buildup rates, frost;
 fields and defaults in `WeatherType.java`) that `Weather.java` eases toward, so slot changes and walking into
 another biome show its weather as it is. The odds per biome and season are in `weather_climate.json`; seasons
-(spring, summer, autumn, winter) last "Days per season" game days each and blend into the next over the last
+(spring, summer, autumn, winter) last `Climate.SEASON_DAYS` game days each and blend into the next over the last
 quarter. Consecutive slots form a Markov chain whose transition weights come from how alike two types look
 (`WeatherForecast.java`), so clear skies cloud over before it storms. In the dev client both JSON files are read
 from `src/main/resources` and reloaded on save. The light changes go through `weatherLight` in `sky.glsl`
@@ -116,18 +116,18 @@ environments with 3D Weather's biome regions as fallback (see the script for usa
 Rerun it against newer checkouts to pick up their additions. The biome looks (desert, swamp, snow, ...) are set in
 the script's `BIOMES` table.
 
-Plugin config, Hide other areas section: while the player is in one of 117 HD's areas that hide the rest of the map
+Plugin config, Advanced section, "Hide other areas": while the player is in one of 117 HD's areas that hide the rest of the map
 (caves, instances, cutscene spots; the mainland's surface too), `AreaHiding.java` takes every other tile out of the
 scene as it loads, so no zone, shadow, water body, light or voxel ever sees it. Walking into another area loads the
 scene again. The areas come from `area_hiding.json`, built by `tools/import_117hd_areas.py`.
 
 ## Clouds
 
-Plugin config, Clouds section: one slab of clouds over the procedural sky, marched in 6 (looking up) to 16 (at
+Plugin config, Sky & time of day section: one slab of clouds over the procedural sky, marched in 6 (looking up) to 16 (at
 the horizon) steps per sky pixel in the composite (nothing is spent where scenery covers the sky), with optional
 cloud shadows on the ground. Rain and snow close the sky up through `Weather.cloudCover()` and, by region, the
 weather field. Tuning constants are `#define`s at the top of `clouds.glsl`; the noise texture and wind are in
-`Clouds.java`. A detail noise warps the shapes a little and gently erodes their edges (Cloud roughness), so they
+`Clouds.java`. A detail noise warps the shapes a little and gently erodes their edges, so they
 are soft but not perfectly round; some stretches of sky turn wispy. The sun and moon show
 through thin cloud and hide behind thick cloud, with silver linings, and the stars (`atmosphere.glsl`) are faint
 dots that fade toward the horizon, in haze and behind clouds.
@@ -143,7 +143,8 @@ from it, which is cheaper than marching the clouds for every sky pixel but softe
 Volumetric fog (`VolumetricFog.java`, `fog_frag.glsl`) is the configured density times the weather's fog times the
 region's climate (`FogClimate.java`): mist at dawn that burns off by late morning and lies low, more of it and again
 at dusk and night in damp regions (swamps, forests, the tropics), almost none in deserts, which get a faint midday
-haze instead. Patches drift and change shape, and larger banks of fog drift over the ground (Fog banks).
+haze instead. Patches drift and change shape, and larger banks of fog drift over the ground. Fog has three settings (on, quality, density); the rest are constants at the
+top of `VolumetricFog.java` and `fog_frag.glsl`.
 
 ## Water
 
@@ -174,7 +175,7 @@ flow to check them. Needs numpy, scipy, scikit-image and Pillow.
 
 ## Skylight
 
-Plugin config, Skylight section. The skylight scales the ambient and sky light by how much sky a
+The skylight (always on, no settings) scales the ambient and sky light by how much sky a
 spot sees, ray traced through the scene's voxels. When a region loads, the static scene's opaque triangles (captured as
 the zones upload, `VoxelCapture.java`) are voxelized into half-tile cubes on a worker thread (`Voxelizer.java`,
 `VoxelGrid.java`, `VoxelBuilder.java`; per zone, so zones reused by the next load keep theirs), a voxel being filled

@@ -6,7 +6,7 @@ uniform vec3 envAmbient;   // multiplies ambient and sky fill (linear)
 uniform vec3 envSun;       // multiplies the sun or moon, and the cave key light (linear)
 uniform vec4 envFogColor;  // sRGB, a: how much it replaces the sky-colored fog
 uniform float envFogDepth; // 117 HD-style fog density, already scaled for the draw distance; 0 is off
-uniform vec3 envFogCover;  // xy: the player's world xz, z: most of the view around them the fog may hide (1: no limit)
+uniform vec2 envFogFocus;  // the player's world xz, where the limit on what the fog may hide is centered
 uniform float envHaze;     // share of the sky hidden behind fog
 uniform vec3 envSkyTint;   // sRGB multiplier on the procedural sky
 uniform float envDrawDistance; // game units
@@ -49,7 +49,7 @@ float envFogAmount(vec3 rel, vec2 worldXZ) {
   float dist = length(vec3(rel.x, rel.y * 0.5, rel.z));
   float d = max(dist - start, 0.0) / max(dd - start, 1.0);
   float amount = 1.0 - clamp(exp(-d * envFogDepth / 100.0), 0.0, 1.0);
-  return capFogCover(amount, envFogCover.z, length(worldXZ - envFogCover.xy));
+  return capFogCover(amount, length(worldXZ - envFogFocus));
 }
 
 // Procedural sky with the area's tint and haze. elev: view ray elevation, -dir.y.

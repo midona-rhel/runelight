@@ -253,11 +253,11 @@ class ModelUploader
 					boolean flat = color3 == -1;
 					if (faceTextures == null || faceTextures[faceIdx] == -1)
 					{
-						color1 = VertexShading.baseColor(color1, faceIdx, v1, unlitColors, normalsX, normalsY, normalsZ);
+						color1 = VertexShading.baseColor(color1, faceIdx, v1, normalsX, normalsY, normalsZ);
 						if (!flat)
 						{
-							color2 = VertexShading.baseColor(color2, faceIdx, v2, unlitColors, normalsX, normalsY, normalsZ);
-							color3 = VertexShading.baseColor(color3, faceIdx, v3, unlitColors, normalsX, normalsY, normalsZ);
+							color2 = VertexShading.baseColor(color2, faceIdx, v2, normalsX, normalsY, normalsZ);
+							color3 = VertexShading.baseColor(color3, faceIdx, v3, normalsX, normalsY, normalsZ);
 						}
 					}
 					if (flat)
@@ -269,7 +269,7 @@ class ModelUploader
 					int n1 = smooth ? VertexShading.vertexNormal(normalsX, normalsY, normalsZ, v1, normalSin, normalCos) : 0;
 					int n2 = smooth ? VertexShading.vertexNormal(normalsX, normalsY, normalsZ, v2, normalSin, normalCos) : 0;
 					int n3 = smooth ? VertexShading.vertexNormal(normalsX, normalsY, normalsZ, v3, normalSin, normalCos) : 0;
-					if (flat && hasNormals && VertexShading.smoothFlatFaces
+					if (flat && hasNormals
 						&& VertexShading.flatFaceNormals(verticesX, verticesY, verticesZ, normalsX, normalsY, normalsZ, v1, v2, v3, normalSin, normalCos, flatNormals))
 					{
 						n1 = flatNormals[0];
@@ -677,11 +677,11 @@ class ModelUploader
 
 			if (faceTextures == null || faceTextures[face] == -1)
 			{
-				color1 = VertexShading.baseColor(color1, face, triangleA, unlitColors, normalsX, normalsY, normalsZ);
+				color1 = VertexShading.baseColor(color1, face, triangleA, normalsX, normalsY, normalsZ);
 				if (!flat)
 				{
-					color2 = VertexShading.baseColor(color2, face, triangleB, unlitColors, normalsX, normalsY, normalsZ);
-					color3 = VertexShading.baseColor(color3, face, triangleC, unlitColors, normalsX, normalsY, normalsZ);
+					color2 = VertexShading.baseColor(color2, face, triangleB, normalsX, normalsY, normalsZ);
+					color3 = VertexShading.baseColor(color3, face, triangleC, normalsX, normalsY, normalsZ);
 				}
 			}
 			if (flat)
@@ -694,7 +694,7 @@ class ModelUploader
 			int n1 = smooth ? VertexShading.vertexNormal(normalsX, normalsY, normalsZ, triangleA, orientSine, normalCos) : 0;
 			int n2 = smooth ? VertexShading.vertexNormal(normalsX, normalsY, normalsZ, triangleB, orientSine, normalCos) : 0;
 			int n3 = smooth ? VertexShading.vertexNormal(normalsX, normalsY, normalsZ, triangleC, orientSine, normalCos) : 0;
-			if (flat && hasNormals && VertexShading.smoothFlatFaces
+			if (flat && hasNormals
 				&& VertexShading.flatFaceNormals(verticesX, verticesY, verticesZ, normalsX, normalsY, normalsZ, triangleA, triangleB, triangleC, orientSine, normalCos, flatNormals))
 			{
 				n1 = flatNormals[0];

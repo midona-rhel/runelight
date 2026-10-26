@@ -12,7 +12,7 @@ final class EnvironmentUniforms
 	static final int VALUES = 15;
 	final float[] values = new float[VALUES];
 
-	private int ambient, sun, fogColor, fogDepth, haze, skyTint, drawDistance, cave, fogCover;
+	private int ambient, sun, fogColor, fogDepth, haze, skyTint, drawDistance, cave, fogFocus;
 
 	void locate(int program)
 	{
@@ -24,22 +24,19 @@ final class EnvironmentUniforms
 		skyTint = glGetUniformLocation(program, "envSkyTint");
 		drawDistance = glGetUniformLocation(program, "envDrawDistance");
 		cave = glGetUniformLocation(program, "envCave");
-		fogCover = glGetUniformLocation(program, "envFogCover");
+		fogFocus = glGetUniformLocation(program, "envFogFocus");
 	}
 
 	/**
 	 * @param env              null for the neutral look
-	 * @param lightStrength    0 neutral, 1 as authored, more exaggerates
 	 * @param fogStrength      multiplier on the area's fog density
 	 * @param drawDistanceTiles the draw distance in tiles
-	 * @param maxFogCover      most of the view around the player the fog may hide, 0 to 1 (fog_cover.glsl)
-	 * @param focusX           world x and z of the player, where the limit is centered
+	 * @param focusX           world x and z of the player, where the limit on what the fog may hide is centered
 	 */
-	void set(EnvironmentManager env, float lightStrength, float fogStrength, int drawDistanceTiles, float maxFogCover,
-		float focusX, float focusZ)
+	void set(EnvironmentManager env, float fogStrength, int drawDistanceTiles, float focusX, float focusZ)
 	{
 		glUniform1f(drawDistance, drawDistanceTiles * 128f);
-		glUniform3f(fogCover, focusX, focusZ, maxFogCover);
+		glUniform2f(fogFocus, focusX, focusZ);
 		glUniform1i(cave, env != null && !env.isOverworld() ? 1 : 0);
 		if (env == null)
 		{
@@ -55,13 +52,12 @@ final class EnvironmentUniforms
 		}
 
 		EnvironmentManager.Ambience a = env.getAmbience();
-		float k = lightStrength;
 		float[] v = values;
 		for (int i = 0; i < 3; ++i)
 		{
-			v[i] = scale(a.ambient[i], k);
-			v[3 + i] = scale(a.sun[i], k);
-			v[6 + i] = scale(a.skyTint[i], k);
+			v[i] = Math.max(0, a.ambient[i]);
+			v[3 + i] = Math.max(0, a.sun[i]);
+			v[6 + i] = Math.max(0, a.skyTint[i]);
 			v[9 + i] = a.fogColor[i];
 		}
 		v[12] = fogStrength > 0 ? a.fogColorWeight : 0;
@@ -74,10 +70,5 @@ final class EnvironmentUniforms
 		glUniform4f(fogColor, v[9], v[10], v[11], v[12]);
 		glUniform1f(fogDepth, v[13]);
 		glUniform1f(haze, v[14]);
-	}
-
-	private static float scale(float v, float k)
-	{
-		return Math.max(0, 1 + (v - 1) * k);
 	}
 }

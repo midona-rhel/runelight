@@ -1298,11 +1298,11 @@ class SceneUploader
 
 			if (faceTextures == null || faceTextures[face] == -1)
 			{
-				color1 = VertexShading.baseColor(color1, face, triangleA, unlitColors, normalsX, normalsY, normalsZ);
+				color1 = VertexShading.baseColor(color1, face, triangleA, normalsX, normalsY, normalsZ);
 				if (!flat)
 				{
-					color2 = VertexShading.baseColor(color2, face, triangleB, unlitColors, normalsX, normalsY, normalsZ);
-					color3 = VertexShading.baseColor(color3, face, triangleC, unlitColors, normalsX, normalsY, normalsZ);
+					color2 = VertexShading.baseColor(color2, face, triangleB, normalsX, normalsY, normalsZ);
+					color3 = VertexShading.baseColor(color3, face, triangleC, normalsX, normalsY, normalsZ);
 				}
 			}
 			if (flat)
@@ -1314,7 +1314,7 @@ class SceneUploader
 			int n1 = smooth ? VertexShading.vertexNormal(normalsX, normalsY, normalsZ, triangleA, normalSin, normalCos) : 0;
 			int n2 = smooth ? VertexShading.vertexNormal(normalsX, normalsY, normalsZ, triangleB, normalSin, normalCos) : 0;
 			int n3 = smooth ? VertexShading.vertexNormal(normalsX, normalsY, normalsZ, triangleC, normalSin, normalCos) : 0;
-			if (flat && hasNormals && VertexShading.smoothFlatFaces
+			if (flat && hasNormals
 				&& VertexShading.flatFaceNormals(vertexX, vertexY, vertexZ, normalsX, normalsY, normalsZ, triangleA, triangleB, triangleC, normalSin, normalCos, flatNormals))
 			{
 				n1 = flatNormals[0];

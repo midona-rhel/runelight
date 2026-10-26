@@ -279,19 +279,17 @@ final class RoomLight
 	}
 
 	/**
-	 * The minimum room light for the time of day, 0 for off: by day DAY_SHARE of the outdoor light (never less than the
-	 * night's), easing to TARGET_NIGHT as the sun sets.
+	 * The minimum room light for the time of day: by day DAY_SHARE of the outdoor light (never less than the night's),
+	 * easing to TARGET_NIGHT as the sun sets.
 	 *
 	 * @param sunAltitude degrees
-	 * @param byDay whether there is a target by day too
-	 * @param brightness the setting, 1 for 100%
+	 * @param brightness the setting, 1 for 100%; 0 turns the fill off
 	 */
-	static float target(float sunAltitude, boolean byDay, float brightness)
+	static float target(float sunAltitude, float brightness)
 	{
 		float night = BuildingLights.nightFactor(sunAltitude);
 		float day = Math.max(TARGET_NIGHT, DAY_SHARE * outdoorLight(sunAltitude));
-		float t = byDay ? day + (TARGET_NIGHT - day) * night : TARGET_NIGHT * night;
-		return t * Math.max(0, brightness);
+		return (day + (TARGET_NIGHT - day) * night) * Math.max(0, brightness);
 	}
 
 	/**

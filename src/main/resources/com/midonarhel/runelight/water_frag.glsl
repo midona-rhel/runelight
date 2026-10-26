@@ -17,8 +17,6 @@ uniform sampler2D waterContact; // WaterMap.contact: how close something standin
 uniform vec3 waterWind;
 uniform vec4 waterDrift;
 uniform float waterRain;
-uniform float waterWaves;
-uniform float waterSpeed;
 uniform int waterOutdoors;
 uniform int waterDebug;         // 1 types and flow, 2 the waves as a relief (WaterDebug)
 uniform float waterSkyDepth;   // the sky's depth in sceneDepth (frame.glsl's isSky)
@@ -274,7 +272,7 @@ void waterWaveField(vec2 xz, int type, vec2 flow, out vec2 slope, out float foam
   // still water drifts with the wind, slowly; running water carries its ripples in two phases (water_common.glsl)
   bool ocean = type == 2 || type == 3 || type == 4;
   float stillSlow = ocean ? OCEAN_STILL_SLOW : STILL_SLOW;
-  vec2 base = waterDrift.xy * (speed * waterSpeed * (ocean ? OCEAN_STILL_DRIFT : STILL_DRIFT));
+  vec2 base = waterDrift.xy * (speed * (ocean ? OCEAN_STILL_DRIFT : STILL_DRIFT));
   vec2 m0 = base, m1 = base;
   float w0 = 1.0;
   float flowing = smoothstep(FLOW_MIN * 0.5, FLOW_MIN, flowSpeed);
@@ -294,7 +292,7 @@ void waterWaveField(vec2 xz, int type, vec2 flow, out vec2 slope, out float foam
   }
   float contact = textureLod(waterContact, (xz / WATER_TILE + waterGrid.x) / (waterGrid.y - 1.0), 0.0).r;
   contact *= contact;
-  slope *= look.w * waterWaves * (0.7 + 0.5 * wind) * (0.75 + 0.35 * energy) * (1.0 + TURB_WAVES * turb)
+  slope *= look.w * (0.7 + 0.5 * wind) * (0.75 + 0.35 * energy) * (1.0 + TURB_WAVES * turb)
     * mix(STILL_WAVES, FAST_WAVES, smoothstep(FLOW_MIN * 0.5, FAST_FLOW, flowSpeed)) * (1.0 + CONTACT_WAVES * contact)
     * mix(SHORE_WAVES, 1.0, smoothstep(0.0, SHORE_CALM, data.r) * smoothstep(0.5, 1.0, data.b));
   if (ocean && flowing < 1.0) {
@@ -309,14 +307,13 @@ void waterWaveField(vec2 xz, int type, vec2 flow, out vec2 slope, out float foam
       // the crests wander off the shore distance's lines (tiles, so straight), never ruled straight along a bank
       float phase = WATER_TAU * (shore / SWELL_LENGTH + waterCycle(SWELL_PERIOD)
         + 0.45 * waveNoise(xz / (SWELL_LENGTH * WATER_TILE * 1.3)));
-      slope += g / max(length(g), 1e-3) * (SWELL_SLOPE * cos(phase) * reach * (1.0 - flowing) * (0.4 + 1.2 * patch)
-        * waterWaves);
+      slope += g / max(length(g), 1e-3) * (SWELL_SLOPE * cos(phase) * reach * (1.0 - flowing) * (0.4 + 1.2 * patch));
     }
   }
   // soft foam on rapids and around things standing in the water: the large cells' rims, carried with the flow
   foam = 0.0;
   // fast water foams a little along its banks: by the flow before it slows toward them (water_vert.glsl)
-  float fast = length(waterPage0(waterData, xz / WATER_TILE + waterGrid.x).gb) * WATER_TILE * waterSpeed * speed;
+  float fast = length(waterPage0(waterData, xz / WATER_TILE + waterGrid.x).gb) * WATER_TILE * speed;
   float bankFoam = smoothstep(BANK_FOAM_FLOW.x, BANK_FOAM_FLOW.y, fast)
     * (1.0 - smoothstep(BANK_FOAM_REACH.x, BANK_FOAM_REACH.y, data.r));
   float churn = max(smoothstep(TURB_FOAM.x, TURB_FOAM.y, turb), bankFoam * BANK_FOAM);
@@ -375,7 +372,7 @@ void main() {
   float foam = wave.z;
   // the flow's phases for the caustics
   bool ocean = type == 2 || type == 3 || type == 4;
-  vec2 base = waterDrift.xy * (speed * waterSpeed * (ocean ? OCEAN_STILL_DRIFT : STILL_DRIFT));
+  vec2 base = waterDrift.xy * (speed * (ocean ? OCEAN_STILL_DRIFT : STILL_DRIFT));
   vec2 m0 = base, m1 = base;
   float w0 = 1.0;
   float flowing = smoothstep(FLOW_MIN * 0.5, FLOW_MIN, flowSpeed);
@@ -426,7 +423,7 @@ void main() {
     // type color, flow as stripes that move with it, turbulent water reddens
     const vec3 DEBUG_TYPE[WATER_TYPES] = vec3[](vec3(0.0), vec3(0.2, 0.6, 1.0), vec3(0.0, 0.2, 0.9),
       vec3(0.3, 0.3, 0.6), vec3(0.6, 0.9, 1.0), vec3(0.4, 0.6, 0.1), vec3(0.4, 0.3, 0.3));
-    float tiles = flowSpeed / (WATER_TILE * max(waterSpeed * speed, 1e-3));
+    float tiles = flowSpeed / (WATER_TILE * max(speed, 1e-3));
     vec2 dir = flowSpeed > 1e-3 ? flow / flowSpeed : vec2(0.0);
     float stripe = flowSpeed > 1e-3 ? step(0.5, fract(dot(xz / 64.0, dir) - waterTime * tiles * 2.0)) : 0.5;
     vec3 c = mix(DEBUG_TYPE[type], vec3(stripe), 0.35) * mix(0.6, 1.0, energy);

@@ -56,7 +56,7 @@ const vec4 WATER_LOOK[WATER_TYPES] = vec4[](
   vec4(0.25, 0.80, 0.50, 1.00),
   vec4(0.80, 0.30, 0.10, 0.45),
   vec4(0.75, 0.10, 0.20, 0.70));
-// Depths (world units, before the clarity setting) over which the bed fades into the depth color, then darker, and
+// Depths (world units) over which the bed fades into the depth color, then darker, and
 // how much of the depth color is left in the deep (117 HD goes to black: the deep stays the type's color here)
 const vec3 WATER_FADE[WATER_TYPES] = vec3[](
   vec3(1.0),

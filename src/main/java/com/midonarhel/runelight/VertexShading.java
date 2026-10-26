@@ -15,8 +15,6 @@ final class VertexShading
 	private static final float LIGHTNESS_MULTIPLIER = 3;
 
 	static boolean undoVanillaShading = true;
-	// replace colors with the model's unlit colors instead; flattens color gradients (117 HD's "Experimental")
-	static boolean unlitColors = false;
 
 	private VertexShading()
 	{
@@ -74,7 +72,6 @@ final class VertexShading
 
 	// Flat-shaded faces whose vertex normals are within this angle of the face normal are shaded smoothly, so
 	// low-poly round shapes (tree trunks, rocks) read as round while real corners (crates, walls) stay sharp.
-	static boolean smoothFlatFaces = true;
 	private static final float SMOOTH_COS = 0.643f; // cos(50 degrees): 5-sided and rounder prisms smooth, cubes don't
 
 	/**
@@ -199,15 +196,10 @@ final class VertexShading
 	 * the directional shading. Untextured faces only: textured faces store a bare lightness that the fragment
 	 * shader multiplies the texture by.
 	 *
-	 * @param unlit the model's unlit face colors, or null
 	 * @param nx unrotated model vertex normals (vanilla lights in model space), or null
 	 */
-	static int baseColor(int color, int face, int vertex, short[] unlit, float[] nx, float[] ny, float[] nz)
+	static int baseColor(int color, int face, int vertex, float[] nx, float[] ny, float[] nz)
 	{
-		if (unlitColors && unlit != null)
-		{
-			return unlit[face] & 0xffff;
-		}
 		if (!undoVanillaShading || nx == null)
 		{
 			return color;

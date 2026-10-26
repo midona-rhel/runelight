@@ -80,9 +80,6 @@ uniform float shadowRadius;      // half extent of the shadow map, world units
 uniform float shadowDepthRange;
 uniform float shadowMapSize;
 
-// fog, same parameters as the vanilla GPU plugin
-uniform int useFog;
-uniform int fogDepth;       // tiles
 uniform int drawDistance;   // world units
 uniform int expandedMapLoadingChunks;
 uniform vec3 clientSkyColor;
@@ -163,16 +160,6 @@ uniform vec3 interiorTint;
 // sky visibility at which a spot counts as fully indoors, and as not indoors at all
 #define INTERIOR_SKY_CLOSED 0.1
 #define INTERIOR_SKY_OPEN 0.4
-
-// ---------------------------------------------------------------------------------------------------------------
-// Distance fog by the game's fog depth setting, from the same edge as the edge fade, as in vert.glsl
-
-float fogAmount(vec3 world) {
-  if (useFog == 0) {
-    return 0.0;
-  }
-  return 1.0 - clamp(edgeDistance(world) / (float(fogDepth) * TILE_SIZE), 0.0, 1.0);
-}
 
 // The sky this pixel would show if nothing stood in front of it, in sRGB: what the world melts into at its edge.
 vec3 skyBehind(vec2 px, vec3 dir, vec3 fogColor, bool sunAndSky) {
@@ -540,7 +527,7 @@ vec4 shadeScene(ivec2 px, SceneSample sm, vec4 transparent) {
   } else {
     lit = texelFetch(compositeParts, ivec3(px, 0), 0).rgb;
   }
-  float distanceFog = max(fogAmount(p + cameraPos), envFogAmount(p, (p + cameraPos).xz));
+  float distanceFog = envFogAmount(p, (p + cameraPos).xz);
   // the world fades into the sky behind it toward the draw distance, so where the culling stops never shows
   float edge = inside ? edgeFadeAmount(p + cameraPos) : 0.0;
   if (linearLit) {

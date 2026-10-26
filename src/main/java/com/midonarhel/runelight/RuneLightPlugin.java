@@ -128,7 +128,8 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 	private static final Logger log = LoggerFactory.getLogger(RuneLightPlugin.class);
 
 	static final int MAX_DISTANCE = 184;
-	static final int MAX_FOG_DEPTH = 100;
+	// how far in, in tiles, the sky's light flowing in under cover falls to a third of its brightness
+	static final int SKYLIGHT_REACH = 3;
 	static final int SCENE_OFFSET = (Constants.EXTENDED_SCENE_SIZE - Constants.SCENE_SIZE) / 2; // offset for sxy -> msxy
 	private static final int UNIFORM_BUFFER_SIZE = 5 * Float.BYTES;
 	private static final int NUM_ZONES = Constants.EXTENDED_SCENE_SIZE >> 3;
@@ -251,8 +252,8 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		int cameraPos, time, outdoors, proceduralSky, lightingEnabled, sunDir, moonDir, casterDir, sunIsCaster,
 			strikeLight, sunAltitude, overcast, weatherLight;
 		int shadowsEnabled, lightProjRel, shadowRadius, shadowDepthRange, shadowMapSize;
-		int pointLights, roomHeader, interiorTint, skylightOn, skylightFloor;
-		int skyVoid, useFog, fogDepth, drawDistance, expandedChunks, clientSkyColor;
+		int pointLights, roomHeader, interiorTint, skylightOn;
+		int skyVoid, drawDistance, expandedChunks, clientSkyColor;
 		int lightningBolt, volumetricFog;
 		final FrameUniforms frame = new FrameUniforms();
 		final EnvironmentUniforms env = new EnvironmentUniforms();
@@ -487,7 +488,6 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 	private boolean frameHasSkybox;
 	private boolean frameShadows;
 	private int frameSkyColor;
-	private int frameFogDepth;
 	private int frameDrawDistance;
 
 	/**
@@ -624,9 +624,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 	private Map<Integer, Integer> nextRoofChanges;
 
 	// Uniforms
-	private int uniUseFog;
 	private int uniFogColor;
-	private int uniFogDepth;
 	private int uniDrawDistance;
 	private final EdgeFade edgeFade = new EdgeFade();
 	private final EdgeFade.Uniforms sceneEdgeUniforms = new EdgeFade.Uniforms();
@@ -683,8 +681,6 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		glErrorChecks = config.glErrorChecks();
 
 		VertexShading.undoVanillaShading = config.removeBakedShading();
-		VertexShading.unlitColors = config.unlitColors();
-		VertexShading.smoothFlatFaces = config.smoothShapes();
 		GroundBlender.enabled = config.groundBlending();
 
 		sceneLights = new SceneLights(client);
@@ -1018,15 +1014,12 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 					}
 				});
 			}
-			else if (configChanged.getKey().equals("removeBakedShading") || configChanged.getKey().equals("unlitColors")
-				|| configChanged.getKey().equals("smoothShapes"))
+			else if (configChanged.getKey().equals("removeBakedShading"))
 			{
 				clientThread.invokeLater(() ->
 				{
 					// colors are baked into the vertex data at upload, so reload the scene
 					VertexShading.undoVanillaShading = config.removeBakedShading();
-					VertexShading.unlitColors = config.unlitColors();
-					VertexShading.smoothFlatFaces = config.smoothShapes();
 					if (client.getGameState() == GameState.LOGGED_IN)
 					{
 						client.setGameState(GameState.LOADING);
@@ -1246,9 +1239,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		uniEntityTint = glGetUniformLocation(glProgram, "entityTint");
 		uniSmoothBanding = glGetUniformLocation(glProgram, "smoothBanding");
 		uniBrightness = glGetUniformLocation(glProgram, "brightness");
-		uniUseFog = glGetUniformLocation(glProgram, "useFog");
 		uniFogColor = glGetUniformLocation(glProgram, "fogColor");
-		uniFogDepth = glGetUniformLocation(glProgram, "fogDepth");
 		uniDrawDistance = glGetUniformLocation(glProgram, "drawDistance");
 		sceneEdgeUniforms.locate(glProgram);
 		uniExpandedMapLoadingChunks = glGetUniformLocation(glProgram, "expandedMapLoadingChunks");
@@ -1367,10 +1358,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		c.roomHeader = glGetUniformLocation(p, "roomHeader");
 		c.interiorTint = glGetUniformLocation(p, "interiorTint");
 		c.skylightOn = glGetUniformLocation(p, "skylightOn");
-		c.skylightFloor = glGetUniformLocation(p, "skylightFloor");
 		c.skyVoid = glGetUniformLocation(p, "skyVoid");
-		c.useFog = glGetUniformLocation(p, "useFog");
-		c.fogDepth = glGetUniformLocation(p, "fogDepth");
 		c.drawDistance = glGetUniformLocation(p, "drawDistance");
 		c.expandedChunks = glGetUniformLocation(p, "expandedMapLoadingChunks");
 		c.clientSkyColor = glGetUniformLocation(p, "clientSkyColor");
@@ -1938,10 +1926,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 
 		// Setup uniforms
 		final int drawDistance = getDrawDistance();
-		final int fogDepth = config.fogDepth();
 		final int sky = client.getSkyboxColor();
-		// the scene shader only uses fog for transparent faces; opaque ones are fogged in the composite pass
-		glUniform1i(uniUseFog, fogDepth > 0 ? 1 : 0);
 		glUniform1i(uniAlphaPass, 0);
 		glUniform1i(uniSceneOutdoors, frameOutdoors ? 1 : 0);
 		glUniform1i(uniSceneProceduralSky, proceduralSky() ? 1 : 0);
@@ -1963,7 +1948,6 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		}
 		setEnvironmentUniforms(sceneEnvUniforms);
 		glUniform4f(uniFogColor, (sky >> 16 & 0xFF) / 255f, (sky >> 8 & 0xFF) / 255f, (sky & 0xFF) / 255f, 1f);
-		glUniform1i(uniFogDepth, fogDepth);
 		glUniform1i(uniDrawDistance, drawDistance * Perspective.LOCAL_TILE_SIZE);
 		glUniform1i(uniExpandedMapLoadingChunks, client.getExpandedMapLoading());
 		glUniform1f(uniColorblindIntensity, config.colorBlindIntensity());
@@ -2118,7 +2102,6 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 			int r = frameSkyColor >> 16 & 0xFF, g = frameSkyColor >> 8 & 0xFF, b = frameSkyColor & 0xFF;
 			frameSkyVoid = !frameHasSkybox && r + g + b <= 24;
 		}
-		frameFogDepth = config.fogDepth();
 		frameDrawDistance = getDrawDistance() * Perspective.LOCAL_TILE_SIZE;
 
 		cpuTimer.begin(CpuTimer.ENVIRONMENT);
@@ -2146,7 +2129,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		if (config.volumetricFog() && lp != null && client.getGameState() == GameState.LOGGED_IN && volumetricFog.hasGround())
 		{
 			// thicker in rain and snow, and in areas 117 HD gives fog (its fogDepth: ~6 faint, 50 thick)
-			float areaFog = config.areaEnvironments() ? environmentManager.getFogDepth() * config.areaFogStrength() / 100f : 0;
+			float areaFog = config.areaEnvironments() ? environmentManager.getFogDepth() : 0;
 			volumetricFog.areaDensity = weather.fogMultiplier()
 				* (1 + weather.areaFogWeight() * Math.min(areaFog / AREA_FOG_DEPTH, 2));
 			volumetricFog.areaHeight = weather.fogHeightMultiplier();
@@ -2171,8 +2154,8 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		// read back in case the client limits it
 		float radius = EdgeFade.radius(drawDistance, scene.getDrawDistance(), offset);
 		float areaFog = config.areaEnvironments() && !frameHasSkybox
-			? environmentManager.getFogDepth() * config.areaFogStrength() / 100f * weather.distanceFogScale() : 0;
-		edgeFade.update(fx, fz, radius, client.getExpandedMapLoading(), config.edgeFadeTiles(),
+			? environmentManager.getFogDepth() * weather.distanceFogScale() : 0;
+		edgeFade.update(fx, fz, radius, client.getExpandedMapLoading(),
 			EdgeFade.fogginess(weather.fogMultiplier(), areaFog));
 	}
 
@@ -2209,9 +2192,9 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 			frameSkylightTileZ = scene.getBaseY() + lp.getY() / (float) Perspective.LOCAL_TILE_SIZE;
 		}
 		BuildingLights buildings = buildingLights;
-		if (wanted && config.skylightFlow() && buildings != null)
+		if (wanted && buildings != null)
 		{
-			skyField.update(buildings.getWalls(), buildings.getRooms(), buildings.getFloors(), plane, config.skylightReach());
+			skyField.update(buildings.getWalls(), buildings.getRooms(), buildings.getFloors(), plane, SKYLIGHT_REACH);
 		}
 		else
 		{
@@ -2268,11 +2251,10 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		{
 			WeatherData.reloadIfChanged(watcher.getDirectory(), gson);
 		}
-		climate.update(frameGameMillis, config.weatherSeasonDays());
+		climate.update(frameGameMillis, Climate.SEASON_DAYS);
 		weather.updateField(sky ? wv.getScene() : null, plane, environmentManager, config.areaEnvironments(), biomeName,
 			config.weatherMode(), climate, config.weatherIntensity(), config.weatherBuildup(), dayCycle.hour(), fx, fz);
-		weather.update(config.weatherBuildup(), config.weatherVarying(), config.weatherOvercast(),
-			config.weatherLightning(), sky, fx, fy, fz, plane);
+		weather.update(config.weatherBuildup(), true, config.weatherLightning(), sky, fx, fy, fz, plane);
 		weather.getOvercast(volumetricFog.overcast);
 		updateWeatherAudio(fx, fy, fz);
 	}
@@ -2334,9 +2316,8 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 	{
 		boolean on = config.areaEnvironments();
 		// the game's own skyboxes have their own colors; area fog would not match them, like in 117 HD
-		float fog = frameHasSkybox ? 0 : config.areaFogStrength() / 100f;
-		u.set(on ? environmentManager : null, config.areaLightStrength() / 100f, fog * weather.distanceFogScale(),
-			getDrawDistance(), config.volumetricFogMaxCover() / 100f, edgeFade.focalX, edgeFade.focalZ);
+		float fog = frameHasSkybox ? 0 : weather.distanceFogScale();
+		u.set(on ? environmentManager : null, fog, getDrawDistance(), edgeFade.focalX, edgeFade.focalZ);
 	}
 
 	/**
@@ -2400,7 +2381,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 			weather.getWind().apply(shadowWind, weather.isWindStill());
 		}
 		glUniform1i(uniShadowTexturesReady, textureArrayId != -1 ? 1 : 0);
-		glUniform1i(uniShadowEmissiveCasts, config.emissiveMaterials() ? 0 : 1);
+		glUniform1i(uniShadowEmissiveCasts, config.emissiveStrength() > 0 ? 0 : 1);
 		glUniformMatrix4fv(uniShadowEntityProj, false, IDENTITY);
 		// swaying plants are left out of the static cache and redrawn each frame (Wind.java)
 		final boolean swayShadows = windSwayAmount() > 0 && config.windSwayShadows();
@@ -2485,10 +2466,8 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		float depthRange, boolean swayShadows)
 	{
 		final int sway = swayShadows ? Zone.SWAY_EXCLUDE : Zone.SWAY_ALL;
-		final boolean roofShadows = config.roofShadows();
 		int key = java.util.Objects.hash(System.identityHashCode(ctx), ctx.minLevel, ctx.level, ctx.maxLevel,
-			roofShadows, roofShadows ? 0 : ctx.hideRoofIds.hashCode(), config.emissiveMaterials(), textureArrayId != -1,
-			size, radius, sway);
+			config.emissiveStrength() > 0, textureArrayId != -1, size, radius, sway);
 		shadowMap.checkCacheKey(key);
 		if (shadowStaticDirty)
 		{
@@ -2608,12 +2587,11 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		// zones around the focus, with margin for tall casters just outside the map
 		int offset = SCENE_OFFSET >> 3;
 		float reach = radius + 2048;
-		final boolean roofShadows = config.roofShadows();
 		if (list != null)
 		{
 			for (int i = from; i < to; ++i)
 			{
-				shadowZone(ctx, list[i] >> 16, list[i] & 0xFFFF, offset, roofShadows, sway);
+				shadowZone(ctx, list[i] >> 16, list[i] & 0xFFFF, offset, sway);
 			}
 			return;
 		}
@@ -2634,7 +2612,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 				}
 				if (!collect)
 				{
-					shadowZone(ctx, x, z, offset, roofShadows, sway);
+					shadowZone(ctx, x, z, offset, sway);
 					continue;
 				}
 				Zone zone = ctx.zones[x][z];
@@ -2650,22 +2628,15 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		}
 	}
 
-	private static void shadowZone(SceneContext ctx, int x, int z, int offset, boolean roofShadows, int sway)
+	private static void shadowZone(SceneContext ctx, int x, int z, int offset, int sway)
 	{
 		Zone zone = ctx.zones[x][z];
 		if (!zone.initialized || zone.sizeO <= 0)
 		{
 			return;
 		}
-		if (roofShadows)
-		{
-			// every level and every roof, including ones hidden from the camera
-			zone.renderOpaque(x - offset, z - offset, ctx.minLevel, ctx.level, 3, Collections.emptySet(), sway);
-		}
-		else
-		{
-			zone.renderOpaque(x - offset, z - offset, ctx.minLevel, ctx.level, ctx.maxLevel, ctx.hideRoofIds, sway);
-		}
+		// every level and every roof, including ones hidden from the camera, so interiors stay shaded
+		zone.renderOpaque(x - offset, z - offset, ctx.minLevel, ctx.level, 3, Collections.emptySet(), sway);
 	}
 
 	/**
@@ -2725,7 +2696,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		BuildingLights buildingRooms = buildingLights;
 		// the light map needs the rooms' floors, to know which storey a surface is on
 		RoomMap rooms = buildingRooms != null ? buildingRooms.getRooms() : null;
-		volumetricFog.rooms = config.noFogIndoors() ? rooms : null;
+		volumetricFog.rooms = rooms;
 		volumetricFog.openRooms = null;
 		framePointLights = points;
 		frameLightClusters = points || rooms != null;
@@ -2747,10 +2718,10 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 			}
 			cpuTimer.end(CpuTimer.LIGHTS);
 			lightClusters.setRooms(rooms);
-			updateRoomLight(config.buildingLights() ? rooms : null);
+			updateRoomLight(config.interiorBrightness() > 0 ? rooms : null);
 			lightClusters.setLightMap(frameLightMap ? lightMap : null);
 			SceneContext roofCtx = root;
-			boolean openRoofs = frameFog && rooms != null && config.openRoofFog() && roofCtx != null;
+			boolean openRoofs = frameFog && rooms != null && roofCtx != null;
 			if (openRoofs)
 			{
 				openRooms.update(buildingRooms.getResult(), roofCtx.hideRoofIds, roofCtx.level);
@@ -2789,10 +2760,9 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		roomLight.setRooms(rooms);
 		if (rooms != null && buildings != null)
 		{
-			roomLight.followWalls(buildings.getWalls(), buildings.getFloors(), config.skylightReach());
+			roomLight.followWalls(buildings.getWalls(), buildings.getFloors(), SKYLIGHT_REACH);
 		}
-		float target = config.buildingLights() && frameOutdoors
-			? RoomLight.target(dayCycle.sunAltitude, config.buildingLightsByDay(), config.buildingLightBrightness() / 100f) : 0;
+		float target = frameOutdoors ? RoomLight.target(dayCycle.sunAltitude, config.interiorBrightness() / 100f) : 0;
 		roomLight.update(dt, target, dayCycle.sunAltitude);
 		lightClusters.setRoomFill(rooms != null ? roomLight : null);
 	}
@@ -2909,11 +2879,8 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		}
 		glUniform1i(c.pointLights, framePointLights ? 1 : 0);
 		glUniform1i(c.skylightOn, frameSkylight ? 1 : 0);
-		glUniform1f(c.skylightFloor, config.skylightFloor() / 100f);
 		glUniform3f(c.interiorTint, BuildingLights.FILL_TINT[0], BuildingLights.FILL_TINT[1], BuildingLights.FILL_TINT[2]);
 
-		glUniform1i(c.useFog, frameFogDepth > 0 ? 1 : 0);
-		glUniform1i(c.fogDepth, frameFogDepth);
 		glUniform1i(c.drawDistance, frameDrawDistance);
 		c.edge.set(edgeFade);
 		glUniform1i(c.expandedChunks, client.getExpandedMapLoading());
@@ -2938,11 +2905,6 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 	private void collectLights()
 	{
 		frameLights.clear();
-		BuildingLights walls = buildingLights;
-		if (walls != null)
-		{
-			walls.setSplitRooms(config.roomsByWalls());
-		}
 		// 0 by day, 1 once the sun is well below the horizon
 		float t = Math.max(0, Math.min(1, (-2 - dayCycle.sunAltitude) / 8));
 		float night = frameOutdoors ? t * t * (3 - 2 * t) : 1;
@@ -3155,7 +3117,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		clouds.setEye(frameCameraX, frameCameraY, frameCameraZ, client.getCameraFocalPointX(),
 			client.getCameraFocalPointY(), client.getCameraFocalPointZ(), edgeFade.radius, config.skyHorizonAtEdge());
 		clouds.update(config.clouds(), config.cloudShadows(), config.cloudCoverage(), config.cloudSpeed(),
-			config.cloudDetail(), weather.cloudCover(), baseX, baseZ, weather.getField());
+			weather.cloudCover(), baseX, baseZ, weather.getField());
 	}
 
 	/**
@@ -3163,11 +3125,10 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 	 */
 	private int updateSkyCache()
 	{
-		int mode = config.skyCache() ? SkyCache.MODE_LIGHT : 0;
 		// Loading a region keeps drawing the last frames; dropping the cache for them would switch the sky light.
 		// Without updates the composite eases from the last capture back to the analytic light (SkyCache).
 		GameState state = client.getGameState();
-		if (mode == 0 || !frameOutdoors || (state != GameState.LOGGED_IN && state != GameState.LOADING))
+		if (!frameOutdoors || (state != GameState.LOGGED_IN && state != GameState.LOADING))
 		{
 			skyCache.bind(SKY_CACHE_UNIT);
 			return 0;
@@ -3175,8 +3136,8 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		int cycle = config.dayCycleMinutes();
 		double gameMinutes = cycle > 0 ? frameGameMillis / 60_000.0 : Double.NaN;
 		weather.getOvercast(skyCacheOvercast);
-		int settings = java.util.Objects.hash(config.clouds(), config.cloudCoverage(), config.cloudDetail(), cycle,
-			config.fixedHour(), config.weatherOvercast(), Math.round(skyCacheOvercast[3] * 20),
+		int settings = java.util.Objects.hash(config.clouds(), config.cloudCoverage(), cycle,
+			config.fixedHour(), Math.round(skyCacheOvercast[3] * 20),
 			Math.round(skyCacheOvercast[4] * 20), Math.round(skyCacheOvercast[5] * 20), Math.round(skyCacheOvercast[6] * 20),
 			Math.round(weather.cloudWisp() * 10), Math.round(weather.cloudDark() * 10));
 		if (config.clouds())
@@ -3184,10 +3145,10 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 			clouds.bindNoise(CLOUD_NOISE_UNIT);
 			weather.getField().bindSky(WEATHER_SKY_UNIT);
 		}
-		skyCache.update(clouds, gameMinutes, config.skyCacheMinutes(), frameCameraX, frameCameraY, frameCameraZ,
+		skyCache.update(clouds, gameMinutes, frameCameraX, frameCameraY, frameCameraZ,
 			dayCycle, skyCacheOvercast, settings, SKY_CACHE_UNIT);
 		skyCache.bind(SKY_CACHE_UNIT);
-		return mode;
+		return SkyCache.MODE_LIGHT;
 	}
 
 	/** Start a build of the scene's voxels, which the skylight traces, if one is due. */
@@ -3252,7 +3213,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		WorldView aoView = client.getTopLevelWorldView();
 		Scene aoScene = aoView != null ? aoView.getScene() : null;
 		final boolean shadows = frameShadows && shadowMap.isInitialized();
-		final boolean ground = config.weatherSurfaces() && weather.groundActive();
+		final boolean ground = weather.groundActive();
 		frameGround = ground;
 		final boolean sky = skyGrid.isReady(aoScene);
 		frameSkylight = false;
@@ -3292,8 +3253,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 			{
 				weatherGround.setAoOff();
 			}
-			frameSkylight = skyGrid.bindAo(SKY_GRID_UNIT, aoScene, frameCameraX, frameCameraY, frameCameraZ,
-				config.skylightOutdoors());
+			frameSkylight = skyGrid.bindAo(SKY_GRID_UNIT, aoScene, frameCameraX, frameCameraY, frameCameraZ);
 			skyField.bindAo(SKY_FIELD_UNIT, frameCameraX, frameCameraZ);
 			gpuTimer.begin(GpuTimer.AO);
 			glDrawArrays(GL_TRIANGLES, 0, 3);
@@ -3331,7 +3291,6 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		if (frameFog)
 		{
 			gpuTimer.begin(GpuTimer.FOG);
-			volumetricFog.indoorFactor = config.noFogIndoors() ? VolumetricFog.INDOOR_DENSITY : 1;
 			volumetricFog.waterTexture = water.dataTexture(config);
 			// in a void the sun doesn't light the fog: it would glow over the black around the scene
 			final boolean fogSun = frameOutdoors && !frameSkyVoid;
@@ -3469,9 +3428,9 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		{
 			gpuTimer.begin(GpuTimer.WEATHER);
 			weather.draw(frameViewProj, frameInvViewProj, frameViewport, glCapabilities.OpenGL45,
-				frameCameraX, frameCameraY, frameCameraZ, dayCycle, config.weatherSplashes(), water, config,
+				frameCameraX, frameCameraY, frameCameraZ, dayCycle, water, config,
 				WEATHER_OCCLUSION_UNIT,
-				config.pointLights() && config.weatherPointLights() && lightClusters.isInitialized(),
+				config.pointLights() && lightClusters.isInitialized(),
 				lightClusters.getRoomHeader(), frameDrawDistance,
 				wadeSteps.steps(frameCameraX, frameCameraZ));
 			gpuTimer.end();

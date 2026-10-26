@@ -109,8 +109,8 @@ final class SurfaceMaterials
 		 */
 		void set(RuneLightConfig config)
 		{
-			glUniform1f(emissive, config.emissiveMaterials() ? config.emissiveStrength() / 100f : 0f);
-			glUniform1f(transmission, config.foliageTransmission() ? config.transmissionStrength() / 100f : 0f);
+			glUniform1f(emissive, config.emissiveStrength() / 100f);
+			glUniform1f(transmission, config.transmissionStrength() / 100f);
 		}
 	}
 

@@ -61,10 +61,6 @@ uniform vec3 fogGroundGrid;  // x: extended tile of local tile 0, y: corners per
 uniform vec2 fogCenter;      // world x, z the fade is centered on: the player
 uniform vec2 fogFade;        // horizontal distance from the center where the fog starts and finishes fading out
 uniform float fogNear;       // distance from the camera over which the fog thickens from nothing
-uniform float fogSunScatter;
-uniform float fogMaxCover;   // most the fog may hide around the player (fog_cover.glsl), 1 for no limit
-uniform float fogNoiseAmount;
-uniform float fogBankAmount;
 uniform vec3 fogTint;        // multiplies the fog's ambient color; for per-area fog later
 uniform int fogSteps;        // march steps, at most FOG_MAX_STEPS (Performance: fog quality)
 
@@ -119,6 +115,10 @@ out vec4 FragFog;
 #define FOG_NOISE_SCALE 8192.0
 #define FOG_NOISE_SCALE_Y 1024.0
 #define FOG_WIND vec3(48.0, -4.0, 28.0)
+// how much the fog drifts in patches and gathers in large banks, 0 even, 1 fully (VolumetricFog.NOISE_AMOUNT and
+// BANK_AMOUNT)
+#define FOG_NOISE_AMOUNT 0.5
+#define FOG_BANK_AMOUNT 0.5
 // banks: the band of the bank noise that goes from thin to thick; narrower is more contrast
 #define FOG_BANK_LOW 0.2
 #define FOG_BANK_HIGH 0.8
@@ -314,7 +314,7 @@ void main() {
     vec3 caster = strikeSun(sunIsCaster == 1 ? sunLight(sunAltitude) : moonLight(sunAltitude));
     float luma = dot(caster, vec3(0.2126, 0.7152, 0.0722));
     caster = max(mix(vec3(luma), caster, FOG_SUN_SATURATION), 0.0);
-    sun = caster * phase(dot(dir, casterDir)) * (fogSunScatter * FOG_SUN_SCALE);
+    sun = caster * phase(dot(dir, casterDir)) * FOG_SUN_SCALE;
   } else {
     ambient = FOG_CAVE_COLOR;
     ambientFar = FOG_CAVE_COLOR;
@@ -323,7 +323,7 @@ void main() {
   ambient *= fogTint;
 
   // the shadow map projection is orthographic, so its coordinates are linear along the ray
-  bool shafts = sunAndSky && shadowsEnabled == 1 && fogSunScatter > 0.0;
+  bool shafts = sunAndSky && shadowsEnabled == 1;
   vec3 lc0 = (lightProjRel * vec4(0.0, 0.0, 0.0, 1.0)).xyz;
   vec3 lcd = (lightProjRel * vec4(dir, 0.0)).xyz;
   float shadowBias = 24.0 / (2.0 * shadowDepthRange);
@@ -387,12 +387,10 @@ void main() {
     sigma *= mix(FOG_NEAR_FLOOR, 1.0, smoothstep(0.0, fogNear, centerDist));
     sigma *= smoothstep(0.0, fogNear, t);
     sigma *= weatherFogFactor(wp.xz);
-    if (fogNoiseAmount > 0.0 || fogBankAmount > 0.0) {
-      vec2 n = texture(fogNoise, noiseStart + noiseDir * t).rg;
-      // both average about 1, so they move fog around without changing how much there is
-      sigma *= max(mix(1.0, n.r * 2.0, fogNoiseAmount), 0.0);
-      sigma *= mix(1.0, smoothstep(FOG_BANK_LOW, FOG_BANK_HIGH, n.g) * 2.0, fogBankAmount);
-    }
+    vec2 n = texture(fogNoise, noiseStart + noiseDir * t).rg;
+    // both average about 1, so they move fog around without changing how much there is
+    sigma *= max(mix(1.0, n.r * 2.0, FOG_NOISE_AMOUNT), 0.0);
+    sigma *= mix(1.0, smoothstep(FOG_BANK_LOW, FOG_BANK_HIGH, n.g) * 2.0, FOG_BANK_AMOUNT);
     if (sigma <= 0.0) {
       continue;
     }
@@ -443,7 +441,7 @@ void main() {
   // Limit how much of the view the fog hides where the ray ends. The flat glow shrinks with the cover; the light
   // from the sun and the lamps mostly stays, so thick fog still shows where it is lit.
   float cover = 1.0 - trans;
-  float limited = capFogCover(cover, fogMaxCover, length(cameraPos.xz + dir.xz * t1 - fogCenter));
+  float limited = capFogCover(cover, length(cameraPos.xz + dir.xz * t1 - fogCenter));
   float keep = cover > 1e-5 ? limited / cover : 1.0;
   float lightKeep = mix(keep, 1.0, FOG_LIGHT_COVER_KEEP);
 

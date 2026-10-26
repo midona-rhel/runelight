@@ -33,7 +33,7 @@ class Clouds
 	/** Uniform locations of one program that draws clouds: the composite's, and the sky cache's capture. */
 	static final class Locations
 	{
-		int enabled, shadows, weather, offset, detail, type;
+		int enabled, shadows, weather, offset, type;
 		int base, skyRect;
 		int eye, ground;
 	}
@@ -44,7 +44,7 @@ class Clouds
 
 	// this frame's values, from update()
 	private boolean enabled, shadows;
-	private float coverage, weather, detail, base;
+	private float coverage, weather, base;
 	private WeatherField field;
 	private float offsetX, offsetZ;
 	private double originX, originZ;
@@ -211,7 +211,6 @@ class Clouds
 		l.shadows = glGetUniformLocation(program, "cloudShadowsEnabled");
 		l.weather = glGetUniformLocation(program, "cloudWeather");
 		l.offset = glGetUniformLocation(program, "cloudOffset");
-		l.detail = glGetUniformLocation(program, "cloudDetail");
 		l.type = glGetUniformLocation(program, "cloudType");
 		l.base = glGetUniformLocation(program, "cloudBaseCoverage");
 		l.skyRect = glGetUniformLocation(program, "cloudSkyRect");
@@ -230,7 +229,7 @@ class Clouds
 	 * @param baseX world x of the scene's origin, in world units, so clouds stay put when the scene reloads
 	 * @param field the weather around the player: rain clouds over rainy regions, clear sky over clear ones
 	 */
-	void update(boolean enabled, boolean shadows, int coveragePercent, int speedPercent, int detailPercent,
+	void update(boolean enabled, boolean shadows, int coveragePercent, int speedPercent,
 		float cloudCover, long baseX, long baseZ, WeatherField field)
 	{
 		this.field = field;
@@ -249,7 +248,6 @@ class Clouds
 		base = coveragePercent / 100f;
 		coverage = base + (1 - base) * cloudCover;
 		weather = cloudCover;
-		detail = detailPercent / 100f;
 		// the shader adds camera-relative scene positions; take the scene origin and the drift away from the noise
 		offsetX = (float) Math.floorMod(baseX, (long) WRAP) - (float) windX;
 		offsetZ = (float) Math.floorMod(baseZ, (long) WRAP) - (float) windZ;
@@ -265,7 +263,6 @@ class Clouds
 		glUniform1i(l.enabled, enabled ? 1 : 0);
 		glUniform1i(l.shadows, shadows ? 1 : 0);
 		glUniform1f(l.weather, weather);
-		glUniform1f(l.detail, detail);
 		glUniform2f(l.type, wisp, dark);
 		glUniform2f(l.offset, offsetX, offsetZ);
 		glUniform1f(l.base, base);

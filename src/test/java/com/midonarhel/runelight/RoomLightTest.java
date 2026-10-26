@@ -49,7 +49,7 @@ public class RoomLightTest
 
 	private static float night(RoomLight l)
 	{
-		l.update(0, RoomLight.target(NIGHT, true, 1), NIGHT);
+		l.update(0, RoomLight.target(NIGHT, 1), NIGHT);
 		return l.fillOf(1);
 	}
 
@@ -59,19 +59,18 @@ public class RoomLightTest
 		RoomLight l = light();
 		assertEquals(RoomLight.TARGET_NIGHT, night(l), 1e-5);
 		RoomLight dayRoom = light();
-		float target = RoomLight.target(DAY, true, 1);
+		float target = RoomLight.target(DAY, 1);
 		dayRoom.update(0, target, DAY);
 		assertEquals(target, dayRoom.fillOf(1), 1e-5);
 		assertEquals(RoomLight.DAY_SHARE * RoomLight.outdoorLight(DAY), target, 1e-5);
-		// the lift is a third of the light a sunlit floor outdoors gets, and without the day setting there is none
+		// the lift is a third of the light a sunlit floor outdoors gets
 		assertEquals(0.42f * RoomLight.outdoorLight(DAY), target, 1e-5);
 		assertTrue(target > 2 * RoomLight.TARGET_NIGHT);
-		assertEquals(0, RoomLight.target(DAY, false, 1), 0);
 		// at dusk it eases to the night's, never under it, and at dawn the same
 		float last = target;
 		for (float alt = DAY; alt >= NIGHT; alt -= 0.5f)
 		{
-			float t = RoomLight.target(alt, true, 1);
+			float t = RoomLight.target(alt, 1);
 			assertTrue(t >= RoomLight.TARGET_NIGHT - 1e-6f);
 			assertTrue("smooth at " + alt, Math.abs(t - last) < 0.05f);
 			last = t;
@@ -88,7 +87,7 @@ public class RoomLightTest
 		assertEquals(0, night(l), 0);
 		RoomLight day = light();
 		day.floor(0, 1, 1, glow(3));
-		day.update(0, RoomLight.target(DAY, true, 1), DAY);
+		day.update(0, RoomLight.target(DAY, 1), DAY);
 		assertTrue("by day too " + day.fillOf(1), day.fillOf(1) < 0.02f);
 	}
 
@@ -110,7 +109,7 @@ public class RoomLightTest
 	@Test
 	public void aWideOpenDoorwayLiftsARoomLessByDayThanAClosedOne()
 	{
-		float target = RoomLight.target(DAY, true, 1);
+		float target = RoomLight.target(DAY, 1);
 		RoomLight closed = light();
 		closed.update(0, target, DAY);
 		RoomLight open = light();
@@ -134,7 +133,7 @@ public class RoomLightTest
 	@Test
 	public void byDayEveryRoomStaysClearlyDarkerThanTheOutdoors()
 	{
-		float outdoors = RoomLight.outdoorLight(DAY), target = RoomLight.target(DAY, true, 1);
+		float outdoors = RoomLight.outdoorLight(DAY), target = RoomLight.target(DAY, 1);
 		float skyLuminance = RoomLight.skyLuminance(DAY);
 		RoomLight windowless = baked(walled(), 0, 4);
 		windowless.update(0, target, DAY);
@@ -202,23 +201,24 @@ public class RoomLightTest
 	}
 
 	@Test
-	public void theFillFollowsABakeAndBrightnessAndTheDaySetting()
+	public void theFillFollowsABakeAndBrightness()
 	{
 		RoomLight l = light();
 		assertEquals(RoomLight.TARGET_NIGHT, night(l), 1e-5);
 		// the room's lights are baked: its blocks are sent
 		l.floor(0, 1, 1, glow(2));
-		l.update(10, RoomLight.target(NIGHT, true, 1), NIGHT);
+		l.update(10, RoomLight.target(NIGHT, 1), NIGHT);
 		assertEquals(0, l.fillOf(1), 1e-3);
 		// a door opens, the lights are baked again with the room shut off from them: the blocks are cleared
 		l.floor(0, 1, 1, null);
-		l.update(10, RoomLight.target(NIGHT, true, 1), NIGHT);
+		l.update(10, RoomLight.target(NIGHT, 1), NIGHT);
 		assertEquals(RoomLight.TARGET_NIGHT, l.fillOf(1), 1e-3);
-		// brightness scales the target; without the day setting there is no target by day
-		l.update(10, RoomLight.target(NIGHT, true, 0.5f), NIGHT);
+		// brightness scales the target, by day and at night; 0 turns the fill off
+		l.update(10, RoomLight.target(NIGHT, 0.5f), NIGHT);
 		assertEquals(RoomLight.TARGET_NIGHT / 2, l.fillOf(1), 1e-3);
-		assertEquals(0, RoomLight.target(DAY, false, 1), 0);
-		assertEquals(RoomLight.TARGET_NIGHT, RoomLight.target(NIGHT, false, 1), 0);
+		assertEquals(2 * RoomLight.target(DAY, 1), RoomLight.target(DAY, 2), 1e-6);
+		assertEquals(0, RoomLight.target(DAY, 0), 0);
+		assertEquals(0, RoomLight.target(NIGHT, 0), 0);
 	}
 
 	@Test
@@ -235,9 +235,9 @@ public class RoomLightTest
 	public void fillsEaseInAndTheSummaryCountsRooms()
 	{
 		RoomLight l = light();
-		l.update(0, RoomLight.target(NIGHT, true, 1), NIGHT);
+		l.update(0, RoomLight.target(NIGHT, 1), NIGHT);
 		l.floor(0, 1, 1, glow(2));
-		float target = RoomLight.target(NIGHT, true, 1);
+		float target = RoomLight.target(NIGHT, 1);
 		l.update(0.1f, target, NIGHT);
 		assertTrue("part of the way", l.fillOf(1) > 0 && l.fillOf(1) < target);
 		int[] s = l.summary();
@@ -307,7 +307,7 @@ public class RoomLightTest
 		empty.update(0, target, NIGHT);
 		assertEquals(target, empty.fillOf(1), 1e-5);
 		// by day: the hearth's room needs about nothing of the day's target, the empty one all of it
-		float day = RoomLight.target(DAY, true, 1);
+		float day = RoomLight.target(DAY, 1);
 		torch.update(10, day, DAY);
 		empty.update(10, day, DAY);
 		System.out.println("room light numbers: hearth room score " + torch.lightScore(1) + ", day target " + day + ", hearth fill "

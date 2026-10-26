@@ -45,10 +45,10 @@ public class EdgeFadeTest
 		float some = EdgeFade.fogginess(1.0f, 10);
 		assertTrue(some > 0 && some < 1);
 		float r = 50 * T;
-		assertEquals(12 * T, EdgeFade.targetWidth(12, r, 0), 1e-3);
-		assertEquals(r * EdgeFade.FOGGY_SHARE, EdgeFade.targetWidth(12, r, 1), 1e-3);
+		assertEquals(12 * T, EdgeFade.targetWidth(r, 0), 1e-3);
+		assertEquals(r * EdgeFade.FOGGY_SHARE, EdgeFade.targetWidth(r, 1), 1e-3);
 		// never wider than the world
-		assertEquals(5 * T, EdgeFade.targetWidth(12, 5 * T, 0), 1e-3);
+		assertEquals(5 * T, EdgeFade.targetWidth(5 * T, 0), 1e-3);
 	}
 
 	/** Same matrices as RuneLightPlugin: scale, projection, pitch, yaw; column-major, camera-relative. */
@@ -103,7 +103,7 @@ public class EdgeFadeTest
 	public void tallObjectsAtTheScreenEdgeKeepTheirZone()
 	{
 		EdgeFade e = new EdgeFade();
-		e.update(0, 0, 400 * T, 3, 12, 0);
+		e.update(0, 0, 400 * T, 3, 0);
 		// looking down from 20 tiles up; boxes a zone wide at every tile, so some sit just past the screen's edges
 		int found = 0;
 		for (float pitch = 0.3f; pitch < 1.4f; pitch += 0.2f)
@@ -132,7 +132,7 @@ public class EdgeFadeTest
 	public void cullingDoesNotDependOnTheCameraYaw()
 	{
 		EdgeFade e = new EdgeFade();
-		e.update(5000, 6000, 30 * T, 3, 12, 0);
+		e.update(5000, 6000, 30 * T, 3, 0);
 		// with a frustum that sees everything, only the circle decides
 		float[] all = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1e9f};
 		e.setFrustum(all, 0, 0, 0);

@@ -239,7 +239,6 @@ class Weather
 	// per frame
 	private boolean active;
 	private boolean openSky;
-	private float overcastStrength;
 	// the eased weather: cloud cover 0-1, rain and snow intensity, wind 0-1, fog multipliers, storm 0-1, and how
 	// snowy the overcast looks (0 rain gray, 1 snow white)
 	private float cover;
@@ -532,12 +531,12 @@ class Weather
 	}
 
 	/**
-	 * sky.glsl's weatherOvercast: cover times the overcast setting, how snowy (white) rather than rainy (slate)
+	 * sky.glsl's weatherOvercast: the cover, how snowy (white) rather than rainy (slate)
 	 * the overcast is, and the lightning flash; with room for seven, also weatherLight (see {@link #getLight}).
 	 */
 	void getOvercast(float[] out)
 	{
-		out[0] = cloudCover() * overcastStrength;
+		out[0] = cloudCover();
 		out[1] = snowiness;
 		out[2] = openSky ? lightning.getFlash() : 0;
 		if (out.length >= 7)
@@ -548,14 +547,13 @@ class Weather
 
 	/**
 	 * sky.glsl's weatherLight from {@code offset}: sun strength - 1, haze, warmth, sky saturation offset, all 0 in
-	 * neutral weather and underground. The overcast setting scales it like the cover.
+	 * neutral weather and underground.
 	 */
 	void getLight(float[] out, int offset)
 	{
-		float k = openSky ? Math.max(overcastStrength, 0.0f) : 0;
 		for (int i = 0; i < 4; ++i)
 		{
-			out[offset + i] = light[i] * Math.min(k, 1);
+			out[offset + i] = openSky ? light[i] : 0;
 		}
 	}
 
@@ -564,7 +562,7 @@ class Weather
 	 */
 	void setOvercastUniform(int location)
 	{
-		glUniform3f(location, cloudCover() * overcastStrength, snowiness, openSky ? lightning.getFlash() : 0);
+		glUniform3f(location, cloudCover(), snowiness, openSky ? lightning.getFlash() : 0);
 	}
 
 	/**
@@ -582,19 +580,17 @@ class Weather
 	 * map is freed once nothing is left to draw. Call after {@link #updateField}, with the same focus.
 	 *
 	 * @param varying whether intensity and wind wander over time
-	 * @param overcastPercent how much the cover grays the sky and changes the light
 	 * @param lightningEnabled whether storms strike
 	 * @param outdoors whether the area has a sky at all
 	 * @param fx player ground position, world units
 	 */
-	boolean update(boolean gradual, boolean varying, int overcastPercent, boolean lightningEnabled, boolean outdoors,
+	boolean update(boolean gradual, boolean varying, boolean lightningEnabled, boolean outdoors,
 		float fx, float fy, float fz, int plane)
 	{
 		long now = System.currentTimeMillis();
 		float dt = lastMillis == 0 ? 0 : Math.min((now - lastMillis) / 1000f, 0.25f);
 		lastMillis = now;
 		openSky = outdoors;
-		overcastStrength = overcastPercent / 100f;
 		// real seconds since the clock's epoch: showers, swells and the wind's wander are the same whenever the
 		// client started
 		double t = GameClock.realSeconds(now);
@@ -969,14 +965,13 @@ class Weather
 	 * ({@link #bindField}) must still be bound on the units given to setPrograms, as they are right after the
 	 * composite.
 	 *
-	 * @param splashes   draw the rain's impacts on the ground, not on water (it has its own rings)
 	 * @param wadeSteps  the steps of those wading through puddles (WadeSteps.steps): a few droplets leap from each
 	 * @param pointLights light particles with this frame's light clusters
 	 * @param roomHeader the room map's header (LightClusters.getRoomHeader), which says whether the light map is there
 	 * @param drawDistance world units from the player: how far the particles reach
 	 */
 	void draw(float[] viewProj, float[] invViewProj, int[] viewport, boolean zeroToOne,
-		float cameraX, float cameraY, float cameraZ, DayCycle day, boolean splashes, Water water,
+		float cameraX, float cameraY, float cameraZ, DayCycle day, Water water,
 		RuneLightConfig config, int occlusionUnit, boolean pointLights, float[] roomHeader, float drawDistance,
 		float[] wadeSteps)
 	{
@@ -1030,7 +1025,7 @@ class Weather
 			water.setRect(config, rain.waterRect);
 			drawLayers(rain, LAYER_RAIN_DROPS * rainShown, RAIN_ABOVE, RAIN_BELOW, out, height, cameraX, cameraZ,
 				aheadX, aheadZ);
-			float impacts = splashes ? rainShown * Math.min(1, wetShown) : 0;
+			float impacts = rainShown * Math.min(1, wetShown);
 			if (impacts > 0)
 			{
 				// the mist the rain beats up over what it hits

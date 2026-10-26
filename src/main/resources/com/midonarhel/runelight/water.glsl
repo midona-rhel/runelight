@@ -23,7 +23,6 @@ uniform usampler2D waterSurface;  // RGBA16UI, 64 bits packed by water_frag.glsl
                                   // (waterSurfaceAt); 0 no water
 uniform usampler2D waterShaded;   // RGBA32UI, half resolution: the shaded surface (waterShadeHalf)
 uniform int waterReflections;     // a few screen-space taps for the world in the reflection
-uniform float waterClarity;       // multiplier on how deep the bed stays visible
 uniform int waterCaustics;
 uniform int waterDebug;
 uniform int waterSlotType[WATER_SLOTS];  // each look's water type (Water.java)
@@ -145,7 +144,6 @@ uvec4 waterPackShaded(vec3 surface, float cover, vec3 spec) {
 // 117 HD's fade of what is under the water (sRGB multiplier): into the depth color over the first stretch, then darker
 vec3 waterDepthTint(int type, float depth) {
   vec3 fade = WATER_FADE[type];
-  fade.xy *= waterClarity;
   vec3 dc = WATER_DEPTH_COLOR[type];
   return depth < fade.x ? mix(vec3(1.0), dc, depth / fade.x)
     : dc * mix(1.0, fade.z, clamp((depth - fade.x) / (fade.y - fade.x), 0.0, 1.0));

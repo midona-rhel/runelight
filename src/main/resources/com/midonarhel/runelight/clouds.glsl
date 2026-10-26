@@ -23,7 +23,6 @@ uniform int cloudShadowsEnabled;
 uniform float cloudBaseCoverage;  // the configured clear weather coverage
 uniform float cloudWeather;    // Weather.cloudCover() at the player: rain clouds are denser, darker and grayer
 uniform vec2 cloudOffset;      // world xz of the noise origin: scene base plus wind drift, wrapped
-uniform float cloudDetail;     // roughness: 0 smooth and round, 1 normal, 2 very broken
 uniform vec2 cloudType;        // the player's weather look (WeatherType): x how wispy and high 0..1, y darkness offset -1..1
 // tiling: r cloud shape, equalized (1 - c covers a share c); g Worley puffs; b fine value noise; a coarse character
 uniform sampler2D cloudNoise;
@@ -177,7 +176,7 @@ vec3 cloudLocalCover(vec2 xz, vec3 sky) {
   // thin skies vary less, so clear weather stays clear everywhere
   float vary = CLOUD_VARY * min(coverage / CLOUD_VARY_FULL, 1.0) * (1.0 - weather);
   float cov = clamp(coverage + (macro.r - 0.5) * vary, 0.0, 1.0);
-  float wisp = smoothstep(CLOUD_WISP_LOW, CLOUD_WISP_HIGH, macro.a) * (1.0 - weather) * min(cloudDetail, 1.0);
+  float wisp = smoothstep(CLOUD_WISP_LOW, CLOUD_WISP_HIGH, macro.a) * (1.0 - weather);
   wisp = max(wisp, sky.y);
   // how dark: the cover, brightened or darkened by the weather's look (high thin cloud stays white)
   float dark = clamp(weather * (1.0 + sky.z), 0.0, 1.0);
@@ -193,7 +192,7 @@ float cloudSlantCover(float c, float across) {
 // Noise value needed for cloud at height fraction hf: rises toward the top for domes, a little at the base.
 // cw: cloudLocalCover; puff: 0..1, varies the domes
 float cloudThreshold(float hf, vec3 cw, float puff) {
-  float base = mix(CLOUD_THRESHOLD_CLEAR, CLOUD_THRESHOLD_OVERCAST, cw.x) - CLOUD_EROSION_BIAS * cloudDetail;
+  float base = mix(CLOUD_THRESHOLD_CLEAR, CLOUD_THRESHOLD_OVERCAST, cw.x) - CLOUD_EROSION_BIAS;
   float range = max(1.0 - base, CLOUD_DOME_MIN_RANGE);
   float u = clamp((hf - CLOUD_BASE) / (1.0 - CLOUD_BASE), 0.0, 1.0);
   float dome = u * u * range * CLOUD_DOME * mix(1.0 - CLOUD_DOME_VARY, 1.0 + CLOUD_DOME_VARY, puff)
@@ -206,16 +205,16 @@ float cloudThreshold(float hf, vec3 cw, float puff) {
 float cloudSample(vec2 xz, float hf, vec3 cw, float lod, out vec2 warp, out float crevice) {
   vec2 p = xz / CLOUD_TILE;
   vec4 dn = textureLod(cloudNoise, p * CLOUD_DETAIL_SCALE + hf * CLOUD_RISE_SHIFT, lod + log2(CLOUD_DETAIL_SCALE));
-  warp = (dn.rb - 0.5) * (CLOUD_WARP * min(cloudDetail, 1.5));
+  warp = (dn.rb - 0.5) * CLOUD_WARP;
   p += warp / CLOUD_TILE;
   float e = textureLod(cloudNoise, p, lod).r - cloudThreshold(hf, cw, dn.g);
   crevice = 1.0;
-  if (e > 0.0 && cloudDetail > 0.0) {
+  if (e > 0.0) {
     // erosion only takes away, and mostly at the edges: the outlines break up a little, the cores stay smooth
     float erosion = mix(1.0 - dn.g, dn.b, mix(CLOUD_RAGGED, 1.0, cw.y));
     float edge = mix(CLOUD_INNER, 1.0, 1.0 - smoothstep(0.0, CLOUD_EDGE, e));
-    e -= erosion * CLOUD_DETAIL * edge * cloudDetail * mix(CLOUD_BASE_EROSION, 1.0, smoothstep(0.0, 0.5, hf));
-    crevice = mix(1.0, mix(CLOUD_CREVICE, CLOUD_PUFF, dn.g), min(cloudDetail, 1.0));
+    e -= erosion * CLOUD_DETAIL * edge * mix(CLOUD_BASE_EROSION, 1.0, smoothstep(0.0, 0.5, hf));
+    crevice = mix(CLOUD_CREVICE, CLOUD_PUFF, dn.g);
   }
   return e;
 }
@@ -363,7 +362,7 @@ float cloudShadow(vec3 p, vec3 lightDir) {
   vec2 xz = world + cloudOffset;
   // the same warp as the clouds overhead, so the shadows have their shapes
   vec4 dn = textureLod(cloudNoise, xz * (CLOUD_DETAIL_SCALE / CLOUD_TILE), 1.5 + log2(CLOUD_DETAIL_SCALE));
-  xz += (dn.rb - 0.5) * (CLOUD_WARP * min(cloudDetail, 1.5));
+  xz += (dn.rb - 0.5) * CLOUD_WARP;
   vec3 cw = cloudLocalCover(xz, vec3(cloudWeather, cloudType));
   float d = cloudDensity(xz, 0.3, cw, 1.5);
   // thin high cloud casts faint shadows

@@ -201,6 +201,8 @@ class SkyCache
 	// next one is shown at once instead of blended from it
 	private long lastUpdateMillis;
 	private static final long STALE_MILLIS = 1000;
+	// in-game minutes between captures; changes of weather and drifting clouds capture it sooner
+	private static final int CAPTURE_MINUTES = 5;
 
 	Programs compile(Template template) throws ShaderException
 	{
@@ -358,12 +360,11 @@ class SkyCache
 	 * enabled.
 	 *
 	 * @param gameMinutes the game clock in minutes, NaN while it stands still
-	 * @param minutes configured in-game minutes between captures
 	 * @param overcast sky.glsl's weatherOvercast; the flash is left out
 	 * @param settings hash of the config the sky depends on
 	 * @param fromUnit, fromUnit + 1: free units for the blend
 	 */
-	void update(Clouds clouds, double gameMinutes, int minutes, float cameraX, float cameraY, float cameraZ,
+	void update(Clouds clouds, double gameMinutes, float cameraX, float cameraY, float cameraZ,
 		DayCycle day, float[] overcast, int settings, int fromUnit)
 	{
 		if (captureProgram == 0 || blendProgram == 0 || irradianceProgram == 0)
@@ -414,7 +415,7 @@ class SkyCache
 			from = r[1];
 			shown = r[2];
 			blending = from != latest;
-			interval = Schedule.interval(minutes, day.sunAltitude);
+			interval = Schedule.interval(CAPTURE_MINUTES, day.sunAltitude);
 			schedule.captured(gameMinutes, now, cover, overcast[0], overcast[1], day.sunAltitude, 0, driftX, driftZ,
 				settings);
 			changed = true;

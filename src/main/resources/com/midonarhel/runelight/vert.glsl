@@ -56,8 +56,6 @@ uniform mat4 worldProj;
 uniform mat4 entityProj;
 uniform ivec4 entityTint;
 uniform float brightness;
-uniform int useFog;
-uniform int fogDepth;
 uniform int drawDistance;
 uniform int expandedMapLoadingChunks;
 uniform ivec3 base;
@@ -68,7 +66,6 @@ out vec4 fColor;
 noperspective centroid out float fHsl;
 flat out int fTextureId;
 out vec2 fUv;
-out float fFogAmount;
 out vec3 fWorldPos;
 out vec3 fNormal;       // smooth vertex normal, world space; only meaningful when fNormalValid is 1
 out float fNormalValid;
@@ -82,10 +79,6 @@ out float fDepth;
 #include "hsl_to_rgb.glsl"
 #include "sway.glsl"
 #include "edge_fade.glsl"
-
-float fogFactorLinear(const float dist, const float start, const float end) {
-  return 1.0 - clamp((dist - start) / (end - start), 0.0, 1.0);
-}
 
 void main() {
   vec4 vert = vec4(vertf.xyz + base, 1);
@@ -140,8 +133,4 @@ void main() {
   } else {
     fHsl = float(((int(hsl[0]) & 63) << 10) | ((int(hsl[1]) & 7) << 7) | (int(hsl[2]) & 127));
   }
-
-  // the vanilla fog depth, measured from the same edge as the edge fade (edge_fade.glsl) rather than a square
-  // around the camera, which moves as the camera turns
-  fFogAmount = fogFactorLinear(edgeDistance(worldPos.xyz), 0.f, fogDepth * TILE_SIZE) * useFog;
 }

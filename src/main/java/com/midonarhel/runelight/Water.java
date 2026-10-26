@@ -45,7 +45,7 @@ class Water
 	 */
 	static final class Frame
 	{
-		float time, windX, windZ, strength, driftX, driftZ, waves, speed, rain, skyDepth;
+		float time, windX, windZ, strength, driftX, driftZ, rain, skyDepth;
 		boolean outdoors, caustics, zeroToOne;
 		// 0 off, then WaterDebug's views
 		int debug;
@@ -97,7 +97,7 @@ class Water
 	/** A composite program's water uniforms. */
 	static final class CompositeUniforms
 	{
-		private int enabled = -1, time = -1, reflections = -1, clarity = -1, caustics = -1, debug = -1, slotType = -1,
+		private int enabled = -1, time = -1, reflections = -1, caustics = -1, debug = -1, slotType = -1,
 			rect = -1, fakeOn = -1;
 
 		/** Look them up and point the program's samplers at the units. Call with each newly compiled composite. */
@@ -106,7 +106,6 @@ class Water
 			enabled = glGetUniformLocation(program, "waterEnabled");
 			time = glGetUniformLocation(program, "waterTime");
 			reflections = glGetUniformLocation(program, "waterReflections");
-			clarity = glGetUniformLocation(program, "waterClarity");
 			caustics = glGetUniformLocation(program, "waterCaustics");
 			debug = glGetUniformLocation(program, "waterDebug");
 			slotType = glGetUniformLocation(program, "waterSlotType");
@@ -305,8 +304,6 @@ class Water
 		f.strength = (float) strength;
 		f.driftX = (float) driftX;
 		f.driftZ = (float) driftZ;
-		f.waves = config.waterWaves() / 100f;
-		f.speed = config.waterFlowSpeed() / 100f;
 		f.rain = rain;
 		f.outdoors = outdoors;
 		f.debug = config.waterDebug().ordinal();
@@ -357,7 +354,6 @@ class Water
 		glUniform1i(u.fakeOn, config.water() ? 1 : 0);
 		glUniform1f(u.time, frame.time);
 		glUniform1i(u.reflections, config.waterReflections() ? 1 : 0);
-		glUniform1f(u.clarity, config.waterClarity() / 100f);
 		if (!enabled)
 		{
 			return;

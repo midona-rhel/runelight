@@ -24,6 +24,8 @@ import java.util.Map;
  */
 final class Climate
 {
+	// game days each season lasts
+	static final int SEASON_DAYS = 7;
 	// degrees per unit of rain or snow falling (forecast amounts, which are about 0.25 to 1.3)
 	static final float PRECIP_COOL = 3;
 	// share of the day's temperature swing full cloud cover takes away

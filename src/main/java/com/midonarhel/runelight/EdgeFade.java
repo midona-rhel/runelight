@@ -31,6 +31,8 @@ final class EdgeFade
 	// near plane for the frustum test, world units in front of the camera
 	static final float NEAR = 50;
 
+	// Fade width in clear air, tiles
+	static final int CLEAR_TILES = 12;
 	// Fade width in fog: up to this share of the radius
 	static final float FOGGY_SHARE = 0.6f;
 	// weather fog (Weather.fogMultiplier) from where the fade starts to widen to thick fog
@@ -93,10 +95,10 @@ final class EdgeFade
 		return 1 - (1 - w) * (1 - a);
 	}
 
-	/** Fade width, world units: {@code clearTiles} in clear air, up to FOGGY_SHARE of the radius in fog. */
-	static float targetWidth(int clearTiles, float radius, float fogginess)
+	/** Fade width, world units: CLEAR_TILES in clear air, up to FOGGY_SHARE of the radius in fog. */
+	static float targetWidth(float radius, float fogginess)
 	{
-		float clear = Math.min(clearTiles * TILE, radius);
+		float clear = Math.min(CLEAR_TILES * TILE, radius);
 		return clear + (Math.max(clear, radius * FOGGY_SHARE) - clear) * fogginess;
 	}
 
@@ -111,19 +113,15 @@ final class EdgeFade
 		return (104 + expandedChunks * 8 - 1) * TILE;
 	}
 
-	/**
-	 * This frame's edge.
-	 *
-	 * @param clearTiles fade width in clear air (config)
-	 */
-	void update(float focalX, float focalZ, float radius, int expandedChunks, int clearTiles, float fogginess)
+	/** This frame's edge. */
+	void update(float focalX, float focalZ, float radius, int expandedChunks, float fogginess)
 	{
 		this.focalX = focalX;
 		this.focalZ = focalZ;
 		this.radius = radius;
 		sceneMin = sceneMin(expandedChunks);
 		sceneMax = sceneMax(expandedChunks);
-		float target = targetWidth(clearTiles, radius, fogginess);
+		float target = targetWidth(radius, fogginess);
 		long now = System.currentTimeMillis();
 		float dt = Math.max(0, Math.min(0.1f, (now - widthMillis) / 1000f));
 		widthMillis = now;

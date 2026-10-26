@@ -26,7 +26,12 @@ class VolumetricFog
 	private static final int NOISE_SIZE = 64;
 	private static final float EDGE_FADE_TILES = 7;
 	private static final float NEAR_FADE_TILES = 7;
-	// density left inside building rooms with "No fog indoors": a trace, so a doorway doesn't cut it off sharply
+	// how high the fog reaches before it thins out, and how far from the player it has faded out, in tiles
+	private static final float HEIGHT_TILES = 3;
+	private static final float DISTANCE_TILES = 40;
+	// fog_frag.glsl's FOG_NOISE_AMOUNT and FOG_BANK_AMOUNT
+	private static final float NOISE_AMOUNT = 0.5f, BANK_AMOUNT = 0.5f;
+	// density left inside building rooms (fog_frag.glsl): a trace, so a doorway doesn't cut it off sharply
 	static final float INDOOR_DENSITY = 0.03f;
 	// and in rooms whose roof is hidden, open to the sky: enough for their lamps to glow in it
 	static final float OPEN_INDOOR_DENSITY = 0.25f;
@@ -59,12 +64,11 @@ class VolumetricFog
 	private FogGround pendingGround;
 	private FogGround ground;
 	private int texGround;
-	// density left inside building rooms (fog_frag.glsl), and the scene's water to stop the rays at
-	float indoorFactor = 1;
 	// the building rooms (null: none), and those whose roof is hidden (OpenRooms): lit by their own lamps and
 	// thicker than the other rooms. Both go into the ground texture (FogGround.texels), sent again when they change.
 	RoomMap rooms;
 	OpenRooms openRooms;
+	// the scene's water to stop the rays at
 	int waterTexture;
 	private static final int[] NONE_OPEN = new int[OpenRooms.WORDS];
 	private FogGround sentGround;
@@ -82,10 +86,6 @@ class VolumetricFog
 	private float centerX, centerZ;
 	private float fadeStart, fadeEnd;
 	private float near;
-	private float sunScatter;
-	private float noiseAmount;
-	private float bankAmount;
-	private float maxCover = 1;
 	private int steps = 12;
 
 	private Locations fog;
@@ -97,12 +97,12 @@ class VolumetricFog
 	{
 		final int program;
 		final LightMapTexture.Uniforms lightMap = new LightMapTexture.Uniforms();
-		int uniBankAmount, uniCameraPos, uniCasterDir, uniCenter, uniClientSkyColor, uniDensity, uniDepthZeroToOne,
+		int uniCameraPos, uniCasterDir, uniCenter, uniClientSkyColor, uniDensity, uniDepthZeroToOne,
 			uniFade, uniFieldFog, uniFieldRect, uniGroundGrid, uniHalfRatio, uniHeight, uniHighestY, uniIndoor,
-			uniIndoorOpen, uniInvViewProj, uniLight, uniLightProjRel, uniMaxCover, uniNear, uniNoiseAmount,
+			uniIndoorOpen, uniInvViewProj, uniLight, uniLightProjRel, uniNear,
 			uniOutdoors, uniOvercast, uniPointLights, uniProceduralSky,
 			uniShadowDepthRange, uniShadowsEnabled, uniSteps, uniStrikeLight, uniSunAltitude, uniSunIsCaster,
-			uniSunScatter, uniTime, uniTint, uniViewProj, uniViewport, uniWaterEnabled, uniWaterGrid;
+			uniTime, uniTint, uniViewProj, uniViewport, uniWaterEnabled, uniWaterGrid;
 
 		Locations(int program)
 		{
@@ -157,10 +157,6 @@ class VolumetricFog
 		u.uniCenter = glGetUniformLocation(u.program, "fogCenter");
 		u.uniFade = glGetUniformLocation(u.program, "fogFade");
 		u.uniNear = glGetUniformLocation(u.program, "fogNear");
-		u.uniSunScatter = glGetUniformLocation(u.program, "fogSunScatter");
-		u.uniNoiseAmount = glGetUniformLocation(u.program, "fogNoiseAmount");
-		u.uniBankAmount = glGetUniformLocation(u.program, "fogBankAmount");
-		u.uniMaxCover = glGetUniformLocation(u.program, "fogMaxCover");
 		u.uniTint = glGetUniformLocation(u.program, "fogTint");
 		u.uniSteps = glGetUniformLocation(u.program, "fogSteps");
 		u.uniViewProj = glGetUniformLocation(u.program, "viewProj");
@@ -213,19 +209,15 @@ class VolumetricFog
 		final float tile = 128;
 		// 1% is an extinction of 1e-5 per unit: at the default 25% about half the light is lost over 22 tiles
 		density = config.volumetricFogDensity() * 1e-5f * areaDensity;
-		height = Math.max(config.volumetricFogHeight() / 100f * tile * areaHeight, 16);
+		height = Math.max(HEIGHT_TILES * tile * areaHeight, 16);
 		this.plane = plane;
 		centerX = x;
 		centerZ = z;
-		fadeEnd = Math.min(config.volumetricFogDistance() * tile, drawDistance);
+		fadeEnd = Math.min(DISTANCE_TILES * tile, drawDistance);
 		// the outer EDGE_FADE_TILES thin out to nothing, and so do the first NEAR_FADE_TILES from the camera
 		fadeStart = Math.max(fadeEnd - EDGE_FADE_TILES * tile, 0);
 		near = NEAR_FADE_TILES * tile;
 		highestY = ground.highest(plane, x - fadeEnd, z - fadeEnd, x + fadeEnd, z + fadeEnd);
-		sunScatter = config.volumetricFogSunScattering() / 100f;
-		noiseAmount = config.volumetricFogNoise() / 100f;
-		bankAmount = config.volumetricFogBanks() / 100f;
-		maxCover = config.volumetricFogMaxCover() / 100f;
 		steps = config.fogQuality().pick(6, 8, 12);
 	}
 
@@ -347,7 +339,7 @@ class VolumetricFog
 			field = Math.min(Math.max((WeatherField.FOG_RANGE + local - f.getFocus(WeatherField.FOG)) / local, 0), FIELD_MAX);
 		}
 		float sigma = density * (float) Math.exp(BELOW) * (1 + OPEN_INDOOR_DENSITY) * field
-			* (1 + noiseAmount) * (1 + bankAmount);
+			* (1 + NOISE_AMOUNT) * (1 + BANK_AMOUNT);
 		return GLOW_VISIBLE / (GLOW_SCALE * GLOW_INTEGRAL * sigma);
 	}
 
@@ -365,7 +357,7 @@ class VolumetricFog
 	 */
 	boolean hasShafts(boolean outdoors, ShadowMap shadows)
 	{
-		return outdoors && shadows != null && sunScatter > 0;
+		return outdoors && shadows != null;
 	}
 
 	/**
@@ -429,10 +421,6 @@ class VolumetricFog
 		glUniform2f(u.uniCenter, centerX, centerZ);
 		glUniform2f(u.uniFade, fadeStart, fadeEnd);
 		glUniform1f(u.uniNear, near);
-		glUniform1f(u.uniSunScatter, sunScatter);
-		glUniform1f(u.uniNoiseAmount, noiseAmount);
-		glUniform1f(u.uniBankAmount, bankAmount);
-		glUniform1f(u.uniMaxCover, maxCover);
 		glUniform3fv(u.uniTint, areaTint);
 		glUniform1i(u.uniSteps, steps);
 		WeatherField field = weatherField;
@@ -448,8 +436,8 @@ class VolumetricFog
 			glUniform3f(u.uniFieldFog, 0, 0, 0);
 		}
 
-		glUniform1f(u.uniIndoor, indoorFactor);
-		glUniform1f(u.uniIndoorOpen, Math.max(indoorFactor, OPEN_INDOOR_DENSITY));
+		glUniform1f(u.uniIndoor, INDOOR_DENSITY);
+		glUniform1f(u.uniIndoorOpen, OPEN_INDOOR_DENSITY);
 		glUniform1i(u.uniWaterEnabled, waterTexture != 0 ? 1 : 0);
 		if (waterTexture != 0)
 		{

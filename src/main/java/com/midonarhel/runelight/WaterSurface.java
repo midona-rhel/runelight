@@ -77,7 +77,7 @@ class WaterSurface
 	}
 
 	private int program;
-	private int uniViewProj, uniCamera, uniFocus, uniGrid, uniTime, uniWind, uniDrift, uniWaves, uniSpeed,
+	private int uniViewProj, uniCamera, uniFocus, uniGrid, uniTime, uniWind, uniDrift,
 		uniRain, uniOutdoors, uniDebug, uniSkyDepth, uniCausticsOn, uniCasterDir, uniInvViewProj, uniViewport,
 		uniZeroToOne, uniBake, uniWaveBlend, uniOrigin;
 
@@ -98,11 +98,11 @@ class WaterSurface
 	// reaches into their neighbors): a step's chunks as it is due, and any that came into view since into the shown
 	// two before they are drawn. Near the view: within it widened WAVE_VIEW_SLACK times, so that turning the camera
 	// rarely finds a chunk missing. Per map the chunks worked out in it, and the motion they were worked out with
-	// (wind x, z, strength, drift x, z, waves, speed), so a chunk added later matches the rest.
+	// (wind x, z, strength, drift x, z), so a chunk added later matches the rest.
 	private static final float WAVE_VIEW_SLACK = 2f;
 	private final boolean[][] waveBaked = new boolean[3][];
-	private final float[][] waveMotion = new float[3][7];
-	private final float[] motion = new float[7];
+	private final float[][] waveMotion = new float[3][5];
+	private final float[] motion = new float[5];
 	// per chunk this frame: drawn (within reach), in view, near it, its map region needed now, wanted soon, picked
 	private static final byte DRAWN = 1, IN_VIEW = 2, NEAR_VIEW = 4, NEEDED = 8, WANTED = 16, PICKED = 32;
 	private byte[] chunkFlags;
@@ -341,8 +341,6 @@ class WaterSurface
 		uniTime = glGetUniformLocation(program, "waterTime");
 		uniWind = glGetUniformLocation(program, "waterWind");
 		uniDrift = glGetUniformLocation(program, "waterDrift");
-		uniWaves = glGetUniformLocation(program, "waterWaves");
-		uniSpeed = glGetUniformLocation(program, "waterSpeed");
 		uniRain = glGetUniformLocation(program, "waterRain");
 		uniOutdoors = glGetUniformLocation(program, "waterOutdoors");
 		uniDebug = glGetUniformLocation(program, "waterDebug");
@@ -521,8 +519,6 @@ class WaterSurface
 		motion[2] = params.strength;
 		motion[3] = params.driftX;
 		motion[4] = params.driftZ;
-		motion[5] = params.waves;
-		motion[6] = params.speed;
 		float blend = bakeWaves(params, focusX, focusZ);
 		glUniform1i(uniBake, 0);
 		glUniform1f(uniTime, params.time);
@@ -736,13 +732,11 @@ class WaterSurface
 		glBindTexture(GL_TEXTURE_2D, 0);
 	}
 
-	// wind x, z, strength, drift x, z, waves, speed
+	// wind x, z, strength, drift x, z
 	private void setMotion(float[] p)
 	{
 		glUniform3f(uniWind, p[0], p[1], p[2]);
 		glUniform4f(uniDrift, p[3], p[4], 0, 0);
-		glUniform1f(uniWaves, p[5]);
-		glUniform1f(uniSpeed, p[6]);
 	}
 
 	private void ensureWaveMaps()

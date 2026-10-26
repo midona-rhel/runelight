@@ -54,7 +54,6 @@ class BuildingLights
 	// which planes have a floor on every tile (RoomMap.setFloors), kept for the rooms rebuilt as doors open
 	private byte[] filledTiles;
 	private int wallScene;
-	private volatile boolean splitRooms = true;
 
 	private static float[] tint(float r, float g, float b)
 	{
@@ -89,16 +88,6 @@ class BuildingLights
 		return filledTiles;
 	}
 
-	/** Whether rooms split along their interior walls; a change rebuilds the rooms on the next tick. */
-	void setSplitRooms(boolean split)
-	{
-		if (split != splitRooms)
-		{
-			splitRooms = split;
-			builtFor = null;
-		}
-	}
-
 	void rebuild()
 	{
 		builtFor = null;
@@ -126,10 +115,7 @@ class BuildingLights
 		byte[][][] settings = scene.getExtendedTileSettings();
 		WallMap w = WallMap.build(flags, diagonals.values(), settings != null && settings.length > 0 ? settings[0].length : 0,
 			RuneLightPlugin.SCENE_OFFSET, ++wallScene);
-		if (splitRooms)
-		{
-			r = BuildingDetector.split(r, settings, w);
-		}
+		r = BuildingDetector.split(r, settings, w);
 		RoomMap m = RoomMap.build(r, settings, scene.getTileHeights(), RuneLightPlugin.SCENE_OFFSET);
 		if (m != null)
 		{
@@ -305,7 +291,7 @@ class BuildingLights
 				if (!w.sameWalls(old))
 				{
 					walls = w;
-					if (splitRooms && coarse != null)
+					if (coarse != null)
 					{
 						byte[][][] settings = scene.getExtendedTileSettings();
 						RoomMap n = RoomMap.build(BuildingDetector.split(coarse, settings, w), settings, scene.getTileHeights(),

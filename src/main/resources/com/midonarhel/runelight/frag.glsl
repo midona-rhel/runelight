@@ -39,7 +39,6 @@ in vec4 fColor;
 noperspective centroid in float fHsl;
 flat in int fTextureId;
 in vec2 fUv;
-in float fFogAmount;
 in vec3 fWorldPos;
 in vec3 fNormal;
 in float fNormalValid;
@@ -163,7 +162,7 @@ void main() {
     light = emissiveLight(light, materialEmissive(fMaterial));
     vec3 fog = envFog(outdoors == 1 && proceduralSky == 1 ? skyHorizon(sunAltitude) : fogColor.rgb, outdoors == 1,
       sunAltitude);
-    float fogAmount = max(fFogAmount, envFogAmount(fWorldPos - vec3(cameraX, cameraY, cameraZ), fWorldPos.xz));
+    float fogAmount = envFogAmount(fWorldPos - vec3(cameraX, cameraY, cameraZ), fWorldPos.xz);
     FragAlpha = vec4(mix(shade(c.rgb, light), fog, fogAmount), c.a);
     // transparent faces vanish toward the edge of the world, where the composite shows the sky behind them
     FragAlpha.a *= 1.0 - edgeFadeAmount(fWorldPos);

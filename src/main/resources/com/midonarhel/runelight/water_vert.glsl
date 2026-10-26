@@ -12,7 +12,6 @@ layout(location = 0) in uvec4 tile;  // extended tile x, y, water type, look slo
 uniform mat4 waterViewProj;   // camera-relative world -> clip
 uniform vec3 waterCamera;     // camera position, world
 uniform sampler2D waterData;  // WaterMap.texture
-uniform float waterSpeed;     // multiplier on flow
 uniform int waterBake;        // 1: into the wave map (WAVE_MAP_TILES tiles wrapping) rather than onto the screen
 
 out vec3 vRel;        // camera-relative position, moved
@@ -31,7 +30,7 @@ void main() {
   vec4 p0 = waterPage0(waterData, c);
   vec4 p1 = waterPage1(waterData, c);
   // the flow slows toward the bank
-  vec2 flow = p0.gb * (WATER_TILE * waterSpeed * WATER_FLOW_SPEED[type])
+  vec2 flow = p0.gb * (WATER_TILE * WATER_FLOW_SPEED[type])
     * mix(BANK_SLOW, 1.0, smoothstep(0.0, BANK_REACH, p1.r) * smoothstep(0.5, 1.0, p1.b));
 
   vRel = vec3(xz.x, p0.r, xz.y) - waterCamera;

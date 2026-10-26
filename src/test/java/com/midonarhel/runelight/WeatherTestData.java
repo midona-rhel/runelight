@@ -42,6 +42,6 @@ final class WeatherTestData
 		WeatherType type = Weather.resolve(mode);
 		field.update(b -> type, null, 0.6f, false, 12, 0);
 		field.focus(WeatherField.CELL / 2f, WeatherField.CELL / 2f);
-		weather.update(false, false, 100, true, outdoors, 0, 0, 0, 0);
+		weather.update(false, false, true, outdoors, 0, 0, 0, 0);
 	}
 }
