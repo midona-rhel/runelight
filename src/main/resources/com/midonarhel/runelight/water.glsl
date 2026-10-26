@@ -607,29 +607,29 @@ uniform int waterFakeOn;  // the water setting: off draws the faces as their typ
 // a face is a fall when its normal's vertical part is below the second and not a pool's at all below the first
 #define FALL_STEEP vec2(0.5, 0.85)
 // A fall is real water, running straight down at FALL_FLOW world units a second (its ripples stretched by FALL_STRETCH
-// along the flow), mostly under foam in two flat tones with hard edges, a pale tint and a bright core, with the water
-// showing through only as teeth hanging down. The foam is bands across the fall, FALL_BAND tiles apart and sliding down a
-// band every FALL_PERIOD seconds (a divisor of waterTime's wrap into a multiple of FALL_SEEDS, so the bands' shapes,
-// seeded by their number modulo FALL_SEEDS, repeat exactly). A band is a front, its path swinging FALL_SWING tiles up
-// and down as a sum of three sines of its own wavelengths and phases, which slowly drift, and its own slowly modulated
-// amplitude: below it a bar of foam FALL_BAR tiles thick (swelling and thinning along it, lobed by the foam's cells),
-// and under that the water in teeth up to FALL_TOOTH tiles long, pointed at their ends, with foam between them and
-// below them down to the next front. The lip it pours over is a front of its own, at the top of the model's water, and
-// where it lands the foam rises as one mass up to FOOT_FOAM tiles, its upper edge lobed. The core is the bar's upper
-// part.
+// along the flow), under foam in two flat tones with hard edges: a pale tint and a bright core. Fronts FALL_FRONT tiles
+// apart slide down it, and the lip is one of its own. Below a front a band of foam, then a density of foam that
+// rises slowly down to the next front; the water shows through it in cones, one per column across the fall, each of
+// its own width and length (peaked on the column's centre line, so the rising density cuts it to a tooth, wide at the
+// top and pointed at the bottom), and the foot is foam, rising to points the same way. The fronts undulate across the
+// fall by a pair of slow sines. The bright core is where the foam's surplus over the cones, together with a second,
+// finer layer of tall cells scrolling down faster, is large.
 #define FALL_FLOW 320.0
 #define FALL_STRETCH 0.4
-#define FALL_BAND 2.2
+#define FALL_COLUMN 0.45
+#define FALL_FRONT 2.2
 #define FALL_PERIOD 1.5
-#define FALL_SEEDS 32.0
-#define FALL_SWING 0.55
-#define FALL_BAR 0.65
-#define FALL_TOOTH 2.0
-#define FOOT_FOAM 0.6
-#define FALL_CORE 0.55
+#define FALL_BAND 0.2
+#define FALL_FOOT 0.9
+#define FALL_FINE 0.5
+#define FALL_FINER 1.6
+#define FALL_TALL 1.7
+#define FALL_WAVER 0.05
+#define FALL_BRIGHT 0.3
 #define FALL_FOAM vec3(0.62, 0.72, 0.90)
 #define FALL_LIT 2.0
 #define FALL_WATER vec3(0.40, 0.52, 0.70)
+
 // The slope of level fake water at world xz: two octaves of the sea's waves, running both ways
 vec2 waterFakeSlope(vec2 xz) {
   const mat2 TURN = mat2(0.8, 0.6, -0.6, 0.8);
@@ -647,76 +647,61 @@ vec2 waterFakeSlope(vec2 xz) {
   return g * (0.5 * FAKE_HEIGHT);
 }
 
-// The lobes of the foam's ripple cells (Water.cells) along x, in cells: a row of round domes (1 - d^2)^3 reaching 0.85 of
-// a cell, 0 between them to 1 on top, each moving in a small circle of its own, a turn every period seconds; seed picks the
-// row
-float waterLobes(float x, float seed, float period) {
+// A column of cones across a fall at lat tiles, row seeding their lengths: 0 to 1, peaked on the centre line of each
+// column, each column of its own width and height, swaying a little
+float waterCones(float lat, float row, float seed) {
+  float turn = waterCycle(14.0);
+  float x = lat / FALL_COLUMN + 0.3 * sin(WATER_TAU * (lat / 1.9 + turn)) + 0.2 * sin(WATER_TAU * (lat / 1.1 - 2.0 * turn) + seed);
   float id = floor(x);
-  float sum = 0.0;
-  for (int i = -1; i <= 1; ++i) {
-    float c = id + float(i);
-    float r = waterHash(vec3(mod(c, 64.0), seed, 1.0));
-    float at = c + 0.2 + 0.6 * r + 0.15 * sin(WATER_TAU * (waterCycle(period) + r));
-    float d = (x - at) / 0.85;
-    float k = max(1.0 - d * d, 0.0);
-    sum += k * k * k;
+  float r = waterHash(vec3(mod(id, 64.0), mod(row, 16.0), seed));
+  float tall = 0.7 + 0.3 * r + 0.2 * sin(WATER_TAU * (turn + r));
+  return min(tall, 1.0) * max(1.0 - 1.15 * abs(2.0 * fract(x) - 1.0), 0.0);
+}
+
+// The distance of p, in cells, to the nearest of a jittered point per cell, rows wrapping every rows cells (so the
+// scroll repeats exactly)
+float waterVoronoi(vec2 p, float rows, float seed) {
+  vec2 id = floor(p);
+  float best = 4.0;
+  for (int j = -1; j <= 1; ++j) {
+    for (int i = -1; i <= 1; ++i) {
+      vec2 c = id + vec2(float(i), float(j));
+      vec3 k = vec3(mod(c.x, 64.0), mod(c.y, rows), seed);
+      vec2 at = c + 0.15 + 0.7 * vec2(waterHash(k), waterHash(k + 7.0));
+      best = min(best, distance(p, at));
+    }
   }
-  return min(sum, 1.0);
+  return best;
 }
 
-// The path of band n of a fall across it (lat tiles), in bands: three sines each of their own wavelength, phase and
-// drift, FALL_SWING tiles at the most, with an amplitude of their own that wanders slowly across the fall
-float waterBandPath(float lat, float n) {
-  vec3 r = vec3(waterHash(vec3(n, 1.0, 5.0)), waterHash(vec3(n, 2.0, 5.0)), waterHash(vec3(n, 3.0, 5.0)));
-  float turn = WATER_TAU * waterCycle(40.0);
-  float swing = sin(WATER_TAU * lat / (1.9 + 1.2 * r.z) + WATER_TAU * r.x - turn);
-  float path = 0.5 * sin(WATER_TAU * lat / (1.5 + 1.0 * r.x) + WATER_TAU * r.y + turn)
-    + 0.35 * sin(WATER_TAU * lat / (0.8 + 0.5 * r.y) + WATER_TAU * r.z - 2.0 * turn)
-    + 0.2 * sin(WATER_TAU * lat / (0.45 + 0.3 * r.z) + WATER_TAU * r.x + 3.0 * turn);
-  return FALL_SWING / FALL_BAND * path * (0.55 + 0.45 * swing);
-}
-
-// The length of the teeth of the water hanging from the front of band seed at lat (tiles across), 0 to 1: broad teeth
-// of uneven pitch and length
-float waterTeeth(float lat, float seed) {
-  float s = lat / 1.05 + 0.35 * sin(WATER_TAU * lat / 2.3 + seed * 2.1) + 0.2 * sin(WATER_TAU * lat / 1.3 + seed);
-  float zig = 1.0 - abs(2.0 * fract(s) - 1.0);
-  // each tooth its own length, a few long and many short, its end blunt
-  float own = waterHash(vec3(floor(s), seed, 3.0));
-  return sqrt(zig) * (0.2 + 0.8 * own * own);
-}
-
-// The foam of a fall at world position w (y down) with tang across it, span: its height above the foot and below the
-// top: 0 where the water shows, FOAM_TINT of the foam color in the tint, FOAM_CORE in the core.
+// The foam of a fall at world position w with tang across it, span: its height above the foot and below the top:
+// 0 where the water shows, FOAM_TINT of the foam color in the tint, FOAM_CORE in the core.
 float waterFallFoam(vec3 w, vec2 tang, vec2 span) {
   float lat = dot(w.xz, tang) / WATER_TILE;
-  float h = w.y / WATER_TILE;
-  float b = h / FALL_BAND - waterTime / FALL_PERIOD;
-  float n0 = floor(b);
-  float aa = max(fwidth(b) * FALL_BAND, 0.004);
-  // foam bars, their cores and the water's teeth, over the fronts of the bands and the lip, with v tiles below a front
-  float bars = 0.0, cores = 0.0, teeth = 0.0;
-  for (int i = -2; i <= 1; ++i) {
-    float n = n0 + float(i);
-    float seed = mod(n, FALL_SEEDS);
-    // the lip is the front at i = -2
-    bool lip = i == -2;
-    float v = lip ? span.y / WATER_TILE : (b - n) * FALL_BAND - waterBandPath(lat, seed) * FALL_BAND;
-    float swell = 0.55 + 0.45 * sin(WATER_TAU * lat / (0.9 + 0.6 * waterHash(vec3(seed, 4.0, 5.0))) + seed);
-    float bar = FALL_BAR * (lip ? 0.6 : 1.0) * swell * (0.5 + 0.9 * waterLobes(lat / 0.3 + seed * 3.7, lip ? 70.0 : seed, 13.0));
-    float len = FALL_TOOTH * waterTeeth(lat, lip ? 70.0 : seed);
-    bars = max(bars, waterEdge(v, aa) * waterEdge(bar - v, aa));
-    cores = max(cores, waterEdge(v, aa) * waterEdge(FALL_CORE * bar - v, aa));
-    teeth = max(teeth, waterEdge(v - bar, aa) * waterEdge(bar + len - v, aa));
-  }
-  // the foot
+  float down = span.y / WATER_TILE;
   float up = span.x / WATER_TILE;
-  float mass = FOOT_FOAM * (0.35 + 0.65 * waterLobes(lat / 0.3 + 9.0, 80.0, 7.0));
-  bars = max(bars, waterEdge(mass - up, aa));
-  cores = max(cores, waterEdge(FALL_CORE * mass - up, aa));
-  float water = teeth * (1.0 - bars);
-  float core = cores * (1.0 - water);
-  return mix(FOAM_TINT * (1.0 - water), FOAM_CORE, core);
+  float turn = WATER_TAU * waterCycle(24.0);
+  // below its front: u, 0 to 1 down to the next front, the fronts FALL_FRONT tiles apart, sliding down a front every
+  // FALL_PERIOD seconds (a divisor of waterTime's wrap, so the fronts, seeded by their number modulo 32, repeat)
+  float edge = FALL_WAVER * (sin(WATER_TAU * lat / 1.7 + turn) + sin(WATER_TAU * lat / 0.9 - 2.0 * turn));
+  float q = w.y / WATER_TILE / FALL_FRONT - waterTime / FALL_PERIOD + edge;
+  float u = fract(q);
+  float dense = max(1.6 * (1.0 - u / FALL_BAND), 0.85 * pow(max(u - FALL_BAND, 0.0) / (1.0 - FALL_BAND), 1.4));
+  float top = dense - waterCones(lat, mod(floor(q), 32.0), 1.0);
+  // the lip's own front
+  float lip = 1.6 * (1.0 - down / (FALL_BAND * FALL_FRONT)) - waterCones(lat + 0.2, 17.0, 4.0);
+  top = max(top, lip);
+  // the foot, rising to points
+  float foot = waterCones(lat + 0.3, 3.0, 2.0) - up / FALL_FOOT;
+  float score = max(top, foot) + 0.08;
+  // the finer layer, tall cells scrolling down
+  float cw = FALL_COLUMN / FALL_FINER;
+  float fine = clamp(1.0 - waterVoronoi(vec2(lat / cw, down / (cw * FALL_TALL) - waterCycle(6.0) * 6.0), 6.0, 3.0) / 0.8, 0.0, 1.0);
+  float bright = score + FALL_FINE * (fine - 0.5);
+  float aa = max(fwidth(score), 1e-4);
+  float tint = waterEdge(score, aa);
+  float core = waterEdge(bright - FALL_BRIGHT, max(fwidth(bright), 1e-4));
+  return mix(FOAM_TINT * tint, FOAM_CORE, core * tint);
 }
 
 // The fake water face at pixel px (camera-relative p, facing camera normal faceN, color albedo (sRGB), the sun's
