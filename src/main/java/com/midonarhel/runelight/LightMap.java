@@ -15,13 +15,16 @@ import org.slf4j.LoggerFactory;
 /**
  * The static point lights, baked into a light map: per storey, a grid of quarter-tile cells holding the light that
  * reaches the cell from all the baked lights together (LightMapBake works one light out; the composite, the fog and
- * the weather read the map instead of looping over the lights). What a cell holds, in two layers per storey:
+ * the weather read the map instead of looping over the lights). What a cell holds, per storey:
  *
- * - A, filtered: the summed colour of the lights, each its colour times its strength times its share of the cell; and
- *   how far the brightest of them is ahead of the next one (their luminances' difference), in alpha.
- * - B, filtered but for its alpha: where the lights are, as their mean place weighted by their luminance, premultiplied
- *   by it so that it filters: the sum of luminance times the place from the cell's middle (x, z) and the height (world
- *   y), in sixteenths of a unit; and, to be read as it is, the table index of the brightest light.
+ * - A, HEIGHT_LAYERS layers over the storey's height, filtered across the layers too: the summed colour of the
+ *   lights, each its colour times its strength times its share of the cell at the layer's height; and how far the
+ *   brightest of them (the one in B) is ahead of the next one (their luminances' difference), in alpha.
+ * - B, filtered across the cell but never across the layers, one for all of them: where the lights are, as their mean
+ *   place weighted by their luminance over the layers, from the cell's middle (x, z) and the height (world y), in
+ *   sixteenths of a unit, so that it filters as the place of a light does; the cells round the lit ones, where the
+ *   colour is filtered down to nothing, carry the place of the lights that reach their neighbours; and, to be read
+ *   as it is, the table index of the brightest light.
  *   The shading takes its direction and height from the mean place, and the flicker from the table (light_map.glsl):
  *   the table holds, for each baked light, how strong it is now against how strong it was baked. So only the brightest
  *   light of a cell flickers, by as much as it is ahead of the others (so that where the brightest changes from one
@@ -129,7 +132,7 @@ final class LightMap
 	static final class Block
 	{
 		final int key, plane, bx, bz, seq;
-		// RGBA half floats of the two layers, BLOCK * BLOCK * 4 each; null when the block holds no light
+		// RGBA half floats: a is HEIGHT_LAYERS layers of BLOCK * BLOCK cells, b one; null when the block holds no light
 		final short[] a, b;
 
 		Block(int key, int plane, int bx, int bz, int seq, short[] a, short[] b)
@@ -1089,10 +1092,14 @@ final class LightMap
 
 	private static Block build(int key, int plane, int bx, int bz, int seq, int off, List<Part> parts)
 	{
-		int n = BLOCK * BLOCK;
-		// per cell: the colour sum, the sum of luminance times the place of the light (x, z, y), the luminance, the
-		// brightest and the next brightest, and the brightest light
-		float[] sum = new float[n * 3], at = new float[n * 3], total = new float[n], best = new float[n], second = new float[n];
+		int n = BLOCK * BLOCK, layers = LightMapBake.HEIGHT_LAYERS;
+		// per cell and layer: the colour sum, the luminance, the brightest, the next brightest and the brightest light;
+		// per cell: the sum of luminance times the place of the light (x, z, y), the brightest light over all the layers,
+		// and the sum of the places of the lights whose rectangle holds the cell without any of their light in it
+		float[] sum = new float[n * layers * 3], total = new float[n * layers], best = new float[n * layers], second = new float[n * layers];
+		Part[] brightest = new Part[n * layers];
+		float[] at = new float[n * 3], all = new float[n], most = new float[n], ring = new float[n * 3];
+		int[] ringCount = new int[n];
 		Part[] dominant = new Part[n];
 		boolean any = false;
 		for (Part p : parts)
@@ -1104,30 +1111,53 @@ final class LightMap
 			{
 				for (int x = x0; x < x1; ++x)
 				{
-					float c = g.c[(z - g.z0) * g.w + x - g.x0];
-					if (c <= 0)
-					{
-						continue;
-					}
 					int i = (z - bz * BLOCK) * BLOCK + x - bx * BLOCK;
-					float lr = p.r * c, lg = p.gr * c, lb = p.b * c;
-					sum[i * 3] += lr;
-					sum[i * 3 + 1] += lg;
-					sum[i * 3 + 2] += lb;
-					float lum = 0.2126f * lr + 0.7152f * lg + 0.0722f * lb;
-					total[i] += lum;
-					at[i * 3] += lum * p.x;
-					at[i * 3 + 1] += lum * p.z;
-					at[i * 3 + 2] += lum * p.y;
-					if (lum > best[i])
+					int from = ((z - g.z0) * g.w + x - g.x0) * layers;
+					float lumAll = 0;
+					for (int layer = 0; layer < layers; ++layer)
 					{
-						second[i] = best[i];
-						best[i] = lum;
-						dominant[i] = p;
+						float c = g.c[from + layer];
+						if (c <= 0)
+						{
+							continue;
+						}
+						int j = i * layers + layer;
+						float lr = p.r * c, lg = p.gr * c, lb = p.b * c;
+						sum[j * 3] += lr;
+						sum[j * 3 + 1] += lg;
+						sum[j * 3 + 2] += lb;
+						float lum = 0.2126f * lr + 0.7152f * lg + 0.0722f * lb;
+						total[j] += lum;
+						lumAll += lum;
+						if (lum > best[j])
+						{
+							second[j] = best[j];
+							best[j] = lum;
+							brightest[j] = p;
+						}
+						else if (lum > second[j])
+						{
+							second[j] = lum;
+						}
 					}
-					else if (lum > second[i])
+					if (lumAll > 0)
 					{
-						second[i] = lum;
+						all[i] += lumAll;
+						at[i * 3] += lumAll * p.x;
+						at[i * 3 + 1] += lumAll * p.z;
+						at[i * 3 + 2] += lumAll * p.y;
+						if (lumAll > most[i])
+						{
+							most[i] = lumAll;
+							dominant[i] = p;
+						}
+					}
+					else
+					{
+						ring[i * 3] += p.x;
+						ring[i * 3 + 1] += p.z;
+						ring[i * 3 + 2] += p.y;
+						ringCount[i]++;
 					}
 					any = true;
 				}
@@ -1137,27 +1167,45 @@ final class LightMap
 		{
 			return new Block(key, plane, bx, bz, seq, null, null);
 		}
-		short[] a = new short[n * 4], b = new short[n * 4];
+		short[] a = new short[n * layers * 4], b = new short[n * 4];
 		for (int j = 0; j < BLOCK; ++j)
 		{
 			for (int i = 0; i < BLOCK; ++i)
 			{
 				int c = j * BLOCK + i;
 				Part d = dominant[c];
-				if (d == null)
+				float mx, mz, my;
+				if (d != null)
+				{
+					mx = at[c * 3] / all[c];
+					mz = at[c * 3 + 1] / all[c];
+					my = at[c * 3 + 2] / all[c];
+					for (int layer = 0; layer < layers; ++layer)
+					{
+						int k = c * layers + layer, o = (layer * n + c) * 4;
+						a[o] = Half.toHalf(sum[k * 3]);
+						a[o + 1] = Half.toHalf(sum[k * 3 + 1]);
+						a[o + 2] = Half.toHalf(sum[k * 3 + 2]);
+						// how far the light the flicker is read for is ahead, where it is the brightest
+						a[o + 3] = Half.toHalf(brightest[k] == d ? best[k] - second[k] : 0);
+					}
+				}
+				else if (ringCount[c] > 0)
+				{
+					mx = ring[c * 3] / ringCount[c];
+					mz = ring[c * 3 + 1] / ringCount[c];
+					my = ring[c * 3 + 2] / ringCount[c];
+				}
+				else
 				{
 					continue;
 				}
-				a[c * 4] = Half.toHalf(sum[c * 3]);
-				a[c * 4 + 1] = Half.toHalf(sum[c * 3 + 1]);
-				a[c * 4 + 2] = Half.toHalf(sum[c * 3 + 2]);
-				a[c * 4 + 3] = Half.toHalf(best[c] - second[c]);
-				// the mean place from the cell's middle, times the luminance, in sixteenths of a unit
+				// the mean place from the cell's middle, in sixteenths of a unit
 				float cx = (bx * BLOCK + i + 0.5f - off) * LightMapBake.CELL, cz = (bz * BLOCK + j + 0.5f - off) * LightMapBake.CELL;
-				b[c * 4] = Half.toHalf((at[c * 3] - total[c] * cx) * PLACE_SCALE);
-				b[c * 4 + 1] = Half.toHalf((at[c * 3 + 1] - total[c] * cz) * PLACE_SCALE);
-				b[c * 4 + 2] = Half.toHalf(at[c * 3 + 2] * PLACE_SCALE);
-				b[c * 4 + 3] = Half.toHalf(d.id);
+				b[c * 4] = Half.toHalf((mx - cx) * PLACE_SCALE);
+				b[c * 4 + 1] = Half.toHalf((mz - cz) * PLACE_SCALE);
+				b[c * 4 + 2] = Half.toHalf(my * PLACE_SCALE);
+				b[c * 4 + 3] = Half.toHalf(d == null ? 0 : d.id);
 			}
 		}
 		return new Block(key, plane, bx, bz, seq, a, b);

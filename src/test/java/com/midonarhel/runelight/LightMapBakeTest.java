@@ -159,9 +159,10 @@ public class LightMapBakeTest
 	@Test
 	public void wallsOfTheStoreyInTheWayStopLightToo()
 	{
-		// lamp on the balcony shines down past the edge; a wall on the ground between the lamp and a spot hides it
+		// lamp on the balcony shines down past the edge; a wall on the ground between the lamp and a spot hides it (a lamp
+		// higher up, or a spot higher, would see over the wall's top: the ray is above the storey's height there)
 		BakeScene s = new BakeScene().floor(1, 10, 10, 20, 30, true).verticalWall(0, 23, 10, 30);
-		LightMapBake.Result r = bake(s, BakeScene.light(1, 20.9f, 20.5f, 40, 10));
+		LightMapBake.Result r = bake(s, BakeScene.light(1, 20.9f, 20.5f, 10, 10));
 		assertTrue(BakeScene.atTile(r, 0, 22.5f, 20.5f) > 0);
 		assertEquals(0, BakeScene.atTile(r, 0, 25.5f, 20.5f), 0);
 	}
@@ -234,8 +235,10 @@ public class LightMapBakeTest
 		LightMapBake.Result fire = bake(s, BakeScene.light(0, 22.5f, 24.5f, 40, 10));
 		LightMapBake.Result fireBare = bake(new BakeScene(), BakeScene.light(0, 22.5f, 24.5f, 40, 10));
 		// right behind it: the light is wide, and only a barrel wide of it is gone
-		float shaded = BakeScene.at(fire, 0, 101, 98), open = BakeScene.at(fireBare, 0, 101, 98);
+		float shaded = BakeScene.at(fire, 0, 0, 101, 98), open = BakeScene.at(fireBare, 0, 0, 101, 98);
 		assertTrue("shaded " + shaded + " open " + open, shaded < open * 0.95f && shaded > open * 0.5f);
+		// and above the barrel's top the same fire is not shaded at all
+		assertEquals(BakeScene.at(fireBare, 0, 3, 101, 98), BakeScene.at(fire, 0, 3, 101, 98), 1e-3f);
 	}
 
 	@Test
@@ -280,5 +283,38 @@ public class LightMapBakeTest
 			assertEquals(0, v[v.length - 1], 0);
 			assertTrue("just inside the radius it is nearly gone: " + v[line == 0 ? 22 : 21], v[line == 0 ? 22 : 21] < 0.02f);
 		}
+	}
+
+	@Test
+	public void eachLayerIsLitFromItsOwnHeight()
+	{
+		// a lamp 30 up: close beside it the layer at its height is the brightest, the top layer, 180 higher, the least
+		LightMapBake.Result r = bake(new BakeScene(), BakeScene.light(0, 24.5f, 24.5f, 30, 8));
+		float low = BakeScene.at(r, 0, 0, 4 * 25, 4 * 24 + 2), top = BakeScene.at(r, 0, 3, 4 * 25, 4 * 24 + 2);
+		assertTrue("low " + low + " top " + top, low > top * 1.2f && top > 0);
+		// far out the same, in less
+		float far = BakeScene.at(r, 0, 0, 4 * 29, 4 * 24 + 2);
+		assertTrue(far > 0 && far < low);
+	}
+
+	@Test
+	public void anEaveShadesTheHighLayersBehindItAndNotTheLowOnes()
+	{
+		// a roof overhang, 150 to 239 high, two tiles east of the lamp, a tile deep and three wide: the ground under it is lit by the layers
+		// the overhang does not cover the light's way to (the low ones, seen under it), and the layer at the overhang's height
+		// is shaded behind it
+		BakeScene s = new BakeScene();
+		for (int gz = 4 * 23; gz < 4 * 26; ++gz)
+		{
+			for (int gx = 4 * 26; gx < 4 * 27; ++gx)
+			{
+				s.modelBox(0, gx, gz, 0, 0, 32, 32, 150, 239);
+			}
+		}
+		LightMapBake.Result roofed = bake(s, BakeScene.light(0, 24.5f, 24.5f, 30, 10));
+		LightMapBake.Result bare = bake(new BakeScene(), BakeScene.light(0, 24.5f, 24.5f, 30, 10));
+		int gx = 4 * 28 + 2, gz = 4 * 24 + 2;
+		assertEquals("low layer sees under the eave", BakeScene.at(bare, 0, 0, gx, gz), BakeScene.at(roofed, 0, 0, gx, gz), 1e-3f);
+		assertTrue("top layer is behind it", BakeScene.at(roofed, 0, 3, gx, gz) < BakeScene.at(bare, 0, 3, gx, gz) * 0.5f);
 	}
 }

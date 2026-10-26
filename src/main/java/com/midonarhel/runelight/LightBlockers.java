@@ -100,7 +100,7 @@ final class LightBlockers
 
 	/**
 	 * Whether a solid object stops the light on the cell, the whole of it. With the models known the object is what
-	 * they say stands at the light's height (ModelBlockers.box), not its whole tile: a crate that fills its tile to
+	 * they say stands at the light's height (ModelBlockers.runs), not its whole tile: a crate that fills its tile to
 	 * the knee does not shade a torch above it. So only without models, or for a storey other than the light's own
 	 * (where no one height is the light's), it is the tile.
 	 */

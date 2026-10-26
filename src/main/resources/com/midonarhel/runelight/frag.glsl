@@ -61,7 +61,7 @@ layout(std140) uniform uniforms {
 layout(location = 0) out vec4 FragColor;
 layout(location = 1) out vec4 FragNormal;
 layout(location = 2) out vec4 FragAlpha;  // transparency layer, see SceneTargets
-layout(location = 3) out vec4 FragMaterial;  // emissive, transmissive, water (water.glsl), snow; see materials.glsl
+layout(location = 3) out vec4 FragMaterial;  // the material and the face's normal, see material_target.glsl
 
 // Transparent faces are drawn in a separate pass into their own layer and lit right here, because the composite
 // pass only sees the opaque surface behind them. Same lighting as the composite, without shadows.
@@ -74,6 +74,7 @@ uniform float sunAltitude;
 
 #include "sky.glsl"
 #include "materials.glsl"
+#include "material_target.glsl"
 #include "environment.glsl"
 #include "edge_fade.glsl"
 
@@ -136,18 +137,17 @@ void main() {
 
   // The triangle's own normal from screen-space derivatives, facing the camera. Used for faces the game marks
   // as flat shaded, and as the reference that orients the smooth vertex normal.
-  vec3 n = normalize(cross(dFdx(fWorldPos), dFdy(fWorldPos)));
-  if (dot(n, vec3(cameraX, cameraY, cameraZ) - fWorldPos) < 0.0)
-    n = -n;
+  vec3 faceNormal = normalize(cross(dFdx(fWorldPos), dFdy(fWorldPos)));
+  if (dot(faceNormal, vec3(cameraX, cameraY, cameraZ) - fWorldPos) < 0.0)
+    faceNormal = -faceNormal;
+  vec3 n = faceNormal;
   if (fNormalValid > 0.5 && dot(fNormal, fNormal) > 1e-8) {
     vec3 sn = normalize(fNormal);
-    n = dot(sn, n) < 0.0 ? -sn : sn;
+    n = dot(sn, faceNormal) < 0.0 ? -sn : sn;
   }
   FragNormal = vec4(n * 0.5 + 0.5, c.a);
   // alpha 1 marks the sample as covered by geometry (SceneTargets.clear); the opaque pass writes without blending
-  // water: 1 bed (always under the water), 0 land terrain (never), 0.5 anything else (if below the surface)
-  float water = (fMaterial & 8) != 0 ? 1.0 : (fMaterial & 16) != 0 ? 0.0 : 0.5;
-  FragMaterial = vec4(materialEmissive(fMaterial), materialTransmissive(fMaterial), water, materialSnow(fMaterial));
+  FragMaterial = materialPack(fMaterial, faceNormal);
 
   if (alphaPass == 1) {
     vec3 light;

@@ -222,6 +222,7 @@ final class RoomLight implements LightMap.Sink
 				float score = 0;
 				if (a != null)
 				{
+					// the first height layer, the floor's
 					int c = (j * side + i) * 4;
 					float lum = 0.2126f * Half.fromHalf(a[c]) + 0.7152f * Half.fromHalf(a[c + 1])
 						+ 0.0722f * Half.fromHalf(a[c + 2]);

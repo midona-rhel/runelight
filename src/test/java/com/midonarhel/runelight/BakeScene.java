@@ -153,14 +153,25 @@ final class BakeScene
 		return new LightMapBake.Light(plane, world(tileX), -plane * STOREY - height, world(tileY), radiusTiles * 128);
 	}
 
-	/** The share at a cell, scene cell coordinates (a tile is 4), 0 where the bake left it out. */
+	/** The share at a cell, scene cell coordinates (a tile is 4), the best of the height layers, 0 where the bake left it out. */
 	static float at(LightMapBake.Result r, int plane, int gx, int gz)
+	{
+		float best = 0;
+		for (int layer = 0; layer < LightMapBake.HEIGHT_LAYERS; ++layer)
+		{
+			best = Math.max(best, at(r, plane, layer, gx, gz));
+		}
+		return best;
+	}
+
+	/** The share at a cell for one height layer. */
+	static float at(LightMapBake.Result r, int plane, int layer, int gx, int gz)
 	{
 		for (LightMapBake.Grid g : r.grids)
 		{
 			if (g.plane == plane && gx >= g.x0 && gz >= g.z0 && gx < g.x0 + g.w && gz < g.z0 + g.h)
 			{
-				return g.c[(gz - g.z0) * g.w + gx - g.x0];
+				return g.c[((gz - g.z0) * g.w + gx - g.x0) * LightMapBake.HEIGHT_LAYERS + layer];
 			}
 		}
 		return 0;

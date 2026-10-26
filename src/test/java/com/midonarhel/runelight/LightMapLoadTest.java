@@ -116,7 +116,7 @@ public class LightMapLoadTest
 	static final class Recorder implements LightMap.Sink
 	{
 		final Map<Integer, short[][]> blocks = new HashMap<>();
-		final ShortBuffer staging = ByteBuffer.allocateDirect(32 * 32 * 4 * 2).order(ByteOrder.nativeOrder()).asShortBuffer();
+		final ShortBuffer staging = ByteBuffer.allocateDirect(32 * 32 * 4 * 2 * LightMapBake.HEIGHT_LAYERS).order(ByteOrder.nativeOrder()).asShortBuffer();
 		int sent;
 		long last, first = -1;
 		long start;
@@ -124,7 +124,7 @@ public class LightMapLoadTest
 		@Override
 		public void block(int plane, int bx, int bz, short[] a, short[] b)
 		{
-			// what the texture upload does on this side of GL: copy both layers to a staging buffer
+			// what the texture upload does on this side of GL: copy both to a staging buffer
 			staging.clear();
 			if (a != null) staging.put(a);
 			staging.clear();

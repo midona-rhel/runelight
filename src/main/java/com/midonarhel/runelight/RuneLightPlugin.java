@@ -1144,7 +1144,9 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 						+ "#define LIGHT_MAP_TABLE_BASE " + LightClusters.LIGHT_MAP_TABLE_BASE + "\n";
 				case "light_map_config":
 					// the shaders read the static lights from the light map, or from the clusters and the occlusion grids
-					return "#define LIGHT_MAP " + (config.lightMap() ? 1 : 0) + "\n";
+					return "#define LIGHT_MAP " + (config.lightMap() ? 1 : 0) + "\n"
+						+ "#define LIGHT_MAP_LAYERS " + LightMapBake.HEIGHT_LAYERS + "\n"
+						+ "#define LIGHT_MAP_LAYER_HEIGHT " + (float) LightMapBake.LAYER_HEIGHT + "\n";
 				case "composite_mode":
 					// Compile out the diagnostic branches and intermediate samplers in normal rendering.
 					// Changing this diagnostic property requires a shader reload.

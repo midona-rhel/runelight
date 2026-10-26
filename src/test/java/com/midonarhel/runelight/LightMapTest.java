@@ -7,39 +7,50 @@ import static org.junit.Assert.assertTrue;
 
 public class LightMapTest
 {
-	/** The textures, on the CPU: [plane][layer][z][x][4] floats. */
+	/** The textures, on the CPU: A [plane][height layer][z][x][4] floats, B [plane][z][x][4]. */
 	private static final class Mirror implements LightMap.Sink
 	{
 		final int cells = BakeScene.SIZE * 4;
-		final float[][][] a = new float[4][cells][cells * 4], b = new float[4][cells][cells * 4];
+		final float[][][][] a = new float[4][LightMapBake.HEIGHT_LAYERS][cells][cells * 4];
+		final float[][][] b = new float[4][cells][cells * 4];
 		int blocks;
 
 		@Override
 		public void block(int plane, int bx, int bz, short[] sa, short[] sb)
 		{
 			blocks++;
+			int n = LightMap.BLOCK * LightMap.BLOCK;
 			for (int j = 0; j < LightMap.BLOCK; ++j)
 			{
 				for (int i = 0; i < LightMap.BLOCK; ++i)
 				{
 					for (int c = 0; c < 4; ++c)
 					{
-						a[plane][bz * 32 + j][(bx * 32 + i) * 4 + c] = sa == null ? 0 : Half.fromHalf(sa[(j * 32 + i) * 4 + c]);
+						for (int layer = 0; layer < LightMapBake.HEIGHT_LAYERS; ++layer)
+						{
+							a[plane][layer][bz * 32 + j][(bx * 32 + i) * 4 + c] = sa == null ? 0 : Half.fromHalf(sa[(layer * n + j * 32 + i) * 4 + c]);
+						}
 						b[plane][bz * 32 + j][(bx * 32 + i) * 4 + c] = sb == null ? 0 : Half.fromHalf(sb[(j * 32 + i) * 4 + c]);
 					}
 				}
 			}
 		}
 
+		/** The colour at the lowest height layer. */
 		float red(int plane, float tx, float ty)
 		{
-			return a[plane][(int) (ty * 4)][(int) (tx * 4) * 4];
+			return red(plane, 0, tx, ty);
 		}
 
-		/** How far the brightest light is ahead of the rest, as a share of all the light. */
+		float red(int plane, int layer, float tx, float ty)
+		{
+			return a[plane][layer][(int) (ty * 4)][(int) (tx * 4) * 4];
+		}
+
+		/** How far the brightest light is ahead of the rest, as a share of all the light, at the lowest layer. */
 		float lead(int plane, float tx, float ty)
 		{
-			float[] c = a[plane][(int) (ty * 4)];
+			float[] c = a[plane][0][(int) (ty * 4)];
 			int i = (int) (tx * 4) * 4;
 			return c[i + 3] / (0.2126f * c[i] + 0.7152f * c[i + 1] + 0.0722f * c[i + 2]);
 		}
@@ -48,10 +59,9 @@ public class LightMapTest
 		float[] place(int plane, float tx, float ty)
 		{
 			int gx = (int) (tx * 4), gz = (int) (ty * 4);
-			float[] c = a[plane][gz], d = b[plane][gz];
-			float total = 0.2126f * c[gx * 4] + 0.7152f * c[gx * 4 + 1] + 0.0722f * c[gx * 4 + 2];
+			float[] d = b[plane][gz];
 			float midX = (gx + 0.5f - BakeScene.OFFSET * 4) * 32, midZ = (gz + 0.5f - BakeScene.OFFSET * 4) * 32;
-			return new float[]{midX + d[gx * 4] * 16 / total, d[gx * 4 + 2] * 16 / total, midZ + d[gx * 4 + 1] * 16 / total};
+			return new float[]{midX + d[gx * 4] * 16, d[gx * 4 + 2] * 16, midZ + d[gx * 4 + 1] * 16};
 		}
 
 		float id(int plane, float tx, float ty)
@@ -87,7 +97,7 @@ public class LightMapTest
 		map.update(100000, m);
 		assertTrue(LightMap.isLive(s));
 		assertEquals("colour times strength at the light", 2 * 1, m.red(0, 24.6f, 24.6f), 0.5f);
-		assertEquals(0.5f * m.red(0, 24.6f, 24.6f), m.a[0][(int) (24.6f * 4)][(int) (24.6f * 4) * 4 + 1], 0.01f);
+		assertEquals(0.5f * m.red(0, 24.6f, 24.6f), m.a[0][0][(int) (24.6f * 4)][(int) (24.6f * 4) * 4 + 1], 0.01f);
 		assertEquals("alone, it is the whole", 1, m.lead(0, 24.6f, 24.6f), 0.01f);
 		float[] at = m.place(0, 24.6f, 24.6f);
 		assertEquals("the light's place", s.x, at[0], 2);
@@ -355,8 +365,8 @@ public class LightMapTest
 	@Test
 	public void aLightBakedAgainToTheSameResultSendsNothing()
 	{
-		// a model at 200 units appears in the light's reach, which has a fire at 40 units: it is baked again, and the
-		// result is what it was
+		// a model at 225 units, over the top layer's middle, appears in the light's reach, which has a fire at 40 units: it
+		// is baked again, and the result is what it was
 		LightMap map = new LightMap(0);
 		map.setBlockers(new BakeScene().modelBox(0, 4 * 30, 4 * 24, 0, 0, 32, 32, 0, 30).blockers(1));
 		LightMap.Source s = source(0, 24.5f, 24.5f, 40, 6, 2);
@@ -364,7 +374,7 @@ public class LightMapTest
 		Mirror m = new Mirror();
 		settle(map, m);
 		int bakes = s.generation, blocks = m.blocks;
-		map.setBlockers(new BakeScene().modelBox(0, 4 * 30, 4 * 24, 0, 0, 32, 32, 0, 30).modelBox(0, 4 * 25, 4 * 24, 0, 0, 32, 32, 200, 230)
+		map.setBlockers(new BakeScene().modelBox(0, 4 * 30, 4 * 24, 0, 0, 32, 32, 0, 30).modelBox(0, 4 * 25, 4 * 24, 0, 0, 32, 32, 225, 239)
 			.blockers(2));
 		settle(map, m);
 		assertEquals(bakes + 1, s.generation);

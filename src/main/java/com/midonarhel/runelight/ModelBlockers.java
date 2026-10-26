@@ -10,10 +10,11 @@ import java.util.Arrays;
  * - a mask of HEIGHT_BINS bins of BIN_HEIGHT units above the storey's floor, set for the bins a model reaches;
  * - for each BAND (a quarter of the bins), the box in the cell (to the unit) that the models of the band fill.
  *
- * A light is only stopped by what stands at its own height (ModelBlockers.box): the bins within one of its own. A
- * barrel, a crate, a table or a counter never shades a torch that hangs above it, a pillar, a bookcase, an open furnace
- * door or a statue does shade a lamp at their height, and a box is only as big as the model is in the cell, so what
- * stops the light is the model's own size and not a cell's. Walls are the wall map's.
+ * A light is only stopped by what stands where its line goes (runs): the runs of bins joined to one another, each with its
+ * box and its heights. A barrel, a crate, a table or a counter never shades a torch that hangs above it, a pillar, a
+ * bookcase, an open furnace door or a statue does shade a lamp at their height, an awning or a roof shades what is
+ * behind it at its height and above, and a box is only as big as the model is in the cell, so what stops the light is
+ * the model's own size and not a cell's. Walls are the wall map's.
  *
  * Triangles that lie flat (floors, tabletops, ceilings, stair treads) are left out: they stop no light going along the
  * ground, and a ceiling would shut every lamp in. The bins reach to 16 * 15 = 240 units, where a storey's ceiling is.
@@ -115,30 +116,42 @@ final class ModelBlockers
 		return r < 0 ? 0 : masks[r] & 0xffff;
 	}
 
+	/** The numbers of a run in runs(): its box, its bottom and top, and whether it is at the light's height. */
+	static final int RUN = 7;
+	/** The most runs a cell has: alternate bins. */
+	static final int MAX_RUNS = HEIGHT_BINS / 2;
+
 	/**
-	 * The box (x0, z0, x1, z1, in units of the cell, 0 to 1) of what stands in the cell at a light's height: in the
-	 * light's bin or the one either side of it.
+	 * The runs of what stands in the cell: each set of bins joined to one another, with the box (x0, z0, x1, z1, in units of
+	 * the cell, 0 to 1) of the bands it reaches, the heights (units above the floor) it reaches, and whether it is at a
+	 * light's height: it has a bin in the light's bin or the one either side of it.
 	 *
-	 * @param out the box
-	 * @return false when nothing does
+	 * @param out RUN numbers for each run, lowest first
+	 * @return the number of runs, 0 when nothing stands in the cell
 	 */
-	boolean box(int plane, int gx, int gz, int bin, float[] out)
+	int runs(int plane, int gx, int gz, int bin, float[] out)
 	{
 		int r = record(plane, gx, gz);
 		if (r < 0)
 		{
-			return false;
+			return 0;
 		}
+		int all = masks[r] & 0xffff;
 		int window = ((1 << Math.min(HEIGHT_BINS, bin + 2)) - 1) & ~((1 << Math.max(0, bin - 1)) - 1);
-		int mask = masks[r] & window;
-		if (mask == 0)
+		int count = 0;
+		for (int lo = 0; lo < HEIGHT_BINS; ++lo)
 		{
-			return false;
-		}
-		float x0 = CELL, z0 = CELL, x1 = 0, z1 = 0;
-		for (int band = 0; band < BANDS; ++band)
-		{
-			if ((mask >> band * BINS_PER_BAND & (1 << BINS_PER_BAND) - 1) != 0)
+			if ((all >> lo & 1) == 0)
+			{
+				continue;
+			}
+			int hi = lo;
+			while (hi + 1 < HEIGHT_BINS && (all >> hi + 1 & 1) != 0)
+			{
+				++hi;
+			}
+			float x0 = CELL, z0 = CELL, x1 = 0, z1 = 0;
+			for (int band = lo / BINS_PER_BAND; band <= hi / BINS_PER_BAND; ++band)
 			{
 				int o = r * RECORD + band * BOX;
 				x0 = Math.min(x0, boxes[o]);
@@ -146,12 +159,17 @@ final class ModelBlockers
 				x1 = Math.max(x1, boxes[o + 2]);
 				z1 = Math.max(z1, boxes[o + 3]);
 			}
+			int o = count++ * RUN;
+			out[o] = x0 / CELL;
+			out[o + 1] = z0 / CELL;
+			out[o + 2] = x1 / CELL;
+			out[o + 3] = z1 / CELL;
+			out[o + 4] = lo * BIN_HEIGHT;
+			out[o + 5] = (hi + 1) * BIN_HEIGHT;
+			out[o + 6] = (window >> lo & ((1 << hi - lo + 1) - 1)) != 0 ? 1 : 0;
+			lo = hi + 1;
 		}
-		out[0] = x0 / CELL;
-		out[1] = z0 / CELL;
-		out[2] = x1 / CELL;
-		out[3] = z1 / CELL;
-		return true;
+		return count;
 	}
 
 	/** The bin a height above the floor (world units) is in. */

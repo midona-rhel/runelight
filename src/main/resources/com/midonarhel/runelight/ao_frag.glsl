@@ -11,12 +11,13 @@
 #include "weather_ground_ao.glsl"
 #include "skylight_ao.glsl"
 #include "water_common.glsl"
+#include "material_target.glsl"
 
 uniform float aoRadius;  // world units
 uniform int aoSamples;   // 0: only the geometry for the upsamples (AO off, fog on)
 uniform int shadowsEnabled;
 uniform vec3 casterDir;  // toward the light that casts shadows
-uniform SCENE_SAMPLER sceneMaterial;  // r emissive, g transmissive, b water, a snow (frag.glsl)
+uniform SCENE_SAMPLER sceneMaterial;  // the material and the face's normal (material_target.glsl)
 uniform usampler2D waterAoSurface;  // the water surface pass's target (water_frag.glsl)
 uniform int waterAoOn;
 uniform ivec4 waterAoRect;  // the pixels the surface can cover (water.glsl's waterRect)
@@ -57,7 +58,7 @@ void main() {
   float noise = ign(gl_FragCoord.xy);
   FragShadow.a = skylightVisibility(p, n);
   if (shadowsEnabled == 1) {
-    vec2 m = texelFetch(sceneMaterial, px, 0).rg;
+    vec2 m = materialUnpack(texelFetch(sceneMaterial, px, 0)).rg;
     // emissive surfaces show no shading; a leaf lit from behind looks up its shadow on the lit side
     if (m.r < 0.999) {
       FragShadow.r = shadowFactor(p, dot(n, casterDir) < 0.0 && m.g > 0.0 ? -n : n, noise);
@@ -69,7 +70,7 @@ void main() {
   // land terrain is never under water: the surface runs on under the banks, hidden (water.glsl)
   float keep = 1.0;
   if (waterAoOn == 1 && all(greaterThanEqual(px, waterAoRect.xy)) && all(lessThan(px, waterAoRect.zw))
-    && texelFetch(sceneMaterial, px, 0).b >= 0.25) {
+    && materialUnpack(texelFetch(sceneMaterial, px, 0)).b >= 0.25) {
     keep = 1.0 - smoothstep(0.0, AO_WATER_DEPTH, waterDepthUnder(waterAoSurface, waterAoRect, px, p));
     if (keep <= 0.0) {
       return;

@@ -6,25 +6,28 @@ import org.lwjgl.BufferUtils;
 import static org.lwjgl.opengl.GL33C.*;
 
 /**
- * The light map's textures (LightMap): one RGBA16F array, two layers per storey (the sums of colour and lead, then the
- * lights' mean place and brightest light; both filtered), cells * cells texels a layer: 736 x 736 for the largest scene, 34.7 MB all told. Zero from the start, so a
- * cell nothing was sent for is dark; blocks are sent into it as LightMap bakes them.
+ * The light map's texture (LightMap): one RGBA16F 3D texture, cells * cells texels in each of its slices, LAYERS of
+ * them for each storey's colour sums and lead (the height layers, filtered across) and then one for each storey's
+ * lights' mean place and brightest light (never filtered across): 736 x 736 for the largest scene, 86.7 MB all told.
+ * Zero from the start, so a cell nothing was sent for is dark; blocks are sent into it as LightMap bakes them.
  */
 final class LightMapTexture implements LightMap.Sink
 {
-	/** Layers per storey: the sums of colour, and the lights' places. */
-	static final int LAYERS = 2;
+	/** Slices of colour for a storey: the height layers. */
+	static final int LAYERS = LightMapBake.HEIGHT_LAYERS;
+	/** Slices in all: the colour of each layer of each storey, then each storey's places. */
+	static final int SLICES = (LAYERS + 1) * WallMap.PLANES;
 
 	private int texture;
 	private int cells;
-	private final ShortBuffer staging = BufferUtils.createShortBuffer(LightMap.BLOCK * LightMap.BLOCK * 4);
+	private final ShortBuffer staging = BufferUtils.createShortBuffer(LAYERS * LightMap.BLOCK * LightMap.BLOCK * 4);
 	private int uploads;
 	private int generation;
 
 	/** Bytes the texture takes on the GPU. */
 	static long bytes(int cells)
 	{
-		return (long) cells * cells * 8 * LAYERS * WallMap.PLANES;
+		return (long) cells * cells * 8 * SLICES;
 	}
 
 	/** Make the texture the size the scene needs; it starts empty. False when there is no scene. */
@@ -42,37 +45,38 @@ final class LightMapTexture implements LightMap.Sink
 		this.cells = cells;
 		texture = glGenTextures();
 		++generation;
-		glBindTexture(GL_TEXTURE_2D_ARRAY, texture);
-		glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-		glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+		glBindTexture(GL_TEXTURE_3D, texture);
+		glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+		glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
 		// past the scene there is no light
-		glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_BORDER);
-		glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_BORDER);
-		glTexParameterfv(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_BORDER_COLOR, new float[4]);
-		int layers = LAYERS * WallMap.PLANES;
-		glTexImage3D(GL_TEXTURE_2D_ARRAY, 0, GL_RGBA16F, cells, cells, layers, 0, GL_RGBA, GL_HALF_FLOAT, (ByteBuffer) null);
-		// glTexImage3D leaves it undefined: zero a layer at a time
+		glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_BORDER);
+		glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_BORDER);
+		glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_WRAP_R, GL_CLAMP_TO_EDGE);
+		glTexParameterfv(GL_TEXTURE_3D, GL_TEXTURE_BORDER_COLOR, new float[4]);
+		glTexImage3D(GL_TEXTURE_3D, 0, GL_RGBA16F, cells, cells, SLICES, 0, GL_RGBA, GL_HALF_FLOAT, (ByteBuffer) null);
+		// glTexImage3D leaves it undefined: zero a slice at a time
 		ByteBuffer zero = BufferUtils.createByteBuffer(cells * cells * 8);
-		for (int layer = 0; layer < layers; ++layer)
+		for (int slice = 0; slice < SLICES; ++slice)
 		{
-			glTexSubImage3D(GL_TEXTURE_2D_ARRAY, 0, 0, 0, layer, cells, cells, 1, GL_RGBA, GL_HALF_FLOAT, zero);
+			glTexSubImage3D(GL_TEXTURE_3D, 0, 0, 0, slice, cells, cells, 1, GL_RGBA, GL_HALF_FLOAT, zero);
 		}
-		glBindTexture(GL_TEXTURE_2D_ARRAY, 0);
+		glBindTexture(GL_TEXTURE_3D, 0);
 		return true;
 	}
 
 	@Override
 	public void block(int plane, int bx, int bz, short[] a, short[] b)
 	{
-		glBindTexture(GL_TEXTURE_2D_ARRAY, texture);
-		send(plane * LAYERS, bx, bz, a);
-		send(plane * LAYERS + 1, bx, bz, b);
-		glBindTexture(GL_TEXTURE_2D_ARRAY, 0);
+		glBindTexture(GL_TEXTURE_3D, texture);
+		send(plane * LAYERS, LAYERS, bx, bz, a);
+		send(LAYERS * WallMap.PLANES + plane, 1, bx, bz, b);
+		glBindTexture(GL_TEXTURE_3D, 0);
 		uploads++;
 	}
 
-	private void send(int layer, int bx, int bz, short[] data)
+	private void send(int slice, int slices, int bx, int bz, short[] data)
 	{
+		int shorts = slices * LightMap.BLOCK * LightMap.BLOCK * 4;
 		staging.clear();
 		if (data != null)
 		{
@@ -80,14 +84,14 @@ final class LightMapTexture implements LightMap.Sink
 		}
 		else
 		{
-			for (int i = 0; i < staging.capacity(); ++i)
+			for (int i = 0; i < shorts; ++i)
 			{
 				staging.put((short) 0);
 			}
 		}
 		staging.flip();
-		glTexSubImage3D(GL_TEXTURE_2D_ARRAY, 0, bx * LightMap.BLOCK, bz * LightMap.BLOCK, layer, LightMap.BLOCK,
-			LightMap.BLOCK, 1, GL_RGBA, GL_HALF_FLOAT, staging);
+		glTexSubImage3D(GL_TEXTURE_3D, 0, bx * LightMap.BLOCK, bz * LightMap.BLOCK, slice, LightMap.BLOCK,
+			LightMap.BLOCK, slices, GL_RGBA, GL_HALF_FLOAT, staging);
 	}
 
 	/** Changes whenever the texture is made, empty. */
@@ -110,14 +114,14 @@ final class LightMapTexture implements LightMap.Sink
 	void bind(int unit)
 	{
 		glActiveTexture(GL_TEXTURE0 + unit);
-		glBindTexture(GL_TEXTURE_2D_ARRAY, texture);
+		glBindTexture(GL_TEXTURE_3D, texture);
 		glActiveTexture(GL_TEXTURE0);
 	}
 
 	static void unbind(int unit)
 	{
 		glActiveTexture(GL_TEXTURE0 + unit);
-		glBindTexture(GL_TEXTURE_2D_ARRAY, 0);
+		glBindTexture(GL_TEXTURE_3D, 0);
 		glActiveTexture(GL_TEXTURE0);
 	}
 

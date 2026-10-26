@@ -1,5 +1,6 @@
 package com.midonarhel.runelight;
 
+import java.util.Arrays;
 import org.junit.Test;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
@@ -42,10 +43,19 @@ public class ModelBlockersTest
 		return ModelBlockers.assemble(new ModelBlockers.Zone[]{ModelBlockers.rasterize(c, floors())}, new int[]{1}, new int[]{1}, 1, 128);
 	}
 
+	/** The box and heights of the run of the cell at a light's height, null when nothing is. */
 	private static float[] box(ModelBlockers m, int plane, int gx, int gz, float height)
 	{
-		float[] out = new float[4];
-		return m.box(plane, gx, gz, ModelBlockers.bin(height), out) ? out : null;
+		float[] out = new float[ModelBlockers.MAX_RUNS * ModelBlockers.RUN];
+		int runs = m.runs(plane, gx, gz, ModelBlockers.bin(height), out);
+		for (int r = 0; r < runs; ++r)
+		{
+			if (out[r * ModelBlockers.RUN + 6] != 0)
+			{
+				return Arrays.copyOfRange(out, r * ModelBlockers.RUN, r * ModelBlockers.RUN + 6);
+			}
+		}
+		return null;
 	}
 
 	/** A box with four sides, 12 units (x) and 8 (z) in size, as the prop in the tests. */
@@ -94,6 +104,25 @@ public class ModelBlockersTest
 		assertEquals("a torch above it", null, box(m, 0, 32, 32, 120));
 		assertTrue("a pillar stops either", box(m, 0, 32 + 4, 32, 40) != null && box(m, 0, 32 + 4, 32, 150) != null);
 		assertEquals("one bin either side", null, box(m, 0, 32 + 4, 32, 230 + 40));
+	}
+
+	@Test
+	public void aCellHasARunForEachSetOfHeightsAModelReaches()
+	{
+		VoxelCapture c = new VoxelCapture();
+		// a barrel, 70 high, with an awning over it from 150 to 225
+		prop(c, 8, 8, 0, -70);
+		prop(c, 4, 4, -150, -224);
+		ModelBlockers m = assemble(c);
+		float[] out = new float[ModelBlockers.MAX_RUNS * ModelBlockers.RUN];
+		assertEquals(2, m.runs(0, 32, 32, ModelBlockers.bin(40), out));
+		assertEquals(0, out[4], 0);
+		assertEquals(75, out[5], 0);
+		assertEquals("at the light", 1, out[6], 0);
+		assertEquals(150, out[ModelBlockers.RUN + 4], 0);
+		assertEquals(225, out[ModelBlockers.RUN + 5], 0);
+		assertEquals("far above it", 0, out[ModelBlockers.RUN + 6], 0);
+		assertEquals(0, m.runs(0, 32 + 2, 32, ModelBlockers.bin(40), out));
 	}
 
 	@Test

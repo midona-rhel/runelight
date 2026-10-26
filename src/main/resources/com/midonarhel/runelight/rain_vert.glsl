@@ -9,6 +9,7 @@
 #include "sky.glsl"
 #include "weather_common.glsl"
 #include "water_common.glsl"
+#include "material_target.glsl"
 #include "wind.glsl"
 #include "weather_wade.glsl"
 
@@ -16,7 +17,7 @@ uniform int dropCount;         // the instances before this many are drops; the 
 uniform int mistStage;         // > 0: one of the mist's stages (rain_frag.glsl), one triangle over the target
 uniform float mist;            // how strong the mist is
 uniform int wadeDroplets;      // 1: the instances are the droplets of wading steps, not drops or splashes
-uniform SCENE_SAMPLER sceneMaterial;  // r emissive, b water bed (frag.glsl)
+uniform SCENE_SAMPLER sceneMaterial;  // the material and the face's normal (material_target.glsl)
 uniform usampler2D waterSurface;  // the water pass's pixels, 0 where there is none (water_common.glsl)
 uniform ivec4 waterRect;
 uniform vec3 wind;             // steady wind on the drops, world units per second; with the gust, the carry and the slant
@@ -233,7 +234,7 @@ void wadeDroplet(int id, vec2 corner) {
   vec4 cf = viewProj * vec4(foot, 1.0);
   vec2 px = (cf.xy / cf.w * 0.5 + 0.5) * vec2(sceneViewport.zw) + vec2(sceneViewport.xy);
   if (cf.w < NEAR || any(greaterThan(abs(cf.xy), vec2(cf.w))) || abs(sceneViewDepth(px) - cf.w) > cf.w * SPLASH_SURFACE_TOLERANCE + 8.0
-    || waterSurfaceAt(waterSurface, waterRect, ivec2(px)).b != 0u || texelFetch(sceneMaterial, ivec2(px), 0).r > 0.01) {
+    || waterSurfaceAt(waterSurface, waterRect, ivec2(px)).b != 0u || materialUnpack(texelFetch(sceneMaterial, ivec2(px), 0)).r > 0.01) {
     gl_Position = CULLED;
     return;
   }
@@ -277,7 +278,7 @@ void impact(int id, vec2 corner) {
   vec4 cf = viewProj * vec4(p, 1.0);
   vec2 px = (cf.xy / cf.w * 0.5 + 0.5) * vec2(sceneViewport.zw) + vec2(sceneViewport.xy);
   if (cf.w < NEAR || any(greaterThan(abs(cf.xy), vec2(cf.w))) || abs(sceneViewDepth(px) - cf.w) > cf.w * SPLASH_SURFACE_TOLERANCE + 8.0
-    || waterSurfaceAt(waterSurface, waterRect, ivec2(px)).b != 0u || texelFetch(sceneMaterial, ivec2(px), 0).b > 0.75) {
+    || waterSurfaceAt(waterSurface, waterRect, ivec2(px)).b != 0u || materialUnpack(texelFetch(sceneMaterial, ivec2(px), 0)).b > 0.75) {
     gl_Position = CULLED;
     return;
   }

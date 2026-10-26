@@ -18,6 +18,7 @@
 #define SKY_FRAME_CONSTANTS
 #include "sky.glsl"
 #include "materials.glsl"
+#include "material_target.glsl"
 #include "environment.glsl"
 #include cluster_config
 #include light_map_config
@@ -51,7 +52,7 @@ uniform sampler2D cloudHalf;
 #define TILE_SIZE 128.0
 
 uniform sampler2D sceneAlpha;  // transparent geometry, already lit, premultiplied
-uniform SCENE_SAMPLER sceneMaterial;  // r emissive, g transmissive, b water, a snow (frag.glsl)
+uniform SCENE_SAMPLER sceneMaterial;  // the material and the face's normal (material_target.glsl)
 #include debug_view
 uniform int aoEnabled;
 uniform float aoStrength;
@@ -191,28 +192,6 @@ vec3 skyBehind(vec2 px, vec3 dir, vec3 fogColor, bool sunAndSky) {
 // lights.json colors are linear and strengths are 117 HD's, used as they are; this is only a global trim
 #define POINT_LIGHT_SCALE 1.0
 
-// How much of a point light a surface takes by its angle to it, N.L. Smooth vertex normals tilt a wall's face by
-// several degrees across each tile, which for a light close to the wall, at a grazing angle, flips N.L from lit to
-// dark in bands a tile wide with the triangles' diagonal edges. A fire is not a point either: so near a light N.L has
-// a floor, NDL_NEAR_FLOOR at the light and less to nothing at NDL_NEAR_END, which the angle only exceeds, smoothly (a
-// knee NDL_KNEE wide, closing with the distance). A wall beside a light glows in a gradient; a face turned well
-// away (below NDL_AWAY_LOW) stays dark, and a surface that faces the light, or is far from it, is lit as it was.
-#define NDL_NEAR_FULL 48.0
-#define NDL_NEAR_END 640.0
-#define NDL_NEAR_FLOOR 0.5
-#define NDL_KNEE 0.2
-#define NDL_AWAY_LOW -0.35
-#define NDL_AWAY_HIGH 0.05
-float pointLightNdl(float ndl, float dist) {
-  float near = 1.0 - smoothstep(NDL_NEAR_FULL, NDL_NEAR_END, dist);
-  float facing = smoothstep(NDL_AWAY_LOW, NDL_AWAY_HIGH, ndl);
-  float floorNdl = near * NDL_NEAR_FLOOR;
-  float knee = max(near * NDL_KNEE, 1e-3);
-  float s = max(ndl, 0.0) - floorNdl;
-  float lifted = s >= knee ? s : s <= -knee ? 0.0 : (s + knee) * (s + knee) / (4.0 * knee);
-  return facing * (floorNdl + lifted);
-}
-
 int clusterAt(ivec2 px, float z) {
   return clusterEntry((vec2(px) + 0.5 - vec2(sceneViewport.xy)) / vec2(sceneViewport.zw), z);
 }
@@ -224,6 +203,17 @@ int clusterLightCount(int entry) {
     ++count;
   }
   return count;
+}
+
+// The normal a point light's N.L takes. Ground reads as ground by its smooth normal, where a flat one would show the
+// triangles in the light; a wall, a chimney or a counter is flat, and the smooth normal of its model tilts across it
+// (the vertices are shared with the faces next to it, the top and the ends) a few degrees, which at the angle a light
+// beside it meets it draws those faces' diagonals into the glow. So the more a face is upright, the more it takes its
+// own normal (material_target.glsl): from POINT_SMOOTH_FLAT, a slope the ground can have, to POINT_SMOOTH_FULL.
+#define POINT_SMOOTH_FLAT 0.55
+#define POINT_SMOOTH_FULL 0.85
+vec3 pointLightNormal(vec3 smoothNormal, vec3 faceNormal) {
+  return normalize(mix(faceNormal, smoothNormal, smoothstep(POINT_SMOOTH_FLAT, POINT_SMOOTH_FULL, abs(faceNormal.y))));
 }
 
 // returns the light on the front; light through thin foliage from behind goes to throughOut
@@ -239,13 +229,12 @@ vec3 pointLights(int entry, vec3 p, vec3 n, float transmissive, out vec3 through
     vec3 world = p + cameraPos;
     mapPlane = lightMapPlane(world + n * ROOM_NORMAL_BIAS);
     vec3 toLight;
-    float lightY, lightDistance;
-    vec3 baked = lightMapLight(world, world + n * LIGHT_MAP_NORMAL_BIAS, mapPlane, toLight, lightY, lightDistance);
+    float lightY;
+    vec3 baked = lightMapLight(world, world + n * LIGHT_MAP_NORMAL_BIAS, mapPlane, toLight, lightY);
     float bakedNdl = dot(n, toLight);
-    float bakedTaken = pointLightNdl(bakedNdl, lightDistance);
     // Opaque back faces receive neither diffuse light nor foliage transmission.
-    if (bakedTaken > 0.0 || transmissive > 0.0) {
-      sum += baked * (bakedTaken * POINT_LIGHT_SCALE);
+    if (bakedNdl > 0.0 || transmissive > 0.0) {
+      sum += baked * (max(bakedNdl, 0.0) * POINT_LIGHT_SCALE);
       through += baked * (transmission(bakedNdl, dot(-toLight, viewDir), transmissive) * POINT_LIGHT_SCALE);
     }
   }
@@ -267,9 +256,8 @@ vec3 pointLights(int entry, vec3 p, vec3 n, float transmissive, out vec3 through
     }
     vec3 ld = l * inversesqrt(max(d2, 1.0));
     float ndl = dot(n, ld);
-    float taken = pointLightNdl(ndl, sqrt(d2));
     // Opaque back faces receive neither diffuse light nor foliage transmission.
-    if (taken <= 0.0 && transmissive <= 0.0) {
+    if (ndl <= 0.0 && transmissive <= 0.0) {
       continue;
     }
     if (!roomKnown) {
@@ -291,7 +279,7 @@ vec3 pointLights(int entry, vec3 p, vec3 n, float transmissive, out vec3 through
     // 117 HD's falloff; we light in linear space like it does
     float att = 1.0 - sqrt(d2 / r2);
     att *= att;
-    sum += color * att * taken * POINT_LIGHT_SCALE;
+    sum += color * att * max(ndl, 0.0) * POINT_LIGHT_SCALE;
     // thin foliage is also lit from behind: magic tree canopies glow around the lights inside them
     through += color * att * transmission(ndl, dot(-ld, viewDir), transmissive) * POINT_LIGHT_SCALE;
   }
@@ -362,12 +350,14 @@ struct SceneSample {
   vec4 color;     // a: 1 where geometry was drawn, 0 on the clear
   float depth;
   vec3 normal;    // as stored, n * 0.5 + 0.5
-  vec4 material;
+  vec4 material;  // materialUnpack
+  vec3 faceNormal;
 };
 
 SceneSample sceneSample(ivec2 px, int s) {
+  vec4 target = texelFetch(sceneMaterial, px, s);
   return SceneSample(texelFetch(sceneColor, px, s), texelFetch(sceneDepth, px, s).r, texelFetch(sceneNormal, px, s).rgb,
-    texelFetch(sceneMaterial, px, s));
+    materialUnpack(target), materialFaceNormal(target));
 }
 
 // Lights one scene sample of the pixel px: sky or surface, then the transparent layer over it, then the fog.
@@ -492,7 +482,7 @@ vec4 shadeScene(ivec2 px, SceneSample sm, vec4 transparent) {
   int cluster = clusterAt(px, viewDepth(d));
   if ((compositePart == 0 || compositePart == 3) && pointLightsEnabled == 1 && inside) {
     vec3 through;
-    light += pointLights(cluster, p, n, transmissive, through) * mix(1.0, ao, AO_DIRECT);
+    light += pointLights(cluster, p, pointLightNormal(n, sm.faceNormal), transmissive, through) * mix(1.0, ao, AO_DIRECT);
     // the canopy interior SSAO darkens is exactly where light inside a tree shines through
     light += through;
   }
@@ -591,7 +581,7 @@ bool sameSurface(SceneSample a, float vz, ivec2 px, int t) {
     return false;
   }
   return all(lessThanEqual(abs(texelFetch(sceneNormal, px, t).rgb - a.normal), vec3(MSAA_NORMAL_TOLERANCE)))
-    && all(lessThanEqual(abs(texelFetch(sceneMaterial, px, t) - a.material), vec4(MSAA_MATERIAL_TOLERANCE)));
+    && all(lessThanEqual(abs(materialUnpack(texelFetch(sceneMaterial, px, t)) - a.material), vec4(MSAA_MATERIAL_TOLERANCE)));
 }
 
 #if COMPOSITE_PASS == COMPOSITE_MARK

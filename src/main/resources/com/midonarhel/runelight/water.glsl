@@ -222,7 +222,7 @@ vec4 waterTraceReflection(vec3 s, vec3 r, vec3 light, vec2 px) {
         }
       }
       // water reflecting water, and the sky, show the sky
-      bool isWorld = !isSky(texelFetch(sceneDepth, ip, 0).r) && texelFetch(sceneMaterial, ip, 0).b <= 0.75
+      bool isWorld = !isSky(texelFetch(sceneDepth, ip, 0).r) && materialUnpack(texelFetch(sceneMaterial, ip, 0)).b <= 0.75
         && waterSurfaceAt(waterSurface, waterRect, ip).b == 0u;
       if (!isWorld)
         return vec4(0.0);
