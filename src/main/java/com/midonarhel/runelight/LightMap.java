@@ -7,6 +7,8 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.PriorityBlockingQueue;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -58,6 +60,20 @@ final class LightMap
 	static final int INFO_LIGHTS = 16;
 	/** A light further than this (world units) outside the view's reach is let go of. */
 	static final float EVICT_MARGIN = 2560;
+	/**
+	 * How long a scene's first bakes wait for its models (setBlockers): baking before them means baking again, and the
+	 * lights are the clusters' meanwhile.
+	 */
+	static final long MODEL_WAIT_NANOS = 1_000_000_000L;
+	/** More threads than the steady count work while at least this many tasks wait, and leave when idle this long. */
+	static final int BURST_BACKLOG = 6;
+	private static final long BURST_IDLE_MILLIS = 3000;
+	/**
+	 * A block is put together after the bakes of the lights that can reach it from the focus's side: those no further
+	 * from the focus than it is, plus the lights' reach and half a block's diagonal. So it is put together about once,
+	 * when those lights have landed, not after each of the many that reach it.
+	 */
+	static final float BLOCK_HALF_DIAGONAL = BLOCK * LightMapBake.CELL * 0.71f;
 
 	/** A static light: where it is, what it is like, and what the map knows of it. */
 	static final class Source
@@ -72,6 +88,8 @@ final class LightMap
 		int id;
 		boolean registered;
 		boolean retired;
+		// its bake waits for the models
+		boolean held;
 		int generation;
 		LightMapBake.Grid[] grids;
 		int[] needKeys = new int[0], needSeqs = new int[0];
@@ -154,7 +172,9 @@ final class LightMap
 	private final Object lock = new Object();
 	private final PriorityBlockingQueue<Task> tasks = new PriorityBlockingQueue<>();
 	private final List<Thread> threads = new ArrayList<>();
-	private final int threadCount;
+	private final int threadCount, burstCount;
+	private final AtomicInteger burstRunning = new AtomicInteger();
+	private final List<Thread> burstThreadList = new java.util.concurrent.CopyOnWriteArrayList<>();
 	private volatile boolean stopped;
 
 	// guarded by lock
@@ -198,11 +218,24 @@ final class LightMap
 	private boolean sceneLoad;
 	private long sceneLoadNanos;
 	private int bakesPending, combinesQueued;
+	// whether the first bakes of a scene wait for its models, since when, and when the work they held began
+	private float maxRadius;
+	private boolean holding;
+	private long waitStart, heldFrom;
+	// totals for tests and measurements
+	private long totalBakes, totalBakeNanos, totalCombines, totalCombineNanos;
 
 	/** @param threads the baking threads; 0 for none: the work is then done by {@link #runTasks} */
 	LightMap(int threads)
 	{
+		this(threads, threads);
+	}
+
+	/** @param burst the most threads while a lot of work waits (a scene load); the others leave when it is done */
+	LightMap(int threads, int burst)
+	{
 		threadCount = threads;
+		burstCount = Math.max(threads, burst);
 		resetIds();
 	}
 
@@ -220,6 +253,12 @@ final class LightMap
 		return Math.max(1, Math.min(3, Runtime.getRuntime().availableProcessors() / 2));
 	}
 
+	/** More threads for a burst of work: three quarters of the cores, six at the most. */
+	static int burstThreads()
+	{
+		return Math.max(defaultThreads(), Math.min(6, Runtime.getRuntime().availableProcessors() * 3 / 4));
+	}
+
 	void free()
 	{
 		stopped = true;
@@ -228,6 +267,10 @@ final class LightMap
 			t.interrupt();
 		}
 		threads.clear();
+		for (Thread t : burstThreadList)
+		{
+			t.interrupt();
+		}
 		tasks.clear();
 	}
 
@@ -246,6 +289,49 @@ final class LightMap
 			}
 		}
 		tasks.add(new Task(priority, run));
+		if (threadCount > 0 && burstCount > threadCount && tasks.size() >= BURST_BACKLOG
+			&& burstRunning.get() < burstCount - threadCount)
+		{
+			burstRunning.incrementAndGet();
+			Thread t = new Thread(this::burstWork, "RuneLight light map burst");
+			t.setDaemon(true);
+			t.setPriority(Thread.MIN_PRIORITY);
+			burstThreadList.add(t);
+			t.start();
+		}
+	}
+
+	/** A thread for a burst: it works while there is work, and ends when there has been none for a while. */
+	private void burstWork()
+	{
+		try
+		{
+			while (!stopped)
+			{
+				Task t = tasks.poll(BURST_IDLE_MILLIS, TimeUnit.MILLISECONDS);
+				if (t == null)
+				{
+					return;
+				}
+				try
+				{
+					t.run.run();
+				}
+				catch (Throwable ex)
+				{
+					log.warn("Light map task failed", ex);
+				}
+			}
+		}
+		catch (InterruptedException ex)
+		{
+			// done
+		}
+		finally
+		{
+			burstThreadList.remove(Thread.currentThread());
+			burstRunning.decrementAndGet();
+		}
 	}
 
 	private void work()
@@ -286,6 +372,55 @@ final class LightMap
 	 */
 	void setBlockers(LightBlockers next)
 	{
+		setBlockers(next, false);
+	}
+
+	/**
+	 * As setBlockers(next), told whether the scene's models are on the way (next has none yet). The lights are not
+	 * baked for a moment then, MODEL_WAIT_NANOS at the most, so that they are baked once, with the models, and the
+	 * clusters light them meanwhile. Call it every frame: the wait ends by itself.
+	 *
+	 * @param modelsAwaited the models of this scene are being made, next.models is null until they are
+	 */
+	void setBlockers(LightBlockers next, boolean modelsAwaited)
+	{
+		synchronized (lock)
+		{
+			long now = System.nanoTime();
+			boolean wait = next != null && next.models == null && modelsAwaited;
+			long since = waitStart;
+			if (!wait)
+			{
+				waitStart = 0;
+			}
+			else if (waitStart == 0)
+			{
+				waitStart = since = now;
+			}
+			boolean was = holding;
+			holding = wait && now - waitStart < MODEL_WAIT_NANOS;
+			if (was && !holding)
+			{
+				heldFrom = since;
+				log.info("Light map: waited {} ms for the scene's models{}", Math.round((now - since) / 1e6),
+					wait ? ", not there yet: the lights are baked without them" : "");
+			}
+			applyBlockers(next);
+			if (was && !holding)
+			{
+				for (Source s : new ArrayList<>(sources))
+				{
+					if (s.held && s.registered && !s.retired)
+					{
+						rebake(s, s.grids == null);
+					}
+				}
+			}
+		}
+	}
+
+	private void applyBlockers(LightBlockers next)
+	{
 		synchronized (lock)
 		{
 			LightBlockers old = blockers;
@@ -324,7 +459,14 @@ final class LightMap
 			}
 			if (old.models != next.models)
 			{
-				if (next.models != null)
+				if (next.models != null && old.models == null)
+				{
+					// the models come to a scene without: only where they stand, and the solid objects that stop being
+					// whole tiles at the light's height (LightBlockers.solid)
+					next.models.markCells(models);
+					markSolid(next.walls, models);
+				}
+				else if (next.models != null)
 				{
 					next.models.diff(old.models, models);
 				}
@@ -365,6 +507,31 @@ final class LightMap
 			{
 				log.debug("Light map: {} lights baked again, {} cells of walls or solid objects and {} cells of models changed",
 					again, walls.count(), models.count());
+			}
+		}
+	}
+
+	/** Mark the cells of the tiles that a solid object fills on any storey. */
+	private static void markSolid(WallMap walls, CellChanges changes)
+	{
+		int n = LightBlockers.CELLS_PER_TILE;
+		for (int p = 0; p < WallMap.PLANES; ++p)
+		{
+			for (int x = 0; x < walls.size; ++x)
+			{
+				for (int y = 0; y < walls.size; ++y)
+				{
+					if (walls.solid(p, x, y))
+					{
+						for (int j = 0; j < n; ++j)
+						{
+							for (int i = 0; i < n; ++i)
+							{
+								changes.mark(x * n + i, y * n + j, 0);
+							}
+						}
+					}
+				}
 			}
 		}
 	}
@@ -427,6 +594,7 @@ final class LightMap
 				return false;
 			}
 			s.registered = true;
+			maxRadius = Math.max(maxRadius, s.radius);
 			s.id = freeIds.poll();
 			tableUsed = Math.max(tableUsed, s.id + 1);
 			table[s.id * 4] = 1;
@@ -567,6 +735,35 @@ final class LightMap
 		}
 	}
 
+	/** Work done so far: bakes, combines, and the nanoseconds each took; for tests and measurements. */
+	long[] stats()
+	{
+		synchronized (lock)
+		{
+			return new long[] {totalBakes, totalBakeNanos, totalCombines, totalCombineNanos};
+		}
+	}
+
+	/** Whether nothing is baking, waiting to be put together or waiting to be sent, and no bake is held. */
+	boolean idle()
+	{
+		synchronized (lock)
+		{
+			if (bakesPending > 0 || combinesQueued > 0 || !ready.isEmpty() || holding)
+			{
+				return false;
+			}
+			for (Source s : sources)
+			{
+				if (s.held)
+				{
+					return false;
+				}
+			}
+			return true;
+		}
+	}
+
 	/** Cells per side of the map's scene, 0 without one. */
 	int cells()
 	{
@@ -587,11 +784,20 @@ final class LightMap
 	private void rebake(Source s, boolean fresh)
 	{
 		int gen = ++s.generation;
+		if (holding)
+		{
+			// the models are coming: bake once, then
+			s.held = true;
+			return;
+		}
+		s.held = false;
 		float dx = s.x - focusX, dz = s.z - focusZ;
 		if (batch == null)
 		{
 			// a new scene counts from when it was loaded
-			batch = new Batch(sceneLoad ? sceneLoadNanos : System.nanoTime(), sceneLoad);
+			long from = heldFrom != 0 ? heldFrom : System.nanoTime();
+			batch = new Batch(sceneLoad ? Math.min(sceneLoadNanos, from) : from, sceneLoad);
+			heldFrom = 0;
 			sceneLoad = false;
 		}
 		batch.lights++;
@@ -632,6 +838,8 @@ final class LightMap
 			}
 			synchronized (lock)
 			{
+				totalBakes++;
+				totalBakeNanos += took;
 				if (batch != null)
 				{
 					batch.bakeNanos += took;
@@ -776,8 +984,13 @@ final class LightMap
 		{
 			combinePending[k] = true;
 			combinesQueued++;
-			// the blocks first: they are quick and the bakes wait for them
-			submit(-1, () -> combine(k));
+			// among the bakes by distance, behind the lights that reach the block
+			int perSide = blocksPerSide;
+			float bxm = ((k % perSide) * BLOCK + BLOCK / 2f - blockers.offset * LightBlockers.CELLS_PER_TILE) * LightMapBake.CELL;
+			float bzm = ((k / perSide % perSide) * BLOCK + BLOCK / 2f - blockers.offset * LightBlockers.CELLS_PER_TILE) * LightMapBake.CELL;
+			float d = (float) Math.sqrt((bxm - focusX) * (bxm - focusX) + (bzm - focusZ) * (bzm - focusZ));
+			float after = d + maxRadius + BLOCK_HALF_DIAGONAL;
+			submit(after * after, () -> combine(k));
 		}
 	}
 
@@ -854,9 +1067,17 @@ final class LightMap
 		Block block = build(k, plane, bx, bz, seqNow, off, parts);
 		synchronized (lock)
 		{
+			totalCombines++;
+			totalCombineNanos += System.nanoTime() - start;
 			if (batch != null)
 			{
 				batch.blockNanos += System.nanoTime() - start;
+			}
+			if (k >= seq.length || seq[k] != block.seq)
+			{
+				// the block changed again while this was put together, and another thread is putting that one together:
+				// this one must not be sent after it
+				return;
 			}
 			Block old = ready.get(k);
 			if (old == null || old.seq <= block.seq)
@@ -953,6 +1174,17 @@ final class LightMap
 	 */
 	int update(int max, Sink sink)
 	{
+		return update(max, 0, max, sink);
+	}
+
+	/**
+	 * As update(max, sink), but when more blocks are waiting, up to hardMax are sent for as long as the send has taken
+	 * less than budgetNanos: the nearest first, so a scene load is not spread over many frames and a frame is not held
+	 * up by the sending.
+	 */
+	int update(int max, long budgetNanos, int hardMax, Sink sink)
+	{
+		long begin = System.nanoTime();
 		List<Block> send = null;
 		synchronized (lock)
 		{
@@ -967,8 +1199,12 @@ final class LightMap
 			int off = offsetCells();
 			float fx = focusX, fz = focusZ;
 			send.sort((p, q) -> Float.compare(distance(p, off, fx, fz), distance(q, off, fx, fz)));
-			for (int i = 0; i < send.size() && sent < max; ++i)
+			for (int i = 0; i < send.size() && sent < hardMax; ++i)
 			{
+				if (sent >= max && System.nanoTime() - begin >= budgetNanos)
+				{
+					break;
+				}
 				Block bl = send.get(i);
 				synchronized (lock)
 				{

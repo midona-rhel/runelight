@@ -36,6 +36,9 @@ class VoxelBuilder
 	private ForkJoinPool pool;
 	private volatile SceneVoxels voxels;
 	private volatile ModelBlockers modelBlockers;
+	// a scene swap wants its models: -1 from the swap until its build is submitted, then that build's number; 0 once its
+	// models are out (or none is wanted)
+	private final AtomicInteger awaited = new AtomicInteger();
 
 	/** The newest voxels, null before the first build; a new object after every build. */
 	SceneVoxels getVoxels()
@@ -47,6 +50,15 @@ class VoxelBuilder
 	ModelBlockers getModelBlockers()
 	{
 		return modelBlockers;
+	}
+
+	/**
+	 * Whether the models of the scene just swapped in are not made yet: what getModelBlockers holds, if anything, is
+	 * of a scene before.
+	 */
+	boolean modelsAwaited()
+	{
+		return awaited.get() != 0;
 	}
 
 	/** The worker. */
@@ -67,6 +79,7 @@ class VoxelBuilder
 	{
 		buildRequested = true;
 		buildAfterMillis = 0;
+		awaited.set(-1);
 	}
 
 	/** A zone was rebuilt: rebuild the voxels once the changes settle. */
@@ -152,6 +165,7 @@ class VoxelBuilder
 	private void submitBuild(Scene scene, Zone[][] zones, WaterMap waterMap)
 	{
 		int g = ++generation;
+		awaited.compareAndSet(-1, g);
 		int baseZone = RuneLightPlugin.SCENE_OFFSET >> 3;
 		int count = VoxelGrid.SCENE_TILES / 8 + 2;
 		Zone[] list = new Zone[count * count];
@@ -209,6 +223,27 @@ class VoxelBuilder
 		Voxelizer.Zone[] zoneVoxels = new Voxelizer.Zone[n];
 		ModelBlockers.Zone[] blockerZones = new ModelBlockers.Zone[n];
 		AtomicInteger voxelized = new AtomicInteger();
+		// the models that stop light first, and out as soon as they are made: the light map waits for them, and the
+		// voxelizing is the longer part
+		parallel(n, i ->
+		{
+			Zone z = list[i];
+			if (z.modelBlockers == null && z.voxelCapture != null)
+			{
+				z.modelBlockers = ModelBlockers.rasterize(z.voxelCapture, zoneFloors(settings, heights, zx[i], zz[i]));
+			}
+			blockerZones[i] = z.modelBlockers;
+		});
+		long blockerTime = System.nanoTime();
+		if (g == generation)
+		{
+			this.modelBlockers = ModelBlockers.assemble(blockerZones, zx, zz, n, Constants.EXTENDED_SCENE_SIZE * LightBlockers.CELLS_PER_TILE);
+			int wanted = awaited.get();
+			if (wanted > 0 && g >= wanted)
+			{
+				awaited.compareAndSet(wanted, 0);
+			}
+		}
 		parallel(n, i ->
 		{
 			// zones keep their voxels, so a zone reused by the next region load isn't voxelized again
@@ -216,22 +251,19 @@ class VoxelBuilder
 			if (z.voxels == null && z.voxelCapture != null)
 			{
 				z.voxels = Voxelizer.voxelize(z.voxelCapture);
-				z.modelBlockers = ModelBlockers.rasterize(z.voxelCapture, zoneFloors(settings, heights, zx[i], zz[i]));
 				z.voxelCapture = null;
 				voxelized.incrementAndGet();
 			}
 			zoneVoxels[i] = z.voxels;
-			blockerZones[i] = z.modelBlockers;
 		});
 		long voxelTime = System.nanoTime();
 		VoxelGrid grid = VoxelGrid.assemble(zoneVoxels, zx, zz, baseZone, water);
 		SceneVoxels result = new SceneVoxels(grid, baseX, baseY, instance, heights);
 		result.terrain = terrain;
 		this.voxels = result;
-		this.modelBlockers = ModelBlockers.assemble(blockerZones, zx, zz, n, Constants.EXTENDED_SCENE_SIZE * LightBlockers.CELLS_PER_TILE);
 		long gridTime = System.nanoTime();
-		log.info("Voxel build {}: {} new / {} zones, voxelize {} ms, assemble {} ms, total {} ms; {}-unit cells, {}x{}x{}, {} MiB cells",
-			g, voxelized.get(), n, (voxelTime - start) / 1_000_000.0, (gridTime - voxelTime) / 1_000_000.0,
+		log.info("Voxel build {}: {} new / {} zones, light blockers {} ms, voxelize {} ms, assemble {} ms, total {} ms; {}-unit cells, {}x{}x{}, {} MiB cells",
+			g, voxelized.get(), n, (blockerTime - start) / 1_000_000.0, (voxelTime - blockerTime) / 1_000_000.0, (gridTime - voxelTime) / 1_000_000.0,
 			(gridTime - start) / 1_000_000.0, VoxelGrid.VOXEL, grid.nx, grid.ny, grid.nz,
 			grid.cells.length * 4L / (1024.0 * 1024.0));
 	}

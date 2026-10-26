@@ -311,7 +311,10 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 	// the static lights baked into per-storey maps (LightMap), which the composite, the fog and the weather read from
 	// the same unit as the occlusion grids, which the map takes the place of (the shaders have one or the other)
 	private static final int LIGHT_MAP_BLOCKS_PER_FRAME = 24;
-	private final LightMap lightMap = new LightMap(LightMap.defaultThreads());
+	// more are sent in a frame while the sending has taken less than this, up to the most (a scene load has hundreds)
+	private static final long LIGHT_MAP_SEND_BUDGET_NANOS = 1_000_000;
+	private static final int LIGHT_MAP_BLOCKS_MAX = 96;
+	private final LightMap lightMap = new LightMap(LightMap.defaultThreads(), LightMap.burstThreads());
 	private final LightMapTexture lightMapTexture = new LightMapTexture();
 	// how much light each building room gets and the fill it lacks (RoomLight); it reads the blocks sent to the texture
 	private final RoomLight roomLight = new RoomLight();
@@ -2772,7 +2775,9 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 			return false;
 		}
 		cpuTimer.begin(CpuTimer.LIGHT_MAP);
-		ModelBlockers models = voxelBuilder.getModelBlockers();
+		// a scene's models are not the previous scene's: the lights wait for them a moment (LightMap.setBlockers)
+		boolean modelsAwaited = voxelBuilder.modelsAwaited();
+		ModelBlockers models = modelsAwaited ? null : voxelBuilder.getModelBlockers();
 		if (walls != blockerWalls || models != blockerModels || built != blockerRooms || floors != blockerFloors)
 		{
 			lightBlockers = new LightBlockers(walls, models, built.floors, floors);
@@ -2781,7 +2786,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 			blockerRooms = built;
 			blockerFloors = floors;
 		}
-		lightMap.setBlockers(lightBlockers);
+		lightMap.setBlockers(lightBlockers, modelsAwaited);
 		lightMap.setNight(night);
 		lightMap.setFocus(edgeFade.focalX, edgeFade.focalZ);
 		gpuTimer.begin(GpuTimer.LIGHT_MAP);
@@ -2795,7 +2800,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		roomLight.setCells(ready ? lightMap.cells() : 0);
 		if (ready)
 		{
-			lightMap.update(LIGHT_MAP_BLOCKS_PER_FRAME, lightMapSink);
+			lightMap.update(LIGHT_MAP_BLOCKS_PER_FRAME, LIGHT_MAP_SEND_BUDGET_NANOS, LIGHT_MAP_BLOCKS_MAX, lightMapSink);
 		}
 		gpuTimer.end();
 		cpuTimer.end(CpuTimer.LIGHT_MAP);

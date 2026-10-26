@@ -56,6 +56,11 @@ final class LightMapBake
 	static final float MAX_RADIUS = 3200;
 	/** Directions a sweep tells apart: at the far end of a big light still a few world units a direction. */
 	static final int BINS = 2048;
+	/** Bins to a block of the sweep's depths, whose nearest and farthest blocker tell which cells need no closer look. */
+	private static final int BLOCK_SHIFT = 4, BLOCK = 1 << BLOCK_SHIFT, BLOCKS = BINS / BLOCK, BLOCK_LEVELS = 8;
+	/** Cells to a side of the blocks of cells that a sweep settles together, how far (cells) a look in a cell or a block lies from its middle (with room for float rounding), and how near a block can be to be told apart. */
+	private static final int CELL_BLOCK = 4;
+	private static final float CELL_REACH = 0.37f, BLOCK_REACH = (CELL_BLOCK / 2f - 0.25f) * 1.4143f + 0.02f, BLOCK_NEAR = 2.1f * BLOCK_REACH;
 	/** A light is cast this far (world units) off the walls of its cell. */
 	static final float SOURCE_CLEARANCE = 8;
 	/** How far (cells) from a blocked cell the nearest open one is looked for. */
@@ -63,8 +68,11 @@ final class LightMapBake
 	/** The heights above a storey's floor the light is followed to, on the storeys it shines onto through openings. */
 	static final float[] CROSS_HEIGHTS = {32, 96, 160};
 
+	private static final int JOIN_E = 1, JOIN_W = 2, JOIN_N = 4, JOIN_S = 8;
 	private static final int BLUR_REACH = (int) Math.ceil(2.5f * BLUR_SIGMA_CELLS);
 	private static final float[] BLUR = new float[BLUR_REACH + 1];
+	// the weights of a run of b cells before a cell and a after it, and the cell, added in the blur's order
+	private static final float[][] BLUR_WEIGHTS = new float[BLUR_REACH + 1][BLUR_REACH + 1];
 	private static final float GOLDEN_ANGLE = 2.3999632f;
 	private static final float SQRT2 = 1.4142135f;
 	private static final float[] BIN_DX = new float[BINS], BIN_DZ = new float[BINS];
@@ -74,6 +82,22 @@ final class LightMapBake
 		for (int d = 0; d <= BLUR_REACH; ++d)
 		{
 			BLUR[d] = (float) Math.exp(-d * d / (2.0 * BLUR_SIGMA_CELLS * BLUR_SIGMA_CELLS));
+		}
+		for (int b = 0; b <= BLUR_REACH; ++b)
+		{
+			for (int a = 0; a <= BLUR_REACH; ++a)
+			{
+				float weight = 1;
+				for (int d = 1; d <= b; ++d)
+				{
+					weight += BLUR[d];
+				}
+				for (int d = 1; d <= a; ++d)
+				{
+					weight += BLUR[d];
+				}
+				BLUR_WEIGHTS[b][a] = weight;
+			}
 		}
 		for (int k = 0; k < BINS; ++k)
 		{
@@ -150,6 +174,8 @@ final class LightMapBake
 		boolean[] covered = new boolean[0];
 		// the box fills most of the cell: wrap does not go through
 		boolean[] dense = new boolean[0];
+		// per cell, a bit for each of the four steps (JOIN_E, JOIN_W, JOIN_N, JOIN_S) that joined() lets light make
+		byte[] join = new byte[0];
 
 		void reset(int w, int h)
 		{
@@ -163,6 +189,7 @@ final class LightMapBake
 				boxOf = new int[w * h];
 				covered = new boolean[w * h];
 				dense = new boolean[w * h];
+				join = new byte[w * h];
 			}
 			Arrays.fill(east, 0, w * h, true);
 			Arrays.fill(north, 0, w * h, true);
@@ -172,6 +199,20 @@ final class LightMapBake
 			diagonalCount = 0;
 			boxCount = 0;
 			boxCellCount = 0;
+		}
+
+		/** Fill join from the walls and the open cells: once for a layer, for the flood and the blur to share. */
+		void computeJoin()
+		{
+			for (int j = 0; j < h; ++j)
+			{
+				for (int i = 0; i < w; ++i)
+				{
+					int k = j * w + i;
+					join[k] = (byte) ((i + 1 >= w || free[k + 1] && east[k] ? JOIN_E : 0) | (i == 0 || free[k - 1] && east[k - 1] ? JOIN_W : 0)
+						| (j + 1 >= h || free[k + w] && north[k] ? JOIN_N : 0) | (j == 0 || free[k - w] && north[k - w] ? JOIN_S : 0));
+				}
+			}
 		}
 
 		void addBox(int cell, float x0, float z0, float x1, float z1)
@@ -226,12 +267,27 @@ final class LightMapBake
 		private float[] segments = new float[256];
 		private int segmentCount;
 		private final float[] depth = new float[BINS];
+		// the sweep's nearest and farthest blocker over each block of BLOCK bins, and the candidates' cell columns and rows
+		private final float[] blockMin = new float[BLOCK_LEVELS * (BINS / BLOCK)], blockMax = new float[BLOCK_LEVELS * (BINS / BLOCK)];
+		private int[] candX = new int[0], candZ = new int[0], order = new int[0], blockStart = new int[0], blockAdd = new int[0];
+		private int blockCols, blockRows;
 		private int[] candidates = new int[0];
 		private int candidateCount;
 		private short[] hits = new short[0];
 		private byte[] runBefore = new byte[0], runAfter = new byte[0];
 		private float[] vis = new float[0], value = new float[0], value2 = new float[0], mix = new float[0], dist = new float[0];
-		private final Heap heap = new Heap();
+		// the flood's two queues: cells reached by an axis step and by a diagonal step, each in order of distance
+		private float[] axisKey = new float[0], diagKey = new float[0];
+		private int[] axisCell = new int[0], diagCell = new int[0];
+		// the storeys the line from the light to a cell on another storey crosses, and each one's height from the light
+		private final int[] crossStorey = new int[WallMap.PLANES];
+		private final float[] crossNum = new float[WallMap.PLANES];
+		// whether a storey has walls anywhere in the light's rectangle
+		private final boolean[] storeyWalls = new boolean[WallMap.PLANES];
+		// per cell of the light's rectangle, for all the other storeys: its distance from the light, and its tile's place in the floors
+		private float[] cellDistance = new float[0];
+		private int[] cellTile = new int[0];
+		private boolean cellsKnown;
 		private long visits;
 
 		private void size(int cells)
@@ -261,6 +317,7 @@ final class LightMapBake
 	static Result bake(Light light, LightBlockers b, Scratch s)
 	{
 		s.visits = 0;
+		s.cellsKnown = false;
 		float radius = light.radius;
 		int off = b.offset * CELLS_PER_TILE;
 		float lx = light.x / CELL + off, lz = light.z / CELL + off;
@@ -294,9 +351,10 @@ final class LightMapBake
 		for (int n = 0; n < s.candidateCount; ++n)
 		{
 			int k = s.candidates[n];
-			float d = (float) Math.hypot(k % w + 0.5f - sx, k / w + 0.5f - sz) * CELL * invRadius;
+			float d = hypot(k % w + 0.5f - sx, k / w + 0.5f - sz) * CELL * invRadius;
 			value[k] = s.vis[k] * falloff(d);
 		}
+		own.computeJoin();
 		flood(s, own, source[0], source[1], sx, sz, rc);
 		for (int n = 0; n < s.candidateCount; ++n)
 		{
@@ -329,6 +387,12 @@ final class LightMapBake
 		return new Result(Arrays.copyOf(grids, count), s.visits);
 	}
 
+	/** Math.hypot as a float, without its cost: the squares of floats are exact in a double. */
+	private static float hypot(float a, float b)
+	{
+		return (float) Math.sqrt((double) a * a + (double) b * b);
+	}
+
 	/** 117 HD's falloff at a distance in radii. */
 	static float falloff(float d)
 	{
@@ -353,9 +417,18 @@ final class LightMapBake
 		float thin = MIN_BOX / CELL;
 		for (int j = 0; j < h; ++j)
 		{
+			int lastTile = Integer.MIN_VALUE;
+			boolean open = true;
 			for (int i = 0; i < w; ++i)
 			{
-				l.free[j * w + i] = !b.solid(plane, x0 + i, z0 + j, bin >= 0);
+				// a solid object fills its tile: asked once for the cells of a tile that follow one another
+				int tile = Math.floorDiv(x0 + i, CELLS_PER_TILE);
+				if (tile != lastTile)
+				{
+					lastTile = tile;
+					open = !b.solid(plane, x0 + i, z0 + j, bin >= 0);
+				}
+				l.free[j * w + i] = open;
 				if (bin >= 0 && b.models != null && b.models.box(plane, x0 + i, z0 + j, bin, box))
 				{
 					// as thin as MIN_BOX at the least, inside the cell
@@ -694,6 +767,18 @@ final class LightMapBake
 		int cells = l.w * l.h;
 		Arrays.fill(s.hits, 0, cells, (short) 0);
 		Arrays.fill(s.vis, 0, cells, 0);
+		if (s.candX.length < s.candidateCount)
+		{
+			s.candX = new int[s.candidates.length];
+			s.candZ = new int[s.candidates.length];
+		}
+		for (int n = 0; n < s.candidateCount; ++n)
+		{
+			int k = s.candidates[n], j = k / l.w;
+			s.candZ[n] = j;
+			s.candX[n] = k - j * l.w;
+		}
+		groupCandidates(s, l);
 		float half = LIGHT_WIDTH_TILES * CELLS_PER_TILE * 0.5f;
 		int samples = 0;
 		for (int k = 0; k < SAMPLES; ++k)
@@ -718,8 +803,47 @@ final class LightMapBake
 		for (int n = 0; n < s.candidateCount; ++n)
 		{
 			int c = s.candidates[n];
-			s.vis[c] = s.hits[c] * inv;
+			s.vis[c] = (s.hits[c] + s.blockAdd[(s.candZ[n] / CELL_BLOCK) * s.blockCols + s.candX[n] / CELL_BLOCK]) * inv;
 		}
+	}
+
+	/** The candidates grouped by block of CELL_BLOCK x CELL_BLOCK cells: s.order lists them block after block. */
+	private static void groupCandidates(Scratch s, Layer l)
+	{
+		int cols = (l.w + CELL_BLOCK - 1) / CELL_BLOCK, rows = (l.h + CELL_BLOCK - 1) / CELL_BLOCK;
+		s.blockCols = cols;
+		s.blockRows = rows;
+		if (s.blockStart.length < cols * rows + 1)
+		{
+			s.blockStart = new int[cols * rows + 1];
+			s.blockAdd = new int[cols * rows + 1];
+		}
+		if (s.order.length < s.candidateCount)
+		{
+			s.order = new int[s.candidates.length];
+		}
+		int[] start = s.blockStart;
+		Arrays.fill(start, 0, cols * rows + 1, 0);
+		Arrays.fill(s.blockAdd, 0, cols * rows + 1, 0);
+		for (int n = 0; n < s.candidateCount; ++n)
+		{
+			++start[(s.candZ[n] / CELL_BLOCK) * cols + s.candX[n] / CELL_BLOCK + 1];
+		}
+		for (int b = 0; b < cols * rows; ++b)
+		{
+			start[b + 1] += start[b];
+		}
+		// start[b] is the next free place of block b while filling, and the first one of block b + 1 after
+		for (int n = 0; n < s.candidateCount; ++n)
+		{
+			s.order[start[(s.candZ[n] / CELL_BLOCK) * cols + s.candX[n] / CELL_BLOCK]++] = n;
+		}
+		// shift back to the first place of each block
+		for (int b = cols * rows; b > 0; --b)
+		{
+			start[b] = start[b - 1];
+		}
+		start[0] = 0;
 	}
 
 	private static boolean crossesAny(Scratch s, float ax, float az, float bx, float bz)
@@ -747,6 +871,40 @@ final class LightMapBake
 	{
 		float p = dx / (Math.abs(dx) + Math.abs(dz));
 		return dz < 0 ? 3 + p : 1 - p;
+	}
+
+	/**
+	 * Whether a sweep sees every look at a patch of cells (1), none of them (-1), or some (0): the patch's looks all
+	 * lie within reach (cells) of its middle at (cx, cz) from the sweep's point, d away, so they fall in the bins
+	 * around the middle's, and the nearest and the farthest blocker over those bins bound the depths they are
+	 * compared with. Only for patches farther than their reach twice over.
+	 */
+	private static int classify(Scratch s, float cx, float cz, float d, float reach)
+	{
+		int mid = Math.min(BINS - 1, (int) (pseudoAngle(cx, cz) * (BINS / 4f)));
+		// at most 512 bins to a radian of angle, and the arc of a chord of the reach is a few percent over its sine
+		int bins = (int) (538f * reach / d) + 3;
+		int b0 = (mid - bins) >> BLOCK_SHIFT, b1 = (mid + bins) >> BLOCK_SHIFT;
+		float[] blockMin = s.blockMin, blockMax = s.blockMax;
+		int len = b1 - b0 + 1;
+		float lo, hi;
+		if (len >= BLOCKS)
+		{
+			lo = blockMin[(BLOCK_LEVELS - 1) * BLOCKS];
+			hi = blockMax[(BLOCK_LEVELS - 1) * BLOCKS];
+		}
+		else
+		{
+			int k = 31 - Integer.numberOfLeadingZeros(len), o = k * BLOCKS;
+			int u = b0 & (BLOCKS - 1), v = (b1 - (1 << k) + 1) & (BLOCKS - 1);
+			lo = Math.min(blockMin[o + u], blockMin[o + v]);
+			hi = Math.max(blockMax[o + u], blockMax[o + v]);
+		}
+		if (d + reach < lo)
+		{
+			return 1;
+		}
+		return d - reach > hi ? -1 : 0;
 	}
 
 	/**
@@ -812,31 +970,96 @@ final class LightMapBake
 				}
 			}
 		}
-		int w = l.w;
-		for (int n = 0; n < s.candidateCount; ++n)
+		float[] blockMin = s.blockMin, blockMax = s.blockMax;
+		for (int b = 0; b < BLOCKS; ++b)
 		{
-			int k = s.candidates[n];
-			int seen = 0;
-			for (int sj = 0; sj < SUBS; ++sj)
+			float lo = Float.POSITIVE_INFINITY, hi = 0;
+			for (int bin = b * BLOCK; bin < (b + 1) * BLOCK; ++bin)
 			{
-				for (int si = 0; si < SUBS; ++si)
+				float d = depth[bin];
+				lo = d < lo ? d : lo;
+				hi = d > hi ? d : hi;
+			}
+			blockMin[b] = lo;
+			blockMax[b] = hi;
+		}
+		// level k: the nearest and the farthest over 2^k blocks on from each, round the turn
+		for (int k = 1; k < BLOCK_LEVELS; ++k)
+		{
+			int o = k * BLOCKS, p = o - BLOCKS, half = 1 << (k - 1);
+			for (int b = 0; b < BLOCKS; ++b)
+			{
+				int c = p + ((b + half) & (BLOCKS - 1));
+				blockMin[o + b] = Math.min(blockMin[p + b], blockMin[c]);
+				blockMax[o + b] = Math.max(blockMax[p + b], blockMax[c]);
+			}
+		}
+		// blocks of cells that this sweep sees wholly or not at all are settled in one look; the rest cell by cell
+		int[] order = s.order, start = s.blockStart, add = s.blockAdd;
+		for (int bj = 0, blk = 0; bj < s.blockRows; ++bj)
+		{
+			for (int bi = 0; bi < s.blockCols; ++bi, ++blk)
+			{
+				if (start[blk] == start[blk + 1])
 				{
-					float dx = k % w + (si + 0.5f) / SUBS - px, dz = k / w + (sj + 0.5f) / SUBS - pz;
-					float d2 = dx * dx + dz * dz;
-					if (d2 < 1e-6f)
+					continue;
+				}
+				// the middle of the block's cells; every look in them is within BLOCK_REACH of it
+				float cx = (bi + 0.5f) * CELL_BLOCK - px, cz = (bj + 0.5f) * CELL_BLOCK - pz;
+				float c2 = cx * cx + cz * cz;
+				if (c2 >= BLOCK_NEAR * BLOCK_NEAR)
+				{
+					int verdict = classify(s, cx, cz, (float) Math.sqrt(c2), BLOCK_REACH);
+					if (verdict > 0)
 					{
-						seen++;
+						add[blk] += SUBS * SUBS;
 						continue;
 					}
-					int bin = Math.min(BINS - 1, (int) (pseudoAngle(dx, dz) * (BINS / 4f)));
-					float limit = depth[bin];
-					if (limit == Float.POSITIVE_INFINITY || d2 < limit * limit)
+					if (verdict < 0)
 					{
-						seen++;
+						continue;
 					}
 				}
+				for (int m = start[blk]; m < start[blk + 1]; ++m)
+				{
+					int n = order[m], i = s.candX[n], j = s.candZ[n], k = j * l.w + i;
+					float ccx = i + 0.5f - px, ccz = j + 0.5f - pz, cc2 = ccx * ccx + ccz * ccz;
+					if (cc2 >= 2.25f)
+					{
+						int verdict = classify(s, ccx, ccz, (float) Math.sqrt(cc2), CELL_REACH);
+						if (verdict > 0)
+						{
+							s.hits[k] += SUBS * SUBS;
+							continue;
+						}
+						if (verdict < 0)
+						{
+							continue;
+						}
+					}
+					int seen = 0;
+					for (int sj = 0; sj < SUBS; ++sj)
+					{
+						for (int si = 0; si < SUBS; ++si)
+						{
+							float dx = i + (si + 0.5f) / SUBS - px, dz = j + (sj + 0.5f) / SUBS - pz;
+							float d2 = dx * dx + dz * dz;
+							if (d2 < 1e-6f)
+							{
+								seen++;
+								continue;
+							}
+							int bin = Math.min(BINS - 1, (int) (pseudoAngle(dx, dz) * (BINS / 4f)));
+							float limit = depth[bin];
+							if (limit == Float.POSITIVE_INFINITY || d2 < limit * limit)
+							{
+								seen++;
+							}
+						}
+					}
+					s.hits[k] += seen;
+				}
 			}
-			s.hits[k] += seen;
 		}
 		s.visits += s.candidateCount * SUBS * SUBS;
 	}
@@ -850,58 +1073,139 @@ final class LightMapBake
 	 */
 	private static void flood(Scratch s, Layer l, float px, float pz, float sx, float sz, float rc)
 	{
-		int w = l.w;
-		Arrays.fill(s.dist, 0, w * l.h, Float.POSITIVE_INFINITY);
+		int w = l.w, h = l.h;
+		float[] dist = s.dist;
+		Arrays.fill(dist, 0, w * h, Float.POSITIVE_INFINITY);
+		boolean[] dense = l.dense;
+		byte[] join = l.join;
 		int src = (int) Math.floor(pz) * w + (int) Math.floor(px);
 		// the way from the light to the source cell's middle
 		float start = (float) Math.hypot(sx - ((int) Math.floor(px) + 0.5f), sz - ((int) Math.floor(pz) + 0.5f));
-		Heap heap = s.heap;
-		heap.clear();
-		s.dist[src] = start;
-		heap.push(start, src);
-		while (heap.size > 0)
+		// Steps cost 1 or the root of 2, so cells are reached in order of distance by two queues, one for each cost: each
+		// is in order because the cells are taken in order, and the nearer front is the next cell: Dijkstra's order
+		// with no heap. A cell is put in a queue once for every shorter way found to it, at most four of each.
+		int cap = w * h * 4 + 1;
+		if (s.axisKey.length < cap)
 		{
-			int k = heap.pop();
-			float d = heap.popped;
-			if (d > s.dist[k])
+			s.axisKey = new float[cap];
+			s.diagKey = new float[cap];
+			s.axisCell = new int[cap];
+			s.diagCell = new int[cap];
+		}
+		float[] ak = s.axisKey, dk = s.diagKey;
+		int[] ac = s.axisCell, dc = s.diagCell;
+		int ah = 0, at = 0, dh = 0, dt = 0;
+		float limit = rc + 1;
+		dist[src] = start;
+		ak[at] = start;
+		ac[at++] = src;
+		int visits = 0;
+		while (ah < at || dh < dt)
+		{
+			int k;
+			float d;
+			if (dh >= dt || (ah < at && ak[ah] <= dk[dh]))
+			{
+				d = ak[ah];
+				k = ac[ah++];
+			}
+			else
+			{
+				d = dk[dh];
+				k = dc[dh++];
+			}
+			if (d > dist[k])
 			{
 				continue;
 			}
-			s.visits++;
+			visits++;
 			int i = k % w, j = k / w;
-			for (int dj = -1; dj <= 1; ++dj)
+			int jm = join[k];
+			float nAxis = d + 1, nDiag = d + SQRT2;
+			if (nAxis < limit)
 			{
-				for (int di = -1; di <= 1; ++di)
+				// east, west, north, south
+				if ((jm & JOIN_E) != 0 && i + 1 < w)
 				{
-					if ((di == 0 && dj == 0) || !step(l, i, j, di, dj))
+					int nk = k + 1;
+					if (nAxis < dist[nk] && !dense[nk])
+					{
+						dist[nk] = nAxis;
+						ak[at] = nAxis;
+						ac[at++] = nk;
+					}
+				}
+				if ((jm & JOIN_W) != 0 && i > 0)
+				{
+					int nk = k - 1;
+					if (nAxis < dist[nk] && !dense[nk])
+					{
+						dist[nk] = nAxis;
+						ak[at] = nAxis;
+						ac[at++] = nk;
+					}
+				}
+				if ((jm & JOIN_N) != 0 && j + 1 < h)
+				{
+					int nk = k + w;
+					if (nAxis < dist[nk] && !dense[nk])
+					{
+						dist[nk] = nAxis;
+						ak[at] = nAxis;
+						ac[at++] = nk;
+					}
+				}
+				if ((jm & JOIN_S) != 0 && j > 0)
+				{
+					int nk = k - w;
+					if (nAxis < dist[nk] && !dense[nk])
+					{
+						dist[nk] = nAxis;
+						ak[at] = nAxis;
+						ac[at++] = nk;
+					}
+				}
+			}
+			if (nDiag < limit)
+			{
+				// a corner is turned when both ways round it are open, from both sides
+				for (int dj = -1; dj <= 1; dj += 2)
+				{
+					int nj = j + dj;
+					if (nj < 0 || nj >= h)
 					{
 						continue;
 					}
-					int nk = k + dj * w + di;
-					float nd = d + (di != 0 && dj != 0 ? SQRT2 : 1);
-					if (nd < rc + 1 && nd < s.dist[nk] && !l.dense[nk])
+					int vert = dj > 0 ? JOIN_N : JOIN_S, vertBack = dj > 0 ? JOIN_S : JOIN_N;
+					if ((jm & vert) == 0)
 					{
-						s.dist[nk] = nd;
-						heap.push(nd, nk);
+						continue;
+					}
+					for (int di = -1; di <= 1; di += 2)
+					{
+						int ni = i + di;
+						if (ni < 0 || ni >= w)
+						{
+							continue;
+						}
+						int nk = k + dj * w + di;
+						if (!(nDiag < dist[nk]) || dense[nk])
+						{
+							continue;
+						}
+						int horiz = di > 0 ? JOIN_E : JOIN_W, horizBack = di > 0 ? JOIN_W : JOIN_E;
+						int nm = join[nk];
+						if ((jm & horiz) != 0 && (nm & horizBack) != 0 && (nm & vertBack) != 0)
+						{
+							dist[nk] = nDiag;
+							dk[dt] = nDiag;
+							dc[dt++] = nk;
+						}
 					}
 				}
 			}
 		}
-	}
-
-	/** Whether light passes from cell (i, j) to the neighbour (di, dj) away, a corner too when both ways round it are open. */
-	private static boolean step(Layer l, int i, int j, int di, int dj)
-	{
-		if (di == 0 || dj == 0)
-		{
-			return joined(l, i, j, di, dj);
-		}
-		int ni = i + di, nj = j + dj;
-		if (ni < 0 || nj < 0 || ni >= l.w || nj >= l.h)
-		{
-			return false;
-		}
-		return joined(l, i, j, di, 0) && joined(l, i, j, 0, dj) && joined(l, ni, nj, -di, 0) && joined(l, ni, nj, 0, -dj);
+		s.visits += visits;
 	}
 
 	// ---------------------------------------------------------------------------------------------------------
@@ -914,62 +1218,97 @@ final class LightMapBake
 	 */
 	private static void blur(Scratch s, Layer l, float[] value)
 	{
+		blur(s, l, value, 0, 0, l.w - 1, l.h - 1);
+	}
+
+	/**
+	 * The blur of the cells i0..i1, j0..j1 (inclusive). The layer outside the rectangle must have no light in it, and be
+	 * no nearer than the blur's reach to the light there is, or what it would give is left out.
+	 */
+	private static void blur(Scratch s, Layer l, float[] value, int i0, int j0, int i1, int j1)
+	{
 		int w = l.w, h = l.h;
 		float[] tmp = s.mix;
 		byte[] before = s.runBefore, after = s.runAfter;
+		boolean[] open = l.free, dense = l.dense;
+		byte[] join = l.join;
+		// the second pass reads the first's cells up to the reach beyond the rectangle, where there is nothing
+		for (int j = Math.max(0, j0 - BLUR_REACH); j <= Math.min(h - 1, j1 + BLUR_REACH); ++j)
+		{
+			Arrays.fill(tmp, j * w + i0, j * w + i1 + 1, 0f);
+		}
 		for (int pass = 0; pass < 2; ++pass)
 		{
 			boolean x = pass == 0;
 			float[] from = x ? value : tmp, to = x ? tmp : value;
 			int stride = x ? 1 : w;
-			// how many open steps lead on from each cell, either way along the axis (up to the blur's reach)
-			for (int j = 0; j < h; ++j)
+			int stepBefore = x ? JOIN_W : JOIN_S, stepAfter = x ? JOIN_E : JOIN_N;
+			// how many open steps lead on from each cell, either way along the axis (up to the blur's reach); counted
+			// from the reach before the rectangle, which is as far back as it matters
+			int a0 = x ? Math.max(0, i0 - BLUR_REACH) : i0, a1 = x ? Math.min(w - 1, i1 + BLUR_REACH) : i1;
+			int b0 = x ? j0 : Math.max(0, j0 - BLUR_REACH), b1 = x ? j1 : Math.min(h - 1, j1 + BLUR_REACH);
+			for (int j = b0; j <= b1; ++j)
 			{
-				for (int i = 0; i < w; ++i)
+				for (int i = a0; i <= a1; ++i)
 				{
 					int k = j * w + i;
-					int pi = x ? i - 1 : i, pj = x ? j : j - 1;
-					before[k] = (byte) (pi >= 0 && pj >= 0 && l.free[k] && !l.dense[k] && openStep(l, i, j, pi - i, pj - j)
-						? Math.min(BLUR_REACH, before[k - stride] + 1) : 0);
+					boolean first = x ? i == a0 : j == b0;
+					int p = k - stride;
+					before[k] = (byte) (!first && open[k] && !dense[k] && (join[k] & stepBefore) != 0 && !dense[p]
+						? Math.min(BLUR_REACH, before[p] + 1) : 0);
 				}
 			}
-			for (int j = h - 1; j >= 0; --j)
+			for (int j = b1; j >= b0; --j)
 			{
-				for (int i = w - 1; i >= 0; --i)
+				for (int i = a1; i >= a0; --i)
 				{
 					int k = j * w + i;
-					int ni = x ? i + 1 : i, nj = x ? j : j + 1;
-					after[k] = (byte) (ni < w && nj < h && l.free[k] && !l.dense[k] && openStep(l, i, j, ni - i, nj - j)
-						? Math.min(BLUR_REACH, after[k + stride] + 1) : 0);
+					boolean last = x ? i == a1 : j == b1;
+					int n = k + stride;
+					after[k] = (byte) (!last && open[k] && !dense[k] && (join[k] & stepAfter) != 0 && !dense[n]
+						? Math.min(BLUR_REACH, after[n] + 1) : 0);
 				}
 			}
-			for (int k = 0; k < w * h; ++k)
+			for (int j = j0; j <= j1; ++j)
 			{
-				if (!l.free[k] || l.dense[k])
+				for (int k = j * w + i0; k <= j * w + i1; ++k)
 				{
-					continue;
+					if (!open[k] || dense[k])
+					{
+						continue;
+					}
+					int nb = before[k], na = after[k];
+					float sum = from[k];
+					if (BLUR_REACH == 5 && nb == 5 && na == 5)
+					{
+						// the common case, open ground all round: the same sums, in the same order, without the loops
+						sum += BLUR[1] * from[k - stride];
+						sum += BLUR[2] * from[k - 2 * stride];
+						sum += BLUR[3] * from[k - 3 * stride];
+						sum += BLUR[4] * from[k - 4 * stride];
+						sum += BLUR[5] * from[k - 5 * stride];
+						sum += BLUR[1] * from[k + stride];
+						sum += BLUR[2] * from[k + 2 * stride];
+						sum += BLUR[3] * from[k + 3 * stride];
+						sum += BLUR[4] * from[k + 4 * stride];
+						sum += BLUR[5] * from[k + 5 * stride];
+					}
+					else
+					{
+						for (int d = 1; d <= nb; ++d)
+						{
+							sum += BLUR[d] * from[k - d * stride];
+						}
+						for (int d = 1; d <= na; ++d)
+						{
+							sum += BLUR[d] * from[k + d * stride];
+						}
+					}
+					to[k] = sum / BLUR_WEIGHTS[nb][na];
 				}
-				float sum = from[k], weight = 1;
-				for (int d = 1; d <= before[k]; ++d)
-				{
-					sum += BLUR[d] * from[k - d * stride];
-					weight += BLUR[d];
-				}
-				for (int d = 1; d <= after[k]; ++d)
-				{
-					sum += BLUR[d] * from[k + d * stride];
-					weight += BLUR[d];
-				}
-				to[k] = sum / weight;
 			}
 		}
-		s.visits += w * h;
-	}
-
-	/** Whether the blur passes from cell (i, j) to the neighbour one step away: open, and not a model that fills its cell. */
-	private static boolean openStep(Layer l, int i, int j, int di, int dj)
-	{
-		return joined(l, i, j, di, dj) && !l.dense[(j + dj) * l.w + i + di];
+		s.visits += (i1 - i0 + 1) * (j1 - j0 + 1);
 	}
 
 	/** The floor in the middle of a model's box is lit like the open cells beside it. */
@@ -1007,10 +1346,16 @@ final class LightMapBake
 	 */
 	private static void dilate(Layer l, float[] value)
 	{
+		dilate(l, value, 0, 0, l.w - 1, l.h - 1);
+	}
+
+	/** The cells i0..i1, j0..j1 (inclusive) only: no blocked cell outside takes light from the layer. */
+	private static void dilate(Layer l, float[] value, int i0, int j0, int i1, int j1)
+	{
 		int w = l.w, h = l.h;
-		for (int j = 0; j < h; ++j)
+		for (int j = j0; j <= j1; ++j)
 		{
-			for (int i = 0; i < w; ++i)
+			for (int i = i0; i <= i1; ++i)
 			{
 				int k = j * w + i;
 				if (l.free[k])
@@ -1045,10 +1390,16 @@ final class LightMapBake
 
 	private static Grid crop(int plane, int x0, int z0, int w, int h, float[] value)
 	{
+		return crop(plane, x0, z0, w, h, value, 0, 0, w - 1, h - 1);
+	}
+
+	/** The cells i0..i1, j0..j1 (inclusive) are the only ones with light. */
+	private static Grid crop(int plane, int x0, int z0, int w, int h, float[] value, int i0, int j0, int i1, int j1)
+	{
 		int minX = w, minZ = h, maxX = -1, maxZ = -1;
-		for (int j = 0; j < h; ++j)
+		for (int j = j0; j <= j1; ++j)
 		{
-			for (int i = 0; i < w; ++i)
+			for (int i = i0; i <= i1; ++i)
 			{
 				if (value[j * w + i] > 0)
 				{
@@ -1089,66 +1440,118 @@ final class LightMapBake
 		load(l, b, plane, x0, z0, w, h, -1);
 		float[] value = s.value2;
 		Arrays.fill(value, 0, w * h, 0);
-		boolean any = false;
-		for (int k = 0; k < w * h; ++k)
+		// the floors between the light and the storey, and how far each is from the light
+		boolean up = plane > light.plane;
+		int crossings = 0;
+		for (int k = up ? light.plane + 1 : light.plane; up ? k <= plane : k > plane; k += up ? 1 : -1)
 		{
-			if (!l.free[k])
+			s.crossStorey[crossings] = k;
+			s.crossNum[crossings++] = b.floor(k, ltx, lty) - light.y;
+		}
+		double reach = (double) radius * radius;
+		// the storeys in the light's way, and the target, that have a wall anywhere in the rectangle
+		Arrays.fill(s.storeyWalls, false);
+		s.storeyWalls[plane] = b.anyWalls(plane, x0, z0, x0 + w - 1, z0 + h - 1);
+		for (int n = 0; n < crossings; ++n)
+		{
+			int k = s.crossStorey[n];
+			s.storeyWalls[k] = b.anyWalls(k, x0, z0, x0 + w - 1, z0 + h - 1);
+			s.storeyWalls[k - 1] = b.anyWalls(k - 1, x0, z0, x0 + w - 1, z0 + h - 1);
+		}
+		if (!s.cellsKnown)
+		{
+			if (s.cellDistance.length < w * h)
 			{
-				continue;
+				s.cellDistance = new float[w * h];
+				s.cellTile = new int[w * h];
 			}
-			float cx = (x0 + k % w + 0.5f - off) * CELL, cz = (z0 + k / w + 0.5f - off) * CELL;
-			float d2 = (float) Math.hypot(cx - light.x, cz - light.z);
-			if (d2 >= radius)
+			for (int j = 0; j < h; ++j)
 			{
-				continue;
-			}
-			s.visits++;
-			int ctx = (int) Math.floor(cx / 128) + tOff, cty = (int) Math.floor(cz / 128) + tOff;
-			float seen = 0;
-			for (float ref : CROSS_HEIGHTS)
-			{
-				float ry = b.floor(plane, ctx, cty) - ref;
-				if (Math.hypot(d2, ry - light.y) < radius)
+				for (int i = 0; i < w; ++i)
 				{
-					seen += through(light, b, s, plane, cx, cz, ry, x0, z0, off);
+					float cx = (x0 + i + 0.5f - off) * CELL, cz = (z0 + j + 0.5f - off) * CELL;
+					float d2 = hypot(cx - light.x, cz - light.z);
+					s.cellDistance[j * w + i] = d2;
+					if (d2 < radius)
+					{
+						s.cellTile[j * w + i] = b.tileIndex((int) Math.floor(cx / 128) + tOff, (int) Math.floor(cz / 128) + tOff);
+					}
 				}
 			}
-			float v = seen / CROSS_HEIGHTS.length * falloff(d2 / radius);
-			value[k] = v;
-			any |= v > 0;
+			s.cellsKnown = true;
 		}
-		if (!any)
+		// the rectangle the light lands in
+		int minI = w, minJ = h, maxI = -1, maxJ = -1;
+		for (int j = 0; j < h; ++j)
+		{
+			for (int i = 0; i < w; ++i)
+			{
+				float d2 = s.cellDistance[j * w + i];
+				if (!l.free[j * w + i] || d2 >= radius)
+				{
+					continue;
+				}
+				float cx = (x0 + i + 0.5f - off) * CELL, cz = (z0 + j + 0.5f - off) * CELL;
+				s.visits++;
+				float floorY = b.floorAt(plane, s.cellTile[j * w + i]);
+				float seen = 0;
+				for (float ref : CROSS_HEIGHTS)
+				{
+					float dy = floorY - ref - light.y;
+					if ((double) d2 * d2 + (double) dy * dy < reach)
+					{
+						seen += through(light, b, s, plane, crossings, ltx, lty, cx, cz, dy, x0, z0, off);
+					}
+				}
+				float v = seen / CROSS_HEIGHTS.length * falloff(d2 / radius);
+				value[j * w + i] = v;
+				if (v > 0)
+				{
+					minI = Math.min(minI, i);
+					maxI = Math.max(maxI, i);
+					minJ = Math.min(minJ, j);
+					maxJ = Math.max(maxJ, j);
+				}
+			}
+		}
+		if (maxI < 0)
 		{
 			return null;
 		}
-		blur(s, l, value);
-		dilate(l, value);
-		return crop(plane, x0, z0, w, h, value);
+		l.computeJoin();
+		// the light spreads no further than the blur's reach, and a blocked cell takes from its neighbours one step more
+		int i0 = Math.max(0, minI - BLUR_REACH), i1 = Math.min(w - 1, maxI + BLUR_REACH);
+		int j0 = Math.max(0, minJ - BLUR_REACH), j1 = Math.min(h - 1, maxJ + BLUR_REACH);
+		blur(s, l, value, i0, j0, i1, j1);
+		i0 = Math.max(0, i0 - 1);
+		i1 = Math.min(w - 1, i1 + 1);
+		j0 = Math.max(0, j0 - 1);
+		j1 = Math.min(h - 1, j1 + 1);
+		dilate(l, value, i0, j0, i1, j1);
+		return crop(plane, x0, z0, w, h, value, i0, j0, i1, j1);
 	}
 
 	/**
-	 * How much of the light gets from its place to the point (cx, ry, cz) on another storey: 0 when a floor with a tile
-	 * in the way, a wall of the storeys it passes through, or the light's own storey (the share that sees the first
-	 * opening) stops it.
+	 * How much of the light gets from its place to the point (cx, ry, cz) on another storey, ry being dy from the light:
+	 * 0 when a floor with a tile in the way, a wall of the storeys it passes through, or the light's own storey (the
+	 * share that sees the first opening) stops it. It goes by the crossings floors of s.crossStorey, nearest the light first.
 	 */
-	private static float through(Light light, LightBlockers b, Scratch s, int plane, float cx, float cz, float ry,
-		int x0, int z0, int off)
+	private static float through(Light light, LightBlockers b, Scratch s, int plane, int crossings, int ltx, int lty,
+		float cx, float cz, float dy, int x0, int z0, int off)
 	{
 		int tOff = b.offset;
-		int ltx = (int) Math.floor(light.x / 128) + tOff, lty = (int) Math.floor(light.z / 128) + tOff;
-		float dy = ry - light.y;
 		if (Math.abs(dy) < 1e-3f)
 		{
 			return 0;
 		}
-		int from = light.plane;
-		boolean up = plane > from;
+		boolean up = plane > light.plane;
 		float px = light.x, pz = light.z;
-		int storey = from;
+		int storey = light.plane;
 		float seen = -1;
-		for (int k = up ? from + 1 : from; up ? k <= plane : k > plane; k += up ? 1 : -1)
+		for (int n = 0; n < crossings; ++n)
 		{
-			float t = (b.floor(k, ltx, lty) - light.y) / dy;
+			int k = s.crossStorey[n];
+			float t = s.crossNum[n] / dy;
 			if (!(t > 0 && t < 1))
 			{
 				continue;
@@ -1166,7 +1569,7 @@ final class LightMapBake
 					return 0;
 				}
 			}
-			else if (b.walls.blocked(storey, px, pz, qx, qz))
+			else if (s.storeyWalls[storey] && b.blocked(storey, px, pz, qx, qz))
 			{
 				return 0;
 			}
@@ -1174,7 +1577,7 @@ final class LightMapBake
 			pz = qz;
 			storey = up ? k : k - 1;
 		}
-		if (seen < 0 || b.walls.blocked(plane, px, pz, cx, cz))
+		if (seen < 0 || s.storeyWalls[plane] && b.blocked(plane, px, pz, cx, cz))
 		{
 			return 0;
 		}
@@ -1194,72 +1597,4 @@ final class LightMapBake
 	}
 
 	// ---------------------------------------------------------------------------------------------------------
-
-	/** A binary min-heap of cells by distance. */
-	private static final class Heap
-	{
-		private float[] key = new float[256];
-		private int[] item = new int[256];
-		int size;
-		float popped;
-
-		void clear()
-		{
-			size = 0;
-		}
-
-		void push(float k, int v)
-		{
-			if (size == key.length)
-			{
-				key = Arrays.copyOf(key, size * 2);
-				item = Arrays.copyOf(item, size * 2);
-			}
-			int i = size++;
-			while (i > 0)
-			{
-				int parent = (i - 1) >> 1;
-				if (key[parent] <= k)
-				{
-					break;
-				}
-				key[i] = key[parent];
-				item[i] = item[parent];
-				i = parent;
-			}
-			key[i] = k;
-			item[i] = v;
-		}
-
-		int pop()
-		{
-			int top = item[0];
-			popped = key[0];
-			float k = key[--size];
-			int v = item[size];
-			int i = 0;
-			while (true)
-			{
-				int child = i * 2 + 1;
-				if (child >= size)
-				{
-					break;
-				}
-				if (child + 1 < size && key[child + 1] < key[child])
-				{
-					child++;
-				}
-				if (key[child] >= k)
-				{
-					break;
-				}
-				key[i] = key[child];
-				item[i] = item[child];
-				i = child;
-			}
-			key[i] = k;
-			item[i] = v;
-			return top;
-		}
-	}
 }

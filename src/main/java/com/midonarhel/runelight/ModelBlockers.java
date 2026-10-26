@@ -405,6 +405,27 @@ final class ModelBlockers
 		return masks[r] == o.masks[q] && Arrays.equals(boxes, r * RECORD, (r + 1) * RECORD, o.boxes, q * RECORD, (q + 1) * RECORD);
 	}
 
+	/** Mark the cells (of every storey) that have a model. */
+	void markCells(CellChanges changes)
+	{
+		for (int b = 0; b < index.length; ++b)
+		{
+			int[] mine = index[b];
+			if (mine == null)
+			{
+				continue;
+			}
+			int bx = b % perSide, bz = b / perSide % perSide;
+			for (int c = 0; c < BLOCK * BLOCK; ++c)
+			{
+				if (mine[c] != 0)
+				{
+					changes.mark(bx * BLOCK + c % BLOCK, bz * BLOCK + c / BLOCK, 0);
+				}
+			}
+		}
+	}
+
 	/** Mark the cells (of every storey) that differ from another scene's. */
 	void diff(ModelBlockers o, CellChanges changes)
 	{
