@@ -245,6 +245,27 @@ float waveNoise(vec2 p) {
   return mix(mix(a, b, u.x), mix(c, d, u.x), u.y) * 2.0 - 1.0;
 }
 
+// Value noise repeating every 64 lattice points both ways: -1 to 1
+float waterFoamNoise(vec2 p) {
+  vec2 i = floor(p), f = fract(p);
+  vec2 u = f * f * (3.0 - 2.0 * f);
+  vec2 i1 = mod(i + 1.0, 64.0);
+  i = mod(i, 64.0);
+  float a = waterHash(vec3(i, 5.0)), b = waterHash(vec3(i1.x, i.y, 5.0));
+  float c = waterHash(vec3(i.x, i1.y, 5.0)), d = waterHash(vec3(i1, 5.0));
+  return mix(mix(a, b, u.x), mix(c, d, u.x), u.y) * 2.0 - 1.0;
+}
+
+// Where a fall's foam gathers at p (in cells): the cells' edges (waterFoamEdges) warped by slow noise until they wander
+// like veins, thick and thin along their length and broken here and there. 1 along a vein's middle, 0 off it. Only a
+// layout: the foam's bubbles (waterFoamCells) fill it. Repeats every 128 cells down (p.y).
+float waterFoamVeins(vec2 p) {
+  vec2 warp = 0.9 * vec2(waterFoamNoise(p * 0.5), waterFoamNoise(p * 0.5 + 31.7))
+    + 0.35 * vec2(waterFoamNoise(p + 7.1), waterFoamNoise(p + 53.3));
+  float width = 0.5 * smoothstep(-1.0, 0.1, waterFoamNoise(p + 91.0));
+  return 1.0 - smoothstep(0.0, max(width, 1e-4), waterFoamEdges(p + warp));
+}
+
 // Value noise with its gradient, not tiling (hashed lattice): x the value -1 to 1, yz its gradient
 vec3 waveNoiseD(vec2 p) {
   vec2 i = floor(p), f = fract(p);
