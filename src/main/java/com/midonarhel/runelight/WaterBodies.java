@@ -33,8 +33,8 @@ final class WaterBodies
 	// tiles from shore where water counts as open: rivers flow into it
 	static final int OPEN_LAKE = 3;
 	static final int OPEN_OCEAN = 4;
-	// a body running off the scene edge this big, or this far from shore, is sea
-	static final int OCEAN_SIZE = 400;
+	// a body running off the scene edge with water this far from any shore is sea: a long river can be as big as a
+	// bay, but never this wide
 	static final int OCEAN_SHORE = 6;
 	// open sea inside an ocean body: its channel's middle at least this far from the bank (tiles), so the arms and
 	// river mouths that join the sea don't count
@@ -97,7 +97,6 @@ final class WaterBodies
 	// per body
 	int bodies;
 	int[] bodyClass = new int[0];
-	int[] bodySize = new int[0];
 
 	private final int[] queue;
 	private final int[] dist;
@@ -173,16 +172,11 @@ final class WaterBodies
 	{
 		Arrays.fill(body, -1);
 		int count = 0;
-		int[] sizes = new int[16];
 		for (int start = 0; start < water.length; ++start)
 		{
 			if (!water[start] || body[start] != -1)
 			{
 				continue;
-			}
-			if (count == sizes.length)
-			{
-				sizes = Arrays.copyOf(sizes, count * 2);
 			}
 			int head = 0, tail = 0;
 			queue[tail++] = start;
@@ -196,10 +190,9 @@ final class WaterBodies
 				tail = visit(x, y - 1, count, tail);
 				tail = visit(x, y + 1, count, tail);
 			}
-			sizes[count++] = tail;
+			count++;
 		}
 		bodies = count;
-		bodySize = Arrays.copyOf(sizes, count);
 	}
 
 	private int visit(int x, int y, int label, int tail)
@@ -302,7 +295,7 @@ final class WaterBodies
 		}
 		for (int b = 0; b < bodies; ++b)
 		{
-			if (hasSea[b] || edge[b] && (bodySize[b] >= OCEAN_SIZE || maxShore[b] >= OCEAN_SHORE))
+			if (hasSea[b] || edge[b] && maxShore[b] >= OCEAN_SHORE)
 			{
 				bodyClass[b] = OCEAN;
 			}
