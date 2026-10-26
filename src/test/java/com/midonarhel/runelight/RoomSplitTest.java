@@ -103,10 +103,14 @@ public class RoomSplitTest
 		assertEquals(coarse.rooms.get(0).tiles.length, r.rooms.get(0).tiles.length);
 		// light passes it too
 		assertFalse(w.blocked(0, world(10), world(9), world(14), world(9)));
-		// opening and closing it changes nothing about the walls
+		// but the light map sees it: bars let a little light through, and opening the gate lets it all
+		assertTrue(w.seeThrough(0, 12, 9, WallMap.WEST));
 		f[0][12 - OFFSET][9 - OFFSET] = 0;
 		f[0][11 - OFFSET][9 - OFFSET] = 0;
-		assertTrue(w.sameWalls(WallMap.build(f, null, SIZE, OFFSET, 1)));
+		WallMap open = WallMap.build(f, null, SIZE, OFFSET, 1);
+		assertFalse(w.sameWalls(open));
+		assertFalse(open.seeThrough(0, 12, 9, WallMap.WEST));
+		assertEquals(r.rooms.size(), BuildingDetector.split(coarse, settings, open).rooms.size());
 		// a wall of the same line does split
 		for (int y = 8; y < 12; ++y)
 		{
@@ -168,7 +172,7 @@ public class RoomSplitTest
 	}
 
 	@Test
-	public void wallTorchLightsItsOwnRoomOnly()
+	public void aWallTorchIsInItsOwnRoom()
 	{
 		// a house with an interior wall between x 11 and 12; a torch hangs on it on the west side, one on the east side
 		byte[][][] settings = house();
@@ -194,30 +198,10 @@ public class RoomSplitTest
 		float edge = (12 - OFFSET) * 128f, z = (9 - OFFSET + 0.5f) * 128;
 		for (boolean onWest : new boolean[]{true, false})
 		{
+			// a torch hangs on the wall's side, within a few units of it: its room is the side's own
 			float x = onWest ? edge - 6 : edge + 6;
-			// the room test: only its own room
-			float code = m.lightCode(x, -200, z, 0);
-			assertTrue(RoomMap.indoor(code));
-			int[] own = m.roomAt(onWest ? edge - 64 : edge + 64, -40, z), other = m.roomAt(onWest ? edge + 64 : edge - 64, -40, z);
-			assertEquals(1, RoomMap.share(code, own[0], own[1], 0.55f), 0);
-			assertEquals(0, RoomMap.share(code, other[0], other[1], 0.55f), 0);
-			// the cast: the other side of the wall is dark, the near side is lit right up to the wall
-			LightOcclusion.Entry e = new LightOcclusion.Entry(0, 0, 0, 0, x, z, 600);
-			LightOcclusion.castEntry(e, w);
-			LightOcclusion.Atlas a = LightOcclusion.pack(java.util.Collections.singletonList(e), 0);
-			assertEquals(1, LightOcclusion.lookup(a, e, cellOf(e, onWest ? edge - 16 : edge + 16), cellOfZ(e, z)), 1e-6);
-			assertEquals(0, LightOcclusion.lookup(a, e, cellOf(e, onWest ? edge + 16 : edge - 16), cellOfZ(e, z)), 1e-6);
+			assertEquals(onWest ? west : east, m.roomOfLight(x, z, 0));
 		}
-	}
-
-	private static int cellOf(LightOcclusion.Entry e, float x)
-	{
-		return (int) Math.floor((x - e.originX) / e.cell);
-	}
-
-	private static int cellOfZ(LightOcclusion.Entry e, float z)
-	{
-		return (int) Math.floor((z - e.originZ) / e.cell);
 	}
 
 	@Test
@@ -297,15 +281,15 @@ public class RoomSplitTest
 		m.setWalls(w);
 		// tile (9, 10) on the "/" wall: north-west of it the small room, south-east the big one
 		// (world y -1: just above the floor, on plane 0; the test's floors are all at 0)
-		int nw = m.roomAt((9 - OFFSET + 0.25f) * 128, -1, (10 - OFFSET + 0.75f) * 128)[0];
-		int se = m.roomAt((9 - OFFSET + 0.75f) * 128, -1, (10 - OFFSET + 0.25f) * 128)[0];
+		int nw = m.roomAt((9 - OFFSET + 0.25f) * 128, -1, (10 - OFFSET + 0.75f) * 128);
+		int se = m.roomAt((9 - OFFSET + 0.75f) * 128, -1, (10 - OFFSET + 0.25f) * 128);
 		assertTrue(nw > 0 && se > 0);
 		assertNotEquals(nw, se);
-		assertEquals(nw, m.roomAt((8 - OFFSET + 0.5f) * 128, -1, (11 - OFFSET + 0.5f) * 128)[0]);
-		assertEquals(se, m.roomAt((10 - OFFSET + 0.5f) * 128, -1, (9 - OFFSET + 0.5f) * 128)[0]);
+		assertEquals(nw, m.roomAt((8 - OFFSET + 0.5f) * 128, -1, (11 - OFFSET + 0.5f) * 128));
+		assertEquals(se, m.roomAt((10 - OFFSET + 0.5f) * 128, -1, (9 - OFFSET + 0.5f) * 128));
 		// the cut corner: inside the wall the big room, past it outdoors
-		assertEquals(se, m.roomAt((11 - OFFSET + 0.2f) * 128, -1, (8 - OFFSET + 0.8f) * 128)[0]);
-		assertEquals(0, m.roomAt((11 - OFFSET + 0.8f) * 128, -1, (8 - OFFSET + 0.2f) * 128)[0]);
+		assertEquals(se, m.roomAt((11 - OFFSET + 0.2f) * 128, -1, (8 - OFFSET + 0.8f) * 128));
+		assertEquals(0, m.roomAt((11 - OFFSET + 0.8f) * 128, -1, (8 - OFFSET + 0.2f) * 128));
 		// and the texels say so: "/" with the room on the north-west half (0), outdoors across
 		java.nio.FloatBuffer b = java.nio.FloatBuffer.allocate(m.texelCount() * 4);
 		m.texels(b);
@@ -334,11 +318,10 @@ public class RoomSplitTest
 		RoomMap m = RoomMap.build(r, settings, heights, OFFSET);
 		assertNotEquals(m.room(0, 9, 9), m.room(0, 14, 9));
 		assertTrue(m.room(0, 9, 9) > 0 && m.room(0, 14, 9) > 0);
-		// a light in the west room doesn't reach the east one
-		float code = m.lightCode((9 - OFFSET + 0.5f) * 128, -200, (9 - OFFSET + 0.5f) * 128, 0);
-		assertEquals(0, RoomMap.share(code, m.room(0, 14, 9), 0, 0.5f), 0);
-		assertEquals(1, RoomMap.share(code, m.room(0, 10, 10), 0, 0.5f), 0);
-		assertTrue(m.covered((9 - OFFSET + 0.5f) * 128, (9 - OFFSET + 0.5f) * 128, 0));
-		assertTrue(!m.covered((5 - OFFSET + 0.5f) * 128, (5 - OFFSET + 0.5f) * 128, 0));
+		// a light in the west room is in it, and not in the east one
+		int lamp = m.roomOfLight((9 - OFFSET + 0.5f) * 128, (9 - OFFSET + 0.5f) * 128, 0);
+		assertEquals(m.room(0, 10, 10), lamp);
+		assertNotEquals(m.room(0, 14, 9), lamp);
+		assertEquals(0, m.roomOfLight((5 - OFFSET + 0.5f) * 128, (5 - OFFSET + 0.5f) * 128, 0));
 	}
 }

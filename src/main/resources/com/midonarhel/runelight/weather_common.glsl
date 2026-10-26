@@ -159,7 +159,6 @@ vec3 weatherPointLights(vec3 p, vec4 clip, vec3 n, float roofY) {
   float roof = roofY - cameraPos.y + WEATHER_ROOF_BIAS;
   bool overRoof = p.y < roof;
   vec3 sum = vec3(0.0);
-#if LIGHT_MAP
   // the baked lights (light_map.glsl), each as below, at most four. Weather is outside: the map's light is what reaches it
   // through the doors and over the walls.
   if (lightMapOn()) {
@@ -178,7 +177,6 @@ vec3 weatherPointLights(vec3 p, vec4 clip, vec3 n, float roofY) {
       }
     }
   }
-#endif
   LightMask lights = clusterLights(entry);
   int li;
   while (nextLight(lights, li)) {

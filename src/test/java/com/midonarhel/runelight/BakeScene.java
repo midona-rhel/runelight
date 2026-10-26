@@ -37,6 +37,14 @@ final class BakeScene
 		return this;
 	}
 
+	/** Bars, a fence or a railing on the west edge of tile (x, y): they stop movement and not sight. */
+	BakeScene barsWest(int plane, int x, int y)
+	{
+		flags[plane][x - OFFSET][y - OFFSET] |= WallMap.MOVE_WEST;
+		flags[plane][x - 1 - OFFSET][y - OFFSET] |= WallMap.MOVE_EAST;
+		return this;
+	}
+
 	BakeScene southWall(int plane, int x, int y)
 	{
 		flags[plane][x - OFFSET][y - OFFSET] |= WallMap.LOS_SOUTH;

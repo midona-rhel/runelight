@@ -9,10 +9,11 @@ import java.util.Collection;
  * The walls of a scene per plane: for every tile, which of its four edges hold a wall and whether a diagonal wall
  * crosses it. Walls are the edges the collision map says block line of sight (closed doors and windows included,
  * fences and railings not; an open door is no wall), plus the diagonal walls, which the collision map only shows
- * as a fully blocked tile, from their objects. Rooms split along these walls (BuildingDetector.split) and the
+ * as a fully blocked tile, from their objects. Edges that stop movement but not sight (bars, fences, railings,
+ * low walls, gates) are kept apart (seeThrough): they let light through, a little dimmed. Rooms split along these walls (BuildingDetector.split) and the
  * point-light blocking reads the same edges in point_light_blocking.glsl.
  *
- * GL-free and immutable once built, so the light occlusion worker can read it. Arrays are [plane][x][y] in
+ * GL-free and immutable once built, so the light map's workers can read it. Arrays are [plane][x][y] in
  * extended scene tiles, like RoomMap; x is east, y north.
  */
 final class WallMap
@@ -27,6 +28,8 @@ final class WallMap
 	// CollisionDataFlag: line of sight blocked toward a side, and the whole tile
 	static final int LOS_NORTH = 0x400, LOS_EAST = 0x1000, LOS_SOUTH = 0x4000, LOS_WEST = 0x10000;
 	static final int LOS_FULL = 0x20000;
+	// CollisionDataFlag: movement blocked toward a side
+	static final int MOVE_NORTH = 0x2, MOVE_EAST = 0x8, MOVE_SOUTH = 0x20, MOVE_WEST = 0x80;
 
 	// object config: type in the low 5 bits, rotation in bits 6-7; type 9 is a diagonal wall
 	static final int TYPE_DIAGONAL_WALL = 9;
@@ -40,6 +43,8 @@ final class WallMap
 	// tiles the collision map blocks sight across entirely (a solid object); a diagonal wall tile is one too, but
 	// has its bit
 	private final boolean[] full;
+	// per tile, the edges (NORTH...) that stop movement and not sight
+	private final byte[] see;
 
 	/** A diagonal wall object on a tile: kind is DIAG_SW_NE or DIAG_NW_SE. Extended tile coordinates. */
 	static final class Diagonal
@@ -79,6 +84,7 @@ final class WallMap
 		this.scene = scene;
 		bits = new byte[PLANES * size * size];
 		full = new boolean[PLANES * size * size];
+		see = new byte[PLANES * size * size];
 	}
 
 	/** The map as the scene dump has it: its size, offset and scene, the wall bits and the solid tiles. */
@@ -92,6 +98,7 @@ final class WallMap
 		{
 			out.writeBoolean(f);
 		}
+		out.write(see);
 	}
 
 	/** A map without walls. */
@@ -133,6 +140,12 @@ final class WallMap
 					if (b != 0 && x < size && y < size)
 					{
 						m.bits[m.index(plane, x, y)] |= (byte) b;
+					}
+					int s = ((v & MOVE_NORTH) != 0 ? NORTH : 0) | ((v & MOVE_EAST) != 0 ? EAST : 0)
+						| ((v & MOVE_SOUTH) != 0 ? SOUTH : 0) | ((v & MOVE_WEST) != 0 ? WEST : 0);
+					if ((s & ~b) != 0 && x < size && y < size)
+					{
+						m.see[m.index(plane, x, y)] |= (byte) (s & ~b);
 					}
 					if ((v & LOS_FULL) != 0 && x < size && y < size)
 					{
@@ -204,6 +217,45 @@ final class WallMap
 		}
 	}
 
+	/**
+	 * Whether the edge between tile (x, y) and its neighbor toward side holds a wall that stops movement and not sight
+	 * (bars, a fence, a railing, a low wall, a closed gate), and no wall that stops sight.
+	 */
+	boolean seeThrough(int plane, int x, int y, int side)
+	{
+		if (plane < 0 || plane >= PLANES || edge(plane, x, y, side))
+		{
+			return false;
+		}
+		switch (side)
+		{
+			case NORTH:
+				return ((seeBits(plane, x, y) & NORTH) | (seeBits(plane, x, y + 1) & SOUTH)) != 0;
+			case SOUTH:
+				return ((seeBits(plane, x, y) & SOUTH) | (seeBits(plane, x, y - 1) & NORTH)) != 0;
+			case EAST:
+				return ((seeBits(plane, x, y) & EAST) | (seeBits(plane, x + 1, y) & WEST)) != 0;
+			default:
+				return ((seeBits(plane, x, y) & WEST) | (seeBits(plane, x - 1, y) & EAST)) != 0;
+		}
+	}
+
+	/** Whether any edge of the tile is seeThrough. */
+	boolean anySeeThrough(int plane, int x, int y)
+	{
+		return seeThrough(plane, x, y, NORTH) || seeThrough(plane, x, y, EAST) || seeThrough(plane, x, y, SOUTH)
+			|| seeThrough(plane, x, y, WEST);
+	}
+
+	private int seeBits(int plane, int x, int y)
+	{
+		if (x < 0 || y < 0 || x >= size || y >= size)
+		{
+			return 0;
+		}
+		return see[index(plane, x, y)];
+	}
+
 	/** Whether any wall lies in the rectangle of extended tiles (inclusive). */
 	boolean anyIn(int plane, int x0, int y0, int x1, int y1)
 	{
@@ -232,7 +284,8 @@ final class WallMap
 	/** Same walls (and size) as another map. */
 	boolean sameWalls(WallMap o)
 	{
-		return o != null && o.size == size && o.offset == offset && Arrays.equals(o.bits, bits) && Arrays.equals(o.full, full);
+		return o != null && o.size == size && o.offset == offset && Arrays.equals(o.bits, bits) && Arrays.equals(o.full, full)
+			&& Arrays.equals(o.see, see);
 	}
 
 	/**
@@ -249,7 +302,7 @@ final class WallMap
 				int i = index(plane, x, 0);
 				for (int y = 0; y < size; ++y, ++i)
 				{
-					if (bits[i] != o.bits[i] || full[i] != o.full[i])
+					if (bits[i] != o.bits[i] || full[i] != o.full[i] || see[i] != o.see[i])
 					{
 						x0 = Math.min(x0, x);
 						y0 = Math.min(y0, y);
@@ -276,7 +329,7 @@ final class WallMap
 				int i = index(plane, x, 0);
 				for (int y = 0; y < size; ++y, ++i)
 				{
-					if (bits[i] != o.bits[i] || full[i] != o.full[i])
+					if (bits[i] != o.bits[i] || full[i] != o.full[i] || see[i] != o.see[i])
 					{
 						for (int dz = 0; dz < n; ++dz)
 						{

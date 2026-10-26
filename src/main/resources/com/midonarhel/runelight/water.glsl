@@ -337,13 +337,14 @@ void waterShadeHalf(ivec2 hpx) {
   vec3 tAlong = vec3(fwd.x, 0.0, fwd.y), tAcross = vec3(-fwd.y, 0.0, fwd.x);
   vec3 lampSpec = vec3(0.0);
   if (pointLightsEnabled == 1 && lightOn) {
-#if LIGHT_MAP
     // the baked lights (light_map.glsl), each as below
+    int mapPlane = 0;
     if (lightMapOn()) {
       vec3 world = s + cameraPos;
+      mapPlane = lightMapPlane(world);
       vec4 vis;
       ivec4 ids;
-      if (lightMapSlots(world, world, lightMapPlane(world), vis, ids)) {
+      if (lightMapSlots(world, world, mapPlane, vis, ids)) {
         for (int k = 0; k < 4; ++k) {
           vec3 color, ld;
           float lightY;
@@ -354,10 +355,7 @@ void waterShadeHalf(ivec2 hpx) {
         }
       }
     }
-#endif
     int entry = clusterAt(px, viewZ);
-    // lights in buildings stay there (rooms.glsl)
-    ivec2 room = clusterHasLights(entry) ? lightRoomAt(s + cameraPos - vec3(0.0, ROOM_NORMAL_BIAS, 0.0)) : ivec2(-1, 0);
     LightMask lights = clusterLights(entry);
     int li;
     while (nextLight(lights, li)) {
@@ -368,7 +366,10 @@ void waterShadeHalf(ivec2 hpx) {
       if (d2 >= r2)
         continue;
       vec4 colorCode = texelFetch(lightData, li * 2 + 1);
-      vec3 color = colorCode.rgb * roomShare(colorCode.w, room);
+      if (!lightOnStorey(colorCode.w, mapPlane)) {
+        continue;
+      }
+      vec3 color = colorCode.rgb;
       float att = pointLightFalloff(d2, r2);
       vec3 ld = l * inversesqrt(max(d2, 1.0));
       surfaceLight += color * (att * max(-ld.y, 0.2) * LAMP_SURFACE);

@@ -117,7 +117,7 @@ public class SceneLightsTraceTest
 	private static List<PointLight> frame(SceneLights lights, float night)
 	{
 		List<PointLight> out = new ArrayList<>();
-		lights.collect(out, 10, night, 45, 4 * 128, 3 * 128 + 64, 6000, null);
+		lights.collect(out, 10, night, 45, 4 * 128, 3 * 128 + 64, 6000);
 		return out;
 	}
 
@@ -140,7 +140,7 @@ public class SceneLightsTraceTest
 		assertEquals("both at night", 2, frame(lights, 1).size());
 		// the summary a few seconds on counts what the frames showed
 		List<PointLight> out = new ArrayList<>();
-		lights.collect(out, 30, 0, 45, 4 * 128, 3 * 128 + 64, 6000, null);
+		lights.collect(out, 30, 0, 45, 4 * 128, 3 * 128 + 64, 6000);
 		assertEquals(1, out.size());
 	}
 

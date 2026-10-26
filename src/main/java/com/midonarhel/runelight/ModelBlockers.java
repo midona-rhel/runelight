@@ -194,6 +194,12 @@ final class ModelBlockers
 	 */
 	int runs(int plane, int gx, int gz, int bin, int exclude, float[] out)
 	{
+		return runs(plane, gx, gz, bin, exclude, false, out);
+	}
+
+	/** @param skipWalls the records of wall objects are left out too: the tile's see-through walls are the wall map's */
+	int runs(int plane, int gx, int gz, int bin, int exclude, boolean skipWalls, float[] out)
+	{
 		int first = record(plane, gx, gz);
 		if (first < 0)
 		{
@@ -207,7 +213,7 @@ final class ModelBlockers
 		Arrays.fill(z0, CELL);
 		for (int r = first; r >= 0; r = next[r] - 1)
 		{
-			if (exclude != 0 && owners[r] == exclude)
+			if (exclude != 0 && owners[r] == exclude || skipWalls && VoxelCapture.isWall(owners[r]))
 			{
 				continue;
 			}

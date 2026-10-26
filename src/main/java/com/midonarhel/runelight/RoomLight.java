@@ -26,14 +26,13 @@ import org.slf4j.LoggerFactory;
  *
  * Calibration, in the composite's light on an upward surface (linear luminance; outdoors at 45 degrees of sun about
  * 2.7: the sun's 2.64 times its height, plus the ambient and sky light 0.8):
- * - Night: a fully dark room gets TARGET_NIGHT, 0.30, what the constant fill it replaces gave at its centre
- *   (BuildingLights.FILL_TINT of luminance 0.312). A room with a hearth or torches scores past it (a torch of strength 9
+ * - Night: a fully dark room gets TARGET_NIGHT, 0.40, a third above what the constant fill it replaced gave at its
+ *   centre (BuildingLights.FILL_TINT of luminance 0.312). A room with a hearth or torches scores past it (a torch of strength 9
  *   and radius 500 gives the floor within three tiles of it more) and gets none.
- * - Day: the target is DAY_SHARE, 0.32, of the outdoor light: 0.86 at 45 degrees. The fill's shaping (composite_frag.glsl)
- *   gives a room's middle all of it and its walls a third, so a room reads about 25 to 30 percent of the outdoors on
- *   average: a windowless room is lifted to that (score 0, fill 0.86); one with a door open to the day scores the
- *   SKY_SHARE (0.22) of the outdoors the doorway's share of its floor gets, 0.59 at most, and is lifted by the rest, a
- *   fifth of the outdoors with the door wide open; a room with a hearth (score past 1) gets nothing, and stays as lit
+ * - Day: the target is DAY_SHARE, 0.42, of the outdoor light: 1.13 at 45 degrees. The fill's shaping (composite_frag.glsl)
+ *   gives a room's middle all of it and its walls a third, so a room reads about a third to two fifths of the outdoors on
+ *   average: a windowless room is lifted to that (score 0, fill 1.13); one with a door open to the day scores the
+ *   SKY_SHARE (0.22) of the outdoors the doorway's share of its floor gets, 0.59 at most, and is lifted by the rest; a room with a hearth (score past 1) gets nothing, and stays as lit
  *   as its fire makes it. Before this a pub by day read 11 percent of the grass outside; a fully lit room still does
  *   as it did.
  */
@@ -42,9 +41,9 @@ final class RoomLight
 	private static final Logger log = LoggerFactory.getLogger(RoomLight.class);
 
 	/** The least light a room gets at night, in luminance: the old constant fill's, dim but readable. */
-	static final float TARGET_NIGHT = 0.30f;
+	static final float TARGET_NIGHT = 0.40f;
 	/** By day interiors are lifted to this share of the light a sunlit floor outdoors gets: dimmer than outside, legible. */
-	static final float DAY_SHARE = 0.32f;
+	static final float DAY_SHARE = 0.42f;
 	/** Of the target (the shortfall) over which the fill eases in: no fill at a score of target * (1 + KNEE). */
 	static final float KNEE = 0.25f;
 	/** How much of the light map's cell light a floor takes: the cosine of the light's angle, averaged. */

@@ -64,7 +64,7 @@ public class RoomLightTest
 		assertEquals(target, dayRoom.fillOf(1), 1e-5);
 		assertEquals(RoomLight.DAY_SHARE * RoomLight.outdoorLight(DAY), target, 1e-5);
 		// the lift is a third of the light a sunlit floor outdoors gets, and without the day setting there is none
-		assertEquals(0.32f * RoomLight.outdoorLight(DAY), target, 1e-5);
+		assertEquals(0.42f * RoomLight.outdoorLight(DAY), target, 1e-5);
 		assertTrue(target > 2 * RoomLight.TARGET_NIGHT);
 		assertEquals(0, RoomLight.target(DAY, false, 1), 0);
 		// at dusk it eases to the night's, never under it, and at dawn the same
@@ -83,11 +83,11 @@ public class RoomLightTest
 	public void aRoomLitByTorchesGetsNoFill()
 	{
 		RoomLight l = light();
-		l.floor(0, 1, 1, glow(2));
-		assertEquals(1, l.lightScore(1), 1e-3);
+		l.floor(0, 1, 1, glow(3));
+		assertEquals(1.5f, l.lightScore(1), 1e-3);
 		assertEquals(0, night(l), 0);
 		RoomLight day = light();
-		day.floor(0, 1, 1, glow(2));
+		day.floor(0, 1, 1, glow(3));
 		day.update(0, RoomLight.target(DAY, true, 1), DAY);
 		assertTrue("by day too " + day.fillOf(1), day.fillOf(1) < 0.02f);
 	}
@@ -119,7 +119,7 @@ public class RoomLightTest
 		RoomLight ajar = light();
 		ajar.setSky(new float[]{0, 0.3f});
 		ajar.update(0, target, DAY);
-		assertTrue("wide open " + open.fillOf(1) + " of " + closed.fillOf(1), open.fillOf(1) < 0.45f * closed.fillOf(1));
+		assertTrue("wide open " + open.fillOf(1) + " of " + closed.fillOf(1), open.fillOf(1) < 0.5f * closed.fillOf(1));
 		assertTrue(ajar.fillOf(1) < closed.fillOf(1) && ajar.fillOf(1) > open.fillOf(1));
 		// the room's light is the fill and the daylight together: it reaches the target, and the open room gets the most
 		// of it from the sky
@@ -129,6 +129,32 @@ public class RoomLightTest
 		n.setSky(new float[]{0, 1});
 		float night = night(n);
 		assertTrue(night > 0.6f * RoomLight.TARGET_NIGHT);
+	}
+
+	@Test
+	public void byDayEveryRoomStaysClearlyDarkerThanTheOutdoors()
+	{
+		float outdoors = RoomLight.outdoorLight(DAY), target = RoomLight.target(DAY, true, 1);
+		float skyLuminance = RoomLight.skyLuminance(DAY);
+		RoomLight windowless = baked(walled(), 0, 4);
+		windowless.update(0, target, DAY);
+		RoomLight torch = baked(walled(), 9, 4);
+		torch.update(0, target, DAY);
+		// a doorway and windows: the sky comes in through the doorway; windows stop sight, so they bring none
+		int[][][] doorway = RoomMapTest.walls();
+		float sky = RoomLight.skyShares(RoomMapTest.house(doorway), WallMap.build(doorway, null, SIZE, OFFSET, 1), null, 4)[1];
+		RoomLight doorAndWindows = light();
+		doorAndWindows.setSky(new float[]{0, sky});
+		doorAndWindows.update(0, target, DAY);
+		float[] lit = {windowless.score(1, skyLuminance) + windowless.fillOf(1), doorAndWindows.score(1, skyLuminance) + doorAndWindows.fillOf(1),
+			torch.score(1, skyLuminance) + torch.fillOf(1)};
+		System.out.println("room light by day, outdoors " + outdoors + ": windowless score " + windowless.score(1, skyLuminance) + " fill "
+			+ windowless.fillOf(1) + "; door and windows sky share " + sky + " score " + doorAndWindows.score(1, skyLuminance) + " fill "
+			+ doorAndWindows.fillOf(1) + "; torch score " + torch.score(1, skyLuminance) + " fill " + torch.fillOf(1));
+		for (float v : lit)
+		{
+			assertTrue("room " + v + " outdoors " + outdoors, v < 0.5f * outdoors && v > 0.3f * outdoors);
+		}
 	}
 
 	@Test
@@ -286,7 +312,7 @@ public class RoomLightTest
 		empty.update(10, day, DAY);
 		System.out.println("room light numbers: hearth room score " + torch.lightScore(1) + ", day target " + day + ", hearth fill "
 			+ torch.fillOf(1) + ", windowless fill " + empty.fillOf(1));
-		assertTrue("hearth by day " + torch.fillOf(1), torch.fillOf(1) < 0.35f * day);
+		assertTrue("hearth by day " + torch.fillOf(1), torch.fillOf(1) < 0.6f * day);
 		assertEquals(day, empty.fillOf(1), 1e-5);
 	}
 

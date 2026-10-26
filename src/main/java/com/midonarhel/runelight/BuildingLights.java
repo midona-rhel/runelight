@@ -42,16 +42,16 @@ class BuildingLights
 	private final Client client;
 
 	private volatile BuildingDetector.Result result = new BuildingDetector.Result();
-	// rooms per tile for room-aware point lights and fog (RoomMap); null until a scene is built
+	// rooms per tile for the fog and the room fill (RoomMap); null until a scene is built
 	private volatile RoomMap rooms;
 	private Scene builtFor;
 	private int builtBaseX, builtBaseY;
-	// The walls (WallMap) the rooms are split along and the static lights are occluded by: rebuilt every tick from
+	// The walls (WallMap) the rooms are split along and the static lights are baked against: rebuilt every tick from
 	// the collision maps, as doors open and close, plus the diagonal wall objects, followed through spawn events.
 	private volatile WallMap walls;
 	private final Map<GameObject, WallMap.Diagonal> diagonals = new IdentityHashMap<>();
 	private BuildingDetector.Result coarse;
-	// which planes have a floor on every tile (RoomMap.linkStoreys), kept for the rooms rebuilt as doors open
+	// which planes have a floor on every tile (RoomMap.setFloors), kept for the rooms rebuilt as doors open
 	private byte[] filledTiles;
 	private int wallScene;
 	private volatile boolean splitRooms = true;
@@ -135,7 +135,7 @@ class BuildingLights
 		{
 			m.setWalls(w);
 			filledTiles = floorTiles(scene, m.size);
-			m.linkStoreys(filledTiles);
+			m.setFloors(filledTiles);
 		}
 		rooms = m;
 		walls = w;
@@ -313,7 +313,7 @@ class BuildingLights
 						if (n != null)
 						{
 							n.setWalls(w);
-							n.linkStoreys(filledTiles);
+							n.setFloors(filledTiles);
 							rooms = n;
 							return;
 						}

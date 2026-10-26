@@ -333,7 +333,7 @@ final class WeatherAudio
 	{
 		if (visibility < 0)
 		{
-			return rooms != null && rooms.roomAt(x, y, z)[0] > 0 ? 1 : 0;
+			return rooms != null && rooms.roomAt(x, y, z) > 0 ? 1 : 0;
 		}
 		float t = Math.max(0, Math.min(1, (visibility - FULLY_INDOORS) / (FULLY_OUTDOORS - FULLY_INDOORS)));
 		return 1 - t * t * (3 - 2 * t);

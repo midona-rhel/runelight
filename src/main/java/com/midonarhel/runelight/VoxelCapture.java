@@ -6,6 +6,7 @@ import net.runelite.api.GameObject;
 import net.runelite.api.Perspective;
 import net.runelite.api.Point;
 import net.runelite.api.TileObject;
+import net.runelite.api.WallObject;
 
 /**
  * The opaque triangles of one zone as SceneUploader writes them, kept for the voxel proxy (Voxelizer), which is built
@@ -13,6 +14,9 @@ import net.runelite.api.TileObject;
  */
 final class VoxelCapture
 {
+	/** The bit of a wall object's number that tells it from the others. */
+	private static final int WALL = 0x40000000;
+
 	short[] pos = new short[9 * 256];
 	// per triangle: it belongs to swaying foliage, which lets some light through
 	boolean[] foliage = new boolean[256];
@@ -40,8 +44,14 @@ final class VoxelCapture
 			x = object.getX() >> Perspective.LOCAL_COORD_BITS;
 			y = object.getY() >> Perspective.LOCAL_COORD_BITS;
 		}
-		int owner = (object.getId() * 31 + x) * 31 + y;
+		int owner = (object.getId() * 31 + x) * 31 + y & ~WALL | (object instanceof WallObject ? WALL : 0);
 		return owner == 0 ? 1 : owner;
+	}
+
+	/** Whether the number is a wall object's (a wall, a fence, bars, a door leaf). */
+	static boolean isWall(int owner)
+	{
+		return (owner & WALL) != 0;
 	}
 
 	void add(int x0, int y0, int z0, int x1, int y1, int z1, int x2, int y2, int z2, boolean foliage)

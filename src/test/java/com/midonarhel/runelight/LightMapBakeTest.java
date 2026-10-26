@@ -38,6 +38,28 @@ public class LightMapBakeTest
 	}
 
 	@Test
+	public void barsLetMostOfTheLightThrough()
+	{
+		// a wall of bars along x = 20 from y 14 to 26 and a candle 2.5 tiles west of it, against the same wall of stone
+		BakeScene bars = new BakeScene(), stone = new BakeScene();
+		for (int y = 14; y <= 26; ++y)
+		{
+			bars.barsWest(0, 20, y);
+			stone.westWall(0, 20, y);
+		}
+		LightMapBake.Light candle = BakeScene.light(0, 17.5f, 20.5f, 40, 8);
+		LightMapBake.Result through = bake(bars, candle), shut = bake(stone, candle), open = bake(new BakeScene(), candle);
+		for (float y = 17.5f; y < 24; y += 0.5f)
+		{
+			float v = BakeScene.atTile(through, 0, 22.5f, y), o = BakeScene.atTile(open, 0, 22.5f, y);
+			assertEquals("stone, y " + y, 0, BakeScene.atTile(shut, 0, 22.5f, y), 0);
+			assertTrue("bars, y " + y + ": " + v + " of " + o, v > 0.7f * o && v < o + 1e-3f);
+		}
+		// the bars are nothing to the cells on the candle's side
+		assertEquals(BakeScene.atTile(open, 0, 18.5f, 20.5f), BakeScene.atTile(through, 0, 18.5f, 20.5f), 0.02f);
+	}
+
+	@Test
 	public void doorwayPassesASoftFan()
 	{
 		BakeScene s = new BakeScene().verticalWall(0, 20, 12, 28, 20);

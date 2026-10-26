@@ -18,14 +18,13 @@ import net.runelite.client.ui.overlay.OverlayPosition;
 
 /**
  * Development aid: tints the rooms detected on the player's plane, each in its own color, labels each with the id
- * the lights and the shaders know it by (R) and its plane (L), outlines the tiles
- * where a hole in the floor links a room to the one above or below it, and says which room the player stands in.
+ * the shaders know it by (R) and its plane (L), and says which room the player
+ * stands in.
  */
 class BuildingOverlay extends Overlay
 {
 	// only rooms this close to the player are drawn, to keep the overlay cheap in towns
 	private static final int RANGE_TILES = 32;
-	private static final Color LINK = new Color(0, 220, 255);
 
 	private final Client client;
 	private final RuneLightPlugin plugin;
@@ -82,11 +81,6 @@ class BuildingOverlay extends Overlay
 				{
 					g.setColor(fill);
 					g.fill(poly);
-					if (map != null && map.link(room.plane, t >>> 16, t & 0xFFFF) != 0)
-					{
-						g.setColor(LINK);
-						g.draw(poly);
-					}
 				}
 			}
 			// the label sits on the room tile nearest the middle of the room
@@ -101,8 +95,7 @@ class BuildingOverlay extends Overlay
 		if (map != null)
 		{
 			int room = map.room(plane, px, py);
-			int link = map.link(plane, px, py);
-			String text = "you: " + (room != 0 ? "R" + room : "outdoors") + " L" + plane + (link != 0 ? ", hole to R" + link : "");
+			String text = "you: " + (room != 0 ? "R" + room : "outdoors") + " L" + plane;
 			label(g, player.getCanvasTextLocation(g, text, player.getLogicalHeight() + 40), text);
 		}
 

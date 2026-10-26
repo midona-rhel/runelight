@@ -97,7 +97,7 @@ uniform usamplerBuffer clusterData;  // per cluster: a bit per light in view (li
 
 #include "light_clusters.glsl"
 #include "rooms.glsl"
-#include "light_occlusion.glsl"
+#include "skylight_ambient.glsl"
 #include "light_map.glsl"
 
 // 0 legacy/debug, 1 ambient, 2 sun, 3 points, 4 surfaces, 5 atmosphere.
@@ -221,7 +221,6 @@ vec3 pointLights(int entry, vec3 p, vec3 n, float transmissive, out vec3 through
   vec3 viewDir = transmissive > 0.0 ? normalize(-p) : vec3(0.0);
   vec3 through = vec3(0.0);
   vec3 sum = vec3(0.0);
-#if LIGHT_MAP
   // the static lights baked into the map (light_map.glsl): the lights that reach the point, each worked out as below,
   // times its visibility. The lights below are the others: those that move, and those not baked yet.
   int mapPlane = 0;
@@ -245,11 +244,6 @@ vec3 pointLights(int entry, vec3 p, vec3 n, float transmissive, out vec3 through
       }
     }
   }
-#endif
-  // lights only reach the room they are in, or the outdoors (rooms.glsl): looked up at the first light that reaches
-  // the point, as most pixels of a cluster lie outside all its lights' radii
-  ivec3 room;
-  bool roomKnown = false;
   LightMask lights = clusterLights(entry);
   int li;
   while (nextLight(lights, li)) {
@@ -267,21 +261,11 @@ vec3 pointLights(int entry, vec3 p, vec3 n, float transmissive, out vec3 through
     if (ndl <= 0.0 && transmissive <= 0.0) {
       continue;
     }
-    if (!roomKnown) {
-      room = lightRoomPlaneAt(p + cameraPos + n * ROOM_NORMAL_BIAS);
-#if LIGHT_MAP
-      // the storey the map put the point on, which the moving lights keep to (lightRoomShare)
-      room.z = mapPlane;
-#endif
-      roomKnown = true;
-    }
     vec4 colorCode = texelFetch(lightData, li * 2 + 1);
-    vec4 extra = texelFetch(lightData, LIGHT_EXTRA_BASE + li);
-    float share = lightRoomShare(colorCode.w, extra, room);
-    if (share <= 0.0) {
+    if (!lightOnStorey(colorCode.w, mapPlane)) {
       continue;
     }
-    vec3 color = colorCode.rgb * share * lightOcclusion(extra, posRadius.xyz, p, n);
+    vec3 color = colorCode.rgb;
 
     // 117 HD's falloff; we light in linear space like it does
     float att = pointLightFalloff(d2, r2);

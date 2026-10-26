@@ -163,7 +163,7 @@ final class LightMapTexture
 		{
 			if (header >= 0)
 			{
-				glUniform4fv(header, roomHeader);
+				glUniform3fv(header, roomHeader);
 			}
 		}
 	}

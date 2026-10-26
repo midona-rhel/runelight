@@ -172,9 +172,9 @@ cache dir, finds the water, and computes the flow; `tools/water/annotations.json
 gets wrong (sources, outlets, still canals), and `tools/water/crop.py` renders map crops with a tile grid and the
 flow to check them. Needs numpy, scipy, scikit-image and Pillow.
 
-## Skylight and light occlusion
+## Skylight
 
-Plugin config, Skylight and light occlusion section. The skylight scales the ambient and sky light by how much sky a
+Plugin config, Skylight section. The skylight scales the ambient and sky light by how much sky a
 spot sees, ray traced through the scene's voxels. When a region loads, the static scene's opaque triangles (captured as
 the zones upload, `VoxelCapture.java`) are voxelized into half-tile cubes on a worker thread (`Voxelizer.java`,
 `VoxelGrid.java`, `VoxelBuilder.java`; per zone, so zones reused by the next load keep theirs), a voxel being filled
@@ -185,50 +185,34 @@ capture. The voxels are built only while the skylight is wanted. The sky visibil
 tile corner, three heights above each floor, how much sky is seen toward up and the four sides. Every tile keeps its own
 four corner values, shared with its neighbors only where no wall stands between them, so nothing leaks through walls.
 The AO pass reads a pixel's tile and weighs the directions by its normal (`skylight_ao.glsl`, in the half resolution
-shadow target's alpha), and the composite scales the ambient and sky light by it (`light_occlusion.glsl`).
+shadow target's alpha), and the composite scales the ambient and sky light by it (`skylight_ambient.glsl`).
 Debug view "Skylight" shows it.
 
 Walls (`WallMap.java`) come from the collision map's line-of-sight edges plus the diagonal wall objects; rooms split
-along them (`BuildingDetector.split`), and every light that stays put gets a quarter-tile visibility grid cast
-against them on a worker thread (`LightOcclusion.java`), recast when a door opens or closes, packed after the room
-map in the light buffer. Once a light's grid is cast the walls alone decide where it reaches on its own plane; the
-rooms keep it off the other planes, except through holes in the floors (`RoomMap.linkStoreys`, from the scene's tile
-paints and models): the rooms either side of a hole share their lights there, and a light of another plane shows when
-nothing floors it over or in, or its room has a hole (`RoomMap.seenFrom`; 117 HD's plane rule plus the holes). Lights
-under a roof don't light surfaces open to the sky above them, facing up (roofs), not the walls around them.
+along them (`BuildingDetector.split`; `RoomMap.java` keeps the room and floor lookup the fog, the room fill, puddles and
+the weather read). Edges that stop movement but not sight (bars, fences, railings, low walls, closed gates) are kept apart
+as see-through walls: the light map lets 85% of a light through them.
 
 ### Light map
 
-Plugin config, Development section, Light map (on by default; off is the path above, the lights in the clusters).
 The static lights (those in lights.json and the automatic ones, not the lights that move, follow an animation or the
-sky) are baked on background threads into one grid per storey of quarter-tile cells (`LightMap.java`, `LightMapBake.java`).
-What stops a light (`LightBlockers.java`): the walls and diagonal walls (`WallMap`), and the static models, rasterized
-from the zones' triangles the skylight voxelizes (`ModelBlockers.java`). A cell keeps, per storey, which heights above the
-floor a model reaches (16 bins of 15 units) and the box it fills in the cell (to the unit), per quarter of the heights.
-A light is only stopped by what stands at its own height, in its bin or one either side: a barrel, crate, table or counter
-(70 or less) never shades a torch above it, a pillar, shelf, open furnace door or statue does, and what stops the light is
-the model's own box, not its cell. Flat triangles (floors, tabletops, ceilings) are left out. A solid object's tile (the
-collision map's sight blocker) follows the same rule when the models are known: it is what the models say stands at the
-light's height, and the whole tile only before they are (and on a storey other than the light's, which has no height).
-A light is 0.8 tile wide: 16 points over its disc are each swept exactly (a polar depth over 2048 directions, the cost
-is the blocker edges plus the cells), every cell looked at in 2 x 2 places, and the share of the looks that see it is its
-visibility, falling off by (1 - d / r)^2 as in 117 HD. Light also walks round corners and through doors, as a floor under
-the direct light (0.35 of the falloff by path distance, a flood fill over the cells; not through a model that fills its
-cell), and a Gaussian blur of 2 cells (half a tile) takes light only from cells it can reach without crossing a wall, a
-solid object or a model that fills its cell. A light inside its own object (a brazier, a wall torch, a furnace) is not
-shaded by the models it stands in and is cast from the nearest open cell. Onto the storeys above and below the light goes
-through the openings: the line to a cell has to cross every floor between where the storey has no floor tile, and the
-walls of the storeys it passes through apply (models are not followed there).
-A cell keeps the lights' summed colour and how far the brightest light is ahead of the next (RGBA16F), and the lights'
-mean place weighted by their luminance, stored premultiplied so that it filters, and the index of the brightest light
-(RGBA16F; the index is read as it is, everything else filtered, so nothing in space steps from cell to cell): 2 layers a
-storey, 8 in all, 34.7 MB of GPU memory for the largest scene. The composite, the fog (per step), rain and snow (per
-particle) and the water read them (`light_map.glsl`); the brightest light's flicker, pulse and fades come from a table in
-the light buffer (strength now over strength baked), by its lead over the others so that nothing steps where the
-brightest changes, and the mean place gives the direction and height for the shading. Lights at night: night-only
-lights and night multipliers are baked at the night as of sixteen steps of it. Walls, doors and objects that change bake
-the lights whose reach holds a changed cell again, and a light baked again to the same result sends nothing; a light is
-the map's only once all its blocks are on the GPU, until then the clusters light it. Each scene load or teleport is one
-line in the log (info): the lights baked, the time until every block was sent, the work and the threads; debug logging
-adds each light's bake time.
-
+sky) are baked on background threads into one grid per storey of quarter-tile cells (`LightMap.java`, `LightMapBake.java`);
+the lights that move, and the static ones not baked yet, are the clusters' (`light_clusters.glsl`), which keep to their storey.
+What stops a light (`LightBlockers.java`): the walls and diagonal walls (`WallMap`), the see-through walls, which stop 15% of it
+(`LightMapBake.SEE_THROUGH_OPACITY`; the models of wall objects on such a tile are left out), and the static models,
+rasterized from the zones' triangles the skylight voxelizes (`ModelBlockers.java`). A cell keeps, per storey, which heights
+above the floor a model reaches (16 bins of 15 units) and the box it fills in the cell, per quarter of the heights. A light is
+only stopped by what stands at its own height, in its bin or one either side: a barrel, crate, table or counter never shades a
+torch above it, a pillar, shelf, open furnace door or statue does. Flat triangles (floors, tabletops, ceilings) are left out.
+A light is 0.8 tile wide: 16 points over its disc are each swept exactly (a polar depth over 2048 directions), every cell
+looked at in 2 x 2 places, and the share of the looks that see it is its visibility. Light also walks round corners and through
+doors (a flood fill over the cells; not through a model that fills its cell), and a Gaussian blur of 2 cells takes light only from
+cells it can reach without crossing a wall, a solid object or a model that fills its cell. A light inside its own object is not
+shaded by the models it stands in. Onto the storeys above and below the light goes through the openings in the floors.
+The map stores only each light's visibility (0 to 1), in four height layers per storey, in RGBA8: four slots a cell, a light
+keeps one slot all over so that two lights never mix in a filtered read, and where more than four overlap the weakest are
+dropped (counted in the log, info). One more slice pair per storey holds the index of the four lights (16 bits each, read as it
+is). The shaders (`light_map.glsl`) read the index and the filtered visibility, then work each light out as the clusters do:
+117 HD's falloff, N.L, the table's colour times strength now (flicker, pulse, night and fades). About 52 MB of GPU memory for the
+largest scene. Walls, doors and objects that change bake the lights whose reach holds a changed cell again; a light is the
+map's only once all its blocks are on the GPU. Each scene load or teleport is one line in the log (info).

@@ -200,8 +200,6 @@ class SceneLights
 	private final List<Live> fading = new ArrayList<>();
 	// the tiles with a world light, where an automatic one would only double it
 	private final Set<Long> worldLightTiles = new HashSet<>();
-	// this frame's rooms, for the lights of the other planes
-	private RoomMap viewRooms;
 	// the baked lights' map, null when the static lights are all left to the clusters
 	private LightMap lightMap;
 
@@ -1055,14 +1053,11 @@ class SceneLights
 	 * @param night 0 by day to 1 at night, for night-only lights and night multipliers
 	 * @param sunAltitude degrees, for the lights that come in from outside
 	 * @param maxDistance only lights whose sphere comes within this distance of the camera (xz) are added
-	 * @param rooms the scene's rooms and floors, null when unknown: they decide which lights of the other planes are
-	 * seen through an opening
 	 */
 	void collect(List<PointLight> out, float time, float night, float sunAltitude, float camX, float camZ,
-		float maxDistance, RoomMap rooms)
+		float maxDistance)
 	{
 		poolUsed = 0;
-		viewRooms = rooms;
 		autoLights.clear();
 		if (client.getGameState() != GameState.LOGGED_IN)
 		{
@@ -1269,14 +1264,9 @@ class SceneLights
 			return;
 		}
 		List<PointLight> target = p.auto ? autoLights : out;
-		int n = target.size();
 		// a light that has faded in and stays is the map's; fading or going, the clusters have it
 		LightMap.Source bake = lightMap != null && parentExists && p.life.brightness() >= 1 ? p.bake : null;
 		emit(target, p.def, p.life, p.x, p.y, p.z, p.plane, p.seed, bake);
-		if (target.size() > n)
-		{
-			target.get(n).fixed();
-		}
 	}
 
 	/**
@@ -1311,11 +1301,9 @@ class SceneLights
 		float seed, LightMap.Source bake)
 	{
 		boolean mapped = bake != null && LightMap.isLive(bake);
-		// Other planes' lights stay hidden unless they are meant to show through (the definition says so) or nothing
-		// floors them off: the pit below a gallery, the room under a stairwell (117 HD hides the rest to keep them
-		// from leaking through floors). The map knows what the floors let through.
-		if (!mapped && lightPlane != framePlane && !d.visibleFromOtherPlanes
-			&& (viewRooms == null || !viewRooms.seenFrom(lightPlane, framePlane, x, z)))
+		// Other planes' lights stay hidden unless they are meant to show through (the definition says so: 117 HD hides
+		// the rest to keep them from leaking through floors). The map knows what the floors let through.
+		if (!mapped && lightPlane != framePlane && !d.visibleFromOtherPlanes)
 		{
 			if (funnel != null)
 			{

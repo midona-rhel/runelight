@@ -929,19 +929,6 @@ public interface RuneLightConfig extends Config
 	}
 
 	@ConfigItem(
-		keyName = "lightMap",
-		name = "Light map",
-		description = "Light the scene from its static lamps and torches with a map baked in the background, which stops at"
-			+ " walls and comes out through doors and windows, instead of the clustered lights. Untick to compare.",
-		section = developmentSection,
-		position = 106
-	)
-	default boolean lightMap()
-	{
-		return true;
-	}
-
-	@ConfigItem(
 		keyName = "strikeLightning",
 		name = "Strike lightning",
 		description = "One lightning strike now, in any weather. Unticks itself.",
@@ -1331,24 +1318,10 @@ public interface RuneLightConfig extends Config
 
 	@ConfigSection(
 		name = "Rooms",
-		description = "Keep light and fog where they belong: lamps inside buildings, fog outside them",
+		description = "Keep the fog out of buildings",
 		position = 750
 	)
 	String roomsSection = "rooms";
-
-	@ConfigItem(
-		keyName = "roomLights",
-		name = "Lights stay in rooms",
-		description = "Lights inside a building only light its room, and lights outside don't shine in through the "
-			+ "walls; light spills a little out of open doorways, and through holes in the floors (stairwells, pits) "
-			+ "between the floors.",
-		section = roomsSection,
-		position = 751
-	)
-	default boolean roomLights()
-	{
-		return true;
-	}
 
 	@ConfigItem(
 		keyName = "fogIndoors",
@@ -1376,8 +1349,8 @@ public interface RuneLightConfig extends Config
 	}
 
 	@ConfigSection(
-		name = "Skylight and light occlusion",
-		description = "Light from the sky and from lamps stops where the scenery and the walls block it",
+		name = "Skylight",
+		description = "Light from the sky stops where the scenery and the walls block it",
 		position = 800
 	)
 	String lightOcclusionSection = "lightOcclusion";
@@ -1397,35 +1370,10 @@ public interface RuneLightConfig extends Config
 	}
 
 	@ConfigItem(
-		keyName = "lightWallOcclusion",
-		name = "Walls block lights",
-		description = "Lamps, fires and other lights that stay put don't shine through walls, diagonal ones included; "
-			+ "they reach out through doorways and windows. Worked out in the background for each light.",
-		section = lightOcclusionSection,
-		position = 803
-	)
-	default boolean lightWallOcclusion()
-	{
-		return true;
-	}
-
-	@ConfigItem(
-		keyName = "lightRoofOcclusion",
-		name = "No light on roofs",
-		description = "Lights under a roof don't light the roof's top, or anything else open to the sky above them.",
-		section = lightOcclusionSection,
-		position = 804
-	)
-	default boolean lightRoofOcclusion()
-	{
-		return true;
-	}
-
-	@ConfigItem(
 		keyName = "roomsByWalls",
 		name = "Split rooms at walls",
-		description = "Buildings are split into rooms along their interior walls, so lights stay in their own "
-			+ "room.",
+		description = "Buildings are split into rooms along their interior walls, so each gets its own fill light "
+			+ "and fog.",
 		section = lightOcclusionSection,
 		position = 805
 	)

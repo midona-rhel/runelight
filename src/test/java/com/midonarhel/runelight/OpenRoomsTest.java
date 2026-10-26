@@ -64,12 +64,4 @@ public class OpenRoomsTest
 		assertFalse(open.isOpen(0));
 		assertFalse(open.isOpen(RoomMap.ANY));
 	}
-
-	@Test
-	public void lightCodeGivesItsRoom()
-	{
-		assertEquals(5, RoomMap.roomOf(RoomMap.code(5, 9)));
-		assertEquals(5, RoomMap.roomOf(RoomMap.code(5, 0)));
-		assertEquals(RoomMap.ANY, RoomMap.roomOf(RoomMap.anyCode()));
-	}
 }

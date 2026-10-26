@@ -1,6 +1,5 @@
 package com.midonarhel.runelight;
 
-import java.nio.ByteBuffer;
 import java.nio.FloatBuffer;
 import java.nio.IntBuffer;
 import java.util.Arrays;
@@ -29,12 +28,9 @@ class LightClusters
 	static final int LIGHTS_PER_TEXEL = 128;
 	static final float NEAR = 50;
 	static final float FAR = 25600;
-	// a third texel per light after the two per light: its occlusion grid and whether it is covered
-	// (LightOcclusion.texel, light_occlusion.glsl)
-	static final int LIGHT_EXTRA_BASE = MAX_LIGHTS * 2;
 	// the light map's table follows (LightMap.table, light_map.glsl): TABLE_TEXELS texels, two to a baked light: its place
 	// and radius now, and its colour times its strength now
-	static final int LIGHT_MAP_TABLE_BASE = MAX_LIGHTS * 3;
+	static final int LIGHT_MAP_TABLE_BASE = MAX_LIGHTS * 2;
 	// the rooms' fill follows (RoomLight.table, rooms.glsl): a texel per room id, x the fill's luminance
 	static final int ROOM_FILL_BASE = LIGHT_MAP_TABLE_BASE + LightMap.TABLE_TEXELS;
 	// the room map (RoomMap.texels) follows, from this texel on (rooms.glsl)
@@ -65,18 +61,11 @@ class LightClusters
 	// the rooms' fill, and the version each copy of the buffer has
 	private RoomLight roomFill;
 	private final int[] uploadedFill = new int[SETS];
-	private boolean roomLights;
 	private int maxTexels;
 	private FloatBuffer roomStaging, tableStaging, fillStaging;
-	private final float[] roomHeader = new float[4];
-	// the static lights' occlusion grids (LightOcclusion), in a texture of their own: one filtered fetch a lookup
-	private LightOcclusion.Atlas atlas, uploadedAtlas;
-	private boolean roofLights;
+	private final float[] roomHeader = new float[3];
 	// the baked lights' table, null without the light map (setLightMap)
 	private LightMap lightMap;
-	private int visTexture, visWidth = 1, visHeight = 1;
-	private ByteBuffer visStaging;
-	private final FloatBuffer extraData = BufferUtils.createFloatBuffer(MAX_LIGHTS * 4);
 	// the view the cluster bounds were computed for: they only change with the camera
 	private final float[] boundsViewProj = new float[16];
 	private boolean boundsValid;
@@ -152,14 +141,6 @@ class LightClusters
 		glBindTexture(GL_TEXTURE_BUFFER, 0);
 		glBindBuffer(GL_TEXTURE_BUFFER, 0);
 
-		visTexture = glGenTextures();
-		glBindTexture(GL_TEXTURE_2D, visTexture);
-		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
-		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-		uploadAtlas(null);
-		glBindTexture(GL_TEXTURE_2D, 0);
 	}
 
 	void free()
@@ -168,16 +149,13 @@ class LightClusters
 		{
 			glDeleteTextures(lightTextures);
 			glDeleteTextures(clusterTextures);
-			glDeleteTextures(visTexture);
 			glDeleteBuffers(lightBuffers);
 			glDeleteBuffers(clusterBuffers);
 			Arrays.fill(lightBuffers, 0);
 			Arrays.fill(lightTextures, 0);
 			Arrays.fill(clusterBuffers, 0);
 			Arrays.fill(clusterTextures, 0);
-			visTexture = 0;
 		}
-		uploadedAtlas = null;
 		boundsValid = false;
 	}
 
@@ -228,13 +206,10 @@ class LightClusters
 		openRooms = open != null && open.count() > 0 ? open : null;
 	}
 
-	/**
-	 * The rooms lights are kept in (null: lights reach everywhere, as without rooms).
-	 */
-	void setRooms(RoomMap rooms, boolean lightsUseRooms)
+	/** The rooms: the fog stays out of them and the light map knows the floors (null: none). */
+	void setRooms(RoomMap rooms)
 	{
 		roomMap = rooms;
-		roomLights = lightsUseRooms;
 	}
 
 	/** The fill the rooms get (null: none), which goes up with the lights. */
@@ -244,19 +219,9 @@ class LightClusters
 	}
 
 	/**
-	 * The static lights' occlusion grids (null: none), and whether lights under a roof leave what is open to the sky
-	 * above them dark.
-	 */
-	void setOcclusion(LightOcclusion.Atlas atlas, boolean roofLights)
-	{
-		this.atlas = atlas;
-		this.roofLights = roofLights;
-	}
-
-	/**
 	 * The light map the shaders read (null: none, the lights are all the clusters'). The lights in the frame's list are
-	 * then the ones it doesn't carry: the moving ones, and the static ones not baked yet. They are told apart for the
-	 * shaders (a moving light keeps to its storey, the others to their rooms), and the map's table goes up with them.
+	 * then the ones it doesn't carry: the moving ones, and the static ones not baked yet, which keep to their storey,
+	 * and the map's table goes up with them.
 	 */
 	void setLightMap(LightMap map)
 	{
@@ -280,7 +245,6 @@ class LightClusters
 	void cull(List<PointLight> lights, float[] viewProj, float camX, float camY, float camZ)
 	{
 		lightData.clear();
-		extraData.clear();
 		fogCandidates = 0;
 		// the clusters only change with the view and the spheres of the lights in it
 		boolean changed = !boundsValid || !Arrays.equals(viewProj, boundsViewProj);
@@ -291,7 +255,6 @@ class LightClusters
 			boundsValid = true;
 		}
 		RoomMap rooms = roomMap;
-		LightOcclusion.Atlas grids = atlas;
 
 		int n = Math.min(lights.size(), MAX_LIGHTS);
 		int kept = 0;
@@ -329,24 +292,13 @@ class LightClusters
 			ranges[r + 4] = slice(w - l.radius);
 			ranges[r + 5] = slice(w + l.radius);
 
-			float code = rooms != null && roomLights ? rooms.lightCode(l.x, l.y, l.z, l.plane) : l.roomCode;
-			// a light only in building rooms counts as indoors
-			boolean indoor = RoomMap.indoor(code);
+			int room = rooms != null ? rooms.roomOfLight(l.x, l.z, l.plane) : 0;
+			// a light only in a building room counts as indoors
+			boolean indoor = room != 0;
 			lightData.put(x).put(y).put(z).put(l.radius);
-			lightData.put(l.r * l.intensity).put(l.g * l.intensity).put(l.b * l.intensity).put(code);
-			boolean covered = roofLights && rooms != null && rooms.covered(l.x, l.z, l.plane);
-			if (lightMap != null)
-			{
-				// no grids; bit 0: a moving light, which keeps to its storey (light_occlusion.glsl)
-				extraData.put(-1).put(0).put(0).put((covered ? 2 : 0) | (l.fixed ? 0 : 1)
-					| (l.plane >= 0 && l.plane < WallMap.PLANES ? l.plane << 3 : 0));
-			}
-			else
-			{
-				LightOcclusion.texel(l.occlusion, grids, covered, l.plane, l.radius, extraData);
-			}
+			lightData.put(l.r * l.intensity).put(l.g * l.intensity).put(l.b * l.intensity).put(storeyCode(l.plane, indoor));
 
-			if (fogColumns && (!indoor || openRooms != null && openRooms.isOpen(RoomMap.roomOf(code))))
+			if (fogColumns && (!indoor || openRooms != null && openRooms.isOpen(room)))
 			{
 				// the fog's rays are clipped to its cylinder and layer: a sphere outside either has no glow in them
 				float fx = x - fogX, fz = z - fogZ, reach = fogRadius + l.radius;
@@ -360,7 +312,6 @@ class LightClusters
 		changed |= kept != lightCount;
 		lightCount = kept;
 		lightData.flip();
-		extraData.flip();
 		if (changed)
 		{
 			texels = Math.max(1, (kept + LIGHTS_PER_TEXEL - 1) / LIGHTS_PER_TEXEL);
@@ -504,14 +455,6 @@ class LightClusters
 			rooms = null;
 		}
 		int roomTexels = rooms != null ? rooms.texelCount() : RoomMap.HEADER_TEXELS;
-		LightOcclusion.Atlas grids = atlas;
-		if (grids != uploadedAtlas)
-		{
-			glBindTexture(GL_TEXTURE_2D, visTexture);
-			uploadAtlas(grids);
-			glBindTexture(GL_TEXTURE_2D, 0);
-			uploadedAtlas = grids;
-		}
 		set = (set + 1) % SETS;
 		glBindBuffer(GL_TEXTURE_BUFFER, lightBuffers[set]);
 		if (rooms != uploadedRooms[set] || rooms != null && rooms.getVersion() != uploadedVersion[set])
@@ -541,7 +484,6 @@ class LightClusters
 		if (lightCount > 0)
 		{
 			glBufferSubData(GL_TEXTURE_BUFFER, 0, lightData);
-			glBufferSubData(GL_TEXTURE_BUFFER, (long) LIGHT_EXTRA_BASE * 4 * Float.BYTES, extraData);
 		}
 		LightMap baked = lightMap;
 		if (baked != null)
@@ -551,12 +493,10 @@ class LightClusters
 			tableStaging.put(baked.table(), 0, floats).flip();
 			glBufferSubData(GL_TEXTURE_BUFFER, (long) LIGHT_MAP_TABLE_BASE * 4 * Float.BYTES, tableStaging);
 		}
-		// the map's header: whether there is a map (3: and the light map), and whether the lights keep to their rooms or
-		// only the fog uses it
+		// the map's header: whether there is a map (3: and the light map), its size and its offset
 		roomHeader[0] = rooms != null ? (baked != null ? 3 : 2) : 0;
 		roomHeader[1] = rooms != null ? rooms.size : 0;
 		roomHeader[2] = rooms != null ? rooms.offset : 0;
-		roomHeader[3] = rooms != null && roomLights ? 1 : 0;
 
 		glBindBuffer(GL_TEXTURE_BUFFER, clusterBuffers[set]);
 		int words = texels * 4;
@@ -586,40 +526,14 @@ class LightClusters
 		glBufferSubData(GL_TEXTURE_BUFFER, (long) from * Integer.BYTES, maskData);
 	}
 
-	/** Send the occlusion grids' atlas into the bound 2D texture; a single fully visible texel when there is none. */
-	private void uploadAtlas(LightOcclusion.Atlas grids)
+	/**
+	 * What the light buffer says of a light besides its colour (the fourth number of its second texel, rooms.glsl): the
+	 * storey it lights, plus one, 0 when unknown (every storey); negative when it is outdoors.
+	 */
+	static float storeyCode(int plane, boolean indoor)
 	{
-		int size = grids != null ? grids.texels.length : 1;
-		if (visStaging == null || visStaging.capacity() < size)
-		{
-			visStaging = BufferUtils.createByteBuffer(size);
-		}
-		visStaging.clear();
-		if (grids != null)
-		{
-			visStaging.put(grids.texels);
-		}
-		else
-		{
-			visStaging.put((byte) 255);
-		}
-		visStaging.flip();
-		visWidth = grids != null ? grids.width : 1;
-		visHeight = grids != null ? grids.height : 1;
-		glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
-		glTexImage2D(GL_TEXTURE_2D, 0, GL_R8, visWidth, visHeight, 0, GL_RED, GL_UNSIGNED_BYTE, visStaging);
-		glPixelStorei(GL_UNPACK_ALIGNMENT, 4);
-	}
-
-	/** The occlusion atlas' size in texels, for the composite's lookup (lightVisSize). */
-	int getAtlasWidth()
-	{
-		return visWidth;
-	}
-
-	int getAtlasHeight()
-	{
-		return visHeight;
+		float storey = plane >= 0 && plane < WallMap.PLANES ? plane + 1 : 0;
+		return indoor ? storey : -storey;
 	}
 
 	private static FloatBuffer staging(FloatBuffer b, int floats)
@@ -633,33 +547,29 @@ class LightClusters
 	}
 
 	/**
-	 * The room map's header as of the last upload, rooms.glsl's roomHeader: its version (0 no map), size and offset,
-	 * and whether the lights keep to their rooms.
+	 * The room map's header as of the last upload, rooms.glsl's roomHeader: its version (0 no map, 3 with the light
+	 * map), size and offset.
 	 */
 	float[] getRoomHeader()
 	{
 		return roomHeader;
 	}
 
-	void bind(int lightUnit, int clusterUnit, int visUnit)
+	void bind(int lightUnit, int clusterUnit)
 	{
 		glActiveTexture(GL_TEXTURE0 + lightUnit);
 		glBindTexture(GL_TEXTURE_BUFFER, lightTextures[set]);
 		glActiveTexture(GL_TEXTURE0 + clusterUnit);
 		glBindTexture(GL_TEXTURE_BUFFER, clusterTextures[set]);
-		glActiveTexture(GL_TEXTURE0 + visUnit);
-		glBindTexture(GL_TEXTURE_2D, visTexture);
 		glActiveTexture(GL_TEXTURE0);
 	}
 
-	static void unbind(int lightUnit, int clusterUnit, int visUnit)
+	static void unbind(int lightUnit, int clusterUnit)
 	{
 		glActiveTexture(GL_TEXTURE0 + lightUnit);
 		glBindTexture(GL_TEXTURE_BUFFER, 0);
 		glActiveTexture(GL_TEXTURE0 + clusterUnit);
 		glBindTexture(GL_TEXTURE_BUFFER, 0);
-		glActiveTexture(GL_TEXTURE0 + visUnit);
-		glBindTexture(GL_TEXTURE_2D, 0);
 		glActiveTexture(GL_TEXTURE0);
 	}
 

@@ -60,11 +60,19 @@ public class LightClustersTest
 		// in front of the camera (north is +z, y down)
 		List<PointLight> lights = new ArrayList<>();
 		lights.add(new PointLight().set(0, 800, 3000, 600, 1, 0.5f, 0.2f, 2));
-		PointLight indoor = new PointLight().set(200, 800, 3200, 600, 1, 0.5f, 0.2f, 2);
-		// in room 1 only
-		indoor.roomCode = RoomMap.code(1, 1);
+		// in a room: ground floor tiles x 4..7, y 27..30 (extended) are under a roof
+		PointLight indoor = new PointLight().set(200, 800, 3200, 600, 1, 0.5f, 0.2f, 2).onPlane(0);
 		lights.add(indoor);
 		lights.add(new PointLight().set(0, 800, 20000, 600, 1, 0.5f, 0.2f, 2));
+		byte[][][] settings = new byte[4][40][40];
+		for (int x = 4; x < 8; ++x)
+		{
+			for (int y = 27; y < 31; ++y)
+			{
+				settings[0][x][y] = BuildingDetector.TILE_FLAG_UNDER_ROOF;
+			}
+		}
+		clusters.setRooms(RoomMap.build(BuildingDetector.detect(settings, null), settings, new int[4][41][41], 4));
 		clusters.setFog(true, 0, 3000, 4000, -1e9f, 0);
 		clusters.cull(lights, viewProj(), 0, 0, 0);
 		List<Integer> fog = fogColumnLights(clusters);

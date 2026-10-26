@@ -13,8 +13,6 @@
 // (rooms.glsl), and where a filtered read would take from a cell the wall cuts it off from, it reads where it stands.
 // Needs lightData, cluster_config, light_map_config and rooms.glsl. The map is there when the room map's header says 3.
 
-#if LIGHT_MAP
-
 uniform sampler3D lightMap;
 
 // a surface is looked up in the map this far off it along its normal (world units): a wall's lit face is read in front of
@@ -27,6 +25,14 @@ uniform sampler3D lightMap;
 
 bool lightMapOn() {
   return roomHeader.x > 2.5;
+}
+
+// Whether a light of the clusters (the fourth number of its colour texel, LightClusters.storeyCode) lights the storey a
+// point is on: the moving lights, and the static ones the map has not baked yet, keep to the storey they are on. Without
+// the map the storeys are not known and every light reaches.
+bool lightOnStorey(float code, int plane) {
+  int storey = int(abs(code) + 0.5) - 1;
+  return !lightMapOn() || storey < 0 || storey == plane;
 }
 
 // The storey of a world point: the highest with a floor tile under it whose floor is below the point.
@@ -217,5 +223,3 @@ bool lightMapLight(int id, float vis, vec3 w, out vec3 color, out vec3 toLight, 
   color = texelFetch(lightData, LIGHT_MAP_TABLE_BASE + id * 2 + 1).rgb * (vis * pointLightFalloff(d2, r2));
   return true;
 }
-
-#endif

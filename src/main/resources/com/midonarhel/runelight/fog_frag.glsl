@@ -353,11 +353,9 @@ void main() {
   // the flat glow and the sun's shafts apart: the cover limit takes more of the first
   vec3 scatterAmbient = vec3(0.0);
   vec3 scatterSun = vec3(0.0);
-#if LIGHT_MAP
   // the baked lights' glow, picked up where the steps are
   vec3 scatterMap = vec3(0.0);
   bool mapGlow = glow && lightMapOn();
-#endif
   float trans = 1.0;
   float weight[FOG_MAX_STEPS];
   for (int i = 0; i < FOG_MAX_STEPS; ++i) {
@@ -422,7 +420,6 @@ void main() {
     scatterSun += direct * ((1.0 - far) * scattered);
     // the point lights' share fades into the far color like the rest of the light
     weight[i] = scattered * (1.0 - far) / dt;
-#if LIGHT_MAP
     if (mapGlow) {
       vec4 vis;
       ivec4 ids;
@@ -438,13 +435,10 @@ void main() {
         scatterMap += glowHere * (scattered * (1.0 - far));
       }
     }
-#endif
     trans *= stepTrans;
   }
   vec3 lamps = glow ? pointGlow(px, dir, t0, dt, steps, weight) : vec3(0.0);
-#if LIGHT_MAP
   lamps += scatterMap * FOG_MAP_LIGHT_SCALE;
-#endif
 
   // Limit how much of the view the fog hides where the ray ends. The flat glow shrinks with the cover; the light
   // from the sun and the lamps mostly stays, so thick fog still shows where it is lit.

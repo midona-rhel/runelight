@@ -60,6 +60,10 @@ final class LightMapBake
 	static final float FIXTURE = 10;
 	/** A model that covers less than this share of its cell across a line from the light barely shades it; all of it, shades it fully. */
 	static final float COVER_KNEE = 0.25f;
+	/** The height (above the floor, world units) a see-through wall reaches: a storey's. */
+	static final float SEE_THROUGH_HEIGHT = ModelBlockers.HEIGHT_BINS * ModelBlockers.BIN_HEIGHT;
+	/** The share of the light a see-through wall (bars, a fence, a railing) stops: the rest goes through. */
+	static final float SEE_THROUGH_OPACITY = 0.15f;
 	/** A model whose box fills this much of a cell (the share of its area) is a solid for the wrap of light. */
 	static final float DENSE_BOX = 0.5f;
 	/** The thinnest a model's box is taken to be (world units): a leaf of a door stops light across its length. */
@@ -199,6 +203,8 @@ final class LightMapBake
 		float[] runs = new float[32];
 		// per box, how much of the cell it covers seen along z and along x (0 to 1)
 		float[] cover = new float[32];
+		// per box, the share of the light it stops whatever the line, or -1 to tell it from the cover
+		float[] stopped = new float[16];
 		boolean[] dropped = new boolean[16];
 		int boxCount;
 		// the boxes at the light's height, in the cell's: per cell the box + 1 (0: none), and the cells that have one
@@ -250,13 +256,14 @@ final class LightMapBake
 		}
 
 		/** @param near the box is at the light's height: the cell's floor is lit round it, and the light's fixture may be it */
-		void addBox(int cell, float x0, float z0, float x1, float z1, float low, float high, float coverX, float coverZ, boolean near)
+		void addBox(int cell, float x0, float z0, float x1, float z1, float low, float high, float coverX, float coverZ, float stop, boolean near)
 		{
 			if (boxCount * 4 == boxes.length)
 			{
 				boxes = Arrays.copyOf(boxes, boxes.length * 2);
 				runs = Arrays.copyOf(runs, runs.length * 2);
 				cover = Arrays.copyOf(cover, cover.length * 2);
+				stopped = Arrays.copyOf(stopped, stopped.length * 2);
 				dropped = Arrays.copyOf(dropped, dropped.length * 2);
 			}
 			int o = boxCount * 4;
@@ -268,6 +275,7 @@ final class LightMapBake
 			runs[boxCount * 2 + 1] = high;
 			cover[boxCount * 2] = coverX;
 			cover[boxCount * 2 + 1] = coverZ;
+			stopped[boxCount] = stop;
 			dropped[boxCount] = false;
 			++boxCount;
 			if (near)
@@ -564,7 +572,7 @@ final class LightMapBake
 		for (int j = 0; j < h; ++j)
 		{
 			int lastTile = Integer.MIN_VALUE;
-			boolean open = true;
+			boolean open = true, see = false;
 			for (int i = 0; i < w; ++i)
 			{
 				// a solid object fills its tile: asked once for the cells of a tile that follow one another
@@ -573,9 +581,11 @@ final class LightMapBake
 				{
 					lastTile = tile;
 					open = !b.solid(plane, x0 + i, z0 + j, bin >= 0);
+					// the bars and fences of the tile are the wall map's, not the models': the wall objects' boxes are left out
+					see = bin >= 0 && b.walls.anySeeThrough(plane, tile, Math.floorDiv(z0 + j, CELLS_PER_TILE));
 				}
 				l.free[j * w + i] = open;
-				int runs = bin >= 0 && b.models != null ? b.models.runs(plane, x0 + i, z0 + j, bin, owner, box) : 0;
+				int runs = bin >= 0 && b.models != null ? b.models.runs(plane, x0 + i, z0 + j, bin, owner, see, box) : 0;
 				for (int r = 0; r < runs; ++r)
 				{
 					int o = r * ModelBlockers.RUN;
@@ -590,7 +600,7 @@ final class LightMapBake
 						}
 					}
 					boolean near = box[o + 6] != 0;
-					l.addBox(j * w + i, i + box[o], j + box[o + 1], i + box[o + 2], j + box[o + 3], box[o + 4], box[o + 5], box[o + 7], box[o + 8], near);
+					l.addBox(j * w + i, i + box[o], j + box[o + 1], i + box[o + 2], j + box[o + 3], box[o + 4], box[o + 5], box[o + 7], box[o + 8], -1, near);
 					if (near)
 					{
 						l.covered[j * w + i] = box[o] <= 0.5f && box[o + 2] >= 0.5f && box[o + 1] <= 0.5f && box[o + 3] >= 0.5f;
@@ -633,7 +643,39 @@ final class LightMapBake
 				{
 					diagonal(l, bits, ax, az);
 				}
+				if (bin >= 0)
+				{
+					// bars, fences and railings stop a little of the light, on the edge, whatever its height
+					boolean sn = walls.seeThrough(plane, tx, ty, WallMap.NORTH), se = walls.seeThrough(plane, tx, ty, WallMap.EAST);
+					boolean ss = ty == ty0 && walls.seeThrough(plane, tx, ty, WallMap.SOUTH);
+					boolean sw = tx == tx0 && walls.seeThrough(plane, tx, ty, WallMap.WEST);
+					for (int k = 0; (sn | se | ss | sw) && k < CELLS_PER_TILE; ++k)
+					{
+						seeThroughEdge(l, sn, ax + k, az + CELLS_PER_TILE, true);
+						seeThroughEdge(l, se, ax + CELLS_PER_TILE, az + k, false);
+						seeThroughEdge(l, ss, ax + k, az, true);
+						seeThroughEdge(l, sw, ax, az + k, false);
+					}
+				}
 			}
+		}
+	}
+
+	/** A see-through wall along a cell's side at (i, j), the cell's corner (cells): a thin box that stops SEE_THROUGH_OPACITY of the light. */
+	private static void seeThroughEdge(Layer l, boolean wall, int i, int j, boolean alongX)
+	{
+		if (!wall || i < 0 || j < 0 || i > l.w || j > l.h)
+		{
+			return;
+		}
+		float thin = MIN_BOX / CELL * 0.5f;
+		if (alongX)
+		{
+			l.addBox(0, i, j - thin, i + 1, j + thin, 0, SEE_THROUGH_HEIGHT, 0.5f, 0.5f, SEE_THROUGH_OPACITY, false);
+		}
+		else
+		{
+			l.addBox(0, i - thin, j, i + thin, j + 1, 0, SEE_THROUGH_HEIGHT, 0.5f, 0.5f, SEE_THROUGH_OPACITY, false);
 		}
 	}
 
@@ -1151,6 +1193,10 @@ final class LightMapBake
 	 */
 	private static float opacity(Layer l, int box, float px, float pz)
 	{
+		if (l.stopped[box] >= 0)
+		{
+			return l.stopped[box];
+		}
 		float coverX = l.cover[box * 2], coverZ = l.cover[box * 2 + 1];
 		float dx = (l.boxes[box * 4] + l.boxes[box * 4 + 2]) * 0.5f - px, dz = (l.boxes[box * 4 + 1] + l.boxes[box * 4 + 3]) * 0.5f - pz;
 		float len = hypot(dx, dz);
