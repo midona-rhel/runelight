@@ -261,6 +261,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		final Clouds.Locations clouds = new Clouds.Locations();
 		final Water.CompositeUniforms water = new Water.CompositeUniforms();
 		final SkyCache.CompositeUniforms skyCache = new SkyCache.CompositeUniforms();
+		final NightSky.Uniforms night = new NightSky.Uniforms();
 		final WeatherGround.CompositeUniforms ground = new WeatherGround.CompositeUniforms();
 
 		CompositeProgram(int pass)
@@ -428,6 +429,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 	private volatile double swapIntervalMs;
 
 	private final DayCycle dayCycle = new DayCycle();
+	private final NightSky nightSky = new NightSky();
 	final EnvironmentManager environmentManager = new EnvironmentManager();
 	private final EnvironmentUniforms sceneEnvUniforms = new EnvironmentUniforms();
 	private final ShadowMap shadowMap = new ShadowMap();
@@ -1382,6 +1384,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		Clouds.locate(c.clouds, p, CLOUD_NOISE_UNIT, WEATHER_SKY_UNIT);
 		c.water.locate(p, WATER_DATA_UNIT, WATER_NOISE_UNIT);
 		c.skyCache.locate(p, SKY_CACHE_UNIT);
+		c.night.locate(p);
 		bindSceneSamplers(p);
 		glUseProgram(p);
 		glUniform1i(glGetUniformLocation(p, "sceneAo"), AO_TEXTURE_UNIT);
@@ -2216,6 +2219,31 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		}
 	}
 
+	private void updateNightSky()
+	{
+		float[] forward = viewRay(0, 0);
+		float[] above = viewRay(0, 2f / Math.max(frameViewport[3], 1));
+		float pixelAngle = 0;
+		if (forward != null && above != null)
+		{
+			pixelAngle = (float) Math.sqrt(Math.pow(forward[0] - above[0], 2) + Math.pow(forward[1] - above[1], 2)
+				+ Math.pow(forward[2] - above[2], 2));
+		}
+		nightSky.update(compositeTime, dayCycle.phase, forward, pixelAngle,
+			config.areaEnvironments() ? environmentManager.getBiome() : null, frameGameMillis, config.aurora());
+	}
+
+	/** The unit view ray through a point of the screen (-1 to 1) as frame.glsl's reconstructPosition; null before there is one. */
+	private float[] viewRay(float ndcX, float ndcY)
+	{
+		float[] m = frameInvViewProj;
+		float x = m[0] * ndcX + m[4] * ndcY + m[8] + m[12], y = m[1] * ndcX + m[5] * ndcY + m[9] + m[13];
+		float z = m[2] * ndcX + m[6] * ndcY + m[10] + m[14], w = m[3] * ndcX + m[7] * ndcY + m[11] + m[15];
+		float length = (float) Math.sqrt(x * x + y * y + z * z);
+		return length > 1e-6f && Math.abs(w) > 1e-9f ? new float[]{x / length * Math.signum(w), y / length * Math.signum(w),
+			z / length * Math.signum(w)} : null;
+	}
+
 	private void updateWeather(float cameraX, float cameraY, float cameraZ)
 	{
 		WorldView wv = client.getTopLevelWorldView();
@@ -2840,6 +2868,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		glUseProgram(c.program);
 		setFrameUniforms(c.frame);
 		skyCache.setComposite(c.skyCache, weather.skyHaze(), config.starBrightness() / 100f);
+		nightSky.set(c.night, config.nebulaStrength() / 100f);
 		glUniform1i(c.aoEnabled, config.ambientOcclusion() ? 1 : 0);
 		glUniform1f(c.aoStrength, config.aoStrength() / 100f);
 
@@ -3291,6 +3320,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 
 		skyCache.easeComposite(skyCacheMode);
 		compositeTime = (System.currentTimeMillis() - startMillis) / 1000f;
+		updateNightSky();
 		prepareLighting();
 		sceneTargets.bindAlphaLayer(ALPHA_LAYER_UNIT);
 

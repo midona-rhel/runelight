@@ -4,13 +4,14 @@
 // so cloud cover and the sky's colors show on the ground.
 // Needs frame.glsl, sky.glsl, environment.glsl, lightning.glsl and clouds.glsl.
 
+#include "night_sky.glsl"
+
 uniform sampler2D skyCache;  // linear: sky through the clouds (rgb), cloud transmittance (a); see skyCacheUv
 uniform sampler2D skyIrradiance;  // linear: cosine weighted sky seen by a surface facing each way, same layout
 uniform int skyCacheMode;    // SkyCache.MODE_LIGHT (1): the sky light comes from the cache
 uniform float skyCacheWeight;  // 0..1, how much of the sky light comes from the cache rather than skyLight: eases
                                // in and out so the light never switches between the two at once
 uniform float skyHaze;       // 0..1, how hazy the air is (Weather.skyHaze): the stars fade
-uniform float starBrightness;
 
 #define SKY_TAU 6.28318530718
 // the cache reaches this far below the horizon (sine of the elevation), where clouds still fade out
@@ -28,15 +29,7 @@ uniform float starBrightness;
 #define MOON_DISC 2.5
 #define MOON_HALO 0.012
 #define DISC_CLOUD_POWER 1.5
-// Stars: one at most per cell of a grid around the camera, a soft dot about a pixel wide. Most are faint
-// (brightness falls off as a power), they twinkle a little, and fade toward the horizon, in haze and at dawn.
-#define STAR_CELLS 320.0
-#define STAR_CHANCE 0.0011
-#define STAR_SIZE 0.0004
-#define STAR_BRIGHTNESS 0.9
-#define STAR_FAINT 2.0
-#define STAR_TWINKLE 0.25
-#define STAR_HORIZON 0.3
+// how much of the night sky thick haze hides
 #define STAR_HAZE 0.9
 
 // Cache layout: u is the azimuth, v the square root of the elevation's sine, so most texels go to the sky near
@@ -75,27 +68,7 @@ vec3 skyFill(vec3 n, float alt, float up) {
   return mix(analytic, max(cached, 0.0), skyCacheWeight * clamp(irr.a, 0.0, 1.0));
 }
 
-vec3 stars(vec3 dir, float pixelAngle, float time) {
-  vec3 q = dir * STAR_CELLS;
-  vec3 cell = floor(q);
-  float h = hash13(cell);
-  if (h < 1.0 - STAR_CHANCE) {
-    return vec3(0.0);
-  }
-  vec3 center = cell + 0.25 + 0.5 * vec3(hash13(cell + 1.7), hash13(cell + 3.1), hash13(cell + 5.9));
-  vec3 off = q - center;
-  off -= dir * dot(off, dir);
-  float size = max(pixelAngle * 0.8, STAR_SIZE) * STAR_CELLS;
-  float dot2 = dot(off, off) / (size * size);
-  float u = (h - (1.0 - STAR_CHANCE)) / STAR_CHANCE;
-  float brightness = 0.25 + 0.75 * pow(u, STAR_FAINT);
-  float t = hash13(cell + 7.3);
-  float twinkle = 1.0 + STAR_TWINKLE * sin(time * (1.3 + 2.4 * t) + t * 40.0);
-  vec3 tint = mix(vec3(0.78, 0.85, 1.0), vec3(1.0, 0.92, 0.80), hash13(cell + 9.1));
-  return tint * (brightness * twinkle * exp(-dot2) * STAR_BRIGHTNESS);
-}
-
-// Sun and moon discs and the stars, linear, seen through the clouds' transmittance T
+// Sun and moon discs and the night sky (night_sky.glsl), linear, seen through the clouds' transmittance T
 vec3 celestial(vec3 dir, vec3 sunDir, vec3 moonDir, float alt, float time, float pixelAngle, float T) {
   float clear = overcastClear();
   float through = pow(T, DISC_CLOUD_POWER);
@@ -114,12 +87,9 @@ vec3 celestial(vec3 dir, vec3 sunDir, vec3 moonDir, float alt, float time, float
   c += vec3(0.85, 0.88, 1.00) * ((smoothstep(0.99990, 0.99995, mm) * MOON_DISC * through + m60 * MOON_HALO * T)
     * night);
 
-  // stars wait for the sky to darken, and thin out toward the horizon and in hazy, damp air
-  float starVis = smoothstep(-8.0, -18.0, alt) * clear * smoothstep(0.0, STAR_HORIZON, -dir.y)
-    * (1.0 - STAR_HAZE * clamp(max(skyHaze, envHaze), 0.0, 1.0)) * starBrightness * T;
-  if (starVis > 0.0) {
-    c += stars(dir, pixelAngle, time) * starVis;
-  }
+  // the stars, nebula and the rest wait for the sky to darken, and thin out in hazy, damp air
+  float visible = clear * (1.0 - STAR_HAZE * clamp(max(skyHaze, envHaze), 0.0, 1.0));
+  c += nightSky(dir, moonDir, alt, time, pixelAngle, visible, T);
   return c;
 }
 

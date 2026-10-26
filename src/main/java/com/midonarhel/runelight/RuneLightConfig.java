@@ -1215,6 +1215,31 @@ public interface RuneLightConfig extends Config
 		return 100;
 	}
 
+	@Range(max = 200)
+	@ConfigItem(
+		keyName = "nebulaStrength",
+		name = "Nebula strength",
+		description = "How bright the colored nebula clouds and the Milky Way are in the night sky, in percent. 0 hides them and the crowding of stars in the Milky Way.",
+		section = cloudsSection,
+		position = 511
+	)
+	default int nebulaStrength()
+	{
+		return 100;
+	}
+
+	@ConfigItem(
+		keyName = "aurora",
+		name = "Aurora",
+		description = "Curtains of light in the night sky of the far north: the Fremennik lands and the frozen north around Weiss. Needs area environments.",
+		section = cloudsSection,
+		position = 512
+	)
+	default boolean aurora()
+	{
+		return true;
+	}
+
 	@ConfigItem(
 		keyName = "skyHorizonAtEdge",
 		name = "Horizon at world edge",

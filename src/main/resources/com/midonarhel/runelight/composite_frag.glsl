@@ -206,13 +206,18 @@ int clusterLightCount(int entry) {
 }
 
 // The normal a point light's N.L takes. Ground reads as ground by its smooth normal, where a flat one would show the
-// triangles in the light; a wall, a chimney or a counter is flat, and the smooth normal of its model tilts across it
-// (the vertices are shared with the faces next to it, the top and the ends) a few degrees, which at the angle a light
-// beside it meets it draws those faces' diagonals into the glow. So the more a face is upright, the more it takes its
-// own normal (material_target.glsl): from POINT_SMOOTH_FLAT, a slope the ground can have, to POINT_SMOOTH_FULL.
+// triangles in the light, and so does a steep slope of it (a ledge's face, where the light above would otherwise stop
+// along the triangle's edge): terrain is `ground` (material_target.glsl: land terrain). A wall, a chimney or a counter
+// is flat, and the smooth normal of its model tilts across it (the vertices are shared with the faces next to it, the top
+// and the ends) a few degrees, which at the angle a light beside it meets it draws those faces' diagonals into the glow.
+// So the more such a face is upright, the more it takes its own normal: from POINT_SMOOTH_FLAT, a slope the ground can
+// have, to POINT_SMOOTH_FULL.
 #define POINT_SMOOTH_FLAT 0.55
 #define POINT_SMOOTH_FULL 0.85
-vec3 pointLightNormal(vec3 smoothNormal, vec3 faceNormal) {
+vec3 pointLightNormal(vec3 smoothNormal, vec3 faceNormal, bool ground) {
+  if (ground) {
+    return smoothNormal;
+  }
   return normalize(mix(faceNormal, smoothNormal, smoothstep(POINT_SMOOTH_FLAT, POINT_SMOOTH_FULL, abs(faceNormal.y))));
 }
 
@@ -472,7 +477,7 @@ vec4 shadeScene(ivec2 px, SceneSample sm, vec4 transparent) {
   int cluster = clusterAt(px, viewDepth(d));
   if ((compositePart == 0 || compositePart == 3) && pointLightsEnabled == 1 && inside) {
     vec3 through;
-    light += pointLights(cluster, p, pointLightNormal(n, sm.faceNormal), transmissive, through) * mix(1.0, ao, AO_DIRECT);
+    light += pointLights(cluster, p, pointLightNormal(n, sm.faceNormal, material.b < 0.25), transmissive, through) * mix(1.0, ao, AO_DIRECT);
     // the canopy interior SSAO darkens is exactly where light inside a tree shines through
     light += through;
   }
