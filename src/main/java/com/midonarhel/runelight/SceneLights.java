@@ -81,10 +81,35 @@ class SceneLights
 	private int definitionCount;
 
 	private AutoLightRules autoRules;
+	// this scan's automatic lights: objects named like a light, and why some got none
+	private int autoMatched, autoNoModel, autoNoSpot, autoNearWorld;
 	// the rules' light for an object id, null for none
 	private final Map<Integer, LightDefinition> autoById = new HashMap<>();
 	// for the log: what an automatic light was made for, while the scene is scanned
 	private Map<String, Integer> autoTally;
+
+	/**
+	 * What became of the scene's lights in one frame, logged a few seconds after the scene loaded: the lights that
+	 * should show but don't are in one of these counts.
+	 */
+	private static final class Funnel
+	{
+		int hidden, otherPlane, outOfReach, nightOff, mapped, pending, clusters;
+		// the strengths of the lights that reach the screen: under 2, 2 to 6, 6 to 15, 15 and up
+		final int[] strengths = new int[4];
+
+		void strength(float s)
+		{
+			++strengths[s < 2 ? 0 : s < 6 ? 1 : s < 15 ? 2 : 3];
+		}
+	}
+
+	// seconds after a scene loads that its lights are summed up
+	private static final float FUNNEL_DELAY = 6;
+	// the game time of that frame, NaN before the scene's first frame, then until it has been logged
+	private float funnelAt = Float.NaN;
+	private boolean funnelPending;
+	private Funnel funnel;
 	private final ModelData autoModel = new ModelData();
 	private final AutoLightPlacement.Spot autoSpot = new AutoLightPlacement.Spot();
 	private final float[] autoMove = new float[2];
@@ -324,6 +349,9 @@ class SceneLights
 		}
 
 		autoTally = new TreeMap<>();
+		funnelPending = true;
+		funnelAt = Float.NaN;
+		autoMatched = autoNoModel = autoNoSpot = autoNearWorld = 0;
 		Scene scene = wv.getScene();
 		Tile[][][] tiles = scene.getExtendedTiles();
 		for (Tile[][] plane : tiles)
@@ -364,11 +392,11 @@ class SceneLights
 		{
 			autoCount += n;
 		}
-		log.debug("Scene lights: {} objects with lights, {} world lights", countObjectLights() - autoCount, worldLights.size());
-		if (autoCount > 0)
-		{
-			log.debug("Automatic lights: {} placed, by name {}", autoCount, autoTally);
-		}
+		log.info("Scene lights: {} lights.json objects with lights, {} world lights", countObjectLights() - autoCount,
+			worldLights.size());
+		log.info("Automatic lights: {} objects named like a light, {} placed, {} without a model, {} without a place, "
+				+ "{} next to a 117 HD world light; placed by name {}", autoMatched, autoCount, autoNoModel, autoNoSpot,
+			autoNearWorld, autoTally);
 		autoTally = null;
 	}
 
@@ -567,6 +595,7 @@ class SceneLights
 		{
 			return null;
 		}
+		++autoMatched;
 		Renderable renderable;
 		if (object instanceof GameObject)
 		{
@@ -577,9 +606,15 @@ class SceneLights
 			DecorativeObject deco = (DecorativeObject) object;
 			renderable = deco.getRenderable() != null ? deco.getRenderable() : deco.getRenderable2();
 		}
-		Model model = renderable != null ? renderable.getModel() : null;
-		if (model == null || !AutoLightPlacement.locate(autoModel.wrap(model), autoSpot))
+		Model model = ModelData.modelOf(renderable);
+		if (model == null)
 		{
+			++autoNoModel;
+			return null;
+		}
+		if (!AutoLightPlacement.locate(autoModel.wrap(model), autoSpot))
+		{
+			++autoNoSpot;
 			return null;
 		}
 
@@ -612,6 +647,7 @@ class SceneLights
 		// 117 HD lights this place already
 		if (nearWorldLight(at[0], at[2], plane))
 		{
+			++autoNearWorld;
 			return null;
 		}
 		if (autoTally != null)
@@ -1041,6 +1077,17 @@ class SceneLights
 		planeChanged = framePlane != lastPlane;
 		lastPlane = framePlane;
 		gameCycle = client.getGameCycle();
+		if (funnelPending)
+		{
+			if (Float.isNaN(funnelAt))
+			{
+				funnelAt = time + FUNNEL_DELAY;
+			}
+			else if (time >= funnelAt)
+			{
+				funnel = new Funnel();
+			}
+		}
 
 		for (TrackedObject t : objects.values())
 		{
@@ -1087,7 +1134,43 @@ class SceneLights
 			}
 		}
 
-		appendNearest(out, autoLights, LightClusters.MAX_LIGHTS - out.size(), camX, camZ);
+		int room = LightClusters.MAX_LIGHTS - out.size();
+		appendNearest(out, autoLights, room, camX, camZ);
+		if (funnel != null)
+		{
+			logFunnel(funnel, room, out.size());
+			funnel = null;
+			funnelPending = false;
+		}
+	}
+
+	private void logFunnel(Funnel f, int room, int total)
+	{
+		int objectLights = countObjectLights() - countAuto();
+		log.info("Light pipeline: {} lights.json object lights + {} world lights + {} automatic; "
+				+ "{} hidden (fading or waiting for their animation), {} on another plane, {} out of reach, "
+				+ "{} night-only and off now (night {}); {} in the light map, {} waiting for it, {} on the clusters; "
+				+ "strengths of those showing: {} under 2, {} 2 to 6, {} 6 to 15, {} 15 and up; "
+				+ "clusters {}/{} used, {} automatic lights over budget",
+			objectLights, worldLights.size(), countAuto(), f.hidden, f.otherPlane, f.outOfReach, f.nightOff, frameNight,
+			f.mapped, f.pending, f.clusters, f.strengths[0], f.strengths[1], f.strengths[2], f.strengths[3], total,
+			LightClusters.MAX_LIGHTS, Math.max(0, autoLights.size() - Math.max(0, room)));
+	}
+
+	private int countAuto()
+	{
+		int n = 0;
+		for (TrackedObject t : objects.values())
+		{
+			for (Placed p : t.lights)
+			{
+				if (p.auto)
+				{
+					++n;
+				}
+			}
+		}
+		return n;
 	}
 
 	/**
@@ -1118,6 +1201,10 @@ class SceneLights
 		p.life.update(parentExists && (!p.def.animationSpecific() || playing(p)), frameDt);
 		if (!p.life.visible())
 		{
+			if (funnel != null)
+			{
+				++funnel.hidden;
+			}
 			return;
 		}
 		List<PointLight> target = p.auto ? autoLights : out;
@@ -1169,12 +1256,20 @@ class SceneLights
 		if (!mapped && lightPlane != framePlane && !d.visibleFromOtherPlanes
 			&& (viewRooms == null || !viewRooms.seenFrom(lightPlane, framePlane, x, z)))
 		{
+			if (funnel != null)
+			{
+				++funnel.otherPlane;
+			}
 			return;
 		}
 		float dx = x - camX, dz = z - camZ;
 		float reach = maxDistance + d.radius * 1.5f;
 		if (dx * dx + dz * dz > reach * reach)
 		{
+			if (funnel != null)
+			{
+				++funnel.outOfReach;
+			}
 			float far = reach + LightMap.EVICT_MARGIN;
 			if (bake != null && dx * dx + dz * dz > far * far)
 			{
@@ -1217,6 +1312,22 @@ class SceneLights
 		}
 		strength *= 1 + (d.nightMultiplier - 1) * frameNight;
 		strength *= life.brightness();
+		if (funnel != null)
+		{
+			if (d.nightOnly && frameNight <= 0)
+			{
+				++funnel.nightOff;
+			}
+			else if (mapped)
+			{
+				++funnel.mapped;
+				funnel.strength(strength);
+			}
+			else if (bake != null)
+			{
+				++funnel.pending;
+			}
+		}
 		if (mapped)
 		{
 			lightMap.setLevel(bake, strength);
@@ -1238,6 +1349,11 @@ class SceneLights
 		if (poolUsed == pool.size())
 		{
 			pool.add(new PointLight());
+		}
+		if (funnel != null)
+		{
+			++funnel.clusters;
+			funnel.strength(strength);
 		}
 		out.add(pool.get(poolUsed++).set(x, y, z, radius, red, green, blue, strength).onPlane(lightPlane));
 	}

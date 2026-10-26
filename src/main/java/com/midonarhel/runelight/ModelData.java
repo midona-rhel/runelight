@@ -1,7 +1,9 @@
 package com.midonarhel.runelight;
 
 import java.lang.reflect.Array;
+import net.runelite.api.DynamicObject;
 import net.runelite.api.Model;
+import net.runelite.api.Renderable;
 
 /**
  * The parts of a model the model uploader reads. {@link #wrap} points at the model's own arrays, for uploads made
@@ -30,6 +32,27 @@ final class ModelData
 
 	// copy's arrays, one per array field, kept between models
 	private final Object[] owned = new Object[18];
+
+	/**
+	 * The model a renderable draws, as SceneUploader finds it: the renderable itself, or an animated object's model;
+	 * null when it has none (yet).
+	 */
+	static Model modelOf(Renderable r)
+	{
+		if (r instanceof Model)
+		{
+			return (Model) r;
+		}
+		if (r instanceof DynamicObject)
+		{
+			Model m = ((DynamicObject) r).getModelZbuf();
+			if (m != null)
+			{
+				return m;
+			}
+		}
+		return r != null ? r.getModel() : null;
+	}
 
 	ModelData wrap(Model m)
 	{
