@@ -220,4 +220,26 @@ public class WaterMapTest
 		int mud = lake(25).bedColor(85, 85, 0);
 		assertTrue((sand & 127) > (mud & 127));
 	}
+
+	@Test
+	public void waterPullsTowardAFallsLip()
+	{
+		int n = WaterMap.CORNERS;
+		float[] px = new float[n * n], pz = new float[n * n], level = new float[n * n], strength = new float[n * n];
+		// a lip along z = 10 tiles from x = 5 to 7, 100 units up
+		java.util.List<float[]> lips = java.util.Collections.singletonList(new float[]{5 * 128f, 10 * 128f, 7 * 128f, 10 * 128f, 100f});
+		WaterMap.pullToLips(lips, px, pz, level, strength);
+		int near = 8 * n + 6, far = 4 * n + 6, beside = 10 * n + 12;
+		assertEquals(0f, px[near], 1e-4f);
+		assertEquals(1f - 2f / 2.5f, pz[near], 1e-4f);
+		assertEquals(100f, level[near], 0f);
+		assertEquals(1f - 2f / 2.5f, strength[near], 1e-4f);
+		// on the lip: no direction, full strength
+		assertEquals(1f, strength[10 * n + 6], 1e-4f);
+		assertEquals(0f, pz[10 * n + 6], 0f);
+		assertEquals(0f, pz[far], 0f);
+		assertEquals(0f, px[beside], 0f);
+		// the pull points back at the lip from the other side too
+		assertTrue(pz[12 * n + 6] < 0f);
+	}
 }

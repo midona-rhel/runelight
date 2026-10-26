@@ -100,6 +100,22 @@ final class WaterMap
 	private static final float CONTACT_TURB = 0.25f;
 	byte[] contact;
 
+	// Waterfalls: the water above a fall flows toward its lip and churns there, so the rapids' foam drifts to the edge
+	// and gathers along it, to pour over. Per corner, within LIP_REACH tiles of a lip: the unit direction to it times
+	// 1 at the lip and 0 at the reach (x, z), and the lip's height (y down). A corner's water counts only at the lip's
+	// own level (LIP_LEVEL world units), not the pool the fall lands in.
+	private static final float LIP_REACH = 2.5f;
+	private static final float LIP_LEVEL = 48f;
+	// tiles a second of flow toward the lip at the lip, and the turbulence there
+	private static final float LIP_FLOW = 1.2f;
+	private static final float LIP_CHURN = 2f;
+	// a steep face of fake water is a fall's: its normal's vertical part below this
+	private static final float LIP_STEEP = 0.5f;
+	private final float[] lipPullX = new float[CORNERS * CORNERS];
+	private final float[] lipPullZ = new float[CORNERS * CORNERS];
+	private final float[] lipLevel = new float[CORNERS * CORNERS];
+	private final float[] lipStrength = new float[CORNERS * CORNERS];
+
 	/**
 	 * Water type for a vanilla texture id, before the area and body decide: FRESH, SWAMP or a sea type, or NONE.
 	 */
@@ -283,6 +299,7 @@ final class WaterMap
 		}
 
 		findContacts(tiles, heights);
+		findLips(tiles);
 		buildTexture(heights, landCorner);
 	}
 
@@ -674,26 +691,7 @@ final class WaterMap
 			}
 		}
 		boolean[] marked = new boolean[CONTACT_SIZE * CONTACT_SIZE];
-		boolean any = false;
-		for (Tile[][] plane : tiles)
-		{
-			for (int x = 0; x < SIZE; ++x)
-			{
-				for (int y = 0; y < SIZE; ++y)
-				{
-					Tile t = plane[x][y];
-					if (t == null || !nearWater(x, y))
-					{
-						continue;
-					}
-					// the bridge tile under a deck holds what stands in the water below it (piers)
-					for (Tile u = t; u != null; u = u.getBridge())
-					{
-						any |= markTile(u, surfaceY, marked);
-					}
-				}
-			}
-		}
+		boolean any = eachModel(tiles, (id, r, orient, x, height, z) -> crossings(id, r, orient, x, height, z, surfaceY, marked));
 		if (!any)
 		{
 			return;
@@ -728,9 +726,172 @@ final class WaterMap
 	}
 
 	/**
-	 * Mark where the objects on one tile cross the surface.
+	 * Find the lips of the scene's waterfalls (the top edges of the steep faces of fake water) into the pull toward
+	 * them.
 	 */
-	private static boolean markTile(Tile t, float[] surfaceY, boolean[] marked)
+	private void findLips(Tile[][][] tiles)
+	{
+		java.util.List<float[]> lips = new java.util.ArrayList<>();
+		eachModel(tiles, (id, r, orient, x, height, z) -> lipsOf(id, r, orient, x, height, z, lips));
+		pullToLips(lips, lipPullX, lipPullZ, lipLevel, lipStrength);
+	}
+
+	/**
+	 * The lips of one model's fall faces: segments {x0, z0, x1, z1, y} of the edges of its steep fake water faces that lie
+	 * at the top of its water (scene extended world units, y down).
+	 */
+	private static boolean lipsOf(int id, Renderable r, int orient, int x, int height, int z, java.util.List<float[]> out)
+	{
+		Model m = r instanceof Model ? (Model) r
+			: r instanceof DynamicObject ? ((DynamicObject) r).getModelZbuf() : null;
+		if (m == null)
+		{
+			return false;
+		}
+		int material = SurfaceMaterials.forObject(id, r);
+		float[] vx = m.getVerticesX(), vy = m.getVerticesY(), vz = m.getVerticesZ();
+		int[] f1 = m.getFaceIndices1(), f2 = m.getFaceIndices2(), f3 = m.getFaceIndices3();
+		int[] colors1 = m.getFaceColors1(), colors3 = m.getFaceColors3();
+		short[] textures = m.getFaceTextures();
+		byte[] transparencies = m.getFaceTransparencies();
+		float sin = orient != 0 ? Perspective.SINE[orient] / 65536f : 0;
+		float cos = orient != 0 ? Perspective.COSINE[orient] / 65536f : 1;
+		float ox = x + (RuneLightPlugin.SCENE_OFFSET << 7), oz = z + (RuneLightPlugin.SCENE_OFFSET << 7);
+		boolean[] fake = new boolean[m.getFaceCount()];
+		float top = Float.POSITIVE_INFINITY;
+		for (int f = 0; f < fake.length; ++f)
+		{
+			if (colors3[f] == -2)
+			{
+				continue;
+			}
+			int texture = textures != null ? textures[f] : -1;
+			if (SurfaceMaterials.isFake(SurfaceMaterials.face(material, texture, colors1[f] & 0xffff,
+				SurfaceMaterials.opacity(transparencies, f))))
+			{
+				fake[f] = true;
+				top = Math.min(top, Math.min(vy[f1[f]], Math.min(vy[f2[f]], vy[f3[f]])) + height);
+			}
+		}
+		boolean any = false;
+		float[] px = new float[3], py = new float[3], pz = new float[3];
+		for (int f = 0; f < fake.length; ++f)
+		{
+			if (!fake[f])
+			{
+				continue;
+			}
+			int[] v = {f1[f], f2[f], f3[f]};
+			for (int k = 0; k < 3; ++k)
+			{
+				px[k] = vz[v[k]] * sin + vx[v[k]] * cos + ox;
+				pz[k] = vz[v[k]] * cos - vx[v[k]] * sin + oz;
+				py[k] = vy[v[k]] + height;
+			}
+			float ax = px[1] - px[0], ay = py[1] - py[0], az = pz[1] - pz[0];
+			float bx = px[2] - px[0], by = py[2] - py[0], bz = pz[2] - pz[0];
+			float nx = ay * bz - az * by, ny = az * bx - ax * bz, nz = ax * by - ay * bx;
+			float len = (float) Math.sqrt(nx * nx + ny * ny + nz * nz);
+			if (len < 1e-3f || Math.abs(ny) / len >= LIP_STEEP)
+			{
+				continue;
+			}
+			for (int k = 0; k < 3; ++k)
+			{
+				int k2 = (k + 1) % 3;
+				if (py[k] <= top + 4 && py[k2] <= top + 4)
+				{
+					out.add(new float[]{px[k], pz[k], px[k2], pz[k2], top});
+					any = true;
+				}
+			}
+		}
+		return any;
+	}
+
+	/**
+	 * Per corner of the CORNERS grid, the pull toward the nearest of the lips (segments as lipsOf gives them): the unit
+	 * direction there, scaled down to 0 at LIP_REACH tiles, the lip's height and the strength itself (1 on the lip, 0 at
+	 * the reach; a corner right on the lip has no direction). Corners with no lip in reach keep zeros.
+	 */
+	static void pullToLips(java.util.List<float[]> lips, float[] pullX, float[] pullZ, float[] level, float[] best)
+	{
+		java.util.Arrays.fill(pullX, 0);
+		java.util.Arrays.fill(pullZ, 0);
+		java.util.Arrays.fill(best, 0);
+		for (float[] l : lips)
+		{
+			int x0 = Math.max(0, (int) Math.floor(Math.min(l[0], l[2]) / 128f - LIP_REACH));
+			int x1 = Math.min(CORNERS - 1, (int) Math.ceil(Math.max(l[0], l[2]) / 128f + LIP_REACH));
+			int z0 = Math.max(0, (int) Math.floor(Math.min(l[1], l[3]) / 128f - LIP_REACH));
+			int z1 = Math.min(CORNERS - 1, (int) Math.ceil(Math.max(l[1], l[3]) / 128f + LIP_REACH));
+			float dx = l[2] - l[0], dz = l[3] - l[1];
+			float len2 = dx * dx + dz * dz;
+			for (int cz = z0; cz <= z1; ++cz)
+			{
+				for (int cx = x0; cx <= x1; ++cx)
+				{
+					float qx = cx * 128f - l[0], qz = cz * 128f - l[1];
+					float t = len2 > 0 ? Math.max(0, Math.min(1, (qx * dx + qz * dz) / len2)) : 0;
+					float ex = dx * t - qx, ez = dz * t - qz;
+					float d = (float) Math.sqrt(ex * ex + ez * ez) / 128f;
+					float strength = 1 - d / LIP_REACH;
+					int c = cz * CORNERS + cx;
+					if (strength <= best[c])
+					{
+						continue;
+					}
+					best[c] = strength;
+					// right on the lip there is no direction to it, only the churn
+					pullX[c] = d < 1e-3f ? 0 : ex / (d * 128f) * strength;
+					pullZ[c] = d < 1e-3f ? 0 : ez / (d * 128f) * strength;
+					level[c] = l[4];
+				}
+			}
+		}
+	}
+
+	/**
+	 * What to do with one model of the scene: its object id, renderable, orientation and scene local position; whether it
+	 * found anything.
+	 */
+	private interface ModelVisit
+	{
+		boolean visit(int id, Renderable r, int orient, int x, int height, int z);
+	}
+
+	/**
+	 * Visit the models of the objects on the tiles at or by water; whether any visit found something.
+	 */
+	private boolean eachModel(Tile[][][] tiles, ModelVisit visit)
+	{
+		boolean any = false;
+		for (Tile[][] plane : tiles)
+		{
+			for (int x = 0; x < SIZE; ++x)
+			{
+				for (int y = 0; y < SIZE; ++y)
+				{
+					Tile t = plane[x][y];
+					if (t == null || !nearWater(x, y))
+					{
+						continue;
+					}
+					// the bridge tile under a deck holds what stands in the water below it (piers)
+					for (Tile u = t; u != null; u = u.getBridge())
+					{
+						any |= visitTile(u, visit);
+					}
+				}
+			}
+		}
+		return any;
+	}
+
+	/**
+	 * Visit the objects on one tile.
+	 */
+	private static boolean visitTile(Tile t, ModelVisit visit)
 	{
 		boolean any = false;
 		GameObject[] objects = t.getGameObjects();
@@ -739,28 +900,26 @@ final class WaterMap
 			GameObject o = objects[k];
 			if (o != null && o.getSceneMinLocation().equals(t.getSceneLocation()))
 			{
-				any |= crossings(o.getId(), o.getRenderable(), o.getModelOrientation(), o.getX(), o.getZ(), o.getY(), surfaceY,
-					marked);
+				any |= visit.visit(o.getId(), o.getRenderable(), o.getModelOrientation(), o.getX(), o.getZ(), o.getY());
 			}
 		}
 		GroundObject g = t.getGroundObject();
 		if (g != null)
 		{
-			any |= crossings(g.getId(), g.getRenderable(), 0, g.getX(), g.getZ(), g.getY(), surfaceY, marked);
+			any |= visit.visit(g.getId(), g.getRenderable(), 0, g.getX(), g.getZ(), g.getY());
 		}
 		WallObject w = t.getWallObject();
 		if (w != null)
 		{
-			any |= crossings(w.getId(), w.getRenderable1(), 0, w.getX(), w.getZ(), w.getY(), surfaceY, marked);
-			any |= crossings(w.getId(), w.getRenderable2(), 0, w.getX(), w.getZ(), w.getY(), surfaceY, marked);
+			any |= visit.visit(w.getId(), w.getRenderable1(), 0, w.getX(), w.getZ(), w.getY());
+			any |= visit.visit(w.getId(), w.getRenderable2(), 0, w.getX(), w.getZ(), w.getY());
 		}
 		DecorativeObject d = t.getDecorativeObject();
 		if (d != null)
 		{
-			any |= crossings(d.getId(), d.getRenderable(), 0, d.getX() + d.getXOffset(), d.getZ(), d.getY() + d.getYOffset(),
-				surfaceY, marked);
-			any |= crossings(d.getId(), d.getRenderable2(), 0, d.getX() + d.getXOffset2(), d.getZ(),
-				d.getY() + d.getYOffset2(), surfaceY, marked);
+			any |= visit.visit(d.getId(), d.getRenderable(), 0, d.getX() + d.getXOffset(), d.getZ(), d.getY() + d.getYOffset());
+			any |= visit.visit(d.getId(), d.getRenderable2(), 0, d.getX() + d.getXOffset2(), d.getZ(),
+				d.getY() + d.getYOffset2());
 		}
 		return any;
 	}
@@ -1023,6 +1182,13 @@ final class WaterMap
 					shore /= count;
 					energy /= count;
 					turbulence /= count;
+					if (lipStrength[c] > 0 && Math.abs(height - lipLevel[c]) <= LIP_LEVEL)
+					{
+						// the water above a fall runs to its lip and churns there
+						fx += lipPullX[c] * LIP_FLOW;
+						fz += lipPullZ[c] * LIP_FLOW;
+						turbulence = Math.max(turbulence, Math.min(LIP_CHURN * lipStrength[c], 1f));
+					}
 					if (contact != null)
 					{
 						// slower and churning right by things standing in the water

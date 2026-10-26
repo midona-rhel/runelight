@@ -76,7 +76,6 @@ layout(location = 1) out vec4 WaveOut;    // the wave map: slope xy, foam
 // turbulence (rapids) adds to the ripples, and lays soft foam over them where it is strong
 #define TURB_WAVES 0.6
 #define TURB_FOAM vec2(0.35, 0.9)
-#define FOAM 0.45
 // running water foams along its banks: from BANK_FOAM_FLOW.x world units a second, fully at .y, as much as BANK_FOAM
 // of the rapids' churn, fading out between BANK_FOAM_REACH's tiles from the shore
 #define BANK_FOAM_FLOW vec2(25.0, 80.0)
@@ -341,7 +340,7 @@ void waterWaveField(vec2 xz, int type, vec2 flow, out vec2 slope, out float foam
         + textureLod(waterNoise, vec3(uv.yx + vec2(0.37, -waterCycle(FOAM_STILL_PERIOD * 1.37)), 2.0), lodFoam).b);
       h = mix(still, h, flowing);
     }
-    float rim = 1.0 - smoothstep(0.15, 0.55, h);
+    float rim = waterFoamRim(h);
     foam = max(rim * churn * FOAM, contact * (rim * CONTACT_FOAM + CONTACT_FILM));
   }
 }

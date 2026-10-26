@@ -188,6 +188,30 @@ float waterHash(vec3 p) {
   return fract((p.x + p.y) * p.z);
 }
 
+// The foam on rapids, and on a fall's lip and foot: the rims of the large ripple cells (height h, Water.cells), as much
+// of the water's foam colour as FOAM of it where the water is fully churned
+#define FOAM 0.45
+float waterFoamRim(float h) {
+  return 1.0 - smoothstep(0.15, 0.55, h);
+}
+
+// The ripple cells' height at p, in cells, as Water.cells makes them for the water pass's texture: the domes of the
+// jittered points around p added up
+float waterFoamCells(vec2 p) {
+  vec2 id = floor(p);
+  float sum = 0.0;
+  for (int j = -1; j <= 1; ++j) {
+    for (int i = -1; i <= 1; ++i) {
+      vec2 c = id + vec2(float(i), float(j));
+      vec2 at = c + 0.2 + 0.6 * vec2(waterHash(vec3(mod(c, 64.0), 11.0)), waterHash(vec3(mod(c, 64.0), 12.0)));
+      vec2 d = (p - at) / 0.85;
+      float k = max(1.0 - dot(d, d), 0.0);
+      sum += k * k * k;
+    }
+  }
+  return min(sum, 1.0);
+}
+
 // Value noise, not tiling (hashed lattice): -1 to 1
 float waveNoise(vec2 p) {
   vec2 i = floor(p), f = fract(p);
