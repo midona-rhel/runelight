@@ -87,7 +87,7 @@ layout(location = 1) out vec4 WaveOut;    // the wave map: slope xy, foam
 // SHORE_SPACING tiles apart and one coming in every SHORE_PERIOD seconds (a divisor of waterTime's wrap, so they never
 // jump). A crest is SHORE_LINE tiles half wide and thins away to nothing by SHORE_FAR's tiles from the shore. Nearing it,
 // from SHORE_BREAK.x to .y tiles, it widens and breaks into round blobs, the domes of the same ripple cells the rapids'
-// foam is made of, which shrink to nothing before the next crest arrives.
+// foam is made of, which shrink to nothing before the next crest arrives. Two tones: a core, and a paler tint a little wider round it.
 #define SHORE_SPACING 4.5
 #define SHORE_PERIOD 8.0
 #define SHORE_FAR vec2(9.0, 12.0)
@@ -246,11 +246,13 @@ float shoreFoam(vec2 xz) {
     * (1.0 - smoothstep(SHORE_FAR.x, SHORE_FAR.y, middle));
   float aa = max(fwidth(s), 0.01);
   float line = 1.0 - smoothstep(crestHalf - aa, crestHalf + aa, s);
+  // two tones: the core, and round it a paler tint, a wider line and blobs a little larger
+  float wide = 1.0 - smoothstep(1.4 * crestHalf - aa, 1.4 * crestHalf + aa, s);
   // the blobs: the ripple cells' domes (layer 2, as the rapids' foam), shrinking as the crest nears the shore
   float h = textureLod(waterNoise, vec3(xz / CELL_SCALE_B + vec2(wave * 0.37, wave * 0.61), 2.0), 0.0).b;
   float t = mix(-0.1, 0.7, life);
   float e = max(fwidth(h), 0.02);
-  return line * smoothstep(t - e, t + e, h);
+  return 0.5 * wide * smoothstep(t - 0.12 - e, t - 0.12 + e, h) + 0.5 * line * smoothstep(t - e, t + e, h);
 }
 
 // The waves' slope at xz and the foam on them (the wave map's, WaterSurface.bake), for water of this type and flow

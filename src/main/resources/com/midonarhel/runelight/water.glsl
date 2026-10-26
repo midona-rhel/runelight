@@ -582,19 +582,26 @@ uniform int waterFakeOn;  // the water setting: off draws the faces as their typ
 #define FAKE_PERIOD 9.0
 // a face is a fall when its normal's vertical part is below the second and not a pool's at all below the first
 #define FALL_STEEP vec2(0.5, 0.85)
-// A fall is flat water crossed by white ribbons FALL_RIBBON tiles across, each winding as a sine of its height (a turn
-// every FALL_TURN tiles, FALL_SWAY of a ribbon's width either way) and sliding down as it winds, a turn every
-// FALL_PERIOD seconds; each ribbon its own width and its own pinching and swelling as it slides
-#define FALL_RIBBON 0.42
-#define FALL_TURN 2.2
-#define FALL_SWAY 0.5
+// A fall is flat water over which foam forms in two tones, a bright core and a paler tint round it, in sine bands: curves
+// across its width, FALL_BAND tiles apart, whose height is a sine of the position across (FALL_SWAY of a band either
+// way, a turn every FALL_TURN tiles), sliding down a band every FALL_PERIOD seconds. A band is only a soft envelope: the
+// foam inside it is the ripple cells of the rapids' foam, stretched into teeth (FALL_TEETH tiles across and FALL_BAND
+// down) and sliding with it, kept where the envelope times the cells passes FALL_TINT, and its core FALL_CORE.
+#define FALL_BAND 0.9
+#define FALL_TURN 1.7
+#define FALL_SWAY 0.35
 #define FALL_PERIOD 2.2
-#define FALL_WIDTH vec2(0.22, 0.42)
-// the lip it pours over is foam this far down (world units), its edge winding; where it lands the foam is round blobs
-// (the ripple cells of the rapids' foam) churning, big at the foot and gone by the second height (world units)
-#define FALL_LIP 14.0
+#define FALL_TEETH 0.26
+#define FALL_TINT 0.28
+#define FALL_CORE 0.62
+// the lip it pours over is foam this far down (world units, the core the share FALL_LIP_CORE of it), hanging down in teeth
+// FALL_LIP_TEETH tiles across; where it lands the foam is a churning mass of the same cells, up to the second height
+// (world units)
+#define FALL_LIP 23.0
+#define FALL_LIP_CORE 0.5
+#define FALL_LIP_TEETH 0.3
 #define FOOT_FOAM vec2(16.0, 100.0)
-#define FOOT_BLOB 0.36
+#define FOOT_BLOB 0.4
 // The slope of level fake water at world xz: two octaves of the sea's waves, running both ways
 vec2 waterFakeSlope(vec2 xz) {
   const mat2 TURN = mat2(0.8, 0.6, -0.6, 0.8);
@@ -620,7 +627,7 @@ float waterDomes(vec2 p) {
   for (int j = -1; j <= 1; ++j) {
     for (int i = -1; i <= 1; ++i) {
       vec2 c = id + vec2(i, j);
-      vec2 at = c + 0.2 + 0.6 * vec2(waterHash(vec3(c, 1.0)), waterHash(vec3(c, 2.0)));
+      vec2 at = c + 0.2 + 0.6 * vec2(waterHash(vec3(c + 17.3, 1.0)), waterHash(vec3(c + 5.7, 2.0)));
       vec2 d = (p - at) / 0.85;
       float k = max(1.0 - dot(d, d), 0.0);
       sum += k * k * k;
@@ -630,32 +637,33 @@ float waterDomes(vec2 p) {
 }
 
 // The foam of a fall at world position w (y down) with tang across it, span: its height above the foot and below the
-// top. White ribbons over the flat water, the lip's foam, and blobs where it lands.
+// top: 0 water, a half the tint, 1 the core
 float waterFallFoam(vec3 w, vec2 tang, vec2 span) {
   float lat = dot(w.xz, tang) / WATER_TILE;
   float h = w.y / WATER_TILE;
   float cycle = waterCycle(FALL_PERIOD);
-  float t = waterCycle(1.0) * WATER_TAU;
-  // the ribbons: the position across them winds with the height and the time, running down
-  float u = lat / FALL_RIBBON;
-  float turn = WATER_TAU * (h / FALL_TURN - cycle);
-  u += FALL_SWAY * sin(turn + 1.6 * sin(0.55 * lat / FALL_RIBBON));
-  float id = floor(u);
-  float rnd = waterHash(vec3(id, 5.0, 3.0));
-  float width = mix(FALL_WIDTH.x, FALL_WIDTH.y, rnd) * (0.72 + 0.28 * sin(WATER_TAU * (h / (1.1 + rnd) - cycle) + 6.0 * rnd));
-  float d = abs(fract(u) - 0.5);
-  float aa = max(fwidth(u), 0.01);
-  float foam = 1.0 - smoothstep(0.5 * width - aa, 0.5 * width + aa, d);
-  // the lip
-  float edge = FALL_LIP * (1.0 + 0.5 * sin(lat * 9.0 + waterCycle(3.0) * WATER_TAU));
-  foam = max(foam, 1.0 - smoothstep(edge - 2.0, edge + 2.0, span.y));
-  // where it lands: round blobs churning in place, shrinking away up the fall
-  vec2 q = vec2(lat, h) / FOOT_BLOB + vec2(0.35 * sin(t + h * 2.0), -waterCycle(1.7));
-  float blobs = waterDomes(q);
-  float shrink = smoothstep(FOOT_FOAM.x, FOOT_FOAM.y, span.x);
-  float level = mix(0.05, 0.8, shrink);
-  float e = max(fwidth(blobs), 0.03);
-  return max(foam, (1.0 - smoothstep(0.9, 1.0, shrink)) * smoothstep(level - e, level + e, blobs));
+  // the bands: where they may form, sliding down; the cells slide with them, a cell down a band
+  float b = h / FALL_BAND + FALL_SWAY / FALL_BAND * sin(WATER_TAU * lat / FALL_TURN) - cycle;
+  float f = fract(b);
+  float env = smoothstep(0.1, 0.45, f) * (1.0 - smoothstep(0.55, 0.95, f)) * (0.7 + 0.3 * waterHash(vec3(floor(b), 4.0, 9.0)));
+  float teeth = waterDomes(vec2(lat / FALL_TEETH, b * 0.55));
+  float v = env * (0.1 + 1.2 * teeth);
+  float e = max(fwidth(v), 0.02);
+  float tint = smoothstep(FALL_TINT - e, FALL_TINT + e, v);
+  float core = smoothstep(FALL_CORE - e, FALL_CORE + e, v);
+  // the lip: teeth hanging down from the top, points where the triangle wave of the position across peaks
+  float tooth = 1.0 - abs(2.0 * fract(lat / FALL_LIP_TEETH + 0.5 * waterHash(vec3(floor(lat / FALL_LIP_TEETH), 8.0, 1.0))) - 1.0);
+  float lip = FALL_LIP * (0.3 + 0.7 * tooth) * (1.0 + 0.1 * sin(WATER_TAU * waterCycle(3.0) + lat * 7.0));
+  tint = max(tint, 1.0 - smoothstep(lip - 1.5, lip + 1.5, span.y));
+  core = max(core, 1.0 - smoothstep(lip * FALL_LIP_CORE - 1.5, lip * FALL_LIP_CORE + 1.5, span.y));
+  // the foot: a churning mass of cells, thick at the bottom and ragged up
+  float near = 1.0 - smoothstep(FOOT_FOAM.x, FOOT_FOAM.y, span.x);
+  float mass = waterDomes(vec2(lat, h) / FOOT_BLOB + vec2(0.35 * sin(WATER_TAU * waterCycle(1.0) + h * 2.0), -waterCycle(1.7)));
+  float m = near * (0.45 + 0.9 * mass) - 0.3;
+  float em = max(fwidth(m), 0.03);
+  tint = max(tint, smoothstep(0.05 - em, 0.05 + em, m));
+  core = max(core, smoothstep(0.4 - em, 0.4 + em, m));
+  return 0.5 * tint + 0.5 * core;
 }
 
 // The fake water face at pixel px (camera-relative p, facing camera normal faceN, color albedo (sRGB), the sun's
