@@ -73,8 +73,8 @@ ivec2 roomPlaneAt(vec3 w) {
 // Distance in tiles (1: a tile or more) to the nearest wall from a point on a storey, baked at the tile corners
 // (RoomAmbient) for outdoor tiles as well as rooms; f is the point's place in its tile.
 float tileWallDistance(int index, int plane, vec2 f) {
-  int packed = int(texelFetch(lightData, index + 3)[plane]);
-  vec4 distances = vec4(packed & 63, (packed >> 6) & 63, (packed >> 12) & 63, (packed >> 18) & 63) / 63.0;
+  int bits = int(texelFetch(lightData, index + 3)[plane]);
+  vec4 distances = vec4(bits & 63, (bits >> 6) & 63, (bits >> 12) & 63, (bits >> 18) & 63) / 63.0;
   float distance = mix(mix(distances.x, distances.y, f.x), mix(distances.z, distances.w, f.x), f.y);
   int walls = int(texelFetch(lightData, index + 2)[plane]);
   if ((walls & ROOM_WALL_SW_NE) != 0) distance = min(distance, abs(f.y - f.x) * 0.70710678);
