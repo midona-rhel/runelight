@@ -31,6 +31,10 @@ final class WaterMap
 	// heightRange's bound when the heights aren't known, far past any the game has
 	static final int HEIGHT_UNKNOWN = 1 << 20;
 	static final int CORNERS = SIZE + 1;
+	// pages of the data texture, side by side
+	static final int PAGES = 3;
+	// farthest the shore distance field is kept (tiles); the waves are all within it
+	static final float SHORE_FIELD_REACH = 32f;
 
 	// water types, indices into the palette in water.glsl
 	static final int NONE = 0;
@@ -70,10 +74,12 @@ final class WaterMap
 	final WaterBodies bodies = new WaterBodies(SIZE);
 	private int baseX, baseY;
 
-	// RGBA float texture, two pages of CORNERS x CORNERS side by side, row by row:
+	// RGBA float texture, three pages of CORNERS x CORNERS side by side, row by row:
 	// page 0 (surface height, on land the nearest water's; flow x, flow z in tiles/s; type of the tile whose sw corner
 	// this is),
-	// page 1 (distance to shore in tiles, wave energy 0-1, share of the corner's tiles that are water, turbulence 0-1)
+	// page 1 (distance to shore in tiles, wave energy 0-1, share of the corner's tiles that are water, turbulence 0-1),
+	// page 2 (straight line distance to the nearest land corner in tiles, share of the corner's water tiles that are
+	// open sea 0-1: the shore waves' field, see WaterBodies.ocean)
 	float[] texture;
 	boolean hasWater;
 
@@ -277,7 +283,7 @@ final class WaterMap
 		}
 
 		findContacts(tiles, heights);
-		buildTexture(heights);
+		buildTexture(heights, landCorner);
 	}
 
 	/**
@@ -818,7 +824,10 @@ final class WaterMap
 			+ (bed[tx][tz + 1] * (1 - fx) + bed[tx + 1][tz + 1] * fx) * fz);
 	}
 
-	private boolean nearWater(int x, int y)
+	/**
+	 * Whether extended tile (x, y) or one of its neighbours is water.
+	 */
+	boolean nearWater(int x, int y)
 	{
 		for (int dy = -1; dy <= 1; ++dy)
 		{
@@ -939,17 +948,20 @@ final class WaterMap
 
 	// ---------------------------------------------------------------------------------------------------------
 
-	private void buildTexture(int[][][] heights)
+	private void buildTexture(int[][][] heights, boolean[] landCorner)
 	{
 		WaterBodies b = bodies;
-		int w = CORNERS * 2;
+		int w = CORNERS * PAGES;
 		float[] t = new float[w * CORNERS * 4];
+		float[] toLand = new float[CORNERS * CORNERS];
+		distanceToLand(landCorner, CORNERS, SHORE_FIELD_REACH, toLand);
 		for (int cy = 0; cy < CORNERS; ++cy)
 		{
 			for (int cx = 0; cx < CORNERS; ++cx)
 			{
 				// over the water tiles touching this corner
 				float height = 0, fx = 0, fz = 0, shore = 0, energy = 0, turbulence = 0;
+				int open = 0;
 				// the map's flow of the tiles here and how much the scene sped it up, for the corner's own map flow
 				float mx = 0, mz = 0, gain = 0;
 				int mapped = 0;
@@ -989,6 +1001,10 @@ final class WaterMap
 						shore += b.shore[i];
 						energy += b.energy[i];
 						turbulence += b.turbulence[i];
+						if (b.ocean[i])
+						{
+							++open;
+						}
 						++count;
 					}
 				}
@@ -1035,10 +1051,87 @@ final class WaterMap
 				t[p1 + 1] = energy;
 				t[p1 + 2] = count / 4f;
 				t[p1 + 3] = turbulence;
+				int p2 = (cy * w + 2 * CORNERS + cx) * 4;
+				t[p2] = toLand[cy * CORNERS + cx];
+				t[p2 + 1] = count > 0 ? (float) open / count : 0;
 			}
 		}
 		spreadLevel(t, w);
 		texture = t;
+	}
+
+	/**
+	 * Straight line distance in tiles from every cell of the n x n grid to the nearest {@code land} cell (0 on land),
+	 * at most {@code max}; {@code max} everywhere when there is no land. Exact (Felzenszwalb and Huttenlocher's
+	 * two passes of lower envelopes of parabolas).
+	 */
+	static void distanceToLand(boolean[] land, int n, float max, float[] out)
+	{
+		float inf = 1e20f;
+		float[] f = new float[n], d = new float[n];
+		int[] v = new int[n];
+		float[] z = new float[n + 1];
+		float[] g = new float[n * n];
+		for (int x = 0; x < n; ++x)
+		{
+			for (int y = 0; y < n; ++y)
+			{
+				f[y] = land[y * n + x] ? 0 : inf;
+			}
+			squaredTransform(f, d, v, z, n);
+			for (int y = 0; y < n; ++y)
+			{
+				g[y * n + x] = d[y];
+			}
+		}
+		for (int y = 0; y < n; ++y)
+		{
+			System.arraycopy(g, y * n, f, 0, n);
+			squaredTransform(f, d, v, z, n);
+			for (int x = 0; x < n; ++x)
+			{
+				out[y * n + x] = Math.min((float) Math.sqrt(d[x]), max);
+			}
+		}
+	}
+
+	private static void squaredTransform(float[] f, float[] d, int[] v, float[] z, int n)
+	{
+		int k = 0;
+		v[0] = 0;
+		z[0] = -Float.MAX_VALUE;
+		z[1] = Float.MAX_VALUE;
+		for (int q = 1; q < n; ++q)
+		{
+			float s;
+			while (true)
+			{
+				int p = v[k];
+				s = ((f[q] + (float) q * q) - (f[p] + (float) p * p)) / (2f * q - 2f * p);
+				if (s <= z[k] && k > 0)
+				{
+					--k;
+				}
+				else
+				{
+					break;
+				}
+			}
+			++k;
+			v[k] = q;
+			z[k] = s;
+			z[k + 1] = Float.MAX_VALUE;
+		}
+		k = 0;
+		for (int q = 0; q < n; ++q)
+		{
+			while (z[k + 1] < q)
+			{
+				++k;
+			}
+			float dq = q - v[k];
+			d[q] = dq * dq + f[v[k]];
+		}
 	}
 
 	/**

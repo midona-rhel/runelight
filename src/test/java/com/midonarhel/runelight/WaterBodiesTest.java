@@ -318,4 +318,45 @@ public class WaterBodiesTest
 		assertEquals(WaterMap.NONE, WaterMap.textureKind(-1));
 		assertEquals(WaterMap.NONE, WaterMap.textureKind(31));
 	}
+
+	@Test
+	public void openSeaIsTheOnlyOcean()
+	{
+		WaterBodies w = grid();
+		fill(w, 0, 0, N - 1, 19); // sea along the north
+		fill(w, 30, 20, 32, 40); // a river running into it
+		fill(w, 5, 30, 9, 34); // a pond
+		w.solve();
+		assertTrue(w.ocean[at(24, 10)]);
+		assertTrue(w.ocean[at(24, 19)]);
+		// the river is part of the ocean body, but a channel too narrow to be open sea
+		assertEquals(WaterBodies.OCEAN, w.bodyClass[0]);
+		assertTrue(!w.ocean[at(31, 35)]);
+		assertTrue(!w.ocean[at(7, 32)]);
+	}
+
+	@Test
+	public void lakesAndPoolsHaveNoOpenSea()
+	{
+		WaterBodies w = grid();
+		fill(w, 10, 10, 30, 30); // a lake well inside the scene
+		w.solve();
+		for (int i = 0; i < N * N; ++i)
+		{
+			assertTrue(!w.ocean[i]);
+		}
+	}
+
+	@Test
+	public void seaTexturesMakeOpenSeaAtAnyWidth()
+	{
+		WaterBodies w = grid();
+		fill(w, 0, 0, N - 1, 1); // two tiles of sea along the edge, as a narrow strait
+		for (int i = 0; i < N * 2; ++i)
+		{
+			w.sea[i] = true;
+		}
+		w.solve();
+		assertTrue(w.ocean[at(24, 0)]);
+	}
 }

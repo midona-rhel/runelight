@@ -86,14 +86,20 @@ vec2 waterCorner(vec2 worldXZ) {
   return clamp(worldXZ / WATER_TILE + waterGrid.x, vec2(0.0), vec2(waterGrid.y - 1.0));
 }
 
-// page 0 (height, flow x, flow z, type) and page 1 (shore, energy, water share, turbulence) at corner coordinates c,
-// filtered between corners
+// page 0 (height, flow x, flow z, type), page 1 (shore, energy, water share, turbulence) and page 2 (see below) at
+// corner coordinates c, filtered between corners
 vec4 waterPage0(sampler2D data, vec2 c) {
-  return textureLod(data, (c + 0.5) / vec2(2.0 * waterGrid.y, waterGrid.y), 0.0);
+  return textureLod(data, (c + 0.5) / vec2(3.0 * waterGrid.y, waterGrid.y), 0.0);
 }
 
 vec4 waterPage1(sampler2D data, vec2 c) {
-  return textureLod(data, (c + vec2(waterGrid.y, 0.0) + 0.5) / vec2(2.0 * waterGrid.y, waterGrid.y), 0.0);
+  return textureLod(data, (c + vec2(waterGrid.y, 0.0) + 0.5) / vec2(3.0 * waterGrid.y, waterGrid.y), 0.0);
+}
+
+// page 2: the straight line distance to the nearest land corner in tiles, the share of the corner's water that is open
+// sea (the shore waves' field, WaterMap)
+vec4 waterPage2(sampler2D data, vec2 c) {
+  return textureLod(data, (c + vec2(2.0 * waterGrid.y, 0.0) + 0.5) / vec2(3.0 * waterGrid.y, waterGrid.y), 0.0);
 }
 
 // The flow phases at xz: two copies of the waves dragged along the flow half a cycle apart, each fading out before
@@ -151,4 +157,66 @@ float nominalDepth(float shore) {
 // A scroll of a whole number of repeats per wrap of waterTime, about one per `period` seconds
 float waterCycle(float period) {
   return fract(floor(WATER_TIME_WRAP / period + 0.5) * (waterTime / WATER_TIME_WRAP));
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// Procedural waves, also used by the composite for water the models only fake (water.glsl waterFake)
+
+// The waves: the standard choppy sea of sine octaves. Each octave is a grid of sine waves warped by noise (so it
+// never tiles or lines up), folded to 1 - |sin| and raised to WAVE_CHOP: sharp crests over broad rounded troughs.
+// WAVE_OCTAVES of them, the first WAVE_LONGEST tiles from crest to crest, each next turned (about 37 degrees) and
+// WAVE_SHRINK as long, WAVE_FADE as high, and a little less choppy. Each runs both ways at WAVE_SPEED wavelengths a
+// second, which makes them heave in place rather than slide. WAVE_HEIGHT: world units of the first.
+#define WAVE_DIR vec2(0.70710678, 0.70710678)
+#define WAVE_OCTAVES 3
+#define WAVE_LONGEST 5.5
+#define WAVE_SHRINK 0.53
+#define WAVE_FADE 0.3
+#define WAVE_CHOP 1.3
+#define WAVE_SPEED 0.11
+#define WAVE_HEIGHT 5.5
+
+float waterHash(vec3 p) {
+  p = fract(p * 0.1031);
+  p += dot(p, p.zyx + 31.32);
+  return fract((p.x + p.y) * p.z);
+}
+
+// Value noise, not tiling (hashed lattice): -1 to 1
+float waveNoise(vec2 p) {
+  vec2 i = floor(p), f = fract(p);
+  vec2 u = f * f * (3.0 - 2.0 * f);
+  float a = waterHash(vec3(i, 7.0)), b = waterHash(vec3(i + vec2(1.0, 0.0), 7.0));
+  float c = waterHash(vec3(i + vec2(0.0, 1.0), 7.0)), d = waterHash(vec3(i + vec2(1.0, 1.0), 7.0));
+  return mix(mix(a, b, u.x), mix(c, d, u.x), u.y) * 2.0 - 1.0;
+}
+
+// Value noise with its gradient, not tiling (hashed lattice): x the value -1 to 1, yz its gradient
+vec3 waveNoiseD(vec2 p) {
+  vec2 i = floor(p), f = fract(p);
+  vec2 u = f * f * (3.0 - 2.0 * f);
+  vec2 du = 6.0 * f * (1.0 - f);
+  float a = waterHash(vec3(i, 7.0)), b = waterHash(vec3(i + vec2(1.0, 0.0), 7.0));
+  float c = waterHash(vec3(i + vec2(0.0, 1.0), 7.0)), d = waterHash(vec3(i + vec2(1.0, 1.0), 7.0));
+  float k1 = b - a, k2 = c - a, k3 = a - b - c + d;
+  return vec3(a + k1 * u.x + k2 * u.y + k3 * u.x * u.y, du * vec2(k1 + k3 * u.y, k2 + k3 * u.x)) * 2.0
+    - vec3(1.0, 0.0, 0.0);
+}
+
+// The gradient (by uv) of one octave of choppy waves at uv (radians of its sines): a grid of sines warped by noise,
+// folded to 1 - |sin| blended toward |cos|, their product raised so the crests come to a point. Worked out exactly
+// rather than by looking the height up three times.
+vec2 seaOctaveGrad(vec2 uv, vec3 n, float chop) {
+  vec2 w = uv + n.x;
+  vec2 s = sin(w), c = cos(w);
+  vec2 wv = 1.0 - abs(s), dwv = -sign(s) * c;
+  vec2 swv = abs(c), dswv = -sign(c) * s;
+  vec2 m = wv + (swv - wv) * wv;
+  vec2 dm = dwv * (1.0 + swv - 2.0 * wv) + dswv * wv;
+  float P = max(m.x * m.y, 1e-4);
+  vec2 dP = vec2(dm.x * m.y, m.x * dm.y);
+  float R = max(1.0 - pow(P, 0.65), 1e-4);
+  vec2 g = -chop * pow(R, chop - 1.0) * 0.65 * pow(P, -0.35) * dP;
+  // through the warp: w = uv + n(uv) on both axes
+  return g.x * vec2(1.0 + n.y, n.z) + g.y * vec2(n.y, 1.0 + n.z);
 }

@@ -1232,8 +1232,10 @@ class SceneUploader
 
 		// the game's ripples on it, which the water draws itself (WaterMap.contact): 117 HD's list
 		WaterOverrides overrides = WaterOverrides.get();
-		boolean ripples = overrides.hasRipples(id) && EnvironmentManager.toWorld(scene, x + basex >> 7, z + basez >> 7,
-			level, objectWorld);
+		// only where the water has a tile to draw them on: a rock beside a fall or a pool without one keeps its foam
+		boolean ripples = overrides.hasRipples(id) && sinkWater
+			&& water.nearWater((x + basex >> 7) + RuneLightPlugin.SCENE_OFFSET, (z + basez >> 7) + RuneLightPlugin.SCENE_OFFSET)
+			&& EnvironmentManager.toWorld(scene, x + basex >> 7, z + basez >> 7, level, objectWorld);
 		boolean standing = false;
 		if (sinkWater && !sway)
 		{
@@ -1265,6 +1267,9 @@ class SceneUploader
 			modelLocalZI[v] = vz;
 		}
 
+		// fake water: faces drawn as real water, with their height above the foot of the model's water in u
+		final float foot = SurfaceMaterials.fakeFoot(material, faceTextures, triangleCount, color1s, transparencies,
+			indices1, indices2, indices3, vertexY);
 		int len = 0;
 		for (int face = 0; face < triangleCount; ++face)
 		{
@@ -1351,8 +1356,19 @@ class SceneUploader
 				+ (priorities != null ? (priorities[face] & 0xff) * PRIORITY_BIAS : 0);
 			alphaBias |= Math.min(faceBias, 255) << 16;
 			int texture = faceTextures != null ? faceTextures[face] + 1 : 0;
-			texture |= SurfaceMaterials.face(material, texture - 1, color1, SurfaceMaterials.opacity(transparencies, face));
-			GpuIntBuffer buf = alpha ? ab : vb;
+			int bits = SurfaceMaterials.face(material, texture - 1, color1, SurfaceMaterials.opacity(transparencies, face));
+			boolean fake = SurfaceMaterials.isFake(bits);
+			if (fake)
+			{
+				texture = 0;
+				alphaBias &= 0xffffff;
+				su0 = SurfaceMaterials.fakeHeight(foot, vertexY[triangleA]);
+				su1 = SurfaceMaterials.fakeHeight(foot, vertexY[triangleB]);
+				su2 = SurfaceMaterials.fakeHeight(foot, vertexY[triangleC]);
+				sv0 = sv1 = sv2 = 0;
+			}
+			texture |= bits;
+			GpuIntBuffer buf = alpha && !fake ? ab : vb;
 
 			buf.put22224(vx1, vy1, vz1, sway ? swayCodes[triangleA] : 0, alphaBias | color1);
 			buf.put2222(texture, su0, sv0, n1);

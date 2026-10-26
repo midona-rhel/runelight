@@ -36,6 +36,9 @@ final class WaterBodies
 	// a body running off the scene edge this big, or this far from shore, is sea
 	static final int OCEAN_SIZE = 400;
 	static final int OCEAN_SHORE = 6;
+	// open sea inside an ocean body: its channel's middle at least this far from the bank (tiles), so the arms and
+	// river mouths that join the sea don't count
+	static final float OPEN_SEA_RIDGE = 3f;
 	private static final int MAX_DISTANCE = 64;
 
 	// tiles per second
@@ -85,6 +88,8 @@ final class WaterBodies
 	final float[] turbulence;
 	// distance to shore of the middle of the channel each tile is in, tiles
 	final float[] ridge;
+	// tiles of open sea (see openSea): the only water with shore waves
+	final boolean[] ocean;
 	// how much faster than the map's flow each tile with map flow runs after shaping (1 where still)
 	final float[] gain;
 	// the sea's push toward its shores, added to the flow after smoothing
@@ -118,6 +123,7 @@ final class WaterBodies
 		energy = new float[n];
 		turbulence = new float[n];
 		ridge = new float[n];
+		ocean = new boolean[n];
 		gain = new float[n];
 		queue = new int[n];
 		dist = new int[n];
@@ -146,6 +152,7 @@ final class WaterBodies
 		}
 		smoothFlow();
 		shapeFlow();
+		openSea();
 		for (int i = 0; i < water.length; ++i)
 		{
 			flowX[i] += pushX[i];
@@ -717,6 +724,21 @@ final class WaterBodies
 		float down = surfaceAt(x + sx, y + sz, i) - surface[i];
 		float up = surface[i] - surfaceAt(x - sx, y - sz, i);
 		return Math.max(0, Math.max(down, up));
+	}
+
+	/**
+	 * Which water is open sea: the tiles the game marks as sea, and the tiles of an ocean body (water running off the
+	 * scene that is large or far from every shore, see {@link #classify}) in a channel wide enough, by its ridge, that
+	 * it isn't a river or an inlet running into the sea. Rivers, lakes and ponds that don't run off the scene are never
+	 * sea.
+	 */
+	private void openSea()
+	{
+		for (int i = 0; i < water.length; ++i)
+		{
+			int b = body[i];
+			ocean[i] = b >= 0 && bodyClass[b] == OCEAN && (sea[i] || ridge[i] >= OPEN_SEA_RIDGE);
+		}
 	}
 
 	private void energies()

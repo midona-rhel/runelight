@@ -157,7 +157,7 @@ vec2 fogWaterCell(vec2 worldXZ) {
 }
 
 float fogWaterLevel(vec2 c) {
-  return textureLod(waterData, (c + 0.5) / vec2(2.0 * waterGrid.y, waterGrid.y), 0.0).r;
+  return textureLod(waterData, (c + 0.5) / vec2(3.0 * waterGrid.y, waterGrid.y), 0.0).r;
 }
 
 // Distance along the ray dir to where it enters the water above the camera-relative point hit, or -1 when hit

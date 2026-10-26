@@ -257,6 +257,53 @@ vec3 waterShoulder(vec3 c) {
   return mix(c, 1.0 - (1.0 - SHOULDER) * exp(-(c - SHOULDER) / (1.0 - SHOULDER)), step(SHOULDER, c));
 }
 
+// The lamps' light on the surface at camera-relative s (seen at pixel px, view depth viewZ): the baked lights
+// (light_map.glsl) and the clusters', added to the surface's light as a little each (LAMP_SURFACE) and to lampSpec as
+// their glints
+void waterLamps(ivec2 px, vec3 s, float viewZ, vec3 nrm, vec3 toCamera, vec3 tAlong, vec3 tAcross,
+  inout vec3 surfaceLight, inout vec3 lampSpec) {
+  if (pointLightsEnabled != 1 || lightingEnabled != 1)
+    return;
+  // the baked lights (light_map.glsl), each as below
+  int mapPlane = 0;
+  if (lightMapOn()) {
+    vec3 world = s + cameraPos;
+    mapPlane = lightMapPlane(world);
+    vec4 vis;
+    ivec4 ids;
+    if (lightMapSlots(world, world, mapPlane, vis, ids)) {
+      for (int k = 0; k < 4; ++k) {
+        vec3 color, ld;
+        float lightY;
+        if (lightMapLight(ids[k], vis[k], world, color, ld, lightY)) {
+          surfaceLight += color * (max(-ld.y, 0.2) * LAMP_SURFACE);
+          lampSpec += color * waterGlint(nrm, ld, toCamera, tAlong, tAcross, LAMP_ALONG, LAMP_ACROSS);
+        }
+      }
+    }
+  }
+  int entry = clusterAt(px, viewZ);
+  LightMask lights = clusterLights(entry);
+  int li;
+  while (nextLight(lights, li)) {
+    vec4 posRadius = texelFetch(lightData, li * 2);
+    vec3 l = posRadius.xyz - s;
+    float d2 = dot(l, l);
+    float r2 = posRadius.w * posRadius.w;
+    if (d2 >= r2)
+      continue;
+    vec4 colorCode = texelFetch(lightData, li * 2 + 1);
+    if (!lightOnStorey(colorCode.w, mapPlane)) {
+      continue;
+    }
+    vec3 color = colorCode.rgb;
+    float att = pointLightFalloff(d2, r2);
+    vec3 ld = l * inversesqrt(max(d2, 1.0));
+    surfaceLight += color * (att * max(-ld.y, 0.2) * LAMP_SURFACE);
+    lampSpec += color * (att * waterGlint(nrm, ld, toCamera, tAlong, tAcross, LAMP_ALONG, LAMP_ACROSS));
+  }
+}
+
 // ---------------------------------------------------------------------------------------------------------------
 // The half resolution pass: for the half resolution pixel hpx, the nearest water surface among the full resolution
 // pixels it covers (four at most), shaded: the surface's color (linear, foam in it), how much of what is under it the
@@ -336,46 +383,7 @@ void waterShadeHalf(ivec2 hpx) {
   vec2 fwd = v.xz * inversesqrt(max(dot(v.xz, v.xz), 1e-6));
   vec3 tAlong = vec3(fwd.x, 0.0, fwd.y), tAcross = vec3(-fwd.y, 0.0, fwd.x);
   vec3 lampSpec = vec3(0.0);
-  if (pointLightsEnabled == 1 && lightOn) {
-    // the baked lights (light_map.glsl), each as below
-    int mapPlane = 0;
-    if (lightMapOn()) {
-      vec3 world = s + cameraPos;
-      mapPlane = lightMapPlane(world);
-      vec4 vis;
-      ivec4 ids;
-      if (lightMapSlots(world, world, mapPlane, vis, ids)) {
-        for (int k = 0; k < 4; ++k) {
-          vec3 color, ld;
-          float lightY;
-          if (lightMapLight(ids[k], vis[k], world, color, ld, lightY)) {
-            surfaceLight += color * (max(-ld.y, 0.2) * LAMP_SURFACE);
-            lampSpec += color * waterGlint(nrm, ld, toCamera, tAlong, tAcross, LAMP_ALONG, LAMP_ACROSS);
-          }
-        }
-      }
-    }
-    int entry = clusterAt(px, viewZ);
-    LightMask lights = clusterLights(entry);
-    int li;
-    while (nextLight(lights, li)) {
-      vec4 posRadius = texelFetch(lightData, li * 2);
-      vec3 l = posRadius.xyz - s;
-      float d2 = dot(l, l);
-      float r2 = posRadius.w * posRadius.w;
-      if (d2 >= r2)
-        continue;
-      vec4 colorCode = texelFetch(lightData, li * 2 + 1);
-      if (!lightOnStorey(colorCode.w, mapPlane)) {
-        continue;
-      }
-      vec3 color = colorCode.rgb;
-      float att = pointLightFalloff(d2, r2);
-      vec3 ld = l * inversesqrt(max(d2, 1.0));
-      surfaceLight += color * (att * max(-ld.y, 0.2) * LAMP_SURFACE);
-      lampSpec += color * (att * waterGlint(nrm, ld, toCamera, tAlong, tAcross, LAMP_ALONG, LAMP_ACROSS));
-    }
-  }
+  waterLamps(px, s, viewZ, nrm, toCamera, tAlong, tAcross, surfaceLight, lampSpec);
   // ---- what the surface reflects: the sky, and the world where the reflected ray finds it
   vec3 skyN = normalize(nrm * vec3(SKY_TILT, 1.0, SKY_TILT));
   float vn = clamp(dot(toCamera, skyN), 0.0, 1.0);
@@ -435,24 +443,13 @@ vec3 waterNormalAt(ivec2 q) {
   return vec3(nx, -sqrt(max(1.0 - nx * nx - nz * nz, 0.0)), nz);
 }
 
-// The sharp glints of the sun or moon on the surface at full resolution: v the view direction, shadow the sun's. A
-// glint is a facet catching the sun, often smaller than a pixel: the lobe is widened by how much the (steepened)
-// normal changes across the pixel, from its neighbours to the right and below, so the pixel shows the glint averaged
-// over its footprint. Where the waves are fine against the pixels (far off, or at a low render scale) the glints are
-// softer and dimmer instead of aliasing into specks or blocks; up close they stay pinpoints.
-vec3 waterGlitter(ivec2 px, vec3 nrm, vec3 v, float shine, float foam, float shadow) {
+// The sun's or moon's glint off the steepened normal `steep` seen along v, its lobe widened by `footprint`, the
+// squared change of the steepened normal over the pixel, times shadow (the sun's), foam and the type's shine
+vec3 waterSunGlint(vec3 steep, vec3 v, float footprint, float shine, float foam, float shadow) {
   if (outdoors == 0 || lightingEnabled == 0)
     return vec3(0.0);
   vec2 fwd = v.xz * inversesqrt(max(dot(v.xz, v.xz), 1e-6));
   vec3 tAlong = vec3(fwd.x, 0.0, fwd.y), tAcross = vec3(-fwd.y, 0.0, fwd.x);
-  vec3 steep = waterGlitterNormal(nrm);
-  ivec2 last = sceneTextureSize() - 1;
-  vec3 nx = waterNormalAt(min(px + ivec2(1, 0), last));
-  vec3 ny = waterNormalAt(min(px + ivec2(0, 1), last));
-  // the slope's change over the pixel, squared; a neighbour off the water counts as no change
-  vec3 dx = nx.y != 0.0 ? waterGlitterNormal(nx) - steep : vec3(0.0);
-  vec3 dy = ny.y != 0.0 ? waterGlitterNormal(ny) - steep : vec3(0.0);
-  float footprint = (dot(dx, dx) + dot(dy, dy)) * GLITTER_FOOTPRINT;
   float rough = GLITTER_ROUGH * GLINT_SUN_SIZE;
   float along = sqrt(rough * rough * 2.56 + footprint), across = sqrt(rough * rough + footprint);
   float glitter = waterGlint(steep, casterDir, -v, tAlong, tAcross, along, across);
@@ -460,6 +457,22 @@ vec3 waterGlitter(ivec2 px, vec3 nrm, vec3 v, float shine, float foam, float sha
   vec3 caster = strikeSun(sunIsCaster == 1 ? sunLight(sunAltitude) : moonLight(sunAltitude)) * envSun;
   return caster * (glitter * shadow * shine * (1.0 - foam) * (sunIsCaster == 1 ? 1.0 : MOON_SPECULAR)
     * (1.0 - smoothstep(GLINT_OVERCAST.x, GLINT_OVERCAST.y, weatherOvercast.x)));
+}
+
+// The sharp glints of the sun or moon on the surface at full resolution: v the view direction, shadow the sun's. A
+// glint is a facet catching the sun, often smaller than a pixel: the lobe is widened by how much the (steepened)
+// normal changes across the pixel, from its neighbours to the right and below, so the pixel shows the glint averaged
+// over its footprint. Where the waves are fine against the pixels (far off, or at a low render scale) the glints are
+// softer and dimmer instead of aliasing into specks or blocks; up close they stay pinpoints.
+vec3 waterGlitter(ivec2 px, vec3 nrm, vec3 v, float shine, float foam, float shadow) {
+  vec3 steep = waterGlitterNormal(nrm);
+  ivec2 last = sceneTextureSize() - 1;
+  vec3 nx = waterNormalAt(min(px + ivec2(1, 0), last));
+  vec3 ny = waterNormalAt(min(px + ivec2(0, 1), last));
+  // the slope's change over the pixel, squared; a neighbour off the water counts as no change
+  vec3 dx = nx.y != 0.0 ? waterGlitterNormal(nx) - steep : vec3(0.0);
+  vec3 dy = ny.y != 0.0 ? waterGlitterNormal(ny) - steep : vec3(0.0);
+  return waterSunGlint(steep, v, (dot(dx, dx) + dot(dy, dy)) * GLITTER_FOOTPRINT, shine, foam, shadow);
 }
 
 // ---------------------------------------------------------------------------------------------------------------
@@ -551,4 +564,153 @@ vec3 waterOver(ivec2 px, inout vec3 p, vec3 albedo, float shadow, vec3 lit, floa
   vec3 result = linearToSrgb(clamp(mix(bed, color, smoothstep(0.0, 1.0, depth / SOFT_EDGE)), 0.0, 1.0));
   p = s;
   return result;
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// Fake water: the faces models draw as water (fountains, wells, troughs, sinks, waterfalls; SurfaceMaterials marks
+// them, the scene pass writes them as water 3 in the material target with their height above the foot of the
+// model's water). The composite replaces their lit color with water shaded as the real surface is, from the face
+// itself: its own normal and the world position, no texture. Level faces get the ripples and reflections of still
+// water; steep ones are falls, white streaks of foam running down over the water's color, foaming at the foot.
+// Everything here is ALU: the composite has no sampler to spare.
+uniform int waterFakeOn;  // the water setting: off draws the faces as their type's plain color
+
+// how deep the water counts as being, for the color it fades into (world units)
+#define FAKE_DEPTH 100.0
+// the ripples of level water: the largest ones FAKE_LONGEST tiles from crest to crest and FAKE_HEIGHT world units
+// high, the finer octave after it a third as high; the seconds one cycle of them takes
+#define FAKE_LONGEST 1.4
+#define FAKE_HEIGHT 1.6
+#define FAKE_PERIOD 9.0
+// a face is a fall when its normal's vertical part is below the second and not a pool's at all below the first
+#define FALL_STEEP vec2(0.5, 0.85)
+// A fall's streaks: columns FALL_COLUMN tiles across that wobble as they run, each with its own runs of foam
+// about FALL_LENGTH tiles long (each its own length, so no two run in step) falling a length every FALL_PERIOD
+// seconds, broken up by drifting noise
+#define FALL_COLUMN 0.12
+#define FALL_LENGTH 2.0
+#define FALL_PERIOD 0.6
+#define FALL_WOBBLE 0.35
+#define FALL_FOAM 0.85
+#define FALL_FOAM_COLOR vec3(0.93, 0.96, 0.98)
+// the foam where a fall lands: full this high above its foot (world units), gone by the second
+#define FOOT_FOAM vec2(10.0, 96.0)
+// how steep the streaks' columns catch the light across them
+#define FALL_RELIEF 0.25
+
+// The slope of level fake water at world xz: two octaves of the sea's waves, running both ways
+vec2 waterFakeSlope(vec2 xz) {
+  const mat2 TURN = mat2(0.8, 0.6, -0.6, 0.8);
+  mat2 M = TURN * (WATER_TAU / (FAKE_LONGEST * WATER_TILE));
+  float tt = waterCycle(FAKE_PERIOD) * WATER_TAU;
+  vec2 g = vec2(0.0);
+  float amp = 1.0, chop = WAVE_CHOP;
+  for (int i = 0; i < 2; ++i) {
+    vec2 uv = M * xz;
+    vec2 ua = uv + tt, ub = uv - tt + 2.3;
+    g += transpose(M) * (seaOctaveGrad(ua, waveNoiseD(ua), chop) + seaOctaveGrad(ub, waveNoiseD(ub), chop)) * amp;
+    M = TURN * M / WAVE_SHRINK;
+    amp *= WAVE_FADE;
+  }
+  return g * (0.5 * FAKE_HEIGHT);
+}
+
+// The foam of a fall at world position w (y down) with tang across it: the streaks, and across them the relief
+// the light catches (x), the foam at its foot given foot, its height above it (y)
+vec2 waterFallFoam(vec3 w, vec2 tang, float foot, out float relief) {
+  float lat = dot(w.xz, tang) / (WATER_TILE * FALL_COLUMN);
+  float h = w.y / WATER_TILE;
+  float x = lat + FALL_WOBBLE * sin(h * 2.1 + lat * 0.7);
+  float column = floor(x), across = fract(x);
+  float rnd = waterHash(vec3(column, 3.0, 1.0));
+  float len = FALL_LENGTH * (0.75 + 0.5 * rnd);
+  float cycle = waterCycle(FALL_PERIOD);
+  // runs of foam falling: a pattern of h - speed * time, with speed = len per period, so the cycle moves it a length
+  float run = 0.5 + 0.5 * sin(WATER_TAU * (h / len - cycle + rnd));
+  float core = smoothstep(0.35, 0.85, sin(3.14159 * across));
+  // broken up by noise falling with it
+  float n = waveNoise(vec2(lat * 0.8, h * 1.9 - cycle * 1.9 * FALL_LENGTH));
+  float streaks = smoothstep(0.3, 0.75, run) * core * smoothstep(-0.5, 0.0, n);
+  relief = cos(3.14159 * across) * (0.3 + 0.7 * run);
+  // where it lands: boiling foam, thicker toward the foot
+  float boil = 0.55 + 0.45 * waveNoise(vec2(lat * 2.3, h * 3.1 + waterCycle(0.7) * 4.0));
+  float landing = (1.0 - smoothstep(FOOT_FOAM.x, FOOT_FOAM.y, foot)) * boil;
+  return vec2(max(streaks * FALL_FOAM, landing), 0.0);
+}
+
+// The fake water face at pixel px (camera-relative p, facing camera normal faceN, color albedo (sRGB), the sun's
+// shadow, foot above the foot of its water), lit as lit (sRGB): its color as water, sRGB.
+vec3 waterFake(ivec2 px, vec3 p, vec3 faceN, vec3 albedo, float shadow, float foot, vec3 lit) {
+  // the slimy greens are swamp water, the rest fresh
+  int type = albedo.g > albedo.b * 1.15 ? 5 : 1;
+  vec4 look = WATER_LOOK[type];
+  if (waterFakeOn == 0) {
+    vec3 c = WATER_SURFACE_COLOR[type];
+    return c * (dot(lit, vec3(0.299, 0.587, 0.114)) / dot(c, vec3(0.299, 0.587, 0.114)));
+  }
+  float dist = length(p);
+  vec3 v = p / dist;
+  vec3 toCamera = -v;
+  vec3 world = p + cameraPos;
+  float fall = 1.0 - smoothstep(FALL_STEEP.x, FALL_STEEP.y, abs(faceN.y));
+  float side = length(faceN.xz);
+  vec2 tang = side > 1e-3 ? vec2(-faceN.z, faceN.x) / side : vec2(1.0, 0.0);
+
+  // the surface's normal and its foam
+  vec2 slope = waterFakeSlope(world.xz) * look.w;
+  vec3 nrm = faceN + vec3(-slope.x, 0.0, -slope.y) * (1.0 - fall);
+  float foam = 0.0;
+  if (fall > 0.0) {
+    float relief;
+    foam = waterFallFoam(world, tang, foot, relief).x * fall;
+    nrm += vec3(tang.x, 0.0, tang.y) * (relief * FALL_RELIEF * fall);
+  }
+  nrm = normalize(nrm);
+
+  // ---- light on the surface, as the real water's
+  bool lightOn = lightingEnabled == 1;
+  vec3 surfaceLight = vec3(1.0);
+  float murk = smoothstep(WATER_LOOK[1].x, WATER_LOOK[5].x, look.x);
+  if (outdoors == 1 && lightOn) {
+    vec3 caster = strikeCaster(sunIsCaster == 1 ? sunLight(sunAltitude) : moonLight(sunAltitude)) * envSun;
+    vec3 ambient = ambientLight(sunAltitude) * envAmbient;
+    vec3 sky = skyLight(sunAltitude) * envAmbient;
+    float bodyShadow = mix(shadow, 1.0, MURKY_SHADOW_LIFT * murk);
+    // a fall is lit as the pool below it is, not by how steep its face is
+    vec3 lightN = normalize(mix(nrm, vec3(0.0, -1.0, 0.0), 0.6 * fall));
+    surfaceLight = ambient + sky * max(-lightN.y, 0.0) + caster * max(dot(lightN, casterDir), 0.0) * bodyShadow;
+  } else if (lightOn) {
+    surfaceLight = envCaveLight(vec3(0.0, -1.0, 0.0));
+  }
+  vec2 fwd = v.xz * inversesqrt(max(dot(v.xz, v.xz), 1e-6));
+  vec3 tAlong = vec3(fwd.x, 0.0, fwd.y), tAcross = vec3(-fwd.y, 0.0, fwd.x);
+  vec3 lampSpec = vec3(0.0);
+  waterLamps(px, p, (viewProj * vec4(p, 1.0)).w, nrm, toCamera, tAlong, tAcross, surfaceLight, lampSpec);
+
+  // ---- what it reflects: the sky, and the world where the reflected ray finds it
+  vec3 skyN = normalize(nrm * vec3(SKY_TILT, 1.0, SKY_TILT));
+  float fresnel = mix(FRESNEL_BASE, 1.0, pow(1.0 - clamp(dot(toCamera, skyN), 0.0, 1.0), FRESNEL_POWER));
+  vec3 waveN = normalize(nrm * vec3(WAVE_SKY_TILT, 1.0, WAVE_SKY_TILT));
+  float waveSky = mix(FRESNEL_BASE, 1.0, pow(1.0 - clamp(dot(toCamera, waveN), 0.0, 1.0), FRESNEL_POWER));
+  vec3 r = reflect(v, waveN);
+  r.y = min(r.y, -0.02);
+  vec3 reflection = waterSkyReflection(normalize(r));
+  if (waterReflections == 1 && fall < 0.5) {
+    vec4 hit = waterTraceReflection(p, reflect(v, nrm), surfaceLight, vec2(px));
+    reflection = mix(reflection, hit.rgb, hit.a);
+  }
+
+  // ---- the highlights, the surface and what is under it (a pool of FAKE_DEPTH, its floor the face's color gone
+  // sandy)
+  vec3 spec = min(lampSpec * LAMP_SPECULAR, vec3(LAMP_MAX));
+  spec += waterSunGlint(waterGlitterNormal(nrm), v, 0.0, look.z, foam, shadow) * (1.0 - fall);
+  vec3 surface = mix(srgbToLinear(WATER_SURFACE_COLOR[type]) * surfaceLight, reflection * waveSky, look.y);
+  float cover = mix(max(fresnel, (1.0 + toCamera.y) * OPACITY_SLANT), 0.9, fall);
+  vec3 foamColor = srgbToLinear(mix(WATER_FOAM_COLOR[type], FALL_FOAM_COLOR, fall)) * surfaceLight;
+  float covered = cover + foam * (1.0 - cover);
+  surface = (surface * (cover * (1.0 - foam)) + foamColor * foam) / max(covered, 1e-4);
+  vec3 bed = srgbToLinear(mix(albedo, vec3(0.62, 0.55, 0.40), 0.5)) * surfaceLight;
+  vec3 under = bed * srgbToLinear(waterDepthTint(type, FAKE_DEPTH));
+  float alpha = max(look.x * smoothstep(0.0, SURFACE_DEPTH, FAKE_DEPTH), covered);
+  return linearToSrgb(clamp(waterShoulder(mix(under, surface, alpha) + spec), 0.0, 1.0));
 }

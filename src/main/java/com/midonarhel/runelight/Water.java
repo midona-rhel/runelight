@@ -98,7 +98,7 @@ class Water
 	static final class CompositeUniforms
 	{
 		private int enabled = -1, time = -1, reflections = -1, clarity = -1, caustics = -1, debug = -1, slotType = -1,
-			rect = -1;
+			rect = -1, fakeOn = -1;
 
 		/** Look them up and point the program's samplers at the units. Call with each newly compiled composite. */
 		void locate(int program, int surfaceUnit, int shadedUnit)
@@ -111,6 +111,7 @@ class Water
 			debug = glGetUniformLocation(program, "waterDebug");
 			slotType = glGetUniformLocation(program, "waterSlotType");
 			rect = glGetUniformLocation(program, "waterRect");
+			fakeOn = glGetUniformLocation(program, "waterFakeOn");
 			glUseProgram(program);
 			glUniform1i(glGetUniformLocation(program, "waterSurface"), surfaceUnit);
 			glUniform1i(glGetUniformLocation(program, "waterShaded"), shadedUnit);
@@ -233,7 +234,7 @@ class Water
 		buf.put(map.texture).flip();
 		// full floats: heights reach thousands of units, where half floats step by 2 to 4, and the shader takes the
 		// type from this texture too
-		glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA32F, WaterMap.CORNERS * 2, WaterMap.CORNERS, 0, GL_RGBA, GL_FLOAT, buf);
+		glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA32F, WaterMap.CORNERS * WaterMap.PAGES, WaterMap.CORNERS, 0, GL_RGBA, GL_FLOAT, buf);
 
 		// where things stand in the water (WaterMap.contact); one empty texel with none
 		if (texContact == 0)
@@ -285,6 +286,9 @@ class Water
 		float focusZ, float reach, float[] casterDir, boolean depthZeroToOne, int dataUnit, int noiseUnit, int contactUnit)
 	{
 		visible = false;
+		// the clock runs without water in the scene too: fake water (water.glsl waterFake) moves by it
+		long now = System.nanoTime();
+		frame.time = (float) (((now - startNanos) / 1e9) % TIME_WRAP);
 		if (!config.water() || !hasData)
 		{
 			return;
@@ -293,11 +297,9 @@ class Water
 		{
 			texNoise = createNoise();
 		}
-		long now = System.nanoTime();
 		advance(wind, lastNanos == 0 ? 0 : (now - lastNanos) / 1e9);
 		lastNanos = now;
 		Frame f = frame;
-		f.time = (float) (((now - startNanos) / 1e9) % TIME_WRAP);
 		f.windX = wind[0];
 		f.windZ = wind[1];
 		f.strength = (float) strength;
@@ -351,13 +353,15 @@ class Water
 	{
 		boolean enabled = enabled(config);
 		glUniform1i(u.enabled, enabled ? 1 : 0);
+		// fake water is drawn wherever the model has it, with the water setting on, in view of real water or not
+		glUniform1i(u.fakeOn, config.water() ? 1 : 0);
+		glUniform1f(u.time, frame.time);
+		glUniform1i(u.reflections, config.waterReflections() ? 1 : 0);
+		glUniform1f(u.clarity, config.waterClarity() / 100f);
 		if (!enabled)
 		{
 			return;
 		}
-		glUniform1f(u.time, frame.time);
-		glUniform1i(u.reflections, config.waterReflections() ? 1 : 0);
-		glUniform1f(u.clarity, config.waterClarity() / 100f);
 		glUniform1i(u.caustics, config.waterCaustics() ? 1 : 0);
 		glUniform1i(u.debug, config.waterDebug().ordinal());
 		glUniform4i(u.rect, rect[0], rect[1], rect[2], rect[3]);

@@ -31,6 +31,11 @@ import static org.lwjgl.opengl.GL33C.glUniform1f;
  *   bits 14-15  how much snow settles on it: all, reduced (things to interact with) or none (items, actors)
  * Models whose 117 HD override lights only some faces name an emissive group (bits 6-13 of the model flags), which
  * decides each face by its color, alpha and whether it is textured.
+ * Fake water, faces that pretend to be water (fountains, wells, troughs, waterfalls), has both water flags at once
+ * (bed and land terrain, which no model face has otherwise): the composite shades them as real water (water.glsl
+ * waterFake). They are the faces with the game's water textures, and the faces of a fake water group (bits 23-30 of
+ * the model flags) that its rules pick out. The uploaders make them opaque, drop their texture and put their height
+ * above the foot of the model's water in the u coordinate (see {@link #fakeFoot}).
  * The flags are always baked; the config toggles only change shader uniforms, so no scene reload is needed.
  */
 final class SurfaceMaterials
@@ -56,6 +61,12 @@ final class SurfaceMaterials
 	// model-level emissive group in bits 6-13: 1 + its index in groups, 0 for none
 	private static final int GROUP_SHIFT = 6;
 	private static final int GROUP_MASK = 0xff;
+	// model-level fake water group in bits 23-30 (above the wind's, WindSway.MODEL_SHIFT): 1 + its index in fakeGroups
+	private static final int FAKE_SHIFT = 23;
+	// face bits of fake water: both water flags
+	static final int FAKE_WATER = WaterMap.BED_FLAG | WaterMap.LAND_FLAG;
+	// the game's water textures: a face with one is fake water on any model (the terrain's are the water map's)
+	private static final int[] WATER_TEXTURES = {1, 24, 25};
 
 	// Foliage objects are whole trees: these HSL limits keep brown and grey faces (bark, trunks, rocks) opaque.
 	// OSRS hue runs 0-63 (0 red, ~8 brown/orange, ~11 yellow, ~21 green, ~42 blue), saturation 0-7.
@@ -72,6 +83,7 @@ final class SurfaceMaterials
 	private static int[] npcs = new int[0];
 	private static int[] spotanims = new int[0];
 	private static Group[] groups = new Group[0];
+	private static Group[] fakeGroups = new Group[0];
 	// per texture id: the face bits (already shifted)
 	private static int[] textures = new int[0];
 
@@ -113,6 +125,8 @@ final class SurfaceMaterials
 		int[][] emissiveNpcs;
 		@SerializedName("emissiveSpotanims")
 		int[][] emissiveSpotanims;
+		// as emissiveGroups, a level above 0 meaning fake water
+		Group[] fakeWater;
 	}
 
 	/**
@@ -263,6 +277,28 @@ final class SurfaceMaterials
 			}
 		}
 
+		Group[] fake = d.fakeWater != null ? d.fakeWater : new Group[0];
+		if (fake.length > GROUP_MASK)
+		{
+			log.error("materials.json has {} fake water groups, more than the {} a model can name", fake.length, GROUP_MASK);
+			fake = Arrays.copyOf(fake, GROUP_MASK);
+		}
+		for (int i = 0; i < fake.length; i++)
+		{
+			for (Rule r : fake[i].rules)
+			{
+				r.compile();
+			}
+			for (int id : fake[i].objects)
+			{
+				if (id >= obj.length)
+				{
+					obj = Arrays.copyOf(obj, id + 1);
+				}
+				obj[id] |= (i + 1) << FAKE_SHIFT;
+			}
+		}
+
 		int[] spot = new int[maxId(null, d.emissiveSpotanims, null, g, false) + 1];
 		setLevels(spot, d.emissiveSpotanims, 0);
 
@@ -292,6 +328,7 @@ final class SurfaceMaterials
 		npcs = npc;
 		spotanims = spot;
 		groups = g;
+		fakeGroups = fake;
 		textures = tex;
 	}
 
@@ -429,6 +466,11 @@ final class SurfaceMaterials
 	 */
 	static int face(int model, int texture, int hsl, int opacity)
 	{
+		if (isFakeWater(model, texture, hsl, opacity))
+		{
+			// water takes no snow
+			return FAKE_WATER | SNOW_NONE >> SNOW_MODEL_SHIFT << SNOW_SHIFT;
+		}
 		int bits = 0;
 		if (texture >= 0)
 		{
@@ -452,6 +494,71 @@ final class SurfaceMaterials
 			bits = (bits & ~(EMISSIVE_MASK << SHIFT)) | Math.max(level, bits >> SHIFT & EMISSIVE_MASK) << SHIFT;
 		}
 		return bits | (model & SNOW_MASK) >> SNOW_MODEL_SHIFT << SNOW_SHIFT;
+	}
+
+	private static boolean isFakeWater(int model, int texture, int hsl, int opacity)
+	{
+		int group = model >> FAKE_SHIFT & GROUP_MASK;
+		return isWaterTexture(texture) || group != 0 && fakeGroups[group - 1].level(texture, hsl, opacity) != 0;
+	}
+
+	/**
+	 * Whether the face bits {@link #face} gave are fake water.
+	 */
+	static boolean isFake(int faceBits)
+	{
+		return (faceBits & FAKE_WATER) == FAKE_WATER;
+	}
+
+	/**
+	 * Where the water of a model with fake water stands: the largest y (lowest point, y down) of the vertices of its
+	 * fake faces, or NaN when it has none. {@code material} the model flags, the arrays the model's (faces whose third
+	 * color is -2 are not drawn). The uploaders put each vertex's height above it, in world units, into the u
+	 * coordinate of its fake faces, which the shader foams the foot of falls by.
+	 */
+	static float fakeFoot(int material, short[] textures, int faceCount, int[] colors, byte[] transparencies,
+		int[] indices1, int[] indices2, int[] indices3, float[] vertexY)
+	{
+		boolean any = (material >> FAKE_SHIFT & GROUP_MASK) != 0;
+		for (int f = 0; f < faceCount && !any && textures != null; ++f)
+		{
+			any = isWaterTexture(textures[f]);
+		}
+		if (!any)
+		{
+			return Float.NaN;
+		}
+		float foot = Float.NaN;
+		for (int f = 0; f < faceCount; ++f)
+		{
+			int texture = textures != null ? textures[f] : -1;
+			if (isFake(face(material, texture, colors[f] & 0xffff, opacity(transparencies, f))))
+			{
+				foot = Math.max(Float.isNaN(foot) ? -Float.MAX_VALUE : foot,
+					Math.max(vertexY[indices1[f]], Math.max(vertexY[indices2[f]], vertexY[indices3[f]])));
+			}
+		}
+		return foot;
+	}
+
+	private static boolean isWaterTexture(int texture)
+	{
+		for (int t : WATER_TEXTURES)
+		{
+			if (t == texture)
+			{
+				return true;
+			}
+		}
+		return false;
+	}
+
+	/**
+	 * A fake water vertex's height above the foot (see {@link #fakeFoot}), for the u coordinate: whole world units.
+	 */
+	static int fakeHeight(float foot, float vertexY)
+	{
+		return Math.max(0, Math.min(Math.round(foot - vertexY), 0x7fff));
 	}
 
 	/**

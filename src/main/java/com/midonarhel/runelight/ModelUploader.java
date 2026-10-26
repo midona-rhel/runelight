@@ -128,6 +128,9 @@ class ModelUploader
 		final float[] normalsZ = computed.z;
 		final boolean hasNormals = true;
 		final short[] unlitColors = model.unlitColors;
+		// fake water: faces drawn as real water, with their height above the foot of the model's water in u
+		final float foot = SurfaceMaterials.fakeFoot(material, faceTextures, faceCount, faceColors1, transparencies,
+			indices1, indices2, indices3, verticesY);
 
 		float orientSine = 0;
 		float orientCosine = 0;
@@ -294,7 +297,18 @@ class ModelUploader
 					alphaBias |= faceTransparency(modelTransparency, transparencies != null ? transparencies[faceIdx] & 0xff : 0) << 24;
 					alphaBias |= bias != null ? (bias[faceIdx] & 0xff) << 16 : 0;
 					int texture = faceTextures != null ? faceTextures[faceIdx] + 1 : 0;
-					texture |= SurfaceMaterials.face(material, texture - 1, color1, SurfaceMaterials.opacity(transparencies, faceIdx));
+					int bits = SurfaceMaterials.face(material, texture - 1, color1, SurfaceMaterials.opacity(transparencies, faceIdx));
+					if (SurfaceMaterials.isFake(bits))
+					{
+						// drawn as real water: opaque, untextured, its height above the foot in u
+						texture = 0;
+						alphaBias &= 0xffffff;
+						su0 = SurfaceMaterials.fakeHeight(foot, verticesY[v1]);
+						su1 = SurfaceMaterials.fakeHeight(foot, verticesY[v2]);
+						su2 = SurfaceMaterials.fakeHeight(foot, verticesY[v3]);
+						sv0 = sv1 = sv2 = 0;
+					}
+					texture |= bits;
 
 					int vbOff = faceIdx * FACE_SIZE;
 					vertexBuffer[vbOff++] = Float.floatToIntBits(modelLocalX[v1]);
@@ -600,6 +614,9 @@ class ModelUploader
 		final float[] normalsZ = computed.z;
 		final boolean hasNormals = true;
 		final short[] unlitColors = model.unlitColors;
+		// fake water: faces drawn as real water, with their height above the foot of the model's water in u
+		final float foot = SurfaceMaterials.fakeFoot(material, faceTextures, triangleCount, color1s, transparencies,
+			indices1, indices2, indices3, verticesY);
 
 		float orientSine = 0;
 		float orientCosine = 0;
@@ -728,7 +745,18 @@ class ModelUploader
 			alphaBias |= transparencies != null ? (transparencies[face] & 0xff) << 24 : 0;
 			alphaBias |= bias != null ? (bias[face] & 0xff) << 16 : 0;
 			int texture = faceTextures != null ? faceTextures[face] + 1 : 0;
-			texture |= SurfaceMaterials.face(material, texture - 1, color1, SurfaceMaterials.opacity(transparencies, face));
+			int bits = SurfaceMaterials.face(material, texture - 1, color1, SurfaceMaterials.opacity(transparencies, face));
+			if (SurfaceMaterials.isFake(bits))
+			{
+				// drawn as real water: opaque, untextured, its height above the foot in u
+				texture = 0;
+				alphaBias &= 0xffffff;
+				su0 = SurfaceMaterials.fakeHeight(foot, verticesY[triangleA]);
+				su1 = SurfaceMaterials.fakeHeight(foot, verticesY[triangleB]);
+				su2 = SurfaceMaterials.fakeHeight(foot, verticesY[triangleC]);
+				sv0 = sv1 = sv2 = 0;
+			}
+			texture |= bits;
 
 			putfff4(buffer, vx1, vy1, vz1, alphaBias | color1);
 			put2222(buffer, texture, su0, sv0, n1);

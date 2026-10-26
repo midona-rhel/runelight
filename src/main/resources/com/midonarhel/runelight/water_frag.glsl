@@ -44,19 +44,6 @@ flat in int vSlot;
 layout(location = 0) out uvec4 WaterOut;  // 64 bits packed, see water.glsl's waterUnpack
 layout(location = 1) out vec4 WaveOut;    // the wave map: slope xy, foam
 
-// The waves: the standard choppy sea of sine octaves. Each octave is a grid of sine waves warped by noise (so it
-// never tiles or lines up), folded to 1 - |sin| and raised to WAVE_CHOP: sharp crests over broad rounded troughs.
-// WAVE_OCTAVES of them, the first WAVE_LONGEST tiles from crest to crest, each next turned (about 37 degrees) and
-// WAVE_SHRINK as long, WAVE_FADE as high, and a little less choppy. Each runs both ways at WAVE_SPEED wavelengths a
-// second, which makes them heave in place rather than slide. WAVE_HEIGHT: world units of the first.
-#define WAVE_DIR vec2(0.70710678, 0.70710678)
-#define WAVE_OCTAVES 3
-#define WAVE_LONGEST 5.5
-#define WAVE_SHRINK 0.53
-#define WAVE_FADE 0.3
-#define WAVE_CHOP 1.3
-#define WAVE_SPEED 0.11
-#define WAVE_HEIGHT 5.5
 // along the wind the waves are this much longer than across it
 #define WAVE_STRETCH 1.35
 // still water (no flow) runs its waves and its detail this many times slower, and drifts less with the wind
@@ -97,6 +84,22 @@ layout(location = 1) out vec4 WaveOut;    // the wave map: slope xy, foam
 #define BANK_FOAM_FLOW vec2(25.0, 80.0)
 #define BANK_FOAM 0.7
 #define BANK_FOAM_REACH vec2(0.4, 1.3)
+// Shore waves, on open sea only (WaterMap page 2): bands of foam rolling in toward the shore as sine waves,
+// SHORE_SPACING tiles apart, one every SHORE_PERIOD seconds (a divisor of waterTime's wrap, so they never jump), SHORE_WIDTH
+// of the spacing wide (the sine's crest between its two smoothsteps). A band comes in over SHORE_FAR's tiles from
+// the shore, starts breaking into blobs at SHORE_BREAK.x (noise cells SHORE_BLOB tiles across, thresholded
+// higher the nearer the shore) that shrink away by SHORE_BREAK.y; the next band is already behind it. Along the
+// shore each crest wanders SHORE_WANDER tiles, and its strength varies SHORE_PATCH of itself. SHORE_FOAM: the
+// foam at most.
+#define SHORE_SPACING 4.5
+#define SHORE_PERIOD 8.0
+#define SHORE_FAR vec2(10.0, 13.0)
+#define SHORE_BREAK vec2(6.5, 1.0)
+#define SHORE_WIDTH vec2(0.7, 0.95)
+#define SHORE_BLOB 1.6
+#define SHORE_WANDER 0.4
+#define SHORE_PATCH 0.4
+#define SHORE_FOAM 0.6
 // caustics (water.glsl has the strength): world units per repeat, seconds per cycle of each copy on still water;
 // mean and line values of the kept copy; drawn out along water faster than CAUSTIC_STRETCH_SPEED by up to
 // CAUSTIC_STRETCH seconds of the flow
@@ -126,53 +129,8 @@ layout(location = 1) out vec4 WaveOut;    // the wave map: slope xy, foam
 #define RAIN_CREST 0.35
 #define RAIN_FOAM 0.8
 
-float waterHash(vec3 p) {
-  p = fract(p * 0.1031);
-  p += dot(p, p.zyx + 31.32);
-  return fract((p.x + p.y) * p.z);
-}
-
 float waterLod(float footprint, float repeat) {
   return log2(max(footprint * 256.0 / repeat, 1.0));
-}
-
-// Value noise, not tiling (hashed lattice): -1 to 1
-float waveNoise(vec2 p) {
-  vec2 i = floor(p), f = fract(p);
-  vec2 u = f * f * (3.0 - 2.0 * f);
-  float a = waterHash(vec3(i, 7.0)), b = waterHash(vec3(i + vec2(1.0, 0.0), 7.0));
-  float c = waterHash(vec3(i + vec2(0.0, 1.0), 7.0)), d = waterHash(vec3(i + vec2(1.0, 1.0), 7.0));
-  return mix(mix(a, b, u.x), mix(c, d, u.x), u.y) * 2.0 - 1.0;
-}
-
-// Value noise with its gradient, not tiling (hashed lattice): x the value -1 to 1, yz its gradient
-vec3 waveNoiseD(vec2 p) {
-  vec2 i = floor(p), f = fract(p);
-  vec2 u = f * f * (3.0 - 2.0 * f);
-  vec2 du = 6.0 * f * (1.0 - f);
-  float a = waterHash(vec3(i, 7.0)), b = waterHash(vec3(i + vec2(1.0, 0.0), 7.0));
-  float c = waterHash(vec3(i + vec2(0.0, 1.0), 7.0)), d = waterHash(vec3(i + vec2(1.0, 1.0), 7.0));
-  float k1 = b - a, k2 = c - a, k3 = a - b - c + d;
-  return vec3(a + k1 * u.x + k2 * u.y + k3 * u.x * u.y, du * vec2(k1 + k3 * u.y, k2 + k3 * u.x)) * 2.0
-    - vec3(1.0, 0.0, 0.0);
-}
-
-// The gradient (by uv) of one octave of choppy waves at uv (radians of its sines): a grid of sines warped by noise,
-// folded to 1 - |sin| blended toward |cos|, their product raised so the crests come to a point. Worked out exactly
-// rather than by looking the height up three times.
-vec2 seaOctaveGrad(vec2 uv, vec3 n, float chop) {
-  vec2 w = uv + n.x;
-  vec2 s = sin(w), c = cos(w);
-  vec2 wv = 1.0 - abs(s), dwv = -sign(s) * c;
-  vec2 swv = abs(c), dswv = -sign(c) * s;
-  vec2 m = wv + (swv - wv) * wv;
-  vec2 dm = dwv * (1.0 + swv - 2.0 * wv) + dswv * wv;
-  float P = max(m.x * m.y, 1e-4);
-  vec2 dP = vec2(dm.x * m.y, m.x * dm.y);
-  float R = max(1.0 - pow(P, 0.65), 1e-4);
-  vec2 g = -chop * pow(R, chop - 1.0) * 0.65 * pow(P, -0.35) * dP;
-  // through the warp: w = uv + n(uv) on both axes
-  return g.x * vec2(1.0 + n.y, n.z) + g.y * vec2(n.y, 1.0 + n.z);
 }
 
 // The waves' slope at q (world units) with the wind along dir, `slow` times slower and `size` times as large:
@@ -273,6 +231,30 @@ uint pack01(float v, float bits) {
   return uint(clamp(v, 0.0, 1.0) * bits + 0.5);
 }
 
+// The foam of the shore waves at xz: 0 away from open sea and its shores
+float shoreFoam(vec2 xz) {
+  vec4 field = waterPage2(waterData, xz / WATER_TILE + waterGrid.x);
+  float open = smoothstep(0.5, 1.0, field.g);
+  if (open <= 0.0 || field.r >= SHORE_FAR.y)
+    return 0.0;
+  // this crest's phase: the distance to shore, wandering along the shore, plus the time; its wave counts up as
+  // the bands come in
+  vec2 along = xz / (WATER_TILE * SHORE_BLOB * 1.7);
+  float q = (field.r + SHORE_WANDER * waveNoise(along)) / SHORE_SPACING + waterTime / SHORE_PERIOD;
+  float wave = floor(q), f = q - wave;
+  // the distance from shore of this band's middle, which only shrinks with time
+  float middle = field.r + (0.5 - f) * SHORE_SPACING;
+  float band = smoothstep(SHORE_WIDTH.x, SHORE_WIDTH.y, 0.5 + 0.5 * cos(WATER_TAU * (f - 0.5)));
+  float life = clamp((SHORE_BREAK.x - middle) / (SHORE_BREAK.x - SHORE_BREAK.y), 0.0, 1.0);
+  vec2 blobAt = xz / (WATER_TILE * SHORE_BLOB) + vec2(wave * 5.31, wave * 2.17);
+  float n = 0.65 * waveNoise(blobAt) + 0.35 * waveNoise(blobAt * 2.3 + 17.0);
+  float threshold = mix(-0.3, 0.55, smoothstep(0.0, 1.0, life));
+  float blobs = smoothstep(threshold, threshold + 0.2, n);
+  float strength = 1.0 - SHORE_PATCH * waterHash(vec3(wave, floor(along.x * 0.5), floor(along.y * 0.5)));
+  return open * band * blobs * strength * SHORE_FOAM * (1.0 - smoothstep(0.75, 1.0, life))
+    * (1.0 - smoothstep(SHORE_FAR.x, SHORE_FAR.y, middle));
+}
+
 // The waves' slope at xz and the foam on them (the wave map's, WaterSurface.bake), for water of this type and flow
 void waterWaveField(vec2 xz, int type, vec2 flow, out vec2 slope, out float foam) {
   float speed = WATER_FLOW_SPEED[type];
@@ -350,6 +332,7 @@ void waterWaveField(vec2 xz, int type, vec2 flow, out vec2 slope, out float foam
     float rim = 1.0 - smoothstep(0.15, 0.55, h);
     foam = max(rim * churn * FOAM, contact * (rim * CONTACT_FOAM + CONTACT_FILM));
   }
+  foam = max(foam, shoreFoam(xz));
 }
 
 void main() {

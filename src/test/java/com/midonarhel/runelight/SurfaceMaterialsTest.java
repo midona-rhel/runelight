@@ -2,6 +2,8 @@ package com.midonarhel.runelight;
 
 import com.google.gson.Gson;
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertTrue;
 import org.junit.BeforeClass;
 import org.junit.Test;
 
@@ -86,5 +88,62 @@ public class SurfaceMaterialsTest
 	{
 		assertEquals(0, emissive(1, -1, hsl(7, 6, 60), 100));
 		assertEquals(0, emissive(-1, -1, hsl(7, 6, 60), 100));
+	}
+
+	private static boolean fake(int model, int texture, int hsl, int opacity)
+	{
+		return SurfaceMaterials.isFake(SurfaceMaterials.face(model, texture, hsl, opacity));
+	}
+
+	@Test
+	public void facesWithTheWaterTexturesAreFakeWaterOnAnyModel()
+	{
+		for (int texture : new int[]{1, 24, 25})
+		{
+			assertTrue(fake(0, texture, hsl(0, 0, 50), OPAQUE));
+		}
+		assertFalse(fake(0, 2, hsl(0, 0, 50), OPAQUE));
+		assertFalse(fake(0, -1, hsl(42, 3, 50), OPAQUE));
+		// fake water takes no snow
+		int bits = SurfaceMaterials.face(0, 1, 0, OPAQUE);
+		assertEquals(2, bits >> SurfaceMaterials.SNOW_SHIFT & 3);
+	}
+
+	@Test
+	public void fakeWaterGroupsPickFacesByTheirRules()
+	{
+		// a model whose water is untextured blue (hue 42); its other faces stay what they were
+		int fountain = SurfaceMaterials.forObject(878);
+		assertTrue(fake(fountain, -1, hsl(42, 3, 50), OPAQUE));
+		assertFalse(fake(fountain, -1, hsl(10, 3, 50), OPAQUE));
+		// one whose water is the translucent faces of one hue
+		int pool = SurfaceMaterials.forObject(2654);
+		assertTrue(fake(pool, -1, hsl(32, 3, 50), 100));
+		assertFalse(fake(pool, -1, hsl(32, 3, 50), OPAQUE));
+	}
+
+	@Test
+	public void ordinaryModelsHaveNoFakeWater()
+	{
+		assertFalse(fake(SurfaceMaterials.forObject(PRIF_FURNACE), -1, hsl(42, 3, 50), OPAQUE));
+		assertFalse(SurfaceMaterials.isFake(0));
+		assertFalse(SurfaceMaterials.isFake(WaterMap.BED_FLAG));
+		assertFalse(SurfaceMaterials.isFake(WaterMap.LAND_FLAG));
+	}
+
+	@Test
+	public void theFootIsTheLowestFakeVertex()
+	{
+		// three faces, the second the only one that is not water; y is down, so the foot is the largest
+		short[] textures = {1, -1, 1};
+		int[] colors = {0, 0, 0};
+		int[] a = {0, 3, 6}, b = {1, 4, 7}, c = {2, 5, 8};
+		float[] y = {-100, -80, -60, 40, 50, 60, -40, -30, -20};
+		assertEquals(-20, SurfaceMaterials.fakeFoot(0, textures, 3, colors, null, a, b, c, y), 0);
+		// no water faces and no group: no foot
+		assertTrue(Float.isNaN(SurfaceMaterials.fakeFoot(0, new short[]{-1, -1, -1}, 3, colors, null, a, b, c, y)));
+		assertTrue(Float.isNaN(SurfaceMaterials.fakeFoot(0, null, 3, colors, null, a, b, c, y)));
+		assertEquals(80, SurfaceMaterials.fakeHeight(-20, -100));
+		assertEquals(0, SurfaceMaterials.fakeHeight(-20, 40));
 	}
 }

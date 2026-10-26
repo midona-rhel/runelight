@@ -26,6 +26,12 @@ Emissive comes from:
   - objects whose light says they burn (fires, flames, lava) or cook and smelt (ranges, ovens, stoves, furnaces):
     only their hot-colored faces glow (117 HD has no emissive data for these; its glow there is its lights alone)
 
+Fake water is the third behaviour: models whose faces only pretend to be water (fountains, wells, troughs, barrels,
+sinks, pools, waterfalls). RuneLight draws those faces as real water (water.glsl waterFake). They come from the
+override groups whose material is one of 117 HD's flat water materials, in the same group form as the emissive ones
+(level 1: fake water), minus the ones that are not water (blood, portals, slime floors, pipes, vents), and from the
+vanilla water textures, which SurfaceMaterials treats as fake wherever a model carries them.
+
 Usage (from a 117HD/RLHD checkout):
   tools/import_117hd_materials.py <RLHD>/src/main/resources/rs117/hd/scene \
       src/main/resources/com/midonarhel/runelight/materials.json
@@ -56,6 +62,25 @@ SPIRIT_LIGHT = re.compile(r"ghost|spirit|soul|spectre|wisp|phantom|wight|lassar|
 FIRE_LIGHT = re.compile(r"\bfires?\b|flames?|\blava\b|magma|campfire|bonfire|"
     r"(?<![a-z])(range|ovens?|stoves?|furnace)(?![a-z])", re.I)
 NOT_FIRE = re.compile(r"altar|lantern|cannon|statue|ship|orb", re.I)
+
+# 117 HD's materials for a flat sheet of water, which RuneLight draws as real water
+FAKE_WATER_MATERIALS = {"WATER_FLAT", "WATER_FLAT_2", "WATER_FLAT_FORCE", "WATER_FLAT_FLOW", "WATER_FLAT_FLOW_2",
+    "WATER_FOUNTAIN_FLAT", "WATER_FOUNTAIN_FLAT_LIGHT", "SWAMP_WATER_FLAT", "SWAMP_WATER_FLAT_FLOW"}
+# ...of which these overrides are not water (117 HD borrows the materials for blood, slime, portals and the like), or
+# shows them where a pool of real water cannot (a floor that is the whole room, vents and pipes of machinery)
+NOT_WATER = re.compile(r"blood|maggot|portal|teleporter|pipe|vent\b|vents\b|hydra|bloodwood|drain|bucket|"
+    r"waterwheel|whetstone|doghouse|cooking pot|wind catcher|demonic door|drakan|vampyr|sangvesti|darkmeyer|"
+    r"planter|altar|chalice|barrel with liquid|decorative barrel|water tap|farming guild - greenhouse", re.I)
+
+# Water 117 HD has no override for, found by scanning the cache's object models for water-hued faces (hue 32-44) on
+# fountains, wells, sinks and falls: (objects, untextured default, textured, rules as [level, clauses])
+EXTRA_FAKE_WATER = [
+    ([878, 884, 6097, 6249, 6549, 8747, 12897], 0, 0, [[1, [["h==42"]]]]),  # wells
+    ([2654, 3641], 0, 0, [[1, [["h==32", "a<255"]]]]),  # the Sinclair mansion fountains' water
+    ([6750, 12089], 0, 0, [[1, [["h==37"]]]]),  # large and fairy fountains
+    ([16302], 0, 1, [[1, [["h==37"]]]]),  # waterfall: its sheet is the droplets texture, its sides translucent water
+    ([16704], 0, 0, [[1, [["h==32"]]]]),  # sink
+]
 
 # emissive levels
 FULL = 3
@@ -222,6 +247,32 @@ def main():
             for i in npcs:
                 emissive_npcs[i] = FULL
 
+    # fake water: the override groups with a flat water material, first matching rule decides as for emissive ones
+    fake = {}
+    for o in overrides:
+        desc = o.get("description", "")
+        objects = resolve(o.get("objectIds"), gamevals["objects"], desc, warnings)
+        if not objects or NOT_WATER.search(desc):
+            continue
+        water = lambda name: name in FAKE_WATER_MATERIALS
+        base = water(o.get("baseMaterial"))
+        textured = water(o.get("textureMaterial"))
+        rules = []
+        for c in o.get("colorOverrides") or []:
+            try:
+                when = conditions(c.get("colors"))
+            except ValueError as ex:
+                warnings.append(f"{ex} in {desc}")
+                continue
+            rules.append([1 if water(c.get("baseMaterial")) else 0, when])
+        while rules and rules[-1][0] == (1 if base else 0):
+            rules.pop()
+        if (base or textured or rules) and (base or textured or any(r[0] for r in rules)):
+            fake.setdefault((1 if base else 0, 1 if textured else 0, json.dumps(rules)), set()).update(objects)
+
+    for objects, base, textured, rules in EXTRA_FAKE_WATER:
+        fake.setdefault((base, textured, json.dumps(rules)), set()).update(objects)
+
     for name, i in gamevals["objects"].items():
         if TREE_NAME.search(name) and not NOT_TREE_NAME.search(name):
             foliage_objects.add(i)
@@ -264,6 +315,10 @@ def main():
              "rules": [{"level": r[0], "when": r[1]} for r in json.loads(k[2])]}
             for k, g in sorted(groups.items(), key=lambda kv: min(kv[1][0] | kv[1][1]))],
         "emissiveSpotanims": pairs(emissive_spotanims),
+        "fakeWater": [
+            {"objects": sorted(ids), "untextured": k[0], "textured": k[1],
+             "rules": [{"level": r[0], "when": r[1]} for r in json.loads(k[2])]}
+            for k, ids in sorted(fake.items(), key=lambda kv: min(kv[1]))],
     }
     with open(sys.argv[2], "w", encoding="utf-8") as f:
         json.dump(out, f, separators=(",", ":"))

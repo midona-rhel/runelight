@@ -112,7 +112,7 @@ public class WaterMapTest
 	public void textureLayout()
 	{
 		WaterMap m = lake(1);
-		int w = WaterMap.CORNERS * 2;
+		int w = WaterMap.CORNERS * WaterMap.PAGES;
 		// page 0: the tile type sits at its sw corner; page 1: shore distance and the water share
 		assertEquals(WaterMap.FRESH, m.texture[(90 * w + 90) * 4 + 3], 0);
 		assertEquals(0, m.texture[(10 * w + 10) * 4 + 3], 0);
@@ -124,9 +124,53 @@ public class WaterMapTest
 	}
 
 	@Test
+	public void distanceToLandIsStraightLine()
+	{
+		int n = 16;
+		boolean[] land = new boolean[n * n];
+		land[3 * n + 4] = true;
+		land[12 * n + 13] = true;
+		float[] d = new float[n * n];
+		WaterMap.distanceToLand(land, n, 100, d);
+		assertEquals(0, d[3 * n + 4], 0);
+		assertEquals(5, d[7 * n + 7], 1e-5f);                // 3 across, 4 down: the 3-4-5 triangle, not a walk of 7
+		assertEquals(Math.hypot(1, 1), d[4 * n + 5], 1e-5f);  // the diagonal
+		assertEquals(Math.hypot(2, 1), d[11 * n + 11], 1e-5f); // nearer to the second
+		// reaches no further than max
+		WaterMap.distanceToLand(land, n, 3, d);
+		assertEquals(3, d[10 * n + 0], 0);
+	}
+
+	@Test
+	public void distanceToLandWithoutLandIsMax()
+	{
+		int n = 8;
+		float[] d = new float[n * n];
+		WaterMap.distanceToLand(new boolean[n * n], n, 32, d);
+		for (float v : d)
+		{
+			assertEquals(32, v, 0);
+		}
+	}
+
+	@Test
+	public void shorePageHoldsTheDistanceToLandAndNoOpenSeaInALake()
+	{
+		WaterMap m = lake(1);
+		int w = WaterMap.CORNERS * WaterMap.PAGES;
+		int page2 = WaterMap.CORNERS * 2;
+		// the middle of the lake is further from land than its edge, and a lake is not open sea
+		float edge = m.texture[(90 * w + page2 + 80) * 4];
+		float middle = m.texture[(90 * w + page2 + 90) * 4];
+		assertTrue(edge < middle);
+		assertTrue(middle <= WaterMap.SHORE_FIELD_REACH);
+		assertEquals(0, m.texture[(90 * w + page2 + 90) * 4 + 1], 0);
+	}
+
+	@Test
 	public void landCornersTakeTheWaterLevel()
 	{
-		int w = WaterMap.CORNERS * 2;
+		int w = WaterMap.CORNERS * WaterMap.PAGES;
 		float[] t = new float[w * WaterMap.CORNERS * 4];
 		for (int cy = 0; cy < WaterMap.CORNERS; ++cy)
 		{
