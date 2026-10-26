@@ -82,6 +82,8 @@ final class LightMap
 	static final class Source
 	{
 		final int plane;
+		// the scene object the light is on (VoxelCapture.ownerOf), 0 for a world light
+		final int owner;
 		final float x, y, z, radius;
 		final float red, green, blue, strength;
 		final boolean nightOnly;
@@ -100,8 +102,9 @@ final class LightMap
 		volatile boolean live;
 
 		Source(int plane, float x, float y, float z, float radius, float red, float green, float blue, float strength,
-			boolean nightOnly, float nightMultiplier)
+			boolean nightOnly, float nightMultiplier, int owner)
 		{
+			this.owner = owner;
 			this.plane = plane;
 			this.x = x;
 			this.y = y;
@@ -832,7 +835,7 @@ final class LightMap
 				b = blockers;
 			}
 			long start = System.nanoTime();
-			LightMapBake.Result r = LightMapBake.bake(new LightMapBake.Light(s.plane, s.x, s.y, s.z, s.radius), b, scratch.get());
+			LightMapBake.Result r = LightMapBake.bake(new LightMapBake.Light(s.plane, s.x, s.y, s.z, s.radius, s.owner), b, scratch.get());
 			long took = System.nanoTime() - start;
 			if (log.isDebugEnabled())
 			{

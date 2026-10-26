@@ -24,7 +24,7 @@ import static org.junit.Assert.assertTrue;
 public class LightMapLoadTest
 {
 	private static final int SIZE = 184, OFFSET = 40, LOCAL = 104;
-	private static final byte[] BARREL = {6, 6, 26, 26, 6, 6, 26, 26, 6, 6, 26, 26, 6, 6, 26, 26};
+	private static final byte[] BARREL = {6, 6, 26, 26, 0x7e, 0x7e, 6, 6, 26, 26, 0x7e, 0x7e, 6, 6, 26, 26, 0x7e, 0x7e, 6, 6, 26, 26, 0x7e, 0x7e};
 
 	/** The scene in its two states: what the walls alone say, and with the models. */
 	static final class Town
@@ -93,7 +93,7 @@ public class LightMapLoadTest
 			for (int k = 0; k < 14; ++k)
 			{
 				int gx = (OFFSET + x0 + rnd.nextInt(w)) * 4 + rnd.nextInt(4), gz = (OFFSET + y0 + rnd.nextInt(h)) * 4 + rnd.nextInt(4);
-				models.set(0, gx, gz, (short) 0x3f, BARREL, 0);
+				models.set(0, gx, gz, 0, (short) 0x3f, BARREL, 0);
 			}
 		}
 		WallMap wallMap = WallMap.build(flags, null, SIZE, OFFSET, 1);
@@ -107,7 +107,7 @@ public class LightMapLoadTest
 			float radius = (2.5f + rnd.nextFloat() * 5) * 128;
 			float height = rnd.nextFloat() < 0.3f ? 150 : 40;
 			t.lights.add(new LightMap.Source(plane, (tx - OFFSET) * 128, -plane * 240f - height, (ty - OFFSET) * 128, radius,
-				1f, 0.7f, 0.4f, 0.8f, false, 1f));
+				1f, 0.7f, 0.4f, 0.8f, false, 1f, 0));
 		}
 		return t;
 	}
@@ -213,7 +213,7 @@ public class LightMapLoadTest
 		List<LightMap.Source> lights = new ArrayList<>();
 		for (LightMap.Source s : t.lights)
 		{
-			lights.add(new LightMap.Source(s.plane, s.x, s.y, s.z, s.radius, s.red, s.green, s.blue, s.strength, false, 1f));
+			lights.add(new LightMap.Source(s.plane, s.x, s.y, s.z, s.radius, s.red, s.green, s.blue, s.strength, false, 1f, 0));
 		}
 		Load out = new Load();
 		out.rec = rec;
@@ -290,7 +290,7 @@ public class LightMapLoadTest
 		map.setBlockers(t.full);
 		for (LightMap.Source s : t.lights)
 		{
-			map.add(new LightMap.Source(s.plane, s.x, s.y, s.z, s.radius, s.red, s.green, s.blue, s.strength, false, 1f));
+			map.add(new LightMap.Source(s.plane, s.x, s.y, s.z, s.radius, s.red, s.green, s.blue, s.strength, false, 1f, 0));
 		}
 		map.runTasks();
 		Recorder rec = new Recorder();

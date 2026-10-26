@@ -2,6 +2,10 @@ package com.midonarhel.runelight;
 
 import java.nio.IntBuffer;
 import java.util.Arrays;
+import net.runelite.api.GameObject;
+import net.runelite.api.Perspective;
+import net.runelite.api.Point;
+import net.runelite.api.TileObject;
 
 /**
  * The opaque triangles of one zone as SceneUploader writes them, kept for the voxel proxy (Voxelizer), which is built
@@ -12,13 +16,40 @@ final class VoxelCapture
 	short[] pos = new short[9 * 256];
 	// per triangle: it belongs to swaying foliage, which lets some light through
 	boolean[] foliage = new boolean[256];
+	// per triangle: the scene object it is of (owner), 0 for none: the ground and what is not an object
+	int[] owner = new int[256];
+	// the object the triangles added now are of
+	int current;
 	int count;
+
+	/**
+	 * A scene object's number, the same from its geometry (SceneUploader) and from the light that is on it (SceneLights),
+	 * whatever the object looks like at the moment (an impostor has the id of the object it stands for): its id and tile.
+	 */
+	static int ownerOf(TileObject object)
+	{
+		int x, y;
+		if (object instanceof GameObject)
+		{
+			Point min = ((GameObject) object).getSceneMinLocation();
+			x = min.getX();
+			y = min.getY();
+		}
+		else
+		{
+			x = object.getX() >> Perspective.LOCAL_COORD_BITS;
+			y = object.getY() >> Perspective.LOCAL_COORD_BITS;
+		}
+		int owner = (object.getId() * 31 + x) * 31 + y;
+		return owner == 0 ? 1 : owner;
+	}
 
 	void add(int x0, int y0, int z0, int x1, int y1, int z1, int x2, int y2, int z2, boolean foliage)
 	{
 		if (count == this.foliage.length)
 		{
 			this.foliage = Arrays.copyOf(this.foliage, count * 2);
+			owner = Arrays.copyOf(owner, count * 2);
 			pos = Arrays.copyOf(pos, count * 2 * 9);
 		}
 		int o = count * 9;
@@ -31,6 +62,7 @@ final class VoxelCapture
 		pos[o + 6] = (short) x2;
 		pos[o + 7] = (short) y2;
 		pos[o + 8] = (short) z2;
+		this.owner[count] = current;
 		this.foliage[count++] = foliage;
 	}
 
@@ -38,6 +70,7 @@ final class VoxelCapture
 	void trim()
 	{
 		foliage = Arrays.copyOf(foliage, count);
+		owner = Arrays.copyOf(owner, count);
 		pos = Arrays.copyOf(pos, count * 9);
 	}
 

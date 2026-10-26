@@ -10,7 +10,7 @@ public class LightMapTimingTest
 	private static final int SIZE = 184, OFFSET = 40, LOCAL = 104;
 
 	// a barrel: a box 20 units wide in the cell, up to 90 high
-	private static final byte[] BARREL = {6, 6, 26, 26, 6, 6, 26, 26, 6, 6, 26, 26, 6, 6, 26, 26};
+	private static final byte[] BARREL = {6, 6, 26, 26, 0x7e, 0x7e, 6, 6, 26, 26, 0x7e, 0x7e, 6, 6, 26, 26, 0x7e, 0x7e, 6, 6, 26, 26, 0x7e, 0x7e};
 
 	private static LightBlockers town(Random rnd)
 	{
@@ -81,7 +81,7 @@ public class LightMapTimingTest
 			for (int k = 0; k < 6; ++k)
 			{
 				int gx = (OFFSET + x0 + rnd.nextInt(w)) * 4 + rnd.nextInt(4), gz = (OFFSET + y0 + rnd.nextInt(h)) * 4 + rnd.nextInt(4);
-				models.set(0, gx, gz, (short) 0x3f, BARREL, 0);
+				models.set(0, gx, gz, 0, (short) 0x3f, BARREL, 0);
 			}
 		}
 		WallMap walls = WallMap.build(flags, null, SIZE, OFFSET, 1);
@@ -101,7 +101,7 @@ public class LightMapTimingTest
 			float tx = OFFSET + 8 + rnd.nextFloat() * 88, ty = OFFSET + 8 + rnd.nextFloat() * 88;
 			float radius = (3 + rnd.nextFloat() * 8) * 128;
 			float height = rnd.nextFloat() < 0.3f ? 150 : 40;
-			lights[i] = new LightMapBake.Light(plane, (tx - OFFSET) * 128, -plane * 240f - height, (ty - OFFSET) * 128, radius);
+			lights[i] = new LightMapBake.Light(plane, (tx - OFFSET) * 128, -plane * 240f - height, (ty - OFFSET) * 128, radius, 0);
 		}
 		// warm up
 		for (int i = 0; i < 20; ++i)

@@ -317,4 +317,86 @@ public class LightMapBakeTest
 		assertEquals("low layer sees under the eave", BakeScene.at(bare, 0, 0, gx, gz), BakeScene.at(roofed, 0, 0, gx, gz), 1e-3f);
 		assertTrue("top layer is behind it", BakeScene.at(roofed, 0, 3, gx, gz) < BakeScene.at(bare, 0, 3, gx, gz) * 0.5f);
 	}
+
+	/** The share of the layer at the light's height (the second) at a tile position. */
+	private static float at(LightMapBake.Result r, float tileX, float tileY)
+	{
+		return BakeScene.at(r, 0, 1, (int) Math.floor(tileX * 4), (int) Math.floor(tileY * 4));
+	}
+
+	/** A wall sconce: a bracket of the same object reaching 64 units, past the small clearance a world light has, on the light's line east. */
+	private static BakeScene sconceScene(int owner)
+	{
+		BakeScene s = new BakeScene();
+		for (int gz = 4 * 24 + 1; gz <= 4 * 24 + 3; ++gz)
+		{
+			for (int gx = 4 * 24 + 3; gx <= 4 * 24 + 4; ++gx)
+			{
+				s.modelBox(0, gx, gz, 0, 0, 32, 32, 80, 110, owner);
+			}
+		}
+		return s;
+	}
+
+	@Test
+	public void aLightIsNotShadedByTheObjectItIsOn()
+	{
+		// 95 up, in the cell at (24.6, 24.6) tiles, with its bracket reaching 60 units east of it
+		float x = 24.6f, y = 24.6f;
+		LightMapBake.Result bare = bake(new BakeScene(), BakeScene.light(0, x, y, 95, 8));
+		LightMapBake.Result own = bake(sconceScene(77), BakeScene.light(0, x, y, 95, 8, 77));
+		LightMapBake.Result other = bake(sconceScene(78), BakeScene.light(0, x, y, 95, 8, 77));
+		LightMapBake.Result world = bake(sconceScene(0), BakeScene.light(0, x, y, 95, 8));
+		for (float tx = 27; tx <= 29; tx += 1)
+		{
+			float open = at(bare, tx, y);
+			assertEquals("no streak east, tile " + tx, open, at(own, tx, y), 1e-6f);
+			assertTrue("another object's bracket does shade it, tile " + tx, at(other, tx, y) < open * 0.5f);
+		}
+		// a world light has no object, and keeps only the small clearance round it: 60 units of bracket shade it
+		assertTrue(at(world, 28, y) < at(bare, 28, y) * 0.5f);
+	}
+
+	/** The share behind a prop at a cell, over what it is in the open. */
+	private static float behind(BakeScene prop, int gx, int gz, int cx, int cz, float height)
+	{
+		LightMapBake.Result shaded = bake(prop, BakeScene.light(0, 22.5f, 24.5f, height, 8));
+		LightMapBake.Result open = bake(new BakeScene(), BakeScene.light(0, 22.5f, 24.5f, height, 8));
+		return BakeScene.at(shaded, 0, 1, cx, cz) / BakeScene.at(open, 0, 1, cx, cz);
+	}
+
+	@Test
+	public void aThinPropShadesALittleAndAMassThatFillsItsCellsShadesAll()
+	{
+		// the light at 22.5 tiles, the prop in the cell 3 tiles east of it, the cell behind it 2 tiles on
+		int gx = 4 * 25 + 2, gz = 4 * 24 + 2, behindX = 4 * 27, behindZ = 4 * 24 + 2;
+		// an armour stand: 12 units across, to 150 high
+		float stand = behind(new BakeScene().modelBox(0, gx, gz, 10, 10, 22, 22, 0, 149), gx, gz, behindX, behindZ, 60);
+		assertTrue("an armour stand takes a few tens of percent at most: " + stand, stand > 0.6f && stand < 0.98f);
+		// the same, 20 across: a statue's base
+		float wide = behind(new BakeScene().modelBox(0, gx, gz, 6, 6, 26, 26, 0, 149), gx, gz, behindX, behindZ, 60);
+		assertTrue("wider takes more: " + wide, wide < stand);
+		assertTrue("a few tens of percent at most: " + wide, wide > 0.6f);
+		// an oven body: a tile of cells filled
+		BakeScene oven = new BakeScene();
+		for (int z = 4 * 24; z < 4 * 25; ++z)
+		{
+			for (int x = 4 * 25; x < 4 * 26; ++x)
+			{
+				oven.modelBox(0, x, z, 0, 0, 32, 32, 0, 149);
+			}
+		}
+		float body = behind(oven, gx, gz, behindX, behindZ, 60);
+		assertTrue("an oven body shades what is behind it, as a wall of models always did, to what the wrap of light leaves: " + body, body < 0.5f);
+	}
+
+	@Test
+	public void aDoorLeafShadesAcrossItsLengthAndNotAlongIt()
+	{
+		// a leaf 28 long, 4 thick, on the line from the light: broadside (the leaf across the line east) and edge on
+		BakeScene across = new BakeScene().modelBox(0, 4 * 25 + 2, 4 * 24 + 2, 14, 2, 18, 30, 0, 100);
+		BakeScene along = new BakeScene().modelBox(0, 4 * 25 + 2, 4 * 24 + 2, 2, 14, 30, 18, 0, 100);
+		float broad = behind(across, 0, 0, 4 * 27, 4 * 24 + 2, 60), edge = behind(along, 0, 0, 4 * 27, 4 * 24 + 2, 60);
+		assertTrue("broadside " + broad + " edge on " + edge, broad < 0.85f && edge > broad + 0.1f);
+	}
 }

@@ -87,7 +87,7 @@ public class LightMapShadingTest
 
 	private static LightMap.Source source(float tx, float ty, float height, float radiusTiles, float strength, float r, float g, float b)
 	{
-		return new LightMap.Source(0, BakeScene.world(tx), -height, BakeScene.world(ty), radiusTiles * 128, r, g, b, strength, false, 1);
+		return new LightMap.Source(0, BakeScene.world(tx), -height, BakeScene.world(ty), radiusTiles * 128, r, g, b, strength, false, 1, 0);
 	}
 
 	private static float biggestStep(float[] v)
@@ -144,7 +144,7 @@ public class LightMapShadingTest
 			scene.southWall(0, x, 24);
 		}
 		map.setBlockers(scene.blockers());
-		map.add(new LightMap.Source(0, BakeScene.world(24.5f), -60, BakeScene.world(lightTileY), 4 * 128, 1, 0.5f, 0.2f, 8, false, 1));
+		map.add(new LightMap.Source(0, BakeScene.world(24.5f), -60, BakeScene.world(lightTileY), 4 * 128, 1, 0.5f, 0.2f, 8, false, 1, 0));
 		Mirror m = new Mirror();
 		map.runTasks();
 		map.update(100000, m);

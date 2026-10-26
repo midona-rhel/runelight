@@ -73,7 +73,7 @@ public class LightMapTest
 	private static LightMap.Source source(int plane, float tx, float ty, float height, float radiusTiles, float strength)
 	{
 		return new LightMap.Source(plane, BakeScene.world(tx), -plane * BakeScene.STOREY - height, BakeScene.world(ty),
-			radiusTiles * 128, 1, 0.5f, 0.25f, strength, false, 1);
+			radiusTiles * 128, 1, 0.5f, 0.25f, strength, false, 1, 0);
 	}
 
 	private static void settle(LightMap map, Mirror m)
@@ -234,7 +234,7 @@ public class LightMapTest
 	{
 		LightMap map = new LightMap(0);
 		map.setBlockers(new BakeScene().blockers());
-		LightMap.Source lamp = new LightMap.Source(0, BakeScene.world(24.5f), -40, BakeScene.world(24.5f), 6 * 128, 1, 1, 1, 2, true, 1);
+		LightMap.Source lamp = new LightMap.Source(0, BakeScene.world(24.5f), -40, BakeScene.world(24.5f), 6 * 128, 1, 1, 1, 2, true, 1, 0);
 		LightMap.Source day = source(0, 30.5f, 24.5f, 40, 4, 1);
 		map.setNight(0);
 		map.add(lamp);

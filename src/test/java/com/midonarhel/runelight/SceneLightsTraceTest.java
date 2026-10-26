@@ -85,7 +85,8 @@ public class SceneLightsTraceTest
 	{
 		LocalPoint lp = new LocalPoint(tileX * 128 + 64, tileY * 128 + 64);
 		return fake(GameObject.class, map("getId", id, "getRenderable", renderable, "getLocalLocation", lp,
-			"getX", lp.getX(), "getY", lp.getY(), "getSizeX", 1, "getSizeY", 1));
+			"getX", lp.getX(), "getY", lp.getY(), "getSizeX", 1, "getSizeY", 1,
+			"getSceneMinLocation", new net.runelite.api.Point(tileX, tileY)));
 	}
 
 	private static SceneLights scene(Renderable torch, Renderable lantern) throws Exception

@@ -246,7 +246,7 @@ public class RoomLightTest
 		if (strength > 0)
 		{
 			map.add(new LightMap.Source(0, BakeScene.world(23), -100, BakeScene.world(23), radiusTiles * 128, 1, 0.58f, 0.01f,
-				strength, false, 1));
+				strength, false, 1, 0));
 		}
 		map.runTasks();
 		map.update(100000, l);
@@ -283,7 +283,7 @@ public class RoomLightTest
 		l.setRooms(room(scene));
 		LightMap map = new LightMap(0);
 		map.setBlockers(scene.blockers());
-		map.add(new LightMap.Source(0, BakeScene.world(30), -100, BakeScene.world(23), 4 * 128, 1, 0.58f, 0.01f, 9, false, 1));
+		map.add(new LightMap.Source(0, BakeScene.world(30), -100, BakeScene.world(23), 4 * 128, 1, 0.58f, 0.01f, 9, false, 1, 0));
 		map.runTasks();
 		map.update(100000, l);
 		assertEquals(0, l.lightScore(1), 1e-3);

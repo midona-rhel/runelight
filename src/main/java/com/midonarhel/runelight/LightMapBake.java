@@ -57,6 +57,8 @@ final class LightMapBake
 	static final int SUBS = 2;
 	/** Models closer than this (world units) to a light are its own fixture and do not shade it. */
 	static final float FIXTURE = 10;
+	/** A model that covers less than this share of its cell across a line from the light barely shades it; all of it, shades it fully. */
+	static final float COVER_KNEE = 0.25f;
 	/** A model whose box fills this much of a cell (the share of its area) is a solid for the wrap of light. */
 	static final float DENSE_BOX = 0.5f;
 	/** The thinnest a model's box is taken to be (world units): a leaf of a door stops light across its length. */
@@ -92,6 +94,8 @@ final class LightMapBake
 	// the weights of a run of b cells before a cell and a after it, and the cell, added in the blur's order
 	private static final float[][] BLUR_WEIGHTS = new float[BLUR_REACH + 1][BLUR_REACH + 1];
 	private static final float GOLDEN_ANGLE = 2.3999632f;
+	// the steps of the sequences that spread the samples a box is counted in, over the samples and over the boxes
+	private static final double GOLDEN = 0.6180339887498949, PLASTIC = 0.7548776662466927;
 	private static final float SQRT2 = 1.4142135f;
 	private static final float[] BIN_DX = new float[BINS], BIN_DZ = new float[BINS];
 
@@ -132,11 +136,13 @@ final class LightMapBake
 	/** A light as the bake sees it. */
 	static final class Light
 	{
-		final int plane;
+		final int plane, owner;
 		final float x, y, z, radius;
 
-		Light(int plane, float x, float y, float z, float radius)
+		/** @param owner the scene object the light is on (VoxelCapture.ownerOf), whose own geometry never shades it; 0 for a world light */
+		Light(int plane, float x, float y, float z, float radius, int owner)
 		{
+			this.owner = owner;
 			this.plane = plane;
 			this.x = x;
 			this.y = y;
@@ -190,6 +196,8 @@ final class LightMapBake
 		// model has in a cell; per box its bottom and top (above the floor), and whether the light's fixture took it
 		float[] boxes = new float[64];
 		float[] runs = new float[32];
+		// per box, how much of the cell it covers seen along z and along x (0 to 1)
+		float[] cover = new float[32];
 		boolean[] dropped = new boolean[16];
 		int boxCount;
 		// the boxes at the light's height, in the cell's: per cell the box + 1 (0: none), and the cells that have one
@@ -241,12 +249,13 @@ final class LightMapBake
 		}
 
 		/** @param near the box is at the light's height: the cell's floor is lit round it, and the light's fixture may be it */
-		void addBox(int cell, float x0, float z0, float x1, float z1, float low, float high, boolean near)
+		void addBox(int cell, float x0, float z0, float x1, float z1, float low, float high, float coverX, float coverZ, boolean near)
 		{
 			if (boxCount * 4 == boxes.length)
 			{
 				boxes = Arrays.copyOf(boxes, boxes.length * 2);
 				runs = Arrays.copyOf(runs, runs.length * 2);
+				cover = Arrays.copyOf(cover, cover.length * 2);
 				dropped = Arrays.copyOf(dropped, dropped.length * 2);
 			}
 			int o = boxCount * 4;
@@ -256,6 +265,8 @@ final class LightMapBake
 			boxes[o + 3] = z1;
 			runs[boxCount * 2] = low;
 			runs[boxCount * 2 + 1] = high;
+			cover[boxCount * 2] = coverX;
+			cover[boxCount * 2 + 1] = coverZ;
 			dropped[boxCount] = false;
 			++boxCount;
 			if (near)
@@ -333,6 +344,11 @@ final class LightMapBake
 		// the boxes that stop it at some layers, by the number of the box in the layer, and per layer how far each is scaled
 		// from the light (1: where it stands, 0: not at all)
 		private int[] partials = new int[16];
+		// the boxes that stop it at every layer but only partly (a model that does not fill its cell), and the ones of them
+		// that a sample's sweep counts: stochastically, by how much they stop (stops)
+		private int[] softBoxes = new int[16];
+		private int softCount;
+		private final Segments chosen = new Segments();
 		private int partialCount;
 		private float[] partialScale = new float[16 * HEIGHT_LAYERS];
 		// per layer, whether any box differs from the common ones
@@ -421,15 +437,19 @@ final class LightMapBake
 		// how high the light is above its storey's floor
 		float height = b.floor(light.plane, (int) Math.floor(light.x / 128) + b.offset,
 			(int) Math.floor(light.z / 128) + b.offset) - light.y;
-		load(own, b, light.plane, x0, z0, w, h, ModelBlockers.bin(height));
+		load(own, b, light.plane, x0, z0, w, h, ModelBlockers.bin(height), light.owner);
 		float sx = lx - x0, sz = lz - z0;
 		float[] source = new float[2];
 		if (!source(own, sx, sz, source))
 		{
 			return new Result(new Grid[0], 0);
 		}
-		dropFixture(own, sx, sz);
-		dropFixture(own, source[0], source[1]);
+		if (light.owner == 0)
+		{
+			// a light on an object is not shaded by it: that object's own geometry was left out. A world light only has FIXTURE
+			dropFixture(own, sx, sz);
+			dropFixture(own, source[0], source[1]);
+		}
 		collectSegments(s, own, height);
 		gatherCandidates(s, own, sx, sz, rc);
 		s.reach = rc + 1;
@@ -516,7 +536,7 @@ final class LightMapBake
 	/**
 	 * @param bin the light's height bin when this is the light's own storey, where models are followed; -1 on any other
 	 */
-	private static void load(Layer l, LightBlockers b, int plane, int x0, int z0, int w, int h, int bin)
+	private static void load(Layer l, LightBlockers b, int plane, int x0, int z0, int w, int h, int bin, int owner)
 	{
 		l.reset(w, h);
 		float[] box = new float[ModelBlockers.MAX_RUNS * ModelBlockers.RUN];
@@ -535,7 +555,7 @@ final class LightMapBake
 					open = !b.solid(plane, x0 + i, z0 + j, bin >= 0);
 				}
 				l.free[j * w + i] = open;
-				int runs = bin >= 0 && b.models != null ? b.models.runs(plane, x0 + i, z0 + j, bin, box) : 0;
+				int runs = bin >= 0 && b.models != null ? b.models.runs(plane, x0 + i, z0 + j, bin, owner, box) : 0;
 				for (int r = 0; r < runs; ++r)
 				{
 					int o = r * ModelBlockers.RUN;
@@ -550,7 +570,7 @@ final class LightMapBake
 						}
 					}
 					boolean near = box[o + 6] != 0;
-					l.addBox(j * w + i, i + box[o], j + box[o + 1], i + box[o + 2], j + box[o + 3], box[o + 4], box[o + 5], near);
+					l.addBox(j * w + i, i + box[o], j + box[o + 1], i + box[o + 2], j + box[o + 3], box[o + 4], box[o + 5], box[o + 7], box[o + 8], near);
 					if (near)
 					{
 						l.covered[j * w + i] = box[o] <= 0.5f && box[o + 2] >= 0.5f && box[o + 1] <= 0.5f && box[o + 3] >= 0.5f;
@@ -855,6 +875,7 @@ final class LightMapBake
 			s.segments.add(l.diagonals[d * 4], l.diagonals[d * 4 + 1], l.diagonals[d * 4 + 2], l.diagonals[d * 4 + 3]);
 		}
 		s.partialCount = 0;
+		s.softCount = 0;
 		s.anyDiffer = false;
 		Arrays.fill(s.layerDiffers, false);
 		for (int b = 0; b < l.boxCount; ++b)
@@ -889,7 +910,17 @@ final class LightMapBake
 				}
 				continue;
 			}
-			s.segments.box(l.boxes[b * 4], l.boxes[b * 4 + 1], l.boxes[b * 4 + 2], l.boxes[b * 4 + 3]);
+			if (l.cover[b * 2] >= 1 && l.cover[b * 2 + 1] >= 1)
+			{
+				// it fills its cell all the way across
+				s.segments.box(l.boxes[b * 4], l.boxes[b * 4 + 1], l.boxes[b * 4 + 2], l.boxes[b * 4 + 3]);
+				continue;
+			}
+			if (s.softCount == s.softBoxes.length)
+			{
+				s.softBoxes = Arrays.copyOf(s.softBoxes, s.softCount * 2);
+			}
+			s.softBoxes[s.softCount++] = b;
 		}
 	}
 
@@ -953,13 +984,13 @@ final class LightMapBake
 			{
 				continue;
 			}
-			sweep(s, l, x, z);
+			sweep(s, l, x, z, k);
 			++samples;
 		}
 		if (samples == 0)
 		{
 			// nothing of the disc can be reached from the source: the source alone
-			sweep(s, l, px, pz);
+			sweep(s, l, px, pz, 0);
 			samples = 1;
 		}
 		return samples;
@@ -1093,20 +1124,60 @@ final class LightMapBake
 	}
 
 	/**
+	 * How much of the light a model's box stops on the line from (px, pz) to it (0 to 1). A model does not fill its box: what
+	 * stops a line is the part of the cell the model covers across the line (the box's cover, along z for a line that runs
+	 * along z, along x for one along x, between for a slant), and a model that covers under COVER_KNEE of the cell across
+	 * stops nothing to speak of, one that covers all of it everything, with a smooth turn between.
+	 */
+	private static float opacity(Layer l, int box, float px, float pz)
+	{
+		float coverX = l.cover[box * 2], coverZ = l.cover[box * 2 + 1];
+		float dx = (l.boxes[box * 4] + l.boxes[box * 4 + 2]) * 0.5f - px, dz = (l.boxes[box * 4 + 1] + l.boxes[box * 4 + 3]) * 0.5f - pz;
+		float len = hypot(dx, dz);
+		float across = len < 1e-3f ? (coverX + coverZ) * 0.5f : (Math.abs(dz) * coverX + Math.abs(dx) * coverZ) / len;
+		float t = Math.max(0, Math.min(1, (across - COVER_KNEE) / (1 - COVER_KNEE)));
+		return t * t * (3 - 2 * t);
+	}
+
+	/**
+	 * Whether a sample's sweep counts a box as a blocker. The samples are the light's width, so a box that stops some of the light
+	 * is counted by that share of them, spread evenly over the samples and differently for each box: the lines through
+	 * several boxes keep the share that gets past each, and the shade is soft.
+	 */
+	private static boolean stops(Layer l, int box, float px, float pz, int sample)
+	{
+		double u = (box * PLASTIC + sample * GOLDEN) % 1;
+		return u < opacity(l, box, px, pz);
+	}
+
+	/**
 	 * One sweep from (px, pz): the nearest blocker in each direction, then every candidate cell nearer than it counts a
 	 * hit. The layers whose models differ from the common ones are swept again where they do.
 	 */
-	private static void sweep(Scratch s, Layer l, float px, float pz)
+	private static void sweep(Scratch s, Layer l, float px, float pz, int sample)
 	{
 		Arrays.fill(s.depth, Float.POSITIVE_INFINITY);
 		nearest(s.depth, s.segments, px, pz);
+		if (s.softCount > 0)
+		{
+			s.chosen.count = 0;
+			for (int n = 0; n < s.softCount; ++n)
+			{
+				int b = s.softBoxes[n];
+				if (stops(l, b, px, pz, sample))
+				{
+					s.chosen.box(l.boxes[b * 4], l.boxes[b * 4 + 1], l.boxes[b * 4 + 2], l.boxes[b * 4 + 3]);
+				}
+			}
+			nearest(s.depth, s.chosen, px, pz);
+		}
 		tables(s.depth, s.blockMin, s.blockMax);
 		settle(s, l, px, pz);
 		for (int layer = 0; layer < HEIGHT_LAYERS; ++layer)
 		{
 			if (s.layerDiffers[layer])
 			{
-				differ(s, l, px, pz, layer);
+				differ(s, l, px, pz, layer, sample);
 			}
 		}
 		s.visits += s.candidateCount * SUBS * SUBS;
@@ -1293,7 +1364,7 @@ final class LightMapBake
 	 * light, each where it stands or scaled up from (px, pz), are blockers too. What the layer sees differently from the
 	 * common sweep is added to its delta; the cells that look the same way as they did are left as they were.
 	 */
-	private static void differ(Scratch s, Layer l, float px, float pz, int layer)
+	private static void differ(Scratch s, Layer l, float px, float pz, int layer, int sample)
 	{
 		Segments extra = s.extra;
 		extra.count = 0;
@@ -1305,6 +1376,10 @@ final class LightMapBake
 				continue;
 			}
 			int b = s.partials[p];
+			if (!stops(l, b, px, pz, sample))
+			{
+				continue;
+			}
 			float x0 = l.boxes[b * 4], z0 = l.boxes[b * 4 + 1], x1 = l.boxes[b * 4 + 2], z1 = l.boxes[b * 4 + 3];
 			if (scale != 1)
 			{
@@ -1770,7 +1845,7 @@ final class LightMapBake
 			return null;
 		}
 		Layer l = s.other;
-		load(l, b, plane, x0, z0, w, h, -1);
+		load(l, b, plane, x0, z0, w, h, -1, 0);
 		float[] value = s.value2;
 		Arrays.fill(value, 0, w * h * HEIGHT_LAYERS, 0);
 		// the floors between the light and the storey, and how far each is from the light

@@ -146,7 +146,7 @@ class SceneLights
 			// a light that reaches further than the bake does would end at its edge: it stays with the clusters
 			this.bake = def.outdoorLighting || def.animationSpecific() || def.fixedDespawnTime || reach > LightMapBake.MAX_RADIUS ? null
 				: new LightMap.Source(plane, x, y, z, reach, def.red, def.green, def.blue, def.strength, def.nightOnly,
-				def.nightMultiplier);
+				def.nightMultiplier, object == null ? 0 : VoxelCapture.ownerOf(object));
 		}
 	}
 

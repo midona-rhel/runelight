@@ -86,8 +86,14 @@ final class BakeScene
 		return this;
 	}
 
-	/** A model in a cell: its box in the cell (units, 0 to 32) and the heights above the floor it reaches. */
+	/** A model in a cell: its box in the cell (units, 0 to 32) and the heights above the floor it reaches. It fills its box. */
 	BakeScene modelBox(int plane, int gx, int gz, int x0, int z0, int x1, int z1, float low, float high)
+	{
+		return modelBox(plane, gx, gz, x0, z0, x1, z1, low, high, 0);
+	}
+
+	/** As modelBox, a model of the scene object owner (VoxelCapture.ownerOf). */
+	BakeScene modelBox(int plane, int gx, int gz, int x0, int z0, int x1, int z1, float low, float high, int owner)
 	{
 		if (models == null)
 		{
@@ -98,15 +104,20 @@ final class BakeScene
 		{
 			mask |= 1 << bin;
 		}
-		byte[] box = new byte[16];
+		byte[] box = new byte[24];
+		int unit = 32 / ModelBlockers.COLUMNS;
+		int xCols = (1 << (Math.max(x1 - 1, x0) / unit) + 1) - (1 << x0 / unit);
+		int zCols = (1 << (Math.max(z1 - 1, z0) / unit) + 1) - (1 << z0 / unit);
 		for (int band = 0; band < 4; ++band)
 		{
-			box[band * 4] = (byte) x0;
-			box[band * 4 + 1] = (byte) z0;
-			box[band * 4 + 2] = (byte) x1;
-			box[band * 4 + 3] = (byte) z1;
+			box[band * 6] = (byte) x0;
+			box[band * 6 + 1] = (byte) z0;
+			box[band * 6 + 2] = (byte) x1;
+			box[band * 6 + 3] = (byte) z1;
+			box[band * 6 + 4] = (byte) xCols;
+			box[band * 6 + 5] = (byte) zCols;
 		}
-		models.set(plane, gx, gz, (short) mask, box, 0);
+		models.set(plane, gx, gz, owner, (short) mask, box, 0);
 		return this;
 	}
 
@@ -150,7 +161,13 @@ final class BakeScene
 	/** A light on a storey at a tile position, this high above the storey's floor. */
 	static LightMapBake.Light light(int plane, float tileX, float tileY, float height, float radiusTiles)
 	{
-		return new LightMapBake.Light(plane, world(tileX), -plane * STOREY - height, world(tileY), radiusTiles * 128);
+		return light(plane, tileX, tileY, height, radiusTiles, 0);
+	}
+
+	/** A light on the scene object owner. */
+	static LightMapBake.Light light(int plane, float tileX, float tileY, float height, float radiusTiles, int owner)
+	{
+		return new LightMapBake.Light(plane, world(tileX), -plane * STOREY - height, world(tileY), radiusTiles * 128, owner);
 	}
 
 	/** The share at a cell, scene cell coordinates (a tile is 4), the best of the height layers, 0 where the bake left it out. */

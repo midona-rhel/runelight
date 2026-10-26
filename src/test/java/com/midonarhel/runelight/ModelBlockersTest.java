@@ -47,7 +47,7 @@ public class ModelBlockersTest
 	private static float[] box(ModelBlockers m, int plane, int gx, int gz, float height)
 	{
 		float[] out = new float[ModelBlockers.MAX_RUNS * ModelBlockers.RUN];
-		int runs = m.runs(plane, gx, gz, ModelBlockers.bin(height), out);
+		int runs = m.runs(plane, gx, gz, ModelBlockers.bin(height), 0, out);
 		for (int r = 0; r < runs; ++r)
 		{
 			if (out[r * ModelBlockers.RUN + 6] != 0)
@@ -115,14 +115,49 @@ public class ModelBlockersTest
 		prop(c, 4, 4, -150, -224);
 		ModelBlockers m = assemble(c);
 		float[] out = new float[ModelBlockers.MAX_RUNS * ModelBlockers.RUN];
-		assertEquals(2, m.runs(0, 32, 32, ModelBlockers.bin(40), out));
+		assertEquals(2, m.runs(0, 32, 32, ModelBlockers.bin(40), 0, out));
 		assertEquals(0, out[4], 0);
 		assertEquals(75, out[5], 0);
 		assertEquals("at the light", 1, out[6], 0);
 		assertEquals(150, out[ModelBlockers.RUN + 4], 0);
 		assertEquals(225, out[ModelBlockers.RUN + 5], 0);
 		assertEquals("far above it", 0, out[ModelBlockers.RUN + 6], 0);
-		assertEquals(0, m.runs(0, 32 + 2, 32, ModelBlockers.bin(40), out));
+		assertEquals(0, m.runs(0, 32 + 2, 32, ModelBlockers.bin(40), 0, out));
+	}
+
+	@Test
+	public void aCellKeepsWhatEachObjectIsAndLeavesOutTheOneAskedFor()
+	{
+		VoxelCapture c = new VoxelCapture();
+		// a bracket of one object (a, 12 x 8 units, 90 to 120 high) and a barrel of another, in the same cell
+		c.current = 5;
+		prop(c, 4, 4, -90, -120);
+		c.current = 6;
+		prop(c, 14, 14, 0, -70);
+		ModelBlockers m = assemble(c);
+		float[] out = new float[ModelBlockers.MAX_RUNS * ModelBlockers.RUN];
+		assertEquals(2, m.runs(0, 32, 32, ModelBlockers.bin(100), 0, out));
+		assertEquals("without the bracket: the barrel", 1, m.runs(0, 32, 32, ModelBlockers.bin(100), 5, out));
+		assertEquals(0, out[4], 0);
+		assertEquals(75, out[5], 0);
+		assertEquals("without the barrel: the bracket", 1, m.runs(0, 32, 32, ModelBlockers.bin(100), 6, out));
+		assertEquals(90, out[4], 0);
+		assertEquals(0, ModelBlockers.assemble(new ModelBlockers.Zone[]{ModelBlockers.rasterize(new VoxelCapture(), floors())},
+			new int[]{1}, new int[]{1}, 1, 128).runs(0, 32, 32, 0, 0, out));
+	}
+
+	@Test
+	public void aModelCoversTheColumnsOfTheCellItsSilhouetteReaches()
+	{
+		VoxelCapture c = new VoxelCapture();
+		// 12 units across x and 8 along z, at 8 to 20 and 8 to 16 of the cell: columns of 4 units, 3 and 2, and the face
+		// on the far edge, a line, is in the column that starts there: 4 and 3
+		prop(c, 8, 8, 0, -70);
+		ModelBlockers m = assemble(c);
+		float[] out = new float[ModelBlockers.MAX_RUNS * ModelBlockers.RUN];
+		assertEquals(1, m.runs(0, 32, 32, 0, 0, out));
+		assertEquals(4 / 8f, out[7], 1e-6f);
+		assertEquals(3 / 8f, out[8], 1e-6f);
 	}
 
 	@Test

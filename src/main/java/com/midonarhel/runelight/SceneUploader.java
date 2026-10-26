@@ -279,7 +279,7 @@ class SceneUploader
 		{
 			return;
 		}
-		int savedRid = rid;
+		int savedRid = rid, savedOwner = owner;
 		int start = zone.vboO != null ? zone.vboO.vb.position() : 0;
 		swayFlushing = true;
 		try
@@ -287,6 +287,7 @@ class SceneUploader
 			for (SwayObject o : swayDeferred)
 			{
 				rid = o.rid;
+				owner = o.owner;
 				uploadZoneRenderable(o.r, zone, o.orient, o.x, o.y, o.z, o.lx, o.lz, o.ux, o.uz, o.id, vb, ab);
 			}
 		}
@@ -295,6 +296,7 @@ class SceneUploader
 			swayFlushing = false;
 			swayDeferred.clear();
 			rid = savedRid;
+			owner = savedOwner;
 		}
 		int end = zone.vboO != null ? zone.vboO.vb.position() : 0;
 		zone.addSwayRange(start, end);
@@ -393,6 +395,7 @@ class SceneUploader
 		WallObject wallObject = t.getWallObject();
 		if (wallObject != null && renderCallbackManager.drawObject(scene, wallObject))
 		{
+			owner = VoxelCapture.ownerOf(wallObject);
 			Renderable renderable1 = wallObject.getRenderable1();
 			uploadZoneRenderable(renderable1, zone, 0, wallObject.getX(), wallObject.getZ(), wallObject.getY(), -1, -1, -1, -1, wallObject.getId(), vertexBuffer, ab);
 
@@ -405,6 +408,7 @@ class SceneUploader
 		{
 			// what hangs on a wall lies flat on it: drawn in front of it, as the game draws it after the wall
 			objectBias = DECORATION_BIAS;
+			owner = VoxelCapture.ownerOf(decorativeObject);
 			Renderable renderable = decorativeObject.getRenderable();
 			uploadZoneRenderable(renderable, zone, 0, decorativeObject.getX() + decorativeObject.getXOffset(), decorativeObject.getZ(), decorativeObject.getY() + decorativeObject.getYOffset(), -1, -1, -1, -1, decorativeObject.getId(), vertexBuffer, ab);
 
@@ -416,6 +420,7 @@ class SceneUploader
 		GroundObject groundObject = t.getGroundObject();
 		if (groundObject != null && renderCallbackManager.drawObject(scene, groundObject))
 		{
+			owner = VoxelCapture.ownerOf(groundObject);
 			Renderable renderable = groundObject.getRenderable();
 			uploadZoneRenderable(renderable, zone, 0, groundObject.getX(), groundObject.getZ(), groundObject.getY(),
 				-1, -1, -1, -1,
@@ -443,6 +448,7 @@ class SceneUploader
 				continue;
 			}
 
+			owner = VoxelCapture.ownerOf(gameObject);
 			Renderable renderable = gameObject.getRenderable();
 			uploadZoneRenderable(renderable, zone, gameObject.getModelOrientation(), gameObject.getX(), gameObject.getZ(), gameObject.getY(),
 				min.getX(), min.getY(), max.getX(), max.getY(),
@@ -538,9 +544,9 @@ class SceneUploader
 	private static final class SwayObject
 	{
 		final Renderable r;
-		final int orient, x, y, z, lx, lz, ux, uz, id, rid;
+		final int orient, x, y, z, lx, lz, ux, uz, id, rid, owner;
 
-		SwayObject(Renderable r, int orient, int x, int y, int z, int lx, int lz, int ux, int uz, int id, int rid)
+		SwayObject(Renderable r, int orient, int x, int y, int z, int lx, int lz, int ux, int uz, int id, int rid, int owner)
 		{
 			this.r = r;
 			this.orient = orient;
@@ -553,6 +559,7 @@ class SceneUploader
 			this.uz = uz;
 			this.id = id;
 			this.rid = rid;
+			this.owner = owner;
 		}
 	}
 
@@ -561,8 +568,12 @@ class SceneUploader
 		int material = SurfaceMaterials.forObject(id, r) | WindSway.forObject(id, r);
 		if (!swayFlushing && WindSway.sways(material))
 		{
-			swayDeferred.add(new SwayObject(r, orient, x, y, z, lx, lz, ux, uz, id, rid));
+			swayDeferred.add(new SwayObject(r, orient, x, y, z, lx, lz, ux, uz, id, rid, owner));
 			return;
+		}
+		if (vb instanceof VoxelCapture.Buffer)
+		{
+			((VoxelCapture.Buffer) vb).capture.current = owner;
 		}
 		int pos = zone.vboA != null ? zone.vboA.vb.position() : 0;
 		Model model = null;
@@ -578,6 +589,10 @@ class SceneUploader
 			{
 				uploadStaticModel(model, orient, x - basex, y, z - basez, material, id, vb, ab);
 			}
+		}
+		if (vb instanceof VoxelCapture.Buffer)
+		{
+			((VoxelCapture.Buffer) vb).capture.current = 0;
 		}
 		int endpos = zone.vboA != null ? zone.vboA.vb.position() : 0;
 		if (endpos > pos)
@@ -1153,6 +1168,8 @@ class SceneUploader
 	private static final int PRIORITY_BIAS = 1;
 	private static final int DECORATION_BIAS = 4;
 	private int objectBias;
+	// the scene object being uploaded (VoxelCapture.ownerOf)
+	private int owner;
 
 	private int uploadStaticModel(Model model, int orient, int x, int y, int z, int material, int id, GpuIntBuffer vb, GpuIntBuffer ab)
 	{

@@ -8,7 +8,11 @@ import java.util.Arrays;
  * models are, and where in the cell:
  *
  * - a mask of HEIGHT_BINS bins of BIN_HEIGHT units above the storey's floor, set for the bins a model reaches;
- * - for each BAND (a quarter of the bins), the box in the cell (to the unit) that the models of the band fill.
+ * - for each BAND (a quarter of the bins), the box in the cell (to the unit) that the models of the band fill, and how
+ *   much of the cell they cover: the columns of the cell (COLUMNS of them, along x and along z) that a model's
+ *   silhouette reaches seen along the other axis, which is the share of the lines across the cell that meet the model;
+ * - per scene object (VoxelCapture.owner): what a light on an object leaves out of what stands in its way is the
+ *   object's own geometry, so a cell keeps a record for each object that stands in it.
  *
  * A light is only stopped by what stands where its line goes (runs): the runs of bins joined to one another, each with its
  * box and its heights. A barrel, a crate, a table or a counter never shades a torch that hangs above it, a pillar, a
@@ -29,8 +33,10 @@ final class ModelBlockers
 	static final float BIN_HEIGHT = 15;
 	static final int BANDS = 4;
 	private static final int BINS_PER_BAND = HEIGHT_BINS / BANDS;
-	/** Numbers per cell and band in a box: x0, z0, x1, z1 in units of the cell (0 to 32). */
-	private static final int BOX = 4;
+	/** Columns a cell's width is told apart in, for how much of it a model covers (4 units each). */
+	static final int COLUMNS = 8;
+	/** Numbers per cell and band in a box: x0, z0, x1, z1 in units of the cell (0 to 32), the columns along x and along z. */
+	private static final int BOX = 6;
 	private static final int RECORD = BANDS * BOX;
 	// flatter than this (cosine of the angle to the horizontal) and a triangle is a floor
 	private static final float FLAT = 0.95f;
@@ -41,16 +47,18 @@ final class ModelBlockers
 	private static final float CELL = 32;
 	private static final int BLOCK = LightMap.BLOCK;
 
-	/** One zone's cells with models: key (cx + MARGIN) | (cz + MARGIN) << 7 | storey << 14, the bins' mask, the boxes. */
+
+	/** One zone's cells with models, a record for each object in a cell: key (cx + MARGIN) | (cz + MARGIN) << 7 | storey << 14, the object, the bins' mask, the boxes. */
 	static final class Zone
 	{
-		final int[] keys;
+		final int[] keys, owners;
 		final short[] masks;
 		final byte[] boxes;
 
-		Zone(int[] keys, short[] masks, byte[] boxes)
+		Zone(int[] keys, int[] owners, short[] masks, byte[] boxes)
 		{
 			this.keys = keys;
+			this.owners = owners;
 			this.masks = masks;
 			this.boxes = boxes;
 		}
@@ -58,8 +66,10 @@ final class ModelBlockers
 
 	final int cells;
 	private final int perSide;
-	// per storey and block of BLOCK * BLOCK cells, the record of each cell plus one (0: none); null for a block without
+	// per storey and block of BLOCK * BLOCK cells, the first record of each cell plus one (0: none); null for a block without
 	private final int[][] index;
+	// per record: the object, and the next record of the cell plus one (0: the last)
+	private int[] owners = new int[64], next = new int[64];
 	private short[] masks = new short[64];
 	private byte[] boxes = new byte[64 * RECORD];
 	private int records;
@@ -71,8 +81,8 @@ final class ModelBlockers
 		index = new int[PLANES * perSide * perSide][];
 	}
 
-	/** Put a cell's record in: its mask and RECORD box numbers from boxes at offset. */
-	void set(int plane, int gx, int gz, short mask, byte[] box, int offset)
+	/** Put an object's record in a cell: its mask and RECORD box numbers from boxes at offset, merged with what the object has there. */
+	void set(int plane, int gx, int gz, int owner, short mask, byte[] box, int offset)
 	{
 		if (gx < 0 || gz < 0 || gx >= cells || gz >= cells || mask == 0)
 		{
@@ -85,20 +95,38 @@ final class ModelBlockers
 		}
 		int cell = gz % BLOCK * BLOCK + gx % BLOCK;
 		int r = index[b][cell] - 1;
+		while (r >= 0 && owners[r] != owner)
+		{
+			r = next[r] - 1;
+		}
 		if (r < 0)
 		{
 			if (records == masks.length)
 			{
 				masks = Arrays.copyOf(masks, records * 2);
+				owners = Arrays.copyOf(owners, records * 2);
+				next = Arrays.copyOf(next, records * 2);
 				boxes = Arrays.copyOf(boxes, records * 2 * RECORD);
 			}
 			r = records++;
+			owners[r] = owner;
+			next[r] = index[b][cell];
 			index[b][cell] = r + 1;
+			masks[r] = 0;
+			for (int i = 0; i < RECORD; i += BOX)
+			{
+				boxes[r * RECORD + i] = (byte) CELL;
+				boxes[r * RECORD + i + 1] = (byte) CELL;
+				boxes[r * RECORD + i + 2] = 0;
+				boxes[r * RECORD + i + 3] = 0;
+				boxes[r * RECORD + i + 4] = 0;
+				boxes[r * RECORD + i + 5] = 0;
+			}
 		}
-		masks[r] = mask;
-		System.arraycopy(box, offset, boxes, r * RECORD, RECORD);
+		merge(r, mask, box, offset);
 	}
 
+	/** The first record of a cell, -1 for none. */
 	private int record(int plane, int gx, int gz)
 	{
 		if (gx < 0 || gz < 0 || gx >= cells || gz >= cells)
@@ -112,31 +140,64 @@ final class ModelBlockers
 	/** The bins a model reaches in the cell, a bit each; 0 without any. */
 	int heights(int plane, int gx, int gz)
 	{
-		int r = record(plane, gx, gz);
-		return r < 0 ? 0 : masks[r] & 0xffff;
+		int mask = 0;
+		for (int r = record(plane, gx, gz); r >= 0; r = next[r] - 1)
+		{
+			mask |= masks[r] & 0xffff;
+		}
+		return mask;
 	}
 
-	/** The numbers of a run in runs(): its box, its bottom and top, and whether it is at the light's height. */
-	static final int RUN = 7;
+	/** The numbers of a run in runs(): its box, its bottom and top, whether it is at the light's height, and its cover along x and z. */
+	static final int RUN = 9;
 	/** The most runs a cell has: alternate bins. */
 	static final int MAX_RUNS = HEIGHT_BINS / 2;
 
 	/**
 	 * The runs of what stands in the cell: each set of bins joined to one another, with the box (x0, z0, x1, z1, in units of
-	 * the cell, 0 to 1) of the bands it reaches, the heights (units above the floor) it reaches, and whether it is at a
-	 * light's height: it has a bin in the light's bin or the one either side of it.
+	 * the cell, 0 to 1) of the bands it reaches, the heights (units above the floor) it reaches, whether it is at a
+	 * light's height (it has a bin in the light's bin or the one either side of it), and how much of the cell it covers
+	 * seen along z and seen along x (0 to 1): the mean over its bands of the share of columns the models reach.
 	 *
+	 * @param exclude the object whose records are left out, 0 for none: the one a light is on
 	 * @param out RUN numbers for each run, lowest first
 	 * @return the number of runs, 0 when nothing stands in the cell
 	 */
-	int runs(int plane, int gx, int gz, int bin, float[] out)
+	int runs(int plane, int gx, int gz, int bin, int exclude, float[] out)
 	{
-		int r = record(plane, gx, gz);
-		if (r < 0)
+		int first = record(plane, gx, gz);
+		if (first < 0)
 		{
 			return 0;
 		}
-		int all = masks[r] & 0xffff;
+		int all = 0;
+		// per band: the box, and the columns along x and along z (bakes run on several threads: nothing is shared)
+		float[] x0 = new float[BANDS], z0 = new float[BANDS], x1 = new float[BANDS], z1 = new float[BANDS];
+		int[] xs = new int[BANDS], zs = new int[BANDS];
+		Arrays.fill(x0, CELL);
+		Arrays.fill(z0, CELL);
+		for (int r = first; r >= 0; r = next[r] - 1)
+		{
+			if (exclude != 0 && owners[r] == exclude)
+			{
+				continue;
+			}
+			all |= masks[r] & 0xffff;
+			for (int band = 0; band < BANDS; ++band)
+			{
+				int o = r * RECORD + band * BOX;
+				if (boxes[o + 2] < boxes[o] || boxes[o + 3] < boxes[o + 1])
+				{
+					continue;
+				}
+				x0[band] = Math.min(x0[band], boxes[o]);
+				z0[band] = Math.min(z0[band], boxes[o + 1]);
+				x1[band] = Math.max(x1[band], boxes[o + 2]);
+				z1[band] = Math.max(z1[band], boxes[o + 3]);
+				xs[band] |= boxes[o + 4] & 0xff;
+				zs[band] |= boxes[o + 5] & 0xff;
+			}
+		}
 		int window = ((1 << Math.min(HEIGHT_BINS, bin + 2)) - 1) & ~((1 << Math.max(0, bin - 1)) - 1);
 		int count = 0;
 		for (int lo = 0; lo < HEIGHT_BINS; ++lo)
@@ -150,23 +211,37 @@ final class ModelBlockers
 			{
 				++hi;
 			}
-			float x0 = CELL, z0 = CELL, x1 = 0, z1 = 0;
+			float bx0 = CELL, bz0 = CELL, bx1 = 0, bz1 = 0, coverX = 0, coverZ = 0;
+			int bands = 0;
 			for (int band = lo / BINS_PER_BAND; band <= hi / BINS_PER_BAND; ++band)
 			{
-				int o = r * RECORD + band * BOX;
-				x0 = Math.min(x0, boxes[o]);
-				z0 = Math.min(z0, boxes[o + 1]);
-				x1 = Math.max(x1, boxes[o + 2]);
-				z1 = Math.max(z1, boxes[o + 3]);
+				if (x1[band] < x0[band] || z1[band] < z0[band])
+				{
+					continue;
+				}
+				bx0 = Math.min(bx0, x0[band]);
+				bz0 = Math.min(bz0, z0[band]);
+				bx1 = Math.max(bx1, x1[band]);
+				bz1 = Math.max(bz1, z1[band]);
+				coverX += Integer.bitCount(xs[band]) / (float) COLUMNS;
+				coverZ += Integer.bitCount(zs[band]) / (float) COLUMNS;
+				++bands;
+			}
+			if (bands == 0)
+			{
+				lo = hi;
+				continue;
 			}
 			int o = count++ * RUN;
-			out[o] = x0 / CELL;
-			out[o + 1] = z0 / CELL;
-			out[o + 2] = x1 / CELL;
-			out[o + 3] = z1 / CELL;
+			out[o] = bx0 / CELL;
+			out[o + 1] = bz0 / CELL;
+			out[o + 2] = bx1 / CELL;
+			out[o + 3] = bz1 / CELL;
 			out[o + 4] = lo * BIN_HEIGHT;
 			out[o + 5] = (hi + 1) * BIN_HEIGHT;
 			out[o + 6] = (window >> lo & ((1 << hi - lo + 1) - 1)) != 0 ? 1 : 0;
+			out[o + 7] = coverX / bands;
+			out[o + 8] = coverZ / bands;
 			lo = hi + 1;
 		}
 		return count;
@@ -185,10 +260,10 @@ final class ModelBlockers
 	 */
 	static Zone rasterize(VoxelCapture cap, float[] floors)
 	{
-		// per cell and storey, the slot of its record + 1
+		// per cell and storey, the slot of its first record + 1; a slot for each object in the cell, the next one + 1 in nextSlot
 		int[] slot = new int[SIDE * SIDE * PLANES];
 		int slots = 0;
-		int[] keys = new int[64];
+		int[] keys = new int[64], owners = new int[64], nextSlot = new int[64];
 		short[] masks = new short[64];
 		byte[] boxes = new byte[64 * RECORD];
 		// the heights where a triangle can reach the bins anywhere in the zone, per storey
@@ -256,6 +331,8 @@ final class ModelBlockers
 					int tile = Math.max(0, Math.min(7, cx >> 2)) * 8 + Math.max(0, Math.min(7, cz >> 2));
 					int bx0 = (int) Math.floor(px0 - cx * CELL), bx1 = (int) Math.ceil(px1 - cx * CELL);
 					int bz0 = (int) Math.floor(pz0 - cz * CELL), bz1 = (int) Math.ceil(pz1 - cz * CELL);
+					// the columns its silhouette reaches along each axis: a line (a wall seen edge on) is a column
+					int xCols = columns(bx0, bx1), zCols = columns(bz0, bz1);
 					for (int p = 0; p < PLANES; ++p)
 					{
 						// heights above the floor: y is down
@@ -267,17 +344,25 @@ final class ModelBlockers
 						int b0 = bin(lo), b1 = bin(hi);
 						int cell = ((cz + MARGIN) * SIDE + cx + MARGIN) * PLANES + p;
 						int s = slot[cell] - 1;
+						while (s >= 0 && owners[s] != cap.owner[t])
+						{
+							s = nextSlot[s] - 1;
+						}
 						if (s < 0)
 						{
 							if (slots == masks.length)
 							{
 								keys = Arrays.copyOf(keys, slots * 2);
+								owners = Arrays.copyOf(owners, slots * 2);
+								nextSlot = Arrays.copyOf(nextSlot, slots * 2);
 								masks = Arrays.copyOf(masks, slots * 2);
 								boxes = Arrays.copyOf(boxes, slots * 2 * RECORD);
 							}
 							s = slots++;
+							nextSlot[s] = slot[cell];
 							slot[cell] = s + 1;
 							keys[s] = cx + MARGIN | cz + MARGIN << 7 | p << 14;
+							owners[s] = cap.owner[t];
 							masks[s] = 0;
 							for (int i = 0; i < RECORD; i += BOX)
 							{
@@ -285,6 +370,8 @@ final class ModelBlockers
 								boxes[s * RECORD + i + 1] = (byte) CELL;
 								boxes[s * RECORD + i + 2] = 0;
 								boxes[s * RECORD + i + 3] = 0;
+								boxes[s * RECORD + i + 4] = 0;
+								boxes[s * RECORD + i + 5] = 0;
 							}
 						}
 						for (int bin = b0; bin <= b1; ++bin)
@@ -298,12 +385,22 @@ final class ModelBlockers
 							boxes[q + 1] = (byte) Math.min(boxes[q + 1], bz0);
 							boxes[q + 2] = (byte) Math.max(boxes[q + 2], bx1);
 							boxes[q + 3] = (byte) Math.max(boxes[q + 3], bz1);
+							boxes[q + 4] |= (byte) xCols;
+							boxes[q + 5] |= (byte) zCols;
 						}
 					}
 				}
 			}
 		}
-		return new Zone(Arrays.copyOf(keys, slots), Arrays.copyOf(masks, slots), Arrays.copyOf(boxes, slots * RECORD));
+		return new Zone(Arrays.copyOf(keys, slots), Arrays.copyOf(owners, slots), Arrays.copyOf(masks, slots), Arrays.copyOf(boxes, slots * RECORD));
+	}
+
+	/** The bits of the columns of the cell that the span from a to b (units into the cell) reaches; a span without width reaches one. */
+	private static int columns(int a, int b)
+	{
+		int unit = (int) CELL / COLUMNS;
+		int first = Math.min(COLUMNS - 1, a / unit), last = Math.min(COLUMNS - 1, Math.max(b - 1, a) / unit);
+		return (1 << last + 1) - (1 << first);
 	}
 
 	/** Whether the triangle at o lies flat, or has no area. */
@@ -387,15 +484,7 @@ final class ModelBlockers
 				int gx = ox + (key & 0x7f) - MARGIN, gz = oz + (key >> 7 & 0x7f) - MARGIN;
 				int plane = key >> 14 & 3;
 				// zones overlap where models overhang: the boxes and heights of both
-				int r = m.record(plane, gx, gz);
-				if (r < 0)
-				{
-					m.set(plane, gx, gz, z.masks[k], z.boxes, k * RECORD);
-				}
-				else
-				{
-					m.merge(r, z.masks[k], z.boxes, k * RECORD);
-				}
+				m.set(plane, gx, gz, z.owners[k], z.masks[k], z.boxes, k * RECORD);
 			}
 		}
 		return m;
@@ -415,12 +504,34 @@ final class ModelBlockers
 			boxes[q + 1] = (byte) Math.min(boxes[q + 1], box[offset + i + 1]);
 			boxes[q + 2] = (byte) Math.max(boxes[q + 2], box[offset + i + 2]);
 			boxes[q + 3] = (byte) Math.max(boxes[q + 3], box[offset + i + 3]);
+			boxes[q + 4] |= box[offset + i + 4];
+			boxes[q + 5] |= box[offset + i + 5];
 		}
 	}
 
+	/** Whether the cell's records, from the first r of this and q of o, are the same: each object's is. */
 	private boolean same(int r, ModelBlockers o, int q)
 	{
-		return masks[r] == o.masks[q] && Arrays.equals(boxes, r * RECORD, (r + 1) * RECORD, o.boxes, q * RECORD, (q + 1) * RECORD);
+		int mine = 0, theirs = 0;
+		for (int a = r; a >= 0; a = next[a] - 1)
+		{
+			++mine;
+			int b = q;
+			while (b >= 0 && o.owners[b] != owners[a])
+			{
+				b = o.next[b] - 1;
+			}
+			if (b < 0 || masks[a] != o.masks[b]
+				|| !Arrays.equals(boxes, a * RECORD, (a + 1) * RECORD, o.boxes, b * RECORD, (b + 1) * RECORD))
+			{
+				return false;
+			}
+		}
+		for (int b = q; b >= 0; b = o.next[b] - 1)
+		{
+			++theirs;
+		}
+		return mine == theirs;
 	}
 
 	/** Mark the cells (of every storey) that have a model. */
