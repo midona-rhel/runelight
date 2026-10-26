@@ -264,18 +264,19 @@ vec2 shoreFoam(vec2 xz) {
   return vec2(tint, core);
 }
 
-// The foam cells' height at xz (layer 2 of the noise, in cells), carried with the flow as running water's ripples are:
-// two copies drifting across each other on still water. lod: the mip to read.
+// The foam cells' height at xz (layer 2 of the noise, in cells) of still water, drifted by base: two copies drifting across
+// each other. lod: the mip to read.
+float waterFoamStill(vec2 xz, vec2 base, float lod) {
+  vec2 uv = (xz - base) / CELL_SCALE_B;
+  return 0.5 * (textureLod(waterNoise, vec3(uv + vec2(waterCycle(FOAM_STILL_PERIOD), 0.0), 2.0), lod).b
+    + textureLod(waterNoise, vec3(uv.yx + vec2(0.37, -waterCycle(FOAM_STILL_PERIOD * 1.37)), 2.0), lod).b);
+}
+
+// The foam cells' height at xz, carried with the flow as running water's ripples are, and as still water's where it is not
 float waterFoamHeight(vec2 xz, vec2 base, vec2 m0, vec2 m1, float w0, float flowing, float lod) {
   float h = textureLod(waterNoise, vec3((xz - m0) / CELL_SCALE_B, 2.0), lod).b * w0
     + textureLod(waterNoise, vec3((xz + vec2(173.0, 91.0) - m1) / CELL_SCALE_B, 2.0), lod).b * (1.0 - w0);
-  if (flowing < 1.0) {
-    vec2 uv = (xz - base) / CELL_SCALE_B;
-    float still = 0.5 * (textureLod(waterNoise, vec3(uv + vec2(waterCycle(FOAM_STILL_PERIOD), 0.0), 2.0), lod).b
-      + textureLod(waterNoise, vec3(uv.yx + vec2(0.37, -waterCycle(FOAM_STILL_PERIOD * 1.37)), 2.0), lod).b);
-    h = mix(still, h, flowing);
-  }
-  return h;
+  return flowing < 1.0 ? mix(waterFoamStill(xz, base, lod), h, flowing) : h;
 }
 
 // The foam around things standing in the water (WaterMap.contact) at xz, as hard edged coverage like shoreFoam's (the
@@ -286,6 +287,26 @@ vec2 contactFoam(vec2 xz, float h) {
   float hn = h + CONTACT_SHRINK * (1.0 - near);
   float aa = max(fwidth(hn), 1e-4);
   return step(0.001, near) * vec2(waterEdge(FOAM_CUT.y - hn, aa), waterEdge(FOAM_CUT.x - hn, aa));
+}
+
+// The terrain falls' frame at xz (WaterMap.frameX): the fall's direction times 1 plus how much longer its slope has made the
+// run so far, in tiles; zero away from falls. Where there is one the foam is laid out along the water's surface, not the
+// ground (fallLaid), so it is as large on the slope as on the flat, and its cells carried straight down the fall, a repeat of
+// them every FLOW_CYCLE seconds, over the whole of it, the pool above and below included: one pattern, not one a tile.
+vec2 fallFrame(vec2 xz) {
+  vec2 frame = waterPage2(waterData, xz / WATER_TILE + waterGrid.x).ba;
+  return dot(frame, frame) > 0.25 ? frame : vec2(0.0);
+}
+
+// xz laid out along a fall's surface
+vec2 fallLaid(vec2 xz, vec2 frame) {
+  float stretch = length(frame);
+  return stretch > 0.0 ? xz + frame / stretch * (WATER_TILE * (stretch - 1.0)) : xz;
+}
+
+// The foam cells' height on and around a fall, at its laid out xz (fallLaid)
+float fallFoamHeight(vec2 laid, vec2 frame, float lod) {
+  return waterFoamStill(laid, normalize(frame) * (CELL_SCALE_B * waterCycle(FLOW_CYCLE)), lod);
 }
 
 // The waves' slope at xz and the foam on them (the wave map's, WaterSurface.bake), for water of this type and flow
@@ -352,10 +373,23 @@ void waterWaveField(vec2 xz, int type, vec2 flow, out vec2 slope, out float foam
   float bankFoam = smoothstep(BANK_FOAM_FLOW.x, BANK_FOAM_FLOW.y, fast)
     * (1.0 - smoothstep(BANK_FOAM_REACH.x, BANK_FOAM_REACH.y, data.r));
   float churn = max(smoothstep(TURB_FOAM.x, TURB_FOAM.y, turb), bankFoam * BANK_FOAM);
-  if (churn > 0.0) {
+  // a fall's foam is the hard edged one of its frame, in every pixel
+  if (churn > 0.0 && fallFrame(xz) == vec2(0.0)) {
     float h = waterFoamHeight(xz, base, m0, m1, w0, flowing, lodFoam);
     foam = waterFoamRim(h) * churn * FOAM;
   }
+}
+
+// The hard edged foam at xz: the shore waves' and the foam around things standing in the water, and on terrain falls and
+// at their lip and foot (the composite lays them in the same two tones): x the tint, y the core. The foam cells are the
+// water's own, carried with its flow (m0, m1, w0, flowing), or on a fall laid out along its slope.
+vec2 hardFoam(vec2 xz, vec2 base, vec2 m0, vec2 m1, float w0, float flowing, float footprint) {
+  vec2 frame = fallFrame(xz);
+  vec2 laid = fallLaid(xz, frame);
+  float laidLod = waterLod(max(length(dFdx(laid)), length(dFdy(laid))), CELL_SCALE_B);
+  float cells = frame != vec2(0.0) ? fallFoamHeight(laid, frame, laidLod)
+    : waterFoamHeight(xz, base, m0, m1, w0, flowing, waterLod(footprint, CELL_SCALE_B));
+  return max(shoreFoam(xz), contactFoam(xz, cells));
 }
 
 void main() {
@@ -460,9 +494,7 @@ void main() {
       | pack01(foam, 7.0) << 23 | pack01(sqrt(nominalDepth(data.r) / 512.0), 63.0) << 26;
   }
   // distance (16 bits), caustics: -1 to 3 (8 bits), the shore waves' rim and core coverage (4 bits each)
-  // hard edged foam, the shore waves' and around things standing in the water (the composite lays both in the same two tones)
-  float cells = waterFoamHeight(xz, base, m0, m1, w0, flowing, waterLod(footprint, CELL_SCALE_B));
-  vec2 shore = max(shoreFoam(xz), contactFoam(xz, cells));
+  vec2 shore = hardFoam(xz, base, m0, m1, w0, flowing, footprint);
   bits.y = pack01(length(vRel) / WATER_REACH, 65535.0) | pack01((caustic + 1.0) / 4.0, 255.0) << 16
     | pack01(shore.x, 15.0) << 24 | pack01(shore.y, 15.0) << 28;
   // never 0, which is no water

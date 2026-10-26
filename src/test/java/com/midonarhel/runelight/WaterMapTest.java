@@ -267,4 +267,114 @@ public class WaterMapTest
 		assertEquals(0, c[(5 * cells - 1) * WaterMap.CONTACT_SIZE + 5 * cells] & 255);
 		assertTrue((c[(5 * cells + 1) * WaterMap.CONTACT_SIZE + 5 * cells] & 255) > 0);
 	}
+
+	/**
+	 * A strip of water 3 tiles wide running in direction k (0 +x, 1 -x, 2 +z, 3 -z, WaterMap's FALL_DX): level to 83 along it, a
+	 * fall's tile at 83 dropping `drop` over its run, level again from 84 to 87; land beside it, at the strip's heights. With
+	 * `land`, the tile below the fall is land. Coordinates along the run are mirrored for the negative directions.
+	 */
+	static WaterMap fallStrip(int drop, boolean land, int k)
+	{
+		boolean alongX = k < 2;
+		Tile[][][] tiles = new Tile[4][N][N];
+		for (int x = 0; x < N; ++x)
+		{
+			for (int y = 0; y < N; ++y)
+			{
+				int along = k == 0 ? x : k == 1 ? 167 - x : k == 2 ? y : 167 - y;
+				int across = alongX ? y : x;
+				boolean water = across >= 80 && across < 83 && along >= 80 && along < 88 && !(land && along >= 84);
+				tiles[0][x][y] = tile(x, y, water ? 1 : -1);
+			}
+		}
+		int[][][] heights = new int[4][N + 1][N + 1];
+		for (int x = 0; x <= N; ++x)
+		{
+			for (int y = 0; y <= N; ++y)
+			{
+				int along = k == 0 ? x : k == 1 ? 168 - x : k == 2 ? y : 168 - y;
+				heights[0][x][y] = along <= 83 ? 0 : drop;
+			}
+		}
+		Scene scene = proxy(Scene.class, m ->
+		{
+			switch (m)
+			{
+				case "getExtendedTiles":
+					return tiles;
+				case "getTileHeights":
+					return heights;
+				case "getBaseX":
+				case "getBaseY":
+					return 3200;
+				default:
+					return null;
+			}
+		});
+		return WaterMap.build(scene, null, null);
+	}
+
+	@Test
+	public void aSteepTileBetweenTwoPoolsIsAFall()
+	{
+		WaterMap m = fallStrip(256, false, 2);
+		for (int y = 80; y < 88; ++y)
+		{
+			assertEquals("tile " + y, y == 83, m.fall[y * N + 81]);
+		}
+		// its surface is the slope: the terrain's heights at its corners, the pools' above and below
+		int w = WaterMap.CORNERS * WaterMap.PAGES;
+		assertEquals(0f, m.texture[(83 * w + 81) * 4], 0f);
+		assertEquals(256f, m.texture[(84 * w + 81) * 4], 0f);
+		// the frame points down the fall (+y), 1 above it and 1 plus the slope's extra length from the foot on: sqrt(1 + 2 ^ 2)
+		int p2 = 2 * WaterMap.CORNERS;
+		assertEquals(1f, m.texture[(83 * w + p2 + 81) * 4 + 3], 1e-5f);
+		assertEquals(0f, m.texture[(83 * w + p2 + 81) * 4 + 2], 0f);
+		assertEquals((float) Math.sqrt(5), m.texture[(84 * w + p2 + 81) * 4 + 3], 1e-5f);
+		assertEquals((float) Math.sqrt(5), m.texture[(86 * w + p2 + 81) * 4 + 3], 1e-5f);
+		// it runs down the fall, fast
+		assertTrue(m.texture[(83 * w + 81) * 4 + 2] > 2f);
+		// its water is covered in foam, thickest at the lip and the foot
+		int cells = WaterMap.CONTACT_RES;
+		int first = m.contact[(83 * cells) * WaterMap.CONTACT_SIZE + 81 * cells + 1] & 255;
+		int middle = m.contact[(83 * cells + 1) * WaterMap.CONTACT_SIZE + 81 * cells + 1] & 255;
+		int last = m.contact[(83 * cells + cells - 1) * WaterMap.CONTACT_SIZE + 81 * cells + 1] & 255;
+		assertTrue(middle > 128);
+		assertTrue(first > middle);
+		assertTrue(last > middle);
+	}
+
+	@Test
+	public void aFallRunsDownhillWhicheverWayItFaces()
+	{
+		int[] dx = {1, -1, 0, 0}, dz = {0, 0, 1, -1};
+		int w = WaterMap.CORNERS * WaterMap.PAGES;
+		int p2 = 2 * WaterMap.CORNERS;
+		for (int k = 0; k < 4; ++k)
+		{
+			WaterMap m = fallStrip(256, false, k);
+			// the fall's tile and the corner on its foot's edge, in the middle of its width
+			int tx = k < 2 ? (k == 0 ? 83 : 84) : 81, ty = k < 2 ? 81 : (k == 2 ? 83 : 84);
+			assertTrue("tile " + k, m.fall[ty * N + tx]);
+			int cx = k < 2 ? 84 : 81, cy = k < 2 ? 81 : 84;
+			assertEquals("x " + k, dx[k] * (float) Math.sqrt(5), m.texture[(cy * w + p2 + cx) * 4 + 2], 1e-5f);
+			assertEquals("z " + k, dz[k] * (float) Math.sqrt(5), m.texture[(cy * w + p2 + cx) * 4 + 3], 1e-5f);
+			// the water on it runs the same way
+			assertTrue("flow " + k, m.texture[(cy * w + cx) * 4 + 1] * dx[k] + m.texture[(cy * w + cx) * 4 + 2] * dz[k] > 2f);
+		}
+	}
+
+	@Test
+	public void aClimbingBankIsNoFall()
+	{
+		// the same slope with land below it
+		WaterMap m = fallStrip(256, true, 2);
+		for (int y = 80; y < 88; ++y)
+		{
+			assertFalse("tile " + y, m.fall[y * N + 81]);
+		}
+		// and a gentle slope between two pools
+		m = fallStrip(64, false, 2);
+		assertFalse(m.fall[83 * N + 81]);
+	}
 }
