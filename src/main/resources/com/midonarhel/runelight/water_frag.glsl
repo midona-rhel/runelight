@@ -84,19 +84,21 @@ layout(location = 1) out vec4 WaveOut;    // the wave map: slope xy, foam
 #define BANK_FOAM_REACH vec2(0.4, 1.3)
 // Shore waves, on open sea only (WaterMap page 2): crests rolling in toward the shore, SHORE_SPACING tiles apart, one every
 // SHORE_PERIOD seconds (a divisor of waterTime's wrap into a multiple of SHORE_SEEDS, so the crests' shapes, seeded by their
-// number modulo SHORE_SEEDS, repeat exactly). Each is one continuous curve: its path off the shore's contour a sum of three
-// sines of its own directions, wavelengths and phases (up to SHORE_WOBBLE tiles), its half width SHORE_LINE tiles
-// swollen into lobes where the foam's ripple cells (layer 2, as the rapids' foam) are high and pinched where they are
-// low, thinning away to nothing by SHORE_FAR's tiles from the shore. Nearing it, from SHORE_BREAK.x to .y tiles, it
-// thickens and its lobes deepen, and it dissolves at the end. Two tones: a core, and a paler tint SHORE_RIM times as wide.
+// number modulo SHORE_SEEDS, repeat exactly). Each is one continuous band of foam in two tones with hard edges, a core and a
+// rim SHORE_RIM times as wide: its path off the shore's contour a sum of three sines of its own directions, wavelengths and
+// phases (up to SHORE_WOBBLE tiles), its half width SHORE_LINE tiles swollen into lobes where the foam's ripple cells
+// (layer 2, as the rapids' foam) are high and pinched where they are low. A crest narrower than SHORE_MIN tiles is not drawn. It exists from SHORE_FAR tiles from the
+// shore, drawn from 0.7 tiles inside it; from SHORE_BREAK.x to .y tiles it thickens and its lobes deepen, and it shrinks away at
+// the end.
 #define SHORE_SPACING 4.5
 #define SHORE_PERIOD 8.0
 #define SHORE_SEEDS 16.0
-#define SHORE_FAR vec2(9.0, 12.0)
+#define SHORE_FAR 9.0
 #define SHORE_BREAK vec2(5.5, 0.9)
-#define SHORE_LINE 0.26
-#define SHORE_WOBBLE 0.8
-#define SHORE_RIM 1.6
+#define SHORE_LINE 0.4
+#define SHORE_WOBBLE 1.0
+#define SHORE_RIM 1.5
+#define SHORE_MIN 0.12
 // caustics (water.glsl has the strength): world units per repeat, seconds per cycle of each copy on still water;
 // mean and line values of the kept copy; drawn out along water faster than CAUSTIC_STRETCH_SPEED by up to
 // CAUSTIC_STRETCH seconds of the flow
@@ -232,7 +234,7 @@ uint pack01(float v, float bits) {
 float shoreFoam(vec2 xz) {
   vec2 c = xz / WATER_TILE;
   vec4 field = waterPage2(waterData, c + waterGrid.x);
-  if (field.g < 0.5 || field.r >= SHORE_FAR.y + SHORE_SPACING)
+  if (field.g < 0.5 || field.r >= SHORE_FAR + SHORE_SPACING)
     return 0.0;
   float t = waterTime / SHORE_PERIOD;
   float k0 = floor(field.r / SHORE_SPACING + t);
@@ -254,10 +256,12 @@ float shoreFoam(vec2 xz) {
     // the foam's cells along it, moving in small circles
     vec2 at = xz / (1.6 * CELL_SCALE_B) + seed * vec2(0.37, 0.61) + 0.15 * vec2(sin(WATER_TAU * waterCycle(11.0)), cos(WATER_TAU * waterCycle(13.0)));
     float lobes = textureLod(waterNoise, vec3(at, 2.0), 0.0).b;
-    float width = SHORE_LINE * (1.0 + 1.8 * life) * (0.25 + (1.1 + 0.9 * life) * lobes)
-      * (1.0 - smoothstep(SHORE_FAR.x, SHORE_FAR.y, middle)) * (1.0 - smoothstep(0.8, 1.0, life));
-    tint = max(tint, 1.0 - smoothstep(SHORE_RIM * width - aa, SHORE_RIM * width + aa, d));
-    core = max(core, 1.0 - smoothstep(width - aa, width + aa, d));
+    float width = SHORE_LINE * (1.0 + 1.2 * life) * (0.5 + (0.8 + 0.8 * life) * lobes)
+      * clamp(SHORE_FAR - middle, 0.0, 1.0) * clamp(5.0 * (1.0 - life), 0.0, 1.0);
+    // a crest too thin to show is not there at all, never a hairline
+    float shown = step(SHORE_MIN, width) * step(0.7, SHORE_FAR - middle);
+    tint = max(tint, shown * waterEdge(SHORE_RIM * width - d, aa));
+    core = max(core, shown * waterEdge(width - d, aa));
   }
   return mix(0.45 * tint, 0.85, core);
 }

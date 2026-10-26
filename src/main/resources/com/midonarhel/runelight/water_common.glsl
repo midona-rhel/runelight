@@ -154,6 +154,12 @@ float nominalDepth(float shore) {
 #define WAVE_MAP_TILES 96.0
 #define WAVE_MAP_REACH 46.0
 
+// A hard edge: 1 where inside (a distance, positive within the shape) is positive, 0 where negative, over about a pixel
+// (aa, the distance a pixel spans)
+float waterEdge(float inside, float aa) {
+  return clamp(0.5 + inside / max(aa, 1e-5), 0.0, 1.0);
+}
+
 // A scroll of a whole number of repeats per wrap of waterTime, about one per `period` seconds
 float waterCycle(float period) {
   return fract(floor(WATER_TIME_WRAP / period + 0.5) * (waterTime / WATER_TIME_WRAP));
