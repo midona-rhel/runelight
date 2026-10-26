@@ -11,6 +11,7 @@
 #define SKY_FRAME_CONSTANTS
 #include "sky.glsl"
 #include cluster_config
+#include light_map_config
 #include "fog_cover.glsl"
 
 uniform vec3 cameraPos;
@@ -32,7 +33,8 @@ uniform samplerBuffer lightData;
 uniform usamplerBuffer clusterData;
 
 #include "light_clusters.glsl"
-#include "light_volume.glsl"
+#include "rooms.glsl"
+#include "light_map.glsl"
 
 // inside building rooms (RoomMap.java, in fogGround) the fog's density is multiplied by this; 1 leaves interiors
 // foggy
@@ -127,6 +129,10 @@ out vec4 FragFog;
 // radius), and the integral along a straight line is an arctangent.
 #define FOG_POINT_LIGHT_SCALE 0.6
 #define FOG_GLOW_CORE 0.2
+// The baked lights (light_map.glsl) glow in the fog where the steps are, not in closed form: their share of the light
+// along a ray through a light, against the closed form's (the integral of (1 - d / r)^2 across the radius is 0.67 r, the
+// glow's about 0.38 r at FOG_POINT_LIGHT_SCALE).
+#define FOG_MAP_LIGHT_SCALE 0.55
 
 #include "halfmap.glsl"
 #include "ign.glsl"
@@ -198,10 +204,6 @@ vec3 pointGlow(ivec2 px, vec3 dir, float t0, float dt, int steps, float weight[F
     float h2 = max(dot(posRadius.xyz, posRadius.xyz) - tc * tc, 0.0);
     float r2 = posRadius.w * posRadius.w;
     if (h2 >= r2) {
-      continue;
-    }
-    // a light the baked volume has where it stands glows from there (light_volume.glsl)
-    if (lightHeld(texelFetch(lightData, LIGHT_BAKED_BASE + li).x, lightBlockEpochAt(posRadius.xyz + cameraPos))) {
       continue;
     }
     float hc = sqrt(r2 - h2);
@@ -351,8 +353,11 @@ void main() {
   // the flat glow and the sun's shafts apart: the cover limit takes more of the first
   vec3 scatterAmbient = vec3(0.0);
   vec3 scatterSun = vec3(0.0);
-  // the baked lights' glow, which the steps pick up where they are
-  vec3 scatterBaked = vec3(0.0);
+#if LIGHT_MAP
+  // the baked lights' glow, picked up where the steps are
+  vec3 scatterMap = vec3(0.0);
+  bool mapGlow = glow && lightMapOn();
+#endif
   float trans = 1.0;
   float weight[FOG_MAX_STEPS];
   for (int i = 0; i < FOG_MAX_STEPS; ++i) {
@@ -417,12 +422,19 @@ void main() {
     scatterSun += direct * ((1.0 - far) * scattered);
     // the point lights' share fades into the far color like the rest of the light
     weight[i] = scattered * (1.0 - far) / dt;
-    if (glow) {
-      scatterBaked += lightVolumeOmni(wp) * (scattered * (1.0 - far));
+#if LIGHT_MAP
+    if (mapGlow) {
+      vec3 toLight;
+      float lightY;
+      scatterMap += lightMapLight(wp, wp, lightMapPlane(wp), toLight, lightY) * (scattered * (1.0 - far));
     }
+#endif
     trans *= stepTrans;
   }
-  vec3 lamps = glow ? pointGlow(px, dir, t0, dt, steps, weight) + scatterBaked * FOG_POINT_LIGHT_SCALE : vec3(0.0);
+  vec3 lamps = glow ? pointGlow(px, dir, t0, dt, steps, weight) : vec3(0.0);
+#if LIGHT_MAP
+  lamps += scatterMap * FOG_MAP_LIGHT_SCALE;
+#endif
 
   // Limit how much of the view the fog hides where the ray ends. The flat glow shrinks with the cover; the light
   // from the sun and the lamps mostly stays, so thick fog still shows where it is lit.

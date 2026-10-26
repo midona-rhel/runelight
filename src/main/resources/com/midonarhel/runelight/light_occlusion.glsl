@@ -6,7 +6,9 @@
 // Point lights: a static light's occlusion grid (LightOcclusion.java) dims it behind walls, and a light under a roof
 // leaves the tops of things open to the sky above it dark: roofs aren't lit from inside. The per-light texel after
 // the lights (LightOcclusion.texel) carries both, and whether the walls already decide where the light reaches on
-// its own storey. Needs lightData, cluster_config, cameraPos and rooms.glsl.
+// its own storey. With the light map (light_map.glsl) the static lights that are baked are not here; the occlusion
+// grids are not cast, and a moving light keeps to its storey. Needs lightData, cluster_config, light_map_config,
+// cameraPos and rooms.glsl.
 
 uniform int skylightOn;      // 1 when the AO pass worked the sky visibility out this frame
 uniform float skylightFloor; // share of the ambient light kept where no sky is seen
@@ -46,8 +48,10 @@ vec3 doorwayDaylight(vec3 world, vec3 n, vec3 sun) {
 
 // The static lights' occlusion grids (LightOcclusion.Atlas): a byte per cell, each grid inside a border of fully
 // visible texels, so one hardware filtered fetch is the bilinear lookup and reads 1 past the grid's edge
+#if !LIGHT_MAP
 uniform sampler2D lightVis;
 uniform vec2 lightVisSize;  // the atlas' size in texels
+#endif
 
 // How much of a light with room code roomCode and per-light texel `extra` reaches a point in room r (lightRoomPlaneAt).
 // The rooms decide it, except for a light whose occlusion grid is cast: its walls decide on its own storey, so the
@@ -56,6 +60,12 @@ uniform vec2 lightVisSize;  // the atlas' size in texels
 // the rooms, which let them spill through openings (RoomMap).
 float lightRoomShare(float roomCode, vec4 extra, ivec3 r) {
   int code = int(extra.w);
+#if LIGHT_MAP
+  // bit 0 (LightClusters.cull): a moving light, which lights the storey it is on and no other
+  if (roomHeader.x > 2.5 && (code & 1) != 0) {
+    return ((code >> 3) & 3) == r.z ? 1.0 : 0.0;
+  }
+#endif
   if ((code & 4) != 0 && ((code >> 3) & 3) == r.z) {
     return 1.0;
   }
@@ -75,6 +85,7 @@ float lightOcclusion(vec4 extra, vec3 lightPos, vec3 p, vec3 n) {
       * smoothstep(LIGHT_ROOF_MARGIN, LIGHT_ROOF_MARGIN + LIGHT_ROOF_RAMP, below)
       * smoothstep(LIGHT_ROOF_FACING_LOW, LIGHT_ROOF_FACING_HIGH, -n.y);
   }
+#if !LIGHT_MAP
   if (extra.x >= 0.0 && v > 0.0) {
     int n4 = code >> 5;
     float cell = (code & 1) != 0 ? 64.0 : 32.0;
@@ -85,5 +96,6 @@ float lightOcclusion(vec4 extra, vec3 lightPos, vec3 p, vec3 n) {
     vec2 at = vec2(mod(extra.x, 4096.0), floor(extra.x / 4096.0));
     v *= textureLod(lightVis, (at + c + 0.5) / lightVisSize, 0.0).r;
   }
+#endif
   return v;
 }

@@ -196,3 +196,30 @@ rooms keep it off the other planes, except through holes in the floors (`RoomMap
 paints and models): the rooms either side of a hole share their lights there, and a light of another plane shows when
 nothing floors it over or in, or its room has a hole (`RoomMap.seenFrom`; 117 HD's plane rule plus the holes). Lights
 under a roof don't light surfaces open to the sky above them, facing up (roofs), not the walls around them.
+
+### Light map
+
+Plugin config, Development section, Light map (on by default; off is the path above, the lights in the clusters).
+The static lights (those in lights.json and the automatic ones, not the lights that move, follow an animation or the
+sky) are baked on background threads into one grid per storey of quarter-tile cells (`LightMap.java`, `LightMapBake.java`).
+What stops a light (`LightBlockers.java`): the walls and diagonal walls (`WallMap`), the tiles a solid object fills, and
+the static models at lamp height, rasterized conservatively from the zones' triangles the skylight voxelizes
+(`ModelBlockers.java`): a cell is blocked on a storey when a triangle crosses it between 80 and 128 units above that
+storey's floor, which stops pillars, shelves, open doors, statues, trunks and bushes but lets lights shine over tables,
+counters, fences and barrels (70 at most) and doesn't shut a lamp in under a ceiling or canopy (240 and up).
+A light is 0.8 tile wide: 16 points over its disc are each swept exactly (a polar depth over 2048 directions, the cost
+is the blocker edges plus the cells), and the share of the points that see a cell is its visibility, falling off by
+(1 - d / r)^2 as in 117 HD. Light also walks round corners and through doors, as a floor under the direct light (0.35
+of the falloff by path distance, a flood fill over the cells), and a blur of a cell never takes light from across a
+blocker. A light inside its own object (a brazier, a wall torch, a furnace) is cast from the nearest open cell. Onto the
+storeys above and below the light goes through the openings: the line to a cell has to cross every floor between where
+the storey has no floor tile, and the walls of the storeys it passes through apply.
+A cell keeps the lights' summed colour and the dominant light's share (RGBA16F, filtered), and the dominant light's
+index, place and height (RGBA16F, read as it is): 2 layers a storey, 8 in all, 34.7 MB of GPU memory for the largest
+scene. The composite, the fog (per step), rain and snow (per particle) and the water read them (`light_map.glsl`); the
+dominant light's flicker, pulse and fades come from a table in the light buffer (strength now over strength baked), and
+its direction and height give the shading. Lights at night: night-only lights and night multipliers are baked at the
+night as of sixteen steps of it. Walls, doors and objects that change bake the lights near them again; a light is the
+map's only once all its blocks are on the GPU, until then the clusters light it. Enable debug logging for the bake
+times.
+

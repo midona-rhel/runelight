@@ -1,6 +1,7 @@
 // Shared by the rain, snow and weather surface passes. Include after frame.glsl and sky.glsl.
 
 #include cluster_config
+#include light_map_config
 // World space is game units (128 per tile), y points down; positions here are camera-relative unless named world.
 
 // Top-down depth of all static scenery around the player, every roof included (Weather.java). Window depth grows
@@ -118,7 +119,8 @@ uniform samplerBuffer lightData;     // per light: (camera-relative position, ra
 uniform usamplerBuffer clusterData;  // per cluster: a bit per light in view (light_clusters.glsl)
 
 #include "light_clusters.glsl"
-#include "light_volume.glsl"
+#include "rooms.glsl"
+#include "light_map.glsl"
 
 // particles are lit at their center, once per vertex; global trim against the surface lighting
 #define WEATHER_POINT_LIGHT_SCALE 1.0
@@ -156,9 +158,23 @@ vec3 weatherPointLights(vec3 p, vec4 clip, vec3 n, float roofY) {
   vec3 view = normalize(p);
   float roof = roofY - cameraPos.y + WEATHER_ROOF_BIAS;
   bool overRoof = p.y < roof;
-  // the baked lights (light_volume.glsl): the lights the block holds are left out of the loop below
-  float blockEpoch = lightBlockEpochAt(p + cameraPos);
-  vec3 sum = lightVolumeOmni(p + cameraPos);
+  vec3 sum = vec3(0.0);
+#if LIGHT_MAP
+  // the baked lights (light_map.glsl), one lookup at the point; not when the light is below the roof it is over, as
+  // below. Weather is outside: the map's light is what reaches it through the doors and over the walls.
+  if (lightMapOn()) {
+    vec3 world = p + cameraPos;
+    vec3 toLight;
+    float lightY;
+    vec3 baked = lightMapLight(world, world, lightMapPlane(world), toLight, lightY);
+    // the dominant light's height stands for the lights' (the cell's)
+    if (!(overRoof && lightY - cameraPos.y > roof)) {
+      float k = particle ? 1.0 + WEATHER_FORWARD_SCATTER * pow(max(dot(toLight, view), 0.0), WEATHER_FORWARD_POWER)
+        : max(dot(n, toLight), 0.0);
+      sum += baked * k;
+    }
+  }
+#endif
   LightMask lights = clusterLights(entry);
   int li;
   while (nextLight(lights, li)) {
@@ -170,7 +186,7 @@ vec3 weatherPointLights(vec3 p, vec4 clip, vec3 n, float roofY) {
     vec3 l = posRadius.xyz - p;
     float d2 = dot(l, l);
     float r2 = posRadius.w * posRadius.w;
-    if (d2 >= r2 || lightHeld(texelFetch(lightData, LIGHT_BAKED_BASE + li).x, blockEpoch)) {
+    if (d2 >= r2) {
       continue;
     }
     // 117 HD's falloff, as in the composite

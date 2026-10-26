@@ -398,7 +398,7 @@ final class RoomMap
 		return room > 0 && room < linked.length && linked[room];
 	}
 
-	private static float floorHeight(byte[][][] settings, int[][][] heights, int plane, int x, int y)
+	static float floorHeight(byte[][][] settings, int[][][] heights, int plane, int x, int y)
 	{
 		if (heights == null || heights.length == 0)
 		{

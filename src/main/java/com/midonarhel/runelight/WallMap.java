@@ -221,8 +221,8 @@ final class WallMap
 	}
 
 	/**
-	 * The rectangle of tiles whose walls differ from another map of the same size, over all planes, as
-	 * {x0, y0, x1, y1}; null when they are the same.
+	 * The rectangle of tiles whose walls or solid objects differ from another map of the same size, over all planes,
+	 * as {x0, y0, x1, y1}; null when they are the same.
 	 */
 	int[] diff(WallMap o)
 	{
@@ -234,7 +234,7 @@ final class WallMap
 				int i = index(plane, x, 0);
 				for (int y = 0; y < size; ++y, ++i)
 				{
-					if (bits[i] != o.bits[i])
+					if (bits[i] != o.bits[i] || full[i] != o.full[i])
 					{
 						x0 = Math.min(x0, x);
 						y0 = Math.min(y0, y);

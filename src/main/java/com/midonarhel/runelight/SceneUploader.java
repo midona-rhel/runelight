@@ -183,6 +183,7 @@ class SceneUploader
 			voxelBuffer.capture.trim();
 			zone.voxelCapture = voxelBuffer.capture;
 			zone.voxels = null;
+			zone.modelBlockers = null;
 		}
 	}
 

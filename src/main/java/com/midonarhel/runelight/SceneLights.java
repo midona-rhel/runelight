@@ -102,6 +102,9 @@ class SceneLights
 		// what it is attached to, null for a world light
 		final TileObject object;
 		final boolean auto;
+		// what the light map bakes of it, null for a light that can't be baked: one that comes and goes with an
+		// animation or for a time, or follows the sky
+		final LightMap.Source bake;
 
 		Placed(LightDefinition def, float[] at, int plane, float seed, boolean fadesIn, TileObject object, boolean auto)
 		{
@@ -114,6 +117,9 @@ class SceneLights
 			this.life = new LightLife(def, fadesIn);
 			this.object = object;
 			this.auto = auto;
+			this.bake = def.outdoorLighting || def.animationSpecific() || def.fixedDespawnTime ? null
+				: new LightMap.Source(plane, x, y, z, def.kind == LightDefinition.FLICKER ? def.radius * 1.5f : def.radius,
+				def.red, def.green, def.blue, def.strength, def.nightOnly, def.nightMultiplier);
 		}
 	}
 
@@ -165,6 +171,8 @@ class SceneLights
 	private final Set<Long> worldLightTiles = new HashSet<>();
 	// this frame's rooms, for the lights of the other planes
 	private RoomMap viewRooms;
+	// the baked lights' map, null when the static lights are all left to the clusters
+	private LightMap lightMap;
 
 	// the frame being collected
 	private float frameTime, frameNight, frameSun, frameDt;
@@ -179,13 +187,6 @@ class SceneLights
 	private int poolUsed;
 	// the frame's automatic lights, which go after the others
 	private final List<PointLight> autoLights = new ArrayList<>();
-	// the lights the volume bakes that the frame does not draw on their own (hidden from this plane, over the budget),
-	// which go last
-	private final List<PointLight> bakeOnlyLights = new ArrayList<>();
-	// what emit worked out for the light it made last, for the volume: its strength and radius without the swing of a
-	// flicker or pulse, and the swing
-	private float emitStrength, emitRadius, emitMod;
-	private boolean emitModulated;
 
 	// scratch
 	private final float[] at = new float[3];
@@ -264,11 +265,28 @@ class SceneLights
 		return definitionCount;
 	}
 
+	/**
+	 * The map the static lights are baked into (null: they stay with the clusters, as before it). The lights it holds
+	 * are not added to the frame's lights.
+	 */
+	void setLightMap(LightMap map)
+	{
+		if (map != lightMap && lightMap != null)
+		{
+			lightMap.clear();
+		}
+		lightMap = map;
+	}
+
 	// ---------------------------------------------------------------------------------------------------------
 	// Static lights: objects and fixed world positions
 
 	private void clear()
 	{
+		if (lightMap != null)
+		{
+			lightMap.clear();
+		}
 		objects.clear();
 		worldLights.clear();
 		worldLightTiles.clear();
@@ -403,11 +421,21 @@ class SceneLights
 		// they fade out and wait their despawn delay
 		for (Placed p : t.lights)
 		{
+			unbake(p);
 			if (!p.auto)
 			{
 				p.life.update(true, 0);
 				orphans.add(p);
 			}
+		}
+	}
+
+	/** The light is going: the map lets go of it, and the clusters fade it out. */
+	private void unbake(Placed p)
+	{
+		if (lightMap != null && p.bake != null)
+		{
+			lightMap.remove(p.bake, true);
 		}
 	}
 
@@ -686,6 +714,10 @@ class SceneLights
 			if (id != t.resolvedId)
 			{
 				t.resolvedId = id;
+				for (Placed p : t.lights)
+				{
+					unbake(p);
+				}
 				t.lights = placeObjectLights(entry.getKey(), id, true);
 			}
 		}
@@ -990,7 +1022,6 @@ class SceneLights
 		poolUsed = 0;
 		viewRooms = rooms;
 		autoLights.clear();
-		bakeOnlyLights.clear();
 		if (client.getGameState() != GameState.LOGGED_IN)
 		{
 			return;
@@ -1054,33 +1085,24 @@ class SceneLights
 			}
 		}
 
-		int added = appendNearest(out, autoLights, LightClusters.MAX_LIGHTS - out.size(), camX, camZ);
-		// the automatic lights over the budget are still baked
-		for (int i = added; i < autoLights.size(); ++i)
-		{
-			autoLights.get(i).bakeOnly = true;
-			out.add(autoLights.get(i));
-		}
-		out.addAll(bakeOnlyLights);
+		appendNearest(out, autoLights, LightClusters.MAX_LIGHTS - out.size(), camX, camZ);
 	}
 
 	/**
 	 * Add the nearest of the candidates to the lights, at most room of them, to leave the budget to the lights
-	 * already there. Returns how many; the rest, if any, are at the end of the candidates.
+	 * already there.
 	 */
-	static int appendNearest(List<PointLight> out, List<PointLight> candidates, int room, float camX, float camZ)
+	static void appendNearest(List<PointLight> out, List<PointLight> candidates, int room, float camX, float camZ)
 	{
 		if (room <= 0)
 		{
-			return 0;
+			return;
 		}
 		if (candidates.size() > room)
 		{
 			candidates.sort((a, b) -> Float.compare(distanceSquared(a, camX, camZ), distanceSquared(b, camX, camZ)));
 		}
-		int added = Math.min(room, candidates.size());
-		out.addAll(candidates.subList(0, added));
-		return added;
+		out.addAll(candidates.subList(0, Math.min(room, candidates.size())));
 	}
 
 	private static float distanceSquared(PointLight l, float camX, float camZ)
@@ -1098,19 +1120,12 @@ class SceneLights
 		}
 		List<PointLight> target = p.auto ? autoLights : out;
 		int n = target.size();
-		// a light tied to an animation comes and goes with it: only the clusters do for it
-		boolean bakeable = !p.def.animationSpecific();
-		List<PointLight> hidden = bakeable ? bakeOnlyLights : null;
-		int m = bakeOnlyLights.size();
-		emit(target, hidden, p.def, p.life, p.x, p.y, p.z, p.plane, p.seed);
-		PointLight light = target.size() > n ? target.get(n) : bakeOnlyLights.size() > m ? bakeOnlyLights.get(m) : null;
-		if (light != null)
+		// a light that has faded in and stays is the map's; fading or going, the clusters have it
+		LightMap.Source bake = lightMap != null && parentExists && p.life.brightness() >= 1 ? p.bake : null;
+		emit(target, p.def, p.life, p.x, p.y, p.z, p.plane, p.seed, bake);
+		if (target.size() > n)
 		{
-			light.fixed();
-			if (bakeable)
-			{
-				light.bakeable(p, emitRadius, emitStrength, emitMod, emitModulated);
-			}
+			target.get(n).fixed();
 		}
 	}
 
@@ -1134,23 +1149,23 @@ class SceneLights
 		l.life.update(parentExists, frameDt);
 		if (l.life.visible())
 		{
-			emit(out, null, l.def, l.life, l.x, l.y, l.z, l.plane, l.seed);
+			emit(out, l.def, l.life, l.x, l.y, l.z, l.plane, l.seed, null);
 		}
 	}
 
 	/**
-	 * Make the light as it is now and add it to out, unless it is not to be seen from this plane or out of reach. A
-	 * light that is hidden from this plane but could be baked goes to hidden instead (null for one that can't be).
+	 * @param bake the light's place in the light map, null for a light that isn't on it: with it, the light is baked
+	 * once it is in reach; and while the map carries it, only its strength (the table) is kept up to date
 	 */
-	private void emit(List<PointLight> out, List<PointLight> hidden, LightDefinition d, LightLife life, float x, float y,
-		float z, int lightPlane, float seed)
+	private void emit(List<PointLight> out, LightDefinition d, LightLife life, float x, float y, float z, int lightPlane,
+		float seed, LightMap.Source bake)
 	{
+		boolean mapped = bake != null && LightMap.isLive(bake);
 		// Other planes' lights stay hidden unless they are meant to show through (the definition says so) or nothing
 		// floors them off: the pit below a gallery, the room under a stairwell (117 HD hides the rest to keep them
-		// from leaking through floors). The light volume has no such leaks, so it keeps them.
-		boolean seen = lightPlane == framePlane || d.visibleFromOtherPlanes
-			|| viewRooms != null && viewRooms.seenFrom(lightPlane, framePlane, x, z);
-		if (!seen && hidden == null)
+		// from leaking through floors). The map knows what the floors let through.
+		if (!mapped && lightPlane != framePlane && !d.visibleFromOtherPlanes
+			&& (viewRooms == null || !viewRooms.seenFrom(lightPlane, framePlane, x, z)))
 		{
 			return;
 		}
@@ -1158,13 +1173,20 @@ class SceneLights
 		float reach = maxDistance + d.radius * 1.5f;
 		if (dx * dx + dz * dz > reach * reach)
 		{
+			float far = reach + LightMap.EVICT_MARGIN;
+			if (bake != null && dx * dx + dz * dz > far * far)
+			{
+				lightMap.remove(bake, false);
+			}
 			return;
+		}
+		if (bake != null)
+		{
+			lightMap.add(bake);
 		}
 
 		float strength = d.strength;
 		float radius = d.radius;
-		float mod = 1;
-		boolean modulated = false;
 		if (d.kind == LightDefinition.FLICKER)
 		{
 			// same flicker curve as 117 HD: a sum of sharpened cosines at unrelated frequencies
@@ -1175,16 +1197,16 @@ class SceneLights
 			double c17s = c17 * c17 * c17, c31s = c31 * c31 * c31, c71s = c71 * c71, c151s = c151 * c151 * c151;
 			double f = (c11 * c11 * c11 + c17s * c17s + c23 * c23 + c31s * c31s + c71s * c71s + c151s * c151s / 2) / 4.335;
 			float lo = 1 - d.range / 100f, hi = 1 + d.range / 100f;
-			mod = lo + (hi - lo) * (float) f;
-			modulated = d.range > 0;
+			strength *= lo + (hi - lo) * (float) f;
 			radius *= 1.5f;
 		}
 		else if (d.kind == LightDefinition.PULSE && d.duration > 0)
 		{
 			// triangle wave between -range% and +range%
 			float phase = (frameTime / (d.duration / 1000f) + seed) % 1f;
-			mod = 1 + (2 * (1 - 2 * Math.abs(phase - 0.5f)) - 1) * d.range / 100f;
-			modulated = d.range > 0;
+			float m = 1 + (2 * (1 - 2 * Math.abs(phase - 0.5f)) - 1) * d.range / 100f;
+			strength *= m;
+			radius *= m;
 		}
 
 		if (d.nightOnly)
@@ -1193,6 +1215,11 @@ class SceneLights
 		}
 		strength *= 1 + (d.nightMultiplier - 1) * frameNight;
 		strength *= life.brightness();
+		if (mapped)
+		{
+			lightMap.setLevel(bake, strength);
+			return;
+		}
 		float red = d.red, green = d.green, blue = d.blue;
 		if (d.outdoorLighting)
 		{
@@ -1205,26 +1232,11 @@ class SceneLights
 		{
 			return;
 		}
-		emitStrength = strength;
-		emitRadius = radius;
-		emitMod = mod;
-		emitModulated = modulated;
-		// a pulse swells the light's radius with its strength
-		float drawn = d.kind == LightDefinition.PULSE && d.duration > 0 ? radius * mod : radius;
 
 		if (poolUsed == pool.size())
 		{
 			pool.add(new PointLight());
 		}
-		PointLight light = pool.get(poolUsed++).set(x, y, z, drawn, red, green, blue, strength * mod).onPlane(lightPlane);
-		if (seen)
-		{
-			out.add(light);
-		}
-		else
-		{
-			light.bakeOnly = true;
-			hidden.add(light);
-		}
+		out.add(pool.get(poolUsed++).set(x, y, z, radius, red, green, blue, strength).onPlane(lightPlane));
 	}
 }

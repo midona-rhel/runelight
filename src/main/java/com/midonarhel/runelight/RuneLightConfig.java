@@ -928,14 +928,14 @@ public interface RuneLightConfig extends Config
 	}
 
 	@ConfigItem(
-		keyName = "bakedPointLights",
-		name = "Baked point lights",
-		description = "Light the scene from its static lamps and torches with a volume baked in the background, shadowed by"
-			+ " the scene, instead of the clustered lights. Untick to compare.",
+		keyName = "lightMap",
+		name = "Light map",
+		description = "Light the scene from its static lamps and torches with a map baked in the background, which stops at"
+			+ " walls and comes out through doors and windows, instead of the clustered lights. Untick to compare.",
 		section = developmentSection,
 		position = 106
 	)
-	default boolean bakedPointLights()
+	default boolean lightMap()
 	{
 		return true;
 	}

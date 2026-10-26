@@ -31,14 +31,14 @@ class CpuTimer
 	static final int OCCLUSION = 14;
 	// handing the skylight's grid its next rays and uploading what it traced (the tracing is on its worker)
 	static final int SKY_GRID = 15;
-	// taking in the static lights for the baked volume, handing it its next blocks and uploading what is baked
-	static final int LIGHT_VOLUME = 16;
+	// handing the light map its changes and sending the blocks baked since (the baking is on its threads)
+	static final int LIGHT_MAP = 16;
 	static final int STAGES = 17;
 
 	static final String[] NAMES = {
 		"client scene", "environment", "weather", "light collection", "light clusters", "shadow submit",
 		"UI upload", "swap wait", "outside frame", "client UI + overlays",
-		"buffer map", "light upload", "scene voxels", "sky capture", "occlusion maps", "sky grid", "light volume"
+		"buffer map", "light upload", "scene voxels", "sky capture", "occlusion maps", "sky grid", "light map"
 	};
 
 	private final long[] start = new long[STAGES];

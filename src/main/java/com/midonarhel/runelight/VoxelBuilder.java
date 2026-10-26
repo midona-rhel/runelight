@@ -7,6 +7,7 @@ import java.util.concurrent.ForkJoinPool;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.IntConsumer;
 import java.util.stream.IntStream;
+import net.runelite.api.Constants;
 import net.runelite.api.Scene;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -34,11 +35,18 @@ class VoxelBuilder
 	private ExecutorService worker;
 	private ForkJoinPool pool;
 	private volatile SceneVoxels voxels;
+	private volatile ModelBlockers modelBlockers;
 
 	/** The newest voxels, null before the first build; a new object after every build. */
 	SceneVoxels getVoxels()
 	{
 		return voxels;
+	}
+
+	/** The models that stop light, null before the first build; a new object after every build. */
+	ModelBlockers getModelBlockers()
+	{
+		return modelBlockers;
 	}
 
 	/** The worker. */
@@ -166,13 +174,31 @@ class VoxelBuilder
 		int baseX = scene.getBaseX(), baseY = scene.getBaseY();
 		boolean instance = scene.isInstance();
 		int[][][] heights = scene.getTileHeights();
+		byte[][][] settings = scene.getExtendedTileSettings();
 		SkyTerrain terrain = SkyTerrain.capture(scene, RuneLightPlugin.SCENE_OFFSET);
 		int zones2 = n;
-		submit(() -> build(g, list, zx, zz, zones2, baseZone, water, baseX, baseY, instance, heights, terrain));
+		submit(() -> build(g, list, zx, zz, zones2, baseZone, water, baseX, baseY, instance, heights, settings, terrain));
+	}
+
+	/** A zone's tiles' floor heights per storey, ModelBlockers.rasterize's layout. */
+	private static float[] zoneFloors(byte[][][] settings, int[][][] heights, int zoneX, int zoneZ)
+	{
+		float[] out = new float[ModelBlockers.PLANES * 64];
+		for (int p = 0; p < ModelBlockers.PLANES; ++p)
+		{
+			for (int tx = 0; tx < 8; ++tx)
+			{
+				for (int tz = 0; tz < 8; ++tz)
+				{
+					out[p * 64 + tx * 8 + tz] = RoomMap.floorHeight(settings, heights, p, zoneX * 8 + tx, zoneZ * 8 + tz);
+				}
+			}
+		}
+		return out;
 	}
 
 	private void build(int g, Zone[] list, int[] zx, int[] zz, int n, int baseZone, VoxelWater water,
-		int baseX, int baseY, boolean instance, int[][][] heights, SkyTerrain terrain)
+		int baseX, int baseY, boolean instance, int[][][] heights, byte[][][] settings, SkyTerrain terrain)
 	{
 		if (g != generation)
 		{
@@ -181,6 +207,7 @@ class VoxelBuilder
 		}
 		long start = System.nanoTime();
 		Voxelizer.Zone[] zoneVoxels = new Voxelizer.Zone[n];
+		ModelBlockers.Zone[] blockerZones = new ModelBlockers.Zone[n];
 		AtomicInteger voxelized = new AtomicInteger();
 		parallel(n, i ->
 		{
@@ -189,16 +216,19 @@ class VoxelBuilder
 			if (z.voxels == null && z.voxelCapture != null)
 			{
 				z.voxels = Voxelizer.voxelize(z.voxelCapture);
+				z.modelBlockers = ModelBlockers.rasterize(z.voxelCapture, zoneFloors(settings, heights, zx[i], zz[i]));
 				z.voxelCapture = null;
 				voxelized.incrementAndGet();
 			}
 			zoneVoxels[i] = z.voxels;
+			blockerZones[i] = z.modelBlockers;
 		});
 		long voxelTime = System.nanoTime();
 		VoxelGrid grid = VoxelGrid.assemble(zoneVoxels, zx, zz, baseZone, water);
 		SceneVoxels result = new SceneVoxels(grid, baseX, baseY, instance, heights);
 		result.terrain = terrain;
 		this.voxels = result;
+		this.modelBlockers = ModelBlockers.assemble(blockerZones, zx, zz, n, Constants.EXTENDED_SCENE_SIZE * LightBlockers.CELLS_PER_TILE);
 		long gridTime = System.nanoTime();
 		log.info("Voxel build {}: {} new / {} zones, voxelize {} ms, assemble {} ms, total {} ms; {}-unit cells, {}x{}x{}, {} MiB cells",
 			g, voxelized.get(), n, (voxelTime - start) / 1_000_000.0, (gridTime - voxelTime) / 1_000_000.0,

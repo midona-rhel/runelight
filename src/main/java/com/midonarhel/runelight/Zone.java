@@ -85,6 +85,8 @@ class Zone
 	// the skylight's copy of the opaque triangles (SceneUploader), until the voxel worker turns it into voxels
 	VoxelCapture voxelCapture;
 	Voxelizer.Zone voxels;
+	// the models that stop light at lamp height, rasterized with the voxels (ModelBlockers)
+	ModelBlockers.Zone modelBlockers;
 
 	// what renderOpaque draws of the swaying ranges
 	static final int SWAY_ALL = 0, SWAY_EXCLUDE = 1, SWAY_ONLY = 2;
