@@ -262,4 +262,23 @@ public class LightMapBakeTest
 		assertTrue("step " + biggestStep(column), biggestStep(column) < 0.15f);
 		assertTrue(row.length > 0);
 	}
+
+	@Test
+	public void aLightFadesToExactlyNothingAtItsRadius()
+	{
+		// high up, on open floor: along a row and along a diagonal out past the radius, no step and nothing left over
+		LightMapBake.Result r = bake(new BakeScene(), BakeScene.light(0, 24.5f, 24.5f, 150, 6));
+		for (int line = 0; line < 2; ++line)
+		{
+			float[] v = new float[40];
+			for (int i = 0; i < v.length; ++i)
+			{
+				v[i] = line == 0 ? BakeScene.at(r, 0, 98 + i, 98) : BakeScene.at(r, 0, 98 + i * 3 / 4, 98 + i * 3 / 4);
+			}
+			assertTrue("line " + line + " step " + biggestStep(v), biggestStep(v) < 0.15f);
+			// the radius is 24 cells from the light: past it, nothing
+			assertEquals(0, v[v.length - 1], 0);
+			assertTrue("just inside the radius it is nearly gone: " + v[line == 0 ? 22 : 21], v[line == 0 ? 22 : 21] < 0.02f);
+		}
+	}
 }

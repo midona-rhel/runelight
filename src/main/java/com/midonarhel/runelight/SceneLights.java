@@ -117,9 +117,11 @@ class SceneLights
 			this.life = new LightLife(def, fadesIn);
 			this.object = object;
 			this.auto = auto;
-			this.bake = def.outdoorLighting || def.animationSpecific() || def.fixedDespawnTime ? null
-				: new LightMap.Source(plane, x, y, z, def.kind == LightDefinition.FLICKER ? def.radius * 1.5f : def.radius,
-				def.red, def.green, def.blue, def.strength, def.nightOnly, def.nightMultiplier);
+			float reach = def.kind == LightDefinition.FLICKER ? def.radius * 1.5f : def.radius;
+			// a light that reaches further than the bake does would end at its edge: it stays with the clusters
+			this.bake = def.outdoorLighting || def.animationSpecific() || def.fixedDespawnTime || reach > LightMapBake.MAX_RADIUS ? null
+				: new LightMap.Source(plane, x, y, z, reach, def.red, def.green, def.blue, def.strength, def.nightOnly,
+				def.nightMultiplier);
 		}
 	}
 

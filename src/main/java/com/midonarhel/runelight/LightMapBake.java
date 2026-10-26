@@ -52,7 +52,7 @@ final class LightMapBake
 	static final float DENSE_BOX = 0.5f;
 	/** The thinnest a model's box is taken to be (world units): a leaf of a door stops light across its length. */
 	static final float MIN_BOX = 4;
-	/** Lights reach this far at most, world units. */
+	/** Lights that reach further than this (world units) are not baked: the bake would end them at its edge. */
 	static final float MAX_RADIUS = 3200;
 	/** Directions a sweep tells apart: at the far end of a big light still a few world units a direction. */
 	static final int BINS = 2048;
@@ -261,7 +261,7 @@ final class LightMapBake
 	static Result bake(Light light, LightBlockers b, Scratch s)
 	{
 		s.visits = 0;
-		float radius = Math.min(light.radius, MAX_RADIUS);
+		float radius = light.radius;
 		int off = b.offset * CELLS_PER_TILE;
 		float lx = light.x / CELL + off, lz = light.z / CELL + off;
 		float rc = radius / CELL;

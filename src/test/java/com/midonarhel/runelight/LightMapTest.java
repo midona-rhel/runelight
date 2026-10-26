@@ -173,7 +173,6 @@ public class LightMapTest
 		int before = m.blocks;
 		map.setLevel(s, 3);
 		assertEquals("1.5 times the baked strength", 1.5f, map.table()[s.id * 4], 1e-4f);
-		assertEquals("its radius", s.radius, map.table()[s.id * 4 + 1], 0);
 		settle(map, m);
 		assertEquals(before, m.blocks);
 	}

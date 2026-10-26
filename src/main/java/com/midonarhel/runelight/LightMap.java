@@ -20,11 +20,11 @@ import org.slf4j.LoggerFactory;
  * - B, filtered but for its alpha: where the lights are, as their mean place weighted by their luminance, premultiplied
  *   by it so that it filters: the sum of luminance times the place from the cell's middle (x, z) and the height (world
  *   y), in sixteenths of a unit; and, to be read as it is, the table index of the brightest light.
- *   The shading takes its direction and its vertical falloff from the mean place, and the flicker from the table
- *   (light_map.glsl): the table holds, for each baked light, how strong it is now against how strong it was baked, and
- *   its radius. So only the brightest light of a cell flickers, by as much as it is ahead of the others (so that
- *   where the brightest changes from one light to another, nothing steps), and a pulse changes a strength but not a
- *   radius.
+ *   The shading takes its direction and height from the mean place, and the flicker from the table (light_map.glsl):
+ *   the table holds, for each baked light, how strong it is now against how strong it was baked. So only the brightest
+ *   light of a cell flickers, by as much as it is ahead of the others (so that where the brightest changes from one
+ *   light to another, nothing steps), and a pulse changes a strength but not a radius. Nothing read as it is is a
+ *   range or a distance: a light's reach is in the cells alone, which fade to exactly zero at its radius.
  *
  * The bakes run on background threads, nearest light first, and the cells are put together by 32 x 32 blocks from the
  * lights' results, again on the threads; the render thread only sends the finished blocks (the nearest first, a few a
@@ -174,7 +174,7 @@ final class LightMap
 	private boolean[] onGpu = new boolean[0];
 	private float focusX, focusZ;
 
-	// the table: per id, (strength now over the baked, radius, 0, 0)
+	// the table: per id, (strength now over the baked, 0, 0, 0)
 	private final float[] table = new float[TABLE_TEXELS * 4];
 	private int tableUsed = 1;
 
@@ -372,7 +372,7 @@ final class LightMap
 	/** Whether a cell of the light's reach (its box, a storey apart or not) differs. */
 	private static boolean touches(Source s, CellChanges changes, int off)
 	{
-		float r = Math.min(s.radius, LightMapBake.MAX_RADIUS) / LightMapBake.CELL;
+		float r = s.radius / LightMapBake.CELL;
 		float cx = s.x / LightMapBake.CELL + off, cz = s.z / LightMapBake.CELL + off;
 		return changes.any((int) Math.floor(cx - r) - 1, (int) Math.floor(cz - r) - 1, (int) Math.floor(cx + r) + 1,
 			(int) Math.floor(cz + r) + 1);
@@ -430,7 +430,6 @@ final class LightMap
 			s.id = freeIds.poll();
 			tableUsed = Math.max(tableUsed, s.id + 1);
 			table[s.id * 4] = 1;
-			table[s.id * 4 + 1] = s.radius;
 			sources.add(s);
 			if (blockers != null)
 			{
@@ -540,7 +539,7 @@ final class LightMap
 		return s.live;
 	}
 
-	/** The table, for the shaders: per id (strength now over baked, radius, 0, 0). */
+	/** The table, for the shaders: per id (strength now over baked, 0, 0, 0). */
 	float[] table()
 	{
 		return table;

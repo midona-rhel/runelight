@@ -6,7 +6,7 @@
 //      place from the cell's middle, x and z, and the height, y, in sixteenths of a unit), so that it filters; and in
 //      alpha the table index of the brightest light, which is read as it is (texelFetch).
 // The table, in lightData from LIGHT_MAP_TABLE_BASE, has per light its strength now over the strength it was baked with
-// (flicker, pulse, fades) and its radius. The brightest light of a cell flickers by its lead over the others, so where
+// (flicker, pulse, fades). The brightest light of a cell flickers by its lead over the others, so where
 // the brightest changes from one light to another the flicker changes smoothly with it.
 // Needs lightData, cluster_config, light_map_config and rooms.glsl. The map is there when the room map's header says 3.
 
@@ -18,9 +18,6 @@ uniform sampler2DArray lightMap;
 // it, in the cell the light fell on
 #define LIGHT_MAP_NORMAL_BIAS 20.0
 #define LIGHT_MAP_CELL 32.0
-// the most the vertical falloff (the light's distance from the point, in 3D, against its distance from the cell) may
-// raise the baked light
-#define LIGHT_MAP_VERTICAL_MAX 2.0
 // the places in layer B are in this many world units to a stored unit
 #define LIGHT_MAP_PLACE_UNIT 16.0
 
@@ -46,7 +43,7 @@ int lightMapPlane(vec3 w) {
 }
 
 // The baked lights' light at the world point w, read at `at` (the point itself, or off its surface) on a storey: the
-// colour, with the brightest light's flicker and the vertical falloff in it, in toLight the unit direction from w to
+// colour, with the brightest light's flicker in it, in toLight the unit direction from w to
 // the lights' mean place and in lightY its height (world y). Black, and toLight straight up, where no light reaches.
 vec3 lightMapLight(vec3 w, vec3 at, int plane, out vec3 toLight, out float lightY) {
   toLight = vec3(0.0, -1.0, 0.0);
@@ -70,21 +67,15 @@ vec3 lightMapLight(vec3 w, vec3 at, int plane, out vec3 toLight, out float light
   float d3 = length(l);
   toLight = l / max(d3, 1.0);
   lightY = mean.y;
-  // the brightest light, the one read as it is: its radius for the vertical falloff, its flicker by its lead
+  // the brightest light, the one read as it is: its flicker by its lead. Nothing read as it is may be a range or a
+  // distance (a cut at one light's radius, a cell at a time): the reach of the lights is in the cells, filtered.
   int id = int(texelFetch(lightMap, ivec3(cell, plane * 2 + 1), 0).w + 0.5);
   float swing = 1.0;
-  float vertical = 1.0;
   if (id > 0) {
-    vec4 entry = texelFetch(lightData, LIGHT_MAP_TABLE_BASE + id);
     float lead = clamp(a.a / total, 0.0, 1.0);
-    swing = 1.0 - lead + lead * entry.x;
-    // the bake fell off with the distance in the plane; here it is the point's, with the height
-    float r = entry.y;
-    float near = max(1.0 - length(mean.xz) / r, 0.05);
-    float far = max(1.0 - d3 / r, 0.0);
-    vertical = min((far * far) / (near * near), LIGHT_MAP_VERTICAL_MAX);
+    swing = 1.0 - lead + lead * texelFetch(lightData, LIGHT_MAP_TABLE_BASE + id).x;
   }
-  return a.rgb * (swing * vertical);
+  return a.rgb * swing;
 }
 
 #endif
