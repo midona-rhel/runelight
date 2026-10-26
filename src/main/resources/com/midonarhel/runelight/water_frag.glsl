@@ -97,7 +97,7 @@ layout(location = 1) out vec4 WaveOut;    // the wave map: slope xy, foam
 #define SHORE_BREAK vec2(5.5, 0.9)
 #define SHORE_LINE 0.4
 #define SHORE_WOBBLE 1.0
-#define SHORE_RIM 1.5
+#define SHORE_RIM 2.3
 #define SHORE_MIN 0.12
 // caustics (water.glsl has the strength): world units per repeat, seconds per cycle of each copy on still water;
 // mean and line values of the kept copy; drawn out along water faster than CAUSTIC_STRETCH_SPEED by up to
@@ -230,18 +230,20 @@ uint pack01(float v, float bits) {
   return uint(clamp(v, 0.0, 1.0) * bits + 0.5);
 }
 
-// The foam of the shore waves at xz: 0 away from open sea and its shores, 0.45 the tint, 0.85 the core
-float shoreFoam(vec2 xz) {
+// The foam of the shore waves at xz, as hard edged coverage (the water pass is at the screen's resolution): x the rim
+// (tint) and y the core, 0 away from open sea and its shores
+vec2 shoreFoam(vec2 xz) {
   vec2 c = xz / WATER_TILE;
   vec4 field = waterPage2(waterData, c + waterGrid.x);
-  if (field.g < 0.5 || field.r >= SHORE_FAR + SHORE_SPACING)
-    return 0.0;
-  float t = waterTime / SHORE_PERIOD;
-  float k0 = floor(field.r / SHORE_SPACING + t);
   float aa = max(fwidth(field.r), 0.01);
+  if (field.g < 0.5 || field.r >= SHORE_FAR + SHORE_SPACING)
+    return vec2(0.0);
+  float t = waterTime / SHORE_PERIOD;
+  // the two crests either side of this distance
+  float k0 = floor(field.r / SHORE_SPACING + t - 0.5);
   float turn = WATER_TAU * waterCycle(40.0);
   float tint = 0.0, core = 0.0;
-  for (int i = -1; i <= 1; ++i) {
+  for (int i = 0; i < 2; ++i) {
     float k = k0 + float(i);
     float seed = mod(k, SHORE_SEEDS);
     vec3 r = vec3(waterHash(vec3(seed, 1.0, 6.0)), waterHash(vec3(seed, 2.0, 6.0)), waterHash(vec3(seed, 3.0, 6.0)));
@@ -263,7 +265,7 @@ float shoreFoam(vec2 xz) {
     tint = max(tint, shown * waterEdge(SHORE_RIM * width - d, aa));
     core = max(core, shown * waterEdge(width - d, aa));
   }
-  return mix(0.45 * tint, 0.85, core);
+  return vec2(tint, core);
 }
 
 // The waves' slope at xz and the foam on them (the wave map's, WaterSurface.bake), for water of this type and flow
@@ -342,7 +344,6 @@ void waterWaveField(vec2 xz, int type, vec2 flow, out vec2 slope, out float foam
     float rim = 1.0 - smoothstep(0.15, 0.55, h);
     foam = max(rim * churn * FOAM, contact * (rim * CONTACT_FOAM + CONTACT_FILM));
   }
-  foam = max(foam, shoreFoam(xz));
 }
 
 void main() {
@@ -403,7 +404,6 @@ void main() {
 
   // ---- the caustics on the bed below, carried by the flow
   float caustic = 0.0;
-  vec2 causticRB = vec2(0.0);
   if (waterCausticsOn == 1 && look.x < 0.7) {
     vec2 ndc = (vec2(px) + 0.5 - vec2(waterViewport.xy)) / vec2(waterViewport.zw) * 2.0 - 1.0;
     vec4 h = waterInvViewProj * vec4(ndc, waterZeroToOne == 1 ? sceneZ : sceneZ * 2.0 - 1.0, 1.0);
@@ -423,7 +423,6 @@ void main() {
       c = c * w0 + causticMoved(at + vec2(97.0, 211.0), m1 - base, smear, lod) * (1.0 - w0);
     c = (c - CAUSTIC_MEAN) / (CAUSTIC_LINE - CAUSTIC_MEAN);
     caustic = c.g;
-    causticRB = c.rb - c.g;
   }
 
   uvec2 bits;
@@ -448,9 +447,10 @@ void main() {
     bits.x = pack01(nrm.x * 0.5 + 0.5, 511.0) | pack01(nrm.z * 0.5 + 0.5, 511.0) << 9 | uint(vSlot & 31) << 18
       | pack01(foam, 7.0) << 23 | pack01(sqrt(nominalDepth(data.r) / 512.0), 63.0) << 26;
   }
-  // distance (16 bits), caustics: green -1 to 3 (8 bits), red and blue -0.5 to 0.5 from it (4 bits each)
+  // distance (16 bits), caustics: -1 to 3 (8 bits), the shore waves' rim and core coverage (4 bits each)
+  vec2 shore = shoreFoam(xz);
   bits.y = pack01(length(vRel) / WATER_REACH, 65535.0) | pack01((caustic + 1.0) / 4.0, 255.0) << 16
-    | pack01(causticRB.x + 0.5, 15.0) << 24 | pack01(causticRB.y + 0.5, 15.0) << 28;
+    | pack01(shore.x, 15.0) << 24 | pack01(shore.y, 15.0) << 28;
   // never 0, which is no water
   bits.y = max(bits.y & 0xFFFFu, 1u) | (bits.y & 0xFFFF0000u);
   WaterOut = uvec4(bits.x & 0xFFFFu, bits.x >> 16, bits.y & 0xFFFFu, bits.y >> 16);

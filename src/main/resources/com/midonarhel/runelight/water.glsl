@@ -109,6 +109,12 @@ layout(location = 1) out uvec4 WaterShadedOut;
 #define SSR_TILT 1.0
 
 
+// The foam in two flat tones with hard edges over the water, a pale tint and a bright core: the shares of the foam color
+// over the water, and how far the foam's color is whitened (the shore waves' and the falls')
+#define FOAM_TINT 0.55
+#define FOAM_CORE 0.9
+#define FOAM_WHITE 0.75
+
 // The water pass's packed surface (water_frag.glsl): the distance to it, its normal, look slot, foam, the water's
 // depth going by the shore (smooth across tiles), and the caustics on the bed below
 void waterUnpack(uvec4 w, out float t, out vec3 nrm, out int slot, out float foam, out float shoreDepth,
@@ -123,6 +129,11 @@ void waterUnpack(uvec4 w, out float t, out vec3 nrm, out int slot, out float foa
   shoreDepth = d * d * 512.0;
   t = float(b & 65535u) / 65535.0 * WATER_REACH;
   caustic = float(b >> 16 & 255u) / 255.0 * 4.0 - 1.0;
+}
+
+// The shore waves' foam at the pixel, in water_frag.glsl's full resolution coverage: x the tint, y the core
+vec2 waterShoreOf(uvec4 w) {
+  return vec2(float(w.a >> 8 & 15u), float(w.a >> 12 & 15u)) / 15.0;
 }
 
 // The shaded target's 16 bit values (GL 4.1 has no packHalf2x16): light 0 to 63 on a log scale, fine near black;
@@ -555,6 +566,19 @@ vec3 waterOver(ivec2 px, inout vec3 p, vec3 albedo, float shadow, vec3 lit, floa
   vec2 slope = nrm.xz / nrm.y;
   under *= max(1.0 + WAVE_SHADE * dot(slope, v.xz) / max(length(v.xz), 0.25), 0.0);
   float alpha = max(WATER_LOOK[type].x * smoothstep(0.0, SURFACE_DEPTH, colorDepth), surface.a);
+  // the shore waves' foam, in the flat tones the falls have, over the water as it is lit from above
+  vec2 shore = waterShoreOf(ws);
+  if (shore.x > 0.0) {
+    vec3 up = vec3(0.0, -1.0, 0.0);
+    vec3 topLight = outdoors == 1 && lightingEnabled == 1
+      ? ambientLight(sunAltitude) * envAmbient + skyLight(sunAltitude) * envAmbient
+        + strikeCaster(sunIsCaster == 1 ? sunLight(sunAltitude) : moonLight(sunAltitude)) * envSun * max(dot(up, casterDir), 0.0) * shadow
+      : vec3(1.0);
+    float share = mix(FOAM_TINT * shore.x, FOAM_CORE, shore.y);
+    surface.rgb = mix(surface.rgb, srgbToLinear(mix(WATER_FOAM_COLOR[type], vec3(1.0), FOAM_WHITE)) * mix(topLight, vec3(1.0), 0.5), share);
+    alpha = max(alpha, share);
+    spec *= 1.0 - share;
+  }
   vec3 color = waterShoulder(mix(under, surface.rgb, alpha) + spec);
   // over the waterline the water fades in over the bed and its caustics: no hard edge where it meets the bank or a
   // leg in the water
@@ -583,29 +607,29 @@ uniform int waterFakeOn;  // the water setting: off draws the faces as their typ
 // a face is a fall when its normal's vertical part is below the second and not a pool's at all below the first
 #define FALL_STEEP vec2(0.5, 0.85)
 // A fall is real water, running straight down at FALL_FLOW world units a second (its ripples stretched by FALL_STRETCH
-// along the flow), with foam on it in two tones with hard edges, a bright core and a rim round it. The foam is bands
-// across the fall, FALL_BAND tiles apart and sliding down a band every FALL_PERIOD seconds (a divisor of waterTime's wrap
-// into a multiple of FALL_SEEDS, so the bands' shapes, seeded by their number modulo FALL_SEEDS, repeat exactly). Each
-// band is one continuous curve: its path swings FALL_SWING tiles up and down as a sum of three sines of its own
-// wavelengths and phases, which slowly drift, and its own slowly modulated amplitude; its half width FALL_HALF tiles
-// swells and thins along it, and is lobed where the foam's cells (waterLobes) are high. The rim is FALL_RIM times as wide.
+// along the flow), mostly under foam in two flat tones with hard edges, a pale tint and a bright core, with the water
+// showing through only as teeth hanging down. The foam is bands across the fall, FALL_BAND tiles apart and sliding down a
+// band every FALL_PERIOD seconds (a divisor of waterTime's wrap into a multiple of FALL_SEEDS, so the bands' shapes,
+// seeded by their number modulo FALL_SEEDS, repeat exactly). A band is a front, its path swinging FALL_SWING tiles up
+// and down as a sum of three sines of its own wavelengths and phases, which slowly drift, and its own slowly modulated
+// amplitude: below it a bar of foam FALL_BAR tiles thick (swelling and thinning along it, lobed by the foam's cells),
+// and under that the water in teeth up to FALL_TOOTH tiles long, pointed at their ends, with foam between them and
+// below them down to the next front. The lip it pours over is a front of its own, at the top of the model's water, and
+// where it lands the foam rises as one mass up to FOOT_FOAM tiles, its upper edge lobed. The core is the bar's upper
+// part.
 #define FALL_FLOW 320.0
 #define FALL_STRETCH 0.4
 #define FALL_BAND 2.2
 #define FALL_PERIOD 1.5
 #define FALL_SEEDS 32.0
 #define FALL_SWING 0.55
-#define FALL_HALF 0.17
-#define FALL_RIM 1.6
-// the lip it pours over is one mass of foam hanging down to FALL_LIP world units at the most, its lower edge lobed (the
-// core FALL_CORE as far down); where it lands the foam is one mass rising up to FOOT_FOAM world units, its upper edge
-// lobed the same way
-#define FALL_LIP 64.0
+#define FALL_BAR 0.65
+#define FALL_TOOTH 2.0
+#define FOOT_FOAM 0.6
 #define FALL_CORE 0.55
-#define FOOT_FOAM 76.0
-// the foam's tones, the shares of the foam color over the water
-#define FOAM_TINT 0.5
-#define FOAM_CORE 0.8
+#define FALL_FOAM vec3(0.62, 0.72, 0.90)
+#define FALL_LIT 2.0
+#define FALL_WATER vec3(0.40, 0.52, 0.70)
 // The slope of level fake water at world xz: two octaves of the sea's waves, running both ways
 vec2 waterFakeSlope(vec2 xz) {
   const mat2 TURN = mat2(0.8, 0.6, -0.6, 0.8);
@@ -652,30 +676,47 @@ float waterBandPath(float lat, float n) {
   return FALL_SWING / FALL_BAND * path * (0.55 + 0.45 * swing);
 }
 
+// The length of the teeth of the water hanging from the front of band seed at lat (tiles across), 0 to 1: broad teeth
+// of uneven pitch and length
+float waterTeeth(float lat, float seed) {
+  float s = lat / 1.05 + 0.35 * sin(WATER_TAU * lat / 2.3 + seed * 2.1) + 0.2 * sin(WATER_TAU * lat / 1.3 + seed);
+  float zig = 1.0 - abs(2.0 * fract(s) - 1.0);
+  // each tooth its own length, a few long and many short, its end blunt
+  float own = waterHash(vec3(floor(s), seed, 3.0));
+  return sqrt(zig) * (0.2 + 0.8 * own * own);
+}
+
 // The foam of a fall at world position w (y down) with tang across it, span: its height above the foot and below the
-// top. The tone shares of the foam color: 0 water, FOAM_TINT the rim, FOAM_CORE the core.
+// top: 0 where the water shows, FOAM_TINT of the foam color in the tint, FOAM_CORE in the core.
 float waterFallFoam(vec3 w, vec2 tang, vec2 span) {
   float lat = dot(w.xz, tang) / WATER_TILE;
   float h = w.y / WATER_TILE;
   float b = h / FALL_BAND - waterTime / FALL_PERIOD;
   float n0 = floor(b);
   float aa = max(fwidth(b) * FALL_BAND, 0.004);
-  float tint = 0.0, core = 0.0;
-  for (int i = -1; i <= 1; ++i) {
+  // foam bars, their cores and the water's teeth, over the fronts of the bands and the lip, with v tiles below a front
+  float bars = 0.0, cores = 0.0, teeth = 0.0;
+  for (int i = -2; i <= 1; ++i) {
     float n = n0 + float(i);
     float seed = mod(n, FALL_SEEDS);
+    // the lip is the front at i = -2
+    bool lip = i == -2;
+    float v = lip ? span.y / WATER_TILE : (b - n) * FALL_BAND - waterBandPath(lat, seed) * FALL_BAND;
     float swell = 0.55 + 0.45 * sin(WATER_TAU * lat / (0.9 + 0.6 * waterHash(vec3(seed, 4.0, 5.0))) + seed);
-    float bandHalf = FALL_HALF * swell * (0.2 + 1.3 * waterLobes(lat / 0.3 + seed * 3.7, seed, 13.0));
-    float d = abs(b - n - waterBandPath(lat, seed)) * FALL_BAND;
-    tint = max(tint, waterEdge(FALL_RIM * bandHalf - d, aa));
-    core = max(core, waterEdge(bandHalf - d, aa));
+    float bar = FALL_BAR * (lip ? 0.6 : 1.0) * swell * (0.5 + 0.9 * waterLobes(lat / 0.3 + seed * 3.7, lip ? 70.0 : seed, 13.0));
+    float len = FALL_TOOTH * waterTeeth(lat, lip ? 70.0 : seed);
+    bars = max(bars, waterEdge(v, aa) * waterEdge(bar - v, aa));
+    cores = max(cores, waterEdge(v, aa) * waterEdge(FALL_CORE * bar - v, aa));
+    teeth = max(teeth, waterEdge(v - bar, aa) * waterEdge(bar + len - v, aa));
   }
-  // the lip and the foot: one mass each, ragged along its free edge
-  float lip = FALL_LIP * (0.35 + 0.65 * waterLobes(lat / 0.27 + 5.0, 70.0, 11.0));
-  float foot = FOOT_FOAM * (0.35 + 0.65 * waterLobes(lat / 0.3 + 9.0, 80.0, 7.0));
-  tint = max(tint, max(waterEdge(lip - span.y, 1.5), waterEdge(foot - span.x, 1.0)));
-  core = max(core, max(waterEdge(FALL_CORE * lip - span.y, 1.5), waterEdge(FALL_CORE * foot - span.x, 1.0)));
-  return mix(FOAM_TINT * tint, FOAM_CORE, core);
+  // the foot
+  float up = span.x / WATER_TILE;
+  float mass = FOOT_FOAM * (0.35 + 0.65 * waterLobes(lat / 0.3 + 9.0, 80.0, 7.0));
+  bars = max(bars, waterEdge(mass - up, aa));
+  cores = max(cores, waterEdge(FALL_CORE * mass - up, aa));
+  float water = teeth * (1.0 - bars);
+  float core = cores * (1.0 - water);
+  return mix(FOAM_TINT * (1.0 - water), FOAM_CORE, core);
 }
 
 // The fake water face at pixel px (camera-relative p, facing camera normal faceN, color albedo (sRGB), the sun's
@@ -744,9 +785,10 @@ vec3 waterFake(ivec2 px, vec3 p, vec3 faceN, vec3 albedo, float shadow, vec2 spa
   // sandy)
   vec3 spec = min(lampSpec * LAMP_SPECULAR, vec3(LAMP_MAX));
   spec += waterSunGlint(waterGlitterNormal(nrm), v, 0.0, look.z, foam, shadow);
-  vec3 surface = mix(srgbToLinear(WATER_SURFACE_COLOR[type]) * surfaceLight, reflection * waveSky, look.y);
+  vec3 surface = mix(srgbToLinear(WATER_SURFACE_COLOR[type]) * mix(surfaceLight, vec3(FALL_LIT), fall), reflection * waveSky, look.y);
   float cover = max(fresnel, (1.0 + toCamera.y) * OPACITY_SLANT);
-  vec3 foamColor = srgbToLinear(mix(WATER_FOAM_COLOR[type], vec3(1.0), 0.75 * fall)) * mix(surfaceLight, vec3(1.0), fall);
+  surface = mix(surface, srgbToLinear(FALL_WATER), 0.6 * fall);
+  vec3 foamColor = srgbToLinear(mix(WATER_FOAM_COLOR[type], FALL_FOAM, fall)) * mix(surfaceLight, vec3(1.0), fall);
   float covered = cover + foam * (1.0 - cover);
   surface = (surface * (cover * (1.0 - foam)) + foamColor * foam) / max(covered, 1e-4);
   vec3 bed = srgbToLinear(mix(albedo, vec3(0.62, 0.55, 0.40), 0.5)) * surfaceLight;
