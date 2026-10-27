@@ -4019,11 +4019,12 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 			swapIntervalNow = ms;
 		}
 		lastSwapNanos = now;
+		// the frame's steps are done before the hitch check reads them
+		cpuTimer.endFrame();
 		if (log.isDebugEnabled())
 		{
 			hitchMonitor.endFrame(swapIntervalNow, cpuTimer, gpuTimer);
 		}
-		cpuTimer.endFrame();
 		cpuTimer.begin(CpuTimer.OUTSIDE);
 		drawManager.processDrawComplete(this::screenshot);
 

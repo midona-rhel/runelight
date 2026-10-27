@@ -42,7 +42,7 @@ class GpuTimer
 	static final int STAGES = 22;
 
 	static final String[] NAMES = {
-		"scene", "MSAA resolve", "shadow map", "weather occlusion", "AO + skylight", "sky cache", "fog", "sky/fog + final blend",
+		"scene (with the client's traversal)", "MSAA resolve", "shadow map", "weather occlusion", "AO + skylight", "sky cache", "fog", "sky/fog + final blend",
 		"weather", "UI", "water", "shadow copy", "shadow models", "sky grid upload", "AO/fog filtering", "upscale", "ambient + sky", "sun + cloud shadows", "point lights + blocking", "materials + water blend", "clouds", "light map upload"
 	};
 
@@ -146,6 +146,9 @@ class GpuTimer
 			return;
 		}
 		glEndQuery(GL_TIME_ELAPSED);
+		// The GPU stops the clock when it reaches the end, which is when the driver next submits. CPU work before
+		// that (the client's UI, a scene swap) would be counted as this pass's, so submit now.
+		glFlush();
 		active = false;
 	}
 

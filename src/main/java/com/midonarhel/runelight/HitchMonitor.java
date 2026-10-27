@@ -2,6 +2,7 @@ package com.midonarhel.runelight;
 
 import java.lang.management.GarbageCollectorMXBean;
 import java.lang.management.ManagementFactory;
+import java.util.ArrayDeque;
 import java.util.Arrays;
 import java.util.List;
 import org.slf4j.Logger;
@@ -11,7 +12,8 @@ import org.slf4j.LoggerFactory;
  * Finds the cause of occasional long frames from the log. A frame that took more than twice the running median
  * (and more than {@link #MIN_MS}) is logged with the plugin's CPU steps and GPU passes that were large in it, the
  * garbage collections that ran during it, and the periodic jobs that were flagged on it. The GPU times arrive 3
- * frames later, so the line is written then. Client thread only; costs a few array reads a frame.
+ * frames later, so the line is written then. Every hitch with a job flagged, and every hitch in the frames after a
+ * scene swap, is written; other hitches at most once a second. Client thread only; costs a few array reads a frame.
  *
  * Where the client thread was stuck: a watchdog thread looks every couple of milliseconds, and once a frame has run
  * past the hitch threshold takes the client thread's stack a few times; the hitch line names the frames. Started on
@@ -42,6 +44,8 @@ final class HitchMonitor
 	private static final int WARMUP = 240;
 	// a pending line waits this long for the GPU's times
 	private static final int GPU_WAIT = 6;
+	// hitches this many frames after a scene swap are all written, flagged or not
+	private static final int SWAP_FRAMES = 8;
 	// stages of at least this long are named
 	private static final double STAGE_MS = 2;
 	private static final int MAX_STAGES = 5;
@@ -63,9 +67,22 @@ final class HitchMonitor
 	private long gcCount;
 	private long gcMillis;
 
-	// the hitch waiting for its GPU times
-	private long pendingFrame = -1;
-	private String pendingText;
+	// the hitches waiting for their GPU times, oldest first
+	private static final class Pending
+	{
+		final long frame;
+		final String text;
+
+		Pending(long frame, String text)
+		{
+			this.frame = frame;
+			this.text = text;
+		}
+	}
+
+	private final ArrayDeque<Pending> pending = new ArrayDeque<>();
+	// count when the last scene swap was flagged
+	private int swapCount = Integer.MIN_VALUE / 2;
 
 	// shared with the watchdog: the client thread, when its frame began, the hitch threshold, and the stacks taken
 	// in the current frame
@@ -106,32 +123,44 @@ final class HitchMonitor
 			collectionMillis += Math.max(collectors.get(i).getCollectionTime(), 0);
 		}
 
-		if (pendingText != null)
+		long read = gpu.getReadFrame();
+		while (!pending.isEmpty())
 		{
-			if (gpu.getReadFrame() == pendingFrame)
+			Pending p = pending.peekFirst();
+			if (read == p.frame)
 			{
-				log.debug("{}; GPU {}", pendingText, gpuText(gpu));
-				pendingText = null;
+				log.debug("{}; GPU {}", p.text, gpuText(gpu));
 			}
-			else if (frame - pendingFrame > GPU_WAIT)
+			else if (read > p.frame || frame - p.frame > GPU_WAIT)
 			{
-				log.debug("{}; GPU times not read", pendingText);
-				pendingText = null;
+				log.debug("{}; GPU times not read", p.text);
 			}
+			else
+			{
+				break;
+			}
+			pending.removeFirst();
 		}
 
-		if (count >= WARMUP && frameMs > MIN_MS && frameMs > median * FACTOR && pendingText == null)
+		if ((jobs & SCENE_SWAP) != 0)
 		{
-			int held = limiter.check("hitch");
+			swapCount = count;
+		}
+		if (count >= WARMUP && frameMs > MIN_MS && frameMs > median * FACTOR)
+		{
+			boolean always = jobs != 0 || count - swapCount <= SWAP_FRAMES;
+			int held = always ? 0 : limiter.check("hitch");
 			if (held >= 0)
 			{
-				pendingText = text(frame, frameMs, cpu, collections - gcCount, collectionMillis - gcMillis, held)
+				String text = text(frame, frameMs, cpu, collections - gcCount, collectionMillis - gcMillis, held)
 					+ stuckText();
-				pendingFrame = frame;
-				if (!gpu.isEnabled())
+				if (gpu.isEnabled())
 				{
-					log.debug("{}; GPU timings are off (show timings turns them on)", pendingText);
-					pendingText = null;
+					pending.addLast(new Pending(frame, text));
+				}
+				else
+				{
+					log.debug("{}; GPU timings are off (show timings turns them on)", text);
 				}
 			}
 		}
