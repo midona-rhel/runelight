@@ -63,6 +63,9 @@ class LightClusters
 	private final int[] uploadedFill = new int[SETS];
 	private int maxTexels;
 	private FloatBuffer roomStaging, tableStaging, fillStaging;
+	// the map and version roomStaging holds: the copies take turns, and each is sent the same texels
+	private RoomMap stagedRooms;
+	private int stagedVersion;
 	private final float[] roomHeader = new float[3];
 	// the baked lights' table, null without the light map (setLightMap)
 	private LightMap lightMap;
@@ -463,9 +466,14 @@ class LightClusters
 			glBufferData(GL_TEXTURE_BUFFER, (long) (ROOM_BASE + roomTexels) * 4 * Float.BYTES, GL_DYNAMIC_DRAW);
 			if (rooms != null)
 			{
-				roomStaging = staging(roomStaging, roomTexels * 4);
-				rooms.texels(roomStaging);
-				roomStaging.flip();
+				if (rooms != stagedRooms || rooms.getVersion() != stagedVersion)
+				{
+					roomStaging = staging(roomStaging, roomTexels * 4);
+					rooms.texels(roomStaging);
+					roomStaging.flip();
+					stagedRooms = rooms;
+					stagedVersion = rooms.getVersion();
+				}
 				glBufferSubData(GL_TEXTURE_BUFFER, (long) ROOM_BASE * 4 * Float.BYTES, roomStaging);
 			}
 			uploadedRooms[set] = rooms;
