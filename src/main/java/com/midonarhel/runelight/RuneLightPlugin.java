@@ -734,8 +734,10 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 					}
 
 					awtContext = new AWTContext(canvas);
-					// a stencil for the composite's edge pass (windowStencil)
-					awtContext.configurePixelFormat(0, 0, 8);
+					// The GPU plugin's and 117 HD's pixel format: Windows sets a window's format once, so asking for another
+					// (a stencil) would keep them from starting on this canvas until a restart. Without a window stencil the
+					// composite's edge pass discards the pixels without a second surface itself (windowStencil).
+					awtContext.configurePixelFormat(0, 0, 0);
 				}
 
 				awtContext.createGLContext();
