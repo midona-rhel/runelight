@@ -122,6 +122,8 @@ import org.lwjgl.system.Configuration;
 	name = "RuneLight",
 	description = "Lighting-focused GPU renderer",
 	tags = {"gpu", "lighting", "shadows", "fog", "renderer"},
+	// renderers take over the client's drawing: RuneLite turns the others off when one is turned on
+	conflicts = {"GPU", "117 HD"},
 	loadInSafeMode = false
 )
 public class RuneLightPlugin extends Plugin implements DrawCallbacks
@@ -530,6 +532,10 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 	private int vaoUiHandle;
 	private int vboUiHandle;
 
+	// The scene is drawn forward (ForwardTarget): shaded as it is drawn, like the GPU plugin and 117 HD, with no
+	// G-buffer, half resolution passes or composite. The deferred path stays until each feature has moved over.
+	static final boolean FORWARD = true;
+	private final ForwardTarget forwardTarget = new ForwardTarget();
 	private final SceneTargets sceneTargets = new SceneTargets();
 	private boolean sceneFboValid;
 
@@ -684,8 +690,8 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		overlayManager.add(overlay);
 		glErrorChecks = config.glErrorChecks();
 
-		VertexShading.undoVanillaShading = config.removeBakedShading();
-		GroundBlender.enabled = config.groundBlending();
+		VertexShading.undoVanillaShading = Features.SURFACES && config.removeBakedShading();
+		GroundBlender.enabled = Features.SURFACES && config.groundBlending();
 
 		sceneLights = new SceneLights(client);
 		sceneLights.load(gson);
@@ -693,12 +699,16 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		WaterOverrides.load(gson);
 		areaHiding.load(gson);
 		WindSway.load(gson);
-		eventBus.register(sceneLights);
-		clientThread.invoke(sceneLights::rebuild);
 		weatherAudio = new WeatherAudio();
 		buildingLights = new BuildingLights(client);
-		eventBus.register(buildingLights);
-		clientThread.invoke(buildingLights::rebuild);
+		// the lights and the buildings follow the scene through its events: only while lighting is back
+		if (Features.LIGHTING)
+		{
+			eventBus.register(sceneLights);
+			clientThread.invoke(sceneLights::rebuild);
+			eventBus.register(buildingLights);
+			clientThread.invoke(buildingLights::rebuild);
+		}
 		overlayManager.add(buildingOverlay);
 		environmentManager.load(gson);
 		WeatherData.load(gson);
@@ -855,8 +865,9 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		client.setGpuFlags(DrawCallbacks.GPU
 			| (config.removeVertexSnapping() ? DrawCallbacks.NO_VERTEX_SNAPPING : 0)
 			| DrawCallbacks.ZBUF
-			// zones are culled by zoneInFrustum: a circle around the player and the real frustum (EdgeFade)
-			| DrawCallbacks.ZBUF_ZONE_FRUSTUM_CHECK
+			// deferred, zones are culled by zoneInFrustum: a circle around the player and the real frustum (EdgeFade);
+			// forward, the client culls them in its square of the draw distance, as for the GPU plugin
+			| (FORWARD ? 0 : DrawCallbacks.ZBUF_ZONE_FRUSTUM_CHECK)
 			| DrawCallbacks.RENDER_THREADS(threads)
 		);
 	}
@@ -1025,7 +1036,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 				clientThread.invokeLater(() ->
 				{
 					// colors are baked into the vertex data at upload, so reload the scene
-					VertexShading.undoVanillaShading = config.removeBakedShading();
+					VertexShading.undoVanillaShading = Features.SURFACES && config.removeBakedShading();
 					if (client.getGameState() == GameState.LOGGED_IN)
 					{
 						client.setGameState(GameState.LOADING);
@@ -1037,7 +1048,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 				clientThread.invokeLater(() ->
 				{
 					// blended colors are baked into the terrain vertices at upload
-					GroundBlender.enabled = config.groundBlending();
+					GroundBlender.enabled = Features.SURFACES && config.groundBlending();
 					if (client.getGameState() == GameState.LOGGED_IN)
 					{
 						client.setGameState(GameState.LOADING);
@@ -1185,6 +1196,8 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 					return "#define MSAA_SAMPLES " + shaderSamples + "\n";
 				case "colorblind_mode":
 					return "#define COLORBLIND_MODE " + config.colorBlindMode().ordinal() + "\n";
+				case "forward_mode":
+					return "#define FORWARD " + (FORWARD ? 1 : 0) + "\n";
 				case "debug_view":
 					// the composite's debug branches compile out; changing the view reloads the shaders
 					return "const int debugView = " + config.debugView().ordinal() + ";\n";
@@ -1396,7 +1409,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 
 	private float windSwayAmount()
 	{
-		return config.windSway() ? config.windSwayStrength() / 100f : 0f;
+		return Features.ENVIRONMENT && config.windSway() ? config.windSwayStrength() / 100f : 0f;
 	}
 
 	private void setFogProgram(int program)
@@ -1740,7 +1753,14 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 			glDisable(GL_MULTISAMPLE);
 		}
 
-		sceneTargets.init(width, height, aaSamples, (float) Math.max(1, 2 * renderFactor));
+		if (FORWARD)
+		{
+			forwardTarget.init(width, height, aaSamples);
+		}
+		else
+		{
+			sceneTargets.init(width, height, aaSamples, (float) Math.max(1, 2 * renderFactor));
+		}
 		if (renderFactor != 1)
 		{
 			upscaler.init(width, height);
@@ -1752,6 +1772,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 
 	private void shutdownFbo()
 	{
+		forwardTarget.free();
 		sceneTargets.free();
 		upscaler.free();
 	}
@@ -1806,10 +1827,19 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 	{
 		// the hitch monitor reads the GPU's times too, but only when someone is reading the debug log
 		gpuTimer.setEnabled(config.gpuPassTimings());
-		captureFrameState(scene, cameraX, cameraY, cameraZ);
-		wadeSteps.update(client.getTopLevelWorldView(), client.getLocalPlayer(), cameraX, cameraZ,
-			weather.groundActive() && client.getGameState() == GameState.LOGGED_IN);
-		updateEdge(scene, cameraX, cameraZ);
+		if (FORWARD)
+		{
+			captureForwardState(scene, cameraX, cameraY, cameraZ);
+			// the GPU plugin's draw distance: the client draws and culls its square of it
+			scene.setDrawDistance(getDrawDistance());
+		}
+		else
+		{
+			captureFrameState(scene, cameraX, cameraY, cameraZ);
+			wadeSteps.update(client.getTopLevelWorldView(), client.getLocalPlayer(), cameraX, cameraZ,
+				weather.groundActive() && client.getGameState() == GameState.LOGGED_IN);
+			updateEdge(scene, cameraX, cameraZ);
+		}
 
 		// UBO
 		uniformBuffer.clear();
@@ -1873,7 +1903,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 				lastRenderFactor = renderFactor;
 			}
 
-			glBindFramebuffer(GL_DRAW_FRAMEBUFFER, sceneTargets.getRenderFbo());
+			glBindFramebuffer(GL_DRAW_FRAMEBUFFER, FORWARD ? forwardTarget.getFbo() : sceneTargets.getRenderFbo());
 		}
 
 		// Setup anisotropic filtering
@@ -2005,16 +2035,28 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		cpuTimer.begin(CpuTimer.CLIENT_SCENE);
 	}
 
+	private void clearScene(float r, float g, float b)
+	{
+		if (FORWARD)
+		{
+			forwardTarget.clear(r, g, b);
+		}
+		else
+		{
+			sceneTargets.clear(r, g, b);
+		}
+	}
+
 	private void drawSkybox(Scene scene, int sky, float cameraX, float cameraY, float cameraZ)
 	{
 		Model skybox = scene.getSkybox();
 		if (skybox == null)
 		{
-			sceneTargets.clear((sky >> 16 & 0xFF) / 255f, (sky >> 8 & 0xFF) / 255f, (sky & 0xFF) / 255f);
+			clearScene((sky >> 16 & 0xFF) / 255f, (sky >> 8 & 0xFF) / 255f, (sky & 0xFF) / 255f);
 			return;
 		}
 
-		sceneTargets.clear(0f, 0f, 0f);
+		clearScene(0f, 0f, 0f);
 
 		int size = skybox.getFaceCount() * 3 * VAO.VERT_SIZE;
 		RenderThread rt = rts[0];
@@ -2051,6 +2093,16 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		glDisable(GL_CULL_FACE);
 		glDisable(GL_DEPTH_TEST);
 		cpuTimer.end(CpuTimer.CLIENT_SCENE);
+
+		if (FORWARD)
+		{
+			// the scene is finished: draw() resolves it into the window
+			gpuTimer.end();
+			glBindFramebuffer(GL_DRAW_FRAMEBUFFER, awtContext.getFramebuffer(false));
+			sceneFboValid = true;
+			cpuTimer.begin(CpuTimer.CLIENT_UI);
+			return;
+		}
 
 		gpuTimer.begin(GpuTimer.RESOLVE);
 		sceneTargets.resolveAlpha();
@@ -2095,6 +2147,21 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 	 * Draw the scene targets to the window. Effects that work on the whole frame (fog, AO, grading) go in
 	 * composite_frag.glsl.
 	 */
+	/** The forward frame's state: the camera and the sky, and nothing for a feature that is not back (Features). */
+	private void captureForwardState(Scene scene, float cameraX, float cameraY, float cameraZ)
+	{
+		frameCameraX = cameraX;
+		frameCameraY = cameraY;
+		frameCameraZ = cameraZ;
+		frameSkyColor = client.getSkyboxColor();
+		frameHasSkybox = scene.getSkybox() != null;
+		frameDrawDistance = getDrawDistance() * Perspective.LOCAL_TILE_SIZE;
+		frameOutdoors = false;
+		frameShadows = false;
+		VAO.clearShadowDraws();
+		VAO.recordShadowDraws = false;
+	}
+
 	private void captureFrameState(Scene scene, float cameraX, float cameraY, float cameraZ)
 	{
 		frameCameraX = cameraX;
@@ -2646,12 +2713,16 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 	}
 
 	/**
-	 * Transparent faces go to their own layer, blended as premultiplied "over" so the composite can put the layer
-	 * on top of the lit opaque scene. They don't write depth (Zone and VAO already turn depth writes off).
+	 * Transparent faces are blended "over" what is drawn: forward, straight onto the scene; deferred, into their own
+	 * layer so the composite can put it on top of the lit opaque scene. They don't write depth (Zone and VAO already
+	 * turn depth writes off).
 	 */
 	private void setAlphaPass(boolean alpha)
 	{
-		sceneTargets.setAlphaPass(alpha);
+		if (!FORWARD)
+		{
+			sceneTargets.setAlphaPass(alpha);
+		}
 		if (alpha)
 		{
 			glEnable(GL_BLEND);
@@ -3210,6 +3281,29 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		{
 			logLimiter.warn(log, "voxels " + ex, "Voxel build failed", ex);
 			voxelBuilder.free();
+		}
+	}
+
+	/** The forward scene into the window: resolved, and upscaled below 100% render scale. */
+	private void presentForward()
+	{
+		final AffineTransform transform = clientUI.getGraphicsConfiguration().getDefaultTransform();
+		final int width = getScaledValue(transform.getScaleX(), lastStretchedCanvasWidth);
+		final int height = getScaledValue(transform.getScaleY(), lastStretchedCanvasHeight);
+		// the interface texture is filled first, so its upload doesn't split the window's pass (as in compositeScene)
+		finishInterfaceUpload();
+		final boolean upscale = upscaler.isInitialized();
+		gpuTimer.begin(GpuTimer.RESOLVE);
+		forwardTarget.resolve(upscale ? upscaler.getFbo() : awtContext.getFramebuffer(false));
+		gpuTimer.end();
+		if (upscale)
+		{
+			gpuTimer.begin(GpuTimer.UPSCALE);
+			glBindFramebuffer(GL_FRAMEBUFFER, awtContext.getFramebuffer(false));
+			glBindVertexArray(vaoUiHandle);
+			upscaler.draw(width, height, config.upscaleSharpness() / 100f);
+			glBindVertexArray(0);
+			gpuTimer.end();
 		}
 	}
 
@@ -3941,7 +4035,15 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 
 		interfaceFinished = false;
 		boolean composited = false;
-		if (sceneFboValid && sceneTargets.isInitialized() && compositeFull.program != 0)
+		if (FORWARD)
+		{
+			if (sceneFboValid && forwardTarget.isInitialized())
+			{
+				presentForward();
+				composited = true;
+			}
+		}
+		else if (sceneFboValid && sceneTargets.isInitialized() && compositeFull.program != 0)
 		{
 			try
 			{
@@ -4346,12 +4448,15 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 
 		// the water's bed depths and flow, needed to size and upload the zones; swapped in with them
 		Stopwatch sw = Stopwatch.createStarted();
-		WaterMap waterMap = config.water()
+		WaterMap waterMap = Features.WATER && config.water()
 			? WaterMap.build(scene, WaterOverrides.get()) : null;
 		mapUploader.water = waterMap;
 		water.sceneLoaded(waterMap);
 		log.debug("Water map time {}", sw);
-		volumetricFog.sceneLoaded(scene);
+		if (Features.FOG)
+		{
+			volumetricFog.sceneLoaded(scene);
+		}
 
 		// size the zones which require upload
 		sw = Stopwatch.createStarted();

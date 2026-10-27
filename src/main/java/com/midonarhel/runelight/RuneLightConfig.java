@@ -189,15 +189,12 @@ public interface RuneLightConfig extends Config
 		ADAPTIVE
 	}
 
-	@ConfigSection(
-		name = "Lighting",
-		description = "Sun, shadows, ambient occlusion, point lights and interiors",
-		position = 30
-	)
+	// no header while none of its settings are shown (Features)
 	String lightingSection = "lighting";
 
 	@ConfigItem(
 		keyName = "sunLighting",
+		hidden = !Features.LIGHTING,
 		name = "Sun and moon lighting",
 		description = "Day and night cycle with directional light from the sun or moon. Off underground.",
 		section = lightingSection,
@@ -212,6 +209,7 @@ public interface RuneLightConfig extends Config
 	@Units(Units.PERCENT)
 	@ConfigItem(
 		keyName = "buildingLightBrightness",
+		hidden = !Features.LIGHTING,
 		name = "Interior brightness",
 		description = "How much light dim rooms of buildings get, by day and at night, in percent. A room with lights "
 			+ "or open to the day gets little or none; a closed-in one is lifted to a dim but readable level. 0 "
@@ -226,6 +224,7 @@ public interface RuneLightConfig extends Config
 
 	@ConfigItem(
 		keyName = "pointLights",
+		hidden = !Features.LIGHTING,
 		name = "Point lights",
 		description = "Lights from torches, fires and other sources. They do not cast shadows.",
 		section = lightingSection,
@@ -240,6 +239,7 @@ public interface RuneLightConfig extends Config
 	@Units(Units.PERCENT)
 	@ConfigItem(
 		keyName = "emissiveStrength",
+		hidden = !Features.LIGHTING,
 		name = "Glowing materials",
 		description = "Brightness of lava, fire, magic, spells and spirits like ghosts, which show their own color "
 			+ "instead of being shaded, shadowed or darkened by ambient occlusion, in percent. 0 turns it off.",
@@ -255,6 +255,7 @@ public interface RuneLightConfig extends Config
 	@Units(Units.PERCENT)
 	@ConfigItem(
 		keyName = "transmissionStrength",
+		hidden = !Features.LIGHTING,
 		name = "Light through leaves",
 		description = "How much light passes through leaves, bushes and plants from behind, so tree canopies glow "
 			+ "around the lights inside them, in percent. 0 turns it off.",
@@ -268,6 +269,7 @@ public interface RuneLightConfig extends Config
 
 	@ConfigItem(
 		keyName = "shadows",
+		hidden = !Features.LIGHTING,
 		name = "Shadows",
 		description = "Soft shadows from the sun or moon.",
 		section = lightingSection,
@@ -281,6 +283,7 @@ public interface RuneLightConfig extends Config
 	@Range(min = 8, max = 96)
 	@ConfigItem(
 		keyName = "shadowDistance",
+		hidden = !Features.LIGHTING,
 		name = "Shadow distance",
 		description = "How far from your character shadows are drawn, in tiles.",
 		section = lightingSection,
@@ -293,6 +296,7 @@ public interface RuneLightConfig extends Config
 
 	@ConfigItem(
 		keyName = "shadowResolution",
+		hidden = !Features.LIGHTING,
 		name = "Shadow resolution",
 		description = "Shadow map size. Higher is sharper and costs more.",
 		section = lightingSection,
@@ -305,6 +309,7 @@ public interface RuneLightConfig extends Config
 
 	@ConfigItem(
 		keyName = "ambientOcclusion",
+		hidden = !Features.LIGHTING,
 		name = "Ambient occlusion",
 		description = "Soft shadowing in corners, creases and under objects (SSAO).",
 		section = lightingSection,
@@ -319,6 +324,7 @@ public interface RuneLightConfig extends Config
 	@Units(Units.PERCENT)
 	@ConfigItem(
 		keyName = "aoStrength",
+		hidden = !Features.LIGHTING,
 		name = "AO strength",
 		description = "How dark occluded areas get, in percent.",
 		section = lightingSection,
@@ -333,6 +339,7 @@ public interface RuneLightConfig extends Config
 	@Units(Units.PERCENT)
 	@ConfigItem(
 		keyName = "aoRadius",
+		hidden = !Features.LIGHTING,
 		name = "AO radius",
 		description = "How far occlusion reaches, in percent of a tile.",
 		section = lightingSection,
@@ -345,6 +352,7 @@ public interface RuneLightConfig extends Config
 
 	@ConfigItem(
 		keyName = "aoQuality",
+		hidden = !Features.LIGHTING,
 		name = "AO quality",
 		description = "Samples per pixel of ambient occlusion: 12 on high, 8 on medium, 6 on low. Lower is noisier.",
 		section = lightingSection,
@@ -357,6 +365,7 @@ public interface RuneLightConfig extends Config
 
 	@ConfigItem(
 		keyName = "removeBakedShading",
+		hidden = !Features.SURFACES,
 		name = "Remove baked shading",
 		description = "The game bakes light from one fixed direction into model colors. Remove it so the sun, moon and "
 			+ "lights do the shading. Reloads the scene when changed.",
@@ -370,6 +379,7 @@ public interface RuneLightConfig extends Config
 
 	@ConfigItem(
 		keyName = "groundBlending",
+		hidden = !Features.SURFACES,
 		name = "Ground blending",
 		description = "Blend ground colors smoothly across tile borders and give paths soft edges, like 117 HD. Also "
 			+ "removes the light the game bakes into the ground. Reloads the scene when changed.",
@@ -381,15 +391,12 @@ public interface RuneLightConfig extends Config
 		return true;
 	}
 
-	@ConfigSection(
-		name = "Sky & time of day",
-		description = "The sky, the clock and the clouds",
-		position = 40
-	)
+	// no header while none of its settings are shown (Features)
 	String skySection = "sky";
 
 	@ConfigItem(
 		keyName = "proceduralSky",
+		hidden = !Features.SKY,
 		name = "Procedural sky",
 		description = "Draw a sky that follows the time of day. Areas with their own skybox keep it.",
 		section = skySection,
@@ -404,6 +411,7 @@ public interface RuneLightConfig extends Config
 	@Units(Units.MINUTES)
 	@ConfigItem(
 		keyName = "dayCycleMinutes",
+		hidden = !Features.SKY,
 		name = "Day length",
 		description = "Real minutes per full day and night; the time follows the real clock, so it is the same whenever "
 			+ "you play. 0 holds the time at the fixed hour (the weather goes on at 24 minutes a day).",
@@ -418,6 +426,7 @@ public interface RuneLightConfig extends Config
 	@Range(max = 23)
 	@ConfigItem(
 		keyName = "fixedHour",
+		hidden = !Features.SKY,
 		name = "Fixed hour",
 		description = "Time of day to hold when day length is 0. 6 is sunrise, 12 midday.",
 		section = skySection,
@@ -430,6 +439,7 @@ public interface RuneLightConfig extends Config
 
 	@ConfigItem(
 		keyName = "clouds",
+		hidden = !Features.SKY,
 		name = "Clouds",
 		description = "Clouds drifting across the procedural sky, lit by the sun and moon. Rain and snow cover the sky.",
 		section = skySection,
@@ -444,6 +454,7 @@ public interface RuneLightConfig extends Config
 	@Units(Units.PERCENT)
 	@ConfigItem(
 		keyName = "clearWeatherClouds",
+		hidden = !Features.SKY,
 		name = "Clear weather clouds",
 		description = "How much of the sky clouds cover in clear weather, in percent; cloudier weather adds to it.",
 		section = skySection,
@@ -458,6 +469,7 @@ public interface RuneLightConfig extends Config
 	@Units(Units.PERCENT)
 	@ConfigItem(
 		keyName = "cloudSpeed",
+		hidden = !Features.SKY,
 		name = "Cloud speed",
 		description = "How fast the clouds drift, in percent.",
 		section = skySection,
@@ -472,6 +484,7 @@ public interface RuneLightConfig extends Config
 	@Units(Units.PERCENT)
 	@ConfigItem(
 		keyName = "starBrightness",
+		hidden = !Features.SKY,
 		name = "Star brightness",
 		description = "How bright the stars are, in percent.",
 		section = skySection,
@@ -486,6 +499,7 @@ public interface RuneLightConfig extends Config
 	@Units(Units.PERCENT)
 	@ConfigItem(
 		keyName = "nebulaStrength",
+		hidden = !Features.SKY,
 		name = "Nebula strength",
 		description = "How bright the colored nebula clouds and the Milky Way are in the night sky, in percent. 0 hides "
 			+ "them and the crowding of stars in the Milky Way.",
@@ -499,6 +513,7 @@ public interface RuneLightConfig extends Config
 
 	@ConfigItem(
 		keyName = "aurora",
+		hidden = !Features.SKY,
 		name = "Aurora",
 		description = "Curtains of light in the night sky of the far north: the Fremennik lands and the frozen north "
 			+ "around Weiss. Needs area ambience.",
@@ -512,6 +527,7 @@ public interface RuneLightConfig extends Config
 
 	@ConfigItem(
 		keyName = "cloudShadows",
+		hidden = !Features.SKY,
 		name = "Cloud shadows",
 		description = "Clouds shade the ground from the sun or moon as they pass over.",
 		section = skySection,
@@ -524,6 +540,7 @@ public interface RuneLightConfig extends Config
 
 	@ConfigItem(
 		keyName = "skyHorizonAtEdge",
+		hidden = !Features.SKY,
 		name = "Horizon at world edge",
 		description = "Put the sky's horizon where the drawn world ends, so the clouds come down to the land at any "
 			+ "camera angle.",
@@ -535,15 +552,12 @@ public interface RuneLightConfig extends Config
 		return true;
 	}
 
-	@ConfigSection(
-		name = "Weather",
-		description = "Automatic regional weather, rain, snow and storms",
-		position = 50
-	)
+	// no header while none of its settings are shown (Features)
 	String weatherSection = "weather";
 
 	@ConfigItem(
 		keyName = "weatherMode",
+		hidden = !Features.WEATHER,
 		name = "Weather",
 		description = "Automatic: each region's weather changes every 8 game hours by its biome and the season (deserts "
 			+ "sunny with sandstorms, swamps foggy and wet, mountains snowy in winter). Off keeps it clear; any "
@@ -561,6 +575,7 @@ public interface RuneLightConfig extends Config
 	@Units(Units.PERCENT)
 	@ConfigItem(
 		keyName = "weatherIntensity",
+		hidden = !Features.WEATHER,
 		name = "Intensity",
 		description = "How heavy the rain or snow is, in percent. In automatic weather, 60 is each weather's own "
 			+ "amount.",
@@ -574,6 +589,7 @@ public interface RuneLightConfig extends Config
 
 	@ConfigItem(
 		keyName = "weatherBuildup",
+		hidden = !Features.WEATHER,
 		name = "Gradual buildup",
 		description = "Weather changes blend over a minute and the ground gets wet or white over time.",
 		section = weatherSection,
@@ -586,6 +602,7 @@ public interface RuneLightConfig extends Config
 
 	@ConfigItem(
 		keyName = "weatherLightning",
+		hidden = !Features.WEATHER,
 		name = "Lightning",
 		description = "Occasional lightning in storms that briefly lights the sky and the scene.",
 		section = weatherSection,
@@ -600,6 +617,7 @@ public interface RuneLightConfig extends Config
 	@Units(Units.PERCENT)
 	@ConfigItem(
 		keyName = "weatherSounds",
+		hidden = !Features.WEATHER,
 		name = "Weather sounds",
 		description = "Volume of the rain and the thunder, on top of the game's sound effects volume. 0 turns them off.",
 		section = weatherSection,
@@ -610,15 +628,12 @@ public interface RuneLightConfig extends Config
 		return 50;
 	}
 
-	@ConfigSection(
-		name = "Water",
-		description = "Water you can see into, with waves that follow the rivers, reflections and glints",
-		position = 60
-	)
+	// no header while none of its settings are shown (Features)
 	String waterSection = "water";
 
 	@ConfigItem(
 		keyName = "water",
+		hidden = !Features.WATER,
 		name = "Water",
 		description = "Draw water as a surface over a lowered bed: clear water shows the bed and darkens with depth, "
 			+ "swamps and caves are murky, rivers flow from their sources to the sea. Reloads the scene.",
@@ -632,6 +647,7 @@ public interface RuneLightConfig extends Config
 
 	@ConfigItem(
 		keyName = "waterReflections",
+		hidden = !Features.WATER,
 		name = "World reflections",
 		description = "Rough reflections of the scene (trees, walls, the shore) in the water, besides the sky. A few "
 			+ "screen-space taps per water pixel.",
@@ -645,6 +661,7 @@ public interface RuneLightConfig extends Config
 
 	@ConfigItem(
 		keyName = "waterCaustics",
+		hidden = !Features.WATER,
 		name = "Caustics",
 		description = "Rippling sunlight on the bed of clear, shallow water (117 HD's caustics).",
 		section = waterSection,
@@ -655,15 +672,12 @@ public interface RuneLightConfig extends Config
 		return true;
 	}
 
-	@ConfigSection(
-		name = "Fog",
-		description = "Volumetric fog",
-		position = 70
-	)
+	// no header while none of its settings are shown (Features)
 	String fogSection = "fog";
 
 	@ConfigItem(
 		keyName = "volumetricFog",
+		hidden = !Features.FOG,
 		name = "Volumetric fog",
 		description = "Light fog around your character that thins out with distance, lit by the sun, moon and lights.",
 		section = fogSection,
@@ -676,6 +690,7 @@ public interface RuneLightConfig extends Config
 
 	@ConfigItem(
 		keyName = "fogQuality",
+		hidden = !Features.FOG,
 		name = "Fog quality",
 		description = "Steps through the volumetric fog: 12 on high, 8 on medium, 6 on low. Lower is grainier in sun "
 			+ "shafts.",
@@ -690,6 +705,7 @@ public interface RuneLightConfig extends Config
 	@Range(max = 15)
 	@ConfigItem(
 		keyName = "volumetricFogDensity",
+		hidden = !Features.FOG,
 		name = "Fog density",
 		description = "How thick the fog is near the ground.",
 		section = fogSection,
@@ -700,15 +716,12 @@ public interface RuneLightConfig extends Config
 		return 15;
 	}
 
-	@ConfigSection(
-		name = "Environment",
-		description = "Per-area ambience and wind",
-		position = 80
-	)
+	// no header while none of its settings are shown (Features)
 	String environmentSection = "environment";
 
 	@ConfigItem(
 		keyName = "areaEnvironments",
+		hidden = !Features.ENVIRONMENT,
 		name = "Area ambience",
 		description = "Recognise caves and dungeons by area and give areas their own light colors, fog and sky haze "
 			+ "(deserts, swamps, snow, the Wilderness, caves). Off: only the game's sky color decides what is "
@@ -723,6 +736,7 @@ public interface RuneLightConfig extends Config
 
 	@ConfigItem(
 		keyName = "windSway",
+		hidden = !Features.ENVIRONMENT,
 		name = "Sway in the wind",
 		description = "Trees bend and plants flutter with the weather's wind: barely in calm air, hard in a storm.",
 		section = environmentSection,
@@ -737,6 +751,7 @@ public interface RuneLightConfig extends Config
 	@Units(Units.PERCENT)
 	@ConfigItem(
 		keyName = "windSwayStrength",
+		hidden = !Features.ENVIRONMENT,
 		name = "Sway strength",
 		description = "How far plants move, in percent.",
 		section = environmentSection,
@@ -749,6 +764,7 @@ public interface RuneLightConfig extends Config
 
 	@ConfigItem(
 		keyName = "windSwayShadows",
+		hidden = !Features.ENVIRONMENT,
 		name = "Sway in shadows",
 		description = "Shadows of swaying plants move with them. Costs redrawing those plants into the shadow map every "
 			+ "frame.",
@@ -762,6 +778,7 @@ public interface RuneLightConfig extends Config
 
 	@ConfigItem(
 		keyName = "windSwayFps",
+		hidden = !Features.ENVIRONMENT,
 		name = "Sway frame rate",
 		description = "Animate swaying plants at a low frame rate like the game's own animations, or smoothly every "
 			+ "frame.",
@@ -929,6 +946,7 @@ public interface RuneLightConfig extends Config
 
 	@ConfigItem(
 		keyName = "debugView",
+		hidden = !Features.LIGHTING,
 		name = "Debug view",
 		description = "Show one of the scene buffers instead of the final image.",
 		section = developmentSection,
@@ -941,6 +959,7 @@ public interface RuneLightConfig extends Config
 
 	@ConfigItem(
 		keyName = "waterDebugView",
+		hidden = !Features.WATER,
 		name = "Water debug",
 		description = "Tint water by type and show which way it flows, or show its waves as a relief.",
 		section = developmentSection,
@@ -953,6 +972,7 @@ public interface RuneLightConfig extends Config
 
 	@ConfigItem(
 		keyName = "testLight",
+		hidden = !Features.LIGHTING,
 		name = "Test light on player",
 		description = "A warm point light carried by your character, for checking point lighting.",
 		section = developmentSection,
@@ -965,6 +985,7 @@ public interface RuneLightConfig extends Config
 
 	@ConfigItem(
 		keyName = "strikeLightning",
+		hidden = !Features.WEATHER,
 		name = "Strike lightning",
 		description = "One lightning strike now, in any weather. Unticks itself.",
 		section = developmentSection,
@@ -977,6 +998,7 @@ public interface RuneLightConfig extends Config
 
 	@ConfigItem(
 		keyName = "weatherFieldMap",
+		hidden = !Features.WEATHER,
 		name = "Show weather map",
 		description = "A small map of the weather around you in the timings overlay.",
 		section = developmentSection,
@@ -989,6 +1011,7 @@ public interface RuneLightConfig extends Config
 
 	@ConfigItem(
 		keyName = "showBuildings",
+		hidden = !Features.LIGHTING,
 		name = "Show detected buildings",
 		description = "Tint the rooms found on your floor, label each with its id (R) and level (L), mark where their "
 			+ "lights are and outline the tiles where a hole in the floor links a room to the one above or "
@@ -1003,6 +1026,7 @@ public interface RuneLightConfig extends Config
 
 	@ConfigItem(
 		keyName = "dumpScene",
+		hidden = !Features.LIGHTING,
 		name = "Dump scene",
 		description = "Write what the light map is made from around you (the models, walls, floors, lights, camera and "
 			+ "time of day) to a file in .runelite/runelight-dumps, for offline renders. Unticks itself.",

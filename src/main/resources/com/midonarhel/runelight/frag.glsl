@@ -28,6 +28,7 @@
 //#define ZBUF_DEBUG
 
 #include colorblind_mode
+#include forward_mode
 
 uniform sampler2DArray textures;
 uniform float brightness;
@@ -129,6 +130,13 @@ void main() {
 
 #if COLORBLIND_MODE > 0
   c.rgb = colorblind(c.rgb);
+#endif
+
+#if FORWARD
+  // the vanilla color as the GPU plugin draws it (with its default fog depth of 0: no fog); transparent faces are
+  // blended over the scene by their alpha
+  FragColor = c;
+  return;
 #endif
 
   // opaque surfaces are lit and fogged later by the composite pass

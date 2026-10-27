@@ -466,7 +466,8 @@ final class SurfaceMaterials
 	 */
 	static int face(int model, int texture, int hsl, int opacity)
 	{
-		if (isFakeWater(model, texture, hsl, opacity))
+		// without RuneLight's water nothing would draw a fake water face, so it keeps its own texture and transparency
+		if (Features.WATER && isFakeWater(model, texture, hsl, opacity))
 		{
 			// water takes no snow
 			return FAKE_WATER | SNOW_NONE >> SNOW_MODEL_SHIFT << SNOW_SHIFT;

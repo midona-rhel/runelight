@@ -68,6 +68,7 @@ class GpuTimer
 	private final double[] windowSum = new double[STAGES];
 	private int windowFrames;
 	private long windowStart;
+	private final long[] lastRan = new long[STAGES];
 	// frames ended so far, and the frame whose times the last endFrame read (-1: none); for the hitch monitor
 	private long frames;
 	private long readFrame = -1;
@@ -194,13 +195,17 @@ class GpuTimer
 			}
 		}
 		double total = 0;
+		long now = System.nanoTime();
 		for (int s = 0; s < STAGES; ++s)
 		{
+			if (frame[s] > 0)
+			{
+				lastRan[s] = now;
+			}
 			total += frame[s];
 			windowSum[s] += frame[s];
 		}
 		++windowFrames;
-		long now = System.nanoTime();
 		if (now - windowStart >= CpuTimer.WINDOW_NANOS)
 		{
 			totalMs = 0;
@@ -216,6 +221,12 @@ class GpuTimer
 		// this slot was filled SLOTS - 1 frames ago
 		readFrame = frames - (SLOTS - 1);
 		readTotalMs = total;
+	}
+
+	/** Whether a pass ran in the last CpuTimer.RECENT_NANOS. */
+	boolean ranRecently(int stage)
+	{
+		return lastRan[stage] != 0 && System.nanoTime() - lastRan[stage] < CpuTimer.RECENT_NANOS;
 	}
 
 	/** A pass's mean time per frame over the last whole window, 0 where it did not run. */

@@ -97,20 +97,24 @@ class RuneLightOverlay extends OverlayPanel
 		line("FPS / target", client.getFPS() + " / " + (target > 0 ? target : "none"), Color.WHITE);
 		line("Frame / budget", ms(frame) + (target > 0 ? " / " + ms(budget) : ""),
 			target > 0 && frame > budget ? Color.ORANGE : Color.GREEN);
-		// every pass and step on its own line in a fixed order, as means per frame over the last second
+		// the passes and steps that are part of the frame's work (ran in the last few seconds), each on its own line in
+		// a fixed order, as means per frame over the last second
 		if (gpu.isEnabled())
 		{
 			line("GPU per frame", ms(gpu.getTotalMs()), Color.CYAN);
 			for (int stage = 0; stage < GpuTimer.STAGES; stage++)
 			{
-				double value = gpu.getMs(stage);
-				line("  " + GpuTimer.NAMES[stage], ms(value), value >= 1 ? Color.ORANGE : Color.WHITE);
+				if (gpu.ranRecently(stage))
+				{
+					double value = gpu.getMs(stage);
+					line("  " + GpuTimer.NAMES[stage], ms(value), value >= 1 ? Color.ORANGE : Color.WHITE);
+				}
 			}
 		}
 		line("CPU per frame (incl. waits)", ms(plugin.getCpuFrameMs()), Color.CYAN);
 		for (int stage = 0; stage < CpuTimer.STAGES; stage++)
 		{
-			if (stage != CpuTimer.OUTSIDE)
+			if (stage != CpuTimer.OUTSIDE && cpu.ranRecently(stage))
 			{
 				line("  " + CpuTimer.NAMES[stage], ms(cpu.getMs(stage)), Color.WHITE);
 			}

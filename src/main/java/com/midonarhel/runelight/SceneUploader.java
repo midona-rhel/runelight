@@ -126,7 +126,7 @@ class SceneUploader
 		Set<Integer> roofIds = new HashSet<>();
 
 		// the top level scene's opaque triangles are also kept for the voxels the skylight traces
-		VoxelCapture.Buffer voxelBuffer = zone.vboO != null && scene.getWorldViewId() == WorldView.TOPLEVEL
+		VoxelCapture.Buffer voxelBuffer = Features.LIGHTING && zone.vboO != null && scene.getWorldViewId() == WorldView.TOPLEVEL
 			? new VoxelCapture.Buffer(zone.vboO.vb) : null;
 		var vb = voxelBuffer != null ? voxelBuffer : zone.vboO != null ? new GpuIntBuffer(zone.vboO.vb) : null;
 		var ab = zone.vboA != null ? new GpuIntBuffer(zone.vboA.vb) : null;
@@ -147,8 +147,11 @@ class SceneUploader
 			}
 		}
 
-		// built with blending off too: the water bed takes the bank's colors from it either way (shoreColor)
-		groundBlender.build(scene, mzx, mzz);
+		// built with blending off too while there is water: the water bed takes the bank's colors from it (shoreColor)
+		if (GroundBlender.enabled || water != null)
+		{
+			groundBlender.build(scene, mzx, mzz);
+		}
 
 		zone.rids = new int[4][roofIds.size()];
 		zone.roofStart = new int[4][roofIds.size()];

@@ -43,6 +43,8 @@ class CpuTimer
 
 	// averages are over whole windows of this long, so a reading holds still while it is read
 	static final long WINDOW_NANOS = 1_000_000_000L;
+	// a step or pass that has not run for this long is left out of the timings (it is not in this frame's work)
+	static final long RECENT_NANOS = 5_000_000_000L;
 
 	private final long[] start = new long[STAGES];
 	private final double[] frame = new double[STAGES];
@@ -51,6 +53,7 @@ class CpuTimer
 	private final double[] windowSum = new double[STAGES];
 	private int windowFrames;
 	private long windowStart;
+	private final long[] lastRan = new long[STAGES];
 	// the frame that just ended, for the hitch monitor
 	private final double[] last = new double[STAGES];
 
@@ -71,14 +74,18 @@ class CpuTimer
 	/** Fold this frame's times into the averages. */
 	void endFrame()
 	{
+		long now = System.nanoTime();
 		for (int s = 0; s < STAGES; ++s)
 		{
+			if (frame[s] > 0)
+			{
+				lastRan[s] = now;
+			}
 			windowSum[s] += frame[s];
 			last[s] = frame[s];
 			frame[s] = 0;
 		}
 		++windowFrames;
-		long now = System.nanoTime();
 		if (now - windowStart >= WINDOW_NANOS)
 		{
 			for (int s = 0; s < STAGES; ++s)
@@ -89,6 +96,12 @@ class CpuTimer
 			windowFrames = 0;
 			windowStart = now;
 		}
+	}
+
+	/** Whether a step ran in the last RECENT_NANOS. */
+	boolean ranRecently(int stage)
+	{
+		return lastRan[stage] != 0 && System.nanoTime() - lastRan[stage] < RECENT_NANOS;
 	}
 
 	/** A step's mean time per frame over the last whole window. */
