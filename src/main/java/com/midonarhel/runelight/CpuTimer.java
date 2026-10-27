@@ -41,9 +41,16 @@ class CpuTimer
 		"buffer map", "light upload", "scene voxels", "sky capture", "occlusion maps", "sky grid", "light map"
 	};
 
+	// averages are over whole windows of this long, so a reading holds still while it is read
+	static final long WINDOW_NANOS = 1_000_000_000L;
+
 	private final long[] start = new long[STAGES];
 	private final double[] frame = new double[STAGES];
+	// each step's mean per frame over the last finished window, and the window being summed
 	private final double[] ms = new double[STAGES];
+	private final double[] windowSum = new double[STAGES];
+	private int windowFrames;
+	private long windowStart;
 	// the frame that just ended, for the hitch monitor
 	private final double[] last = new double[STAGES];
 
@@ -66,12 +73,25 @@ class CpuTimer
 	{
 		for (int s = 0; s < STAGES; ++s)
 		{
-			ms[s] = ms[s] == 0 ? frame[s] : ms[s] * 0.95 + frame[s] * 0.05;
+			windowSum[s] += frame[s];
 			last[s] = frame[s];
 			frame[s] = 0;
 		}
+		++windowFrames;
+		long now = System.nanoTime();
+		if (now - windowStart >= WINDOW_NANOS)
+		{
+			for (int s = 0; s < STAGES; ++s)
+			{
+				ms[s] = windowSum[s] / windowFrames;
+				windowSum[s] = 0;
+			}
+			windowFrames = 0;
+			windowStart = now;
+		}
 	}
 
+	/** A step's mean time per frame over the last whole window. */
 	double getMs(int stage)
 	{
 		return ms[stage];

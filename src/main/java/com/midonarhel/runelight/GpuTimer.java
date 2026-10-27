@@ -42,7 +42,7 @@ class GpuTimer
 	static final int STAGES = 22;
 
 	static final String[] NAMES = {
-		"scene (with the client's traversal)", "MSAA resolve", "shadow map", "weather occlusion", "AO + skylight", "sky cache", "fog", "sky/fog + final blend",
+		"scene (with the client's traversal)", "MSAA resolve", "shadow map", "weather occlusion", "AO + skylight", "sky cache", "fog", "lighting + composite",
 		"weather", "UI", "water", "shadow copy", "shadow models", "sky grid upload", "AO/fog filtering", "upscale", "ambient + sky", "sun + cloud shadows", "point lights + blocking", "materials + water blend", "clouds", "light map upload"
 	};
 
@@ -61,16 +61,17 @@ class GpuTimer
 	private boolean enabled = true;
 
 	private final double[] frame = new double[STAGES];
-	// Last valid execution of each stage, milliseconds; cached jobs retain their result.
+	// each stage's mean per read frame over the last finished window (CpuTimer.WINDOW_NANOS), a stage that did not
+	// run in a frame counting 0 for it, and the window being summed
 	private final double[] ms = new double[STAGES];
 	private double totalMs;
+	private final double[] windowSum = new double[STAGES];
+	private int windowFrames;
+	private long windowStart;
 	// frames ended so far, and the frame whose times the last endFrame read (-1: none); for the hitch monitor
 	private long frames;
 	private long readFrame = -1;
 	private double readTotalMs;
-	private long lastReadNanos;
-	private final long[] stageReadNanos = new long[STAGES];
-	private final boolean[] present = new boolean[STAGES];
 
 	void init()
 	{
@@ -81,10 +82,11 @@ class GpuTimer
 		}
 		slot = 0;
 		active = false;
-		java.util.Arrays.fill(ms, Double.NaN);
-		totalMs = Double.NaN;
-		lastReadNanos = 0;
-		java.util.Arrays.fill(stageReadNanos, 0);
+		java.util.Arrays.fill(ms, 0);
+		java.util.Arrays.fill(windowSum, 0);
+		totalMs = 0;
+		windowFrames = 0;
+		windowStart = System.nanoTime();
 		initialized = true;
 	}
 
@@ -177,7 +179,6 @@ class GpuTimer
 			return;
 		}
 		java.util.Arrays.fill(frame, 0);
-		java.util.Arrays.fill(present, false);
 		for (int i = 0; i < n; ++i)
 		{
 			int q = queries[slot][i];
@@ -186,40 +187,40 @@ class GpuTimer
 				return;
 			}
 			long nanos = glGetQueryObjecti64(q, GL_QUERY_RESULT);
-			// Invalid driver results must not leave plausible-looking stale averages.
-			int stage = stageOf[slot][i];
-			present[stage] = true;
-			frame[stage] += nanos < 0 || nanos > 1_000_000_000L ? Double.NaN : nanos / 1e6;
+			// a result no pass can take (a driver's bad query) counts nothing
+			if (nanos > 0 && nanos < 1_000_000_000L)
+			{
+				frame[stageOf[slot][i]] += nanos / 1e6;
+			}
 		}
 		double total = 0;
-		long now = System.nanoTime();
 		for (int s = 0; s < STAGES; ++s)
 		{
-			// Keep the last real execution for cached jobs and invalid driver samples.
-			if (present[s] && Double.isFinite(frame[s]) && frame[s] > 0)
-			{
-				ms[s] = frame[s];
-				stageReadNanos[s] = now;
-			}
 			total += frame[s];
+			windowSum[s] += frame[s];
 		}
-		// A bad query must not freeze the displayed total at an unrelated startup frame.
-		// Show this frame's valid subtotal; the overlay explicitly reports missing queries.
-		totalMs = 0;
-		for (double value : frame) if (Double.isFinite(value)) totalMs += value;
-		lastReadNanos = now;
+		++windowFrames;
+		long now = System.nanoTime();
+		if (now - windowStart >= CpuTimer.WINDOW_NANOS)
+		{
+			totalMs = 0;
+			for (int s = 0; s < STAGES; ++s)
+			{
+				ms[s] = windowSum[s] / windowFrames;
+				totalMs += ms[s];
+				windowSum[s] = 0;
+			}
+			windowFrames = 0;
+			windowStart = now;
+		}
 		// this slot was filled SLOTS - 1 frames ago
 		readFrame = frames - (SLOTS - 1);
 		readTotalMs = total;
 	}
 
+	/** A pass's mean time per frame over the last whole window, 0 where it did not run. */
 	double getMs(int stage) { return ms[stage]; }
 	double getTotalMs() { return totalMs; }
-	double ageSeconds(int stage)
-	{
-		long time = stage < 0 ? lastReadNanos : stageReadNanos[stage];
-		return time == 0 ? Double.POSITIVE_INFINITY : (System.nanoTime() - time) / 1e9;
-	}
 
 	boolean isEnabled()
 	{

@@ -23,9 +23,9 @@ class RuneLightOverlay extends OverlayPanel
 	private final Client client;
 	private final RuneLightPlugin plugin;
 	private final RuneLightConfig config;
-	// The timings are only built a few times a second and shown again in between: formatting the ~35 lines into new
-	// components every frame was steady garbage on the client thread, for numbers too quick to read anyway.
-	private static final long TIMINGS_NANOS = 250_000_000L;
+	// The timings are built once per averaging window and shown again in between: the numbers hold still while read,
+	// and formatting the lines into new components every frame would be steady garbage on the client thread.
+	private static final long TIMINGS_NANOS = CpuTimer.WINDOW_NANOS;
 	private final List<LayoutableRenderableEntity> timings = new ArrayList<>();
 	private long timingsBuilt;
 
@@ -91,47 +91,33 @@ class RuneLightOverlay extends OverlayPanel
 		GpuTimer gpu = plugin.gpuTimer;
 		CpuTimer cpu = plugin.cpuTimer;
 		double frame = plugin.getSwapIntervalMs();
-		line("FPS / target", client.getFPS() + " / 200", Color.WHITE);
-		line("Frame / budget", ms(frame) + " / 5.00 ms", frame > 5 ? Color.ORANGE : Color.GREEN);
-		int missing = 0;
-		for (int stage = 0; stage < GpuTimer.STAGES; stage++)
-			if (!Double.isFinite(gpu.getReadMs(stage))) missing++;
+		// the client's own 50 fps unless the cap is lifted
+		int target = config.unlockFps() ? config.fpsTarget() : 50;
+		double budget = target > 0 ? 1000.0 / target : 0;
+		line("FPS / target", client.getFPS() + " / " + (target > 0 ? target : "none"), Color.WHITE);
+		line("Frame / budget", ms(frame) + (target > 0 ? " / " + ms(budget) : ""),
+			target > 0 && frame > budget ? Color.ORANGE : Color.GREEN);
+		// every pass and step on its own line in a fixed order, as means per frame over the last second
 		if (gpu.isEnabled())
-			line(missing == 0 ? "GPU measured passes" : "GPU subtotal (" + missing + " missing)", gpuResult(gpu, -1), Color.CYAN);
-		// Stable pass order: once measured, keep the last valid result and show its age.
-		for (int stage = 0; gpu.isEnabled() && stage < GpuTimer.STAGES; stage++)
 		{
-			double value = gpu.getMs(stage);
-			if (Double.isFinite(value))
-				line("  " + (stage == GpuTimer.COMPOSITE && Boolean.parseBoolean(System.getProperty("runelight.compositeCombined", "true"))
-					? "lighting + composite" : GpuTimer.NAMES[stage]), gpuResult(gpu, stage), value >= 1 ? Color.ORANGE : Color.WHITE);
+			line("GPU per frame", ms(gpu.getTotalMs()), Color.CYAN);
+			for (int stage = 0; stage < GpuTimer.STAGES; stage++)
+			{
+				double value = gpu.getMs(stage);
+				line("  " + GpuTimer.NAMES[stage], ms(value), value >= 1 ? Color.ORANGE : Color.WHITE);
+			}
 		}
-		line("CPU elapsed (incl. waits)", ms(plugin.getCpuFrameMs()), Color.CYAN);
-		Integer[] stages = new Integer[CpuTimer.STAGES];
-		for (int i = 0; i < stages.length; i++) stages[i] = i;
-		java.util.Arrays.sort(stages, (a, b) -> Double.compare(cpu.getMs(b), cpu.getMs(a)));
-		int shown = 0;
-		for (int stage : stages)
+		line("CPU per frame (incl. waits)", ms(plugin.getCpuFrameMs()), Color.CYAN);
+		for (int stage = 0; stage < CpuTimer.STAGES; stage++)
 		{
-			if (stage == CpuTimer.SWAP || stage == CpuTimer.OUTSIDE) continue;
-			if (shown++ == 4 || cpu.getMs(stage) < 0.05) break;
-			line("  " + CpuTimer.NAMES[stage], ms(cpu.getMs(stage)), Color.WHITE);
+			if (stage != CpuTimer.OUTSIDE)
+			{
+				line("  " + CpuTimer.NAMES[stage], ms(cpu.getMs(stage)), Color.WHITE);
+			}
 		}
-		line("  swap wait", ms(cpu.getMs(CpuTimer.SWAP)), Color.WHITE);
 		line("  other plugin/driver", ms(cpu.untrackedMs(plugin.getCpuFrameMs())), Color.WHITE);
 		line("Between frames", ms(cpu.getMs(CpuTimer.OUTSIDE)), Color.WHITE);
 		line("Point lights", Integer.toString(plugin.getPointLightCount()), Color.WHITE);
-		line("CPU: largest 4 steps", "CPU/GPU overlap", Color.GRAY);
-		if (gpu.isEnabled())
-			line("GPU values", "last valid run + age", Color.GRAY);
-	}
-
-	private static String gpuResult(GpuTimer timer, int stage)
-	{
-		double value = stage < 0 ? timer.getTotalMs() : timer.getMs(stage);
-		if (!Double.isFinite(value)) return "awaiting valid result";
-		double age = timer.ageSeconds(stage);
-		return ms(value) + (age >= 0.25 ? String.format(" (%.1fs ago)", age) : "");
 	}
 
 	private static final int MAP_CELL = 5;
