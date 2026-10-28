@@ -1069,7 +1069,7 @@ public class LegacyRenderer implements Renderer {
 			plugin.uboGlobal.saturation.set(config.saturation() / 100f);
 			plugin.uboGlobal.contrast.set(config.contrast() / 100f);
 			plugin.uboGlobal.underwaterEnvironment.set(environmentManager.getTargetEnvironment().isUnderwater ? 1 : 0);
-			plugin.uboGlobal.underwaterCaustics.set(config.underwaterCaustics() ? 1 : 0);
+			plugin.uboGlobal.underwaterCaustics.set(0); // Lumina: the sun is diffuse light only
 			plugin.uboGlobal.underwaterCausticsColor.set(env.getWaterCausticsColor());
 			plugin.uboGlobal.underwaterCausticsStrength.set(env.waterCausticsStrength);
 			plugin.uboGlobal.elapsedTime.set((float) (plugin.elapsedTime % MAX_FLOAT_WITH_128TH_PRECISION));

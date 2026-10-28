@@ -9,13 +9,16 @@ package rs117.hd;
  */
 public final class Features
 {
-	/** The sun and moon (directional light and its highlights) and the sky's light on what faces up. */
-	public static final boolean SUN = false;
+	/** The sun and moon: their diffuse light and its light through leaves; no highlights, no caustics. */
+	public static final boolean SUN = true;
 	/** Shadow maps. */
 	public static final boolean SHADOWS = false;
 	/** Point lights from objects, NPCs, projectiles and the rest. */
 	public static final boolean LIGHTS = false;
-	/** The daylight cycle and its sky; without it the background is the area's fog color. */
+	/**
+	 * The daylight cycle and its sky, and the sky's light on what faces up; without it the background is the area's
+	 * fog color.
+	 */
 	public static final boolean SKY = false;
 	/** Distance fog and ground fog. */
 	public static final boolean FOG = false;

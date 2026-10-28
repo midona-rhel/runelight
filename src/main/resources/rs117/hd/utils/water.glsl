@@ -120,7 +120,11 @@ vec4 sampleWater(int waterTypeIndex, vec3 viewDir) {
     vec3 skyLightColor = uboGlobal.fogColor;
     float skyLightStrength = 0.5;
     float skyDotNormals = downDotNormals;
+    #if SKY_LIGHT
     vec3 skyLightOut = max(skyDotNormals, 0.0) * skyLightColor * skyLightStrength;
+    #else
+    vec3 skyLightOut = vec3(0); // Lumina: not back yet (Features.SKY)
+    #endif
 
 
     // lightning

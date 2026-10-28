@@ -628,7 +628,7 @@ public interface HdPluginConfig extends Config
 	String KEY_WATER_SPECULAR_REFLECTIONS = "waterSpecularReflection";
 	@ConfigItem(
 		keyName = KEY_WATER_SPECULAR_REFLECTIONS,
-		hidden = !Features.SUN,
+		hidden = true, // Lumina: no specular
 		name = "Water sun & moon reflections",
 		description = "Enables sun and moon highlights on water, including the fake sun when day & night is disabled.",
 		position = 6,
@@ -640,7 +640,7 @@ public interface HdPluginConfig extends Config
 
 	@ConfigItem(
 		keyName = "underwaterCaustics",
-		hidden = !Features.SUN,
+		hidden = true, // Lumina: the sun is diffuse light only
 		name = "Underwater caustics",
 		description = "Apply underwater lighting effects to imitate sunlight passing through waves on the surface.",
 		position = 7,

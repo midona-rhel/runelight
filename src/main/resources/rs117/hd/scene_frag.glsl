@@ -461,8 +461,7 @@ void main() {
         vec3 lightOut = max(lightDotNormals, 0.0) * lightColor;
 
         // directional light specular
-        vec3 lightReflectDir = reflect(-uboGlobal.lightDir, normals);
-        vec3 lightSpecularOut = lightColor * specular(fTexBlend, viewDir, lightReflectDir, vSpecularGloss, vSpecularStrength);
+        vec3 lightSpecularOut = vec3(0); // Lumina: no specular
 
         // point lights
         vec3 pointLightsOut = vec3(0);
@@ -478,7 +477,7 @@ void main() {
         #if SKY_LIGHT
         vec3 skyLightOut = max(skyDotNormals, 0.0) * skyLightColor * skyLightStrength;
         #else
-        vec3 skyLightOut = vec3(0); // Lumina: not back yet (Features.SUN)
+        vec3 skyLightOut = vec3(0); // Lumina: not back yet (Features.SKY)
         #endif
 
 
