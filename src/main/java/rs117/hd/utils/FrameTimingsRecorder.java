@@ -120,7 +120,7 @@ public class FrameTimingsRecorder implements FrameTimer.Listener {
 			String prefix = HdPluginConfig.CONFIG_GROUP + ".";
 			for (String config : configManager.getConfigurationKeys(prefix)) {
 				String key = config.substring(prefix.length());
-				snapshot.settings.put(key, configManager.getConfiguration("hd", key));
+				snapshot.settings.put(key, configManager.getConfiguration(HdPluginConfig.CONFIG_GROUP, key));
 			}
 
 			frameTimer.addTimingsListener(this);

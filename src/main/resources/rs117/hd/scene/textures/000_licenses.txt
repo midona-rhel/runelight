@@ -1,3 +1,6 @@
+RuneLight (a fork of 117 HD) does not include the Infernal cape textures, used with permission for 117 HD, nor
+the sand textures derived from a photograph on Unsplash; their entries below are kept for reference.
+
 Infernal cape texture by deathlezz, used with permission
 -- https://www.reddit.com/user/deathlezz
 

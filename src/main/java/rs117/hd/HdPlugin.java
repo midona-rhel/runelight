@@ -152,14 +152,15 @@ import static rs117.hd.utils.buffer.GLBuffer.STORAGE_WRITE;
 @Slf4j
 @Singleton
 @PluginDescriptor(
-	name = "117 HD",
-	description = "GPU renderer with a suite of graphical enhancements",
-	tags = { "hd", "high", "detail", "graphics", "shaders", "textures", "gpu", "shadows", "lights" },
-	conflicts = "GPU"
+	name = "RuneLight",
+	description = "Lighting-focused GPU renderer, built on 117 HD",
+	tags = { "hd", "high", "detail", "graphics", "shaders", "textures", "gpu", "shadows", "lights", "lighting" },
+	// renderers take over the client's drawing: RuneLite turns the others off when one is turned on
+	conflicts = { "GPU", "117 HD" }
 )
 public class HdPlugin extends Plugin {
 	public static final ResourcePath PLUGIN_DIR = Props
-		.getFolder("rlhd.plugin-dir", () -> path(RuneLite.RUNELITE_DIR, "117hd"));
+		.getFolder("rlhd.plugin-dir", () -> path(RuneLite.RUNELITE_DIR, "runelight"));
 
 	public static final String DISCORD_URL = "https://discord.gg/U4p6ChjgSE";
 	public static final String RUNELITE_URL = "https://runelite.net";

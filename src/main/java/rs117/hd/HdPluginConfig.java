@@ -68,7 +68,8 @@ import static rs117.hd.utils.MathUtils.*;
 @ConfigGroup(CONFIG_GROUP)
 public interface HdPluginConfig extends Config
 {
-	String CONFIG_GROUP = "hd";
+	// RuneLight's own: 117 HD's saved settings and those of RuneLight before the fork stay apart
+	String CONFIG_GROUP = "runelighthd";
 
 	/*====== General settings ======*/
 
