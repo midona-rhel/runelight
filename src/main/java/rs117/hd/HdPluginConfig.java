@@ -924,6 +924,7 @@ public interface HdPluginConfig extends Config
 	String KEY_MODEL_TEXTURES = "objectTextures";
 	@ConfigItem(
 		keyName = KEY_MODEL_TEXTURES,
+		hidden = true,
 		name = "Model textures",
 		description = "Adds new textures to most models. If disabled, the standard game textures will be used instead.",
 		position = 8,
@@ -936,6 +937,7 @@ public interface HdPluginConfig extends Config
 	String KEY_GROUND_TEXTURES = "groundTextures";
 	@ConfigItem(
 		keyName = KEY_GROUND_TEXTURES,
+		hidden = true,
 		name = "Ground textures",
 		description = "Adds new textures to most ground tiles.",
 		position = 9,

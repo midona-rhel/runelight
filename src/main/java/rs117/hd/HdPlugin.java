@@ -1801,12 +1801,13 @@ public class HdPlugin extends Plugin {
 		configShadowTransparency = config.shadowTransparency();
 		configRoofShadows = config.roofShadows();
 		configTerrainShadows = config.terrainShadows() && renderer instanceof ZoneRenderer;
-		configGroundTextures = config.groundTextures();
+		// RuneLight keeps the game's own textures: 117 HD's replacement textures are not part of it
+		configGroundTextures = false;
 		var groundBlending = config.groundBlending();
 		configGroundBlending = groundBlending != GroundBlending.OFF;
 		configGroundBlendingColors = groundBlending.colors;
 		configGroundBlendingTextures = groundBlending.textures;
-		configModelTextures = config.modelTextures();
+		configModelTextures = false;
 		configLegacyTzHaarReskin = config.legacyTzHaarReskin();
 		configProjectileLights = config.projectileLights();
 		configNpcLights = config.npcLights();
