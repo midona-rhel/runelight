@@ -22,8 +22,10 @@ import net.runelite.api.hooks.*;
 import net.runelite.client.eventbus.Subscribe;
 import net.runelite.client.ui.DrawManager;
 import org.lwjgl.opengl.*;
+import rs117.hd.Features;
 import rs117.hd.HdPlugin;
 import rs117.hd.HdPluginConfig;
+import rs117.hd.config.FogDepthMode;
 import rs117.hd.config.ColorFilter;
 import rs117.hd.config.DynamicLights;
 import rs117.hd.model.ModelHasher;
@@ -1029,7 +1031,7 @@ public class LegacyRenderer implements Renderer {
 			Environment env = environmentManager.getCurrentEnvironment();
 
 			float fogDepth = 0;
-			switch (config.fogDepthMode()) {
+			switch (Features.FOG ? config.fogDepthMode() : FogDepthMode.NONE) {
 				case USER_DEFINED:
 					fogDepth = config.fogDepth();
 					break;
@@ -1058,7 +1060,7 @@ public class LegacyRenderer implements Renderer {
 
 			plugin.uboGlobal.groundFogStart.set(env.groundFogStart);
 			plugin.uboGlobal.groundFogEnd.set(env.groundFogEnd);
-			plugin.uboGlobal.groundFogOpacity.set(config.groundFog() ? env.groundFogOpacity : 0);
+			plugin.uboGlobal.groundFogOpacity.set(Features.FOG && config.groundFog() ? env.groundFogOpacity : 0);
 
 			// Lights & lightning
 			plugin.uboGlobal.pointLightsCount.set(lightManager.getNumVisibleLights());

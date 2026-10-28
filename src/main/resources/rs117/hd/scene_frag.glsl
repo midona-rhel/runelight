@@ -475,7 +475,11 @@ void main() {
         vec3 skyLightColor = uboGlobal.fogColor;
         float skyLightStrength = 0.5;
         float skyDotNormals = downDotNormals;
+        #if SKY_LIGHT
         vec3 skyLightOut = max(skyDotNormals, 0.0) * skyLightColor * skyLightStrength;
+        #else
+        vec3 skyLightOut = vec3(0); // RuneLight: not back yet (Features.SUN)
+        #endif
 
 
         // lightning

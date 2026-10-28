@@ -6,6 +6,7 @@ import javax.inject.Inject;
 import javax.inject.Singleton;
 import lombok.extern.slf4j.Slf4j;
 import org.lwjgl.opengl.*;
+import rs117.hd.Features;
 import rs117.hd.HdPlugin;
 import rs117.hd.HdPluginConfig;
 import rs117.hd.config.StarMode;
@@ -290,7 +291,8 @@ public class SkyRenderer {
 			multiply(directionalLight, directionalLight, factor);
 		}
 		float effectiveAmbientStrength = linearSrgbLuminance(ambientLight);
-		float effectiveDirectionalStrength = linearSrgbLuminance(directionalLight);
+		// without the sun (Features.SUN) only the ambient light is left
+		float effectiveDirectionalStrength = Features.SUN ? linearSrgbLuminance(directionalLight) : 0;
 		divide(ambientLight, ambientLight, effectiveAmbientStrength);
 		divide(directionalLight, directionalLight, effectiveDirectionalStrength);
 		// The sun disk can need reflection occlusion even without diffuse lighting

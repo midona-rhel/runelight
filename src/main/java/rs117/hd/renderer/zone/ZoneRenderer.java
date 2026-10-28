@@ -38,6 +38,7 @@ import net.runelite.client.callback.ClientThread;
 import net.runelite.client.eventbus.Subscribe;
 import net.runelite.client.ui.DrawManager;
 import org.lwjgl.opengl.*;
+import rs117.hd.Features;
 import rs117.hd.HdPlugin;
 import rs117.hd.HdPluginConfig;
 import rs117.hd.config.ColorFilter;
@@ -688,7 +689,7 @@ public class ZoneRenderer implements Renderer {
 
 		Environment env = environmentManager.getCurrentEnvironment();
 		float fogDepth = 0;
-		if (!shouldRenderVanillaSkybox) {
+		if (Features.FOG && !shouldRenderVanillaSkybox) {
 			switch (config.fogDepthMode()) {
 				case USER_DEFINED:
 					fogDepth = config.fogDepth();
@@ -714,7 +715,7 @@ public class ZoneRenderer implements Renderer {
 
 		plugin.uboGlobal.groundFogStart.set(env.groundFogStart);
 		plugin.uboGlobal.groundFogEnd.set(env.groundFogEnd);
-		plugin.uboGlobal.groundFogOpacity.set(config.groundFog() ? env.groundFogOpacity : 0);
+		plugin.uboGlobal.groundFogOpacity.set(Features.FOG && config.groundFog() ? env.groundFogOpacity : 0);
 
 		// Lights & lightning
 		plugin.uboGlobal.lightningBrightness.set(environmentManager.getLightningBrightness());

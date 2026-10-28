@@ -14,6 +14,7 @@ import javax.inject.Singleton;
 import lombok.Getter;
 import lombok.extern.slf4j.Slf4j;
 import net.runelite.client.callback.ClientThread;
+import rs117.hd.Features;
 import rs117.hd.HdPlugin;
 import rs117.hd.HdPluginConfig;
 import rs117.hd.config.DaylightCycle;
@@ -203,7 +204,7 @@ public class SkyManager {
 	}
 
 	public void updateConfig() {
-		configCycle = config.daylightCycle();
+		configCycle = Features.SKY ? config.daylightCycle() : DaylightCycle.OFF;
 		configMoonBehavior = config.moonBehavior();
 		configMoonPhase = configMoonBehavior == MoonBehavior.DISABLED ? MoonPhase.FIRST_QUARTER : config.moonPhase();
 		configCycleDuration = max(1e-6f, (float) config.customCycleDurationMinutes());

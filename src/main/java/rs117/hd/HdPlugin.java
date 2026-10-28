@@ -999,6 +999,7 @@ public class HdPlugin extends Plugin {
 			.define("UNDO_VANILLA_SHADING", configShadingMode.undoVanillaShading)
 			.define("LEGACY_GREY_COLORS", configLegacyGreyColors)
 			.define("DISABLE_DIRECTIONAL_SHADING", !configShadingMode.directionalShading)
+			.define("SKY_LIGHT", Features.SUN)
 			.define("FLAT_SHADING", config.flatShading())
 			.define("WIND_DISPLACEMENT", configWindDisplacement)
 			.define("WIND_DISPLACEMENT_NOISE_RESOLUTION", WIND_DISPLACEMENT_NOISE_RESOLUTION)
@@ -1796,7 +1797,7 @@ public class HdPlugin extends Plugin {
 	private void updateCachedConfigs() {
 		configExpandedMapLoadingChunks = useLowMemoryMode ? 0 : config.expandedMapLoadingChunks();
 		configNightBrightness = config.nightBrightness() / 100f;
-		configShadowMode = config.shadowMode();
+		configShadowMode = Features.SHADOWS ? config.shadowMode() : ShadowMode.OFF;
 		configShadowsEnabled = configShadowMode != ShadowMode.OFF;
 		configShadowTransparency = config.shadowTransparency();
 		configRoofShadows = config.roofShadows();
@@ -1809,19 +1810,19 @@ public class HdPlugin extends Plugin {
 		configGroundBlendingTextures = groundBlending.textures;
 		configModelTextures = false;
 		configLegacyTzHaarReskin = config.legacyTzHaarReskin();
-		configProjectileLights = config.projectileLights();
-		configNpcLights = config.npcLights();
-		configPetLights = config.petLights();
-		configThrallLights = config.thrallLights();
-		configSpotanimLights = config.spotanimLights();
-		configObjectLights = config.objectLights();
+		configProjectileLights = Features.LIGHTS && config.projectileLights();
+		configNpcLights = Features.LIGHTS && config.npcLights();
+		configPetLights = Features.LIGHTS && config.petLights();
+		configThrallLights = Features.LIGHTS && config.thrallLights();
+		configSpotanimLights = Features.LIGHTS && config.spotanimLights();
+		configObjectLights = Features.LIGHTS && config.objectLights();
 		configVanillaShadowMode = config.vanillaShadowMode();
 		configHideFakeShadows = configVanillaShadowMode != VanillaShadowMode.SHOW;
 		configLegacyGreyColors = config.legacyGreyColors();
 		configModelBatching = config.modelBatching();
 		configModelCaching = config.modelCaching();
 		configDefaultSkyColor = config.defaultSkyColor();
-		configDynamicLights = config.dynamicLights();
+		configDynamicLights = Features.LIGHTS ? config.dynamicLights() : DynamicLights.NONE;
 		configTiledLighting = config.tiledLighting().get(!OLD_INTEL_GPU);
 		configTiledLightingImageLoadStore = config.imageLoadStore().get(true);
 		configOverrideSky = config.overrideSky();

@@ -228,6 +228,7 @@ public interface HdPluginConfig extends Config
 	String KEY_NORMAL_MAPPING = "normalMapping";
 	@ConfigItem(
 		keyName = KEY_NORMAL_MAPPING,
+		hidden = true,
 		name = "Normal mapping",
 		description = "Affects how light interacts with certain materials. Barely impacts performance.",
 		position = 10,
@@ -240,6 +241,7 @@ public interface HdPluginConfig extends Config
 	String KEY_PARALLAX_OCCLUSION_MAPPING = "parallaxOcclusionMappingToggle";
 	@ConfigItem(
 		keyName = KEY_PARALLAX_OCCLUSION_MAPPING,
+		hidden = true,
 		name = "Parallax occlusion mapping",
 		description = "Adds more depth to some materials, at the cost of higher GPU usage.",
 		position = 11,
@@ -396,17 +398,13 @@ public interface HdPluginConfig extends Config
 
 	/*====== Shadow settings ======*/
 
-	@ConfigSection(
-		name = "Shadows",
-		description = "Shadow settings",
-		position = 1,
-		closedByDefault = true
-	)
+	// RuneLight: no header while none of its settings are shown (Features)
 	String shadowSettings = "shadowSettings";
 
 	String KEY_SHADOW_MODE = "shadowMode";
 	@ConfigItem(
 		keyName = KEY_SHADOW_MODE,
+		hidden = !Features.SHADOWS,
 		name = "Shadow mode",
 		description =
 			"Render fully dynamic shadows.<br>" +
@@ -423,6 +421,7 @@ public interface HdPluginConfig extends Config
 	String KEY_SHADOW_RESOLUTION = "shadowResolution";
 	@ConfigItem(
 		keyName = KEY_SHADOW_RESOLUTION,
+		hidden = !Features.SHADOWS,
 		name = "Shadow quality",
 		description =
 			"The resolution of the shadow map.<br>" +
@@ -437,6 +436,7 @@ public interface HdPluginConfig extends Config
 	String KEY_SHADOW_FILTERING = "shadowFiltering";
 	@ConfigItem(
 		keyName = KEY_SHADOW_FILTERING,
+		hidden = !Features.SHADOWS,
 		name = "Shadow filtering",
 		description =
 			"Filtering technique used when smoothing the edges of shadows.<br>" +
@@ -456,6 +456,7 @@ public interface HdPluginConfig extends Config
 	String KEY_SHADOW_TRANSPARENCY = "enableShadowTransparency";
 	@ConfigItem(
 		keyName = KEY_SHADOW_TRANSPARENCY,
+		hidden = !Features.SHADOWS,
 		name = "Shadow transparency",
 		description = "Enable partial support for taking model transparency into account.",
 		position = 4,
@@ -480,6 +481,7 @@ public interface HdPluginConfig extends Config
 	String KEY_TERRAIN_SHADOWS = "terrainShadows";
 	@ConfigItem(
 		keyName = KEY_TERRAIN_SHADOWS,
+		hidden = !Features.SHADOWS,
 		name = "Terrain shadows",
 		description = "Allow terrain to cast shadows. May cause visual artifacts on slopes.",
 		position = 6,
@@ -492,6 +494,7 @@ public interface HdPluginConfig extends Config
 	String KEY_CONSERVATIVE_SHADOW_CULLING = "expandShadowDraw";
 	@ConfigItem(
 		keyName = KEY_CONSERVATIVE_SHADOW_CULLING,
+		hidden = !Features.SHADOWS,
 		name = "Remove shadow pop-in",
 		description =
 			"Render a potentially much larger part of the scene, to avoid shadows popping in and out<br>" +
@@ -532,6 +535,7 @@ public interface HdPluginConfig extends Config
 	String KEY_LIGHTS = "dynamicLights";
 	@ConfigItem(
 		keyName = KEY_LIGHTS,
+		hidden = !Features.LIGHTS,
 		name = "Lights",
 		description =
 			"The maximum number of dynamic lights visible at once.<br>" +
@@ -546,6 +550,7 @@ public interface HdPluginConfig extends Config
 	String KEY_OBJECT_LIGHTS = "objectLights";
 	@ConfigItem(
 		keyName = KEY_OBJECT_LIGHTS,
+		hidden = !Features.LIGHTS,
 		name = "Object lights",
 		description = "Adds dynamic lights to objects, such as lamps and fires.",
 		position = 1,
@@ -558,6 +563,7 @@ public interface HdPluginConfig extends Config
 	String KEY_NPC_LIGHTS = "npcLights";
 	@ConfigItem(
 		keyName = KEY_NPC_LIGHTS,
+		hidden = !Features.LIGHTS,
 		name = "NPC lights",
 		description = "Adds dynamic lights to some NPCs, excluding pets and followers.",
 		position = 1,
@@ -570,6 +576,7 @@ public interface HdPluginConfig extends Config
 	String KEY_PET_LIGHTS = "petLights";
 	@ConfigItem(
 		keyName = KEY_PET_LIGHTS,
+		hidden = !Features.LIGHTS,
 		name = "Pet lights",
 		description = "Adds dynamic lights to pets and followers.",
 		position = 2,
@@ -582,6 +589,7 @@ public interface HdPluginConfig extends Config
 	String KEY_THRALL_LIGHTS = "thrallLights";
 	@ConfigItem(
 		keyName = KEY_THRALL_LIGHTS,
+		hidden = !Features.LIGHTS,
 		name = "Thrall lights",
 		description = "Adds dynamic lights to thralls.",
 		position = 3,
@@ -594,6 +602,7 @@ public interface HdPluginConfig extends Config
 	String KEY_SPOTANIM_LIGHTS = "spotanimLights";
 	@ConfigItem(
 		keyName = KEY_SPOTANIM_LIGHTS,
+		hidden = !Features.LIGHTS,
 		name = "Animation lights",
 		description = "Adds dynamic lights to spells and other graphical effects.",
 		position = 4,
@@ -606,6 +615,7 @@ public interface HdPluginConfig extends Config
 	String KEY_PROJECTILE_LIGHTS = "projectileLights";
 	@ConfigItem(
 		keyName = KEY_PROJECTILE_LIGHTS,
+		hidden = !Features.LIGHTS,
 		name = "Projectile lights",
 		description = "Adds dynamic lights to some projectiles.",
 		position = 5,
@@ -618,6 +628,7 @@ public interface HdPluginConfig extends Config
 	String KEY_WATER_SPECULAR_REFLECTIONS = "waterSpecularReflection";
 	@ConfigItem(
 		keyName = KEY_WATER_SPECULAR_REFLECTIONS,
+		hidden = !Features.SUN,
 		name = "Water sun & moon reflections",
 		description = "Enables sun and moon highlights on water, including the fake sun when day & night is disabled.",
 		position = 6,
@@ -629,6 +640,7 @@ public interface HdPluginConfig extends Config
 
 	@ConfigItem(
 		keyName = "underwaterCaustics",
+		hidden = !Features.SUN,
 		name = "Underwater caustics",
 		description = "Apply underwater lighting effects to imitate sunlight passing through waves on the surface.",
 		position = 7,
@@ -641,17 +653,13 @@ public interface HdPluginConfig extends Config
 
 	/*====== Day & night settings ======*/
 
-	@ConfigSection(
-		name = "Day & night",
-		description = "Daylight cycle settings",
-		position = 3,
-		closedByDefault = false
-	)
+	// RuneLight: no header while none of its settings are shown (Features)
 	String daylightCycleSettings = "daylightCycleSettings";
 
 	String KEY_DAYLIGHT_CYCLE = "daylightCycle";
 	@ConfigItem(
 		keyName = KEY_DAYLIGHT_CYCLE,
+		hidden = !Features.SKY,
 		name = "Cycle mode",
 		description =
 			"Controls the day & night cycle behavior.<br>" +
@@ -677,6 +685,7 @@ public interface HdPluginConfig extends Config
 	@Units(Units.PERCENT)
 	@ConfigItem(
 		keyName = KEY_NIGHT_BRIGHTNESS,
+		hidden = !Features.SKY,
 		name = "Night brightness",
 		description =
 			"Simulates your eyes adapting to darkness by brightening night-time lighting.<br>" +
@@ -693,6 +702,7 @@ public interface HdPluginConfig extends Config
 	String KEY_STARS = "stars";
 	@ConfigItem(
 		keyName = KEY_STARS,
+		hidden = !Features.SKY,
 		name = "Stars",
 		description =
 			"'Off' hides stars.<br>" +
@@ -709,6 +719,7 @@ public interface HdPluginConfig extends Config
 	String KEY_NEBULAE = "nebulae";
 	@ConfigItem(
 		keyName = KEY_NEBULAE,
+		hidden = !Features.SKY,
 		name = "Nebulae",
 		description = "Show clouds of cosmic dust and gas in the night sky.",
 		position = 3,
@@ -721,6 +732,7 @@ public interface HdPluginConfig extends Config
 	String KEY_MOON_BEHAVIOR = "moonBehavior";
 	@ConfigItem(
 		keyName = KEY_MOON_BEHAVIOR,
+		hidden = !Features.SKY,
 		name = "Moon behavior",
 		description =
 			"Controls how the moon moves across the sky.<br>" +
@@ -738,6 +750,7 @@ public interface HdPluginConfig extends Config
 	String KEY_MOON_PHASE = "moonPhase";
 	@ConfigItem(
 		keyName = KEY_MOON_PHASE,
+		hidden = !Features.SKY,
 		name = "Moon phase",
 		description =
 			"Controls the portion of the moon which is lit by the sun.<br>" +
@@ -755,6 +768,7 @@ public interface HdPluginConfig extends Config
 	@Units(Units.MINUTES)
 	@ConfigItem(
 		keyName = KEY_CUSTOM_CYCLE_DURATION,
+		hidden = !Features.SKY,
 		name = "Custom cycle duration",
 		description = "Configures how long each Custom day & night cycle lasts.",
 		position = 6,
@@ -769,6 +783,7 @@ public interface HdPluginConfig extends Config
 	@Units("°")
 	@ConfigItem(
 		keyName = KEY_LATITUDE_DEGREES,
+		hidden = !Features.SKY,
 		name = "Real-time latitude",
 		description =
 			"<b>Advanced setting</b>: Change the latitude coordinate for realistic sun and moon movement for a location on Earth.<br>" +
@@ -788,6 +803,7 @@ public interface HdPluginConfig extends Config
 	@Units("°")
 	@ConfigItem(
 		keyName = KEY_LONGITUDE_DEGREES,
+		hidden = !Features.SKY,
 		name = "Real-time longitude",
 		description =
 			"<b>Advanced setting</b>: Change the longitude coordinate for realistic sun and moon movement for a location on Earth.<br>" +
@@ -851,6 +867,7 @@ public interface HdPluginConfig extends Config
 
 	@ConfigItem(
 		keyName = "fogDepthMode",
+		hidden = !Features.FOG,
 		name = "Fog depth mode",
 		description =
 			"Determines how the fog amount is controlled.<br>" +
@@ -870,6 +887,7 @@ public interface HdPluginConfig extends Config
 	@Units(" tiles")
 	@ConfigItem(
 		keyName = "fogDepth",
+		hidden = !Features.FOG,
 		name = "Static fog depth",
 		description =
 			"Specify how far from the edge fog should reach.<br>" +
@@ -884,6 +902,7 @@ public interface HdPluginConfig extends Config
 
 	@ConfigItem(
 		keyName = "groundFog",
+		hidden = !Features.FOG,
 		name = "Ground fog",
 		description = "Enables a height-based fog effect that covers the ground in certain areas.",
 		position = 5,
@@ -1252,6 +1271,7 @@ public interface HdPluginConfig extends Config
 
 	@ConfigItem(
 		keyName = "shadowDistance",
+		hidden = !Features.SHADOWS,
 		name = "Legacy shadow distance",
 		description =
 			"The maximum draw distance for shadows.<br>" +
@@ -1442,6 +1462,7 @@ public interface HdPluginConfig extends Config
 
 	@ConfigItem(
 		keyName = "experimentalNightAdaptationEverywhere",
+		hidden = !Features.SKY,
 		name = "Night adaptation everywhere",
 		description = "Apply Day & night's 'Night brightness' adaptation to all dark scenes.",
 		section = experimentalSettings
@@ -1464,6 +1485,7 @@ public interface HdPluginConfig extends Config
 	String KEY_TILED_LIGHTING = "tiledLighting";
 	@ConfigItem(
 		keyName = KEY_TILED_LIGHTING,
+		hidden = !Features.LIGHTS,
 		name = "Tiled lighting",
 		description =
 			"Allows rendering <b>a lot</b> more lights simultaneously.<br>" +

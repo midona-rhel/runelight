@@ -35,6 +35,7 @@ import lombok.Getter;
 import lombok.extern.slf4j.Slf4j;
 import net.runelite.api.*;
 import net.runelite.client.callback.ClientThread;
+import rs117.hd.Features;
 import rs117.hd.HdPlugin;
 import rs117.hd.HdPluginConfig;
 import rs117.hd.config.DaylightCycle;
@@ -324,7 +325,7 @@ public class EnvironmentManager {
 		// between fixed and moving skies would also blend unrelated celestial motion.
 		boolean oldHasFixedSun = state.target.getSky().sunAngles != null;
 		boolean newHasFixedSun = newEnvironment.getSky().sunAngles != null;
-		if (config.daylightCycle() != DaylightCycle.OFF && state.target != Environment.NONE &&
+		if (Features.SKY && config.daylightCycle() != DaylightCycle.OFF && state.target != Environment.NONE &&
 			oldHasFixedSun != newHasFixedSun)
 			skipTransition = true;
 
