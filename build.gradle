@@ -13,11 +13,14 @@ repositories {
 	mavenCentral()
 }
 
-def runeLiteVersion = 'latest.release'
-def pluginMainClass = 'com.midonarhel.runelight.RuneLightPluginTest'
+// pinned to the release the GPU plugin source was copied from; bump both together
+def runeLiteVersion = '1.13.4'
+def pluginMainClass = 'com.midonarhel.lumina.LuminaPluginTest'
 
 dependencies {
 	compileOnly group: 'net.runelite', name: 'client', version: runeLiteVersion
+	compileOnly 'org.projectlombok:lombok:1.18.30'
+	annotationProcessor 'org.projectlombok:lombok:1.18.30'
 
 	testImplementation 'junit:junit:4.12'
 	testImplementation group: 'net.runelite', name: 'client', version: runeLiteVersion
@@ -31,7 +34,7 @@ tasks.withType(JavaCompile).configureEach {
 	options.release.set(11)
 }
 
-// Dev client with this plugin loaded. Shaders are read from src/main/resources and hot reloaded on save.
+// Dev client with this plugin loaded.
 tasks.register('run', JavaExec) {
 	classpath = sourceSets.test.runtimeClasspath
 	mainClass = pluginMainClass
@@ -43,14 +46,4 @@ tasks.register('run', JavaExec) {
 		jvmArgs '--add-exports=java.desktop/com.apple.eawt=ALL-UNNAMED', '--add-opens=java.desktop/com.apple.eawt=ALL-UNNAMED'
 	}
 	args '--developer-mode'
-}
-
-// Re-run the production light culler on captured scene data; no game or GL context needed.
-tasks.register('sceneClusterReplay', JavaExec) {
-    dependsOn testClasses
-    classpath = sourceSets.test.runtimeClasspath
-    mainClass = 'com.midonarhel.runelight.SceneClusterReplay'
-    doFirst {
-        args project.property('sceneCapture'), project.property('replayOutput')
-    }
 }
