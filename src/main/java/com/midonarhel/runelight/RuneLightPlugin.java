@@ -98,6 +98,7 @@ import net.runelite.client.plugins.PluginInstantiationException;
 import net.runelite.client.plugins.PluginManager;
 import com.midonarhel.runelight.config.AntiAliasingMode;
 import com.midonarhel.runelight.config.DebugView;
+import com.midonarhel.runelight.config.ShadingMode;
 import com.midonarhel.runelight.config.UIScalingMode;
 import com.midonarhel.runelight.config.WeatherMode;
 import com.midonarhel.runelight.template.Template;
@@ -372,6 +373,10 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 	private final PointLight testLight = new PointLight();
 	private int uniAlphaPass;
 	private int uniSceneOutdoors;
+	// forward: the scene is lit (the sun or the cave light) rather than drawn in its vanilla colors
+	private int uniSceneLit;
+	// forward: the sun shades by N.L (ShadingMode.directionalShading)
+	private int uniSceneDirectional;
 	private int uniSceneProceduralSky;
 	private int uniSceneCasterDir;
 	private int uniSceneSunIsCaster, uniSceneStrikeLight;
@@ -491,6 +496,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 	// per-frame state for the full-screen passes, captured during the scene draw
 	private float frameCameraX, frameCameraY, frameCameraZ;
 	private boolean frameOutdoors;
+	private boolean frameLit;
 	private boolean frameHasSkybox;
 	private boolean frameShadows;
 	private int frameSkyColor;
@@ -690,7 +696,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		overlayManager.add(overlay);
 		glErrorChecks = config.glErrorChecks();
 
-		VertexShading.undoVanillaShading = Features.SURFACES && config.removeBakedShading();
+		setShadingMode();
 		GroundBlender.enabled = Features.SURFACES && config.groundBlending();
 
 		sceneLights = new SceneLights(client);
@@ -868,6 +874,8 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 			// deferred, zones are culled by zoneInFrustum: a circle around the player and the real frustum (EdgeFade);
 			// forward, the client culls them in its square of the draw distance, as for the GPU plugin
 			| (FORWARD ? 0 : DrawCallbacks.ZBUF_ZONE_FRUSTUM_CHECK)
+			// as 117 HD: the client keeps the models' unlit colors only when asked (ShadingMode.unlitFaceColors)
+			| (Features.SUN && config.shadingMode().unlitFaceColors ? DrawCallbacks.UNLIT_FACE_COLORS : 0)
 			| DrawCallbacks.RENDER_THREADS(threads)
 		);
 	}
@@ -1031,12 +1039,13 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 					}
 				});
 			}
-			else if (configChanged.getKey().equals("removeBakedShading"))
+			else if (configChanged.getKey().equals("shadingMode") || configChanged.getKey().equals("preserveVanillaNormals"))
 			{
 				clientThread.invokeLater(() ->
 				{
-					// colors are baked into the vertex data at upload, so reload the scene
-					VertexShading.undoVanillaShading = Features.SURFACES && config.removeBakedShading();
+					// colors and normals are baked into the vertex data at upload, so reload the scene
+					setShadingMode();
+					setupGpuFlags();
 					if (client.getGameState() == GameState.LOGGED_IN)
 					{
 						client.setGameState(GameState.LOADING);
@@ -1283,6 +1292,8 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 
 		uniAlphaPass = glGetUniformLocation(glProgram, "alphaPass");
 		uniSceneOutdoors = glGetUniformLocation(glProgram, "outdoors");
+		uniSceneLit = glGetUniformLocation(glProgram, "lit");
+		uniSceneDirectional = glGetUniformLocation(glProgram, "directionalShading");
 		uniSceneProceduralSky = glGetUniformLocation(glProgram, "proceduralSky");
 		uniSceneCasterDir = glGetUniformLocation(glProgram, "casterDir");
 		uniSceneSunIsCaster = glGetUniformLocation(glProgram, "sunIsCaster");
@@ -1405,6 +1416,15 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		glUniform1i(glGetUniformLocation(p, "sceneAlpha"), ALPHA_LAYER_UNIT);
 		glUniform1i(glGetUniformLocation(p, "sceneMaterial"), MATERIAL_UNIT);
 		glUseProgram(0);
+	}
+
+	/** The upload's part of the shading mode (ShadingMode): which colors and normals the faces take. */
+	private void setShadingMode()
+	{
+		ShadingMode mode = config.shadingMode();
+		VertexShading.undoVanillaShading = Features.SUN && mode.undoVanillaShading;
+		VertexShading.unlitFaceColors = Features.SUN && mode.unlitFaceColors;
+		VertexShading.preserveVanillaNormals = Features.SUN && config.preserveVanillaNormals();
 	}
 
 	private float windSwayAmount()
@@ -1965,13 +1985,24 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		final int sky = client.getSkyboxColor();
 		glUniform1i(uniAlphaPass, 0);
 		glUniform1i(uniSceneOutdoors, frameOutdoors ? 1 : 0);
+		glUniform1i(uniSceneLit, FORWARD && frameLit ? 1 : 0);
+		glUniform1i(uniSceneDirectional, config.shadingMode().directionalShading ? 1 : 0);
 		glUniform1i(uniSceneProceduralSky, proceduralSky() ? 1 : 0);
 		glUniform3fv(uniSceneCasterDir, dayCycle.casterDir);
 		glUniform1i(uniSceneSunIsCaster, dayCycle.sunIsCaster ? 1 : 0);
 		glUniform2fv(uniSceneStrikeLight, dayCycle.strikeLight);
 		glUniform1f(uniSceneSunAltitude, dayCycle.sunAltitude);
-		weather.setOvercastUniform(uniSceneOvercast);
-		weather.setLightUniform(uniSceneWeatherLight);
+		if (Features.WEATHER)
+		{
+			weather.setOvercastUniform(uniSceneOvercast);
+			weather.setLightUniform(uniSceneWeatherLight);
+		}
+		else
+		{
+			// a clear sky and neutral light, not whatever the weather held when it last ran
+			glUniform3f(uniSceneOvercast, 0, 0, 0);
+			glUniform4f(uniSceneWeatherLight, 0, 0, 0, 0);
+		}
 		// plants can be held to a low animation rate like the game's own animations: the wind uniforms then only
 		// change on those ticks (the scene and shadow programs keep the last values in between)
 		long swayNow = System.nanoTime();
@@ -2156,7 +2187,18 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		frameSkyColor = client.getSkyboxColor();
 		frameHasSkybox = scene.getSkybox() != null;
 		frameDrawDistance = getDrawDistance() * Perspective.LOCAL_TILE_SIZE;
+		frameLit = Features.SUN && config.sunLighting();
 		frameOutdoors = false;
+		if (frameLit)
+		{
+			// the sun where the sky is open (the cave light under the ground), at the hour of the day cycle
+			cpuTimer.begin(CpuTimer.ENVIRONMENT);
+			frameOpenSky = updateEnvironment(scene);
+			cpuTimer.end(CpuTimer.ENVIRONMENT);
+			frameOutdoors = frameOpenSky;
+			frameGameMillis = GameClock.gameMillis(System.currentTimeMillis(), config.dayCycleMinutes());
+			dayCycle.update(frameGameMillis, config.dayCycleMinutes(), config.fixedHour());
+		}
 		frameShadows = false;
 		VAO.clearShadowDraws();
 		VAO.recordShadowDraws = false;
@@ -2372,7 +2414,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 	 */
 	private boolean updateEnvironment(Scene scene)
 	{
-		if (!config.areaEnvironments())
+		if (!(Features.ENVIRONMENT && config.areaEnvironments()))
 		{
 			int r = frameSkyColor >> 16 & 0xFF, g = frameSkyColor >> 8 & 0xFF, b = frameSkyColor & 0xFF;
 			return r + g + b > 24;
@@ -2387,7 +2429,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 
 	private void setEnvironmentUniforms(EnvironmentUniforms u)
 	{
-		boolean on = config.areaEnvironments();
+		boolean on = Features.ENVIRONMENT && config.areaEnvironments();
 		// the game's own skyboxes have their own colors; area fog would not match them, like in 117 HD
 		float fog = frameHasSkybox ? 0 : weather.distanceFogScale();
 		u.set(on ? environmentManager : null, fog, getDrawDistance(), edgeFade.focalX, edgeFade.focalZ);

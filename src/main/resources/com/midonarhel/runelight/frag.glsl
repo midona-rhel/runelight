@@ -66,6 +66,8 @@ layout(location = 3) out vec4 FragMaterial;  // the material and the face's norm
 // Transparent faces are drawn in a separate pass into their own layer and lit right here, because the composite
 // pass only sees the opaque surface behind them. Same lighting as the composite, without shadows.
 uniform int alphaPass;
+uniform int lit;  // forward: shade the surface (outdoors the sun, else the cave light) rather than its vanilla color
+uniform int directionalShading;  // forward: the sun by N.L, else 117 HD's constant 0.7 (ShadingMode)
 uniform int outdoors;
 uniform int proceduralSky;
 uniform vec3 casterDir;
@@ -132,19 +134,14 @@ void main() {
   c.rgb = colorblind(c.rgb);
 #endif
 
-#if FORWARD
-  // the vanilla color as the GPU plugin draws it (with its default fog depth of 0: no fog); transparent faces are
-  // blended over the scene by their alpha
-  FragColor = c;
-  return;
-#endif
-
-  // opaque surfaces are lit and fogged later by the composite pass
+  // deferred: opaque surfaces are lit and fogged later by the composite pass
   FragColor = c;
 
   // The triangle's own normal from screen-space derivatives, facing the camera. Used for faces the game marks
   // as flat shaded, and as the reference that orients the smooth vertex normal.
-  vec3 faceNormal = normalize(cross(dFdx(fWorldPos), dFdy(fWorldPos)));
+  // (a triangle seen edge-on or smaller than a pixel has no derivative normal: up stands in, never a NaN)
+  vec3 faceCross = cross(dFdx(fWorldPos), dFdy(fWorldPos));
+  vec3 faceNormal = dot(faceCross, faceCross) > 1e-12 ? normalize(faceCross) : vec3(0.0, -1.0, 0.0);
   if (dot(faceNormal, vec3(cameraX, cameraY, cameraZ) - fWorldPos) < 0.0)
     faceNormal = -faceNormal;
   vec3 n = faceNormal;
@@ -152,6 +149,26 @@ void main() {
     vec3 sn = normalize(fNormal);
     n = dot(sn, faceNormal) < 0.0 ? -sn : sn;
   }
+
+#if FORWARD
+  // Forward, the surface is shaded here: 117 HD's model of an ambient light, the sky's light on what faces up and
+  // the sun (or moon) on what faces it, in linear color; underground the cave light. Unlit, the vanilla color as the
+  // GPU plugin draws it (with its default fog depth of 0: no fog). Transparent faces are blended over the scene.
+  if (lit == 1) {
+    vec3 light;
+    if (outdoors == 1) {
+      vec3 caster = strikeCaster(sunIsCaster == 1 ? sunLight(sunAltitude) : moonLight(sunAltitude));
+      light = (ambientLight(sunAltitude) + skyLight(sunAltitude) * max(-n.y, 0.0)) * envAmbient
+        + caster * envSun * (directionalShading == 1 ? max(dot(n, casterDir), 0.0) : 0.7);
+    } else {
+      light = envCaveLight(n);
+    }
+    c.rgb = shade(c.rgb, light);
+  }
+  FragColor = c;
+  return;
+#endif
+
   FragNormal = vec4(n * 0.5 + 0.5, c.a);
   // alpha 1 marks the sample as covered by geometry (SceneTargets.clear); the opaque pass writes without blending
   FragMaterial = materialPack(fMaterial, faceNormal, fUv * 256.0);

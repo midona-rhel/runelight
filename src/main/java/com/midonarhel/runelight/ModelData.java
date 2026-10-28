@@ -14,6 +14,8 @@ final class ModelData
 {
 	int vertexCount;
 	float[] verticesX, verticesY, verticesZ;
+	// the game's own vertex normals (VertexShading.computeNormals), null where the model has none
+	int[] normalsX, normalsY, normalsZ;
 
 	int faceCount;
 	int[] indices1, indices2, indices3;
@@ -31,7 +33,7 @@ final class ModelData
 	byte overrideAmount, overrideHue, overrideSaturation, overrideLuminance;
 
 	// copy's arrays, one per array field, kept between models
-	private final Object[] owned = new Object[18];
+	private final Object[] owned = new Object[21];
 
 	/**
 	 * The model a renderable draws, as SceneUploader finds it: the renderable itself, or an animated object's model;
@@ -60,6 +62,9 @@ final class ModelData
 		verticesX = m.getVerticesX();
 		verticesY = m.getVerticesY();
 		verticesZ = m.getVerticesZ();
+		normalsX = m.getVertexNormalsX();
+		normalsY = m.getVertexNormalsY();
+		normalsZ = m.getVertexNormalsZ();
 
 		faceCount = m.getFaceCount();
 		indices1 = m.getFaceIndices1();
@@ -88,6 +93,9 @@ final class ModelData
 		verticesX = copy(0, m.getVerticesX(), v);
 		verticesY = copy(1, m.getVerticesY(), v);
 		verticesZ = copy(2, m.getVerticesZ(), v);
+		normalsX = copy(18, m.getVertexNormalsX(), v);
+		normalsY = copy(19, m.getVertexNormalsY(), v);
+		normalsZ = copy(20, m.getVertexNormalsZ(), v);
 
 		int f = faceCount = m.getFaceCount();
 		indices1 = copy(3, m.getFaceIndices1(), f);

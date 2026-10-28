@@ -1200,6 +1200,7 @@ class SceneUploader
 		final VertexShading.Normals computed = this.computedNormals;
 		computed.ensure(model.getVerticesCount());
 		VertexShading.computeNormals(model.getVerticesCount(), vertexX, vertexY, vertexZ,
+			model.getVertexNormalsX(), model.getVertexNormalsY(), model.getVertexNormalsZ(),
 			model.getFaceCount(), indices1, indices2, indices3, color3s, computed.x, computed.y, computed.z);
 		final float[] normalsX = computed.x;
 		final float[] normalsY = computed.y;
@@ -1301,11 +1302,11 @@ class SceneUploader
 
 			if (faceTextures == null || faceTextures[face] == -1)
 			{
-				color1 = VertexShading.baseColor(color1, face, triangleA, normalsX, normalsY, normalsZ);
+				color1 = VertexShading.baseColor(color1, face, triangleA, unlitColors, normalsX, normalsY, normalsZ);
 				if (!flat)
 				{
-					color2 = VertexShading.baseColor(color2, face, triangleB, normalsX, normalsY, normalsZ);
-					color3 = VertexShading.baseColor(color3, face, triangleC, normalsX, normalsY, normalsZ);
+					color2 = VertexShading.baseColor(color2, face, triangleB, unlitColors, normalsX, normalsY, normalsZ);
+					color3 = VertexShading.baseColor(color3, face, triangleC, unlitColors, normalsX, normalsY, normalsZ);
 				}
 			}
 			if (flat)
@@ -1313,18 +1314,19 @@ class SceneUploader
 				color2 = color3 = color1;
 			}
 
-			boolean smooth = !flat && hasNormals;
+			// flat faces keep their own normal unless the game's are preserved (117 HD's option)
+			boolean smooth = (!flat || VertexShading.preserveVanillaNormals) && hasNormals;
 			int n1 = smooth ? VertexShading.vertexNormal(normalsX, normalsY, normalsZ, triangleA, normalSin, normalCos) : 0;
 			int n2 = smooth ? VertexShading.vertexNormal(normalsX, normalsY, normalsZ, triangleB, normalSin, normalCos) : 0;
 			int n3 = smooth ? VertexShading.vertexNormal(normalsX, normalsY, normalsZ, triangleC, normalSin, normalCos) : 0;
-			if (flat && hasNormals
+			if (flat && !VertexShading.preserveVanillaNormals && hasNormals
 				&& VertexShading.flatFaceNormals(vertexX, vertexY, vertexZ, normalsX, normalsY, normalsZ, triangleA, triangleB, triangleC, normalSin, normalCos, flatNormals))
 			{
 				n1 = flatNormals[0];
 				n2 = flatNormals[1];
 				n3 = flatNormals[2];
 				// one color over the rounded surface: the per-face lit colors would still show the facets
-				if (unlitColors != null && (faceTextures == null || faceTextures[face] == -1))
+				if (VertexShading.undoVanillaShading && unlitColors != null && (faceTextures == null || faceTextures[face] == -1))
 				{
 					color1 = color2 = color3 = unlitColors[face] & 0xffff;
 				}

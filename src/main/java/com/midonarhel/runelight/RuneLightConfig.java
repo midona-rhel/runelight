@@ -36,6 +36,7 @@ import com.midonarhel.runelight.config.ColorBlindMode;
 import com.midonarhel.runelight.config.DebugView;
 import com.midonarhel.runelight.config.Quality;
 import com.midonarhel.runelight.config.RenderScale;
+import com.midonarhel.runelight.config.ShadingMode;
 import com.midonarhel.runelight.config.ShadowResolution;
 import com.midonarhel.runelight.config.SwayFps;
 import com.midonarhel.runelight.config.UIScalingMode;
@@ -189,12 +190,16 @@ public interface RuneLightConfig extends Config
 		ADAPTIVE
 	}
 
-	// no header while none of its settings are shown (Features)
+	@ConfigSection(
+		name = "Lighting",
+		description = "Sun, shadows, ambient occlusion, point lights and interiors",
+		position = 30
+	)
 	String lightingSection = "lighting";
 
 	@ConfigItem(
 		keyName = "sunLighting",
-		hidden = !Features.LIGHTING,
+		hidden = !Features.SUN,
 		name = "Sun and moon lighting",
 		description = "Day and night cycle with directional light from the sun or moon. Off underground.",
 		section = lightingSection,
@@ -364,17 +369,32 @@ public interface RuneLightConfig extends Config
 	}
 
 	@ConfigItem(
-		keyName = "removeBakedShading",
-		hidden = !Features.SURFACES,
-		name = "Remove baked shading",
-		description = "The game bakes light from one fixed direction into model colors. Remove it so the sun, moon and "
-			+ "lights do the shading. Reloads the scene when changed.",
+		keyName = "shadingMode",
+		hidden = !Features.SUN,
+		name = "Shading mode",
+		description = "117 HD's shading modes. 117 HD: the shading baked into the game's colors is removed and the sun "
+			+ "shades. Vanilla: the baked shading stays and the sun lights every face the same. None: the game's unlit "
+			+ "colors, lit the same everywhere. Experimental: the unlit colors, shaded by the sun. Reloads the scene.",
 		section = lightingSection,
 		position = 43
 	)
-	default boolean removeBakedShading()
+	default ShadingMode shadingMode()
 	{
-		return true;
+		return ShadingMode.DEFAULT;
+	}
+
+	@ConfigItem(
+		keyName = "preserveVanillaNormals",
+		hidden = !Features.SUN,
+		name = "Preserve vanilla normals",
+		description = "Flat shaded faces take the game's own normals too, like 117 HD's option of the same name; there "
+			+ "they are often less accurate. Reloads the scene.",
+		section = lightingSection,
+		position = 44
+	)
+	default boolean preserveVanillaNormals()
+	{
+		return false;
 	}
 
 	@ConfigItem(
@@ -411,11 +431,11 @@ public interface RuneLightConfig extends Config
 	@Units(Units.MINUTES)
 	@ConfigItem(
 		keyName = "dayCycleMinutes",
-		hidden = !Features.SKY,
+		hidden = !Features.SUN,
 		name = "Day length",
 		description = "Real minutes per full day and night; the time follows the real clock, so it is the same whenever "
 			+ "you play. 0 holds the time at the fixed hour (the weather goes on at 24 minutes a day).",
-		section = skySection,
+		section = lightingSection,
 		position = 42
 	)
 	default int dayCycleMinutes()
@@ -426,10 +446,10 @@ public interface RuneLightConfig extends Config
 	@Range(max = 23)
 	@ConfigItem(
 		keyName = "fixedHour",
-		hidden = !Features.SKY,
+		hidden = !Features.SUN,
 		name = "Fixed hour",
 		description = "Time of day to hold when day length is 0. 6 is sunrise, 12 midday.",
-		section = skySection,
+		section = lightingSection,
 		position = 43
 	)
 	default int fixedHour()

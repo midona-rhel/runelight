@@ -15,6 +15,10 @@ final class VertexShading
 	private static final float LIGHTNESS_MULTIPLIER = 3;
 
 	static boolean undoVanillaShading = true;
+	// the shading mode's (ShadingMode): untextured faces take the model's unlit colors
+	static boolean unlitFaceColors;
+	// 117 HD's option: flat shaded faces take the game's normals too, not their own
+	static boolean preserveVanillaNormals;
 
 	private VertexShading()
 	{
@@ -137,12 +141,15 @@ final class VertexShading
 	}
 
 	/**
-	 * Smooth vertex normals computed from the model's own geometry: each vertex gets the area-weighted average of
-	 * the normals of the visible faces around it. Doesn't depend on the game providing normals, which it doesn't
-	 * always do, and which 117 HD found to be inaccurate anyway. The sign follows the face winding, which is
-	 * consistent within a model; the fragment shader aligns it with the triangle's facing regardless.
+	 * Smooth vertex normals: the game's own where it gives one, as 117 HD uses them (the normals the vanilla shading
+	 * was baked with, which keep foliage evenly lit; 117 HD only finds them inaccurate on flat shaded faces, which
+	 * take their own normal: flatFaceNormals). Elsewhere the area-weighted average of the normals of the visible
+	 * faces around the vertex. The sign follows the face winding, which is consistent within a model; the fragment
+	 * shader aligns it with the triangle's facing regardless.
+	 *
+	 * @param gx the game's vertex normals, or null when the model has none
 	 */
-	static void computeNormals(int vertexCount, float[] vx, float[] vy, float[] vz,
+	static void computeNormals(int vertexCount, float[] vx, float[] vy, float[] vz, int[] gx, int[] gy, int[] gz,
 		int faceCount, int[] i1, int[] i2, int[] i3, int[] colors3, float[] nx, float[] ny, float[] nz)
 	{
 		java.util.Arrays.fill(nx, 0, vertexCount, 0);
@@ -168,6 +175,21 @@ final class VertexShading
 			nx[c] += fx;
 			ny[c] += fy;
 			nz[c] += fz;
+		}
+		if (gx == null || gy == null || gz == null)
+		{
+			return;
+		}
+		int n = Math.min(vertexCount, Math.min(gx.length, Math.min(gy.length, gz.length)));
+		for (int v = 0; v < n; ++v)
+		{
+			int x = gx[v], y = gy[v], z = gz[v];
+			if (x != 0 || y != 0 || z != 0)
+			{
+				nx[v] = x;
+				ny[v] = y;
+				nz[v] = z;
+			}
 		}
 	}
 
@@ -196,10 +218,15 @@ final class VertexShading
 	 * the directional shading. Untextured faces only: textured faces store a bare lightness that the fragment
 	 * shader multiplies the texture by.
 	 *
+	 * @param unlit the model's unlit face colors, or null
 	 * @param nx unrotated model vertex normals (vanilla lights in model space), or null
 	 */
-	static int baseColor(int color, int face, int vertex, float[] nx, float[] ny, float[] nz)
+	static int baseColor(int color, int face, int vertex, short[] unlit, float[] nx, float[] ny, float[] nz)
 	{
+		if (unlitFaceColors && unlit != null)
+		{
+			return unlit[face] & 0xffff;
+		}
 		if (!undoVanillaShading || nx == null)
 		{
 			return color;

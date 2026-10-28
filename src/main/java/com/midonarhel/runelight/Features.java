@@ -12,7 +12,9 @@ final class Features
 {
 	private static final boolean DEFERRED = !RuneLightPlugin.FORWARD;
 
-	/** Sun and moon, shadows, AO, point lights and the light map, interiors, glow and light through leaves. */
+	/** The sun and moon (or the cave light underground) and the sky's light, with the game's baked shading removed. */
+	static final boolean SUN = true;
+	/** Shadows, AO, point lights and the light map, interiors, glow and light through leaves. */
 	static final boolean LIGHTING = DEFERRED;
 	/** The procedural sky, clouds and the night sky. */
 	static final boolean SKY = DEFERRED;
@@ -24,7 +26,7 @@ final class Features
 	static final boolean FOG = DEFERRED;
 	/** Area environments and wind sway. */
 	static final boolean ENVIRONMENT = DEFERRED;
-	/** Changes to the scene's colors at upload: the baked shading removed, ground blending. */
+	/** Ground blending, a change to the terrain's colors at upload. */
 	static final boolean SURFACES = DEFERRED;
 
 	private Features()
