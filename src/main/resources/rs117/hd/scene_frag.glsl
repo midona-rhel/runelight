@@ -478,7 +478,7 @@ void main() {
         #if SKY_LIGHT
         vec3 skyLightOut = max(skyDotNormals, 0.0) * skyLightColor * skyLightStrength;
         #else
-        vec3 skyLightOut = vec3(0); // RuneLight: not back yet (Features.SUN)
+        vec3 skyLightOut = vec3(0); // Lumina: not back yet (Features.SUN)
         #endif
 
 

@@ -1,7 +1,7 @@
 package rs117.hd;
 
 /**
- * What RuneLight has brought back on top of 117 HD's renderer. With all of these off it draws the game with 117 HD's
+ * What Lumina has brought back on top of 117 HD's renderer. With all of these off it draws the game with 117 HD's
  * ambient light alone. A feature that is false here does no work whatever its settings say, and its settings are
  * hidden; bringing one back is turning it on here, measured against the frame before.
  *

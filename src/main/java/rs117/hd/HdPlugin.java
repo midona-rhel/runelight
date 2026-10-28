@@ -152,7 +152,7 @@ import static rs117.hd.utils.buffer.GLBuffer.STORAGE_WRITE;
 @Slf4j
 @Singleton
 @PluginDescriptor(
-	name = "RuneLight",
+	name = "Lumina",
 	description = "Lighting-focused GPU renderer, built on 117 HD",
 	tags = { "hd", "high", "detail", "graphics", "shaders", "textures", "gpu", "shadows", "lights", "lighting" },
 	// renderers take over the client's drawing: RuneLite turns the others off when one is turned on
@@ -160,7 +160,7 @@ import static rs117.hd.utils.buffer.GLBuffer.STORAGE_WRITE;
 )
 public class HdPlugin extends Plugin {
 	public static final ResourcePath PLUGIN_DIR = Props
-		.getFolder("rlhd.plugin-dir", () -> path(RuneLite.RUNELITE_DIR, "runelight"));
+		.getFolder("rlhd.plugin-dir", () -> path(RuneLite.RUNELITE_DIR, "lumina"));
 
 	public static final String DISCORD_URL = "https://discord.gg/U4p6ChjgSE";
 	public static final String RUNELITE_URL = "https://runelite.net";
@@ -771,7 +771,7 @@ public class HdPlugin extends Plugin {
 
 				clientThread.invokeLater(this::displayUpdateMessage);
 
-				log.info("117 HD started successfully!");
+				log.info("Lumina started successfully!");
 			} catch (Throwable err) {
 				log.error("Error while starting 117 HD", err);
 				stopPlugin();
@@ -1802,7 +1802,7 @@ public class HdPlugin extends Plugin {
 		configShadowTransparency = config.shadowTransparency();
 		configRoofShadows = config.roofShadows();
 		configTerrainShadows = config.terrainShadows() && renderer instanceof ZoneRenderer;
-		// RuneLight keeps the game's own textures: 117 HD's replacement textures are not part of it
+		// Lumina keeps the game's own textures: 117 HD's replacement textures are not part of it
 		configGroundTextures = false;
 		var groundBlending = config.groundBlending();
 		configGroundBlending = groundBlending != GroundBlending.OFF;

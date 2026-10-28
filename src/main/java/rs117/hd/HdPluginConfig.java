@@ -68,8 +68,8 @@ import static rs117.hd.utils.MathUtils.*;
 @ConfigGroup(CONFIG_GROUP)
 public interface HdPluginConfig extends Config
 {
-	// RuneLight's own: 117 HD's saved settings and those of RuneLight before the fork stay apart
-	String CONFIG_GROUP = "runelighthd";
+	// Lumina's own: 117 HD's saved settings and those of RuneLight before the fork stay apart
+	String CONFIG_GROUP = "lumina";
 
 	/*====== General settings ======*/
 
@@ -398,7 +398,7 @@ public interface HdPluginConfig extends Config
 
 	/*====== Shadow settings ======*/
 
-	// RuneLight: no header while none of its settings are shown (Features)
+	// Lumina: no header while none of its settings are shown (Features)
 	String shadowSettings = "shadowSettings";
 
 	String KEY_SHADOW_MODE = "shadowMode";
@@ -653,7 +653,7 @@ public interface HdPluginConfig extends Config
 
 	/*====== Day & night settings ======*/
 
-	// RuneLight: no header while none of its settings are shown (Features)
+	// Lumina: no header while none of its settings are shown (Features)
 	String daylightCycleSettings = "daylightCycleSettings";
 
 	String KEY_DAYLIGHT_CYCLE = "daylightCycle";
