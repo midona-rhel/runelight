@@ -68,6 +68,7 @@ layout(location = 3) out vec4 FragMaterial;  // the material and the face's norm
 uniform int alphaPass;
 uniform int lit;  // forward: shade the surface (outdoors the sun, else the cave light) rather than its vanilla color
 uniform int directionalShading;  // forward: the sun by N.L, else 117 HD's constant 0.7 (ShadingMode)
+uniform vec3 lightStrength;  // forward: the settings' multipliers on the ambient, sky and sun light
 uniform int outdoors;
 uniform int proceduralSky;
 uniform vec3 casterDir;
@@ -158,8 +159,8 @@ void main() {
     vec3 light;
     if (outdoors == 1) {
       vec3 caster = strikeCaster(sunIsCaster == 1 ? sunLight(sunAltitude) : moonLight(sunAltitude));
-      light = (ambientLight(sunAltitude) + skyLight(sunAltitude) * max(-n.y, 0.0)) * envAmbient
-        + caster * envSun * (directionalShading == 1 ? max(dot(n, casterDir), 0.0) : 0.7);
+      light = (ambientLight(sunAltitude) * lightStrength.x + skyLight(sunAltitude) * (lightStrength.y * max(-n.y, 0.0)))
+        * envAmbient + caster * envSun * (lightStrength.z * (directionalShading == 1 ? max(dot(n, casterDir), 0.0) : 0.7));
     } else {
       light = envCaveLight(n);
     }

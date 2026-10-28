@@ -264,6 +264,8 @@ final class EnvironmentManager
 	void update(Scene scene, int localX, int localY, int plane, int skyColor, float time)
 	{
 		int tileX = localX >> 7, tileY = localY >> 7;
+		// where in its tile the focal point is: the area blend follows the exact point
+		float fracX = (localX & 127) / 128f, fracY = (localY & 127) / 128f;
 		int r = skyColor >> 16 & 0xFF, g = skyColor >> 8 & 0xFF, b = skyColor & 0xFF;
 		boolean skyBlack = r + g + b <= 24;
 
@@ -297,7 +299,7 @@ final class EnvironmentManager
 					jumped = d >= INSTANT_DISTANCE;
 				}
 				System.arraycopy(worldPoint, 0, lastWorldPoint, 0, 3);
-				lookup(worldPoint, skyBlack, jumped, time);
+				lookup(worldPoint, fracX, fracY, skyBlack, jumped, time);
 			}
 			else
 			{
@@ -305,10 +307,17 @@ final class EnvironmentManager
 			}
 		}
 
+		else if (hasTarget && targetBlended && lastWorldPoint[0] != Integer.MIN_VALUE)
+		{
+			// within the tile the blend still moves with the point, so it never steps
+			blendAround(lastWorldPoint[0] + fracX, lastWorldPoint[1] + fracY, lastWorldPoint[2], skyBlack, target);
+			to.copyFrom(blendSum);
+		}
+
 		advance(time, classification == Classification.CAVE || underRoof);
 	}
 
-	private void lookup(int[] wp, boolean skyBlack, boolean jumped, float time)
+	private void lookup(int[] wp, float fracX, float fracY, boolean skyBlack, boolean jumped, float time)
 	{
 		int x = wp[0], y = wp[1], p = wp[2];
 		Environment env = environmentAt(x, y, p);
@@ -318,14 +327,17 @@ final class EnvironmentManager
 		boolean blended = c == Classification.OVERWORLD && (env == null || !env.instant);
 		if (blended)
 		{
-			blendAround(x, y, p, skyBlack, env);
+			blendAround(x + fracX, y + fracY, p, skyBlack, env);
 		}
 		select(env, c, weatherBiomeAt(x, y, p), jumped, time, blended);
 	}
 
-	// the area blend: samples BLEND_STEP tiles apart out to BLEND_REACH tiles each way, weighed by closeness
-	private static final int BLEND_STEP = 6;
-	private static final int BLEND_REACH = 24;
+	// The area blend: the mean over a box TRANSITION_TILES wide around the focal point of the areas on a grid of
+	// BLEND_STEP tile cells anchored to the world, each cell weighed by how much of it the box covers. The look
+	// changes continuously as the point moves (no sample ever jumps in or out whole), inside an area it is that
+	// area's, and a straight border is crossed over exactly TRANSITION_TILES.
+	private static final int TRANSITION_TILES = 16;
+	private static final int BLEND_STEP = 2;
 	private final Ambience blendSum = new Ambience();
 	private final Ambience sample = new Ambience();
 
@@ -333,7 +345,7 @@ final class EnvironmentManager
 	 * Fills {@link #blendSum} with the open-air environments around world (x, y, p), weighed by how close they are;
 	 * samples underground, or in an area that switches instantly, count as the one at the middle.
 	 */
-	private void blendAround(int x, int y, int p, boolean skyBlack, Environment middle)
+	private void blendAround(float x, float y, int p, boolean skyBlack, Environment middle)
 	{
 		Ambience sum = blendSum;
 		java.util.Arrays.fill(sum.ambient, 0);
@@ -342,16 +354,26 @@ final class EnvironmentManager
 		java.util.Arrays.fill(sum.skyTint, 0);
 		sum.fogColorWeight = sum.fogDepth = sum.haze = 0;
 		float total = 0, colored = 0;
-		for (int dy = -BLEND_REACH; dy <= BLEND_REACH; dy += BLEND_STEP)
+		float half = TRANSITION_TILES / 2f;
+		int cx0 = Math.floorDiv((int) Math.floor(x - half), BLEND_STEP), cx1 = Math.floorDiv((int) Math.floor(x + half), BLEND_STEP);
+		int cy0 = Math.floorDiv((int) Math.floor(y - half), BLEND_STEP), cy1 = Math.floorDiv((int) Math.floor(y + half), BLEND_STEP);
+		for (int cy = cy0; cy <= cy1; ++cy)
 		{
-			for (int dx = -BLEND_REACH; dx <= BLEND_REACH; dx += BLEND_STEP)
+			float wy = coverage(cy, y, half);
+			for (int cx = cx0; cx <= cx1; ++cx)
 			{
-				float w = (1 - Math.abs(dx) / (BLEND_REACH + (float) BLEND_STEP))
-					* (1 - Math.abs(dy) / (BLEND_REACH + (float) BLEND_STEP));
-				Environment e = environmentAt(x + dx, y + dy, p);
-				if (classOf(e, y + dy, skyBlack) != Classification.OVERWORLD || e != null && e.instant)
+				float w = coverage(cx, x, half) * wy;
+				if (w <= 0)
 				{
-					e = middle;
+					continue;
+				}
+				int sx = cx * BLEND_STEP + BLEND_STEP / 2, sy = cy * BLEND_STEP + BLEND_STEP / 2;
+				Environment e = cellEnvironment(sx, sy, p);
+				// caves and areas that switch at once take no part: their share shrinks with the box's overlap, so
+				// the blend stays continuous (all of it gone, the middle stands in below)
+				if (classOf(e, sy, skyBlack) != Classification.OVERWORLD || e != null && e.instant)
+				{
+					continue;
 				}
 				sample.set(e == null ? NEUTRAL : e);
 				for (int k = 0; k < 3; ++k)
@@ -368,6 +390,11 @@ final class EnvironmentManager
 				total += w;
 			}
 		}
+		if (total <= 0)
+		{
+			sum.set(middle == null ? NEUTRAL : middle);
+			return;
+		}
 		for (int k = 0; k < 3; ++k)
 		{
 			sum.ambient[k] /= total;
@@ -378,6 +405,37 @@ final class EnvironmentManager
 		sum.fogColorWeight = colored / total;
 		sum.fogDepth /= total;
 		sum.haze /= total;
+	}
+
+	// the environment at each blend cell's middle, by cell; areas don't move, so they are kept until the scene or
+	// plane changes
+	private final java.util.Map<Long, Environment> cellEnvironments = new java.util.HashMap<>();
+	private Object cellScene;
+	private int cellPlane = -1;
+
+	private Environment cellEnvironment(int x, int y, int p)
+	{
+		if (cellScene != lastScene || cellPlane != p)
+		{
+			cellEnvironments.clear();
+			cellScene = lastScene;
+			cellPlane = p;
+		}
+		long key = (long) x << 32 | (y & 0xffffffffL);
+		Environment e = cellEnvironments.get(key);
+		if (e == null && !cellEnvironments.containsKey(key))
+		{
+			e = environmentAt(x, y, p);
+			cellEnvironments.put(key, e);
+		}
+		return e;
+	}
+
+	/** The share of grid cell c (BLEND_STEP tiles wide) inside [center - half, center + half]. */
+	private static float coverage(int c, float center, float half)
+	{
+		float lo = c * BLEND_STEP, hi = lo + BLEND_STEP;
+		return Math.max(0, Math.min(hi, center + half) - Math.max(lo, center - half)) / BLEND_STEP;
 	}
 
 	// how the area at a world point is lit: from its environment, else underground past the mainland's top, else as

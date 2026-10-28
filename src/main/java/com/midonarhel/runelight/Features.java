@@ -24,7 +24,9 @@ final class Features
 	static final boolean WATER = DEFERRED;
 	/** Volumetric fog. */
 	static final boolean FOG = DEFERRED;
-	/** Area environments and wind sway. */
+	/** Area ambience: the light of 117 HD's areas (tint and strength), blended continuously across their borders. */
+	static final boolean AMBIENCE = true;
+	/** Wind sway. */
 	static final boolean ENVIRONMENT = DEFERRED;
 	/** Ground blending, a change to the terrain's colors at upload. */
 	static final boolean SURFACES = DEFERRED;

@@ -397,6 +397,51 @@ public interface RuneLightConfig extends Config
 		return false;
 	}
 
+	@Range(max = 300)
+	@Units(Units.PERCENT)
+	@ConfigItem(
+		keyName = "ambientStrength",
+		hidden = !Features.SUN,
+		name = "Ambient strength",
+		description = "How strong the light from all around is: how bright what the sun doesn't reach stays.",
+		section = lightingSection,
+		position = 45
+	)
+	default int ambientStrength()
+	{
+		return 100;
+	}
+
+	@Range(max = 300)
+	@Units(Units.PERCENT)
+	@ConfigItem(
+		keyName = "skyLightStrength",
+		hidden = !Features.SUN,
+		name = "Sky light strength",
+		description = "How strong the sky's light is on what faces up.",
+		section = lightingSection,
+		position = 46
+	)
+	default int skyLightStrength()
+	{
+		return 100;
+	}
+
+	@Range(max = 300)
+	@Units(Units.PERCENT)
+	@ConfigItem(
+		keyName = "sunStrength",
+		hidden = !Features.SUN,
+		name = "Sun strength",
+		description = "How strong the sun and moon are on what faces them.",
+		section = lightingSection,
+		position = 47
+	)
+	default int sunStrength()
+	{
+		return 100;
+	}
+
 	@ConfigItem(
 		keyName = "groundBlending",
 		hidden = !Features.SURFACES,
@@ -736,12 +781,16 @@ public interface RuneLightConfig extends Config
 		return 15;
 	}
 
-	// no header while none of its settings are shown (Features)
+	@ConfigSection(
+		name = "Environment",
+		description = "Area ambience and wind",
+		position = 70
+	)
 	String environmentSection = "environment";
 
 	@ConfigItem(
 		keyName = "areaEnvironments",
-		hidden = !Features.ENVIRONMENT,
+		hidden = !Features.AMBIENCE,
 		name = "Area ambience",
 		description = "Recognise caves and dungeons by area and give areas their own light colors, fog and sky haze "
 			+ "(deserts, swamps, snow, the Wilderness, caves). Off: only the game's sky color decides what is "

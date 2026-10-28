@@ -377,6 +377,8 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 	private int uniSceneLit;
 	// forward: the sun shades by N.L (ShadingMode.directionalShading)
 	private int uniSceneDirectional;
+	// forward: the settings' multipliers on the ambient, sky and sun light
+	private int uniSceneLightStrength;
 	private int uniSceneProceduralSky;
 	private int uniSceneCasterDir;
 	private int uniSceneSunIsCaster, uniSceneStrikeLight;
@@ -1294,6 +1296,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		uniSceneOutdoors = glGetUniformLocation(glProgram, "outdoors");
 		uniSceneLit = glGetUniformLocation(glProgram, "lit");
 		uniSceneDirectional = glGetUniformLocation(glProgram, "directionalShading");
+		uniSceneLightStrength = glGetUniformLocation(glProgram, "lightStrength");
 		uniSceneProceduralSky = glGetUniformLocation(glProgram, "proceduralSky");
 		uniSceneCasterDir = glGetUniformLocation(glProgram, "casterDir");
 		uniSceneSunIsCaster = glGetUniformLocation(glProgram, "sunIsCaster");
@@ -1987,6 +1990,8 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		glUniform1i(uniSceneOutdoors, frameOutdoors ? 1 : 0);
 		glUniform1i(uniSceneLit, FORWARD && frameLit ? 1 : 0);
 		glUniform1i(uniSceneDirectional, config.shadingMode().directionalShading ? 1 : 0);
+		glUniform3f(uniSceneLightStrength, config.ambientStrength() / 100f, config.skyLightStrength() / 100f,
+			config.sunStrength() / 100f);
 		glUniform1i(uniSceneProceduralSky, proceduralSky() ? 1 : 0);
 		glUniform3fv(uniSceneCasterDir, dayCycle.casterDir);
 		glUniform1i(uniSceneSunIsCaster, dayCycle.sunIsCaster ? 1 : 0);
@@ -2414,7 +2419,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 	 */
 	private boolean updateEnvironment(Scene scene)
 	{
-		if (!(Features.ENVIRONMENT && config.areaEnvironments()))
+		if (!(Features.AMBIENCE && config.areaEnvironments()))
 		{
 			int r = frameSkyColor >> 16 & 0xFF, g = frameSkyColor >> 8 & 0xFF, b = frameSkyColor & 0xFF;
 			return r + g + b > 24;
@@ -2429,7 +2434,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 
 	private void setEnvironmentUniforms(EnvironmentUniforms u)
 	{
-		boolean on = Features.ENVIRONMENT && config.areaEnvironments();
+		boolean on = Features.AMBIENCE && config.areaEnvironments();
 		// the game's own skyboxes have their own colors; area fog would not match them, like in 117 HD
 		float fog = frameHasSkybox ? 0 : weather.distanceFogScale();
 		u.set(on ? environmentManager : null, fog, getDrawDistance(), edgeFade.focalX, edgeFade.focalZ);
