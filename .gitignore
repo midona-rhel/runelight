@@ -8,3 +8,4 @@ out/
 .settings/
 .classpath
 __pycache__/
+*.log
