@@ -24,6 +24,8 @@
  */
 package com.midonarhel.lumina;
 
+import com.midonarhel.lumina.util.MathUtils;
+
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 import java.nio.IntBuffer;
@@ -48,6 +50,32 @@ class GpuIntBuffer
 	{
 		buffer.put(((y & 0xffff) << 16) | (x & 0xffff));
 		buffer.put(((w & 0xffff) << 16) | (z & 0xffff));
+	}
+
+	/**
+	 * Writes one vertex in the zone vertex format (see {@link Zone#VERT_SIZE}).
+	 *
+	 * @param abhsl0   the alpha, bias and colour of the face's first vertex; abhsl1 and abhsl2 those of the second and
+	 *                 third. All three vertices of a face carry the same three values, in the order the face's vertices
+	 *                 are written, so the shader can blend between them per fragment (117 HD's face buffer).
+	 * @param tex      the vanilla texture id + 1 of the face, 0 if untextured
+	 * @param u        texture coordinates, stored as half floats like 117 HD's
+	 * @param flags    bits 0-2: whether the face's vertex 0/1/2 is an overlay vertex at an overlay-underlay border
+	 *                 (117 HD's MATERIAL_FLAG_IS_OVERLAY), bit 3: upwards normals, bit 4: vanilla UVs
+	 * @param material the face material's slot in the shader material table
+	 */
+	void putZoneVertex(int x, int y, int z, int abhsl0, int abhsl1, int abhsl2, int tex, float u, float v, int flags,
+		int nx, int ny, int nz, int material)
+	{
+		buffer.put(((y & 0xffff) << 16) | (x & 0xffff));
+		buffer.put(z & 0xffff);
+		buffer.put(abhsl0);
+		buffer.put(abhsl1);
+		buffer.put(abhsl2);
+		buffer.put(((flags & 0xffff) << 16) | (tex & 0xffff));
+		buffer.put(MathUtils.float16(v) << 16 | MathUtils.float16(u));
+		buffer.put(((ny & 0xffff) << 16) | (nx & 0xffff));
+		buffer.put(((material & 0xffff) << 16) | (nz & 0xffff));
 	}
 
 	void flip()

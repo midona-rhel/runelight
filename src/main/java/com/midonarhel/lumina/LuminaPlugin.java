@@ -43,16 +43,21 @@ import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.CountDownLatch;
 import javax.inject.Inject;
+import javax.inject.Named;
 import javax.swing.SwingUtilities;
 import lombok.extern.slf4j.Slf4j;
 import net.runelite.api.BufferProvider;
 import net.runelite.api.Client;
 import net.runelite.api.Constants;
+import net.runelite.api.DynamicObject;
 import net.runelite.api.FloatProjection;
 import net.runelite.api.GameObject;
 import net.runelite.api.GameState;
+import net.runelite.api.GraphicsObject;
 import net.runelite.api.Model;
+import net.runelite.api.NPC;
 import net.runelite.api.Perspective;
+import net.runelite.api.Projectile;
 import net.runelite.api.Projection;
 import net.runelite.api.Renderable;
 import net.runelite.api.Scene;
@@ -61,6 +66,7 @@ import net.runelite.api.TileObject;
 import net.runelite.api.WorldEntity;
 import net.runelite.api.WorldView;
 import net.runelite.api.events.CommandExecuted;
+import net.runelite.api.events.GameTick;
 import net.runelite.api.events.GameStateChanged;
 import net.runelite.api.events.PostClientTick;
 import net.runelite.api.hooks.DrawCallbacks;
@@ -75,6 +81,22 @@ import net.runelite.client.plugins.PluginInstantiationException;
 import net.runelite.client.plugins.PluginManager;
 import com.midonarhel.lumina.config.AntiAliasingMode;
 import com.midonarhel.lumina.config.UIScalingMode;
+import com.midonarhel.lumina.geometry.DiffuseColors;
+import com.midonarhel.lumina.config.ColorFilter;
+import com.midonarhel.lumina.config.HdSettings;
+import com.midonarhel.lumina.scene.materials.MaterialManager;
+import com.midonarhel.lumina.util.ObjectOrientation;
+import com.midonarhel.lumina.scene.areas.Area;
+import net.runelite.api.Player;
+import com.midonarhel.lumina.lighting.Lighting;
+import com.midonarhel.lumina.lighting.LightingSource;
+import com.midonarhel.lumina.lighting.LightingUniforms;
+import com.midonarhel.lumina.lighting.SkyLighting;
+import com.midonarhel.lumina.scene.SceneData;
+import com.midonarhel.lumina.scene.SceneShading;
+import com.midonarhel.lumina.scene.environment.EnvironmentManager;
+import com.midonarhel.lumina.scene.overrides.ModelOverride;
+import com.midonarhel.lumina.scene.overrides.ModelOverrideManager;
 import com.midonarhel.lumina.template.Template;
 import net.runelite.client.ui.ClientUI;
 import net.runelite.client.ui.DrawManager;
@@ -124,8 +146,6 @@ public class LuminaPlugin extends Plugin implements DrawCallbacks
 	@Inject
 	private TextureManager textureManager;
 
-	@Inject
-	private RegionManager regionManager;
 
 	@Inject
 	private DrawManager drawManager;
@@ -136,8 +156,40 @@ public class LuminaPlugin extends Plugin implements DrawCallbacks
 	@Inject
 	private RenderCallbackManager renderCallbackManager;
 
+	@Inject
+	private SceneShading sceneShading;
+
+	@Inject
+	private ModelOverrideManager modelOverrideManager;
+
+	@Inject
+	private EnvironmentManager environmentManager;
+
+	@Inject
+	private SkyLighting skyLighting;
+
+	/**
+	 * The scene light, filled each frame by {@link #lightingSource} and uploaded as the scene shader's lighting uniforms.
+	 */
+	private final Lighting lighting = new Lighting();
+	/**
+	 * What decides the scene light: 117 HD's environment, sky and daylight-cycle lighting.
+	 */
+	private LightingSource lightingSource;
+	private LightingUniforms sceneLightingUniforms, skyLightingUniforms;
+	// 117 HD's plugin.elapsedTime: seconds since the plugin started
+	private long startNanos;
+
 	private Canvas canvas;
 	private AWTContext awtContext;
+
+	@Inject
+	@Named("developerMode")
+	private boolean developerMode;
+
+	// developer mode: commands from .runelite/lumina/command.txt, as if typed as ::lumina <line>
+	private final CommandFile commandFile = new CommandFile(
+		net.runelite.client.RuneLite.RUNELITE_DIR.toPath().resolve("lumina").resolve("command.txt"), this::runLuminaCommand);
 
 	private final GpuTimer gpuTimer = new GpuTimer();
 	private final CpuTimer cpuTimer = new CpuTimer();
@@ -156,12 +208,21 @@ public class LuminaPlugin extends Plugin implements DrawCallbacks
 		.add(GL_VERTEX_SHADER, "vert.glsl")
 		.add(GL_FRAGMENT_SHADER, "frag.glsl");
 
+	static final Shader SKY_PROGRAM = new Shader()
+		.add(GL_VERTEX_SHADER, "sky_vert.glsl")
+		.add(GL_FRAGMENT_SHADER, "sky_frag.glsl");
+
 	static final Shader UI_PROGRAM = new Shader()
 		.add(GL_VERTEX_SHADER, "vertui.glsl")
 		.add(GL_FRAGMENT_SHADER, "fragui.glsl");
 
 	static int glProgram;
 	private int glUiProgram;
+	private int glSkyProgram;
+	private int uniSkyInvProjection;
+	private int uniSkyGammaCorrection;
+	private int uniSkyElapsedTime;
+	private int uniSkyColorblindIntensity;
 
 	private int interfaceTexture;
 	private int interfacePbo;
@@ -177,6 +238,10 @@ public class LuminaPlugin extends Plugin implements DrawCallbacks
 	private int textureArrayId;
 
 	private final GLBuffer glUniformBuffer = new GLBuffer("uniform buffer");
+	// 117 HD's material uniform block (see MaterialManager.fillSlots)
+	private final GLBuffer glMaterialBuffer = new GLBuffer("material buffer");
+	private final float[] materialData = new float[MaterialManager.MAX_SLOTS * 12];
+	private int uniBlockMaterials;
 
 	private int lastCanvasWidth;
 	private int lastCanvasHeight;
@@ -206,6 +271,8 @@ public class LuminaPlugin extends Plugin implements DrawCallbacks
 
 		final int sizeX, sizeZ;
 		Zone[][] zones;
+		// shading data (tile overrides, terrain normals and colours) of the scene the zones belong to
+		SceneData data;
 
 		private int cameraX, cameraY, cameraZ;
 		private int minLevel, level, maxLevel;
@@ -261,11 +328,9 @@ public class LuminaPlugin extends Plugin implements DrawCallbacks
 	private SceneContext[] subs;
 	private Zone[][] nextZones;
 	private Map<Integer, Integer> nextRoofChanges;
+	private SceneData nextSceneData;
 
 	// Uniforms
-	private int uniUseFog;
-	private int uniFogColor;
-	private int uniFogDepth;
 	private int uniDrawDistance;
 	private int uniExpandedMapLoadingChunks;
 	private int uniSmoothBanding;
@@ -284,6 +349,46 @@ public class LuminaPlugin extends Plugin implements DrawCallbacks
 	private int uniTick;
 	private int uniColorblindIntensity;
 	private int uniUiColorblindIntensity;
+	private int uniDebugView;
+	private int uniGammaCorrection;
+	private OutputUniforms sceneOutputUniforms, skyOutputUniforms;
+
+	// 117 HD's HdPlugin.COLOR_FILTER_FADE_DURATION
+	private static final float COLOR_FILTER_FADE_DURATION = 500;
+
+	/**
+	 * The uniforms of output.glsl's colour adjustments (117 HD's UBOGlobal saturation, contrast and colour filter).
+	 */
+	private static final class OutputUniforms
+	{
+		private final int saturation, contrast, colorFilter, colorFilterPrevious, colorFilterFade;
+
+		OutputUniforms(int program)
+		{
+			saturation = glGetUniformLocation(program, "saturation");
+			contrast = glGetUniformLocation(program, "contrast");
+			colorFilter = glGetUniformLocation(program, "colorFilter");
+			colorFilterPrevious = glGetUniformLocation(program, "colorFilterPrevious");
+			colorFilterFade = glGetUniformLocation(program, "colorFilterFade");
+		}
+
+		void upload()
+		{
+			glUniform1f(saturation, HdSettings.saturation);
+			glUniform1f(contrast, HdSettings.contrast);
+			if (HdSettings.colorFilter != ColorFilter.NONE)
+			{
+				glUniform1i(colorFilter, HdSettings.colorFilter.ordinal());
+				glUniform1i(colorFilterPrevious, HdSettings.colorFilterPrevious.ordinal());
+				long timeSinceChange = System.currentTimeMillis() - HdSettings.colorFilterChangedAt;
+				glUniform1f(colorFilterFade, Math.max(0, Math.min(1, timeSinceChange / COLOR_FILTER_FADE_DURATION)));
+			}
+		}
+	}
+	private int uniElapsedTime;
+	private boolean materialsUploaded;
+	// ::lumina debug: 0 off, 1 base colour, 2 light only, 3 normals
+	private int debugView;
 	static int uniBase;
 
 	static final float[] IDENTITY = Mat4.identity();
@@ -300,8 +405,14 @@ public class LuminaPlugin extends Plugin implements DrawCallbacks
 			var rt = rts[i] = new RenderThread();
 			rt.modelUploader = new ModelUploader();
 		}
-		clientUploader = new SceneUploader(renderCallbackManager);
-		mapUploader = new SceneUploader(renderCallbackManager);
+		HdSettings.update(config);
+		DiffuseColors.shadingMode = config.shadingMode();
+		DiffuseColors.colorMode = config.colorMode();
+		sceneShading.load();
+		lightingSource = skyLighting;
+		startNanos = System.nanoTime();
+		clientUploader = new SceneUploader(renderCallbackManager, modelOverrideManager);
+		mapUploader = new SceneUploader(renderCallbackManager, modelOverrideManager);
 		clientThread.invoke(() ->
 		{
 			try
@@ -425,6 +536,148 @@ public class LuminaPlugin extends Plugin implements DrawCallbacks
 		});
 	}
 
+	/**
+	 * 117 HD's handling of a changed setting (HdPlugin.onConfigChanged): which keys recompile the shaders, reload
+	 * the data files (117 HD reloads environments, model overrides or materials separately; Lumina reloads them all)
+	 * or reload the scene. Settings read per frame need nothing.
+	 *
+	 * @return whether the key is a 117 HD setting
+	 */
+	private boolean handleHdConfigChange(String key)
+	{
+		boolean recompilePrograms = false;
+		boolean reloadSceneData = false;
+		boolean reloadTextures = false;
+		boolean reloadScene = false;
+		switch (key)
+		{
+			case "hideUnrelatedAreas":
+				reloadScene = true;
+				break;
+			case "vanillaColorBanding":
+				recompilePrograms = true;
+				break;
+			case "colorFilter":
+				if (HdSettings.colorFilter == ColorFilter.NONE || HdSettings.colorFilterPrevious == ColorFilter.NONE)
+				{
+					recompilePrograms = true;
+				}
+				if (HdSettings.colorFilter == ColorFilter.CEL_SHADING || HdSettings.colorFilterPrevious == ColorFilter.CEL_SHADING)
+				{
+					reloadScene = true;
+				}
+				break;
+			case "legacyDisableEnvironmentalLighting":
+			case "pohThemeEnvironments":
+			case "legacyTobEnvironment":
+				reloadSceneData = true;
+				break;
+			case "seasonalTheme":
+			case "seasonalHemisphere":
+				reloadSceneData = true;
+				reloadTextures = true;
+				reloadScene = true;
+				break;
+			case "seasonalFoliage":
+			case "textureResolution":
+			case "infernalCape":
+				reloadSceneData = true;
+				reloadTextures = true;
+				reloadScene = true;
+				break;
+			case "fillGapsInTerrain":
+				reloadScene = true;
+				break;
+			case "hideVanillaWaterEffects":
+			case "recolorGroundObjects":
+				reloadSceneData = true;
+				reloadScene = true;
+				break;
+			case "vanillaShadowMode":
+				reloadScene = true;
+				break;
+			case "reduceOverExposure":
+			case "experimentalPreserveVanillaNormals":
+			case "flatShading":
+				recompilePrograms = true;
+				reloadScene = true;
+				break;
+			// read every frame (117 HD: updateCachedConfigs only); anisotropic filtering is applied by the frame too
+			case "daylightCycle":
+			case "moonBehavior":
+			case "moonPhase":
+			case "overrideSky":
+			case "defaultSkyColor":
+			case "replaceVanillaSkyboxes":
+			case "useLegacyBrightness":
+			case "brightness2":
+			case "screenBrightness":
+			case "fSaturation":
+			case "fContrast":
+			case "nightBrightness":
+			case "experimentalNightAdaptationEverywhere":
+			case "fogDepthMode":
+			case "fogDepth":
+			case "groundFog":
+			case "anisotropicFilteringLevel":
+				return true;
+			default:
+				return false;
+		}
+
+		final boolean doRecompile = recompilePrograms, doReloadData = reloadSceneData, doReloadTextures = reloadTextures, doReloadScene = reloadScene;
+		clientThread.invokeLater(() ->
+		{
+			if (!lwjglInitted)
+			{
+				return;
+			}
+			if (doReloadTextures && textureArrayId != -1)
+			{
+				textureManager.freeTextureArray(textureArrayId);
+				textureArrayId = -1;
+				lastAnisotropicFilteringLevel = -1;
+			}
+			if (doReloadData)
+			{
+				sceneShading.load();
+				if (root.data != null)
+				{
+					environmentManager.loadSceneEnvironments(root.data);
+				}
+			}
+			if (doRecompile)
+			{
+				shutdownProgram();
+				try
+				{
+					initProgram();
+				}
+				catch (RuntimeException ex)
+				{
+					log.error("Shader recompile failed after a config change; stopping the plugin", ex);
+					SwingUtilities.invokeLater(() ->
+					{
+						try
+						{
+							pluginManager.stopPlugin(this);
+						}
+						catch (PluginInstantiationException ex2)
+						{
+							log.error("error stopping plugin", ex2);
+						}
+					});
+					return;
+				}
+			}
+			if (doReloadScene && client.getGameState() == GameState.LOGGED_IN)
+			{
+				client.setGameState(GameState.LOADING);
+			}
+		});
+		return true;
+	}
+
 	private void setupGpuFlags()
 	{
 		int cpus = Runtime.getRuntime().availableProcessors();
@@ -433,6 +686,10 @@ public class LuminaPlugin extends Plugin implements DrawCallbacks
 		client.setGpuFlags(DrawCallbacks.GPU
 			| (config.removeVertexSnapping() ? DrawCallbacks.NO_VERTEX_SNAPPING : 0)
 			| DrawCallbacks.ZBUF
+			| DrawCallbacks.NORMALS
+			// 117 HD requests unlit face colours only for shading modes that use them (DEFAULT uses the lit colours);
+			// Lumina's GPU colour mode needs them too
+			| (DiffuseColors.requestUnlitFaceColors() ? DrawCallbacks.UNLIT_FACE_COLORS : 0)
 			| DrawCallbacks.RENDER_THREADS(threads)
 		);
 	}
@@ -472,6 +729,7 @@ public class LuminaPlugin extends Plugin implements DrawCallbacks
 				}
 
 				root.free();
+				root.data = null;
 
 				gpuTimer.free();
 				snapshot = null;
@@ -495,6 +753,7 @@ public class LuminaPlugin extends Plugin implements DrawCallbacks
 			}
 
 			glCapabilities = null;
+			nextSceneData = null;
 
 			// force main buffer provider rebuild to turn off alpha channel
 			client.resizeCanvas();
@@ -512,6 +771,11 @@ public class LuminaPlugin extends Plugin implements DrawCallbacks
 	{
 		if (configChanged.getGroup().equals(LuminaConfig.GROUP))
 		{
+			HdSettings.update(config);
+			if (handleHdConfigChange(configChanged.getKey()))
+			{
+				return;
+			}
 			if (configChanged.getKey().equals("unlockFps")
 				|| configChanged.getKey().equals("vsyncMode")
 				|| configChanged.getKey().equals("fpsTarget"))
@@ -524,6 +788,24 @@ public class LuminaPlugin extends Plugin implements DrawCallbacks
 				clientThread.invokeLater(() ->
 				{
 					client.setExpandedMapLoading(config.expandedMapLoadingZones());
+					if (client.getGameState() == GameState.LOGGED_IN)
+					{
+						client.setGameState(GameState.LOADING);
+					}
+				});
+			}
+			else if (configChanged.getKey().equals("shadingMode") || configChanged.getKey().equals("colorMode"))
+			{
+				// 117 HD restarts the plugin when the shading mode changes: new GPU flags (unlit face colours),
+				// recompiled shaders (DISABLE_DIRECTIONAL_SHADING) and a reloaded scene
+				clientThread.invokeLater(() ->
+				{
+					DiffuseColors.shadingMode = config.shadingMode();
+					DiffuseColors.colorMode = config.colorMode();
+					MaterialManager.updateNoneBrightness();
+					setupGpuFlags();
+					shutdownProgram();
+					initProgram();
 					if (client.getGameState() == GameState.LOGGED_IN)
 					{
 						client.setGameState(GameState.LOADING);
@@ -618,6 +900,11 @@ public class LuminaPlugin extends Plugin implements DrawCallbacks
 					return "#define SAMPLING_MODE " + config.uiScalingMode().ordinal() + "\n";
 				case "colorblind_mode":
 					return "#define COLORBLIND_MODE " + config.colorBlindMode().ordinal() + "\n";
+				case "shading_config":
+					return "#define DISABLE_DIRECTIONAL_SHADING " + (DiffuseColors.shadingMode.directionalShading ? 0 : 1) + "\n"
+						+ "#define FLAT_SHADING " + (HdSettings.flatShading ? 1 : 0) + "\n"
+						+ "#define VANILLA_COLOR_BANDING " + (HdSettings.vanillaColorBanding ? 1 : 0) + "\n"
+						+ "#define APPLY_COLOR_FILTER " + (HdSettings.colorFilter != ColorFilter.NONE ? 1 : 0) + "\n";
 			}
 			return null;
 		});
@@ -633,6 +920,7 @@ public class LuminaPlugin extends Plugin implements DrawCallbacks
 		Template template = createTemplate();
 		glProgram = PROGRAM.compile(template);
 		glUiProgram = UI_PROGRAM.compile(template);
+		glSkyProgram = SKY_PROGRAM.compile(template);
 
 		glBindVertexArray(0);
 
@@ -646,9 +934,6 @@ public class LuminaPlugin extends Plugin implements DrawCallbacks
 		uniEntityTint = glGetUniformLocation(glProgram, "entityTint");
 		uniSmoothBanding = glGetUniformLocation(glProgram, "smoothBanding");
 		uniBrightness = glGetUniformLocation(glProgram, "brightness");
-		uniUseFog = glGetUniformLocation(glProgram, "useFog");
-		uniFogColor = glGetUniformLocation(glProgram, "fogColor");
-		uniFogDepth = glGetUniformLocation(glProgram, "fogDepth");
 		uniDrawDistance = glGetUniformLocation(glProgram, "drawDistance");
 		uniExpandedMapLoadingChunks = glGetUniformLocation(glProgram, "expandedMapLoadingChunks");
 		uniTextureLightMode = glGetUniformLocation(glProgram, "textureLightMode");
@@ -658,6 +943,19 @@ public class LuminaPlugin extends Plugin implements DrawCallbacks
 		uniTextureAnimations = glGetUniformLocation(glProgram, "textureAnimations");
 		uniBase = glGetUniformLocation(glProgram, "base");
 		uniColorblindIntensity = glGetUniformLocation(glProgram, "colorblindIntensity");
+		uniDebugView = glGetUniformLocation(glProgram, "debugView");
+		uniGammaCorrection = glGetUniformLocation(glProgram, "gammaCorrection");
+		sceneOutputUniforms = new OutputUniforms(glProgram);
+		uniElapsedTime = glGetUniformLocation(glProgram, "elapsedTime");
+		uniBlockMaterials = glGetUniformBlockIndex(glProgram, "materials");
+		sceneLightingUniforms = new LightingUniforms(glProgram);
+
+		uniSkyInvProjection = glGetUniformLocation(glSkyProgram, "invProjection");
+		uniSkyGammaCorrection = glGetUniformLocation(glSkyProgram, "gammaCorrection");
+		skyOutputUniforms = new OutputUniforms(glSkyProgram);
+		uniSkyElapsedTime = glGetUniformLocation(glSkyProgram, "elapsedTime");
+		uniSkyColorblindIntensity = glGetUniformLocation(glSkyProgram, "colorblindIntensity");
+		skyLightingUniforms = new LightingUniforms(glSkyProgram);
 
 		uniTex = glGetUniformLocation(glUiProgram, "tex");
 		uniTexTargetDimensions = glGetUniformLocation(glUiProgram, "targetDimensions");
@@ -673,6 +971,9 @@ public class LuminaPlugin extends Plugin implements DrawCallbacks
 
 		glDeleteProgram(glUiProgram);
 		glUiProgram = 0;
+
+		glDeleteProgram(glSkyProgram);
+		glSkyProgram = 0;
 	}
 
 	private void initVao()
@@ -721,6 +1022,11 @@ public class LuminaPlugin extends Plugin implements DrawCallbacks
 	{
 		uniformBuffer = new GpuFloatBuffer(UNIFORM_BUFFER_SIZE);
 		initGlBuffer(glUniformBuffer);
+		initGlBuffer(glMaterialBuffer);
+		glBindBuffer(GL_UNIFORM_BUFFER, glMaterialBuffer.glBufferId);
+		glBufferData(GL_UNIFORM_BUFFER, (long) materialData.length * Float.BYTES, GL_DYNAMIC_DRAW);
+		glBindBuffer(GL_UNIFORM_BUFFER, 0);
+		materialsUploaded = false;
 		Zone.initBuffer();
 
 		for (int i = 0; i < rts.length; ++i)
@@ -738,6 +1044,7 @@ public class LuminaPlugin extends Plugin implements DrawCallbacks
 	private void shutdownBuffers()
 	{
 		destroyGlBuffer(glUniformBuffer);
+		destroyGlBuffer(glMaterialBuffer);
 		uniformBuffer = null;
 		Zone.freeBuffer();
 
@@ -920,6 +1227,18 @@ public class LuminaPlugin extends Plugin implements DrawCallbacks
 
 		glBindBufferBase(GL_UNIFORM_BUFFER, 0, glUniformBuffer.glBufferId);
 
+		// material table: uploaded when materials were added
+		if (!materialsUploaded || MaterialManager.slotsDirty())
+		{
+			TextureProvider tp = client.getTextureProvider();
+			int count = MaterialManager.fillSlots(materialData, tp == null ? null : tp.getTextures());
+			glBindBuffer(GL_UNIFORM_BUFFER, glMaterialBuffer.glBufferId);
+			glBufferSubData(GL_UNIFORM_BUFFER, 0, java.util.Arrays.copyOf(materialData, count * 12));
+			glBindBuffer(GL_UNIFORM_BUFFER, 0);
+			materialsUploaded = true;
+		}
+		glBindBufferBase(GL_UNIFORM_BUFFER, 1, glMaterialBuffer.glBufferId);
+
 		checkGLErrors();
 
 		final int canvasHeight = client.getCanvasHeight();
@@ -1003,14 +1322,25 @@ public class LuminaPlugin extends Plugin implements DrawCallbacks
 
 		// Setup uniforms
 		final int drawDistance = getDrawDistance();
-		final int fogDepth = config.fogDepth();
-		final int sky = client.getSkyboxColor();
-		glUniform1i(uniUseFog, fogDepth > 0 ? 1 : 0);
-		glUniform4f(uniFogColor, (sky >> 16 & 0xFF) / 255f, (sky >> 8 & 0xFF) / 255f, (sky & 0xFF) / 255f, 1f);
-		glUniform1i(uniFogDepth, fogDepth);
-		glUniform1i(uniDrawDistance, drawDistance * Perspective.LOCAL_TILE_SIZE);
-		glUniform1i(uniExpandedMapLoadingChunks, client.getExpandedMapLoading());
+		final float elapsedTime = (float) ((System.nanoTime() - startNanos) / 1e9);
+		final float gammaCorrection = HdSettings.getGammaCorrection();
+		// 117 HD's SceneContext: instances load no extra map chunks
+		final int expandedChunks = root.data != null && root.data.scene.isInstance() ? 0 : client.getExpandedMapLoading();
+
+		updateAreaHiding();
+
+		// Scene light, fog and sky: the lighting source decides them, the shaders read them as is
+		lightingSource.fill(lighting, root.data, elapsedTime, drawDistance, scene.getSkybox() != null);
+		sceneLightingUniforms.upload(lighting);
+		glUniform1f(uniDrawDistance, (float) drawDistance);
+		glUniform1i(uniExpandedMapLoadingChunks, expandedChunks);
 		glUniform1f(uniColorblindIntensity, config.colorBlindIntensity());
+		glUniform1f(uniGammaCorrection, gammaCorrection);
+		sceneOutputUniforms.upload();
+		// 117 HD's dither offset, elapsedTime modulo the largest float with 1/128 precision
+		final float ditherTime = elapsedTime % 65536f;
+		glUniform1f(uniElapsedTime, ditherTime);
+		glUniform1i(uniDebugView, debugView);
 
 		// Brightness happens to also be stored in the texture provider, so we use that
 		TextureProvider textureProvider = client.getTextureProvider();
@@ -1030,6 +1360,7 @@ public class LuminaPlugin extends Plugin implements DrawCallbacks
 		Mat4.mul(projectionMatrix, Mat4.rotateY(cameraYaw));
 		Mat4.mul(projectionMatrix, Mat4.translate(-cameraX, -cameraY, -cameraZ));
 		glUniformMatrix4fv(uniWorldProj, false, projectionMatrix);
+		float[] invProjection = Mat4.inverse(projectionMatrix);
 
 		glUniformMatrix4fv(uniEntityProj, false, IDENTITY);
 
@@ -1037,6 +1368,7 @@ public class LuminaPlugin extends Plugin implements DrawCallbacks
 
 		// Bind uniforms
 		glUniformBlockBinding(glProgram, uniBlockMain, 0);
+		glUniformBlockBinding(glProgram, uniBlockMaterials, 1);
 		glUniform1i(uniTextures, 1); // texture sampler array is bound to texture1
 
 		// Enable face culling
@@ -1046,23 +1378,158 @@ public class LuminaPlugin extends Plugin implements DrawCallbacks
 		glEnable(GL_BLEND);
 		glBlendFuncSeparate(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA, GL_ONE, GL_ONE);
 
-		// Enable depth testing
-		glDepthFunc(GL_GREATER);
+		// Enable depth testing (117 HD: GL_GEQUAL, so later geometry at equal depth wins)
+		glDepthFunc(GL_GEQUAL);
 		glEnable(GL_DEPTH_TEST);
 
-		drawSkybox(scene, sky, cameraX, cameraY, cameraZ);
+		drawSky(scene, invProjection, gammaCorrection, ditherTime, cameraX, cameraY, cameraZ);
 
 		checkGLErrors();
 	}
 
-	private void drawSkybox(Scene scene, int sky, float cameraX, float cameraY, float cameraZ)
+	private boolean justChangedArea;
+
+	/**
+	 * 117 HD maps vanilla textures to materials once the client's textures are known; uploads need the mapping.
+	 */
+	private void initVanillaMaterials()
+	{
+		TextureProvider textureProvider = client.getTextureProvider();
+		if (textureProvider != null && textureProvider.getTextures() != null)
+		{
+			MaterialManager.initVanillaTextures(textureProvider.getTextures());
+		}
+	}
+
+	/**
+	 * 117 HD's updateAreaHiding: the current area is the first possible area containing the local player; when it
+	 * changes, every zone is rebuilt.
+	 */
+	private void updateAreaHiding()
+	{
+		SceneData data = root.data;
+		Player localPlayer = client.getLocalPlayer();
+		if (data == null || localPlayer == null || !data.enableAreaHiding || data.sceneBase == null)
+		{
+			justChangedArea = false;
+			return;
+		}
+
+		var lp = localPlayer.getLocalLocation();
+		int[] worldPos = {
+			data.sceneBase[0] + lp.getSceneX(),
+			data.sceneBase[1] + lp.getSceneY(),
+			data.sceneBase[2] + client.getTopLevelWorldView().getPlane()
+		};
+
+		// Check all areas contained in the scene in the order they appear in the list, so lower floors take
+		// precedence over higher floors which include tiny portions of the floor beneath around stairs and ladders
+		Area newArea = null;
+		for (var area : data.possibleAreas)
+		{
+			if (area.containsPoint(false, worldPos))
+			{
+				newArea = area;
+				break;
+			}
+		}
+
+		if (newArea != data.currentArea)
+		{
+			if (justChangedArea)
+			{
+				// Disable area hiding if it somehow gets stuck in a loop switching areas
+				data.enableAreaHiding = false;
+				log.error("Disabling area hiding after moving from {} to {} at {}", data.currentArea, newArea, worldPos);
+				newArea = null;
+			}
+			else
+			{
+				justChangedArea = true;
+				for (Zone[] column : root.zones)
+				{
+					for (Zone zone : column)
+					{
+						zone.invalidate = true;
+					}
+				}
+			}
+			data.currentArea = newArea;
+		}
+		else
+		{
+			justChangedArea = false;
+		}
+	}
+
+	/**
+	 * 117 HD's zoneInFrustum area check: zones outside the current area are not drawn.
+	 */
+	private boolean isZoneHidden(SceneContext ctx, Scene scene, int zx, int zz)
+	{
+		if (ctx != root || ctx.data == null)
+		{
+			return false;
+		}
+		Area currentArea = ctx.data.currentArea;
+		if (currentArea == null || ctx.data.sceneBase == null)
+		{
+			return false;
+		}
+		int[] base = ctx.data.sceneBase;
+		int minX = zx * 8 - ctx.data.sceneOffset;
+		int minZ = zz * 8 - ctx.data.sceneOffset;
+		return !currentArea.intersects(true, base[0] + minX, base[1] + minZ, base[0] + minX + 7, base[1] + minZ + 7);
+	}
+
+	/**
+	 * 117 HD's area check for dynamic and temporary models of the top-level scene.
+	 */
+	private boolean isOutsideArea(SceneContext ctx, int x, int z, int plane)
+	{
+		if (ctx != root || ctx.data == null)
+		{
+			return false;
+		}
+		Area currentArea = ctx.data.currentArea;
+		if (currentArea == null || ctx.data.sceneBase == null)
+		{
+			return false;
+		}
+		int[] base = ctx.data.sceneBase;
+		return !currentArea.containsPoint(base[0] + (x >> Perspective.LOCAL_COORD_BITS), base[1] + (z >> Perspective.LOCAL_COORD_BITS), base[2] + plane);
+	}
+
+	/**
+	 * Clears the scene and draws its background: 117 HD's sky (SkyRenderer.clear and the sky pass) unless a vanilla
+	 * skybox is shown, which 117 HD draws over black.
+	 */
+	private void drawSky(Scene scene, float[] invProjection, float gammaCorrection, float ditherTime, float cameraX, float cameraY, float cameraZ)
 	{
 		Model skybox = scene.getSkybox();
-		if (skybox == null)
+		if (!lighting.vanillaSkybox || skybox == null)
 		{
-			glClearColor((sky >> 16 & 0xFF) / 255f, (sky >> 8 & 0xFF) / 255f, (sky & 0xFF) / 255f, 1f);
+			glClearColor(0f, 0f, 0f, 1f);
 			glClearDepth(0d);
 			glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+
+			// 117 HD draws the sky behind the scene (at depth 0, after it); drawn first here without depth
+			glUseProgram(glSkyProgram);
+			skyLightingUniforms.upload(lighting);
+			glUniformMatrix4fv(uniSkyInvProjection, false, invProjection);
+			glUniform1f(uniSkyGammaCorrection, gammaCorrection);
+			skyOutputUniforms.upload();
+			glUniform1f(uniSkyElapsedTime, ditherTime);
+			glUniform1f(uniSkyColorblindIntensity, config.colorBlindIntensity());
+			glDisable(GL_BLEND);
+			glDisable(GL_DEPTH_TEST);
+			glDepthMask(false);
+			glBindVertexArray(vaoUiHandle);
+			glDrawArrays(GL_TRIANGLES, 0, 3);
+			glDepthMask(true);
+			glEnable(GL_DEPTH_TEST);
+			glEnable(GL_BLEND);
+			glUseProgram(glProgram);
 			return;
 		}
 
@@ -1073,7 +1540,7 @@ public class LuminaPlugin extends Plugin implements DrawCallbacks
 		int size = skybox.getFaceCount() * 3 * VAO.VERT_SIZE;
 		RenderThread rt = rts[0];
 		VAO o = rt.vaoO.get(size);
-		rt.modelUploader.uploadTempModel(skybox, 0, 0, 0, 0,
+		rt.modelUploader.uploadTempModel(skybox, null, 0, 0, 0, 0, 0,
 			(int) cameraX, (int) cameraY, (int) cameraZ, o.vbo.vb);
 
 		float[] skyboxProjection = Mat4.translate(cameraX, cameraY, cameraZ);
@@ -1148,13 +1615,20 @@ public class LuminaPlugin extends Plugin implements DrawCallbacks
 		}
 
 		Zone z = ctx.zones[zx][zz];
-		if (!z.initialized)
+		if (!z.initialized || isZoneHidden(ctx, scene, zx, zz))
 		{
 			return;
 		}
 
 		int offset = scene.getWorldViewId() == WorldView.TOPLEVEL ? (SCENE_OFFSET >> 3) : 0;
+		// 117 HD draws opaque zones without blending
+		glDisable(GL_BLEND);
 		z.renderOpaque(zx - offset, zz - offset, ctx.minLevel, ctx.level, ctx.maxLevel, ctx.hideRoofIds);
+		if (ctx.minLevel == 0)
+		{
+			z.renderGapFillers(zx - offset, zz - offset);
+		}
+		glEnable(GL_BLEND);
 
 		checkGLErrors();
 	}
@@ -1171,7 +1645,7 @@ public class LuminaPlugin extends Plugin implements DrawCallbacks
 		}
 
 		Zone z = ctx.zones[zx][zz];
-		if (!z.initialized)
+		if (!z.initialized || isZoneHidden(ctx, scene, zx, zz))
 		{
 			return;
 		}
@@ -1188,7 +1662,16 @@ public class LuminaPlugin extends Plugin implements DrawCallbacks
 		}
 
 		RenderThread rt = rts[0];
-		z.renderAlpha(rt.modelUploader, zx - offset, zz - offset, cameraYaw, cameraPitch, ctx.minLevel, ctx.level, ctx.maxLevel, level, ctx.hideRoofIds, !close || (scene.getOverrideAmount() > 0));
+		boolean unsorted = !close || (scene.getOverrideAmount() > 0);
+		// 117 HD: colour without depth writes, then (top level only) depth without colour, so opaque models drawn
+		// later on higher planes test against alpha
+		z.renderAlpha(rt.modelUploader, zx - offset, zz - offset, cameraYaw, cameraPitch, ctx.minLevel, ctx.level, ctx.maxLevel, level, ctx.hideRoofIds, unsorted, false);
+		if (scene.getWorldViewId() == WorldView.TOPLEVEL)
+		{
+			glColorMask(false, false, false, false);
+			z.renderAlpha(rt.modelUploader, zx - offset, zz - offset, cameraYaw, cameraPitch, ctx.minLevel, ctx.level, ctx.maxLevel, level, ctx.hideRoofIds, unsorted, true);
+			glColorMask(true, true, true, true);
+		}
 
 		checkGLErrors();
 	}
@@ -1250,13 +1733,26 @@ public class LuminaPlugin extends Plugin implements DrawCallbacks
 			return;
 		}
 
-		if (!renderCallbackManager.drawObject(scene, tileObject))
+		if (!renderCallbackManager.drawObject(scene, tileObject) || isOutsideArea(ctx, x, z, tileObject.getPlane()))
+		{
+			return;
+		}
+
+		int objectId = tileObject.getId();
+		if (r instanceof DynamicObject && ((DynamicObject) r).getRecordedObjectComposition() != null)
+		{
+			objectId = ((DynamicObject) r).getRecordedObjectComposition().getId();
+		}
+		ModelOverride override = dynamicModelOverride(ctx, ModelOverrideManager.TYPE_OBJECT, objectId, x, z, tileObject.getPlane());
+		if (override.hide)
 		{
 			return;
 		}
 
 		int size = m.getFaceCount() * 3 * VAO.VERT_SIZE;
-		if (m.getFaceTransparencies() == null)
+		// faces can also become alpha through vanilla texture materials and override materials (117 HD's
+		// mightHaveTransparency)
+		if (m.getFaceTransparencies() == null && m.getFaceTextures() == null && !override.mightHaveTransparency)
 		{
 			RenderThread rt = rts[renderThreadId + 1];
 			VAO o = rt.vaoO.get(size);
@@ -1265,7 +1761,7 @@ public class LuminaPlugin extends Plugin implements DrawCallbacks
 				return;
 			}
 
-			rt.modelUploader.uploadTempModel(m, orient, x, y, z,
+			rt.modelUploader.uploadTempModel(m, override, ObjectOrientation.getModelPreOrientation(ObjectOrientation.getObjectConfig(tileObject)), orient, x, y, z,
 				ctx.cameraX, ctx.cameraY, ctx.cameraZ, o.vbo.vb);
 			o.addRange(ctx.projection, scene, 0);
 		}
@@ -1286,7 +1782,7 @@ public class LuminaPlugin extends Plugin implements DrawCallbacks
 			int start = a.vbo.vb.position();
 			try
 			{
-				sorter.uploadSortedModel(rt, worldProjection, m, orient, x, y, z,
+				sorter.uploadSortedModel(rt, worldProjection, m, override, ObjectOrientation.getModelPreOrientation(ObjectOrientation.getObjectConfig(tileObject)), orient, x, y, z,
 					ctx.cameraX, ctx.cameraY, ctx.cameraZ, o.vbo.vb, a.vbo.vb, false);
 			}
 			catch (Exception ex)
@@ -1322,15 +1818,22 @@ public class LuminaPlugin extends Plugin implements DrawCallbacks
 			return;
 		}
 
-		if (!renderCallbackManager.drawObject(scene, gameObject))
+		if (!renderCallbackManager.drawObject(scene, gameObject) || isOutsideArea(ctx, x, z, gameObject.getPlane()))
 		{
 			return;
 		}
 
 		Renderable renderable = gameObject.getRenderable();
+		ModelOverride override = tempModelOverride(ctx, gameObject, renderable, x, z);
+		if (override.hide)
+		{
+			return;
+		}
+
 		int size = m.getFaceCount() * 3 * VAO.VERT_SIZE;
 		int renderMode = renderable.getRenderMode();
-		if (renderMode == Renderable.RENDERMODE_SORTED_NO_DEPTH || m.getFaceTransparencies() != null || m.getTransparency() != 0)
+		if (renderMode == Renderable.RENDERMODE_SORTED_NO_DEPTH || m.getFaceTransparencies() != null || m.getTransparency() != 0
+			|| m.getFaceTextures() != null || override.mightHaveTransparency)
 		{
 			RenderThread rt = rts[0];
 			VAO o = rt.vaoO.get(size);
@@ -1341,7 +1844,7 @@ public class LuminaPlugin extends Plugin implements DrawCallbacks
 			m.calculateBoundsCylinder();
 			try
 			{
-				uploader.uploadSortedModel(rt, worldProjection, m, orient, x, y, z,
+				uploader.uploadSortedModel(rt, worldProjection, m, override, ObjectOrientation.getModelPreOrientation(gameObject.getConfig()), orient, x, y, z,
 					ctx.cameraX, ctx.cameraY, ctx.cameraZ, o.vbo.vb, a.vbo.vb,
 					renderMode == Renderable.RENDERMODE_SORTED_NO_DEPTH);
 			}
@@ -1368,10 +1871,54 @@ public class LuminaPlugin extends Plugin implements DrawCallbacks
 			RenderThread rt = rts[0];
 			VAO o = rt.vaoO.get(size);
 			ModelUploader uploader = rt.modelUploader;
-			uploader.uploadTempModel(m, orient, x, y, z,
+			uploader.uploadTempModel(m, override, ObjectOrientation.getModelPreOrientation(gameObject.getConfig()), orient, x, y, z,
 				ctx.cameraX, ctx.cameraY, ctx.cameraZ, o.vbo.vb);
 			o.addRange(ctx.projection, scene, 0);
 		}
+	}
+
+	/**
+	 * The model override of a temporary model (players, NPCs, projectiles, graphics objects and spawned locs).
+	 */
+	private ModelOverride tempModelOverride(SceneContext ctx, GameObject gameObject, Renderable renderable, int x, int z)
+	{
+		int plane = gameObject.getPlane();
+		if (renderable instanceof NPC)
+		{
+			return dynamicModelOverride(ctx, ModelOverrideManager.TYPE_NPC, ((NPC) renderable).getId(), x, z, plane);
+		}
+		if (renderable instanceof GraphicsObject)
+		{
+			return dynamicModelOverride(ctx, ModelOverrideManager.TYPE_GRAPHICS_OBJECT, ((GraphicsObject) renderable).getId(), x, z, plane);
+		}
+		if (renderable instanceof Projectile)
+		{
+			return dynamicModelOverride(ctx, ModelOverrideManager.TYPE_PROJECTILE, ((Projectile) renderable).getId(), x, z, plane);
+		}
+		if (renderable instanceof DynamicObject)
+		{
+			var composition = ((DynamicObject) renderable).getRecordedObjectComposition();
+			int id = composition != null ? composition.getId() : gameObject.getId();
+			return dynamicModelOverride(ctx, ModelOverrideManager.TYPE_OBJECT, id, x, z, plane);
+		}
+		if (renderable instanceof Model)
+		{
+			return dynamicModelOverride(ctx, ModelOverrideManager.TYPE_OBJECT, gameObject.getId(), x, z, plane);
+		}
+		return ModelOverride.NONE;
+	}
+
+	/**
+	 * Looks up a model override, resolving area-restricted overrides from the model's local position.
+	 */
+	private ModelOverride dynamicModelOverride(SceneContext ctx, int type, int id, int x, int z, int plane)
+	{
+		ModelOverride override = modelOverrideManager.getOverride(type, id);
+		if (override.areaOverrides != null && ctx.data != null)
+		{
+			override = ModelOverrideManager.resolveArea(override, ctx.data.localToWorld(x, z, plane));
+		}
+		return override;
 	}
 
 	@Override
@@ -1431,7 +1978,16 @@ public class LuminaPlugin extends Plugin implements DrawCallbacks
 				zone = ctx.zones[x][z] = new Zone();
 
 				Scene scene = wv.getScene();
-				clientUploader.zoneSize(scene, zone, x, z);
+				initVanillaMaterials();
+				if (ctx.data == null || ctx.data.scene != scene)
+				{
+					ctx.data = sceneShading.createSceneData(wv, scene, client.getExpandedMapLoading());
+					if (ctx == root)
+					{
+						ctx.data.initAreaHiding();
+					}
+				}
+				clientUploader.zoneSize(scene, ctx.data, zone, x, z);
 
 				VBO o = null, a = null;
 				int sz = zone.sizeO * Zone.VERT_SIZE * 3;
@@ -1452,7 +2008,7 @@ public class LuminaPlugin extends Plugin implements DrawCallbacks
 
 				zone.init(o, a);
 
-				clientUploader.uploadZone(scene, zone, x, z);
+				clientUploader.uploadZone(scene, ctx.data, zone, x, z);
 
 				zone.unmap();
 				zone.initialized = true;
@@ -1750,12 +2306,19 @@ public class LuminaPlugin extends Plugin implements DrawCallbacks
 			}
 			nextZones = null;
 			nextRoofChanges = null;
+			nextSceneData = null;
 		}
 
 		SceneContext ctx = root;
 		Scene prev = client.getTopLevelWorldView().getScene();
 
-		regionManager.prepare(scene);
+		// shading data of the new scene, before its zones are sized and uploaded. 117 HD hides unrelated areas at
+		// upload and draw time instead of removing tiles from the scene, so all tiles take part in terrain normals
+		Stopwatch sceneDataTime = Stopwatch.createStarted();
+		initVanillaMaterials();
+		SceneData sceneData = sceneShading.createSceneData(worldView, scene, client.getExpandedMapLoading());
+		sceneData.initAreaHiding();
+		log.debug("Scene data time {}", sceneDataTime);
 
 		int dx = scene.getBaseX() - prev.getBaseX() >> 3;
 		int dy = scene.getBaseY() - prev.getBaseY() >> 3;
@@ -1777,7 +2340,9 @@ public class LuminaPlugin extends Plugin implements DrawCallbacks
 		Zone[][] newZones = new Zone[SCENE_ZONES][SCENE_ZONES];
 		final GameState gameState = client.getGameState();
 		if (prev.isInstance() == scene.isInstance()
-			&& gameState == GameState.LOGGED_IN)
+			&& gameState == GameState.LOGGED_IN
+			// 117 HD reuses zones only within the same hidden area
+			&& (root.data == null || root.data.currentArea == sceneData.currentArea))
 		{
 			int[][][] prevTemplates = prev.getInstanceTemplateChunks();
 			int[][][] curTemplates = scene.getInstanceTemplateChunks();
@@ -1898,7 +2463,7 @@ public class LuminaPlugin extends Plugin implements DrawCallbacks
 				{
 					assert zone.glVao == 0;
 					assert zone.glVaoA == 0;
-					mapUploader.zoneSize(scene, zone, x, z);
+					mapUploader.zoneSize(scene, sceneData, zone, x, z);
 					len += zone.sizeO;
 					lena += zone.sizeA;
 					newzones++;
@@ -1971,7 +2536,7 @@ public class LuminaPlugin extends Plugin implements DrawCallbacks
 
 				if (!zone.initialized)
 				{
-					mapUploader.uploadZone(scene, zone, x, z);
+					mapUploader.uploadZone(scene, sceneData, zone, x, z);
 				}
 			}
 		}
@@ -1979,6 +2544,7 @@ public class LuminaPlugin extends Plugin implements DrawCallbacks
 
 		nextZones = newZones;
 		nextRoofChanges = roofChanges;
+		nextSceneData = sceneData;
 	}
 
 	private static boolean canReuse(Zone[][] zones, int zx, int zz)
@@ -2026,6 +2592,8 @@ public class LuminaPlugin extends Plugin implements DrawCallbacks
 		}
 
 		final SceneContext ctx = new SceneContext(worldView.getSizeX() >> 3, worldView.getSizeY() >> 3);
+		initVanillaMaterials();
+		ctx.data = sceneShading.createSceneData(worldView, scene, 0);
 		subs[worldViewId] = ctx;
 
 		for (int x = 0; x < ctx.sizeX; ++x)
@@ -2033,7 +2601,7 @@ public class LuminaPlugin extends Plugin implements DrawCallbacks
 			for (int z = 0; z < ctx.sizeZ; ++z)
 			{
 				Zone zone = ctx.zones[x][z];
-				mapUploader.zoneSize(scene, zone, x, z);
+				mapUploader.zoneSize(scene, ctx.data, zone, x, z);
 			}
 		}
 
@@ -2085,7 +2653,7 @@ public class LuminaPlugin extends Plugin implements DrawCallbacks
 			{
 				Zone zone = ctx.zones[x][z];
 
-				mapUploader.uploadZone(scene, zone, x, z);
+				mapUploader.uploadZone(scene, ctx.data, zone, x, z);
 			}
 		}
 	}
@@ -2139,6 +2707,8 @@ public class LuminaPlugin extends Plugin implements DrawCallbacks
 
 		ctx.zones = nextZones;
 		nextZones = null;
+		ctx.data = nextSceneData;
+		nextSceneData = null;
 
 		// setup vaos
 		for (int x = 0; x < ctx.zones.length; ++x) // NOPMD: ForLoopCanBeForeach
@@ -2300,11 +2870,96 @@ public class LuminaPlugin extends Plugin implements DrawCallbacks
 	}
 
 	@Subscribe
+	private void onGameTick(GameTick event)
+	{
+		if (developerMode)
+		{
+			commandFile.poll();
+		}
+	}
+
+	@Subscribe
 	private void onCommandExecuted(CommandExecuted event)
 	{
 		if (event.getCommand().equals("lumina"))
 		{
-			String[] args = event.getArguments();
+			runLuminaCommand(event.getArguments());
+		}
+		else if (event.getCommand().equals("gpumem"))
+		{
+			runGpuMemCommand();
+		}
+	}
+
+	private void runLuminaCommand(String[] args)
+	{
+		// developer tools only
+		if (!developerMode)
+		{
+			return;
+		}
+		{
+			if (args.length >= 4 && args[0].equals("cam"))
+			{
+				try
+				{
+					FrameCapture.setCamera(client, Integer.parseInt(args[1]), Integer.parseInt(args[2]), Integer.parseInt(args[3]));
+				}
+				catch (NumberFormatException ex)
+				{
+					log.warn("::lumina cam yaw pitch zoom: numbers expected");
+				}
+				return;
+			}
+			if (args.length >= 1 && args[0].equals("capture"))
+			{
+				FrameCapture.capture(client, drawManager, "Lumina", args.length >= 2 ? args[1] : "capture");
+				return;
+			}
+			if (args.length >= 1 && args[0].equals("dump"))
+			{
+				// every lighting value the shaders get, for comparing against 117 HD
+				StringBuilder sb = new StringBuilder("Lighting dump: target=")
+					.append(environmentManager.getTargetEnvironment())
+					.append(" to=").append(environmentManager.getToEnvironment())
+					.append(" candidates=").append(root.data == null ? "none" : root.data.environments)
+					.append(" focal=").append(root.data == null ? "none" : java.util.Arrays.toString(root.data.localToWorld(
+						(int) client.getCameraFocalPointX(), (int) client.getCameraFocalPointZ(), client.getTopLevelWorldView().getPlane())))
+					.append(" sceneBase=").append(root.data == null ? "none" : java.util.Arrays.toString(root.data.sceneBase))
+					.append(System.lineSeparator()).append("  ").append(skyLighting.describe());
+				for (var f : Lighting.class.getFields())
+				{
+					try
+					{
+						Object v = f.get(lighting);
+						sb.append(System.lineSeparator()).append("  ").append(f.getName()).append(" = ")
+							.append(v instanceof float[] ? java.util.Arrays.toString((float[]) v) : v);
+					}
+					catch (IllegalAccessException ignored)
+					{
+					}
+				}
+				log.info(sb.toString());
+				return;
+			}
+			if (args.length >= 2 && args[0].equals("debug"))
+			{
+				switch (args[1])
+				{
+					case "albedo":
+						debugView = 1;
+						break;
+					case "light":
+						debugView = 2;
+						break;
+					case "normal":
+						debugView = 3;
+						break;
+					default:
+						debugView = 0;
+				}
+				return;
+			}
 			if (args.length >= 1 && args[0].equals("snapshot") && snapshot == null)
 			{
 				int seconds = 20;
@@ -2322,10 +2977,11 @@ public class LuminaPlugin extends Plugin implements DrawCallbacks
 				gpuTimer.setEnabled(true);
 				log.info("Snapshot started: {} s", seconds);
 			}
-			return;
 		}
+	}
 
-		if (event.getCommand().equals("gpumem"))
+	private void runGpuMemCommand()
+	{
 		{
 			int totalSzKb = 0;
 			for (int i = 0; i < rts.length; ++i)

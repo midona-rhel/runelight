@@ -29,101 +29,60 @@
 
 #include texture_config
 
-// smallest unit of the texture which can be moved per tick. textures are all
-// 128x128px - so this is equivalent to +1px
-#define TEXTURE_ANIM_UNIT (1.0f / 128.0f)
-
-#define TILE_SIZE 128.f
-
-#define FOG_SCENE_EDGE_MIN ((-expandedMapLoadingChunks * 8 + 1) * TILE_SIZE)
-#define FOG_SCENE_EDGE_MAX ((104 + expandedMapLoadingChunks * 8 - 1) * TILE_SIZE)
-#define FOG_CORNER_ROUNDING 1.5
-#define FOG_CORNER_ROUNDING_SQUARED (FOG_CORNER_ROUNDING * FOG_CORNER_ROUNDING)
-
+// 117 HD's scene_vert.glsl (zone renderer) on Lumina's vertex formats: each vertex carries the alpha/bias/HSL of all
+// three vertices of its face (117 HD's face buffer), and gl_VertexID % 3 is the vertex's index in the face, since
+// faces are drawn as consecutive triplets.
 layout(location = 0) in vec3 vertf;
-layout(location = 1) in int abhsl;
-layout(location = 2) in ivec4 tex;
-
-layout(std140) uniform uniforms {
-  float cameraYaw;
-  float cameraPitch;
-  float cameraX;
-  float cameraY;
-  float cameraZ;
-};
+layout(location = 1) in ivec3 abhsl;  // alpha, bias and HSL of the face's vertices 0, 1, 2
+layout(location = 2) in ivec2 texFlags; // vanilla texture id + 1, flags (bits 0-2 overlay of vertex 0-2, 3 upwards normals, 4 vanilla UVs)
+layout(location = 4) in vec2 uv;
+layout(location = 3) in vec4 normalMaterial; // unnormalized normal (zero: drawn unlit, vanilla skybox), material slot
 
 uniform mat4 worldProj;
 uniform mat4 entityProj;
-uniform ivec4 entityTint;
-uniform float brightness;
-uniform int useFog;
-uniform int fogDepth;
-uniform int drawDistance;
-uniform int expandedMapLoadingChunks;
 uniform ivec3 base;
-uniform int tick;
-uniform vec2 textureAnimations[TEXTURE_COUNT];
 
-out vec4 fColor;
-noperspective centroid out float fHsl;
+flat out ivec3 fAlphaBiasHsl;
+flat out int fFlags;
 flat out int fTextureId;
+flat out int fMaterial;
+flat out int fLit;
+centroid out vec3 fTexBlend;
+out vec3 fPosition;
+out vec3 fNormal;
 out vec2 fUv;
-out float fFogAmount;
 #ifdef ZBUF_DEBUG
 out float fDepth;
 #endif
 
-#include "hsl_to_rgb.glsl"
-
-float fogFactorLinear(const float dist, const float start, const float end) {
-  return 1.0 - clamp((dist - start) / (end - start), 0.0, 1.0);
-}
-
 void main() {
-  vec4 vert = vec4(vertf + base, 1);
-  float a = float(abhsl >> 24 & 0xff) / 255.f;
-  int bias = (abhsl >> 16) & 0xff;
+  int vertex = gl_VertexID % 3;
 
-  vec3 hsl = vec3(abhsl >> 10 & 63, abhsl >> 7 & 7, abhsl & 127);
-  hsl += ((entityTint.xyz - hsl) * entityTint.w) / 128;
-  vec3 rgb = hslToRgb(hsl);
+  // entityProj places sub-scenes (boats) in the world, rotating them too (117 HD's world view projection)
+  vec4 worldPos = entityProj * vec4(vertf + base, 1);
+  fPosition = worldPos.xyz;
+  vec3 normal = normalMaterial.xyz;
+  fNormal = mat3(entityProj) * normal;
+  fLit = normal != vec3(0) ? 1 : 0;
+  fMaterial = int(normalMaterial.w);
 
-  vec4 worldPos = entityProj * vert;
-  vec4 screenPos = worldProj * worldPos;
+  fAlphaBiasHsl = abhsl;
+  fFlags = texFlags.y;
+  fTexBlend = vec3(0);
+  fTexBlend[vertex] = 1.0;
+
+  vec4 clipPosition = worldProj * worldPos;
 #ifdef ZBUF_DEBUG
-  fDepth = screenPos.z / screenPos.w;
+  fDepth = clipPosition.z / clipPosition.w;
 #endif
-  screenPos.z += float(bias) / 128.0;
-  gl_Position = screenPos;
+  int depthBias = (abhsl[vertex] >> 16) & 0xff;
 #ifdef BIAS_DEBUG
-  fColor = vec4(clamp(bias, 0, 12) / 12.0, 0.0, 0.0, 1.0);
-#else
-  fColor = vec4(rgb, 1.f - a);
+  fFlags = depthBias << 8;
 #endif
+  clipPosition.z += depthBias / 128.0;
+  gl_Position = clipPosition;
 
-  fTextureId = tex.x;  // the texture id + 1
-  fUv = vec2(float(tex.y) / 256.f, float(tex.z) / 256.f);
-  if (fTextureId > 0) {
-    vec2 textureAnim = textureAnimations[min(fTextureId - 1, TEXTURE_COUNT - 1)];
-    fUv += float(tick) * textureAnim * TEXTURE_ANIM_UNIT;
-    fHsl = float(abhsl & 0xffff);  // only used for texture lighting, which isn't affected by tint
-  } else {
-    fHsl = float(((int(hsl[0]) & 63) << 10) | ((int(hsl[1]) & 7) << 7) | (int(hsl[2]) & 127));
-  }
-
-  float fogWest = max(FOG_SCENE_EDGE_MIN, cameraX - drawDistance);
-  float fogEast = min(FOG_SCENE_EDGE_MAX, cameraX + drawDistance);
-  float fogSouth = max(FOG_SCENE_EDGE_MIN, cameraZ - drawDistance);
-  float fogNorth = min(FOG_SCENE_EDGE_MAX, cameraZ + drawDistance);
-
-  // Calculate distance from the scene edge
-  float xDist = min(worldPos.x - fogWest, fogEast - worldPos.x);
-  float zDist = min(worldPos.z - fogSouth, fogNorth - worldPos.z);
-  float nearestEdgeDistance = min(xDist, zDist);
-  float secondNearestEdgeDistance = max(xDist, zDist);
-  float fogDistance =
-      nearestEdgeDistance - FOG_CORNER_ROUNDING * TILE_SIZE *
-                                max(0.f, (nearestEdgeDistance + FOG_CORNER_ROUNDING_SQUARED) / (secondNearestEdgeDistance + FOG_CORNER_ROUNDING_SQUARED));
-
-  fFogAmount = fogFactorLinear(fogDistance, 0.f, fogDepth * TILE_SIZE) * useFog;
+  fTextureId = texFlags.x;  // the vanilla texture id + 1
+  // 117 HD's computeVertexUvs: geometry and vanilla UVs pass through (world UVs are computed on upload)
+  fUv = uv;
 }

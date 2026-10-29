@@ -49,11 +49,13 @@ import static org.lwjgl.opengl.GL33C.*;
 @RequiredArgsConstructor
 class Zone
 {
-	// Zone vertex format
-	// index 0: short vec3(x, y, z)
-	// index 1: int abhsl
-	// index 2: short vec4(id, u, v, 0)
-	static final int VERT_SIZE = 20;
+	// Zone vertex format (see GpuIntBuffer.putZoneVertex)
+	// index 0: short vec3(x, y, z) + pad
+	// index 1: int ivec3(abhsl of the face's vertices 0, 1, 2), the same for all three vertices of a face
+	// index 2: short ivec2(texture id + 1, flags)
+	// index 4: half vec2(u, v)
+	// index 3: short vec4(normal x, y, z, material slot); a zero normal marks unlit (vanilla) geometry
+	static final int VERT_SIZE = 36;
 
 	int glVao;
 	int bufLen;
@@ -69,7 +71,10 @@ class Zone
 	boolean dirty; // whether the zone has temporary modifications
 	boolean invalidate; // whether the zone needs rebuilding
 
-	int[] levelOffsets = new int[4]; // buffer pos in ints for the end of the level
+	// 117 HD's zone sections: levels 0-3, then the terrain (level 0 tiles and vis-below tiles), then gap fillers
+	static final int LEVEL_TERRAIN = 4;
+	static final int LEVEL_GAP_FILLER = 5;
+	int[] levelOffsets = new int[6]; // buffer pos in ints for the end of the level
 
 	int[][] rids;
 	int[][] roofStart;
@@ -159,10 +164,16 @@ class Zone
 		glVertexAttribPointer(0, 4, GL_SHORT, false, VERT_SIZE, 0);
 
 		glEnableVertexAttribArray(1);
-		glVertexAttribIPointer(1, 1, GL_INT, VERT_SIZE, 8);
+		glVertexAttribIPointer(1, 3, GL_INT, VERT_SIZE, 8);
 
 		glEnableVertexAttribArray(2);
-		glVertexAttribIPointer(2, 4, GL_SHORT, VERT_SIZE, 12);
+		glVertexAttribIPointer(2, 2, GL_SHORT, VERT_SIZE, 20);
+
+		glEnableVertexAttribArray(4);
+		glVertexAttribPointer(4, 2, GL_HALF_FLOAT, false, VERT_SIZE, 24);
+
+		glEnableVertexAttribArray(3);
+		glVertexAttribPointer(3, 4, GL_SHORT, false, VERT_SIZE, 28);
 
 		glBindVertexArray(0);
 		glBindBuffer(GL_ARRAY_BUFFER, 0);
@@ -208,6 +219,9 @@ class Zone
 
 			end -= off; // convert from end pos to length
 
+			// vert.glsl takes a vertex's corner in its face from gl_VertexID % 3: draws must start and end on a face
+			assert off % 3 == 0 && end % 3 == 0 : "draw range not on a face boundary: " + off + "+" + end;
+
 			drawOff.put(i, off);
 			drawEnd.put(i, end);
 		}
@@ -217,6 +231,12 @@ class Zone
 	{
 		drawOff.clear();
 		drawEnd.clear();
+
+		// 117 HD draws the terrain section first, when the ground level is rendered
+		if (minLevel == 0)
+		{
+			pushRange(levelOffsets[3], levelOffsets[LEVEL_TERRAIN]);
+		}
 
 		for (int level = minLevel; level <= maxLevel; ++level)
 		{
@@ -272,6 +292,29 @@ class Zone
 		}
 	}
 
+	/**
+	 * 117 HD's gap fillers: drawn at a constant depth just above the sky's (glDepthRange MIN_NORMAL), so all other
+	 * geometry draws over them.
+	 */
+	void renderGapFillers(int zx, int zz)
+	{
+		int start = levelOffsets[LEVEL_TERRAIN];
+		int end = levelOffsets[LEVEL_GAP_FILLER];
+		if (end <= start)
+		{
+			return;
+		}
+		drawOff.clear();
+		drawEnd.clear();
+		pushRange(start, end);
+		convertForDraw(VERT_SIZE);
+		glUniform3i(uniBase, zx << 10, 0, zz << 10);
+		glBindVertexArray(glVao);
+		glDepthRange(Float.MIN_NORMAL, Float.MIN_NORMAL);
+		glMultiDrawArrays(GL_TRIANGLES, drawOff, drawEnd);
+		glDepthRange(0, 1);
+	}
+
 	private static void pushRange(int start, int end)
 	{
 		assert end >= start;
@@ -324,7 +367,14 @@ class Zone
 
 	static final Queue<AlphaModel> modelCache = new ArrayDeque<>();
 
-	void addAlphaModel(int vao, Model model, int startpos, int endpos, int x, int y, int z, int lx, int lz, int ux, int uz, int rid, int level, int id)
+	/**
+	 * Adds a static model's alpha faces for sorting.
+	 *
+	 * @param faces     the model faces written to the alpha buffer between startpos and endpos, in buffer order, as
+	 *                  decided by the uploader (so the faces skipped there are skipped here too)
+	 * @param faceCount the number of entries in {@code faces}
+	 */
+	void addAlphaModel(int vao, Model model, int[] faces, int faceCount, int startpos, int endpos, int x, int y, int z, int lx, int lz, int ux, int uz, int rid, int level, int id)
 	{
 		AlphaModel m = new AlphaModel();
 		m.id = id;
@@ -348,9 +398,6 @@ class Zone
 			m.lx = m.lz = m.ux = m.uz = -1;
 		}
 
-		int faceCount = model.getFaceCount();
-		int[] color3 = model.getFaceColors3();
-		byte[] transparencies = model.getFaceTransparencies();
 		float[] vertexX = model.getVerticesX();
 		float[] vertexY = model.getVerticesY();
 		float[] vertexZ = model.getVerticesZ();
@@ -361,13 +408,9 @@ class Zone
 		int minX = Integer.MAX_VALUE, minY = minX, minZ = minY;
 		int maxX = Integer.MIN_VALUE, maxY = maxX, maxZ = maxY;
 
-		for (int f = 0; f < faceCount; ++f)
+		for (int i = 0; i < faceCount; ++i)
 		{
-			if (color3[f] == -2 || transparencies[f] == 0)
-			{
-				continue;
-			}
-
+			int f = faces[i];
 			int fx = (int) (vertexX[indices1[f]] + vertexX[indices2[f]] + vertexX[indices3[f]]);
 			int fy = (int) (vertexY[indices1[f]] + vertexY[indices2[f]] + vertexY[indices3[f]]);
 			int fz = (int) (vertexZ[indices1[f]] + vertexZ[indices2[f]] + vertexZ[indices3[f]]);
@@ -399,13 +442,9 @@ class Zone
 		int[] packedFaces = m.packedFaces = new int[(endpos - startpos) / ((3 * VERT_SIZE) >> 2)];
 		int radius = 0;
 		char bufferIdx = 0;
-		for (int f = 0; f < faceCount; ++f)
+		for (int i = 0; i < faceCount; ++i)
 		{
-			if (color3[f] == -2 || transparencies[f] == 0)
-			{
-				continue;
-			}
-
+			int f = faces[i];
 			int fx = (((int) (vertexX[indices1[f]] + vertexX[indices2[f]] + vertexX[indices3[f]]) / 3) - cx) >> shift;
 			int fy = (((int) (vertexY[indices1[f]] + vertexY[indices2[f]] + vertexY[indices3[f]]) / 3) - cy) >> shift;
 			int fz = (((int) (vertexZ[indices1[f]] + vertexZ[indices2[f]] + vertexZ[indices3[f]]) / 3) - cz) >> shift;
@@ -527,8 +566,14 @@ class Zone
 		alphaModels.sort(alphaModelComparator);
 	}
 
-	void renderAlpha(ModelUploader mu, int zx, int zz, int cyaw, int cpitch, int minLevel, int currentLevel, int maxLevel, int level, Set<Integer> hiddenRoofIds, boolean useStaticUnsorted)
+	// whether renderAlpha writes depth only (117 HD's second alpha pass), else colour without depth writes
+	private static boolean depthOnly;
+
+	void renderAlpha(ModelUploader mu, int zx, int zz, int cyaw, int cpitch, int minLevel, int currentLevel, int maxLevel, int level, Set<Integer> hiddenRoofIds, boolean useStaticUnsorted, boolean depthOnly)
 	{
+		Zone.depthOnly = depthOnly;
+		// 117 HD draws static alpha unsorted in its depth-only pass
+		useStaticUnsorted |= depthOnly;
 		drawOff.clear();
 		drawEnd.clear();
 		alphaElements.clear();
@@ -665,7 +710,7 @@ class Zone
 			assert drawOff.limit() > 0;
 			glUniform3i(uniBase, 0, 0, 0);
 			glBindVertexArray(lastVao);
-			glDepthMask(false);
+			glDepthMask(depthOnly);
 			glMultiDrawArrays(GL_TRIANGLES, drawOff, drawEnd);
 			glDepthMask(true);
 			drawOff.clear();
@@ -678,7 +723,7 @@ class Zone
 			glBindVertexArray(lastVao);
 			glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, elementBufferId);
 			glBufferData(GL_ELEMENT_ARRAY_BUFFER, alphaElements, GL_STREAM_DRAW);
-			glDepthMask(false);
+			glDepthMask(depthOnly);
 			glDrawElements(GL_TRIANGLES, alphaElements.limit(), GL_UNSIGNED_INT, 0L);
 			glDepthMask(true);
 			glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, 0);
@@ -690,7 +735,7 @@ class Zone
 			assert drawOff.limit() > 0;
 			glUniform3i(uniBase, lastzx << 10, 0, lastzz << 10);
 			glBindVertexArray(lastVao);
-			glDepthMask(false);
+			glDepthMask(depthOnly);
 			glMultiDrawArrays(GL_TRIANGLES, drawOff, drawEnd);
 			glDepthMask(true);
 			drawOff.clear();

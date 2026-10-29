@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2023, Adam <Adam@sigterm.info>
+ * Copyright (c) 2021, 117 <https://twitter.com/117scape>
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -22,13 +22,9 @@
  * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
  * SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
-package com.midonarhel.lumina.regions;
+package com.midonarhel.lumina.scene.overrides;
 
-class Region
+public enum InheritTileColorType
 {
-	int id;
-	int cx1;
-	int cy1;
-	int cx2;
-	int cy2;
+	NONE, OVERLAY, UNDERLAY
 }

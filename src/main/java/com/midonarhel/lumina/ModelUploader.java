@@ -24,8 +24,14 @@
  */
 package com.midonarhel.lumina;
 
+import com.midonarhel.lumina.geometry.FaceShading;
+import com.midonarhel.lumina.scene.overrides.ModelOverride;
+import com.midonarhel.lumina.scene.overrides.UvType;
+import com.midonarhel.lumina.scene.materials.MaterialManager;
+import com.midonarhel.lumina.util.MathUtils;
 import java.nio.IntBuffer;
 import java.util.Arrays;
+import javax.annotation.Nullable;
 import net.runelite.api.Model;
 import net.runelite.api.Perspective;
 import net.runelite.api.Projection;
@@ -52,11 +58,19 @@ class ModelUploader
 
 	private final float[] u, v;
 
+	private static final int FACE_SIZE = (VAO.VERT_SIZE >> 2) * 3;
+	// 117 HD's MathUtils.DEG_TO_JAU
+	private static final float DEG_TO_JAU = 2048 / 360f;
+	private final FaceShading faceShading = new FaceShading();
+	private final int[] faceData = new int[FACE_SIZE];
+	private final float[] uvs = new float[12];
+	private final float[] uvWork = new float[9];
+	private static final int[] NO_NORMALS = new int[9];
+
 	static final int MAX_VERTEX_COUNT = 6500;
 	static final int MAX_FACE_COUNT = 8192; // was 6500
 	static final int MAX_DIAMETER = 6000;
 	private static final int MAX_FACES_PER_PRIORITY = 4000; // was 2500
-	private static final int FACE_SIZE = (VAO.VERT_SIZE >> 2) * 3;
 
 	{
 		distances = new int[MAX_VERTEX_COUNT];
@@ -83,7 +97,7 @@ class ModelUploader
 		v = new float[3];
 	}
 
-	int uploadSortedModel(LuminaPlugin.RenderThread rt, Projection proj, Model model, int orientation, int x, int y, int z,
+	int uploadSortedModel(LuminaPlugin.RenderThread rt, Projection proj, Model model, ModelOverride override, int preOrientation, int orientation, int x, int y, int z,
 		int cameraX, int cameraY, int cameraZ, IntBuffer opaqueBuffer, IntBuffer alphaBuffer, boolean prioritySort)
 	{
 		final int vertexCount = model.getVerticesCount();
@@ -96,16 +110,17 @@ class ModelUploader
 		final int[] indices2 = model.getFaceIndices2();
 		final int[] indices3 = model.getFaceIndices3();
 
-		final int[] faceColors1 = model.getFaceColors1();
-		final int[] faceColors2 = model.getFaceColors2();
 		final int[] faceColors3 = model.getFaceColors3();
 		final byte[] faceRenderPriorities = model.getFaceRenderPriorities();
 
 		final short[] faceTextures = model.getFaceTextures();
 
-		final byte[] transparencies = model.getFaceTransparencies();
-		final byte modelTransparency = model.getTransparency();
-		final byte[] bias = model.getFaceBias();
+		// 117 HD's temp model path: override rotation and height offset
+		if (override.rotate != 0)
+		{
+			orientation = Math.floorMod((int) (override.rotate * DEG_TO_JAU), 2048);
+		}
+		y += override.heightOffset;
 
 		float orientSine = 0;
 		float orientCosine = 0;
@@ -163,6 +178,8 @@ class ModelUploader
 			}
 		}
 
+		faceShading.setModel(model, override, orientation, null, true, modelLocalX, modelLocalY, modelLocalZ);
+
 		final int diameter = model.getDiameter();
 		final int radius = model.getRadius();
 		if (diameter >= MAX_DIAMETER)
@@ -190,7 +207,8 @@ class ModelUploader
 					cX = modelProjectedX[v3],
 					cY = modelProjectedY[v3];
 
-				if (aX == -5000 || bX == -5000 || cX == -5000 || (aX - bX) * (cY - bY) - (cX - bX) * (aY - bY) > 0)
+				if ((aX == -5000 || bX == -5000 || cX == -5000 || (aX - bX) * (cY - bY) - (cX - bX) * (aY - bY) > 0)
+					&& faceShading.shade(faceIdx))
 				{
 					int distance = radius + (distances[v1] + distances[v2] + distances[v3]) / 3;
 					assert distance >= 0 && distance < diameter;
@@ -210,63 +228,15 @@ class ModelUploader
 
 					minFz = Math.min(minFz, distance);
 					maxFz = Math.max(maxFz, distance);
-					computeFaceUvs(model, faceIdx, modelCameraX, modelCameraY, modelCameraZ, true, u, v);
+					faceUvs(faceShading, model, faceIdx, preOrientation, true, modelCameraX, modelCameraY, modelCameraZ,
+						modelLocalX, modelLocalY, modelLocalZ, 0, 0, uvs, uvWork);
 
-					int su0 = (int) (u[0] * 256f);
-					int sv0 = (int) (v[0] * 256f);
-
-					int su1 = (int) (u[1] * 256f);
-					int sv1 = (int) (v[1] * 256f);
-
-					int su2 = (int) (u[2] * 256f);
-					int sv2 = (int) (v[2] * 256f);
-
-					int color1 = faceColors1[faceIdx];
-					int color2 = faceColors2[faceIdx];
-					int color3 = faceColors3[faceIdx];
-
-					if (color3 == -1)
-					{
-						color2 = color3 = color1;
-					}
-
-					// HSL override is not applied to textured faces
-					if (faceTextures == null || faceTextures[faceIdx] == -1)
-					{
-						if (model.getOverrideAmount() > 0)
-						{
-							color1 = interpolateHSL(color1, model.getOverrideHue(), model.getOverrideSaturation(), model.getOverrideLuminance(), model.getOverrideAmount());
-							color2 = interpolateHSL(color2, model.getOverrideHue(), model.getOverrideSaturation(), model.getOverrideLuminance(), model.getOverrideAmount());
-							color3 = interpolateHSL(color3, model.getOverrideHue(), model.getOverrideSaturation(), model.getOverrideLuminance(), model.getOverrideAmount());
-						}
-					}
-
-					int alphaBias = 0;
-					alphaBias |= faceTransparency(modelTransparency, transparencies != null ? transparencies[faceIdx] & 0xff : 0) << 24;
-					alphaBias |= bias != null ? (bias[faceIdx] & 0xff) << 16 : 0;
+					// colours, alpha, bias, normals and material: 117 HD's temp model path (FaceShading)
+					int alphaBias = faceShading.transparency << 24 | faceShading.depthBias << 16;
 					int texture = faceTextures != null ? faceTextures[faceIdx] + 1 : 0;
-
-					int vbOff = faceIdx * FACE_SIZE;
-					vertexBuffer[vbOff++] = Float.floatToIntBits(modelLocalX[v1]);
-					vertexBuffer[vbOff++] = Float.floatToIntBits(modelLocalY[v1]);
-					vertexBuffer[vbOff++] = Float.floatToIntBits(modelLocalZ[v1]);
-					vertexBuffer[vbOff++] = alphaBias | color1;
-					vertexBuffer[vbOff++] = ((su0 & 0xffff) << 16 | (texture & 0xffff));
-					vertexBuffer[vbOff++] = sv0 & 0xffff;
-
-					vertexBuffer[vbOff++] = Float.floatToIntBits(modelLocalX[v2]);
-					vertexBuffer[vbOff++] = Float.floatToIntBits(modelLocalY[v2]);
-					vertexBuffer[vbOff++] = Float.floatToIntBits(modelLocalZ[v2]);
-					vertexBuffer[vbOff++] = alphaBias | color2;
-					vertexBuffer[vbOff++] = ((su1 & 0xffff) << 16 | (texture & 0xffff));
-					vertexBuffer[vbOff++] = sv1 & 0xffff;
-
-					vertexBuffer[vbOff++] = Float.floatToIntBits(modelLocalX[v3]);
-					vertexBuffer[vbOff++] = Float.floatToIntBits(modelLocalY[v3]);
-					vertexBuffer[vbOff++] = Float.floatToIntBits(modelLocalZ[v3]);
-					vertexBuffer[vbOff++] = alphaBias | color3;
-					vertexBuffer[vbOff++] = ((su2 & 0xffff) << 16 | (texture & 0xffff));
-					vertexBuffer[vbOff++] = sv2 & 0xffff;
+					putFace(vertexBuffer, faceIdx * FACE_SIZE, v1, v2, v3,
+						alphaBias | faceShading.color1, alphaBias | faceShading.color2, alphaBias | faceShading.color3,
+						texture, uvs, faceFlags(faceShading), faceShading.normals, MaterialManager.slot(faceShading.material));
 				}
 			}
 		}
@@ -279,7 +249,7 @@ class ModelUploader
 				for (char face = zsortHead[i]; face != (char) -1; face = zsortNext[face])
 				{
 					int offset = face * FACE_SIZE;
-					var b = (vertexBuffer[offset + 3] & 0xff000000) != 0 ? alphaBuffer : opaqueBuffer;
+					var b = (vertexBuffer[offset + 6] >>> 16 & ALPHA_FLAG) != 0 ? alphaBuffer : opaqueBuffer;
 					b.put(vertexBuffer, offset, FACE_SIZE);
 				}
 			}
@@ -358,7 +328,7 @@ class ModelUploader
 				{
 					final int face = dynFaces[drawnFaces++];
 					int offset = face * FACE_SIZE;
-					var b = (vertexBuffer[offset + 3] & 0xff000000) != 0 ? alphaBuffer : opaqueBuffer;
+					var b = (vertexBuffer[offset + 6] >>> 16 & ALPHA_FLAG) != 0 ? alphaBuffer : opaqueBuffer;
 					b.put(vertexBuffer, offset, FACE_SIZE);
 
 					if (drawnFaces == numDynFaces && dynFaces != orderedFaces[11])
@@ -383,7 +353,7 @@ class ModelUploader
 				{
 					final int face = dynFaces[drawnFaces++];
 					int offset = face * FACE_SIZE;
-					var b = (vertexBuffer[offset + 3] & 0xff000000) != 0 ? alphaBuffer : opaqueBuffer;
+					var b = (vertexBuffer[offset + 6] >>> 16 & ALPHA_FLAG) != 0 ? alphaBuffer : opaqueBuffer;
 					b.put(vertexBuffer, offset, FACE_SIZE);
 
 					if (drawnFaces == numDynFaces && dynFaces != orderedFaces[11])
@@ -408,7 +378,7 @@ class ModelUploader
 				{
 					final int face = dynFaces[drawnFaces++];
 					int offset = face * FACE_SIZE;
-					var b = (vertexBuffer[offset + 3] & 0xff000000) != 0 ? alphaBuffer : opaqueBuffer;
+					var b = (vertexBuffer[offset + 6] >>> 16 & ALPHA_FLAG) != 0 ? alphaBuffer : opaqueBuffer;
 					b.put(vertexBuffer, offset, FACE_SIZE);
 
 					if (drawnFaces == numDynFaces && dynFaces != orderedFaces[11])
@@ -436,7 +406,7 @@ class ModelUploader
 				{
 					final int face = priFaces[faceIdx];
 					int offset = face * FACE_SIZE;
-					var b = (vertexBuffer[offset + 3] & 0xff000000) != 0 ? alphaBuffer : opaqueBuffer;
+					var b = (vertexBuffer[offset + 6] >>> 16 & ALPHA_FLAG) != 0 ? alphaBuffer : opaqueBuffer;
 					b.put(vertexBuffer, offset, FACE_SIZE);
 				}
 			}
@@ -445,7 +415,7 @@ class ModelUploader
 			{
 				final int face = dynFaces[drawnFaces++];
 				int offset = face * FACE_SIZE;
-				var b = (vertexBuffer[offset + 3] & 0xff000000) != 0 ? alphaBuffer : opaqueBuffer;
+				var b = (vertexBuffer[offset + 6] >>> 16 & ALPHA_FLAG) != 0 ? alphaBuffer : opaqueBuffer;
 				b.put(vertexBuffer, offset, FACE_SIZE);
 
 				if (drawnFaces == numDynFaces && dynFaces != orderedFaces[11])
@@ -470,24 +440,13 @@ class ModelUploader
 		return len;
 	}
 
-	private static int faceTransparency(byte modelTransparency, int faceTransparency)
-	{
-		if (modelTransparency == -1)
-		{
-			return 255;
-		}
-		int t = modelTransparency & 255;
-		if (t > 0 && faceTransparency < 253)
-		{
-			int a = (253 - faceTransparency) * t >> 8;
-			assert (faceTransparency & 255) == faceTransparency;
-			return faceTransparency + a;
-		}
-		return faceTransparency;
-	}
-
-	// temp draw
-	int uploadTempModel(Model model, int orientation, int x, int y, int z,
+	/**
+	 * Uploads a model unsorted.
+	 *
+	 * @param override the model override; null uploads the model as vanilla lit it, without normals (drawn unlit by
+	 *                 the shader), which the skybox uses
+	 */
+	int uploadTempModel(Model model, @Nullable ModelOverride override, int preOrientation, int orientation, int x, int y, int z,
 		int cameraX, int cameraY, int cameraZ, IntBuffer buffer)
 	{
 		final int triangleCount = model.getFaceCount();
@@ -515,6 +474,16 @@ class ModelUploader
 		final byte overrideHue = model.getOverrideHue();
 		final byte overrideSat = model.getOverrideSaturation();
 		final byte overrideLum = model.getOverrideLuminance();
+
+		// 117 HD's temp model path: override rotation and height offset
+		if (override != null)
+		{
+			if (override.rotate != 0)
+			{
+				orientation = Math.floorMod((int) (override.rotate * DEG_TO_JAU), 2048);
+			}
+			y += override.heightOffset;
+		}
 
 		float orientSine = 0;
 		float orientCosine = 0;
@@ -556,73 +525,93 @@ class ModelUploader
 			modelLocalZ[v] = vertexZ;
 		}
 
+		if (override != null)
+		{
+			faceShading.setModel(model, override, orientation, null, true, modelLocalX, modelLocalY, modelLocalZ);
+		}
+
 		int len = 0;
 		for (int face = 0; face < triangleCount; ++face)
 		{
-			int color1 = color1s[face];
-			int color2 = color2s[face];
-			int color3 = color3s[face];
-
-			if (color3 == -1)
+			int color1, color2, color3;
+			int alphaBias;
+			int[] normals;
+			int flags = 0;
+			int slot = 0;
+			if (override != null)
 			{
-				color2 = color3 = color1;
-			}
-			else if (color3 == -2)
-			{
-				continue;
-			}
-
-			// HSL override is not applied to textured faces
-			if (faceTextures == null || faceTextures[face] == -1)
-			{
-				if (overrideAmount > 0)
+				// colours, alpha, bias and normals as for static models (FaceShading), plus the model HSL override
+				if (!faceShading.shade(face))
 				{
-					color1 = interpolateHSL(color1, overrideHue, overrideSat, overrideLum, overrideAmount);
-					color2 = interpolateHSL(color2, overrideHue, overrideSat, overrideLum, overrideAmount);
-					color3 = interpolateHSL(color3, overrideHue, overrideSat, overrideLum, overrideAmount);
+					continue;
 				}
+				color1 = faceShading.color1;
+				color2 = faceShading.color2;
+				color3 = faceShading.color3;
+				alphaBias = faceShading.transparency << 24 | faceShading.depthBias << 16;
+				normals = faceShading.normals;
+				flags = faceFlags(faceShading);
+				slot = MaterialManager.slot(faceShading.material);
+			}
+			else
+			{
+				color1 = color1s[face];
+				color2 = color2s[face];
+				color3 = color3s[face];
+
+				if (color3 == -1)
+				{
+					color2 = color3 = color1;
+				}
+				else if (color3 == -2)
+				{
+					continue;
+				}
+
+				// HSL override is not applied to textured faces
+				if (faceTextures == null || faceTextures[face] == -1)
+				{
+					if (overrideAmount > 0)
+					{
+						color1 = FaceShading.interpolateHSL(color1, overrideHue, overrideSat, overrideLum, overrideAmount);
+						color2 = FaceShading.interpolateHSL(color2, overrideHue, overrideSat, overrideLum, overrideAmount);
+						color3 = FaceShading.interpolateHSL(color3, overrideHue, overrideSat, overrideLum, overrideAmount);
+					}
+				}
+
+				alphaBias = 0;
+				alphaBias |= transparencies != null ? (transparencies[face] & 0xff) << 24 : 0;
+				alphaBias |= bias != null ? (bias[face] & 0xff) << 16 : 0;
+				normals = NO_NORMALS;
 			}
 
 			int triangleA = indices1[face];
 			int triangleB = indices2[face];
 			int triangleC = indices3[face];
 
-			float vx1 = modelLocalX[triangleA];
-			float vy1 = modelLocalY[triangleA];
-			float vz1 = modelLocalZ[triangleA];
 
-			float vx2 = modelLocalX[triangleB];
-			float vy2 = modelLocalY[triangleB];
-			float vz2 = modelLocalZ[triangleB];
+			if (override != null)
+			{
+				faceUvs(faceShading, model, face, preOrientation, true, modelCameraX, modelCameraY, modelCameraZ,
+					modelLocalX, modelLocalY, modelLocalZ, 0, 0, uvs, uvWork);
+			}
+			else
+			{
+				computeFaceUvs(model, face, modelCameraX, modelCameraY, modelCameraZ, true, u, v);
+				uvs[0] = u[0];
+				uvs[1] = v[0];
+				uvs[4] = u[1];
+				uvs[5] = v[1];
+				uvs[8] = u[2];
+				uvs[9] = v[2];
+			}
 
-			float vx3 = modelLocalX[triangleC];
-			float vy3 = modelLocalY[triangleC];
-			float vz3 = modelLocalZ[triangleC];
-
-			computeFaceUvs(model, face, modelCameraX, modelCameraY, modelCameraZ, true, u, v);
-
-			int su0 = (int) (u[0] * 256f);
-			int sv0 = (int) (v[0] * 256f);
-
-			int su1 = (int) (u[1] * 256f);
-			int sv1 = (int) (v[1] * 256f);
-
-			int su2 = (int) (u[2] * 256f);
-			int sv2 = (int) (v[2] * 256f);
-
-			int alphaBias = 0;
-			alphaBias |= transparencies != null ? (transparencies[face] & 0xff) << 24 : 0;
-			alphaBias |= bias != null ? (bias[face] & 0xff) << 16 : 0;
 			int texture = faceTextures != null ? faceTextures[face] + 1 : 0;
 
-			putfff4(buffer, vx1, vy1, vz1, alphaBias | color1);
-			put2222(buffer, texture, su0, sv0, 0);
-
-			putfff4(buffer, vx2, vy2, vz2, alphaBias | color2);
-			put2222(buffer, texture, su1, sv1, 0);
-
-			putfff4(buffer, vx3, vy3, vz3, alphaBias | color3);
-			put2222(buffer, texture, su2, sv2, 0);
+			putFace(faceData, 0, triangleA, triangleB, triangleC,
+				alphaBias | color1, alphaBias | color2, alphaBias | color3,
+				texture, uvs, flags, normals, slot);
+			buffer.put(faceData, 0, FACE_SIZE);
 
 			len += 3;
 		}
@@ -630,42 +619,124 @@ class ModelUploader
 		return len;
 	}
 
-	static void put2222(IntBuffer vb, int x, int y, int z, int w)
+	/**
+	 * Writes one face in the temporary vertex format (see {@link VAO#VERT_SIZE}): each vertex carries the colours of
+	 * all three vertices of the face, in face order, for the shader's per-fragment blend.
+	 */
+	private void putFace(int[] out, int off, int a, int b, int c, int c1, int c2, int c3,
+		int texture, float[] uvs, int flags, int[] n, int material)
 	{
-		vb.put(((y & 0xffff) << 16) | (x & 0xffff));
-		vb.put(((w & 0xffff) << 16) | (z & 0xffff));
+		off = putVertex(out, off, a, c1, c2, c3, texture, uvs[0], uvs[1], flags, n[0], n[1], n[2], material);
+		off = putVertex(out, off, b, c1, c2, c3, texture, uvs[4], uvs[5], flags, n[3], n[4], n[5], material);
+		putVertex(out, off, c, c1, c2, c3, texture, uvs[8], uvs[9], flags, n[6], n[7], n[8], material);
 	}
 
-	static void putfff4(IntBuffer vb, float x, float y, float z, int w)
+	private int putVertex(int[] out, int off, int vertex, int c1, int c2, int c3, int texture, float u, float v, int flags,
+		int nx, int ny, int nz, int material)
 	{
-		vb.put(Float.floatToIntBits(x));
-		vb.put(Float.floatToIntBits(y));
-		vb.put(Float.floatToIntBits(z));
-		vb.put(w);
+		out[off++] = Float.floatToIntBits(modelLocalX[vertex]);
+		out[off++] = Float.floatToIntBits(modelLocalY[vertex]);
+		out[off++] = Float.floatToIntBits(modelLocalZ[vertex]);
+		out[off++] = c1;
+		out[off++] = c2;
+		out[off++] = c3;
+		out[off++] = (flags & 0xffff) << 16 | (texture & 0xffff);
+		out[off++] = MathUtils.float16(v) << 16 | MathUtils.float16(u);
+		out[off++] = (ny & 0xffff) << 16 | (nx & 0xffff);
+		out[off++] = (material & 0xffff) << 16 | (nz & 0xffff);
+		return off;
 	}
 
-	private static int interpolateHSL(int hsl, byte hue2, byte sat2, byte lum2, byte lerp)
+	// flags bit 5 (not read by the shader): the face goes to the alpha buffer
+	private static final int ALPHA_FLAG = 1 << 5;
+
+	private static int faceFlags(FaceShading fs)
 	{
-		int hue = hsl >> 10 & 63;
-		int sat = hsl >> 7 & 7;
-		int lum = hsl & 127;
-		int var9 = lerp & 255;
-		if (hue2 != -1)
-		{
-			hue += var9 * (hue2 - hue) >> 7;
-		}
+		return (fs.upwardsNormals ? 1 << 3 : 0) | (fs.uvType == UvType.VANILLA ? 1 << 4 : 0) | (fs.alpha ? ALPHA_FLAG : 0);
+	}
 
-		if (sat2 != -1)
-		{
-			sat += var9 * (sat2 - sat) >> 7;
-		}
+	private static final float[] GEOMETRY_UVS = {
+		0, 0, 0, 0,
+		1, 0, 0, 0,
+		0, 1, 0, 0
+	};
 
-		if (lum2 != -1)
+	/**
+	 * 117 HD's face UVs for the face FaceShading last shaded, at out[0..1], out[4..5], out[8..9]: vanilla UVs from the
+	 * texture triangle (projected along camera rays for temporary models), UVs computed by the override's UV type
+	 * (world UVs evaluated per vertex as 117 HD's vertex shader does), or geometry UVs.
+	 *
+	 * @param px     the face vertices' positions as uploaded (scene-local after adding basex/basez)
+	 */
+	static void faceUvs(FaceShading fs, Model model, int face, int preOrientation, boolean project,
+		float cameraX, float cameraY, float cameraZ, float[] px, float[] py, float[] pz, int basex, int basez,
+		float[] out, float[] work)
+	{
+		UvType uvType = fs.uvType;
+		if (uvType == UvType.VANILLA)
 		{
-			lum += var9 * (lum2 - lum) >> 7;
+			float[] u = new float[3], v = new float[3];
+			computeFaceUvs(model, face, cameraX, cameraY, cameraZ, project, u, v);
+			out[0] = u[0];
+			out[1] = v[0];
+			out[4] = u[1];
+			out[5] = v[1];
+			out[8] = u[2];
+			out[9] = v[2];
 		}
+		else if (uvType != UvType.GEOMETRY)
+		{
+			fs.faceOverride.fillUvsForFace(out, model, preOrientation, uvType, face, work);
+			if (uvType.worldUvs)
+			{
+				int a = model.getFaceIndices1()[face];
+				int b = model.getFaceIndices2()[face];
+				int c = model.getFaceIndices3()[face];
+				worldUv(out, 0, px[a] + basex, py[a], pz[a] + basez);
+				worldUv(out, 4, px[b] + basex, py[b], pz[b] + basez);
+				worldUv(out, 8, px[c] + basex, py[c], pz[c] + basez);
+			}
+		}
+		else
+		{
+			System.arraycopy(GEOMETRY_UVS, 0, out, 0, 12);
+		}
+	}
 
-		return (hue << 10 | sat << 7 | lum) & 65535;
+	/**
+	 * 117 HD's computeVertexUvs for world UVs: uvw is a plane normal scaled by the UV scale.
+	 */
+	private static void worldUv(float[] uvw, int i, float x, float y, float z)
+	{
+		float nx = uvw[i], ny = uvw[i + 1], nz = uvw[i + 2];
+		float scale = 1f / (float) Math.sqrt(nx * nx + ny * ny + nz * nz);
+		nx *= scale;
+		ny *= scale;
+		nz *= scale;
+		// C1 = cross((0, 0, 1), N), C2 = cross((0, 1, 0), N)
+		float c1x = -ny, c1y = nx, c1z = 0;
+		float c2x = nz, c2y = 0, c2z = -nx;
+		float c1 = (float) Math.sqrt(c1x * c1x + c1y * c1y + c1z * c1z);
+		float c2 = (float) Math.sqrt(c2x * c2x + c2y * c2y + c2z * c2z);
+		float tx, ty, tz;
+		if (c1 > c2)
+		{
+			tx = c1x / c1;
+			ty = c1y / c1;
+			tz = c1z / c1;
+		}
+		else
+		{
+			tx = c2x / c2;
+			ty = c2y / c2;
+			tz = c2z / c2;
+		}
+		// B = cross(N, T)
+		float bx = ny * tz - nz * ty;
+		float by = nz * tx - nx * tz;
+		// (mat3(T, B, N) * pos).xy / 128 * scale
+		uvw[i] = (tx * x + bx * y + nx * z) / 128f * scale;
+		uvw[i + 1] = (ty * x + by * y + ny * z) / 128f * scale;
 	}
 
 	static void computeFaceUvs(Model model, int face,
