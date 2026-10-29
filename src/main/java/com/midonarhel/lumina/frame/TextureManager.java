@@ -51,7 +51,8 @@ import static org.lwjgl.opengl.GL42C.glTexStorage3D;
 /**
  * The scene's texture array, built as 117 HD builds its material texture array (MaterialManager / TextureManager)
  * at the configured texture resolution: one layer per vanilla texture (layer = vanilla texture id), then one
- * per HD image Lumina ships for a material's texture owner, then an empty layer. Images are scaled bicubically,
+ * per HD image Lumina ships for a material's texture owner (a missing image falls back to the material's vanilla
+ * texture or to white, see MaterialManager). Images are scaled bicubically,
  * HD images flipped horizontally to match vanilla UV orientation, stored as sRGB (GL_SRGB8_ALPHA8) with mipmaps,
  * repeating, and filtered trilinearly with anisotropic filtering.
  */
@@ -91,8 +92,7 @@ public class TextureManager
 				images.add(image);
 			}
 		}
-		int emptyLayer = textures.length + images.size();
-		int layerCount = emptyLayer + 1;
+		int layerCount = textures.length + images.size();
 
 		int textureArrayId = glGenTextures();
 		glBindTexture(GL_TEXTURE_2D_ARRAY, textureArrayId);
@@ -137,7 +137,7 @@ public class TextureManager
 		}
 		log.debug("Uploaded {} vanilla textures and {} HD images", cnt, images.size());
 
-		MaterialManager.setImageLayers(imageLayers, emptyLayer);
+		MaterialManager.setImageLayers(imageLayers);
 
 		glActiveTexture(GL_TEXTURE1);
 		glBindTexture(GL_TEXTURE_2D_ARRAY, textureArrayId);

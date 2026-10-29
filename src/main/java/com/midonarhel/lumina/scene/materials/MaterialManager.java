@@ -34,6 +34,8 @@ import com.midonarhel.lumina.util.ColorUtils;
 import com.midonarhel.lumina.util.ExpressionParser;
 import com.midonarhel.lumina.util.GsonUtils;
 import java.io.IOException;
+import java.io.InputStream;
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -48,9 +50,15 @@ import net.runelite.api.Texture;
 /**
  * 117 HD's MaterialManager (rs117.hd.scene.MaterialManager), for the user's settings: loads materials.json
  * (parents inherited shallowly, root NONE), applies material replacements with the fixed variables of
- * {@link ShadingVariables} (modelTextures and groundTextures off, SUMMER, seasonal foliage on, HD infernal cape),
- * maps vanilla texture ids to materials (adding VANILLA_i fallbacks with transparency for textures without a
- * material), and keeps the scene shader's material table (one slot per material in use).
+ * {@link ShadingVariables} (modelTextures and groundTextures off, SUMMER, seasonal foliage on, the infernal cape
+ * setting, vanilla by default), maps vanilla texture ids to materials (adding VANILLA_i fallbacks with transparency
+ * for textures without a material), and keeps the scene shader's material table (one slot per material in use).
+ * <p>
+ * Lumina ships almost none of 117 HD's images (see scene/textures/): a material whose owner's image is missing
+ * draws its vanilla texture, or white (the vertex colour) when it has no vanilla texture, and a flow map whose image
+ * is missing does not flow. Brightness and texture scale are kept unless 117 HD ships that image
+ * (textures/117hd_images.txt): then they were tuned for the image and are neutralised; owners 117 HD has no image
+ * for either apply them to the vanilla texture in 117 HD too, so Lumina keeps doing that.
  */
 @Slf4j
 public final class MaterialManager
@@ -66,7 +74,12 @@ public final class MaterialManager
 	private static volatile boolean slotsDirty;
 	// texture array layer of each HD image Lumina ships (set by the texture manager), by image name
 	private static Map<String, Integer> imageLayers = Map.of();
-	private static int emptyLayer = -1;
+	// whether the texture manager has told us which images are shipped (before that, nothing is "missing")
+	private static boolean imagesKnown;
+	// materials already warned about for a missing image (guarded by SLOTS)
+	private static final Set<String> warnedMissingImage = new HashSet<>();
+	// the image names 117 HD ships (textures/117hd_images.txt)
+	private static Set<String> hdImages = Set.of();
 
 	private MaterialManager()
 	{
@@ -74,6 +87,7 @@ public final class MaterialManager
 
 	public static void load(Gson gson) throws IOException
 	{
+		hdImages = loadHdImageNames();
 		JsonArray rawMaterials = GsonUtils.loadResource(gson, "materials.json", JsonArray.class);
 
 		var rawMaterialMap = new HashMap<String, JsonObject>();
@@ -305,18 +319,80 @@ public final class MaterialManager
 	}
 
 	/**
-	 * Sets the texture array layers of the HD images, by image name, and the empty layer.
+	 * Sets the texture array layers of the HD images Lumina ships, by image name.
 	 */
-	public static void setImageLayers(Map<String, Integer> layers, int empty)
+	public static void setImageLayers(Map<String, Integer> layers)
 	{
 		imageLayers = layers;
-		emptyLayer = empty;
+		imagesKnown = true;
+		synchronized (SLOTS)
+		{
+			warnedMissingImage.clear();
+		}
 		slotsDirty = true;
 	}
 
 	/**
-	 * 117 HD's textureLayer: the layer of the material's texture owner (its root), which holds the owner's image or
-	 * else its vanilla texture; -1 for NONE.
+	 * 117 HD's texture owner: the material's root, whose image (or vanilla texture) the material draws.
+	 */
+	private static Material owner(Material material)
+	{
+		var owner = material;
+		while (owner.parent != null)
+		{
+			owner = owner.parent;
+		}
+		return owner;
+	}
+
+	/**
+	 * The image name of the material's owner when 117 HD ships that image and Lumina does not, else null (no image
+	 * in 117 HD either, or shipped).
+	 */
+	@Nullable
+	private static String missingHdImage(Material material)
+	{
+		String image = owner(material).getTextureName();
+		return image == null || imageLayers.containsKey(image) || !hdImages.contains(image) ? null : image;
+	}
+
+	/**
+	 * The image name of the flow map's owner when Lumina does not ship it, else null.
+	 */
+	@Nullable
+	private static String missingFlowImage(Material flowMap)
+	{
+		String image = owner(flowMap).getTextureName();
+		return image == null || imageLayers.containsKey(image) ? null : image;
+	}
+
+	// textures/117hd_images.txt: one image name per line, # comments
+	private static Set<String> loadHdImageNames() throws IOException
+	{
+		String path = GsonUtils.SCENE_DATA_PATH + "textures/117hd_images.txt";
+		try (InputStream in = MaterialManager.class.getResourceAsStream(path))
+		{
+			if (in == null)
+			{
+				throw new IOException("Missing resource: " + path);
+			}
+			var names = new HashSet<String>();
+			for (String line : new String(in.readAllBytes(), StandardCharsets.UTF_8).split("\n"))
+			{
+				line = line.trim();
+				if (!line.isEmpty() && !line.startsWith("#"))
+				{
+					names.add(line);
+				}
+			}
+			return names;
+		}
+	}
+
+	/**
+	 * 117 HD's textureLayer, the layer of the material's texture owner (its root): the owner's image, or when the
+	 * image is missing the material's vanilla texture (its own index, so FORTIS_ROADS_MIRRORED keeps vanilla 122
+	 * under its owner FORTIS_ROADS, else the owner's), or -1 (white, the vertex colour) when there is neither.
 	 */
 	private static int textureLayer(@Nullable Material material)
 	{
@@ -324,25 +400,64 @@ public final class MaterialManager
 		{
 			return -1;
 		}
-		var owner = material;
-		while (owner.parent != null)
-		{
-			owner = owner.parent;
-		}
+		var owner = owner(material);
 		if (owner == Material.NONE)
 		{
 			return -1;
 		}
 		String image = owner.getTextureName();
-		if (image != null && imageLayers.containsKey(image))
+		if (image != null)
 		{
-			return imageLayers.get(image);
+			Integer layer = imageLayers.get(image);
+			if (layer != null)
+			{
+				return layer;
+			}
 		}
-		if (owner.vanillaTextureIndex != -1)
+		if (material.vanillaTextureIndex != -1)
 		{
-			return owner.vanillaTextureIndex;
+			return material.vanillaTextureIndex;
 		}
-		return emptyLayer;
+		return owner.vanillaTextureIndex;
+	}
+
+	/**
+	 * The slot's layers, brightness and texture scale after the missing-image fallback (see the class comment),
+	 * warning once per material when its own image or its flow map's image is not shipped.
+	 */
+	private static void fillTextureFields(float[] out, int o, Material m)
+	{
+		int colorMap = textureLayer(m);
+		float brightness = m.brightness;
+		float scaleX = m.textureScale[0];
+		float scaleY = m.textureScale[1];
+		float flowMapStrength = m.flowMapStrength;
+		String image = imagesKnown ? missingHdImage(m) : null;
+		if (image != null && colorMap != -1)
+		{
+			brightness = 1;
+			scaleX = 1;
+			scaleY = 1;
+		}
+		String flowImage = imagesKnown && m.flowMap != null ? missingFlowImage(m.flowMap) : null;
+		if (flowImage != null)
+		{
+			flowMapStrength = 0;
+		}
+		if ((image != null || flowImage != null) && warnedMissingImage.add(m.name))
+		{
+			log.warn("material {}: {}{}{}", m.name,
+				image == null ? "" : "image " + image + " not shipped, using " + (colorMap == -1 ? "vertex colour" :
+					"vanilla texture " + colorMap + " with neutral brightness and texture scale"),
+				image != null && flowImage != null ? "; " : "",
+				flowImage == null ? "" : "flow map image " + flowImage + " not shipped, not flowing");
+		}
+		out[o] = colorMap;
+		out[o + 1] = textureLayer(m.flowMap);
+		out[o + 3] = brightness;
+		out[o + 4] = scaleX == 0 ? 0 : 1 / scaleX;
+		out[o + 5] = scaleY == 0 ? 0 : 1 / scaleY;
+		out[o + 8] = flowMapStrength;
 	}
 
 	/**
@@ -385,15 +500,10 @@ public final class MaterialManager
 					}
 				}
 				int o = i * 12;
-				out[o] = textureLayer(m);
-				out[o + 1] = textureLayer(m.flowMap);
+				fillTextureFields(out, o, m);
 				out[o + 2] = (m.overrideBaseColor ? 4 : 0) | (m.unlit ? 2 : 0) | (m.hasTransparency ? 1 : 0);
-				out[o + 3] = m.brightness;
-				out[o + 4] = m.textureScale[0] == 0 ? 0 : 1 / m.textureScale[0];
-				out[o + 5] = m.textureScale[1] == 0 ? 0 : 1 / m.textureScale[1];
 				out[o + 6] = m.scrollSpeed[0] + vanillaScrollX;
 				out[o + 7] = m.scrollSpeed[1] + vanillaScrollY;
-				out[o + 8] = m.flowMapStrength;
 				out[o + 9] = m.flowMapDuration[0];
 				out[o + 10] = m.flowMapDuration[1];
 				out[o + 11] = m.subsurface;

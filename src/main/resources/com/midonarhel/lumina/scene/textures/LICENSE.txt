@@ -1,2 +1,2 @@
-web.png, fortis_roads.jpg and lava_flow_map.png are copied unchanged from 117 HD
+lava_flow_map.png is copied unchanged from 117 HD
 (https://github.com/117HD/RLHD, src/main/resources/rs117/hd/scene/textures), BSD 2-Clause License.

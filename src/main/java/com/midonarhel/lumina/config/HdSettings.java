@@ -52,7 +52,8 @@ public final class HdSettings
 	 */
 	public static volatile SeasonalTheme seasonalTheme = SeasonalTheme.SUMMER;
 	public static volatile boolean seasonalFoliage = true;
-	public static volatile InfernalCape infernalCape = InfernalCape.HD;
+	// Lumina ships no HD cape images (vanilla keeps the vanilla texture; HD and Legacy draw the cape untextured)
+	public static volatile InfernalCape infernalCape = InfernalCape.VANILLA;
 	public static volatile boolean useLegacyBrightness;
 	public static volatile int legacyBrightness = 20;
 	public static volatile int brightness = 100;

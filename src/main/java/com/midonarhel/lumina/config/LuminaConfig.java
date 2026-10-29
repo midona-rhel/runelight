@@ -694,13 +694,13 @@ public interface LuminaConfig extends Config
 		name = "Infernal cape",
 		description =
 			"Replace the infernal cape texture with a more detailed version.<br>" +
-			"Note: with Anisotropic filtering above zero, the cape may look blurry when zoomed out.",
+			"Note: Lumina does not ship the 117 HD cape images, so HD and Legacy draw the cape without its texture.",
 		position = 3,
 		section = hdSceneSection
 	)
 	default InfernalCape infernalCape()
 	{
-		return InfernalCape.HD;
+		return InfernalCape.VANILLA;
 	}
 
 	@ConfigItem(
