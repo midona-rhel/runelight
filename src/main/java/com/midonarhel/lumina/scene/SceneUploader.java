@@ -298,7 +298,7 @@ class SceneUploader
 	private static void putGapVertex(GpuIntBuffer vb, int x, int y, int z, int u, int v)
 	{
 		Material black = MaterialManager.getMaterial("BLACK");
-		vb.putZoneVertex(x, y, z, 0, 0, 0, 0, u, v, 0, 0, -1, 0, MaterialManager.slot(black == null ? Material.NONE : black));
+		vb.putZoneVertex(x, y, z, 0, 0, 0, 0, u, v, 255 << 8, 0, -1, 0, MaterialManager.slot(black == null ? Material.NONE : black));
 	}
 
 	void uploadZone(Scene scene, SceneData data, Zone zone, int mzx, int mzz)
@@ -861,22 +861,47 @@ class SceneUploader
 	 * if double-sided once more reversed (C, B, A) with negated normals.
 	 */
 	private static void putTerrainFace(GpuIntBuffer vb, boolean doubleSided, int tex, int flags, int material,
-		int xa, int ya, int za, int ca, float ua, float va, short[] na,
-		int xb, int yb, int zb, int cb, float ub, float vb2, short[] nb,
-		int xc, int yc, int zc, int cc, float uc, float vc, short[] nc)
+		int xa, int ya, int za, int ca, float ua, float va, short[] na, int sa,
+		int xb, int yb, int zb, int cb, float ub, float vb2, short[] nb, int sb,
+		int xc, int yc, int zc, int cc, float uc, float vc, short[] nc, int sc)
 	{
-		vb.putZoneVertex(xa, ya, za, ca, cb, cc, tex, ua, va, flags, na[0], na[1], na[2], material);
-		vb.putZoneVertex(xb, yb, zb, ca, cb, cc, tex, ub, vb2, flags, nb[0], nb[1], nb[2], material);
-		vb.putZoneVertex(xc, yc, zc, ca, cb, cc, tex, uc, vc, flags, nc[0], nc[1], nc[2], material);
+		// the vertex's sky visibility rides in flags bits 8-15
+		vb.putZoneVertex(xa, ya, za, ca, cb, cc, tex, ua, va, flags | sa << 8, na[0], na[1], na[2], material);
+		vb.putZoneVertex(xb, yb, zb, ca, cb, cc, tex, ub, vb2, flags | sb << 8, nb[0], nb[1], nb[2], material);
+		vb.putZoneVertex(xc, yc, zc, ca, cb, cc, tex, uc, vc, flags | sc << 8, nc[0], nc[1], nc[2], material);
 		if (doubleSided)
 		{
 			// reversed winding: the face's colours and overlay flags are reversed with it (117 HD's windingReversed)
 			int rflags = (flags & 1) << 2 | (flags & 2) | (flags >> 2 & 1) | (flags & ~7);
-			vb.putZoneVertex(xc, yc, zc, cc, cb, ca, tex, uc, vc, rflags, -nc[0], -nc[1], -nc[2], material);
-			vb.putZoneVertex(xb, yb, zb, cc, cb, ca, tex, ub, vb2, rflags, -nb[0], -nb[1], -nb[2], material);
-			vb.putZoneVertex(xa, ya, za, cc, cb, ca, tex, ua, va, rflags, -na[0], -na[1], -na[2], material);
+			vb.putZoneVertex(xc, yc, zc, cc, cb, ca, tex, uc, vc, rflags | sc << 8, -nc[0], -nc[1], -nc[2], material);
+			vb.putZoneVertex(xb, yb, zb, cc, cb, ca, tex, ub, vb2, rflags | sb << 8, -nb[0], -nb[1], -nb[2], material);
+			vb.putZoneVertex(xa, ya, za, cc, cb, ca, tex, ua, va, rflags | sa << 8, -na[0], -na[1], -na[2], material);
 		}
 	}
+
+	/**
+	 * The sky visibility of a static model vertex: sampled a little along its normal (an inner wall face lands in
+	 * the room, the outer one outside) on the level the biased height belongs to, at least the tile's.
+	 */
+	private int vertexSkyVisibility(int vx, int vy, int vz, int nx, int ny, int nz)
+	{
+		if (data.skyVisibility == null)
+		{
+			return 255;
+		}
+		float len = (float) Math.sqrt((float) nx * nx + (float) ny * ny + (float) nz * nz);
+		if (len > 0)
+		{
+			float s = SKY_NORMAL_BIAS / len;
+			vx += Math.round(nx * s);
+			vy += Math.round(ny * s);
+			vz += Math.round(nz * s);
+		}
+		return data.skyVisibility(vx + basex, vy, vz + basez, tileZ, -2);
+	}
+
+	// how far along its normal a static model vertex samples the sky visibility (units)
+	private static final int SKY_NORMAL_BIAS = 32;
 
 
 	// 117 HD's uploadTilePaint with ground blending off, without water, ground materials or HD textures
@@ -972,19 +997,25 @@ class SceneUploader
 		uvx = fract(uvx * uvcos - uvy * uvsin);
 		uvy = fract(tmp * uvsin + uvy * uvcos);
 
+		// the tile's sky visibility quadrants at its corners, on its render level
+		final int swSky = data.skyVisibilityCorner(tileZ, tileX, tileY, SceneData.SKY_SW);
+		final int seSky = data.skyVisibilityCorner(tileZ, tileX, tileY, SceneData.SKY_SE);
+		final int nwSky = data.skyVisibilityCorner(tileZ, tileX, tileY, SceneData.SKY_NW);
+		final int neSky = data.skyVisibilityCorner(tileZ, tileX, tileY, SceneData.SKY_NE);
+
 		// face 1: NE, NW, SE (overlay flags are only set on land in 117 HD)
 		int flags = water ? 0 : overlayFlag(neKey, 0) | overlayFlag(nwKey, 1) | overlayFlag(seKey, 2);
 		putTerrainFace(vertexBuffer, doubleSided, tex, flags, slot,
-			lx2, neHeight, lz2, neColor, uvx, uvy, neNormal,
-			lx3, nwHeight, lz3, nwColor, uvx - uvcos, uvy - uvsin, nwNormal,
-			lx1, seHeight, lz1, seColor, uvx + uvsin, uvy - uvcos, seNormal);
+			lx2, neHeight, lz2, neColor, uvx, uvy, neNormal, neSky,
+			lx3, nwHeight, lz3, nwColor, uvx - uvcos, uvy - uvsin, nwNormal, nwSky,
+			lx1, seHeight, lz1, seColor, uvx + uvsin, uvy - uvcos, seNormal, seSky);
 
 		// face 2: SW, SE, NW
 		flags = water ? 0 : overlayFlag(swKey, 0) | overlayFlag(seKey, 1) | overlayFlag(nwKey, 2);
 		putTerrainFace(vertexBuffer, doubleSided, tex, flags, slot,
-			lx0, swHeight, lz0, swColor, uvx - uvcos + uvsin, uvy - uvsin - uvcos, swNormal,
-			lx1, seHeight, lz1, seColor, uvx + uvsin, uvy - uvcos, seNormal,
-			lx3, nwHeight, lz3, nwColor, uvx - uvcos, uvy - uvsin, nwNormal);
+			lx0, swHeight, lz0, swColor, uvx - uvcos + uvsin, uvy - uvsin - uvcos, swNormal, swSky,
+			lx1, seHeight, lz1, seColor, uvx + uvsin, uvy - uvcos, seNormal, seSky,
+			lx3, nwHeight, lz3, nwColor, uvx - uvcos, uvy - uvsin, nwNormal, nwSky);
 
 		return doubleSided ? 12 : 6;
 	}
@@ -1113,10 +1144,16 @@ class SceneUploader
 			float uvCx = uvx + dx * uvcos - dz * uvsin;
 			float uvCy = uvy + dx * uvsin + dz * uvcos;
 
+			// the tile's sky visibility quadrants, bilinear at each vertex's position within the tile
+			final int tileLx = tileX << 7, tileLz = tileY << 7;
+			final int skyA = data.skyVisibility(tileZ, tileExX, tileExY, (lx0 + basex - tileLx) / 128f, (lz0 + basez - tileLz) / 128f);
+			final int skyB = data.skyVisibility(tileZ, tileExX, tileExY, (lx1 + basex - tileLx) / 128f, (lz1 + basez - tileLz) / 128f);
+			final int skyC = data.skyVisibility(tileZ, tileExX, tileExY, (lx2 + basex - tileLx) / 128f, (lz2 + basez - tileLz) / 128f);
+
 			putTerrainFace(vertexBuffer, doubleSided, tex, flags, MaterialManager.slot(material),
-				lx0, ly0, lz0, colorA, uvAx, uvAy, normalA,
-				lx1, ly1, lz1, colorB, uvBx, uvBy, normalB,
-				lx2, ly2, lz2, colorC, uvCx, uvCy, normalC);
+				lx0, ly0, lz0, colorA, uvAx, uvAy, normalA, skyA,
+				lx1, ly1, lz1, colorB, uvBx, uvBy, normalB, skyB,
+				lx2, ly2, lz2, colorC, uvCx, uvCy, normalC, skyC);
 
 			cnt += doubleSided ? 6 : 3;
 		}
@@ -1252,9 +1289,14 @@ class SceneUploader
 			int slot = MaterialManager.slot(faceShading.material);
 			GpuIntBuffer buf = alpha ? ab : vb;
 
-			buf.putZoneVertex(vx1, vy1, vz1, c1, c2, c3, texture, uvs[0], uvs[1], flags, n[0], n[1], n[2], slot);
-			buf.putZoneVertex(vx2, vy2, vz2, c1, c2, c3, texture, uvs[4], uvs[5], flags, n[3], n[4], n[5], slot);
-			buf.putZoneVertex(vx3, vy3, vz3, c1, c2, c3, texture, uvs[8], uvs[9], flags, n[6], n[7], n[8], slot);
+			// each vertex's sky visibility in flags bits 8-15 (the reversed copy keeps the front's values)
+			int flags1 = flags | vertexSkyVisibility(vx1, vy1, vz1, n[0], n[1], n[2]) << 8;
+			int flags2 = flags | vertexSkyVisibility(vx2, vy2, vz2, n[3], n[4], n[5]) << 8;
+			int flags3 = flags | vertexSkyVisibility(vx3, vy3, vz3, n[6], n[7], n[8]) << 8;
+
+			buf.putZoneVertex(vx1, vy1, vz1, c1, c2, c3, texture, uvs[0], uvs[1], flags1, n[0], n[1], n[2], slot);
+			buf.putZoneVertex(vx2, vy2, vz2, c1, c2, c3, texture, uvs[4], uvs[5], flags2, n[3], n[4], n[5], slot);
+			buf.putZoneVertex(vx3, vy3, vz3, c1, c2, c3, texture, uvs[8], uvs[9], flags3, n[6], n[7], n[8], slot);
 			len += 3;
 			if (alpha)
 			{
@@ -1264,9 +1306,9 @@ class SceneUploader
 			if (faceShading.doubleSided)
 			{
 				// 117 HD's reversed copy: vertices C, B, A with negated normals (colours reversed with the winding)
-				buf.putZoneVertex(vx3, vy3, vz3, c3, c2, c1, texture, uvs[8], uvs[9], flags, -n[6], -n[7], -n[8], slot);
-				buf.putZoneVertex(vx2, vy2, vz2, c3, c2, c1, texture, uvs[4], uvs[5], flags, -n[3], -n[4], -n[5], slot);
-				buf.putZoneVertex(vx1, vy1, vz1, c3, c2, c1, texture, uvs[0], uvs[1], flags, -n[0], -n[1], -n[2], slot);
+				buf.putZoneVertex(vx3, vy3, vz3, c3, c2, c1, texture, uvs[8], uvs[9], flags3, -n[6], -n[7], -n[8], slot);
+				buf.putZoneVertex(vx2, vy2, vz2, c3, c2, c1, texture, uvs[4], uvs[5], flags2, -n[3], -n[4], -n[5], slot);
+				buf.putZoneVertex(vx1, vy1, vz1, c3, c2, c1, texture, uvs[0], uvs[1], flags1, -n[0], -n[1], -n[2], slot);
 				len += 3;
 				if (alpha)
 				{

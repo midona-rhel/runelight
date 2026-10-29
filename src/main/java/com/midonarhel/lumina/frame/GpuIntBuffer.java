@@ -48,7 +48,8 @@ public class GpuIntBuffer
 	 * @param tex      the vanilla texture id + 1 of the face, 0 if untextured
 	 * @param u        texture coordinates, stored as half floats like 117 HD's
 	 * @param flags    bits 0-2: whether the face's vertex 0/1/2 is an overlay vertex at an overlay-underlay border
-	 *                 (117 HD's MATERIAL_FLAG_IS_OVERLAY), bit 3: upwards normals, bit 4: vanilla UVs
+	 *                 (117 HD's MATERIAL_FLAG_IS_OVERLAY), bit 3: upwards normals, bit 4: vanilla UVs, bits 8-15: the
+	 *                 vertex's sky visibility (0-255, SceneData.skyVisibility)
 	 * @param material the face material's slot in the shader material table
 	 */
 	public void putZoneVertex(int x, int y, int z, int abhsl0, int abhsl1, int abhsl2, int tex, float u, float v, int flags,

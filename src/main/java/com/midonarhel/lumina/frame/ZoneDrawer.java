@@ -27,6 +27,7 @@ package com.midonarhel.lumina.frame;
 import com.midonarhel.lumina.scene.AreaHiding;
 import com.midonarhel.lumina.scene.ModelUploader;
 import com.midonarhel.lumina.scene.SceneContext;
+import com.midonarhel.lumina.scene.SceneData;
 import com.midonarhel.lumina.scene.SceneLoader;
 import com.midonarhel.lumina.scene.Zone;
 import com.midonarhel.lumina.scene.overrides.ModelOverride;
@@ -227,7 +228,7 @@ public final class ZoneDrawer
 			}
 
 			rt.modelUploader.uploadTempModel(m, override, ObjectOrientation.getModelPreOrientation(ObjectOrientation.getObjectConfig(tileObject)), orient, x, y, z,
-				ctx.cameraX, ctx.cameraY, ctx.cameraZ, o.vbo.vb);
+				ctx.cameraX, ctx.cameraY, ctx.cameraZ, o.vbo.vb, skyVisibility(ctx, x, y, z, tileObject.getPlane()));
 			o.addRange(ctx.projection, scene, 0);
 		}
 		else
@@ -248,7 +249,7 @@ public final class ZoneDrawer
 			try
 			{
 				sorter.uploadSortedModel(rt, worldProjection, m, override, ObjectOrientation.getModelPreOrientation(ObjectOrientation.getObjectConfig(tileObject)), orient, x, y, z,
-					ctx.cameraX, ctx.cameraY, ctx.cameraZ, o.vbo.vb, a.vbo.vb, false);
+					ctx.cameraX, ctx.cameraY, ctx.cameraZ, o.vbo.vb, a.vbo.vb, false, skyVisibility(ctx, x, y, z, tileObject.getPlane()));
 			}
 			catch (Exception ex)
 			{
@@ -310,7 +311,7 @@ public final class ZoneDrawer
 			{
 				uploader.uploadSortedModel(rt, worldProjection, m, override, ObjectOrientation.getModelPreOrientation(gameObject.getConfig()), orient, x, y, z,
 					ctx.cameraX, ctx.cameraY, ctx.cameraZ, o.vbo.vb, a.vbo.vb,
-					renderMode == Renderable.RENDERMODE_SORTED_NO_DEPTH);
+					renderMode == Renderable.RENDERMODE_SORTED_NO_DEPTH, skyVisibility(ctx, x, y, z, gameObject.getPlane()));
 			}
 			catch (Exception ex)
 			{
@@ -336,9 +337,23 @@ public final class ZoneDrawer
 			VAO o = rt.vaoO.get(size);
 			ModelUploader uploader = rt.modelUploader;
 			uploader.uploadTempModel(m, override, ObjectOrientation.getModelPreOrientation(gameObject.getConfig()), orient, x, y, z,
-				ctx.cameraX, ctx.cameraY, ctx.cameraZ, o.vbo.vb);
+				ctx.cameraX, ctx.cameraY, ctx.cameraZ, o.vbo.vb, skyVisibility(ctx, x, y, z, gameObject.getPlane()));
 			o.addRange(ctx.projection, scene, 0);
 		}
+	}
+
+	/**
+	 * The sky visibility of a dynamic or temporary model, one value at its base: its tile's quadrants on the level
+	 * its height belongs to (a model on a bridge deck or an upper storey takes that floor's level, whatever its plane).
+	 */
+	private static int skyVisibility(SceneContext ctx, int x, int y, int z, int plane)
+	{
+		SceneData data = ctx.data;
+		if (data == null)
+		{
+			return 255;
+		}
+		return data.skyVisibility(x, y, z, plane, 2);
 	}
 
 	/**

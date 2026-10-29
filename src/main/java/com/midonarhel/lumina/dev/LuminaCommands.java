@@ -178,6 +178,9 @@ public final class LuminaCommands
 				case "normal":
 					frame.setDebugView(3);
 					break;
+				case "skyvis":
+					frame.setDebugView(4);
+					break;
 				default:
 					frame.setDebugView(0);
 			}

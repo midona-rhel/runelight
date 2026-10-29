@@ -34,7 +34,7 @@
 // faces are drawn as consecutive triplets.
 layout(location = 0) in vec3 vertf;
 layout(location = 1) in ivec3 abhsl;  // alpha, bias and HSL of the face's vertices 0, 1, 2
-layout(location = 2) in ivec2 texFlags; // vanilla texture id + 1, flags (bits 0-2 overlay of vertex 0-2, 3 upwards normals, 4 vanilla UVs)
+layout(location = 2) in ivec2 texFlags; // vanilla texture id + 1, flags (bits 0-2 overlay of vertex 0-2, 3 upwards normals, 4 vanilla UVs, 8-15 sky visibility)
 layout(location = 4) in vec2 uv;
 layout(location = 3) in vec4 normalMaterial; // unnormalized normal (zero: drawn unlit, vanilla skybox), material slot
 
@@ -51,6 +51,7 @@ centroid out vec3 fTexBlend;
 out vec3 fPosition;
 out vec3 fNormal;
 out vec2 fUv;
+out float fSkyVis;  // the vertex's sky visibility (Lumina's sky fill scale), interpolated
 #ifdef ZBUF_DEBUG
 out float fDepth;
 #endif
@@ -68,6 +69,8 @@ void main() {
 
   fAlphaBiasHsl = abhsl;
   fFlags = texFlags.y;
+  // read before BIAS_DEBUG below overwrites fFlags bits 8 and up with the depth bias
+  fSkyVis = float((texFlags.y >> 8) & 0xff) / 255.0;
   fTexBlend = vec3(0);
   fTexBlend[vertex] = 1.0;
 

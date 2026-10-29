@@ -29,6 +29,8 @@ import com.midonarhel.lumina.frame.FrameRenderer;
 import com.midonarhel.lumina.frame.VBO;
 import com.midonarhel.lumina.scene.materials.MaterialManager;
 import com.midonarhel.lumina.scene.overrides.ModelOverrideManager;
+import com.midonarhel.lumina.scene.terrain.SkyCover;
+import java.util.BitSet;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.concurrent.CountDownLatch;
@@ -211,6 +213,8 @@ public final class SceneLoader
 					if (ctx == root)
 					{
 						ctx.data.initAreaHiding();
+						// client thread: the wall openings resolve directly
+						SkyCover.bake(ctx.data, SkyCover.openings(client, SkyCover.wallObjectIds(scene))::get);
 					}
 				}
 				clientUploader.zoneSize(scene, ctx.data, zone, x, z);
@@ -461,10 +465,16 @@ public final class SceneLoader
 			len, (len * Zone.VERT_SIZE * 3) / 1024,
 			lena, (lena * Zone.VERT_SIZE * 3) / 1024);
 
+		// the sky cover's wall openings need object definitions, resolved on the client thread below
+		int[] wallIds = SkyCover.wallObjectIds(scene);
+		BitSet[] openings = new BitSet[1];
+
 		// allocate buffers for zones which require upload
 		CountDownLatch latch = new CountDownLatch(1);
 		clientThread.invoke(() ->
 		{
+			openings[0] = SkyCover.openings(client, wallIds);
+
 			for (int x = 0; x < Constants.EXTENDED_SCENE_SIZE >> 3; ++x)
 			{
 				for (int z = 0; z < Constants.EXTENDED_SCENE_SIZE >> 3; ++z)
@@ -507,6 +517,11 @@ public final class SceneLoader
 		{
 			throw new RuntimeException(e);
 		}
+
+		// sky visibility before the uploads read it (map-load thread; the openings were resolved on the client thread)
+		sw = Stopwatch.createStarted();
+		SkyCover.bake(sceneData, openings[0]::get);
+		log.debug("Sky cover time {}", sw);
 
 		// upload zones
 		sw = Stopwatch.createStarted();

@@ -97,9 +97,14 @@ public class ModelUploader
 		v = new float[3];
 	}
 
+	/**
+	 * @param skyVisibility the model's sky visibility (0-255, SceneData.skyVisibility at its position), one value for
+	 *                      the whole model
+	 */
 	public int uploadSortedModel(RenderThread rt, Projection proj, Model model, ModelOverride override, int preOrientation, int orientation, int x, int y, int z,
-		int cameraX, int cameraY, int cameraZ, IntBuffer opaqueBuffer, IntBuffer alphaBuffer, boolean prioritySort)
+		int cameraX, int cameraY, int cameraZ, IntBuffer opaqueBuffer, IntBuffer alphaBuffer, boolean prioritySort, int skyVisibility)
 	{
+		final int skyFlags = skyVisibility << 8;
 		final int vertexCount = model.getVerticesCount();
 		final float[] verticesX = model.getVerticesX();
 		final float[] verticesY = model.getVerticesY();
@@ -236,7 +241,7 @@ public class ModelUploader
 					int texture = faceTextures != null ? faceTextures[faceIdx] + 1 : 0;
 					putFace(vertexBuffer, faceIdx * FACE_SIZE, v1, v2, v3,
 						alphaBias | faceShading.color1, alphaBias | faceShading.color2, alphaBias | faceShading.color3,
-						texture, uvs, faceFlags(faceShading), faceShading.normals, MaterialManager.slot(faceShading.material));
+						texture, uvs, faceFlags(faceShading) | skyFlags, faceShading.normals, MaterialManager.slot(faceShading.material));
 				}
 			}
 		}
@@ -443,12 +448,14 @@ public class ModelUploader
 	/**
 	 * Uploads a model unsorted.
 	 *
-	 * @param override the model override; null uploads the model as vanilla lit it, without normals (drawn unlit by
-	 *                 the shader), which the skybox uses
+	 * @param override      the model override; null uploads the model as vanilla lit it, without normals (drawn unlit
+	 *                      by the shader), which the skybox uses
+	 * @param skyVisibility the model's sky visibility (0-255), one value for the whole model
 	 */
 	public int uploadTempModel(Model model, @Nullable ModelOverride override, int preOrientation, int orientation, int x, int y, int z,
-		int cameraX, int cameraY, int cameraZ, IntBuffer buffer)
+		int cameraX, int cameraY, int cameraZ, IntBuffer buffer, int skyVisibility)
 	{
+		final int skyFlags = skyVisibility << 8;
 		final int triangleCount = model.getFaceCount();
 		final int vertexCount = model.getVerticesCount();
 
@@ -536,7 +543,7 @@ public class ModelUploader
 			int color1, color2, color3;
 			int alphaBias;
 			int[] normals;
-			int flags = 0;
+			int flags = skyFlags;
 			int slot = 0;
 			if (override != null)
 			{
@@ -550,7 +557,7 @@ public class ModelUploader
 				color3 = faceShading.color3;
 				alphaBias = faceShading.transparency << 24 | faceShading.depthBias << 16;
 				normals = faceShading.normals;
-				flags = faceFlags(faceShading);
+				flags |= faceFlags(faceShading);
 				slot = MaterialManager.slot(faceShading.material);
 			}
 			else
@@ -647,7 +654,7 @@ public class ModelUploader
 		return off;
 	}
 
-	// flags bit 5 (not read by the shader): the face goes to the alpha buffer
+	// flags bit 5 (not read by the shader): the face goes to the alpha buffer; bits 8-15: the sky visibility
 	private static final int ALPHA_FLAG = 1 << 5;
 
 	private static int faceFlags(FaceShading fs)

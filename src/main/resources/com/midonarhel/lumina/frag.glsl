@@ -74,7 +74,7 @@ layout(std140) uniform materials {
   vec4 materialData[MAX_MATERIALS * 3];
 };
 // developer comparison views (::lumina debug): 0 off, 1 base colour (117 HD's DISPLAY_BASE_COLOR), 2 lighting
-// (DISPLAY_LIGHTING), 3 normals (DISPLAY_NORMAL)
+// (DISPLAY_LIGHTING), 3 normals (DISPLAY_NORMAL), 4 sky visibility as grey
 uniform int debugView;
 
 flat in ivec3 fAlphaBiasHsl;
@@ -86,6 +86,7 @@ centroid in vec3 fTexBlend;
 in vec3 fPosition;
 in vec3 fNormal;
 in vec2 fUv;
+in float fSkyVis;
 #ifdef ZBUF_DEBUG
 in float fDepth;
 #endif
@@ -171,6 +172,10 @@ void main() {
 
   if (debugView == 3) {
     FragColor = vec4(N * 0.5 + 0.5, 1.0);
+    return;
+  }
+  if (debugView == 4) {
+    FragColor = vec4(vec3(fSkyVis), 1.0);
     return;
   }
 
@@ -364,6 +369,8 @@ void main() {
     // normals + the caster * max(N.L, 0) * (1 - shadow) (shadows later; leaf transmission kept; no specular)
     vec3 skyFill = max(skyFillSh[0] + skyFillSh[1] * normals.x + skyFillSh[2] * normals.y + skyFillSh[3] * normals.z
       + skyFillBounce * max(normals.y, 0.0), 0.0);
+    // how much of the sky the point sees (scene.terrain.SkyCover): none deep under a roof, all in the open
+    skyFill *= fSkyVis;
     compositeLight = ambientLightOut + skyFill + lightOut + transmissionOut;
   } else {
     // apply lighting (Lumina: no specular and no point lights; the fresnel surface colour term is zero in 117 HD)

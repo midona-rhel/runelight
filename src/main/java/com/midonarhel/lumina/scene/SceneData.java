@@ -93,6 +93,15 @@ public class SceneData
 	public IntIntMap vertexTerrainNormalIndices;
 	public short[] vertexTerrainNormals;
 
+	// the corners of a tile's sky visibility quadrants
+	public static final int SKY_SW = 0, SKY_SE = 1, SKY_NW = 2, SKY_NE = 3;
+	/**
+	 * The sky visibility of every tile's four corners (0-255), [level][x][z][corner] flattened, baked by
+	 * {@link com.midonarhel.lumina.scene.terrain.SkyCover}; null (sub-scenes, no bake yet) is 255 everywhere.
+	 */
+	@Nullable
+	public byte[] skyVisibility;
+
 	public SceneData(WorldView worldView, Scene scene, int expandedMapLoadingChunks)
 	{
 		this.scene = scene;
@@ -225,6 +234,76 @@ public class SceneData
 		result[1] = vertexTerrainNormals[offset + 1];
 		result[2] = vertexTerrainNormals[offset + 2];
 		return result;
+	}
+
+	/**
+	 * The sky visibility (0-255) at a corner of a tile, by level and extended scene coordinates.
+	 */
+	public int skyVisibilityCorner(int level, int tileExX, int tileExZ, int corner)
+	{
+		if (skyVisibility == null || tileExX < 0 || tileExZ < 0 || tileExX >= sizeX || tileExZ >= sizeZ)
+		{
+			return 255;
+		}
+		return skyVisibility[(getTileIdx(level, tileExX, tileExZ) << 2) + corner] & 0xff;
+	}
+
+	/**
+	 * The sky visibility (0-255) within a tile, bilinear between the tile's own four corners (never across a wall).
+	 *
+	 * @param fx the position within the tile, 0 at the west edge, 1 at the east
+	 * @param fz the position within the tile, 0 at the south edge, 1 at the north
+	 */
+	public int skyVisibility(int level, int tileExX, int tileExZ, float fx, float fz)
+	{
+		if (skyVisibility == null || tileExX < 0 || tileExZ < 0 || tileExX >= sizeX || tileExZ >= sizeZ)
+		{
+			return 255;
+		}
+		fx = Math.max(0, Math.min(1, fx));
+		fz = Math.max(0, Math.min(1, fz));
+		int base = getTileIdx(level, tileExX, tileExZ) << 2;
+		float south = (skyVisibility[base + SKY_SW] & 0xff) * (1 - fx) + (skyVisibility[base + SKY_SE] & 0xff) * fx;
+		float north = (skyVisibility[base + SKY_NW] & 0xff) * (1 - fx) + (skyVisibility[base + SKY_NE] & 0xff) * fx;
+		return Math.round(south * (1 - fz) + north * fz);
+	}
+
+	/**
+	 * The sky visibility (0-255) at a scene-local position: its tile's quadrants, bilinear.
+	 *
+	 * @param minLevel the level the position belongs to at least (its tile's render level, or an entity's plane)
+	 * @param slack    see {@link #skyLevel}
+	 */
+	public int skyVisibility(int localX, int y, int localZ, int minLevel, int slack)
+	{
+		if (skyVisibility == null)
+		{
+			return 255;
+		}
+		int ex = Math.max(0, Math.min(sizeX - 1, sceneOffset + (localX >> LOCAL_COORD_BITS)));
+		int ez = Math.max(0, Math.min(sizeZ - 1, sceneOffset + (localZ >> LOCAL_COORD_BITS)));
+		int level = skyLevel(ex, ez, y, minLevel, slack);
+		return skyVisibility(level, ex, ez, (localX & 127) / 128f, (localZ & 127) / 128f);
+	}
+
+	/**
+	 * The level a height belongs to at an extended tile: the highest level whose floor is at or below
+	 * {@code y + slack} (y down), at least {@code minLevel}. Vertices of static models use a slack of -2, so a
+	 * wall's top edge stays on its tile's level; the base of a dynamic model uses +2, so a model standing on a floor
+	 * (a bridge deck, an upper storey) takes that floor's level.
+	 */
+	public int skyLevel(int tileExX, int tileExZ, int y, int minLevel, int slack)
+	{
+		minLevel = Math.max(0, Math.min(MAX_Z - 1, minLevel));
+		int[][][] heights = scene.getTileHeights();
+		for (int level = MAX_Z - 1; level > minLevel; level--)
+		{
+			if (y <= heights[level][tileExX][tileExZ] + slack)
+			{
+				return level;
+			}
+		}
+		return minLevel;
 	}
 
 	public boolean intersects(Area area)

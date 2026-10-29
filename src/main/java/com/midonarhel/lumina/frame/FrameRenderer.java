@@ -153,7 +153,7 @@ public final class FrameRenderer
 	private GpuFloatBuffer uniformBuffer;
 
 	private boolean materialsUploaded;
-	// ::lumina debug: 0 off, 1 base colour, 2 light only, 3 normals
+	// ::lumina debug: 0 off, 1 base colour, 2 light only, 3 normals, 4 sky visibility
 	private int debugView;
 
 	/**
@@ -759,7 +759,7 @@ public final class FrameRenderer
 		RenderThread rt = renderThreads.get(0);
 		VAO o = rt.vaoO.get(size);
 		rt.modelUploader.uploadTempModel(skybox, null, 0, 0, 0, 0, 0,
-			(int) cameraX, (int) cameraY, (int) cameraZ, o.vbo.vb);
+			(int) cameraX, (int) cameraY, (int) cameraZ, o.vbo.vb, 255);
 
 		float[] skyboxProjection = Mat4.translate(cameraX, cameraY, cameraZ);
 		o.addRange(skyboxProjection, scene, Renderable.RENDERMODE_UNSORTED_NO_DEPTH);
