@@ -26,6 +26,7 @@ package com.midonarhel.lumina.scene.overrides;
 
 import com.google.gson.Gson;
 import com.midonarhel.lumina.scene.areas.Area;
+import com.midonarhel.lumina.shading.ShadingVariables;
 import com.midonarhel.lumina.util.GsonUtils;
 import java.io.IOException;
 import java.util.ArrayDeque;

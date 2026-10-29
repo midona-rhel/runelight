@@ -24,10 +24,6 @@
  */
 package com.midonarhel.lumina.config;
 
-import com.midonarhel.lumina.LuminaConfig;
-import com.midonarhel.lumina.scene.overrides.SeasonalTheme;
-import com.midonarhel.lumina.scene.sky.MoonBehavior;
-import com.midonarhel.lumina.scene.sky.MoonPhase;
 import java.time.ZoneOffset;
 import java.time.ZonedDateTime;
 

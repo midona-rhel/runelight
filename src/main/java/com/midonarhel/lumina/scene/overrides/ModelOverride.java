@@ -29,6 +29,7 @@ import com.google.gson.JsonElement;
 import com.google.gson.annotations.JsonAdapter;
 import com.google.gson.annotations.SerializedName;
 import com.midonarhel.lumina.config.HdSettings;
+import com.midonarhel.lumina.config.SeasonalTheme;
 import com.midonarhel.lumina.scene.materials.Material;
 import com.midonarhel.lumina.scene.materials.MaterialManager;
 import java.util.HashMap;

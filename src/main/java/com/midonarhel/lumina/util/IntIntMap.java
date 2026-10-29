@@ -78,15 +78,6 @@ public final class IntIntMap
 		return keys[i] == EMPTY ? defaultValue : values[i];
 	}
 
-	public boolean containsKey(int key)
-	{
-		if (key == EMPTY)
-		{
-			return hasEmptyKey;
-		}
-		return keys[slot(key)] != EMPTY;
-	}
-
 	public void put(int key, int value)
 	{
 		if (key == EMPTY)
@@ -104,14 +95,6 @@ public final class IntIntMap
 			{
 				grow();
 			}
-		}
-	}
-
-	public void putIfAbsent(int key, int value)
-	{
-		if (!containsKey(key))
-		{
-			put(key, value);
 		}
 	}
 

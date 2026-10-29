@@ -54,6 +54,9 @@ public class SceneData
 	public static final int TILE_OVERRIDE_OVERLAY = 2;
 	public static final int TILE_OVERRIDE_COUNT = 3;
 
+	// the client's colour of hidden tile faces (117 HD's HDUtils.HIDDEN_HSL)
+	public static final int HIDDEN_HSL = 12345678;
+
 	public static final int VERTEX_IS_OVERLAY = 1 << 2;
 	public static final int VERTEX_IS_UNDERLAY = 1 << 3;
 

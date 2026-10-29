@@ -34,6 +34,7 @@ import net.runelite.api.Scene;
 import net.runelite.api.SceneTileModel;
 import net.runelite.api.SceneTilePaint;
 import net.runelite.api.Tile;
+import static com.midonarhel.lumina.scene.SceneData.HIDDEN_HSL;
 import static com.midonarhel.lumina.scene.SceneData.TILE_OVERRIDE_COUNT;
 import static com.midonarhel.lumina.scene.SceneData.TILE_OVERRIDE_MAIN;
 import static com.midonarhel.lumina.scene.SceneData.TILE_OVERRIDE_OVERLAY;
@@ -56,7 +57,6 @@ import static net.runelite.api.Constants.MAX_Z;
 public final class TerrainGenerator
 {
 	private static final int VERTICES_PER_FACE = 3;
-	private static final int HIDDEN_HSL = 12345678;
 
 	private final TileOverrideManager tileOverrideManager;
 

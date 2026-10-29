@@ -41,13 +41,6 @@ public final class ColorUtils
 	// The implementation is based on the sRGB EOTF given in the Khronos Data Format Specification.
 	// Source: https://web.archive.org/web/20220808015852/https://registry.khronos.org/DataFormat/specs/1.3/dataformat.1.3.pdf
 	// Page number 130 (146 in the PDF)
-	public static float linearToSrgb(float c)
-	{
-		return c <= 0.0031308f ?
-			c * 12.92f :
-			1.055f * (float) Math.pow(c, 1 / 2.4f) - 0.055f;
-	}
-
 	public static float srgbToLinear(float c)
 	{
 		return c <= 0.04045f ?
@@ -61,16 +54,6 @@ public final class ColorUtils
 		for (int i = 0; i < c.length; i++)
 		{
 			result[i] = srgbToLinear(c[i]);
-		}
-		return result;
-	}
-
-	public static float[] linearToSrgb(float... c)
-	{
-		float[] result = new float[c.length];
-		for (int i = 0; i < c.length; i++)
-		{
-			result[i] = linearToSrgb(c[i]);
 		}
 		return result;
 	}
@@ -180,13 +163,6 @@ public final class ColorUtils
 	{
 		Color color = Color.decode(hex);
 		return new float[]{color.getRed() / 255f, color.getGreen() / 255f, color.getBlue() / 255f};
-	}
-
-	public static void unpackRawHsl(int[] out, int hsl)
-	{
-		out[0] = hsl >> 10 & 0x3F;
-		out[1] = hsl >> 7 & 0x7;
-		out[2] = hsl & 0x7F;
 	}
 
 	/**

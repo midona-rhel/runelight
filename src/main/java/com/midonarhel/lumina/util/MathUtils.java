@@ -18,6 +18,9 @@ public final class MathUtils
 	public static final float TWO_PI = PI * 2;
 	public static final float DEG_TO_RAD = PI / 180;
 	public static final float RAD_TO_DEG = 180 / PI;
+	// 117 HD's JAU_TO_RAD and DEG_TO_JAU (Jagex angle units, 2048 per turn), as Lumina's uploaders compute them
+	public static final float JAU_TO_RAD = (float) (Math.PI * 2 / 2048);
+	public static final float DEG_TO_JAU = 2048 / 360f;
 
 	private MathUtils()
 	{
@@ -48,11 +51,6 @@ public final class MathUtils
 		return (float) Math.exp(v);
 	}
 
-	public static float pow(float v, float e)
-	{
-		return (float) Math.pow(v, e);
-	}
-
 	public static float pow2(float v)
 	{
 		return v * v;
@@ -76,11 +74,6 @@ public final class MathUtils
 	public static float floor(float v)
 	{
 		return (float) Math.floor(v);
-	}
-
-	public static double fract(double v)
-	{
-		return v - Math.floor(v);
 	}
 
 	public static float fract(float v)

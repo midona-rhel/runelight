@@ -29,6 +29,8 @@ import com.google.gson.JsonArray;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.midonarhel.lumina.config.DaylightCycle;
+import com.midonarhel.lumina.config.MoonBehavior;
+import com.midonarhel.lumina.config.MoonPhase;
 import com.midonarhel.lumina.config.HdSettings;
 import com.midonarhel.lumina.scene.environment.Environment;
 import com.midonarhel.lumina.scene.environment.EnvironmentManager;

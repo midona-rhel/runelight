@@ -35,6 +35,7 @@ import com.google.gson.reflect.TypeToken;
 import com.google.gson.stream.JsonReader;
 import com.google.gson.stream.JsonToken;
 import com.google.gson.stream.JsonWriter;
+import com.midonarhel.lumina.config.MoonPhase;
 import com.midonarhel.lumina.util.ColorUtils;
 import com.midonarhel.lumina.util.ColorUtils.SrgbToLinearAdapter;
 import com.midonarhel.lumina.util.GsonUtils;

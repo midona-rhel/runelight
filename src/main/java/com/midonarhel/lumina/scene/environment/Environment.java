@@ -141,7 +141,7 @@ public class Environment
 		{
 			directionalColor = rgb("#ffffff");
 		}
-		directionalColor = ensureLength(directionalColor, 3);
+		directionalColor = MathUtils.ensureArrayLength(directionalColor, 3);
 		if (underglowColor == null)
 		{
 			underglowColor = rgb("#000000");
@@ -191,13 +191,13 @@ public class Environment
 				ambientColor = DEFAULT.ambientColor;
 			}
 		}
-		ambientColor = ensureLength(ambientColor, 3);
+		ambientColor = MathUtils.ensureArrayLength(ambientColor, 3);
 		if (ambientStrength < 0)
 		{
 			ambientStrength = isOverworld ? directionalStrength : DEFAULT.ambientStrength;
 		}
 
-		shadowAngles = shadowAngles == null ? DEFAULT_SHADOW_ANGLES : ensureLength(shadowAngles, 2);
+		shadowAngles = shadowAngles == null ? DEFAULT_SHADOW_ANGLES : MathUtils.ensureArrayLength(shadowAngles, 2);
 
 		fogDepth = Math.max(0, fogDepth);
 
@@ -264,17 +264,6 @@ public class Environment
 	private static void mix(float[] out, float[] a, float[] b, float t)
 	{
 		MathUtils.mix(out, a, b, t);
-	}
-
-	private static float[] ensureLength(float[] array, int length)
-	{
-		if (array.length == length)
-		{
-			return array;
-		}
-		float[] result = new float[length];
-		System.arraycopy(array, 0, result, 0, Math.min(length, array.length));
-		return result;
 	}
 
 	@Override

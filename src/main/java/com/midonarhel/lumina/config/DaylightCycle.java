@@ -34,20 +34,19 @@ import lombok.RequiredArgsConstructor;
 @RequiredArgsConstructor
 public enum DaylightCycle
 {
-	OFF("Off", null, false),
-	DEFAULT("Default", null, false),
-	DAWN("Dawn", "DAWN", false),
-	SUNRISE("Sunrise", "SUNRISE", false),
-	DAY("Day", "DAY", false),
-	SUNSET("Sunset", "SUNSET", false),
-	DUSK("Dusk", "DUSK", false),
-	NIGHT("Night", "NIGHT", false),
+	OFF("Off", null),
+	DEFAULT("Default", null),
+	DAWN("Dawn", "DAWN"),
+	SUNRISE("Sunrise", "SUNRISE"),
+	DAY("Day", "DAY"),
+	SUNSET("Sunset", "SUNSET"),
+	DUSK("Dusk", "DUSK"),
+	NIGHT("Night", "NIGHT"),
 	;
 
 	private final String name;
 	@Nullable
 	public final String fixedSkyPreset;
-	public final boolean useConfigLatLon;
 
 	@Override
 	public String toString()
