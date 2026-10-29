@@ -30,11 +30,14 @@ import com.midonarhel.lumina.config.AntiAliasingMode;
 import com.midonarhel.lumina.config.ColorFilter;
 import com.midonarhel.lumina.config.HdSettings;
 import com.midonarhel.lumina.config.LuminaConfig;
+import com.midonarhel.lumina.config.LightingSourceKind;
+import com.midonarhel.lumina.config.SkySettings;
 import com.midonarhel.lumina.config.UIScalingMode;
 import com.midonarhel.lumina.lighting.Lighting;
 import com.midonarhel.lumina.lighting.LightingSource;
 import com.midonarhel.lumina.scene.AreaHiding;
 import com.midonarhel.lumina.scene.SceneContext;
+import com.midonarhel.lumina.scene.SceneData;
 import com.midonarhel.lumina.scene.SceneLoader;
 import com.midonarhel.lumina.scene.Zone;
 import com.midonarhel.lumina.scene.materials.MaterialManager;
@@ -66,6 +69,7 @@ import net.runelite.rlawt.AWTContext;
 import static com.midonarhel.lumina.frame.SceneProgram.IDENTITY;
 import static com.midonarhel.lumina.frame.SceneProgram.uniEntityProj;
 import static com.midonarhel.lumina.frame.SceneProgram.uniEntityTint;
+import org.lwjgl.opengl.GL;
 import static org.lwjgl.opengl.GL33C.*;
 
 /**
@@ -92,13 +96,26 @@ public final class FrameRenderer
 	private final RenderThreads renderThreads;
 
 	/**
-	 * The scene light, filled each frame by {@link #lightingSource} and uploaded as the scene shader's lighting uniforms.
+	 * The scene light, filled each frame by the lighting source and uploaded as the scene shader's lighting uniforms.
 	 */
 	private final Lighting lighting = new Lighting();
 	/**
-	 * What decides the scene light: 117 HD's environment, sky and daylight-cycle lighting.
+	 * What decides the scene light: 117 HD's environment, sky and daylight-cycle lighting, or Lumina's sky; the
+	 * "Lighting source" setting picks one each frame ({@link #lightingSource()}).
 	 */
-	private final LightingSource lightingSource;
+	private final LightingSource hd117Source;
+	private final LightingSource luminaSource;
+	// the last frame's inputs to the source, so the developer dump can ask the other source for the same frame
+	private SceneData lastScene;
+	private float lastElapsedTime;
+	private int lastDrawDistance;
+	private boolean lastHasSkybox;
+	// Lumina's sky pass, drawn after the top-level opaque geometry when the Lumina source is active, and what it
+	// needs from this frame's uniform setup
+	private final SkyRenderer skyRenderer = new SkyRenderer();
+	private float[] frameInvProjection;
+	private float frameGammaCorrection;
+	private float frameDitherTime;
 	// 117 HD's plugin.elapsedTime: seconds since the plugin started
 	private final long startNanos;
 
@@ -143,8 +160,8 @@ public final class FrameRenderer
 	 * @param stopPlugin stops the plugin, after a fatal buffer swap error
 	 */
 	public FrameRenderer(Client client, ClientUI clientUI, LuminaConfig config, TextureManager textureManager, DrawManager drawManager,
-		Runnable stopPlugin, LightingSource lightingSource, SceneLoader scenes, AreaHiding areaHiding, ZoneDrawer zoneDrawer,
-		RenderThreads renderThreads)
+		Runnable stopPlugin, LightingSource hd117Source, LightingSource luminaSource, SceneLoader scenes, AreaHiding areaHiding,
+		ZoneDrawer zoneDrawer, RenderThreads renderThreads)
 	{
 		this.client = client;
 		this.clientUI = clientUI;
@@ -152,7 +169,8 @@ public final class FrameRenderer
 		this.textureManager = textureManager;
 		this.drawManager = drawManager;
 		this.stopPlugin = stopPlugin;
-		this.lightingSource = lightingSource;
+		this.hd117Source = hd117Source;
+		this.luminaSource = luminaSource;
 		this.scenes = scenes;
 		this.areaHiding = areaHiding;
 		this.zoneDrawer = zoneDrawer;
@@ -164,6 +182,27 @@ public final class FrameRenderer
 	public Lighting lighting()
 	{
 		return lighting;
+	}
+
+	/** The source the "Lighting source" setting picks this frame. */
+	private LightingSource lightingSource()
+	{
+		return SkySettings.lightingSource == LightingSourceKind.HD117 ? hd117Source : luminaSource;
+	}
+
+	/**
+	 * Developer dump: the light a source would give for the last frame's inputs. For the active source this is
+	 * {@link #lighting()}; for the other one it is filled now into {@code out}. Client thread only.
+	 */
+	public Lighting lightingOf(LightingSourceKind kind, Lighting out)
+	{
+		LightingSource source = kind == LightingSourceKind.HD117 ? hd117Source : luminaSource;
+		if (source == lightingSource())
+		{
+			return lighting;
+		}
+		source.fill(out, lastScene, lastElapsedTime, lastDrawDistance, lastHasSkybox);
+		return out;
 	}
 
 	public FrameTiming timing()
@@ -194,6 +233,8 @@ public final class FrameRenderer
 	{
 		this.awtContext = awtContext;
 		this.canvas = canvas;
+		// the plugin sets glClipControl ZERO_TO_ONE on GL 4.5: the far plane is NDC depth 0 there, -1 otherwise (macOS)
+		skyRenderer.farNdcDepth = GL.getCapabilities().OpenGL45 ? 0 : -1;
 		initBuffers();
 		initVao();
 		compilePrograms();
@@ -243,6 +284,7 @@ public final class FrameRenderer
 	public void compilePrograms() throws ShaderException
 	{
 		programs.compile(createTemplate(), vaoUiHandle);
+		skyRenderer.init(programs.glLuminaSkyProgram);
 	}
 
 	public void deletePrograms()
@@ -611,7 +653,11 @@ public final class FrameRenderer
 		areaHiding.update();
 
 		// Scene light, fog and sky: the lighting source decides them, the shaders read them as is
-		lightingSource.fill(lighting, root.data, elapsedTime, drawDistance, scene.getSkybox() != null);
+		lastScene = root.data;
+		lastElapsedTime = elapsedTime;
+		lastDrawDistance = drawDistance;
+		lastHasSkybox = scene.getSkybox() != null;
+		lightingSource().fill(lighting, lastScene, lastElapsedTime, lastDrawDistance, lastHasSkybox);
 		programs.sceneLightingUniforms.upload(lighting);
 		glUniform1f(programs.uniDrawDistance, (float) drawDistance);
 		glUniform1i(programs.uniExpandedMapLoadingChunks, expandedChunks);
@@ -636,6 +682,10 @@ public final class FrameRenderer
 		Mat4.mul(projectionMatrix, Mat4.translate(-cameraX, -cameraY, -cameraZ));
 		glUniformMatrix4fv(programs.uniWorldProj, false, projectionMatrix);
 		float[] invProjection = Mat4.inverse(projectionMatrix);
+		// for Lumina's sky pass after the opaque geometry
+		frameInvProjection = invProjection;
+		frameGammaCorrection = gammaCorrection;
+		frameDitherTime = ditherTime;
 
 		glUniformMatrix4fv(uniEntityProj, false, IDENTITY);
 
@@ -675,6 +725,12 @@ public final class FrameRenderer
 			glClearDepth(0d);
 			glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
+			if (lighting.luminaLighting)
+			{
+				// Lumina's sky is drawn after the opaque geometry (drawSkyAfterOpaque)
+				return;
+			}
+
 			// 117 HD draws the sky behind the scene (at depth 0, after it); drawn first here without depth
 			glUseProgram(programs.glSkyProgram);
 			programs.skyLightingUniforms.upload(lighting);
@@ -711,6 +767,23 @@ public final class FrameRenderer
 		rt.vaoO.draw();
 
 		glUniformMatrix4fv(uniEntityProj, false, IDENTITY);
+	}
+
+	/**
+	 * Lumina's sky pass: called by the plugin after the top-level scene's opaque pass (DrawCallbacks.PASS_OPAQUE), as
+	 * 117 HD places its sky. Draws where nothing has been drawn yet, at the far depth with the scene's GEQUAL test and
+	 * no depth write, so the opaque geometry drawn later still wins and the alpha geometry blends over it. Nothing
+	 * under 117 HD's source or with a vanilla skybox shown.
+	 */
+	public void drawSkyAfterOpaque(Scene scene)
+	{
+		if (!lighting.luminaLighting || (lighting.vanillaSkybox && scene.getSkybox() != null) || frameInvProjection == null)
+		{
+			return;
+		}
+		skyRenderer.draw(lighting, frameInvProjection, frameGammaCorrection, frameDitherTime, config.colorBlindIntensity(), vaoUiHandle);
+		glUseProgram(programs.glProgram);
+		checkGLErrors();
 	}
 
 	public void postSceneDraw(Scene scene)

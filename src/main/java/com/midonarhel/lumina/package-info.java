@@ -7,6 +7,7 @@
  * <li>{@code scene}: scene loading, zone upload and the 117 HD data the uploads read</li>
  * <li>{@code shading}: where a vertex colour or normal is decided</li>
  * <li>{@code lighting}: the scene light the shaders read, and what decides it</li>
+ * <li>{@code sky}: Lumina's own day cycle, sun, moon and sky, one of the lighting sources</li>
  * <li>{@code config}, {@code dev}, {@code util}: settings, developer tools, shared helpers</li>
  * </ul>
  */

@@ -28,6 +28,7 @@ import com.google.inject.Provides;
 import com.midonarhel.lumina.config.ColorFilter;
 import com.midonarhel.lumina.config.HdSettings;
 import com.midonarhel.lumina.config.LuminaConfig;
+import com.midonarhel.lumina.config.SkySettings;
 import com.midonarhel.lumina.dev.LuminaCommands;
 import com.midonarhel.lumina.frame.FrameRenderer;
 import com.midonarhel.lumina.frame.RenderThreads;
@@ -41,6 +42,7 @@ import com.midonarhel.lumina.scene.environment.EnvironmentManager;
 import com.midonarhel.lumina.scene.materials.MaterialManager;
 import com.midonarhel.lumina.scene.overrides.ModelOverrideManager;
 import com.midonarhel.lumina.shading.DiffuseColors;
+import com.midonarhel.lumina.sky.SkySource;
 import java.awt.Canvas;
 import java.util.Set;
 import javax.inject.Inject;
@@ -137,6 +139,9 @@ public class LuminaPlugin extends Plugin implements DrawCallbacks
 	private SkyLighting skyLighting;
 
 	@Inject
+	private SkySource skySource;
+
+	@Inject
 	@Named("developerMode")
 	private boolean developerMode;
 
@@ -159,16 +164,17 @@ public class LuminaPlugin extends Plugin implements DrawCallbacks
 	{
 		renderThreads = new RenderThreads(config.numThreads());
 		HdSettings.update(config);
+		SkySettings.update(config);
 		DiffuseColors.shadingMode = config.shadingMode();
 		DiffuseColors.colorMode = config.colorMode();
 		sceneDataLoader.load();
 		scenes = new SceneLoader(client, clientThread, sceneDataLoader, renderCallbackManager, modelOverrideManager);
 		areaHiding = new AreaHiding(client, scenes);
 		zoneDrawer = new ZoneDrawer(renderCallbackManager, modelOverrideManager, renderThreads, scenes, areaHiding);
-		// the scene light: 117 HD's environment, sky and daylight-cycle lighting
+		// the scene light: 117 HD's environment, sky and daylight-cycle lighting, or Lumina's sky (the setting picks)
 		frame = new FrameRenderer(client, clientUI, config, textureManager, drawManager, this::stopPlugin, skyLighting,
-			scenes, areaHiding, zoneDrawer, renderThreads);
-		commands = new LuminaCommands(client, drawManager, config, environmentManager, skyLighting, frame, scenes);
+			skySource, scenes, areaHiding, zoneDrawer, renderThreads);
+		commands = new LuminaCommands(client, drawManager, config, environmentManager, skyLighting, skySource, frame, scenes);
 		clientThread.invoke(() ->
 		{
 			try
@@ -493,6 +499,8 @@ public class LuminaPlugin extends Plugin implements DrawCallbacks
 		if (configChanged.getGroup().equals(LuminaConfig.GROUP))
 		{
 			HdSettings.update(config);
+			// the Sky section's settings are read per frame; nothing else to do for them
+			SkySettings.update(config);
 			if (handleHdConfigChange(configChanged.getKey()))
 			{
 				return;
@@ -672,6 +680,11 @@ public class LuminaPlugin extends Plugin implements DrawCallbacks
 	public void drawPass(Projection projection, Scene scene, int pass)
 	{
 		zoneDrawer.drawPass(scene, pass);
+		if (pass == PASS_OPAQUE && scene.getWorldViewId() == WorldView.TOPLEVEL)
+		{
+			// Lumina's sky, behind the opaque geometry and under the alpha geometry (as 117 HD places its sky)
+			frame.drawSkyAfterOpaque(scene);
+		}
 	}
 
 	@Override

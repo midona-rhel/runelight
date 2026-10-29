@@ -252,6 +252,9 @@ public class Environment
 		groundFogStart = mix(from.groundFogStart, to.groundFogStart, t);
 		groundFogEnd = mix(from.groundFogEnd, to.groundFogEnd, t);
 		groundFogOpacity = mix(from.groundFogOpacity, to.groundFogOpacity, t);
+		// Lumina: carried onto the manager's from/to/current copies (117 HD leaves it false there), so sky.SkySource can
+		// fade its sky between the two environments of a transition
+		isOverworld = t == 1 ? to.isOverworld : from.isOverworld;
 		sky = t == 1 ? to.sky : from.sky;
 		return this;
 	}

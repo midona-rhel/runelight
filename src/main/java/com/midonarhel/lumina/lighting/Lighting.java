@@ -72,4 +72,20 @@ public final class Lighting
 	public final float[] groundFogLight = new float[3];
 	public float skyVisibility;
 	public float starHorizonHeight;
+
+	// Lumina's sky source (sky.SkySource); zero and false under 117 HD's source
+	/**
+	 * Whether the scene shader lights with Lumina's seam, ambient + sky fill SH(n) + caster * max(N.L, 0), instead of
+	 * 117 HD's composite, and the frame draws Lumina's sky pass instead of 117 HD's.
+	 */
+	public boolean luminaLighting;
+	/**
+	 * The sky fill's L1 spherical harmonics as irradiance coefficients, four linear RGB colours: the constant term and
+	 * the terms for n.x, n.y and n.z (sky.SkyLight).
+	 */
+	public final float[] skyFillSh = new float[12];
+	/** The ground's bounce onto downward normals, linear RGB, times max(n.y, 0). */
+	public final float[] skyFillBounce = new float[3];
+	/** How visible the sun's disc is in the sky pass, 0 to 1 (0 at night or with the discs off). */
+	public float sunVisibility;
 }

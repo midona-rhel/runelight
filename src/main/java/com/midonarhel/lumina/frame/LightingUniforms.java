@@ -29,6 +29,7 @@ import static org.lwjgl.opengl.GL33C.glGetUniformLocation;
 import static org.lwjgl.opengl.GL33C.glUniform1f;
 import static org.lwjgl.opengl.GL33C.glUniform1i;
 import static org.lwjgl.opengl.GL33C.glUniform3f;
+import static org.lwjgl.opengl.GL33C.glUniform3fv;
 
 /**
  * The uniform locations of one shader program for the {@link Lighting} values (frag.glsl, fog.glsl, sky.glsl,
@@ -42,9 +43,14 @@ public final class LightingUniforms
 	private final int skyEnabled, zenithColor, horizonColor, sunColor, customGradient, horizonWidth, skySunDir, moonDir;
 	private final int moonDiskColor, moonIllumination, moonVisibility, skyFogColor, skyFogDensity, skyFogHorizonHeight;
 	private final int groundFogLight, skyVisibility, starHorizonHeight;
+	private final int luminaLighting, skyFillSh, skyFillBounce, sunVisibility;
 
 	public LightingUniforms(int program)
 	{
+		luminaLighting = glGetUniformLocation(program, "luminaLighting");
+		skyFillSh = glGetUniformLocation(program, "skyFillSh");
+		skyFillBounce = glGetUniformLocation(program, "skyFillBounce");
+		sunVisibility = glGetUniformLocation(program, "skySunVisibility");
 		ambientColor = glGetUniformLocation(program, "ambientColor");
 		ambientStrength = glGetUniformLocation(program, "ambientStrength");
 		lightColor = glGetUniformLocation(program, "lightColor");
@@ -114,6 +120,10 @@ public final class LightingUniforms
 		vec3(groundFogLight, l.groundFogLight);
 		glUniform1f(skyVisibility, l.skyVisibility);
 		glUniform1f(starHorizonHeight, l.starHorizonHeight);
+		glUniform1i(luminaLighting, l.luminaLighting ? 1 : 0);
+		glUniform3fv(skyFillSh, l.skyFillSh);
+		vec3(skyFillBounce, l.skyFillBounce);
+		glUniform1f(sunVisibility, l.sunVisibility);
 	}
 
 	private static void vec3(int location, float[] v)

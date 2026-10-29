@@ -118,6 +118,12 @@ public class SkyLighting implements LightingSource
 	@Override
 	public void fill(Lighting out, SceneData scene, double elapsedTime, int drawDistance, boolean hasSkyboxModel)
 	{
+		// not Lumina's seam: the scene shader composites 117 HD's way and the frame draws 117 HD's sky pass
+		out.luminaLighting = false;
+		java.util.Arrays.fill(out.skyFillSh, 0);
+		java.util.Arrays.fill(out.skyFillBounce, 0);
+		out.sunVisibility = 0;
+
 		// ZoneRenderer: environmentManager.update, skyManager.update, skyRenderer.prepareFrame
 		if (scene != null)
 		{
@@ -406,7 +412,7 @@ public class SkyLighting implements LightingSource
 	 * Attenuate overhead-calibrated linear lighting through a shared reference atmosphere, in place.
 	 * Authored ambient/direct ratios do not determine atmospheric density.
 	 */
-	private static void applyAtmosphere(float[] directional, float[] ambient, float altitudeDegrees)
+	public static void applyAtmosphere(float[] directional, float[] ambient, float altitudeDegrees)
 	{
 		float elevation = sin(max(0, altitudeDegrees) * DEG_TO_RAD);
 		float curvature = 1 / 38.f;

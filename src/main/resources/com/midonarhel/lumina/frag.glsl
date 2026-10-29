@@ -60,6 +60,10 @@ uniform float groundFogStart;
 uniform float groundFogEnd;
 uniform float groundFogOpacity;
 uniform float lightningBrightness;
+// Lumina's sky source (lighting.Lighting): its lighting seam and the sky fill's L1 SH irradiance coefficients
+uniform int luminaLighting;
+uniform vec3 skyFillSh[4];
+uniform vec3 skyFillBounce;
 
 // 117 HD's material struct, three vec4 per material slot (see MaterialManager.fillSlots):
 // (colour map layer, flow map layer, flags (4 overrideBaseColor, 2 unlit, 1 hasTransparency), brightness),
@@ -352,8 +356,17 @@ void main() {
   // underglow
   vec3 underglowOut = underglowColor * max(normals.y, 0) * underglowStrength;
 
-  // apply lighting (Lumina: no specular and no point lights; the fresnel surface colour term is zero in 117 HD)
-  vec3 compositeLight = ambientLightOut + lightOut + skyLightOut + lightningOut + underglowOut + transmissionOut;
+  vec3 compositeLight;
+  if (luminaLighting != 0) {
+    // Lumina's seam: ambient (the area's already in it) + the sky's light SH(n) with the ground bounce for downward
+    // normals + the caster * max(N.L, 0) * (1 - shadow) (shadows later; leaf transmission kept; no specular)
+    vec3 skyFill = max(skyFillSh[0] + skyFillSh[1] * normals.x + skyFillSh[2] * normals.y + skyFillSh[3] * normals.z
+      + skyFillBounce * max(normals.y, 0.0), 0.0);
+    compositeLight = ambientLightOut + skyFill + lightOut + transmissionOut;
+  } else {
+    // apply lighting (Lumina: no specular and no point lights; the fresnel surface colour term is zero in 117 HD)
+    compositeLight = ambientLightOut + lightOut + skyLightOut + lightningOut + underglowOut + transmissionOut;
+  }
 
   if (debugView == 2) {
     FragColor = vec4(compositeLight, 1.0);

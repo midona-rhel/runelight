@@ -1,11 +1,14 @@
 package com.midonarhel.lumina.dev;
 
+import com.midonarhel.lumina.config.LightingSourceKind;
 import com.midonarhel.lumina.config.LuminaConfig;
+import com.midonarhel.lumina.config.SkySettings;
 import com.midonarhel.lumina.frame.FrameRenderer;
 import com.midonarhel.lumina.lighting.Lighting;
 import com.midonarhel.lumina.lighting.SkyLighting;
 import com.midonarhel.lumina.scene.SceneLoader;
 import com.midonarhel.lumina.scene.environment.EnvironmentManager;
+import com.midonarhel.lumina.sky.SkySource;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
@@ -35,21 +38,25 @@ public final class LuminaCommands
 	private final LuminaConfig config;
 	private final EnvironmentManager environmentManager;
 	private final SkyLighting skyLighting;
+	private final SkySource skySource;
 	private final FrameRenderer frame;
 	private final SceneLoader scenes;
+	// the dump's scratch for the source that is not active
+	private final Lighting otherLighting = new Lighting();
 
 	// commands from .runelite/lumina/command.txt, as if typed as ::lumina <line>
 	private final CommandFile commandFile = new CommandFile(
 		RuneLite.RUNELITE_DIR.toPath().resolve("lumina").resolve("command.txt"), this::run);
 
 	public LuminaCommands(Client client, DrawManager drawManager, LuminaConfig config, EnvironmentManager environmentManager,
-		SkyLighting skyLighting, FrameRenderer frame, SceneLoader scenes)
+		SkyLighting skyLighting, SkySource skySource, FrameRenderer frame, SceneLoader scenes)
 	{
 		this.client = client;
 		this.drawManager = drawManager;
 		this.config = config;
 		this.environmentManager = environmentManager;
 		this.skyLighting = skyLighting;
+		this.skySource = skySource;
 		this.frame = frame;
 		this.scenes = scenes;
 	}
@@ -83,27 +90,43 @@ public final class LuminaCommands
 		}
 		if (args.length >= 1 && args[0].equals("dump"))
 		{
-			// every lighting value the shaders get, for comparing against 117 HD
+			// every lighting value the shaders get, from both sources for this frame, for comparing against 117 HD and
+			// against each other (the active source is marked)
 			var data = scenes.root().data;
-			Lighting lighting = frame.lighting();
-			StringBuilder sb = new StringBuilder("Lighting dump: target=")
-				.append(environmentManager.getTargetEnvironment())
+			StringBuilder sb = new StringBuilder("Lighting dump: active=").append(SkySettings.lightingSource)
+				.append(" target=").append(environmentManager.getTargetEnvironment())
 				.append(" to=").append(environmentManager.getToEnvironment())
 				.append(" candidates=").append(data == null ? "none" : data.environments)
 				.append(" focal=").append(data == null ? "none" : Arrays.toString(data.localToWorld(
 					(int) client.getCameraFocalPointX(), (int) client.getCameraFocalPointZ(), client.getTopLevelWorldView().getPlane())))
-				.append(" sceneBase=").append(data == null ? "none" : Arrays.toString(data.sceneBase))
-				.append(System.lineSeparator()).append("  ").append(skyLighting.describe());
-			for (var f : Lighting.class.getFields())
+				.append(" sceneBase=").append(data == null ? "none" : Arrays.toString(data.sceneBase));
+			for (LightingSourceKind kind : LightingSourceKind.values())
 			{
-				try
+				Lighting lighting = frame.lightingOf(kind, otherLighting);
+				sb.append(System.lineSeparator()).append("[").append(kind.name()).append(kind == SkySettings.lightingSource ? ", active] " : "] ")
+					.append(kind == LightingSourceKind.LUMINA ? skySource.describe() : skyLighting.describe());
+				// the light on flat ground and on a vertical wall facing the light, as the scene shader sums it
+				float[] up = {0, -1, 0};
+				float[] wall = {lighting.lightDir[0], 0, lighting.lightDir[2]};
+				float len = (float) Math.sqrt(wall[0] * wall[0] + wall[2] * wall[2]);
+				if (len > 1e-6f)
 				{
-					Object v = f.get(lighting);
-					sb.append(System.lineSeparator()).append("  ").append(f.getName()).append(" = ")
-						.append(v instanceof float[] ? Arrays.toString((float[]) v) : v);
+					wall[0] /= len;
+					wall[2] /= len;
 				}
-				catch (IllegalAccessException ignored)
+				sb.append(System.lineSeparator()).append("  light on flat ground = ").append(Arrays.toString(irradiance(lighting, up)))
+					.append(", on a wall facing the light = ").append(Arrays.toString(irradiance(lighting, wall)));
+				for (var f : Lighting.class.getFields())
 				{
+					try
+					{
+						Object v = f.get(lighting);
+						sb.append(System.lineSeparator()).append("  ").append(f.getName()).append(" = ")
+							.append(v instanceof float[] ? Arrays.toString((float[]) v) : v);
+					}
+					catch (IllegalAccessException ignored)
+					{
+					}
 				}
 			}
 			log.info(sb.toString());
@@ -142,6 +165,30 @@ public final class LuminaCommands
 			}
 			frame.timing().startSnapshot(snapshotHeader(seconds), seconds);
 		}
+	}
+
+	/**
+	 * The light a lit surface with this normal (unit, y down) gets, summed as frag.glsl sums it: Lumina's seam
+	 * (ambient + sky fill SH + caster) or 117 HD's (ambient + directional + half the fog colour on upward faces).
+	 */
+	static float[] irradiance(Lighting l, float[] n)
+	{
+		float[] out = new float[3];
+		float ndl = Math.max(0, n[0] * l.lightDir[0] + n[1] * l.lightDir[1] + n[2] * l.lightDir[2]);
+		for (int i = 0; i < 3; i++)
+		{
+			out[i] = l.ambientColor[i] * l.ambientStrength + l.lightColor[i] * l.lightStrength * ndl;
+			if (l.luminaLighting)
+			{
+				out[i] += Math.max(0, l.skyFillSh[i] + l.skyFillSh[3 + i] * n[0] + l.skyFillSh[6 + i] * n[1] + l.skyFillSh[9 + i] * n[2]
+					+ l.skyFillBounce[i] * Math.max(0, n[1]));
+			}
+			else
+			{
+				out[i] += 0.5f * l.fogColor[i] * Math.max(0, -n[1]);
+			}
+		}
+		return out;
 	}
 
 	/** The conditions a snapshot is measured under, for its file. */

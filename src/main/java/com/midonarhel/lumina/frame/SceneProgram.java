@@ -45,6 +45,11 @@ public final class SceneProgram
 		.add(GL_VERTEX_SHADER, "sky_vert.glsl")
 		.add(GL_FRAGMENT_SHADER, "sky_frag.glsl");
 
+	// Lumina's sky pass (SkyRenderer), the same fullscreen triangle
+	static final Shader LUMINA_SKY_PROGRAM = new Shader()
+		.add(GL_VERTEX_SHADER, "sky_vert.glsl")
+		.add(GL_FRAGMENT_SHADER, "lumina_sky_frag.glsl");
+
 	static final Shader UI_PROGRAM = new Shader()
 		.add(GL_VERTEX_SHADER, "vertui.glsl")
 		.add(GL_FRAGMENT_SHADER, "fragui.glsl");
@@ -61,6 +66,7 @@ public final class SceneProgram
 	int glProgram;
 	int glUiProgram;
 	int glSkyProgram;
+	int glLuminaSkyProgram;
 
 	int uniSkyInvProjection;
 	int uniSkyGammaCorrection;
@@ -130,6 +136,7 @@ public final class SceneProgram
 		glProgram = PROGRAM.compile(template);
 		glUiProgram = UI_PROGRAM.compile(template);
 		glSkyProgram = SKY_PROGRAM.compile(template);
+		glLuminaSkyProgram = LUMINA_SKY_PROGRAM.compile(template);
 
 		glBindVertexArray(0);
 
@@ -180,5 +187,8 @@ public final class SceneProgram
 
 		glDeleteProgram(glSkyProgram);
 		glSkyProgram = 0;
+
+		glDeleteProgram(glLuminaSkyProgram);
+		glLuminaSkyProgram = 0;
 	}
 }

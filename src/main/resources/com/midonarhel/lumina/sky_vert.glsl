@@ -26,12 +26,17 @@
 
 // 117 HD's sky_vert.glsl: a fullscreen triangle at the far plane.
 
+// The NDC depth of the far plane: 0 with glClipControl ZERO_TO_ONE (the scene's reverse-Z far), -1 without (macOS).
+// Lumina's sky pass (SkyRenderer) sets it and depth-tests GEQUAL against the cleared depth; 117 HD's sky pass draws
+// without a depth test and leaves it at 0, as before.
+uniform float skyFarDepth;
+
 out vec2 fScreenPos;
 
 void main() {
   // Fullscreen triangle - generates vertices at (-1,-1), (3,-1), (-1,3)
   vec2 pos = vec2((gl_VertexID & 1) * 4.0 - 1.0, (gl_VertexID & 2) * 2.0 - 1.0);
-  gl_Position = vec4(pos, 0.0, 1.0);
+  gl_Position = vec4(pos, skyFarDepth, 1.0);
 
   // Pass screen position to fragment shader for per-pixel ray calculation
   fScreenPos = pos;

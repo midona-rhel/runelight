@@ -304,6 +304,73 @@ public interface LuminaConfig extends Config
 		return ColorMode.HD117;
 	}
 
+	// Lumina's sky (com.midonarhel.lumina.sky); cached by SkySettings, read per frame
+
+	@ConfigSection(
+		name = "Sky",
+		description = "Lumina's sky and day cycle.",
+		position = 50
+	)
+	String skySection = "sky";
+
+	@ConfigItem(
+		keyName = "lightingSource",
+		name = "Lighting source",
+		description =
+			"What lights the scene and draws the sky.<br>" +
+			"'Lumina' is Lumina's own sun, moon and sky.<br>" +
+			"'117 HD' is 117 HD's environments and daylight cycle (the '117 HD: lighting' section).",
+		position = 0,
+		section = skySection
+	)
+	default LightingSourceKind lightingSource()
+	{
+		return LightingSourceKind.LUMINA;
+	}
+
+	@ConfigItem(
+		keyName = "dayLength",
+		name = "Day length",
+		description =
+			"How long a game day lasts in real time. The time of day follows the real clock, the same for everyone.<br>" +
+			"'Real time' makes the game's time of day your local time of day.<br>" +
+			"'Fixed hour' holds the day at the 'Fixed hour' setting.",
+		position = 1,
+		section = skySection
+	)
+	default DayLength dayLength()
+	{
+		return DayLength.MINUTES_24;
+	}
+
+	@Range(
+		min = 0,
+		max = 24
+	)
+	@ConfigItem(
+		keyName = "fixedHour",
+		name = "Fixed hour",
+		description = "The hour of the game day, 0 to 24, when 'Day length' is 'Fixed hour'. The sun is up from 4 to 20.",
+		position = 2,
+		section = skySection
+	)
+	default int fixedHour()
+	{
+		return 12;
+	}
+
+	@ConfigItem(
+		keyName = "showSunMoon",
+		name = "Show sun and moon",
+		description = "Draw the sun's and the moon's discs in the sky.",
+		position = 3,
+		section = skySection
+	)
+	default boolean showSunMoon()
+	{
+		return true;
+	}
+
 	// 117 HD's settings (rs117.hd.HdPluginConfig): the same keys, names, descriptions and defaults
 
 	@ConfigSection(
