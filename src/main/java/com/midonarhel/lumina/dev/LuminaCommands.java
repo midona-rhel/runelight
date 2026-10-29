@@ -1,6 +1,7 @@
 package com.midonarhel.lumina.dev;
 
 import com.midonarhel.lumina.config.LightingSourceKind;
+import com.midonarhel.lumina.config.DayLength;
 import com.midonarhel.lumina.config.LuminaConfig;
 import com.midonarhel.lumina.config.SkySettings;
 import com.midonarhel.lumina.frame.FrameRenderer;
@@ -15,6 +16,7 @@ import java.util.List;
 import lombok.extern.slf4j.Slf4j;
 import net.runelite.api.Client;
 import net.runelite.client.RuneLite;
+import net.runelite.client.config.ConfigManager;
 import net.runelite.client.ui.DrawManager;
 import static org.lwjgl.opengl.GL33C.GL_RENDERER;
 import static org.lwjgl.opengl.GL33C.GL_VERSION;
@@ -36,6 +38,7 @@ public final class LuminaCommands
 	private final Client client;
 	private final DrawManager drawManager;
 	private final LuminaConfig config;
+	private final ConfigManager configManager;
 	private final EnvironmentManager environmentManager;
 	private final SkyLighting skyLighting;
 	private final SkySource skySource;
@@ -48,10 +51,11 @@ public final class LuminaCommands
 	private final CommandFile commandFile = new CommandFile(
 		RuneLite.RUNELITE_DIR.toPath().resolve("lumina").resolve("command.txt"), this::run);
 
-	public LuminaCommands(Client client, DrawManager drawManager, LuminaConfig config, EnvironmentManager environmentManager,
-		SkyLighting skyLighting, SkySource skySource, FrameRenderer frame, SceneLoader scenes)
+	public LuminaCommands(Client client, DrawManager drawManager, LuminaConfig config, ConfigManager configManager,
+		EnvironmentManager environmentManager, SkyLighting skyLighting, SkySource skySource, FrameRenderer frame, SceneLoader scenes)
 	{
 		this.client = client;
+		this.configManager = configManager;
 		this.drawManager = drawManager;
 		this.config = config;
 		this.environmentManager = environmentManager;
@@ -86,6 +90,35 @@ public final class LuminaCommands
 		if (args.length >= 1 && args[0].equals("capture"))
 		{
 			FrameCapture.capture(client, drawManager, "Lumina", args.length >= 2 ? args[1] : "capture");
+			return;
+		}
+		// ::lumina time <hour 0-24 | run>: hold the game clock at an hour, or let it run (24 minute day)
+		if (args.length >= 2 && args[0].equals("time"))
+		{
+			if (args[1].equals("run"))
+			{
+				configManager.setConfiguration(LuminaConfig.GROUP, "dayLength", DayLength.MINUTES_24);
+			}
+			else
+			{
+				try
+				{
+					int hour = Math.max(0, Math.min(24, Integer.parseInt(args[1])));
+					configManager.setConfiguration(LuminaConfig.GROUP, "fixedHour", hour);
+					configManager.setConfiguration(LuminaConfig.GROUP, "dayLength", DayLength.FIXED_HOUR);
+				}
+				catch (NumberFormatException ex)
+				{
+					log.warn("::lumina time <hour|run>");
+				}
+			}
+			return;
+		}
+		// ::lumina source <lumina|hd117>: which lighting source the frame uses
+		if (args.length >= 2 && args[0].equals("source"))
+		{
+			configManager.setConfiguration(LuminaConfig.GROUP, "lightingSource",
+				args[1].equalsIgnoreCase("hd117") ? LightingSourceKind.HD117 : LightingSourceKind.LUMINA);
 			return;
 		}
 		if (args.length >= 1 && args[0].equals("dump"))

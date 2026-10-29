@@ -121,6 +121,9 @@ public class LuminaPlugin extends Plugin implements DrawCallbacks
 	private DrawManager drawManager;
 
 	@Inject
+	private ConfigManager configManager;
+
+	@Inject
 	private PluginManager pluginManager;
 
 	@Inject
@@ -174,7 +177,7 @@ public class LuminaPlugin extends Plugin implements DrawCallbacks
 		// the scene light: 117 HD's environment, sky and daylight-cycle lighting, or Lumina's sky (the setting picks)
 		frame = new FrameRenderer(client, clientUI, config, textureManager, drawManager, this::stopPlugin, skyLighting,
 			skySource, scenes, areaHiding, zoneDrawer, renderThreads);
-		commands = new LuminaCommands(client, drawManager, config, environmentManager, skyLighting, skySource, frame, scenes);
+		commands = new LuminaCommands(client, drawManager, config, configManager, environmentManager, skyLighting, skySource, frame, scenes);
 		clientThread.invoke(() ->
 		{
 			try
