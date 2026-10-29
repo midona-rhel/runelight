@@ -1,0 +1,119 @@
+// The climate of each part of the world, as a layer stack read by weather.ClimateMap: a tile's climate is the LAST
+// layer that contains it. A layer is {climate: climates.json id, areas: [117 HD area names (scene/areas.json)],
+// rects: [[x1, y1, x2, y2] world tiles, inclusive], note}. Underground is decided before the layers: a tile whose
+// 117 HD environment is not overworld has no climate (ClimateMap.NO_SKY), so caves, dungeons, instances and the
+// other planes (Zanaris) never reach this file. "default" is the climate of an overworld tile no layer contains.
+// Layers marked "guess" place regions the climate map does not list, or resolve a conflict in it.
+{
+  "default": "TEMPERATE",
+  "layers": [
+    {
+      "climate": "TEMPERATE",
+      "rects": [[960, 2048, 4031, 8063]],
+      "note": "base: the whole 117 HD overworld (MAINLAND + MAINLAND_EXTENSIONS bounds). Unlisted places fall here: Entrana, Port Sarim, Draynor, Catherby, Camelot castle, Piscatoris, Zul-Andra, the sea"
+    },
+    {
+      "climate": "KOUREND_TEMPERATE",
+      "areas": ["KOUREND"],
+      "note": "all of Great Kourend and Kebos; Arceuus, Lovakengj, the swamp and the snowy north are overridden below"
+    },
+    {
+      "climate": "TEMPERATE",
+      "areas": ["HOSIDIUS"],
+      "note": "the climate map lists Hosidius with the central mainland"
+    },
+    {
+      "climate": "COOL_TEMPERATE",
+      "areas": ["FREMENNIK_PROVINCE", "FREMENNIK_COLONIES", "WATERBIRTH_ISLAND", "LUNAR_ISLE", "PIRATES_COVE"],
+      "rects": [[2860, 3400, 2945, 3520], [2590, 3440, 2739, 3530]],
+      "note": "Rellekka lowlands; rects are Taverley and Seers' Village (guess at their extents; Camelot castle and Catherby east of x 2740 stay TEMPERATE as the map's row 1 lists Camelot). Guess: Miscellania/Etceteria, Waterbirth, Lunar Isle and Pirates' Cove are not in the map"
+    },
+    {
+      "climate": "ALPINE",
+      "areas": [
+        "TROLL_COUNTRY", "WHITE_WOLF_MOUNTAIN_ENVIRONMENT", "ICE_MOUNTAIN",
+        "RELLEKKA_SNOWY_REGION", "RELLEKKA_HUNTER_REGION", "RELLEKKA_HUNTER_ICEBERG", "MOUNTAIN_CAMP",
+        "FREMENNIK_ISLES", "UNGAEL", "ICEBERG",
+        "ZEAH_SNOWY_NORTHERN_REGION"
+      ],
+      "note": "Trollheim, Weiss, the ice path, the God Wars entrance, White Wolf Mountain, the Fremennik isles, Wintertodt. Guess: Ice Mountain and the Mountain Camp (snowy in game, not in the map); ZEAH_SNOWY_NORTHERN_REGION is 117 HD's snow region including Wintertodt, so alpine although the map's row 2 says 'Zeah north' at 4 C"
+    },
+    {
+      "climate": "COOL_TEMPERATE",
+      "areas": ["BURTHORPE"],
+      "note": "after ALPINE: TROLL_COUNTRY's boxes reach into the west of Burthorpe"
+    },
+    {
+      "climate": "DESERT",
+      "areas": ["KHARID_DESERT_REGION"],
+      "note": "117 HD's desert region, Al Kharid included; its west edge stops at the river Lum"
+    },
+    {
+      "climate": "TROPICAL",
+      "areas": [
+        "KARAMJA", "FELDIP_HILLS", "FELDIP_HILLS_SOUTHERN_REGION", "MOS_LE_HARMLESS", "APE_ATOLL", "FOSSIL_ISLAND",
+        "ISLE_OF_SOULS_MAINLAND", "CRANDOR", "HARMONY"
+      ],
+      "rects": [[2624, 2560, 2687, 2623]],
+      "note": "Guess: Isle of Souls, Crandor, Harmony Island and the Void Knights' Outpost (the rect) are not in the map"
+    },
+    {
+      "climate": "VOLCANIC",
+      "areas": ["KARAMJA_VOLCANO", "LOVAKENGJ", "MOUNT_KARUULM"],
+      "note": "TzHaar itself is underground (no sky). Guess: Mount Karuulm, listed by the map as not yet placed (volcanic)"
+    },
+    {
+      "climate": "MORYTANIA",
+      "areas": ["MORYTANIA"]
+    },
+    {
+      "climate": "WETLANDS",
+      "areas": ["KEBOS_LOWLANDS_SWAMP", "TAR_SWAMP"],
+      "rects": [[3138, 3140, 3250, 3203]],
+      "note": "the rect is the Lumbridge swamp (guess at its extent: south of the castle to the coast, west of the river Lum)"
+    },
+    {
+      "climate": "ARCEUUS",
+      "areas": ["ARCEUUS"]
+    },
+    {
+      "climate": "VOLCANIC",
+      "areas": ["FOSSIL_ISLAND_VOLCANO"],
+      "note": "Guess: listed by the map as not yet placed (ash)"
+    },
+    {
+      "climate": "MEDITERRANEAN",
+      "areas": ["VARLAMORE", "ALDARIN"],
+      "note": "all of Varlamore (Civitas illa Fortis, the Sunset Coast, Aldarin); the forest, rainforest, savannah and mountains are overridden below"
+    },
+    {
+      "climate": "SAVANNAH",
+      "areas": ["Quetzacalli Gorge"],
+      "rects": [[1690, 2880, 1800, 3060]],
+      "note": "Guess: 117 HD has no area for the Avium Savannah; the rect is east and south-east of Civitas around the Church of Ralos and the hunter pit traps"
+    },
+    {
+      "climate": "TROPICAL",
+      "areas": ["Varlamore - Tlati Rainforest"]
+    },
+    {
+      "climate": "AUTUMN_FOREST",
+      "areas": ["AUBURNVALE"]
+    },
+    {
+      "climate": "ALPINE",
+      "areas": ["VARLAMORE_SNOWY_MOUNTAINS_LOWER", "VARLAMORE_SNOWY_MOUNTAINS_UPPER"],
+      "note": "after AUBURNVALE, whose bounds overlap the foothills"
+    },
+    {
+      "climate": "TEMPERATE_RAINFOREST",
+      "areas": ["TIRANNWN", "TREE_GNOME_STRONGHOLD"],
+      "note": "Isafdar, Lletya, Arandar, Prifddinas and the Gnome Stronghold"
+    },
+    {
+      "climate": "WILDERNESS",
+      "areas": ["WILDERNESS"],
+      "note": "last, so it wins over TROLL_COUNTRY's east edge. The Frozen Waste Plateau stays WILDERNESS (the map: never snow there), though it is snow-covered terrain; question for the map"
+    }
+  ]
+}

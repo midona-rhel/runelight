@@ -1,0 +1,96 @@
+// The weather patterns (notes/lumina-weather-design: 8 patterns + ASH_FALL). Read by weather.Pattern.Table.
+//   kind:          Pattern.Kind
+//   sky:           sky.SkyModifiers at full strength (overcast, snow, haze, warmth, saturation, sunStrength)
+//   fog:           colour SKY (the horizon, as the clear sky) | GREY (horizon desaturated by `desaturate`, darkened
+//                  by `darken`) | WHITE | SAND (`tint` * horizon luma) | ASH (`tint` * horizon luma);
+//                  density: multiplier on the climate's baseline fog density
+//   precipitation: kind NONE | RAIN | SNOW | SAND | ASH, intensity [min, max] drawn per slot
+//   wind:          [min, max] drawn per slot, 0 still to 1 gale
+//   ground:        NONE | WET | SNOW_COVER | DUST | ASH
+//   persistence:   the pattern's weight to follow itself (the diagonal of the forecast's affinity matrix);
+//                  0 means it never follows itself (storms)
+//   hours:         [min, max] game hours the pattern lasts from the slot's start; absent = the whole 8-hour slot
+[
+  {
+    "kind": "CLEAR",
+    "sky": { "overcast": 0, "snow": 0, "haze": 0, "warmth": 0, "saturation": 0, "sunStrength": 0 },
+    "fog": { "colour": "SKY", "density": 1.0 },
+    "precipitation": { "kind": "NONE", "intensity": [0, 0] },
+    "wind": [0.05, 0.3],
+    "ground": "NONE",
+    "persistence": 2.0
+  },
+  {
+    "kind": "PARTLY_CLOUDY",
+    "sky": { "overcast": 0.35, "snow": 0, "haze": 0.05, "warmth": 0, "saturation": 0, "sunStrength": 0 },
+    "fog": { "colour": "SKY", "density": 1.0 },
+    "precipitation": { "kind": "NONE", "intensity": [0, 0] },
+    "wind": [0.1, 0.4],
+    "ground": "NONE",
+    "persistence": 1.6
+  },
+  {
+    "kind": "OVERCAST",
+    "sky": { "overcast": 0.85, "snow": 0, "haze": 0.2, "warmth": 0, "saturation": -0.1, "sunStrength": 0 },
+    "fog": { "colour": "GREY", "desaturate": 0.4, "darken": 0.1, "density": 1.2 },
+    "precipitation": { "kind": "NONE", "intensity": [0, 0] },
+    "wind": [0.1, 0.5],
+    "ground": "NONE",
+    "persistence": 1.6
+  },
+  {
+    "kind": "RAIN",
+    "sky": { "overcast": 0.95, "snow": 0, "haze": 0.3, "warmth": 0, "saturation": -0.15, "sunStrength": -0.1 },
+    "fog": { "colour": "GREY", "desaturate": 0.6, "darken": 0.2, "density": 1.5 },
+    "precipitation": { "kind": "RAIN", "intensity": [0.3, 0.7] },
+    "wind": [0.3, 0.7],
+    "ground": "WET",
+    "persistence": 1.2
+  },
+  {
+    "kind": "STORM",
+    "sky": { "overcast": 1.0, "snow": 0, "haze": 0.35, "warmth": 0, "saturation": -0.25, "sunStrength": -0.2 },
+    "fog": { "colour": "GREY", "desaturate": 0.7, "darken": 0.3, "density": 1.8 },
+    "precipitation": { "kind": "RAIN", "intensity": [1.0, 1.0] },
+    "wind": [0.7, 1.0],
+    "ground": "WET",
+    "persistence": 0,
+    "hours": [4, 8]
+  },
+  {
+    "kind": "FOG",
+    "sky": { "overcast": 0.3, "snow": 0, "haze": 0.9, "warmth": 0, "saturation": -0.2, "sunStrength": -0.15 },
+    "fog": { "colour": "WHITE", "density": 4.0 },
+    "precipitation": { "kind": "NONE", "intensity": [0, 0] },
+    "wind": [0, 0.1],
+    "ground": "NONE",
+    "persistence": 0.8
+  },
+  {
+    "kind": "SNOW",
+    "sky": { "overcast": 0.9, "snow": 1.0, "haze": 0.4, "warmth": -0.2, "saturation": -0.1, "sunStrength": -0.1 },
+    "fog": { "colour": "WHITE", "density": 2.0 },
+    "precipitation": { "kind": "SNOW", "intensity": [0.3, 1.0] },
+    "wind": [0.1, 0.5],
+    "ground": "SNOW_COVER",
+    "persistence": 1.5
+  },
+  {
+    "kind": "SANDSTORM",
+    "sky": { "overcast": 0.3, "snow": 0, "haze": 0.8, "warmth": 0.8, "saturation": -0.1, "sunStrength": -0.35 },
+    "fog": { "colour": "SAND", "tint": [1.3, 1.0, 0.65], "density": 3.0 },
+    "precipitation": { "kind": "SAND", "intensity": [0.6, 1.0] },
+    "wind": [0.8, 1.0],
+    "ground": "DUST",
+    "persistence": 0.6
+  },
+  {
+    "kind": "ASH_FALL",
+    "sky": { "overcast": 0.6, "snow": 0, "haze": 0.7, "warmth": 0.3, "saturation": -0.3, "sunStrength": -0.3 },
+    "fog": { "colour": "ASH", "tint": [0.75, 0.7, 0.62], "density": 2.0 },
+    "precipitation": { "kind": "ASH", "intensity": [0.4, 0.8] },
+    "wind": [0.1, 0.3],
+    "ground": "ASH",
+    "persistence": 1.0
+  }
+]

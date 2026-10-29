@@ -10,6 +10,7 @@ import com.midonarhel.lumina.lighting.SkyLighting;
 import com.midonarhel.lumina.scene.SceneLoader;
 import com.midonarhel.lumina.scene.environment.EnvironmentManager;
 import com.midonarhel.lumina.sky.SkySource;
+import com.midonarhel.lumina.weather.ClimateReport;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
@@ -29,6 +30,7 @@ import static org.lwjgl.opengl.GL33C.glGetString;
  * <li>dump: every lighting value the shaders get, for comparing against 117 HD</li>
  * <li>debug albedo|light|normal|off: the scene shader's comparison views</li>
  * <li>snapshot [seconds]: a {@link Snapshot} of the frame times</li>
+ * <li>climate: the climate under the player and the forecast of the coming slots ({@link ClimateReport})</li>
  * </ul>
  * The plugin only calls this in developer mode. Everything runs on the client thread.
  */
@@ -90,6 +92,13 @@ public final class LuminaCommands
 		if (args.length >= 1 && args[0].equals("capture"))
 		{
 			FrameCapture.capture(client, drawManager, "Lumina", args.length >= 2 ? args[1] : "capture");
+			return;
+		}
+		// ::lumina climate: the climate under the player and the forecast of the coming slots
+		if (args.length >= 1 && args[0].equals("climate") && client.getLocalPlayer() != null)
+		{
+			var at = client.getLocalPlayer().getWorldLocation();
+			log.info(ClimateReport.describe(at.getX(), at.getY(), at.getPlane(), System.currentTimeMillis(), SkySettings.dayLength.minutes));
 			return;
 		}
 		// ::lumina time <hour 0-24 | run>: hold the game clock at an hour, or let it run (24 minute day)

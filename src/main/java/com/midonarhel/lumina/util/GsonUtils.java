@@ -51,7 +51,14 @@ public final class GsonUtils
 	 */
 	public static <T> T loadResource(Gson gson, String fileName, Class<T> type) throws IOException
 	{
-		String path = SCENE_DATA_PATH + fileName;
+		return loadClasspath(gson, SCENE_DATA_PATH + fileName, type);
+	}
+
+	/**
+	 * Parses a JSON resource at an absolute classpath path leniently (the data files contain comments).
+	 */
+	public static <T> T loadClasspath(Gson gson, String path, Class<T> type) throws IOException
+	{
 		try (InputStream in = GsonUtils.class.getResourceAsStream(path))
 		{
 			if (in == null)

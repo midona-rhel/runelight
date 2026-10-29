@@ -1,0 +1,124 @@
+// The climates (notes: lumina climate map v2, 2026-10-29). Read by weather.Climate.Table.
+//   analogue, temperature (mean, C), precipitation (mm per year): the real-world model the shares came from
+//   weights: share of slots per Pattern.Kind; a kind with no entry has weight 0 and never occurs there
+//   permanentSnowCover: the ground is always snow (no cover build-up or melt)
+//   alwaysDim: a permanent sun -0.2 and saturation -0.15 on top of the pattern (the Wilderness)
+//   intensityBias: added to the drawn precipitation intensity (tropical rain: short and heavy)
+// The forecast moves SNOW to RAIN where temperature > 2 C and RAIN to SNOW where temperature <= 2 C, whatever is
+// written here (climate map rule: rain above 2 C, snow at or below). Morytania's green sky tint is an area look, not
+// weather, so it is not here. Underground has no climate: ClimateMap.NO_SKY.
+[
+  {
+    "id": "TEMPERATE",
+    "analogue": "UK: Lumbridge, Varrock, Falador, Ardougne, Camelot, Yanille, Hosidius",
+    "temperature": 10,
+    "precipitation": 900,
+    "weights": { "CLEAR": 48, "PARTLY_CLOUDY": 20, "OVERCAST": 12, "RAIN": 12, "STORM": 2, "FOG": 6 }
+  },
+  {
+    "id": "COOL_TEMPERATE",
+    "analogue": "northern UK / southern Norway: Burthorpe, Taverley, Seers' Village, Rellekka lowlands",
+    "temperature": 4,
+    "precipitation": 900,
+    "weights": { "CLEAR": 40, "PARTLY_CLOUDY": 18, "OVERCAST": 18, "RAIN": 10, "STORM": 1, "FOG": 6, "SNOW": 7 },
+    "note": "4 C is above the 2 C snow line, so the 7 SNOW falls as rain; the authored share is kept for when the line moves"
+  },
+  {
+    "id": "ALPINE",
+    "analogue": "Nordics / alpine: Fremennik isles, Trollheim, White Wolf Mountain, Weiss, Wintertodt, Varlamore snowy mountains",
+    "temperature": -4,
+    "precipitation": 700,
+    "weights": { "CLEAR": 35, "PARTLY_CLOUDY": 15, "OVERCAST": 20, "FOG": 5, "SNOW": 25 },
+    "permanentSnowCover": true,
+    "note": "fog here is freezing fog (by temperature), not a separate pattern"
+  },
+  {
+    "id": "DESERT",
+    "analogue": "Arabian: the Kharidian desert",
+    "temperature": 30,
+    "precipitation": 100,
+    "weights": { "CLEAR": 82, "PARTLY_CLOUDY": 5, "OVERCAST": 2, "RAIN": 1, "SANDSTORM": 10 }
+  },
+  {
+    "id": "TROPICAL",
+    "analogue": "tropics: Karamja, Feldip Hills, Mos Le'Harmless, Fossil Island, Ape Atoll, Tlati rainforest",
+    "temperature": 27,
+    "precipitation": 2500,
+    "weights": { "CLEAR": 45, "PARTLY_CLOUDY": 15, "OVERCAST": 5, "RAIN": 20, "STORM": 15 },
+    "intensityBias": 0.2
+  },
+  {
+    "id": "VOLCANIC",
+    "analogue": "volcanic: the Karamja volcano, Lovakengj, Mount Karuulm, the Fossil Island volcano",
+    "temperature": 25,
+    "precipitation": 300,
+    "weights": { "CLEAR": 55, "PARTLY_CLOUDY": 15, "OVERCAST": 15, "RAIN": 5, "ASH_FALL": 10 }
+  },
+  {
+    "id": "AUTUMN_FOREST",
+    "analogue": "northern US forest: Auburnvale",
+    "temperature": 8,
+    "precipitation": 1100,
+    "weights": { "CLEAR": 42, "PARTLY_CLOUDY": 20, "OVERCAST": 15, "RAIN": 12, "STORM": 2, "FOG": 6, "SNOW": 3 },
+    "note": "8 C is above the snow line, so the 3 SNOW falls as rain"
+  },
+  {
+    "id": "MEDITERRANEAN",
+    "analogue": "Mediterranean / Roman (uncertain): Civitas illa Fortis, Aldarin, Sunset Coast",
+    "temperature": 20,
+    "precipitation": 500,
+    "weights": { "CLEAR": 65, "PARTLY_CLOUDY": 15, "OVERCAST": 5, "RAIN": 8, "STORM": 5, "FOG": 2 }
+  },
+  {
+    "id": "SAVANNAH",
+    "analogue": "savannah (uncertain): Avium Savannah, Quetzacalli Gorge",
+    "temperature": 24,
+    "precipitation": 600,
+    "weights": { "CLEAR": 65, "PARTLY_CLOUDY": 15, "OVERCAST": 5, "RAIN": 8, "STORM": 7 }
+  },
+  {
+    "id": "KOUREND_TEMPERATE",
+    "analogue": "US temperate: Shayzien, Piscarilius, the Kourend Woodland, Kebos",
+    "temperature": 12,
+    "precipitation": 1000,
+    "weights": { "CLEAR": 45, "PARTLY_CLOUDY": 20, "OVERCAST": 12, "RAIN": 13, "STORM": 3, "FOG": 7 }
+  },
+  {
+    "id": "WETLANDS",
+    "analogue": "wetlands: the Kebos lowlands, the Tar Swamp, the Lumbridge swamp",
+    "temperature": 12,
+    "precipitation": 1200,
+    "weights": { "CLEAR": 30, "PARTLY_CLOUDY": 20, "OVERCAST": 20, "RAIN": 12, "STORM": 3, "FOG": 15 }
+  },
+  {
+    "id": "ARCEUUS",
+    "analogue": "dark-magic uplands: Arceuus",
+    "temperature": 6,
+    "precipitation": 900,
+    "weights": { "CLEAR": 15, "PARTLY_CLOUDY": 15, "OVERCAST": 45, "RAIN": 10, "STORM": 2, "FOG": 10, "SNOW": 3 },
+    "note": "6 C is above the snow line, so the 3 SNOW falls as rain"
+  },
+  {
+    "id": "TEMPERATE_RAINFOREST",
+    "analogue": "temperate rainforest (Wales / Pacific NW): Tirannwn, the Tree Gnome Stronghold",
+    "temperature": 9,
+    "precipitation": 1600,
+    "weights": { "CLEAR": 35, "PARTLY_CLOUDY": 20, "OVERCAST": 15, "RAIN": 20, "STORM": 2, "FOG": 8 }
+  },
+  {
+    "id": "MORYTANIA",
+    "analogue": "gothic fenland: Mort Myre, the Barrows, Meiyerditch, Darkmeyer, Slepe",
+    "temperature": 8,
+    "precipitation": 1300,
+    "weights": { "PARTLY_CLOUDY": 5, "OVERCAST": 40, "RAIN": 25, "STORM": 5, "FOG": 25 },
+    "note": "the green sky tint is the area look's, not weather"
+  },
+  {
+    "id": "WILDERNESS",
+    "analogue": "magical wasteland: the Wilderness",
+    "temperature": 8,
+    "precipitation": 0,
+    "weights": { "OVERCAST": 50, "RAIN": 20, "STORM": 20, "FOG": 10 },
+    "alwaysDim": true
+  }
+]
