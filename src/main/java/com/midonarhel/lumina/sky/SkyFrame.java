@@ -35,6 +35,13 @@ public final class SkyFrame
 {
 	public final float[] zenith = new float[3];
 	public final float[] horizon = new float[3];
+	/**
+	 * The distance fog's colour: the horizon (after the area's tint and haze), or underground the area's own fog
+	 * colour; the scene shader adds the sun's glow in the view direction.
+	 */
+	public final float[] fog = new float[3];
+	/** The distance fog's depth in 117 HD's units ({@link SkyModel#CLEAR_DAY_FOG_DEPTH} until the weather drives it). */
+	public float fogDepth;
 	/** The sun's glow colour, including how visible the glow is at this altitude (0 at night). */
 	public final float[] glow = new float[3];
 	public final float[] sunColour = new float[3];

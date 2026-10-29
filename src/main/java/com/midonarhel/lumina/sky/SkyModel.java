@@ -32,9 +32,12 @@ package com.midonarhel.lumina.sky;
  * {@link MonotoneCurve} instead of per-segment smoothsteps; the {@link SkyFrame} it fills is linear. The light
  * colours (sun, moon, ambient) are linear diffuse-light units as before, scaled by {@link #BRIGHTNESS} so that the
  * midday overworld comes out as bright as 117 HD's OVERWORLD environment (see BrightnessMatchTest), and multiplied by
- * the area's {@link AreaLook}. {@link SkyModifiers} is the weather's seam: the old overcast, haze, warmth, saturation
- * and sun strength functions, every one the identity when neutral. Not ported: the overcast sky-light boost (the
- * energy balance under cloud), lightning, the cloud light.
+ * the area's {@link AreaLook}. The area's sky override ({@link #areaSky}) is the old renderer's environment.glsl:
+ * the sky times the tint, then hazed toward the area's fog colour; the fog is the horizon that comes out, or
+ * underground the area's own colour, and the sun is 0 there. {@link SkyModifiers} is the weather's seam: the old
+ * overcast, haze, warmth, saturation and sun strength functions, every one the identity when neutral; a weather fog
+ * colour (a sandstorm) and the fog depth will go through the same area steps later. Not ported: the overcast
+ * sky-light boost (the energy balance under cloud), lightning, the cloud light.
  */
 public final class SkyModel
 {
@@ -85,6 +88,28 @@ public final class SkyModel
 	 */
 	public static final float BRIGHTNESS = 1.264f;
 
+	/**
+	 * The distance fog's depth under a clear sky, in 117 HD's fog depth units (its OVERWORLD environment's value:
+	 * barely visible). The one depth Lumina uses until the weather module drives it through {@link SkyModifiers};
+	 * none of 117 HD's per-area depths are read.
+	 */
+	public static final float CLEAR_DAY_FOG_DEPTH = 6.5f;
+	/** Underground, where there is no sky: the old renderer's cave biome depth, so far cave walls fade into the dark. */
+	public static final float CAVE_FOG_DEPTH = 35f;
+	/**
+	 * The ambient light underground (linear), times the area's ambient multiplier: 117 HD's typical cave on flat
+	 * ground, ambient #aaafb6 x 1.5 plus its 0.25 white directional at 52 degrees, the baseline the data file's
+	 * underground multipliers are relative to (tools/import_area_looks.py, CAVE_AMBIENT).
+	 */
+	static final float[] CAVE_AMBIENT = {0.80f, 0.84f, 0.90f};
+	// the area's sky override (the old environment.glsl): how much of the horizon's own colour an area's fog colour
+	// picks up, so sunsets and nights still show in it; the horizon colour of the brightest day, for scaling the fog
+	// colour with the daylight; haze thins toward the zenith by this much
+	private static final float FOG_SKY_SHARE = 0.35f;
+	private static final float[] DAY_HORIZON = HORIZON_COLOR[HORIZON_COLOR.length - 1];
+	private static final float HAZE_ZENITH = 0.55f;
+	private static final float FOG_NIGHT_FLOOR = 0.03f;
+
 	// haze: share of the sky turned milky at full haze, its colour, the sun and moon light it takes away, how much it
 	// lifts the ambient light (scattered sunlight), and how much of the sun's disc it hides
 	private static final float HAZE_SKY = 0.6f;
@@ -128,6 +153,7 @@ public final class SkyModel
 
 	private final float[] zenithSrgb = new float[3];
 	private final float[] horizonSrgb = new float[3];
+	private final float[] fogSrgb = new float[3];
 	private final float[] tmp = new float[3];
 
 	/**
@@ -151,29 +177,34 @@ public final class SkyModel
 		float clearMean = 0.5f * (luma(zenithSrgb) + luma(horizonSrgb));
 		overcastSky(zenithSrgb, clearMean, mod);
 		overcastSky(horizonSrgb, clearMean, mod);
+		areaSky(look, zenithSrgb, horizonSrgb, fogSrgb);
 		srgbToLinear(zenithSrgb, out.zenith);
 		srgbToLinear(horizonSrgb, out.horizon);
+		srgbToLinear(fogSrgb, out.fog);
+		out.fogDepth = mix(CLEAR_DAY_FOG_DEPTH, CAVE_FOG_DEPTH, look.underground);
 
-		// the sun's glow and disc, the moon and the stars
+		// the sun's glow and disc, the moon and the stars; the glow is part of the sky, so it takes the area's tint and
+		// thins with its haze like the horizon
 		float clear = overcastClear(mod);
 		out.sunVisibility = smoothstep(-6, 2, alt) * clear;
 		out.nightVisibility = smoothstep(-4, -14, alt) * clear;
 		mix(tmp, GLOW_LOW, GLOW_HIGH, smoothstep(0, 25, alt));
+		multiply(tmp, look.skyTint);
 		srgbToLinear(tmp, out.glow);
-		scale(out.glow, out.sunVisibility);
+		scale(out.glow, out.sunVisibility * (1 - look.haze));
 
 		// the sun (linear): warm at the horizon, pale at noon; its strength window is the handoff dead band
 		mix(out.sunColour, SUN_WARM, SUN_NOON, smoothstep(2, 28, alt));
 		scale(out.sunColour, SUN_INTENSITY * Celestial.sunStrength(alt));
 		overcastDirect(out.sunColour, o, mod);
-		scale(out.sunColour, (1 + mod.sunStrength) * BRIGHTNESS);
+		scale(out.sunColour, (1 + mod.sunStrength) * BRIGHTNESS * (1 - look.underground));
 		multiply(out.sunColour, look.sun);
 
 		// the moon
 		System.arraycopy(MOON_COLOR, 0, out.moonColour, 0, 3);
 		scale(out.moonColour, MOON_INTENSITY * Celestial.moonStrength(alt));
 		overcastDirect(out.moonColour, o, mod);
-		scale(out.moonColour, BRIGHTNESS);
+		scale(out.moonColour, BRIGHTNESS * (1 - look.underground));
 		multiply(out.moonColour, look.sun);
 
 		// light from the whole sky, cool blue by day; fills shadows
@@ -187,13 +218,49 @@ public final class SkyModel
 		multiply(out.ambient, tmp);
 		overcastAmbient(out.ambient, o, mod);
 		scale(out.ambient, BRIGHTNESS);
-		multiply(out.ambient, look.ambient);
-
-		// the sky's light on surfaces: SkyLight integrates the sky's radiance (zenith, horizon, glow) times this. For
-		// a dome of one radiance the up-facing irradiance is pi times it, so this gives the old skyLightAt scale.
+		// underground there is no sky: the cave ambient instead, the area's multiplier on either
 		for (int i = 0; i < 3; i++)
 		{
-			out.skyFill[i] = SKY_LIGHT / (float) Math.PI * BRIGHTNESS * look.skyTint[i];
+			out.ambient[i] = mix(out.ambient[i], CAVE_AMBIENT[i], look.underground) * look.ambient[i];
+		}
+
+		// the sky's light on surfaces: SkyLight integrates the sky's radiance (zenith, horizon, glow) times this. For
+		// a dome of one radiance the up-facing irradiance is pi times it, so this gives the old skyLightAt scale. The
+		// area's tint is in the radiance already; underground there is none.
+		for (int i = 0; i < 3; i++)
+		{
+			out.skyFill[i] = SKY_LIGHT / (float) Math.PI * BRIGHTNESS * (1 - look.underground);
+		}
+	}
+
+	/**
+	 * The area's sky override and the fog colour, in sRGB, the old renderer's environment.glsl at the two ends of the
+	 * gradient (envSky's per-pixel haze factor haze * mix(1, 0.55, elevation) becomes the horizon's and the zenith's):
+	 * <ul>
+	 * <li>the haze target: the area's fog colour scaled with the daylight (the horizon's luminance over the brightest
+	 * day's, at least 0.03) with {@link #FOG_SKY_SHARE} of the untinted horizon mixed in, so sunsets and nights show
+	 * in it (envFog outdoors); the horizon itself where the look has no fog colour</li>
+	 * <li>zenith and horizon times the sky tint</li>
+	 * <li>horizon = mix(horizon, target, haze), zenith = mix(zenith, target, haze * 0.55)</li>
+	 * <li>fog = the hazed horizon under the sky, the area's own fog colour underground (fading between the two with
+	 * {@link AreaLook#underground})</li>
+	 * </ul>
+	 */
+	void areaSky(AreaLook look, float[] zenith, float[] horizon, float[] fog)
+	{
+		float day = clamp(luma(horizon) / luma(DAY_HORIZON), FOG_NIGHT_FLOOR, 1);
+		for (int i = 0; i < 3; i++)
+		{
+			float own = mix(look.fogColor[i] * day, horizon[i], FOG_SKY_SHARE);
+			tmp[i] = mix(horizon[i], own, look.fogWeight);
+		}
+		multiply(zenith, look.skyTint);
+		multiply(horizon, look.skyTint);
+		for (int i = 0; i < 3; i++)
+		{
+			horizon[i] = mix(horizon[i], tmp[i], look.haze);
+			zenith[i] = mix(zenith[i], tmp[i], look.haze * HAZE_ZENITH);
+			fog[i] = mix(horizon[i], look.fogColor[i], look.underground);
 		}
 	}
 

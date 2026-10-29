@@ -64,6 +64,7 @@ uniform float lightningBrightness;
 uniform int luminaLighting;
 uniform vec3 skyFillSh[4];
 uniform vec3 skyFillBounce;
+uniform float fogSkyGlow;  // how much of the sun's glow the distance fog takes in the view direction (1 under the sky)
 
 // 117 HD's material struct, three vec4 per material slot (see MaterialManager.fillSlots):
 // (colour map layer, flow map layer, flags (4 overrideBaseColor, 2 unlit, 1 hasTransparency), brightness),
@@ -96,6 +97,7 @@ out vec4 FragColor;
 #include "output.glsl"
 #include "fog.glsl"
 #include "sky.glsl"
+#include "lumina_glow.glsl"
 
 #ifdef ZBUF_DEBUG
 float linear_depth(float depth) {
@@ -423,7 +425,19 @@ void main() {
           outputColor.rgb = mix(outputColor.rgb, linearToSrgb(distanceFogColor), fogAmount);
       }
     } else {
-      outputColor.rgb = mix(outputColor.rgb, linearToSrgb(fogColor), combinedFog);
+      vec3 fog = fogColor;
+      if (luminaLighting != 0 && fogSkyGlow > 0.0 && combinedFog > 1e-4) {
+        // Lumina: fogColor is the sky's horizon, so the sun's glow joins it where the view looks toward the sun, as it
+        // does in the sky pass behind the draw-distance edge (lumina_sky_frag.glsl): the glow of the horizon in the
+        // view's compass direction, whatever the pixel's height
+        vec3 toward = fPosition - cameraPos;
+        float horiz = length(toward.xz);
+        if (horiz > 1e-3) {
+          vec3 sunDir = vec3(skySunDir.x, -skySunDir.y, skySunDir.z);
+          fog += luminaSunGlow(vec3(toward.x / horiz, 0.0, toward.z / horiz), sunDir) * fogSkyGlow;
+        }
+      }
+      outputColor.rgb = mix(outputColor.rgb, linearToSrgb(fog), combinedFog);
     }
   }
 

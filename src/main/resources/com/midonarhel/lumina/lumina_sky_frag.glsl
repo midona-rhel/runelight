@@ -49,6 +49,7 @@ out vec4 FragColor;
 
 #include "lighting.glsl"
 #include "output.glsl"
+#include "lumina_glow.glsl"
 
 // How far a view ray (y down) points down past where any sky could be: none at the horizon and shallow angles (the
 // fog and horizon past the map's edge), all of it from VOID_BELOW.y down. What is seen there is the dark under the
@@ -63,18 +64,6 @@ vec3 skyGradient(vec3 dir) {
     : skyHorizonColor * mix(1.0, 0.65, clamp(-elev * 4.0, 0.0, 1.0));
 }
 
-// Wide warm glow around the sun, added to the gradient; visible a little below the horizon for sunsets
-vec3 sunGlow(vec3 dir, vec3 sunDir) {
-  float mu = max(dot(dir, sunDir), 0.0);
-  // mu^10 and mu^120, multiplied out
-  float m2 = mu * mu;
-  float m4 = m2 * m2;
-  float m10 = m4 * m4 * m2;
-  float m40 = m10 * m10;
-  m40 *= m40;
-  return skySunColor * (m10 * 0.30 + m40 * m40 * m40 * 0.50);
-}
-
 void main() {
   // Unproject two points along the pixel ray to get the view direction. Lumina's projection has no far plane and
   // maps view depth z to NDC depth 100 / z, so NDC depths 1 and 0.5 are both finite points on the ray.
@@ -85,7 +74,8 @@ void main() {
   vec3 sunDir = vec3(skySunDir.x, -skySunDir.y, skySunDir.z);
   vec3 moonDir = vec3(skyMoonDir.x, -skyMoonDir.y, skyMoonDir.z);
 
-  vec3 color = skyGradient(dir) + sunGlow(dir, sunDir);
+  // the gradient and the wide warm glow around the sun, visible a little below the horizon for sunsets
+  vec3 color = skyGradient(dir) + luminaSunGlow(dir, sunDir);
 
   // sun disc
   float mu = max(dot(dir, sunDir), 0.0);

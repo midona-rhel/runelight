@@ -43,7 +43,7 @@ public final class LightingUniforms
 	private final int skyEnabled, zenithColor, horizonColor, sunColor, customGradient, horizonWidth, skySunDir, moonDir;
 	private final int moonDiskColor, moonIllumination, moonVisibility, skyFogColor, skyFogDensity, skyFogHorizonHeight;
 	private final int groundFogLight, skyVisibility, starHorizonHeight;
-	private final int luminaLighting, skyFillSh, skyFillBounce, sunVisibility;
+	private final int luminaLighting, skyFillSh, skyFillBounce, sunVisibility, fogSkyGlow;
 
 	public LightingUniforms(int program)
 	{
@@ -51,6 +51,7 @@ public final class LightingUniforms
 		skyFillSh = glGetUniformLocation(program, "skyFillSh");
 		skyFillBounce = glGetUniformLocation(program, "skyFillBounce");
 		sunVisibility = glGetUniformLocation(program, "skySunVisibility");
+		fogSkyGlow = glGetUniformLocation(program, "fogSkyGlow");
 		ambientColor = glGetUniformLocation(program, "ambientColor");
 		ambientStrength = glGetUniformLocation(program, "ambientStrength");
 		lightColor = glGetUniformLocation(program, "lightColor");
@@ -124,6 +125,7 @@ public final class LightingUniforms
 		glUniform3fv(skyFillSh, l.skyFillSh);
 		vec3(skyFillBounce, l.skyFillBounce);
 		glUniform1f(sunVisibility, l.sunVisibility);
+		glUniform1f(fogSkyGlow, l.fogSkyGlow);
 	}
 
 	private static void vec3(int location, float[] v)

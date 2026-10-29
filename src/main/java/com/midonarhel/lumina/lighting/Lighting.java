@@ -88,4 +88,9 @@ public final class Lighting
 	public final float[] skyFillBounce = new float[3];
 	/** How visible the sun's disc is in the sky pass, 0 to 1 (0 at night or with the discs off). */
 	public float sunVisibility;
+	/**
+	 * How much of the sun's glow the distance fog takes in the view direction, so the draw-distance edge meets the
+	 * sky pass: 1 under the open sky, 0 underground (the fog is the area's own colour there).
+	 */
+	public float fogSkyGlow;
 }
