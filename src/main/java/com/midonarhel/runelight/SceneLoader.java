@@ -91,6 +91,7 @@ final class SceneLoader
 		{
 			uploaders[i] = new SceneUploader(renderCallbackManager);
 		}
+		report.setPool(pool);
 	}
 
 	/** Whether a load is built and waits for its swap. */
@@ -508,19 +509,23 @@ final class SceneLoader
 		// zones are independent: the loader and the upload threads take them in turn (one SceneUploader each)
 		java.util.concurrent.atomic.AtomicInteger nextZone = new java.util.concurrent.atomic.AtomicInteger();
 		int helpers = onClientThread || n < 16 ? 0 : uploaders.length;
-		java.util.concurrent.Future<?>[] running = new java.util.concurrent.Future<?>[helpers];
+		@SuppressWarnings("unchecked")
+		java.util.concurrent.Future<long[]>[] running = new java.util.concurrent.Future[helpers];
 		for (int h = 0; h < helpers; ++h)
 		{
 			SceneUploader up = uploaders[h];
 			up.water = plugin.mapUploader.water;
 			running[h] = uploadThreads.submit(() -> uploadZones(scene, list, xs, zs, nextZone, up, uploads, false, what));
 		}
-		uploadZones(scene, list, xs, zs, nextZone, plugin.mapUploader, uploads, onClientThread, what);
-		for (java.util.concurrent.Future<?> f : running)
+		StringBuilder threads = new StringBuilder();
+		long[] own = uploadZones(scene, list, xs, zs, nextZone, plugin.mapUploader, uploads, onClientThread, what);
+		threads.append(String.format("loader %d zones: wait %.0f write %.0f", own[2], own[0] / 1e6, own[1] / 1e6));
+		for (java.util.concurrent.Future<long[]> f : running)
 		{
 			try
 			{
-				f.get();
+				long[] h = f.get();
+				threads.append(String.format(", helper %d: wait %.0f write %.0f", h[2], h[0] / 1e6, h[1] / 1e6));
 			}
 			catch (InterruptedException ex)
 			{
@@ -532,18 +537,31 @@ final class SceneLoader
 				log.error("Zone upload thread failed ({})", what, ex.getCause());
 			}
 		}
+		long f0 = System.nanoTime();
 		uploads.finish(onClientThread);
+		if (what.equals("load"))
+		{
+			threads.append(String.format("; last unmaps %.0f", (System.nanoTime() - f0) / 1e6));
+			report.uploadThreads(threads.toString());
+		}
 	}
 
-	private static void uploadZones(Scene scene, Zone[] list, int[] xs, int[] zs, java.util.concurrent.atomic.AtomicInteger next,
+	/** @return {nanos waiting for buffers to be mapped, nanos writing, zones written} of this thread */
+	private static long[] uploadZones(Scene scene, Zone[] list, int[] xs, int[] zs, java.util.concurrent.atomic.AtomicInteger next,
 		SceneUploader uploader, ZoneUploads uploads, boolean onClientThread, String what)
 	{
+		long[] t = new long[3];
 		for (int i; (i = next.getAndIncrement()) < list.length; )
 		{
+			long t0 = System.nanoTime();
 			uploads.mapped(i, onClientThread);
+			long t1 = System.nanoTime();
+			t[0] += t1 - t0;
+			t[2]++;
 			try
 			{
 				uploader.uploadZone(scene, list[i], xs[i], zs[i]);
+				t[1] += System.nanoTime() - t1;
 			}
 			catch (RuntimeException ex)
 			{
@@ -553,6 +571,7 @@ final class SceneLoader
 			}
 			uploads.uploaded(i);
 		}
+		return t;
 	}
 
 	private void loadSub(WorldView worldView, Scene scene)

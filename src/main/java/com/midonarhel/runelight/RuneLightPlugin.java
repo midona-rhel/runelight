@@ -4372,6 +4372,16 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		sceneLoader.despawn(worldView);
 	}
 
+	/**
+	 * The one queue for GL work that must not land on a single frame (scene loads, rebuilds of per-scene textures): add
+	 * a job with SceneJobs.add(name, priority, job); its step is handed a deadline and does as much as fits before it,
+	 * returning true when done. The client thread runs it, ≤ 1 ms a frame for all jobs (4 ms for LOAD jobs while loading).
+	 */
+	SceneJobs sceneJobs()
+	{
+		return sceneLoader.jobs;
+	}
+
 	/** A top level swap begins (SceneLoader). */
 	void sceneSwapStarted()
 	{

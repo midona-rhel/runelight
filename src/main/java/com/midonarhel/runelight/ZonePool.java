@@ -32,6 +32,8 @@ final class ZonePool
 	private long liveBytes;
 	private int keptCount;
 	private boolean trimQueued;
+	// for the load report: buffers taken as they were, given new storage, made new, deleted by the trim
+	int hits, respecified, created, trimmed;
 
 	/** A buffer of at least bytes for a zone, with its vertex array, not mapped. */
 	VBO acquire(int bytes)
@@ -42,12 +44,14 @@ final class ZonePool
 		{
 			vbo = take(e);
 			vbo.size = bytes;
+			hits++;
 		}
 		else if (!kept.isEmpty())
 		{
 			// none fits: the largest kept one takes new storage under its name, its vertex array still reads it
 			vbo = take(kept.lastEntry());
 			vbo.respecify(bytes, roundUp(bytes));
+			respecified++;
 		}
 		else
 		{
@@ -56,6 +60,7 @@ final class ZonePool
 			vbo.vao = glGenVertexArrays();
 			SceneLoadReport.arraysCreated++;
 			Zone.setupVao(vbo.vao, vbo.bufId);
+			created++;
 		}
 		liveBytes += vbo.capacity;
 		return vbo;
@@ -90,6 +95,7 @@ final class ZonePool
 				return true;
 			}
 			delete(take(kept.lastEntry()));
+			trimmed++;
 		}
 		while (System.nanoTime() < deadline);
 		return false;
@@ -133,6 +139,20 @@ final class ZonePool
 	long keptBytes()
 	{
 		return keptBytes;
+	}
+
+	long liveBytes()
+	{
+		return liveBytes;
+	}
+
+	/** The counters as text, and reset them (the load report). */
+	String takeCounts()
+	{
+		String t = String.format("pool hits %d, respecified %d, created %d, trimmed %d; kept %d buffers %d MB, live %d MB",
+			hits, respecified, created, trimmed, keptCount, keptBytes >> 20, liveBytes >> 20);
+		hits = respecified = created = trimmed = 0;
+		return t;
 	}
 
 	/** Delete everything kept (shutdown); the zones in use free theirs through release first. */
