@@ -250,7 +250,7 @@ public final class RoomMap
 	/**
 	 * The room of a point at local world position, the CPU twin of rooms.glsl's roomAt: 0 outdoors, -1 outside the map.
 	 */
-	int roomAt(float x, float y, float z)
+	public int roomAt(float x, float y, float z)
 	{
 		int tx = (int) Math.floor(x / TILE) + offset;
 		int ty = (int) Math.floor(z / TILE) + offset;

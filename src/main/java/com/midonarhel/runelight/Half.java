@@ -8,7 +8,7 @@ public final class Half
 	}
 
 	/** The half float bits of f, rounded to nearest. */
-	static short toHalf(float f)
+	public static short toHalf(float f)
 	{
 		int bits = Float.floatToIntBits(f);
 		int sign = bits >>> 16 & 0x8000;

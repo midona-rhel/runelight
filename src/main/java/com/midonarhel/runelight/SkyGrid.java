@@ -39,7 +39,7 @@ import java.nio.ShortBuffer;
  */
 public final class SkyGrid
 {
-	static final int SIZE = VoxelGrid.SCENE_TILES;
+	public static final int SIZE = VoxelGrid.SCENE_TILES;
 	static final int CORNERS = SIZE + 1;
 	static final int FLOORS = 3;
 	// the least two floors' grounds are apart
@@ -50,7 +50,7 @@ public final class SkyGrid
 	public static final int LEVELS = FLOORS * HEIGHTS.length + 1;
 	// One exterior sample just above the captured geometry at each corner.
 	public static final int SURFACE_LEVEL = LEVELS - 1;
-	static final float TILE = 128;
+	public static final float TILE = 128;
 	// rays per group of quadrants: an even spread over the sky's half of the sphere, each counting for every lobe it
 	// lies in (the one up and up to two sides)
 	static final int RAYS = 32;
@@ -117,9 +117,9 @@ public final class SkyGrid
 	public final int resolution, size, corners, textureWidth, textureHeight, reach;
 	public final float spacing;
 
-	SkyGrid() { this(1); }
+	public SkyGrid() { this(1); }
 
-	SkyGrid(int resolution)
+	public SkyGrid(int resolution)
 	{
 		this.resolution = resolution;
 		size = SIZE * resolution;
@@ -553,7 +553,7 @@ public final class SkyGrid
 		}
 	}
 
-	int texel(int x, int y, int slice)
+	public int texel(int x, int y, int slice)
 	{
 		return ((slice * textureHeight + y) * textureWidth + x) * 4;
 	}
@@ -568,7 +568,7 @@ public final class SkyGrid
 	 * @param x, y, z base scene local units, y down
 	 * @return -1 outside the grid, or where no level has a value
 	 */
-	float upVisibility(float x, float y, float z)
+	public float upVisibility(float x, float y, float z)
 	{
 		float tx = x / TILE * resolution, tz = z / TILE * resolution;
 		if (!(tx >= 0 && tz >= 0 && tx < size && tz < size))

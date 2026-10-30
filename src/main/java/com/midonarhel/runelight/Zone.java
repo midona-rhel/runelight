@@ -46,7 +46,7 @@ import static com.midonarhel.runelight.RuneLightPlugin.uniBase;
 import org.lwjgl.BufferUtils;
 import static org.lwjgl.opengl.GL33C.*;
 
-class Zone
+public class Zone
 {
 	private static final Logger log = LoggerFactory.getLogger(Zone.class);
 
@@ -62,10 +62,10 @@ class Zone
 	int glVaoA;
 	int bufLenA;
 
-	int sizeO, sizeA;
+	public int sizeO, sizeA;
 	VBO vboO, vboA;
 
-	boolean initialized; // whether the zone vao and vbos are ready
+	public boolean initialized; // whether the zone vao and vbos are ready
 	boolean cull; // whether the zone is queued for deletion
 	boolean dirty; // whether the zone has temporary modifications
 	boolean invalidate; // whether the zone needs rebuilding
@@ -245,7 +245,7 @@ class Zone
 		swayRanges[swayRangeCount++] = end;
 	}
 
-	void renderOpaque(int zx, int zz, int minLevel, int currentLevel, int maxLevel, Set<Integer> hiddenRoofIds)
+	public void renderOpaque(int zx, int zz, int minLevel, int currentLevel, int maxLevel, Set<Integer> hiddenRoofIds)
 	{
 		renderOpaque(zx, zz, minLevel, currentLevel, maxLevel, hiddenRoofIds, SWAY_ALL);
 	}
@@ -254,7 +254,7 @@ class Zone
 	 * @param sway {@link #SWAY_ALL}, or {@link #SWAY_EXCLUDE} / {@link #SWAY_ONLY} to leave out or draw only the
 	 *             models that sway in the wind
 	 */
-	void renderOpaque(int zx, int zz, int minLevel, int currentLevel, int maxLevel, Set<Integer> hiddenRoofIds, int sway)
+	public void renderOpaque(int zx, int zz, int minLevel, int currentLevel, int maxLevel, Set<Integer> hiddenRoofIds, int sway)
 	{
 		if (sway == SWAY_ONLY && swayRangeCount == 0)
 		{

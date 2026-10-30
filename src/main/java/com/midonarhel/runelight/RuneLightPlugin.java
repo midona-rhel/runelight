@@ -24,6 +24,24 @@
  */
 package com.midonarhel.runelight;
 
+import com.midonarhel.runelight.weather.Climate;
+import com.midonarhel.runelight.weather.WadeSteps;
+import com.midonarhel.runelight.weather.Weather;
+import com.midonarhel.runelight.weather.WeatherAudio;
+import com.midonarhel.runelight.weather.WeatherData;
+import com.midonarhel.runelight.weather.WeatherField;
+import com.midonarhel.runelight.weather.WeatherGround;
+import com.midonarhel.runelight.weather.Wind;
+
+import com.midonarhel.runelight.sky.Clouds;
+import com.midonarhel.runelight.sky.DayCycle;
+import com.midonarhel.runelight.sky.EnvironmentManager;
+import com.midonarhel.runelight.sky.EnvironmentUniforms;
+import com.midonarhel.runelight.sky.GameClock;
+import com.midonarhel.runelight.sky.Lightning;
+import com.midonarhel.runelight.sky.NightSky;
+import com.midonarhel.runelight.sky.SkyCache;
+
 import com.midonarhel.runelight.dev.BuildingOverlay;
 import com.midonarhel.runelight.dev.CommandFile;
 import com.midonarhel.runelight.dev.CpuTimer;
@@ -627,14 +645,14 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 
 	SceneUploader clientUploader, mapUploader;
 
-	static class SceneContext
+	public static class SceneContext
 	{
 		final float[] projection = Mat4.identity();
 
-		final int sizeX, sizeZ;
-		Zone[][] zones;
+		public final int sizeX, sizeZ;
+		public Zone[][] zones;
 
-		int cameraX, cameraY, cameraZ;
+		public int cameraX, cameraY, cameraZ;
 		private int minLevel, level, maxLevel;
 		private Set<Integer> hideRoofIds;
 
@@ -664,7 +682,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 			this.hideRoofIds = levels.hideRoofIds;
 		}
 
-		void free(ZonePool pool, SceneJobs jobs)
+		public void free(ZonePool pool, SceneJobs jobs)
 		{
 			for (int x = 0; x < sizeX; ++x)
 			{
@@ -720,9 +738,9 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 	private int uniTick;
 	private int uniColorblindIntensity;
 	private int uniUiColorblindIntensity;
-	static int uniBase;
+	public static int uniBase;
 
-	static final float[] IDENTITY = Mat4.identity();
+	public static final float[] IDENTITY = Mat4.identity();
 
 	@Override
 	protected void startUp()

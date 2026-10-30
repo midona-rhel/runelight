@@ -16,6 +16,23 @@ for c in classes:
     # the parent package's classes it used without import
     s = re.sub(r'(^package [^\n]+\n)', r'\1\nimport ' + base + '.*;\n', s, count=1, flags=re.M)
     dst.write_text(s)
+# each moved class's own test moves with it, keeping package-private access: <Class>Test.java
+(troot / sub).mkdir(exist_ok=True)
+for c in classes:
+    t = troot / f'{c}Test.java'
+    if not t.exists(): continue
+    dst = troot / sub / f'{c}Test.java'
+    subprocess.check_call(['git', 'mv', str(t), str(dst)])
+    s = dst.read_text()
+    s = re.sub(r'^package com\.midonarhel\.runelight;', f'package {target};', s, count=1, flags=re.M)
+    s = re.sub(r'(^package [^\n]+\n)', r'\1\nimport ' + base + '.*;\n', s, count=1, flags=re.M)
+    dst.write_text(s)
+# static imports of the moved classes point at the new package
+static_import = re.compile(r'^import (?:static )?com\.midonarhel\.runelight\.(' + '|'.join(map(re.escape, classes)) + r')\.', re.M)
+for d in [root, troot]:
+    for f in d.rglob('*.java'):
+        s = f.read_text(); s2 = static_import.sub(lambda m: m.group(0).replace('com.midonarhel.runelight.' + m.group(1) + '.', target + '.' + m.group(1) + '.'), s)
+        if s2 != s: f.write_text(s2)
 word = re.compile(r'\b(' + '|'.join(map(re.escape, classes)) + r')\b')
 touched = []
 for d in [root, troot]:

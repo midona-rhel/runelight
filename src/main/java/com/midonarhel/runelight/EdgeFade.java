@@ -221,7 +221,7 @@ final class EdgeFade
 	{
 		private int edge = -1, scene = -1;
 
-		void locate(int program)
+		public void locate(int program)
 		{
 			edge = glGetUniformLocation(program, "edgeFade");
 			scene = glGetUniformLocation(program, "edgeScene");
