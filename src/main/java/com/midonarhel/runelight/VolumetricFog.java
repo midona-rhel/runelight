@@ -76,6 +76,17 @@ class VolumetricFog
 	private final int[] sentOpen = new int[OpenRooms.WORDS];
 	private float[] groundTexels;
 	private FloatBuffer groundBuffer;
+	// B3: the ground texels are packed on a worker (FogGround.texels walks the whole map); the result is uploaded on
+	// the frame it is ready, and the previous texture stands until then, so a region load no longer packs on its frame
+	private static final java.util.concurrent.ExecutorService GROUND_PACKER = java.util.concurrent.Executors.newSingleThreadExecutor(r ->
+	{
+		Thread t = new Thread(r, "RuneLight fog ground");
+		t.setDaemon(true);
+		return t;
+	});
+	private volatile float[] packedGround;
+	private volatile Object packedFor;
+	private Object packing;
 
 	// the values the pass uses this frame, in world units
 	private float density;
@@ -264,17 +275,35 @@ class VolumetricFog
 		{
 			return;
 		}
+		// something changed: pack the texels on the worker for exactly this (ground, rooms, open) and wait for them
+		float[] ready = packedGround;
+		Object key = packedFor;
+		Object want = new Object[]{g, r, bits.clone()};
+		if (ready == null || !sameRequest(key, want))
+		{
+			if (packing == null || !sameRequest(packing, want))
+			{
+				packing = want;
+				final float[] out = new float[FogGround.WIDTH * FogGround.CORNERS * FogGround.CHANNELS];
+				final OpenRooms openNow = open;
+				GROUND_PACKER.execute(() ->
+				{
+					g.texels(r, openNow, out);
+					packedGround = out;
+					packedFor = want;
+				});
+			}
+			return;
+		}
 		sentGround = g;
 		sentRooms = r;
 		System.arraycopy(bits, 0, sentOpen, 0, sentOpen.length);
-		if (groundTexels == null)
+		if (groundBuffer == null)
 		{
-			groundTexels = new float[FogGround.WIDTH * FogGround.CORNERS * FogGround.CHANNELS];
-			groundBuffer = BufferUtils.createFloatBuffer(groundTexels.length);
+			groundBuffer = BufferUtils.createFloatBuffer(ready.length);
 		}
-		g.texels(r, open, groundTexels);
 		groundBuffer.clear();
-		groundBuffer.put(groundTexels).flip();
+		groundBuffer.put(ready).flip();
 		if (texGround == 0)
 		{
 			texGround = glGenTextures();
@@ -291,6 +320,16 @@ class VolumetricFog
 		// full floats: heights reach thousands of units, where half floats step by 2 to 4
 		glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA32F, FogGround.WIDTH, FogGround.CORNERS, 0, GL_RGBA, GL_FLOAT, groundBuffer);
 		glBindTexture(GL_TEXTURE_2D, 0);
+	}
+
+	private static boolean sameRequest(Object a, Object b)
+	{
+		if (!(a instanceof Object[]) || !(b instanceof Object[]))
+		{
+			return false;
+		}
+		Object[] x = (Object[]) a, y = (Object[]) b;
+		return x[0] == y[0] && x[1] == y[1] && java.util.Arrays.equals((int[]) x[2], (int[]) y[2]);
 	}
 
 	/** Whether a scene's terrain has been uploaded: the fog has nothing to lie on before. */
