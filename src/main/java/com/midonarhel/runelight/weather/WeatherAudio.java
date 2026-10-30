@@ -1,4 +1,6 @@
-package com.midonarhel.runelight;
+package com.midonarhel.runelight.weather;
+
+import com.midonarhel.runelight.*;
 
 import java.io.BufferedInputStream;
 import java.io.IOException;
@@ -21,11 +23,11 @@ import org.slf4j.LoggerFactory;
  * quiet spell, so the client thread only sets a few numbers and never waits on the device. The sounds are CC0
  * recordings (sounds/CREDITS.txt), made into these files by tools/make_weather_sounds.py.
  */
-final class WeatherAudio
+public final class WeatherAudio
 {
 	private static final Logger log = LoggerFactory.getLogger(WeatherAudio.class);
 
-	private static final String PATH = "/com/midonarhel/runelight/sounds/";
+	private static final String PATH = "/com/midonarhel/runelight/weather/sounds/";
 	private static final int THUNDERS = 3;
 	// frames mixed at a time, and the device's buffer, in bytes of 16-bit mono: about 23 ms and 93 ms
 	private static final int BLOCK = 512;
@@ -41,8 +43,8 @@ final class WeatherAudio
 	// below this loudness the rain fades to nothing
 	private static final float RAIN_FLOOR = 0.05f;
 	// the sky seen overhead, 0 to 1, at and below which the player is fully indoors, and at and above which outdoors
-	static final float FULLY_INDOORS = 0.15f;
-	static final float FULLY_OUTDOORS = 0.6f;
+	public static final float FULLY_INDOORS = 0.15f;
+	public static final float FULLY_OUTDOORS = 0.6f;
 	// rain this far away (world units) is not heard; nearer is, the more so the nearer, up to this share of its loudness
 	static final float RAIN_REACH = 6400;
 	static final float DISTANT_RAIN = 0.8f;
@@ -69,7 +71,7 @@ final class WeatherAudio
 	private Thread thread;
 
 	/** Load the sounds. Without them (or without a device later) it stays silent, and says so once. */
-	WeatherAudio()
+	public WeatherAudio()
 	{
 		try
 		{
@@ -131,7 +133,7 @@ final class WeatherAudio
 	 * @param indoors  how far indoors the player is, 0 to 1 (indoorMix)
 	 * @param volume   everything's level, 0 to 1
 	 */
-	void update(float loudness, float indoors, float volume)
+	public void update(float loudness, float indoors, float volume)
 	{
 		if (failed)
 		{
@@ -154,7 +156,7 @@ final class WeatherAudio
 	 * @param sound    whether to play it (not at volume 0)
 	 * @return the clip's loudness for the light, null if the sounds did not load
 	 */
-	Rumble thunder(float distance, float strength, boolean sound)
+	public Rumble thunder(float distance, float strength, boolean sound)
 	{
 		if (envelopes == null)
 		{
@@ -175,7 +177,7 @@ final class WeatherAudio
 	}
 
 	/** Stop the mixer thread and close the device; waits briefly for it. */
-	void shutDown()
+	public void shutDown()
 	{
 		running = false;
 		Thread t = thread;
@@ -329,7 +331,7 @@ final class WeatherAudio
 	 * @param rooms      the room map, null if there is none
 	 * @param y          a little above the floor, for the room map
 	 */
-	static float indoorMix(float visibility, RoomMap rooms, float x, float y, float z)
+	public static float indoorMix(float visibility, RoomMap rooms, float x, float y, float z)
 	{
 		if (visibility < 0)
 		{

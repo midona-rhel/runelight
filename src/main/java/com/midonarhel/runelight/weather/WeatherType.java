@@ -1,4 +1,6 @@
-package com.midonarhel.runelight;
+package com.midonarhel.runelight.weather;
+
+import com.midonarhel.runelight.*;
 
 import java.util.Collections;
 import java.util.LinkedHashMap;
@@ -13,7 +15,7 @@ import java.util.Map;
  * The catalogue itself is static: loaded once at startup (WeatherData) and replaced as a whole on a hot reload.
  * Types are compared by identity within one catalogue and by {@link #id} across reloads.
  */
-final class WeatherType
+public final class WeatherType
 {
 	// set by the catalogue
 	transient String id = "CLEAR";
@@ -202,7 +204,7 @@ final class WeatherType
 	}
 
 	/** The type with this id, or null. */
-	static WeatherType get(String id)
+	public static WeatherType get(String id)
 	{
 		return id != null ? catalogue.byId.get(id) : null;
 	}

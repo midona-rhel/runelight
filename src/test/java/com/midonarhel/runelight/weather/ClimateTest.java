@@ -1,4 +1,6 @@
-package com.midonarhel.runelight;
+package com.midonarhel.runelight.weather;
+
+import com.midonarhel.runelight.*;
 
 import com.midonarhel.runelight.sky.GameClock;
 
@@ -6,7 +8,7 @@ import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertSame;
 import static org.junit.Assert.assertTrue;
-import com.midonarhel.runelight.WeatherClimate.Season;
+import com.midonarhel.runelight.weather.WeatherClimate.Season;
 import org.junit.Before;
 import org.junit.Test;
 

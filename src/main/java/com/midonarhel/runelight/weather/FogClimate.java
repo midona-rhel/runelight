@@ -1,4 +1,6 @@
-package com.midonarhel.runelight;
+package com.midonarhel.runelight.weather;
+
+import com.midonarhel.runelight.*;
 
 /**
  * How much fog a region makes by itself over the day: mist at dawn that burns off as the sun climbs, some again at

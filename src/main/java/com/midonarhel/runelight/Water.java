@@ -15,7 +15,7 @@ import static org.lwjgl.opengl.GL33C.*;
  * surface mesh and its pass ({@link WaterSurface}), the tiling wave noise and caustics, and the per-frame motion. The
  * composite shades the water (water.glsl) from the surface pass's target.
  */
-class Water
+public class Water
 {
 	private static final int NOISE_SIZE = 256;
 	private static final long NOISE_SEED = 9157;
@@ -103,7 +103,7 @@ class Water
 			rect = -1, fakeOn = -1;
 
 		/** Look them up and point the program's samplers at the units. Call with each newly compiled composite. */
-		void locate(int program, int surfaceUnit, int shadedUnit)
+		public void locate(int program, int surfaceUnit, int shadedUnit)
 		{
 			enabled = glGetUniformLocation(program, "waterEnabled");
 			time = glGetUniformLocation(program, "waterTime");
@@ -152,7 +152,7 @@ class Water
 	 * With a program in use that has a {@code waterRect} uniform at {@code uniRect} (and the surface sampler on the
 	 * unit {@link #bind} used): the pixels the surface covers, none without water.
 	 */
-	void setRect(RuneLightConfig config, int uniRect)
+	public void setRect(RuneLightConfig config, int uniRect)
 	{
 		boolean enabled = enabled(config);
 		glUniform4i(uniRect, enabled ? rect[0] : 0, enabled ? rect[1] : 0, enabled ? rect[2] : 0,

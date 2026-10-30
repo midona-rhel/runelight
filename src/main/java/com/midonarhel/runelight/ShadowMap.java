@@ -7,7 +7,7 @@ import static org.lwjgl.opengl.GL33C.*;
  * the player. Depth is stored linearly in both clip conventions: window depth = (z + depthRange) / (2 depthRange)
  * where z is the distance along the light direction from the focus.
  */
-class ShadowMap
+public class ShadowMap
 {
 	private int size;
 	private int fbo;
@@ -18,7 +18,7 @@ class ShadowMap
 	private int samplerCompare;
 
 	// world space light matrix (for the shadow pass) and camera-relative (for the composite)
-	final float[] lightProj = Mat4.identity();
+	public final float[] lightProj = Mat4.identity();
 	final float[] lightProjRel = Mat4.identity();
 	private float radius;
 	private float depthRange;
@@ -67,7 +67,7 @@ class ShadowMap
 	// a tile's own maximum stays a short loop when the texels are small.
 	private static final int MAX_TILE = 16;
 
-	void init(int size)
+	public void init(int size)
 	{
 		this.size = size;
 		texDepth = glGenTextures();
@@ -107,7 +107,7 @@ class ShadowMap
 		glSamplerParameteri(samplerCompare, GL_TEXTURE_COMPARE_FUNC, GL_LEQUAL);
 	}
 
-	void free()
+	public void free()
 	{
 		freeCache();
 		if (fbo != 0)
@@ -120,7 +120,7 @@ class ShadowMap
 		}
 	}
 
-	boolean isInitialized()
+	public boolean isInitialized()
 	{
 		return fbo != 0;
 	}
@@ -130,7 +130,7 @@ class ShadowMap
 		return size;
 	}
 
-	int getFbo()
+	public int getFbo()
 	{
 		return fbo;
 	}
@@ -434,7 +434,7 @@ class ShadowMap
 	 * @param depthRange how far in front of and behind the focus casters are captured, world units
 	 * @param zeroToOne whether glClipControl maps clip depth to [0, 1]
 	 */
-	void update(float[] dir, float fx, float fy, float fz, float cameraX, float cameraY, float cameraZ,
+	public void update(float[] dir, float fx, float fy, float fz, float cameraX, float cameraY, float cameraZ,
 		float radius, float depthRange, boolean zeroToOne)
 	{
 		this.radius = radius;
@@ -510,7 +510,7 @@ class ShadowMap
 		}
 	}
 
-	void bindForSampling(int rawUnit, int compareUnit)
+	public void bindForSampling(int rawUnit, int compareUnit)
 	{
 		glActiveTexture(GL_TEXTURE0 + rawUnit);
 		glBindTexture(GL_TEXTURE_2D, texDepth);
@@ -526,7 +526,7 @@ class ShadowMap
 	 * a compare sampler, since a shadow sampler (in a program drawn with this map unused) must always find a depth
 	 * texture with comparison on its unit, or NVIDIA flags undefined behavior. Reads as lit.
 	 */
-	static void unbind(int rawUnit, int compareUnit)
+	public static void unbind(int rawUnit, int compareUnit)
 	{
 		glActiveTexture(GL_TEXTURE0 + rawUnit);
 		glBindTexture(GL_TEXTURE_2D, 0);

@@ -1,4 +1,6 @@
-package com.midonarhel.runelight;
+package com.midonarhel.runelight.weather;
+
+import com.midonarhel.runelight.*;
 
 import java.util.Collections;
 import java.util.HashMap;

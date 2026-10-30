@@ -1,4 +1,6 @@
-package com.midonarhel.runelight;
+package com.midonarhel.runelight.weather;
+
+import com.midonarhel.runelight.*;
 
 import com.midonarhel.runelight.sky.GameClock;
 import com.midonarhel.runelight.sky.Lightning;
@@ -10,7 +12,7 @@ import com.google.gson.Gson;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
-import com.midonarhel.runelight.WeatherClimate.Season;
+import com.midonarhel.runelight.weather.WeatherClimate.Season;
 import com.midonarhel.runelight.config.WeatherMode;
 import java.io.InputStreamReader;
 import java.nio.charset.StandardCharsets;

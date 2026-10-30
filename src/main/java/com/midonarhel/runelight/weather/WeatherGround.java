@@ -1,4 +1,6 @@
-package com.midonarhel.runelight;
+package com.midonarhel.runelight.weather;
+
+import com.midonarhel.runelight.*;
 
 import static org.lwjgl.opengl.GL33C.*;
 
@@ -9,7 +11,7 @@ import static org.lwjgl.opengl.GL33C.*;
  * (weather_ground.glsl), so it takes the AO, the shadows and the point lights like any
  * other surface. This holds the two programs' uniforms.
  */
-final class WeatherGround
+public final class WeatherGround
 {
 	private int aoOn = -1, aoOcclusionProjRel = -1, aoOcclusionDepthRange = -1, aoFieldRect = -1, aoGroundFocus = -1,
 		aoGroundLocal = -1, aoFieldOn = -1;
@@ -18,7 +20,7 @@ final class WeatherGround
 	 * @param occlusionUnit the occlusion map's raw view; its compare view is on the next unit
 	 * @param fieldUnit     the weather field; its ground is on the next unit
 	 */
-	void locate(int aoProgram, int occlusionUnit, int fieldUnit)
+	public void locate(int aoProgram, int occlusionUnit, int fieldUnit)
 	{
 		aoOn = glGetUniformLocation(aoProgram, "weatherGroundOn");
 		aoOcclusionProjRel = glGetUniformLocation(aoProgram, "occlusionProjRel");
@@ -34,7 +36,7 @@ final class WeatherGround
 	}
 
 	/** With the AO program in use: off, nothing written. */
-	void setAoOff()
+	public void setAoOff()
 	{
 		glUniform1i(aoOn, 0);
 	}
@@ -55,11 +57,11 @@ final class WeatherGround
 	}
 
 	/** A composite program's uniforms. */
-	static final class CompositeUniforms
+	public static final class CompositeUniforms
 	{
 		private int on = -1, noiseOrigin = -1, wadeSteps = -1;
 
-		void locate(int program)
+		public void locate(int program)
 		{
 			on = glGetUniformLocation(program, "weatherGroundOn");
 			noiseOrigin = glGetUniformLocation(program, "weatherNoiseOrigin");
@@ -67,7 +69,7 @@ final class WeatherGround
 		}
 
 		/** With the program in use: the steps in the puddles (WadeSteps.steps). */
-		void setWade(float[] steps)
+		public void setWade(float[] steps)
 		{
 			glUniform4fv(wadeSteps, steps);
 		}
@@ -77,7 +79,7 @@ final class WeatherGround
 		 *
 		 * @param originX world x of local (scene) x 0, world units, so snow and puddles stay put when the scene reloads
 		 */
-		void set(boolean enabled, float originX, float originZ)
+		public void set(boolean enabled, float originX, float originZ)
 		{
 			glUniform1i(on, enabled ? 1 : 0);
 			glUniform2f(noiseOrigin, originX, originZ);

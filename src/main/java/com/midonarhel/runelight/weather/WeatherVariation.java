@@ -1,4 +1,6 @@
-package com.midonarhel.runelight;
+package com.midonarhel.runelight.weather;
+
+import com.midonarhel.runelight.*;
 
 /**
  * How rain and snow change over time: slow swells and lulls over a minute or two, and now and then a short heavier

@@ -20,11 +20,18 @@ def publicize_nested(cls, nested):
     if s2 != s: p.write_text(s2); changed.add(f'{cls}.{nested} (nested)'); return True
     return False
 
+def file_declaring(cls):
+    if cls in files: return files[cls]
+    for p in files.values():
+        if re.search(r'^\t+(?:public |private |protected )?(?:abstract |final |static )*(?:class|interface|enum|record) ' + re.escape(cls) + r'\b', p.read_text(), re.M):
+            return p
+    return None
+
 def publicize_member(cls, member):
-    p = files.get(cls)
+    p = file_declaring(cls)
     if not p: return
     s = p.read_text(); lines = s.split('\n')
-    pat = re.compile(r'^(\t+)((?:static |final |synchronized |abstract |volatile |transient )*)([\w<>\[\], ?.]+\s+)?' + re.escape(member) + r'\s*(\(|=|;|,)')
+    pat = re.compile(r'^(\t+)((?:static |final |synchronized |abstract |volatile |transient )*)([\w<>\[\]?.]+(?:<[^>]*>)?\s+)?(?:[\w\[\]]+\s*(?:=\s*[^,;]+)?,\s*)*' + re.escape(member) + r'\s*(\(|=|;|,)')
     for i, l in enumerate(lines):
         if l.lstrip().startswith(('public', 'private', 'protected', '//', '*', '@', 'return', 'if', 'for', 'while')): continue
         m = pat.match(l)
@@ -42,7 +49,7 @@ def publicize_member(cls, member):
 lines_in = sys.stdin.read().split('\n')
 for i, l in enumerate(lines_in):
     m = re.search(r'symbol:\s+(?:class|variable) (\w+)$', l)
-    if m and m.group(1) in files and i > 0 and 'cannot find symbol' in lines_in[i-1]:
+    if m and m.group(1) in files and any('cannot find symbol' in x for x in lines_in[max(0,i-4):i]):
         publicize_class(m.group(1))
 for line in lines_in:
     m = re.search(r'error: (\w+) is not public in ([\w.]+); cannot be accessed', line)

@@ -24,6 +24,8 @@
  */
 package com.midonarhel.runelight;
 
+import com.midonarhel.runelight.weather.Weather;
+
 import com.midonarhel.runelight.sky.Clouds;
 import com.midonarhel.runelight.sky.Lightning;
 

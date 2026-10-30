@@ -1,4 +1,6 @@
-package com.midonarhel.runelight;
+package com.midonarhel.runelight.weather;
+
+import com.midonarhel.runelight.*;
 
 import com.google.gson.Gson;
 import com.google.gson.reflect.TypeToken;
@@ -18,7 +20,7 @@ import org.slf4j.LoggerFactory;
  * each place has (weather_regions.json). In the dev client they are read from the shader source directory instead and
  * reloaded when saved, so weather can be tuned live.
  */
-final class WeatherData
+public final class WeatherData
 {
 	private static final Logger log = LoggerFactory.getLogger(WeatherData.class);
 
@@ -39,7 +41,7 @@ final class WeatherData
 	}
 
 	/** Load the files from the plugin's resources. */
-	static void load(Gson gson)
+	public static void load(Gson gson)
 	{
 		try (InputStream t = WeatherData.class.getResourceAsStream(TYPES);
 			InputStream c = WeatherData.class.getResourceAsStream(CLIMATE);
@@ -76,7 +78,7 @@ final class WeatherData
 	 *
 	 * @return true when the weather data was replaced
 	 */
-	static boolean reloadIfChanged(Path dir, Gson gson)
+	public static boolean reloadIfChanged(Path dir, Gson gson)
 	{
 		long now = System.currentTimeMillis();
 		if (dir == null || now - lastPoll < POLL_MILLIS)

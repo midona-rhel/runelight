@@ -1,4 +1,11 @@
-package com.midonarhel.runelight;
+package com.midonarhel.runelight.weather;
+
+import com.midonarhel.runelight.*;
+
+import com.midonarhel.runelight.weather.Weather;
+import com.midonarhel.runelight.weather.WeatherData;
+import com.midonarhel.runelight.weather.WeatherField;
+import com.midonarhel.runelight.weather.WeatherType;
 
 import com.google.gson.Gson;
 import com.midonarhel.runelight.config.WeatherMode;

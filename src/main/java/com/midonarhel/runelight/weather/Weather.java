@@ -1,4 +1,6 @@
-package com.midonarhel.runelight;
+package com.midonarhel.runelight.weather;
+
+import com.midonarhel.runelight.*;
 
 import com.midonarhel.runelight.sky.DayCycle;
 import com.midonarhel.runelight.sky.EnvironmentManager;
@@ -52,7 +54,7 @@ public class Weather
 	// Particle layers. The nearest owns distances up to LAYER_NEAR from the camera, each next one twice as far; a
 	// layer's box is that distance across each way, centered a little ahead of the camera (LAYER_AHEAD of its half
 	// width, as far as the camera looks sideways rather than down), so it covers its band of what the camera sees.
-	static final int MAX_LAYERS = 6;
+	public static final int MAX_LAYERS = 6;
 	static final float LAYER_NEAR = 1536;
 	private static final float LAYER_AHEAD = 0.4f;
 	// per layer outward: particle size (streak length and width, flake size), and the share of particles drawn
@@ -61,7 +63,7 @@ public class Weather
 	static final float LAYER_SIZE_GROWTH = 1.6f;
 	static final float LAYER_COUNT_FALLOFF = 0.85f;
 	// layer crossfade, LAYER_CROSSFADE in weather_common.glsl
-	static final float LAYER_CROSSFADE = 0.35f;
+	public static final float LAYER_CROSSFADE = 0.35f;
 	// height of the nearest boxes above and depth below the player's ground, world units; farther boxes are taller
 	// (by LAYER_HEIGHT_GROWTH per layer, up to LAYER_HEIGHT_MAX) to reach over hills and to the sky behind them
 	private static final float RAIN_ABOVE = 2560, RAIN_BELOW = 768;
@@ -133,9 +135,9 @@ public class Weather
 	/**
 	 * Freshly compiled programs, so a hot reload can compile everything before replacing anything.
 	 */
-	static final class Programs
+	public static final class Programs
 	{
-		final int rain, snow;
+		public final int rain, snow;
 
 		Programs(int rain, int snow)
 		{
@@ -284,7 +286,7 @@ public class Weather
 	private float focusX, focusY, focusZ;
 	private int focusPlane;
 
-	Programs compile(Template template) throws ShaderException
+	public Programs compile(Template template) throws ShaderException
 	{
 		int r = 0, s = 0;
 		try
@@ -305,7 +307,7 @@ public class Weather
 	/**
 	 * Replace the current programs, deleting the old ones.
 	 */
-	void setPrograms(Programs p, int sceneUnit, int materialUnit, int occlusionUnit, int shadowCompareUnit, int alphaLayerUnit,
+	public void setPrograms(Programs p, int sceneUnit, int materialUnit, int occlusionUnit, int shadowCompareUnit, int alphaLayerUnit,
 		int lightDataUnit, int clusterDataUnit, int waterUnit, int fieldUnit, int lightMapUnit)
 	{
 		freePrograms();
@@ -315,7 +317,7 @@ public class Weather
 			waterUnit, fieldUnit, lightMapUnit);
 	}
 
-	void freePrograms()
+	public void freePrograms()
 	{
 		glDeleteProgram(rain.program);
 		glDeleteProgram(snow.program);
@@ -325,7 +327,7 @@ public class Weather
 	/**
 	 * GL resources other than programs.
 	 */
-	void free()
+	public void free()
 	{
 		occlusion.free();
 		field.free();
@@ -404,22 +406,22 @@ public class Weather
 	/**
 	 * Scenery changed (scene load, zone rebuild): redraw the occlusion map before it is next used.
 	 */
-	void invalidateOcclusion()
+	public void invalidateOcclusion()
 	{
 		occlusionDirty = true;
 	}
 
-	boolean isActive()
+	public boolean isActive()
 	{
 		return active;
 	}
 
-	Lightning getLightning()
+	public Lightning getLightning()
 	{
 		return lightning;
 	}
 
-	WeatherField getField()
+	public WeatherField getField()
 	{
 		return field;
 	}
@@ -428,7 +430,7 @@ public class Weather
 	 * How overcast the sky is, 0 clear to 1 fully covered. 0 underground. Shared by everything that should follow
 	 * the weather (clouds, sky, light).
 	 */
-	float cloudCover()
+	public float cloudCover()
 	{
 		return openSky ? Math.min(1, cover) : 0;
 	}
@@ -437,7 +439,7 @@ public class Weather
 	 * Wind over open water: the direction it blows toward (x, z, normalized) and its strength 0-1 with gusts.
 	 * Still underground.
 	 */
-	void getWaterWind(float[] out)
+	public void getWaterWind(float[] out)
 	{
 		out[0] = windSim.getDirX();
 		out[1] = windSim.getDirZ();
@@ -447,7 +449,7 @@ public class Weather
 	/**
 	 * The wind, for anything that moves with it (Wind.apply sets a program's wind uniforms).
 	 */
-	Wind getWind()
+	public Wind getWind()
 	{
 		return windSim;
 	}
@@ -455,7 +457,7 @@ public class Weather
 	/**
 	 * Whether the air is still here: underground the wind uniforms read calm.
 	 */
-	boolean isWindStill()
+	public boolean isWindStill()
 	{
 		return !openSky;
 	}
@@ -467,12 +469,12 @@ public class Weather
 	}
 
 	/** clouds.glsl's cloudType: how wispy and high (0..1) and the darkness offset (-1..1). */
-	float cloudWisp()
+	public float cloudWisp()
 	{
 		return openSky ? cloudWisp : 0;
 	}
 
-	float cloudDark()
+	public float cloudDark()
 	{
 		return openSky ? cloudDark : 0;
 	}
@@ -488,7 +490,7 @@ public class Weather
 	/**
 	 * Rain falling on open water, 0-1.
 	 */
-	float waterRain()
+	public float waterRain()
 	{
 		return openSky ? Math.min(1, rainEffective) : 0;
 	}
@@ -565,7 +567,7 @@ public class Weather
 	/**
 	 * Set the weatherOvercast uniform of the program in use.
 	 */
-	void setOvercastUniform(int location)
+	public void setOvercastUniform(int location)
 	{
 		glUniform3f(location, cloudCover(), snowiness, openSky ? lightning.getFlash() : 0);
 	}
@@ -573,7 +575,7 @@ public class Weather
 	/**
 	 * Set the weatherLight uniform of the program in use.
 	 */
-	void setLightUniform(int location)
+	public void setLightUniform(int location)
 	{
 		getLight(scratch, 0);
 		glUniform4f(location, scratch[0], scratch[1], scratch[2], scratch[3]);
@@ -589,7 +591,7 @@ public class Weather
 	 * @param outdoors whether the area has a sky at all
 	 * @param fx player ground position, world units
 	 */
-	boolean update(boolean gradual, boolean varying, boolean lightningEnabled, boolean outdoors,
+	public boolean update(boolean gradual, boolean varying, boolean lightningEnabled, boolean outdoors,
 		float fx, float fy, float fz, int plane)
 	{
 		long now = System.currentTimeMillis();
@@ -690,7 +692,7 @@ public class Weather
 	}
 
 	/** The weather a manual mode asks for: clear for Off, else the forced type. */
-	static WeatherType resolve(WeatherMode mode)
+	public static WeatherType resolve(WeatherMode mode)
 	{
 		WeatherType t = mode == WeatherMode.OFF ? null : WeatherType.get(mode.name());
 		return t != null ? t : WeatherType.clear();
@@ -718,7 +720,7 @@ public class Weather
 	 * @param hour     clock time 0-24, for mist by the time of day
 	 * @param fx       player ground position, local units
 	 */
-	void updateField(Scene scene, int plane, EnvironmentManager env, boolean areas, String biome, WeatherMode mode,
+	public void updateField(Scene scene, int plane, EnvironmentManager env, boolean areas, String biome, WeatherMode mode,
 		Climate climate, int intensityPercent, boolean gradual, double hour, float fx, float fz)
 	{
 		long now = System.currentTimeMillis();
@@ -849,7 +851,7 @@ public class Weather
 	 * Redraw the occlusion map if needed, with the shadow program: same vertex formats, and it keeps alpha
 	 * tested holes (leaves, grates) open.
 	 */
-	void renderOcclusion(RuneLightPlugin.SceneContext ctx, int program, int uniLightProj, int uniEntityProj,
+	public void renderOcclusion(RuneLightPlugin.SceneContext ctx, int program, int uniLightProj, int uniEntityProj,
 		int uniBase, int uniTexturesReady, boolean texturesReady, boolean zeroToOne)
 	{
 		if (!active || program == 0 || ctx == null)
@@ -941,7 +943,7 @@ public class Weather
 	 * How hard it rains for the ears, 0 to 1: the rain at the player, or, with the weather field, the rain at places
 	 * around them heard from the distance, so rain swells as the player walks toward it. 0 where there is no sky.
 	 */
-	float rainLoudness()
+	public float rainLoudness()
 	{
 		if (!openSky)
 		{
@@ -975,7 +977,7 @@ public class Weather
 	 * @param roomHeader the room map's header (LightClusters.getRoomHeader), which says whether the light map is there
 	 * @param drawDistance world units from the player: how far the particles reach
 	 */
-	void draw(float[] viewProj, float[] invViewProj, int[] viewport, boolean zeroToOne,
+	public void draw(float[] viewProj, float[] invViewProj, int[] viewport, boolean zeroToOne,
 		float cameraX, float cameraY, float cameraZ, DayCycle day, Water water,
 		RuneLightConfig config, int occlusionUnit, boolean pointLights, float[] roomHeader, float drawDistance,
 		float[] wadeSteps)
@@ -1100,19 +1102,19 @@ public class Weather
 	}
 
 	/** How far from the camera layer k's band reaches. */
-	static float layerReach(int k)
+	public static float layerReach(int k)
 	{
 		return LAYER_NEAR * (1 << k);
 	}
 
 	/** A layer's height above or depth below the ground, growing outward. */
-	static float layerHeight(float nearest, int k)
+	public static float layerHeight(float nearest, int k)
 	{
 		return Math.min(nearest * (float) Math.pow(LAYER_HEIGHT_GROWTH, k), Math.max(nearest, LAYER_HEIGHT_MAX));
 	}
 
 	/** The outermost layer needed for particles out to {@code out} from the camera, at full strength. */
-	static int lastLayer(float out)
+	public static int lastLayer(float out)
 	{
 		int k = 0;
 		while (k < MAX_LAYERS - 1 && layerReach(k) * (1 - LAYER_CROSSFADE) < out)
@@ -1136,7 +1138,7 @@ public class Weather
 	 * Whether the AO pass shades wet ground and snow cover this frame: there is some anywhere in the scene and the
 	 * occlusion map is there to tell what is sheltered.
 	 */
-	boolean groundActive()
+	public boolean groundActive()
 	{
 		if (!active || !occlusion.isInitialized() || occlusionDirty)
 		{
@@ -1154,7 +1156,7 @@ public class Weather
 	 * field on {@code fieldUnit} and the next, and set weather_ground_ao.glsl's uniforms. {@link #groundActive}
 	 * first; {@link ShadowMap#unbind} the occlusion units after the pass, they have sampler objects bound.
 	 */
-	void bindGround(WeatherGround g, int occlusionUnit, int fieldUnit, float cameraX, float cameraY, float cameraZ)
+	public void bindGround(WeatherGround g, int occlusionUnit, int fieldUnit, float cameraX, float cameraY, float cameraZ)
 	{
 		relativeTo(occlusion.lightProj, cameraX, cameraY, cameraZ, occlusionProjRel);
 		occlusion.bindForSampling(occlusionUnit, occlusionUnit + 1);
@@ -1166,7 +1168,7 @@ public class Weather
 	 * Upload the weather field if it changed and bind it on two units from {@code unit}, for the weather passes and
 	 * the fog, and its sky on {@code skyUnit}, for the clouds.
 	 */
-	void bindField(int unit, int skyUnit)
+	public void bindField(int unit, int skyUnit)
 	{
 		field.bind(unit, unit + 1);
 		field.bindSky(skyUnit);

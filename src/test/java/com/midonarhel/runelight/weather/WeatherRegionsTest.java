@@ -1,4 +1,6 @@
-package com.midonarhel.runelight;
+package com.midonarhel.runelight.weather;
+
+import com.midonarhel.runelight.*;
 
 import com.midonarhel.runelight.sky.EnvironmentManager;
 import com.midonarhel.runelight.sky.GameClock;
@@ -8,7 +10,7 @@ import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertTrue;
 import com.google.gson.Gson;
-import com.midonarhel.runelight.WeatherClimate.Season;
+import com.midonarhel.runelight.weather.WeatherClimate.Season;
 import java.util.Arrays;
 import java.util.HashSet;
 import java.util.Set;

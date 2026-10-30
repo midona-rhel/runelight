@@ -1,4 +1,6 @@
-package com.midonarhel.runelight;
+package com.midonarhel.runelight.weather;
+
+import com.midonarhel.runelight.*;
 
 import java.util.Arrays;
 import java.util.IdentityHashMap;
@@ -17,7 +19,7 @@ import net.runelite.api.coords.LocalPoint;
  * pass kicks up a few droplets from a fresh one (rain_vert.glsl). The nearest MAX_STEPS live steps go to the shaders as
  * vec4s: local x, local z, age in seconds, strength (0 where unused).
  */
-final class WadeSteps
+public final class WadeSteps
 {
 	// steps in the shaders' array (WADE_MAX in weather_wade.glsl)
 	static final int MAX_STEPS = 24;
@@ -54,7 +56,7 @@ final class WadeSteps
 	 * one tile in size, which takes in the humanoids (guards, villagers, monks) and some small animals too: ripples
 	 * round a rat's feet are no harm.
 	 */
-	void update(WorldView view, Player self, float cameraX, float cameraZ, boolean enabled)
+	public void update(WorldView view, Player self, float cameraX, float cameraZ, boolean enabled)
 	{
 		long now = System.nanoTime();
 		frame++;
@@ -137,7 +139,7 @@ final class WadeSteps
 	}
 
 	/** The nearest MAX_STEPS live steps to the camera, as the shaders' vec4 array; the rest of it is zero. */
-	float[] steps(float cameraX, float cameraZ)
+	public float[] steps(float cameraX, float cameraZ)
 	{
 		long now = System.nanoTime();
 		Arrays.fill(uniform, 0);

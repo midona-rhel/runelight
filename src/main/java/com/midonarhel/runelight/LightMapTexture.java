@@ -12,7 +12,7 @@ import static org.lwjgl.opengl.GL33C.*;
  * storey's index of the lights in the slots (read as it is): 736 x 736 for the largest scene, 52 MB all told. Zero from
  * the start, so a cell nothing was sent for is dark; blocks are sent into it as LightMap bakes them.
  */
-final class LightMapTexture
+public final class LightMapTexture
 {
 	private static final Logger log = LoggerFactory.getLogger(LightMapTexture.class);
 
@@ -143,11 +143,11 @@ final class LightMapTexture
 	 * What a program that reads the light map needs: the sampler, and the room map's header, which says whether the map is
 	 * there and how to find a cell (light_map.glsl).
 	 */
-	static final class Uniforms
+	public static final class Uniforms
 	{
 		private int header = -1;
 
-		void locate(int program, int unit)
+		public void locate(int program, int unit)
 		{
 			header = glGetUniformLocation(program, "roomHeader");
 			int sampler = glGetUniformLocation(program, "lightMap");
@@ -159,7 +159,7 @@ final class LightMapTexture
 		}
 
 		/** @param roomHeader LightClusters.getRoomHeader */
-		void apply(float[] roomHeader)
+		public void apply(float[] roomHeader)
 		{
 			if (header >= 0)
 			{

@@ -1,4 +1,6 @@
-package com.midonarhel.runelight;
+package com.midonarhel.runelight.weather;
+
+import com.midonarhel.runelight.*;
 
 import java.nio.ByteBuffer;
 import java.util.HashMap;
@@ -24,15 +26,15 @@ public final class WeatherField
 {
 	// tiles per cell side, and world units
 	static final int CELL_TILES = 16;
-	static final int CELL = CELL_TILES * 128;
+	public static final int CELL = CELL_TILES * 128;
 	// the fog channel holds fog / FOG_RANGE (FogClimate caps fog at 3.2)
-	static final float FOG_RANGE = 4;
+	public static final float FOG_RANGE = 4;
 	// cells of blur on each side, on top of the bilinear filter: region borders blend over about 80 tiles
 	static final int BLUR = 2;
 	private static final float[] KERNEL = {1, 2, 3, 2, 1};
 
 	// channels of the eased state; the first six are uploaded as textures (8 bits)
-	static final int COVER = 0, RAIN = 1, SNOW = 2, FOG = 3, WET = 4, SNOW_COVER = 5, GPU_CHANNELS = 6;
+	public static final int COVER = 0, RAIN = 1, SNOW = 2, FOG = 3, WET = 4, SNOW_COVER = 5, GPU_CHANNELS = 6;
 	// the rest only the player's weather reads, at the focus: the fog's height and the region's humidity, the area
 	// fog and distance fog weights, storm, how snowy the overcast is, wind and gustiness, showers, then the type's
 	// look: clouds (wisp, dark), light (sun - 1, haze, warmth, sky saturation), fog tint, rain drops (length, speed,
@@ -64,7 +66,7 @@ public final class WeatherField
 	/** Uniform locations of one program that samples the field (weather passes). */
 	static final class Locations
 	{
-		int rect, focus, groundFocus, on;
+		public int rect, focus, groundFocus, on;
 	}
 
 	private int sizeX, sizeZ;
@@ -113,7 +115,7 @@ public final class WeatherField
 	 * @param keys    per cell, the place it covers (see {@link #chunkKey}), or Long.MIN_VALUE when unknown
 	 * @param biomes  per cell, the region's biome name, null for the default biome, {@link #NO_SKY} for no weather
 	 */
-	void layout(int sizeX, int sizeZ, float originX, float originZ, long[] keys, String[] biomes)
+	public void layout(int sizeX, int sizeZ, float originX, float originZ, long[] keys, String[] biomes)
 	{
 		int n = sizeX * sizeZ;
 		Map<Long, Integer> old = new HashMap<>(index);
@@ -176,7 +178,7 @@ public final class WeatherField
 	 * @param gradual   false applies every change at once
 	 * @param dt        seconds since the last update
 	 */
-	void update(Function<String, WeatherType> typeFor, Function<String, float[]> groundFor, float scale, boolean gradual,
+	public void update(Function<String, WeatherType> typeFor, Function<String, float[]> groundFor, float scale, boolean gradual,
 		double hour, float dt)
 	{
 		int n = sizeX * sizeZ;
@@ -526,7 +528,7 @@ public final class WeatherField
 	}
 
 	/** Remember the field at the player, which the shaders subtract. */
-	void focus(float x, float z)
+	public void focus(float x, float z)
 	{
 		focusX = x;
 		focusZ = z;
@@ -538,7 +540,7 @@ public final class WeatherField
 	}
 
 	/** Whether there are cells to look up. */
-	boolean isEnabled()
+	public boolean isEnabled()
 	{
 		return initialized && sizeX > 0;
 	}
@@ -549,7 +551,7 @@ public final class WeatherField
 		return anything;
 	}
 
-	float getFocus(int channel)
+	public float getFocus(int channel)
 	{
 		return focus[channel];
 	}
@@ -635,7 +637,7 @@ public final class WeatherField
 	}
 
 	/** Upload the field if it changed and bind the sky (cover, wispiness, darkness) on {@code skyUnit}. */
-	void bindSky(int skyUnit)
+	public void bindSky(int skyUnit)
 	{
 		if (sizeX == 0 || sizeZ == 0)
 		{
@@ -668,7 +670,7 @@ public final class WeatherField
 		}
 	}
 
-	static void unbind(int... units)
+	public static void unbind(int... units)
 	{
 		for (int unit : units)
 		{
@@ -743,7 +745,7 @@ public final class WeatherField
 	}
 
 	/** weatherFieldRect: xy the world xz of the field's corner, zw one over its size, world units. */
-	void setRect(int location)
+	public void setRect(int location)
 	{
 		glUniform4f(location, originX, originZ, 1f / Math.max(sizeX * CELL, 1), 1f / Math.max(sizeZ * CELL, 1));
 	}

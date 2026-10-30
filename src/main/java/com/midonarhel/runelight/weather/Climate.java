@@ -1,9 +1,11 @@
-package com.midonarhel.runelight;
+package com.midonarhel.runelight.weather;
+
+import com.midonarhel.runelight.*;
 
 import com.midonarhel.runelight.sky.GameClock;
 
-import com.midonarhel.runelight.WeatherClimate.Season;
-import com.midonarhel.runelight.WeatherClimate.Temperature;
+import com.midonarhel.runelight.weather.WeatherClimate.Season;
+import com.midonarhel.runelight.weather.WeatherClimate.Temperature;
 import java.util.HashMap;
 import java.util.Map;
 
@@ -24,10 +26,10 @@ import java.util.Map;
  * days back from the clean ground (frozen biomes from their permanent snow), long enough that what it started from
  * no longer shows, so every client arrives at the same ground for the same moment however it got there.
  */
-final class Climate
+public final class Climate
 {
 	// game days each season lasts
-	static final int SEASON_DAYS = 7;
+	public static final int SEASON_DAYS = 7;
 	// degrees per unit of rain or snow falling (forecast amounts, which are about 0.25 to 1.3)
 	static final float PRECIP_COOL = 3;
 	// share of the day's temperature swing full cloud cover takes away
@@ -240,7 +242,7 @@ final class Climate
 		}
 
 		/** Bring the region to a moment of the game clock. */
-		void update(long gameMillis, int seasonDays)
+		public void update(long gameMillis, int seasonDays)
 		{
 			seasonDays = Math.max(seasonDays, 1);
 			if (gameMillis == now && seasonDays == this.seasonDays && catalogue == WeatherType.version())
@@ -344,12 +346,12 @@ final class Climate
 	private long gameMillis;
 	private int seasonDays = WeatherForecast.DEFAULT_SEASON_DAYS;
 
-	Climate()
+	public Climate()
 	{
 	}
 
 	/** Move the clock; regions follow when next asked for. */
-	void update(long gameMillis, int seasonDays)
+	public void update(long gameMillis, int seasonDays)
 	{
 		this.gameMillis = gameMillis;
 		this.seasonDays = Math.max(seasonDays, 1);

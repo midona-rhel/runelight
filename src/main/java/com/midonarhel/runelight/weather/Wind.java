@@ -1,4 +1,6 @@
-package com.midonarhel.runelight;
+package com.midonarhel.runelight.weather;
+
+import com.midonarhel.runelight.*;
 
 import static org.lwjgl.opengl.GL33C.*;
 
@@ -39,7 +41,7 @@ public final class Wind
 	private static final float TIME_RATE = 1.5f;
 
 	/** Uniform locations of one program that reads the wind. */
-	static final class Locations
+	public static final class Locations
 	{
 		int dir = -1, strength = -1, gust = -1, time = -1, front = -1, gustiness = -1;
 	}
@@ -212,7 +214,7 @@ public final class Wind
 		return names[(int) Math.floorMod(Math.round(deg / 45), 8)];
 	}
 
-	static Locations locate(int program)
+	public static Locations locate(int program)
 	{
 		Locations l = new Locations();
 		if (program == 0)
@@ -232,7 +234,7 @@ public final class Wind
 	 * With the program in use: set its wind uniforms. Underground, or with {@code still}, the air is calm but the
 	 * phase keeps going, so nothing jumps on the way out.
 	 */
-	void apply(Locations l, boolean still)
+	public void apply(Locations l, boolean still)
 	{
 		if (l == null)
 		{

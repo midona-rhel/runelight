@@ -52,7 +52,7 @@ public final class Rumble
 	 * A clip's loudness over time: the RMS over WINDOW seconds, RATE times a second, smoothed (forward and back, so
 	 * it does not lag) to BANDWIDTH Hz, and scaled to peak at 1.
 	 */
-	static float[] envelope(float[] clip, int sampleRate)
+	public static float[] envelope(float[] clip, int sampleRate)
 	{
 		int n = (int) ((long) clip.length * RATE / sampleRate);
 		int half = Math.round(WINDOW * sampleRate / 2);

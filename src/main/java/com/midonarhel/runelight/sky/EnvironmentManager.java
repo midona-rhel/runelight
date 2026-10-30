@@ -1,5 +1,8 @@
 package com.midonarhel.runelight.sky;
 
+import com.midonarhel.runelight.weather.WeatherField;
+import com.midonarhel.runelight.weather.WeatherRegions;
+
 import com.midonarhel.runelight.*;
 
 import com.google.gson.Gson;
