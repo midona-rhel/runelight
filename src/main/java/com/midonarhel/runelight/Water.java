@@ -53,6 +53,9 @@ class Water
 	}
 
 	private int texData, texNoise, texContact;
+	// a loaded scene's data and contact, uploaded before its swap (uploadNext), and which load they hold
+	private int texDataBack, texContactBack;
+	private Loaded uploaded;
 	// the water's own clock: System.nanoTime is monotonic and fine grained everywhere, where currentTimeMillis can
 	// tick in 15.6 ms steps on Windows (the waves stutter) and jumps when the system clock is adjusted
 	private final long startNanos = System.nanoTime();
@@ -200,53 +203,69 @@ class Water
 	}
 
 	/**
-	 * The loaded scene became the current one: upload its water. GL thread.
+	 * Upload a loaded scene's water (surface tiles, data, contact) into the textures and buffer not drawn, before its
+	 * swap: a scheduler job (SceneLoader), GL thread. The swap then only flips them.
+	 */
+	void uploadNext(Loaded loaded)
+	{
+		WaterMap map = loaded.map;
+		boolean data = map != null && map.hasWater && map.texture != null;
+		surface.uploadNext(data ? loaded.mesh : null);
+		if (data)
+		{
+			int activeUnit = glGetInteger(GL_ACTIVE_TEXTURE);
+			glActiveTexture(GL_TEXTURE0);
+			int bound = glGetInteger(GL_TEXTURE_BINDING_2D);
+			texDataBack = uploadData(texDataBack, map);
+			texContactBack = uploadContact(texContactBack, map);
+			// unit 0 as it was: a frame that loses a sampler's texture is drawn black (the teleport flash, 2026-10-30)
+			glBindTexture(GL_TEXTURE_2D, bound);
+			glActiveTexture(activeUnit);
+		}
+		uploaded = loaded;
+	}
+
+	/**
+	 * The loaded scene became the current one: draw its water, uploaded before (uploadNext; done here if it was not).
+	 * GL thread; no GL call when it was uploaded before.
 	 */
 	void swap(Loaded loaded)
 	{
+		if (uploaded != loaded)
+		{
+			uploadNext(loaded);
+		}
+		uploaded = null;
 		WaterMap map = loaded.map;
-		WaterSurface.Mesh mesh = loaded.mesh;
-
 		hasData = map != null && map.hasWater && map.texture != null;
 		current = hasData ? map : null;
-		surface.upload(hasData ? mesh : null);
-		if (!hasData)
+		surface.flip();
+		if (hasData)
 		{
-			return;
+			int t = texData;
+			texData = texDataBack;
+			texDataBack = t;
+			t = texContact;
+			texContact = texContactBack;
+			texContactBack = t;
 		}
-		if (texData == 0)
-		{
-			texData = glGenTextures();
-			glBindTexture(GL_TEXTURE_2D, texData);
-			glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-			glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-			glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
-			glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-		}
-		else
-		{
-			glBindTexture(GL_TEXTURE_2D, texData);
-		}
+	}
+
+	private static int uploadData(int tex, WaterMap map)
+	{
+		tex = texture(tex);
 		FloatBuffer buf = BufferUtils.createFloatBuffer(map.texture.length);
 		buf.put(map.texture).flip();
 		// full floats: heights reach thousands of units, where half floats step by 2 to 4, and the shader takes the
 		// type from this texture too
 		glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA32F, WaterMap.CORNERS * WaterMap.PAGES, WaterMap.CORNERS, 0, GL_RGBA, GL_FLOAT, buf);
+		return tex;
+	}
 
-		// where things stand in the water (WaterMap.contact); one empty texel with none
-		if (texContact == 0)
-		{
-			texContact = glGenTextures();
-			glBindTexture(GL_TEXTURE_2D, texContact);
-			glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-			glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-			glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
-			glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-		}
-		else
-		{
-			glBindTexture(GL_TEXTURE_2D, texContact);
-		}
+	/** Where things stand in the water (WaterMap.contact); one empty texel with none. */
+	private static int uploadContact(int tex, WaterMap map)
+	{
+		tex = texture(tex);
 		int size = map.contact != null ? WaterMap.CONTACT_SIZE : 1;
 		ByteBuffer contact = BufferUtils.createByteBuffer(size * size);
 		if (map.contact != null)
@@ -256,7 +275,26 @@ class Water
 		glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
 		glTexImage2D(GL_TEXTURE_2D, 0, GL_R8, size, size, 0, GL_RED, GL_UNSIGNED_BYTE, contact);
 		glPixelStorei(GL_UNPACK_ALIGNMENT, 4);
-		glBindTexture(GL_TEXTURE_2D, 0);
+		return tex;
+	}
+
+	/** tex bound on the active unit, made with linear filtering and clamped edges when 0. */
+	private static int texture(int tex)
+	{
+		if (tex == 0)
+		{
+			tex = glGenTextures();
+			glBindTexture(GL_TEXTURE_2D, tex);
+			glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+			glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+			glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+			glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+		}
+		else
+		{
+			glBindTexture(GL_TEXTURE_2D, tex);
+		}
+		return tex;
 	}
 
 	/**
@@ -425,6 +463,17 @@ class Water
 			glDeleteTextures(texData);
 			texData = 0;
 		}
+		if (texDataBack != 0)
+		{
+			glDeleteTextures(texDataBack);
+			texDataBack = 0;
+		}
+		if (texContactBack != 0)
+		{
+			glDeleteTextures(texContactBack);
+			texContactBack = 0;
+		}
+		uploaded = null;
 		if (texContact != 0)
 		{
 			glDeleteTextures(texContact);

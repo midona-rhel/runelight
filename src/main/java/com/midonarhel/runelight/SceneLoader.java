@@ -358,6 +358,13 @@ final class SceneLoader
 
 		SceneDerived d = new SceneDerived(scene, newZones, roofChanges, join(waterBuild), join(fogGroundBuild));
 		t = stage("water mesh + fog ground wait", t);
+		// the water's surface tiles, data and contact into the textures not drawn, before the swap, which flips them
+		Water.Loaded water = d.water;
+		jobs.add("water", SceneJobs.LOAD, deadline ->
+		{
+			plugin.water.uploadNext(water);
+			return true;
+		});
 		if (d.fogGround != null)
 		{
 			// the fog's ground drawn from the swap on (its rooms come after it, and ease in): uploaded before it

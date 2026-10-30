@@ -518,7 +518,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 	private static final int WATER_WAVES_UNIT_B = RuneLightPlugin.COMPOSITE_TEXTURE_UNIT + 19;
 	// two units: the weather field (WeatherField) and its ground, for the fog and the weather passes
 	private static final int WEATHER_FIELD_UNIT = RuneLightPlugin.COMPOSITE_TEXTURE_UNIT + 16;
-	private final Water water = new Water();
+	final Water water = new Water();
 	private final float[] waterWind = new float[3];
 	final VoxelBuilder voxelBuilder = new VoxelBuilder();
 	// the skylight's traced sky visibility for the AO pass, and the static lights' occlusion
