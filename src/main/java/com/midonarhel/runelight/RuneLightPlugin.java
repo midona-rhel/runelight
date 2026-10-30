@@ -4087,10 +4087,8 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		}
 		lastSwapNanos = now;
 		frameSnapshot.frame();
-		if (log.isDebugEnabled())
-		{
-			hitchMonitor.endFrame(swapIntervalNow, cpuTimer, gpuTimer);
-		}
+		// the hitch monitor attributes slow frames to the jobs that ran in them (and GC); always on, it rate-limits itself
+		hitchMonitor.endFrame(swapIntervalNow, cpuTimer, gpuTimer);
 		cpuTimer.endFrame();
 		cpuTimer.begin(CpuTimer.OUTSIDE);
 		drawManager.processDrawComplete(this::screenshot);

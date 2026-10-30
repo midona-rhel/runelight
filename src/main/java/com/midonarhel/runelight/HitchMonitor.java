@@ -110,12 +110,12 @@ final class HitchMonitor
 		{
 			if (gpu.getReadFrame() == pendingFrame)
 			{
-				log.debug("{}; GPU {}", pendingText, gpuText(gpu));
+				log.info("{}; GPU {}", pendingText, gpuText(gpu));
 				pendingText = null;
 			}
 			else if (frame - pendingFrame > GPU_WAIT)
 			{
-				log.debug("{}; GPU times not read", pendingText);
+				log.info("{}; GPU times not read", pendingText);
 				pendingText = null;
 			}
 		}
@@ -130,7 +130,7 @@ final class HitchMonitor
 				pendingFrame = frame;
 				if (!gpu.isEnabled())
 				{
-					log.debug("{}; GPU timings are off (show timings turns them on)", pendingText);
+					log.info("{}; GPU timings are off (show timings turns them on)", pendingText);
 					pendingText = null;
 				}
 			}
