@@ -944,6 +944,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		if (buildingLights != null)
 		{
 			eventBus.unregister(buildingLights);
+			buildingLights.shutDown();
 			buildingLights = null;
 		}
 		if (shaderWatcher != null)
@@ -1820,6 +1821,11 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		int minLevel, int level, int maxLevel, Set<Integer> hideRoofIds)
 	{
 		tempModels.flush();
+		if (scene.getWorldViewId() == WorldView.TOPLEVEL && buildingLights != null)
+		{
+			// the building analysis' newest result, made on its worker, for every consumer this frame alike
+			buildingLights.apply();
+		}
 		SceneContext ctx = context(scene);
 		if (ctx == null)
 		{

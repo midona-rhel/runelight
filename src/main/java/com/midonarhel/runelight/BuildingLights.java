@@ -55,6 +55,21 @@ class BuildingLights
 	private byte[] filledTiles;
 	private int wallScene;
 
+	// The analysis runs on this thread, off the client's (it was 3–18 ms on the swap frame, and WallMap.build every
+	// tick): the client thread hands it a copy of the collision flags and takes the result at the next frame (apply).
+	private final java.util.concurrent.ExecutorService worker = java.util.concurrent.Executors.newSingleThreadExecutor(r ->
+	{
+		Thread t = new Thread(r, "RuneLight buildings");
+		t.setDaemon(true);
+		return t;
+	});
+	// the collision flags the last analysis was handed, to see a door change with a compare instead of a rebuild
+	private int[][][] handedFlags;
+	// a result waiting to be taken by the client thread; the number of the newest request, so older results are dropped
+	private final java.util.concurrent.atomic.AtomicReference<Runnable> pending = new java.util.concurrent.atomic.AtomicReference<>();
+	private int requests;
+	private volatile int newestRequest;
+
 	private static float[] tint(float r, float g, float b)
 	{
 		float luminance = 0.2126f * r + 0.7152f * g + 0.0722f * b;
@@ -88,6 +103,7 @@ class BuildingLights
 		return filledTiles;
 	}
 
+	/** Analyse the scene drawn now, on the worker; the old result is gone at once, the new one comes with apply. */
 	void rebuild()
 	{
 		builtFor = null;
@@ -97,6 +113,7 @@ class BuildingLights
 		coarse = null;
 		filledTiles = null;
 		diagonals.clear();
+		handedFlags = null;
 		if (client.getGameState() != GameState.LOGGED_IN)
 		{
 			return;
@@ -106,32 +123,131 @@ class BuildingLights
 		{
 			return;
 		}
-
-		long start = System.nanoTime();
-		BuildingDetector.Result r = BuildingDetector.detect(scene.getExtendedTileSettings(), scene.getRoofs());
-		coarse = r;
-		findDiagonals(scene);
-		int[][][] flags = collisionFlags();
-		byte[][][] settings = scene.getExtendedTileSettings();
-		WallMap w = WallMap.build(flags, diagonals.values(), settings != null && settings.length > 0 ? settings[0].length : 0,
-			RuneLightPlugin.SCENE_OFFSET, ++wallScene);
-		r = BuildingDetector.split(r, settings, w);
-		RoomMap m = RoomMap.build(r, settings, scene.getTileHeights(), RuneLightPlugin.SCENE_OFFSET);
-		if (m != null)
-		{
-			m.setWalls(w);
-			filledTiles = floorTiles(scene, m.size);
-			m.setFloors(filledTiles);
-		}
-		rooms = m;
-		walls = w;
-		result = r;
 		builtFor = scene;
 		builtBaseX = scene.getBaseX();
 		builtBaseY = scene.getBaseY();
-		log.info("Buildings: {} rooms (roof ids {}, dropped {} small, {} huge) in {} ms",
-			r.rooms.size(), r.usedRoofIds ? "used" : "ignored", r.rejectedSmall, r.rejectedHuge,
-			(System.nanoTime() - start) / 1_000_000.0);
+		int[][][] flags = copy(collisionFlags());
+		handedFlags = flags;
+		int request = newestRequest = ++requests;
+		int wallsScene = ++wallScene;
+		worker.execute(() ->
+		{
+			long start = System.nanoTime();
+			// the scene's tiles are read here, off the client thread: they change only as objects spawn, which the
+			// spawn events follow once the result is taken
+			Map<GameObject, WallMap.Diagonal> found = new IdentityHashMap<>();
+			findDiagonals(scene, found);
+			BuildingDetector.Result r = BuildingDetector.detect(scene.getExtendedTileSettings(), scene.getRoofs());
+			BuildingDetector.Result coarseResult = r;
+			byte[][][] settings = scene.getExtendedTileSettings();
+			WallMap w = WallMap.build(flags, found.values(), settings != null && settings.length > 0 ? settings[0].length : 0,
+				RuneLightPlugin.SCENE_OFFSET, wallsScene);
+			r = BuildingDetector.split(r, settings, w);
+			RoomMap m = RoomMap.build(r, settings, scene.getTileHeights(), RuneLightPlugin.SCENE_OFFSET);
+			byte[] filled = null;
+			if (m != null)
+			{
+				m.setWalls(w);
+				filled = floorTiles(scene, m.size);
+				m.setFloors(filled);
+			}
+			BuildingDetector.Result done = r;
+			byte[] filledDone = filled;
+			log.info("Buildings: {} rooms (roof ids {}, dropped {} small, {} huge) in {} ms (worker)",
+				r.rooms.size(), r.usedRoofIds ? "used" : "ignored", r.rejectedSmall, r.rejectedHuge,
+				(System.nanoTime() - start) / 1_000_000.0);
+			offer(request, () ->
+			{
+				if (builtFor != scene)
+				{
+					return;
+				}
+				// spawns since the hand-off are kept: the analysis' diagonals join them
+				found.putAll(diagonals);
+				diagonals.clear();
+				diagonals.putAll(found);
+				coarse = coarseResult;
+				filledTiles = filledDone;
+				rooms = m;
+				walls = w;
+				result = done;
+			});
+		});
+	}
+
+	private void offer(int request, Runnable apply)
+	{
+		if (request == newestRequest)
+		{
+			pending.set(apply);
+		}
+	}
+
+	/** Take the worker's newest result, if one is waiting: client thread, once a frame before the consumers. */
+	void apply()
+	{
+		Runnable r = pending.getAndSet(null);
+		if (r != null)
+		{
+			r.run();
+		}
+	}
+
+	void shutDown()
+	{
+		worker.shutdownNow();
+	}
+
+	private static int[][][] copy(int[][][] flags)
+	{
+		if (flags == null)
+		{
+			return null;
+		}
+		int[][][] out = new int[flags.length][][];
+		for (int p = 0; p < flags.length; ++p)
+		{
+			if (flags[p] != null)
+			{
+				out[p] = new int[flags[p].length][];
+				for (int x = 0; x < flags[p].length; ++x)
+				{
+					out[p][x] = flags[p][x].clone();
+				}
+			}
+		}
+		return out;
+	}
+
+	private static boolean same(int[][][] a, int[][][] b)
+	{
+		if (a == null || b == null || a.length != b.length)
+		{
+			return a == b;
+		}
+		for (int p = 0; p < a.length; ++p)
+		{
+			if (a[p] == null || b[p] == null)
+			{
+				if (a[p] != b[p])
+				{
+					return false;
+				}
+				continue;
+			}
+			if (a[p].length != b[p].length)
+			{
+				return false;
+			}
+			for (int x = 0; x < a[p].length; ++x)
+			{
+				if (!java.util.Arrays.equals(a[p][x], b[p][x]))
+				{
+					return false;
+				}
+			}
+		}
+		return true;
 	}
 
 	/**
@@ -193,7 +309,7 @@ class BuildingLights
 		}
 	}
 
-	private void findDiagonals(Scene scene)
+	private static void findDiagonals(Scene scene, Map<GameObject, WallMap.Diagonal> into)
 	{
 		Tile[][][] tiles = scene.getExtendedTiles();
 		for (Tile[][] plane : tiles)
@@ -207,7 +323,7 @@ class BuildingLights
 					{
 						for (GameObject go : objects)
 						{
-							addDiagonal(go, tile);
+							addDiagonal(go, tile, into);
 						}
 					}
 				}
@@ -215,7 +331,7 @@ class BuildingLights
 		}
 	}
 
-	private void addDiagonal(GameObject go, Tile tile)
+	private static void addDiagonal(GameObject go, Tile tile, Map<GameObject, WallMap.Diagonal> into)
 	{
 		if (go == null || tile == null || (go.getConfig() & 0x1F) != WallMap.TYPE_DIAGONAL_WALL)
 		{
@@ -233,7 +349,7 @@ class BuildingLights
 				go.getConfig() >> 6 & 3)
 			: WallMap.diagonalOf(null, null, 0, 0, go.getConfig() >> 6 & 3);
 		int offset = RuneLightPlugin.SCENE_OFFSET;
-		diagonals.put(go, new WallMap.Diagonal(go.getPlane(), p.getX() + offset, p.getY() + offset, kind));
+		into.put(go, new WallMap.Diagonal(go.getPlane(), p.getX() + offset, p.getY() + offset, kind));
 	}
 
 	@Subscribe
@@ -241,7 +357,7 @@ class BuildingLights
 	{
 		if (builtFor != null)
 		{
-			addDiagonal(e.getGameObject(), e.getTile());
+			addDiagonal(e.getGameObject(), e.getTile(), diagonals);
 		}
 	}
 
@@ -281,32 +397,59 @@ class BuildingLights
 		}
 		else
 		{
-			// doors open and close
+			// doors open and close: a compare of the collision flags with those last handed over on the client thread
+			// (tens of microseconds), the walls and rooms built again on the worker only when they changed
 			RoomMap m = rooms;
 			WallMap old = walls;
-			if (m != null && old != null && scene != null)
+			BuildingDetector.Result coarseNow = coarse;
+			byte[] filledNow = filledTiles;
+			int[][][] flagsNow = collisionFlags();
+			if (m == null || old == null || scene == null || same(flagsNow, handedFlags))
 			{
-				int[][][] flags = collisionFlags();
-				WallMap w = WallMap.build(flags, diagonals.values(), old.size, old.offset, old.scene);
-				if (!w.sameWalls(old))
-				{
-					walls = w;
-					if (coarse != null)
-					{
-						byte[][][] settings = scene.getExtendedTileSettings();
-						RoomMap n = RoomMap.build(BuildingDetector.split(coarse, settings, w), settings, scene.getTileHeights(),
-							RuneLightPlugin.SCENE_OFFSET);
-						if (n != null)
-						{
-							n.setWalls(w);
-							n.setFloors(filledTiles);
-							rooms = n;
-							return;
-						}
-					}
-					m.setWalls(w);
-				}
+				return;
 			}
+			int[][][] flags = copy(flagsNow);
+			handedFlags = flags;
+			java.util.List<WallMap.Diagonal> diagonalsNow = new java.util.ArrayList<>(diagonals.values());
+			int request = newestRequest = ++requests;
+			Scene sceneNow = scene;
+			worker.execute(() ->
+			{
+				WallMap w = WallMap.build(flags, diagonalsNow, old.size, old.offset, old.scene);
+				if (w.sameWalls(old))
+				{
+					return;
+				}
+				RoomMap n = null;
+				if (coarseNow != null)
+				{
+					byte[][][] settings = sceneNow.getExtendedTileSettings();
+					n = RoomMap.build(BuildingDetector.split(coarseNow, settings, w), settings, sceneNow.getTileHeights(),
+						RuneLightPlugin.SCENE_OFFSET);
+					if (n != null)
+					{
+						n.setWalls(w);
+						n.setFloors(filledNow);
+					}
+				}
+				RoomMap rebuilt = n;
+				offer(request, () ->
+				{
+					if (builtFor != sceneNow || walls != old)
+					{
+						return;
+					}
+					walls = w;
+					if (rebuilt != null)
+					{
+						rooms = rebuilt;
+					}
+					else
+					{
+						m.setWalls(w);
+					}
+				});
+			});
 		}
 	}
 }
