@@ -1,4 +1,6 @@
-package com.midonarhel.runelight;
+package com.midonarhel.runelight.light;
+
+import com.midonarhel.runelight.LayerEase;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
@@ -29,7 +31,7 @@ public class LightLifeTest
 	@Test
 	public void plainLightIsThereAtOnceAndStays()
 	{
-		LightLife life = new LightLife(def(), true);
+		LightLife life = new LightLife(def(), true, 0);
 		life.update(true, 0);
 		assertTrue(life.visible());
 		assertEquals(1, life.brightness(), EPS);
@@ -44,7 +46,7 @@ public class LightLifeTest
 		LightDefinition d = def();
 		d.spawnDelay = 500;
 		d.fadeInDuration = 200;
-		LightLife life = new LightLife(d, true);
+		LightLife life = new LightLife(d, true, 0);
 		run(life, true, 0.3f);
 		assertFalse(life.visible());
 		run(life, true, 0.3f);
@@ -60,7 +62,7 @@ public class LightLifeTest
 	{
 		LightDefinition d = def();
 		d.fadeInDuration = 500;
-		LightLife life = new LightLife(d, false);
+		LightLife life = new LightLife(d, false, 0);
 		life.update(true, 0);
 		assertEquals(1, life.brightness(), EPS);
 	}
@@ -71,7 +73,7 @@ public class LightLifeTest
 		LightDefinition d = def();
 		d.despawnDelay = 400;
 		d.fadeOutDuration = 200;
-		LightLife life = new LightLife(d, false);
+		LightLife life = new LightLife(d, false, 0);
 		run(life, true, 1);
 		run(life, false, 0.2f);
 		assertTrue(life.visible());
@@ -90,7 +92,7 @@ public class LightLifeTest
 		LightDefinition d = def();
 		d.despawnDelay = 5000;
 		d.despawnWithParent = true;
-		LightLife life = new LightLife(d, false);
+		LightLife life = new LightLife(d, false, 0);
 		run(life, true, 1);
 		life.update(false, 0.01f);
 		assertFalse(life.visible());
@@ -103,7 +105,7 @@ public class LightLifeTest
 		d.spawnDelay = 100;
 		d.despawnDelay = 400;
 		d.fixedDespawnTime = true;
-		LightLife life = new LightLife(d, false);
+		LightLife life = new LightLife(d, false, 0);
 		run(life, true, 0.3f);
 		assertTrue(life.visible());
 		// the parent is still there at 0.5 s, and the light is gone
@@ -118,7 +120,7 @@ public class LightLifeTest
 		LightDefinition d = def();
 		d.animationIds = new int[]{7};
 		d.despawnDelay = 100;
-		LightLife life = new LightLife(d, false);
+		LightLife life = new LightLife(d, false, 0);
 		run(life, false, 1);
 		assertFalse(life.visible());
 		assertFalse(life.over(false));
@@ -135,7 +137,7 @@ public class LightLifeTest
 	@Test
 	public void hidingFadesTheLightOutAndBackIn()
 	{
-		LightLife life = new LightLife(def(), false);
+		LightLife life = new LightLife(def(), false, 0);
 		run(life, true, 1);
 		life.hide(true, false);
 		assertEquals(1, life.brightness(), EPS);
@@ -154,10 +156,23 @@ public class LightLifeTest
 	@Test
 	public void changingPlanesHidesWithoutAFade()
 	{
-		LightLife life = new LightLife(def(), false);
+		LightLife life = new LightLife(def(), false, 0);
 		run(life, true, 1);
 		life.hide(true, true);
 		assertFalse(life.visible());
 		assertEquals(0, life.brightness(), EPS);
+	}
+
+	@Test
+	public void aLightPlacedAfterItsSceneEasesIn()
+	{
+		long placed = System.nanoTime();
+		LightLife life = new LightLife(def(), false, placed);
+		run(life, true, 1);
+		// at most 8 % in the first frames, all of it after LayerEase's 0.3 s
+		assertTrue(life.brightness() < 0.08f);
+		LightLife long_ago = new LightLife(def(), false, placed - 2 * LayerEase.NANOS);
+		run(long_ago, true, 1);
+		assertEquals(1, long_ago.brightness(), EPS);
 	}
 }

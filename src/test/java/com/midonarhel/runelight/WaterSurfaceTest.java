@@ -45,6 +45,9 @@ public class WaterSurfaceTest
 			}
 			swamp += t == WaterMap.SWAMP ? 1 : 0;
 			fresh += t == WaterMap.FRESH ? 1 : 0;
+			// only the water tiles are drawn on the screen; the land around them is for the wave maps alone
+			boolean water = y == 30 && (x == 20 || x == 21);
+			assertEquals(water ? 0 : WaterSurface.LAND, m.tiles[i * 4 + 3] & WaterSurface.LAND);
 		}
 		assertEquals(12, swamp + fresh);
 	}

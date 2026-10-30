@@ -78,6 +78,11 @@ import com.midonarhel.runelight.dev.FrameSnapshot;
 import com.midonarhel.runelight.dev.HitchMonitor;
 import com.midonarhel.runelight.dev.LookMonitor;
 import com.midonarhel.runelight.dev.ShaderWatcher;
+import com.midonarhel.runelight.light.LampWalls;
+import com.midonarhel.runelight.light.LightClusters;
+import com.midonarhel.runelight.light.PointLight;
+import com.midonarhel.runelight.light.RoomLight;
+import com.midonarhel.runelight.light.SceneLights;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -363,6 +368,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 			strikeLight, sunAltitude, overcast, weatherLight;
 		int shadowsEnabled, lightProjRel, shadowRadius, shadowDepthRange, shadowMapSize;
 		int pointLights, roomHeader, interiorTint, skylightOn;
+		final LampWalls.Uniforms lampWalls = new LampWalls.Uniforms();
 		int skyVoid, drawDistance, expandedChunks, clientSkyColor;
 		int lightningBolt, volumetricFog;
 		final FrameUniforms frame = new FrameUniforms();
@@ -425,52 +431,19 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 	private static final int SHADOW_MAX_UNIT = RuneLightPlugin.COMPOSITE_TEXTURE_UNIT + 22;
 	private static final int LIGHT_DATA_UNIT = RuneLightPlugin.COMPOSITE_TEXTURE_UNIT + 6;
 	private static final int CLUSTER_DATA_UNIT = RuneLightPlugin.COMPOSITE_TEXTURE_UNIT + 7;
-	// the light map (LightMapTexture)
-	private static final int LIGHT_MAP_UNIT = RuneLightPlugin.COMPOSITE_TEXTURE_UNIT + 21;
+	// the rooms (RoomTexture)
+	private static final int ROOM_TEXELS_UNIT = RuneLightPlugin.COMPOSITE_TEXTURE_UNIT + 20;
 	// the fog as marched at quarter resolution, read by its upsample
 	// the clouds at half resolution, which the composite's sky filters (composite_frag.glsl)
 	private static final int CLOUD_HALF_UNIT = RuneLightPlugin.COMPOSITE_TEXTURE_UNIT + 23;
 
 	private final LightClusters lightClusters = new LightClusters();
-	// the static lights baked into per-storey maps (LightMap), which the composite, the fog and the weather read from
-	// B3: the light map's blocks reach the GPU a few per frame within a time budget, never a burst on the load frame
-	// (24 blocks and 1 ms before 2026-10-30: the glTexSubImage3D burst was 30+ ms of each region load's hitch)
-	private static final int LIGHT_MAP_BLOCKS_PER_FRAME = 2;
-	// more are sent in a frame while the sending has taken less than this, up to the most (a scene load has hundreds)
-	private static final long LIGHT_MAP_SEND_BUDGET_NANOS = 400_000;
-	private static final int LIGHT_MAP_BLOCKS_MAX = 96;
-	private final LightMap lightMap = new LightMap(LightMap.defaultThreads(), LightMap.burstThreads());
-	private final LightMapTexture lightMapTexture = new LightMapTexture();
-	// how much light each building room gets and the fill it lacks (RoomLight); it reads the blocks sent to the texture
+	// the walls that stop the lamps, and the rooms (for their fill and the puddles), on the GPU
+	private final LampWalls lampWalls = new LampWalls();
+	private final RoomTexture roomTexture = new RoomTexture();
+	// how much light each building room gets and the fill it lacks (RoomLight)
 	private final RoomLight roomLight = new RoomLight();
-	private final LightMap.Sink lightMapSink = new LightMap.Sink()
-	{
-		@Override
-		public void block(int plane, int bx, int bz, byte[] vis, byte[] index)
-		{
-			lightMapTexture.block(plane, bx, bz, vis, index);
-		}
-
-		@Override
-		public void floor(int plane, int bx, int bz, float[] floor)
-		{
-			roomLight.floor(plane, bx, bz, floor);
-		}
-	};
-	private int roomLightTexture;
 	private long roomLightNanos;
-	// what the light map was last given to stop light, and what that was made from
-	private LightBlockers lightBlockers;
-	// the Dump scene checkbox was ticked; set on the config thread, taken by the next frame
-	private volatile boolean dumpSceneRequested;
-	private WallMap blockerWalls;
-	private ModelBlockers blockerModels;
-	private RoomMap blockerRooms;
-	private byte[] blockerFloors;
-	// the map carries the static lights this frame
-	private boolean frameLightMap;
-	// the voxel build is wanted for the models the light map is stopped by
-	private boolean frameLightMapWanted;
 	private final OpenRooms openRooms = new OpenRooms();
 	// repeating errors are logged once per interval
 	private final LogLimiter logLimiter = new LogLimiter(10_000);
@@ -478,8 +451,13 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 	public final HitchMonitor hitchMonitor = new HitchMonitor();
 	private final java.util.ArrayList<PointLight> frameLights = new java.util.ArrayList<>();
 	private final PointLight testLight = new PointLight();
+	// lamp.glsl's lampWallsHeader with no walls bound
+	private static final float[] NO_WALLS = {0, 0, 0, 0, 1};
 	private int uniAlphaPass;
 	private int uniSceneOutdoors;
+	// the lamps on the transparent faces (frag.glsl's alpha pass)
+	private int uniScenePointLights;
+	private final LampWalls.Uniforms sceneLampWalls = new LampWalls.Uniforms();
 	private int uniSceneProceduralSky;
 	private int uniSceneCasterDir;
 	private int uniSceneSunIsCaster, uniSceneStrikeLight;
@@ -835,6 +813,8 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		clientUploader = new SceneUploader(renderCallbackManager);
 		mapUploader = new SceneUploader(renderCallbackManager);
 		sceneLoader = new SceneLoader(this, client, clientThread, config, loadReport, renderCallbackManager);
+		// the lights of a scene's objects are placed from the scene jobs, not in the client's event posts
+		sceneLights.setJobs(sceneJobs());
 		clientThread.invoke(() ->
 		{
 			try
@@ -988,7 +968,6 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 			sceneLights = null;
 		}
 		overlayManager.remove(buildingOverlay);
-		lightMap.free();
 		hitchMonitor.stop();
 		if (weatherAudio != null)
 		{
@@ -1028,7 +1007,8 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 				skyField.free();
 				roomLight.free();
 				lightClusters.free();
-				lightMapTexture.free();
+				lampWalls.free();
+				roomTexture.free();
 				volumetricFog.free();
 				clouds.free();
 				water.free();
@@ -1084,16 +1064,6 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		if (configChanged.getGroup().equals(RuneLightConfig.GROUP))
 		{
 			glErrorChecks = config.glErrorChecks();
-			if (configChanged.getKey().equals("dumpScene"))
-			{
-				if (config.dumpScene())
-				{
-					// written in the next frame, which has the scene's buffers and the light map's inputs
-					dumpSceneRequested = true;
-					configManager.setConfiguration(RuneLightConfig.GROUP, "dumpScene", false);
-				}
-				return;
-			}
 			if (configChanged.getKey().equals("strikeLightning"))
 			{
 				if (config.strikeLightning())
@@ -1162,7 +1132,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 				setupGpuFlags();
 			}
 			else if (configChanged.getKey().equals("uiScalingMode") || configChanged.getKey().equals("colorBlindMode")
-				|| configChanged.getKey().equals("debugView") || configChanged.getKey().equals("lightMap"))
+				|| configChanged.getKey().equals("debugView"))
 			{
 				clientThread.invokeLater(() ->
 				{
@@ -1282,11 +1252,8 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 						+ "#define CLUSTER_NEAR " + LightClusters.NEAR + "\n"
 						+ "#define CLUSTER_FAR " + LightClusters.FAR + "\n"
 						+ "#define ROOM_FILL_BASE " + LightClusters.ROOM_FILL_BASE + "\n"
-						+ "#define ROOM_BASE " + LightClusters.ROOM_BASE + "\n"
-						+ "#define LIGHT_MAP_TABLE_BASE " + LightClusters.LIGHT_MAP_TABLE_BASE + "\n";
-				case "light_map_config":
-					return "#define LIGHT_MAP_LAYERS " + LightMapBake.HEIGHT_LAYERS + "\n"
-						+ "#define LIGHT_MAP_LAYER_HEIGHT " + (float) LightMapBake.LAYER_HEIGHT + "\n";
+						+ "#define LAMP_WALLS_BASE " + LightClusters.LAMP_WALLS_BASE + "\n"
+						+ "#define LAMP_WALL_LAYER_TEXELS " + LampWalls.LAYER_TEXELS + "\n";
 				case "composite_mode":
 					// Compile out the diagnostic branches and intermediate samplers in normal rendering.
 					// Changing this diagnostic property requires a shader reload.
@@ -1341,7 +1308,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		water.setSurfaceProgram(WaterSurface.PROGRAM.compile(template), COMPOSITE_TEXTURE_UNIT + 2, WATER_DATA_UNIT,
 			WATER_NOISE_UNIT, WATER_CONTACT_UNIT, WATER_WAVES_UNIT_A, WATER_WAVES_UNIT_B);
 		weather.setPrograms(weather.compile(template), COMPOSITE_TEXTURE_UNIT, MATERIAL_UNIT, WEATHER_OCCLUSION_UNIT, SHADOW_COMPARE_UNIT, ALPHA_LAYER_UNIT,
-			LIGHT_DATA_UNIT, CLUSTER_DATA_UNIT, WATER_DATA_UNIT, WEATHER_FIELD_UNIT, LIGHT_MAP_UNIT);
+			LIGHT_DATA_UNIT, CLUSTER_DATA_UNIT, WATER_DATA_UNIT, WEATHER_FIELD_UNIT);
 		skyCache.setPrograms(skyCache.compile(template), CLOUD_NOISE_UNIT, WEATHER_SKY_UNIT, SKY_CACHE_UNIT);
 		upscaler.setProgram(Upscaler.PROGRAM.compile(template));
 
@@ -1382,6 +1349,11 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 
 		uniAlphaPass = glGetUniformLocation(glProgram, "alphaPass");
 		uniSceneOutdoors = glGetUniformLocation(glProgram, "outdoors");
+		uniScenePointLights = glGetUniformLocation(glProgram, "pointLightsEnabled");
+		sceneLampWalls.locate(glProgram);
+		glUseProgram(glProgram);
+		glUniform1i(glGetUniformLocation(glProgram, "lightData"), LIGHT_DATA_UNIT);
+		glUniform1i(glGetUniformLocation(glProgram, "clusterData"), CLUSTER_DATA_UNIT);
 		uniSceneProceduralSky = glGetUniformLocation(glProgram, "proceduralSky");
 		uniSceneCasterDir = glGetUniformLocation(glProgram, "casterDir");
 		uniSceneSunIsCaster = glGetUniformLocation(glProgram, "sunIsCaster");
@@ -1474,6 +1446,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		c.shadowMapSize = glGetUniformLocation(p, "shadowMapSize");
 		c.pointLights = glGetUniformLocation(p, "pointLightsEnabled");
 		c.roomHeader = glGetUniformLocation(p, "roomHeader");
+		c.lampWalls.locate(p);
 		c.interiorTint = glGetUniformLocation(p, "interiorTint");
 		c.skylightOn = glGetUniformLocation(p, "skylightOn");
 		c.skyVoid = glGetUniformLocation(p, "skyVoid");
@@ -1499,7 +1472,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		glUniform1i(glGetUniformLocation(p, "shadowCompare"), SHADOW_COMPARE_UNIT);
 		glUniform1i(glGetUniformLocation(p, "lightData"), LIGHT_DATA_UNIT);
 		glUniform1i(glGetUniformLocation(p, "clusterData"), CLUSTER_DATA_UNIT);
-		glUniform1i(glGetUniformLocation(p, "lightMap"), LIGHT_MAP_UNIT);
+		glUniform1i(glGetUniformLocation(p, "roomTexels"), ROOM_TEXELS_UNIT);
 		glUniform1i(glGetUniformLocation(p, "cloudHalf"), CLOUD_HALF_UNIT);
 		glUniform1i(glGetUniformLocation(p, "sceneAlpha"), ALPHA_LAYER_UNIT);
 		glUniform1i(glGetUniformLocation(p, "sceneMaterial"), MATERIAL_UNIT);
@@ -1514,7 +1487,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 	private void setFogProgram(int program)
 	{
 		volumetricFog.setProgram(program, COMPOSITE_TEXTURE_UNIT + 2, SHADOW_COMPARE_UNIT, LIGHT_DATA_UNIT,
-			CLUSTER_DATA_UNIT, FOG_NOISE_UNIT, WEATHER_FIELD_UNIT, WATER_DATA_UNIT, FOG_GROUND_UNIT, FOG_GROUND_PREV_UNIT, LIGHT_MAP_UNIT);
+			CLUSTER_DATA_UNIT, FOG_NOISE_UNIT, WEATHER_FIELD_UNIT, WATER_DATA_UNIT, FOG_GROUND_UNIT, FOG_GROUND_PREV_UNIT);
 	}
 
 	private static void bindSceneSamplers(int program)
@@ -1648,7 +1621,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		water.setSurfaceProgram(waterSurface, COMPOSITE_TEXTURE_UNIT + 2, WATER_DATA_UNIT, WATER_NOISE_UNIT,
 			WATER_CONTACT_UNIT, WATER_WAVES_UNIT_A, WATER_WAVES_UNIT_B);
 		weather.setPrograms(weatherPrograms, COMPOSITE_TEXTURE_UNIT, MATERIAL_UNIT, WEATHER_OCCLUSION_UNIT, SHADOW_COMPARE_UNIT, ALPHA_LAYER_UNIT,
-			LIGHT_DATA_UNIT, CLUSTER_DATA_UNIT, WATER_DATA_UNIT, WEATHER_FIELD_UNIT, LIGHT_MAP_UNIT);
+			LIGHT_DATA_UNIT, CLUSTER_DATA_UNIT, WATER_DATA_UNIT, WEATHER_FIELD_UNIT);
 		skyCache.setPrograms(skyCachePrograms, CLOUD_NOISE_UNIT, WEATHER_SKY_UNIT, SKY_CACHE_UNIT);
 		upscaler.setProgram(upscale);
 		initUniforms();
@@ -2111,6 +2084,12 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		// Enable depth testing
 		glDepthFunc(GL_GREATER);
 		glEnable(GL_DEPTH_TEST);
+
+		// the lamps before the scene: its transparent faces are lit as they are drawn (frag.glsl)
+		prepareLamps();
+		glUseProgram(glProgram);
+		glUniform1i(uniScenePointLights, framePointLights ? 1 : 0);
+		sceneLampWalls.apply(frameLightClusters ? lampWalls.header() : NO_WALLS);
 
 		drawSkybox(scene, sky, cameraX, cameraY, cameraZ);
 
@@ -3054,21 +3033,24 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		glUniform1f(u.halfRatio, sceneTargets.getHalfRatio());
 	}
 
-	/**
-	 * Bind the shadow map, and gather, cull, upload and bind this frame's point lights and rooms: for the composite and
-	 * the fog.
-	 */
+	/** Bind the shadow map for the composite and the fog, once it is drawn. */
 	private void prepareLighting()
 	{
 		if (frameShadows && shadowMap.isInitialized())
 		{
 			shadowMap.bindForSampling(SHADOW_RAW_UNIT, SHADOW_COMPARE_UNIT);
 		}
+	}
 
+	/**
+	 * Gather, cull, upload and bind this frame's lamps, the walls that stop them and the rooms, before the scene is
+	 * drawn: for its transparent faces, the composite, the fog, the weather and the water.
+	 */
+	private void prepareLamps()
+	{
 		boolean points = config.pointLights();
-		BuildingLights buildingRooms = buildingLights;
-		// the light map needs the rooms' floors, to know which storey a surface is on
-		RoomMap rooms = buildingRooms != null ? buildingRooms.getRooms() : null;
+		BuildingLights buildings = buildingLights;
+		RoomMap rooms = buildings != null ? buildings.getRooms() : null;
 		volumetricFog.rooms = rooms;
 		volumetricFog.openRooms = null;
 		framePointLights = points;
@@ -3087,36 +3069,38 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 			else
 			{
 				frameLights.clear();
-				frameLightMap = false;
 			}
 			cpuTimer.end(CpuTimer.LIGHTS);
-			lightClusters.setRooms(rooms);
+			lampWalls.update(points && buildings != null ? buildings.getWalls() : null, rooms,
+				buildings != null ? buildings.getFloors() : null);
+			lightClusters.setWalls(lampWalls);
+			roomTexture.update(rooms);
 			updateRoomLight(config.interiorBrightness() > 0 ? rooms : null);
-			lightClusters.setLightMap(frameLightMap ? lightMap : null);
+			// the fog comes back into the rooms whose roof the client hides
 			SceneContext roofCtx = root;
-			boolean openRoofs = frameFog && rooms != null && roofCtx != null;
-			if (openRoofs)
+			if (frameFog && rooms != null && roofCtx != null)
 			{
-				openRooms.update(buildingRooms.getResult(), roofCtx.hideRoofIds, roofCtx.level);
+				openRooms.update(buildings.getResult(), roofCtx.hideRoofIds, roofCtx.level);
+				volumetricFog.openRooms = openRooms.count() > 0 ? openRooms : null;
 			}
-			openRoofs = openRoofs && openRooms.count() > 0;
-			lightClusters.setOpenRooms(openRoofs ? openRooms : null);
-			volumetricFog.openRooms = openRoofs ? openRooms : null;
 			cpuTimer.begin(CpuTimer.CLUSTERS);
 			// the fog integrates the lights along each pixel's ray from per-column lists
 			lightClusters.setFog(frameFog, volumetricFog.getCenterX() - frameCameraX,
 				volumetricFog.getCenterZ() - frameCameraZ, volumetricFog.getRadius(),
 				volumetricFog.getTop() - frameCameraY, volumetricFog.getMinGlow());
 			lightClusters.cull(frameLights, frameViewProj, frameCameraX, frameCameraY, frameCameraZ);
+			if (lightClusters.getOverflows() > 0 && logLimiter.check("lightClusterOverflow") >= 0)
+			{
+				// each one left its least important lights out there (LightClusters.MAX_LIGHTS_PER_CLUSTER)
+				log.info("Light clusters: {} lamp listings over the cap of {} a cluster", lightClusters.getOverflows(),
+					LightClusters.MAX_LIGHTS_PER_CLUSTER);
+			}
 			cpuTimer.end(CpuTimer.CLUSTERS);
 			cpuTimer.begin(CpuTimer.LIGHT_UPLOAD);
 			lightClusters.upload();
 			cpuTimer.end(CpuTimer.LIGHT_UPLOAD);
 			lightClusters.bind(LIGHT_DATA_UNIT, CLUSTER_DATA_UNIT);
-			if (frameLightMap)
-			{
-				lightMapTexture.bind(LIGHT_MAP_UNIT);
-			}
+			roomTexture.bind(ROOM_TEXELS_UNIT);
 		}
 	}
 
@@ -3130,74 +3114,23 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		float dt = roomLightNanos == 0 ? 0 : Math.min((now - roomLightNanos) / 1e9f, 0.5f);
 		roomLightNanos = now;
 		BuildingLights buildings = buildingLights;
+		SceneLights lights = sceneLights;
 		roomLight.setRooms(rooms);
 		if (rooms != null && buildings != null)
 		{
 			roomLight.followWalls(buildings.getWalls(), buildings.getFloors(), SKYLIGHT_REACH);
+			// the rooms' lamps are the fixed ones, as they are now; with no lamps on, none
+			roomLight.followLamps(out ->
+			{
+				if (framePointLights && lights != null)
+				{
+					lights.steadyLamps(out);
+				}
+			}, buildings.getWalls(), dt);
 		}
 		float target = frameOutdoors ? RoomLight.target(dayCycle.sunAltitude, config.interiorBrightness() / 100f) : 0;
 		roomLight.update(dt, target, dayCycle.sunAltitude);
 		lightClusters.setRoomFill(rooms != null ? roomLight : null);
-	}
-
-	/**
-	 * Give the light map the scene's walls, solid objects and models, the time of day and the view, and send the blocks
-	 * it has baked. Before the lights are collected: the ones it carries leave the list.
-	 *
-	 * @return whether the map carries the static lights this frame
-	 */
-	private boolean updateLightMap(float night)
-	{
-		BuildingLights b = buildingLights;
-		WallMap walls = b != null ? b.getWalls() : null;
-		RoomMap built = b != null ? b.getRooms() : null;
-		byte[] floors = b != null ? b.getFloors() : null;
-		frameLightMapWanted = config.pointLights();
-		SceneLights lights = sceneLights;
-		if (lights == null)
-		{
-			return false;
-		}
-		if (!frameLightMapWanted || walls == null || built == null || floors == null)
-		{
-			lights.setLightMap(null);
-			if (!frameLightMapWanted)
-			{
-				lightMapTexture.free();
-			}
-			roomLight.setCells(0);
-			return false;
-		}
-		cpuTimer.begin(CpuTimer.LIGHT_MAP);
-		// a scene's models are not the previous scene's: the lights wait for them a moment (LightMap.setBlockers)
-		boolean modelsAwaited = voxelBuilder.modelsAwaited();
-		ModelBlockers models = modelsAwaited ? null : voxelBuilder.getModelBlockers();
-		if (walls != blockerWalls || models != blockerModels || built != blockerRooms || floors != blockerFloors)
-		{
-			lightBlockers = new LightBlockers(walls, models, built.floors, floors);
-			blockerWalls = walls;
-			blockerModels = models;
-			blockerRooms = built;
-			blockerFloors = floors;
-		}
-		lightMap.setBlockers(lightBlockers, modelsAwaited);
-		lightMap.setNight(night);
-		lightMap.setFocus(edgeFade.focalX, edgeFade.focalZ);
-		boolean ready = lightMapTexture.ensure(lightMap.cells());
-		if (lightMapTexture.generation() != roomLightTexture)
-		{
-			// a new, empty texture
-			roomLightTexture = lightMapTexture.generation();
-			roomLight.clearLight();
-		}
-		roomLight.setCells(ready ? lightMap.cells() : 0);
-		if (ready)
-		{
-			lightMap.update(LIGHT_MAP_BLOCKS_PER_FRAME, LIGHT_MAP_SEND_BUDGET_NANOS, LIGHT_MAP_BLOCKS_MAX, lightMapSink);
-		}
-		cpuTimer.end(CpuTimer.LIGHT_MAP);
-		lights.setLightMap(ready ? lightMap : null);
-		return ready;
 	}
 
 	/**
@@ -3241,12 +3174,14 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 
 		if (frameLightClusters)
 		{
-			glUniform3fv(c.roomHeader, lightClusters.getRoomHeader());
+			glUniform3fv(c.roomHeader, roomTexture.header());
+			c.lampWalls.apply(lampWalls.header());
 		}
 		else
 		{
-			// nothing bound: no rooms
+			// nothing bound: no rooms, no walls
 			glUniform3f(c.roomHeader, 0, 0, 0);
+			c.lampWalls.apply(NO_WALLS);
 		}
 		glUniform1i(c.pointLights, framePointLights ? 1 : 0);
 		glUniform1i(c.skylightOn, frameSkylight ? 1 : 0);
@@ -3279,13 +3214,6 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		// 0 by day, 1 once the sun is well below the horizon
 		float t = Math.max(0, Math.min(1, (-2 - dayCycle.sunAltitude) / 8));
 		float night = frameOutdoors ? t * t * (3 - 2 * t) : 1;
-		// the light map takes the static lights' place
-		frameLightMap = updateLightMap(night);
-		if (dumpSceneRequested)
-		{
-			dumpSceneRequested = false;
-			dumpScene(night);
-		}
 		SceneLights lights = sceneLights;
 		if (lights != null)
 		{
@@ -3303,142 +3231,8 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 				float ground = Perspective.getTileHeight(client, lp, client.getTopLevelWorldView().getPlane());
 				// a little above head height (y points down), warm like a torch, reaching about 5 tiles
 				frameLights.add(testLight.set(lp.getX(), ground - 250, lp.getY(), 5 * Perspective.LOCAL_TILE_SIZE,
-					1.0f, 0.72f, 0.42f, 6f));
+					1.0f, 0.72f, 0.42f, 6f).onPlane(client.getTopLevelWorldView().getPlane()));
 			}
-		}
-	}
-
-	// zones either side of the player's that the scene dump holds the models of
-	private static final int DUMP_ZONES = 3;
-	// opens a scene dump, which is a gzip stream
-	private static final int SCENE_DUMP_MAGIC = 0x524c4433;
-
-	/**
-	 * Write what the light map is made from around the player to a file (Dump scene): the zones' vertices as drawn, the
-	 * blockers (walls, models, floors), every light, the camera and the time of day. Read back offline. A gzip stream of,
-	 * in order: the magic, the player's storey and local x and z, the scene's min, current and max level, the camera's
-	 * position, the viewport's size and the view-projection (without the camera's translation), the night, whether it is
-	 * outdoors, the sun's altitude, whether it casts, the sun's, the moon's and the caster's direction, the focal point,
-	 * the light map's blockers (LightBlockers.write), the lights (SceneLights.write), the zones' vertices, the water
-	 * (whether there is any, then WaterMap.write) and the player's model as drawn (its local x, y and z, the count of
-	 * its vertices, then each as ModelUploader.uploadTempModel packs it).
-	 */
-	private void dumpScene(float night)
-	{
-		Player player = client.getLocalPlayer();
-		SceneContext ctx = root;
-		LightBlockers blockers = lightBlockers;
-		if (player == null || ctx == null || blockers == null || sceneLights == null)
-		{
-			log.warn("Scene dump: there is no scene with a light map to write yet");
-			return;
-		}
-		Path file = RuneLite.RUNELITE_DIR.toPath().resolve("runelight-dumps")
-			.resolve(DateTimeFormatter.ofPattern("yyyyMMdd-HHmmss").format(LocalDateTime.now()) + ".bin.gz");
-		int offset = SCENE_OFFSET >> 3;
-		LocalPoint lp = player.getLocalLocation();
-		try
-		{
-			Files.createDirectories(file.getParent());
-			try (DataOutputStream out = new DataOutputStream(new BufferedOutputStream(new GZIPOutputStream(Files.newOutputStream(file)))))
-			{
-				out.writeInt(SCENE_DUMP_MAGIC);
-				out.writeInt(player.getWorldLocation().getPlane());
-				out.writeInt(lp.getX());
-				out.writeInt(lp.getY());
-				out.writeInt(ctx.minLevel);
-				out.writeInt(ctx.level);
-				out.writeInt(ctx.maxLevel);
-				out.writeFloat(frameCameraX);
-				out.writeFloat(frameCameraY);
-				out.writeFloat(frameCameraZ);
-				out.writeInt(client.getViewportWidth());
-				out.writeInt(client.getViewportHeight());
-				for (float f : frameViewProj)
-				{
-					out.writeFloat(f);
-				}
-				out.writeFloat(night);
-				out.writeBoolean(frameOutdoors);
-				out.writeFloat(dayCycle.sunAltitude);
-				out.writeBoolean(dayCycle.sunIsCaster);
-				for (float[] v : new float[][]{dayCycle.sunDir, dayCycle.moonDir, dayCycle.casterDir})
-				{
-					for (float f : v)
-					{
-						out.writeFloat(f);
-					}
-				}
-				out.writeFloat(edgeFade.focalX);
-				out.writeFloat(edgeFade.focalZ);
-				blockers.write(out);
-				sceneLights.write(out);
-				int px = (lp.getX() >> 10) + offset, pz = (lp.getY() >> 10) + offset;
-				List<int[]> zones = new ArrayList<>();
-				List<ByteBuffer> vertices = new ArrayList<>();
-				for (int x = Math.max(0, px - DUMP_ZONES); x <= Math.min(ctx.sizeX - 1, px + DUMP_ZONES); ++x)
-				{
-					for (int z = Math.max(0, pz - DUMP_ZONES); z <= Math.min(ctx.sizeZ - 1, pz + DUMP_ZONES); ++z)
-					{
-						ByteBuffer v = ctx.zones[x][z].initialized
-							? ctx.zones[x][z].readOpaque(ctx.minLevel, ctx.level, ctx.maxLevel, ctx.hideRoofIds) : null;
-						if (v != null && v.remaining() > 0)
-						{
-							zones.add(new int[]{x - offset, z - offset});
-							vertices.add(v);
-						}
-					}
-				}
-				out.writeInt(zones.size());
-				for (int i = 0; i < zones.size(); ++i)
-				{
-					out.writeInt(zones.get(i)[0]);
-					out.writeInt(zones.get(i)[1]);
-					ByteBuffer v = vertices.get(i);
-					out.writeInt(v.remaining());
-					byte[] bytes = new byte[v.remaining()];
-					v.get(bytes);
-					out.write(bytes);
-				}
-				WaterMap waterMap = water.map();
-				out.writeBoolean(waterMap != null);
-				if (waterMap != null)
-				{
-					waterMap.write(out);
-				}
-				writePlayer(out, player, ctx);
-			}
-			log.info("Scene dump written to {}", file);
-		}
-		catch (IOException e)
-		{
-			log.warn("Scene dump to {} failed", file, e);
-		}
-	}
-
-	/**
-	 * The local player's model where and as it is drawn: its position, then its vertices (none without a model).
-	 */
-	private void writePlayer(DataOutputStream out, Player player, SceneContext ctx) throws IOException
-	{
-		LocalPoint lp = player.getLocalLocation();
-		int y = Perspective.getTileHeight(client, lp, client.getTopLevelWorldView().getPlane());
-		out.writeInt(lp.getX());
-		out.writeInt(y);
-		out.writeInt(lp.getY());
-		Model model = player.getModel();
-		if (model == null)
-		{
-			out.writeInt(0);
-			return;
-		}
-		IntBuffer buffer = BufferUtils.createIntBuffer(model.getFaceCount() * 3 * (VAO.VERT_SIZE >> 2));
-		int vertices = new ModelUploader().uploadTempModel(model, player.getCurrentOrientation(), lp.getX(), y, lp.getY(),
-			ctx.cameraX, ctx.cameraY, ctx.cameraZ, buffer, 0);
-		out.writeInt(vertices);
-		for (int i = 0; i < vertices * (VAO.VERT_SIZE >> 2); ++i)
-		{
-			out.writeInt(buffer.get(i));
 		}
 	}
 
@@ -3561,7 +3355,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		try
 		{
 			int builds = voxelBuilder.builds();
-			voxelBuilder.prepare(frameSkylightWanted || frameLightMapWanted, scene, root != null ? root.zones : null, clientUploader.water);
+			voxelBuilder.prepare(frameSkylightWanted, scene, root != null ? root.zones : null, clientUploader.water);
 			if (builds != voxelBuilder.builds())
 			{
 				hitchMonitor.job(HitchMonitor.VOXEL_BUILD);
@@ -3714,9 +3508,8 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 				frameViewProj, frameInvViewProj, frameViewport, glCapabilities.OpenGL45,
 				frameCameraX, frameCameraY, frameCameraZ, (System.currentTimeMillis() - startMillis) / 1000f,
 				fogSun, proceduralSky(), frameSkyColor, dayCycle, fogShadows,
-				config.pointLights() && lightClusters.isInitialized()
-					&& (lightClusters.hasFogLights() || frameLightMap && lightMap.hasLive()),
-				lightClusters.getRoomHeader());
+				config.pointLights() && lightClusters.isInitialized() && lightClusters.hasFogLights(),
+				lampWalls.header());
 		}
 		// the AO, the shadows and the fog's sun shafts are all dithered: smoothed together at half resolution before
 		// the composite upsamples them
@@ -3834,7 +3627,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 				frameCameraX, frameCameraY, frameCameraZ, dayCycle, water, config,
 				WEATHER_OCCLUSION_UNIT,
 				config.pointLights() && lightClusters.isInitialized(),
-				lightClusters.getRoomHeader(), frameDrawDistance,
+				lampWalls.header(), frameDrawDistance,
 				wadeSteps.steps(frameCameraX, frameCameraZ));
 			glViewport(0, 0, sceneWidth, sceneHeight);
 		}
@@ -3860,7 +3653,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		glActiveTexture(GL_TEXTURE0);
 		ShadowMap.unbind(SHADOW_RAW_UNIT, SHADOW_COMPARE_UNIT);
 		LightClusters.unbind(LIGHT_DATA_UNIT, CLUSTER_DATA_UNIT);
-		LightMapTexture.unbind(LIGHT_MAP_UNIT);
+		RoomTexture.unbind(ROOM_TEXELS_UNIT);
 		glActiveTexture(GL_TEXTURE0 + ALPHA_LAYER_UNIT);
 		glBindTexture(GL_TEXTURE_2D, 0);
 		sceneTargets.unbindMaterial(MATERIAL_UNIT);

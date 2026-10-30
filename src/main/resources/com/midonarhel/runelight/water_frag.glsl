@@ -42,20 +42,12 @@ flat in int vSlot;
 layout(location = 0) out uvec4 WaterOut;  // 64 bits packed, see water.glsl's waterUnpack
 layout(location = 1) out vec4 WaveOut;    // the wave map: slope xy, foam
 
-// along the wind the waves are this much longer than across it
-#define WAVE_STRETCH 1.35
-// still water (no flow) runs its waves and its detail this many times slower, and drifts less with the wind
-#define STILL_SLOW 1.25
+// still water (no flow) drifts less with the wind
 #define STILL_DRIFT 0.4
-// the sea's still water less so
+// the sea's still water runs as fast as running water's (STILL_SLOW, water_common.glsl), and drifts more
 #define OCEAN_STILL_SLOW 1.0
 #define OCEAN_STILL_DRIFT 1.0
-// the waves' size on still and on running water (as steep either way): more of them, denser, the smaller
-#define STILL_WAVE_SIZE 0.55
-#define FLOW_WAVE_SIZE 0.6
-// the waves' height by the flow: STILL_WAVES on still water, rising to FAST_WAVES at FAST_FLOW world units a second
-#define STILL_WAVES 0.6
-#define FAST_WAVES 1.8
+// the waves' height rises to FAST_WAVES (water_common.glsl) at FAST_FLOW world units a second
 #define FAST_FLOW 90.0
 // toward the shore the waves flatten to SHORE_WAVES of their height, over SHORE_CALM tiles out
 #define SHORE_WAVES 0.05
@@ -101,55 +93,6 @@ layout(location = 1) out vec4 WaveOut;    // the wave map: slope xy, foam
 
 float waterLod(float footprint, float repeat) {
   return log2(max(footprint * 256.0 / repeat, 1.0));
-}
-
-// The waves' slope at q (world units) with the wind along dir, `slow` times slower and `size` times as large:
-// WAVE_OCTAVES octaves, each running both ways so they heave in place, the ones finer than a few pixels left out
-vec2 crestWaves(vec2 q, vec2 dir, float footprint, float slow, float size) {
-  float tile = WATER_TILE * size;
-  vec2 p = vec2(dot(q, dir), dot(q, vec2(-dir.y, dir.x))) / tile;
-  float pixel = footprint / tile;
-  float tt = waterTime / slow * WATER_TAU * WAVE_SPEED;
-  // uv = M p; each octave turned about 37 degrees and WAVE_SHRINK as long
-  mat2 M = mat2(1.0 / WAVE_STRETCH, 0.0, 0.0, 1.0) * (WATER_TAU / WAVE_LONGEST);
-  const mat2 TURN = mat2(0.8, 0.6, -0.6, 0.8);
-  float len = WAVE_LONGEST, amp = 1.0, chop = WAVE_CHOP;
-  vec2 g = vec2(0.0);
-  for (int i = 0; i < WAVE_OCTAVES; ++i) {
-    float vis = smoothstep(4.0, 8.0, len / max(pixel, 1e-4));
-    if (vis <= 0.0)
-      break;
-    vec2 uv = M * p;
-    vec2 ua = uv + tt, ub = uv - tt;
-    vec2 gu = seaOctaveGrad(ua, waveNoiseD(ua), chop) + seaOctaveGrad(ub, waveNoiseD(ub), chop);
-    g += transpose(M) * gu * (amp * vis);
-    M = TURN * M / WAVE_SHRINK;
-    len *= WAVE_SHRINK;
-    amp *= WAVE_FADE;
-    chop = mix(chop, 1.0, 0.2);
-  }
-  g *= 0.5 * WAVE_HEIGHT / tile;
-  return dir * g.x + vec2(-dir.y, dir.x) * g.y;
-}
-
-// The waves at xz moved along by `move`, running along dir: blended from the two nearest of eight fixed directions,
-// as turning their coordinates to follow a winding flow would swirl them, more the further from the origin; the
-// weights keep their strength.
-vec2 ripples(vec2 xz, vec2 move, float footprint, float slow, float size, vec2 dir) {
-  vec2 q = xz - move;
-  float sector = atan(dir.y, dir.x) / (WATER_TAU / 8.0);
-  float s0 = floor(sector);
-  float f = (sector - s0) * (WATER_TAU / 4.0);
-  vec2 waves = vec2(0.0);
-  // only the directions that count (a flow along one of the eight, or still water, takes one)
-  if (cos(f) > 1e-3) {
-    waves += crestWaves(q, vec2(cos(s0 * WATER_TAU / 8.0), sin(s0 * WATER_TAU / 8.0)), footprint, slow, size) * cos(f);
-  }
-  if (sin(f) > 1e-3) {
-    waves += crestWaves(q, vec2(cos((s0 + 1.0) * WATER_TAU / 8.0), sin((s0 + 1.0) * WATER_TAU / 8.0)), footprint, slow,
-      size) * sin(f);
-  }
-  return waves;
 }
 
 // 117 HD's caustics at uv: two copies scrolling apart, the darker kept
@@ -232,7 +175,9 @@ vec2 contactFoam(vec2 xz, float h) {
 // them every FLOW_CYCLE seconds, over the whole of it, the pool above and below included: one pattern, not one a tile.
 vec2 fallFrame(vec2 xz) {
   vec2 frame = waterPage2(waterData, xz / WATER_TILE + waterGrid.x).ba;
-  return dot(frame, frame) > 0.25 ? frame : vec2(0.0);
+  // the frame is 1 or more on the fall's corners and 0 beside it: filtered between them, only where nearly all of it
+  // is left, so it ends at the fall's sides rather than half a tile past them
+  return dot(frame, frame) > 0.9 ? frame : vec2(0.0);
 }
 
 // xz laid out along a fall's surface

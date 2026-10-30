@@ -187,7 +187,6 @@ public class SceneUploader
 			voxelBuffer.capture.trim();
 			zone.voxelCapture = voxelBuffer.capture;
 			zone.voxels = null;
-			zone.modelBlockers = null;
 		}
 	}
 
@@ -318,7 +317,7 @@ public class SceneUploader
 				int ex = p.getX() + RuneLightPlugin.SCENE_OFFSET, ey = p.getY() + RuneLightPlugin.SCENE_OFFSET;
 				if (sizeWater.isBed(ex, ey, t.getRenderLevel(), paint.getTexture()) && sizeWater.isShoreTile(ex, ey))
 				{
-					z.sizeO += 2;
+					z.sizeO += sizeWater.shoreTriangles(ex, ey, t.getRenderLevel()) - 2;
 				}
 			}
 		}
@@ -935,7 +934,8 @@ public class SceneUploader
 		if (water.isShoreTile(tileX, tileY))
 		{
 			// Around the shore the corners stay at the surface, which would leave a narrow stream no depth at all:
-			// sink the middle of the tile too, as a fan of four triangles around it.
+			// sink the middle of the tile too, and the middle of a side shared with another such tile (sideOffset), as a
+			// fan of triangles around the middle.
 			final int hc = (h0 + h1 + h2 + h3 + 2 >> 2) - (water.bedOffset(tileX, tileY) + water.bedOffset(tileX + 1, tileY)
 				+ water.bedOffset(tileX + 1, tileY + 1) + water.bedOffset(tileX, tileY + 1) + 2 >> 2) + water.centerOffset(tileX, tileY);
 			final int cc = lerpHsl(lerpHsl(c0, c1, 0.5f), lerpHsl(c3, c2, 0.5f), 0.5f);
@@ -943,12 +943,41 @@ public class SceneUploader
 			GroundBlender.interpolateSlope(surfaceSlopes, 0.5f, 0.5f, slope);
 			final int nc = VertexShading.encodeNormal(slope[0], -1, slope[1]);
 			final int h = s >> 1;
-			// counterclockwise around the middle: sw, se, ne, nw
-			bedFan(vb, lx + h, hc, lz + h, cc, nc, lx, h0, lz, c0, n0, lx + s, h1, lz, c1, n1, tex);
-			bedFan(vb, lx + h, hc, lz + h, cc, nc, lx + s, h1, lz, c1, n1, lx + s, h2, lz + s, c2, n2, tex);
-			bedFan(vb, lx + h, hc, lz + h, cc, nc, lx + s, h2, lz + s, c2, n2, lx, h3, lz + s, c3, n3, tex);
-			bedFan(vb, lx + h, hc, lz + h, cc, nc, lx, h3, lz + s, c3, n3, lx, h0, lz, c0, n0, tex);
-			return 12;
+			// counterclockwise around the middle: sw, se, ne, nw, with the sunk sides' middles between
+			final int[] ch = {h0, h1, h2, h3}, cl = {c0, c1, c2, c3}, cn = {n0, n1, n2, n3};
+			int px = lx, py = h0, pz = lz, pc = c0, pn = n0;
+			int triangles = 0;
+			for (int k = 0; k < 4; ++k)
+			{
+				final int a = k, b = k + 1 & 3;
+				final int side = water.sideOffset(tileX, tileY, tileZ, k);
+				if (side >= 0)
+				{
+					final int mx = lx + (WaterMap.SIDE_X0[k] + WaterMap.SIDE_X1[k]) * h;
+					final int mz = lz + (WaterMap.SIDE_Y0[k] + WaterMap.SIDE_Y1[k]) * h;
+					final int mh = (ch[a] + ch[b] + 1 >> 1) - (water.bedOffset(tileX + WaterMap.SIDE_X0[k], tileY + WaterMap.SIDE_Y0[k])
+						+ water.bedOffset(tileX + WaterMap.SIDE_X1[k], tileY + WaterMap.SIDE_Y1[k]) + 1 >> 1) + side;
+					final int mc = lerpHsl(cl[a], cl[b], 0.5f);
+					GroundBlender.interpolateSlope(surfaceSlopes, (mx - lx) / (float) s, (mz - lz) / (float) s, slope);
+					final int mn = VertexShading.encodeNormal(slope[0], -1, slope[1]);
+					bedFan(vb, lx + h, hc, lz + h, cc, nc, px, py, pz, pc, pn, mx, mh, mz, mc, mn, tex);
+					px = mx;
+					py = mh;
+					pz = mz;
+					pc = mc;
+					pn = mn;
+					++triangles;
+				}
+				final int bx = lx + (b == 1 || b == 2 ? s : 0), bz = lz + (b >= 2 ? s : 0);
+				bedFan(vb, lx + h, hc, lz + h, cc, nc, px, py, pz, pc, pn, bx, ch[b], bz, cl[b], cn[b], tex);
+				px = bx;
+				py = ch[b];
+				pz = bz;
+				pc = cl[b];
+				pn = cn[b];
+				++triangles;
+			}
+			return triangles * 3;
 		}
 
 		vb.put22224(lx + s, h2, lz + s, 0, c2);

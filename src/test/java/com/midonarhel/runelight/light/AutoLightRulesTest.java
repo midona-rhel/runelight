@@ -1,4 +1,4 @@
-package com.midonarhel.runelight;
+package com.midonarhel.runelight.light;
 
 import com.google.gson.Gson;
 import static org.junit.Assert.assertEquals;
@@ -11,7 +11,7 @@ import org.junit.Test;
 public class AutoLightRulesTest
 {
 	private static final AutoLightRules RULES = new AutoLightRules(new Gson(),
-		AutoLightRulesTest.class.getResourceAsStream("/com/midonarhel/runelight/autolights.json"));
+		AutoLightRulesTest.class.getResourceAsStream("/com/midonarhel/runelight/light/autolights.json"));
 
 	private static String preset(String name)
 	{

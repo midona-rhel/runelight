@@ -12,7 +12,7 @@ package com.midonarhel.runelight;
  * opens), 10 per step across an edge, 14 across a corner. GL-free; arrays are [x * size + y] in extended tiles, y
  * north, like WallMap.
  */
-final class SkyField
+public final class SkyField
 {
 	static final int TEXELS_PER_TILE = 2;
 	// path cost of a step across an edge and across a corner
@@ -28,7 +28,7 @@ final class SkyField
 	}
 
 	/** The share of the light that survives a tile, for light that reaches this many tiles in (one e-fold). */
-	static float falloffOf(float reachTiles)
+	public static float falloffOf(float reachTiles)
 	{
 		return (float) Math.exp(-1.0 / Math.max(reachTiles, 0.25));
 	}
@@ -37,7 +37,7 @@ final class SkyField
 	 * Tiles of a plane that have a roof over them or a floor above: from the rooms' flags and the floors (bit per
 	 * plane, as BuildingLights.floorTiles); everything else is open to the sky.
 	 */
-	static boolean[] covered(RoomMap rooms, byte[] floors, int plane)
+	public static boolean[] covered(RoomMap rooms, byte[] floors, int plane)
 	{
 		int n = rooms.size * rooms.size;
 		boolean[] out = new boolean[n];
@@ -57,7 +57,7 @@ final class SkyField
 	 * @param covered tiles without open sky above
 	 * @param falloff the share left after a tile's step
 	 */
-	static float[] propagate(WallMap walls, boolean[] covered, int plane, float falloff)
+	public static float[] propagate(WallMap walls, boolean[] covered, int plane, float falloff)
 	{
 		int size = walls.size;
 		int n = size * size;

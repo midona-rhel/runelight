@@ -1,4 +1,6 @@
-package com.midonarhel.runelight;
+package com.midonarhel.runelight.light;
+
+import com.midonarhel.runelight.Mat4;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -54,31 +56,21 @@ public class LightClustersTest
 	}
 
 	@Test
-	public void fogColumnsSkipIndoorAndFarLights()
+	public void fogColumnsTakeIndoorLightsAndSkipFarOnes()
 	{
 		LightClusters clusters = new LightClusters();
 		// in front of the camera (north is +z, y down)
 		List<PointLight> lights = new ArrayList<>();
 		lights.add(new PointLight().set(0, 800, 3000, 600, 1, 0.5f, 0.2f, 2));
-		// in a room: ground floor tiles x 4..7, y 27..30 (extended) are under a roof
-		PointLight indoor = new PointLight().set(200, 800, 3200, 600, 1, 0.5f, 0.2f, 2).onPlane(0);
-		lights.add(indoor);
+		// a lamp in a room glows in the fog too: walls alone stop its light, in the shader (light/lamp.glsl)
+		lights.add(new PointLight().set(200, 800, 3200, 600, 1, 0.5f, 0.2f, 2).onPlane(0));
 		lights.add(new PointLight().set(0, 800, 20000, 600, 1, 0.5f, 0.2f, 2));
-		byte[][][] settings = new byte[4][40][40];
-		for (int x = 4; x < 8; ++x)
-		{
-			for (int y = 27; y < 31; ++y)
-			{
-				settings[0][x][y] = BuildingDetector.TILE_FLAG_UNDER_ROOF;
-			}
-		}
-		clusters.setRooms(RoomMap.build(BuildingDetector.detect(settings, null), settings, new int[4][41][41], 4));
 		clusters.setFog(true, 0, 3000, 4000, -1e9f, 0);
 		clusters.cull(lights, viewProj(), 0, 0, 0);
 		List<Integer> fog = fogColumnLights(clusters);
 		assertEquals(3, clusters.getLightCount());
-		assertEquals(1, fog.size());
-		assertEquals(0, (int) fog.get(0));
+		assertEquals(2, fog.size());
+		assertTrue(fog.contains(0) && fog.contains(1));
 
 		clusters.setFog(false, 0, 0, 0, 0, 0);
 		clusters.cull(lights, viewProj(), 0, 0, 0);
@@ -132,14 +124,14 @@ public class LightClustersTest
 			}
 			any = true;
 			assertEquals(LightClusters.MAX_LIGHTS_PER_CLUSTER, column.size());
-			// the 9 dimmest are the ones dropped
+			// the light buffer lists them most important first: the 9 dimmest, last, are the ones dropped
 			for (int i = 0; i < column.size(); ++i)
 			{
-				assertEquals(9 + i, (int) column.get(i));
+				assertEquals(i, (int) column.get(i));
 			}
 		}
 		assertTrue(any);
-		assertFalse(fogColumnLights(clusters).contains(0));
+		assertFalse(fogColumnLights(clusters).contains(n - 1));
 	}
 
 	@Test

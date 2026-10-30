@@ -66,6 +66,8 @@ public final class WaterMap
 	final byte[] type = new byte[SIZE * SIZE];
 	final short[] waterTexture = new short[SIZE * SIZE];
 	final byte[] level = new byte[SIZE * SIZE];
+	// per tile: its water is a plain painted tile (no shaped tile model), whose bed is one quad or a fan (SceneUploader)
+	final boolean[] painted = new boolean[SIZE * SIZE];
 	private final short[] bedHsl = new short[SIZE * SIZE];
 	// per corner: depth level (0 at the shore)
 	public final byte[] depthLevel = new byte[CORNERS * CORNERS];
@@ -98,6 +100,8 @@ public final class WaterMap
 	// how far above the surface (world units) the foot of a model may hover and still stand in it: on a bank tile the
 	// corners climb, and the model sits at their mean
 	private static final float CONTACT_HOVER = 48f;
+	// world units either side of a line between two tiles or two cells within which a point counts as on it, in both
+	private static final float EDGE_SLACK = 0.5f;
 	// at a corner right by one the flow keeps 1 - CONTACT_SLOW of itself and churns at least CONTACT_TURB (rougher
 	// waves, short of the rapids' foam)
 	private static final float CONTACT_SLOW = 0.6f;
@@ -137,9 +141,10 @@ public final class WaterMap
 	private static final float FALL_FLOW = 2.5f;
 	// extended tile steps of a fall's four directions
 	private static final int[] FALL_DX = {1, -1, 0, 0}, FALL_DZ = {0, 0, 1, -1};
-	// the frame reaches this many tiles above a fall's lip, below its foot and out to its sides: as far as the lip's and
-	// the foot's contact (CONTACT_REACH, FOOT_REACH) spreads
-	private static final int FRAME_UP = 3, FRAME_DOWN = 4, FRAME_SIDE = 4;
+	// the frame reaches this many tiles above a fall's lip and below its foot, as far as the lip's and the foot's contact
+	// (CONTACT_REACH, FOOT_REACH) spreads, across the fall's own width only: the foam it lays out runs down the fall, and
+	// out to its sides it ran a one tile fall's motion down the tiles beside it too
+	private static final int FRAME_UP = 3, FRAME_DOWN = 4;
 	// the contact on a fall's face, per cell: all of it at the lip and the foot, FALL_THIN less in the middle, so the foam is
 	// dense where the water goes over and where it lands
 	private static final float FALL_THIN = 0.4f;
@@ -305,6 +310,7 @@ public final class WaterMap
 				hasWater = true;
 
 				SceneTileModel model = water.getSceneTileModel();
+				painted[i] = model == null;
 				if (model != null)
 				{
 					// shore tiles: corners of their land faces stay at the shore
@@ -639,6 +645,43 @@ public final class WaterMap
 	{
 		return depthLevel(ex, ey) == 0 || depthLevel(ex + 1, ey) == 0 || depthLevel(ex, ey + 1) == 0
 			|| depthLevel(ex + 1, ey + 1) == 0;
+	}
+
+	// a tile's sides: south, east, north, west, counterclockwise from its sw corner; each from corner (x0, y0) to (x1, y1),
+	// the tile across it at (dx, dy)
+	public static final int[] SIDE_X0 = {0, 1, 1, 0}, SIDE_Y0 = {0, 0, 1, 1}, SIDE_X1 = {1, 1, 0, 0}, SIDE_Y1 = {0, 1, 1, 0};
+	static final int[] SIDE_DX = {0, 1, 0, -1}, SIDE_DY = {-1, 0, 1, 0};
+
+	/**
+	 * How far the bed sinks in the middle of side k (SIDE_*) of shore tile (ex, ey) on level lvl, or -1 where it runs
+	 * straight between the side's corners. Between two painted bed tiles on the same level it sinks as deep as the tiles'
+	 * middles at least ({@link #MIN_DEPTH}): in a run of water one tile wide every corner is on the bank, and a side
+	 * running straight between two of them left a ridge up to the surface between every two tiles, each tile a pit of
+	 * its own. The tile across works out the same from the same corners, so the two meet.
+	 */
+	public int sideOffset(int ex, int ey, int lvl, int k)
+	{
+		int nx = ex + SIDE_DX[k], ny = ey + SIDE_DY[k];
+		if (nx < 0 || ny < 0 || nx >= SIZE || ny >= SIZE || level[ny * SIZE + nx] != lvl || !painted[ny * SIZE + nx])
+		{
+			return -1;
+		}
+		int along = bedOffset(ex + SIDE_X0[k], ey + SIDE_Y0[k]) + bedOffset(ex + SIDE_X1[k], ey + SIDE_Y1[k]) + 1 >> 1;
+		return along < MIN_DEPTH ? MIN_DEPTH : -1;
+	}
+
+	/**
+	 * The triangles of shore tile (ex, ey)'s bed on level lvl: a fan around its middle, one a corner and one more a sunk
+	 * side (sideOffset).
+	 */
+	public int shoreTriangles(int ex, int ey, int lvl)
+	{
+		int n = 4;
+		for (int k = 0; k < 4; ++k)
+		{
+			n += sideOffset(ex, ey, lvl, k) >= 0 ? 1 : 0;
+		}
+		return n;
 	}
 
 	/**
@@ -1062,13 +1105,13 @@ public final class WaterMap
 		int[] up = edge(x, y, k), down = edge(lastX, lastY, k ^ 1);
 		lips.add(new float[]{up[0] * 128f, up[1] * 128f, up[2] * 128f, up[3] * 128f, edgeHeight(heights, x, y, k)});
 		feet.add(new float[]{down[0] * 128f, down[1] * 128f, down[2] * 128f, down[3] * 128f, edgeHeight(heights, lastX, lastY, k ^ 1)});
-		// the frame: along the fall from its lip, and across it from the tile's sides
+		// the frame: along the fall from its lip, across it between the tile's sides
 		boolean alongX = FALL_DX[k] != 0;
 		int across = alongX ? y : x;
 		for (int u = -FRAME_UP; u <= n + FRAME_DOWN; ++u)
 		{
 			float length = 1 + longer[Math.max(0, Math.min(n, u))];
-			for (int v = across - FRAME_SIDE; v <= across + 1 + FRAME_SIDE; ++v)
+			for (int v = across; v <= across + 1; ++v)
 			{
 				int cx = alongX ? (FALL_DX[k] > 0 ? x + u : x + 1 - u) : v;
 				int cy = alongX ? v : (FALL_DZ[k] > 0 ? y + u : y + 1 - u);
@@ -1086,7 +1129,8 @@ public final class WaterMap
 	/**
 	 * Per corner of the CORNERS grid, the pull toward the nearest of the lines (segments as fallEdgesOf gives them): the
 	 * unit direction there, scaled down to 0 at reach tiles, the lip's height and the strength itself (1 on the lip, 0 at
-	 * the reach; a corner right on the lip has no direction). Corners with no lip in reach keep zeros.
+	 * the reach; a corner right on the lip has no direction). Only the corners across from a line count, within half a
+	 * tile past its ends. Corners with no lip in reach keep zeros.
 	 */
 	static void pullToLines(java.util.List<float[]> lips, float reach, float[] pullX, float[] pullZ, float[] level, float[] best)
 	{
@@ -1106,6 +1150,13 @@ public final class WaterMap
 				for (int cx = x0; cx <= x1; ++cx)
 				{
 					float qx = cx * 128f - l[0], qz = cz * 128f - l[1];
+					// only across the fall's own width: a corner more than half a tile past the line's ends is beside the
+					// fall, and pulling it there ran the water a tile either side of a one tile fall into it as well
+					float along = len2 > 0 ? (qx * dx + qz * dz) / (float) Math.sqrt(len2) : 0;
+					if (along < -64 || along > Math.sqrt(len2) + 64)
+					{
+						continue;
+					}
 					float t = len2 > 0 ? Math.max(0, Math.min(1, (qx * dx + qz * dz) / len2)) : 0;
 					float ex = dx * t - qx, ez = dz * t - qz;
 					float d = (float) Math.sqrt(ex * ex + ez * ez) / 128f;
@@ -1317,57 +1368,87 @@ public final class WaterMap
 				pz[k] = vz[v[k]] * cos - vx[v[k]] * sin + oz;
 				py[k] = vy[v[k]] + height;
 			}
-			int tx = (int) ((px[0] + px[1] + px[2]) / 3) >> 7, ty = (int) ((pz[0] + pz[1] + pz[2]) / 3) >> 7;
-			if (tx < 0 || ty < 0 || tx >= SIZE || ty >= SIZE || Float.isNaN(surfaceY[ty * SIZE + tx]))
+			// the water tiles under the face's middle: a face on the line between two tiles (a rim's inner face on the pool's
+			// edge) stands in both, whichever side the line rounds to
+			float mx = (px[0] + px[1] + px[2]) / 3, mz = (pz[0] + pz[1] + pz[2]) / 3;
+			int tx0 = (int) Math.floor((mx - EDGE_SLACK) / 128), tx1 = (int) Math.floor((mx + EDGE_SLACK) / 128);
+			int ty0 = (int) Math.floor((mz - EDGE_SLACK) / 128), ty1 = (int) Math.floor((mz + EDGE_SLACK) / 128);
+			float last = Float.NaN;
+			for (int ty = ty0; ty <= ty1; ++ty)
+			{
+				for (int tx = tx0; tx <= tx1; ++tx)
+				{
+					if (tx < 0 || ty < 0 || tx >= SIZE || ty >= SIZE || Float.isNaN(surfaceY[ty * SIZE + tx])
+						|| surfaceY[ty * SIZE + tx] == last)
+					{
+						continue;
+					}
+					last = surfaceY[ty * SIZE + tx];
+					any |= cut(px, py, pz, last, foot, cx, cz, marked);
+				}
+			}
+		}
+		return any;
+	}
+
+	/**
+	 * Mark the cells along where a face (px, py, pz) crosses surface level surfaceY (y down) of the tile under it, or just
+	 * above the model's foot where that hovers over it; whether it does.
+	 */
+	private static boolean cut(float[] px, float[] py, float[] pz, float surfaceY, float foot, float[] cx, float[] cz,
+		boolean[] marked)
+	{
+		// cut a hair above the surface (y down), so what ends right at it counts as standing in it
+		float s = surfaceY - CONTACT_TOLERANCE;
+		if (foot < s)
+		{
+			// a foot above the surface: standing in it if it hovers only a little, else clear of it
+			if (s - foot > CONTACT_HOVER)
+			{
+				return false;
+			}
+			s = foot - CONTACT_TOLERANCE;
+		}
+		int n = 0;
+		for (int k = 0; k < 3 && n < 2; ++k)
+		{
+			int k2 = (k + 1) % 3;
+			float da = py[k] - s, db = py[k2] - s;
+			if (da == db || da * db > 0)
 			{
 				continue;
 			}
-			// cut a hair above the surface (y down), so what ends right at it counts as standing in it
-			float s = surfaceY[ty * SIZE + tx] - CONTACT_TOLERANCE;
-			if (foot < s)
+			float t = da / (da - db);
+			cx[n] = px[k] + (px[k2] - px[k]) * t;
+			cz[n] = pz[k] + (pz[k2] - pz[k]) * t;
+			++n;
+		}
+		if (n == 0)
+		{
+			return false;
+		}
+		if (n == 1)
+		{
+			cx[1] = cx[0];
+			cz[1] = cz[0];
+		}
+		// along the cut, half a cell at a time; a point on the line between two cells marks both
+		float cell = 128f / CONTACT_RES;
+		int steps = 1 + (int) (Math.hypot(cx[1] - cx[0], cz[1] - cz[0]) / (cell * 0.5f));
+		boolean any = false;
+		for (int i = 0; i <= steps; ++i)
+		{
+			float t = (float) i / steps;
+			float x = cx[0] + (cx[1] - cx[0]) * t, z = cz[0] + (cz[1] - cz[0]) * t;
+			for (int gz = (int) Math.floor((z - EDGE_SLACK) / cell); gz <= (int) Math.floor((z + EDGE_SLACK) / cell); ++gz)
 			{
-				// a foot above the surface: standing in it if it hovers only a little, else clear of it
-				if (s - foot > CONTACT_HOVER)
+				for (int gx = (int) Math.floor((x - EDGE_SLACK) / cell); gx <= (int) Math.floor((x + EDGE_SLACK) / cell); ++gx)
 				{
-					continue;
-				}
-				s = foot - CONTACT_TOLERANCE;
-			}
-			int n = 0;
-			for (int k = 0; k < 3 && n < 2; ++k)
-			{
-				int k2 = (k + 1) % 3;
-				float da = py[k] - s, db = py[k2] - s;
-				if (da == db || da * db > 0)
-				{
-					continue;
-				}
-				float t = da / (da - db);
-				cx[n] = px[k] + (px[k2] - px[k]) * t;
-				cz[n] = pz[k] + (pz[k2] - pz[k]) * t;
-				++n;
-			}
-			if (n == 0)
-			{
-				continue;
-			}
-			if (n == 1)
-			{
-				cx[1] = cx[0];
-				cz[1] = cz[0];
-			}
-			// along the cut, half a cell at a time
-			float cell = 128f / CONTACT_RES;
-			int steps = 1 + (int) (Math.hypot(cx[1] - cx[0], cz[1] - cz[0]) / (cell * 0.5f));
-			for (int i = 0; i <= steps; ++i)
-			{
-				float t = (float) i / steps;
-				int gx = (int) ((cx[0] + (cx[1] - cx[0]) * t) / cell);
-				int gz = (int) ((cz[0] + (cz[1] - cz[0]) * t) / cell);
-				if (gx >= 0 && gz >= 0 && gx < CONTACT_SIZE && gz < CONTACT_SIZE)
-				{
-					marked[gz * CONTACT_SIZE + gx] = true;
-					any = true;
+					if (gx >= 0 && gz >= 0 && gx < CONTACT_SIZE && gz < CONTACT_SIZE)
+					{
+						marked[gz * CONTACT_SIZE + gx] = true;
+						any = true;
+					}
 				}
 			}
 		}

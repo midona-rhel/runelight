@@ -5,29 +5,28 @@ import java.nio.FloatBuffer;
 /**
  * Which building room every tile of the scene belongs to, for the volumetric fog (it stays out of interiors), the room
  * fill (RoomLight), puddles and the weather. Rooms come from BuildingDetector; 0 is outdoors. The floors' heights and
- * where there is a floor ride along, as do the walls' distances.
+ * where there is a floor ride along.
  *
- * GL-free so it can be tested; LightClusters uploads {@link #texels} after the lights in the light buffer. Arrays
- * are [plane][x][y] in extended scene tiles; planes are logical planes as in BuildingDetector.
+ * GL-free so it can be tested; RoomTexture uploads {@link #texels}, a layer each (rooms.glsl). Arrays are
+ * [plane][x][y] in extended scene tiles; planes are logical planes as in BuildingDetector.
  */
 public final class RoomMap
 {
-	static final int PLANES = 4;
+	public static final int PLANES = 4;
 	// room ids are packed in 12 bits; ANY is one past the largest
-	static final int ANY = 4095;
+	public static final int ANY = 4095;
 	public static final int MAX_ROOM = ANY - 1;
-	static final float TILE = 128;
-	// texels in front of the map: the header (rooms.glsl)
-	static final int HEADER_TEXELS = 1;
-	static final int TEXELS_PER_TILE = 5;
+	public static final float TILE = 128;
+	// the texture's layers (rooms.glsl): rooms, floor heights, walls, puddles; an RGBA texel per tile, a plane each
+	static final int LAYERS = 4;
 
-	final int size;
+	public final int size;
 	// extended tiles before local tile 0
-	final int offset;
-	final short[] rooms;
-	final float[] floors;
+	public final int offset;
+	public final short[] rooms;
+	public final float[] floors;
 	// under a roof by the map's flags, whether or not a room was found there
-	final boolean[] roofed;
+	public final boolean[] roofed;
 	// tiles a diagonal wall crosses with another room, or the outdoors, on its far side: which half (WallMap.half)
 	// the tile's room has, plus 1 (0: the whole tile), and the room of the other half (0 outdoors)
 	final byte[] half;
@@ -38,8 +37,8 @@ public final class RoomMap
 	// the walls the rooms were split along, null when unknown: the texels carry them
 	private WallMap walls;
 
-	// B3: the texels packed off the client thread (pools, wall distances and all), for the version they were packed
-	// for; LightClusters.upload copies them when ready and keeps the previous upload until then, so a region load
+	// B3: the texels packed off the client thread (pools and all), for the version they were packed for;
+	// RoomTexture.update sends them when ready and keeps the previous upload until then, so a region load
 	// no longer packs the whole map on its swap frame (30+ ms of each load's hitch, 2026-10-30)
 	private volatile java.nio.FloatBuffer packed;
 	private volatile int packedVersion = -1;
@@ -70,7 +69,7 @@ public final class RoomMap
 		{
 			try
 			{
-				java.nio.FloatBuffer out = org.lwjgl.BufferUtils.createFloatBuffer(texelCount() * 4);
+				java.nio.FloatBuffer out = org.lwjgl.BufferUtils.createFloatBuffer(floatCount());
 				texelsInto(out);
 				out.flip();
 				packed = out;
@@ -94,7 +93,7 @@ public final class RoomMap
 		across = new short[PLANES * size * size];
 	}
 
-	int index(int plane, int x, int y)
+	public int index(int plane, int x, int y)
 	{
 		return (plane * size + x) * size + y;
 	}
@@ -110,7 +109,7 @@ public final class RoomMap
 	 * @param heights the scene's extended tile heights, [level][x][y] corners
 	 * @param offset extended tiles before local tile 0
 	 */
-	static RoomMap build(BuildingDetector.Result r, byte[][][] settings, int[][][] heights, int offset)
+	public static RoomMap build(BuildingDetector.Result r, byte[][][] settings, int[][][] heights, int offset)
 	{
 		if (settings == null || settings.length == 0)
 		{
@@ -183,7 +182,7 @@ public final class RoomMap
 	}
 
 	/** Follow the scene's walls: doors open and close, and the walls' texels with them. */
-	void setWalls(WallMap walls)
+	public void setWalls(WallMap walls)
 	{
 		if (walls != this.walls && (walls == null || this.walls == null || !walls.sameWalls(this.walls)))
 		{
@@ -281,19 +280,25 @@ public final class RoomMap
 		return room;
 	}
 
-	/** Texels after the header. */
-	int texelCount()
+	/** The index in {@link #texels} of a tile's value for plane 0 in a layer; plane p's is p after it. */
+	static int texelIndex(int size, int layer, int x, int y)
 	{
-		return HEADER_TEXELS + size * size * TEXELS_PER_TILE;
+		return ((layer * size + y) * size + x) * PLANES;
+	}
+
+	/** Floats in {@link #texels}: an RGBA texel per tile and layer. */
+	int floatCount()
+	{
+		return LAYERS * size * size * PLANES;
 	}
 
 	/**
-	 * Fill the buffer with the header texel (enabled, size, offset) and five texels per tile: the four planes' rooms,
-	 * the four planes' floor heights (world y), and
-	 * the four planes' walls: the tile's WallMap bits, plus 64 times the half (WallMap.half) the tile's room has,
-	 * plus 128 times the room of the other half of a tile a diagonal wall crosses (0 outdoors; the tile's own room
-	 * when both halves are in it), the four planes' wall distances at the tile's corners (RoomAmbient), and the four
-	 * planes' puddle places ({@link #pool}).
+	 * The texels, a layer after another, each in rows of tiles from the south (y), east along each (x), an RGBA texel
+	 * of the four planes per tile: the rooms, the floor heights (world y), the walls: the tile's WallMap bits, its edges
+	 * set when either tile beside them holds the wall, plus 64 times the half (WallMap.half) the tile's room has, plus
+	 * 128 times the room of the other half of a tile a diagonal wall crosses (0 outdoors; the tile's own room when both
+	 * halves are in it), bit 19 a floor tile; and the puddle places ({@link #pool}). From the packed copy when it is
+	 * the current version's.
 	 */
 	void texels(FloatBuffer out)
 	{
@@ -308,47 +313,51 @@ public final class RoomMap
 
 	private void texelsInto(FloatBuffer out)
 	{
-		out.put(2).put(size).put(offset).put(0); // the texel is four floats
 		float[] pools = pools();
-		for (int x = 0; x < size; ++x)
+		for (int layer = 0; layer < LAYERS; ++layer)
 		{
 			for (int y = 0; y < size; ++y)
 			{
-				for (int p = 0; p < PLANES; ++p)
+				for (int x = 0; x < size; ++x)
 				{
-					out.put(rooms[index(p, x, y)]);
-				}
-				for (int p = 0; p < PLANES; ++p)
-				{
-					out.put(floors[index(p, x, y)]);
-				}
-				for (int p = 0; p < PLANES; ++p)
-				{
-					int i = index(p, x, y);
-					int b = walls != null ? walls.get(p, x, y) : 0;
-					// Shader filtering needs both sides of cardinal boundaries in the current tile.
-					if (walls != null)
+					for (int p = 0; p < PLANES; ++p)
 					{
-						for (int side = 1; side <= 8; side <<= 1)
+						int i = index(p, x, y);
+						switch (layer)
 						{
-							if (walls.edge(p, x, y, side)) b |= side;
+							case 0:
+								out.put(rooms[i]);
+								break;
+							case 1:
+								out.put(floors[i]);
+								break;
+							case 2:
+								out.put(wallTexel(p, x, y));
+								break;
+							default:
+								out.put(pools[i]);
 						}
 					}
-					// Bit 19 is floor presence; the lower 19 bits retain wall/room encoding.
-					int floor = filled != null && (filled[x * size + y] & (1 << p)) != 0 ? 1 << 19 : 0;
-					out.put(floor + b + (half[i] == 0 ? 128 * rooms[i] : 64 * (half[i] - 1) + 128 * across[i]));
-				}
-				for (int p = 0; p < PLANES; ++p)
-				{
-					int i = index(p, x, y);
-					out.put(walls != null ? RoomAmbient.pack(walls, p, x, y) : 0);
-				}
-				for (int p = 0; p < PLANES; ++p)
-				{
-					out.put(pools[index(p, x, y)]);
 				}
 			}
 		}
+	}
+
+	private float wallTexel(int p, int x, int y)
+	{
+		int i = index(p, x, y);
+		int b = walls != null ? walls.get(p, x, y) : 0;
+		// rooms.glsl reads a tile's own texel for its edges
+		if (walls != null)
+		{
+			for (int side = 1; side <= 8; side <<= 1)
+			{
+				if (walls.edge(p, x, y, side)) b |= side;
+			}
+		}
+		// Bit 19 is floor presence; the lower 19 bits retain wall/room encoding.
+		int floor = filled != null && (filled[x * size + y] & (1 << p)) != 0 ? 1 << 19 : 0;
+		return floor + b + (half[i] == 0 ? 128 * rooms[i] : 64 * (half[i] - 1) + 128 * across[i]);
 	}
 
 	// how much lower than its neighbours (world units) a tile must lie to collect a full puddle, and the slope

@@ -1,12 +1,15 @@
-package com.midonarhel.runelight;
+package com.midonarhel.runelight.light;
+
+import com.midonarhel.runelight.scene.ModelData;
+import com.midonarhel.runelight.RuneLightPlugin;
+import com.midonarhel.runelight.scene.SceneJobs;
+import com.midonarhel.runelight.WallMap;
 
 import com.midonarhel.runelight.scene.ModelData;
 
 import com.midonarhel.runelight.sky.EnvironmentManager;
 
 import com.google.gson.Gson;
-import java.io.DataOutputStream;
-import java.io.IOException;
 import java.io.InputStream;
 import java.io.InputStreamReader;
 import java.nio.charset.StandardCharsets;
@@ -62,7 +65,10 @@ import org.slf4j.LoggerFactory;
 /**
  * Places the lights from lights.json in the scene: on objects (tracked through spawn events, including
  * objects that change appearance through impostors), on NPCs, projectiles and spell effects (followed every
- * frame), and at fixed world positions. Everything runs on the client thread.
+ * frame), and at fixed world positions. Everything runs on the client thread. A scene's objects (its rescan, and the
+ * spawn events, which the client posts for every object of a load) are only queued where they are found; their lights
+ * are placed by a scene job (SceneJobs), as much as fits the frame's budget, never inside the client's event posts, and
+ * each light placed after its scene showed eases in (LayerEase).
  *
  * Each light has a {@link LightLife}: when it spawns and goes, and how it fades. Where the definition has areas the
  * light is made only inside them, and where it has animations only while the parent plays one.
@@ -71,11 +77,12 @@ import org.slf4j.LoggerFactory;
  * (autolights.json, {@link AutoLightRules}). Those come after the others in the frame's lights, so a full budget
  * drops them first.
  */
-class SceneLights
+public class SceneLights
 {
 	private static final Logger log = LoggerFactory.getLogger(SceneLights.class);
 	// half a tile, and how far inside it a wall decoration's light is kept (world units)
 	private static final float TILE_HALF = 64, TILE_MARGIN = 2;
+
 
 	private final Client client;
 
@@ -100,7 +107,7 @@ class SceneLights
 	 */
 	private static final class Funnel
 	{
-		int hidden, otherPlane, outOfReach, nightOff, mapped, pending, clusters;
+		int hidden, outOfReach, nightOff, clusters;
 		// the strengths of the lights that reach the screen: under 2, 2 to 6, 6 to 15, 15 and up
 		final int[] strengths = new int[4];
 
@@ -133,11 +140,11 @@ class SceneLights
 		// what it is attached to, null for a world light
 		final TileObject object;
 		final boolean auto;
-		// what the light map bakes of it, null for a light that can't be baked: one that comes and goes with an
-		// animation or for a time, or follows the sky
-		final LightMap.Source bake;
+		// where its lines to what it lights start
+		final float ox, oz;
 
-		Placed(LightDefinition def, float[] at, int plane, float seed, boolean fadesIn, TileObject object, boolean auto)
+		Placed(LightDefinition def, float[] at, int plane, float seed, boolean fadesIn, TileObject object, boolean auto,
+			long easeSince)
 		{
 			this.def = def;
 			this.x = at[0];
@@ -145,16 +152,12 @@ class SceneLights
 			this.z = at[2];
 			this.plane = plane;
 			this.seed = seed;
-			this.life = new LightLife(def, fadesIn);
+			this.life = new LightLife(def, fadesIn, easeSince);
 			this.object = object;
 			this.auto = auto;
-			// the most the light's radius is (see emit)
-			float reach = def.kind == LightDefinition.FLICKER ? def.radius * 1.5f
-				: def.kind == LightDefinition.PULSE && def.duration > 0 ? def.radius * (1 + def.range / 100f) : def.radius;
-			// a light that reaches further than the bake does would end at its edge: it stays with the clusters
-			this.bake = def.outdoorLighting || def.animationSpecific() || def.fixedDespawnTime || reach > LightMapBake.MAX_RADIUS ? null
-				: new LightMap.Source(plane, x, y, z, reach, def.red, def.green, def.blue, def.strength, def.nightOnly,
-				def.nightMultiplier, object == null ? 0 : VoxelCapture.ownerOf(object));
+			// its lines start where it is; LampWalls moves them off the walls it hangs on
+			ox = x;
+			oz = z;
 		}
 	}
 
@@ -186,7 +189,7 @@ class SceneLights
 		Live(LightDefinition def, Object parent, ActorSpotAnim spotAnim, int npcId, float seed, int plane)
 		{
 			this.def = def;
-			this.life = new LightLife(def, true);
+			this.life = new LightLife(def, true, 0);
 			this.parent = parent;
 			this.spotAnim = spotAnim;
 			this.npcId = npcId;
@@ -204,8 +207,14 @@ class SceneLights
 	private final List<Live> fading = new ArrayList<>();
 	// the tiles with a world light, where an automatic one would only double it
 	private final Set<Long> worldLightTiles = new HashSet<>();
-	// the baked lights' map, null when the static lights are all left to the clusters
-	private LightMap lightMap;
+	// objects found but not looked at yet, whether their lights fade in, in the order found; the job that places them
+	private final java.util.ArrayDeque<Object> pending = new java.util.ArrayDeque<>();
+	private final Map<Object, Boolean> pendingFadesIn = new IdentityHashMap<>();
+	private SceneJobs jobs;
+	private boolean jobQueued;
+	// the rescan of the scene's tiles under way: the next plane and column, -1 none; when it began
+	private int scanPlane = -1, scanX;
+	private long scanStart;
 
 	// the frame being collected
 	private float frameTime, frameNight, frameSun, frameDt;
@@ -226,12 +235,18 @@ class SceneLights
 	private final int[] world = new int[3];
 	private final float[] outdoorColor = new float[3];
 
-	SceneLights(Client client)
+	public SceneLights(Client client)
 	{
 		this.client = client;
 	}
 
-	void load(Gson gson)
+	/** The queue the lights are placed from (null: at once, in the event, as for tests). */
+	public void setJobs(SceneJobs jobs)
+	{
+		this.jobs = jobs;
+	}
+
+	public void load(Gson gson)
 	{
 		byObject.clear();
 		byNpc.clear();
@@ -293,22 +308,9 @@ class SceneLights
 		}
 	}
 
-	int getDefinitionCount()
+	public int getDefinitionCount()
 	{
 		return definitionCount;
-	}
-
-	/**
-	 * The map the static lights are baked into (null: they stay with the clusters, as before it). The lights it holds
-	 * are not added to the frame's lights.
-	 */
-	void setLightMap(LightMap map)
-	{
-		if (map != lightMap && lightMap != null)
-		{
-			lightMap.clear();
-		}
-		lightMap = map;
 	}
 
 	// ---------------------------------------------------------------------------------------------------------
@@ -316,10 +318,9 @@ class SceneLights
 
 	private void clear()
 	{
-		if (lightMap != null)
-		{
-			lightMap.clear();
-		}
+		pending.clear();
+		pendingFadesIn.clear();
+		scanPlane = -1;
 		objects.clear();
 		worldLights.clear();
 		worldLightTiles.clear();
@@ -331,7 +332,7 @@ class SceneLights
 	/**
 	 * Rescan the whole scene. Called after a scene load and on startup.
 	 */
-	void rebuild()
+	public void rebuild()
 	{
 		clear();
 		if (client.getGameState() != GameState.LOGGED_IN)
@@ -350,7 +351,8 @@ class SceneLights
 			}
 			float ground = Perspective.getTileHeight(client, lp, d.plane);
 			d.locate(at, lp.getX(), ground, lp.getY(), 0, 1, 1);
-			worldLights.add(new Placed(d, at, d.plane, (d.worldX * 31 + d.worldY) * 0.61803398875f % 1f, false, null, false));
+			worldLights.add(new Placed(d, at, d.plane, (d.worldX * 31 + d.worldY) * 0.61803398875f % 1f, false, null, false,
+				System.nanoTime()));
 			worldLightTiles.add(tileKey(d.plane, lp.getX() >> 7, lp.getY() >> 7));
 		}
 
@@ -358,33 +360,6 @@ class SceneLights
 		funnelPending = true;
 		funnelAt = Float.NaN;
 		autoMatched = autoNoModel = autoNoSpot = autoNearWorld = 0;
-		Scene scene = wv.getScene();
-		Tile[][][] tiles = scene.getExtendedTiles();
-		for (Tile[][] plane : tiles)
-		{
-			for (Tile[] column : plane)
-			{
-				for (Tile tile : column)
-				{
-					if (tile == null)
-					{
-						continue;
-					}
-					add(tile.getWallObject(), false);
-					add(tile.getDecorativeObject(), false);
-					add(tile.getGroundObject(), false);
-					GameObject[] gameObjects = tile.getGameObjects();
-					if (gameObjects != null)
-					{
-						for (GameObject go : gameObjects)
-						{
-							add(go, false);
-						}
-					}
-				}
-			}
-		}
-
 		for (Player player : wv.players())
 		{
 			attachSpotAnims(player);
@@ -393,13 +368,144 @@ class SceneLights
 		{
 			attachSpotAnims(npc);
 		}
+		// the objects: found column by column and placed by the job
+		scanPlane = 0;
+		scanX = 0;
+		scanStart = System.nanoTime();
+		schedule();
+	}
+
+	/** Queue an object whose lights are to be placed; a later despawn takes it out again. */
+	private void enqueue(TileObject object, boolean fadesIn)
+	{
+		if (object == null || objects.containsKey(object) || pendingFadesIn.containsKey(object))
+		{
+			return;
+		}
+		pending.add(object);
+		pendingFadesIn.put(object, fadesIn);
+		schedule();
+	}
+
+	private void schedule()
+	{
+		if (jobs == null)
+		{
+			// no queue: everything at once
+			placePending(Long.MAX_VALUE);
+			return;
+		}
+		if (!jobQueued)
+		{
+			jobQueued = true;
+			jobs.add("scene lights", SceneJobs.SHOWN, deadline ->
+			{
+				boolean done = placePending(deadline);
+				jobQueued = !done;
+				return done;
+			});
+		}
+	}
+
+	/**
+	 * Find the scene's objects column by column, then place the queued objects' lights, until the deadline
+	 * (System.nanoTime); at least one column or object a call.
+	 *
+	 * @return whether nothing is left
+	 */
+	private boolean placePending(long deadline)
+	{
+		do
+		{
+			if (scanPlane >= 0)
+			{
+				scanColumn();
+			}
+			else
+			{
+				Object object = pending.poll();
+				if (object == null)
+				{
+					return true;
+				}
+				Boolean fadesIn = pendingFadesIn.remove(object);
+				if (object == SCAN_DONE)
+				{
+					logScan();
+				}
+				else if (fadesIn != null)
+				{
+					add((TileObject) object, fadesIn);
+				}
+			}
+		}
+		while (System.nanoTime() < deadline);
+		return scanPlane < 0 && pending.isEmpty();
+	}
+
+	/** One column of the rescan's tiles into the queue; when the last is done, the scan is told in the log. */
+	private void scanColumn()
+	{
+		Tile[][][] tiles = client.getGameState() == GameState.LOGGED_IN
+			? client.getTopLevelWorldView().getScene().getExtendedTiles() : null;
+		if (tiles == null || scanPlane >= tiles.length)
+		{
+			scanPlane = -1;
+			return;
+		}
+		for (Tile tile : tiles[scanPlane][scanX])
+		{
+			if (tile == null)
+			{
+				continue;
+			}
+			enqueueFound(tile.getWallObject());
+			enqueueFound(tile.getDecorativeObject());
+			enqueueFound(tile.getGroundObject());
+			GameObject[] gameObjects = tile.getGameObjects();
+			if (gameObjects != null)
+			{
+				for (GameObject go : gameObjects)
+				{
+					enqueueFound(go);
+				}
+			}
+		}
+		if (++scanX >= tiles[scanPlane].length)
+		{
+			scanX = 0;
+			if (++scanPlane >= tiles.length)
+			{
+				scanPlane = -1;
+				// the summary once the objects found are placed too
+				pending.add(SCAN_DONE);
+				pendingFadesIn.put(SCAN_DONE, false);
+			}
+		}
+	}
+
+	// in the queue after the rescan's objects: the rescan is told in the log when it is reached
+	private static final Object SCAN_DONE = new Object();
+
+	private void enqueueFound(TileObject object)
+	{
+		// the scene's own objects light up as they are found, without 117 HD's spawn fade
+		if (object != null && !objects.containsKey(object) && !pendingFadesIn.containsKey(object))
+		{
+			pending.add(object);
+			pendingFadesIn.put(object, false);
+		}
+	}
+
+	private void logScan()
+	{
 		int autoCount = 0;
 		for (int n : autoTally.values())
 		{
 			autoCount += n;
 		}
-		log.info("Scene lights: {} lights.json objects with lights, {} world lights", countObjectLights() - autoCount,
-			worldLights.size());
+		log.info("Scene lights: {} lights.json objects with lights, {} world lights, placed in {} ms", countObjectLights() - autoCount,
+			worldLights.size(), (System.nanoTime() - scanStart) / 1_000_000);
 		log.info("Automatic lights: {} objects named like a light, {} placed, {} without a model, {} without a place, "
 				+ "{} next to a 117 HD world light; placed by name {}", autoMatched, autoCount, autoNoModel, autoNoSpot,
 			autoNearWorld, autoTally);
@@ -449,6 +555,11 @@ class SceneLights
 
 	private void remove(TileObject object)
 	{
+		if (pendingFadesIn.remove(object) != null)
+		{
+			// gone before its lights were placed
+			return;
+		}
 		TrackedObject t = objects.remove(object);
 		if (t == null)
 		{
@@ -457,21 +568,11 @@ class SceneLights
 		// they fade out and wait their despawn delay
 		for (Placed p : t.lights)
 		{
-			unbake(p);
 			if (!p.auto)
 			{
 				p.life.update(true, 0);
 				orphans.add(p);
 			}
-		}
-	}
-
-	/** The light is going: the map lets go of it, and the clusters fade it out. */
-	private void unbake(Placed p)
-	{
-		if (lightMap != null && p.bake != null)
-		{
-			lightMap.remove(p.bake, true);
 		}
 	}
 
@@ -531,7 +632,7 @@ class SceneLights
 			}
 			d.locate(at, x, ground, z, orientation, sizeX, sizeY);
 			out.add(new Placed(d, onTile(object, at, lp), plane, System.identityHashCode(object) * 0.61803398875f % 1f,
-				fadesIn, object, false));
+				fadesIn, object, false, System.nanoTime()));
 		}
 		return out;
 	}
@@ -567,6 +668,22 @@ class SceneLights
 			at[2] = Math.max(tile.getY() - TILE_HALF + TILE_MARGIN, Math.min(tile.getY() + TILE_HALF - TILE_MARGIN, at[2]));
 		}
 		return at;
+	}
+
+	/**
+	 * The ground of a storey under local position (x, z), the mean of its tile's corners (world y, down); infinite (no
+	 * floor known) outside the scene.
+	 */
+	static float heightAt(int[][][] heights, int plane, float x, float z)
+	{
+		int tx = (int) Math.floor(x / 128) + RuneLightPlugin.SCENE_OFFSET, tz = (int) Math.floor(z / 128) + RuneLightPlugin.SCENE_OFFSET;
+		if (heights == null || plane < 0 || plane >= heights.length || tx < 0 || tz < 0 || tx + 1 >= heights[plane].length
+			|| tz + 1 >= heights[plane][tx].length)
+		{
+			return Float.POSITIVE_INFINITY;
+		}
+		int[][] h = heights[plane];
+		return (h[tx][tz] + h[tx + 1][tz] + h[tx][tz + 1] + h[tx + 1][tz + 1]) * 0.25f;
 	}
 
 	// ---------------------------------------------------------------------------------------------------------
@@ -660,7 +777,8 @@ class SceneLights
 		{
 			autoTally.merge(client.getObjectDefinition(id).getName(), 1, Integer::sum);
 		}
-		return new Placed(d, at, plane, System.identityHashCode(object) * 0.61803398875f % 1f, fadesIn, object, true);
+		return new Placed(d, at, plane, System.identityHashCode(object) * 0.61803398875f % 1f, fadesIn, object, true,
+			System.nanoTime());
 	}
 
 	private boolean nearWorldLight(float x, float z, int plane)
@@ -695,7 +813,7 @@ class SceneLights
 	@Subscribe
 	public void onGameObjectSpawned(GameObjectSpawned e)
 	{
-		add(e.getGameObject(), true);
+		enqueue(e.getGameObject(), true);
 	}
 
 	@Subscribe
@@ -707,7 +825,7 @@ class SceneLights
 	@Subscribe
 	public void onWallObjectSpawned(WallObjectSpawned e)
 	{
-		add(e.getWallObject(), true);
+		enqueue(e.getWallObject(), true);
 	}
 
 	@Subscribe
@@ -719,7 +837,7 @@ class SceneLights
 	@Subscribe
 	public void onDecorativeObjectSpawned(DecorativeObjectSpawned e)
 	{
-		add(e.getDecorativeObject(), true);
+		enqueue(e.getDecorativeObject(), true);
 	}
 
 	@Subscribe
@@ -731,7 +849,7 @@ class SceneLights
 	@Subscribe
 	public void onGroundObjectSpawned(GroundObjectSpawned e)
 	{
-		add(e.getGroundObject(), true);
+		enqueue(e.getGroundObject(), true);
 	}
 
 	@Subscribe
@@ -758,10 +876,6 @@ class SceneLights
 			if (id != t.resolvedId)
 			{
 				t.resolvedId = id;
-				for (Placed p : t.lights)
-				{
-					unbake(p);
-				}
 				t.lights = placeObjectLights(entry.getKey(), id, true);
 			}
 		}
@@ -1058,7 +1172,7 @@ class SceneLights
 	 * @param sunAltitude degrees, for the lights that come in from outside
 	 * @param maxDistance only lights whose sphere comes within this distance of the camera (xz) are added
 	 */
-	void collect(List<PointLight> out, float time, float night, float sunAltitude, float camX, float camZ,
+	public void collect(List<PointLight> out, float time, float night, float sunAltitude, float camX, float camZ,
 		float maxDistance)
 	{
 		poolUsed = 0;
@@ -1151,70 +1265,13 @@ class SceneLights
 	{
 		int objectLights = countObjectLights() - countAuto();
 		log.info("Light pipeline: {} lights.json object lights + {} world lights + {} automatic; "
-				+ "{} hidden (fading or waiting for their animation), {} on another plane, {} out of reach, "
-				+ "{} night-only and off now (night {}); {} in the light map, {} waiting for it, {} on the clusters; "
+				+ "{} hidden (fading or waiting for their animation), {} out of reach, "
+				+ "{} night-only and off now (night {}); {} on the clusters; "
 				+ "strengths of those showing: {} under 2, {} 2 to 6, {} 6 to 15, {} 15 and up; "
 				+ "clusters {}/{} used, {} automatic lights over budget",
-			objectLights, worldLights.size(), countAuto(), f.hidden, f.otherPlane, f.outOfReach, f.nightOff, frameNight,
-			f.mapped, f.pending, f.clusters, f.strengths[0], f.strengths[1], f.strengths[2], f.strengths[3], total,
+			objectLights, worldLights.size(), countAuto(), f.hidden, f.outOfReach, f.nightOff, frameNight,
+			f.clusters, f.strengths[0], f.strengths[1], f.strengths[2], f.strengths[3], total,
 			LightClusters.MAX_LIGHTS, Math.max(0, autoLights.size() - Math.max(0, room)));
-	}
-
-	/**
-	 * Every light of the scene as it is placed, for the scene dump: the fixed ones (on objects, in the world, fading
-	 * out) with the owner and whether the light map bakes them, then the ones that follow an actor, a projectile or an
-	 * effect.
-	 */
-	void write(DataOutputStream out) throws IOException
-	{
-		List<Placed> fixed = new ArrayList<>(worldLights);
-		fixed.addAll(orphans);
-		for (TrackedObject t : objects.values())
-		{
-			fixed.addAll(t.lights);
-		}
-		List<Live> live = new ArrayList<>();
-		for (List<Live> l : attached.values())
-		{
-			live.addAll(l);
-		}
-		live.addAll(fading);
-		out.writeInt(fixed.size() + live.size());
-		for (Placed p : fixed)
-		{
-			write(out, p.def, p.plane, p.x, p.y, p.z, p.object == null ? 0 : VoxelCapture.ownerOf(p.object),
-				p.bake != null, p.auto);
-		}
-		for (Live l : live)
-		{
-			write(out, l.def, l.plane, l.x, l.y, l.z, 0, false, false);
-		}
-	}
-
-	private static void write(DataOutputStream out, LightDefinition d, int plane, float x, float y, float z, int owner,
-		boolean baked, boolean auto) throws IOException
-	{
-		out.writeUTF(d.description == null ? "" : d.description);
-		out.writeInt(plane);
-		out.writeFloat(x);
-		out.writeFloat(y);
-		out.writeFloat(z);
-		out.writeInt(owner);
-		out.writeBoolean(baked);
-		out.writeBoolean(auto);
-		out.writeInt(d.kind);
-		out.writeFloat(d.radius);
-		out.writeFloat(d.red);
-		out.writeFloat(d.green);
-		out.writeFloat(d.blue);
-		out.writeFloat(d.strength);
-		out.writeFloat(d.duration);
-		out.writeFloat(d.range);
-		out.writeBoolean(d.nightOnly);
-		out.writeFloat(d.nightMultiplier);
-		out.writeBoolean(d.outdoorLighting);
-		out.writeBoolean(d.animationSpecific());
-		out.writeBoolean(d.fixedDespawnTime);
 	}
 
 	private int countAuto()
@@ -1267,10 +1324,33 @@ class SceneLights
 			}
 			return;
 		}
-		List<PointLight> target = p.auto ? autoLights : out;
-		// a light that has faded in and stays is the map's; fading or going, the clusters have it
-		LightMap.Source bake = lightMap != null && parentExists && p.life.brightness() >= 1 ? p.bake : null;
-		emit(target, p.def, p.life, p.x, p.y, p.z, p.plane, p.seed, bake);
+		emit(p.auto ? autoLights : out, p.def, p.life, p.x, p.y, p.z, p.ox, p.oz, p.plane, p.seed, false);
+	}
+
+	/**
+	 * The fixed lamps there now (on objects and in the world, in reach) at their steady strength: as collect has
+	 * them but without their flicker or pulse, new objects each call. What the rooms' light is worked out from
+	 * (RoomLight); after collect, for its frame.
+	 */
+	public void steadyLamps(List<PointLight> out)
+	{
+		for (TrackedObject t : objects.values())
+		{
+			for (Placed p : t.lights)
+			{
+				if (p.life.visible())
+				{
+					emit(out, p.def, p.life, p.x, p.y, p.z, p.ox, p.oz, p.plane, p.seed, true);
+				}
+			}
+		}
+		for (Placed p : worldLights)
+		{
+			if (p.life.visible())
+			{
+				emit(out, p.def, p.life, p.x, p.y, p.z, p.ox, p.oz, p.plane, p.seed, true);
+			}
+		}
 	}
 
 	/**
@@ -1293,31 +1373,18 @@ class SceneLights
 		l.life.update(parentExists, frameDt);
 		if (l.life.visible())
 		{
-			emit(out, l.def, l.life, l.x, l.y, l.z, l.plane, l.seed, null);
+			emit(out, l.def, l.life, l.x, l.y, l.z, l.x, l.z, l.plane, l.seed, false);
 		}
 	}
 
 	/**
-	 * @param bake the light's place in the light map, null for a light that isn't on it: with it, the light is baked
-	 * once it is in reach; and while the map carries it, only its strength (the table) is kept up to date
+	 * @param steady without the flicker's or pulse's change of the moment (a flickering light keeps its larger radius),
+	 * into a new object, uncounted
 	 */
-	private void emit(List<PointLight> out, LightDefinition d, LightLife life, float x, float y, float z, int lightPlane,
-		float seed, LightMap.Source bake)
+	private void emit(List<PointLight> out, LightDefinition d, LightLife life, float x, float y, float z, float ox,
+		float oz, int lightPlane, float seed, boolean steady)
 	{
-		boolean mapped = bake != null && LightMap.isLive(bake);
-		// the map's share eases in from when it took the light over (LayerEase): the clusters keep the rest meanwhile
-		float mapShare = mapped ? LightMap.liveWeight(bake, System.nanoTime()) : 0;
-		// Other planes' lights stay hidden unless they are meant to show through (the definition says so: 117 HD hides
-		// the rest to keep them from leaking through floors). The map knows what the floors let through.
-		boolean hiddenOnClusters = lightPlane != framePlane && !d.visibleFromOtherPlanes;
-		if (!mapped && hiddenOnClusters)
-		{
-			if (funnel != null)
-			{
-				++funnel.otherPlane;
-			}
-			return;
-		}
+		Funnel funnel = steady ? null : this.funnel;
 		float dx = x - camX, dz = z - camZ;
 		float reach = maxDistance + d.radius * 1.5f;
 		if (dx * dx + dz * dz > reach * reach)
@@ -1326,21 +1393,16 @@ class SceneLights
 			{
 				++funnel.outOfReach;
 			}
-			float far = reach + LightMap.EVICT_MARGIN;
-			if (bake != null && dx * dx + dz * dz > far * far)
-			{
-				lightMap.remove(bake, false);
-			}
 			return;
-		}
-		if (bake != null)
-		{
-			lightMap.add(bake);
 		}
 
 		float strength = d.strength;
 		float radius = d.radius;
-		if (d.kind == LightDefinition.FLICKER)
+		if (d.kind == LightDefinition.FLICKER && steady)
+		{
+			radius *= 1.5f;
+		}
+		else if (d.kind == LightDefinition.FLICKER)
 		{
 			// same flicker curve as 117 HD: a sum of sharpened cosines at unrelated frequencies
 			double t = Math.PI * 2 * ((frameTime % 60) / 60 + seed);
@@ -1353,7 +1415,7 @@ class SceneLights
 			strength *= lo + (hi - lo) * (float) f;
 			radius *= 1.5f;
 		}
-		else if (d.kind == LightDefinition.PULSE && d.duration > 0)
+		else if (d.kind == LightDefinition.PULSE && d.duration > 0 && !steady)
 		{
 			// triangle wave between -range% and +range%
 			float phase = (frameTime / (d.duration / 1000f) + seed) % 1f;
@@ -1374,25 +1436,6 @@ class SceneLights
 			{
 				++funnel.nightOff;
 			}
-			else if (mapped)
-			{
-				++funnel.mapped;
-				funnel.strength(strength);
-			}
-			else if (bake != null)
-			{
-				++funnel.pending;
-			}
-		}
-		if (mapped)
-		{
-			lightMap.setLevel(bake, strength * mapShare, radius);
-			if (mapShare >= 1 || hiddenOnClusters)
-			{
-				return;
-			}
-			// handing over: the clusters' light fades as the map's comes in
-			strength *= 1 - mapShare;
 		}
 		float red = d.red, green = d.green, blue = d.blue;
 		if (d.outdoorLighting)
@@ -1407,6 +1450,17 @@ class SceneLights
 			return;
 		}
 
+		// its storey's floor and ceiling where its lines start
+		Scene scene = client.getTopLevelWorldView().getScene();
+		int[][][] heights = scene != null ? scene.getTileHeights() : null;
+		float floorY = heightAt(heights, lightPlane, ox, oz);
+		float ceilY = lightPlane + 1 < WallMap.PLANES ? heightAt(heights, lightPlane + 1, ox, oz) : Float.NEGATIVE_INFINITY;
+		if (steady)
+		{
+			out.add(new PointLight().set(x, y, z, radius, red, green, blue, strength).onPlane(lightPlane)
+				.from(ox, oz, floorY, ceilY));
+			return;
+		}
 		if (poolUsed == pool.size())
 		{
 			pool.add(new PointLight());
@@ -1416,6 +1470,7 @@ class SceneLights
 			++funnel.clusters;
 			funnel.strength(strength);
 		}
-		out.add(pool.get(poolUsed++).set(x, y, z, radius, red, green, blue, strength).onPlane(lightPlane));
+		out.add(pool.get(poolUsed++).set(x, y, z, radius, red, green, blue, strength).onPlane(lightPlane)
+			.from(ox, oz, floorY, ceilY).importance(d.strength * d.radius));
 	}
 }

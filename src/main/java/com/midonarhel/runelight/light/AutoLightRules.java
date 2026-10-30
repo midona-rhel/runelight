@@ -1,4 +1,4 @@
-package com.midonarhel.runelight;
+package com.midonarhel.runelight.light;
 
 import com.google.gson.Gson;
 import java.io.InputStream;

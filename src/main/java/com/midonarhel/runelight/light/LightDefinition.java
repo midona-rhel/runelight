@@ -1,4 +1,4 @@
-package com.midonarhel.runelight;
+package com.midonarhel.runelight.light;
 
 /**
  * One entry of lights.json, which is converted from 117 HD's light definitions by
@@ -58,7 +58,6 @@ public class LightDefinition
 	 * Flicker or pulse amplitude, percent.
 	 */
 	public float range;
-	public boolean visibleFromOtherPlanes;
 	public float nightMultiplier = 1;
 	/**
 	 * "NIGHT" or null.

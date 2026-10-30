@@ -1,4 +1,4 @@
-package com.midonarhel.runelight;
+package com.midonarhel.runelight.light;
 
 /**
  * The light that comes in from outside (117 HD's outdoorLighting: cave exits, skylights, windows): it follows the

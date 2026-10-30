@@ -21,7 +21,6 @@
 #include "material_target.glsl"
 #include "environment.glsl"
 #include cluster_config
-#include light_map_config
 #include "fog_apply.glsl"
 #include "lightning.glsl"
 #include "clouds.glsl"
@@ -87,15 +86,12 @@ uniform vec3 clientSkyColor;
 // procedural sky and the area say
 uniform int skyVoid;
 
-// point lights, culled into clusters on the CPU (LightClusters.java)
+// point lights, culled into clusters on the CPU (light/LightClusters.java)
 uniform int pointLightsEnabled;
-uniform samplerBuffer lightData;     // per light: (camera-relative position, radius), (color * strength, room code); then the rooms
-uniform usamplerBuffer clusterData;  // per cluster: a bit per light in view (light_clusters.glsl)
 
-#include "light_clusters.glsl"
+#include "light/lamp.glsl"
 #include "rooms.glsl"
 #include "skylight_ambient.glsl"
-#include "light_map.glsl"
 
 // 0 legacy/debug, 1 ambient, 2 sun, 3 points, 4 surfaces, 5 atmosphere.
 #include "composite_mode"
@@ -153,10 +149,8 @@ float upsampleAoFog(ivec2 px, float z, vec3 n, out vec4 fog, out float shadow, o
   return wsum > 1e-4 ? sh.g : 1.0;
 }
 
-// the color of a room's fill, linear, of luminance 1 (BuildingLights.FILL_TINT), and how much of it is left at a
-// room's walls
+// the color of a room's fill, linear, of luminance 1 (BuildingLights.FILL_TINT)
 uniform vec3 interiorTint;
-#define INTERIOR_WALL 0.35
 // sky visibility at which a spot counts as fully indoors, and as not indoors at all
 #define INTERIOR_SKY_CLOSED 0.1
 #define INTERIOR_SKY_OPEN 0.4
@@ -176,9 +170,6 @@ vec3 skyBehind(vec2 px, vec3 dir, vec3 fogColor, bool sunAndSky) {
 // ---------------------------------------------------------------------------------------------------------------
 // Point lights: only the lights listed in this pixel's cluster are evaluated
 
-// lights.json colors are linear and strengths are 117 HD's, used as they are; this is only a global trim
-#define POINT_LIGHT_SCALE 1.0
-
 int clusterAt(ivec2 px, float z) {
   return clusterEntry((vec2(px) + 0.5 - vec2(sceneViewport.xy)) / vec2(sceneViewport.zw), z);
 }
@@ -192,80 +183,29 @@ int clusterLightCount(int entry) {
   return count;
 }
 
-// The normal a point light's N.L takes. Ground reads as ground by its smooth normal, where a flat one would show the
-// triangles in the light, and so does a steep slope of it (a ledge's face, where the light above would otherwise stop
-// along the triangle's edge): terrain is `ground` (material_target.glsl: land terrain). A wall, a chimney or a counter
-// is flat, and the smooth normal of its model tilts across it (the vertices are shared with the faces next to it, the top
-// and the ends) a few degrees, which at the angle a light beside it meets it draws those faces' diagonals into the glow.
-// So the more such a face is upright, the more it takes its own normal: from POINT_SMOOTH_FLAT, a slope the ground can
-// have, to POINT_SMOOTH_FULL.
-#define POINT_SMOOTH_FLAT 0.55
-#define POINT_SMOOTH_FULL 0.85
-vec3 pointLightNormal(vec3 smoothNormal, vec3 faceNormal, bool ground) {
-  if (ground) {
-    return smoothNormal;
-  }
-  return normalize(mix(faceNormal, smoothNormal, smoothstep(POINT_SMOOTH_FLAT, POINT_SMOOTH_FULL, abs(faceNormal.y))));
-}
-
-// returns the light on the front; light through thin foliage from behind goes to throughOut
-vec3 pointLights(int entry, vec3 p, vec3 n, float transmissive, out vec3 throughOut) {
+// The lamps' light on a surface at camera-relative p with normal n, the smooth normal the sun uses, and face normal
+// faceN, from the lamps of cluster entry (light/lamp.glsl): on its front, and through thin foliage from behind into
+// through. Opaque back faces receive neither.
+vec3 lampsOnSurface(int entry, vec3 p, vec3 n, vec3 faceN, float transmissive, out vec3 through) {
   vec3 viewDir = transmissive > 0.0 ? normalize(-p) : vec3(0.0);
-  vec3 through = vec3(0.0);
+  vec3 wallFrom = p + n * LAMP_WALL_BIAS;
   vec3 sum = vec3(0.0);
-  // the static lights baked into the map (light_map.glsl): the lights that reach the point, each worked out as below,
-  // times its visibility. The lights below are the others: those that move, and those not baked yet.
-  int mapPlane = 0;
-  if (lightMapOn()) {
-    vec3 world = p + cameraPos;
-    mapPlane = lightMapPlane(world + n * ROOM_NORMAL_BIAS);
-    vec4 vis;
-    ivec4 ids;
-    if (lightMapSlots(world, world + n * LIGHT_MAP_NORMAL_BIAS, mapPlane, vis, ids)) {
-      for (int k = 0; k < 4; ++k) {
-        vec3 color, ld;
-        float lightY;
-        if (lightMapLight(ids[k], vis[k], world, color, ld, lightY)) {
-          float ndl = dot(n, ld);
-          // Opaque back faces receive neither diffuse light nor foliage transmission.
-          if (ndl > 0.0 || transmissive > 0.0) {
-            sum += color * (max(ndl, 0.0) * POINT_LIGHT_SCALE);
-            through += color * (transmission(ndl, dot(-ld, viewDir), transmissive) * POINT_LIGHT_SCALE);
-          }
-        }
-      }
-    }
-  }
-  LightMask lights = clusterLights(entry);
+  through = vec3(0.0);
+  LightMask lamps = clusterLights(entry);
   int li;
-  while (nextLight(lights, li)) {
-    vec4 posRadius = texelFetch(lightData, li * 2);
-    // Reject outside the radius before fetching room/visibility data.
-    vec3 l = posRadius.xyz - p;
-    float d2 = dot(l, l);
-    float r2 = posRadius.w * posRadius.w;
-    if (d2 >= r2) {
+  while (nextLight(lamps, li)) {
+    Lamp lamp = lampAt(li);
+    if (!lampReaches(lamp, p, n, faceN, transmissive > 0.0)) {
       continue;
     }
-    vec3 ld = l * inversesqrt(max(d2, 1.0));
+    vec3 ld;
+    float d;
+    vec3 c = lampLight(lamp, p, wallFrom, ld, d);
     float ndl = dot(n, ld);
-    // Opaque back faces receive neither diffuse light nor foliage transmission.
-    if (ndl <= 0.0 && transmissive <= 0.0) {
-      continue;
-    }
-    vec4 colorCode = texelFetch(lightData, li * 2 + 1);
-    if (!lightOnStorey(colorCode.w, mapPlane)) {
-      continue;
-    }
-    vec3 color = colorCode.rgb;
-
-    // 117 HD's falloff; we light in linear space like it does
-    float att = pointLightFalloff(d2, r2);
-    sum += color * att * max(ndl, 0.0) * POINT_LIGHT_SCALE;
-    // thin foliage is also lit from behind: magic tree canopies glow around the lights inside them
-    through += color * att * transmission(ndl, dot(-ld, viewDir), transmissive) * POINT_LIGHT_SCALE;
+    sum += c * lampWrap(lamp, ndl, d);
+    // thin foliage is also lit from behind: magic tree canopies glow around the lamps inside them
+    through += c * transmission(ndl, dot(-ld, viewDir), transmissive);
   }
-  throughOut = through;
   return sum;
 }
 
@@ -434,19 +374,18 @@ vec4 shadeScene(ivec2 px, SceneSample sm, vec4 transparent) {
     // Retain the later skylight daylight fill and the tuned indoor ambient floor.
     float daylightFill = skylightOn == 1 ? 0.7 * clamp(skyUpsampled, 0.0, 1.0) : 0.0;
     indirect += caster * envSun * max(ndl, 0.0) * (1.0 - shadow) * daylightFill * ao;
-    int roomId;
-    float roomFill = roomAmbientFill(p + cameraPos, n, roomId);
-    if (roomFill > 0.0) {
+    int roomId = roomOfSurface(p + cameraPos, n);
+    if (roomId > 0) {
       // how closed in the spot is: a room with its roof hidden still counts, a covered gateway open at both ends
       // doesn't, and the fill fades out toward a room's doorways and open sides instead of ending at its tiles' edge
       float enclosed = skylightOn == 1 ? 1.0 - smoothstep(INTERIOR_SKY_CLOSED, INTERIOR_SKY_OPEN, skyUpsampled) : 1.0;
       // the daylight a room gets at least, through its windows and doors
       vec3 roomDaylight = ambientLight(sunAltitude) + skyFill(vec3(0.0, -1.0, 0.0), sunAltitude, 1.0)
         + caster * envSun * (0.7 * max(-casterDir.y, 0.0));
-      indirect = max(indirect, roomDaylight * envAmbient * roomFill * enclosed * 0.3 * ao);
+      indirect = max(indirect, roomDaylight * envAmbient * enclosed * 0.3 * ao);
       // what the room lacks of the least light a room should have, from its lamps and its sky (RoomLight): a soft fill
-      // over the whole room, darker toward its walls
-      indirect += interiorTint * roomFillLevel(roomId) * mix(INTERIOR_WALL, 1.0, clamp((roomFill - 0.6) / 0.4, 0.0, 1.0)) * enclosed * ao;
+      // over the whole room
+      indirect += interiorTint * roomFillLevel(roomId) * enclosed * ao;
     }
     }
     light = indirect
@@ -468,7 +407,7 @@ vec4 shadeScene(ivec2 px, SceneSample sm, vec4 transparent) {
   int cluster = clusterAt(px, viewDepth(d));
   if ((compositePart == 0 || compositePart == 3) && pointLightsEnabled == 1 && inside) {
     vec3 through;
-    light += pointLights(cluster, p, pointLightNormal(n, sm.faceNormal, material.b < 0.25), transmissive, through) * mix(1.0, ao, AO_DIRECT);
+    light += lampsOnSurface(cluster, p, n, sm.faceNormal, transmissive, through) * mix(1.0, ao, AO_DIRECT);
     // the canopy interior SSAO darkens is exactly where light inside a tree shines through
     light += through;
   }
@@ -510,12 +449,13 @@ vec4 shadeScene(ivec2 px, SceneSample sm, vec4 transparent) {
 
   vec3 lit;
   // Where nothing but the volumetric fog is left to change the lit color, it stays linear and is fogged as it is,
-  // instead of going to sRGB and back (applyFogSample)
+  // instead of going to sRGB and back (applyFogSample). Not on the faces models draw as water: waterUnder only holds
+  // within the real water's rect, so a fountain was water only while a river or moat was in view.
   bool linearLit = false;
   if (compositePart != 5) {
     lit = shadeLinear(color.rgb, light);
     linearLit = fogDone && compositePart == 0 && wet.x <= 0.0 && transparent == vec4(0.0)
-      && !waterUnder(px, material.b);
+      && !waterUnder(px, material.b) && !materialFakeWater(material);
     if (!linearLit) {
       lit = linearToSrgb(lit);
       if (wet.x > 0.0) {

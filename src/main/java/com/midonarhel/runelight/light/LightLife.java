@@ -1,4 +1,6 @@
-package com.midonarhel.runelight;
+package com.midonarhel.runelight.light;
+
+import com.midonarhel.runelight.LayerEase;
 
 /**
  * When a light is there and how bright: 117 HD's life of a light. It spawns spawnDelay after it is made, fades in,
@@ -21,6 +23,9 @@ final class LightLife
 	// comes back each time the parent starts the animation
 	private final boolean replayable;
 
+	// when it was placed, for its ease in (LayerEase; 0: none)
+	private final long easeSince;
+
 	private float elapsed;
 	// -1: not known yet
 	private float lifetime = -1;
@@ -29,10 +34,13 @@ final class LightLife
 	private float changedHidingAt = -1;
 
 	/**
-	 * @param fadesIn whether it fades in at all: not the lights a scene starts with
+	 * @param fadesIn whether it fades in by its definition: not the lights a scene starts with
+	 * @param easeSince when it was placed (System.nanoTime): a light placed after its scene showed eases in from then
+	 * over LayerEase's 0.3 s, whatever its definition says; 0 for none
 	 */
-	LightLife(LightDefinition d, boolean fadesIn)
+	LightLife(LightDefinition d, boolean fadesIn, long easeSince)
 	{
+		this.easeSince = easeSince;
 		spawnDelay = Math.max(0, d.spawnDelay) / 1000f;
 		fadeIn = fadesIn ? Math.max(0, d.fadeInDuration) / 1000f : 0;
 		fadeOut = Math.max(0, d.fadeOutDuration) / 1000f;
@@ -138,11 +146,11 @@ final class LightLife
 	}
 
 	/**
-	 * 0 to 1, what its strength is multiplied by: fading in, fading out, and hiding.
+	 * 0 to 1, what its strength is multiplied by: easing in after it was placed, fading in, fading out, and hiding.
 	 */
 	float brightness()
 	{
-		float b = 1;
+		float b = easeSince != 0 ? LayerEase.weight(easeSince, System.nanoTime()) : 1;
 		if (fadeIn > 0)
 		{
 			b *= saturate((elapsed - spawnDelay) / fadeIn);

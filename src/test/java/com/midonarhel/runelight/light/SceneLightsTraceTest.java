@@ -1,4 +1,6 @@
-package com.midonarhel.runelight;
+package com.midonarhel.runelight.light;
+
+import com.midonarhel.runelight.scene.ModelData;
 
 import com.midonarhel.runelight.scene.ModelData;
 

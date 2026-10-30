@@ -1,7 +1,6 @@
 // Shared by the rain, snow and weather surface passes. Include after frame.glsl and sky.glsl.
 
 #include cluster_config
-#include light_map_config
 // World space is game units (128 per tile), y points down; positions here are camera-relative unless named world.
 
 // Top-down depth of all static scenery around the player, every roof included (Weather.java). Window depth grows
@@ -113,32 +112,22 @@ vec3 weatherParticleColor(vec3 srgb, vec3 points) {
   return shade(srgb, weatherParticleLight() + points * WEATHER_PARTICLE_POINT_BOOST);
 }
 
-// Point lights, culled into clusters on the CPU (LightClusters.java); same tables and lookup as the composite
+// The lamps (light/lamp.glsl): the same lamps, culling, falloff and walls as every lit surface
 uniform int pointLightsEnabled;
-uniform samplerBuffer lightData;     // per light: (camera-relative position, radius), (color * strength, 0)
-uniform usamplerBuffer clusterData;  // per cluster: a bit per light in view (light_clusters.glsl)
 
-#include "light_clusters.glsl"
-#include "rooms.glsl"
-#include "light_map.glsl"
+#include "light/lamp.glsl"
 
-// particles are lit at their center, once per vertex; global trim against the surface lighting
-#define WEATHER_POINT_LIGHT_SCALE 1.0
 // extra light seen through a particle when looking toward the light, at most this many times the plain light
 #define WEATHER_FORWARD_SCATTER 2.0
 #define WEATHER_FORWARD_POWER 6.0
-// world units a light may sit below the roof of a point's column and still light it (lamps on a roof's edge)
-#define WEATHER_ROOF_BIAS 48.0
-// Particles past this view depth (world units) skip the point lights, fading out over the last quarter: there a
-// streak is under a pixel wide and mostly faded, and every one of its six vertices would loop over the lights.
+// Particles past this view depth (world units) skip the lamps, fading out over the last quarter: there a streak is
+// under a pixel wide and mostly faded, and every one of its six vertices would loop over the lamps.
 #define WEATHER_PARTICLE_LIGHT_FAR 5120.0
 
-// Light from the point lights around a camera-relative point. clip: the point's clip position (w is view depth),
-// for the cluster lookup. n: surface normal, or zero for particles, which take light from every side and scatter
-// it forward toward the camera. roofY: world y (down) of the top of the scenery in the point's column, 1e9 for none.
-// Weather is outside: lights inside buildings never reach it, and neither does a light below the roof the point is
-// above (rain over a lit house).
-vec3 weatherPointLights(vec3 p, vec4 clip, vec3 n, float roofY) {
+// Light from the lamps around a camera-relative point. clip: the point's clip position (w is view depth), for the
+// cluster lookup. n: surface normal, or zero for particles, which take light from every side and scatter it forward
+// toward the camera.
+vec3 weatherPointLights(vec3 p, vec4 clip, vec3 n) {
   if (pointLightsEnabled == 0 || clip.w <= 0.0) {
     return vec3(0.0);
   }
@@ -148,58 +137,26 @@ vec3 weatherPointLights(vec3 p, vec4 clip, vec3 n, float roofY) {
     return vec3(0.0);
   }
   float z = clip.w;
-  int entry = clusterEntry(rel, z);
-
   bool particle = dot(n, n) < 0.5;
   float reach = particle ? 1.0 - smoothstep(WEATHER_PARTICLE_LIGHT_FAR * 0.75, WEATHER_PARTICLE_LIGHT_FAR, z) : 1.0;
   if (reach <= 0.0) {
     return vec3(0.0);
   }
   vec3 view = normalize(p);
-  float roof = roofY - cameraPos.y + WEATHER_ROOF_BIAS;
-  bool overRoof = p.y < roof;
   vec3 sum = vec3(0.0);
-  // the baked lights (light_map.glsl), each as below, at most four. Weather is outside: the map's light is what reaches it
-  // through the doors and over the walls.
-  if (lightMapOn()) {
-    vec3 world = p + cameraPos;
-    vec4 vis;
-    ivec4 ids;
-    if (lightMapSlots(world, world, lightMapPlane(world), vis, ids)) {
-      for (int j = 0; j < 4; ++j) {
-        vec3 color, ld;
-        float lightY;
-        if (lightMapLight(ids[j], vis[j], world, color, ld, lightY) && !(overRoof && lightY - cameraPos.y > roof)) {
-          float k = particle ? 1.0 + WEATHER_FORWARD_SCATTER * pow(max(dot(ld, view), 0.0), WEATHER_FORWARD_POWER)
-            : max(dot(n, ld), 0.0);
-          sum += color * k;
-        }
-      }
-    }
-  }
-  LightMask lights = clusterLights(entry);
+  LightMask lamps = clusterLights(clusterEntry(rel, z));
   int li;
-  while (nextLight(lights, li)) {
-    vec4 posRadius = texelFetch(lightData, li * 2);
-    vec4 colorIndoor = texelFetch(lightData, li * 2 + 1);
-    if (colorIndoor.w > 0.5 || overRoof && posRadius.y > roof) {
-      continue;
-    }
-    vec3 l = posRadius.xyz - p;
-    float d2 = dot(l, l);
-    float r2 = posRadius.w * posRadius.w;
-    if (d2 >= r2) {
-      continue;
-    }
-    // 117 HD's falloff, as in the composite
-    float att = pointLightFalloff(d2, r2);
-    vec3 ld = l * inversesqrt(max(d2, 1.0));
+  while (nextLight(lamps, li)) {
+    Lamp lamp = lampAt(li);
+    vec3 ld;
+    float d;
+    vec3 color = lampLight(lamp, p, p, ld, d);
     // drops between the camera and a light glow against it
     float k = particle ? 1.0 + WEATHER_FORWARD_SCATTER * pow(max(dot(ld, view), 0.0), WEATHER_FORWARD_POWER)
-      : max(dot(n, ld), 0.0);
-    sum += colorIndoor.rgb * att * k;
+      : lampWrap(lamp, dot(n, ld), d);
+    sum += color * k;
   }
-  return sum * (WEATHER_POINT_LIGHT_SCALE * reach);
+  return sum * reach;
 }
 
 

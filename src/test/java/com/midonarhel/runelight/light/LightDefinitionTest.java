@@ -1,4 +1,4 @@
-package com.midonarhel.runelight;
+package com.midonarhel.runelight.light;
 
 import com.google.gson.Gson;
 import java.io.InputStreamReader;
@@ -124,7 +124,7 @@ public class LightDefinitionTest
 	public void lightsJsonLoadsWithEverythingTheImporterKeeps()
 	{
 		LightDefinition[] defs = new Gson().fromJson(
-			new InputStreamReader(LightDefinitionTest.class.getResourceAsStream("/com/midonarhel/runelight/lights.json"),
+			new InputStreamReader(LightDefinitionTest.class.getResourceAsStream("/com/midonarhel/runelight/light/lights.json"),
 				StandardCharsets.UTF_8), LightDefinition[].class);
 		int areas = 0, animated = 0, outdoor = 0, aligned = 0, delayed = 0;
 		for (LightDefinition d : defs)

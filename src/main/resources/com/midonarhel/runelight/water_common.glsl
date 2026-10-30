@@ -102,18 +102,23 @@ vec4 waterPage2(sampler2D data, vec2 c) {
   return textureLod(data, (c + vec2(2.0 * waterGrid.y, 0.0) + 0.5) / vec2(3.0 * waterGrid.y, waterGrid.y), 0.0);
 }
 
-// The flow phases at xz: two copies of the waves dragged along the flow half a cycle apart, each fading out before
-// it has been dragged too far, so the waves move without ever stretching. m0, m1: how far each has moved; w0 the
-// first one's weight. The phase is offset across the water so the fades don't pulse in step.
-void waterFlowPhases(vec2 xz, vec2 flow, vec2 base, out vec2 m0, out vec2 m1, out float w0) {
+// The flow phases: two copies of the waves dragged along the flow half a cycle apart, each fading out before it has
+// been dragged too far, so the waves move without ever stretching. m0, m1: how far each has moved; w0 the first one's
+// weight. jitter (cycles) offsets the phase across the water so the fades don't pulse in step.
+void waterFlowPhasesAt(vec2 flow, vec2 base, float jitter, out vec2 m0, out vec2 m1, out float w0) {
   float speed = length(flow);
   vec2 drag = flow * min(1.0, FLOW_DRAG / max(speed * FLOW_CYCLE, 1e-3));
-  float jitter = textureLod(waterNoise, vec3(xz / FLOW_JITTER_SCALE, 0.0), 7.0).b * FLOW_JITTER;
   float ph0 = fract(waterTime / FLOW_CYCLE + jitter);
   float ph1 = fract(ph0 + 0.5);
   w0 = 1.0 - abs(1.0 - 2.0 * ph0);
   m0 = base + drag * (ph0 * FLOW_CYCLE);
   m1 = base + drag * (ph1 * FLOW_CYCLE);
+}
+
+// The flow phases at xz, offset by the noise texture there
+void waterFlowPhases(vec2 xz, vec2 flow, vec2 base, out vec2 m0, out vec2 m1, out float w0) {
+  waterFlowPhasesAt(flow, base, textureLod(waterNoise, vec3(xz / FLOW_JITTER_SCALE, 0.0), 7.0).b * FLOW_JITTER, m0, m1,
+    w0);
 }
 
 // The surface pass's target at pixel px (water_frag.glsl): it holds only the pixels of rect (x0, y0 to x1, y1
@@ -219,23 +224,6 @@ float waterFoamCells(vec2 p) {
   return min(sum, 1.0);
 }
 
-// The cells' edges at p, in cells: how much farther the second nearest of the same jittered points waterFoamCells puts
-// its domes at is than the nearest. 0 on the line between two cells, rising away from it; continuous everywhere.
-float waterFoamEdges(vec2 p) {
-  vec2 id = floor(p);
-  float first = 8.0, second = 8.0;
-  for (int j = -1; j <= 1; ++j) {
-    for (int i = -1; i <= 1; ++i) {
-      vec2 c = id + vec2(float(i), float(j));
-      vec2 at = c + 0.2 + 0.6 * vec2(waterHash(vec3(mod(c, 64.0), 11.0)), waterHash(vec3(mod(c, 64.0), 12.0)));
-      float d = distance(p, at);
-      second = min(second, max(d, first));
-      first = min(first, d);
-    }
-  }
-  return second - first;
-}
-
 // Value noise, not tiling (hashed lattice): -1 to 1
 float waveNoise(vec2 p) {
   vec2 i = floor(p), f = fract(p);
@@ -273,4 +261,65 @@ vec2 seaOctaveGrad(vec2 uv, vec3 n, float chop) {
   vec2 g = -chop * pow(R, chop - 1.0) * 0.65 * pow(P, -0.35) * dP;
   // through the warp: w = uv + n(uv) on both axes
   return g.x * vec2(1.0 + n.y, n.z) + g.y * vec2(n.y, 1.0 + n.z);
+}
+
+// along the wind the waves are this much longer than across it
+#define WAVE_STRETCH 1.35
+// still water (no flow) runs its waves and its detail this many times slower
+#define STILL_SLOW 1.25
+// the waves' size on still and on running water (as steep either way): more of them, denser, the smaller
+#define STILL_WAVE_SIZE 0.55
+#define FLOW_WAVE_SIZE 0.6
+// the waves' height by the flow: STILL_WAVES on still water, rising to FAST_WAVES on fast water (water_frag.glsl
+// FAST_FLOW)
+#define STILL_WAVES 0.6
+#define FAST_WAVES 1.8
+
+// The waves' slope at q (world units) with the wind along dir, `slow` times slower and `size` times as large:
+// WAVE_OCTAVES octaves, each running both ways so they heave in place, the ones finer than a few pixels left out
+vec2 crestWaves(vec2 q, vec2 dir, float footprint, float slow, float size) {
+  float tile = WATER_TILE * size;
+  vec2 p = vec2(dot(q, dir), dot(q, vec2(-dir.y, dir.x))) / tile;
+  float pixel = footprint / tile;
+  float tt = waterTime / slow * WATER_TAU * WAVE_SPEED;
+  // uv = M p; each octave turned about 37 degrees and WAVE_SHRINK as long
+  mat2 M = mat2(1.0 / WAVE_STRETCH, 0.0, 0.0, 1.0) * (WATER_TAU / WAVE_LONGEST);
+  const mat2 TURN = mat2(0.8, 0.6, -0.6, 0.8);
+  float len = WAVE_LONGEST, amp = 1.0, chop = WAVE_CHOP;
+  vec2 g = vec2(0.0);
+  for (int i = 0; i < WAVE_OCTAVES; ++i) {
+    float vis = smoothstep(4.0, 8.0, len / max(pixel, 1e-4));
+    if (vis <= 0.0)
+      break;
+    vec2 uv = M * p;
+    vec2 ua = uv + tt, ub = uv - tt;
+    vec2 gu = seaOctaveGrad(ua, waveNoiseD(ua), chop) + seaOctaveGrad(ub, waveNoiseD(ub), chop);
+    g += transpose(M) * gu * (amp * vis);
+    M = TURN * M / WAVE_SHRINK;
+    len *= WAVE_SHRINK;
+    amp *= WAVE_FADE;
+    chop = mix(chop, 1.0, 0.2);
+  }
+  g *= 0.5 * WAVE_HEIGHT / tile;
+  return dir * g.x + vec2(-dir.y, dir.x) * g.y;
+}
+
+// The waves at xz moved along by `move`, running along dir: blended from the two nearest of eight fixed directions,
+// as turning their coordinates to follow a winding flow would swirl them, more the further from the origin; the
+// weights keep their strength.
+vec2 ripples(vec2 xz, vec2 move, float footprint, float slow, float size, vec2 dir) {
+  vec2 q = xz - move;
+  float sector = atan(dir.y, dir.x) / (WATER_TAU / 8.0);
+  float s0 = floor(sector);
+  float f = (sector - s0) * (WATER_TAU / 4.0);
+  vec2 waves = vec2(0.0);
+  // only the directions that count (a flow along one of the eight, or still water, takes one)
+  if (cos(f) > 1e-3) {
+    waves += crestWaves(q, vec2(cos(s0 * WATER_TAU / 8.0), sin(s0 * WATER_TAU / 8.0)), footprint, slow, size) * cos(f);
+  }
+  if (sin(f) > 1e-3) {
+    waves += crestWaves(q, vec2(cos((s0 + 1.0) * WATER_TAU / 8.0), sin((s0 + 1.0) * WATER_TAU / 8.0)), footprint, slow,
+      size) * sin(f);
+  }
+  return waves;
 }

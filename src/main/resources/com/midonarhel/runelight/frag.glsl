@@ -44,6 +44,7 @@ in vec3 fNormal;
 in float fNormalValid;
 in vec4 fBorderColor;
 in vec3 fInnerColor;
+in vec4 fClip;
 flat in int fMaterial;
 #ifdef ZBUF_DEBUG
 in float fDepth;
@@ -73,6 +74,38 @@ uniform float sunAltitude;
 
 #include "sky.glsl"
 #include "materials.glsl"
+
+// The lamps (light/lamp.glsl), as the composite has them: prepared before the scene is drawn
+#include cluster_config
+uniform int pointLightsEnabled;
+#define cameraPos vec3(cameraX, cameraY, cameraZ)
+#include "light/lamp.glsl"
+
+// The lamps' light on a transparent face at camera-relative p with normal n, from its cluster: on its front, and
+// through a thin leaf from behind
+vec3 alphaLamps(vec3 p, vec3 n, vec3 faceN, float transmissive) {
+  if (pointLightsEnabled == 0 || fClip.w <= 0.0) {
+    return vec3(0.0);
+  }
+  vec2 rel = fClip.xy / fClip.w * 0.5 + 0.5;
+  vec3 viewDir = normalize(-p);
+  vec3 wallFrom = p + n * LAMP_WALL_BIAS;
+  vec3 sum = vec3(0.0);
+  LightMask lamps = clusterLights(clusterEntry(rel, fClip.w));
+  int li;
+  while (nextLight(lamps, li)) {
+    Lamp lamp = lampAt(li);
+    if (!lampReaches(lamp, p, n, faceN, transmissive > 0.0)) {
+      continue;
+    }
+    vec3 ld;
+    float d;
+    vec3 c = lampLight(lamp, p, wallFrom, ld, d);
+    float ndl = dot(n, ld);
+    sum += c * (lampWrap(lamp, ndl, d) + transmission(ndl, dot(-ld, viewDir), transmissive));
+  }
+  return sum;
+}
 #include "material_target.glsl"
 #include "environment.glsl"
 #include "edge_fade.glsl"
@@ -159,6 +192,7 @@ void main() {
     } else {
       light = envCaveLight(n);
     }
+    light += alphaLamps(fWorldPos - cameraPos, n, faceNormal, materialTransmissive(fMaterial));
     light = emissiveLight(light, materialEmissive(fMaterial));
     vec3 fog = envFog(outdoors == 1 && proceduralSky == 1 ? skyHorizon(sunAltitude) : fogColor.rgb, outdoors == 1,
       sunAltitude);

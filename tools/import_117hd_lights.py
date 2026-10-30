@@ -17,7 +17,7 @@ is not one of 117 HD's alignments; its loader reads it as CUSTOM, which is what 
 
 Usage (from a 117HD/RLHD checkout):
   tools/import_117hd_lights.py <RLHD>/src/main/resources/rs117/hd/scene \
-      src/main/resources/com/midonarhel/runelight/lights.json
+      src/main/resources/com/midonarhel/runelight/light/lights.json
 
 117 HD is BSD 2-Clause licensed; its notice is reproduced in LICENSE.
 """

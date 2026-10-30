@@ -71,6 +71,7 @@ out vec3 fNormal;       // smooth vertex normal, world space; only meaningful wh
 out float fNormalValid;
 out vec4 fBorderColor;  // color * border weight, border weight
 out vec3 fInnerColor;   // color * (1 - border weight)
+out vec4 fClip;         // clip position, for the lamps' cluster (light/lamp.glsl)
 flat out int fMaterial;  // SurfaceMaterials bits: emissive level in 0-1, transmissive in 2; water bed 3, land 4, snow 5-6
 #ifdef ZBUF_DEBUG
 out float fDepth;
@@ -108,6 +109,7 @@ void main() {
   worldPos.xyz += windDisplacement(vertf.w, worldPos.xyz, fNormal, packedNormal != 0);
   vec4 screenPos = worldProj * worldPos;
   fWorldPos = worldPos.xyz;
+  fClip = screenPos;
 #ifdef ZBUF_DEBUG
   fDepth = screenPos.z / screenPos.w;
 #endif
