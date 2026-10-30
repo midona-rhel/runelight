@@ -265,6 +265,13 @@ final class HitchMonitor
 		{
 			b.append(String.format("; GC %d collections, %d ms", collections, collectionMillis));
 		}
+		if (frameMs > 500)
+		{
+			// a frame of about a second spent in swapBuffers is what macOS does to a window it does not show (covered,
+			// on another space, the app in the background): whether the client was the active app says which
+			java.awt.Window active = java.awt.KeyboardFocusManager.getCurrentKeyboardFocusManager().getActiveWindow();
+			b.append("; app ").append(active != null ? "active" : "not active");
+		}
 		b.append("; jobs ");
 		boolean any = false;
 		for (int i = 0; i < NAMES.length; ++i)
