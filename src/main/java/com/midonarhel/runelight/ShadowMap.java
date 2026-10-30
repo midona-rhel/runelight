@@ -337,14 +337,19 @@ class ShadowMap
 				glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
 			}
 		}
+		int activeUnit = glGetInteger(GL_ACTIVE_TEXTURE);
+		glActiveTexture(GL_TEXTURE0);
+		int bound0 = glGetInteger(GL_TEXTURE_BINDING_2D);
 		glBindFramebuffer(GL_FRAMEBUFFER, maxFbo);
 		glViewport(0, 0, n, n);
 		glUseProgram(program);
-		glActiveTexture(GL_TEXTURE0);
 		maxPass(program, staticTex[front], maxTex, tile, 0, 0, tile, tile);
 		maxPass(program, maxTex, maxSpareTex, 1, -tiles, 0, 2 * tiles + 1, 1);
 		maxPass(program, maxSpareTex, maxTex, 1, 0, -tiles, 1, 2 * tiles + 1);
-		glBindTexture(GL_TEXTURE_2D, 0);
+		// unit 0 and the active unit as they were: this runs once per static map build, and a frame that loses a
+		// sampler's texture here is drawn black (the teleport flash, 2026-10-30)
+		glBindTexture(GL_TEXTURE_2D, bound0);
+		glActiveTexture(activeUnit);
 	}
 
 	private static void maxPass(int program, int from, int to, int scale, int offsetX, int offsetY, int countX, int countY)

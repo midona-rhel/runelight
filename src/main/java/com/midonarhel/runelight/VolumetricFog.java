@@ -304,6 +304,10 @@ class VolumetricFog
 		}
 		groundBuffer.clear();
 		groundBuffer.put(ready).flip();
+		// the upload binds on whatever unit is active: remember and restore it, so the frame this runs in (once per
+		// scene) does not lose a sampler's texture — the black frame after a teleport (2026-10-30)
+		int activeUnit = glGetInteger(GL_ACTIVE_TEXTURE);
+		int bound = glGetInteger(GL_TEXTURE_BINDING_2D);
 		if (texGround == 0)
 		{
 			texGround = glGenTextures();
@@ -319,7 +323,8 @@ class VolumetricFog
 		}
 		// full floats: heights reach thousands of units, where half floats step by 2 to 4
 		glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA32F, FogGround.WIDTH, FogGround.CORNERS, 0, GL_RGBA, GL_FLOAT, groundBuffer);
-		glBindTexture(GL_TEXTURE_2D, 0);
+		glActiveTexture(activeUnit);
+		glBindTexture(GL_TEXTURE_2D, bound);
 	}
 
 	private static boolean sameRequest(Object a, Object b)
