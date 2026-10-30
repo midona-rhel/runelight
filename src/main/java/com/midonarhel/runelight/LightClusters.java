@@ -454,8 +454,14 @@ class LightClusters
 			// the driver's buffer textures are too small for the map (GL 3.3 only promises 65536 texels)
 			rooms = null;
 		}
-		int roomTexels = rooms != null ? rooms.texelCount() : RoomMap.HEADER_TEXELS;
 		set = (set + 1) % SETS;
+		if (rooms != null && (rooms != uploadedRooms[set] || rooms.getVersion() != uploadedVersion[set]) && !rooms.packedReady())
+		{
+			// B3: the map changed; its texels are packed on a worker — this set keeps what it has until they are ready
+			rooms.packAsync();
+			rooms = uploadedRooms[set];
+		}
+		int roomTexels = rooms != null ? rooms.texelCount() : RoomMap.HEADER_TEXELS;
 		glBindBuffer(GL_TEXTURE_BUFFER, lightBuffers[set]);
 		if (rooms != uploadedRooms[set] || rooms != null && rooms.getVersion() != uploadedVersion[set])
 		{

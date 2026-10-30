@@ -373,9 +373,11 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 
 	private final LightClusters lightClusters = new LightClusters();
 	// the static lights baked into per-storey maps (LightMap), which the composite, the fog and the weather read from
-	private static final int LIGHT_MAP_BLOCKS_PER_FRAME = 24;
+	// B3: the light map's blocks reach the GPU a few per frame within a time budget, never a burst on the load frame
+	// (24 blocks and 1 ms before 2026-10-30: the glTexSubImage3D burst was 30+ ms of each region load's hitch)
+	private static final int LIGHT_MAP_BLOCKS_PER_FRAME = 2;
 	// more are sent in a frame while the sending has taken less than this, up to the most (a scene load has hundreds)
-	private static final long LIGHT_MAP_SEND_BUDGET_NANOS = 1_000_000;
+	private static final long LIGHT_MAP_SEND_BUDGET_NANOS = 400_000;
 	private static final int LIGHT_MAP_BLOCKS_MAX = 96;
 	private final LightMap lightMap = new LightMap(LightMap.defaultThreads(), LightMap.burstThreads());
 	private final LightMapTexture lightMapTexture = new LightMapTexture();

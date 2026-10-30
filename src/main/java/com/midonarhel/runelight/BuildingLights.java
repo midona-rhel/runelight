@@ -129,7 +129,7 @@ class BuildingLights
 		builtFor = scene;
 		builtBaseX = scene.getBaseX();
 		builtBaseY = scene.getBaseY();
-		log.debug("Buildings: {} rooms (roof ids {}, dropped {} small, {} huge) in {} ms",
+		log.info("Buildings: {} rooms (roof ids {}, dropped {} small, {} huge) in {} ms",
 			r.rooms.size(), r.usedRoofIds ? "used" : "ignored", r.rejectedSmall, r.rejectedHuge,
 			(System.nanoTime() - start) / 1_000_000.0);
 	}

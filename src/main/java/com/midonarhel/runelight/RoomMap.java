@@ -38,6 +38,51 @@ final class RoomMap
 	// the walls the rooms were split along, null when unknown: the texels carry them
 	private WallMap walls;
 
+	// B3: the texels packed off the client thread (pools, wall distances and all), for the version they were packed
+	// for; LightClusters.upload copies them when ready and keeps the previous upload until then, so a region load
+	// no longer packs the whole map on its swap frame (30+ ms of each load's hitch, 2026-10-30)
+	private volatile java.nio.FloatBuffer packed;
+	private volatile int packedVersion = -1;
+	private volatile boolean packing;
+	private static final java.util.concurrent.ExecutorService PACKER = java.util.concurrent.Executors.newSingleThreadExecutor(r ->
+	{
+		Thread t = new Thread(r, "RuneLight room texels");
+		t.setDaemon(true);
+		return t;
+	});
+
+	/** Whether {@link #texels} can be served from the packed copy for the current version. */
+	boolean packedReady()
+	{
+		return packed != null && packedVersion == version;
+	}
+
+	/** Pack the texels for the current version on the worker, unless that is already under way. */
+	void packAsync()
+	{
+		if (packing || packedReady())
+		{
+			return;
+		}
+		packing = true;
+		final int forVersion = version;
+		PACKER.execute(() ->
+		{
+			try
+			{
+				java.nio.FloatBuffer out = org.lwjgl.BufferUtils.createFloatBuffer(texelCount() * 4);
+				texelsInto(out);
+				out.flip();
+				packed = out;
+				packedVersion = forVersion;
+			}
+			finally
+			{
+				packing = false;
+			}
+		});
+	}
+
 	private RoomMap(int size, int offset)
 	{
 		this.size = size;
@@ -251,6 +296,17 @@ final class RoomMap
 	 * planes' puddle places ({@link #pool}).
 	 */
 	void texels(FloatBuffer out)
+	{
+		java.nio.FloatBuffer ready = packed;
+		if (ready != null && packedVersion == version)
+		{
+			out.put(ready.duplicate());
+			return;
+		}
+		texelsInto(out);
+	}
+
+	private void texelsInto(FloatBuffer out)
 	{
 		out.put(2).put(size).put(offset).put(0); // the texel is four floats
 		float[] pools = pools();
