@@ -4651,8 +4651,12 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		}
 
 		hitchMonitor.job(HitchMonitor.SCENE_SWAP);
+		// B3: every part of the swap frame timed, logged when the swap is slow, so the map-load hitch is attributed
+		long t0 = System.nanoTime();
 		areaHiding.swapped();
+		long tArea = System.nanoTime();
 		SceneContext ctx = root;
+		int freed = 0, reused = 0;
 		for (int x = 0; x < ctx.sizeX; ++x)
 		{
 			for (int z = 0; z < ctx.sizeZ; ++z)
@@ -4662,15 +4666,18 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 				if (zone.cull)
 				{
 					zone.free();
+					freed++;
 				}
 				else
 				{
 					// reused zone
 					zone.updateRoofs(nextRoofChanges);
+					reused++;
 				}
 			}
 		}
 		nextRoofChanges = null;
+		long tFree = System.nanoTime();
 		lookMonitor.scene("swap", scene);
 
 		ctx.zones = nextZones;
@@ -4681,8 +4688,10 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		water.swap();
 		volumetricFog.swap();
 		clientUploader.water = mapUploader.water;
+		long tModules = System.nanoTime();
 
 		// setup vaos
+		int unmapped = 0;
 		for (int x = 0; x < ctx.zones.length; ++x) // NOPMD: ForLoopCanBeForeach
 		{
 			for (int z = 0; z < ctx.zones[0].length; ++z)
@@ -4693,11 +4702,21 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 				{
 					zone.unmap();
 					zone.initialized = true;
+					unmapped++;
 				}
 			}
 		}
+		long tUnmap = System.nanoTime();
 
 		checkGLErrors();
+		long tEnd = System.nanoTime();
+		double total = (tEnd - t0) / 1e6;
+		if (total > 2)
+		{
+			log.info(String.format("swapScene %.1f ms: areaHiding %.1f, free/roofs %.1f (%d freed, %d reused), modules %.1f, unmap %.1f (%d zones), glGetError %.1f",
+				total, (tArea - t0) / 1e6, (tFree - tArea) / 1e6, freed, reused, (tModules - tFree) / 1e6, (tUnmap - tModules) / 1e6, unmapped,
+				(tEnd - tUnmap) / 1e6));
+		}
 	}
 
 	private void swapSub(Scene scene)
