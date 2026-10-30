@@ -224,23 +224,6 @@ float waterFoamCells(vec2 p) {
   return min(sum, 1.0);
 }
 
-// The cells' edges at p, in cells: how much farther the second nearest of the same jittered points waterFoamCells puts
-// its domes at is than the nearest. 0 on the line between two cells, rising away from it; continuous everywhere.
-float waterFoamEdges(vec2 p) {
-  vec2 id = floor(p);
-  float first = 8.0, second = 8.0;
-  for (int j = -1; j <= 1; ++j) {
-    for (int i = -1; i <= 1; ++i) {
-      vec2 c = id + vec2(float(i), float(j));
-      vec2 at = c + 0.2 + 0.6 * vec2(waterHash(vec3(mod(c, 64.0), 11.0)), waterHash(vec3(mod(c, 64.0), 12.0)));
-      float d = distance(p, at);
-      second = min(second, max(d, first));
-      first = min(first, d);
-    }
-  }
-  return second - first;
-}
-
 // Value noise, not tiling (hashed lattice): -1 to 1
 float waveNoise(vec2 p) {
   vec2 i = floor(p), f = fract(p);
