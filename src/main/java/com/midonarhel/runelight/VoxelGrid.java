@@ -1,5 +1,7 @@
 package com.midonarhel.runelight;
 
+import com.midonarhel.runelight.scene.Zone;
+
 /**
  * Dense voxel grid over the base scene for the skylight's rays (SkyGrid): 208 x 208 half-tile columns, up to
  * MAX_LAYERS half-tile layers from the highest geometry down, and HEADROOM empty ones above it. A cell is 0 when

@@ -19,7 +19,7 @@ Output: {"objects": [[id, code], ...]} with code = mode | (modifier + 3) << 3 | 
 
 Usage (from a 117HD/RLHD checkout):
   tools/import_117hd_wind.py <RLHD>/src/main/resources/rs117/hd/scene \
-      src/main/resources/com/midonarhel/runelight/wind.json
+      src/main/resources/com/midonarhel/runelight/scene/wind.json
 
 117 HD is BSD 2-Clause licensed; its notice is reproduced in LICENSE.
 """

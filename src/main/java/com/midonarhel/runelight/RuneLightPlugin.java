@@ -24,6 +24,30 @@
  */
 package com.midonarhel.runelight;
 
+import com.midonarhel.runelight.scene.AreaHiding;
+import com.midonarhel.runelight.scene.EdgeFade;
+import com.midonarhel.runelight.scene.GLBuffer;
+import com.midonarhel.runelight.scene.GpuFloatBuffer;
+import com.midonarhel.runelight.scene.GroundBlender;
+import com.midonarhel.runelight.scene.Interactables;
+import com.midonarhel.runelight.scene.ModelUploader;
+import com.midonarhel.runelight.scene.RegionManager;
+import com.midonarhel.runelight.scene.SceneJobs;
+import com.midonarhel.runelight.scene.SceneLoadReport;
+import com.midonarhel.runelight.scene.SceneLoader;
+import com.midonarhel.runelight.scene.SceneUploader;
+import com.midonarhel.runelight.scene.SurfaceMaterials;
+import com.midonarhel.runelight.scene.TempModels;
+import com.midonarhel.runelight.scene.TextureManager;
+import com.midonarhel.runelight.scene.VAO;
+import com.midonarhel.runelight.scene.VAOList;
+import com.midonarhel.runelight.scene.VertexShading;
+import com.midonarhel.runelight.scene.WindSway;
+import com.midonarhel.runelight.scene.Zone;
+import com.midonarhel.runelight.scene.ZonePool;
+
+import com.midonarhel.runelight.shadow.ShadowMap;
+
 import com.midonarhel.runelight.weather.Climate;
 import com.midonarhel.runelight.weather.WadeSteps;
 import com.midonarhel.runelight.weather.Weather;
@@ -157,12 +181,12 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 {
 	private static final Logger log = LoggerFactory.getLogger(RuneLightPlugin.class);
 
-	static final int MAX_DISTANCE = 184;
+	public static final int MAX_DISTANCE = 184;
 	// how far in, in tiles, the sky's light flowing in under cover falls to a third of its brightness
 	static final int SKYLIGHT_REACH = 3;
 	public static final int SCENE_OFFSET = (Constants.EXTENDED_SCENE_SIZE - Constants.SCENE_SIZE) / 2; // offset for sxy -> msxy
 	private static final int UNIFORM_BUFFER_SIZE = 5 * Float.BYTES;
-	static final int NUM_ZONES = Constants.EXTENDED_SCENE_SIZE >> 3;
+	public static final int NUM_ZONES = Constants.EXTENDED_SCENE_SIZE >> 3;
 	private static final int MAX_WORLDVIEWS = 4096;
 
 	@Inject
@@ -184,9 +208,9 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 	private TextureManager textureManager;
 
 	@Inject
-	RegionManager regionManager;
+	public RegionManager regionManager;
 
-	final AreaHiding areaHiding = new AreaHiding();
+	public final AreaHiding areaHiding = new AreaHiding();
 
 	@Inject
 	private DrawManager drawManager;
@@ -446,8 +470,8 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 	private final OpenRooms openRooms = new OpenRooms();
 	// repeating errors are logged once per interval
 	private final LogLimiter logLimiter = new LogLimiter(10_000);
-	final LookMonitor lookMonitor = new LookMonitor();
-	final HitchMonitor hitchMonitor = new HitchMonitor();
+	public final LookMonitor lookMonitor = new LookMonitor();
+	public final HitchMonitor hitchMonitor = new HitchMonitor();
 	private final java.util.ArrayList<PointLight> frameLights = new java.util.ArrayList<>();
 	private final PointLight testLight = new PointLight();
 	private int uniAlphaPass;
@@ -470,7 +494,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 	private static final int FOG_TEXTURE_UNIT = RuneLightPlugin.COMPOSITE_TEXTURE_UNIT + 10;
 	private static final int FOG_NOISE_UNIT = RuneLightPlugin.COMPOSITE_TEXTURE_UNIT + 11;
 
-	final VolumetricFog volumetricFog = new VolumetricFog();
+	public final VolumetricFog volumetricFog = new VolumetricFog();
 	private final Clouds clouds = new Clouds();
 	// the half resolution pass's scissor, x0, y0 to x1, y1 exclusive: the water's rect, the clouds' rows (skyRows)
 	private final int[] halfScissor = new int[4], cloudRows = new int[2];
@@ -545,9 +569,9 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 	private static final int WATER_WAVES_UNIT_B = RuneLightPlugin.COMPOSITE_TEXTURE_UNIT + 19;
 	// two units: the weather field (WeatherField) and its ground, for the fog and the weather passes
 	private static final int WEATHER_FIELD_UNIT = RuneLightPlugin.COMPOSITE_TEXTURE_UNIT + 16;
-	final Water water = new Water();
+	public final Water water = new Water();
 	private final float[] waterWind = new float[3];
-	final VoxelBuilder voxelBuilder = new VoxelBuilder();
+	public final VoxelBuilder voxelBuilder = new VoxelBuilder();
 	// the skylight's traced sky visibility for the AO pass, and the static lights' occlusion
 	private static final int SKY_GRID_UNIT = RuneLightPlugin.COMPOSITE_TEXTURE_UNIT + 28;
 	// the weather field's sky (cover, wispiness, darkness around the player) for the clouds
@@ -635,19 +659,19 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 
 	private int cameraYaw, cameraPitch;
 
-	static class RenderThread
+	public static class RenderThread
 	{
-		VAOList vaoO, vaoA;
-		ModelUploader modelUploader;
+		public VAOList vaoO, vaoA;
+		public ModelUploader modelUploader;
 	}
 
 	private RenderThread[] rts;
 
-	SceneUploader clientUploader, mapUploader;
+	public SceneUploader clientUploader, mapUploader;
 
 	public static class SceneContext
 	{
-		final float[] projection = Mat4.identity();
+		public final float[] projection = Mat4.identity();
 
 		public final int sizeX, sizeZ;
 		public Zone[][] zones;
@@ -656,7 +680,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		private int minLevel, level, maxLevel;
 		private Set<Integer> hideRoofIds;
 
-		SceneContext(int sizeX, int sizeZ)
+		public SceneContext(int sizeX, int sizeZ)
 		{
 			this.sizeX = sizeX;
 			this.sizeZ = sizeZ;
@@ -671,7 +695,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		}
 
 		/** A view of a loaded scene's zones not swapped in yet, with the drawn scene's levels (StaticShadowBuild). */
-		SceneContext(Zone[][] zones, SceneContext levels)
+		public SceneContext(Zone[][] zones, SceneContext levels)
 		{
 			this.sizeX = zones.length;
 			this.sizeZ = zones[0].length;
@@ -694,7 +718,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		}
 	}
 
-	SceneContext context(Scene scene)
+	public SceneContext context(Scene scene)
 	{
 		int wvid = scene.getWorldViewId();
 		if (wvid == WorldView.TOPLEVEL)
@@ -704,7 +728,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		return subs[wvid];
 	}
 
-	SceneContext context(WorldView wv)
+	public SceneContext context(WorldView wv)
 	{
 		int wvid = wv.getId();
 		if (wvid == WorldView.TOPLEVEL)
@@ -715,8 +739,8 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 	}
 
 	// the drawn scenes: the top level and the sub world views (SceneLoader swaps them in)
-	SceneContext root;
-	SceneContext[] subs;
+	public SceneContext root;
+	public SceneContext[] subs;
 	private SceneLoader sceneLoader;
 
 	// Uniforms
@@ -727,8 +751,8 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 	private int uniExpandedMapLoadingChunks;
 	private int uniSmoothBanding;
 	private int uniWorldProj;
-	static int uniEntityProj;
-	static int uniEntityTint;
+	public static int uniEntityProj;
+	public static int uniEntityTint;
 	private int uniBrightness;
 	private int uniTexSourceDimensions;
 	private int uniTexTargetDimensions;
@@ -2562,7 +2586,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 	 * for a scene being loaded (SceneLoader) it is held until that scene is swapped in, and replaces the front then, or
 	 * when it is done if the swap came first: until then the old map stands in.
 	 */
-	final class StaticShadowBuild implements SceneJobs.Job
+	public final class StaticShadowBuild implements SceneJobs.Job
 	{
 		private final SceneContext ctx;
 		private final float[] dir;
@@ -2577,7 +2601,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		private int build, next, perFrame, sway;
 		private float radius;
 
-		StaticShadowBuild(SceneContext ctx, float[] dir, float fx, float fy, float fz, boolean bolt, boolean forLoad)
+		public StaticShadowBuild(SceneContext ctx, float[] dir, float fx, float fy, float fz, boolean bolt, boolean forLoad)
 		{
 			this.ctx = ctx;
 			this.dir = dir;
@@ -2589,7 +2613,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 			this.forLoad = forLoad;
 		}
 
-		StaticShadowBuild(SceneContext ctx, float[] dir, Scene scene, boolean bolt, boolean forLoad)
+		public StaticShadowBuild(SceneContext ctx, float[] dir, Scene scene, boolean bolt, boolean forLoad)
 		{
 			this.ctx = ctx;
 			this.dir = dir;
@@ -2727,7 +2751,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		 * The scene this was drawn for is swapped in (client thread): the held map becomes the front one. Not drawn yet
 		 * (the swap came first), what is left of it is drawn now, so the scene never shows with the old place's map.
 		 */
-		void swappedIn()
+		public void swappedIn()
 		{
 			swappedIn = true;
 			boolean drawing = !held && staticBuild == this || !started;
@@ -2761,7 +2785,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 	 * Draw the static shadow map of a scene being loaded (SceneLoader, the map loader's thread, its zones uploaded):
 	 * around where the player will stand, the scene's centre after a teleport. Null when shadows are off.
 	 */
-	StaticShadowBuild prebuildStaticShadows(Scene scene, Zone[][] zones)
+	public StaticShadowBuild prebuildStaticShadows(Scene scene, Zone[][] zones)
 	{
 		if (!config.shadows() || glShadowProgram == 0)
 		{
@@ -2773,7 +2797,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 	}
 
 	/** A load was dropped before its swap (SceneLoader, client thread): its map is not to be used. */
-	void dropStaticShadows(StaticShadowBuild dropped)
+	public void dropStaticShadows(StaticShadowBuild dropped)
 	{
 		if (dropped != null && staticBuild == dropped)
 		{
@@ -4129,7 +4153,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 	}
 
 	/** Whether the object has an action to interact with, as it looks now; client thread (Interactables). */
-	boolean hasAction(int id)
+	public boolean hasAction(int id)
 	{
 		ObjectComposition comp = client.getObjectDefinition(id);
 		if (comp != null && comp.getImpostorIds() != null && comp.getImpostor() != null)
@@ -4435,14 +4459,14 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 	}
 
 	/** A top level swap begins (SceneLoader). */
-	void sceneSwapStarted()
+	public void sceneSwapStarted()
 	{
 		hitchMonitor.job(HitchMonitor.SCENE_SWAP);
 		framesSinceSwap = 0;
 	}
 
 	/** A top level load is built and waits for its swap (SceneLoader, the map loader's thread). */
-	void loadBuilt()
+	public void loadBuilt()
 	{
 		if (swapCaptureArmed)
 		{
@@ -4458,7 +4482,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 	 * The loaded record became the drawn scene (SceneLoader.swap), client thread: every consumer takes its part of it
 	 * now, or keeps the old one until the job building it finishes, the same for all. No GL call.
 	 */
-	void sceneSwapped(SceneLoader.SceneDerived d)
+	public void sceneSwapped(SceneLoader.SceneDerived d)
 	{
 		long t0 = System.nanoTime();
 		weather.invalidateOcclusion();
@@ -4476,7 +4500,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 	}
 
 	/** A zone of the top level scene was uploaded again (SceneLoader.rebuild). */
-	void zoneRebuilt()
+	public void zoneRebuilt()
 	{
 		hitchMonitor.job(HitchMonitor.ZONE_REBUILD);
 		weather.invalidateOcclusion();

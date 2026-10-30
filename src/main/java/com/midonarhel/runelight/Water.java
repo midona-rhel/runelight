@@ -178,7 +178,7 @@ public class Water
 	}
 
 	/** A loaded scene's water and its surface mesh, built off the GL thread (SceneLoader). */
-	static final class Loaded
+	public static final class Loaded
 	{
 		final WaterMap map;
 		final WaterSurface.Mesh mesh;
@@ -191,7 +191,7 @@ public class Water
 	}
 
 	/** The water of a scene being loaded (any thread), map null for none: its surface mesh is built here. */
-	static Loaded prepare(WaterMap map)
+	public static Loaded prepare(WaterMap map)
 	{
 		return new Loaded(map, WaterSurface.build(map));
 	}
@@ -206,7 +206,7 @@ public class Water
 	 * Upload a loaded scene's water (surface tiles, data, contact) into the textures and buffer not drawn, before its
 	 * swap: a scheduler job (SceneLoader), GL thread. The swap then only flips them.
 	 */
-	void uploadNext(Loaded loaded)
+	public void uploadNext(Loaded loaded)
 	{
 		WaterMap map = loaded.map;
 		boolean data = map != null && map.hasWater && map.texture != null;

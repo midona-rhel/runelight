@@ -9,7 +9,7 @@ Each entry keeps the order of 117 HD's areas.json, as which area the player is i
 
 Usage (from a 117HD/RLHD checkout):
   tools/import_117hd_areas.py <RLHD>/src/main/resources/rs117/hd/scene \
-      src/main/resources/com/midonarhel/runelight/area_hiding.json
+      src/main/resources/com/midonarhel/runelight/scene/area_hiding.json
 
 117 HD is BSD 2-Clause licensed; its notice is reproduced in LICENSE.
 """

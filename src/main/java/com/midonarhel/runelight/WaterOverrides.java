@@ -16,7 +16,7 @@ import org.slf4j.LoggerFactory;
  * matches them: which tiles' water its tile overrides make another type, and which objects' faces are the game's
  * ripples it hides.
  */
-final class WaterOverrides
+public final class WaterOverrides
 {
 	private static final Logger log = LoggerFactory.getLogger(WaterOverrides.class);
 
@@ -132,7 +132,7 @@ final class WaterOverrides
 		}
 	}
 
-	static WaterOverrides get()
+	public static WaterOverrides get()
 	{
 		return loaded;
 	}
@@ -194,7 +194,7 @@ final class WaterOverrides
 	/**
 	 * Whether the object has ripples 117 HD hides: then {@link #hidesFace} says which faces.
 	 */
-	boolean hasRipples(int objectId)
+	public boolean hasRipples(int objectId)
 	{
 		return effects.containsKey(objectId);
 	}
@@ -204,7 +204,7 @@ final class WaterOverrides
 	 * the whole model, or for an untextured face the first of its color rules matching the face's color (alpha, and
 	 * the packed HSL of its first color).
 	 */
-	boolean hidesFace(int objectId, int x, int y, int plane, boolean textured, int transparency, int hsl)
+	public boolean hidesFace(int objectId, int x, int y, int plane, boolean textured, int transparency, int hsl)
 	{
 		Effect e = effects.get(objectId);
 		if (e == null || e.area != null && !contains(e.area, x, y, plane))

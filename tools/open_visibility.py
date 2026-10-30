@@ -37,7 +37,15 @@ def publicize_member(cls, member):
         m = pat.match(l)
         # a declaration has a type before the name (or is a method call-shaped declaration at class depth);
         # a bare `name = ...` deeper in is an assignment inside a constructor, never touched
-        if m and (m.group(3) or (m.group(4) == '(' and len(m.group(1)) == 1)) and len(m.group(1)) <= 2 and not re.match(r'^\t+(return|new|throw|else|case)\b', l):
+        # a two-tab declaration counts only inside a nested type's body, never inside a method
+        def in_nested_type(k):
+            for b in range(k - 1, -1, -1):
+                h = lines[b]
+                if re.match(r'^\t\S', h):
+                    return re.match(r'^\t(?:public |private |protected )?(?:abstract |static |final )*(?:class|interface|enum|record) ', h) is not None
+            return False
+        if m and (m.group(3) or (m.group(4) == '(' and len(m.group(1)) == 1)) and len(m.group(1)) <= 2 \
+            and (len(m.group(1)) == 1 or in_nested_type(i)) and not re.match(r'^\t+(return|new|throw|else|case)\b', l):
             lines[i] = m.group(1) + 'public ' + l[len(m.group(1)):]
             changed.add(f'{cls}.{member}'); break
     else:
