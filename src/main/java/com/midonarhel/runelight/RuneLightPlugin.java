@@ -198,6 +198,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 	// reference-build comparison tools (Lumina's): ::runelight cam|capture|set, and the same from
 	// ~/.runelite/lumina/command-perfwip.txt once per client tick in developer mode
 	private CommandFile commandFile;
+	private final FrameSnapshot frameSnapshot = new FrameSnapshot();
 
 	private static final Set<String> OTHER_RENDERERS = Set.of(
 		"net.runelite.client.plugins.gpu.GpuPlugin",
@@ -4031,6 +4032,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 			swapIntervalNow = ms;
 		}
 		lastSwapNanos = now;
+		frameSnapshot.frame();
 		if (log.isDebugEnabled())
 		{
 			hitchMonitor.endFrame(swapIntervalNow, cpuTimer, gpuTimer);
@@ -4759,6 +4761,27 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		else if (args.length >= 1 && args[0].equals("capture"))
 		{
 			FrameCapture.capture(client, drawManager, "RuneLight (perf-wip)", args.length >= 2 ? args[1] : "capture");
+		}
+		else if (args.length >= 1 && args[0].equals("snapshot") && !frameSnapshot.running())
+		{
+			int seconds = args.length >= 2 ? Math.max(1, Math.min(120, Integer.parseInt(args[1]))) : 10;
+			boolean uncapped = args.length >= 3 && args[2].equals("uncapped");
+			int target = config.fpsTarget();
+			if (uncapped)
+			{
+				configManager.setConfiguration(RuneLightConfig.GROUP, "fpsTarget", 999);
+			}
+			java.util.List<String> header = new java.util.ArrayList<>();
+			header.add("renderer: RuneLight (perf-wip)");
+			header.add("canvas: " + client.getCanvasWidth() + "x" + client.getCanvasHeight());
+			header.add("camera: yaw " + client.getCameraYaw() + ", pitch " + client.getCameraPitch() + ", scale " + client.getScale());
+			header.add("unlock_fps: " + config.unlockFps() + ", fps_target: " + (uncapped ? 999 : target) + ", vsync: " + config.syncMode());
+			header.add("location: " + (client.getLocalPlayer() == null ? "none" : client.getLocalPlayer().getWorldLocation()));
+			frameSnapshot.start(header, seconds, uncapped ? () ->
+			{
+				configManager.setConfiguration(RuneLightConfig.GROUP, "fpsTarget", target);
+				log.info("Snapshot done: fpsTarget back to {}", target);
+			} : null);
 		}
 		else if (args.length >= 3 && args[0].equals("set"))
 		{
