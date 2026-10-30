@@ -25,7 +25,8 @@ final class SceneLoadReport
 	private static final int[] OUR_STAGES = {
 		CpuTimer.ENVIRONMENT, CpuTimer.WEATHER, CpuTimer.LIGHTS, CpuTimer.CLUSTERS, CpuTimer.SHADOW_SUBMIT,
 		CpuTimer.UI_UPLOAD, CpuTimer.BUFFER_MAP, CpuTimer.LIGHT_UPLOAD, CpuTimer.VOXELS, CpuTimer.SKY_CACHE,
-		CpuTimer.OCCLUSION, CpuTimer.SKY_GRID, CpuTimer.LIGHT_MAP
+		CpuTimer.OCCLUSION, CpuTimer.SKY_GRID
+		// the light map is timed inside light collection (CpuTimer.nested)
 	};
 
 	private volatile long loadStartNanos;
@@ -33,6 +34,10 @@ final class SceneLoadReport
 	// the load's client-thread work before the swap (zone buffers made and mapped, unmapped), and its frames
 	private volatile double preSwapMs;
 	private volatile int preSwapCalls;
+	// our loadScene, by stage (map loader thread), and when it returned
+	private final StringBuilder stages = new StringBuilder();
+	private volatile String stagesText = "";
+	private volatile long loadEndNanos;
 
 	private long swapNanos;
 	private double swapMs;
@@ -49,6 +54,21 @@ final class SceneLoadReport
 		countsAtLoad = new int[]{buffersCreated, buffersDeleted, arraysCreated, arraysDeleted};
 		preSwapMs = 0;
 		preSwapCalls = 0;
+		stages.setLength(0);
+		loadEndNanos = 0;
+	}
+
+	/** A stage of our loadScene took this long (map loader thread). */
+	void stage(String name, double ms)
+	{
+		stages.append(stages.length() > 0 ? ", " : "").append(name).append(String.format(" %.1f", ms));
+	}
+
+	/** Our loadScene returned (map loader thread): what follows until the swap is the client's. */
+	void loadReturned()
+	{
+		loadEndNanos = System.nanoTime();
+		stagesText = stages.toString();
 	}
 
 	/** Client-thread work the load did before the swap, and in how many steps (frames). */
@@ -120,9 +140,12 @@ final class SceneLoadReport
 			{
 				at = new int[4];
 			}
-			log.info(String.format("Scene load report: load→swap %.0f ms, pre-swap client work %.1f ms in %d steps; swap frame %.1f ms, ours %.1f (swapScene %.1f, %d freed, %d reused); "
+			long loadEnd = loadEndNanos;
+			log.info(String.format("Scene load report: load→swap %.0f ms = our loadScene %.0f (%s) + the client's until its swap %.0f; pre-swap client work %.1f ms in %d steps; swap frame %.1f ms, ours %.1f (swapScene %.1f, %d freed, %d reused); "
 					+ "GL buffers +%d -%d, vertex arrays +%d -%d; next 2 s: %d frames, %d over %.0f ms (frame:ms/ours:ms%s), max %.1f ms, our max %.1f, our mean %.2f",
-				loadStartNanos == 0 ? 0 : (swapNanos - loadStartNanos) / 1e6, preSwapMs, preSwapCalls,
+				loadStartNanos == 0 ? 0 : (swapNanos - loadStartNanos) / 1e6,
+				loadStartNanos == 0 || loadEnd == 0 ? 0 : (loadEnd - loadStartNanos) / 1e6, stagesText,
+				loadEnd == 0 ? 0 : (swapNanos - loadEnd) / 1e6, preSwapMs, preSwapCalls,
 				swapFrameMs, swapFrameOurs, swapMs, swapFreed, swapReused,
 				buffersCreated - at[0], buffersDeleted - at[1], arraysCreated - at[2], arraysDeleted - at[3],
 				frames - 1, slow, SLOW_MS, slowText, maxMs, maxOurs, frames > 1 ? oursAfter / (frames - 1) : 0));

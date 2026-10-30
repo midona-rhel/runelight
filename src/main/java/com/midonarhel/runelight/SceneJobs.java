@@ -21,6 +21,12 @@ final class SceneJobs
 
 	/** Client-thread time a frame for all jobs together. */
 	static final long BUDGET_NANOS = 1_000_000L;
+	/**
+	 * While the client shows its loading box (GameState.LOADING), the load's own jobs (priority LOAD) may take this
+	 * much a frame: the next swap waits on them, and at 1 ms the 529 zone buffers of a teleport took 13 frames
+	 * (≈ 215 ms of the teleport, 2026-10-30) for about 5 ms of work. 4 ms leaves a 60 FPS frame far from 25 ms.
+	 */
+	static final long LOADING_BUDGET_NANOS = 4_000_000L;
 
 	// priorities: what the next swap waits for first, then what the frame after it shows, then upkeep
 	static final int LOAD = 0;
@@ -87,9 +93,10 @@ final class SceneJobs
 	/**
 	 * Run jobs for this frame's budget; client thread, after the frame is presented.
 	 *
+	 * @param loading whether the client is loading a scene (its loading box is up): the load's jobs get more time
 	 * @return the client-thread time spent, ms
 	 */
-	double run()
+	double run(boolean loading)
 	{
 		long start = System.nanoTime();
 		lastRunNanos = start;
@@ -105,21 +112,28 @@ final class SceneJobs
 			queue.add(i, e);
 		}
 		long deadline = start + BUDGET_NANOS;
+		long loadDeadline = start + (loading ? LOADING_BUDGET_NANOS : BUDGET_NANOS);
 		// one step per job per frame, in order; a job that stops before the deadline (done, or waiting for something)
 		// leaves the rest of the budget to the next
 		int i = 0;
 		while (i < queue.size())
 		{
 			long now = System.nanoTime();
-			if (now >= deadline)
+			Entry e = queue.get(i);
+			long end = e.priority == LOAD ? loadDeadline : deadline;
+			if (now >= end)
 			{
+				if (e.priority == LOAD)
+				{
+					++i;
+					continue;
+				}
 				break;
 			}
-			Entry e = queue.get(i);
 			boolean done;
 			try
 			{
-				done = e.job.step(deadline);
+				done = e.job.step(end);
 			}
 			catch (RuntimeException ex)
 			{

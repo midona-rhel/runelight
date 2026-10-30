@@ -41,6 +41,12 @@ class CpuTimer
 		"buffer map", "light upload", "scene voxels", "sky capture", "occlusion maps", "sky grid", "light map"
 	};
 
+	/** Steps timed inside another step (the light map inside light collection): left out of sums. */
+	static boolean nested(int stage)
+	{
+		return stage == LIGHT_MAP;
+	}
+
 	private final long[] start = new long[STAGES];
 	private final double[] frame = new double[STAGES];
 	private final double[] ms = new double[STAGES];
@@ -89,7 +95,7 @@ class CpuTimer
 		double sum = 0;
 		for (int s = 0; s < STAGES; ++s)
 		{
-			if (s != OUTSIDE)
+			if (s != OUTSIDE && !nested(s))
 			{
 				sum += ms[s];
 			}

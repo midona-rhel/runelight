@@ -162,6 +162,9 @@ final class SceneLoader
 		}
 
 		report.loadStarted();
+		long t = System.nanoTime();
+		// the fog's ground needs only the scene: built beside the rest
+		java.util.concurrent.Future<FogGround> fogGroundBuild = beside(() -> FogGround.build(scene));
 		RuneLightPlugin.SceneContext ctx = plugin.root;
 		Scene prev = client.getTopLevelWorldView().getScene();
 
@@ -306,17 +309,17 @@ final class SceneLoader
 			}
 		}
 
-		// the water's bed depths and flow, needed to size and upload the zones; its surface mesh; the fog's ground
-		Stopwatch sw = Stopwatch.createStarted();
+		t = stage("reuse", t);
+
+		// the water's bed depths and flow, needed to size and upload the zones; its surface mesh beside the upload
 		WaterMap waterMap = config.water()
 			? WaterMap.build(scene, WaterOverrides.get()) : null;
 		plugin.mapUploader.water = waterMap;
-		Water.Loaded water = Water.prepare(waterMap);
-		FogGround fogGround = FogGround.build(scene);
-		log.debug("Water map and fog ground time {}", sw);
+		java.util.concurrent.Future<Water.Loaded> waterBuild = beside(() -> Water.prepare(waterMap));
+		t = stage("water map", t);
 
 		// size the zones which require upload
-		sw = Stopwatch.createStarted();
+		Stopwatch sw = Stopwatch.createStarted();
 		int len = 0, lena = 0;
 		int reused = 0, newzones = 0;
 		for (int x = 0; x < NUM_ZONES; ++x)
@@ -344,12 +347,16 @@ final class SceneLoader
 			len, (len * Zone.VERT_SIZE * 3) / 1024,
 			lena, (lena * Zone.VERT_SIZE * 3) / 1024);
 
+		t = stage("sizes", t);
+
 		// upload the zones which require it; their buffers are mapped and unmapped by the scheduler alongside
 		sw = Stopwatch.createStarted();
 		uploadZones(scene, newZones, NUM_ZONES, NUM_ZONES, "load");
 		log.debug("Scene upload time {}", sw);
+		t = stage("upload", t);
 
-		SceneDerived d = new SceneDerived(scene, newZones, roofChanges, water, fogGround);
+		SceneDerived d = new SceneDerived(scene, newZones, roofChanges, join(waterBuild), join(fogGroundBuild));
+		t = stage("water mesh + fog ground wait", t);
 		// what is derived from the drawn zones starts now, before the swap: the voxels on their worker, the static
 		// shadow map by the scheduler
 		try
@@ -362,8 +369,53 @@ final class SceneLoader
 			// the load must not fail for them: the swap then builds what is missing after it
 			log.error("Scene load: starting the voxels or the static shadows failed", ex);
 		}
+		stage("derived starts", t);
 		next = d;
+		report.loadReturned();
 		plugin.loadBuilt();
+	}
+
+	private long stage(String name, long since)
+	{
+		long now = System.nanoTime();
+		report.stage(name, (now - since) / 1e6);
+		return now;
+	}
+
+	/** Run a part of the load on an upload thread while the loader goes on (inline without one). */
+	private <T> java.util.concurrent.Future<T> beside(java.util.concurrent.Callable<T> part)
+	{
+		if (uploadThreads != null)
+		{
+			return uploadThreads.submit(part);
+		}
+		java.util.concurrent.CompletableFuture<T> done = new java.util.concurrent.CompletableFuture<>();
+		try
+		{
+			done.complete(part.call());
+		}
+		catch (Exception ex)
+		{
+			done.completeExceptionally(ex);
+		}
+		return done;
+	}
+
+	private static <T> T join(java.util.concurrent.Future<T> part)
+	{
+		try
+		{
+			return part.get();
+		}
+		catch (InterruptedException ex)
+		{
+			Thread.currentThread().interrupt();
+			throw new RuntimeException(ex);
+		}
+		catch (java.util.concurrent.ExecutionException ex)
+		{
+			throw new RuntimeException(ex.getCause());
+		}
 	}
 
 	private static boolean canReuse(Zone[][] zones, int zx, int zz)
@@ -697,7 +749,7 @@ final class SceneLoader
 		if (!jobs.idle())
 		{
 			plugin.hitchMonitor.job(HitchMonitor.SCENE_JOBS);
-			report.extra(jobs.run());
+			report.extra(jobs.run(client.getGameState() == GameState.LOADING));
 		}
 	}
 
