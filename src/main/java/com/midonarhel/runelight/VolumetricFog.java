@@ -332,6 +332,12 @@ class VolumetricFog
 		return x[0] == y[0] && x[1] == y[1] && java.util.Arrays.equals((int[]) x[2], (int[]) y[2]);
 	}
 
+	/** The ground texels last SENT to the GPU (for the post-swap trace): the texture the fog reads this frame. */
+	Object groundForTrace()
+	{
+		return sentGround;
+	}
+
 	/** Whether a scene's terrain has been uploaded: the fog has nothing to lie on before. */
 	boolean hasGround()
 	{

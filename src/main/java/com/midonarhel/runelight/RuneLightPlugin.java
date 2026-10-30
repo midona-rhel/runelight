@@ -3332,9 +3332,12 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		{
 			// B3 trace: the user sees one frame render normally, one "really sharp", then back, on every teleport — which
 			// passes ran in the frames after the swap tells which layer drops out
-			log.info(String.format("post-swap frame %d: ao=%b fog=%b shadows=%b(init %b) ground=%b sky=%b half=%b fogGround=%b voxels=%b skyCacheMode=%d",
-				framesSinceSwap, ao, frameFog, shadows, shadowMap.isInitialized(), ground, sky, halfPass, volumetricFog.hasGround(),
-				voxelBuilder.getVoxels() != null, lastSkyCacheMode));
+			// identities of the derived data in use this frame: which one changes between the frames names the layer
+			log.info(String.format("post-swap frame %d: ao=%b fog=%b shadows=%b(init %b) ground=%b sky=%b half=%b skyCacheMode=%d captures=%d | voxels=%08x fogGround=%08x shadowFront=%08x rooms=%08x",
+				framesSinceSwap, ao, frameFog, shadows, shadowMap.isInitialized(), ground, sky, halfPass, lastSkyCacheMode, skyCache.getCaptures(),
+				System.identityHashCode(voxelBuilder.getVoxels()), System.identityHashCode(volumetricFog.groundForTrace()),
+				System.identityHashCode(shadowMap.frontView()),
+				System.identityHashCode(buildingLights != null ? buildingLights.getRooms() : null)));
 			if (swapCaptureArmed && framesSinceSwap >= 1 && framesSinceSwap <= 4)
 			{
 				// and the frames themselves, to diff the "sharp" one against its neighbours (::runelight swapcapture arms it)
