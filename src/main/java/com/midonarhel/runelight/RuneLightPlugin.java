@@ -200,6 +200,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 	private int framesSinceSwap = 1000;
 	private final SceneLoadReport loadReport = new SceneLoadReport();
 	private boolean swapCaptureArmed;
+	private int swapCaptureFrames = 8;
 	// frames left to capture around a swap: set when loadScene finishes (before the client's swap), counts down per frame
 	private volatile int swapCaptureLeft;
 	private int swapCaptureIndex;
@@ -4387,7 +4388,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 			// itself and its neighbours are all on file (the user's flash is a whole frame, before frame +1)
 			swapCaptureArmed = false;
 			swapCaptureIndex = 0;
-			swapCaptureLeft = 8;
+			swapCaptureLeft = swapCaptureFrames;
 		}
 	}
 
@@ -4569,8 +4570,11 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		}
 		else if (args.length >= 1 && args[0].equals("swapcapture"))
 		{
+			// the eases after a swap (LayerEase) take 0.3 s: `swapcapture 30` spans them at 60 FPS
+			swapCaptureFrames = args.length >= 2 ? Math.max(1, Math.min(60, Integer.parseInt(args[1]))) : 8;
 			swapCaptureArmed = true;
-			log.info("Armed: eight frames from the end of the next scene load (spanning the swap) are captured as swap-k0..7");
+			log.info("Armed: {} frames from the end of the next scene load (spanning the swap) are captured as swap-k0..{}",
+				swapCaptureFrames, swapCaptureFrames - 1);
 		}
 		else if (args.length >= 3 && args[0].equals("set"))
 		{
