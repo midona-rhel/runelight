@@ -92,6 +92,7 @@ class Zone
 	// what renderOpaque draws of the swaying ranges
 	static final int SWAY_ALL = 0, SWAY_EXCLUDE = 1, SWAY_ONLY = 2;
 
+	/** Take the buffers (ZonePool.acquire, with their vertex arrays) for the zone's upload. */
 	void init(VBO o, VBO a)
 	{
 		assert glVao == 0;
@@ -100,47 +101,33 @@ class Zone
 		if (o != null)
 		{
 			vboO = o;
-			glVao = glGenVertexArrays();
-			SceneLoadReport.arraysCreated++;
-			setupVao(glVao, o.bufId);
+			glVao = o.vao;
 		}
 
 		if (a != null)
 		{
 			vboA = a;
-			glVaoA = glGenVertexArrays();
-			SceneLoadReport.arraysCreated++;
-			setupVao(glVaoA, a.bufId);
+			glVaoA = a.vao;
 		}
 	}
 
-	void free()
+	/** Give the buffers back to the pool: no GL call unless one is still mapped. */
+	void free(ZonePool pool, SceneJobs jobs)
 	{
 		if (vboO != null)
 		{
-			vboO.destroy();
+			pool.release(vboO, jobs);
 			vboO = null;
 		}
 
 		if (vboA != null)
 		{
-			vboA.destroy();
+			pool.release(vboA, jobs);
 			vboA = null;
 		}
 
-		if (glVao != 0)
-		{
-			glDeleteVertexArrays(glVao);
-			SceneLoadReport.arraysDeleted++;
-			glVao = 0;
-		}
-
-		if (glVaoA != 0)
-		{
-			glDeleteVertexArrays(glVaoA);
-			SceneLoadReport.arraysDeleted++;
-			glVaoA = 0;
-		}
+		glVao = 0;
+		glVaoA = 0;
 
 		// don't add permanent alphamodels to the cache as permanent alphamodels are always allocated
 		// to avoid having to synchronize the cache
@@ -169,7 +156,7 @@ class Zone
 		}
 	}
 
-	private void setupVao(int vao, int buffer)
+	static void setupVao(int vao, int buffer)
 	{
 		glBindVertexArray(vao);
 		glBindBuffer(GL_ARRAY_BUFFER, buffer);

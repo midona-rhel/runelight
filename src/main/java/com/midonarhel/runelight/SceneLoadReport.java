@@ -51,11 +51,11 @@ final class SceneLoadReport
 		preSwapCalls = 0;
 	}
 
-	/** Client-thread work the load did before the swap. */
-	void preSwap(double ms)
+	/** Client-thread work the load did before the swap, and in how many steps (frames). */
+	void preSwap(double ms, int steps)
 	{
 		preSwapMs += ms;
-		preSwapCalls++;
+		preSwapCalls += steps;
 	}
 
 	/** Our own work in this frame outside the CPU steps (the load's jobs), client thread. */
@@ -120,7 +120,7 @@ final class SceneLoadReport
 			{
 				at = new int[4];
 			}
-			log.info(String.format("Scene load report: load→swap %.0f ms, pre-swap client work %.1f ms in %d calls; swap frame %.1f ms, ours %.1f (swapScene %.1f, %d freed, %d reused); "
+			log.info(String.format("Scene load report: load→swap %.0f ms, pre-swap client work %.1f ms in %d steps; swap frame %.1f ms, ours %.1f (swapScene %.1f, %d freed, %d reused); "
 					+ "GL buffers +%d -%d, vertex arrays +%d -%d; next 2 s: %d frames, %d over %.0f ms (frame:ms/ours:ms%s), max %.1f ms, our max %.1f, our mean %.2f",
 				loadStartNanos == 0 ? 0 : (swapNanos - loadStartNanos) / 1e6, preSwapMs, preSwapCalls,
 				swapFrameMs, swapFrameOurs, swapMs, swapFreed, swapReused,

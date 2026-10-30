@@ -30,9 +30,13 @@ import static org.lwjgl.opengl.GL33C.*;
 
 class VBO
 {
-	final int size;
+	// the bytes used (mapped and drawn) and the storage the buffer has, at least as large (ZonePool reuses buffers)
+	int size;
+	int capacity;
 	private int usage;
 	int bufId;
+	// the zone vertex array reading this buffer, 0 for none (ZonePool keeps the two together)
+	int vao;
 	private ByteBuffer buffer;
 	IntBuffer vb;
 	int len;
@@ -45,12 +49,29 @@ class VBO
 
 	void init(int usage)
 	{
+		init(usage, size);
+	}
+
+	void init(int usage, int capacity)
+	{
 		this.usage = usage;
+		this.capacity = capacity;
 		bufId = glGenBuffers();
 		SceneLoadReport.buffersCreated++;
 
 		glBindBuffer(GL_ARRAY_BUFFER, bufId);
-		glBufferData(GL_ARRAY_BUFFER, size, usage);
+		glBufferData(GL_ARRAY_BUFFER, capacity, usage);
+		glBindBuffer(GL_ARRAY_BUFFER, 0);
+	}
+
+	/** New storage under the same name (vertex arrays reading it still do); not mapped. */
+	void respecify(int size, int capacity)
+	{
+		assert !mapped;
+		this.size = size;
+		this.capacity = capacity;
+		glBindBuffer(GL_ARRAY_BUFFER, bufId);
+		glBufferData(GL_ARRAY_BUFFER, capacity, usage);
 		glBindBuffer(GL_ARRAY_BUFFER, 0);
 	}
 
@@ -72,7 +93,10 @@ class VBO
 	{
 		assert !mapped;
 		glBindBuffer(GL_ARRAY_BUFFER, bufId);
-		buffer = glMapBufferRange(GL_ARRAY_BUFFER, 0, size, GL_MAP_WRITE_BIT | (usage == GL_STATIC_DRAW ? 0 : (GL_MAP_INVALIDATE_BUFFER_BIT | GL_MAP_FLUSH_EXPLICIT_BIT)), buffer);
+		// the old contents are invalidated either way: a reused zone buffer (ZonePool) may still be read by the GPU, and
+		// the driver can give the mapping fresh storage instead of waiting for it
+		buffer = glMapBufferRange(GL_ARRAY_BUFFER, 0, size, GL_MAP_WRITE_BIT | GL_MAP_INVALIDATE_BUFFER_BIT
+			| (usage == GL_STATIC_DRAW ? 0 : GL_MAP_FLUSH_EXPLICIT_BIT), buffer);
 		if (buffer == null)
 		{
 			int err = glGetError();

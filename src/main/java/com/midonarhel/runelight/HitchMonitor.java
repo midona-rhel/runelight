@@ -29,10 +29,11 @@ final class HitchMonitor
 	static final int AREA_HIDING = 1 << 4;
 	static final int VOXEL_BUILD = 1 << 5;
 	static final int SKY_CAPTURE = 1 << 6;
+	static final int SCENE_JOBS = 1 << 7;
 
 	private static final String[] NAMES = {
 		"static shadow rebuild", "zone rebuild", "scene swap", "shader reload", "area hiding", "voxel build",
-		"sky capture"
+		"sky capture", "scene jobs"
 	};
 
 	private static final double MIN_MS = 12;

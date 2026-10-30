@@ -199,6 +199,9 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 	private final FrameSnapshot frameSnapshot = new FrameSnapshot();
 	private int framesSinceSwap = 1000;
 	private final SceneLoadReport loadReport = new SceneLoadReport();
+	// the load's GL work, a frame budget at a time, and the zones' buffers kept for reuse
+	private final SceneJobs sceneJobs = new SceneJobs();
+	private final ZonePool zonePool = new ZonePool();
 	private boolean swapCaptureArmed;
 	// frames left to capture around a swap: set when loadScene finishes (before the client's swap), counts down per frame
 	private volatile int swapCaptureLeft;
@@ -643,13 +646,13 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 			}
 		}
 
-		void free()
+		void free(ZonePool pool, SceneJobs jobs)
 		{
 			for (int x = 0; x < sizeX; ++x)
 			{
 				for (int z = 0; z < sizeZ; ++z)
 				{
-					zones[x][z].free();
+					zones[x][z].free(pool, jobs);
 				}
 			}
 		}
@@ -989,7 +992,16 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 					textureArrayId = -1;
 				}
 
-				root.free();
+				root.free(zonePool, sceneJobs);
+				for (SceneContext sub : subs != null ? subs : new SceneContext[0])
+				{
+					if (sub != null)
+					{
+						sub.free(zonePool, sceneJobs);
+					}
+				}
+				sceneJobs.clear();
+				zonePool.free();
 
 				shutdownInterfaceTexture();
 				shutdownProgram();
@@ -3901,6 +3913,18 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		return comp != null && Interactables.hasAction(comp.getActions());
 	}
 
+	private VBO mapZoneBuffer(int faces)
+	{
+		int bytes = faces * Zone.VERT_SIZE * 3;
+		if (bytes <= 0)
+		{
+			return null;
+		}
+		VBO vbo = zonePool.acquire(bytes);
+		vbo.map();
+		return vbo;
+	}
+
 	private void rebuild(WorldView wv)
 	{
 		SceneContext ctx = context(wv);
@@ -3920,31 +3944,14 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 				}
 
 				assert zone.initialized;
-				zone.free();
+				zone.free(zonePool, sceneJobs);
 				zone = ctx.zones[x][z] = new Zone();
 
 				Scene scene = wv.getScene();
 				clientUploader.zoneSize(scene, zone, x, z);
 				Interactables.resolve(this::hasAction);
-
-				VBO o = null, a = null;
-				int sz = zone.sizeO * Zone.VERT_SIZE * 3;
-				if (sz > 0)
-				{
-					o = new VBO(sz);
-					o.init(GL_STATIC_DRAW);
-					o.map();
-				}
-
-				sz = zone.sizeA * Zone.VERT_SIZE * 3;
-				if (sz > 0)
-				{
-					a = new VBO(sz);
-					a.init(GL_STATIC_DRAW);
-					a.map();
-				}
-
-				zone.init(o, a);
+				// buffers from the pool, the ones just freed among them (ZonePool)
+				zone.init(mapZoneBuffer(zone.sizeO), mapZoneBuffer(zone.sizeA));
 
 				try
 				{
@@ -4146,6 +4153,13 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 
 		glBindFramebuffer(GL_FRAMEBUFFER, awtContext.getFramebuffer(false));
 
+		// the scene loads' GL work, within its budget, after the frame is presented: its time is the next frame's
+		if (!sceneJobs.idle())
+		{
+			hitchMonitor.job(HitchMonitor.SCENE_JOBS);
+			loadReport.extra(sceneJobs.run());
+		}
+
 		checkGLErrors();
 	}
 
@@ -4291,12 +4305,10 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 					{
 						Zone zone = nextZones[x][z];
 						assert !zone.cull;
-						// anything initialized is a reused zone and so shouldn't be freed
+						// anything initialized is a reused zone and so shouldn't be freed; the new ones are unmapped already
 						if (!zone.initialized)
 						{
-							zone.unmap();
-							zone.initialized = true;
-							zone.free();
+							zone.free(zonePool, sceneJobs);
 						}
 					}
 				}
@@ -4497,79 +4509,9 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 			len, (len * Zone.VERT_SIZE * 3) / 1024,
 			lena, (lena * Zone.VERT_SIZE * 3) / 1024);
 
-		// allocate buffers for zones which require upload
-		CountDownLatch latch = new CountDownLatch(1);
-		clientThread.invoke(() ->
-		{
-			long allocStart = System.nanoTime();
-			Interactables.resolve(this::hasAction);
-			for (int x = 0; x < Constants.EXTENDED_SCENE_SIZE >> 3; ++x)
-			{
-				for (int z = 0; z < Constants.EXTENDED_SCENE_SIZE >> 3; ++z)
-				{
-					Zone zone = newZones[x][z];
-
-					if (zone.initialized)
-					{
-						continue;
-					}
-
-					VBO o = null, a = null;
-					int sz = zone.sizeO * Zone.VERT_SIZE * 3;
-					if (sz > 0)
-					{
-						o = new VBO(sz);
-						o.init(GL_STATIC_DRAW);
-						o.map();
-					}
-
-					sz = zone.sizeA * Zone.VERT_SIZE * 3;
-					if (sz > 0)
-					{
-						a = new VBO(sz);
-						a.init(GL_STATIC_DRAW);
-						a.map();
-					}
-
-					zone.init(o, a);
-				}
-			}
-
-			loadReport.preSwap((System.nanoTime() - allocStart) / 1e6);
-			latch.countDown();
-		});
-		try
-		{
-			latch.await();
-		}
-		catch (InterruptedException e)
-		{
-			throw new RuntimeException(e);
-		}
-
-		// upload zones
+		// upload the zones which require it; their buffers are mapped and unmapped by the scheduler alongside
 		sw = Stopwatch.createStarted();
-		for (int x = 0; x < Constants.EXTENDED_SCENE_SIZE >> 3; ++x)
-		{
-			for (int z = 0; z < Constants.EXTENDED_SCENE_SIZE >> 3; ++z)
-			{
-				Zone zone = newZones[x][z];
-
-				if (!zone.initialized)
-				{
-					try
-					{
-						mapUploader.uploadZone(scene, zone, x, z);
-					}
-					catch (RuntimeException ex)
-					{
-						// the load must not throw: the client then never finishes loading (2026-10-30, a zone's upload outgrew
-						// its counted VBO at base (1632, 3080)); the zone loses its tail, the log names it
-						log.error("Zone upload failed at zone {},{} (load): {}", x, z, ex.toString());
-					}
-				}
-			}
-		}
+		uploadZones(scene, newZones, NUM_ZONES, NUM_ZONES, "load");
 		log.debug("Scene upload time {}", sw);
 
 		nextZones = newZones;
@@ -4614,6 +4556,68 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		return true;
 	}
 
+	/**
+	 * Upload the zones not initialized (not reused), on the loading thread: the scheduler maps their buffers ahead of
+	 * the upload and unmaps them behind it (ZoneUploads), so they are ready to draw at the swap, which does no GL work.
+	 */
+	private void uploadZones(Scene scene, Zone[][] zones, int sizeX, int sizeZ, String what)
+	{
+		int n = 0;
+		for (int x = 0; x < sizeX; ++x)
+		{
+			for (int z = 0; z < sizeZ; ++z)
+			{
+				if (!zones[x][z].initialized)
+				{
+					n++;
+				}
+			}
+		}
+		Zone[] list = new Zone[n];
+		int[] xs = new int[n], zs = new int[n];
+		n = 0;
+		for (int x = 0; x < sizeX; ++x)
+		{
+			for (int z = 0; z < sizeZ; ++z)
+			{
+				if (!zones[x][z].initialized)
+				{
+					list[n] = zones[x][z];
+					xs[n] = x;
+					zs[n] = z;
+					n++;
+				}
+			}
+		}
+		boolean onClientThread = client.isClientThread();
+		ZoneUploads uploads = new ZoneUploads(list, zonePool, sceneJobs, clientThread,
+			() -> Interactables.resolve(this::hasAction),
+			r ->
+			{
+				if (what.equals("load"))
+				{
+					loadReport.preSwap(r[0], (int) r[1]);
+				}
+			});
+		uploads.start(onClientThread);
+		for (int i = 0; i < n; ++i)
+		{
+			uploads.mapped(i, onClientThread);
+			try
+			{
+				mapUploader.uploadZone(scene, list[i], xs[i], zs[i]);
+			}
+			catch (RuntimeException ex)
+			{
+				// the load must not throw: the client then never finishes loading (2026-10-30, a zone's upload outgrew
+				// its counted VBO at base (1632, 3080)); the zone loses its tail, the log names it
+				log.error("Zone upload failed at zone {},{} ({}): {}", xs[i], zs[i], what, ex.toString());
+			}
+			uploads.uploaded(i);
+		}
+		uploads.finish(onClientThread);
+	}
+
 	private void loadSubScene(WorldView worldView, Scene scene)
 	{
 		int worldViewId = scene.getWorldViewId();
@@ -4640,67 +4644,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 			}
 		}
 
-		// allocate buffers for zones which require upload
-		CountDownLatch latch = new CountDownLatch(1);
-		clientThread.invoke(() ->
-		{
-			Interactables.resolve(this::hasAction);
-			for (int x = 0; x < ctx.sizeX; ++x)
-			{
-				for (int z = 0; z < ctx.sizeZ; ++z)
-				{
-					Zone zone = ctx.zones[x][z];
-
-					VBO o = null, a = null;
-					int sz = zone.sizeO * Zone.VERT_SIZE * 3;
-					if (sz > 0)
-					{
-						o = new VBO(sz);
-						o.init(GL_STATIC_DRAW);
-						o.map();
-					}
-
-					sz = zone.sizeA * Zone.VERT_SIZE * 3;
-					if (sz > 0)
-					{
-						a = new VBO(sz);
-						a.init(GL_STATIC_DRAW);
-						a.map();
-					}
-
-					zone.init(o, a);
-				}
-			}
-
-			latch.countDown();
-		});
-		try
-		{
-			latch.await();
-		}
-		catch (InterruptedException e)
-		{
-			throw new RuntimeException(e);
-		}
-
-		for (int x = 0; x < ctx.sizeX; ++x)
-		{
-			for (int z = 0; z < ctx.sizeZ; ++z)
-			{
-				Zone zone = ctx.zones[x][z];
-
-				try
-				{
-					mapUploader.uploadZone(scene, zone, x, z);
-				}
-				catch (RuntimeException ex)
-				{
-					// the load must not throw: the client then never finishes loading (2026-10-30, a zone's upload outgrew
-					// its counted VBO at base (1632, 3080)); the zone loses its tail, the log names it
-					log.error("Zone upload failed at zone {},{} (sub view): {}", x, z, ex.toString());
-				}
-			}
-		}
+		uploadZones(scene, ctx.zones, ctx.sizeX, ctx.sizeZ, "sub view");
 	}
 
 	@Override
@@ -4716,7 +4660,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 				return;
 			}
 
-			sub.free();
+			sub.free(zonePool, sceneJobs);
 			subs[worldViewId] = null;
 		}
 	}
@@ -4746,7 +4690,8 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 
 				if (zone.cull)
 				{
-					zone.free();
+					// its buffers go to the pool: no GL call (ZonePool)
+					zone.free(zonePool, sceneJobs);
 					freed++;
 				}
 				else
@@ -4777,7 +4722,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		clientUploader.water = mapUploader.water;
 		long tModules = System.nanoTime();
 
-		// setup vaos
+		// the new zones were unmapped during the load (ZoneUploads): they are ready to draw
 		int unmapped = 0;
 		for (int x = 0; x < ctx.zones.length; ++x) // NOPMD: ForLoopCanBeForeach
 		{
@@ -4787,7 +4732,6 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 
 				if (!zone.initialized)
 				{
-					zone.unmap();
 					zone.initialized = true;
 					unmapped++;
 				}
@@ -4822,11 +4766,8 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 			{
 				Zone zone = ctx.zones[x][z];
 
-				if (!zone.initialized)
-				{
-					zone.unmap();
-					zone.initialized = true;
-				}
+				// unmapped during the load (ZoneUploads)
+				zone.initialized = true;
 			}
 		}
 		log.debug("WorldView ready: {}", scene.getWorldViewId());
