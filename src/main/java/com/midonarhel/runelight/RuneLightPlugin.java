@@ -4783,6 +4783,30 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 				log.info("Snapshot done: fpsTarget back to {}", target);
 			} : null);
 		}
+		else if (args.length >= 1 && args[0].equals("timers"))
+		{
+			// the smoothed per-pass GPU and per-step CPU times the overlay shows, to the log, so a tool can read them;
+			// needs the "gpuPassTimings" setting on (set gpuPassTimings true) and the FPS uncapped to mean anything
+			StringBuilder sb = new StringBuilder("timers: cpu_frame=").append(String.format("%.2f", getCpuFrameMs()));
+			sb.append(" gpu_enabled=").append(gpuTimer.isEnabled());
+			for (int stage = 0; stage < GpuTimer.STAGES; stage++)
+			{
+				double v = gpuTimer.getMs(stage);
+				if (Double.isFinite(v) && v > 0)
+				{
+					sb.append(" gpu.").append(GpuTimer.NAMES[stage].replace(' ', '_')).append('=').append(String.format("%.2f", v));
+				}
+			}
+			for (int stage = 0; stage < CpuTimer.STAGES; stage++)
+			{
+				double v = cpuTimer.getMs(stage);
+				if (Double.isFinite(v) && v > 0.005)
+				{
+					sb.append(" cpu.").append(CpuTimer.NAMES[stage].replace(' ', '_')).append('=').append(String.format("%.2f", v));
+				}
+			}
+			log.info(sb.toString());
+		}
 		else if (args.length >= 3 && args[0].equals("set"))
 		{
 			configManager.setConfiguration(RuneLightConfig.GROUP, args[1], args[2]);
