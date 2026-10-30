@@ -68,13 +68,29 @@ final class SceneLoader
 	// built by the last load, not swapped in yet; map loader thread writes, client thread takes
 	private volatile SceneDerived next;
 
-	SceneLoader(RuneLightPlugin plugin, Client client, ClientThread clientThread, RuneLightConfig config, SceneLoadReport report)
+	// the zone upload runs on the map loader's thread and these: one uploader each (their scratch is their own)
+	private static final int UPLOAD_THREADS = Math.max(0, Math.min(3, Runtime.getRuntime().availableProcessors() / 2 - 1));
+	private final SceneUploader[] uploaders = new SceneUploader[UPLOAD_THREADS];
+	private final java.util.concurrent.ExecutorService uploadThreads = UPLOAD_THREADS == 0 ? null
+		: java.util.concurrent.Executors.newFixedThreadPool(UPLOAD_THREADS, r ->
+		{
+			Thread t = new Thread(r, "RuneLight zone upload");
+			t.setDaemon(true);
+			return t;
+		});
+
+	SceneLoader(RuneLightPlugin plugin, Client client, ClientThread clientThread, RuneLightConfig config, SceneLoadReport report,
+		net.runelite.client.callback.RenderCallbackManager renderCallbackManager)
 	{
 		this.plugin = plugin;
 		this.client = client;
 		this.clientThread = clientThread;
 		this.config = config;
 		this.report = report;
+		for (int i = 0; i < uploaders.length; ++i)
+		{
+			uploaders[i] = new SceneUploader(renderCallbackManager);
+		}
 	}
 
 	/** Whether a load is built and waits for its swap. */
@@ -336,8 +352,16 @@ final class SceneLoader
 		SceneDerived d = new SceneDerived(scene, newZones, roofChanges, water, fogGround);
 		// what is derived from the drawn zones starts now, before the swap: the voxels on their worker, the static
 		// shadow map by the scheduler
-		d.voxelBuild = plugin.voxelBuilder.buildNext(scene, newZones, waterMap);
-		d.shadows = plugin.prebuildStaticShadows(scene, newZones);
+		try
+		{
+			d.voxelBuild = plugin.voxelBuilder.buildNext(scene, newZones, waterMap);
+			d.shadows = plugin.prebuildStaticShadows(scene, newZones);
+		}
+		catch (RuntimeException | AssertionError ex)
+		{
+			// the load must not fail for them: the swap then builds what is missing after it
+			log.error("Scene load: starting the voxels or the static shadows failed", ex);
+		}
 		next = d;
 		plugin.loadBuilt();
 	}
@@ -416,12 +440,45 @@ final class SceneLoader
 				}
 			});
 		uploads.start(onClientThread);
-		for (int i = 0; i < n; ++i)
+		// zones are independent: the loader and the upload threads take them in turn (one SceneUploader each)
+		java.util.concurrent.atomic.AtomicInteger nextZone = new java.util.concurrent.atomic.AtomicInteger();
+		int helpers = onClientThread || n < 16 ? 0 : uploaders.length;
+		java.util.concurrent.Future<?>[] running = new java.util.concurrent.Future<?>[helpers];
+		for (int h = 0; h < helpers; ++h)
+		{
+			SceneUploader up = uploaders[h];
+			up.water = plugin.mapUploader.water;
+			running[h] = uploadThreads.submit(() -> uploadZones(scene, list, xs, zs, nextZone, up, uploads, false, what));
+		}
+		uploadZones(scene, list, xs, zs, nextZone, plugin.mapUploader, uploads, onClientThread, what);
+		for (java.util.concurrent.Future<?> f : running)
+		{
+			try
+			{
+				f.get();
+			}
+			catch (InterruptedException ex)
+			{
+				Thread.currentThread().interrupt();
+				throw new RuntimeException(ex);
+			}
+			catch (java.util.concurrent.ExecutionException ex)
+			{
+				log.error("Zone upload thread failed ({})", what, ex.getCause());
+			}
+		}
+		uploads.finish(onClientThread);
+	}
+
+	private static void uploadZones(Scene scene, Zone[] list, int[] xs, int[] zs, java.util.concurrent.atomic.AtomicInteger next,
+		SceneUploader uploader, ZoneUploads uploads, boolean onClientThread, String what)
+	{
+		for (int i; (i = next.getAndIncrement()) < list.length; )
 		{
 			uploads.mapped(i, onClientThread);
 			try
 			{
-				plugin.mapUploader.uploadZone(scene, list[i], xs[i], zs[i]);
+				uploader.uploadZone(scene, list[i], xs[i], zs[i]);
 			}
 			catch (RuntimeException ex)
 			{
@@ -431,7 +488,6 @@ final class SceneLoader
 			}
 			uploads.uploaded(i);
 		}
-		uploads.finish(onClientThread);
 	}
 
 	private void loadSub(WorldView worldView, Scene scene)
@@ -661,5 +717,9 @@ final class SceneLoader
 		jobs.clear();
 		pool.free();
 		next = null;
+		if (uploadThreads != null)
+		{
+			uploadThreads.shutdownNow();
+		}
 	}
 }
