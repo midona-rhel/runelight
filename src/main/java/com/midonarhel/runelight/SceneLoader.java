@@ -357,6 +357,19 @@ final class SceneLoader
 
 		SceneDerived d = new SceneDerived(scene, newZones, roofChanges, join(waterBuild), join(fogGroundBuild));
 		t = stage("water mesh + fog ground wait", t);
+		if (d.fogGround != null)
+		{
+			// the fog's ground drawn from the swap on (its rooms come after it, and ease in): uploaded before it
+			FogGround g = d.fogGround;
+			float[] texels = new float[FogGround.WIDTH * FogGround.CORNERS * FogGround.CHANNELS];
+			g.texels(null, null, texels);
+			jobs.add("fog ground", SceneJobs.LOAD, deadline ->
+			{
+				plugin.volumetricFog.prepareNext(g, texels);
+				return true;
+			});
+			t = stage("fog ground texels", t);
+		}
 		// what is derived from the drawn zones starts now, before the swap: the voxels on their worker, the static
 		// shadow map by the scheduler
 		try

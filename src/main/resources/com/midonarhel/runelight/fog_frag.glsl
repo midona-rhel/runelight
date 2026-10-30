@@ -57,6 +57,9 @@ uniform float fogHighestY;   // world y of the highest ground within the fog's r
 // The terrain the height is measured from (FogGround.java): ground y per tile corner, the planes' pages side by side;
 // gba the rooms (FogGround.texels, fogRoomFactor)
 uniform sampler2D fogGround;
+// the ground drawn before it, and its share while the new one eases in (LayerEase, VolumetricFog); 0 when none
+uniform sampler2D fogGroundPrev;
+uniform float fogGroundPrevWeight;
 uniform vec3 fogGroundGrid;  // x: extended tile of local tile 0, y: corners per side, z: texel x of the plane's page
 uniform vec2 fogCenter;      // world x, z the fade is centered on: the player
 uniform vec2 fogFade;        // horizontal distance from the center where the fog starts and finishes fading out
@@ -141,7 +144,12 @@ out vec4 FragFog;
 // fogRoomFactor; the edge of the scene goes on
 vec4 fogGroundAt(vec2 worldXZ) {
   vec2 c = clamp(worldXZ / 128.0 + fogGroundGrid.x, vec2(0.0), vec2(fogGroundGrid.y - 1.0));
-  return textureLod(fogGround, (c + vec2(0.5 + fogGroundGrid.z, 0.5)) / vec2(textureSize(fogGround, 0)), 0.0);
+  vec2 uv = (c + vec2(0.5 + fogGroundGrid.z, 0.5)) / vec2(textureSize(fogGround, 0));
+  vec4 g = textureLod(fogGround, uv, 0.0);
+  if (fogGroundPrevWeight > 0.0) {
+    g = mix(g, textureLod(fogGroundPrev, uv, 0.0), fogGroundPrevWeight);
+  }
+  return g;
 }
 
 // What the rooms leave of the fog's density at world y, from fogGroundAt there: none outdoors, fogIndoor in rooms,

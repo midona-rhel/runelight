@@ -441,7 +441,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 	private static final int FOG_TEXTURE_UNIT = RuneLightPlugin.COMPOSITE_TEXTURE_UNIT + 10;
 	private static final int FOG_NOISE_UNIT = RuneLightPlugin.COMPOSITE_TEXTURE_UNIT + 11;
 
-	private final VolumetricFog volumetricFog = new VolumetricFog();
+	final VolumetricFog volumetricFog = new VolumetricFog();
 	private final Clouds clouds = new Clouds();
 	// the half resolution pass's scissor, x0, y0 to x1, y1 exclusive: the water's rect, the clouds' rows (skyRows)
 	private final int[] halfScissor = new int[4], cloudRows = new int[2];
@@ -507,6 +507,8 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 	private static final int WATER_NOISE_UNIT = RuneLightPlugin.COMPOSITE_TEXTURE_UNIT + 15;
 	// the terrain the volumetric fog lies on (VolumetricFog)
 	private static final int FOG_GROUND_UNIT = RuneLightPlugin.COMPOSITE_TEXTURE_UNIT + 24;
+	// the ground drawn before it while a new one eases in (VolumetricFog, LayerEase)
+	private static final int FOG_GROUND_PREV_UNIT = RuneLightPlugin.COMPOSITE_TEXTURE_UNIT + 30;
 	// two units: the weather field (WeatherField) and its ground, for the fog and the weather passes
 	private static final int WEATHER_FIELD_UNIT = RuneLightPlugin.COMPOSITE_TEXTURE_UNIT + 16;
 	private final Water water = new Water();
@@ -1449,7 +1451,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 	private void setFogProgram(int program)
 	{
 		volumetricFog.setProgram(program, COMPOSITE_TEXTURE_UNIT + 2, SHADOW_COMPARE_UNIT, LIGHT_DATA_UNIT,
-			CLUSTER_DATA_UNIT, FOG_NOISE_UNIT, WEATHER_FIELD_UNIT, WATER_DATA_UNIT, FOG_GROUND_UNIT, LIGHT_MAP_UNIT);
+			CLUSTER_DATA_UNIT, FOG_NOISE_UNIT, WEATHER_FIELD_UNIT, WATER_DATA_UNIT, FOG_GROUND_UNIT, FOG_GROUND_PREV_UNIT, LIGHT_MAP_UNIT);
 	}
 
 	private static void bindSceneSamplers(int program)

@@ -62,7 +62,14 @@ class VolumetricFog
 	private int waterUnit, groundUnit;
 	// the terrain the fog lies on: built when a scene loads (any thread), taken when it swaps in
 	private FogGround ground;
-	private int texGround;
+	// the ground's two textures (texGround the one drawn): a scene's ground is uploaded into the other before its swap
+	// (prepareNext) and taken at the swap; the rooms, which come after, go into the other too and ease in over the one
+	// drawn (LayerEase), sampled beside it meanwhile
+	private int texGround, texGroundBack;
+	private FogGround nextGround;
+	private long groundSince;
+	private boolean easeFromBack;
+	private int groundPrevUnit;
 	// the building rooms (null: none), and those whose roof is hidden (OpenRooms): lit by their own lamps and
 	// thicker than the other rooms. Both go into the ground texture (FogGround.texels), sent again when they change.
 	RoomMap rooms;
@@ -107,6 +114,7 @@ class VolumetricFog
 	{
 		final int program;
 		final LightMapTexture.Uniforms lightMap = new LightMapTexture.Uniforms();
+		int uniGroundPrevWeight;
 		int uniCameraPos, uniCasterDir, uniCenter, uniClientSkyColor, uniDensity, uniDepthZeroToOne,
 			uniFade, uniFieldFog, uniFieldRect, uniGroundGrid, uniHalfRatio, uniHeight, uniHighestY, uniIndoor,
 			uniIndoorOpen, uniInvViewProj, uniLight, uniLightProjRel, uniNear,
@@ -124,13 +132,18 @@ class VolumetricFog
 	 * Take ownership of the freshly compiled fog program (PROGRAM) and look up its uniforms.
 	 */
 	void setProgram(int program, int sceneDepthUnit, int shadowCompareUnit, int lightDataUnit,
-		int clusterDataUnit, int noiseUnit, int weatherFieldUnit, int waterUnit, int groundUnit, int lightMapUnit)
+		int clusterDataUnit, int noiseUnit, int weatherFieldUnit, int waterUnit, int groundUnit, int groundPrevUnit, int lightMapUnit)
 	{
 		this.waterUnit = waterUnit;
 		this.groundUnit = groundUnit;
+		this.groundPrevUnit = groundPrevUnit;
 		free(fog);
 		fog = locate(program, sceneDepthUnit, shadowCompareUnit, lightDataUnit, clusterDataUnit, noiseUnit,
 			weatherFieldUnit, waterUnit, groundUnit, lightMapUnit);
+		glUseProgram(program);
+		glUniform1i(glGetUniformLocation(program, "fogGroundPrev"), groundPrevUnit);
+		fog.uniGroundPrevWeight = glGetUniformLocation(program, "fogGroundPrevWeight");
+		glUseProgram(0);
 	}
 
 	private static void free(Locations u)
@@ -236,9 +249,38 @@ class VolumetricFog
 	 */
 	void swap(FogGround g)
 	{
-		if (g != null)
+		if (g == null)
 		{
-			ground = g;
+			return;
+		}
+		ground = g;
+		if (g == nextGround)
+		{
+			// uploaded before the swap (prepareNext): drawn from this frame, with the zones; no rooms yet
+			int t = texGround;
+			texGround = texGroundBack;
+			texGroundBack = t;
+			sentGround = g;
+			sentRooms = null;
+			System.arraycopy(NONE_OPEN, 0, sentOpen, 0, sentOpen.length);
+			easeFromBack = false;
+		}
+		nextGround = null;
+	}
+
+	/**
+	 * A loaded scene's ground (texels packed without rooms, by SceneLoader) into the texture not drawn, before its swap:
+	 * a scheduler job, client thread.
+	 */
+	void prepareNext(FogGround g, float[] texels)
+	{
+		easeFromBack = false;
+		texGroundBack = upload(texGroundBack, texels);
+		nextGround = g;
+		if (g == ground)
+		{
+			// the swap came first (the job runs after the frame): take it now
+			swap(g);
 		}
 	}
 
@@ -276,23 +318,42 @@ class VolumetricFog
 			}
 			return;
 		}
+		if (nextGround != null)
+		{
+			// the back texture holds the next scene's ground until its swap
+			return;
+		}
+		// the ground is the one drawn (the rooms changed): the new texels ease in over it (LayerEase); a new ground
+		// (a scene not prepared before its swap) replaces it at once
+		boolean sameGround = g == sentGround;
 		sentGround = g;
 		sentRooms = r;
 		System.arraycopy(bits, 0, sentOpen, 0, sentOpen.length);
-		if (groundBuffer == null)
+		texGroundBack = upload(texGroundBack, ready);
+		int t = texGround;
+		texGround = texGroundBack;
+		texGroundBack = t;
+		easeFromBack = sameGround && texGroundBack != 0;
+		groundSince = System.nanoTime();
+	}
+
+	/** Texels into tex (made when 0), returned; the active unit and its binding as they were. */
+	private int upload(int tex, float[] texels)
+	{
+		if (groundBuffer == null || groundBuffer.capacity() < texels.length)
 		{
-			groundBuffer = BufferUtils.createFloatBuffer(ready.length);
+			groundBuffer = BufferUtils.createFloatBuffer(texels.length);
 		}
 		groundBuffer.clear();
-		groundBuffer.put(ready).flip();
-		// the upload binds on whatever unit is active: remember and restore it, so the frame this runs in (once per
-		// scene) does not lose a sampler's texture — the black frame after a teleport (2026-10-30)
+		groundBuffer.put(texels).flip();
+		// the upload binds on whatever unit is active: remember and restore it, so the frame this runs in does not lose
+		// a sampler's texture — the black frame after a teleport (2026-10-30)
 		int activeUnit = glGetInteger(GL_ACTIVE_TEXTURE);
 		int bound = glGetInteger(GL_TEXTURE_BINDING_2D);
-		if (texGround == 0)
+		if (tex == 0)
 		{
-			texGround = glGenTextures();
-			glBindTexture(GL_TEXTURE_2D, texGround);
+			tex = glGenTextures();
+			glBindTexture(GL_TEXTURE_2D, tex);
 			glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
 			glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
 			glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
@@ -300,12 +361,13 @@ class VolumetricFog
 		}
 		else
 		{
-			glBindTexture(GL_TEXTURE_2D, texGround);
+			glBindTexture(GL_TEXTURE_2D, tex);
 		}
 		// full floats: heights reach thousands of units, where half floats step by 2 to 4
 		glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA32F, FogGround.WIDTH, FogGround.CORNERS, 0, GL_RGBA, GL_FLOAT, groundBuffer);
 		glActiveTexture(activeUnit);
 		glBindTexture(GL_TEXTURE_2D, bound);
+		return tex;
 	}
 
 	private static boolean sameRequest(Object a, Object b)
@@ -480,12 +542,19 @@ class VolumetricFog
 		glActiveTexture(GL_TEXTURE0 + groundUnit);
 		sendGround();
 		glBindTexture(GL_TEXTURE_2D, texGround);
+		float before = easeFromBack ? 1 - LayerEase.weight(groundSince, System.nanoTime()) : 0;
+		easeFromBack = before > 0;
+		glUniform1f(u.uniGroundPrevWeight, before);
+		glActiveTexture(GL_TEXTURE0 + groundPrevUnit);
+		glBindTexture(GL_TEXTURE_2D, before > 0 ? texGroundBack : 0);
 		glActiveTexture(GL_TEXTURE0 + noiseUnit);
 		glBindTexture(GL_TEXTURE_3D, texNoise);
 		glDrawArrays(GL_TRIANGLES, 0, 3);
 		glActiveTexture(GL_TEXTURE0 + noiseUnit);
 		glBindTexture(GL_TEXTURE_3D, 0);
 		glActiveTexture(GL_TEXTURE0 + groundUnit);
+		glBindTexture(GL_TEXTURE_2D, 0);
+		glActiveTexture(GL_TEXTURE0 + groundPrevUnit);
 		glBindTexture(GL_TEXTURE_2D, 0);
 		if (waterTexture != 0)
 		{
@@ -514,6 +583,13 @@ class VolumetricFog
 			glDeleteTextures(texGround);
 			texGround = 0;
 		}
+		if (texGroundBack != 0)
+		{
+			glDeleteTextures(texGroundBack);
+			texGroundBack = 0;
+		}
+		nextGround = null;
+		easeFromBack = false;
 		ground = null;
 		sentGround = null;
 		free(fog);
