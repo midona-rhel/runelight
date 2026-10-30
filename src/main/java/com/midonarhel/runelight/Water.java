@@ -65,11 +65,8 @@ class Water
 	// the ends exclusive, WaterSurface.anyVisible): the passes after it skip the rest
 	private boolean visible;
 	private final int[] rect = new int[4];
-	private WaterMap pending;
 	// the map of the scene drawn now, for the scene dump
 	private WaterMap current;
-	private WaterSurface.Mesh pendingMesh;
-	private boolean pendingSet;
 	private final WaterSurface surface = new WaterSurface();
 	private final Frame frame = new Frame();
 
@@ -177,19 +174,23 @@ class Water
 		surface.freeProgram();
 	}
 
-	/**
-	 * The water of a scene being loaded (any thread); null for none. Takes effect at {@link #swap}. Builds its
-	 * surface mesh here, off the GL thread.
-	 */
-	void sceneLoaded(WaterMap map)
+	/** A loaded scene's water and its surface mesh, built off the GL thread (SceneLoader). */
+	static final class Loaded
 	{
-		WaterSurface.Mesh mesh = WaterSurface.build(map);
-		synchronized (this)
+		final WaterMap map;
+		final WaterSurface.Mesh mesh;
+
+		private Loaded(WaterMap map, WaterSurface.Mesh mesh)
 		{
-			pending = map;
-			pendingMesh = mesh;
-			pendingSet = true;
+			this.map = map;
+			this.mesh = mesh;
 		}
+	}
+
+	/** The water of a scene being loaded (any thread), map null for none: its surface mesh is built here. */
+	static Loaded prepare(WaterMap map)
+	{
+		return new Loaded(map, WaterSurface.build(map));
 	}
 
 	/** The water of the scene drawn now, null without; any thread. */
@@ -201,22 +202,10 @@ class Water
 	/**
 	 * The loaded scene became the current one: upload its water. GL thread.
 	 */
-	void swap()
+	void swap(Loaded loaded)
 	{
-		WaterMap map;
-		WaterSurface.Mesh mesh;
-		synchronized (this)
-		{
-			if (!pendingSet)
-			{
-				return;
-			}
-			map = pending;
-			mesh = pendingMesh;
-			pending = null;
-			pendingMesh = null;
-			pendingSet = false;
-		}
+		WaterMap map = loaded.map;
+		WaterSurface.Mesh mesh = loaded.mesh;
 
 		hasData = map != null && map.hasWater && map.texture != null;
 		current = hasData ? map : null;

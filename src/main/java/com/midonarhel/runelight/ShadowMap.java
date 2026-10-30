@@ -55,9 +55,12 @@ class ShadowMap
 	 * (its shadowMax): what is nearer the light than that is in shadow under every tap. The moving models only add
 	 * nearer depth, so it bounds the sampled map too (buildMax).
 	 */
-	private int maxTex, maxSpareTex, maxFbo;
-	private int maxSize;
-	private int maxTile;
+	// the maxima of each static map, made when it is drawn (so a swap of maps is a swap of indices), and the
+	// texture the passes go through
+	private final int[] maxTex = new int[2];
+	private final int[] maxSize = new int[2];
+	private final int[] maxTile = new int[2];
+	private int maxSpareTex, maxSpareSize, maxFbo;
 	// the widest filter tap: shadow_pcss.glsl's MAX_PENUMBRA_WORLD times its farthest POISSON point (1.234)
 	private static final float FILTER_REACH_WORLD = 112 * 1.234f;
 	// Tiles a third of the reach: the bound covers at most a third more than it must. No larger than this, so that
@@ -188,7 +191,8 @@ class ShadowMap
 			glDeleteFramebuffers(maxFbo);
 			glDeleteTextures(maxTex);
 			glDeleteTextures(maxSpareTex);
-			maxFbo = maxTex = maxSpareTex = maxSize = 0;
+			maxFbo = maxSpareTex = maxSpareSize = 0;
+			maxTex[0] = maxTex[1] = maxSize[0] = maxSize[1] = 0;
 		}
 		front = building = held = -1;
 		stale = false;
@@ -277,16 +281,26 @@ class ShadowMap
 	/** The new static map is drawn: make it the front one, and work out its maxima with maxProgram (a VAO bound). */
 	void finishBuild(int maxProgram)
 	{
+		buildMax(maxProgram, building);
 		front = building;
 		building = -1;
-		buildMax(maxProgram);
 	}
 
-	/** The new static map is drawn: keep it beside the front one instead of using it (swapFront). */
-	void holdBuild()
+	/**
+	 * The new static map is drawn: keep it beside the front one instead of using it (swapFront), its maxima made now
+	 * (with maxProgram, a VAO bound) so the swap needs no GL call.
+	 */
+	void holdBuild(int maxProgram)
 	{
+		buildMax(maxProgram, building);
 		held = building;
 		building = -1;
+	}
+
+	/** Forget the map kept beside the front one. */
+	void dropHeld()
+	{
+		held = -1;
 	}
 
 	/** The map kept beside the front one, or null. */
@@ -296,15 +310,14 @@ class ShadowMap
 	}
 
 	/**
-	 * Use the held map and keep the front one in its place, so the light can turn back at once: no map is drawn.
-	 * Like finishBuild, with a VAO bound.
+	 * Use the held map and keep the front one in its place, so the light can turn back at once: no map is drawn, and
+	 * no GL call (its maxima were made by holdBuild).
 	 */
-	void swapFront(int maxProgram)
+	void swapFront()
 	{
 		int next = held;
 		held = front;
 		front = next;
-		buildMax(maxProgram);
 	}
 
 	/**
@@ -312,30 +325,29 @@ class ShadowMap
 	 * columns, as many as cover the filter's reach from any texel in the tile, plus one texel for the bilinear filter's
 	 * second and one for rounding.
 	 */
-	private void buildMax(int program)
+	private void buildMax(int program, int slot)
 	{
-		float texel = 2 * views[front].radius / size;
+		float texel = 2 * views[slot].radius / size;
 		int reach = (int) Math.ceil(FILTER_REACH_WORLD / texel) + 2;
 		int tile = Math.min((reach + 2) / 3, MAX_TILE);
 		int tiles = (reach + tile - 1) / tile;
 		int n = (size + tile - 1) / tile;
-		maxTile = tile;
-		if (n != maxSize)
+		maxTile[slot] = tile;
+		if (maxFbo == 0)
 		{
-			if (maxFbo == 0)
-			{
-				maxFbo = glGenFramebuffers();
-				maxTex = glGenTextures();
-				maxSpareTex = glGenTextures();
-			}
-			maxSize = n;
-			for (int tex : new int[]{maxTex, maxSpareTex})
-			{
-				glBindTexture(GL_TEXTURE_2D, tex);
-				glTexImage2D(GL_TEXTURE_2D, 0, GL_R32F, n, n, 0, GL_RED, GL_FLOAT, 0);
-				glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
-				glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
-			}
+			maxFbo = glGenFramebuffers();
+			glGenTextures(maxTex);
+			maxSpareTex = glGenTextures();
+		}
+		if (n != maxSize[slot])
+		{
+			maxSize[slot] = n;
+			allocMax(maxTex[slot], n);
+		}
+		if (n > maxSpareSize)
+		{
+			maxSpareSize = n;
+			allocMax(maxSpareTex, n);
 		}
 		int activeUnit = glGetInteger(GL_ACTIVE_TEXTURE);
 		glActiveTexture(GL_TEXTURE0);
@@ -343,13 +355,21 @@ class ShadowMap
 		glBindFramebuffer(GL_FRAMEBUFFER, maxFbo);
 		glViewport(0, 0, n, n);
 		glUseProgram(program);
-		maxPass(program, staticTex[front], maxTex, tile, 0, 0, tile, tile);
-		maxPass(program, maxTex, maxSpareTex, 1, -tiles, 0, 2 * tiles + 1, 1);
-		maxPass(program, maxSpareTex, maxTex, 1, 0, -tiles, 1, 2 * tiles + 1);
+		maxPass(program, staticTex[slot], maxTex[slot], tile, 0, 0, tile, tile);
+		maxPass(program, maxTex[slot], maxSpareTex, 1, -tiles, 0, 2 * tiles + 1, 1);
+		maxPass(program, maxSpareTex, maxTex[slot], 1, 0, -tiles, 1, 2 * tiles + 1);
 		// unit 0 and the active unit as they were: this runs once per static map build, and a frame that loses a
 		// sampler's texture here is drawn black (the teleport flash, 2026-10-30)
 		glBindTexture(GL_TEXTURE_2D, bound0);
 		glActiveTexture(activeUnit);
+	}
+
+	private static void allocMax(int tex, int n)
+	{
+		glBindTexture(GL_TEXTURE_2D, tex);
+		glTexImage2D(GL_TEXTURE_2D, 0, GL_R32F, n, n, 0, GL_RED, GL_FLOAT, 0);
+		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
 	}
 
 	private static void maxPass(int program, int from, int to, int scale, int offsetX, int offsetY, int countX, int countY)
@@ -369,10 +389,10 @@ class ShadowMap
 	int bindMax(int unit)
 	{
 		glActiveTexture(GL_TEXTURE0 + unit);
-		glBindTexture(GL_TEXTURE_2D, front >= 0 ? maxTex : 0);
+		glBindTexture(GL_TEXTURE_2D, front >= 0 ? maxTex[front] : 0);
 		glBindSampler(unit, 0);
 		glActiveTexture(GL_TEXTURE0);
-		return front >= 0 ? maxTile : 0;
+		return front >= 0 ? maxTile[front] : 0;
 	}
 
 	/**

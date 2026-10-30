@@ -92,6 +92,12 @@ class Zone
 	// what renderOpaque draws of the swaying ranges
 	static final int SWAY_ALL = 0, SWAY_EXCLUDE = 1, SWAY_ONLY = 2;
 
+	/** Whether the zone can be drawn: swapped in, or uploaded and unmapped for a scene about to be (SceneLoader). */
+	boolean drawable()
+	{
+		return initialized || vboO != null && !vboO.mapped;
+	}
+
 	/** Take the buffers (ZonePool.acquire, with their vertex arrays) for the zone's upload. */
 	void init(VBO o, VBO a)
 	{

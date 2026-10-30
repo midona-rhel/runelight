@@ -61,7 +61,6 @@ class VolumetricFog
 	float weatherFog = 1;
 	private int waterUnit, groundUnit;
 	// the terrain the fog lies on: built when a scene loads (any thread), taken when it swaps in
-	private FogGround pendingGround;
 	private FogGround ground;
 	private int texGround;
 	// the building rooms (null: none), and those whose roof is hidden (OpenRooms): lit by their own lamps and
@@ -233,28 +232,10 @@ class VolumetricFog
 	}
 
 	/**
-	 * The terrain of a scene being loaded (any thread). Takes effect at {@link #swap}.
+	 * The loaded scene became the current one: take its terrain (FogGround.build, by SceneLoader). Client thread.
 	 */
-	void sceneLoaded(Scene scene)
+	void swap(FogGround g)
 	{
-		FogGround g = FogGround.build(scene);
-		synchronized (this)
-		{
-			pendingGround = g;
-		}
-	}
-
-	/**
-	 * The loaded scene became the current one: take its terrain. GL thread.
-	 */
-	void swap()
-	{
-		FogGround g;
-		synchronized (this)
-		{
-			g = pendingGround;
-			pendingGround = null;
-		}
 		if (g != null)
 		{
 			ground = g;

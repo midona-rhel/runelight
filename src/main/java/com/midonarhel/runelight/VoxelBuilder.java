@@ -30,7 +30,14 @@ class VoxelBuilder
 	private boolean buildRequested;
 	private long buildAfterMillis;
 	private long lastBuildMillis;
-	private volatile int generation;
+	private final AtomicInteger generation = new AtomicInteger();
+	// the build started by a load for the scene it is about to swap in (buildNext), until the swap takes it (swapTo):
+	// its result waits here, unseen by the drawn scene's consumers; guarded by this
+	private int nextBuild;
+	private SceneVoxels nextVoxels;
+	private ModelBlockers nextBlockers;
+	// the load's build the drawn scene was swapped to before it finished: published as soon as it does
+	private int publishOnDone;
 
 	private ExecutorService worker;
 	private ForkJoinPool pool;
@@ -40,10 +47,19 @@ class VoxelBuilder
 	// models are out (or none is wanted)
 	private final AtomicInteger awaited = new AtomicInteger();
 
-	/** The newest voxels, null before the first build; a new object after every build. */
+	/** The drawn scene's newest voxels, null before the first build; a new object after every build. */
 	SceneVoxels getVoxels()
 	{
 		return voxels;
+	}
+
+	/**
+	 * The newest voxels built, those of a scene being loaded among them: the skylight traces them before the swap and
+	 * shows them once the scene matches (SkyGridMap).
+	 */
+	synchronized SceneVoxels getNewestVoxels()
+	{
+		return nextVoxels != null ? nextVoxels : voxels;
 	}
 
 	/** The models that stop light, null before the first build; a new object after every build. */
@@ -74,12 +90,57 @@ class VoxelBuilder
 		buildRequested = true;
 	}
 
-	/** A new top level scene was swapped in: build its voxels. */
-	void sceneSwapped()
+	/**
+	 * Start the voxels of a scene being loaded, on the map loader's thread once its zones are uploaded (SceneLoader):
+	 * they are built before the swap and handed over by swapTo.
+	 *
+	 * @return the build's number, for swapTo
+	 */
+	int buildNext(Scene scene, Zone[][] zones, WaterMap water)
 	{
-		buildRequested = true;
-		buildAfterMillis = 0;
-		awaited.set(-1);
+		int g = submitBuild(scene, zones, water, true);
+		synchronized (this)
+		{
+			nextBuild = g;
+			nextVoxels = null;
+			nextBlockers = null;
+		}
+		return g;
+	}
+
+	/**
+	 * The scene loaded with build g was swapped in, client thread: its voxels and models are the drawn scene's now if
+	 * they are done, else as soon as they are; until then the old ones stand in for every consumer, and modelsAwaited
+	 * says so.
+	 */
+	void swapTo(int g)
+	{
+		buildRequested = false;
+		lastBuildMillis = System.currentTimeMillis();
+		synchronized (this)
+		{
+			if (g != 0 && g == nextBuild && nextVoxels != null)
+			{
+				voxels = nextVoxels;
+				modelBlockers = nextBlockers;
+				awaited.set(0);
+			}
+			else if (g != 0 && g == nextBuild)
+			{
+				publishOnDone = g;
+				awaited.set(g);
+			}
+			else
+			{
+				// no build was started for it: build now
+				buildRequested = true;
+				buildAfterMillis = 0;
+				awaited.set(-1);
+			}
+			nextBuild = 0;
+			nextVoxels = null;
+			nextBlockers = null;
+		}
 	}
 
 	/** A zone was rebuilt: rebuild the voxels once the changes settle. */
@@ -100,18 +161,24 @@ class VoxelBuilder
 	void prepare(boolean wanted, Scene scene, Zone[][] zones, WaterMap water)
 	{
 		long now = System.currentTimeMillis();
-		if (wanted && buildRequested && now >= buildAfterMillis && scene != null && zones != null)
+		boolean loading;
+		synchronized (this)
+		{
+			// a load's build is in flight for the next scene: a build of the drawn one now would only delay it
+			loading = nextBuild != 0;
+		}
+		if (wanted && buildRequested && !loading && now >= buildAfterMillis && scene != null && zones != null)
 		{
 			buildRequested = false;
 			lastBuildMillis = now;
-			submitBuild(scene, zones, water);
+			submitBuild(scene, zones, water, false);
 		}
 	}
 
 	/** Builds submitted so far; a change means a build started. */
 	int builds()
 	{
-		return generation;
+		return generation.get();
 	}
 
 	// ---------------------------------------------------------------------------------------------------------
@@ -162,10 +229,13 @@ class VoxelBuilder
 	}
 
 	/** Copy what the build needs from the scene, on the client thread, and queue it. */
-	private void submitBuild(Scene scene, Zone[][] zones, WaterMap waterMap)
+	private int submitBuild(Scene scene, Zone[][] zones, WaterMap waterMap, boolean forNext)
 	{
-		int g = ++generation;
-		awaited.compareAndSet(-1, g);
+		int g = generation.incrementAndGet();
+		if (!forNext)
+		{
+			awaited.compareAndSet(-1, g);
+		}
 		int baseZone = RuneLightPlugin.SCENE_OFFSET >> 3;
 		int count = VoxelGrid.SCENE_TILES / 8 + 2;
 		Zone[] list = new Zone[count * count];
@@ -191,7 +261,8 @@ class VoxelBuilder
 		byte[][][] settings = scene.getExtendedTileSettings();
 		SkyTerrain terrain = SkyTerrain.capture(scene, RuneLightPlugin.SCENE_OFFSET);
 		int zones2 = n;
-		submit(() -> build(g, list, zx, zz, zones2, baseZone, water, baseX, baseY, instance, heights, settings, terrain));
+		submit(() -> build(g, forNext, list, zx, zz, zones2, baseZone, water, baseX, baseY, instance, heights, settings, terrain));
+		return g;
 	}
 
 	/** A zone's tiles' floor heights per storey, ModelBlockers.rasterize's layout. */
@@ -211,10 +282,10 @@ class VoxelBuilder
 		return out;
 	}
 
-	private void build(int g, Zone[] list, int[] zx, int[] zz, int n, int baseZone, VoxelWater water,
+	private void build(int g, boolean forNext, Zone[] list, int[] zx, int[] zz, int n, int baseZone, VoxelWater water,
 		int baseX, int baseY, boolean instance, int[][][] heights, byte[][][] settings, SkyTerrain terrain)
 	{
-		if (g != generation)
+		if (g != generation.get())
 		{
 			// a newer build is already queued
 			return;
@@ -235,9 +306,11 @@ class VoxelBuilder
 			blockerZones[i] = z.modelBlockers;
 		});
 		long blockerTime = System.nanoTime();
-		if (g == generation)
+		ModelBlockers blockers = ModelBlockers.assemble(blockerZones, zx, zz, n, Constants.EXTENDED_SCENE_SIZE * LightBlockers.CELLS_PER_TILE);
+		if (!forNext && g == generation.get())
 		{
-			this.modelBlockers = ModelBlockers.assemble(blockerZones, zx, zz, n, Constants.EXTENDED_SCENE_SIZE * LightBlockers.CELLS_PER_TILE);
+			// the drawn scene's: out at once, the light map waits for them and the voxelizing is the longer part
+			this.modelBlockers = blockers;
 			int wanted = awaited.get();
 			if (wanted > 0 && g >= wanted)
 			{
@@ -260,7 +333,29 @@ class VoxelBuilder
 		VoxelGrid grid = VoxelGrid.assemble(zoneVoxels, zx, zz, baseZone, water);
 		SceneVoxels result = new SceneVoxels(grid, baseX, baseY, instance, heights);
 		result.terrain = terrain;
-		this.voxels = result;
+		if (!forNext)
+		{
+			this.voxels = result;
+		}
+		else
+		{
+			synchronized (this)
+			{
+				if (g == publishOnDone)
+				{
+					// the scene was swapped in before its build finished: it is the drawn scene's now
+					voxels = result;
+					modelBlockers = blockers;
+					publishOnDone = 0;
+					awaited.compareAndSet(g, 0);
+				}
+				else if (g == nextBuild)
+				{
+					nextVoxels = result;
+					nextBlockers = blockers;
+				}
+			}
+		}
 		long gridTime = System.nanoTime();
 		log.info("Voxel build {}: {} new / {} zones, light blockers {} ms, voxelize {} ms, assemble {} ms, total {} ms; {}-unit cells, {}x{}x{}, {} MiB cells",
 			g, voxelized.get(), n, (blockerTime - start) / 1_000_000.0, (voxelTime - blockerTime) / 1_000_000.0, (gridTime - voxelTime) / 1_000_000.0,

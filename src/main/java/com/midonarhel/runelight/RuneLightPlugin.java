@@ -135,7 +135,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 	static final int SKYLIGHT_REACH = 3;
 	static final int SCENE_OFFSET = (Constants.EXTENDED_SCENE_SIZE - Constants.SCENE_SIZE) / 2; // offset for sxy -> msxy
 	private static final int UNIFORM_BUFFER_SIZE = 5 * Float.BYTES;
-	private static final int NUM_ZONES = Constants.EXTENDED_SCENE_SIZE >> 3;
+	static final int NUM_ZONES = Constants.EXTENDED_SCENE_SIZE >> 3;
 	private static final int MAX_WORLDVIEWS = 4096;
 
 	@Inject
@@ -157,9 +157,9 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 	private TextureManager textureManager;
 
 	@Inject
-	private RegionManager regionManager;
+	RegionManager regionManager;
 
-	private final AreaHiding areaHiding = new AreaHiding();
+	final AreaHiding areaHiding = new AreaHiding();
 
 	@Inject
 	private DrawManager drawManager;
@@ -199,9 +199,6 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 	private final FrameSnapshot frameSnapshot = new FrameSnapshot();
 	private int framesSinceSwap = 1000;
 	private final SceneLoadReport loadReport = new SceneLoadReport();
-	// the load's GL work, a frame budget at a time, and the zones' buffers kept for reuse
-	private final SceneJobs sceneJobs = new SceneJobs();
-	private final ZonePool zonePool = new ZonePool();
 	private boolean swapCaptureArmed;
 	// frames left to capture around a swap: set when loadScene finishes (before the client's swap), counts down per frame
 	private volatile int swapCaptureLeft;
@@ -422,8 +419,8 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 	private final OpenRooms openRooms = new OpenRooms();
 	// repeating errors are logged once per interval
 	private final LogLimiter logLimiter = new LogLimiter(10_000);
-	private final LookMonitor lookMonitor = new LookMonitor();
-	private final HitchMonitor hitchMonitor = new HitchMonitor();
+	final LookMonitor lookMonitor = new LookMonitor();
+	final HitchMonitor hitchMonitor = new HitchMonitor();
 	private final java.util.ArrayList<PointLight> frameLights = new java.util.ArrayList<>();
 	private final PointLight testLight = new PointLight();
 	private int uniAlphaPass;
@@ -523,7 +520,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 	private static final int WEATHER_FIELD_UNIT = RuneLightPlugin.COMPOSITE_TEXTURE_UNIT + 16;
 	private final Water water = new Water();
 	private final float[] waterWind = new float[3];
-	private final VoxelBuilder voxelBuilder = new VoxelBuilder();
+	final VoxelBuilder voxelBuilder = new VoxelBuilder();
 	// the skylight's traced sky visibility for the AO pass, and the static lights' occlusion
 	private static final int SKY_GRID_UNIT = RuneLightPlugin.COMPOSITE_TEXTURE_UNIT + 28;
 	// the weather field's sky (cover, wispiness, darkness around the player) for the clouds
@@ -619,7 +616,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 
 	private RenderThread[] rts;
 
-	private SceneUploader clientUploader, mapUploader;
+	SceneUploader clientUploader, mapUploader;
 
 	static class SceneContext
 	{
@@ -644,6 +641,18 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 					zones[x][z] = new Zone();
 				}
 			}
+		}
+
+		/** A view of a loaded scene's zones not swapped in yet, with the drawn scene's levels (StaticShadowBuild). */
+		SceneContext(Zone[][] zones, SceneContext levels)
+		{
+			this.sizeX = zones.length;
+			this.sizeZ = zones[0].length;
+			this.zones = zones;
+			this.minLevel = levels.minLevel;
+			this.level = levels.level;
+			this.maxLevel = levels.maxLevel;
+			this.hideRoofIds = levels.hideRoofIds;
 		}
 
 		void free(ZonePool pool, SceneJobs jobs)
@@ -678,10 +687,10 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		return subs[wvid];
 	}
 
-	private SceneContext root;
-	private SceneContext[] subs;
-	private Zone[][] nextZones;
-	private Map<Integer, Integer> nextRoofChanges;
+	// the drawn scenes: the top level and the sub world views (SceneLoader swaps them in)
+	SceneContext root;
+	SceneContext[] subs;
+	private SceneLoader sceneLoader;
 
 	// Uniforms
 	private int uniFogColor;
@@ -770,6 +779,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		}
 		clientUploader = new SceneUploader(renderCallbackManager);
 		mapUploader = new SceneUploader(renderCallbackManager);
+		sceneLoader = new SceneLoader(this, client, clientThread, config, loadReport);
 		clientThread.invoke(() ->
 		{
 			try
@@ -868,7 +878,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 
 				if (client.getGameState() == GameState.LOGGED_IN)
 				{
-					startupWorldLoad();
+					sceneLoader.startup();
 				}
 
 				checkGLErrors();
@@ -914,21 +924,6 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		);
 	}
 
-	private void startupWorldLoad()
-	{
-		WorldView root = client.getTopLevelWorldView();
-		Scene scene = root.getScene();
-		loadScene(root, scene);
-		swapScene(scene);
-
-		for (WorldEntity subEntity : root.worldEntities())
-		{
-			WorldView sub = subEntity.getWorldView();
-			log.debug("WorldView loading: {}", sub.getId());
-			loadSubScene(sub, sub.getScene());
-			swapSub(sub.getScene());
-		}
-	}
 
 	@Override
 	protected void shutDown()
@@ -992,16 +987,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 					textureArrayId = -1;
 				}
 
-				root.free(zonePool, sceneJobs);
-				for (SceneContext sub : subs != null ? subs : new SceneContext[0])
-				{
-					if (sub != null)
-					{
-						sub.free(zonePool, sceneJobs);
-					}
-				}
-				sceneJobs.clear();
-				zonePool.free();
+				sceneLoader.free();
 
 				shutdownInterfaceTexture();
 				shutdownProgram();
@@ -2476,11 +2462,25 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 			if (cache)
 			{
 				renderStaticShadows(ctx, size, fx, fy, fz, radius, depthRange, swayShadows);
-				// this frame's map starts as a copy of the static one
-				gpuTimer.begin(GpuTimer.SHADOW_COPY);
-				glBindVertexArray(vaoUiHandle);
-				shadowMap.useFront(frameCameraX, frameCameraY, frameCameraZ, glShadowCopyProgram);
-				glUseProgram(glShadowProgram);
+				if (shadowMap.frontView() != null)
+				{
+					// this frame's map starts as a copy of the static one
+					gpuTimer.begin(GpuTimer.SHADOW_COPY);
+					glBindVertexArray(vaoUiHandle);
+					shadowMap.useFront(frameCameraX, frameCameraY, frameCameraZ, glShadowCopyProgram);
+					glUseProgram(glShadowProgram);
+				}
+				else
+				{
+					// no static map drawn yet (start-up, a setting changed; the scheduler draws it): this frame's map
+					// holds the moving models only
+					shadowMap.update(dayCycle.casterDir, fx, fy, fz, frameCameraX, frameCameraY, frameCameraZ,
+						radius, depthRange, glCapabilities.OpenGL45);
+					glBindFramebuffer(GL_FRAMEBUFFER, shadowMap.getFbo());
+					glViewport(0, 0, size, size);
+					glClearDepth(1.0);
+					glClear(GL_DEPTH_BUFFER_BIT);
+				}
 				gpuTimer.begin(GpuTimer.SHADOW);
 				glUniformMatrix4fv(uniShadowLightProj, false, shadowMap.lightProj);
 				if (swayShadows)
@@ -2531,15 +2531,252 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 	private static final float SHADOW_CACHE_HEIGHT = 512;
 	private static final float SHADOW_CACHE_TEXELS = 1.0f;
 
-	private boolean shadowStaticDirty;
 	private int[] shadowBuildZones = new int[64];
-	private int shadowBuildCount, shadowBuildNext, shadowBuildPerFrame;
-	// the map being drawn is kept beside the one in use, not used (a strike's bolt)
-	private boolean shadowBuildHeld;
+	private int shadowBuildCount;
+	// the static map being drawn by the scheduler, null for none (one at a time)
+	private StaticShadowBuild staticBuild;
 
 	/**
-	 * Keep the static shadow map current: start a new one when the light has turned or the player has walked out of
-	 * the snapped cell, and draw this frame's share of it.
+	 * A static shadow map drawn by the scheduler (SceneJobs) into the texture not in use, a share of its zones a frame:
+	 * at most a SHADOW_BUILD_FRAMES-th of them (the GPU's share) and as many as fit the frame's budget (the CPU's).
+	 * Drawn for the scene in use it replaces the front map when done (or is held beside it, for a strike's bolt); drawn
+	 * for a scene being loaded (SceneLoader) it is held until that scene is swapped in, and replaces the front then, or
+	 * when it is done if the swap came first: until then the old map stands in.
+	 */
+	final class StaticShadowBuild implements SceneJobs.Job
+	{
+		private final SceneContext ctx;
+		private final float[] dir;
+		private final float fx, fy, fz;
+		// a bolt's map, held beside the front one; a load's map, for the scene not swapped in yet
+		private final boolean bolt;
+		private final boolean forLoad;
+		private volatile boolean swappedIn;
+		private boolean started, held;
+		private int build, next, perFrame, sway;
+		private float radius;
+
+		StaticShadowBuild(SceneContext ctx, float[] dir, float fx, float fy, float fz, boolean bolt, boolean forLoad)
+		{
+			this.ctx = ctx;
+			this.dir = dir;
+			this.fx = fx;
+			this.fy = fy;
+			this.fz = fz;
+			this.bolt = bolt;
+			this.forLoad = forLoad;
+		}
+
+		@Override
+		public boolean step(long deadline)
+		{
+			if (glShadowProgram == 0 || !shadowMap.isInitialized() || shadowMap.getSize() != config.shadowResolution().getSize())
+			{
+				return finish(false);
+			}
+			int size = shadowMap.getSize();
+			if (!started)
+			{
+				started = true;
+				// one static build at a time: a load's takes over from one of the drawn scene's
+				staticBuild = this;
+				float[] d = dir != null ? dir : dayCycle.casterDir;
+				radius = config.shadowDistance() * Perspective.LOCAL_TILE_SIZE;
+				sway = windSwayAmount() > 0 && config.windSwayShadows() ? Zone.SWAY_EXCLUDE : Zone.SWAY_ALL;
+				float sx = Math.round(fx / SHADOW_CACHE_SNAP) * (float) SHADOW_CACHE_SNAP;
+				float sz = Math.round(fz / SHADOW_CACHE_SNAP) * (float) SHADOW_CACHE_SNAP;
+				hitchMonitor.job(HitchMonitor.STATIC_SHADOWS);
+				shadowMap.startBuild(d, sx, fy, sz, radius + SHADOW_CACHE_SNAP, radius + 4096 + SHADOW_CACHE_SNAP,
+					glCapabilities.OpenGL45);
+				build = shadowMap.builds;
+				shadowBuildCount = 0;
+				shadowZones(ctx, sx, sz, radius + SHADOW_CACHE_SNAP, null, 0, 0, sway);
+				zones = Arrays.copyOf(shadowBuildZones, shadowBuildCount);
+				perFrame = Math.max(1, (zones.length + SHADOW_BUILD_FRAMES - 1) / SHADOW_BUILD_FRAMES);
+			}
+			if (shadowMap.builds != build || !shadowMap.isBuilding())
+			{
+				// the map was forgotten (settings, levels) or another build took its place
+				return finish(false);
+			}
+			glGetIntegerv(GL_VIEWPORT, viewport);
+			beginShadowPass();
+			try
+			{
+				ShadowMap.View v = shadowMap.buildingView();
+				glBindFramebuffer(GL_FRAMEBUFFER, shadowMap.getBuildFbo());
+				glViewport(0, 0, size, size);
+				glUniformMatrix4fv(uniShadowLightProj, false, v.proj);
+				int end = Math.min(next + perFrame, zones.length);
+				while (next < end)
+				{
+					shadowZones(ctx, v.focusX, v.focusZ, v.radius, zones, next, next + 1, sway);
+					next++;
+					if (System.nanoTime() >= deadline)
+					{
+						break;
+					}
+				}
+				if (next < zones.length)
+				{
+					return false;
+				}
+				glBindVertexArray(vaoUiHandle);
+				if (bolt || forLoad && !swappedIn)
+				{
+					shadowMap.holdBuild(glShadowMaxProgram);
+					held = true;
+				}
+				else
+				{
+					shadowMap.finishBuild(glShadowMaxProgram);
+				}
+			}
+			finally
+			{
+				endShadowPass();
+				glBindFramebuffer(GL_FRAMEBUFFER, awtContext.getFramebuffer(false));
+				glViewport(viewport[0], viewport[1], viewport[2], viewport[3]);
+			}
+			return finish(true);
+		}
+
+		private int[] zones;
+		private final int[] viewport = new int[4];
+
+		private boolean finish(boolean drawn)
+		{
+			if (!drawn && started && shadowMap.builds == build && shadowMap.isBuilding())
+			{
+				shadowMap.invalidateCache();
+			}
+			if (staticBuild == this && (!held || !forLoad))
+			{
+				staticBuild = null;
+			}
+			return true;
+		}
+
+		/** The scene this was drawn for is swapped in (client thread): the held map becomes the front one. */
+		void swappedIn()
+		{
+			swappedIn = true;
+			if (held)
+			{
+				shadowMap.swapFront();
+				// the old scene's map is in other coordinates: never swapped back
+				shadowMap.dropHeld();
+				held = false;
+				if (staticBuild == this)
+				{
+					staticBuild = null;
+				}
+			}
+		}
+	}
+
+	/**
+	 * Draw the static shadow map of a scene being loaded (SceneLoader, the map loader's thread, its zones uploaded):
+	 * around where the player will stand, the scene's centre after a teleport. Null when shadows are off.
+	 */
+	StaticShadowBuild prebuildStaticShadows(Scene scene, Zone[][] zones)
+	{
+		if (!config.shadows() || glShadowProgram == 0)
+		{
+			return null;
+		}
+		SceneContext next = new SceneContext(zones, root);
+		int tx = Constants.SCENE_SIZE / 2, tz = Constants.SCENE_SIZE / 2;
+		Player player = client.getLocalPlayer();
+		if (player != null)
+		{
+			// a region load around the player keeps them inside the new scene; a teleport does not
+			int px = player.getWorldLocation().getX() - scene.getBaseX(), pz = player.getWorldLocation().getY() - scene.getBaseY();
+			if (px >= 0 && pz >= 0 && px < Constants.SCENE_SIZE && pz < Constants.SCENE_SIZE)
+			{
+				tx = px;
+				tz = pz;
+			}
+		}
+		int[][][] heights = scene.getTileHeights();
+		float fy = heights[0][tx + SCENE_OFFSET][tz + SCENE_OFFSET];
+		StaticShadowBuild b = new StaticShadowBuild(next, null, tx * Perspective.LOCAL_TILE_SIZE + 64f, fy,
+			tz * Perspective.LOCAL_TILE_SIZE + 64f, false, true);
+		sceneLoader.jobs.add("static shadows (load)", SceneJobs.LOAD, b);
+		return b;
+	}
+
+	/** A load was dropped before its swap (SceneLoader, client thread): its map is not to be used. */
+	void dropStaticShadows(StaticShadowBuild dropped)
+	{
+		if (dropped != null && staticBuild == dropped)
+		{
+			staticBuild = null;
+			if (dropped.held)
+			{
+				shadowMap.dropHeld();
+			}
+		}
+	}
+
+	/** The swap, client thread: the loaded scene's static map replaces the front one if drawn (else when it is). */
+	private void swapStaticShadows(StaticShadowBuild loaded)
+	{
+		if (loaded != null)
+		{
+			loaded.swappedIn();
+		}
+		else
+		{
+			shadowMap.refreshCache();
+		}
+	}
+
+	/** The shadow program's state for drawing zones from the light; endShadowPass puts the frame's back. */
+	private void beginShadowPass()
+	{
+		glEnable(GL_DEPTH_TEST);
+		glDepthFunc(GL_LESS);
+		glDepthMask(true);
+		glDisable(GL_BLEND);
+		// both faces cast: OSRS models are not reliably closed, and backfaces reduce light leaking
+		glDisable(GL_CULL_FACE);
+		glEnable(GL_POLYGON_OFFSET_FILL);
+		glPolygonOffset(1.0f, 1.0f);
+
+		glUseProgram(glShadowProgram);
+		glUniform1i(uniShadowTexturesReady, textureArrayId != -1 ? 1 : 0);
+		glUniform1i(uniShadowEmissiveCasts, config.emissiveStrength() > 0 ? 0 : 1);
+		glUniformMatrix4fv(uniShadowEntityProj, false, IDENTITY);
+		final boolean swayShadows = windSwayAmount() > 0 && config.windSwayShadows();
+		shadowSway.set(swayShadows ? windSwayAmount() : 0);
+
+		// Zone and VAO draw through these shared uniform locations; point them at the shadow program
+		savedBase = uniBase;
+		savedEntityProj = uniEntityProj;
+		savedEntityTint = uniEntityTint;
+		uniBase = uniShadowBase;
+		uniEntityProj = uniShadowEntityProj;
+		uniEntityTint = -1;
+	}
+
+	private int savedBase, savedEntityProj, savedEntityTint;
+
+	private void endShadowPass()
+	{
+		uniBase = savedBase;
+		uniEntityProj = savedEntityProj;
+		uniEntityTint = savedEntityTint;
+		glBindVertexArray(0);
+		glDisable(GL_POLYGON_OFFSET_FILL);
+		glDepthFunc(GL_GREATER);
+		glDisable(GL_DEPTH_TEST);
+		glUseProgram(0);
+	}
+
+	/**
+	 * Keep the static shadow map current: when the light has turned, the player has walked out of the snapped cell, a
+	 * zone was rebuilt or a strike needs its bolt's map, queue a new one for the scheduler to draw (StaticShadowBuild).
 	 */
 	private void renderStaticShadows(SceneContext ctx, int size, float fx, float fy, float fz, float radius,
 		float depthRange, boolean swayShadows)
@@ -2548,80 +2785,31 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		int key = java.util.Objects.hash(System.identityHashCode(ctx), ctx.minLevel, ctx.level, ctx.maxLevel,
 			config.emissiveStrength() > 0, textureArrayId != -1, size, radius, sway);
 		shadowMap.checkCacheKey(key);
-		if (shadowStaticDirty)
+		if (staticBuild != null)
 		{
-			shadowStaticDirty = false;
-			// a scene swap: the static map is drawn again over SHADOW_BUILD_FRAMES while the old one stays in use
-			// (refreshCache), not forgotten and redrawn in one frame (invalidateCache) — that single-frame build was
-			// a third of the load hitch and the frame without a map the user's "one sharp frame" on every teleport
-			// (2026-10-30). The old map is the old area's: where it does not cover the new scene the receiver reads
-			// outside it, which is unshadowed, for those frames.
-			if (shadowMap.isInitialized())
-			{
-				shadowMap.refreshCache();
-			}
-			else
-			{
-				shadowMap.invalidateCache();
-			}
+			return;
 		}
 
 		ShadowMap.View front = shadowMap.frontView();
-		if (!shadowMap.isBuilding() && front != null && shadowStale(front, fx, fy, fz, radius, size))
+		if (front != null && shadowStale(front, fx, fy, fz, radius, size))
 		{
 			// the light turned to where the held map (a lightning strike's, or the sun's it left) is drawn for: use it
 			ShadowMap.View held = shadowMap.heldView();
 			if (held != null && !shadowStale(held, fx, fy, fz, radius, size))
 			{
-				glBindVertexArray(vaoUiHandle);
-				shadowMap.swapFront(glShadowMaxProgram);
+				shadowMap.swapFront();
 				return;
 			}
 		}
 		// a strike needs the map for its bolt drawn before its flash, beside the one in use
 		float[] bolt = weather.getLightning().getBoltDir();
-		boolean holdBolt = !shadowMap.isBuilding() && front != null && bolt != null && !shadowMap.isStale()
+		boolean holdBolt = front != null && bolt != null && !shadowMap.isStale()
 			&& !shadowStale(front, fx, fy, fz, radius, size)
 			&& !directionMatches(front, bolt) && !directionMatches(shadowMap.heldView(), bolt);
-		if (!shadowMap.isBuilding()
-			&& (front == null || shadowMap.isStale() || shadowStale(front, fx, fy, fz, radius, size) || holdBolt))
+		if (front == null || shadowMap.isStale() || shadowStale(front, fx, fy, fz, radius, size) || holdBolt)
 		{
-			shadowBuildHeld = holdBolt;
-			float sx = Math.round(fx / SHADOW_CACHE_SNAP) * (float) SHADOW_CACHE_SNAP;
-			float sz = Math.round(fz / SHADOW_CACHE_SNAP) * (float) SHADOW_CACHE_SNAP;
-			hitchMonitor.job(HitchMonitor.STATIC_SHADOWS);
-			shadowMap.startBuild(holdBolt ? bolt : dayCycle.casterDir, sx, fy, sz, radius + SHADOW_CACHE_SNAP,
-				depthRange + SHADOW_CACHE_SNAP, glCapabilities.OpenGL45);
-			shadowBuildCount = 0;
-			shadowZones(ctx, sx, sz, radius + SHADOW_CACHE_SNAP, null, 0, 0, sway);
-			shadowBuildNext = 0;
-			// the first map is needed at once
-			int frames = front == null ? 1 : SHADOW_BUILD_FRAMES;
-			shadowBuildPerFrame = (shadowBuildCount + frames - 1) / frames;
-		}
-		if (!shadowMap.isBuilding())
-		{
-			return;
-		}
-
-		ShadowMap.View v = shadowMap.buildingView();
-		glBindFramebuffer(GL_FRAMEBUFFER, shadowMap.getBuildFbo());
-		glViewport(0, 0, size, size);
-		glUniformMatrix4fv(uniShadowLightProj, false, v.proj);
-		int end = Math.min(shadowBuildNext + shadowBuildPerFrame, shadowBuildCount);
-		shadowZones(ctx, v.focusX, v.focusZ, v.radius, shadowBuildZones, shadowBuildNext, end, sway);
-		shadowBuildNext = end;
-		if (shadowBuildNext >= shadowBuildCount)
-		{
-			glBindVertexArray(vaoUiHandle);
-			if (shadowBuildHeld)
-			{
-				shadowMap.holdBuild();
-			}
-			else
-			{
-				shadowMap.finishBuild(glShadowMaxProgram);
-			}
+			staticBuild = new StaticShadowBuild(ctx, holdBolt ? bolt.clone() : null, fx, fy, fz, holdBolt, false);
+			sceneLoader.jobs.add(holdBolt ? "static shadows (bolt)" : "static shadows", SceneJobs.SHOWN, staticBuild);
 		}
 	}
 
@@ -2707,7 +2895,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 					continue;
 				}
 				Zone zone = ctx.zones[x][z];
-				if (zone.initialized && zone.sizeO > 0)
+				if (zone.drawable() && zone.sizeO > 0)
 				{
 					if (shadowBuildCount == shadowBuildZones.length)
 					{
@@ -2722,7 +2910,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 	private static void shadowZone(SceneContext ctx, int x, int z, int offset, int sway)
 	{
 		Zone zone = ctx.zones[x][z];
-		if (!zone.initialized || zone.sizeO <= 0)
+		if (!zone.drawable() || zone.sizeO <= 0)
 		{
 			return;
 		}
@@ -3878,11 +4066,11 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		}
 
 		hideAreas(wv);
-		rebuild(wv);
+		sceneLoader.rebuild(wv);
 		for (WorldEntity we : wv.worldEntities())
 		{
 			wv = we.getWorldView();
-			rebuild(wv);
+			sceneLoader.rebuild(wv);
 		}
 	}
 
@@ -3890,7 +4078,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 	private void hideAreas(WorldView wv)
 	{
 		Player player = client.getLocalPlayer();
-		if (player == null || nextZones != null || client.getGameState() != GameState.LOGGED_IN)
+		if (player == null || sceneLoader.loading() || client.getGameState() != GameState.LOGGED_IN)
 		{
 			return;
 		}
@@ -3903,7 +4091,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 	}
 
 	/** Whether the object has an action to interact with, as it looks now; client thread (Interactables). */
-	private boolean hasAction(int id)
+	boolean hasAction(int id)
 	{
 		ObjectComposition comp = client.getObjectDefinition(id);
 		if (comp != null && comp.getImpostorIds() != null && comp.getImpostor() != null)
@@ -3913,73 +4101,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		return comp != null && Interactables.hasAction(comp.getActions());
 	}
 
-	private VBO mapZoneBuffer(int faces)
-	{
-		int bytes = faces * Zone.VERT_SIZE * 3;
-		if (bytes <= 0)
-		{
-			return null;
-		}
-		VBO vbo = zonePool.acquire(bytes);
-		vbo.map();
-		return vbo;
-	}
 
-	private void rebuild(WorldView wv)
-	{
-		SceneContext ctx = context(wv);
-		if (ctx == null)
-		{
-			return;
-		}
-
-		for (int x = 0; x < ctx.sizeX; ++x)
-		{
-			for (int z = 0; z < ctx.sizeZ; ++z)
-			{
-				Zone zone = ctx.zones[x][z];
-				if (!zone.invalidate)
-				{
-					continue;
-				}
-
-				assert zone.initialized;
-				zone.free(zonePool, sceneJobs);
-				zone = ctx.zones[x][z] = new Zone();
-
-				Scene scene = wv.getScene();
-				clientUploader.zoneSize(scene, zone, x, z);
-				Interactables.resolve(this::hasAction);
-				// buffers from the pool, the ones just freed among them (ZonePool)
-				zone.init(mapZoneBuffer(zone.sizeO), mapZoneBuffer(zone.sizeA));
-
-				try
-				{
-					clientUploader.uploadZone(scene, zone, x, z);
-				}
-				catch (RuntimeException ex)
-				{
-					// a zone whose upload outgrows its counted size (java.nio.BufferOverflowException, 2026-10-30, a teleport
-					// destination) took the client down in swapScene, then left it loading forever: the rest of that zone is
-					// lost, the scene loads, and the log names the zone
-					log.error("Zone upload failed at zone {},{}: {}", x, z, ex.toString());
-				}
-
-				zone.unmap();
-				zone.initialized = true;
-				zone.dirty = true;
-				if (ctx == root)
-				{
-					hitchMonitor.job(HitchMonitor.ZONE_REBUILD);
-					weather.invalidateOcclusion();
-					shadowMap.refreshCache();
-					voxelBuilder.zonesChanged();
-				}
-
-				log.trace("Rebuilt zone wv={} x={} z={}", wv.getId(), x, z);
-			}
-		}
-	}
 
 	private void prepareInterfaceTexture(int canvasWidth, int canvasHeight)
 	{
@@ -4154,11 +4276,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		glBindFramebuffer(GL_FRAMEBUFFER, awtContext.getFramebuffer(false));
 
 		// the scene loads' GL work, within its budget, after the frame is presented: its time is the next frame's
-		if (!sceneJobs.idle())
-		{
-			hitchMonitor.job(HitchMonitor.SCENE_JOBS);
-			loadReport.extra(sceneJobs.run());
-		}
+		sceneLoader.runJobs();
 
 		checkGLErrors();
 	}
@@ -4260,6 +4378,66 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		return image;
 	}
 
+	@Override
+	public void loadScene(WorldView worldView, Scene scene)
+	{
+		sceneLoader.load(worldView, scene);
+	}
+
+	@Override
+	public void swapScene(Scene scene)
+	{
+		sceneLoader.swap(scene);
+	}
+
+	@Override
+	public void despawnWorldView(WorldView worldView)
+	{
+		sceneLoader.despawn(worldView);
+	}
+
+	/** A top level swap begins (SceneLoader). */
+	void sceneSwapStarted()
+	{
+		hitchMonitor.job(HitchMonitor.SCENE_SWAP);
+		framesSinceSwap = 0;
+	}
+
+	/** A top level load is built and waits for its swap (SceneLoader, the map loader's thread). */
+	void loadBuilt()
+	{
+		if (swapCaptureArmed)
+		{
+			// the load is done; the client swaps on one of the next frames: capture from here, so the swap frame
+			// itself and its neighbours are all on file (the user's flash is a whole frame, before frame +1)
+			swapCaptureArmed = false;
+			swapCaptureIndex = 0;
+			swapCaptureLeft = 8;
+		}
+	}
+
+	/**
+	 * The loaded record became the drawn scene (SceneLoader.swap), client thread: every consumer takes its part of it
+	 * now, or keeps the old one until the job building it finishes, the same for all. No GL call.
+	 */
+	void sceneSwapped(SceneLoader.SceneDerived d)
+	{
+		weather.invalidateOcclusion();
+		water.swap(d.water);
+		volumetricFog.swap(d.fogGround);
+		voxelBuilder.swapTo(d.voxelBuild);
+		swapStaticShadows(d.shadows);
+	}
+
+	/** A zone of the top level scene was uploaded again (SceneLoader.rebuild). */
+	void zoneRebuilt()
+	{
+		hitchMonitor.job(HitchMonitor.ZONE_REBUILD);
+		weather.invalidateOcclusion();
+		shadowMap.refreshCache();
+		voxelBuilder.zonesChanged();
+	}
+
 	@Subscribe
 	public void onGameStateChanged(GameStateChanged gameStateChanged)
 	{
@@ -4282,496 +4460,12 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		}
 	}
 
-	@Override
-	public void loadScene(WorldView worldView, Scene scene)
-	{
-		if (scene.getWorldViewId() != WorldView.TOPLEVEL)
-		{
-			loadSubScene(worldView, scene);
-			return;
-		}
 
-		if (nextZones != null)
-		{
-			log.debug("Double zone load!");
-			// The previous scene load just gets dropped, this is uncommon and requires a back to back map build packet
-			// while having the first load take more than a full server cycle to complete
-			CountDownLatch latch = new CountDownLatch(1);
-			clientThread.invoke(() ->
-			{
-				for (int x = 0; x < NUM_ZONES; ++x)
-				{
-					for (int z = 0; z < NUM_ZONES; ++z)
-					{
-						Zone zone = nextZones[x][z];
-						assert !zone.cull;
-						// anything initialized is a reused zone and so shouldn't be freed; the new ones are unmapped already
-						if (!zone.initialized)
-						{
-							zone.free(zonePool, sceneJobs);
-						}
-					}
-				}
-				latch.countDown();
-			});
-			try
-			{
-				latch.await();
-			}
-			catch (InterruptedException e)
-			{
-				throw new RuntimeException(e);
-			}
-			nextZones = null;
-			nextRoofChanges = null;
-		}
 
-		loadReport.loadStarted();
-		SceneContext ctx = root;
-		Scene prev = client.getTopLevelWorldView().getScene();
 
-		regionManager.prepare(scene);
-		lookMonitor.scene("load", scene);
 
-		// loaded again where the player stands, their tile is known; a new map is built around them instead
-		Player player = client.getLocalPlayer();
-		boolean inPlace = player != null && scene.getBaseX() == prev.getBaseX() && scene.getBaseY() == prev.getBaseY()
-			&& scene.isInstance() == prev.isInstance();
-		LocalPoint playerPoint = inPlace ? player.getLocalLocation() : null;
-		areaHiding.prepare(scene, config.hideOtherAreas(), client.getTopLevelWorldView().getPlane(),
-			playerPoint != null ? new int[]{playerPoint.getSceneX(), playerPoint.getSceneY()} : null);
 
-		int dx = scene.getBaseX() - prev.getBaseX() >> 3;
-		int dy = scene.getBaseY() - prev.getBaseY() >> 3;
 
-		final int SCENE_ZONES = NUM_ZONES;
-
-		// initially mark every zone as needing culled
-		for (int x = 0; x < SCENE_ZONES; ++x)
-		{
-			for (int z = 0; z < SCENE_ZONES; ++z)
-			{
-				ctx.zones[x][z].cull = true;
-			}
-		}
-
-		Map<Integer, Integer> roofChanges = new HashMap<>();
-
-		// find zones which overlap and copy them
-		Zone[][] newZones = new Zone[SCENE_ZONES][SCENE_ZONES];
-		final GameState gameState = client.getGameState();
-		if (prev.isInstance() == scene.isInstance()
-			&& gameState == GameState.LOGGED_IN
-			// zones built with other tiles hidden can't be reused
-			&& areaHiding.sameAsShown())
-		{
-			int[][][] prevTemplates = prev.getInstanceTemplateChunks();
-			int[][][] curTemplates = scene.getInstanceTemplateChunks();
-
-			int[][][] prids = prev.getRoofs();
-			int[][][] nrids = scene.getRoofs();
-
-			for (int x = 0; x < SCENE_ZONES; ++x)
-			{
-				next:
-				for (int z = 0; z < SCENE_ZONES; ++z)
-				{
-					int ox = x + dx;
-					int oz = z + dy;
-
-					// Reused the old zone if it is also in the new scene, except for the edges, to work around
-					// tile blending, (edge) shadows, sharelight, etc.
-					if (canReuse(ctx.zones, ox, oz))
-					{
-						if (scene.isInstance())
-						{
-							// Convert from modified chunk coordinates to Jagex chunk coordinates
-							int jx = x - (SCENE_OFFSET / 8);
-							int jz = z - (SCENE_OFFSET / 8);
-							int jox = ox - (SCENE_OFFSET / 8);
-							int joz = oz - (SCENE_OFFSET / 8);
-							// Check Jagex chunk coordinates are within the Jagex scene
-							if (jx >= 0 && jx < Constants.SCENE_SIZE / 8 && jz >= 0 && jz < Constants.SCENE_SIZE / 8)
-							{
-								if (jox >= 0 && jox < Constants.SCENE_SIZE / 8 && joz >= 0 && joz < Constants.SCENE_SIZE / 8)
-								{
-									for (int level = 0; level < 4; ++level)
-									{
-										int prevTemplate = prevTemplates[level][jox][joz];
-										int curTemplate = curTemplates[level][jx][jz];
-										if (prevTemplate != curTemplate)
-										{
-											log.error("Instance template reuse mismatch! prev={} cur={}", prevTemplate, curTemplate);
-											continue next;
-										}
-									}
-								}
-							}
-						}
-
-						Zone old = ctx.zones[ox][oz];
-						assert old.initialized;
-
-						if (old.dirty)
-						{
-							continue;
-						}
-
-						assert old.sizeO > 0 || old.sizeA > 0;
-
-						// Roof ids aren't consistent between scenes, so build a mapping of old -> new roof ids
-						// Sometimes groups split or merge, so we can't copy the zone in that case
-						for (int level = 0; level < 4; level++)
-						{
-							for (int tx = 0; tx < 8; tx++)
-							{
-								for (int tz = 0; tz < 8; tz++)
-								{
-									int prid = prids[level][(ox << 3) + tx][(oz << 3) + tz];
-									int nrid = nrids[level][(x << 3) + tx][(z << 3) + tz];
-
-									if (prid != nrid && (prid == 0 || nrid == 0))
-									{
-										log.trace("Roof mismatch: {} -> {}", prid, nrid);
-										continue next;
-									}
-
-									Integer orid = roofChanges.putIfAbsent(prid, nrid);
-									if (orid == null)
-									{
-										log.trace("Roof change: {} -> {}", prid, nrid);
-									}
-									else if (orid != nrid)
-									{
-										log.trace("Roof mismatch: {} -> {} vs {}", prid, nrid, orid);
-										continue next;
-									}
-								}
-							}
-						}
-
-						assert old.cull;
-						old.cull = false;
-
-						newZones[x][z] = old;
-					}
-				}
-			}
-		}
-
-		// Fill out any zones that weren't copied
-		for (int x = 0; x < SCENE_ZONES; ++x)
-		{
-			for (int z = 0; z < SCENE_ZONES; ++z)
-			{
-				if (newZones[x][z] == null)
-				{
-					newZones[x][z] = new Zone();
-				}
-			}
-		}
-
-		// the water's bed depths and flow, needed to size and upload the zones; swapped in with them
-		Stopwatch sw = Stopwatch.createStarted();
-		WaterMap waterMap = config.water()
-			? WaterMap.build(scene, WaterOverrides.get()) : null;
-		mapUploader.water = waterMap;
-		water.sceneLoaded(waterMap);
-		log.debug("Water map time {}", sw);
-		volumetricFog.sceneLoaded(scene);
-
-		// size the zones which require upload
-		sw = Stopwatch.createStarted();
-		int len = 0, lena = 0;
-		int reused = 0, newzones = 0;
-		for (int x = 0; x < NUM_ZONES; ++x)
-		{
-			for (int z = 0; z < NUM_ZONES; ++z)
-			{
-				Zone zone = newZones[x][z];
-				if (!zone.initialized)
-				{
-					assert zone.glVao == 0;
-					assert zone.glVaoA == 0;
-					mapUploader.zoneSize(scene, zone, x, z);
-					len += zone.sizeO;
-					lena += zone.sizeA;
-					newzones++;
-				}
-				else
-				{
-					reused++;
-				}
-			}
-		}
-		log.debug("Scene size time {} reused {} new {} len opaque {} size opaque {}kb len alpha {} size alpha {}kb",
-			sw, reused, newzones,
-			len, (len * Zone.VERT_SIZE * 3) / 1024,
-			lena, (lena * Zone.VERT_SIZE * 3) / 1024);
-
-		// upload the zones which require it; their buffers are mapped and unmapped by the scheduler alongside
-		sw = Stopwatch.createStarted();
-		uploadZones(scene, newZones, NUM_ZONES, NUM_ZONES, "load");
-		log.debug("Scene upload time {}", sw);
-
-		nextZones = newZones;
-		nextRoofChanges = roofChanges;
-		if (swapCaptureArmed)
-		{
-			// the load is done; the client swaps on one of the next frames: capture from here, so the swap frame
-			// itself and its neighbours are all on file (the user's flash is a whole frame, before frame +1)
-			swapCaptureArmed = false;
-			swapCaptureIndex = 0;
-			swapCaptureLeft = 8;
-		}
-	}
-
-	private static boolean canReuse(Zone[][] zones, int zx, int zz)
-	{
-		// For tile blending, sharelight, and shadows to work correctly, the zones surrounding
-		// the zone must be valid.
-		for (int x = zx - 1; x <= zx + 1; ++x)
-		{
-			if (x < 0 || x >= NUM_ZONES)
-			{
-				return false;
-			}
-			for (int z = zz - 1; z <= zz + 1; ++z)
-			{
-				if (z < 0 || z >= NUM_ZONES)
-				{
-					return false;
-				}
-				Zone zone = zones[x][z];
-				if (!zone.initialized)
-				{
-					return false;
-				}
-				if (zone.sizeO == 0 && zone.sizeA == 0)
-				{
-					return false;
-				}
-			}
-		}
-		return true;
-	}
-
-	/**
-	 * Upload the zones not initialized (not reused), on the loading thread: the scheduler maps their buffers ahead of
-	 * the upload and unmaps them behind it (ZoneUploads), so they are ready to draw at the swap, which does no GL work.
-	 */
-	private void uploadZones(Scene scene, Zone[][] zones, int sizeX, int sizeZ, String what)
-	{
-		int n = 0;
-		for (int x = 0; x < sizeX; ++x)
-		{
-			for (int z = 0; z < sizeZ; ++z)
-			{
-				if (!zones[x][z].initialized)
-				{
-					n++;
-				}
-			}
-		}
-		Zone[] list = new Zone[n];
-		int[] xs = new int[n], zs = new int[n];
-		n = 0;
-		for (int x = 0; x < sizeX; ++x)
-		{
-			for (int z = 0; z < sizeZ; ++z)
-			{
-				if (!zones[x][z].initialized)
-				{
-					list[n] = zones[x][z];
-					xs[n] = x;
-					zs[n] = z;
-					n++;
-				}
-			}
-		}
-		boolean onClientThread = client.isClientThread();
-		ZoneUploads uploads = new ZoneUploads(list, zonePool, sceneJobs, clientThread,
-			() -> Interactables.resolve(this::hasAction),
-			r ->
-			{
-				if (what.equals("load"))
-				{
-					loadReport.preSwap(r[0], (int) r[1]);
-				}
-			});
-		uploads.start(onClientThread);
-		for (int i = 0; i < n; ++i)
-		{
-			uploads.mapped(i, onClientThread);
-			try
-			{
-				mapUploader.uploadZone(scene, list[i], xs[i], zs[i]);
-			}
-			catch (RuntimeException ex)
-			{
-				// the load must not throw: the client then never finishes loading (2026-10-30, a zone's upload outgrew
-				// its counted VBO at base (1632, 3080)); the zone loses its tail, the log names it
-				log.error("Zone upload failed at zone {},{} ({}): {}", xs[i], zs[i], what, ex.toString());
-			}
-			uploads.uploaded(i);
-		}
-		uploads.finish(onClientThread);
-	}
-
-	private void loadSubScene(WorldView worldView, Scene scene)
-	{
-		int worldViewId = scene.getWorldViewId();
-		assert worldViewId != -1;
-
-		log.debug("Loading world view {}", worldViewId);
-
-		SceneContext ctx0 = subs[worldViewId];
-		if (ctx0 != null)
-		{
-			log.info("Reload of an already loaded worldview?");
-			return;
-		}
-
-		final SceneContext ctx = new SceneContext(worldView.getSizeX() >> 3, worldView.getSizeY() >> 3);
-		subs[worldViewId] = ctx;
-
-		for (int x = 0; x < ctx.sizeX; ++x)
-		{
-			for (int z = 0; z < ctx.sizeZ; ++z)
-			{
-				Zone zone = ctx.zones[x][z];
-				mapUploader.zoneSize(scene, zone, x, z);
-			}
-		}
-
-		uploadZones(scene, ctx.zones, ctx.sizeX, ctx.sizeZ, "sub view");
-	}
-
-	@Override
-	public void despawnWorldView(WorldView worldView)
-	{
-		int worldViewId = worldView.getId();
-		if (worldViewId != WorldView.TOPLEVEL)
-		{
-			log.debug("WorldView despawn: {}", worldViewId);
-			var sub = subs[worldViewId];
-			if (sub == null)
-			{
-				return;
-			}
-
-			sub.free(zonePool, sceneJobs);
-			subs[worldViewId] = null;
-		}
-	}
-
-	@Override
-	public void swapScene(Scene scene)
-	{
-		if (scene.getWorldViewId() != WorldView.TOPLEVEL)
-		{
-			swapSub(scene);
-			return;
-		}
-
-		hitchMonitor.job(HitchMonitor.SCENE_SWAP);
-		framesSinceSwap = 0;
-		// B3: every part of the swap frame timed, logged when the swap is slow, so the map-load hitch is attributed
-		long t0 = System.nanoTime();
-		areaHiding.swapped();
-		long tArea = System.nanoTime();
-		SceneContext ctx = root;
-		int freed = 0, reused = 0;
-		for (int x = 0; x < ctx.sizeX; ++x)
-		{
-			for (int z = 0; z < ctx.sizeZ; ++z)
-			{
-				Zone zone = ctx.zones[x][z];
-
-				if (zone.cull)
-				{
-					// its buffers go to the pool: no GL call (ZonePool)
-					zone.free(zonePool, sceneJobs);
-					freed++;
-				}
-				else
-				{
-					// reused zone
-					zone.updateRoofs(nextRoofChanges);
-					reused++;
-				}
-			}
-		}
-		nextRoofChanges = null;
-		long tFree = System.nanoTime();
-		lookMonitor.scene("swap", scene);
-
-		if (nextZones == null)
-		{
-			// the load failed (an exception in loadScene): keep the previous zones rather than crash the client
-			log.error("swapScene without a loaded scene: keeping the previous zones");
-			return;
-		}
-		ctx.zones = nextZones;
-		nextZones = null;
-		weather.invalidateOcclusion();
-		shadowStaticDirty = true;
-		voxelBuilder.sceneSwapped();
-		water.swap();
-		volumetricFog.swap();
-		clientUploader.water = mapUploader.water;
-		long tModules = System.nanoTime();
-
-		// the new zones were unmapped during the load (ZoneUploads): they are ready to draw
-		int unmapped = 0;
-		for (int x = 0; x < ctx.zones.length; ++x) // NOPMD: ForLoopCanBeForeach
-		{
-			for (int z = 0; z < ctx.zones[0].length; ++z)
-			{
-				Zone zone = ctx.zones[x][z];
-
-				if (!zone.initialized)
-				{
-					zone.initialized = true;
-					unmapped++;
-				}
-			}
-		}
-		long tUnmap = System.nanoTime();
-
-		checkGLErrors();
-		long tEnd = System.nanoTime();
-		double total = (tEnd - t0) / 1e6;
-		loadReport.swapped(total, freed, reused);
-		if (total > 2)
-		{
-			log.info(String.format("swapScene %.1f ms: areaHiding %.1f, free/roofs %.1f (%d freed, %d reused), modules %.1f, unmap %.1f (%d zones), glGetError %.1f",
-				total, (tArea - t0) / 1e6, (tFree - tArea) / 1e6, freed, reused, (tModules - tFree) / 1e6, (tUnmap - tModules) / 1e6, unmapped,
-				(tEnd - tUnmap) / 1e6));
-		}
-	}
-
-	private void swapSub(Scene scene)
-	{
-		SceneContext ctx = context(scene);
-		if (ctx == null)
-		{
-			return;
-		}
-
-		// setup vaos
-		for (int x = 0; x < ctx.sizeX; ++x)
-		{
-			for (int z = 0; z < ctx.sizeZ; ++z)
-			{
-				Zone zone = ctx.zones[x][z];
-
-				// unmapped during the load (ZoneUploads)
-				zone.initialized = true;
-			}
-		}
-		log.debug("WorldView ready: {}", scene.getWorldViewId());
-	}
 
 	private int getScaledValue(final double scale, final int value)
 	{
