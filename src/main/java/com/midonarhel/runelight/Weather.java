@@ -429,17 +429,6 @@ class Weather
 	}
 
 	/**
-	 * Wind over open water: the direction it blows toward (x, z, normalized) and its strength 0-1 with gusts.
-	 * Still underground.
-	 */
-	void getWaterWind(float[] out)
-	{
-		out[0] = windSim.getDirX();
-		out[1] = windSim.getDirZ();
-		out[2] = openSky ? Math.min(1, windSim.getStrength() + 0.5f * windSim.getGust()) : 0;
-	}
-
-	/**
 	 * The wind, for anything that moves with it (Wind.apply sets a program's wind uniforms).
 	 */
 	Wind getWind()

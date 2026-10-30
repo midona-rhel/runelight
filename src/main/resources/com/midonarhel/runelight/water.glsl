@@ -1,10 +1,10 @@
 // Water, shaded by the composite over the lowered water bed (WaterMap.java, Water.java, WaterSurface.java).
 //
 // The surface is real geometry: the water pass (water_vert.glsl, water_frag.glsl) draws it wherever it is in front of
-// the opaque scene, and leaves how far away it is, its normal, look and foam, the water's depth by the shore and the
-// caustics on the bed below in waterSurface.
+// the opaque scene, and leaves how far away it is, its normal (flat but for the rain rings), look and foam, the water's
+// depth by the shore and the caustics on the bed below in waterSurface.
 //
-// Looking down the water is clear over the shallows and colored by its depth, its surface tinted and lit, the waves
+// Looking down the water is clear over the shallows and colored by its depth, its surface tinted and lit, the ripples
 // shading what is seen through it; at a slant the surface turns into the sky, clouds and all, by Fresnel, with sharp
 // reflections of the world. Sharp glints from the sun and moon, lamps' streaks, foam.
 //
@@ -42,23 +42,23 @@ layout(location = 1) out uvec4 WaterShadedOut;
 #define FRESNEL_BASE 0.15
 #define FRESNEL_POWER 2.0
 #define OPACITY_SLANT 0.4
-// what is seen through a wave face turned toward the camera is a little brighter, turned away darker
+// what is seen through a ripple's face turned toward the camera is a little brighter, turned away darker
 #define WAVE_SHADE 0.6
 // under the water the bank's color goes wet: a little darker
 #define WET_SAND 0.86
-// The sky is reflected off a normal SKY_TILT times as steep as the waves', and the Fresnel goes by it too: each wave
+// The sky is reflected off a normal SKY_TILT times as steep as the ripples', and the Fresnel goes by it too: each ripple's
 // face catches a different part of the sky, the bright horizon toward the camera, the darker zenith away, which is
-// what shows the waves from above (the waves themselves are too gentle to move the reflection much).
+// what shows the ripples from above (they are too gentle to move the reflection much).
 #define SKY_TILT 1.5
 #define WAVE_SKY_TILT 7.0
 // Underground there is no sky to reflect: the water reflects a black stand-in, a very dark tint of the cave's fog
 // color, so it is told from the rock by its own dark color, the lamps on it and the cave in its screen-space reflections
 #define CAVE_SKY_REFLECT 0.1
 // how fast the reflected sky goes from the horizon's color to the zenith's as the reflection rises (an exponent on
-// the elevation): low keeps the horizon to a narrow bright band, so the wave faces that catch it stand out
+// the elevation): low keeps the horizon to a narrow bright band, so the ripples' faces that catch it stand out
 #define SKY_GRADIENT 0.45
-// Highlights. Sheen: a faint tight lobe of the sun or moon on the waves (Blinn-Phong exponent, strength). Glitter:
-// its reflection off the waves as if they were GLITTER_SLOPE times taller, so many small slopes face the sun, each
+// Highlights. Sheen: a faint tight lobe of the sun or moon on the water (Blinn-Phong exponent, strength). Glitter:
+// its reflection off the ripples as if they were GLITTER_SLOPE times taller, so many small slopes face the sun, each
 // catching it in a narrow lobe (GLITTER_ROUGH): many pinpoint glints instead of a wide smear. The moon's are
 // MOON_SPECULAR of the sun's.
 #define SHEEN_GLOSS 300.0
@@ -109,14 +109,9 @@ layout(location = 1) out uvec4 WaterShadedOut;
 #define SSR_TILT 1.0
 
 
-// The foam in two flat tones with hard edges over the water, a pale tint and a bright core: the shares of the foam color
-// over the water, and how far the foam's color is whitened (the shore waves' and the falls')
-#define FOAM_TINT 0.55
-#define FOAM_CORE 0.9
-#define FOAM_WHITE 0.75
 
-// The water pass's packed surface (water_frag.glsl): the distance to it, its normal, look slot, foam, the water's
-// depth going by the shore (smooth across tiles), and the caustics on the bed below
+// The water pass's packed surface (water_frag.glsl): the distance to it, its normal, look slot, foam (the rain's), the
+// water's depth going by the shore (smooth across tiles), and the caustics on the bed below
 void waterUnpack(uvec4 w, out float t, out vec3 nrm, out int slot, out float foam, out float shoreDepth,
   out float caustic) {
   uint a = w.r | w.g << 16, b = w.b | w.a << 16;
@@ -129,11 +124,6 @@ void waterUnpack(uvec4 w, out float t, out vec3 nrm, out int slot, out float foa
   shoreDepth = d * d * 512.0;
   t = float(b & 65535u) / 65535.0 * WATER_REACH;
   caustic = float(b >> 16 & 255u) / 255.0 * 4.0 - 1.0;
-}
-
-// The shore waves' foam at the pixel, in water_frag.glsl's full resolution coverage: x the tint, y the core
-vec2 waterShoreOf(uvec4 w) {
-  return vec2(float(w.a >> 8 & 15u), float(w.a >> 12 & 15u)) / 15.0;
 }
 
 // The shaded target's 16 bit values (GL 4.1 has no packHalf2x16): light 0 to 63 on a log scale, fine near black;
@@ -471,7 +461,7 @@ vec3 waterSunGlint(vec3 steep, vec3 v, float footprint, float shine, float foam,
 // The sharp glints of the sun or moon on the surface at full resolution: v the view direction, shadow the sun's. A
 // glint is a facet catching the sun, often smaller than a pixel: the lobe is widened by how much the (steepened)
 // normal changes across the pixel, from its neighbours to the right and below, so the pixel shows the glint averaged
-// over its footprint. Where the waves are fine against the pixels (far off, or at a low render scale) the glints are
+// over its footprint. Where the ripples are fine against the pixels (far off, or at a low render scale) the glints are
 // softer and dimmer instead of aliasing into specks or blocks; up close they stay pinpoints.
 vec3 waterGlitter(ivec2 px, vec3 nrm, vec3 v, float shine, float foam, float shadow) {
   vec3 steep = waterGlitterNormal(nrm);
@@ -560,26 +550,12 @@ vec3 waterOver(ivec2 px, inout vec3 p, vec3 albedo, float shadow, vec3 lit, floa
     caustics = srgbToLinear(albedo) * caster * (k * clamp(caustic, dark, CAUSTIC_RANGE.y));
   }
   vec3 under = max(srgbToLinear(lit * WET_SAND) + caustics, vec3(0.0)) * srgbToLinear(waterDepthTint(type, colorDepth));
-  // what is seen through a wave face turned toward the camera is a little brighter, turned away darker
+  // what is seen through a ripple's face turned toward the camera is a little brighter, turned away darker
   vec3 v = p / dist;
   spec += waterGlitter(px, nrm, v, WATER_LOOK[type].z, foam, shadow);
   vec2 slope = nrm.xz / nrm.y;
   under *= max(1.0 + WAVE_SHADE * dot(slope, v.xz) / max(length(v.xz), 0.25), 0.0);
   float alpha = max(WATER_LOOK[type].x * smoothstep(0.0, SURFACE_DEPTH, colorDepth), surface.a);
-  // the shore waves' foam and the foam around things standing in the water, in the flat tones the falls have, over the
-  // water as it is lit from above
-  vec2 shore = waterShoreOf(ws);
-  if (shore.x > 0.0) {
-    vec3 up = vec3(0.0, -1.0, 0.0);
-    vec3 topLight = outdoors == 1 && lightingEnabled == 1
-      ? ambientLight(sunAltitude) * envAmbient + skyLight(sunAltitude) * envAmbient
-        + strikeCaster(sunIsCaster == 1 ? sunLight(sunAltitude) : moonLight(sunAltitude)) * envSun * max(dot(up, casterDir), 0.0) * shadow
-      : vec3(1.0);
-    float share = mix(FOAM_TINT * shore.x, FOAM_CORE, shore.y);
-    surface.rgb = mix(surface.rgb, srgbToLinear(mix(WATER_FOAM_COLOR[type], vec3(1.0), FOAM_WHITE)) * mix(topLight, vec3(1.0), 0.5), share);
-    alpha = max(alpha, share);
-    spec *= 1.0 - share;
-  }
   vec3 color = waterShoulder(mix(under, surface.rgb, alpha) + spec);
   // over the waterline the water fades in over the bed and its caustics: no hard edge where it meets the bank or a
   // leg in the water
@@ -591,63 +567,19 @@ vec3 waterOver(ivec2 px, inout vec3 p, vec3 albedo, float shadow, vec3 lit, floa
 
 // ---------------------------------------------------------------------------------------------------------------
 // Fake water: the faces models draw as water (fountains, wells, troughs, sinks, waterfalls; SurfaceMaterials marks
-// them, the scene pass writes them as water 3 in the material target with their distance from the nearer end of
-// the model's water). The composite replaces their lit color with water shaded as the real surface is, from the face
-// itself: its own normal and the world position, no texture. Level faces get the ripples and reflections of still
-// water; steep ones are falls, the same water running down, streaked and foaming at its lip and foot.
-// Everything here is ALU: the composite has no sampler to spare.
+// them, the scene pass writes them as water 3 in the material target). The composite replaces their lit color with
+// water shaded as the real surface is, from the face itself: its own normal, no texture. Steep faces are falls, lit as
+// the pool below them. Everything here is ALU: the composite has no sampler to spare.
 uniform int waterFakeOn;  // the water setting: off draws the faces as their type's plain color
 
 // how deep the water counts as being, for the color it fades into (world units)
 #define FAKE_DEPTH 100.0
-// the ripples of level water: the largest ones FAKE_LONGEST tiles from crest to crest and FAKE_HEIGHT world units
-// high, the finer octave after it a third as high; the seconds one cycle of them takes
-#define FAKE_LONGEST 1.4
-#define FAKE_HEIGHT 1.6
-#define FAKE_PERIOD 9.0
 // a face is a fall when its normal's vertical part is below the second and not a pool's at all below the first
 #define FALL_STEEP vec2(0.5, 0.85)
-// A fall is real water, running straight down it at FALL_FLOW world units a second (its ripples stretched by FALL_STRETCH
-// along the flow), its foam a connected web: the edges of the foam cells (waterFoamEdges), stretched FALL_LONG times
-// along the flow, in cells FALL_CELL world units across, drifting in small circles (FALL_DRIFT seconds a turn) and the
-// whole web scrolling down FALL_SPEED cells a second. Two flat tones with hard edges: a core the line's FALL_LINE.x wide
-// and a rim FALL_LINE.y wide (cells), swelling to FALL_SWELL times that at the lip and the foot (FALL_NEAR tiles) where
-// the web runs into the pool's contact foam: the pool's own cells (waterFoamCells, the contact foam's size), cut as
-// theirs are, shrinking away from the lip and the foot, never fading.
-#define FALL_FLOW 320.0
-#define FALL_STRETCH 0.4
-#define FALL_SPEED 2.0
-#define FALL_DRIFT 40.0
-#define FALL_NEAR 1.0
-#define FALL_CELL 70.0
-#define FALL_LONG 1.75
-#define FALL_LINE vec2(0.035, 0.09)
-#define FALL_SWELL 2.5
-// how much cell height is added to the pool's cells' in the middle of a fall and at its lip and foot
-#define FALL_SHIFT vec2(0.6, -0.2)
-// the pool's foam cells (Water.CELLS across CELL_SCALE_B world units, water_frag.glsl)
-#define POOL_CELL (520.0 / 6.0)
-
-// The slope of level fake water at world xz: two octaves of the sea's waves, running both ways
-vec2 waterFakeSlope(vec2 xz) {
-  const mat2 TURN = mat2(0.8, 0.6, -0.6, 0.8);
-  mat2 M = TURN * (WATER_TAU / (FAKE_LONGEST * WATER_TILE));
-  float tt = waterCycle(FAKE_PERIOD) * WATER_TAU;
-  vec2 g = vec2(0.0);
-  float amp = 1.0, chop = WAVE_CHOP;
-  for (int i = 0; i < 2; ++i) {
-    vec2 uv = M * xz;
-    vec2 ua = uv + tt, ub = uv - tt + 2.3;
-    g += transpose(M) * (seaOctaveGrad(ua, waveNoiseD(ua), chop) + seaOctaveGrad(ub, waveNoiseD(ub), chop)) * amp;
-    M = TURN * M / WAVE_SHRINK;
-    amp *= WAVE_FADE;
-  }
-  return g * (0.5 * FAKE_HEIGHT);
-}
 
 // The fake water face at pixel px (camera-relative p, facing camera normal faceN, color albedo (sRGB), the sun's
-// shadow, end: its distance from the foot or the top of its water, whichever is nearer), lit as lit (sRGB): its color as water, sRGB.
-vec3 waterFake(ivec2 px, vec3 p, vec3 faceN, vec3 albedo, float shadow, float end, vec3 lit) {
+// shadow), lit as lit (sRGB): its color as water, sRGB.
+vec3 waterFake(ivec2 px, vec3 p, vec3 faceN, vec3 albedo, float shadow, vec3 lit) {
   // the slimy greens are swamp water, the rest fresh
   int type = albedo.g > albedo.b * 1.15 ? 5 : 1;
   vec4 look = WATER_LOOK[type];
@@ -658,39 +590,8 @@ vec3 waterFake(ivec2 px, vec3 p, vec3 faceN, vec3 albedo, float shadow, float en
   float dist = length(p);
   vec3 v = p / dist;
   vec3 toCamera = -v;
-  vec3 world = p + cameraPos;
   float fall = 1.0 - smoothstep(FALL_STEEP.x, FALL_STEEP.y, abs(faceN.y));
-  float side = length(faceN.xz);
-  vec2 tang = side > 1e-3 ? vec2(-faceN.z, faceN.x) / side : vec2(1.0, 0.0);
-
-  // the surface's normal and its foam
-  // level water ripples as the sea does; a fall's water runs straight down it, the ripples stretched along the flow
-  float down = step(0.5, fall);
-  vec2 slope = waterFakeSlope(mix(world.xz, vec2(dot(world.xz, tang), (world.y - FALL_FLOW * waterTime) * FALL_STRETCH), down)) * look.w * (1.0 + 2.0 * down);
-  vec3 nrm = faceN + mix(vec3(-slope.x, 0.0, -slope.y), vec3(-slope.x * tang.x, -slope.y, -slope.x * tang.y), down);
-  float foam = 0.0;
-  if (fall > 0.0) {
-    float across = dot(world.xz, tang);
-    // how near the lip and the foot are
-    float near = clamp(1.0 - end / (WATER_TILE * FALL_NEAR), 0.0, 1.0);
-    // the web: the cells' edges, scrolling down and drifting in small circles
-    float turn = WATER_TAU * waterCycle(FALL_DRIFT);
-    vec2 web = vec2(across, world.y / FALL_LONG) / FALL_CELL - vec2(0.0, 64.0 * waterCycle(64.0 / FALL_SPEED))
-      + 0.35 * vec2(sin(turn), cos(turn));
-    float edge = waterFoamEdges(web);
-    float aa = max(fwidth(edge), 1e-4);
-    float swell = mix(1.0, FALL_SWELL, near);
-    float rim = waterEdge(FALL_LINE.y * swell - edge, aa), core = waterEdge(FALL_LINE.x * swell - edge, aa);
-    // the pool's cells at the lip and the foot, as the contact foam cuts them
-    vec2 pool = vec2(across, world.y) / POOL_CELL - vec2(0.0, 64.0 * waterCycle(64.0 / FALL_SPEED));
-    float h = 0.5 * (waterFoamCells(pool + 0.35 * vec2(sin(turn), cos(turn)))
-      + waterFoamCells(pool.yx + vec2(0.37, 0.0) + 0.35 * vec2(cos(turn), sin(turn)))) + mix(FALL_SHIFT.x, FALL_SHIFT.y, near);
-    float ha = max(fwidth(h), 1e-4);
-    rim = max(rim, waterEdge(FOAM_CUT.y - h, ha));
-    core = max(core, waterEdge(FOAM_CUT.x - h, ha));
-    foam = mix(FOAM_TINT * rim, FOAM_CORE, core) * fall;
-  }
-  nrm = normalize(nrm);
+  vec3 nrm = normalize(faceN);
 
   // ---- light on the surface, as the real water's
   bool lightOn = lightingEnabled == 1;
@@ -728,14 +629,11 @@ vec3 waterFake(ivec2 px, vec3 p, vec3 faceN, vec3 albedo, float shadow, float en
   // ---- the highlights, the surface and what is under it (a pool of FAKE_DEPTH, its floor the face's color gone
   // sandy)
   vec3 spec = min(lampSpec * LAMP_SPECULAR, vec3(LAMP_MAX));
-  spec += waterSunGlint(waterGlitterNormal(nrm), v, 0.0, look.z, foam, shadow);
+  spec += waterSunGlint(waterGlitterNormal(nrm), v, 0.0, look.z, 0.0, shadow);
   vec3 surface = mix(srgbToLinear(WATER_SURFACE_COLOR[type]) * surfaceLight, reflection * waveSky, look.y);
   float cover = max(fresnel, (1.0 + toCamera.y) * OPACITY_SLANT);
-  vec3 foamColor = srgbToLinear(WATER_FOAM_COLOR[type]) * surfaceLight;
-  float covered = cover + foam * (1.0 - cover);
-  surface = (surface * (cover * (1.0 - foam)) + foamColor * foam) / max(covered, 1e-4);
   vec3 bed = srgbToLinear(mix(albedo, vec3(0.62, 0.55, 0.40), 0.5)) * surfaceLight;
   vec3 under = bed * srgbToLinear(waterDepthTint(type, FAKE_DEPTH));
-  float alpha = max(look.x * smoothstep(0.0, SURFACE_DEPTH, FAKE_DEPTH), covered);
+  float alpha = max(look.x * smoothstep(0.0, SURFACE_DEPTH, FAKE_DEPTH), cover);
   return linearToSrgb(clamp(waterShoulder(mix(under, surface, alpha) + spec), 0.0, 1.0));
 }

@@ -612,7 +612,7 @@ public interface RuneLightConfig extends Config
 
 	@ConfigSection(
 		name = "Water",
-		description = "Water you can see into, with waves that follow the rivers, reflections and glints",
+		description = "Water you can see into, with caustics that follow the rivers, reflections and glints",
 		position = 60
 	)
 	String waterSection = "water";
@@ -919,7 +919,7 @@ public interface RuneLightConfig extends Config
 	@ConfigItem(
 		keyName = "waterDebugView",
 		name = "Water debug",
-		description = "Tint water by type and show which way it flows, or show its waves as a relief.",
+		description = "Tint water by type and show which way it flows.",
 		section = developmentSection,
 		position = 105
 	)

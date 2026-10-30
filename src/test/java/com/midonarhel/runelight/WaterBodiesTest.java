@@ -170,7 +170,7 @@ public class WaterBodiesTest
 	}
 
 	@Test
-	public void narrowsRunFasterAndRougher()
+	public void narrowsRunFaster()
 	{
 		WaterBodies w = grid();
 		// a wide reach, then three tiles wide, then wide again
@@ -181,8 +181,6 @@ public class WaterBodiesTest
 		w.solve();
 		float wide = speed(w, at(8, 23)), narrow = speed(w, at(24, 23));
 		assertTrue("wide " + wide + " narrow " + narrow, narrow > wide * 2);
-		assertTrue(w.turbulence[at(24, 23)] > w.turbulence[at(8, 23)]);
-		assertEquals(0, w.turbulence[at(8, 23)], 1e-6);
 	}
 
 	@Test
@@ -199,9 +197,6 @@ public class WaterBodiesTest
 		assertEquals(0.2f, speed(w, at(8, 23)), 1e-6);
 		assertEquals(1.1f, speed(w, at(24, 23)), 1e-6);
 		assertEquals(1, w.gain[at(24, 23)], 1e-6);
-		// the narrows still run rough, the wide reach doesn't
-		assertTrue(w.turbulence[at(24, 23)] > 0.2f);
-		assertEquals(0, w.turbulence[at(8, 23)], 1e-6);
 	}
 
 	@Test
@@ -243,9 +238,8 @@ public class WaterBodiesTest
 		int i = at(24, 29);
 		assertEquals(1, w.shore[i]);
 		assertTrue("onshore " + w.flowZ[i], w.flowZ[i] > 0.05f);
-		// open water: no push, waves come from the wind there
+		// open water: no push
 		assertTrue(speed(w, at(24, 10)) < 0.01f);
-		assertTrue(w.energy[at(24, 10)] > w.energy[i]);
 	}
 
 	@Test
@@ -320,35 +314,7 @@ public class WaterBodiesTest
 	}
 
 	@Test
-	public void openSeaIsTheOnlyOcean()
-	{
-		WaterBodies w = grid();
-		fill(w, 0, 0, N - 1, 19); // sea along the north
-		fill(w, 30, 20, 32, 40); // a river running into it
-		fill(w, 5, 30, 9, 34); // a pond
-		w.solve();
-		assertTrue(w.ocean[at(24, 10)]);
-		assertTrue(w.ocean[at(24, 19)]);
-		// the river is part of the ocean body, but a channel too narrow to be open sea
-		assertEquals(WaterBodies.OCEAN, w.bodyClass[0]);
-		assertTrue(!w.ocean[at(31, 35)]);
-		assertTrue(!w.ocean[at(7, 32)]);
-	}
-
-	@Test
-	public void lakesAndPoolsHaveNoOpenSea()
-	{
-		WaterBodies w = grid();
-		fill(w, 10, 10, 30, 30); // a lake well inside the scene
-		w.solve();
-		for (int i = 0; i < N * N; ++i)
-		{
-			assertTrue(!w.ocean[i]);
-		}
-	}
-
-	@Test
-	public void seaTexturesMakeOpenSeaAtAnyWidth()
+	public void seaTexturesMakeAnOceanAtAnyWidth()
 	{
 		WaterBodies w = grid();
 		fill(w, 0, 0, N - 1, 1); // two tiles of sea along the edge, as a narrow strait
@@ -357,6 +323,6 @@ public class WaterBodiesTest
 			w.sea[i] = true;
 		}
 		w.solve();
-		assertTrue(w.ocean[at(24, 0)]);
+		assertEquals(WaterBodies.OCEAN, w.bodyClass[w.body[at(24, 0)]]);
 	}
 }

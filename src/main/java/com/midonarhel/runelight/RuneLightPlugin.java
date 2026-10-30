@@ -506,17 +506,11 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 	// uses, not unit numbers; units go up to the combined limit, 80 on macOS)
 	private static final int WATER_DATA_UNIT = RuneLightPlugin.COMPOSITE_TEXTURE_UNIT + 14;
 	private static final int WATER_NOISE_UNIT = RuneLightPlugin.COMPOSITE_TEXTURE_UNIT + 15;
-	// the water surface pass's map of things standing in the water (WaterMap.contact)
-	private static final int WATER_CONTACT_UNIT = RuneLightPlugin.COMPOSITE_TEXTURE_UNIT + 13;
 	// the terrain the volumetric fog lies on (VolumetricFog)
 	private static final int FOG_GROUND_UNIT = RuneLightPlugin.COMPOSITE_TEXTURE_UNIT + 24;
-	// the surface pass's wave maps either side of now (WaterSurface.bake)
-	private static final int WATER_WAVES_UNIT_A = RuneLightPlugin.COMPOSITE_TEXTURE_UNIT + 17;
-	private static final int WATER_WAVES_UNIT_B = RuneLightPlugin.COMPOSITE_TEXTURE_UNIT + 19;
 	// two units: the weather field (WeatherField) and its ground, for the fog and the weather passes
 	private static final int WEATHER_FIELD_UNIT = RuneLightPlugin.COMPOSITE_TEXTURE_UNIT + 16;
 	private final Water water = new Water();
-	private final float[] waterWind = new float[3];
 	final VoxelBuilder voxelBuilder = new VoxelBuilder();
 	// the skylight's traced sky visibility for the AO pass, and the static lights' occlusion
 	private static final int SKY_GRID_UNIT = RuneLightPlugin.COMPOSITE_TEXTURE_UNIT + 28;
@@ -1281,7 +1275,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		glShadowMaxProgram = SHADOW_MAX_PROGRAM.compile(template);
 		setFogProgram(VolumetricFog.PROGRAM.compile(template));
 		water.setSurfaceProgram(WaterSurface.PROGRAM.compile(template), COMPOSITE_TEXTURE_UNIT + 2, WATER_DATA_UNIT,
-			WATER_NOISE_UNIT, WATER_CONTACT_UNIT, WATER_WAVES_UNIT_A, WATER_WAVES_UNIT_B);
+			WATER_NOISE_UNIT);
 		weather.setPrograms(weather.compile(template), COMPOSITE_TEXTURE_UNIT, MATERIAL_UNIT, WEATHER_OCCLUSION_UNIT, SHADOW_COMPARE_UNIT, ALPHA_LAYER_UNIT,
 			LIGHT_DATA_UNIT, CLUSTER_DATA_UNIT, WATER_DATA_UNIT, WEATHER_FIELD_UNIT, LIGHT_MAP_UNIT);
 		skyCache.setPrograms(skyCache.compile(template), CLOUD_NOISE_UNIT, WEATHER_SKY_UNIT, SKY_CACHE_UNIT);
@@ -1587,8 +1581,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		glShadowCopyProgram = shadowCopy;
 		glShadowMaxProgram = shadowMax;
 		setFogProgram(fog);
-		water.setSurfaceProgram(waterSurface, COMPOSITE_TEXTURE_UNIT + 2, WATER_DATA_UNIT, WATER_NOISE_UNIT,
-			WATER_CONTACT_UNIT, WATER_WAVES_UNIT_A, WATER_WAVES_UNIT_B);
+		water.setSurfaceProgram(waterSurface, COMPOSITE_TEXTURE_UNIT + 2, WATER_DATA_UNIT, WATER_NOISE_UNIT);
 		weather.setPrograms(weatherPrograms, COMPOSITE_TEXTURE_UNIT, MATERIAL_UNIT, WEATHER_OCCLUSION_UNIT, SHADOW_COMPARE_UNIT, ALPHA_LAYER_UNIT,
 			LIGHT_DATA_UNIT, CLUSTER_DATA_UNIT, WATER_DATA_UNIT, WEATHER_FIELD_UNIT, LIGHT_MAP_UNIT);
 		skyCache.setPrograms(skyCachePrograms, CLOUD_NOISE_UNIT, WEATHER_SKY_UNIT, SKY_CACHE_UNIT);
@@ -3506,11 +3499,10 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 
 		sceneTargets.bindTextures(COMPOSITE_TEXTURE_UNIT);
 		// the water surface into its own target, against the scene's depth, before the composite reads it
-		weather.getWaterWind(waterWind);
-		water.drawSurface(config, waterWind, weather.waterRain(), frameOutdoors, sceneTargets.getWidth(),
+		water.drawSurface(config, weather.waterRain(), frameOutdoors, sceneTargets.getWidth(),
 			sceneTargets.getHeight(), frameViewport, frameViewProj, frameInvViewProj, frameCameraX, frameCameraY,
 			frameCameraZ, edgeFade.focalX, edgeFade.focalZ, edgeFade.radius, dayCycle.casterDir, glCapabilities.OpenGL45,
-			WATER_DATA_UNIT, WATER_NOISE_UNIT, WATER_CONTACT_UNIT);
+			WATER_DATA_UNIT, WATER_NOISE_UNIT);
 		// fullscreen triangles are generated from gl_VertexID; core profile still needs some VAO bound
 		glBindVertexArray(vaoUiHandle);
 		cpuTimer.begin(CpuTimer.VOXELS);

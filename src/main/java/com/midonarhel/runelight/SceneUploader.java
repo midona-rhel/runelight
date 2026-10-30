@@ -1230,7 +1230,7 @@ class SceneUploader
 			}
 		}
 
-		// the game's ripples on it, which the water draws itself (WaterMap.contact): 117 HD's list
+		// the game's ripples on it, which 117 HD hides (its list)
 		WaterOverrides overrides = WaterOverrides.get();
 		// only where the water has a tile to draw them on: a rock beside a fall or a pool without one keeps its foam
 		boolean ripples = overrides.hasRipples(id) && sinkWater
@@ -1267,9 +1267,6 @@ class SceneUploader
 			modelLocalZI[v] = vz;
 		}
 
-		// fake water: faces drawn as real water, with their height above the foot of the model's water in u and below the top of it in v
-		final float[] span = SurfaceMaterials.fakeSpan(material, faceTextures, triangleCount, color1s, transparencies,
-			indices1, indices2, indices3, vertexY);
 		int len = 0;
 		for (int face = 0; face < triangleCount; ++face)
 		{
@@ -1360,14 +1357,9 @@ class SceneUploader
 			boolean fake = SurfaceMaterials.isFake(bits);
 			if (fake)
 			{
+				// drawn as real water: opaque, untextured
 				texture = 0;
 				alphaBias &= 0xffffff;
-				su0 = SurfaceMaterials.fakeHeight(span[0], vertexY[triangleA]);
-				su1 = SurfaceMaterials.fakeHeight(span[0], vertexY[triangleB]);
-				su2 = SurfaceMaterials.fakeHeight(span[0], vertexY[triangleC]);
-				sv0 = SurfaceMaterials.fakeHeight(vertexY[triangleA], span[1]);
-				sv1 = SurfaceMaterials.fakeHeight(vertexY[triangleB], span[1]);
-				sv2 = SurfaceMaterials.fakeHeight(vertexY[triangleC], span[1]);
 			}
 			texture |= bits;
 			GpuIntBuffer buf = alpha && !fake ? ab : vb;

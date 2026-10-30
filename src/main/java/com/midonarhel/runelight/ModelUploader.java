@@ -128,9 +128,6 @@ class ModelUploader
 		final float[] normalsZ = computed.z;
 		final boolean hasNormals = true;
 		final short[] unlitColors = model.unlitColors;
-		// fake water: faces drawn as real water, with their height above the foot of the model's water in u and below the top of it in v
-		final float[] span = SurfaceMaterials.fakeSpan(material, faceTextures, faceCount, faceColors1, transparencies,
-			indices1, indices2, indices3, verticesY);
 
 		float orientSine = 0;
 		float orientCosine = 0;
@@ -300,15 +297,9 @@ class ModelUploader
 					int bits = SurfaceMaterials.face(material, texture - 1, color1, SurfaceMaterials.opacity(transparencies, faceIdx));
 					if (SurfaceMaterials.isFake(bits))
 					{
-						// drawn as real water: opaque, untextured, its height above the foot in u, below the top in v
+						// drawn as real water: opaque, untextured
 						texture = 0;
 						alphaBias &= 0xffffff;
-						su0 = SurfaceMaterials.fakeHeight(span[0], verticesY[v1]);
-						su1 = SurfaceMaterials.fakeHeight(span[0], verticesY[v2]);
-						su2 = SurfaceMaterials.fakeHeight(span[0], verticesY[v3]);
-						sv0 = SurfaceMaterials.fakeHeight(verticesY[v1], span[1]);
-						sv1 = SurfaceMaterials.fakeHeight(verticesY[v2], span[1]);
-						sv2 = SurfaceMaterials.fakeHeight(verticesY[v3], span[1]);
 					}
 					texture |= bits;
 
@@ -616,9 +607,6 @@ class ModelUploader
 		final float[] normalsZ = computed.z;
 		final boolean hasNormals = true;
 		final short[] unlitColors = model.unlitColors;
-		// fake water: faces drawn as real water, with their height above the foot of the model's water in u and below the top of it in v
-		final float[] span = SurfaceMaterials.fakeSpan(material, faceTextures, triangleCount, color1s, transparencies,
-			indices1, indices2, indices3, verticesY);
 
 		float orientSine = 0;
 		float orientCosine = 0;
@@ -750,15 +738,9 @@ class ModelUploader
 			int bits = SurfaceMaterials.face(material, texture - 1, color1, SurfaceMaterials.opacity(transparencies, face));
 			if (SurfaceMaterials.isFake(bits))
 			{
-				// drawn as real water: opaque, untextured, its height above the foot in u, below the top in v
+				// drawn as real water: opaque, untextured
 				texture = 0;
 				alphaBias &= 0xffffff;
-				su0 = SurfaceMaterials.fakeHeight(span[0], verticesY[triangleA]);
-				su1 = SurfaceMaterials.fakeHeight(span[0], verticesY[triangleB]);
-				su2 = SurfaceMaterials.fakeHeight(span[0], verticesY[triangleC]);
-				sv0 = SurfaceMaterials.fakeHeight(verticesY[triangleA], span[1]);
-				sv1 = SurfaceMaterials.fakeHeight(verticesY[triangleB], span[1]);
-				sv2 = SurfaceMaterials.fakeHeight(verticesY[triangleC], span[1]);
 			}
 			texture |= bits;
 

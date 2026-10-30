@@ -12,54 +12,36 @@ import static org.lwjgl.opengl.GL33C.*;
 
 /**
  * The scene's water: owns the water data texture (from {@link WaterMap}, uploaded when the scene swaps in), the
- * surface mesh and its pass ({@link WaterSurface}), the tiling wave noise and caustics, and the per-frame motion. The
- * composite shades the water (water.glsl) from the surface pass's target.
+ * surface mesh and its pass ({@link WaterSurface}), the tiling noise and caustics, and the water's clock. The composite
+ * shades the water (water.glsl) from the surface pass's target.
  */
 class Water
 {
 	private static final int NOISE_SIZE = 256;
 	private static final long NOISE_SEED = 9157;
-	private static final double SLOPE_RANGE = 2.8;
 	// 117 HD's caustics map (layer 1 of the noise texture), its red, green and blue taken this many texels apart
 	// diagonally (their aberration of 0.005 per repeat): colored fringes for one tap per copy
 	private static final String CAUSTICS_MAP = "water_caustics.jpg";
 	private static final float CAUSTIC_ABERRATION = 1.28f;
-	// The ripple cells (layer 2): a jittered grid of CELLS x CELLS points, each the top of a round dome reaching
-	// CELL_RADIUS of the grid spacing, the domes added up into soft rounded cells
-	private static final long CELL_SEED = 41;
-	static final int CELLS = 6;
-	private static final float CELL_RADIUS = 0.85f;
 	// the shader's time wraps after this many seconds; every periodic motion in the water shaders repeats within it
 	private static final double TIME_WRAP = 3840;
-	// how far the waves drift with the wind, world units per second (calm, full wind), before the shaders' per-type
-	// and config speed
-	private static final double DRIFT_CALM = 5, DRIFT_WIND = 18;
-	// the drift wraps at a whole number of the normal map's repeats (768, 1280 and 1792, least common multiple 26880,
-	// at any per-type speed of 0.35 or 0.45 and any whole config percent), after weeks of play at the wind's speed
-	private static final double DRIFT_WRAP = 26880.0 * 100 * 20;
-	// seconds over which the water follows a change in the wind's strength: it jumps under roofs and in gusts
-	private static final double STRENGTH_EASE = 1.5;
 
 	/**
-	 * This frame's motion and settings for the surface pass.
+	 * This frame's clock and settings for the surface pass.
 	 */
 	static final class Frame
 	{
-		float time, windX, windZ, strength, driftX, driftZ, rain, skyDepth;
+		float time, rain, skyDepth;
 		boolean outdoors, caustics, zeroToOne;
 		// 0 off, then WaterDebug's views
 		int debug;
 		float[] casterDir, invViewProj;
 	}
 
-	private int texData, texNoise, texContact;
+	private int texData, texNoise;
 	// the water's own clock: System.nanoTime is monotonic and fine grained everywhere, where currentTimeMillis can
-	// tick in 15.6 ms steps on Windows (the waves stutter) and jumps when the system clock is adjusted
+	// tick in 15.6 ms steps on Windows (the water stutters) and jumps when the system clock is adjusted
 	private final long startNanos = System.nanoTime();
-	// The waves' drift, integrated each frame. Velocity times the time since start would move every wave a long way
-	// whenever the wind changes the least bit, which it does all the time: the water jumped about.
-	private long lastNanos;
-	private double driftX, driftZ, strength;
 	private boolean hasData;
 	// whether any of the water is in view this frame (drawSurface), and the pixels it can cover then (x0, y0, x1, y1,
 	// the ends exclusive, WaterSurface.anyVisible): the passes after it skip the rest
@@ -159,13 +141,12 @@ class Water
 	/**
 	 * The surface pass's program, newly compiled (0 to drop it).
 	 */
-	void setSurfaceProgram(int program, int depthUnit, int dataUnit, int noiseUnit, int contactUnit, int waveUnitA,
-		int waveUnitB)
+	void setSurfaceProgram(int program, int depthUnit, int dataUnit, int noiseUnit)
 	{
 		surface.freeProgram();
 		if (program != 0)
 		{
-			surface.setProgram(program, depthUnit, dataUnit, noiseUnit, contactUnit, waveUnitA, waveUnitB);
+			surface.setProgram(program, depthUnit, dataUnit, noiseUnit);
 		}
 	}
 
@@ -232,30 +213,6 @@ class Water
 		// full floats: heights reach thousands of units, where half floats step by 2 to 4, and the shader takes the
 		// type from this texture too
 		glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA32F, WaterMap.CORNERS * WaterMap.PAGES, WaterMap.CORNERS, 0, GL_RGBA, GL_FLOAT, buf);
-
-		// where things stand in the water (WaterMap.contact); one empty texel with none
-		if (texContact == 0)
-		{
-			texContact = glGenTextures();
-			glBindTexture(GL_TEXTURE_2D, texContact);
-			glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-			glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-			glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
-			glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-		}
-		else
-		{
-			glBindTexture(GL_TEXTURE_2D, texContact);
-		}
-		int size = map.contact != null ? WaterMap.CONTACT_SIZE : 1;
-		ByteBuffer contact = BufferUtils.createByteBuffer(size * size);
-		if (map.contact != null)
-		{
-			contact.put(map.contact).flip();
-		}
-		glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
-		glTexImage2D(GL_TEXTURE_2D, 0, GL_R8, size, size, 0, GL_RED, GL_UNSIGNED_BYTE, contact);
-		glPixelStorei(GL_UNPACK_ALIGNMENT, 4);
 		glBindTexture(GL_TEXTURE_2D, 0);
 	}
 
@@ -268,19 +225,18 @@ class Water
 	}
 
 	/**
-	 * Move the water on to this frame and draw its surface into the surface target (see {@link WaterSurface#draw}),
-	 * before the composite. Leaves the framebuffer and VAO bindings changed.
+	 * Move the water's clock on to this frame and draw its surface into the surface target (see
+	 * {@link WaterSurface#draw}), before the composite. Leaves the framebuffer and VAO bindings changed.
 	 *
-	 * @param wind  x, z direction the wind blows toward, and its strength 0-1
 	 * @param rain  0-1 rain falling on open water
-	 * @param focusX where the camera looks (the drawn world's middle, EdgeFade): the waves move around it
+	 * @param focusX where the camera looks (the drawn world's middle, EdgeFade): the water is drawn around it
 	 * @param reach  radius of the drawn world around it, world units
 	 * @param casterDir      toward the light that casts shadows (the caustics follow it)
 	 * @param depthZeroToOne whether glClipControl maps depth to 0-1 (frame.glsl)
 	 */
-	void drawSurface(RuneLightConfig config, float[] wind, float rain, boolean outdoors, int width, int height,
-		int[] viewport, float[] viewProj, float[] invViewProj, float camX, float camY, float camZ, float focusX,
-		float focusZ, float reach, float[] casterDir, boolean depthZeroToOne, int dataUnit, int noiseUnit, int contactUnit)
+	void drawSurface(RuneLightConfig config, float rain, boolean outdoors, int width, int height, int[] viewport,
+		float[] viewProj, float[] invViewProj, float camX, float camY, float camZ, float focusX, float focusZ, float reach,
+		float[] casterDir, boolean depthZeroToOne, int dataUnit, int noiseUnit)
 	{
 		visible = false;
 		// the clock runs without water in the scene too: fake water (water.glsl waterFake) moves by it
@@ -294,14 +250,7 @@ class Water
 		{
 			texNoise = createNoise();
 		}
-		advance(wind, lastNanos == 0 ? 0 : (now - lastNanos) / 1e9);
-		lastNanos = now;
 		Frame f = frame;
-		f.windX = wind[0];
-		f.windZ = wind[1];
-		f.strength = (float) strength;
-		f.driftX = (float) driftX;
-		f.driftZ = (float) driftZ;
 		f.rain = rain;
 		f.outdoors = outdoors;
 		f.debug = config.waterDebug().ordinal();
@@ -316,14 +265,12 @@ class Water
 		glBindTexture(GL_TEXTURE_2D, texData);
 		glActiveTexture(GL_TEXTURE0 + noiseUnit);
 		glBindTexture(GL_TEXTURE_2D_ARRAY, texNoise);
-		glActiveTexture(GL_TEXTURE0 + contactUnit);
-		glBindTexture(GL_TEXTURE_2D, texContact);
 		glActiveTexture(GL_TEXTURE0);
 		// no water in view: the surface, its shading and the composite's water are all skipped this frame
 		visible = surface.anyVisible(viewProj, viewport, camX, camY, camZ, focusX, focusZ, reach, rect);
 		if (visible)
 		{
-			surface.draw(width, height, viewport, viewProj, camX, camY, camZ, focusX, focusZ, f, rect);
+			surface.draw(width, height, viewport, viewProj, camX, camY, camZ, f, rect);
 		}
 	}
 
@@ -387,24 +334,6 @@ class Water
 	}
 
 	/**
-	 * Move the drift on by dt seconds of the given wind (direction x, z and strength).
-	 */
-	void advance(float[] wind, double dt)
-	{
-		// a stall (loading, a breakpoint) doesn't throw the waves across the lake
-		dt = Math.max(0, Math.min(dt, 0.25));
-		strength += (wind[2] - strength) * (1 - Math.exp(-dt / STRENGTH_EASE));
-		double v = (DRIFT_CALM + (DRIFT_WIND - DRIFT_CALM) * strength) * dt;
-		driftX = (driftX + wind[0] * v) % DRIFT_WRAP;
-		driftZ = (driftZ + wind[1] * v) % DRIFT_WRAP;
-	}
-
-	double[] drift()
-	{
-		return new double[]{driftX, driftZ, strength};
-	}
-
-	/**
 	 * After the composite: its two water units, which the surface pass used for the data and the noise.
 	 */
 	static void unbind(int surfaceUnit, int shadedUnit)
@@ -425,11 +354,6 @@ class Water
 			glDeleteTextures(texData);
 			texData = 0;
 		}
-		if (texContact != 0)
-		{
-			glDeleteTextures(texContact);
-			texContact = 0;
-		}
 		if (texNoise != 0)
 		{
 			glDeleteTextures(texNoise);
@@ -438,22 +362,21 @@ class Water
 		hasData = false;
 	}
 
-	// Layer 0 the old wave noise (its height jitters the flow phases and patches the swell), layer 1 the caustics,
-	// layer 2 the ripple cells (foam on rapids): one sampler, the composite has none to spare
+	// Layer 0 the tiling noise (its height jitters the flow phases), layer 1 the caustics: one sampler, the composite
+	// has none to spare
 	private static int createNoise()
 	{
-		byte[] waves = noise(NOISE_SIZE, NOISE_SEED);
+		byte[] noise = noise(NOISE_SIZE, NOISE_SEED);
 		byte[] caustics = caustics(NOISE_SIZE);
-		byte[] cells = cells(NOISE_SIZE, CELL_SEED);
-		ByteBuffer buf = BufferUtils.createByteBuffer(waves.length + caustics.length + cells.length);
-		buf.put(waves).put(caustics).put(cells).flip();
+		ByteBuffer buf = BufferUtils.createByteBuffer(noise.length + caustics.length);
+		buf.put(noise).put(caustics).flip();
 
 		int tex = glGenTextures();
 		glBindTexture(GL_TEXTURE_2D_ARRAY, tex);
 		glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
-		glTexImage3D(GL_TEXTURE_2D_ARRAY, 0, GL_RGBA8, NOISE_SIZE, NOISE_SIZE, 3, 0, GL_RGBA, GL_UNSIGNED_BYTE, buf);
+		glTexImage3D(GL_TEXTURE_2D_ARRAY, 0, GL_RGBA8, NOISE_SIZE, NOISE_SIZE, 2, 0, GL_RGBA, GL_UNSIGNED_BYTE, buf);
 		glPixelStorei(GL_UNPACK_ALIGNMENT, 4);
-		// mipmaps calm the waves in the distance instead of letting them sparkle
+		// mipmaps calm the caustics in the distance instead of letting them sparkle
 		glGenerateMipmap(GL_TEXTURE_2D_ARRAY);
 		glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
 		glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
@@ -463,43 +386,24 @@ class Water
 		return tex;
 	}
 
-	// how far the wave layer's waves turn from its direction (+x) either way, radians: wave trains rather than an
-	// even noise
-	static final float WAVE_SPREAD = 0.6f;
+	// how far the noise's sine waves turn from +x either way, radians
+	static final float NOISE_SPREAD = 0.6f;
 
 	/**
-	 * Tiling wave noise, RGBA: rg the slope of a wave height field (0.5 is flat, scaled so slopes of SLOPE_RANGE
-	 * standard deviations reach 0 or 1), b that height, a an independent finer height (sparkle on crests).
-	 *
-	 * The heights are sums of sine waves with whole numbers of cycles across the texture, so they tile, running
-	 * within WAVE_SPREAD of +x with amplitude falling with frequency like wind waves (the water shader turns them to
-	 * its wave direction). Slopes come out exactly from the same sums,
-	 * so the normals are smooth at every scale and the mipmaps fade them evenly into calm water.
+	 * Tiling noise, RGBA: b a height 0-1, the rest 0. The height is a sum of sine waves with whole numbers of cycles
+	 * across the texture, so it tiles, running within NOISE_SPREAD of +x with amplitude falling with frequency.
 	 */
 	static byte[] noise(int size, long seed)
 	{
 		Random rng = new Random(seed);
 		int n = size * size;
-		float[] h = new float[n], sx = new float[n], sy = new float[n], fine = new float[n];
-		waves(rng, size, 56, 2, 22, 1.7f, WAVE_SPREAD, h, sx, sy);
-		waves(rng, size, 40, 6, 40, 1.4f, (float) Math.PI, fine, null, null);
-
-		// slopes scaled by their spread rather than the rare steepest one, so the texture's range is well used
-		double sum = 0;
-		for (int i = 0; i < n; ++i)
-		{
-			sum += sx[i] * sx[i] + sy[i] * sy[i];
-		}
-		float max = (float) (SLOPE_RANGE * Math.sqrt(sum / (2 * n))) + 1e-6f;
+		float[] h = new float[n];
+		waves(rng, size, 56, 2, 22, 1.7f, NOISE_SPREAD, h);
 		normalize(h);
-		normalize(fine);
 		byte[] out = new byte[n * 4];
 		for (int i = 0; i < n; ++i)
 		{
-			out[i * 4] = (byte) Math.round((clamp(sx[i] / max) * 0.5f + 0.5f) * 255);
-			out[i * 4 + 1] = (byte) Math.round((clamp(sy[i] / max) * 0.5f + 0.5f) * 255);
 			out[i * 4 + 2] = (byte) Math.round(h[i] * 255);
-			out[i * 4 + 3] = (byte) Math.round(fine[i] * 255);
 		}
 		return out;
 	}
@@ -535,73 +439,6 @@ class Water
 	}
 
 
-	/**
-	 * Tiling round ripple cells, RGBA: rg the slope (0.5 flat, slopes of SLOPE_RANGE standard deviations at 0 or 1),
-	 * b the height (1 on the highest crown, 0 the lowest hollow), a unused. The domes of the jittered points around a
-	 * texel add up, so cells are round and run into each other smoothly: reflecting the sky, they read as rounded
-	 * ripples rather than streaks, without the hard creases of a Voronoi pattern.
-	 */
-	static byte[] cells(int size, long seed)
-	{
-		Random rng = new Random(seed);
-		float[] px = new float[CELLS * CELLS], py = new float[CELLS * CELLS];
-		float spacing = (float) size / CELLS;
-		for (int j = 0; j < CELLS; ++j)
-		{
-			for (int i = 0; i < CELLS; ++i)
-			{
-				px[j * CELLS + i] = (i + 0.2f + 0.6f * rng.nextFloat()) * spacing;
-				py[j * CELLS + i] = (j + 0.2f + 0.6f * rng.nextFloat()) * spacing;
-			}
-		}
-		float r = CELL_RADIUS * spacing;
-		int n = size * size;
-		float[] h = new float[n];
-		for (int y = 0; y < size; ++y)
-		{
-			for (int x = 0; x < size; ++x)
-			{
-				float sum = 0;
-				for (int k = 0; k < px.length; ++k)
-				{
-					// the nearest copy of the point across the wrap
-					float dx = Math.abs(x + 0.5f - px[k]), dy = Math.abs(y + 0.5f - py[k]);
-					dx = Math.min(dx, size - dx);
-					dy = Math.min(dy, size - dy);
-					float d2 = (dx * dx + dy * dy) / (r * r);
-					if (d2 < 1)
-					{
-						sum += (1 - d2) * (1 - d2) * (1 - d2);
-					}
-				}
-				h[y * size + x] = sum;
-			}
-		}
-		normalize(h);
-		float[] sx = new float[n], sy = new float[n];
-		double sum = 0;
-		for (int y = 0; y < size; ++y)
-		{
-			for (int x = 0; x < size; ++x)
-			{
-				int i = y * size + x;
-				sx[i] = (h[y * size + (x + 1) % size] - h[y * size + (x + size - 1) % size]) * 0.5f;
-				sy[i] = (h[((y + 1) % size) * size + x] - h[((y + size - 1) % size) * size + x]) * 0.5f;
-				sum += sx[i] * sx[i] + sy[i] * sy[i];
-			}
-		}
-		float max = (float) (SLOPE_RANGE * Math.sqrt(sum / (2 * n))) + 1e-6f;
-		byte[] out = new byte[n * 4];
-		for (int i = 0; i < n; ++i)
-		{
-			out[i * 4] = (byte) Math.round((clamp(sx[i] / max) * 0.5f + 0.5f) * 255);
-			out[i * 4 + 1] = (byte) Math.round((clamp(sy[i] / max) * 0.5f + 0.5f) * 255);
-			out[i * 4 + 2] = (byte) Math.round(h[i] * 255);
-			out[i * 4 + 3] = (byte) 255;
-		}
-		return out;
-	}
-
 	static byte[] aberrate(float[] map, int size, float shift)
 	{
 		final float[][] offsets = {{shift, shift}, {shift, -shift}, {-shift, -shift}, {0, 0}};
@@ -627,11 +464,9 @@ class Water
 	}
 
 	/**
-	 * Add {@code count} sine waves of kMin to kMax cycles across the texture, amplitude falling as k^-falloff, to h, and
-	 * their x and y slopes (per texel) to sx and sy when given.
+	 * Add {@code count} sine waves of kMin to kMax cycles across the texture, amplitude falling as k^-falloff, to h.
 	 */
-	static void waves(Random rng, int size, int count, int kMin, int kMax, float falloff, float spread, float[] h, float[] sx,
-		float[] sy)
+	static void waves(Random rng, int size, int count, int kMin, int kMax, float falloff, float spread, float[] h)
 	{
 		float[] sinX = new float[size], cosX = new float[size], sinY = new float[size], cosY = new float[size];
 		for (int w = 0; w < count; ++w)
@@ -656,29 +491,15 @@ class Water
 				sinY[i] = (float) Math.sin(ay);
 				cosY[i] = (float) Math.cos(ay);
 			}
-			float gx = (float) (amp * Math.PI * 2 * kx / size), gy = (float) (amp * Math.PI * 2 * ky / size);
 			for (int y = 0; y < size; ++y)
 			{
 				for (int x = 0; x < size; ++x)
 				{
-					int i = y * size + x;
-					// sin(a + b) and cos(a + b) from the row and column tables
-					float s = sinX[x] * cosY[y] + cosX[x] * sinY[y];
-					h[i] += amp * s;
-					if (sx != null)
-					{
-						float c = cosX[x] * cosY[y] - sinX[x] * sinY[y];
-						sx[i] += gx * c;
-						sy[i] += gy * c;
-					}
+					// sin(a + b) from the row and column tables
+					h[y * size + x] += amp * (sinX[x] * cosY[y] + cosX[x] * sinY[y]);
 				}
 			}
 		}
-	}
-
-	private static float clamp(float v)
-	{
-		return Math.max(-1, Math.min(1, v));
 	}
 
 	private static void normalize(float[] v)
