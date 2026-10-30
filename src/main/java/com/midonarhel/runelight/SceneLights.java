@@ -1301,9 +1301,12 @@ class SceneLights
 		float seed, LightMap.Source bake)
 	{
 		boolean mapped = bake != null && LightMap.isLive(bake);
+		// the map's share eases in from when it took the light over (LayerEase): the clusters keep the rest meanwhile
+		float mapShare = mapped ? LightMap.liveWeight(bake, System.nanoTime()) : 0;
 		// Other planes' lights stay hidden unless they are meant to show through (the definition says so: 117 HD hides
 		// the rest to keep them from leaking through floors). The map knows what the floors let through.
-		if (!mapped && lightPlane != framePlane && !d.visibleFromOtherPlanes)
+		boolean hiddenOnClusters = lightPlane != framePlane && !d.visibleFromOtherPlanes;
+		if (!mapped && hiddenOnClusters)
 		{
 			if (funnel != null)
 			{
@@ -1379,8 +1382,13 @@ class SceneLights
 		}
 		if (mapped)
 		{
-			lightMap.setLevel(bake, strength, radius);
-			return;
+			lightMap.setLevel(bake, strength * mapShare, radius);
+			if (mapShare >= 1 || hiddenOnClusters)
+			{
+				return;
+			}
+			// handing over: the clusters' light fades as the map's comes in
+			strength *= 1 - mapShare;
 		}
 		float red = d.red, green = d.green, blue = d.blue;
 		if (d.outdoorLighting)

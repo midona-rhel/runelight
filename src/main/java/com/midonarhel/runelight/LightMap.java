@@ -110,8 +110,10 @@ final class LightMap
 		// the slot its cells are in
 		int slot;
 		int[] needKeys = new int[0], needSeqs = new int[0];
-		// whether the map carries the light: its blocks have been sent
+		// whether the map carries the light: its blocks have been sent; and since when (LayerEase: the map's share of
+		// the light eases in from then, the clusters keep the rest)
 		volatile boolean live;
+		volatile long liveSince;
 
 		Source(int plane, float x, float y, float z, float radius, float red, float green, float blue, float strength,
 			boolean nightOnly, float nightMultiplier, int owner)
@@ -792,6 +794,12 @@ final class LightMap
 	static boolean isLive(Source s)
 	{
 		return s.live;
+	}
+
+	/** The map's share of a live light now (LayerEase from when it went live), 0 for one not live. */
+	static float liveWeight(Source s, long now)
+	{
+		return s.live ? LayerEase.weight(s.liveSince, now) : 0;
 	}
 
 	/** The table, for the shaders: per id, TABLE_STRIDE texels (place and radius, colour and 0). */
@@ -1543,6 +1551,7 @@ final class LightMap
 			{
 				if (!s.live && s.grids != null && sent(s.needKeys, s.needSeqs))
 				{
+					s.liveSince = System.nanoTime();
 					s.live = true;
 				}
 			}
