@@ -1,5 +1,8 @@
 package com.midonarhel.runelight;
 
+import com.midonarhel.runelight.sky.GameClock;
+import com.midonarhel.runelight.sky.Lightning;
+
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertTrue;

@@ -1,4 +1,6 @@
-package com.midonarhel.runelight;
+package com.midonarhel.runelight.sky;
+
+import com.midonarhel.runelight.*;
 
 import static org.lwjgl.opengl.GL33C.*;
 
@@ -14,7 +16,7 @@ public final class EnvironmentUniforms
 
 	private int ambient, sun, fogColor, fogDepth, haze, skyTint, drawDistance, cave, fogFocus;
 
-	void locate(int program)
+	public void locate(int program)
 	{
 		ambient = glGetUniformLocation(program, "envAmbient");
 		sun = glGetUniformLocation(program, "envSun");
@@ -33,7 +35,7 @@ public final class EnvironmentUniforms
 	 * @param drawDistanceTiles the draw distance in tiles
 	 * @param focusX           world x and z of the player, where the limit on what the fog may hide is centered
 	 */
-	void set(EnvironmentManager env, float fogStrength, int drawDistanceTiles, float focusX, float focusZ)
+	public void set(EnvironmentManager env, float fogStrength, int drawDistanceTiles, float focusX, float focusZ)
 	{
 		glUniform1f(drawDistance, drawDistanceTiles * 128f);
 		glUniform2f(fogFocus, focusX, focusZ);

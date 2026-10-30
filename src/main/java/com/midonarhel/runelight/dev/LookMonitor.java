@@ -1,5 +1,7 @@
 package com.midonarhel.runelight.dev;
 
+import com.midonarhel.runelight.sky.EnvironmentUniforms;
+
 import com.midonarhel.runelight.*;
 
 import net.runelite.api.Scene;

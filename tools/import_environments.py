@@ -6,7 +6,7 @@ cave/overworld classification, from 117 HD's areas and environments plus 3D Weat
 Usage:
   tools/import_environments.py <RLHD>/src/main/resources/rs117/hd/scene \
       <3D-Weather>/src/main/java/com/weather3d/BiomeChunkMap.java \
-      src/main/resources/com/midonarhel/runelight/environments.json
+      src/main/resources/com/midonarhel/runelight/sky/environments.json
 
 Lookup order in game (EnvironmentManager.java): 117 HD environments in their file order (specific before
 general), then CAVE_AREAS (looks for underground areas 117 HD leaves out), then the lighting of the biome the place

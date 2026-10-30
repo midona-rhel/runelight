@@ -1,4 +1,6 @@
-package com.midonarhel.runelight;
+package com.midonarhel.runelight.sky;
+
+import com.midonarhel.runelight.*;
 
 /**
  * Sun and moon positions over a repeating day, following the game clock's time of day.
@@ -10,7 +12,7 @@ package com.midonarhel.runelight;
  * The shadow casting direction uses the same azimuth but a clamped elevation, keeping shadows short.
  * At night the moon, opposite the sun, casts instead.
  */
-final class DayCycle
+public final class DayCycle
 {
 	// visual sun altitude = PEAK * sin(2 pi phase) + LIFT, in degrees. LIFT > 0 makes days a bit longer than nights.
 	private static final double PEAK_ALTITUDE = 70;
@@ -27,20 +29,20 @@ final class DayCycle
 	// phase at which the visual sun crosses the horizon going up
 	private static final double SUNRISE_PHASE = -Math.asin(LIFT / PEAK_ALTITUDE) / (2 * Math.PI);
 
-	final float[] sunDir = new float[3];
-	final float[] moonDir = new float[3];
-	final float[] casterDir = new float[3];
-	float sunAltitude;
-	boolean sunIsCaster;
+	public final float[] sunDir = new float[3];
+	public final float[] moonDir = new float[3];
+	public final float[] casterDir = new float[3];
+	public float sunAltitude;
+	public boolean sunIsCaster;
 	// sky.glsl's strikeLight, from applyStrike
-	final float[] strikeLight = new float[2];
-	double phase;
+	public final float[] strikeLight = new float[2];
+	public double phase;
 
 	/**
 	 * How bright the light that casts shadows is, linear luminance: sky.glsl's sunLightCover and moonLightCover, in
 	 * round numbers, under this much overcast and snow. The bolt takes over once it is brighter (Lightning).
 	 */
-	float directStrength(float cover, float snow)
+	public float directStrength(float cover, float snow)
 	{
 		// sky.glsl's OVERCAST_DIRECT_RAIN and OVERCAST_DIRECT_SNOW
 		float overcast = 1 + cover * (-1 + 0.30f + (0.42f - 0.30f) * snow);
@@ -63,7 +65,7 @@ final class DayCycle
 	/**
 	 * Let a lightning strike take over the light that casts shadows for this frame, after update().
 	 */
-	void applyStrike(Lightning lightning)
+	public void applyStrike(Lightning lightning)
 	{
 		if (lightning.aim(casterDir))
 		{
@@ -77,7 +79,7 @@ final class DayCycle
 	 * @param cycleMinutes length of a full day in real minutes; 0 holds the time at fixedHour
 	 * @param fixedHour 0-24, 6 is sunrise and 12 is roughly noon
 	 */
-	void update(long gameMillis, int cycleMinutes, double fixedHour)
+	public void update(long gameMillis, int cycleMinutes, double fixedHour)
 	{
 		phase = phaseForHour(cycleMinutes > 0 ? GameClock.hourOfDay(gameMillis) : fixedHour);
 		phase -= Math.floor(phase);
@@ -104,7 +106,7 @@ final class DayCycle
 	/**
 	 * Clock time for display, 0-24.
 	 */
-	double hour()
+	public double hour()
 	{
 		double h = (phase - SUNRISE_PHASE) * 24 + 6;
 		return h - Math.floor(h / 24) * 24;

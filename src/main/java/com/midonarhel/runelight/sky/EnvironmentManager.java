@@ -1,4 +1,6 @@
-package com.midonarhel.runelight;
+package com.midonarhel.runelight.sky;
+
+import com.midonarhel.runelight.*;
 
 import com.google.gson.Gson;
 import java.io.InputStream;
@@ -26,7 +28,7 @@ import org.slf4j.LoggerFactory;
  * The values for the frame are in the public fields/getters, for the shaders and for other effects (fog,
  * weather, interior lights) to read.
  */
-final class EnvironmentManager
+public final class EnvironmentManager
 {
 	private static final Logger log = LoggerFactory.getLogger(EnvironmentManager.class);
 
@@ -177,7 +179,7 @@ final class EnvironmentManager
 	private float sheltered;
 	private boolean underRoof;
 
-	void load(Gson gson)
+	public void load(Gson gson)
 	{
 		Data data;
 		try (InputStream is = EnvironmentManager.class.getResourceAsStream("environments.json"))
@@ -261,7 +263,7 @@ final class EnvironmentManager
 	 * @param skyColor the client's sky color; black means underground when nothing else knows
 	 * @param time     seconds, monotonic
 	 */
-	void update(Scene scene, int localX, int localY, int plane, int skyColor, float time)
+	public void update(Scene scene, int localX, int localY, int plane, int skyColor, float time)
 	{
 		int tileX = localX >> 7, tileY = localY >> 7;
 		int r = skyColor >> 16 & 0xFF, g = skyColor >> 8 & 0xFF, b = skyColor & 0xFF;
@@ -395,7 +397,7 @@ final class EnvironmentManager
 	 * The biome whose weather a world tile has, for the weather field: the climate map's biome
 	 * ({@link WeatherRegions}), or WeatherField.NO_SKY underground and in caves.
 	 */
-	String weatherBiomeAt(int x, int y, int plane)
+	public String weatherBiomeAt(int x, int y, int plane)
 	{
 		Environment env = environmentAt(x, y, plane);
 		if (env == null || env.cave)
@@ -547,7 +549,7 @@ final class EnvironmentManager
 	 * Scene tile to world tile. Instances are built from chunks of the real map: use the template chunk's real
 	 * location so areas defined on the real map apply.
 	 */
-	static boolean toWorld(Scene scene, int sceneX, int sceneY, int plane, int[] out)
+	public static boolean toWorld(Scene scene, int sceneX, int sceneY, int plane, int[] out)
 	{
 		if (!scene.isInstance())
 		{
@@ -608,7 +610,7 @@ final class EnvironmentManager
 	}
 
 	/** Under the open sky: sun, moon, sky and daylight apply. Inside a building under a roof still counts. */
-	boolean isOverworld()
+	public boolean isOverworld()
 	{
 		return classification == Classification.OVERWORLD;
 	}
@@ -626,13 +628,13 @@ final class EnvironmentManager
 	}
 
 	/** The weather biome of the place the camera looks at, null when it has none (underground). */
-	String getBiome()
+	public String getBiome()
 	{
 		return WeatherField.NO_SKY.equals(biome) ? null : biome;
 	}
 
 	/** World tile the lookup used: x, y, plane; -1 when unknown. */
-	int[] getWorldPoint()
+	public int[] getWorldPoint()
 	{
 		return worldPoint;
 	}
@@ -655,7 +657,7 @@ final class EnvironmentManager
 	}
 
 	/** 117 HD-style fog depth (density): 0 none, ~6 barely visible, 50 thick. */
-	float getFogDepth()
+	public float getFogDepth()
 	{
 		return current.fogDepth;
 	}

@@ -20,7 +20,7 @@ import static org.lwjgl.opengl.GL33C.*;
  * exactly Weather.java's (which adds swells and gusts), and elsewhere it is that plus how much rainier or foggier the
  * field says it is there. The sky is looked up as it is.
  */
-final class WeatherField
+public final class WeatherField
 {
 	// tiles per cell side, and world units
 	static final int CELL_TILES = 16;
@@ -59,7 +59,7 @@ final class WeatherField
 	}
 
 	// biome name of cells without a sky
-	static final String NO_SKY = "CAVE";
+	public static final String NO_SKY = "CAVE";
 
 	/** Uniform locations of one program that samples the field (weather passes). */
 	static final class Locations
@@ -749,7 +749,7 @@ final class WeatherField
 	}
 
 	/** clouds.glsl's cloudSkyRect: where the sky lies, like weatherFieldRect; all zero when there is none. */
-	void setSkyRect(int location)
+	public void setSkyRect(int location)
 	{
 		if (isEnabled())
 		{

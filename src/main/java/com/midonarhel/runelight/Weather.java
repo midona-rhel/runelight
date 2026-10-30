@@ -1,5 +1,10 @@
 package com.midonarhel.runelight;
 
+import com.midonarhel.runelight.sky.DayCycle;
+import com.midonarhel.runelight.sky.EnvironmentManager;
+import com.midonarhel.runelight.sky.GameClock;
+import com.midonarhel.runelight.sky.Lightning;
+
 import com.midonarhel.runelight.config.WeatherMode;
 import com.midonarhel.runelight.template.Template;
 import java.util.Collections;

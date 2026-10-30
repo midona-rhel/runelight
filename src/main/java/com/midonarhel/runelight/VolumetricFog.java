@@ -1,5 +1,7 @@
 package com.midonarhel.runelight;
 
+import com.midonarhel.runelight.sky.DayCycle;
+
 import java.nio.ByteBuffer;
 import java.nio.FloatBuffer;
 import java.util.Random;

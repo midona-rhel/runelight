@@ -16,7 +16,7 @@ import net.runelite.api.Constants;
  * This is the one place that decides where it snows, rains or sands: the weather field, the forecast, the ground
  * and the lighting of the open air all ask it.
  */
-final class WeatherRegions
+public final class WeatherRegions
 {
 	/** As in weather_regions.json. */
 	static final class Layer
@@ -69,7 +69,7 @@ final class WeatherRegions
 		installed = new WeatherRegions(d != null ? d : new Data());
 	}
 
-	static WeatherRegions get()
+	public static WeatherRegions get()
 	{
 		return installed;
 	}
@@ -78,7 +78,7 @@ final class WeatherRegions
 	 * The biome of a world tile. {@code areas} are the names of the 117 HD areas the tile lies in (surface areas
 	 * only count on the surface). Null where there is no sky.
 	 */
-	String biomeAt(int x, int y, Collection<String> areas)
+	public String biomeAt(int x, int y, Collection<String> areas)
 	{
 		boolean surface = y < Constants.OVERWORLD_MAX_Y;
 		int best = -1;
@@ -107,12 +107,12 @@ final class WeatherRegions
 	}
 
 	/** The biome whose lighting a biome shares: itself unless the file says otherwise. */
-	String look(String biome)
+	public String look(String biome)
 	{
 		return looks.getOrDefault(biome, biome);
 	}
 
-	String getDefaultBiome()
+	public String getDefaultBiome()
 	{
 		return defaultBiome;
 	}

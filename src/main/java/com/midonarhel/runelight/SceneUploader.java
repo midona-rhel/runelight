@@ -24,6 +24,8 @@
  */
 package com.midonarhel.runelight;
 
+import com.midonarhel.runelight.sky.EnvironmentManager;
+
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import java.util.HashSet;

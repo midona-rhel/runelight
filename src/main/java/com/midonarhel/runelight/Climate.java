@@ -1,5 +1,7 @@
 package com.midonarhel.runelight;
 
+import com.midonarhel.runelight.sky.GameClock;
+
 import com.midonarhel.runelight.WeatherClimate.Season;
 import com.midonarhel.runelight.WeatherClimate.Temperature;
 import java.util.HashMap;

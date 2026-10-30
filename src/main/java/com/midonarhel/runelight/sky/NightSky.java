@@ -1,4 +1,6 @@
-package com.midonarhel.runelight;
+package com.midonarhel.runelight.sky;
+
+import com.midonarhel.runelight.*;
 
 import static org.lwjgl.opengl.GL33C.*;
 
@@ -10,15 +12,15 @@ import java.util.Random;
  *
  * Directions are unit vectors in game coordinates: x east, z north, y pointing DOWN.
  */
-final class NightSky
+public final class NightSky
 {
 	// the stars turn once a day about a pole this far from straight up, toward north
 	private static final double POLE_TILT = Math.toRadians(35);
 
 	// A shooting star every so often: each slot of real time has one with this chance, somewhere in it. They begin
 	// where the camera looks, since the sky shows only a little above the horizon.
-	static final float SLOT_SECONDS = 12;
-	static final float METEOR_CHANCE = 0.45f;
+	public static final float SLOT_SECONDS = 12;
+	public static final float METEOR_CHANCE = 0.45f;
 	static final float METEOR_LIFE_MIN = 0.7f, METEOR_LIFE_MAX = 1.2f;
 	// radians a second along the sky, and the length of the tail
 	private static final float METEOR_SPEED_MIN = 0.3f, METEOR_SPEED_MAX = 0.5f;
@@ -32,16 +34,16 @@ final class NightSky
 	// the aurora's biomes (weather_regions.json): the Fremennik and the frozen north
 	private static final String[] AURORA_BIOMES = {"TUNDRA", "ARCTIC"};
 	// share of nights without one
-	static final float AURORA_NO_NIGHT = 0.3f;
-	static final float AURORA_FADE_SECONDS = 6;
+	public static final float AURORA_NO_NIGHT = 0.3f;
+	public static final float AURORA_FADE_SECONDS = 6;
 
 	/** night_sky.glsl's starFrame, column-major. */
 	final float[] frame = new float[9];
 	/** The shooting star's head (direction, brightness; 0: none) and tail. */
-	final float[] meteorHead = new float[4];
-	final float[] meteorTail = new float[3];
+	public final float[] meteorHead = new float[4];
+	public final float[] meteorTail = new float[3];
 	/** The aurora's strength where the player is, 0 to 1. */
-	float aurora;
+	public float aurora;
 	/** The angle one pixel covers in the middle of the screen, radians. */
 	private float pixel;
 
@@ -55,7 +57,7 @@ final class NightSky
 	/**
 	 * The rotation that turns the sky's directions into the stars' frame, for the day's phase (DayCycle.phase, 0 to 1).
 	 */
-	static void starFrame(double phase, float[] out)
+	public static void starFrame(double phase, float[] out)
 	{
 		double angle = 2 * Math.PI * phase;
 		double c = Math.cos(angle), s = Math.sin(angle);
@@ -72,7 +74,7 @@ final class NightSky
 		out[8] = (float) (c + (1 - c) * az * az);
 	}
 
-	static boolean isAuroraBiome(String biome)
+	public static boolean isAuroraBiome(String biome)
 	{
 		for (String b : AURORA_BIOMES)
 		{
@@ -88,7 +90,7 @@ final class NightSky
 	 * How strong the aurora is on the night around this game time, 0 to 1: some nights have none, the others a
 	 * different strength each. The night changes at noon.
 	 */
-	static float auroraNight(long gameMillis)
+	public static float auroraNight(long gameMillis)
 	{
 		long z = GameClock.day(gameMillis + GameClock.DAY / 2) * 0x9E3779B97F4A7C15L;
 		z = (z ^ (z >>> 30)) * 0xBF58476D1CE4E5B9L;
@@ -107,7 +109,7 @@ final class NightSky
 	 * @param biome the weather biome of the place the camera looks at, null underground
 	 * @param auroraOn the setting
 	 */
-	void update(float seconds, double phase, float[] forward, float pixelAngle, String biome, long gameMillis,
+	public void update(float seconds, double phase, float[] forward, float pixelAngle, String biome, long gameMillis,
 		boolean auroraOn)
 	{
 		pixel = pixelAngle;
@@ -215,11 +217,11 @@ final class NightSky
 	}
 
 	/** A composite program's night sky uniforms. */
-	static final class Uniforms
+	public static final class Uniforms
 	{
 		private int frame = -1, nebula = -1, aurora = -1, head = -1, tail = -1, pixel = -1;
 
-		void locate(int program)
+		public void locate(int program)
 		{
 			frame = glGetUniformLocation(program, "starFrame");
 			nebula = glGetUniformLocation(program, "nebulaStrength");
@@ -231,7 +233,7 @@ final class NightSky
 	}
 
 	/** With a composite program in use: this frame's night sky. nebula: the setting, 1 as authored. */
-	void set(Uniforms u, float nebula)
+	public void set(Uniforms u, float nebula)
 	{
 		glUniformMatrix3fv(u.frame, false, frame);
 		glUniform1f(u.nebula, nebula);

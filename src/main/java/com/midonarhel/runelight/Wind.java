@@ -11,7 +11,7 @@ import static org.lwjgl.opengl.GL33C.*;
  * Shaders get it through wind.glsl (uniforms windDir, windStrength, windGust, windTime, windFront, windGustiness),
  * set on any program by {@link #apply}. windGustAt(worldXZ) there is the same function as {@link #gustAt}.
  */
-final class Wind
+public final class Wind
 {
 	// gust fronts: world units per noise cell along the wind and across it; the noise repeats every GUST_PERIOD
 	// cells along the wind, so the front position can wrap. Must match wind.glsl.
@@ -158,13 +158,13 @@ final class Wind
 	}
 
 	/** Direction the wind blows toward, x (east), normalized with {@link #getDirZ}. */
-	float getDirX()
+	public float getDirX()
 	{
 		return dirX;
 	}
 
 	/** Direction the wind blows toward, z (north). */
-	float getDirZ()
+	public float getDirZ()
 	{
 		return dirZ;
 	}
@@ -176,7 +176,7 @@ final class Wind
 	}
 
 	/** The eased mean of the weather, without lulls: the clouds' drift. */
-	float getMean()
+	public float getMean()
 	{
 		return mean;
 	}

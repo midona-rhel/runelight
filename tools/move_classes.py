@@ -16,6 +16,17 @@ for c in classes:
     # the parent package's classes it used without import
     s = re.sub(r'(^package [^\n]+\n)', r'\1\nimport ' + base + '.*;\n', s, count=1, flags=re.M)
     dst.write_text(s)
+# each moved class's own test moves with it, keeping package-private access: <Class>Test.java
+(troot / sub).mkdir(exist_ok=True)
+for c in classes:
+    t = troot / f'{c}Test.java'
+    if not t.exists(): continue
+    dst = troot / sub / f'{c}Test.java'
+    subprocess.check_call(['git', 'mv', str(t), str(dst)])
+    s = dst.read_text()
+    s = re.sub(r'^package com\.midonarhel\.runelight;', f'package {target};', s, count=1, flags=re.M)
+    s = re.sub(r'(^package [^\n]+\n)', r'\1\nimport ' + base + '.*;\n', s, count=1, flags=re.M)
+    dst.write_text(s)
 word = re.compile(r'\b(' + '|'.join(map(re.escape, classes)) + r')\b')
 touched = []
 for d in [root, troot]:

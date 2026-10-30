@@ -1,4 +1,6 @@
-package com.midonarhel.runelight;
+package com.midonarhel.runelight.sky;
+
+import com.midonarhel.runelight.*;
 
 import com.midonarhel.runelight.template.Template;
 import static org.lwjgl.opengl.GL33C.*;
@@ -19,7 +21,7 @@ import static org.lwjgl.opengl.GL33C.*;
  * the irradiance only needs its blurred 32x16 mip. The 32x16 irradiance (32 fetches a texel) is redrawn when the
  * blend has moved on a little or the sun's glow, which it adds live, has moved.
  */
-class SkyCache
+public class SkyCache
 {
 	// the irradiance reads a blurred mip anyway
 	static final int LIGHT_WIDTH = 128;
@@ -44,12 +46,12 @@ class SkyCache
 		.add(GL_FRAGMENT_SHADER, "sky_irradiance_frag.glsl");
 
 	// composite's skyCacheMode: the sky light comes from the cache
-	static final int MODE_LIGHT = 1;
+	public static final int MODE_LIGHT = 1;
 
 	/**
 	 * When to capture and how far the blend has come. Pure logic on the clock and the sky's inputs.
 	 */
-	static final class Schedule
+	public static final class Schedule
 	{
 		// with the clock standing still, clouds still drift: capture at least this often, real seconds
 		static final float MAX_SECONDS = 30;
@@ -158,11 +160,11 @@ class SkyCache
 	}
 
 	/** Freshly compiled programs, so a hot reload can compile everything before replacing anything. */
-	static final class Programs
+	public static final class Programs
 	{
 		final int capture, blend, irradiance;
 
-		Programs(int capture, int blend, int irradiance)
+		public Programs(int capture, int blend, int irradiance)
 		{
 			this.capture = capture;
 			this.blend = blend;
@@ -204,7 +206,7 @@ class SkyCache
 	// in-game minutes between captures; changes of weather and drifting clouds capture it sooner
 	private static final int CAPTURE_MINUTES = 5;
 
-	Programs compile(Template template) throws ShaderException
+	public Programs compile(Template template) throws ShaderException
 	{
 		int c = 0, b = 0;
 		try
@@ -226,7 +228,7 @@ class SkyCache
 	 * Replace the programs. The blend program samples its two captures from fromUnit and fromUnit + 1, the
 	 * irradiance pass the shown cache from fromUnit.
 	 */
-	void setPrograms(Programs p, int cloudNoiseUnit, int weatherSkyUnit, int fromUnit)
+	public void setPrograms(Programs p, int cloudNoiseUnit, int weatherSkyUnit, int fromUnit)
 	{
 		freePrograms();
 		captureProgram = p.capture;
@@ -261,7 +263,7 @@ class SkyCache
 		schedule.invalidate();
 	}
 
-	void freePrograms()
+	public void freePrograms()
 	{
 		glDeleteProgram(captureProgram);
 		glDeleteProgram(blendProgram);
@@ -270,7 +272,7 @@ class SkyCache
 	}
 
 	/** GL resources other than programs. */
-	void free()
+	public void free()
 	{
 		if (fbo != 0)
 		{
@@ -287,7 +289,7 @@ class SkyCache
 	}
 
 	/** A composite program's atmosphere uniforms. */
-	static final class CompositeUniforms
+	public static final class CompositeUniforms
 	{
 		private int mode = -1, haze = -1, stars = -1, weight = -1;
 
@@ -295,7 +297,7 @@ class SkyCache
 		 * Look them up and point the program's cache sampler at {@code unit}, its irradiance sampler at
 		 * {@code unit + 1}.
 		 */
-		void locate(int program, int unit)
+		public void locate(int program, int unit)
 		{
 			mode = glGetUniformLocation(program, "skyCacheMode");
 			haze = glGetUniformLocation(program, "skyHaze");
@@ -313,7 +315,7 @@ class SkyCache
 	 * The sky light keeps coming partly from the last capture while it eases back to the analytic one; {@link #bind}
 	 * must have been called either way.
 	 */
-	void easeComposite(int mode)
+	public void easeComposite(int mode)
 	{
 		long now = System.currentTimeMillis();
 		// a long frame (loading) must not jump it
@@ -331,7 +333,7 @@ class SkyCache
 	 * With a composite program in use, after {@link #easeComposite}: this frame's use of the cache, how hazy the air
 	 * is and how bright the stars are.
 	 */
-	void setComposite(CompositeUniforms u, float haze, float stars)
+	public void setComposite(CompositeUniforms u, float haze, float stars)
 	{
 		glUniform1i(u.mode, weight > 0 ? MODE_LIGHT : 0);
 		glUniform1f(u.weight, weight);
@@ -342,13 +344,13 @@ class SkyCache
 	// finished captures, for the hitch monitor
 	private int captures;
 
-	int getCaptures()
+	public int getCaptures()
 	{
 		return captures;
 	}
 
 	/** Linear ease of the cache weight toward target over WEIGHT_SECONDS. */
-	static float ease(float weight, float target, float dt)
+	public static float ease(float weight, float target, float dt)
 	{
 		float step = dt / WEIGHT_SECONDS;
 		return weight < target ? Math.min(target, weight + step) : Math.max(target, weight - step);
@@ -364,7 +366,7 @@ class SkyCache
 	 * @param settings hash of the config the sky depends on
 	 * @param fromUnit, fromUnit + 1: free units for the blend
 	 */
-	void update(Clouds clouds, double gameMinutes, float cameraX, float cameraY, float cameraZ,
+	public void update(Clouds clouds, double gameMinutes, float cameraX, float cameraY, float cameraZ,
 		DayCycle day, float[] overcast, int settings, int fromUnit)
 	{
 		if (captureProgram == 0 || blendProgram == 0 || irradianceProgram == 0)
@@ -453,7 +455,7 @@ class SkyCache
 	 * none). The capture blends in from what is on screen, whether that was a capture or a blend toward one, into
 	 * the third texture; the very first capture is shown as it is.
 	 */
-	static int[] roles(int onScreen)
+	public static int[] roles(int onScreen)
 	{
 		if (onScreen < 0)
 		{
@@ -463,7 +465,7 @@ class SkyCache
 	}
 
 	/** Bind the shown cache to {@code unit} and its irradiance to {@code unit + 1} for the composite. */
-	void bind(int unit)
+	public void bind(int unit)
 	{
 		if (shown < 0)
 		{
@@ -476,7 +478,7 @@ class SkyCache
 		glActiveTexture(GL_TEXTURE0);
 	}
 
-	static void unbind(int unit)
+	public static void unbind(int unit)
 	{
 		glActiveTexture(GL_TEXTURE0 + unit + 1);
 		glBindTexture(GL_TEXTURE_2D, 0);

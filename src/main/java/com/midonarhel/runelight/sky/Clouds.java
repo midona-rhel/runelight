@@ -1,4 +1,6 @@
-package com.midonarhel.runelight;
+package com.midonarhel.runelight.sky;
+
+import com.midonarhel.runelight.*;
 
 import java.nio.ByteBuffer;
 import java.util.Random;
@@ -11,7 +13,7 @@ import static org.lwjgl.opengl.GL33C.*;
  * much of the sky is covered (the configured clear-weather coverage, closing up as rain or snow comes in) and
  * the wind drift, for the composite and for the sky cache's captures (SkyCache.java).
  */
-class Clouds
+public class Clouds
 {
 	private static final int NOISE_SIZE = 128;
 	// share of ragged value noise in the cloud shape, the rest is round Worley puffs
@@ -31,7 +33,7 @@ class Clouds
 	private static final double ROWS_SLACK = 1e-3;
 
 	/** Uniform locations of one program that draws clouds: the composite's, and the sky cache's capture. */
-	static final class Locations
+	public static final class Locations
 	{
 		int enabled, shadows, weather, offset, type;
 		int base, skyRect;
@@ -62,7 +64,7 @@ class Clouds
 	 * @param wisp how wispy and high, 0..1
 	 * @param dark darkness offset, -1 bright .. 1 storm dark
 	 */
-	void setWeather(float wisp, float dark, Wind wind)
+	public void setWeather(float wisp, float dark, Wind wind)
 	{
 		this.wisp = wisp;
 		this.dark = dark;
@@ -74,7 +76,7 @@ class Clouds
 	 * the player and rising as it pitches leaves them in place. With {@code horizonAtEdge} the sky's horizon is put
 	 * where the drawn world (EdgeFade) ends. World coordinates of the scene, y down.
 	 */
-	void setEye(float cameraX, float cameraY, float cameraZ, float focalX, float focalY, float focalZ, float radius,
+	public void setEye(float cameraX, float cameraY, float cameraZ, float focalX, float focalY, float focalZ, float radius,
 		boolean horizonAtEdge)
 	{
 		this.focalX = focalX;
@@ -105,7 +107,7 @@ class Clouds
 	 * @param height its height
 	 * @param halfRatio scene pixels per texel
 	 */
-	void skyRows(int[] rows, float[] invViewProj, int[] viewport, int width, int height, float halfRatio)
+	public void skyRows(int[] rows, float[] invViewProj, int[] viewport, int width, int height, float halfRatio)
 	{
 		// texel centers in scene pixels, as cloudsHalf has them, to NDC (frame.glsl's reconstructPosition)
 		double x0 = (0.5 * halfRatio - viewport[0]) / viewport[2] * 2 - 1;
@@ -205,7 +207,7 @@ class Clouds
 	 * Look up a program's cloud uniforms into l and point its noise sampler at noiseUnit and its sky weather sampler
 	 * (WeatherField.bindSky) at skyUnit.
 	 */
-	static void locate(Locations l, int program, int noiseUnit, int skyUnit)
+	public static void locate(Locations l, int program, int noiseUnit, int skyUnit)
 	{
 		l.enabled = glGetUniformLocation(program, "cloudsEnabled");
 		l.shadows = glGetUniformLocation(program, "cloudShadowsEnabled");
@@ -229,7 +231,7 @@ class Clouds
 	 * @param baseX world x of the scene's origin, in world units, so clouds stay put when the scene reloads
 	 * @param field the weather around the player: rain clouds over rainy regions, clear sky over clear ones
 	 */
-	void update(boolean enabled, boolean shadows, int coveragePercent, int speedPercent,
+	public void update(boolean enabled, boolean shadows, int coveragePercent, int speedPercent,
 		float cloudCover, long baseX, long baseZ, WeatherField field)
 	{
 		this.field = field;
@@ -258,7 +260,7 @@ class Clouds
 	/**
 	 * With a cloud drawing program in use: set this frame's uniforms.
 	 */
-	void apply(Locations l)
+	public void apply(Locations l)
 	{
 		glUniform1i(l.enabled, enabled ? 1 : 0);
 		glUniform1i(l.shadows, shadows ? 1 : 0);
@@ -274,7 +276,7 @@ class Clouds
 	/**
 	 * Bind the noise to {@code noiseUnit} (its 2D target).
 	 */
-	void bindNoise(int noiseUnit)
+	public void bindNoise(int noiseUnit)
 	{
 		if (texNoise == 0)
 		{
@@ -285,7 +287,7 @@ class Clouds
 		glActiveTexture(GL_TEXTURE0);
 	}
 
-	boolean isEnabled()
+	public boolean isEnabled()
 	{
 		return enabled;
 	}
@@ -317,14 +319,14 @@ class Clouds
 		return originZ;
 	}
 
-	static void unbind(int noiseUnit)
+	public static void unbind(int noiseUnit)
 	{
 		glActiveTexture(GL_TEXTURE0 + noiseUnit);
 		glBindTexture(GL_TEXTURE_2D, 0);
 		glActiveTexture(GL_TEXTURE0);
 	}
 
-	void free()
+	public void free()
 	{
 		if (texNoise != 0)
 		{

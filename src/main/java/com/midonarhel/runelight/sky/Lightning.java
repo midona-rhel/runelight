@@ -1,4 +1,6 @@
-package com.midonarhel.runelight;
+package com.midonarhel.runelight.sky;
+
+import com.midonarhel.runelight.*;
 
 import java.util.Random;
 import org.slf4j.Logger;
@@ -25,7 +27,7 @@ import static org.lwjgl.opengl.GL33C.*;
  * A strike is one flash, which may flicker once: a second flare rises while the first is still falling. A viewer
  * sees at most about one flash a second.
  */
-class Lightning
+public class Lightning
 {
 	private static final Logger log = LoggerFactory.getLogger(Lightning.class);
 
@@ -36,7 +38,7 @@ class Lightning
 	private static final float STORM_THRESHOLD = 0.6f;
 	// the bolt's light at the top of a pulse, linear: the one brightness knob (sky.glsl's strikeLight.y). The noon
 	// sun is about 2.6, so this is a strong sun's.
-	static final float BRIGHTNESS = 4;
+	public static final float BRIGHTNESS = 4;
 	// seconds to draw the bolt's shadow map before the flash, at most; a strike that can't is dropped
 	private static final float PREPARE_MAX = 1;
 	// seconds for the flash to rise, to hold at its top and to fall
@@ -62,7 +64,7 @@ class Lightning
 
 	// the most the rumble adds to the flash, as a share of a full flash: the light flickers up and down with the
 	// thunder's loudness (smoothed to a few Hz, Rumble), never past this
-	static final float RUMBLE_FLICKER = 0.35f;
+	public static final float RUMBLE_FLICKER = 0.35f;
 
 	private enum Phase { OFF, PREPARE, PULSES }
 
@@ -102,7 +104,7 @@ class Lightning
 	 * @param storm Weather's storm strength, 0 to 1
 	 * @param focusX player position, world units; bolts come down around it
 	 */
-	void update(float dt, float storm, boolean enabled, float focusX, float focusZ)
+	public void update(float dt, float storm, boolean enabled, float focusX, float focusZ)
 	{
 		if (rumble != null)
 		{
@@ -189,7 +191,7 @@ class Lightning
 	}
 
 	/** Strike on the next update, in any weather. */
-	void strikeNow()
+	public void strikeNow()
 	{
 		requested = true;
 	}
@@ -241,7 +243,7 @@ class Lightning
 	}
 
 	/** How far into its fall (0 to 1) a pulse is when it has fallen to this share of its top. */
-	static float fallTime(float share)
+	public static float fallTime(float share)
 	{
 		// the inverse of smooth(): smooth(x) = 1 - share
 		return 0.5f - (float) Math.sin(Math.asin(1 - 2 * (1 - share)) / 3);
@@ -254,13 +256,13 @@ class Lightning
 	}
 
 	/** One pulse at t seconds from its start: a quick rise, a hold at the top, a long fall. */
-	static float pulse(float t)
+	public static float pulse(float t)
 	{
 		return t < PULSE_RISE + PULSE_HOLD ? smooth(t / PULSE_RISE) : 1 - smooth((t - PULSE_RISE - PULSE_HOLD) / PULSE_FALL);
 	}
 
 	/** The flicker's second flare at t seconds from its start: a very quick rise, a short hold, a fall. */
-	static float flare(float t)
+	public static float flare(float t)
 	{
 		return t < FLARE_RISE + FLARE_HOLD ? smooth(t / FLARE_RISE) : 1 - smooth((t - FLARE_RISE - FLARE_HOLD) / FLARE_FALL);
 	}
@@ -270,7 +272,7 @@ class Lightning
 	 *
 	 * @return whether it did, in which case the caster counts as the sun
 	 */
-	boolean aim(float[] casterDir)
+	public boolean aim(float[] casterDir)
 	{
 		if (!takeover)
 		{
@@ -284,7 +286,7 @@ class Lightning
 	 * The thunder of a strike whose flash has just begun, once: how far the bolt came down (world units) and how
 	 * strong the flash is (0 to 1). False when there is none to play.
 	 */
-	boolean takeThunder(float[] out)
+	public boolean takeThunder(float[] out)
 	{
 		if (!thunderPending)
 		{
@@ -301,7 +303,7 @@ class Lightning
 	 * the sky and the ambient light, and to the bolt's own light while the bolt holds the caster; it never takes the
 	 * caster over, which only the flash curve does.
 	 */
-	void rumble(Rumble rumble)
+	public void rumble(Rumble rumble)
 	{
 		this.rumble = rumble;
 		rumbleAge = 0;
@@ -309,13 +311,13 @@ class Lightning
 	}
 
 	/** The bolt's direction while a strike needs a shadow map for it, else null. */
-	float[] getBoltDir()
+	public float[] getBoltDir()
 	{
 		return phase == Phase.OFF ? null : boltDir;
 	}
 
 	/** The brightness of the sun's or moon's light (DayCycle.directStrength), which the bolt has to pass. */
-	void setSunStrength(float strength)
+	public void setSunStrength(float strength)
 	{
 		sunStrength = strength;
 	}
@@ -324,7 +326,7 @@ class Lightning
 	 * What the plugin made of the shadow maps this frame, after drawing them: whether one is drawn for the bolt's
 	 * direction, and whether the one in use is for the light in use.
 	 */
-	void setShadowMaps(boolean boltReady, boolean matchesLight)
+	public void setShadowMaps(boolean boltReady, boolean matchesLight)
 	{
 		if (phase != Phase.OFF && matchesLight != mapMatchesLight && log.isDebugEnabled())
 		{
@@ -335,7 +337,7 @@ class Lightning
 	}
 
 	/** 0 to 1: how bright the flash is this frame, with the rumble's glow after it. */
-	float getFlash()
+	public float getFlash()
 	{
 		return Math.min(1, flash + glow);
 	}
@@ -354,7 +356,7 @@ class Lightning
 	}
 
 	/** sky.glsl's strikeLight: 1 while the bolt casts shadows, and then how bright its light is. */
-	void getStrike(float[] out)
+	public void getStrike(float[] out)
 	{
 		out[0] = takeover ? 1 : 0;
 		// the rumble's glow brightens the bolt's light only as far as the bolt's light is past the sun's, so handing
@@ -366,7 +368,7 @@ class Lightning
 	/**
 	 * A composite program's lightning uniform. Call with each newly compiled composite.
 	 */
-	static int locateComposite(int program)
+	public static int locateComposite(int program)
 	{
 		return glGetUniformLocation(program, "lightningBolt");
 	}
@@ -375,7 +377,7 @@ class Lightning
 	 * With a composite program in use: where the bolt is relative to the camera and how visible it is (location: its
 	 * locateComposite).
 	 */
-	void bind(int location, float cameraX, float cameraZ)
+	public void bind(int location, float cameraX, float cameraZ)
 	{
 		glUniform4f(location, boltX - cameraX, boltZ - cameraZ, Math.min(1, flash * 1.5f), boltSeed);
 	}
