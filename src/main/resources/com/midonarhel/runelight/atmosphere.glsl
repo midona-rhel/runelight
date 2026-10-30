@@ -100,6 +100,21 @@ float cloudJitter(vec2 px) {
 }
 
 #ifdef CLOUDS_HALF_RES
+// The half resolution clouds at scene pixel px, filtered: a tent over 3x3 texels, as four bilinear reads half a
+// texel out from the pixel's place in the target (weights 1 2 1 / 2 4 2 / 1 2 1 over the texels). The march jitters
+// its steps per texel (cloudJitter), and that grain is only blended away by what reads the texels: one bilinear
+// read blends two texels along each axis at full render scale, and none at a render scale of 50% and below, where
+// a texel is a scene pixel and the read lands on its centre, so the jitter stood as a grid of pixel-sized dots in
+// the moonlit wisps over the Ardougne market stalls (the user's "fog grid", 2026-10-30). The tent takes the
+// texel-to-texel alternation out at every render scale; the clouds are soft at that scale anyway (CLOUD_SOFT).
+vec4 cloudsFiltered(vec2 px) {
+  vec2 size = vec2(textureSize(cloudHalf, 0));
+  vec2 uv = px / (halfRatio * size);
+  vec2 h = 0.5 / size;
+  return 0.25 * (textureLod(cloudHalf, uv - h, 0.0) + textureLod(cloudHalf, uv + vec2(h.x, -h.y), 0.0)
+    + textureLod(cloudHalf, uv + vec2(-h.x, h.y), 0.0) + textureLod(cloudHalf, uv + h, 0.0));
+}
+
 // The procedural sky in sRGB: colors, sun glow, clouds, and the sun, moon and stars through the clouds.
 // px: pixel center in target coordinates. The whole sky dome is looked up along cloudSkyDir, so its horizon lies
 // at the edge of the drawn world, and the sun and moon stay where the clouds' lighting has them. The composite's
@@ -110,10 +125,7 @@ vec3 atmosphereSky(vec2 px, vec3 dir, vec3 camPos, vec3 sunDir, vec3 moonDir, fl
   vec3 glowed = skyGradient(dir, alt) + sunGlow(dir, sunDir, alt);
   vec3 lin;
   float T;
-  // the half resolution clouds, filtered; px is in scene pixels
-  vec4 c = cloudsEnabled == 1
-    ? textureLod(cloudHalf, px / (halfRatio * vec2(textureSize(cloudHalf, 0))), 0.0)
-    : vec4(0.0, 0.0, 0.0, 1.0);
+  vec4 c = cloudsEnabled == 1 ? cloudsFiltered(px) : vec4(0.0, 0.0, 0.0, 1.0);
   T = c.a;
   lin = srgbToLinear(max(glowed, 0.0)) * T + cloudShoulder(c.rgb);
   lin += celestial(dir, sunDir, moonDir, alt, time, pixelAngle, T);

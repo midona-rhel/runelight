@@ -123,9 +123,10 @@ class Clouds
 				end = j + 1;
 			}
 		}
-		// a row more each side for the GPU's rounding of the texel centers
-		rows[0] = first < 0 ? 0 : Math.max(first - 1, 0);
-		rows[1] = first < 0 ? 0 : Math.min(end + 1, height);
+		// two rows more each side: one for the GPU's rounding of the texel centers, one for the sky's filtering of the
+		// clouds, which reads a texel and a half out (atmosphere.glsl's cloudsFiltered)
+		rows[0] = first < 0 ? 0 : Math.max(first - 2, 0);
+		rows[1] = first < 0 ? 0 : Math.min(end + 2, height);
 	}
 
 	/**

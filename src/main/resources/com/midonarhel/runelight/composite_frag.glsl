@@ -309,13 +309,16 @@ vec4 cloudsHalf() {
   if (-skyDir.y <= CLOUD_HORIZON.x) {
     return vec4(0.0, 0.0, 0.0, 1.0);
   }
-  // Only where the sky shows: in the scene pixels this texel covers and the ones next to them, which the filtering
-  // reaches, or behind geometry's edges or its fade at the edge of the world. Elsewhere clear sky.
+  // Only where the sky shows: in the scene pixels this texel covers and the ones around them that the sky's
+  // filtering of the clouds reaches (atmosphere.glsl's cloudsFiltered, a texel and a half out), or behind
+  // geometry's edges or its fade at the edge of the world. Elsewhere clear sky. The corners of that square and its
+  // middle are tested.
   bool needed = false;
   ivec2 last = sceneTextureSize() - 1;
-  for (int i = 0; i < 4 && !needed; ++i) {
-    needed = skyShowsAt(clamp(ivec2(c + vec2(i & 1, i >> 1) * (halfRatio + 2.0) - (halfRatio * 0.5 + 1.0)),
-      ivec2(0), last));
+  float reach = halfRatio * 1.5 + 1.0;
+  for (int i = 0; i < 5 && !needed; ++i) {
+    vec2 at = i < 4 ? c + vec2(i & 1, i >> 1) * (2.0 * reach) - reach : c;
+    needed = skyShowsAt(clamp(ivec2(at), ivec2(0), last));
   }
   if (!needed) {
     return vec4(0.0, 0.0, 0.0, 1.0);
