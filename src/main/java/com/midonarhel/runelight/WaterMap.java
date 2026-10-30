@@ -649,7 +649,7 @@ public final class WaterMap
 
 	// a tile's sides: south, east, north, west, counterclockwise from its sw corner; each from corner (x0, y0) to (x1, y1),
 	// the tile across it at (dx, dy)
-	static final int[] SIDE_X0 = {0, 1, 1, 0}, SIDE_Y0 = {0, 0, 1, 1}, SIDE_X1 = {1, 1, 0, 0}, SIDE_Y1 = {0, 1, 1, 0};
+	public static final int[] SIDE_X0 = {0, 1, 1, 0}, SIDE_Y0 = {0, 0, 1, 1}, SIDE_X1 = {1, 1, 0, 0}, SIDE_Y1 = {0, 1, 1, 0};
 	static final int[] SIDE_DX = {0, 1, 0, -1}, SIDE_DY = {-1, 0, 1, 0};
 
 	/**
@@ -659,7 +659,7 @@ public final class WaterMap
 	 * running straight between two of them left a ridge up to the surface between every two tiles, each tile a pit of
 	 * its own. The tile across works out the same from the same corners, so the two meet.
 	 */
-	int sideOffset(int ex, int ey, int lvl, int k)
+	public int sideOffset(int ex, int ey, int lvl, int k)
 	{
 		int nx = ex + SIDE_DX[k], ny = ey + SIDE_DY[k];
 		if (nx < 0 || ny < 0 || nx >= SIZE || ny >= SIZE || level[ny * SIZE + nx] != lvl || !painted[ny * SIZE + nx])
@@ -674,7 +674,7 @@ public final class WaterMap
 	 * The triangles of shore tile (ex, ey)'s bed on level lvl: a fan around its middle, one a corner and one more a sunk
 	 * side (sideOffset).
 	 */
-	int shoreTriangles(int ex, int ey, int lvl)
+	public int shoreTriangles(int ex, int ey, int lvl)
 	{
 		int n = 4;
 		for (int k = 0; k < 4; ++k)
