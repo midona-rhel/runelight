@@ -66,13 +66,20 @@ public class WaterMapTest
 	 */
 	private static WaterMap lake(int texture)
 	{
+		return flat((x, y) -> x >= 80 && x < 100 && y >= 80 && y < 100 ? texture : -1);
+	}
+
+	/**
+	 * Flat land with water where texture gives a water texture (-1 for land), every tile on plane 0.
+	 */
+	private static WaterMap flat(java.util.function.IntBinaryOperator texture)
+	{
 		Tile[][][] tiles = new Tile[4][N][N];
 		for (int x = 0; x < N; ++x)
 		{
 			for (int y = 0; y < N; ++y)
 			{
-				boolean water = x >= 80 && x < 100 && y >= 80 && y < 100;
-				tiles[0][x][y] = tile(x, y, water ? texture : -1);
+				tiles[0][x][y] = tile(x, y, texture.applyAsInt(x, y));
 			}
 		}
 		int[][][] heights = new int[4][N + 1][N + 1];
@@ -501,5 +508,29 @@ public class WaterMapTest
 		assertEquals("east as west", west, east);
 		assertEquals("north as south", south, north);
 		assertEquals("south as west", west, south);
+	}
+
+	@Test
+	public void aRunOfWaterOneTileWideIsOneTrough()
+	{
+		// three water tiles in a row along x, land all round: every corner is on the bank
+		WaterMap m = flat((x, y) -> y == 90 && x >= 80 && x < 83 ? 1 : -1);
+		for (int x = 80; x < 83; ++x)
+		{
+			assertTrue(m.isShoreTile(x, 90));
+		}
+		// the sides between two of them sink as deep as the tiles' middles, the same from either side; the sides on the
+		// bank run straight
+		assertEquals(WaterMap.MIN_DEPTH, m.sideOffset(80, 90, 0, 1));
+		assertEquals(WaterMap.MIN_DEPTH, m.sideOffset(81, 90, 0, 3));
+		assertEquals(m.centerOffset(81, 90), m.sideOffset(81, 90, 0, 1));
+		assertEquals(-1, m.sideOffset(80, 90, 0, 3));
+		assertEquals(-1, m.sideOffset(81, 90, 0, 0));
+		assertEquals(-1, m.sideOffset(81, 90, 0, 2));
+		assertEquals(5, m.shoreTriangles(80, 90, 0));
+		assertEquals(6, m.shoreTriangles(81, 90, 0));
+		// a side between a shore tile and deeper water runs straight: the deeper tile's bed is one quad
+		WaterMap lake = lake(1);
+		assertEquals(-1, lake.sideOffset(81, 85, 0, 1));
 	}
 }

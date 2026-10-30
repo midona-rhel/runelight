@@ -61,6 +61,8 @@ final class WaterMap
 	final byte[] type = new byte[SIZE * SIZE];
 	final short[] waterTexture = new short[SIZE * SIZE];
 	final byte[] level = new byte[SIZE * SIZE];
+	// per tile: its water is a plain painted tile (no shaped tile model), whose bed is one quad or a fan (SceneUploader)
+	final boolean[] painted = new boolean[SIZE * SIZE];
 	private final short[] bedHsl = new short[SIZE * SIZE];
 	// per corner: depth level (0 at the shore)
 	final byte[] depthLevel = new byte[CORNERS * CORNERS];
@@ -302,6 +304,7 @@ final class WaterMap
 				hasWater = true;
 
 				SceneTileModel model = water.getSceneTileModel();
+				painted[i] = model == null;
 				if (model != null)
 				{
 					// shore tiles: corners of their land faces stay at the shore
@@ -636,6 +639,43 @@ final class WaterMap
 	{
 		return depthLevel(ex, ey) == 0 || depthLevel(ex + 1, ey) == 0 || depthLevel(ex, ey + 1) == 0
 			|| depthLevel(ex + 1, ey + 1) == 0;
+	}
+
+	// a tile's sides: south, east, north, west, counterclockwise from its sw corner; each from corner (x0, y0) to (x1, y1),
+	// the tile across it at (dx, dy)
+	static final int[] SIDE_X0 = {0, 1, 1, 0}, SIDE_Y0 = {0, 0, 1, 1}, SIDE_X1 = {1, 1, 0, 0}, SIDE_Y1 = {0, 1, 1, 0};
+	static final int[] SIDE_DX = {0, 1, 0, -1}, SIDE_DY = {-1, 0, 1, 0};
+
+	/**
+	 * How far the bed sinks in the middle of side k (SIDE_*) of shore tile (ex, ey) on level lvl, or -1 where it runs
+	 * straight between the side's corners. Between two painted bed tiles on the same level it sinks as deep as the tiles'
+	 * middles at least ({@link #MIN_DEPTH}): in a run of water one tile wide every corner is on the bank, and a side
+	 * running straight between two of them left a ridge up to the surface between every two tiles, each tile a pit of
+	 * its own. The tile across works out the same from the same corners, so the two meet.
+	 */
+	int sideOffset(int ex, int ey, int lvl, int k)
+	{
+		int nx = ex + SIDE_DX[k], ny = ey + SIDE_DY[k];
+		if (nx < 0 || ny < 0 || nx >= SIZE || ny >= SIZE || level[ny * SIZE + nx] != lvl || !painted[ny * SIZE + nx])
+		{
+			return -1;
+		}
+		int along = bedOffset(ex + SIDE_X0[k], ey + SIDE_Y0[k]) + bedOffset(ex + SIDE_X1[k], ey + SIDE_Y1[k]) + 1 >> 1;
+		return along < MIN_DEPTH ? MIN_DEPTH : -1;
+	}
+
+	/**
+	 * The triangles of shore tile (ex, ey)'s bed on level lvl: a fan around its middle, one a corner and one more a sunk
+	 * side (sideOffset).
+	 */
+	int shoreTriangles(int ex, int ey, int lvl)
+	{
+		int n = 4;
+		for (int k = 0; k < 4; ++k)
+		{
+			n += sideOffset(ex, ey, lvl, k) >= 0 ? 1 : 0;
+		}
+		return n;
 	}
 
 	/**
