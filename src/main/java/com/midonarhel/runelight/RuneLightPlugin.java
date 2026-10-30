@@ -198,6 +198,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 	private CommandFile commandFile;
 	private final FrameSnapshot frameSnapshot = new FrameSnapshot();
 	private int framesSinceSwap = 1000;
+	private boolean swapCaptureArmed;
 	private int lastSkyCacheMode;
 
 	// Frame pacing (Lumina's): with FPS unlocked and vsync off the client's own limiter sleeps whole milliseconds and
@@ -3322,6 +3323,15 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 			log.info(String.format("post-swap frame %d: ao=%b fog=%b shadows=%b(init %b) ground=%b sky=%b half=%b fogGround=%b voxels=%b skyCacheMode=%d",
 				framesSinceSwap, ao, frameFog, shadows, shadowMap.isInitialized(), ground, sky, halfPass, volumetricFog.hasGround(),
 				voxelBuilder.getVoxels() != null, lastSkyCacheMode));
+			if (swapCaptureArmed && framesSinceSwap >= 1 && framesSinceSwap <= 4)
+			{
+				// and the frames themselves, to diff the "sharp" one against its neighbours (::runelight swapcapture arms it)
+				FrameCapture.capture(client, drawManager, "RuneLight (perf-wip)", "swap-f" + framesSinceSwap);
+				if (framesSinceSwap == 4)
+				{
+					swapCaptureArmed = false;
+				}
+			}
 			framesSinceSwap++;
 		}
 		if (halfPass)
@@ -4872,6 +4882,11 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 			paceHere = args[1].equals("on");
 			setupSyncMode();
 			log.info("Frame pacing {}", paceHere ? "here (Lumina's pacer)" : "by the client's limiter");
+		}
+		else if (args.length >= 1 && args[0].equals("swapcapture"))
+		{
+			swapCaptureArmed = true;
+			log.info("Armed: the first four frames after the next scene swap are captured as swap-f1..4");
 		}
 		else if (args.length >= 1 && args[0].equals("timers"))
 		{
