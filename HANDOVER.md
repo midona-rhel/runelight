@@ -55,6 +55,16 @@ tools, docs). Measured 2026-10-30, same client, same views, uncapped, small canv
   alpha casters — port as one mechanism replacing the current static-copy + PCSS-in-AO path.
 - B7 **Zone frustum culling** (Lumina's `ZBUF_ZONE_FRUSTUM_CHECK` implementation).
 
+## The user's list (2026-10-30, 19:05), as segments
+- **Map load is super heavy and things behave weirdly after a load** → B3, measured first: a `snapshot` spanning a
+  region change with the hitch monitor's job names and durations in the CSV, so each hitch is attributed (static
+  shadow rebuild, zone rebuild, scene swap, voxel build, sky capture, light map, area hiding, GC).
+- **Render scale must work** (and look right at 25–50 % on Windows) → A5, also the MSAA: "weird scaling for the
+  MSAA" → B8: how MSAA interacts with render scale and the half-res passes; one AA path, not two.
+- **Hard-edged shading on trees** → A7: the smooth-normal path (`VertexShading.computeNormals`) is not reaching
+  trees (or the 50° rule excludes them); find which, fix as one rule, before/after capture of one tree.
+- **Inefficiencies all over** → B4 (the chain), B5 (uploads/caching), with B1's numbers as the ledger.
+
 ## Order
 B1 → B2 → A1 (the mechanism table) → B3 → A3 → B4 → A5 → B6 → B5 → B7 → A2 → A4 → A6. Each segment's row goes
 in the table below with its numbers; a segment may be reordered when a measurement says so, never skipped.
@@ -63,4 +73,5 @@ in the table below with its numbers; a segment may be reordered when a measureme
 | Segment | Commit | Checked |
 |---|---|---|
 | B1 where the 7 ms go (`::runelight timers`, uncapped, canvas 783×603 ≈ 3.4 Mpx device, gpuPassTimings on) | 860fdd14 | GPU per pass, smoothed, yaw 1024 / yaw 0: volumetric fog 1.62 / 1.47 · sky+fog+final blend (composite) 1.38 / 1.45 · AO+skylight 1.04 / 0.91 · AO/fog filtering 0.59 / 0.52 · shadow map 0.64 / **1.80** · scene 0.46 / 0.91 · sky cache 0.36 / 0.05 · clouds 0.16 / 0.18 · water 0.07 / 0.11 → per-pixel chain (fog + composite + AO + filter + clouds) ≈ **4.8 ms of the 6.96**. CPU per frame: client scene 0.7–0.9, client UI 1.4 (not ours), light upload 0.25, shadow submit 0.14, outside 0.4. At render scale 25 %: frame 3.95 ms median (248 FPS): fog 0.32, composite 0.40, AO 0.14, filter 0.03 — the chain is pixel-bound; what remains (~3.7 ms) is the CPU floor + scene + shadow map. Projection to 4K (4× pixels): chain ≈ 19 ms → B4 is the critical path; the shadow map's 1.8 ms at yaw 0 (static copy + models, view-dependent) is B6's. **Caveat**: the render scale in force during the 18:43 baseline and the first two timers lines is not recorded; the profile held `renderScale=PERCENT_50` afterwards, so those numbers may be at half scale (then the chain at 4K is ~4× worse than projected). The snapshot header and the timers line now record it; re-measure at an explicit FULL before B4 |
+| B2 frame pacing (Lumina's pacer; `::runelight pace on|off` to A/B) | f3b26e6b | capped at 60, same view, 10 s each: client limiter p5/p50/p95/max 15.0/16.4/19.5/23.2 ms, 69 frames over 18.5 ms, stdev 1.35; pacer 16.66/16.67/16.67/16.70, 0 over 18.5, stdev 0.00 |
 | Tools: `::runelight cam/capture/set/snapshot`, command file `~/.runelite/lumina/command-perfwip.txt` | 18b6402a | snapshots at yaw 0 / 1024: 6.96 / 6.98 ms median uncapped, 144 FPS, 1–3 frames > 1.5× median per 10 s |
