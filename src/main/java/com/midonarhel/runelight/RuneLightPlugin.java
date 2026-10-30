@@ -404,7 +404,6 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 	private int roomLightTexture;
 	private long roomLightNanos;
 	// what the light map was last given to stop light, and what that was made from
-	private LightBlockers lightBlockers;
 	// the Dump scene checkbox was ticked; set on the config thread, taken by the next frame
 	private volatile boolean dumpSceneRequested;
 	private WallMap blockerWalls;
@@ -3056,6 +3055,13 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 	 *
 	 * @return whether the map carries the static lights this frame
 	 */
+	private static final java.util.concurrent.ExecutorService LIGHT_BLOCKERS = java.util.concurrent.Executors.newSingleThreadExecutor(r ->
+	{
+		Thread t = new Thread(r, "RuneLight light blockers");
+		t.setDaemon(true);
+		return t;
+	});
+
 	private boolean updateLightMap(float night)
 	{
 		BuildingLights b = buildingLights;
@@ -3084,13 +3090,15 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		ModelBlockers models = modelsAwaited ? null : voxelBuilder.getModelBlockers();
 		if (walls != blockerWalls || models != blockerModels || built != blockerRooms || floors != blockerFloors)
 		{
-			lightBlockers = new LightBlockers(walls, models, built.floors, floors);
+			// the blockers' prefix sums and the map's diff of them (which lights to bake again) on their worker: 29 ms
+			// of the swap frame on the client thread (914c6041, 20:17:05)
 			blockerWalls = walls;
 			blockerModels = models;
 			blockerRooms = built;
 			blockerFloors = floors;
+			LIGHT_BLOCKERS.execute(() -> lightMap.setBlockers(new LightBlockers(walls, models, built.floors, floors), modelsAwaited));
 		}
-		lightMap.setBlockers(lightBlockers, modelsAwaited);
+		lightMap.keepBlockers(modelsAwaited);
 		lightMap.setNight(night);
 		lightMap.setFocus(edgeFade.focalX, edgeFade.focalZ);
 		boolean ready = lightMapTexture.ensure(lightMap.cells());
@@ -3237,7 +3245,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 	{
 		Player player = client.getLocalPlayer();
 		SceneContext ctx = root;
-		LightBlockers blockers = lightBlockers;
+		LightBlockers blockers = lightMap.getBlockers();
 		if (player == null || ctx == null || blockers == null || sceneLights == null)
 		{
 			log.warn("Scene dump: there is no scene with a light map to write yet");

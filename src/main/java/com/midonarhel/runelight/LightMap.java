@@ -453,6 +453,27 @@ final class LightMap
 		}
 	}
 
+	/** The blockers the map is baked against now, null for none. */
+	LightBlockers getBlockers()
+	{
+		synchronized (lock)
+		{
+			return blockers;
+		}
+	}
+
+	/**
+	 * Once a frame, client thread: the wait for a scene's models goes on with the blockers last given (setBlockers,
+	 * which the plugin calls on its worker when they change).
+	 */
+	void keepBlockers(boolean modelsAwaited)
+	{
+		synchronized (lock)
+		{
+			setBlockers(blockers, modelsAwaited);
+		}
+	}
+
 	private void applyBlockers(LightBlockers next)
 	{
 		synchronized (lock)
