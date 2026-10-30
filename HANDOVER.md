@@ -65,6 +65,16 @@ tools, docs). Measured 2026-10-30, same client, same views, uncapped, small canv
   trees (or the 50° rule excludes them); find which, fix as one rule, before/after capture of one tree.
 - **Inefficiencies all over** → B4 (the chain), B5 (uploads/caching), with B1's numbers as the ledger.
 
+## The user's list, continued (2026-10-30, 19:50)
+- **Point-light banding on a diagonal wall** (screenshot: vertical bands across a timber wall under a lantern):
+  the lamp's wall shaping / `pointLightNormal` re-flattening (lights.md) — one normal rule for sun and lamps.
+- **Skylight on the ground under/near a wall is tile-faceted** (screenshot: large triangular light/dark patches on
+  flat ground): the skylight grid's sampling at tile granularity (sky-weather-water.md, SkyGrid) — the grid must be
+  sampled smoothly or at finer resolution; measure which.
+- **Teleports take ~1 s on the user's Windows PC** (fine-ish on the Mac): the load path's GL object churn (529 zone
+  deletes + allocations, 3D texture re-uploads) is much slower on Windows drivers. The pipeline (S1/S2) is judged on
+  Windows as well: a teleport must not be slower than the game's own load, no hitch after it.
+
 ## Order
 B1 → B2 → A1 (the mechanism table) → B3 → A3 → B4 → A5 → B6 → B5 → B7 → A2 → A4 → A6. Each segment's row goes
 in the table below with its numbers; a segment may be reordered when a measurement says so, never skipped.

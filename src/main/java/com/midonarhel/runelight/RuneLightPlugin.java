@@ -1864,8 +1864,8 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		float cameraX, float cameraY, float cameraZ, float cameraPitch, float cameraYaw)
 	{
 		// the hitch monitor reads the GPU's times too, but only when someone is reading the debug log
-		// the GPU pass timers run only for the developer `timers` command (the timings panel is gone, 2026-10-30)
-		gpuTimer.setEnabled(false);
+		// the GPU pass timers run only for the developer `timers` command (the timings panel is gone, 2026-10-30);
+		// nothing here switches them off again per frame (S0: that line made every pass time unreadable)
 		captureFrameState(scene, cameraX, cameraY, cameraZ);
 		wadeSteps.update(client.getTopLevelWorldView(), client.getLocalPlayer(), cameraX, cameraZ,
 			weather.groundActive() && client.getGameState() == GameState.LOGGED_IN);
