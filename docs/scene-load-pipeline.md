@@ -11,8 +11,8 @@ One load routine, one scheduler, pooled zone buffers. Code: `SceneLoader`, `Scen
 | during the upload | map loader + up to 3 "RuneLight zone upload" threads | each zone written into its mapped buffer, one `SceneUploader` per thread |
 | alongside | client thread, ≤ 1 ms a frame (`SceneJobs`) | `ZoneUploads`: buffers taken from `ZonePool` and mapped ahead of the writers, unmapped behind them |
 | end of the load | map loader | `SceneDerived` record built; the fog ground's texels packed (without rooms); the voxel build of the new scene started (`VoxelBuilder.buildNext`); its static shadow map and the fog ground's upload queued |
-| between the load and the swap | client thread, scheduler (LOAD jobs get 4 ms a frame while the loading box is up) | the new scene's static shadow map drawn (all of it in one frame), held; the fog ground uploaded into the fog's second texture |
-| `swapScene` | client thread | `SceneLoader.swap`: old zones' buffers back to the pool (no GL call), new zones in, the record's parts handed over: fog ground (texture flip), static shadow map (index flip; if not drawn yet, the swap draws what is left), water (uploads: still GL on the swap), voxels (if built, else when built) |
+| between the load and the swap | client thread, scheduler (LOAD jobs get 4 ms a frame while the loading box is up) | the new scene's static shadow map drawn (all of it in one frame), held; the fog ground uploaded into the fog's second texture; the water's surface tiles, data and contact into their second buffer and textures |
+| `swapScene` | client thread | `SceneLoader.swap`: old zones' buffers back to the pool (no GL call), new zones in, the record's parts handed over: fog ground (texture flip), static shadow map (index flip; if not drawn yet, the swap draws what is left), water (buffer and texture flip), voxels (if built, else when built) |
 | after | worker "RuneLight buildings" | rooms and walls (`BuildingLights`, was 3–18 ms on the swap frame); doors: a compare of the collision flags each tick, the rebuild on the worker only on a change |
 | after | scheduler | zone buffers the pool keeps beyond the scene in use (≤ 256 MiB) deleted, a few a frame |
 
@@ -30,8 +30,7 @@ counted in the next frame by the load report and flagged "scene jobs" by the hit
 - **Rooms**: built on the "RuneLight buildings" worker after the swap (they need the collision maps; whether those are
   the new scene's at `loadScene` time is untested); the fog's room part eases in. As before, rooms are cleared while
   the client loads.
-- **Water**: its surface tiles and data texture are uploaded on the swap (one `glBufferData` + one `glTexImage2D`).
-  Double-buffering it is the next step.
+- **Water**: uploaded before the swap and flipped with it (97160de6); nothing of it arrives later.
 
 ## Measuring (the same on Windows and macOS)
 
