@@ -698,9 +698,8 @@ vec3 waterFake(ivec2 px, vec3 p, vec3 faceN, vec3 albedo, float shadow, float en
   waterShadeSurface(px, p, v, nrm, lightN, fall, type, foam, shadow, surface, covered, spec, surfaceLight);
   spec += waterSunGlint(waterGlitterNormal(nrm), v, 0.0, look.z, foam, shadow);
 
-  // ---- what is under it: a pool of FAKE_DEPTH, its floor the face's color gone sandy
-  vec3 bed = srgbToLinear(mix(albedo, vec3(0.62, 0.55, 0.40), 0.5)) * surfaceLight;
-  vec3 under = bed * srgbToLinear(waterDepthTint(type, FAKE_DEPTH));
+  // ---- what is under it: the face as the composite lit it, wet, FAKE_DEPTH down, as waterOver takes the bed
+  vec3 under = srgbToLinear(lit * WET_SAND) * srgbToLinear(waterDepthTint(type, FAKE_DEPTH));
   float alpha = max(look.x * smoothstep(0.0, SURFACE_DEPTH, FAKE_DEPTH), covered);
   return linearToSrgb(clamp(waterShoulder(mix(under, surface, alpha) + spec), 0.0, 1.0));
 }
