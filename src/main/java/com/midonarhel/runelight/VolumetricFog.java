@@ -1,10 +1,9 @@
 package com.midonarhel.runelight;
 
+import com.midonarhel.runelight.light.LampWalls;
 import com.midonarhel.runelight.shadow.ShadowMap;
-
-import com.midonarhel.runelight.weather.WeatherField;
-
 import com.midonarhel.runelight.sky.DayCycle;
+import com.midonarhel.runelight.weather.WeatherField;
 
 import java.nio.ByteBuffer;
 import java.nio.FloatBuffer;
@@ -119,7 +118,7 @@ public class VolumetricFog
 	private static final class Locations
 	{
 		final int program;
-		final LightMapTexture.Uniforms lightMap = new LightMapTexture.Uniforms();
+		final LampWalls.Uniforms lampWalls = new LampWalls.Uniforms();
 		int uniGroundPrevWeight;
 		int uniCameraPos, uniCasterDir, uniCenter, uniClientSkyColor, uniDensity, uniDepthZeroToOne,
 			uniFade, uniFieldFog, uniFieldRect, uniGroundGrid, uniHalfRatio, uniHeight, uniHighestY, uniIndoor,
@@ -138,14 +137,14 @@ public class VolumetricFog
 	 * Take ownership of the freshly compiled fog program (PROGRAM) and look up its uniforms.
 	 */
 	void setProgram(int program, int sceneDepthUnit, int shadowCompareUnit, int lightDataUnit,
-		int clusterDataUnit, int noiseUnit, int weatherFieldUnit, int waterUnit, int groundUnit, int groundPrevUnit, int lightMapUnit)
+		int clusterDataUnit, int noiseUnit, int weatherFieldUnit, int waterUnit, int groundUnit, int groundPrevUnit)
 	{
 		this.waterUnit = waterUnit;
 		this.groundUnit = groundUnit;
 		this.groundPrevUnit = groundPrevUnit;
 		free(fog);
 		fog = locate(program, sceneDepthUnit, shadowCompareUnit, lightDataUnit, clusterDataUnit, noiseUnit,
-			weatherFieldUnit, waterUnit, groundUnit, lightMapUnit);
+			weatherFieldUnit, waterUnit, groundUnit);
 		glUseProgram(program);
 		glUniform1i(glGetUniformLocation(program, "fogGroundPrev"), groundPrevUnit);
 		fog.uniGroundPrevWeight = glGetUniformLocation(program, "fogGroundPrevWeight");
@@ -161,7 +160,7 @@ public class VolumetricFog
 	}
 
 	private static Locations locate(int program, int sceneDepthUnit, int shadowCompareUnit, int lightDataUnit,
-		int clusterDataUnit, int noiseUnit, int weatherFieldUnit, int waterUnit, int groundUnit, int lightMapUnit)
+		int clusterDataUnit, int noiseUnit, int weatherFieldUnit, int waterUnit, int groundUnit)
 	{
 		Locations u = new Locations(program);
 		u.uniCameraPos = glGetUniformLocation(u.program, "cameraPos");
@@ -193,7 +192,7 @@ public class VolumetricFog
 		u.uniViewport = glGetUniformLocation(u.program, "sceneViewport");
 		u.uniDepthZeroToOne = glGetUniformLocation(u.program, "depthZeroToOne");
 		u.uniHalfRatio = glGetUniformLocation(u.program, "halfRatio");
-		u.lightMap.locate(u.program, lightMapUnit);
+		u.lampWalls.locate(u.program);
 
 		glUseProgram(u.program);
 		glUniform1i(glGetUniformLocation(u.program, "sceneDepth"), sceneDepthUnit);
@@ -467,7 +466,7 @@ public class VolumetricFog
 		float[] invViewProj, int[] viewport, boolean zeroToOne,
 		float cameraX, float cameraY, float cameraZ, float time,
 		boolean outdoors, boolean proceduralSky, int skyColor, DayCycle day,
-		ShadowMap shadows, boolean pointLights, float[] roomHeader)
+		ShadowMap shadows, boolean pointLights, float[] lampWallsHeader)
 	{
 		Locations u = fog;
 		if (u == null)
@@ -511,7 +510,7 @@ public class VolumetricFog
 			glUniform1f(u.uniShadowDepthRange, shadows.getDepthRange());
 		}
 		glUniform1i(u.uniPointLights, pointLights ? 1 : 0);
-		u.lightMap.apply(roomHeader);
+		u.lampWalls.apply(lampWallsHeader);
 
 		glUniform1f(u.uniDensity, density);
 		glUniform1f(u.uniHeight, height);

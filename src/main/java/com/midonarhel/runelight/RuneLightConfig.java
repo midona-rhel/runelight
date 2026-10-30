@@ -982,17 +982,4 @@ public interface RuneLightConfig extends Config
 	{
 		return false;
 	}
-
-	@ConfigItem(
-		keyName = "dumpScene",
-		name = "Dump scene",
-		description = "Write what the light map is made from around you (the models, walls, floors, lights, camera and "
-			+ "time of day) to a file in .runelite/runelight-dumps, for offline renders. Unticks itself.",
-		section = developmentSection,
-		position = 110
-	)
-	default boolean dumpScene()
-	{
-		return false;
-	}
 }

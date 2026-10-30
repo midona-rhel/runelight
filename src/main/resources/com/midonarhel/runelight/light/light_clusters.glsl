@@ -1,4 +1,4 @@
-// The light masks (LightClusters.java): for every cluster (a screen column's depth slices next to each other), then
+// The light masks (light/LightClusters.java): for every cluster (a screen column's depth slices next to each other), then
 // every fog column, a bit per light in view, in RGBA32UI texels of 128 lights: light i is bit i & 31 of word i >> 5,
 // word w component w & 3 of texel w >> 2. An entry has as many texels as the lights in view need, and the buffer
 // holds exactly CLUSTER_ENTRIES entries, so its size tells how many. Needs cluster_config and clusterData.
@@ -56,11 +56,4 @@ bool clusterHasLights(int entry) {
   LightMask m = clusterLights(entry);
   int li;
   return nextLight(m, li);
-}
-
-// 117 HD's falloff of a point light, from the squared distance to it and its squared radius (below 1 inside it): the clusters'
-// lights and the light map's lights are worked out with it alike (light_map.glsl)
-float pointLightFalloff(float d2, float r2) {
-  float att = 1.0 - sqrt(d2 / r2);
-  return att * att;
 }

@@ -291,12 +291,12 @@ public class RoomSplitTest
 		assertEquals(se, m.roomAt((11 - OFFSET + 0.2f) * 128, -1, (8 - OFFSET + 0.8f) * 128));
 		assertEquals(0, m.roomAt((11 - OFFSET + 0.8f) * 128, -1, (8 - OFFSET + 0.2f) * 128));
 		// and the texels say so: "/" with the room on the north-west half (0), outdoors across
-		java.nio.FloatBuffer b = java.nio.FloatBuffer.allocate(m.texelCount() * 4);
+		java.nio.FloatBuffer b = java.nio.FloatBuffer.allocate(m.floatCount());
 		m.texels(b);
-		int t = (RoomMap.HEADER_TEXELS + (11 * SIZE + 8) * RoomMap.TEXELS_PER_TILE + 2) * 4;
+		int t = RoomMap.texelIndex(SIZE, 2, 11, 8);
 		assertEquals(WallMap.DIAG_SW_NE, b.get(t), 0);
 		// tile (9, 10): the wall bits, the half the tile's room has and the room of the other half
-		int v = (int) b.get((RoomMap.HEADER_TEXELS + (9 * SIZE + 10) * RoomMap.TEXELS_PER_TILE + 2) * 4);
+		int v = (int) b.get(RoomMap.texelIndex(SIZE, 2, 9, 10));
 		assertEquals(WallMap.DIAG_SW_NE, v & 63);
 		boolean northWest = (v >> 6 & 1) == 0;
 		assertEquals(northWest ? nw : se, m.room(0, 9, 10));

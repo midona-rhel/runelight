@@ -1,50 +1,34 @@
-package com.midonarhel.runelight;
+package com.midonarhel.runelight.light;
+
+import com.midonarhel.runelight.BuildingDetector;
+import com.midonarhel.runelight.RoomMap;
+import com.midonarhel.runelight.RoomMapTest;
+import com.midonarhel.runelight.WallMap;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertTrue;
-import java.util.Arrays;
+import java.util.List;
 import org.junit.Test;
 
 public class RoomLightTest
 {
 	private static final int SIZE = 20, OFFSET = 4, LOCAL = SIZE - 2 * OFFSET;
-	// the house of RoomMapTest: extended tiles 8..11, so cells 32..47 of a light map of 80 cells: block 1, 1
-	private static final int CELLS = SIZE * 4;
 	// the sun's height: well below the horizon, and high
 	private static final float NIGHT = -20, DAY = 45;
 
 	private static RoomLight light()
 	{
 		RoomLight l = new RoomLight();
-		l.setCells(CELLS);
 		l.setRooms(RoomMapTest.house(new int[4][LOCAL][LOCAL]));
 		return l;
 	}
 
-	/** A block of the light map with this much light in every cell, null for none. */
-	private static float[] glow(float lum)
+	/** The house's room lit to this score by its lamps. */
+	private static RoomLight lit(float score)
 	{
-		float[] a = new float[LightMap.BLOCK * LightMap.BLOCK];
-		Arrays.fill(a, lum);
-		return a;
-	}
-
-	/** The light map's sink for the rooms' light alone. */
-	private static LightMap.Sink floors(RoomLight l)
-	{
-		return new LightMap.Sink()
-		{
-			@Override
-			public void block(int plane, int bx, int bz, byte[] vis, byte[] index)
-			{
-			}
-
-			@Override
-			public void floor(int plane, int bx, int bz, float[] floor)
-			{
-				l.floor(plane, bx, bz, floor);
-			}
-		};
+		RoomLight l = light();
+		l.setLamps(new float[]{0, score});
+		return l;
 	}
 
 	private static float night(RoomLight l)
@@ -81,12 +65,9 @@ public class RoomLightTest
 	@Test
 	public void aRoomLitByTorchesGetsNoFill()
 	{
-		RoomLight l = light();
-		l.floor(0, 1, 1, glow(3));
-		assertEquals(1.5f, l.lightScore(1), 1e-3);
+		RoomLight l = lit(1.5f);
 		assertEquals(0, night(l), 0);
-		RoomLight day = light();
-		day.floor(0, 1, 1, glow(3));
+		RoomLight day = lit(1.5f);
 		day.update(0, RoomLight.target(DAY, 1), DAY);
 		assertTrue("by day too " + day.fillOf(1), day.fillOf(1) < 0.02f);
 	}
@@ -94,15 +75,13 @@ public class RoomLightTest
 	@Test
 	public void aHotSpotDoesNotHideTheDarkRestOfARoom()
 	{
-		RoomLight l = light();
-		// one cell in sixteen, very bright: counts for no more than the cap
-		float[] a = new float[LightMap.BLOCK * LightMap.BLOCK];
-		for (int c = 0; c < LightMap.BLOCK * LightMap.BLOCK; c += 16)
-		{
-			a[c] = 1000;
-		}
-		l.floor(0, 1, 1, a);
-		assertTrue(l.lightScore(1) <= RoomLight.CELL_CAP / 8);
+		// a very bright lamp low over one corner of a 6 by 6 room: that tile counts for no more than the cap
+		RoomMap room = room();
+		float[] scores = RoomLight.lampScores(room, walled(), List.of(lamp(20.5f, 20.5f, 1000, 1.2f)));
+		assertTrue("score " + scores[1], scores[1] <= RoomLight.TILE_CAP * 4 / 36 + 1e-4f);
+		RoomLight l = new RoomLight();
+		l.setRooms(room);
+		l.setLamps(scores);
 		assertTrue(night(l) > 0.5f * RoomLight.TARGET_NIGHT);
 	}
 
@@ -135,9 +114,9 @@ public class RoomLightTest
 	{
 		float outdoors = RoomLight.outdoorLight(DAY), target = RoomLight.target(DAY, 1);
 		float skyLuminance = RoomLight.skyLuminance(DAY);
-		RoomLight windowless = baked(walled(), 0, 4);
+		RoomLight windowless = baked(0, 4);
 		windowless.update(0, target, DAY);
-		RoomLight torch = baked(walled(), 9, 4);
+		RoomLight torch = baked(9, 4);
 		torch.update(0, target, DAY);
 		// a doorway and windows: the sky comes in through the doorway; windows stop sight, so they bring none
 		int[][][] doorway = RoomMapTest.walls();
@@ -201,16 +180,16 @@ public class RoomLightTest
 	}
 
 	@Test
-	public void theFillFollowsABakeAndBrightness()
+	public void theFillFollowsTheLampsAndBrightness()
 	{
 		RoomLight l = light();
 		assertEquals(RoomLight.TARGET_NIGHT, night(l), 1e-5);
-		// the room's lights are baked: its blocks are sent
-		l.floor(0, 1, 1, glow(2));
+		// the room's lamps come on
+		l.setLamps(new float[]{0, 2});
 		l.update(10, RoomLight.target(NIGHT, 1), NIGHT);
 		assertEquals(0, l.fillOf(1), 1e-3);
-		// a door opens, the lights are baked again with the room shut off from them: the blocks are cleared
-		l.floor(0, 1, 1, null);
+		// a door shuts them out
+		l.setLamps(new float[]{0, 0});
 		l.update(10, RoomLight.target(NIGHT, 1), NIGHT);
 		assertEquals(RoomLight.TARGET_NIGHT, l.fillOf(1), 1e-3);
 		// brightness scales the target, by day and at night; 0 turns the fill off
@@ -222,21 +201,11 @@ public class RoomLightTest
 	}
 
 	@Test
-	public void aRoomNewToTheSceneIsSummedFromTheLightAlreadySent()
-	{
-		RoomLight l = new RoomLight();
-		l.setCells(CELLS);
-		l.floor(0, 1, 1, glow(2));
-		l.setRooms(RoomMapTest.house(new int[4][LOCAL][LOCAL]));
-		assertEquals(1, l.lightScore(1), 1e-3);
-	}
-
-	@Test
 	public void fillsEaseInAndTheSummaryCountsRooms()
 	{
 		RoomLight l = light();
 		l.update(0, RoomLight.target(NIGHT, 1), NIGHT);
-		l.floor(0, 1, 1, glow(2));
+		l.setLamps(new float[]{0, 2});
 		float target = RoomLight.target(NIGHT, 1);
 		l.update(0.1f, target, NIGHT);
 		assertTrue("part of the way", l.fillOf(1) > 0 && l.fillOf(1) < target);
@@ -248,12 +217,13 @@ public class RoomLightTest
 		assertEquals(1, dark.summary()[2]);
 	}
 
-	// ---- a real bake: a room of 6 by 6 tiles in a scene of 48, lit by a light of the given strength in the middle
+	// ---- the lamps' scores: a room of 6 by 6 tiles (extended 20..25) in a scene of 48, walled all round
 
-	private static RoomMap room(BakeScene scene)
+	private static final int SCENE = 48, SCENE_OFFSET = 4;
+
+	private static RoomMap room()
 	{
-		int size = BakeScene.SIZE, offset = BakeScene.OFFSET;
-		byte[][][] settings = new byte[4][size][size];
+		byte[][][] settings = new byte[4][SCENE][SCENE];
 		for (int x = 20; x <= 25; ++x)
 		{
 			for (int y = 20; y <= 25; ++y)
@@ -261,37 +231,48 @@ public class RoomLightTest
 				settings[0][x][y] = BuildingDetector.TILE_FLAG_UNDER_ROOF;
 			}
 		}
-		int[][][] heights = new int[4][size + 1][size + 1];
-		RoomMap m = RoomMap.build(BuildingDetector.detect(settings, null), settings, heights, offset);
-		m.setWalls(WallMap.build(scene.flags, null, size, offset, 1));
+		int[][][] heights = new int[4][SCENE + 1][SCENE + 1];
+		RoomMap m = RoomMap.build(BuildingDetector.detect(settings, null), settings, heights, SCENE_OFFSET);
+		m.setWalls(walled());
 		return m;
 	}
 
-	private static BakeScene walled()
+	/** The room's walls: west of columns 20 and 26, south of rows 20 and 26. */
+	private static WallMap walled()
 	{
-		BakeScene scene = new BakeScene();
-		scene.verticalWall(0, 20, 20, 25).verticalWall(0, 26, 20, 25);
-		for (int x = 20; x <= 25; ++x)
+		int local = SCENE - 2 * SCENE_OFFSET;
+		int[][][] flags = new int[4][local][local];
+		for (int i = 20; i <= 25; ++i)
 		{
-			scene.southWall(0, x, 20).southWall(0, x, 26);
+			for (int x : new int[]{20, 26})
+			{
+				flags[0][x - SCENE_OFFSET][i - SCENE_OFFSET] |= WallMap.LOS_WEST;
+				flags[0][x - 1 - SCENE_OFFSET][i - SCENE_OFFSET] |= WallMap.LOS_EAST;
+			}
+			for (int y : new int[]{20, 26})
+			{
+				flags[0][i - SCENE_OFFSET][y - SCENE_OFFSET] |= WallMap.LOS_SOUTH;
+				flags[0][i - SCENE_OFFSET][y - 1 - SCENE_OFFSET] |= WallMap.LOS_NORTH;
+			}
 		}
-		return scene;
+		return WallMap.build(flags, null, SCENE, SCENE_OFFSET, 1);
 	}
 
-	private static RoomLight baked(BakeScene scene, float strength, float radiusTiles)
+	/** A warm lamp at an extended tile position, 100 units above the floor. */
+	private static PointLight lamp(float tileX, float tileY, float strength, float radiusTiles)
 	{
+		return new PointLight().set((tileX - SCENE_OFFSET) * 128, -100, (tileY - SCENE_OFFSET) * 128, radiusTiles * 128,
+			1, 0.58f, 0.01f, strength).onPlane(0);
+	}
+
+	/** The room with a lamp of this strength in its middle (none for 0). */
+	private static RoomLight baked(float strength, float radiusTiles)
+	{
+		RoomMap room = room();
 		RoomLight l = new RoomLight();
-		l.setCells(BakeScene.SIZE * 4);
-		l.setRooms(room(scene));
-		LightMap map = new LightMap(0);
-		map.setBlockers(scene.blockers());
-		if (strength > 0)
-		{
-			map.add(new LightMap.Source(0, BakeScene.world(23), -100, BakeScene.world(23), radiusTiles * 128, 1, 0.58f, 0.01f,
-				strength, false, 1, 0));
-		}
-		map.runTasks();
-		map.update(100000, floors(l));
+		l.setRooms(room);
+		l.setLamps(RoomLight.lampScores(room, walled(), strength > 0 ? List.of(lamp(23, 23, strength, radiusTiles))
+			: List.of()));
 		return l;
 	}
 
@@ -299,11 +280,13 @@ public class RoomLightTest
 	public void aRoomWithATorchInItIsNotFilledAndAnEmptyOneIs()
 	{
 		float target = RoomLight.TARGET_NIGHT;
-		RoomLight torch = baked(walled(), 9, 4);
+		RoomLight torch = baked(9, 4);
 		torch.update(0, target, NIGHT);
 		assertTrue("score " + torch.lightScore(1), torch.lightScore(1) > target);
-		assertEquals(0, torch.fillOf(1), 0.01f * target);
-		RoomLight empty = baked(walled(), 0, 4);
+		// a twentieth at most: the floor takes the lamp at its real slant now (it was a flat half before), so the score
+		// sits just past the target, in the knee
+		assertEquals(0, torch.fillOf(1), 0.05f * target);
+		RoomLight empty = baked(0, 4);
 		empty.update(0, target, NIGHT);
 		assertEquals(target, empty.fillOf(1), 1e-5);
 		// by day: the hearth's room needs about nothing of the day's target, the empty one all of it
@@ -312,22 +295,19 @@ public class RoomLightTest
 		empty.update(10, day, DAY);
 		System.out.println("room light numbers: hearth room score " + torch.lightScore(1) + ", day target " + day + ", hearth fill "
 			+ torch.fillOf(1) + ", windowless fill " + empty.fillOf(1));
-		assertTrue("hearth by day " + torch.fillOf(1), torch.fillOf(1) < 0.6f * day);
+		// under two thirds of the target (0.6 with the light map's flat half for the floor's slant)
+		assertTrue("hearth by day " + torch.fillOf(1), torch.fillOf(1) < 0.65f * day);
 		assertEquals(day, empty.fillOf(1), 1e-5);
 	}
 
 	@Test
-	public void aLightBehindTheWallDoesNotCountForTheRoom()
+	public void aLampBehindTheWallDoesNotCountForTheRoomAndOneInADoorwayDoes()
 	{
-		BakeScene scene = walled();
-		RoomLight l = new RoomLight();
-		l.setCells(BakeScene.SIZE * 4);
-		l.setRooms(room(scene));
-		LightMap map = new LightMap(0);
-		map.setBlockers(scene.blockers());
-		map.add(new LightMap.Source(0, BakeScene.world(30), -100, BakeScene.world(23), 4 * 128, 1, 0.58f, 0.01f, 9, false, 1, 0));
-		map.runTasks();
-		map.update(100000, floors(l));
-		assertEquals(0, l.lightScore(1), 1e-3);
+		// east of the room's east wall, three tiles in reach of its floor
+		float[] behind = RoomLight.lampScores(room(), walled(), List.of(lamp(27, 23, 9, 4)));
+		assertEquals(0, behind[1], 1e-6);
+		// the same lamp inside, by the wall
+		float[] inside = RoomLight.lampScores(room(), walled(), List.of(lamp(25.5f, 23, 9, 4)));
+		assertTrue("inside " + inside[1], inside[1] > 0.1f);
 	}
 }

@@ -88,8 +88,6 @@ public class Zone
 	// the skylight's copy of the opaque triangles (SceneUploader), until the voxel worker turns it into voxels
 	public VoxelCapture voxelCapture;
 	public Voxelizer.Zone voxels;
-	// the models that stop light at lamp height, rasterized with the voxels (ModelBlockers)
-	public ModelBlockers.Zone modelBlockers;
 
 	// what renderOpaque draws of the swaying ranges
 	public static final int SWAY_ALL = 0, SWAY_EXCLUDE = 1, SWAY_ONLY = 2;
@@ -326,37 +324,6 @@ public class Zone
 			// draw the non roofs
 			pushRange(endpos, this.levelOffsets[level]);
 		}
-	}
-
-	/**
-	 * The vertices renderOpaque draws now, as the buffer holds them (VERT_SIZE bytes each), for the scene dump.
-	 *
-	 * @return null when the zone has no buffer to read
-	 */
-	public ByteBuffer readOpaque(int minLevel, int currentLevel, int maxLevel, Set<Integer> hiddenRoofIds)
-	{
-		if (vboO == null || vboO.mapped)
-		{
-			return null;
-		}
-		pushLevels(minLevel, currentLevel, maxLevel, hiddenRoofIds);
-		int ints = 0;
-		for (int i = 0; i < drawOff.position(); ++i)
-		{
-			ints += drawEnd.get(i) - drawOff.get(i);
-		}
-		ByteBuffer out = BufferUtils.createByteBuffer(ints * 4);
-		glBindBuffer(GL_ARRAY_BUFFER, vboO.bufId);
-		for (int i = 0; i < drawOff.position(); ++i)
-		{
-			int length = (drawEnd.get(i) - drawOff.get(i)) * 4;
-			out.limit(out.position() + length);
-			glGetBufferSubData(GL_ARRAY_BUFFER, drawOff.get(i) * 4L, out.slice());
-			out.position(out.limit());
-		}
-		glBindBuffer(GL_ARRAY_BUFFER, 0);
-		out.flip();
-		return out;
 	}
 
 	private static final int[] filterOff = new int[NUM_DRAW_RANGES];

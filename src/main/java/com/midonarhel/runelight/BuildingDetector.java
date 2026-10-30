@@ -21,7 +21,7 @@ import java.util.List;
 public final class BuildingDetector
 {
 	static final int TILE_FLAG_BRIDGE = 2;
-	static final int TILE_FLAG_UNDER_ROOF = 4;
+	public static final int TILE_FLAG_UNDER_ROOF = 4;
 
 	// rooms smaller than this are stray flags or tiny canopies
 	static final int MIN_TILES = 3;
@@ -59,7 +59,7 @@ public final class BuildingDetector
 	{
 	}
 
-	static Result detect(byte[][][] settings, int[][][] roofs)
+	public static Result detect(byte[][][] settings, int[][][] roofs)
 	{
 		Result result = new Result();
 		if (settings == null || settings.length == 0)

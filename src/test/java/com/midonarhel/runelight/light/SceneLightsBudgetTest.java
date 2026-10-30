@@ -1,4 +1,4 @@
-package com.midonarhel.runelight;
+package com.midonarhel.runelight.light;
 
 import java.util.ArrayList;
 import java.util.List;

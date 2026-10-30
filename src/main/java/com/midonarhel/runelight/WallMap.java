@@ -10,35 +10,36 @@ import java.util.Collection;
  * crosses it. Walls are the edges the collision map says block line of sight (closed doors and windows included,
  * fences and railings not; an open door is no wall), plus the diagonal walls, which the collision map only shows
  * as a fully blocked tile, from their objects. Edges that stop movement but not sight (bars, fences, railings,
- * low walls, gates) are kept apart (seeThrough): they let light through, a little dimmed. Rooms split along these walls (BuildingDetector.split) and the
- * point-light blocking reads the same edges in point_light_blocking.glsl.
+ * low walls, gates) are kept apart (seeThrough): they let light through. Rooms split along these walls
+ * (BuildingDetector.split), and they are the one thing that stops a lamp (LampWalls, light/lamp.glsl; on the CPU
+ * {@link #blocked}).
  *
- * GL-free and immutable once built, so the light map's workers can read it. Arrays are [plane][x][y] in
- * extended scene tiles, like RoomMap; x is east, y north.
+ * GL-free and immutable once built, so workers can read it. Arrays are [plane][x][y] in extended scene tiles, like
+ * RoomMap; x is east, y north.
  */
 public final class WallMap
 {
-	static final int PLANES = 4;
+	public static final int PLANES = 4;
 
 	// per tile bits
 	public static final int NORTH = 1, EAST = 2, SOUTH = 4, WEST = 8;
 	// diagonal from the south-west corner to the north-east one ("/"), and from the north-west to the south-east ("\")
-	static final int DIAG_SW_NE = 16, DIAG_NW_SE = 32;
+	public static final int DIAG_SW_NE = 16, DIAG_NW_SE = 32;
 
 	// CollisionDataFlag: line of sight blocked toward a side, and the whole tile
-	static final int LOS_NORTH = 0x400, LOS_EAST = 0x1000, LOS_SOUTH = 0x4000, LOS_WEST = 0x10000;
-	static final int LOS_FULL = 0x20000;
+	public static final int LOS_NORTH = 0x400, LOS_EAST = 0x1000, LOS_SOUTH = 0x4000, LOS_WEST = 0x10000;
+	public static final int LOS_FULL = 0x20000;
 	// CollisionDataFlag: movement blocked toward a side
 	static final int MOVE_NORTH = 0x2, MOVE_EAST = 0x8, MOVE_SOUTH = 0x20, MOVE_WEST = 0x80;
 
 	// object config: type in the low 5 bits, rotation in bits 6-7; type 9 is a diagonal wall
 	static final int TYPE_DIAGONAL_WALL = 9;
 
-	final int size;
+	public final int size;
 	// extended tiles before local tile 0
-	final int offset;
+	public final int offset;
 	// scenes and rebuilds of the same scene: a different scene means everything cast before is stale
-	final int scene;
+	public final int scene;
 	private final byte[] bits;
 	// tiles the collision map blocks sight across entirely (a solid object); a diagonal wall tile is one too, but
 	// has its bit
@@ -47,11 +48,11 @@ public final class WallMap
 	private final byte[] see;
 
 	/** A diagonal wall object on a tile: kind is DIAG_SW_NE or DIAG_NW_SE. Extended tile coordinates. */
-	static final class Diagonal
+	public static final class Diagonal
 	{
 		final int plane, x, y, kind;
 
-		Diagonal(int plane, int x, int y, int kind)
+		public Diagonal(int plane, int x, int y, int kind)
 		{
 			this.plane = plane;
 			this.x = x;
@@ -114,7 +115,7 @@ public final class WallMap
 	 * @param size extended tiles per side
 	 * @param offset extended tiles before local tile 0
 	 */
-	static WallMap build(int[][][] flags, Collection<Diagonal> diagonals, int size, int offset, int scene)
+	public static WallMap build(int[][][] flags, Collection<Diagonal> diagonals, int size, int offset, int scene)
 	{
 		WallMap m = new WallMap(size, offset, scene);
 		for (int plane = 0; plane < PLANES; ++plane)
@@ -181,7 +182,7 @@ public final class WallMap
 	}
 
 	/** The tile's bits, 0 outside the map. */
-	int get(int plane, int x, int y)
+	public int get(int plane, int x, int y)
 	{
 		if (plane < 0 || plane >= PLANES || x < 0 || y < 0 || x >= size || y >= size)
 		{
@@ -202,7 +203,7 @@ public final class WallMap
 	}
 
 	/** Whether a wall stands on the edge between tile (x, y) and its neighbor toward side (NORTH, EAST, ...). */
-	boolean edge(int plane, int x, int y, int side)
+	public boolean edge(int plane, int x, int y, int side)
 	{
 		switch (side)
 		{
@@ -316,35 +317,6 @@ public final class WallMap
 	}
 
 	/**
-	 * Mark the light map's cells (a quarter tile) of every tile whose walls or solid objects differ from another map of
-	 * the same size, and the cell around them: a wall stands on its tile's edge.
-	 */
-	void diff(WallMap o, CellChanges changes)
-	{
-		int n = LightBlockers.CELLS_PER_TILE;
-		for (int plane = 0; plane < PLANES; ++plane)
-		{
-			for (int x = 0; x < size; ++x)
-			{
-				int i = index(plane, x, 0);
-				for (int y = 0; y < size; ++y, ++i)
-				{
-					if (bits[i] != o.bits[i] || full[i] != o.full[i] || see[i] != o.see[i])
-					{
-						for (int dz = 0; dz < n; ++dz)
-						{
-							for (int dx = 0; dx < n; ++dx)
-							{
-								changes.mark(x * n + dx, y * n + dz, 1);
-							}
-						}
-					}
-				}
-			}
-		}
-	}
-
-	/**
 	 * Which diagonal a diagonal wall's model runs along, from its vertices (model space, x east and z north, before
 	 * the object's model orientation, which is applied here the way SceneUploader does): the sign of the x-z
 	 * covariance. DIAG_SW_NE when x and z grow together; the rotation's parity when the model says nothing.
@@ -393,7 +365,7 @@ public final class WallMap
 	 * Whether a wall stands between two points on a plane, local world units (128 per tile, x east, z north). Ends
 	 * exactly on a wall don't count as crossing it.
 	 */
-	boolean blocked(int plane, float ax, float az, float bx, float bz)
+	public boolean blocked(int plane, float ax, float az, float bx, float bz)
 	{
 		if (plane < 0 || plane >= PLANES)
 		{

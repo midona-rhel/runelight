@@ -197,7 +197,7 @@ void drop(int id, vec2 corner) {
   float near = smoothstep(NEAR_FADE, NEAR_FADE * 3.0, c.w);
   float count = float(dropCount);
   float added = clamp((count - float(id)) / (count * COUNT_FADE + 1.0), 0.0, 1.0);
-  vec3 points = weatherPointLights(head, c1, vec3(0.0), roofY);
+  vec3 points = weatherPointLights(head, c1, vec3(0.0));
   float lit = min(dot(points, vec3(0.2126, 0.7152, 0.0722)), 1.0);
   fAlpha = DROP_ALPHA * rainStyle.w * amount * share * weight * near * added * min(widthPx / drawn * 1.6, 1.0) * mix(MIN_STREAK_DIM, 1.0, alongLen / shown) * (1.0 + LIT_ALPHA * lit);
   fQuad = vec2(corner.x, corner.y);
@@ -244,7 +244,7 @@ void wadeDroplet(int id, vec2 corner) {
   vec4 c = viewProj * vec4(p, 1.0);
   float r = max(WADE_DROPLET_SIZE * pixelScale() / c.w, 1.0);
   gl_Position = offsetPixels(c, vec2(corner.x * SPLASH_ASPECT, corner.y) * r);
-  vec3 points = weatherPointLights(p, c, vec3(0.0), top);
+  vec3 points = weatherPointLights(p, c, vec3(0.0));
   float lit = min(dot(points, vec3(0.2126, 0.7152, 0.0722)), 1.0);
   fAlpha = WADE_DROPLET_ALPHA * amount * s.w * (1.0 - t / WADE_FLIGHT) * (1.0 + LIT_ALPHA * lit);
   fQuad = corner;
@@ -288,7 +288,7 @@ void impact(int id, vec2 corner) {
   vec4 c = viewProj * vec4(p + vec3(q.x, 0.0, q.y) * r, 1.0);
   gl_Position = c;
 
-  vec3 points = weatherPointLights(p, cf, vec3(0.0), top);
+  vec3 points = weatherPointLights(p, cf, vec3(0.0));
   float lit = min(dot(points, vec3(0.2126, 0.7152, 0.0722)), 1.0);
   // fade toward the sides of the box, which moves with the camera
   vec2 rel = abs(xz - layerBox.xz) / IMPACT_HALF;

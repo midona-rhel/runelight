@@ -86,7 +86,7 @@ void main() {
   float sub = min(radiusPx / drawn, 1.0);
   float count = float(dropCount);
   float added = clamp((count - float(id)) / (count * COUNT_FADE + 1.0), 0.0, 1.0);
-  vec3 points = weatherPointLights(p, c, vec3(0.0), roofY);
+  vec3 points = weatherPointLights(p, c, vec3(0.0));
   float lit = min(dot(points, vec3(0.2126, 0.7152, 0.0722)), 1.0);
   fAlpha = FLAKE_ALPHA * amount * share * weight * near * smoothstep(0.0, 16.0, above) * sub * sub * added * (1.0 + LIT_ALPHA * lit);
   fQuad = corner;

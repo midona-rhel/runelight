@@ -46,8 +46,8 @@ public class BuildingLights
 	private volatile RoomMap rooms;
 	private Scene builtFor;
 	private int builtBaseX, builtBaseY;
-	// The walls (WallMap) the rooms are split along and the static lights are baked against: rebuilt every tick from
-	// the collision maps, as doors open and close, plus the diagonal wall objects, followed through spawn events.
+	// The walls (WallMap) the rooms are split along and the lamps are stopped by (LampWalls): from the collision maps,
+	// as doors open and close, plus the diagonal wall objects, followed through spawn events.
 	private volatile WallMap walls;
 	private final Map<GameObject, WallMap.Diagonal> diagonals = new IdentityHashMap<>();
 	private BuildingDetector.Result coarse;
@@ -284,7 +284,7 @@ public class BuildingLights
 	/**
 	 * 0 by day to 1 at night, starting a little before sunset so interiors are lit as it gets dark.
 	 */
-	static float nightFactor(float sunAltitude)
+	public static float nightFactor(float sunAltitude)
 	{
 		float t = (FADE_START_ALTITUDE - sunAltitude) / (FADE_START_ALTITUDE - FADE_END_ALTITUDE);
 		t = Math.max(0, Math.min(1, t));

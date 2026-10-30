@@ -1,4 +1,9 @@
-package com.midonarhel.runelight;
+package com.midonarhel.runelight.light;
+
+import com.midonarhel.runelight.BuildingLights;
+import com.midonarhel.runelight.RoomMap;
+import com.midonarhel.runelight.SkyField;
+import com.midonarhel.runelight.WallMap;
 
 import java.util.Arrays;
 import java.util.concurrent.ExecutorService;
@@ -11,9 +16,10 @@ import org.slf4j.LoggerFactory;
  * black, nor lit more than it needs.
  *
  * A room's score is what its floor receives, as luminance of the light on a surface, averaged over the floor:
- * - the light map's point lights (the floors of the blocks as they are sent to the GPU, {@link #floor}): each floor cell's
- *   light (the lights' luminances times their visibility and falloff) times FLOOR_NDL (a floor is lit at a slant), at most CELL_CAP, so that a torch's hot spot cannot hide a room's dark
- *   rest. It is worked out for the time of day, so a night-only light counts only at night;
+ * - its lamps ({@link #lampScores}): each floor tile's light from the fixed lamps there now at their steady strength
+ *   (SceneLights.steadyLamps), as the shader has it (light/lamp.glsl: the falloff, the walls, the cosine at the floor),
+ *   at most TILE_CAP, so that a torch's hot spot cannot hide a room's dark rest. Worked out on a worker every
+ *   LAMP_SECONDS, and when the rooms or walls change, so a night-only lamp counts only at night;
  * - the sky coming in: how much of the room's floor the sky light reaches through its doors and openings (SkyField, as
  *   the skylight spreads it; found on a worker whenever the walls change), times what a floor the sky reaches in full
  *   gets of the daylight now ({@link #skyLuminance}).
@@ -21,7 +27,7 @@ import org.slf4j.LoggerFactory;
  * The fill is the shortfall against a target, with a soft knee: fill = target * knee((target - score) / target). The
  * target is the "minimum room light" ({@link #target}): TARGET_NIGHT at night, by day DAY_SHARE of the light a sunlit
  * floor outdoors gets ({@link #outdoorLight}), scaled by the Brightness setting. {@link #update} works the fills out
- * and eases them in time (a room whose lights have just been baked does not pop). {@link #table} is what the shader
+ * and eases them in time (a room whose lamps have just come on does not pop). {@link #table} is what the shader
  * reads by room id (rooms.glsl), x being the fill's luminance.
  *
  * Calibration, in the composite's light on an upward surface (linear luminance; outdoors at 45 degrees of sun about
@@ -36,7 +42,7 @@ import org.slf4j.LoggerFactory;
  *   as its fire makes it. Before this a pub by day read 11 percent of the grass outside; a fully lit room still does
  *   as it did.
  */
-final class RoomLight
+public final class RoomLight
 {
 	private static final Logger log = LoggerFactory.getLogger(RoomLight.class);
 
@@ -46,10 +52,10 @@ final class RoomLight
 	static final float DAY_SHARE = 0.42f;
 	/** Of the target (the shortfall) over which the fill eases in: no fill at a score of target * (1 + KNEE). */
 	static final float KNEE = 0.25f;
-	/** How much of the light map's cell light a floor takes: the cosine of the light's angle, averaged. */
-	static final float FLOOR_NDL = 0.5f;
-	/** The most a cell counts for, in luminance: about twice the day's target. */
-	static final float CELL_CAP = 1.5f;
+	/** The most a floor tile counts for, in luminance: about twice the day's target. */
+	static final float TILE_CAP = 1.5f;
+	/** Seconds between the lamps' scores being worked out again. */
+	static final float LAMP_SECONDS = 0.5f;
 	/**
 	 * The share of the outdoor light a floor the sky reaches in full gets: composite_frag.glsl's room daylight, 0.3 of the
 	 * ambient, sky and 0.7 of the sun's light, over the outdoor light.
@@ -67,16 +73,10 @@ final class RoomLight
 	/** A fill under this share of the target is none, over 1 minus it the full target (the summary). */
 	static final float SUMMARY_EDGE = 0.05f;
 
-	private static final int CELLS = LightBlockers.CELLS_PER_TILE;
-
-	// the light map's cells' scores per storey, as the GPU has them (the rooms may change under them)
-	private final float[][] grid = new float[WallMap.PLANES][];
-	private int cells;
-
 	private RoomMap rooms;
-	// per room id: floor tiles, the summed cell scores, the sky's share
+	// per room id: floor tiles, the lamps' mean score on them, the sky's share
 	private int[] tiles = new int[1];
-	private double[] sums = new double[1];
+	private float[] lamp = new float[1];
 	private float[] sky = new float[1];
 	private float[] now = new float[1], goal = new float[1];
 	// x per room id, the table the shader reads
@@ -94,32 +94,19 @@ final class RoomLight
 	private volatile float[] skyDone;
 	private volatile Object skyDoneFor;
 	private volatile Object skyRequest;
+	// the lamps' scores per room as the worker found them, and the rooms they are for; whether it is at it, how long
+	// since they were asked for, and for which walls
+	private volatile float[] lampDone;
+	private volatile Object lampDoneFor;
+	private volatile boolean lampBusy;
+	private float lampAge = Float.POSITIVE_INFINITY;
+	private Object lampWalls;
 
 	// -------------------------------------------------------------------------------------------------------
 	// Score
 
-	/**
-	 * The light map's size in cells a side, 0 for none; the light stored is forgotten when it changes, and so it should
-	 * when the map's texture is made again (empty).
-	 */
-	void setCells(int n)
-	{
-		if (n != cells)
-		{
-			clearLight();
-			cells = n;
-		}
-	}
-
-	/** The light map's texture came back empty: nothing is lit by it. */
-	void clearLight()
-	{
-		Arrays.fill(grid, null);
-		Arrays.fill(sums, 0);
-	}
-
-	/** The rooms of a new scene (or none, null): their tiles are counted and the stored light summed over them. */
-	void setRooms(RoomMap map)
+	/** The rooms of a new scene (or none, null): their tiles are counted; their lamps are worked out again. */
+	public void setRooms(RoomMap map)
 	{
 		if (map == rooms)
 		{
@@ -132,6 +119,9 @@ final class RoomLight
 		skyFor = null;
 		skyDone = null;
 		skyDoneFor = null;
+		lampDone = null;
+		lampDoneFor = null;
+		lampAge = Float.POSITIVE_INFINITY;
 		int n = 1;
 		if (map != null)
 		{
@@ -141,7 +131,7 @@ final class RoomLight
 			}
 		}
 		tiles = new int[n];
-		sums = new double[n];
+		lamp = new float[n];
 		sky = new float[n];
 		now = new float[n];
 		goal = new float[n];
@@ -156,92 +146,19 @@ final class RoomLight
 		{
 			return;
 		}
-		int size = map.size;
-		for (int plane = 0; plane < RoomMap.PLANES; ++plane)
+		for (short room : map.rooms)
 		{
-			float[] g = cells == size * CELLS ? grid[plane] : null;
-			for (int x = 0; x < size; ++x)
+			if (room > 0)
 			{
-				for (int y = 0; y < size; ++y)
-				{
-					int room = map.room(plane, x, y);
-					if (room <= 0)
-					{
-						continue;
-					}
-					++tiles[room];
-					if (g != null)
-					{
-						for (int j = 0; j < CELLS; ++j)
-						{
-							for (int i = 0; i < CELLS; ++i)
-							{
-								sums[room] += g[(y * CELLS + j) * cells + x * CELLS + i];
-							}
-						}
-					}
-				}
+				++tiles[room];
 			}
 		}
 	}
 
-	/** The light on the floor in a block of the light map's cells (LightMap.Sink): null is none. */
-	void floor(int plane, int bx, int bz, float[] light)
-	{
-		RoomMap map = rooms;
-		int side = LightMap.BLOCK;
-		if (cells == 0 || plane < 0 || plane >= grid.length)
-		{
-			return;
-		}
-		if (grid[plane] == null)
-		{
-			if (light == null)
-			{
-				return;
-			}
-			grid[plane] = new float[cells * cells];
-		}
-		float[] g = grid[plane];
-		for (int j = 0; j < side; ++j)
-		{
-			int z = bz * side + j;
-			if (z >= cells)
-			{
-				break;
-			}
-			for (int i = 0; i < side; ++i)
-			{
-				int x = bx * side + i;
-				if (x >= cells)
-				{
-					break;
-				}
-				float score = 0;
-				if (light != null)
-				{
-					score = Math.min(light[j * side + i] * FLOOR_NDL, CELL_CAP);
-				}
-				int k = z * cells + x;
-				float old = g[k];
-				if (score == old)
-				{
-					continue;
-				}
-				g[k] = score;
-				int room = map != null ? map.room(plane, x / CELLS, z / CELLS) : 0;
-				if (room > 0)
-				{
-					sums[room] += score - old;
-				}
-			}
-		}
-	}
-
-	/** The mean of the light map's cell scores over a room's floor. */
+	/** The lamps' mean score over a room's floor. */
 	float lightScore(int room)
 	{
-		return room > 0 && room < tiles.length && tiles[room] > 0 ? (float) (sums[room] / (tiles[room] * CELLS * CELLS)) : 0;
+		return room > 0 && room < lamp.length ? lamp[room] : 0;
 	}
 
 	/** The sky's share of a room (0 to 1). */
@@ -285,7 +202,7 @@ final class RoomLight
 	 * @param sunAltitude degrees
 	 * @param brightness the setting, 1 for 100%; 0 turns the fill off
 	 */
-	static float target(float sunAltitude, float brightness)
+	public static float target(float sunAltitude, float brightness)
 	{
 		float night = BuildingLights.nightFactor(sunAltitude);
 		float day = Math.max(TARGET_NIGHT, DAY_SHARE * outdoorLight(sunAltitude));
@@ -386,7 +303,7 @@ final class RoomLight
 	}
 
 	/** Follow the walls: the sky's share of the rooms is worked out again on a worker when they change. */
-	void followWalls(WallMap walls, byte[] floors, float reachTiles)
+	public void followWalls(WallMap walls, byte[] floors, float reachTiles)
 	{
 		RoomMap map = rooms;
 		if (map == null || walls == null || floors == null || walls.size != map.size)
@@ -399,17 +316,7 @@ final class RoomLight
 			skyWalls = walls;
 			final Object request = new Object();
 			skyRequest = request;
-			if (worker == null)
-			{
-				worker = Executors.newSingleThreadExecutor(r ->
-				{
-					Thread t = new Thread(r, "RuneLight room sky");
-					t.setDaemon(true);
-					t.setPriority(Thread.MIN_PRIORITY);
-					return t;
-				});
-			}
-			worker.execute(() ->
+			worker().execute(() ->
 			{
 				float[] shares = skyShares(map, walls, floors, reachTiles);
 				if (skyRequest == request)
@@ -427,13 +334,146 @@ final class RoomLight
 		}
 	}
 
+	// -------------------------------------------------------------------------------------------------------
+	// Lamps
+
+	/**
+	 * Every room's lamp score: the mean over its floor tiles of the light the lamps give the tile's middle, as
+	 * light/lamp.glsl gives it (luminance times 117 HD's falloff, none past a wall of the lamp's storey, times the
+	 * cosine at the upward floor), each tile at most TILE_CAP.
+	 */
+	static float[] lampScores(RoomMap map, WallMap walls, java.util.List<PointLight> lamps)
+	{
+		int n = map.rooms.length == 0 ? 1 : maxRoom(map) + 1;
+		int size = map.size;
+		float[] tile = new float[RoomMap.PLANES * size * size];
+		for (PointLight l : lamps)
+		{
+			int plane = l.plane;
+			if (plane < 0 || plane >= RoomMap.PLANES || l.radius <= 0)
+			{
+				continue;
+			}
+			float luminance = (0.2126f * l.r + 0.7152f * l.g + 0.0722f * l.b) * l.intensity;
+			float r2 = l.radius * l.radius;
+			int x0 = Math.max((int) Math.floor((l.x - l.radius) / RoomMap.TILE) + map.offset, 0);
+			int y0 = Math.max((int) Math.floor((l.z - l.radius) / RoomMap.TILE) + map.offset, 0);
+			int x1 = Math.min((int) Math.floor((l.x + l.radius) / RoomMap.TILE) + map.offset, size - 1);
+			int y1 = Math.min((int) Math.floor((l.z + l.radius) / RoomMap.TILE) + map.offset, size - 1);
+			for (int x = x0; x <= x1; ++x)
+			{
+				for (int y = y0; y <= y1; ++y)
+				{
+					int i = map.index(plane, x, y);
+					if (map.rooms[i] <= 0)
+					{
+						continue;
+					}
+					float cx = (x - map.offset + 0.5f) * RoomMap.TILE, cz = (y - map.offset + 0.5f) * RoomMap.TILE;
+					// y points down: the floor below the lamp is lit from above
+					float dx = l.x - cx, dy = map.floors[i] - l.y, dz = l.z - cz;
+					float d2 = dx * dx + dy * dy + dz * dz;
+					if (d2 >= r2 || dy <= 0 || walls != null && walls.blocked(plane, cx, cz, l.ox, l.oz))
+					{
+						continue;
+					}
+					float d = (float) Math.sqrt(d2);
+					float att = 1 - d / l.radius;
+					tile[i] += luminance * att * att * (dy / Math.max(d, 1));
+				}
+			}
+		}
+		float[] sum = new float[n];
+		int[] count = new int[n];
+		for (int i = 0; i < tile.length; ++i)
+		{
+			int room = map.rooms[i];
+			if (room > 0 && room < n)
+			{
+				sum[room] += Math.min(tile[i], TILE_CAP);
+				++count[room];
+			}
+		}
+		for (int room = 1; room < n; ++room)
+		{
+			sum[room] = count[room] > 0 ? sum[room] / count[room] : 0;
+		}
+		return sum;
+	}
+
+	/**
+	 * Follow the lamps: their scores are worked out again on the worker every LAMP_SECONDS, and at once when the rooms
+	 * or the walls change.
+	 *
+	 * @param lamps called for the lamps when they are wanted (SceneLights.steadyLamps)
+	 * @param dt seconds since the last call
+	 */
+	public void followLamps(java.util.function.Consumer<java.util.List<PointLight>> lamps, WallMap walls, float dt)
+	{
+		RoomMap map = rooms;
+		float[] done = lampDone;
+		if (done != null && lampDoneFor == map && done.length == lamp.length)
+		{
+			System.arraycopy(done, 0, lamp, 0, done.length);
+			lampDone = null;
+		}
+		if (map == null)
+		{
+			return;
+		}
+		lampAge += Math.max(dt, 0);
+		if (lampBusy || lampAge < LAMP_SECONDS && walls == lampWalls)
+		{
+			return;
+		}
+		lampAge = 0;
+		lampWalls = walls;
+		java.util.List<PointLight> list = new java.util.ArrayList<>();
+		lamps.accept(list);
+		lampBusy = true;
+		worker().execute(() ->
+		{
+			try
+			{
+				float[] scores = lampScores(map, walls, list);
+				lampDoneFor = map;
+				lampDone = scores;
+			}
+			finally
+			{
+				lampBusy = false;
+			}
+		});
+	}
+
+	private ExecutorService worker()
+	{
+		if (worker == null)
+		{
+			worker = Executors.newSingleThreadExecutor(r ->
+			{
+				Thread t = new Thread(r, "RuneLight room light");
+				t.setDaemon(true);
+				t.setPriority(Thread.MIN_PRIORITY);
+				return t;
+			});
+		}
+		return worker;
+	}
+
+	/** Put the lamps' scores in directly (tests). */
+	void setLamps(float[] scores)
+	{
+		System.arraycopy(scores, 0, lamp, 0, Math.min(scores.length, lamp.length));
+	}
+
 	/** Put the sky's shares in directly (tests, and anything that has found them another way). */
 	void setSky(float[] shares)
 	{
 		System.arraycopy(shares, 0, sky, 0, Math.min(shares.length, sky.length));
 	}
 
-	void free()
+	public void free()
 	{
 		if (worker != null)
 		{
@@ -453,7 +493,7 @@ final class RoomLight
 	 * @param sunAltitude degrees, for the sky's light
 	 * @return whether the table changed
 	 */
-	boolean update(float dt, float target, float sunAltitude)
+	public boolean update(float dt, float target, float sunAltitude)
 	{
 		float level = skyLuminance(sunAltitude);
 		lastTarget = target;

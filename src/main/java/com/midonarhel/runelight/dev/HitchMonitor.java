@@ -230,10 +230,7 @@ public final class HitchMonitor
 		int shown = 0;
 		for (int s = 0; s < CpuTimer.STAGES; ++s)
 		{
-			if (!CpuTimer.nested(s))
-			{
-				sum += cpu.getLastMs(s);
-			}
+			sum += cpu.getLastMs(s);
 		}
 		for (; shown < MAX_STAGES; ++shown)
 		{

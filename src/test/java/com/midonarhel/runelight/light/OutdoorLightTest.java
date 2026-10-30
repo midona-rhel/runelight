@@ -1,4 +1,4 @@
-package com.midonarhel.runelight;
+package com.midonarhel.runelight.light;
 
 import static org.junit.Assert.assertArrayEquals;
 import static org.junit.Assert.assertEquals;

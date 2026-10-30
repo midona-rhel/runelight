@@ -267,50 +267,23 @@ vec3 waterShoulder(vec3 c) {
   return mix(c, 1.0 - (1.0 - SHOULDER) * exp(-(c - SHOULDER) / (1.0 - SHOULDER)), step(SHOULDER, c));
 }
 
-// The lamps' light on the surface at camera-relative s (seen at pixel px, view depth viewZ): the baked lights
-// (light_map.glsl) and the clusters', added to the surface's light as a little each (LAMP_SURFACE) and to lampSpec as
-// their glints
+// The lamps' light on the surface at camera-relative s (seen at pixel px, view depth viewZ), from light/lamp.glsl:
+// added to the surface's light as a little each (LAMP_SURFACE) and to lampSpec as their glints
 void waterLamps(ivec2 px, vec3 s, float viewZ, vec3 nrm, vec3 toCamera, vec3 tAlong, vec3 tAcross,
   inout vec3 surfaceLight, inout vec3 lampSpec) {
   if (pointLightsEnabled != 1 || lightingEnabled != 1)
     return;
-  // the baked lights (light_map.glsl), each as below
-  int mapPlane = 0;
-  if (lightMapOn()) {
-    vec3 world = s + cameraPos;
-    mapPlane = lightMapPlane(world);
-    vec4 vis;
-    ivec4 ids;
-    if (lightMapSlots(world, world, mapPlane, vis, ids)) {
-      for (int k = 0; k < 4; ++k) {
-        vec3 color, ld;
-        float lightY;
-        if (lightMapLight(ids[k], vis[k], world, color, ld, lightY)) {
-          surfaceLight += color * (max(-ld.y, 0.2) * LAMP_SURFACE);
-          lampSpec += color * waterGlint(nrm, ld, toCamera, tAlong, tAcross, LAMP_ALONG, LAMP_ACROSS);
-        }
-      }
-    }
-  }
-  int entry = clusterAt(px, viewZ);
-  LightMask lights = clusterLights(entry);
+  LightMask lamps = clusterLights(clusterAt(px, viewZ));
   int li;
-  while (nextLight(lights, li)) {
-    vec4 posRadius = texelFetch(lightData, li * 2);
-    vec3 l = posRadius.xyz - s;
-    float d2 = dot(l, l);
-    float r2 = posRadius.w * posRadius.w;
-    if (d2 >= r2)
+  while (nextLight(lamps, li)) {
+    Lamp lamp = lampAt(li);
+    vec3 ld;
+    float d;
+    vec3 color = lampLight(lamp, s, s, ld, d);
+    if (color == vec3(0.0))
       continue;
-    vec4 colorCode = texelFetch(lightData, li * 2 + 1);
-    if (!lightOnStorey(colorCode.w, mapPlane)) {
-      continue;
-    }
-    vec3 color = colorCode.rgb;
-    float att = pointLightFalloff(d2, r2);
-    vec3 ld = l * inversesqrt(max(d2, 1.0));
-    surfaceLight += color * (att * max(-ld.y, 0.2) * LAMP_SURFACE);
-    lampSpec += color * (att * waterGlint(nrm, ld, toCamera, tAlong, tAcross, LAMP_ALONG, LAMP_ACROSS));
+    surfaceLight += color * (max(-ld.y, 0.2) * LAMP_SURFACE);
+    lampSpec += color * waterGlint(nrm, ld, toCamera, tAlong, tAcross, LAMP_ALONG, LAMP_ACROSS);
   }
 }
 

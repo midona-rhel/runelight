@@ -30,7 +30,6 @@ public final class SceneLoadReport
 		CpuTimer.ENVIRONMENT, CpuTimer.WEATHER, CpuTimer.LIGHTS, CpuTimer.CLUSTERS, CpuTimer.SHADOW_SUBMIT,
 		CpuTimer.UI_UPLOAD, CpuTimer.BUFFER_MAP, CpuTimer.LIGHT_UPLOAD, CpuTimer.VOXELS, CpuTimer.SKY_CACHE,
 		CpuTimer.OCCLUSION, CpuTimer.SKY_GRID
-		// the light map is timed inside light collection (CpuTimer.nested)
 	};
 
 	private volatile long loadStartNanos;

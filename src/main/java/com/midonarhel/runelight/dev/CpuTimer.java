@@ -33,21 +33,13 @@ public class CpuTimer
 	public static final int OCCLUSION = 14;
 	// handing the skylight's grid its next rays and uploading what it traced (the tracing is on its worker)
 	public static final int SKY_GRID = 15;
-	// handing the light map its changes and sending the blocks baked since (the baking is on its threads)
-	public static final int LIGHT_MAP = 16;
-	static final int STAGES = 17;
+	static final int STAGES = 16;
 
 	static final String[] NAMES = {
 		"client scene", "environment", "weather", "light collection", "light clusters", "shadow submit",
 		"UI upload", "swap wait", "outside frame", "client UI + overlays",
-		"buffer map", "light upload", "scene voxels", "sky capture", "occlusion maps", "sky grid", "light map"
+		"buffer map", "light upload", "scene voxels", "sky capture", "occlusion maps", "sky grid"
 	};
-
-	/** Steps timed inside another step (the light map inside light collection): left out of sums. */
-	static boolean nested(int stage)
-	{
-		return stage == LIGHT_MAP;
-	}
 
 	private final long[] start = new long[STAGES];
 	private final double[] frame = new double[STAGES];
@@ -97,7 +89,7 @@ public class CpuTimer
 		double sum = 0;
 		for (int s = 0; s < STAGES; ++s)
 		{
-			if (s != OUTSIDE && !nested(s))
+			if (s != OUTSIDE)
 			{
 				sum += ms[s];
 			}

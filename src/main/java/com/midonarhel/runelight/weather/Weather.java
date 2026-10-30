@@ -11,6 +11,7 @@ import com.midonarhel.runelight.sky.EnvironmentManager;
 import com.midonarhel.runelight.sky.GameClock;
 import com.midonarhel.runelight.sky.Lightning;
 
+import com.midonarhel.runelight.light.LampWalls;
 import com.midonarhel.runelight.config.WeatherMode;
 import com.midonarhel.runelight.template.Template;
 import java.util.Collections;
@@ -163,12 +164,12 @@ public class Weather
 			pointLights;
 		int particleAmount, layerBox, layerSpan, layerBand, particleReach;
 		int light, rainStyle, flakeStyle, flakeColor, fallTime;
-		final LightMapTexture.Uniforms lightMap = new LightMapTexture.Uniforms();
+		final LampWalls.Uniforms lampWalls = new LampWalls.Uniforms();
 		WeatherField.Locations field;
 		Wind.Locations windLocations;
 
 		void locate(int p, int sceneUnit, int materialUnit, int occlusionUnit, int shadowCompareUnit, int alphaLayerUnit,
-			int lightDataUnit, int clusterDataUnit, int waterUnit, int fieldUnit, int lightMapUnit)
+			int lightDataUnit, int clusterDataUnit, int waterUnit, int fieldUnit)
 		{
 			program = p;
 			field = WeatherField.locate(p, fieldUnit, fieldUnit + 1);
@@ -209,7 +210,7 @@ public class Weather
 			gust = glGetUniformLocation(p, "gust");
 			overcast = glGetUniformLocation(p, "weatherOvercast");
 			pointLights = glGetUniformLocation(p, "pointLightsEnabled");
-			lightMap.locate(p, lightMapUnit);
+			lampWalls.locate(p);
 
 			glUseProgram(p);
 			glUniform1i(glGetUniformLocation(p, "sceneColor"), sceneUnit);
@@ -312,13 +313,13 @@ public class Weather
 	 * Replace the current programs, deleting the old ones.
 	 */
 	public void setPrograms(Programs p, int sceneUnit, int materialUnit, int occlusionUnit, int shadowCompareUnit, int alphaLayerUnit,
-		int lightDataUnit, int clusterDataUnit, int waterUnit, int fieldUnit, int lightMapUnit)
+		int lightDataUnit, int clusterDataUnit, int waterUnit, int fieldUnit)
 	{
 		freePrograms();
 		rain.locate(p.rain, sceneUnit, materialUnit, occlusionUnit, occlusionUnit + 1, alphaLayerUnit, lightDataUnit, clusterDataUnit,
-			waterUnit, fieldUnit, lightMapUnit);
+			waterUnit, fieldUnit);
 		snow.locate(p.snow, sceneUnit, materialUnit, occlusionUnit, occlusionUnit + 1, alphaLayerUnit, lightDataUnit, clusterDataUnit,
-			waterUnit, fieldUnit, lightMapUnit);
+			waterUnit, fieldUnit);
 	}
 
 	public void freePrograms()
@@ -978,12 +979,12 @@ public class Weather
 	 *
 	 * @param wadeSteps  the steps of those wading through puddles (WadeSteps.steps): a few droplets leap from each
 	 * @param pointLights light particles with this frame's light clusters
-	 * @param roomHeader the room map's header (LightClusters.getRoomHeader), which says whether the light map is there
+	 * @param lampWallsHeader the walls that stop the lamps (LampWalls.header)
 	 * @param drawDistance world units from the player: how far the particles reach
 	 */
 	public void draw(float[] viewProj, float[] invViewProj, int[] viewport, boolean zeroToOne,
 		float cameraX, float cameraY, float cameraZ, DayCycle day, Water water,
-		RuneLightConfig config, int occlusionUnit, boolean pointLights, float[] roomHeader, float drawDistance,
+		RuneLightConfig config, int occlusionUnit, boolean pointLights, float[] lampWallsHeader, float drawDistance,
 		float[] wadeSteps)
 	{
 		if (!active || !occlusion.isInitialized() || rain.program == 0)
@@ -1028,7 +1029,7 @@ public class Weather
 		{
 			glUseProgram(rain.program);
 			setParticles(rain, Math.max(rainAmount, rainShown), viewProj, invViewProj, viewport, zeroToOne, cameraX,
-				cameraY, cameraZ, day, time, pointLights, roomHeader);
+				cameraY, cameraZ, day, time, pointLights, lampWallsHeader);
 			glUniform1f(rain.fallTime, rainFall);
 			glUniform2f(rain.particleAmount, rainEffective, rainShown);
 			glUniform1f(rain.particleReach, drawDistance);
@@ -1057,7 +1058,7 @@ public class Weather
 		{
 			glUseProgram(snow.program);
 			setParticles(snow, Math.max(snowAmount, snowShown), viewProj, invViewProj, viewport, zeroToOne, cameraX,
-				cameraY, cameraZ, day, time, pointLights, roomHeader);
+				cameraY, cameraZ, day, time, pointLights, lampWallsHeader);
 			glUniform1f(snow.fallTime, snowFall);
 			glUniform2f(snow.particleAmount, snowEffective, snowShown);
 			glUniform1f(snow.particleReach, drawDistance);
@@ -1180,13 +1181,13 @@ public class Weather
 
 	private void setParticles(Uniforms u, float kindAmount, float[] viewProj, float[] invViewProj, int[] viewport,
 		boolean zeroToOne, float cameraX, float cameraY, float cameraZ, DayCycle day, float time, boolean pointLights,
-		float[] roomHeader)
+		float[] lampWallsHeader)
 	{
 		setCommon(u, viewProj, invViewProj, viewport, zeroToOne, cameraX, cameraY, cameraZ, day, time);
 		// the count already follows the amount; only the last trickle also fades
 		glUniform1f(u.amount, Math.min(1, kindAmount / 0.1f));
 		glUniform1i(u.pointLights, pointLights ? 1 : 0);
-		u.lightMap.apply(roomHeader);
+		u.lampWalls.apply(lampWallsHeader);
 		glUniform3f(u.wind, windX, 0, windZ);
 		glUniform3f(u.windOffset, windOffsetX, 0, windOffsetZ);
 		glUniform1f(u.gust, gust);

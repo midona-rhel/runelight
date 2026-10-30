@@ -1,5 +1,10 @@
 # Inventory: point lights and what feeds them (branch `lumen`, 2026-10-30)
 
+> **Status, later on 2026-10-30:** §5, §6, §8 and §10's lamp side are replaced by the walls-and-floors lamp of
+> `light/` (`light/lamp.glsl`, `LampWalls`, HANDOVER's A3 row): the light map, the blockers, the storey rules, the
+> wall shaping and `pointLightNormal` are gone; `lightData` holds lamps, room fill and the walls (no room map). The text
+> below is the inventory as it was read before that, kept for its references.
+
 Read-only inventory of the old RuneLight renderer's lamp pipeline, for Track A3 and rule 2 of HANDOVER.md (one
 mechanism per quantity). Paths are under `src/main/java/com/midonarhel/runelight/` (Java) and
 `src/main/resources/com/midonarhel/runelight/` (GLSL) unless given in full. Line numbers are of the working tree at

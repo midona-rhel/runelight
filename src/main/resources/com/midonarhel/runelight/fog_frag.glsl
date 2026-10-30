@@ -11,7 +11,6 @@
 #define SKY_FRAME_CONSTANTS
 #include "sky.glsl"
 #include cluster_config
-#include light_map_config
 #include "fog_cover.glsl"
 
 uniform vec3 cameraPos;
@@ -29,12 +28,8 @@ uniform mat4 lightProjRel;
 uniform float shadowDepthRange;
 
 uniform int pointLightsEnabled;
-uniform samplerBuffer lightData;
-uniform usamplerBuffer clusterData;
 
-#include "light_clusters.glsl"
-#include "rooms.glsl"
-#include "light_map.glsl"
+#include "light/lamp.glsl"
 
 // inside building rooms (RoomMap.java, in fogGround) the fog's density is multiplied by this; 1 leaves interiors
 // foggy
@@ -125,17 +120,11 @@ out vec4 FragFog;
 // banks: the band of the bank noise that goes from thin to thick; narrower is more contrast
 #define FOG_BANK_LOW 0.2
 #define FOG_BANK_HIGH 0.8
-// Point lights glowing in the fog: every light in the pixel's fog column (LightClusters), each integrated in closed
-// form along the part of the ray inside its sphere instead of being sampled at every step. The halo falls off as
-// (c^2 / (c^2 + d^2) - m) / (1 - m), c = FOG_GLOW_CORE * radius, m its value at the radius: close to the cubic
-// falloff it replaced (0.37, 0.10, 0.03 against 0.42, 0.13, 0.02 at a quarter, half and three quarters of the
-// radius), and the integral along a straight line is an arctangent.
-#define FOG_POINT_LIGHT_SCALE 0.6
-#define FOG_GLOW_CORE 0.2
-// The baked lights (light_map.glsl) glow in the fog where the steps are, not in closed form: their share of the light
-// along a ray through a light, against the closed form's (the integral of (1 - d / r)^2 across the radius is 0.67 r, the
-// glow's about 0.38 r at FOG_POINT_LIGHT_SCALE).
-#define FOG_MAP_LIGHT_SCALE 0.55
+// Lamps glowing in the fog: every lamp in the pixel's fog column (LightClusters), its light (light/lamp.glsl's
+// falloff and colour) integrated in closed form along the part of the ray inside its sphere instead of being sampled
+// at every step, and stopped by the walls as the lamp's light is, seen from where the ray passes closest to it. The
+// share of it the fog scatters toward the camera: as much as the glow it replaced gave a ray through a lamp's middle.
+#define FOG_LAMP_SCATTER 0.44
 
 #include "halfmap.glsl"
 #include "ign.glsl"
@@ -197,46 +186,52 @@ float phase(float cosTheta) {
   return mix(1.0, hg, FOG_PHASE_FORWARD);
 }
 
-// Light from the point lights scattered toward the camera along the ray dir between t0 and t0 + steps * dt.
-// weight[i]: scattering per unit length in step i (transmittance to the step times the share it scatters, over
-// dt), taken where each light's glow peaks. No shadowing, and no walls: a glow cut off
-// at them showed the rooms' square outlines.
-vec3 pointGlow(ivec2 px, vec3 dir, float t0, float dt, int steps, float weight[FOG_MAX_STEPS]) {
-  LightMask lights = clusterLights(columnEntry((vec2(px) + 0.5 - vec2(sceneViewport.xy)) / vec2(sceneViewport.zw)));
-  float tEnd = t0 + dt * float(steps);
+// The integral of the lamp's falloff (lampFalloff: (1 - d / r)^2) along a line passing h from it, from the point
+// nearest it to s along the line: d^2 = h^2 + s^2, and the integral of d is (s d + h^2 asinh(s / h)) / 2
+float lampFalloffAlong(float s, float h, float r) {
+  float d = sqrt(h * h + s * s);
+  float hs = h > 1e-3 ? h * h * asinh(s / h) : 0.0;
+  return s - (s * d + hs) / r + (h * h * s + s * s * s / 3.0) / (r * r);
+}
+
+// Light from the lamps scattered toward the camera along the ray dir, ending at tEnd, as a glow round each lamp: the
+// whole of its falloff along the ray through its sphere, whatever the ray ends at, times the fog where the lamp is (its
+// density, height layer, room and weather there, not where the ray passes): a circle round the lamp, like bloom, not a
+// shape of the march's shaping (the ring round the player, the fade from the camera, the ground under the ray). It
+// fades as the lamp goes behind what the ray ends at, and walls stop it as they stop the lamp's light
+// (light/lamp.glsl), from where the ray passes nearest the lamp.
+vec3 lampGlow(ivec2 px, vec3 dir, float t0, float tEnd, float density) {
+  LightMask lamps = clusterLights(columnEntry((vec2(px) + 0.5 - vec2(sceneViewport.xy)) / vec2(sceneViewport.zw)));
+  float below = -fogHeight * FOG_BELOW;
   vec3 sum = vec3(0.0);
   int li;
-  while (nextLight(lights, li)) {
-    vec4 posRadius = texelFetch(lightData, li * 2);
-    float tc = dot(posRadius.xyz, dir);
-    float h2 = max(dot(posRadius.xyz, posRadius.xyz) - tc * tc, 0.0);
-    float r2 = posRadius.w * posRadius.w;
-    if (h2 >= r2) {
+  while (nextLight(lamps, li)) {
+    Lamp lamp = lampAt(li);
+    float tc = dot(lamp.pos, dir);
+    float h2 = max(dot(lamp.pos, lamp.pos) - tc * tc, 0.0);
+    float r2 = lamp.radius * lamp.radius;
+    if (h2 >= r2 || tc < t0) {
       continue;
     }
-    float hc = sqrt(r2 - h2);
-    float a = max(tc - hc, t0);
-    float b = min(tc + hc, tEnd);
-    if (b <= a) {
+    // behind what the ray ends at, over half its reach
+    float shown = 1.0 - smoothstep(tEnd, tEnd + 0.5 * lamp.radius, tc);
+    if (shown <= 0.0) {
       continue;
     }
-    float c2 = r2 * (FOG_GLOW_CORE * FOG_GLOW_CORE);
-    float q = sqrt(c2 + h2);
-    float m = c2 / (c2 + r2);
-    float k1 = c2 / q;
-    vec4 color = texelFetch(lightData, li * 2 + 1);
-    // The glow's kernel peaks where the ray passes the light, so its integral over [a, b] is taken in one piece and
-    // weighted where it peaks, between the two nearest steps' weights: one pair of atan per light rather than one per
-    // step, which with dozens of lights per column made the glow the fog's largest cost.
-    float s0 = a - tc;
-    float s1 = b - tc;
-    float at = clamp((clamp(tc, a, b) - t0) / dt - 0.5, 0.0, float(steps - 1));
-    int i = int(at);
-    float w = mix(weight[i], weight[min(i + 1, steps - 1)], at - float(i));
-    float glow = (k1 * (atan(s1 / q) - atan(s0 / q)) - m * (s1 - s0)) * w;
-    sum += color.rgb * (glow / (1.0 - m));
+    float open = lampOpen(lamp, dir * tc, dir * tc);
+    if (open <= 0.0) {
+      continue;
+    }
+    // the fog where the lamp is
+    vec3 w = lamp.pos + cameraPos;
+    vec4 ground = fogGroundAt(w.xz);
+    float sigma = density * exp(-max(ground.r - w.y, below) / fogHeight) * fogRoomFactor(ground, w.y)
+      * weatherFogFactor(w.xz);
+    // its whole falloff through the sphere (lampFalloffAlong from the nearest point, both ways)
+    float glow = 2.0 * lampFalloffAlong(sqrt(r2 - h2), sqrt(h2), lamp.radius) * sigma;
+    sum += lamp.color * (glow * open * shown);
   }
-  return sum * FOG_POINT_LIGHT_SCALE;
+  return sum * FOG_LAMP_SCATTER;
 }
 
 void main() {
@@ -361,14 +356,7 @@ void main() {
   // the flat glow and the sun's shafts apart: the cover limit takes more of the first
   vec3 scatterAmbient = vec3(0.0);
   vec3 scatterSun = vec3(0.0);
-  // the baked lights' glow, picked up where the steps are
-  vec3 scatterMap = vec3(0.0);
-  bool mapGlow = glow && lightMapOn();
   float trans = 1.0;
-  float weight[FOG_MAX_STEPS];
-  for (int i = 0; i < FOG_MAX_STEPS; ++i) {
-    weight[i] = 0.0;
-  }
   for (int i = 0; i < steps; ++i) {
     float tEnd = t0 + float(i + 1) * dt;
     vec3 wEnd = dir * tEnd + cameraPos;
@@ -424,27 +412,9 @@ void main() {
     float scattered = trans * (1.0 - stepTrans);
     scatterAmbient += mix(ambient, ambientFar, far) * scattered;
     scatterSun += direct * ((1.0 - far) * scattered);
-    // the point lights' share fades into the far color like the rest of the light
-    weight[i] = scattered * (1.0 - far) / dt;
-    if (mapGlow) {
-      vec4 vis;
-      ivec4 ids;
-      if (lightMapSlots(wp, wp, lightMapPlane(wp), vis, ids)) {
-        vec3 glowHere = vec3(0.0);
-        for (int k = 0; k < 4; ++k) {
-          vec3 color, toLight;
-          float lightY;
-          if (lightMapLight(ids[k], vis[k], wp, color, toLight, lightY)) {
-            glowHere += color;
-          }
-        }
-        scatterMap += glowHere * (scattered * (1.0 - far));
-      }
-    }
     trans *= stepTrans;
   }
-  vec3 lamps = glow ? pointGlow(px, dir, t0, dt, steps, weight) : vec3(0.0);
-  lamps += scatterMap * FOG_MAP_LIGHT_SCALE;
+  vec3 lamps = glow ? lampGlow(px, dir, t0, t1, density) : vec3(0.0);
 
   // Limit how much of the view the fog hides where the ray ends. The flat glow shrinks with the cover; the light
   // from the sun and the lamps mostly stays, so thick fog still shows where it is lit.

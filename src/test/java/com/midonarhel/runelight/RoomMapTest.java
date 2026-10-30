@@ -1,5 +1,6 @@
 package com.midonarhel.runelight;
 
+import com.midonarhel.runelight.light.LightClusters;
 import java.nio.FloatBuffer;
 import org.junit.Test;
 import static org.junit.Assert.assertEquals;
@@ -83,8 +84,8 @@ public class RoomMapTest
 	public void wallTexelsFollowTheWalls()
 	{
 		RoomMap m = house(walls());
-		int t = (RoomMap.HEADER_TEXELS + (9 * SIZE + 10) * RoomMap.TEXELS_PER_TILE + 2) * 4;
-		FloatBuffer b = FloatBuffer.allocate(m.texelCount() * 4);
+		int t = RoomMap.texelIndex(SIZE, 2, 9, 10);
+		FloatBuffer b = FloatBuffer.allocate(m.floatCount());
 		m.texels(b);
 		assertEquals(0, (int) b.get(t) & 63);
 		// a wall inside the room: the texels must upload again
@@ -118,19 +119,16 @@ public class RoomMapTest
 	public void texelLayout()
 	{
 		RoomMap m = house(walls());
-		FloatBuffer b = FloatBuffer.allocate(m.texelCount() * 4);
+		FloatBuffer b = FloatBuffer.allocate(m.floatCount());
 		m.texels(b);
 		assertEquals(0, b.remaining());
-		assertEquals(2, b.get(0), 0);
-		assertEquals(SIZE, b.get(1), 0);
-		assertEquals(OFFSET, b.get(2), 0);
-		int t = (RoomMap.HEADER_TEXELS + (9 * SIZE + 10) * RoomMap.TEXELS_PER_TILE) * 4;
+		int t = RoomMap.texelIndex(SIZE, 0, 9, 10);
 		assertEquals(1, b.get(t), 0);
-		assertEquals(-240, b.get(t + 5), 0);
+		assertEquals(-240, b.get(RoomMap.texelIndex(SIZE, 1, 9, 10) + 1), 0);
 		// the tile outside the doorway is outdoors
-		int p = (RoomMap.HEADER_TEXELS + (7 * SIZE + 9) * RoomMap.TEXELS_PER_TILE) * 4;
+		int p = RoomMap.texelIndex(SIZE, 0, 7, 9);
 		assertEquals(0, b.get(p), 0);
-		// Buffer addresses are packed as floats; expanded diagnostic light storage must stay exact.
-		assertTrue(LightClusters.ROOM_BASE + m.texelCount() < (1 << 24));
+		// the light buffer holds the lamps and the rooms' fill alone: within what GL 3.3 promises a buffer texture
+		assertTrue(LightClusters.LIGHT_TEXELS <= 65536);
 	}
 }
