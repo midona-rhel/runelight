@@ -582,6 +582,7 @@ final class SceneLoader
 				}
 			}
 		}
+		long tFree = System.nanoTime();
 		plugin.lookMonitor.scene("swap", scene);
 
 		// the new zones were unmapped during the load (ZoneUploads): they are ready to draw
@@ -594,13 +595,16 @@ final class SceneLoader
 		}
 		ctx.zones = d.zones;
 		plugin.clientUploader.water = plugin.mapUploader.water;
+		long tZones = System.nanoTime();
 		plugin.sceneSwapped(d);
 
-		double total = (System.nanoTime() - t0) / 1e6;
+		long tEnd = System.nanoTime();
+		double total = (tEnd - t0) / 1e6;
 		report.swapped(total, freed, reused);
 		if (total > 1)
 		{
-			log.info(String.format("swapScene %.2f ms (%d freed, %d reused)", total, freed, reused));
+			log.info(String.format("swapScene %.2f ms: zones freed to the pool %.2f (%d freed, %d reused), zones in %.2f, derived data %.2f",
+				total, (tFree - t0) / 1e6, freed, reused, (tZones - tFree) / 1e6, (tEnd - tZones) / 1e6));
 		}
 	}
 

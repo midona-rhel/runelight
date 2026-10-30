@@ -4450,11 +4450,19 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 	 */
 	void sceneSwapped(SceneLoader.SceneDerived d)
 	{
+		long t0 = System.nanoTime();
 		weather.invalidateOcclusion();
 		water.swap(d.water);
+		long tWater = System.nanoTime();
 		volumetricFog.swap(d.fogGround);
 		voxelBuilder.swapTo(d.voxelBuild);
 		swapStaticShadows(d.shadows);
+		long tEnd = System.nanoTime();
+		if (tEnd - t0 > 500_000)
+		{
+			log.info(String.format("Scene swap's derived data %.2f ms: water %.2f, the rest %.2f", (tEnd - t0) / 1e6,
+				(tWater - t0) / 1e6, (tEnd - tWater) / 1e6));
+		}
 	}
 
 	/** A zone of the top level scene was uploaded again (SceneLoader.rebuild). */
