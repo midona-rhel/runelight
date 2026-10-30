@@ -48,6 +48,12 @@ final class SkyGridMap
 	private volatile boolean jobFresh;
 	private boolean wanted;
 	private int texture;
+	// a new place (new voxels: a scene swap) is traced and uploaded into this second texture while the shown one
+	// stays in use, and the two swap once enough rings are traced — the skylight never drops out between scenes
+	// (it did for three frames after every teleport, the dip the user saw; 2026-10-30)
+	private int backTexture;
+	private boolean freshInFlight;
+	private boolean swapWhenUploaded;
 	// the texture holds a place traced around the player, and where that place is
 	private boolean ready;
 	private int shownBaseX, shownBaseY;
@@ -172,7 +178,15 @@ final class SkyGridMap
 		if (jobFresh)
 		{
 			jobFresh = false;
-			ready = false;
+			if (texture != 0 && ready)
+			{
+				// keep showing the old grid; the new one goes to the back texture until its rings are traced
+				freshInFlight = true;
+			}
+			else
+			{
+				ready = false;
+			}
 		}
 		int[] c = sky.takeChanges();
 		if (c != null)
@@ -181,11 +195,12 @@ final class SkyGridMap
 			pending = pending == null ? c : new int[]{Math.min(pending[0], c[0]), Math.min(pending[1], c[1]),
 				Math.max(pending[2], c[2]), Math.max(pending[3], c[3]), Math.min(pending[4], c[4]), Math.max(pending[5], c[5])};
 		}
-		if (!ready && sky.clearRings() >= READY_RINGS*resolution)
+		if ((!ready || freshInFlight) && sky.clearRings() >= READY_RINGS*resolution)
 		{
 			ready = true;
-			// shown now: upload what is traced at once
+			// shown now (or swapped in, when fresh): upload what is traced at once
 			framesSinceUpload = UPLOAD_FRAMES;
+			swapWhenUploaded = freshInFlight;
 		}
 	}
 
@@ -195,10 +210,12 @@ final class SkyGridMap
 		pending = null;
 		framesSinceUpload = 0;
 		glBindBuffer(GL_PIXEL_UNPACK_BUFFER, 0);
-		if (texture == 0)
+		// the fresh place goes to the back texture; the shown one is untouched until the swap
+		int target = freshInFlight ? backTexture : texture;
+		if (target == 0)
 		{
-			texture = glGenTextures();
-			glBindTexture(GL_TEXTURE_3D, texture);
+			target = glGenTextures();
+			glBindTexture(GL_TEXTURE_3D, target);
 			glTexImage3D(GL_TEXTURE_3D, 0, GL_RGBA16F, sky.textureWidth, sky.textureHeight, SkyGrid.TEX_D, 0, GL_RGBA, GL_HALF_FLOAT,
 				(ByteBuffer) null);
 			glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
@@ -206,10 +223,18 @@ final class SkyGridMap
 			glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
 			glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
 			glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_WRAP_R, GL_CLAMP_TO_EDGE);
+			if (freshInFlight)
+			{
+				backTexture = target;
+			}
+			else
+			{
+				texture = target;
+			}
 		}
 		else
 		{
-			glBindTexture(GL_TEXTURE_3D, texture);
+			glBindTexture(GL_TEXTURE_3D, target);
 		}
 		glPixelStorei(GL_UNPACK_ROW_LENGTH, sky.textureWidth);
 		glPixelStorei(GL_UNPACK_IMAGE_HEIGHT, sky.textureHeight);
@@ -228,7 +253,24 @@ final class SkyGridMap
 		glPixelStorei(GL_UNPACK_SKIP_ROWS, 0);
 		glPixelStorei(GL_UNPACK_SKIP_IMAGES, 0);
 		glBindTexture(GL_TEXTURE_3D, 0);
-		if (pendingMove)
+		if (freshInFlight)
+		{
+			if (swapWhenUploaded)
+			{
+				// the new place's rings are traced and in the back texture: show it, and keep the old as the next back
+				int t = texture;
+				texture = backTexture;
+				backTexture = t;
+				freshInFlight = false;
+				swapWhenUploaded = false;
+				pendingMove = false;
+				shownBaseX = sky.baseX();
+				shownBaseY = sky.baseY();
+				shownInstance = sky.instance();
+			}
+			// else: the shown base stays the old one until the swap
+		}
+		else if (pendingMove)
 		{
 			pendingMove = false;
 			shownBaseX = sky.baseX();
@@ -273,6 +315,13 @@ final class SkyGridMap
 			glDeleteTextures(texture);
 			texture = 0;
 		}
+		if (backTexture != 0)
+		{
+			glDeleteTextures(backTexture);
+			backTexture = 0;
+		}
+		freshInFlight = false;
+		swapWhenUploaded = false;
 		sky = null;
 		job = null;
 		jobFresh = false;
