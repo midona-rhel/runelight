@@ -7,10 +7,9 @@ fork, reference only), `perf-wip` / `hd-baseline` (the old RuneLight renderer, a
 ## Run and compare
 - `./gradlew run` starts a dev client with the plugin (developer mode). Turn off the GPU and 117 HD plugins in the profile:
   `~/.runelite/profiles2/<profile>.properties` keys `runelite.gpuplugin`, `runelite.hdplugin`, `runelite.luminaplugin`.
-- Upstream 117 HD reference for pixel comparisons: a worktree of `upstream-117hd/master` (on the Windows PC at
-  `C:\Users\Midona\source\rlhd-ref`; on the Mac: `git worktree add ../rlhd-ref upstream-117hd/master`) with the same
-  `cam`/`capture`/`dump` commands patched into `rs117.hd.utils.DeveloperTools` (uncommitted there; see the
-  Windows worktree or redo: FrameCapture + CommandFile copied from `dev/`). Settings must match the user's 117 HD:
+- Upstream 117 HD reference for pixel comparisons: branch `ref-117hd-tools` (upstream 117 HD master plus the same
+  `cam`/`capture`/`dump` commands, driven by `~/.runelite/lumina/command-117hd.txt`). On the Mac:
+  `git worktree add ../rlhd-ref ref-117hd-tools`, then `./gradlew run` there with the 117 HD plugin enabled in the profile. Settings must match the user's 117 HD:
   `tools/mirror_profile.py <profile> <keys...>` copies `hd.<key>` to `lumina.<key>`.
 - Captures go to `~/.runelite/lumina/captures/<name>.png` (+ .txt with camera and location). `tools/compare_captures.py a.png b.png out.jpg`
   prints the per-region difference and writes a side-by-side with a diff image. Moving creatures and chat text always differ.
