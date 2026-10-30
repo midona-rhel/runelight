@@ -533,4 +533,33 @@ public class WaterMapTest
 		WaterMap lake = lake(1);
 		assertEquals(-1, lake.sideOffset(81, 85, 0, 1));
 	}
+
+	@Test
+	public void aFallPullsOnlyTheWaterAcrossFromIt()
+	{
+		int n = WaterMap.CORNERS;
+		float[] px = new float[n * n], pz = new float[n * n], level = new float[n * n], strength = new float[n * n];
+		// a lip one tile wide, along z = 10 tiles from x = 5 to 6
+		java.util.List<float[]> lips = java.util.Collections.singletonList(new float[]{5 * 128f, 10 * 128f, 6 * 128f, 10 * 128f, 0f});
+		WaterMap.pullToLines(lips, 2.5f, px, pz, level, strength);
+		// its own corners, on it and upstream of it, are pulled; the corners a tile beside it are not
+		assertTrue(strength[10 * n + 5] > 0 && strength[10 * n + 6] > 0);
+		assertTrue(pz[8 * n + 5] > 0 && pz[8 * n + 6] > 0);
+		assertEquals(0f, strength[10 * n + 4], 0f);
+		assertEquals(0f, strength[10 * n + 7], 0f);
+		assertEquals(0f, strength[9 * n + 7], 0f);
+	}
+
+	@Test
+	public void aFallsFrameIsAsWideAsTheFall()
+	{
+		// the strip is three falls side by side, x 80 to 82: corners 80 to 83 framed, none beside them
+		WaterMap m = fallStrip(256, false, 2);
+		int w = WaterMap.CORNERS * WaterMap.PAGES, p2 = 2 * WaterMap.CORNERS;
+		for (int cx = 76; cx <= 87; ++cx)
+		{
+			float z = m.texture[(84 * w + p2 + cx) * 4 + 3];
+			assertEquals("corner " + cx, cx >= 80 && cx <= 83, z != 0f);
+		}
+	}
 }

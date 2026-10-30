@@ -175,7 +175,9 @@ vec2 contactFoam(vec2 xz, float h) {
 // them every FLOW_CYCLE seconds, over the whole of it, the pool above and below included: one pattern, not one a tile.
 vec2 fallFrame(vec2 xz) {
   vec2 frame = waterPage2(waterData, xz / WATER_TILE + waterGrid.x).ba;
-  return dot(frame, frame) > 0.25 ? frame : vec2(0.0);
+  // the frame is 1 or more on the fall's corners and 0 beside it: filtered between them, only where nearly all of it
+  // is left, so it ends at the fall's sides rather than half a tile past them
+  return dot(frame, frame) > 0.9 ? frame : vec2(0.0);
 }
 
 // xz laid out along a fall's surface
