@@ -18,9 +18,12 @@ import static org.lwjgl.opengl.GL33C.*;
  * runs against sample 0 of the scene's depth, so it is drawn once per pixel, not per MSAA sample; it has its own depth buffer
  * so the waves hide each other, and drops what is behind the scene in its fragment shader.
  *
- * The mesh: one instance per tile (the scene's water tiles and the land tiles around them, where the surface runs on
- * under the banks), built when the scene loads, grouped by chunks of {@link #CHUNK} tiles. Each tile is one flat quad
- * at the water map's corner heights; the waves are all in its normal.
+ * The mesh: one instance per tile (the scene's water tiles and the land tiles around them), built when the scene loads,
+ * grouped by chunks of {@link #CHUNK} tiles. Each tile is one flat quad at the water map's corner heights; the waves are
+ * all in its normal. The land tiles ({@link #LAND}) are only worked out into the wave maps, whose filtering reaches past
+ * the water's edge: on the screen the surface ends with the water tiles, as the game's water does. Drawn over the land
+ * too it lay at the water's level over anything standing on land lower than that (a skirt of water around pools set
+ * into sloping ground).
  */
 class WaterSurface
 {
@@ -29,11 +32,13 @@ class WaterSurface
 		.add(GL_FRAGMENT_SHADER, "water_frag.glsl");
 
 	static final int CHUNK = 8;
+	// the look slot's flag for a land tile around the water (water_vert.glsl)
+	static final int LAND = 0x80;
 	// how far the waves and the surface's offsets can move it off the water level, world units, and more
 	static final int WAVE_MARGIN = 256;
 
 	/**
-	 * The instances of one scene: 4 bytes per tile (extended x, y, water type, look slot), by chunk.
+	 * The instances of one scene: 4 bytes per tile (extended x, y, water type, look slot | LAND on land), by chunk.
 	 */
 	static final class Mesh
 	{
@@ -180,7 +185,7 @@ class WaterSurface
 						m.tiles[o] = (byte) x;
 						m.tiles[o + 1] = (byte) y;
 						m.tiles[o + 2] = (byte) Water.slotType(k);
-						m.tiles[o + 3] = (byte) m.slot(k);
+						m.tiles[o + 3] = (byte) (m.slot(k) | (map.level[y * size + x] >= 0 ? 0 : LAND));
 					}
 				}
 				if (m.count > start)
