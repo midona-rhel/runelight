@@ -50,14 +50,6 @@ layout(location = 1) out vec4 WaveOut;    // the wave map: slope xy, foam
 // the sea's still water less so
 #define OCEAN_STILL_SLOW 1.0
 #define OCEAN_STILL_DRIFT 1.0
-// The sea's swell at the shore: long low waves rolling in toward it, their crests along it, SWELL_LENGTH tiles apart
-// and SWELL_PERIOD seconds each, at most SWELL_SLOPE steep, from SWELL_REACH.y tiles out strengthening to
-// SWELL_REACH.x and dying on the beach; stronger and weaker along the shore every SWELL_PATCH world units or so
-#define SWELL_LENGTH 1.6
-#define SWELL_PERIOD 7.0
-#define SWELL_SLOPE 0.09
-#define SWELL_REACH vec2(1.2, 4.0)
-#define SWELL_PATCH 2400.0
 // the waves' size on still and on running water (as steep either way): more of them, denser, the smaller
 #define STILL_WAVE_SIZE 0.55
 #define FLOW_WAVE_SIZE 0.6
@@ -81,23 +73,6 @@ layout(location = 1) out vec4 WaveOut;    // the wave map: slope xy, foam
 #define BANK_FOAM_FLOW vec2(25.0, 80.0)
 #define BANK_FOAM 0.7
 #define BANK_FOAM_REACH vec2(0.4, 1.3)
-// Shore waves, on open sea only (WaterMap page 2): crests rolling in toward the shore, SHORE_SPACING tiles apart, one every
-// SHORE_PERIOD seconds (a divisor of waterTime's wrap into a multiple of SHORE_SEEDS, so the crests' shapes, seeded by their
-// number modulo SHORE_SEEDS, repeat exactly). Each is one continuous band of foam in two tones with hard edges, a core and a
-// rim SHORE_RIM times as wide: its path off the shore's contour a sum of three sines of its own directions, wavelengths and
-// phases (up to SHORE_WOBBLE tiles), its half width SHORE_LINE tiles swollen into lobes where the foam's ripple cells
-// (layer 2, as the rapids' foam) are high and pinched where they are low. A crest narrower than SHORE_MIN tiles is not drawn. It exists from SHORE_FAR tiles from the
-// shore, drawn from 0.7 tiles inside it; from SHORE_BREAK.x to .y tiles it thickens and its lobes deepen, and it shrinks away at
-// the end.
-#define SHORE_SPACING 4.5
-#define SHORE_PERIOD 8.0
-#define SHORE_SEEDS 16.0
-#define SHORE_FAR 9.0
-#define SHORE_BREAK vec2(5.5, 0.9)
-#define SHORE_LINE 0.4
-#define SHORE_WOBBLE 1.0
-#define SHORE_RIM 2.3
-#define SHORE_MIN 0.12
 // caustics (water.glsl has the strength): world units per repeat, seconds per cycle of each copy on still water;
 // mean and line values of the kept copy; drawn out along water faster than CAUSTIC_STRETCH_SPEED by up to
 // CAUSTIC_STRETCH seconds of the flow
@@ -226,44 +201,6 @@ uint pack01(float v, float bits) {
   return uint(clamp(v, 0.0, 1.0) * bits + 0.5);
 }
 
-// The foam of the shore waves at xz, as hard edged coverage (the water pass is at the screen's resolution): x the rim
-// (tint) and y the core, 0 away from open sea and its shores
-vec2 shoreFoam(vec2 xz) {
-  vec2 c = xz / WATER_TILE;
-  vec4 field = waterPage2(waterData, c + waterGrid.x);
-  float aa = max(fwidth(field.r), 0.01);
-  if (field.g < 0.5 || field.r >= SHORE_FAR + SHORE_SPACING)
-    return vec2(0.0);
-  float t = waterTime / SHORE_PERIOD;
-  // the two crests either side of this distance
-  float k0 = floor(field.r / SHORE_SPACING + t - 0.5);
-  float turn = WATER_TAU * waterCycle(40.0);
-  float tint = 0.0, core = 0.0;
-  for (int i = 0; i < 2; ++i) {
-    float k = k0 + float(i);
-    float seed = mod(k, SHORE_SEEDS);
-    vec3 r = vec3(waterHash(vec3(seed, 1.0, 6.0)), waterHash(vec3(seed, 2.0, 6.0)), waterHash(vec3(seed, 3.0, 6.0)));
-    // the crest's path
-    float wobble = 0.5 * SHORE_WOBBLE * (sin(dot(c, vec2(0.45, 0.27) * (0.7 + 0.6 * r.x)) + WATER_TAU * r.y + turn)
-      + 0.6 * sin(dot(c, vec2(-0.2, 0.6) * (0.7 + 0.6 * r.y)) + WATER_TAU * r.z - 2.0 * turn)
-      + 0.4 * sin(dot(c, vec2(0.9, -0.5) * (0.7 + 0.6 * r.z)) + WATER_TAU * r.x + 3.0 * turn));
-    // how far this crest is from the shore, which only shrinks as the time goes on
-    float middle = (k + 0.5 - t) * SHORE_SPACING;
-    float d = abs(field.r + wobble - middle);
-    float life = clamp((SHORE_BREAK.x - middle) / (SHORE_BREAK.x - SHORE_BREAK.y), 0.0, 1.0);
-    // the foam's cells along it, moving in small circles
-    vec2 at = xz / (1.6 * CELL_SCALE_B) + seed * vec2(0.37, 0.61) + 0.15 * vec2(sin(WATER_TAU * waterCycle(11.0)), cos(WATER_TAU * waterCycle(13.0)));
-    float lobes = textureLod(waterNoise, vec3(at, 2.0), 0.0).b;
-    float width = SHORE_LINE * (1.0 + 1.2 * life) * (0.5 + (0.8 + 0.8 * life) * lobes)
-      * clamp(SHORE_FAR - middle, 0.0, 1.0) * clamp(5.0 * (1.0 - life), 0.0, 1.0);
-    // a crest too thin to show is not there at all, never a hairline
-    float shown = step(SHORE_MIN, width) * step(0.7, SHORE_FAR - middle);
-    tint = max(tint, shown * waterEdge(SHORE_RIM * width - d, aa));
-    core = max(core, shown * waterEdge(width - d, aa));
-  }
-  return vec2(tint, core);
-}
-
 // The foam cells' height at xz (layer 2 of the noise, in cells) of still water, drifted by base: two copies drifting across
 // each other. lod: the mip to read.
 float waterFoamStill(vec2 xz, vec2 base, float lod) {
@@ -279,9 +216,9 @@ float waterFoamHeight(vec2 xz, vec2 base, vec2 m0, vec2 m1, float w0, float flow
   return flowing < 1.0 ? mix(waterFoamStill(xz, base, lod), h, flowing) : h;
 }
 
-// The foam around things standing in the water (WaterMap.contact) at xz, as hard edged coverage like shoreFoam's (the
-// water pass is at the screen's resolution): x the tint, y the core, from the foam cells' height h. The cells' shapes
-// shrink with the distance from the thing (CONTACT_SHRINK), never fade.
+// The foam around things standing in the water (WaterMap.contact) at xz, as hard edged coverage (the water pass is at
+// the screen's resolution): x the tint, y the core, from the foam cells' height h. The cells' shapes shrink with the
+// distance from the thing (CONTACT_SHRINK), never fade.
 vec2 contactFoam(vec2 xz, float h) {
   float near = textureLod(waterContact, (xz / WATER_TILE + waterGrid.x) / (waterGrid.y - 1.0), 0.0).r;
   float hn = h + CONTACT_SHRINK * (1.0 - near);
@@ -351,21 +288,6 @@ void waterWaveField(vec2 xz, int type, vec2 flow, out vec2 slope, out float foam
   slope *= look.w * (0.7 + 0.5 * wind) * (0.75 + 0.35 * energy) * (1.0 + TURB_WAVES * turb)
     * mix(STILL_WAVES, FAST_WAVES, smoothstep(FLOW_MIN * 0.5, FAST_FLOW, flowSpeed)) * (1.0 + CONTACT_WAVES * contact)
     * mix(SHORE_WAVES, 1.0, smoothstep(0.0, SHORE_CALM, data.r) * smoothstep(0.5, 1.0, data.b));
-  if (ocean && flowing < 1.0) {
-    // the swell, across the shore distance's gradient (half a tile either way: smooth across the corners)
-    vec2 c = xz / WATER_TILE + waterGrid.x;
-    float shore = data.r;
-    float reach = smoothstep(0.15, 0.7, shore) * (1.0 - smoothstep(SWELL_REACH.x, SWELL_REACH.y, shore));
-    if (reach > 0.0) {
-      vec2 g = vec2(waterPage1(waterData, c + vec2(0.5, 0.0)).r - waterPage1(waterData, c - vec2(0.5, 0.0)).r,
-        waterPage1(waterData, c + vec2(0.0, 0.5)).r - waterPage1(waterData, c - vec2(0.0, 0.5)).r);
-      float patch = textureLod(waterNoise, vec3(xz / SWELL_PATCH, 0.0), 8.0).b;
-      // the crests wander off the shore distance's lines (tiles, so straight), never ruled straight along a bank
-      float phase = WATER_TAU * (shore / SWELL_LENGTH + waterCycle(SWELL_PERIOD)
-        + 0.45 * waveNoise(xz / (SWELL_LENGTH * WATER_TILE * 1.3)));
-      slope += g / max(length(g), 1e-3) * (SWELL_SLOPE * cos(phase) * reach * (1.0 - flowing) * (0.4 + 1.2 * patch));
-    }
-  }
   // soft foam on rapids: the large cells' rims, carried with the flow
   foam = 0.0;
   // fast water foams a little along its banks: by the flow before it slows toward them (water_vert.glsl)
@@ -380,16 +302,16 @@ void waterWaveField(vec2 xz, int type, vec2 flow, out vec2 slope, out float foam
   }
 }
 
-// The hard edged foam at xz: the shore waves' and the foam around things standing in the water, and on terrain falls and
-// at their lip and foot (the composite lays them in the same two tones): x the tint, y the core. The foam cells are the
-// water's own, carried with its flow (m0, m1, w0, flowing), or on a fall laid out along its slope.
+// The hard edged foam at xz: around things standing in the water, and on terrain falls and at their lip and foot (the
+// composite lays them in the same two tones): x the tint, y the core. The foam cells are the water's own, carried with
+// its flow (m0, m1, w0, flowing), or on a fall laid out along its slope.
 vec2 hardFoam(vec2 xz, vec2 base, vec2 m0, vec2 m1, float w0, float flowing, float footprint) {
   vec2 frame = fallFrame(xz);
   vec2 laid = fallLaid(xz, frame);
   float laidLod = waterLod(max(length(dFdx(laid)), length(dFdy(laid))), CELL_SCALE_B);
   float cells = frame != vec2(0.0) ? fallFoamHeight(laid, frame, laidLod)
     : waterFoamHeight(xz, base, m0, m1, w0, flowing, waterLod(footprint, CELL_SCALE_B));
-  return max(shoreFoam(xz), contactFoam(xz, cells));
+  return contactFoam(xz, cells);
 }
 
 void main() {
@@ -493,10 +415,10 @@ void main() {
     bits.x = pack01(nrm.x * 0.5 + 0.5, 511.0) | pack01(nrm.z * 0.5 + 0.5, 511.0) << 9 | uint(vSlot & 31) << 18
       | pack01(foam, 7.0) << 23 | pack01(sqrt(nominalDepth(data.r) / 512.0), 63.0) << 26;
   }
-  // distance (16 bits), caustics: -1 to 3 (8 bits), the shore waves' rim and core coverage (4 bits each)
-  vec2 shore = hardFoam(xz, base, m0, m1, w0, flowing, footprint);
+  // distance (16 bits), caustics: -1 to 3 (8 bits), the hard edged foam's rim and core coverage (4 bits each)
+  vec2 hard = hardFoam(xz, base, m0, m1, w0, flowing, footprint);
   bits.y = pack01(length(vRel) / WATER_REACH, 65535.0) | pack01((caustic + 1.0) / 4.0, 255.0) << 16
-    | pack01(shore.x, 15.0) << 24 | pack01(shore.y, 15.0) << 28;
+    | pack01(hard.x, 15.0) << 24 | pack01(hard.y, 15.0) << 28;
   // never 0, which is no water
   bits.y = max(bits.y & 0xFFFFu, 1u) | (bits.y & 0xFFFF0000u);
   WaterOut = uvec4(bits.x & 0xFFFFu, bits.x >> 16, bits.y & 0xFFFFu, bits.y >> 16);

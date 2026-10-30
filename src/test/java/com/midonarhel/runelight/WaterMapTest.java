@@ -154,17 +154,16 @@ public class WaterMapTest
 	}
 
 	@Test
-	public void shorePageHoldsTheDistanceToLandAndNoOpenSeaInALake()
+	public void shorePageHoldsTheDistanceToLand()
 	{
 		WaterMap m = lake(1);
 		int w = WaterMap.CORNERS * WaterMap.PAGES;
 		int page2 = WaterMap.CORNERS * 2;
-		// the middle of the lake is further from land than its edge, and a lake is not open sea
+		// the middle of the lake is further from land than its edge
 		float edge = m.texture[(90 * w + page2 + 80) * 4];
 		float middle = m.texture[(90 * w + page2 + 90) * 4];
 		assertTrue(edge < middle);
 		assertTrue(middle <= WaterMap.SHORE_FIELD_REACH);
-		assertEquals(0, m.texture[(90 * w + page2 + 90) * 4 + 1], 0);
 	}
 
 	@Test

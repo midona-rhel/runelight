@@ -78,8 +78,7 @@ final class WaterMap
 	// page 0 (surface height, on land the nearest water's; flow x, flow z in tiles/s; type of the tile whose sw corner
 	// this is),
 	// page 1 (distance to shore in tiles, wave energy 0-1, share of the corner's tiles that are water, turbulence 0-1),
-	// page 2 (straight line distance to the nearest land corner in tiles, share of the corner's water tiles that are
-	// open sea 0-1: the shore waves' field, see WaterBodies.ocean; the fall frame x, z)
+	// page 2 (straight line distance to the nearest land corner in tiles; a free channel, 0; the fall frame x, z)
 	float[] texture;
 	boolean hasWater;
 
@@ -1390,7 +1389,6 @@ final class WaterMap
 			{
 				// over the water tiles touching this corner
 				float height = 0, fx = 0, fz = 0, shore = 0, energy = 0, turbulence = 0;
-				int open = 0;
 				// the map's flow of the tiles here and how much the scene sped it up, for the corner's own map flow
 				float mx = 0, mz = 0, gain = 0;
 				int mapped = 0;
@@ -1438,10 +1436,6 @@ final class WaterMap
 						shore += b.shore[i];
 						energy += b.energy[i];
 						turbulence += b.turbulence[i];
-						if (b.ocean[i])
-						{
-							++open;
-						}
 						++count;
 					}
 				}
@@ -1512,7 +1506,7 @@ final class WaterMap
 				t[p1 + 3] = turbulence;
 				int p2 = (cy * w + 2 * CORNERS + cx) * 4;
 				t[p2] = toLand[cy * CORNERS + cx];
-				t[p2 + 1] = count > 0 ? (float) open / count : 0;
+				t[p2 + 1] = 0;
 				t[p2 + 2] = frameX[cy * CORNERS + cx];
 				t[p2 + 3] = frameZ[cy * CORNERS + cx];
 			}

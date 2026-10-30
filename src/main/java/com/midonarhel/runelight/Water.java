@@ -438,7 +438,7 @@ class Water
 		hasData = false;
 	}
 
-	// Layer 0 the old wave noise (its height jitters the flow phases and patches the swell), layer 1 the caustics,
+	// Layer 0 the old wave noise (its height jitters the flow phases), layer 1 the caustics,
 	// layer 2 the ripple cells (foam on rapids): one sampler, the composite has none to spare
 	private static int createNoise()
 	{

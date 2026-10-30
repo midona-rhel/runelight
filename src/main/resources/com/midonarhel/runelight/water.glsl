@@ -110,7 +110,7 @@ layout(location = 1) out uvec4 WaterShadedOut;
 
 
 // The foam in two flat tones with hard edges over the water, a pale tint and a bright core: the shares of the foam color
-// over the water, and how far the foam's color is whitened (the shore waves' and the falls')
+// over the water, and how far the foam's color is whitened (around things in the water, and the falls')
 #define FOAM_TINT 0.55
 #define FOAM_CORE 0.9
 #define FOAM_WHITE 0.75
@@ -131,8 +131,9 @@ void waterUnpack(uvec4 w, out float t, out vec3 nrm, out int slot, out float foa
   caustic = float(b >> 16 & 255u) / 255.0 * 4.0 - 1.0;
 }
 
-// The shore waves' foam at the pixel, in water_frag.glsl's full resolution coverage: x the tint, y the core
-vec2 waterShoreOf(uvec4 w) {
+// The hard edged foam at the pixel (around things standing in the water), in water_frag.glsl's full resolution
+// coverage: x the tint, y the core
+vec2 waterHardFoamOf(uvec4 w) {
   return vec2(float(w.a >> 8 & 15u), float(w.a >> 12 & 15u)) / 15.0;
 }
 
@@ -566,16 +567,16 @@ vec3 waterOver(ivec2 px, inout vec3 p, vec3 albedo, float shadow, vec3 lit, floa
   vec2 slope = nrm.xz / nrm.y;
   under *= max(1.0 + WAVE_SHADE * dot(slope, v.xz) / max(length(v.xz), 0.25), 0.0);
   float alpha = max(WATER_LOOK[type].x * smoothstep(0.0, SURFACE_DEPTH, colorDepth), surface.a);
-  // the shore waves' foam and the foam around things standing in the water, in the flat tones the falls have, over the
+  // the foam around things standing in the water, in the flat tones the falls have, over the
   // water as it is lit from above
-  vec2 shore = waterShoreOf(ws);
-  if (shore.x > 0.0) {
+  vec2 hard = waterHardFoamOf(ws);
+  if (hard.x > 0.0) {
     vec3 up = vec3(0.0, -1.0, 0.0);
     vec3 topLight = outdoors == 1 && lightingEnabled == 1
       ? ambientLight(sunAltitude) * envAmbient + skyLight(sunAltitude) * envAmbient
         + strikeCaster(sunIsCaster == 1 ? sunLight(sunAltitude) : moonLight(sunAltitude)) * envSun * max(dot(up, casterDir), 0.0) * shadow
       : vec3(1.0);
-    float share = mix(FOAM_TINT * shore.x, FOAM_CORE, shore.y);
+    float share = mix(FOAM_TINT * hard.x, FOAM_CORE, hard.y);
     surface.rgb = mix(surface.rgb, srgbToLinear(mix(WATER_FOAM_COLOR[type], vec3(1.0), FOAM_WHITE)) * mix(topLight, vec3(1.0), 0.5), share);
     alpha = max(alpha, share);
     spec *= 1.0 - share;
