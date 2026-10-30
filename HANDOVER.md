@@ -75,6 +75,11 @@ tools, docs). Measured 2026-10-30, same client, same views, uncapped, small canv
   deletes + allocations, 3D texture re-uploads) is much slower on Windows drivers. The pipeline (S1/S2) is judged on
   Windows as well: a teleport must not be slower than the game's own load, no hitch after it.
 
+- **A wall section gets no lamp light** (screenshot 20:3x: a row of campfires along a castle wall; one span of the
+  wall stays dark while the spans either side are lit) — a lamp-occlusion false positive (one of the eight blocking
+  mechanisms in lights.md: WallMap LOS, solid tiles, ModelBlockers, floors, storey code, …). Belongs to the lamp
+  occlusion segment (the voxel grid as the one occluder); test the user's statement at that wall first.
+
 ## Order
 B1 → B2 → A1 (the mechanism table) → B3 → A3 → B4 → A5 → B6 → B5 → B7 → A2 → A4 → A6. Each segment's row goes
 in the table below with its numbers; a segment may be reordered when a measurement says so, never skipped.
