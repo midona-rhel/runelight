@@ -22,8 +22,10 @@ final class ZonePool
 	private static final int FIT_SLACK = 16 << 10;
 	// storage is given in these steps, so a buffer fits the zones of a size near its own
 	private static final int GRANULE = 4 << 10;
-	// kept beyond the zones in use: the larger of this and the zones in use
+	// kept beyond the zones in use: as much as the zones in use, at least MIN_KEPT and at most MAX_KEPT (a scene's zones
+	// were 112–376 MB, 2026-10-30: a whole spare scene kept would double the zones' share of the GPU's memory)
 	private static final long MIN_KEPT = 64L << 20;
+	private static final long MAX_KEPT = 256L << 20;
 
 	private final TreeMap<Integer, ArrayDeque<VBO>> kept = new TreeMap<>();
 	private long keptBytes;
@@ -70,19 +72,19 @@ final class ZonePool
 		kept.computeIfAbsent(vbo.capacity, k -> new ArrayDeque<>()).add(vbo);
 		keptBytes += vbo.capacity;
 		keptCount++;
-		if (!trimQueued && keptBytes > Math.max(MIN_KEPT, liveBytes))
+		if (!trimQueued && keptBytes > keptLimit())
 		{
 			trimQueued = true;
 			jobs.add("zone buffer trim", SceneJobs.UPKEEP, this::trim);
 		}
 	}
 
-	/** Delete kept buffers, largest first, until no more is kept than the zones in use. */
+	/** Delete kept buffers, largest first, until no more is kept than keptLimit. */
 	private boolean trim(long deadline)
 	{
 		do
 		{
-			if (keptBytes <= Math.max(MIN_KEPT, liveBytes) || kept.isEmpty())
+			if (keptBytes <= keptLimit() || kept.isEmpty())
 			{
 				trimQueued = false;
 				return true;
@@ -91,6 +93,11 @@ final class ZonePool
 		}
 		while (System.nanoTime() < deadline);
 		return false;
+	}
+
+	private long keptLimit()
+	{
+		return Math.max(MIN_KEPT, Math.min(liveBytes, MAX_KEPT));
 	}
 
 	private VBO take(Map.Entry<Integer, ArrayDeque<VBO>> e)
