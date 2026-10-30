@@ -2535,7 +2535,19 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		if (shadowStaticDirty)
 		{
 			shadowStaticDirty = false;
-			shadowMap.invalidateCache();
+			// a scene swap: the static map is drawn again over SHADOW_BUILD_FRAMES while the old one stays in use
+			// (refreshCache), not forgotten and redrawn in one frame (invalidateCache) — that single-frame build was
+			// a third of the load hitch and the frame without a map the user's "one sharp frame" on every teleport
+			// (2026-10-30). The old map is the old area's: where it does not cover the new scene the receiver reads
+			// outside it, which is unshadowed, for those frames.
+			if (shadowMap.isInitialized())
+			{
+				shadowMap.refreshCache();
+			}
+			else
+			{
+				shadowMap.invalidateCache();
+			}
 		}
 
 		ShadowMap.View front = shadowMap.frontView();
@@ -4702,6 +4714,12 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		long tFree = System.nanoTime();
 		lookMonitor.scene("swap", scene);
 
+		if (nextZones == null)
+		{
+			// the load failed (an exception in loadScene): keep the previous zones rather than crash the client
+			log.error("swapScene without a loaded scene: keeping the previous zones");
+			return;
+		}
 		ctx.zones = nextZones;
 		nextZones = null;
 		weather.invalidateOcclusion();
