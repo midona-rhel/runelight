@@ -779,7 +779,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		}
 		clientUploader = new SceneUploader(renderCallbackManager);
 		mapUploader = new SceneUploader(renderCallbackManager);
-		sceneLoader = new SceneLoader(this, client, clientThread, config, loadReport);
+		sceneLoader = new SceneLoader(this, client, clientThread, config, loadReport, renderCallbackManager);
 		clientThread.invoke(() ->
 		{
 			try
@@ -2547,7 +2547,9 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 	{
 		private final SceneContext ctx;
 		private final float[] dir;
-		private final float fx, fy, fz;
+		private float fx, fy, fz;
+		// a load's scene: the focus is worked out from it on the client thread when the build starts
+		private final Scene scene;
 		// a bolt's map, held beside the front one; a load's map, for the scene not swapped in yet
 		private final boolean bolt;
 		private final boolean forLoad;
@@ -2563,8 +2565,40 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 			this.fx = fx;
 			this.fy = fy;
 			this.fz = fz;
+			this.scene = null;
 			this.bolt = bolt;
 			this.forLoad = forLoad;
+		}
+
+		StaticShadowBuild(SceneContext ctx, float[] dir, Scene scene, boolean bolt, boolean forLoad)
+		{
+			this.ctx = ctx;
+			this.dir = dir;
+			this.scene = scene;
+			this.bolt = bolt;
+			this.forLoad = forLoad;
+		}
+
+		/**
+		 * A load's focus: where the player stands in the loaded scene when a region load keeps them inside it, else the
+		 * scene's centre (a teleport lands near it). Client thread.
+		 */
+		private void focusOnLoadedScene()
+		{
+			int tx = Constants.SCENE_SIZE / 2, tz = Constants.SCENE_SIZE / 2;
+			Player player = client.getLocalPlayer();
+			if (player != null)
+			{
+				int px = player.getWorldLocation().getX() - scene.getBaseX(), pz = player.getWorldLocation().getY() - scene.getBaseY();
+				if (px >= 0 && pz >= 0 && px < Constants.SCENE_SIZE && pz < Constants.SCENE_SIZE)
+				{
+					tx = px;
+					tz = pz;
+				}
+			}
+			fx = tx * Perspective.LOCAL_TILE_SIZE + 64f;
+			fz = tz * Perspective.LOCAL_TILE_SIZE + 64f;
+			fy = scene.getTileHeights()[0][tx + SCENE_OFFSET][tz + SCENE_OFFSET];
 		}
 
 		@Override
@@ -2580,6 +2614,10 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 				started = true;
 				// one static build at a time: a load's takes over from one of the drawn scene's
 				staticBuild = this;
+				if (scene != null)
+				{
+					focusOnLoadedScene();
+				}
 				float[] d = dir != null ? dir : dayCycle.casterDir;
 				radius = config.shadowDistance() * Perspective.LOCAL_TILE_SIZE;
 				sway = windSwayAmount() > 0 && config.windSwayShadows() ? Zone.SWAY_EXCLUDE : Zone.SWAY_ALL;
@@ -2685,23 +2723,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		{
 			return null;
 		}
-		SceneContext next = new SceneContext(zones, root);
-		int tx = Constants.SCENE_SIZE / 2, tz = Constants.SCENE_SIZE / 2;
-		Player player = client.getLocalPlayer();
-		if (player != null)
-		{
-			// a region load around the player keeps them inside the new scene; a teleport does not
-			int px = player.getWorldLocation().getX() - scene.getBaseX(), pz = player.getWorldLocation().getY() - scene.getBaseY();
-			if (px >= 0 && pz >= 0 && px < Constants.SCENE_SIZE && pz < Constants.SCENE_SIZE)
-			{
-				tx = px;
-				tz = pz;
-			}
-		}
-		int[][][] heights = scene.getTileHeights();
-		float fy = heights[0][tx + SCENE_OFFSET][tz + SCENE_OFFSET];
-		StaticShadowBuild b = new StaticShadowBuild(next, null, tx * Perspective.LOCAL_TILE_SIZE + 64f, fy,
-			tz * Perspective.LOCAL_TILE_SIZE + 64f, false, true);
+		StaticShadowBuild b = new StaticShadowBuild(new SceneContext(zones, root), null, scene, false, true);
 		sceneLoader.jobs.add("static shadows (load)", SceneJobs.LOAD, b);
 		return b;
 	}
