@@ -172,11 +172,8 @@ public class ModelOverride
 
 	public void normalize()
 	{
+		// (the "Ground-matched foliage" setting is applied at upload time, DiffuseColors.inheritTileColors)
 		if (inheritTileColorType == null)
-		{
-			inheritTileColorType = InheritTileColorType.NONE;
-		}
-		else if (!HdSettings.recolorGroundObjects)
 		{
 			inheritTileColorType = InheritTileColorType.NONE;
 		}

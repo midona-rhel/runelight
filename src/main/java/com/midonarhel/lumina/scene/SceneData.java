@@ -30,6 +30,7 @@ import com.midonarhel.lumina.scene.areas.Area;
 import com.midonarhel.lumina.scene.areas.AreaManager;
 import com.midonarhel.lumina.scene.environment.Environment;
 import com.midonarhel.lumina.scene.overrides.TileOverride;
+import com.midonarhel.lumina.scene.terrain.UnlitTerrainColors;
 import com.midonarhel.lumina.util.IntIntMap;
 import java.util.ArrayList;
 import javax.annotation.Nullable;
@@ -96,11 +97,25 @@ public class SceneData
 	// the corners of a tile's sky visibility quadrants
 	public static final int SKY_SW = 0, SKY_SE = 1, SKY_NW = 2, SKY_NE = 3;
 	/**
-	 * The sky visibility of every tile's four corners (0-255), [level][x][z][corner] flattened, baked by
+	 * The sky visibility of every tile's four corners (0-255), [level][x][z][corner] flattened as
+	 * {@code ((level * sizeX + x) * sizeZ + z) * 4 + corner} (SkyCover's layout: level, then x * n + z), baked by
 	 * {@link com.midonarhel.lumina.scene.terrain.SkyCover}; null (sub-scenes, no bake yet) is 255 everywhere.
 	 */
 	@Nullable
 	public byte[] skyVisibility;
+
+	private int skyIdx(int level, int tileExX, int tileExZ)
+	{
+		return ((level * sizeX + tileExX) * sizeZ + tileExZ) << 2;
+	}
+
+	/**
+	 * The unlit tile colours recomputed from the floor definitions, in the Vanilla colour mode
+	 * ({@link com.midonarhel.lumina.scene.terrain.UnlitTerrainColors}); null in 117 HD mode, or when the floor
+	 * definitions could not be loaded (the uploader then keeps the client's lit colours).
+	 */
+	@Nullable
+	public UnlitTerrainColors unlitTerrain;
 
 	public SceneData(WorldView worldView, Scene scene, int expandedMapLoadingChunks)
 	{
@@ -245,7 +260,7 @@ public class SceneData
 		{
 			return 255;
 		}
-		return skyVisibility[(getTileIdx(level, tileExX, tileExZ) << 2) + corner] & 0xff;
+		return skyVisibility[skyIdx(level, tileExX, tileExZ) + corner] & 0xff;
 	}
 
 	/**
@@ -262,7 +277,7 @@ public class SceneData
 		}
 		fx = Math.max(0, Math.min(1, fx));
 		fz = Math.max(0, Math.min(1, fz));
-		int base = getTileIdx(level, tileExX, tileExZ) << 2;
+		int base = skyIdx(level, tileExX, tileExZ);
 		float south = (skyVisibility[base + SKY_SW] & 0xff) * (1 - fx) + (skyVisibility[base + SKY_SE] & 0xff) * fx;
 		float north = (skyVisibility[base + SKY_NW] & 0xff) * (1 - fx) + (skyVisibility[base + SKY_NE] & 0xff) * fx;
 		return Math.round(south * (1 - fz) + north * fz);
@@ -285,6 +300,40 @@ public class SceneData
 		int level = skyLevel(ex, ez, y, minLevel, slack);
 		return skyVisibility(level, ex, ez, (localX & 127) / 128f, (localZ & 127) / 128f);
 	}
+
+	/**
+	 * The sky visibility (0-255) of a static model vertex: the value a little along its normal (an inner wall face
+	 * lands in the room, the outer one outside), but never less than the value where the vertex itself sits, so a
+	 * vertex on open ground is 255 whatever its normal points at.
+	 *
+	 * @param nx        the vertex normal (unnormalized; zero samples at the vertex only)
+	 * @param tileLevel the render level of the vertex's tile
+	 */
+	public int skyVisibilityOfVertex(int localX, int y, int localZ, int nx, int ny, int nz, int tileLevel)
+	{
+		if (skyVisibility == null)
+		{
+			return 255;
+		}
+		int here = skyVisibility(localX, y, localZ, tileLevel, VERTEX_SLACK);
+		if (here == 255)
+		{
+			return 255;
+		}
+		float len = (float) Math.sqrt((float) nx * nx + (float) ny * ny + (float) nz * nz);
+		if (len == 0)
+		{
+			return here;
+		}
+		float s = SKY_NORMAL_BIAS / len;
+		int biased = skyVisibility(localX + Math.round(nx * s), y + Math.round(ny * s), localZ + Math.round(nz * s), tileLevel, VERTEX_SLACK);
+		return Math.max(here, biased);
+	}
+
+	// how far along its normal a static model vertex samples the sky visibility (units)
+	public static final int SKY_NORMAL_BIAS = 32;
+	// the height slack of a static model vertex's level (see skyLevel)
+	public static final int VERTEX_SLACK = -2;
 
 	/**
 	 * The level a height belongs to at an extended tile: the highest level whose floor is at or below

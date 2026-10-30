@@ -26,6 +26,7 @@ package com.midonarhel.lumina.scene;
 
 import com.midonarhel.lumina.frame.RenderThread;
 import com.midonarhel.lumina.frame.VAO;
+import com.midonarhel.lumina.shading.DiffuseColors;
 import com.midonarhel.lumina.shading.FaceShading;
 import com.midonarhel.lumina.scene.overrides.ModelOverride;
 import com.midonarhel.lumina.scene.overrides.UvType;
@@ -104,6 +105,8 @@ public class ModelUploader
 	public int uploadSortedModel(RenderThread rt, Projection proj, Model model, ModelOverride override, int preOrientation, int orientation, int x, int y, int z,
 		int cameraX, int cameraY, int cameraZ, IntBuffer opaqueBuffer, IntBuffer alphaBuffer, boolean prioritySort, int skyVisibility)
 	{
+		// Vanilla colour mode keeps only the inherited tile colour of an override (no rotation, height offset, hiding)
+		override = DiffuseColors.modelOverride(override);
 		final int skyFlags = skyVisibility << 8;
 		final int vertexCount = model.getVerticesCount();
 		final float[] verticesX = model.getVerticesX();
@@ -455,6 +458,10 @@ public class ModelUploader
 	public int uploadTempModel(Model model, @Nullable ModelOverride override, int preOrientation, int orientation, int x, int y, int z,
 		int cameraX, int cameraY, int cameraZ, IntBuffer buffer, int skyVisibility)
 	{
+		if (override != null)
+		{
+			override = DiffuseColors.modelOverride(override);
+		}
 		final int skyFlags = skyVisibility << 8;
 		final int triangleCount = model.getFaceCount();
 		final int vertexCount = model.getVerticesCount();

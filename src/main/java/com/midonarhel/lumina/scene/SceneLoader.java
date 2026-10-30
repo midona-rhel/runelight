@@ -30,6 +30,7 @@ import com.midonarhel.lumina.frame.VBO;
 import com.midonarhel.lumina.scene.materials.MaterialManager;
 import com.midonarhel.lumina.scene.overrides.ModelOverrideManager;
 import com.midonarhel.lumina.scene.terrain.SkyCover;
+import com.midonarhel.lumina.scene.terrain.UnlitTerrainColors;
 import java.util.BitSet;
 import java.util.HashMap;
 import java.util.Map;
@@ -210,6 +211,12 @@ public final class SceneLoader
 				if (ctx.data == null || ctx.data.scene != scene)
 				{
 					ctx.data = sceneDataLoader.createSceneData(wv, scene, client.getExpandedMapLoading());
+					// client thread: the floor definitions load directly
+					if (UnlitTerrainColors.loadDefinitions(client, scene))
+					{
+						ctx.data.unlitTerrain = UnlitTerrainColors.compute(scene);
+						ctx.data.unlitTerrain.selfCheck(scene, ctx.data.sceneOffset);
+					}
 					if (ctx == root)
 					{
 						ctx.data.initAreaHiding();
@@ -465,15 +472,18 @@ public final class SceneLoader
 			len, (len * Zone.VERT_SIZE * 3) / 1024,
 			lena, (lena * Zone.VERT_SIZE * 3) / 1024);
 
-		// the sky cover's wall openings need object definitions, resolved on the client thread below
+		// the sky cover's wall openings need object definitions, resolved on the client thread below; so do the
+		// floor definitions of the Vanilla colour mode's unlit terrain colours
 		int[] wallIds = SkyCover.wallObjectIds(scene);
 		BitSet[] openings = new BitSet[1];
+		boolean[] floorDefinitions = new boolean[1];
 
 		// allocate buffers for zones which require upload
 		CountDownLatch latch = new CountDownLatch(1);
 		clientThread.invoke(() ->
 		{
 			openings[0] = SkyCover.openings(client, wallIds);
+			floorDefinitions[0] = UnlitTerrainColors.loadDefinitions(client, scene);
 
 			for (int x = 0; x < Constants.EXTENDED_SCENE_SIZE >> 3; ++x)
 			{
@@ -522,6 +532,15 @@ public final class SceneLoader
 		sw = Stopwatch.createStarted();
 		SkyCover.bake(sceneData, openings[0]::get);
 		log.debug("Sky cover time {}", sw);
+
+		// Vanilla colour mode: the unlit tile colours (map-load thread; the definitions are cached)
+		if (floorDefinitions[0])
+		{
+			sw = Stopwatch.createStarted();
+			sceneData.unlitTerrain = UnlitTerrainColors.compute(scene);
+			sceneData.unlitTerrain.selfCheck(scene, sceneData.sceneOffset);
+			log.debug("Unlit terrain colours time {}", sw);
+		}
 
 		// upload zones
 		sw = Stopwatch.createStarted();
@@ -602,10 +621,12 @@ public final class SceneLoader
 			}
 		}
 
-		// allocate buffers for zones which require upload
+		// allocate buffers for zones which require upload (and load the Vanilla colour mode's floor definitions)
+		boolean[] floorDefinitions = new boolean[1];
 		CountDownLatch latch = new CountDownLatch(1);
 		clientThread.invoke(() ->
 		{
+			floorDefinitions[0] = UnlitTerrainColors.loadDefinitions(client, scene);
 			for (int x = 0; x < ctx.sizeX; ++x)
 			{
 				for (int z = 0; z < ctx.sizeZ; ++z)
@@ -642,6 +663,12 @@ public final class SceneLoader
 		catch (InterruptedException e)
 		{
 			throw new RuntimeException(e);
+		}
+
+		if (floorDefinitions[0])
+		{
+			ctx.data.unlitTerrain = UnlitTerrainColors.compute(scene);
+			ctx.data.unlitTerrain.selfCheck(scene, ctx.data.sceneOffset);
 		}
 
 		for (int x = 0; x < ctx.sizeX; ++x)

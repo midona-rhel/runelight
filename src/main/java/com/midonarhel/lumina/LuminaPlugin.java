@@ -41,6 +41,7 @@ import com.midonarhel.lumina.scene.SceneLoader;
 import com.midonarhel.lumina.scene.environment.EnvironmentManager;
 import com.midonarhel.lumina.scene.materials.MaterialManager;
 import com.midonarhel.lumina.scene.overrides.ModelOverrideManager;
+import com.midonarhel.lumina.shading.ColorMode;
 import com.midonarhel.lumina.shading.DiffuseColors;
 import com.midonarhel.lumina.sky.SkySource;
 import java.awt.Canvas;
@@ -169,6 +170,11 @@ public class LuminaPlugin extends Plugin implements DrawCallbacks
 		HdSettings.update(config);
 		SkySettings.update(config);
 		DiffuseColors.shadingMode = config.shadingMode();
+		// the Vanilla colour mode was called GPU before
+		if ("GPU".equals(configManager.getConfiguration(LuminaConfig.GROUP, "colorMode")))
+		{
+			configManager.setConfiguration(LuminaConfig.GROUP, "colorMode", ColorMode.VANILLA);
+		}
 		DiffuseColors.colorMode = config.colorMode();
 		sceneDataLoader.load();
 		scenes = new SceneLoader(client, clientThread, sceneDataLoader, renderCallbackManager, modelOverrideManager);
@@ -359,8 +365,11 @@ public class LuminaPlugin extends Plugin implements DrawCallbacks
 				reloadScene = true;
 				break;
 			case "hideVanillaWaterEffects":
-			case "recolorGroundObjects":
 				reloadSceneData = true;
+				reloadScene = true;
+				break;
+			// Ground-matched foliage is read at upload time (DiffuseColors.inheritTileColors)
+			case "recolorGroundObjects":
 				reloadScene = true;
 				break;
 			case "vanillaShadowMode":
@@ -532,9 +541,15 @@ public class LuminaPlugin extends Plugin implements DrawCallbacks
 				// recompiled shaders (DISABLE_DIRECTIONAL_SHADING) and a reloaded scene
 				clientThread.invokeLater(() ->
 				{
+					if (!lwjglInitted)
+					{
+						return;
+					}
 					DiffuseColors.shadingMode = config.shadingMode();
 					DiffuseColors.colorMode = config.colorMode();
 					MaterialManager.updateNoneBrightness();
+					// the other colour mode's materials replace this one's in the material table
+					MaterialManager.resetSlots();
 					setupGpuFlags();
 					frame.deletePrograms();
 					frame.compilePrograms();

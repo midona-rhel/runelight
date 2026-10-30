@@ -25,6 +25,7 @@
 package com.midonarhel.lumina.scene.overrides;
 
 import com.midonarhel.lumina.config.HdSettings;
+import com.midonarhel.lumina.shading.DiffuseColors;
 import com.google.gson.Gson;
 import com.midonarhel.lumina.util.GsonUtils;
 import java.io.IOException;
@@ -195,7 +196,13 @@ public class ModelOverrideManager
 	public ModelOverride getOverride(int type, int id)
 	{
 		var override = overrides[type].get(id);
-		return override == null ? ModelOverride.NONE : override;
+		if (override == null)
+		{
+			return ModelOverride.NONE;
+		}
+		// the colour mode's reduction (Vanilla keeps only the inherited tile colour) waits for the area resolution
+		// of an override with area variants, which callers do with resolveArea
+		return override.areaOverrides != null ? override : DiffuseColors.modelOverride(override);
 	}
 
 	@Nonnull
@@ -207,11 +214,11 @@ public class ModelOverrideManager
 			{
 				if (override.areaOverrideBounds[i].contains(worldPos))
 				{
-					return override.areaOverrides[i];
+					return DiffuseColors.modelOverride(override.areaOverrides[i]);
 				}
 			}
 		}
-		return override;
+		return DiffuseColors.modelOverride(override);
 	}
 
 	@Nonnull

@@ -27,6 +27,7 @@ package com.midonarhel.lumina.scene.terrain;
 import com.midonarhel.lumina.scene.SceneData;
 import com.midonarhel.lumina.scene.overrides.TileOverride;
 import com.midonarhel.lumina.scene.overrides.TileOverrideManager;
+import com.midonarhel.lumina.shading.DiffuseColors;
 import com.midonarhel.lumina.util.IntIntMap;
 import java.util.Arrays;
 import lombok.extern.slf4j.Slf4j;
@@ -46,7 +47,7 @@ import static net.runelite.api.Constants.MAX_Z;
  * Generates a scene's shading data on the map-load thread, before its zones are uploaded (117 HD's
  * ProceduralGenerator, without water, underwater terrain or ground materials):
  * <ol>
- * <li>the tile override of every tile (main, underlay and overlay),</li>
+ * <li>the tile override of every tile (main, underlay and overlay); none in the Vanilla colour mode,</li>
  * <li>smoothed terrain normals: the sum of the face normals around each terrain vertex,</li>
  * <li>the overlay/underlay marks of terrain vertices (TerrainDataGenerator's setVertexIsOverlay), which the scene
  * shader's overlay/underlay blend reads. 117 HD's shared (blended) vertex colours are not generated: with ground
@@ -118,6 +119,11 @@ public final class TerrainGenerator
 	private void generateTileOverrides(SceneData data)
 	{
 		data.tileOverrides = tileOverrideManager.getOverrides();
+		if (DiffuseColors.useUnlitTerrainColors())
+		{
+			// Vanilla colour mode: no tile overrides (every tile keeps TileOverride.NONE)
+			return;
+		}
 
 		final Scene scene = data.scene;
 		final Tile[][][] tiles = scene.getExtendedTiles();

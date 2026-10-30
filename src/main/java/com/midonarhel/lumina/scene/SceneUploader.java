@@ -757,8 +757,24 @@ class SceneUploader
 	}
 
 	/**
-	 * The colour a model face inherits from the current tile (117 HD's inheritTileColorType), from the lit tile
-	 * colours as in 117 HD, or -1.
+	 * The unlit colour of the current tile's paint in the Vanilla colour mode, or -1 (117 HD mode, or no recompute).
+	 */
+	private int unlitPaintColor()
+	{
+		return data.unlitTerrain == null ? -1 : data.unlitTerrain.paint(tileZ, tileExX, tileExY);
+	}
+
+	/**
+	 * The unlit colour of one layer of the current tile in the Vanilla colour mode, or -1.
+	 */
+	private int unlitLayerColor(boolean isOverlay)
+	{
+		return data.unlitTerrain == null ? -1 : data.unlitTerrain.layer(tileZ, tileExX, tileExY, isOverlay);
+	}
+
+	/**
+	 * The colour a model face inherits from the current tile (117 HD's inheritTileColorType): the lit tile colour
+	 * with its override's change as in 117 HD, the unlit tile colour in the Vanilla colour mode, or -1.
 	 */
 	private int inheritTileColor(InheritTileColorType type)
 	{
@@ -771,7 +787,8 @@ class SceneUploader
 			// Since tile colors are guaranteed to have the same hue and saturation per face,
 			// we can blend without converting from HSL to RGB
 			int averageColor = (tilePaint.getSwColor() + tilePaint.getNwColor() + tilePaint.getNeColor() + tilePaint.getSeColor()) / 4;
-			return data.getTileOverride(tileZ, tileExX, tileExY, TILE_OVERRIDE_MAIN).modifyColor(averageColor);
+			return DiffuseColors.inheritedTileColor(averageColor, unlitPaintColor(),
+				data.getTileOverride(tileZ, tileExX, tileExY, TILE_OVERRIDE_MAIN));
 		}
 
 		if (tileModel != null && tileModel.getTriangleTextureId() == null)
@@ -806,7 +823,8 @@ class SceneUploader
 				{
 					var override = data.getTileOverride(tileZ, tileExX, tileExY,
 						type == InheritTileColorType.OVERLAY ? TILE_OVERRIDE_OVERLAY : TILE_OVERRIDE_UNDERLAY);
-					return override.modifyColor(color);
+					return DiffuseColors.inheritedTileColor(color,
+						unlitLayerColor(TerrainVertices.isOverlayFace(tile, faceColorIndex)), override);
 				}
 			}
 		}
@@ -880,28 +898,13 @@ class SceneUploader
 	}
 
 	/**
-	 * The sky visibility of a static model vertex: sampled a little along its normal (an inner wall face lands in
-	 * the room, the outer one outside) on the level the biased height belongs to, at least the tile's.
+	 * The sky visibility of a static model vertex (zone-local position): {@link SceneData#skyVisibilityOfVertex} on
+	 * the current tile's render level.
 	 */
 	private int vertexSkyVisibility(int vx, int vy, int vz, int nx, int ny, int nz)
 	{
-		if (data.skyVisibility == null)
-		{
-			return 255;
-		}
-		float len = (float) Math.sqrt((float) nx * nx + (float) ny * ny + (float) nz * nz);
-		if (len > 0)
-		{
-			float s = SKY_NORMAL_BIAS / len;
-			vx += Math.round(nx * s);
-			vy += Math.round(ny * s);
-			vz += Math.round(nz * s);
-		}
-		return data.skyVisibility(vx + basex, vy, vz + basez, tileZ, -2);
+		return data.skyVisibilityOfVertex(vx + basex, vy, vz + basez, nx, ny, nz, tileZ);
 	}
-
-	// how far along its normal a static model vertex samples the sky visibility (units)
-	private static final int SKY_NORMAL_BIAS = 32;
 
 
 	// 117 HD's uploadTilePaint with ground blending off, without water, ground materials or HD textures
@@ -961,12 +964,14 @@ class SceneUploader
 				uvScale = override.uvScale;
 			}
 
-			// With ground blending off, 117 HD's tile colour is the client's tile colour with the override's change
+			// With ground blending off, 117 HD's tile colour is the client's tile colour with the override's change;
+			// the Vanilla colour mode uses the tile's recomputed unlit colour (the same at every corner)
 			final boolean overrideApplies = override != TileOverride.NONE;
-			swColor = DiffuseColors.terrainColor(swColor, override, overrideApplies);
-			seColor = DiffuseColors.terrainColor(seColor, override, overrideApplies);
-			nwColor = DiffuseColors.terrainColor(nwColor, override, overrideApplies);
-			neColor = DiffuseColors.terrainColor(neColor, override, overrideApplies);
+			final int unlit = unlitPaintColor();
+			swColor = DiffuseColors.terrainColor(swColor, unlit, override, overrideApplies);
+			seColor = DiffuseColors.terrainColor(seColor, unlit, override, overrideApplies);
+			nwColor = DiffuseColors.terrainColor(nwColor, unlit, override, overrideApplies);
+			neColor = DiffuseColors.terrainColor(neColor, unlit, override, overrideApplies);
 		}
 
 		swHeight -= override.heightOffset;
@@ -1102,9 +1107,10 @@ class SceneUploader
 				}
 
 				final boolean overrideApplies = override != TileOverride.NONE;
-				colorA = DiffuseColors.terrainColor(colorA, override, overrideApplies);
-				colorB = DiffuseColors.terrainColor(colorB, override, overrideApplies);
-				colorC = DiffuseColors.terrainColor(colorC, override, overrideApplies);
+				final int unlit = unlitLayerColor(isOverlay);
+				colorA = DiffuseColors.terrainColor(colorA, unlit, override, overrideApplies);
+				colorB = DiffuseColors.terrainColor(colorB, unlit, override, overrideApplies);
+				colorC = DiffuseColors.terrainColor(colorC, unlit, override, overrideApplies);
 			}
 
 			// 117 HD sets the overlay flags of tile model faces whether or not they are water

@@ -27,22 +27,27 @@ package com.midonarhel.lumina.shading;
 import lombok.RequiredArgsConstructor;
 
 /**
- * Where the diffuse (base) colours come from. See {@link com.midonarhel.lumina.shading.DiffuseColors}, the one place
- * that applies it.
+ * The "Colours" setting: which look the scene's colours and geometry come from. See
+ * {@link com.midonarhel.lumina.shading.DiffuseColors}, the one place that applies it.
  */
 @RequiredArgsConstructor
 public enum ColorMode
 {
 	/**
-	 * 117 HD's colours: its undo of vanilla shading with the brightness caps (as the shading mode allows), model
-	 * colour overrides, inherited tile colours, textured face lightness 90 and tile override colour changes.
+	 * 117 HD's look: its undo of vanilla shading with the brightness caps (as the shading mode allows), model colour
+	 * overrides, inherited tile colours, textured face lightness 90, tile override colour changes, model override
+	 * geometry (height offsets, rotation, vertex snapping, hiding) and its vanilla texture material flags.
 	 */
 	HD117("117 HD"),
 	/**
-	 * The stock GPU plugin's colours: the game's own colours with none of 117 HD's colour changes. Models use the
-	 * client's unlit face colours.
+	 * The game's own colours and geometry as the stock GPU plugin draws them, with the game's baked shading removed
+	 * exactly so Lumina's light shades them: models through the client's unlit face colours, terrain through the unlit
+	 * tile colour recomputed from the floor definitions ({@code scene.terrain.UnlitTerrainColors}). No 117 HD colour
+	 * or tile overrides, no model override geometry, no material flags (single-sided faces), no undo-shading caps.
+	 * Kept: smooth normals, area hiding, gap filling, interior sky visibility, the shading mode's semantics and
+	 * ground-matched foliage (its own setting).
 	 */
-	GPU("GPU"),
+	VANILLA("Vanilla"),
 	;
 
 	private final String name;

@@ -296,12 +296,26 @@ public interface LuminaConfig extends Config
 	@ConfigItem(
 		keyName = "colorMode",
 		name = "Colours",
-		description = "117 HD: 117 HD's colour changes (undo of vanilla shading, overrides). GPU: the game's own colours.",
+		description = "117 HD: 117 HD's colours and overrides (undo of vanilla shading, model and tile overrides).<br>" +
+			"Vanilla: the game's own colours and geometry as the GPU plugin draws them, with the game's baked shading " +
+			"removed so Lumina's light shades them.",
 		position = 16
 	)
 	default ColorMode colorMode()
 	{
 		return ColorMode.HD117;
+	}
+
+	@ConfigItem(
+		keyName = "recolorGroundObjects",
+		name = "Ground-matched foliage",
+		description = "Grass, flowers, bushes and other small ground objects take the colour of the ground below them " +
+			"(117 HD's model overrides say which). Applies in both colour modes.",
+		position = 17
+	)
+	default boolean recolorGroundObjects()
+	{
+		return true;
 	}
 
 	// Lumina's sky (com.midonarhel.lumina.sky); cached by SkySettings, read per frame
@@ -711,18 +725,6 @@ public interface LuminaConfig extends Config
 		section = hdSceneSection
 	)
 	default boolean hideVanillaWaterEffects()
-	{
-		return true;
-	}
-
-	@ConfigItem(
-		keyName = "recolorGroundObjects",
-		name = "Color-matched ground objects",
-		description = "Recolors grass and other small ground objects to match the tile's color.",
-		position = 5,
-		section = hdSceneSection
-	)
-	default boolean recolorGroundObjects()
 	{
 		return true;
 	}

@@ -68,6 +68,8 @@ public final class MaterialManager
 	 */
 	public static Map<String, Material> MATERIAL_MAP = Map.of();
 	private static Material[] VANILLA_TEXTURE_MAPPING;
+	// Vanilla colour mode: one plain material per vanilla texture (the texture, its transparency, nothing else)
+	private static Material[] VANILLA_PLAIN_MAPPING;
 
 	public static final int MAX_SLOTS = 256;
 	private static final List<Material> SLOTS = new ArrayList<>();
@@ -264,21 +266,56 @@ public final class MaterialManager
 			map.put(m.name, m);
 			mapping[i] = m;
 		}
+		// the plain materials of the Vanilla colour mode: the vanilla texture with the transparency 117 HD's data
+		// gives that texture (a property of the texture image, not a look), no flags, brightness or scale
+		var plain = new Material[vanillaTextures.length];
+		for (int i = 0; i < plain.length; i++)
+		{
+			if (vanillaTextures[i] == null)
+			{
+				continue;
+			}
+			var m = new Material("VANILLA_PLAIN_" + i);
+			m.vanillaTextureIndex = i;
+			m.isFallbackVanillaMaterial = true;
+			m.hasTransparency = mapping[i] == null || mapping[i].hasTransparency;
+			m.normalize();
+			plain[i] = m;
+		}
 		MATERIAL_MAP = map;
 		VANILLA_TEXTURE_MAPPING = mapping;
+		VANILLA_PLAIN_MAPPING = plain;
 	}
 
 	/**
-	 * 117 HD's fromVanillaTexture.
+	 * 117 HD's fromVanillaTexture; in the Vanilla colour mode the texture's plain material instead.
 	 */
 	public static Material fromVanillaTexture(int vanillaTextureId)
 	{
-		Material[] mapping = VANILLA_TEXTURE_MAPPING;
+		Material[] mapping = DiffuseColors.useVanillaMaterials() ? VANILLA_PLAIN_MAPPING : VANILLA_TEXTURE_MAPPING;
 		if (mapping == null || vanillaTextureId < 0 || vanillaTextureId >= mapping.length || mapping[vanillaTextureId] == null)
 		{
 			return Material.NONE;
 		}
 		return mapping[vanillaTextureId];
+	}
+
+	/**
+	 * Frees every slot of the scene shader's material table but NONE's, for a colour mode change: the scene is
+	 * re-uploaded with the other mode's materials, which would otherwise fill the table alongside the old ones.
+	 */
+	public static void resetSlots()
+	{
+		synchronized (SLOTS)
+		{
+			for (var m : SLOTS)
+			{
+				m.slot = -1;
+			}
+			SLOTS.clear();
+		}
+		slot(Material.NONE);
+		slotsDirty = true;
 	}
 
 	/**

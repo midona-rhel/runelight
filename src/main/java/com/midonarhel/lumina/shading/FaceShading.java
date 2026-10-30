@@ -39,7 +39,7 @@ import net.runelite.api.Perspective;
  * Per-face colours, alpha, depth bias and normals of a model, ported literally from 117 HD's zone SceneUploader:
  * {@code uploadStaticModel} for static (zone) models and {@code preprocessTempModel} + {@code uploadTempModel} for
  * temporary/dynamic models. The two paths differ in 117 HD and are kept apart here ({@link #setModel} {@code temp}).
- * Where colours come from is decided by {@link DiffuseColors}.
+ * Where colours come from, and which part of the model override applies, is decided by {@link DiffuseColors}.
  * <p>
  * Materials are chosen as in 117 HD (override base/texture materials that survive its model textures setting being
  * off, vanilla texture materials, material overrides of vanilla textures, colour override materials) and decide the
@@ -99,7 +99,7 @@ public final class FaceShading
 	private int orientSin, orientCos;
 	private boolean rotate;
 
-	private boolean colorChanges, undoShading;
+	private boolean colorChanges, inheritColors, undoShading;
 	private short[] unlitColors;
 	private int[] colors1, colors2, colors3;
 	private byte[] transparencies;
@@ -125,7 +125,8 @@ public final class FaceShading
 		float[] posX, float[] posY, float[] posZ)
 	{
 		this.model = model;
-		this.override = override;
+		// Vanilla colour mode keeps only the inherited tile colour of an override
+		this.override = override = DiffuseColors.modelOverride(override);
 		this.tileColors = tileColors;
 		this.temp = temp;
 		this.posX = posX;
@@ -138,6 +139,7 @@ public final class FaceShading
 		orientCos = Perspective.COSINE[orientation];
 
 		colorChanges = DiffuseColors.apply117ColorChanges();
+		inheritColors = DiffuseColors.inheritTileColors();
 		undoShading = DiffuseColors.undoVanillaShading();
 		unlitColors = DiffuseColors.useUnlitModelColors() ? model.getUnlitFaceColors() : null;
 		colors1 = model.getFaceColors1();
@@ -287,24 +289,27 @@ public final class FaceShading
 
 		// 117 HD's static path keeps the shading of textured faces; its temp path only that of vanilla texture materials
 		boolean keepShading = !temp && textured;
+		if (textured)
+		{
+			// 117 HD: "Without overriding the color for textured faces, vanilla shading remains pretty noticeable".
+			// Vanilla mode: the exact unlit base of a textured face is white (the client lights them with the light
+			// intensity alone)
+			c1 = c2 = c3 = colorChanges ? TEXTURED_FACE_COLOR : DiffuseColors.VANILLA_TEXTURED_COLOR;
+		}
+		else if (!temp && inheritColors && faceOverride.inheritTileColorType != InheritTileColorType.NONE && tileColors != null)
+		{
+			// Ground-matched foliage, in both colour modes (the source gives lit or unlit tile colours accordingly)
+			int inherited = tileColors.inherit(faceOverride.inheritTileColorType);
+			if (inherited >= 0)
+			{
+				c1 = c2 = c3 = inherited;
+				// Let the shader know vanilla shading reversal should be skipped for this face
+				keepShading = true;
+			}
+		}
+
 		if (colorChanges)
 		{
-			if (textured)
-			{
-				// Without overriding the color for textured faces, vanilla shading remains pretty noticeable
-				c1 = c2 = c3 = TEXTURED_FACE_COLOR;
-			}
-			else if (!temp && faceOverride.inheritTileColorType != InheritTileColorType.NONE && tileColors != null)
-			{
-				int inherited = tileColors.inherit(faceOverride.inheritTileColorType);
-				if (inherited >= 0)
-				{
-					c1 = c2 = c3 = inherited;
-					// Let the shader know vanilla shading reversal should be skipped for this face
-					keepShading = true;
-				}
-			}
-
 			// Vanilla textures should always have a constant white background
 			if (material.vanillaTextureIndex != -1)
 			{
