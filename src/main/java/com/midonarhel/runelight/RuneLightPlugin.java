@@ -2622,7 +2622,10 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 				shadowBuildCount = 0;
 				shadowZones(ctx, sx, sz, radius + SHADOW_CACHE_SNAP, null, 0, 0, sway);
 				zones = Arrays.copyOf(shadowBuildZones, shadowBuildCount);
-				perFrame = Math.max(1, (zones.length + SHADOW_BUILD_FRAMES - 1) / SHADOW_BUILD_FRAMES);
+				// a load's map is drawn behind the client's loading box, before its swap, which may come a frame or two
+				// after the load (a115b4c4: three frames late, the old place's map stood in and the new one landed in one
+				// frame, 33 % of pixels): all of it in its first frame, as far as the frame's budget goes
+				perFrame = forLoad ? zones.length : Math.max(1, (zones.length + SHADOW_BUILD_FRAMES - 1) / SHADOW_BUILD_FRAMES);
 			}
 			if (shadowMap.builds != build || !shadowMap.isBuilding())
 			{
@@ -2687,10 +2690,26 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 			return true;
 		}
 
-		/** The scene this was drawn for is swapped in (client thread): the held map becomes the front one. */
+		/**
+		 * The scene this was drawn for is swapped in (client thread): the held map becomes the front one. Not drawn yet
+		 * (the swap came first), what is left of it is drawn now, so the scene never shows with the old place's map.
+		 */
 		void swappedIn()
 		{
 			swappedIn = true;
+			boolean drawing = !held && staticBuild == this || !started;
+			if (drawing)
+			{
+				// done drawing, it takes the front itself (swappedIn is set); the queue then drops it
+				while (!step(Long.MAX_VALUE) && shadowMap.isBuilding())
+				{
+				}
+			}
+			else if (!held)
+			{
+				// it was given up (a setting or the levels changed while it was drawn): a new one is drawn as usual
+				shadowMap.refreshCache();
+			}
 			if (held)
 			{
 				shadowMap.swapFront();
