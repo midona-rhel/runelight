@@ -1,4 +1,6 @@
-package com.midonarhel.runelight;
+package com.midonarhel.runelight.shadow;
+
+import com.midonarhel.runelight.*;
 
 import static org.lwjgl.opengl.GL33C.*;
 
@@ -19,7 +21,7 @@ public class ShadowMap
 
 	// world space light matrix (for the shadow pass) and camera-relative (for the composite)
 	public final float[] lightProj = Mat4.identity();
-	final float[] lightProjRel = Mat4.identity();
+	public final float[] lightProjRel = Mat4.identity();
 	private float radius;
 	private float depthRange;
 
@@ -28,12 +30,12 @@ public class ShadowMap
 	 * player stay about the same. Each frame that map is copied into the one sampled and only the moving models are
 	 * drawn over it. A new static map is drawn into the other texture, over a few frames, while the old one is used.
 	 */
-	static final class View
+	public static final class View
 	{
-		final float[] proj = Mat4.identity();
-		final float[] dir = new float[3];
-		float radius, depthRange;
-		float focusX, focusY, focusZ;
+		public final float[] proj = Mat4.identity();
+		public final float[] dir = new float[3];
+		public float radius, depthRange;
+		public float focusX, focusY, focusZ;
 	}
 
 	private final int[] staticTex = new int[2];
@@ -48,7 +50,7 @@ public class ShadowMap
 	private boolean stale;
 	private int cacheKey;
 	// static maps started so far, for the timings overlay
-	int builds;
+	public int builds;
 
 	/*
 	 * The front static map's greatest depth over the reach of shadow_pcss.glsl's widest filter from each tile of texels
@@ -125,7 +127,7 @@ public class ShadowMap
 		return fbo != 0;
 	}
 
-	int getSize()
+	public int getSize()
 	{
 		return size;
 	}
@@ -135,12 +137,12 @@ public class ShadowMap
 		return fbo;
 	}
 
-	float getRadius()
+	public float getRadius()
 	{
 		return radius;
 	}
 
-	float getDepthRange()
+	public float getDepthRange()
 	{
 		return depthRange;
 	}
@@ -178,7 +180,7 @@ public class ShadowMap
 	}
 
 	/** Drop the static cache and its textures, e.g. when caching is turned off. */
-	void freeCache()
+	public void freeCache()
 	{
 		if (staticFbo[0] != 0)
 		{
@@ -199,7 +201,7 @@ public class ShadowMap
 	}
 
 	/** Forget the static map: the scenery, levels or settings changed. */
-	void invalidateCache()
+	public void invalidateCache()
 	{
 		front = building = held = -1;
 		stale = false;
@@ -209,18 +211,18 @@ public class ShadowMap
 	 * Some zones changed: draw the static map again, over several frames, while the old one stays in use. Forgetting
 	 * it instead (invalidateCache) draws the new one in a single frame, a hitch whenever an object appears.
 	 */
-	void refreshCache()
+	public void refreshCache()
 	{
 		stale = true;
 	}
 
-	boolean isStale()
+	public boolean isStale()
 	{
 		return stale;
 	}
 
 	/** Invalidate if anything the static map depends on, hashed, changed. */
-	void checkCacheKey(int key)
+	public void checkCacheKey(int key)
 	{
 		if (key != cacheKey)
 		{
@@ -229,17 +231,17 @@ public class ShadowMap
 		}
 	}
 
-	View frontView()
+	public View frontView()
 	{
 		return front >= 0 ? views[front] : null;
 	}
 
-	boolean isBuilding()
+	public boolean isBuilding()
 	{
 		return building >= 0;
 	}
 
-	View buildingView()
+	public View buildingView()
 	{
 		return views[building];
 	}
@@ -248,7 +250,7 @@ public class ShadowMap
 	 * Start drawing a new static map, into the texture not in use, for this light and focus. Returns its framebuffer,
 	 * cleared, for the zones to be drawn into, now or over the next frames.
 	 */
-	int startBuild(float[] dir, float fx, float fy, float fz, float radius, float depthRange, boolean zeroToOne)
+	public int startBuild(float[] dir, float fx, float fy, float fz, float radius, float depthRange, boolean zeroToOne)
 	{
 		if (staticFbo[0] == 0)
 		{
@@ -273,13 +275,13 @@ public class ShadowMap
 		return staticFbo[building];
 	}
 
-	int getBuildFbo()
+	public int getBuildFbo()
 	{
 		return staticFbo[building];
 	}
 
 	/** The new static map is drawn: make it the front one, and work out its maxima with maxProgram (a VAO bound). */
-	void finishBuild(int maxProgram)
+	public void finishBuild(int maxProgram)
 	{
 		buildMax(maxProgram, building);
 		front = building;
@@ -290,7 +292,7 @@ public class ShadowMap
 	 * The new static map is drawn: keep it beside the front one instead of using it (swapFront), its maxima made now
 	 * (with maxProgram, a VAO bound) so the swap needs no GL call.
 	 */
-	void holdBuild(int maxProgram)
+	public void holdBuild(int maxProgram)
 	{
 		buildMax(maxProgram, building);
 		held = building;
@@ -298,13 +300,13 @@ public class ShadowMap
 	}
 
 	/** Forget the map kept beside the front one. */
-	void dropHeld()
+	public void dropHeld()
 	{
 		held = -1;
 	}
 
 	/** The map kept beside the front one, or null. */
-	View heldView()
+	public View heldView()
 	{
 		return held >= 0 ? views[held] : null;
 	}
@@ -313,7 +315,7 @@ public class ShadowMap
 	 * Use the held map and keep the front one in its place, so the light can turn back at once: no map is drawn, and
 	 * no GL call (its maxima were made by holdBuild).
 	 */
-	void swapFront()
+	public void swapFront()
 	{
 		int next = held;
 		held = front;
@@ -386,7 +388,7 @@ public class ShadowMap
 	 * Bind the maxima for shadow_pcss.glsl's shadowMax and return its texels per tile, its shadowMaxTile: 0 with no
 	 * static map, for no bound.
 	 */
-	int bindMax(int unit)
+	public int bindMax(int unit)
 	{
 		glActiveTexture(GL_TEXTURE0 + unit);
 		glBindTexture(GL_TEXTURE_2D, front >= 0 ? maxTex[front] : 0);
@@ -402,7 +404,7 @@ public class ShadowMap
 	 * is loaded back in. Expects the shadow pass's state (depth test and writes on, GL_LESS, polygon offset) with a VAO
 	 * bound, and leaves it so with the sampled map's framebuffer bound and its viewport set, but copyProgram in use.
 	 */
-	void useFront(float cameraX, float cameraY, float cameraZ, int copyProgram)
+	public void useFront(float cameraX, float cameraY, float cameraZ, int copyProgram)
 	{
 		View v = views[front];
 		radius = v.radius;
@@ -551,7 +553,7 @@ public class ShadowMap
 	}
 
 	/** Free the empty map {@link #unbind} leaves on compare units. */
-	static void freeEmpty()
+	public static void freeEmpty()
 	{
 		if (emptyTexture != 0)
 		{

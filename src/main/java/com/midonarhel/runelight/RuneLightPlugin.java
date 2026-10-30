@@ -24,6 +24,8 @@
  */
 package com.midonarhel.runelight;
 
+import com.midonarhel.runelight.shadow.ShadowMap;
+
 import com.midonarhel.runelight.weather.Climate;
 import com.midonarhel.runelight.weather.WadeSteps;
 import com.midonarhel.runelight.weather.Weather;

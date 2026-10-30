@@ -1,5 +1,7 @@
 package com.midonarhel.runelight;
 
+import com.midonarhel.runelight.shadow.ShadowMap;
+
 import com.midonarhel.runelight.weather.WeatherField;
 
 import com.midonarhel.runelight.sky.DayCycle;
