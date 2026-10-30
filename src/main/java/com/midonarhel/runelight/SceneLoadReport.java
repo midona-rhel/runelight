@@ -1,0 +1,134 @@
+package com.midonarhel.runelight;
+
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
+/**
+ * One log line per scene load, the numbers the load pipeline is judged by: the swap frame's time and how much of it
+ * was ours, our GL buffer and vertex array creations and deletions from the start of the load to two seconds after
+ * the swap, and the frames over 25 ms in those two seconds with our client-thread time in each.
+ *
+ * The GL counts are kept here for every buffer and vertex array the renderer makes or deletes (client thread only).
+ * "Ours" in a frame is the plugin's own CPU steps (CpuTimer, all but the client's scene, its interface, the swap
+ * wait and the time outside the frame) plus the scene swap and the load's jobs that ran in it.
+ */
+final class SceneLoadReport
+{
+	private static final Logger log = LoggerFactory.getLogger(SceneLoadReport.class);
+
+	private static final long WINDOW_NANOS = 2_000_000_000L;
+	private static final double SLOW_MS = 25;
+
+	// GL objects made and deleted, client thread
+	static int buffersCreated, buffersDeleted, arraysCreated, arraysDeleted;
+
+	private static final int[] OUR_STAGES = {
+		CpuTimer.ENVIRONMENT, CpuTimer.WEATHER, CpuTimer.LIGHTS, CpuTimer.CLUSTERS, CpuTimer.SHADOW_SUBMIT,
+		CpuTimer.UI_UPLOAD, CpuTimer.BUFFER_MAP, CpuTimer.LIGHT_UPLOAD, CpuTimer.VOXELS, CpuTimer.SKY_CACHE,
+		CpuTimer.OCCLUSION, CpuTimer.SKY_GRID, CpuTimer.LIGHT_MAP
+	};
+
+	private volatile long loadStartNanos;
+	private volatile int countsAtLoad[];
+	// the load's client-thread work before the swap (zone buffers made and mapped, unmapped), and its frames
+	private volatile double preSwapMs;
+	private volatile int preSwapCalls;
+
+	private long swapNanos;
+	private double swapMs;
+	private int swapFreed, swapReused;
+	private double extraMs;
+	private int frames, slow;
+	private double swapFrameMs, swapFrameOurs, maxMs, maxOurs, oursAfter;
+	private final StringBuilder slowText = new StringBuilder();
+
+	/** The load began (the map loader's thread). */
+	void loadStarted()
+	{
+		loadStartNanos = System.nanoTime();
+		countsAtLoad = new int[]{buffersCreated, buffersDeleted, arraysCreated, arraysDeleted};
+		preSwapMs = 0;
+		preSwapCalls = 0;
+	}
+
+	/** Client-thread work the load did before the swap. */
+	void preSwap(double ms)
+	{
+		preSwapMs += ms;
+		preSwapCalls++;
+	}
+
+	/** Our own work in this frame outside the CPU steps (the load's jobs), client thread. */
+	void extra(double ms)
+	{
+		extraMs += ms;
+	}
+
+	/** The scene was swapped in (client thread); the two-second window starts. */
+	void swapped(double ms, int freed, int reused)
+	{
+		swapNanos = System.nanoTime();
+		swapMs = ms;
+		swapFreed = freed;
+		swapReused = reused;
+		frames = 0;
+		slow = 0;
+		maxMs = maxOurs = oursAfter = 0;
+		slowText.setLength(0);
+	}
+
+	/** After each frame's swap, with its interval. */
+	void frame(double frameMs, CpuTimer cpu)
+	{
+		double ours = extraMs;
+		extraMs = 0;
+		if (swapNanos == 0)
+		{
+			return;
+		}
+		for (int stage : OUR_STAGES)
+		{
+			ours += cpu.getLastMs(stage);
+		}
+		if (frames == 0)
+		{
+			// the frame the swap ran in (it runs outside our frame, before this frame's scene)
+			ours += swapMs;
+			swapFrameMs = frameMs;
+			swapFrameOurs = ours;
+		}
+		else
+		{
+			maxMs = Math.max(maxMs, frameMs);
+			maxOurs = Math.max(maxOurs, ours);
+			oursAfter += ours;
+		}
+		if (frameMs > SLOW_MS)
+		{
+			slow++;
+			if (slowText.length() < 400)
+			{
+				slowText.append(String.format(" +%d:%.0f/%.1f", frames, frameMs, ours));
+			}
+		}
+		frames++;
+		long now = System.nanoTime();
+		if (now - swapNanos >= WINDOW_NANOS)
+		{
+			int[] at = countsAtLoad;
+			if (at == null)
+			{
+				at = new int[4];
+			}
+			log.info(String.format("Scene load report: load→swap %.0f ms, pre-swap client work %.1f ms in %d calls; swap frame %.1f ms, ours %.1f (swapScene %.1f, %d freed, %d reused); "
+					+ "GL buffers +%d -%d, vertex arrays +%d -%d; next 2 s: %d frames, %d over %.0f ms (frame:ms/ours:ms%s), max %.1f ms, our max %.1f, our mean %.2f",
+				loadStartNanos == 0 ? 0 : (swapNanos - loadStartNanos) / 1e6, preSwapMs, preSwapCalls,
+				swapFrameMs, swapFrameOurs, swapMs, swapFreed, swapReused,
+				buffersCreated - at[0], buffersDeleted - at[1], arraysCreated - at[2], arraysDeleted - at[3],
+				frames - 1, slow, SLOW_MS, slowText, maxMs, maxOurs, frames > 1 ? oursAfter / (frames - 1) : 0));
+			swapNanos = 0;
+			loadStartNanos = 0;
+			countsAtLoad = null;
+		}
+	}
+}

@@ -47,6 +47,7 @@ class VBO
 	{
 		this.usage = usage;
 		bufId = glGenBuffers();
+		SceneLoadReport.buffersCreated++;
 
 		glBindBuffer(GL_ARRAY_BUFFER, bufId);
 		glBufferData(GL_ARRAY_BUFFER, size, usage);
@@ -63,6 +64,7 @@ class VBO
 			mapped = false;
 		}
 		glDeleteBuffers(bufId);
+		SceneLoadReport.buffersDeleted++;
 		bufId = 0;
 	}
 

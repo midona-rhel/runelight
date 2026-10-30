@@ -55,6 +55,7 @@ class VAO
 	void init()
 	{
 		vao = glGenVertexArrays();
+		SceneLoadReport.arraysCreated++;
 		glBindVertexArray(vao);
 
 		vbo.init(GL_DYNAMIC_DRAW);
@@ -77,6 +78,7 @@ class VAO
 	{
 		vbo.destroy();
 		glDeleteVertexArrays(vao);
+		SceneLoadReport.arraysDeleted++;
 		vao = 0;
 	}
 

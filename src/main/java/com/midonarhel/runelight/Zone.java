@@ -101,6 +101,7 @@ class Zone
 		{
 			vboO = o;
 			glVao = glGenVertexArrays();
+			SceneLoadReport.arraysCreated++;
 			setupVao(glVao, o.bufId);
 		}
 
@@ -108,6 +109,7 @@ class Zone
 		{
 			vboA = a;
 			glVaoA = glGenVertexArrays();
+			SceneLoadReport.arraysCreated++;
 			setupVao(glVaoA, a.bufId);
 		}
 	}
@@ -129,12 +131,14 @@ class Zone
 		if (glVao != 0)
 		{
 			glDeleteVertexArrays(glVao);
+			SceneLoadReport.arraysDeleted++;
 			glVao = 0;
 		}
 
 		if (glVaoA != 0)
 		{
 			glDeleteVertexArrays(glVaoA);
+			SceneLoadReport.arraysDeleted++;
 			glVaoA = 0;
 		}
 

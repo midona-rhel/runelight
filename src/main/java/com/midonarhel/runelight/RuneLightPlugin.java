@@ -198,6 +198,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 	private CommandFile commandFile;
 	private final FrameSnapshot frameSnapshot = new FrameSnapshot();
 	private int framesSinceSwap = 1000;
+	private final SceneLoadReport loadReport = new SceneLoadReport();
 	private boolean swapCaptureArmed;
 	// frames left to capture around a swap: set when loadScene finishes (before the client's swap), counts down per frame
 	private volatile int swapCaptureLeft;
@@ -4134,9 +4135,12 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		}
 		lastSwapNanos = now;
 		frameSnapshot.frame();
+		// the frame's CPU steps first, so the hitch monitor and the load report read this frame's (they read one frame
+		// late before: a hitch line's "swap wait 12–16 ms" was the frame before it)
+		cpuTimer.endFrame();
 		// the hitch monitor attributes slow frames to the jobs that ran in them (and GC); always on, it rate-limits itself
 		hitchMonitor.endFrame(swapIntervalNow, cpuTimer, gpuTimer);
-		cpuTimer.endFrame();
+		loadReport.frame(swapIntervalNow, cpuTimer);
 		cpuTimer.begin(CpuTimer.OUTSIDE);
 		drawManager.processDrawComplete(this::screenshot);
 
@@ -4310,6 +4314,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 			nextRoofChanges = null;
 		}
 
+		loadReport.loadStarted();
 		SceneContext ctx = root;
 		Scene prev = client.getTopLevelWorldView().getScene();
 
@@ -4496,6 +4501,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		CountDownLatch latch = new CountDownLatch(1);
 		clientThread.invoke(() ->
 		{
+			long allocStart = System.nanoTime();
 			Interactables.resolve(this::hasAction);
 			for (int x = 0; x < Constants.EXTENDED_SCENE_SIZE >> 3; ++x)
 			{
@@ -4529,6 +4535,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 				}
 			}
 
+			loadReport.preSwap((System.nanoTime() - allocStart) / 1e6);
 			latch.countDown();
 		});
 		try
@@ -4791,6 +4798,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		checkGLErrors();
 		long tEnd = System.nanoTime();
 		double total = (tEnd - t0) / 1e6;
+		loadReport.swapped(total, freed, reused);
 		if (total > 2)
 		{
 			log.info(String.format("swapScene %.1f ms: areaHiding %.1f, free/roofs %.1f (%d freed, %d reused), modules %.1f, unmap %.1f (%d zones), glGetError %.1f",
