@@ -3941,7 +3941,17 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 
 				zone.init(o, a);
 
-				clientUploader.uploadZone(scene, zone, x, z);
+				try
+				{
+					clientUploader.uploadZone(scene, zone, x, z);
+				}
+				catch (RuntimeException ex)
+				{
+					// a zone whose upload outgrows its counted size (java.nio.BufferOverflowException, 2026-10-30, a teleport
+					// destination) took the client down in swapScene, then left it loading forever: the rest of that zone is
+					// lost, the scene loads, and the log names the zone
+					log.error("Zone upload failed at zone {},{}: {}", x, z, ex.toString());
+				}
 
 				zone.unmap();
 				zone.initialized = true;
