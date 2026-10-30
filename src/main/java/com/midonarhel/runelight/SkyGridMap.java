@@ -63,6 +63,16 @@ final class SkyGridMap
 	private boolean pendingMove;
 	private int framesSinceUpload;
 	private int uniOn, uniOutdoors, uniCamera;
+	// LayerEase: when the shown grid was swapped in, and the grid shown before it (and its place), whose share eases
+	// out meanwhile; where neither covers the scene, open sky stands in (a teleport, until the new place is traced)
+	private long shownSince;
+	private int prevTexture;
+	private int prevBaseX, prevBaseY;
+	private boolean prevInstance;
+	private int uniWeight, uniPrevOn, uniPrevCamera;
+	// how far (tiles) a grid's place may lie from the scene's for it to be shown there: a region load where the player
+	// walks moves the base by a few chunks, a teleport much further
+	private static final int COVER_TILES = 64;
 
 	/**
 	 * Once a frame on the client thread with the GL context: hand the worker the newest voxels and walls and the next
@@ -261,6 +271,11 @@ final class SkyGridMap
 				int t = texture;
 				texture = backTexture;
 				backTexture = t;
+				prevTexture = ready ? t : 0;
+				prevBaseX = shownBaseX;
+				prevBaseY = shownBaseY;
+				prevInstance = shownInstance;
+				shownSince = System.nanoTime();
 				freshInFlight = false;
 				swapWhenUploaded = false;
 				pendingMove = false;
@@ -272,6 +287,12 @@ final class SkyGridMap
 		}
 		else if (pendingMove)
 		{
+			if (shownSince == 0 || !covers(shownBaseX, shownBaseY, shownInstance, sky.baseX(), sky.baseY(), sky.instance()))
+			{
+				// the first place shown, or one far from the last: it eases in from open sky
+				shownSince = System.nanoTime();
+				prevTexture = 0;
+			}
 			pendingMove = false;
 			shownBaseX = sky.baseX();
 			shownBaseY = sky.baseY();
@@ -322,6 +343,8 @@ final class SkyGridMap
 		}
 		freshInFlight = false;
 		swapWhenUploaded = false;
+		prevTexture = 0;
+		shownSince = 0;
 		sky = null;
 		job = null;
 		jobFresh = false;
@@ -333,13 +356,22 @@ final class SkyGridMap
 		pendingMove = false;
 	}
 
-	/** Look up the AO program's uniforms; the texture is sampled on {@code unit}. */
+	private static boolean covers(int baseX, int baseY, boolean instance, int sceneX, int sceneY, boolean sceneInstance)
+	{
+		return instance == sceneInstance && Math.abs(baseX - sceneX) <= COVER_TILES && Math.abs(baseY - sceneY) <= COVER_TILES;
+	}
+
+	/** Look up the AO program's uniforms; the texture is sampled on {@code unit}, the one easing out on unit + 1. */
 	void locateAo(int program, int unit)
 	{
 		uniOn = glGetUniformLocation(program, "skylightOn");
 		uniCamera = glGetUniformLocation(program, "skyGridCamera");
+		uniWeight = glGetUniformLocation(program, "skyGridWeight");
+		uniPrevOn = glGetUniformLocation(program, "skyGridPrevOn");
+		uniPrevCamera = glGetUniformLocation(program, "skyGridPrevCamera");
 		glUseProgram(program);
 		glUniform1i(glGetUniformLocation(program, "skyGrid"), unit);
+		glUniform1i(glGetUniformLocation(program, "skyGridPrev"), unit + 1);
 		glUniform1f(glGetUniformLocation(program, "skyGridScale"), resolution);
 		glUseProgram(0);
 	}
@@ -359,6 +391,22 @@ final class SkyGridMap
 				cameraZ - (shownBaseY - scene.getBaseY()) * SkyGrid.TILE);
 			glActiveTexture(GL_TEXTURE0 + unit);
 			glBindTexture(GL_TEXTURE_3D, texture);
+			// LayerEase: the shown grid's share since it was swapped in; the rest is the grid before it where that
+			// covers the scene, else open sky
+			int sx = scene.getBaseX(), sy = scene.getBaseY();
+			boolean inst = scene.isInstance();
+			float w = covers(shownBaseX, shownBaseY, shownInstance, sx, sy, inst) ? LayerEase.weight(shownSince, System.nanoTime()) : 0;
+			boolean prevOn = w < 1 && prevTexture != 0 && prevTexture != texture
+				&& covers(prevBaseX, prevBaseY, prevInstance, sx, sy, inst);
+			glUniform1f(uniWeight, w);
+			glUniform1i(uniPrevOn, prevOn ? 1 : 0);
+			if (prevOn)
+			{
+				glUniform3f(uniPrevCamera, cameraX - (prevBaseX - sx) * SkyGrid.TILE, cameraY,
+					cameraZ - (prevBaseY - sy) * SkyGrid.TILE);
+			}
+			glActiveTexture(GL_TEXTURE0 + unit + 1);
+			glBindTexture(GL_TEXTURE_3D, prevOn ? prevTexture : 0);
 			glActiveTexture(GL_TEXTURE0);
 		}
 		return on;
@@ -367,6 +415,8 @@ final class SkyGridMap
 	static void unbind(int unit)
 	{
 		glActiveTexture(GL_TEXTURE0 + unit);
+		glBindTexture(GL_TEXTURE_3D, 0);
+		glActiveTexture(GL_TEXTURE0 + unit + 1);
 		glBindTexture(GL_TEXTURE_3D, 0);
 		glActiveTexture(GL_TEXTURE0);
 	}

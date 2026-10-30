@@ -13,6 +13,12 @@ uniform int skylightOn;
 uniform sampler3D skyGrid;
 uniform float skyGridScale;
 uniform vec3 skyGridCamera;  // the camera in the grid's coordinates: tile 0 at 0
+// LayerEase (SkyGridMap): the shown grid's share, easing in after it is swapped in; the rest is the grid shown before
+// it (skyGridPrevOn) or, where none covers the scene, open sky
+uniform float skyGridWeight;
+uniform sampler3D skyGridPrev;
+uniform int skyGridPrevOn;
+uniform vec3 skyGridPrevCamera;
 // Room-fill corner values (SkyField.java): rg/ba light and cover per half; g also holds 2 * diagonal kind.
 // Texture coordinates are
 // camera-relative world xz * skyFieldMap.xy + skyFieldMap.zw
@@ -255,6 +261,10 @@ float skylightVisibility(vec3 p, vec3 n) {
   }
   vec2 field = skyFieldOn == 1 ? skyFieldVisibility(o) : vec2(0.0);
   float v = skyGridVisibility(skyGrid, scale, o + skyGridCamera, n);
+  if (skyGridWeight < 1.0) {
+    float before = skyGridPrevOn == 1 ? skyGridVisibility(skyGridPrev, scale, o + skyGridPrevCamera, n) : 1.0;
+    v = mix(before, v, skyGridWeight);
+  }
   // out of doors the trace only shades gently: the ambient occlusion draws the contact where things meet, and the
   // grid is too coarse to draw more than a soft darkening near buildings and trees. Under cover (the field's green)
   // it keeps its full range.
