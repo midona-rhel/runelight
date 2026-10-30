@@ -199,6 +199,9 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 	private final FrameSnapshot frameSnapshot = new FrameSnapshot();
 	private int framesSinceSwap = 1000;
 	private boolean swapCaptureArmed;
+	// frames left to capture around a swap: set when loadScene finishes (before the client's swap), counts down per frame
+	private volatile int swapCaptureLeft;
+	private int swapCaptureIndex;
 	private int lastSkyCacheMode;
 
 	// Frame pacing (Lumina's): with FPS unlocked and vsync off the client's own limiter sleeps whole milliseconds and
@@ -3338,16 +3341,14 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 				System.identityHashCode(voxelBuilder.getVoxels()), System.identityHashCode(volumetricFog.groundForTrace()),
 				System.identityHashCode(shadowMap.frontView()),
 				System.identityHashCode(buildingLights != null ? buildingLights.getRooms() : null)));
-			if (swapCaptureArmed && framesSinceSwap >= 1 && framesSinceSwap <= 4)
-			{
-				// and the frames themselves, to diff the "sharp" one against its neighbours (::runelight swapcapture arms it)
-				FrameCapture.capture(client, drawManager, "RuneLight (perf-wip)", "swap-f" + framesSinceSwap);
-				if (framesSinceSwap == 4)
-				{
-					swapCaptureArmed = false;
-				}
-			}
 			framesSinceSwap++;
+		}
+		if (swapCaptureLeft > 0)
+		{
+			// the frames around the swap: k = frames since the load finished, s = frames since the swap (1000 = not yet)
+			FrameCapture.capture(client, drawManager, "RuneLight (perf-wip)", String.format("swap-k%d-s%d", swapCaptureIndex, Math.min(framesSinceSwap, 999)));
+			swapCaptureIndex++;
+			swapCaptureLeft--;
 		}
 		if (halfPass)
 		{
@@ -4566,6 +4567,14 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 
 		nextZones = newZones;
 		nextRoofChanges = roofChanges;
+		if (swapCaptureArmed)
+		{
+			// the load is done; the client swaps on one of the next frames: capture from here, so the swap frame
+			// itself and its neighbours are all on file (the user's flash is a whole frame, before frame +1)
+			swapCaptureArmed = false;
+			swapCaptureIndex = 0;
+			swapCaptureLeft = 8;
+		}
 	}
 
 	private static boolean canReuse(Zone[][] zones, int zx, int zz)
@@ -4935,7 +4944,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		else if (args.length >= 1 && args[0].equals("swapcapture"))
 		{
 			swapCaptureArmed = true;
-			log.info("Armed: the first four frames after the next scene swap are captured as swap-f1..4");
+			log.info("Armed: eight frames from the end of the next scene load (spanning the swap) are captured as swap-k0..7");
 		}
 		else if (args.length >= 1 && args[0].equals("timers"))
 		{
