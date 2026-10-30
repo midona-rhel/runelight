@@ -9,9 +9,9 @@ import org.slf4j.LoggerFactory;
 
 /**
  * Finds the cause of occasional long frames from the log. A frame that took more than twice the running median
- * (and more than {@link #MIN_MS}) is logged with the plugin's CPU steps and GPU passes that were large in it, the
- * garbage collections that ran during it, and the periodic jobs that were flagged on it. The GPU times arrive 3
- * frames later, so the line is written then. Client thread only; costs a few array reads a frame.
+ * (and more than {@link #MIN_MS}) is logged at once with the plugin's CPU steps that were large in it (wall clock),
+ * the garbage collections that ran during it, and the periodic jobs that were flagged on it. Client thread only;
+ * costs a few array reads a frame.
  *
  * Where the client thread was stuck: a watchdog thread looks every couple of milliseconds, and once a frame has run
  * past the hitch threshold takes the client thread's stack a few times; the hitch line names the frames. Started on
@@ -41,8 +41,6 @@ final class HitchMonitor
 	private static final int HISTORY = 64;
 	// frames before judging: the first ones load shaders and textures
 	private static final int WARMUP = 240;
-	// a pending line waits this long for the GPU's times
-	private static final int GPU_WAIT = 6;
 	// stages of at least this long are named
 	private static final double STAGE_MS = 2;
 	private static final int MAX_STAGES = 5;
@@ -64,9 +62,7 @@ final class HitchMonitor
 	private long gcCount;
 	private long gcMillis;
 
-	// the hitch waiting for its GPU times
-	private long pendingFrame = -1;
-	private String pendingText;
+	private long frames;
 
 	// shared with the watchdog: the client thread, when its frame began, the hitch threshold, and the stacks taken
 	// in the current frame
@@ -85,11 +81,11 @@ final class HitchMonitor
 	}
 
 	/**
-	 * Call after the frame's swap and the GPU timer's endFrame.
+	 * Call after the frame's swap, with the frame's CPU steps folded in (CpuTimer.endFrame).
 	 *
 	 * @param frameMs time since the last swap
 	 */
-	void endFrame(double frameMs, CpuTimer cpu, GpuTimer gpu)
+	void endFrame(double frameMs, CpuTimer cpu)
 	{
 		if (watchdog == null)
 		{
@@ -98,7 +94,7 @@ final class HitchMonitor
 			watchdog.setDaemon(true);
 			watchdog.start();
 		}
-		long frame = gpu.getFrames();
+		long frame = ++frames;
 		long collections = 0;
 		long collectionMillis = 0;
 		for (int i = 0; i < collectors.size(); ++i)
@@ -107,33 +103,12 @@ final class HitchMonitor
 			collectionMillis += Math.max(collectors.get(i).getCollectionTime(), 0);
 		}
 
-		if (pendingText != null)
-		{
-			if (gpu.getReadFrame() == pendingFrame)
-			{
-				log.info("{}; GPU {}", pendingText, gpuText(gpu));
-				pendingText = null;
-			}
-			else if (frame - pendingFrame > GPU_WAIT)
-			{
-				log.info("{}; GPU times not read", pendingText);
-				pendingText = null;
-			}
-		}
-
-		if (count >= WARMUP && frameMs > MIN_MS && frameMs > median * FACTOR && pendingText == null)
+		if (count >= WARMUP && frameMs > MIN_MS && frameMs > median * FACTOR)
 		{
 			int held = limiter.check("hitch");
 			if (held >= 0)
 			{
-				pendingText = text(frame, frameMs, cpu, collections - gcCount, collectionMillis - gcMillis, held)
-					+ stuckText();
-				pendingFrame = frame;
-				if (!gpu.isEnabled())
-				{
-					log.info("{}; GPU timings are off (show timings turns them on)", pendingText);
-					pendingText = null;
-				}
+				log.info("{}{}", text(frame, frameMs, cpu, collections - gcCount, collectionMillis - gcMillis, held), stuckText());
 			}
 		}
 
@@ -300,31 +275,6 @@ final class HitchMonitor
 		if (!any)
 		{
 			b.append("none");
-		}
-		return b.toString();
-	}
-
-	private static String gpuText(GpuTimer gpu)
-	{
-		StringBuilder b = new StringBuilder(128);
-		b.append(String.format("%.1f ms", gpu.getReadTotalMs()));
-		boolean[] named = new boolean[GpuTimer.STAGES];
-		for (int n = 0; n < MAX_STAGES; ++n)
-		{
-			int best = -1;
-			for (int s = 0; s < GpuTimer.STAGES; ++s)
-			{
-				if (!named[s] && gpu.getReadMs(s) >= STAGE_MS && (best < 0 || gpu.getReadMs(s) > gpu.getReadMs(best)))
-				{
-					best = s;
-				}
-			}
-			if (best < 0)
-			{
-				break;
-			}
-			named[best] = true;
-			b.append(", ").append(GpuTimer.NAMES[best]).append(String.format(" %.1f", gpu.getReadMs(best)));
 		}
 		return b.toString();
 	}
