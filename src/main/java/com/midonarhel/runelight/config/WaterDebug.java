@@ -6,7 +6,8 @@ package com.midonarhel.runelight.config;
 public enum WaterDebug
 {
 	OFF("Off"),
-	MAP("Types and flow");
+	MAP("Types and flow"),
+	WAVES("Waves");
 
 	private final String name;
 

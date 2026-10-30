@@ -148,10 +148,18 @@ public class WindTest
 		WeatherTestData.drive(gale, WeatherMode.GALE, true);
 		assertTrue(gale.getWind().getStrength() > 3 * calm.getWind().getStrength());
 		assertTrue(gale.getWind().getGustiness() > calm.getWind().getGustiness());
+		// the water follows it
+		float[] a = new float[3], b = new float[3];
+		calm.getWaterWind(a);
+		gale.getWaterWind(b);
+		assertTrue(b[2] > a[2]);
+		assertEquals(1, Math.hypot(b[0], b[1]), 1e-5);
 		// underground the air is still for anything that sways
 		Weather cave = new Weather();
 		WeatherTestData.drive(cave, WeatherMode.GALE, false);
 		assertTrue(cave.isWindStill());
+		cave.getWaterWind(a);
+		assertEquals(0, a[2], 0);
 	}
 
 	@Test
