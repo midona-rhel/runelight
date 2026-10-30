@@ -122,7 +122,7 @@ class ModelUploader
 		final VertexShading.Normals computed = this.computedNormals;
 		computed.ensure(vertexCount);
 		VertexShading.computeNormals(vertexCount, verticesX, verticesY, verticesZ,
-			model.faceCount, indices1, indices2, indices3, faceColors3, computed.x, computed.y, computed.z);
+			model.faceCount, indices1, indices2, indices3, faceColors3, computed);
 		final float[] normalsX = computed.x;
 		final float[] normalsY = computed.y;
 		final float[] normalsZ = computed.z;
@@ -270,7 +270,7 @@ class ModelUploader
 					int n2 = smooth ? VertexShading.vertexNormal(normalsX, normalsY, normalsZ, v2, normalSin, normalCos) : 0;
 					int n3 = smooth ? VertexShading.vertexNormal(normalsX, normalsY, normalsZ, v3, normalSin, normalCos) : 0;
 					if (flat && hasNormals
-						&& VertexShading.flatFaceNormals(verticesX, verticesY, verticesZ, normalsX, normalsY, normalsZ, v1, v2, v3, normalSin, normalCos, flatNormals))
+						&& VertexShading.flatFaceNormals(computed, faceIdx, v1, v2, v3, normalSin, normalCos, flatNormals))
 					{
 						n1 = flatNormals[0];
 						n2 = flatNormals[1];
@@ -610,7 +610,7 @@ class ModelUploader
 		final VertexShading.Normals computed = this.computedNormals;
 		computed.ensure(vertexCount);
 		VertexShading.computeNormals(vertexCount, verticesX, verticesY, verticesZ,
-			triangleCount, indices1, indices2, indices3, color3s, computed.x, computed.y, computed.z);
+			triangleCount, indices1, indices2, indices3, color3s, computed);
 		final float[] normalsX = computed.x;
 		final float[] normalsY = computed.y;
 		final float[] normalsZ = computed.z;
@@ -697,7 +697,7 @@ class ModelUploader
 			int n2 = smooth ? VertexShading.vertexNormal(normalsX, normalsY, normalsZ, triangleB, orientSine, normalCos) : 0;
 			int n3 = smooth ? VertexShading.vertexNormal(normalsX, normalsY, normalsZ, triangleC, orientSine, normalCos) : 0;
 			if (flat && hasNormals
-				&& VertexShading.flatFaceNormals(verticesX, verticesY, verticesZ, normalsX, normalsY, normalsZ, triangleA, triangleB, triangleC, orientSine, normalCos, flatNormals))
+				&& VertexShading.flatFaceNormals(computed, face, triangleA, triangleB, triangleC, orientSine, normalCos, flatNormals))
 			{
 				n1 = flatNormals[0];
 				n2 = flatNormals[1];
