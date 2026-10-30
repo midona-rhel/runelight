@@ -24,6 +24,15 @@
  */
 package com.midonarhel.runelight;
 
+import com.midonarhel.runelight.dev.BuildingOverlay;
+import com.midonarhel.runelight.dev.CommandFile;
+import com.midonarhel.runelight.dev.CpuTimer;
+import com.midonarhel.runelight.dev.FrameCapture;
+import com.midonarhel.runelight.dev.FrameSnapshot;
+import com.midonarhel.runelight.dev.HitchMonitor;
+import com.midonarhel.runelight.dev.LookMonitor;
+import com.midonarhel.runelight.dev.ShaderWatcher;
+
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import com.google.common.base.Stopwatch;
@@ -133,7 +142,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 	static final int MAX_DISTANCE = 184;
 	// how far in, in tiles, the sky's light flowing in under cover falls to a third of its brightness
 	static final int SKYLIGHT_REACH = 3;
-	static final int SCENE_OFFSET = (Constants.EXTENDED_SCENE_SIZE - Constants.SCENE_SIZE) / 2; // offset for sxy -> msxy
+	public static final int SCENE_OFFSET = (Constants.EXTENDED_SCENE_SIZE - Constants.SCENE_SIZE) / 2; // offset for sxy -> msxy
 	private static final int UNIFORM_BUFFER_SIZE = 5 * Float.BYTES;
 	static final int NUM_ZONES = Constants.EXTENDED_SCENE_SIZE >> 3;
 	private static final int MAX_WORLDVIEWS = 4096;
@@ -3398,7 +3407,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		return weather;
 	}
 
-	BuildingLights getBuildingLights()
+	public BuildingLights getBuildingLights()
 	{
 		return buildingLights;
 	}

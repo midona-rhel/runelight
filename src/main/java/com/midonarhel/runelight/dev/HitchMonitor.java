@@ -1,4 +1,6 @@
-package com.midonarhel.runelight;
+package com.midonarhel.runelight.dev;
+
+import com.midonarhel.runelight.*;
 
 import java.lang.management.GarbageCollectorMXBean;
 import java.lang.management.ManagementFactory;
@@ -17,19 +19,19 @@ import org.slf4j.LoggerFactory;
  * past the hitch threshold takes the client thread's stack a few times; the hitch line names the frames. Started on
  * the first frame, stopped by {@link #stop}.
  */
-final class HitchMonitor
+public final class HitchMonitor
 {
 	private static final Logger log = LoggerFactory.getLogger(HitchMonitor.class);
 
 	// jobs that run now and then, flagged by whoever starts them; the bit is the index in NAMES
-	static final int STATIC_SHADOWS = 1;
-	static final int ZONE_REBUILD = 1 << 1;
-	static final int SCENE_SWAP = 1 << 2;
-	static final int SHADER_RELOAD = 1 << 3;
-	static final int AREA_HIDING = 1 << 4;
-	static final int VOXEL_BUILD = 1 << 5;
-	static final int SKY_CAPTURE = 1 << 6;
-	static final int SCENE_JOBS = 1 << 7;
+	public static final int STATIC_SHADOWS = 1;
+	public static final int ZONE_REBUILD = 1 << 1;
+	public static final int SCENE_SWAP = 1 << 2;
+	public static final int SHADER_RELOAD = 1 << 3;
+	public static final int AREA_HIDING = 1 << 4;
+	public static final int VOXEL_BUILD = 1 << 5;
+	public static final int SKY_CAPTURE = 1 << 6;
+	public static final int SCENE_JOBS = 1 << 7;
 
 	private static final String[] NAMES = {
 		"static shadow rebuild", "zone rebuild", "scene swap", "shader reload", "area hiding", "voxel build",
@@ -75,7 +77,7 @@ final class HitchMonitor
 	private Thread watchdog;
 
 	/** Flag a job as running this frame. */
-	void job(int flag)
+	public void job(int flag)
 	{
 		jobs |= flag;
 	}
@@ -85,7 +87,7 @@ final class HitchMonitor
 	 *
 	 * @param frameMs time since the last swap
 	 */
-	void endFrame(double frameMs, CpuTimer cpu)
+	public void endFrame(double frameMs, CpuTimer cpu)
 	{
 		if (watchdog == null)
 		{
@@ -134,7 +136,7 @@ final class HitchMonitor
 	}
 
 	/** Stop the watchdog. */
-	void stop()
+	public void stop()
 	{
 		Thread w = watchdog;
 		if (w != null)

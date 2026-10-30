@@ -1,4 +1,6 @@
-package com.midonarhel.runelight;
+package com.midonarhel.runelight.dev;
+
+import com.midonarhel.runelight.*;
 
 import java.awt.Color;
 import java.awt.Dimension;
@@ -16,7 +18,7 @@ import net.runelite.client.ui.overlay.OverlayLayer;
 import net.runelite.client.ui.overlay.OverlayPosition;
 
 /** Actual reconstructed skylight sample positions, shown through scenery at all heights. */
-final class SkyProbeOverlay extends Overlay
+public final class SkyProbeOverlay extends Overlay
 {
 	private final Client client;
 	private final BooleanSupplier enabled;
@@ -81,7 +83,7 @@ final class SkyProbeOverlay extends Overlay
 	}
 
 	/** Called only between tracing jobs; never reads the worker's buffers concurrently. */
-	static List<float[]> samples(SkyGrid sky, WallMap walls, boolean[] dirty, float px, float pz)
+	public static List<float[]> samples(SkyGrid sky, WallMap walls, boolean[] dirty, float px, float pz)
 	{
 		List<float[]> result = new ArrayList<>();
 		Set<Long> seen = new HashSet<>();

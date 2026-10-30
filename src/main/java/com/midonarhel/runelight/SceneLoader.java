@@ -1,5 +1,7 @@
 package com.midonarhel.runelight;
 
+import com.midonarhel.runelight.dev.HitchMonitor;
+
 import com.google.common.base.Stopwatch;
 import java.util.HashMap;
 import java.util.Map;

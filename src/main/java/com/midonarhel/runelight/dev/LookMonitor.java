@@ -1,4 +1,6 @@
-package com.midonarhel.runelight;
+package com.midonarhel.runelight.dev;
+
+import com.midonarhel.runelight.*;
 
 import net.runelite.api.Scene;
 import org.slf4j.Logger;
@@ -10,7 +12,7 @@ import org.slf4j.LoggerFactory;
  * the world position and how long after the last scene swap it happened. Only runs when the plugin logs at DEBUG.
  * Client thread, except {@link #scene}.
  */
-final class LookMonitor
+public final class LookMonitor
 {
 	private static final Logger log = LoggerFactory.getLogger(LookMonitor.class);
 
@@ -38,7 +40,7 @@ final class LookMonitor
 	private int lastBaseX = Integer.MIN_VALUE, lastBaseY;
 
 	/** A top-level scene was loaded (before the swap) or swapped in. */
-	void scene(String what, Scene scene)
+	public void scene(String what, Scene scene)
 	{
 		if (!log.isDebugEnabled())
 		{
@@ -58,7 +60,7 @@ final class LookMonitor
 	 *
 	 * @param world focal world tile (x, y, plane), -1 when unknown
 	 */
-	void frame(EnvironmentUniforms env, Weather weather, int pointLights, int[] world,
+	public void frame(EnvironmentUniforms env, Weather weather, int pointLights, int[] world,
 		String biome)
 	{
 		float[] v = now;

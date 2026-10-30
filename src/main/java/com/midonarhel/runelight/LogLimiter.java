@@ -10,7 +10,7 @@ import org.slf4j.Logger;
  * how often it happened in between. Keyed by whatever identifies the problem (an error and where it came from).
  * Client thread only.
  */
-final class LogLimiter
+public final class LogLimiter
 {
 	private static final class Entry
 	{
@@ -22,12 +22,12 @@ final class LogLimiter
 	private final LongSupplier clock;
 	private final Map<String, Entry> entries = new HashMap<>();
 
-	LogLimiter(long intervalMillis)
+	public LogLimiter(long intervalMillis)
 	{
 		this(intervalMillis, System::currentTimeMillis);
 	}
 
-	LogLimiter(long intervalMillis, LongSupplier clock)
+	public LogLimiter(long intervalMillis, LongSupplier clock)
 	{
 		this.intervalMillis = intervalMillis;
 		this.clock = clock;
@@ -37,7 +37,7 @@ final class LogLimiter
 	 * Whether to log this occurrence now; -1 if not, else how many occurrences were held back since the last one
 	 * logged.
 	 */
-	int check(String key)
+	public int check(String key)
 	{
 		long now = clock.getAsLong();
 		Entry e = entries.get(key);

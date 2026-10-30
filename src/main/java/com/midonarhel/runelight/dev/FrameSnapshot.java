@@ -1,4 +1,6 @@
-package com.midonarhel.runelight;
+package com.midonarhel.runelight.dev;
+
+import com.midonarhel.runelight.*;
 
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
@@ -17,7 +19,7 @@ import net.runelite.client.RuneLite;
  * of seconds and writes a CSV plus a summary (mean, median, p95, max, frames over 1.5x the median = hitches) to
  * ~/.runelite/lumina/snapshots/perfwip-<time>.csv. Call {@link #frame} once per swapped frame on the client thread.
  */
-final class FrameSnapshot
+public final class FrameSnapshot
 {
 	private static final org.slf4j.Logger log = org.slf4j.LoggerFactory.getLogger(FrameSnapshot.class);
 	private static final Path DIR = RuneLite.RUNELITE_DIR.toPath().resolve("lumina").resolve("snapshots");
@@ -28,12 +30,12 @@ final class FrameSnapshot
 	private final List<Double> frames = new ArrayList<>();
 	private Runnable done;
 
-	boolean running()
+	public boolean running()
 	{
 		return endNanos != 0;
 	}
 
-	void start(List<String> header, int seconds, Runnable done)
+	public void start(List<String> header, int seconds, Runnable done)
 	{
 		this.header = header;
 		this.done = done;
@@ -43,7 +45,7 @@ final class FrameSnapshot
 		log.info("Snapshot started: {} s", seconds);
 	}
 
-	void frame()
+	public void frame()
 	{
 		if (endNanos == 0)
 		{

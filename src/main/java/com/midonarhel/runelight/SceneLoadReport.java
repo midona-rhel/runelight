@@ -1,5 +1,7 @@
 package com.midonarhel.runelight;
 
+import com.midonarhel.runelight.dev.CpuTimer;
+
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 

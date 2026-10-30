@@ -1,38 +1,40 @@
-package com.midonarhel.runelight;
+package com.midonarhel.runelight.dev;
+
+import com.midonarhel.runelight.*;
 
 /**
  * CPU time of the plugin's own per-frame steps and of the parts of the frame it doesn't control, averaged.
  * Steps may be begun several times a frame (only on the client thread); their times add up. Not nested: begin
  * and end the same step, never two at once unless they are different steps.
  */
-class CpuTimer
+public class CpuTimer
 {
 	// the client's scene traversal between our pre and post scene callbacks, including our draw callbacks
-	static final int CLIENT_SCENE = 0;
-	static final int ENVIRONMENT = 1;
-	static final int WEATHER = 2;
-	static final int LIGHTS = 3;
-	static final int CLUSTERS = 4;
-	static final int SHADOW_SUBMIT = 5;
-	static final int UI_UPLOAD = 6;
+	public static final int CLIENT_SCENE = 0;
+	public static final int ENVIRONMENT = 1;
+	public static final int WEATHER = 2;
+	public static final int LIGHTS = 3;
+	public static final int CLUSTERS = 4;
+	public static final int SHADOW_SUBMIT = 5;
+	public static final int UI_UPLOAD = 6;
 	// waiting in swapBuffers: large when the GPU (or vsync) is the limit
-	static final int SWAP = 7;
+	public static final int SWAP = 7;
 	// from our swap to the next frame's scene: the client's game loop, other plugins and overlays
-	static final int OUTSIDE = 8;
+	public static final int OUTSIDE = 8;
 	// between our scene and our draw: the client drawing its interface and RuneLite's overlays into the canvas
-	static final int CLIENT_UI = 9;
+	public static final int CLIENT_UI = 9;
 	// mapping the dynamic model buffers at the start of the scene
-	static final int BUFFER_MAP = 10;
+	public static final int BUFFER_MAP = 10;
 	// sending the light and cluster tables to the GPU (part of light clusters before)
-	static final int LIGHT_UPLOAD = 11;
+	public static final int LIGHT_UPLOAD = 11;
 	// the voxel build's submit; the sky capture; the occlusion map redraws
-	static final int VOXELS = 12;
-	static final int SKY_CACHE = 13;
-	static final int OCCLUSION = 14;
+	public static final int VOXELS = 12;
+	public static final int SKY_CACHE = 13;
+	public static final int OCCLUSION = 14;
 	// handing the skylight's grid its next rays and uploading what it traced (the tracing is on its worker)
-	static final int SKY_GRID = 15;
+	public static final int SKY_GRID = 15;
 	// handing the light map its changes and sending the blocks baked since (the baking is on its threads)
-	static final int LIGHT_MAP = 16;
+	public static final int LIGHT_MAP = 16;
 	static final int STAGES = 17;
 
 	static final String[] NAMES = {
@@ -53,12 +55,12 @@ class CpuTimer
 	// the frame that just ended, for the hitch monitor
 	private final double[] last = new double[STAGES];
 
-	void begin(int stage)
+	public void begin(int stage)
 	{
 		start[stage] = System.nanoTime();
 	}
 
-	void end(int stage)
+	public void end(int stage)
 	{
 		if (start[stage] != 0)
 		{
@@ -68,7 +70,7 @@ class CpuTimer
 	}
 
 	/** Fold this frame's times into the averages. */
-	void endFrame()
+	public void endFrame()
 	{
 		for (int s = 0; s < STAGES; ++s)
 		{
@@ -84,13 +86,13 @@ class CpuTimer
 	}
 
 	/** A step's time in the frame that ended last, not averaged. */
-	double getLastMs(int stage)
+	public double getLastMs(int stage)
 	{
 		return last[stage];
 	}
 
 	/** The frame's time not in any step but the one outside it: the plugin's own untimed work. */
-	double untrackedMs(double cpuFrameMs)
+	public double untrackedMs(double cpuFrameMs)
 	{
 		double sum = 0;
 		for (int s = 0; s < STAGES; ++s)
