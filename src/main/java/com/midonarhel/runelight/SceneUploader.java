@@ -1227,7 +1227,7 @@ class SceneUploader
 		final VertexShading.Normals computed = this.computedNormals;
 		computed.ensure(model.getVerticesCount());
 		VertexShading.computeNormals(model.getVerticesCount(), vertexX, vertexY, vertexZ,
-			model.getFaceCount(), indices1, indices2, indices3, color3s, computed.x, computed.y, computed.z);
+			model.getFaceCount(), indices1, indices2, indices3, color3s, computed);
 		final float[] normalsX = computed.x;
 		final float[] normalsY = computed.y;
 		final float[] normalsZ = computed.z;
@@ -1345,7 +1345,7 @@ class SceneUploader
 			int n2 = smooth ? VertexShading.vertexNormal(normalsX, normalsY, normalsZ, triangleB, normalSin, normalCos) : 0;
 			int n3 = smooth ? VertexShading.vertexNormal(normalsX, normalsY, normalsZ, triangleC, normalSin, normalCos) : 0;
 			if (flat && hasNormals
-				&& VertexShading.flatFaceNormals(vertexX, vertexY, vertexZ, normalsX, normalsY, normalsZ, triangleA, triangleB, triangleC, normalSin, normalCos, flatNormals))
+				&& VertexShading.flatFaceNormals(computed, face, triangleA, triangleB, triangleC, normalSin, normalCos, flatNormals))
 			{
 				n1 = flatNormals[0];
 				n2 = flatNormals[1];

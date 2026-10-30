@@ -24,6 +24,15 @@
  */
 package com.midonarhel.runelight;
 
+import com.midonarhel.runelight.dev.BuildingOverlay;
+import com.midonarhel.runelight.dev.CommandFile;
+import com.midonarhel.runelight.dev.CpuTimer;
+import com.midonarhel.runelight.dev.FrameCapture;
+import com.midonarhel.runelight.dev.FrameSnapshot;
+import com.midonarhel.runelight.dev.HitchMonitor;
+import com.midonarhel.runelight.dev.LookMonitor;
+import com.midonarhel.runelight.dev.ShaderWatcher;
+
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import com.google.common.base.Stopwatch;
@@ -133,7 +142,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 	static final int MAX_DISTANCE = 184;
 	// how far in, in tiles, the sky's light flowing in under cover falls to a third of its brightness
 	static final int SKYLIGHT_REACH = 3;
-	static final int SCENE_OFFSET = (Constants.EXTENDED_SCENE_SIZE - Constants.SCENE_SIZE) / 2; // offset for sxy -> msxy
+	public static final int SCENE_OFFSET = (Constants.EXTENDED_SCENE_SIZE - Constants.SCENE_SIZE) / 2; // offset for sxy -> msxy
 	private static final int UNIFORM_BUFFER_SIZE = 5 * Float.BYTES;
 	static final int NUM_ZONES = Constants.EXTENDED_SCENE_SIZE >> 3;
 	private static final int MAX_WORLDVIEWS = 4096;
@@ -518,7 +527,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 	private static final int WATER_WAVES_UNIT_B = RuneLightPlugin.COMPOSITE_TEXTURE_UNIT + 19;
 	// two units: the weather field (WeatherField) and its ground, for the fog and the weather passes
 	private static final int WEATHER_FIELD_UNIT = RuneLightPlugin.COMPOSITE_TEXTURE_UNIT + 16;
-	private final Water water = new Water();
+	final Water water = new Water();
 	private final float[] waterWind = new float[3];
 	final VoxelBuilder voxelBuilder = new VoxelBuilder();
 	// the skylight's traced sky visibility for the AO pass, and the static lights' occlusion
@@ -2603,6 +2612,12 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 			int size = shadowMap.getSize();
 			if (!started)
 			{
+				if (!forLoad && staticBuild != this)
+				{
+					// queued for the drawn scene, then a load's build took over: starting now would draw over the map the
+					// load holds for its swap (startBuild drops the held one; f5a20af3, 21:06: the swap then found none)
+					return true;
+				}
 				started = true;
 				// one static build at a time: a load's takes over from one of the drawn scene's
 				staticBuild = this;
@@ -2622,7 +2637,10 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 				shadowBuildCount = 0;
 				shadowZones(ctx, sx, sz, radius + SHADOW_CACHE_SNAP, null, 0, 0, sway);
 				zones = Arrays.copyOf(shadowBuildZones, shadowBuildCount);
-				perFrame = Math.max(1, (zones.length + SHADOW_BUILD_FRAMES - 1) / SHADOW_BUILD_FRAMES);
+				// a load's map is drawn behind the client's loading box, before its swap, which may come a frame or two
+				// after the load (a115b4c4: three frames late, the old place's map stood in and the new one landed in one
+				// frame, 33 % of pixels): all of it in its first frame, as far as the frame's budget goes
+				perFrame = forLoad ? zones.length : Math.max(1, (zones.length + SHADOW_BUILD_FRAMES - 1) / SHADOW_BUILD_FRAMES);
 			}
 			if (shadowMap.builds != build || !shadowMap.isBuilding())
 			{
@@ -2687,10 +2705,26 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 			return true;
 		}
 
-		/** The scene this was drawn for is swapped in (client thread): the held map becomes the front one. */
+		/**
+		 * The scene this was drawn for is swapped in (client thread): the held map becomes the front one. Not drawn yet
+		 * (the swap came first), what is left of it is drawn now, so the scene never shows with the old place's map.
+		 */
 		void swappedIn()
 		{
 			swappedIn = true;
+			boolean drawing = !held && staticBuild == this || !started;
+			if (drawing)
+			{
+				// done drawing, it takes the front itself (swappedIn is set); the queue then drops it
+				while (!step(Long.MAX_VALUE) && shadowMap.isBuilding())
+				{
+				}
+			}
+			else if (!held)
+			{
+				// it was given up (a setting or the levels changed while it was drawn): a new one is drawn as usual
+				shadowMap.refreshCache();
+			}
 			if (held)
 			{
 				shadowMap.swapFront();
@@ -3373,7 +3407,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		return weather;
 	}
 
-	BuildingLights getBuildingLights()
+	public BuildingLights getBuildingLights()
 	{
 		return buildingLights;
 	}

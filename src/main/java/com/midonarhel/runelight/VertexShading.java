@@ -70,59 +70,72 @@ final class VertexShading
 		return encodeNormal(x, y, z);
 	}
 
-	// Flat-shaded faces whose vertex normals are within this angle of the face normal are shaded smoothly, so
-	// low-poly round shapes (tree trunks, rocks) read as round while real corners (crates, walls) stay sharp.
+	// The crease angle for faces the game marks flat: at each corner the normal averages the neighbouring faces
+	// that meet this one within the angle, so low-poly round shapes (tree trunks, canopies, rocks) read as round
+	// while real corners (crates, walls) stay sharp. Per corner, not per face: a canopy face whose one corner sits
+	// on a sharp fold still shades smoothly at its other two.
 	private static final float SMOOTH_COS = 0.643f; // cos(50 degrees): 5-sided and rounder prisms smooth, cubes don't
+	// a neighbour on the same plane (the other triangle of a quad) bends no normal, so it doesn't make a face "rounded"
+	private static final float COPLANAR_COS = 0.9995f;
 
 	/**
-	 * Normals for a face the game marks as flat shaded: the smooth vertex normal where the fold is gentle,
-	 * otherwise the face's own normal. Positions and normals are in unrotated model space.
+	 * Normals for a face the game marks as flat shaded: at each corner, the area-weighted average of this face
+	 * and the faces around that corner folded less than the crease angle from it (a face on the same plane with
+	 * the opposite winding, double-sided foliage, counts flipped rather than cancelling). Where no neighbour is
+	 * within the angle the corner keeps the face's own normal. Positions are in unrotated model space.
 	 *
+	 * @param face this face's index, in {@code n}'s face arrays (see {@link #computeNormals})
 	 * @param out receives the three encoded normals
-	 * @return true if any vertex was smoothed
+	 * @return true if any corner was smoothed, so the caller gives the face one colour over its rounded surface
 	 */
-	static boolean flatFaceNormals(float[] vx, float[] vy, float[] vz, float[] nx, float[] ny, float[] nz,
-		int a, int b, int c, float orientSine, float orientCosine, int[] out)
+	static boolean flatFaceNormals(Normals n, int face, int a, int b, int c, float orientSine, float orientCosine,
+		int[] out)
 	{
-		float ux = vx[b] - vx[a], uy = vy[b] - vy[a], uz = vz[b] - vz[a];
-		float wx = vx[c] - vx[a], wy = vy[c] - vy[a], wz = vz[c] - vz[a];
-		float fx = uy * wz - uz * wy, fy = uz * wx - ux * wz, fz = ux * wy - uy * wx;
-		float fl = (float) Math.sqrt(fx * fx + fy * fy + fz * fz);
+		float fl = n.faceArea[face];
 		if (fl < 1e-6f)
 		{
 			out[0] = out[1] = out[2] = 0;
 			return false;
 		}
-		fx /= fl;
-		fy /= fl;
-		fz /= fl;
-		// winding is not reliable for the sign; agree with the vertex normals
-		float sx = nx[a] + nx[b] + nx[c], sy = ny[a] + ny[b] + ny[c], sz = nz[a] + nz[b] + nz[c];
-		if (fx * sx + fy * sy + fz * sz < 0)
-		{
-			fx = -fx;
-			fy = -fy;
-			fz = -fz;
-		}
-
-		// all three corners must be gentle, or a box side would get a gradient from one leaning corner normal
+		float fx = n.faceX[face] / fl, fy = n.faceY[face] / fl, fz = n.faceZ[face] / fl;
+		boolean smoothed = false;
 		int[] idx = {a, b, c};
-		for (int v : idx)
-		{
-			float x = nx[v], y = ny[v], z = nz[v];
-			float l = (float) Math.sqrt(x * x + y * y + z * z);
-			if (l < 1e-6f || (x * fx + y * fy + z * fz) / l <= SMOOTH_COS)
-			{
-				int face = rotatedNormal(fx, fy, fz, orientSine, orientCosine);
-				out[0] = out[1] = out[2] = face;
-				return false;
-			}
-		}
 		for (int i = 0; i < 3; ++i)
 		{
-			out[i] = vertexNormal(nx, ny, nz, idx[i], orientSine, orientCosine);
+			int v = idx[i];
+			float sx = n.faceX[face], sy = n.faceY[face], sz = n.faceZ[face];
+			for (int k = n.adjacencyStart[v], end = n.adjacencyStart[v + 1]; k < end; ++k)
+			{
+				int g = n.adjacency[k];
+				if (g == face)
+				{
+					continue;
+				}
+				float gl = n.faceArea[g];
+				if (gl < 1e-6f)
+				{
+					continue;
+				}
+				float gx = n.faceX[g], gy = n.faceY[g], gz = n.faceZ[g];
+				float cos = (fx * gx + fy * gy + fz * gz) / gl;
+				if (cos > SMOOTH_COS)
+				{
+					sx += gx;
+					sy += gy;
+					sz += gz;
+					smoothed |= cos < COPLANAR_COS;
+				}
+				else if (cos < -SMOOTH_COS)
+				{
+					sx -= gx;
+					sy -= gy;
+					sz -= gz;
+					smoothed |= cos > -COPLANAR_COS;
+				}
+			}
+			out[i] = rotatedNormal(sx, sy, sz, orientSine, orientCosine);
 		}
-		return true;
+		return smoothed;
 	}
 
 	private static int rotatedNormal(float x, float y, float z, float orientSine, float orientCosine)
@@ -137,21 +150,28 @@ final class VertexShading
 	}
 
 	/**
-	 * Smooth vertex normals computed from the model's own geometry: each vertex gets the area-weighted average of
-	 * the normals of the visible faces around it. Doesn't depend on the game providing normals, which it doesn't
-	 * always do, and which 117 HD found to be inaccurate anyway. The sign follows the face winding, which is
-	 * consistent within a model; the fragment shader aligns it with the triangle's facing regardless.
+	 * Normals computed from the model's own geometry, into {@code n}: per face its unnormalised normal (the length
+	 * is twice its area, the weight), per vertex the area-weighted sum of the visible faces around it (the smooth
+	 * normal for faces the game shades smoothly, {@link #vertexNormal}), and which faces meet at each vertex (for
+	 * {@link #flatFaceNormals}). Doesn't depend on the game providing normals, which it doesn't always do, and
+	 * which 117 HD found to be inaccurate anyway. The sign follows the face winding, which is consistent within a
+	 * model; the fragment shader aligns it with the triangle's facing regardless.
 	 */
 	static void computeNormals(int vertexCount, float[] vx, float[] vy, float[] vz,
-		int faceCount, int[] i1, int[] i2, int[] i3, int[] colors3, float[] nx, float[] ny, float[] nz)
+		int faceCount, int[] i1, int[] i2, int[] i3, int[] colors3, Normals n)
 	{
+		n.ensure(vertexCount, faceCount);
+		float[] nx = n.x, ny = n.y, nz = n.z;
+		int[] start = n.adjacencyStart;
 		java.util.Arrays.fill(nx, 0, vertexCount, 0);
 		java.util.Arrays.fill(ny, 0, vertexCount, 0);
 		java.util.Arrays.fill(nz, 0, vertexCount, 0);
+		java.util.Arrays.fill(start, 0, vertexCount + 1, 0);
 		for (int f = 0; f < faceCount; ++f)
 		{
 			if (colors3[f] == -2)
 			{
+				n.faceArea[f] = 0;
 				continue;
 			}
 			int a = i1[f], b = i2[f], c = i3[f];
@@ -159,6 +179,10 @@ final class VertexShading
 			float wx = vx[c] - vx[a], wy = vy[c] - vy[a], wz = vz[c] - vz[a];
 			// unnormalized cross product: its length weights the face by area
 			float fx = uy * wz - uz * wy, fy = uz * wx - ux * wz, fz = ux * wy - uy * wx;
+			n.faceX[f] = fx;
+			n.faceY[f] = fy;
+			n.faceZ[f] = fz;
+			n.faceArea[f] = (float) Math.sqrt(fx * fx + fy * fy + fz * fz);
 			nx[a] += fx;
 			ny[a] += fy;
 			nz[a] += fz;
@@ -168,24 +192,65 @@ final class VertexShading
 			nx[c] += fx;
 			ny[c] += fy;
 			nz[c] += fz;
+			// counting sort of the faces by vertex: counts first, shifted so start[v + 1] ends up as v's first slot
+			++start[a + 1];
+			++start[b + 1];
+			++start[c + 1];
+		}
+		for (int v = 0; v < vertexCount; ++v)
+		{
+			start[v + 1] += start[v];
+		}
+		int[] adjacency = n.adjacency;
+		int[] fill = n.adjacencyFill;
+		System.arraycopy(start, 0, fill, 0, vertexCount);
+		for (int f = 0; f < faceCount; ++f)
+		{
+			if (colors3[f] == -2)
+			{
+				continue;
+			}
+			adjacency[fill[i1[f]]++] = f;
+			adjacency[fill[i2[f]]++] = f;
+			adjacency[fill[i3[f]]++] = f;
 		}
 	}
 
 	/**
-	 * Scratch arrays for computed normals, grown as needed.
+	 * Scratch for {@link #computeNormals}, grown as needed: per vertex the smooth normal (x, y, z), per face its
+	 * unnormalised normal and that normal's length, and the faces around each vertex as a compressed list
+	 * ({@code adjacency[adjacencyStart[v] .. adjacencyStart[v + 1])}).
 	 */
 	static final class Normals
 	{
 		float[] x = new float[0], y = new float[0], z = new float[0];
+		float[] faceX = new float[0], faceY = new float[0], faceZ = new float[0], faceArea = new float[0];
+		int[] adjacencyStart = new int[1], adjacencyFill = new int[0], adjacency = new int[0];
 
-		void ensure(int n)
+		void ensure(int vertices)
 		{
-			if (x.length < n)
+			if (x.length < vertices)
 			{
-				int size = Math.max(n, x.length * 2);
+				int size = Math.max(vertices, x.length * 2);
 				x = new float[size];
 				y = new float[size];
 				z = new float[size];
+				adjacencyStart = new int[size + 1];
+				adjacencyFill = new int[size];
+			}
+		}
+
+		void ensure(int vertices, int faces)
+		{
+			ensure(vertices);
+			if (faceArea.length < faces)
+			{
+				int size = Math.max(faces, faceArea.length * 2);
+				faceX = new float[size];
+				faceY = new float[size];
+				faceZ = new float[size];
+				faceArea = new float[size];
+				adjacency = new int[size * 3];
 			}
 		}
 	}

@@ -18,7 +18,7 @@ import java.util.List;
  * the results are logical planes (the plane a player standing there reports): on bridge tiles the data of map
  * level p + 1 belongs to plane p.
  */
-final class BuildingDetector
+public final class BuildingDetector
 {
 	static final int TILE_FLAG_BRIDGE = 2;
 	static final int TILE_FLAG_UNDER_ROOF = 4;
@@ -31,15 +31,15 @@ final class BuildingDetector
 	// the roofs were built can cover more tiles than the real buildings
 	static final float ROOF_ID_AGREEMENT = 0.1f;
 
-	static final class Room
+	public static final class Room
 	{
-		int plane;
+		public int plane;
 		int roofId;
-		int minX = Integer.MAX_VALUE, minY = Integer.MAX_VALUE, maxX = -1, maxY = -1;
+		public int minX = Integer.MAX_VALUE, minY = Integer.MAX_VALUE, maxX = -1, maxY = -1;
 		/**
 		 * Tiles packed as x << 16 | y.
 		 */
-		int[] tiles;
+		public int[] tiles;
 		/**
 		 * Tiles a diagonal wall crosses of which the room has one half only, packed as (x << 16 | y) << 1 | half
 		 * (WallMap.half): the room's tiles where the other half is another room or outdoors, and tiles of another
@@ -48,9 +48,9 @@ final class BuildingDetector
 		int[] cut = new int[0];
 	}
 
-	static final class Result
+	public static final class Result
 	{
-		final List<Room> rooms = new ArrayList<>();
+		public final List<Room> rooms = new ArrayList<>();
 		boolean usedRoofIds;
 		int rejectedSmall, rejectedHuge;
 	}

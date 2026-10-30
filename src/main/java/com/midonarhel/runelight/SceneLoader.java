@@ -1,5 +1,7 @@
 package com.midonarhel.runelight;
 
+import com.midonarhel.runelight.dev.HitchMonitor;
+
 import com.google.common.base.Stopwatch;
 import java.util.HashMap;
 import java.util.Map;
@@ -358,6 +360,13 @@ final class SceneLoader
 
 		SceneDerived d = new SceneDerived(scene, newZones, roofChanges, join(waterBuild), join(fogGroundBuild));
 		t = stage("water mesh + fog ground wait", t);
+		// the water's surface tiles, data and contact into the textures not drawn, before the swap, which flips them
+		Water.Loaded water = d.water;
+		jobs.add("water", SceneJobs.LOAD, deadline ->
+		{
+			plugin.water.uploadNext(water);
+			return true;
+		});
 		if (d.fogGround != null)
 		{
 			// the fog's ground drawn from the swap on (its rooms come after it, and ease in): uploaded before it
@@ -496,6 +505,7 @@ final class SceneLoader
 			}
 		}
 		boolean onClientThread = client.isClientThread();
+		java.util.List<Thread> writers = new java.util.concurrent.CopyOnWriteArrayList<>();
 		ZoneUploads uploads = new ZoneUploads(list, pool, jobs, clientThread,
 			() -> Interactables.resolve(plugin::hasAction),
 			r ->
@@ -515,8 +525,14 @@ final class SceneLoader
 		{
 			SceneUploader up = uploaders[h];
 			up.water = plugin.mapUploader.water;
-			running[h] = uploadThreads.submit(() -> uploadZones(scene, list, xs, zs, nextZone, up, uploads, false, what));
+			running[h] = uploadThreads.submit(() ->
+			{
+				writers.add(Thread.currentThread());
+				return uploadZones(scene, list, xs, zs, nextZone, up, uploads, false, what);
+			});
 		}
+		writers.add(Thread.currentThread());
+		UploadSampler sampler = helpers > 0 ? new UploadSampler(writers) : null;
 		StringBuilder threads = new StringBuilder();
 		long[] own = uploadZones(scene, list, xs, zs, nextZone, plugin.mapUploader, uploads, onClientThread, what);
 		threads.append(String.format("loader %d zones: wait %.0f write %.0f", own[2], own[0] / 1e6, own[1] / 1e6));
@@ -537,11 +553,20 @@ final class SceneLoader
 				log.error("Zone upload thread failed ({})", what, ex.getCause());
 			}
 		}
+		writers.clear();
+		if (sampler != null)
+		{
+			sampler.stop();
+		}
 		long f0 = System.nanoTime();
 		uploads.finish(onClientThread);
 		if (what.equals("load"))
 		{
 			threads.append(String.format("; last unmaps %.0f", (System.nanoTime() - f0) / 1e6));
+			if (sampler != null)
+			{
+				threads.append("; where the writers were: ").append(sampler.text());
+			}
 			report.uploadThreads(threads.toString());
 		}
 	}
@@ -572,6 +597,77 @@ final class SceneLoader
 			uploads.uploaded(i);
 		}
 		return t;
+	}
+
+	/**
+	 * Where the upload's threads spend their time: their stacks every 2 ms while they write, counted by their three
+	 * innermost frames (the load report names the most frequent). The writers took as long together as one alone
+	 * (a115b4c4: 4 threads × 633 ms for the login scene): this names what they share.
+	 */
+	private static final class UploadSampler implements Runnable
+	{
+		private final java.util.List<Thread> writers;
+		private final java.util.Map<String, Integer> counts = new java.util.HashMap<>();
+		private volatile boolean running = true;
+		private final Thread thread;
+		private int samples;
+
+		UploadSampler(java.util.List<Thread> writers)
+		{
+			this.writers = writers;
+			thread = new Thread(this, "RuneLight upload sampler");
+			thread.setDaemon(true);
+			thread.start();
+		}
+
+		@Override
+		public void run()
+		{
+			while (running)
+			{
+				for (Thread t : writers)
+				{
+					StackTraceElement[] st = t.getStackTrace();
+					StringBuilder k = new StringBuilder();
+					for (int i = 0; i < Math.min(3, st.length); ++i)
+					{
+						k.append(i > 0 ? " < " : "").append(st[i].getClassName().replaceAll(".*\\.", "")).append('.')
+							.append(st[i].getMethodName()).append(':').append(st[i].getLineNumber());
+					}
+					synchronized (counts)
+					{
+						counts.merge(k.toString(), 1, Integer::sum);
+						samples++;
+					}
+				}
+				try
+				{
+					Thread.sleep(2);
+				}
+				catch (InterruptedException ex)
+				{
+					return;
+				}
+			}
+		}
+
+		void stop()
+		{
+			running = false;
+			thread.interrupt();
+		}
+
+		String text()
+		{
+			synchronized (counts)
+			{
+				StringBuilder b = new StringBuilder();
+				counts.entrySet().stream().sorted((a, c) -> c.getValue() - a.getValue()).limit(6).forEach(e ->
+					b.append(b.length() > 0 ? " | " : "").append(Math.round(100.0 * e.getValue() / Math.max(1, samples)))
+						.append("% ").append(e.getKey()));
+				return b.toString();
+			}
+		}
 	}
 
 	private void loadSub(WorldView worldView, Scene scene)

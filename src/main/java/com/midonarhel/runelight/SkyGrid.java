@@ -37,7 +37,7 @@ import java.nio.ShortBuffer;
  * Not thread safe: one thread (SkyGridMap's worker) calls everything; the texels and changes are read between calls.
  * World coordinates are the base scene's local ones, tile 0 at 0, y down.
  */
-final class SkyGrid
+public final class SkyGrid
 {
 	static final int SIZE = VoxelGrid.SCENE_TILES;
 	static final int CORNERS = SIZE + 1;
@@ -46,10 +46,10 @@ final class SkyGrid
 	static final float FLOOR_GAP = 240;
 	// heights of the values above each floor's ground: between a storey's floor and ceiling voxels (a storey is about
 	// 240 high, a voxel 64), low enough for the floor, high enough for the tops of walls
-	static final float[] HEIGHTS = {40, 112, 184};
-	static final int LEVELS = FLOORS * HEIGHTS.length + 1;
+	public static final float[] HEIGHTS = {40, 112, 184};
+	public static final int LEVELS = FLOORS * HEIGHTS.length + 1;
 	// One exterior sample just above the captured geometry at each corner.
-	static final int SURFACE_LEVEL = LEVELS - 1;
+	public static final int SURFACE_LEVEL = LEVELS - 1;
 	static final float TILE = 128;
 	// rays per group of quadrants: an even spread over the sky's half of the sphere, each counting for every lobe it
 	// lies in (the one up and up to two sides)
@@ -114,8 +114,8 @@ final class SkyGrid
 		}
 	}
 
-	final int resolution, size, corners, textureWidth, textureHeight, reach;
-	final float spacing;
+	public final int resolution, size, corners, textureWidth, textureHeight, reach;
+	public final float spacing;
 
 	SkyGrid() { this(1); }
 
@@ -136,7 +136,7 @@ final class SkyGrid
 		dirty = new boolean[active.length];
 	}
 
-	final ShortBuffer texels;
+	public final ShortBuffer texels;
 
 	private VoxelGrid grid;
 	SkyTerrain terrain;
@@ -148,7 +148,7 @@ final class SkyGrid
 	// Actual scene floors per tile (z * size + x), one bit per plane; the ground floor always
 	private final byte[] floors;
 	// units to trace, [(level * corners + z) * corners + x]
-	final boolean[] active;
+	public final boolean[] active;
 	int nearbyUnits, supportUnits;
 	final boolean[] dirty;
 	private int dirtyCount;
@@ -166,12 +166,12 @@ final class SkyGrid
 	private final int[] members = new int[8];
 	private final int[] bits = new int[4];
 
-	int baseX()
+	public int baseX()
 	{
 		return baseX;
 	}
 
-	int baseY()
+	public int baseY()
 	{
 		return baseY;
 	}
@@ -407,7 +407,7 @@ final class SkyGrid
 		return (b & WallMap.DIAG_SW_NE) != 0 ? 1 : (b & WallMap.DIAG_NW_SE) != 0 ? 2 : 0;
 	}
 
-	int wallBits(int f, int tx, int tz)
+	public int wallBits(int f, int tx, int tz)
 	{
 		if (walls == null) return 0;
 		int b = walls.get(f, tx/resolution+walls.offset, tz/resolution+walls.offset);

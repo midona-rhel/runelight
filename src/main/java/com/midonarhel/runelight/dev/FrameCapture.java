@@ -1,4 +1,6 @@
-package com.midonarhel.runelight;
+package com.midonarhel.runelight.dev;
+
+import com.midonarhel.runelight.*;
 
 import java.awt.Image;
 import java.awt.image.BufferedImage;
@@ -20,7 +22,7 @@ import net.runelite.client.ui.DrawManager;
  * ::runelight cam yaw pitch zoom   (yaw 0-2047, pitch 128-512, zoom as the zoom slider's script value)
  * ::runelight capture name
  */
-final class FrameCapture
+public final class FrameCapture
 {
 	private static final org.slf4j.Logger log = org.slf4j.LoggerFactory.getLogger(FrameCapture.class);
 
@@ -31,7 +33,7 @@ final class FrameCapture
 	}
 
 	/** Call on the client thread. */
-	static void setCamera(Client client, int yaw, int pitch, int zoom)
+	public static void setCamera(Client client, int yaw, int pitch, int zoom)
 	{
 		client.setCameraYawTarget(yaw);
 		client.setCameraPitchTarget(pitch);
@@ -39,7 +41,7 @@ final class FrameCapture
 	}
 
 	/** Save the next frame as DIR/name.png, with name.txt holding the camera and location. Call on the client thread. */
-	static void capture(Client client, DrawManager drawManager, String renderer, String name)
+	public static void capture(Client client, DrawManager drawManager, String renderer, String name)
 	{
 		var player = client.getLocalPlayer();
 		String info = "renderer: " + renderer + "\n"

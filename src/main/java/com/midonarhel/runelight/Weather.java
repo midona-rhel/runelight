@@ -34,7 +34,7 @@ import static org.lwjgl.opengl.GL33C.*;
  * (weather_common.glsl). So a change of weather shows over the whole view at once, thinning gradually into the
  * distance.
  */
-class Weather
+public class Weather
 {
 	// occlusion map: OCCLUSION_SIZE^2 texels over +-OCCLUSION_RADIUS world units, 1/8 tile per texel, 4 MB
 	private static final int OCCLUSION_SIZE = 1024;
@@ -473,7 +473,7 @@ class Weather
 	}
 
 	/** Multiplier on the fog's color (dust, ash), 1 1 1 underground. */
-	float[] getFogTint()
+	public float[] getFogTint()
 	{
 		return openSky ? fogTint : NEUTRAL_TINT;
 	}
@@ -492,7 +492,7 @@ class Weather
 	 * How much the weather thickens the volumetric fog, as a multiplier: light in clear weather, thick in fog,
 	 * and with FogClimate, misty or dry by region and time of day.
 	 */
-	float fogMultiplier()
+	public float fogMultiplier()
 	{
 		return openSky ? fog : FOG_CAVE;
 	}
@@ -500,7 +500,7 @@ class Weather
 	/**
 	 * Multiplier on the volumetric fog height: mist lies low in the morning, heat haze rises.
 	 */
-	float fogHeightMultiplier()
+	public float fogHeightMultiplier()
 	{
 		return openSky ? fogHeight : 1;
 	}
@@ -508,7 +508,7 @@ class Weather
 	/**
 	 * How hazy the air is, 0 to 1, for the stars: damp regions and fog hide the faint ones.
 	 */
-	float skyHaze()
+	public float skyHaze()
 	{
 		return openSky ? FogClimate.haze(humidity, fog) : 0;
 	}
@@ -517,7 +517,7 @@ class Weather
 	 * How much of an area's own fog (EnvironmentManager.getFogDepth) the volumetric fog takes on: modest in clear
 	 * weather, all of it in fog.
 	 */
-	float areaFogWeight()
+	public float areaFogWeight()
 	{
 		return openSky ? areaFog : 1;
 	}
@@ -525,7 +525,7 @@ class Weather
 	/**
 	 * Multiplier on the area's distance fog and sky haze.
 	 */
-	float distanceFogScale()
+	public float distanceFogScale()
 	{
 		return openSky ? distanceFog : 1;
 	}
@@ -534,7 +534,7 @@ class Weather
 	 * sky.glsl's weatherOvercast: the cover, how snowy (white) rather than rainy (slate)
 	 * the overcast is, and the lightning flash; with room for seven, also weatherLight (see {@link #getLight}).
 	 */
-	void getOvercast(float[] out)
+	public void getOvercast(float[] out)
 	{
 		out[0] = cloudCover();
 		out[1] = snowiness;
@@ -674,12 +674,12 @@ class Weather
 	}
 
 	/** wet ground and snow cover at the player, 0-1 */
-	float getWetness()
+	public float getWetness()
 	{
 		return wetness;
 	}
 
-	float getSnowCover()
+	public float getSnowCover()
 	{
 		return snowCover;
 	}

@@ -6,11 +6,11 @@ import static org.lwjgl.opengl.GL33C.*;
  * The environment.glsl uniforms of one program. Every program that includes environment.glsl must get these
  * set each frame: unset uniforms are 0, which would mean no ambient light and no sun.
  */
-final class EnvironmentUniforms
+public final class EnvironmentUniforms
 {
 	// the values of the last set(), for LookMonitor: ambient, sun, sky tint, fog color and weight, fog depth, haze
-	static final int VALUES = 15;
-	final float[] values = new float[VALUES];
+	public static final int VALUES = 15;
+	public final float[] values = new float[VALUES];
 
 	private int ambient, sun, fogColor, fogDepth, haze, skyTint, drawDistance, cave, fogFocus;
 

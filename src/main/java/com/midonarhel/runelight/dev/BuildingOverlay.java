@@ -1,4 +1,6 @@
-package com.midonarhel.runelight;
+package com.midonarhel.runelight.dev;
+
+import com.midonarhel.runelight.*;
 
 import java.awt.Color;
 import java.awt.Dimension;
@@ -21,7 +23,7 @@ import net.runelite.client.ui.overlay.OverlayPosition;
  * the shaders know it by (R) and its plane (L), and says which room the player
  * stands in.
  */
-class BuildingOverlay extends Overlay
+public class BuildingOverlay extends Overlay
 {
 	// only rooms this close to the player are drawn, to keep the overlay cheap in towns
 	private static final int RANGE_TILES = 32;

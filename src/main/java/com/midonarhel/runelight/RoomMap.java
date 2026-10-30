@@ -10,12 +10,12 @@ import java.nio.FloatBuffer;
  * GL-free so it can be tested; LightClusters uploads {@link #texels} after the lights in the light buffer. Arrays
  * are [plane][x][y] in extended scene tiles; planes are logical planes as in BuildingDetector.
  */
-final class RoomMap
+public final class RoomMap
 {
 	static final int PLANES = 4;
 	// room ids are packed in 12 bits; ANY is one past the largest
 	static final int ANY = 4095;
-	static final int MAX_ROOM = ANY - 1;
+	public static final int MAX_ROOM = ANY - 1;
 	static final float TILE = 128;
 	// texels in front of the map: the header (rooms.glsl)
 	static final int HEADER_TEXELS = 1;
@@ -219,7 +219,7 @@ final class RoomMap
 	}
 
 	/** The room of a tile, 0 outdoors or outside the map. */
-	int room(int plane, int x, int y)
+	public int room(int plane, int x, int y)
 	{
 		if (plane < 0 || plane >= PLANES || x < 0 || y < 0 || x >= size || y >= size)
 		{

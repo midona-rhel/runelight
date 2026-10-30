@@ -1,4 +1,6 @@
-package com.midonarhel.runelight;
+package com.midonarhel.runelight.dev;
+
+import com.midonarhel.runelight.*;
 
 import java.io.IOException;
 import java.nio.file.Files;
@@ -16,7 +18,7 @@ import org.slf4j.LoggerFactory;
  * WatchService on macOS is itself a slow poller (seconds of latency); checking mtimes of a few dozen files
  * every 200ms is cheaper and reacts immediately on every platform.
  */
-class ShaderWatcher
+public class ShaderWatcher
 {
 	private static final Logger log = LoggerFactory.getLogger(ShaderWatcher.class);
 	private static final long POLL_MS = 200;
@@ -37,7 +39,7 @@ class ShaderWatcher
 	 *
 	 * @return a watcher, or null when no source directory is available (e.g. a Plugin Hub install)
 	 */
-	static ShaderWatcher create()
+	public static ShaderWatcher create()
 	{
 		String prop = System.getProperty("runelight.shaderDir");
 		Path dir = prop != null
@@ -52,12 +54,12 @@ class ShaderWatcher
 		return new ShaderWatcher(dir);
 	}
 
-	Path getDirectory()
+	public Path getDirectory()
 	{
 		return dir;
 	}
 
-	void start()
+	public void start()
 	{
 		running = true;
 		thread = new Thread(this::run, "RuneLight shader watcher");
@@ -66,7 +68,7 @@ class ShaderWatcher
 		log.info("Shader hot reload watching {}", dir);
 	}
 
-	void stop()
+	public void stop()
 	{
 		running = false;
 		if (thread != null)
@@ -79,7 +81,7 @@ class ShaderWatcher
 	/**
 	 * @return true once after any shader file was added, removed or modified
 	 */
-	boolean poll()
+	public boolean poll()
 	{
 		return changed.getAndSet(false);
 	}

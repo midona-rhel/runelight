@@ -1,4 +1,6 @@
-package com.midonarhel.runelight;
+package com.midonarhel.runelight.dev;
+
+import com.midonarhel.runelight.*;
 
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
@@ -12,21 +14,21 @@ import java.util.function.Consumer;
  * of the file is run as if typed as "::<command> <line>", then the file is deleted. Polled once per game tick in
  * developer mode only.
  */
-final class CommandFile
+public final class CommandFile
 {
 	private static final org.slf4j.Logger log = org.slf4j.LoggerFactory.getLogger(CommandFile.class);
 
 	private final Path file;
 	private final Consumer<String[]> run;
 
-	CommandFile(Path file, Consumer<String[]> run)
+	public CommandFile(Path file, Consumer<String[]> run)
 	{
 		this.file = file;
 		this.run = run;
 	}
 
 	/** Call on the client thread. */
-	void poll()
+	public void poll()
 	{
 		if (!Files.exists(file))
 		{

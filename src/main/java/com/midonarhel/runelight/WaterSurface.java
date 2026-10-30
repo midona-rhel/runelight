@@ -115,6 +115,10 @@ class WaterSurface
 	private int waveUnitA, waveUnitB;
 	private int vao, vboTiles, ebo;
 	private Mesh mesh;
+	// a loaded scene's tiles, uploaded before its swap (uploadNext) and drawn from it (flip); the one VAO reads whichever
+	// buffer is bound when the draw points its attribute at a run
+	private int vboTilesBack;
+	private Mesh backMesh;
 	// The target holds only the pixels of the rect (anyVisible), from its corner: a clear of all of it is cheap on a
 	// tiled GPU, but it is still written out whole. Sized in steps of TARGET_STEP pixels, and kept while the rect fits
 	// and needs at most a step less (no new one each frame while the rect's edge hovers about a step).
@@ -377,21 +381,14 @@ class WaterSurface
 	}
 
 	/**
-	 * Upload a scene's mesh (null for none). GL thread.
+	 * Upload a loaded scene's mesh (null for none) into the buffer not drawn, before its swap: a scheduler job, GL thread.
 	 */
-	void upload(Mesh m)
+	void uploadNext(Mesh m)
 	{
-		mesh = m;
-		// the maps are of the old scene's tiles
-		builtStep = Long.MIN_VALUE;
+		backMesh = m;
 		if (m == null)
 		{
 			return;
-		}
-		chunkFlags = new byte[m.chunks];
-		for (int i = 0; i < 3; ++i)
-		{
-			waveBaked[i] = new boolean[m.chunks];
 		}
 		if (vao == 0)
 		{
@@ -408,11 +405,37 @@ class WaterSurface
 			glVertexAttribDivisor(0, 1);
 			glBindVertexArray(0);
 		}
+		if (vboTilesBack == 0)
+		{
+			vboTilesBack = glGenBuffers();
+		}
 		ByteBuffer buf = BufferUtils.createByteBuffer(m.count * 4);
 		buf.put(m.tiles, 0, m.count * 4).flip();
-		glBindBuffer(GL_ARRAY_BUFFER, vboTiles);
+		glBindBuffer(GL_ARRAY_BUFFER, vboTilesBack);
 		glBufferData(GL_ARRAY_BUFFER, buf, GL_STATIC_DRAW);
 		glBindBuffer(GL_ARRAY_BUFFER, 0);
+	}
+
+	/** The swap: the mesh uploadNext put beside the drawn one is drawn from now. No GL call. */
+	void flip()
+	{
+		Mesh m = backMesh;
+		backMesh = null;
+		mesh = m;
+		// the maps are of the old scene's tiles
+		builtStep = Long.MIN_VALUE;
+		if (m == null)
+		{
+			return;
+		}
+		int t = vboTiles;
+		vboTiles = vboTilesBack;
+		vboTilesBack = t;
+		chunkFlags = new byte[m.chunks];
+		for (int i = 0; i < 3; ++i)
+		{
+			waveBaked[i] = new boolean[m.chunks];
+		}
 	}
 
 	boolean hasMesh()
@@ -841,6 +864,12 @@ class WaterSurface
 			glDeleteBuffers(ebo);
 			vao = vboTiles = ebo = 0;
 		}
+		if (vboTilesBack != 0)
+		{
+			glDeleteBuffers(vboTilesBack);
+			vboTilesBack = 0;
+		}
 		mesh = null;
+		backMesh = null;
 	}
 }

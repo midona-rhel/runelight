@@ -26,7 +26,7 @@ import org.slf4j.LoggerFactory;
  * spreads over each room that lacks light (RoomLight), darker toward its walls (composite_frag.glsl), instead of point
  * lights. Everything runs on the client thread.
  */
-class BuildingLights
+public class BuildingLights
 {
 	private static final Logger log = LoggerFactory.getLogger(BuildingLights.class);
 
@@ -81,12 +81,12 @@ class BuildingLights
 		this.client = client;
 	}
 
-	BuildingDetector.Result getResult()
+	public BuildingDetector.Result getResult()
 	{
 		return result;
 	}
 
-	RoomMap getRooms()
+	public RoomMap getRooms()
 	{
 		return rooms;
 	}
