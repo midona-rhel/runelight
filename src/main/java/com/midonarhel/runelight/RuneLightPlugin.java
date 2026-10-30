@@ -4776,6 +4776,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 			header.add("canvas: " + client.getCanvasWidth() + "x" + client.getCanvasHeight());
 			header.add("camera: yaw " + client.getCameraYaw() + ", pitch " + client.getCameraPitch() + ", scale " + client.getScale());
 			header.add("unlock_fps: " + config.unlockFps() + ", fps_target: " + (uncapped ? 999 : target) + ", vsync: " + config.syncMode());
+			header.add("render_scale: " + config.renderScale() + ", ao: " + config.ambientOcclusion());
 			header.add("location: " + (client.getLocalPlayer() == null ? "none" : client.getLocalPlayer().getWorldLocation()));
 			frameSnapshot.start(header, seconds, uncapped ? () ->
 			{
@@ -4787,7 +4788,8 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		{
 			// the smoothed per-pass GPU and per-step CPU times the overlay shows, to the log, so a tool can read them;
 			// needs the "gpuPassTimings" setting on (set gpuPassTimings true) and the FPS uncapped to mean anything
-			StringBuilder sb = new StringBuilder("timers: cpu_frame=").append(String.format("%.2f", getCpuFrameMs()));
+			StringBuilder sb = new StringBuilder("timers: render_scale=").append(config.renderScale())
+				.append(" cpu_frame=").append(String.format("%.2f", getCpuFrameMs()));
 			sb.append(" gpu_enabled=").append(gpuTimer.isEnabled());
 			for (int stage = 0; stage < GpuTimer.STAGES; stage++)
 			{
