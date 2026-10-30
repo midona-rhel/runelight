@@ -4546,7 +4546,16 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 
 				if (!zone.initialized)
 				{
-					mapUploader.uploadZone(scene, zone, x, z);
+					try
+					{
+						mapUploader.uploadZone(scene, zone, x, z);
+					}
+					catch (RuntimeException ex)
+					{
+						// the load must not throw: the client then never finishes loading (2026-10-30, a zone's upload outgrew
+						// its counted VBO at base (1632, 3080)); the zone loses its tail, the log names it
+						log.error("Zone upload failed at zone {},{} (load): {}", x, z, ex.toString());
+					}
 				}
 			}
 		}
@@ -4661,7 +4670,16 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 			{
 				Zone zone = ctx.zones[x][z];
 
-				mapUploader.uploadZone(scene, zone, x, z);
+				try
+				{
+					mapUploader.uploadZone(scene, zone, x, z);
+				}
+				catch (RuntimeException ex)
+				{
+					// the load must not throw: the client then never finishes loading (2026-10-30, a zone's upload outgrew
+					// its counted VBO at base (1632, 3080)); the zone loses its tail, the log names it
+					log.error("Zone upload failed at zone {},{} (sub view): {}", x, z, ex.toString());
+				}
 			}
 		}
 	}
