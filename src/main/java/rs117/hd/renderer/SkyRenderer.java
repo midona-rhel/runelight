@@ -277,7 +277,22 @@ public class SkyRenderer {
 		commandBuffer.PopTimer(Timer.RENDER_SKY);
 	}
 
+	// ::117hd dump: log the lighting values once, for comparing against Lumina
+	public static volatile boolean dumpRequested;
+
 	private void updateGlobalUbo(UBOGlobal ubo) {
+		if (dumpRequested) {
+			dumpRequested = false;
+			var state = skyManager.getState();
+			log.info("Lighting dump: environment={} skyEnabled={} sunAlt={} sunAz={}"
+				+ " | fogColor(global)={} | ambientLight(hdr)={} | directionalLight(hdr)={} | frame.fog={} | frame.horizon={}"
+				+ " | frame.ambient={} | frame.sun={} | fogDensity={} visibility={} customGradient={}",
+				environmentManager.getCurrentEnvironment(), skyEnabled, state.sunAltitudeDegrees, java.util.Arrays.toString(state.sunAngles),
+				java.util.Arrays.toString(fogColor), java.util.Arrays.toString(ambientLight), java.util.Arrays.toString(directionalLight),
+				java.util.Arrays.toString(currentFrame.fog), java.util.Arrays.toString(currentFrame.horizon),
+				java.util.Arrays.toString(currentFrame.ambientLight), java.util.Arrays.toString(currentFrame.sunDirectionalLight),
+				currentFrame.fogDensity, currentFrame.visibility, currentFrame.customGradient);
+		}
 		ubo.fogColor.set(fogColor);
 		float[] waterColorHsv = ColorUtils.srgbToHsv(waterColor);
 		ubo.waterColorLight.set(linearToSrgb(ColorUtils.hsvToSrgb(waterColorHsv[0], waterColorHsv[1], waterColorHsv[2] * .8f)));

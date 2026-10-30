@@ -14,6 +14,7 @@ import net.runelite.client.eventbus.EventBus;
 import net.runelite.client.eventbus.Subscribe;
 import net.runelite.client.input.KeyListener;
 import net.runelite.client.input.KeyManager;
+import net.runelite.client.ui.DrawManager;
 import net.runelite.client.ui.components.colorpicker.ColorPickerManager;
 import net.runelite.client.ui.components.colorpicker.RuneliteColorPicker;
 import rs117.hd.HdPlugin;
@@ -53,6 +54,9 @@ public class DeveloperTools implements KeyListener {
 
 	@Inject
 	private Client client;
+
+	@Inject
+	private DrawManager drawManager;
 
 	@Inject
 	private ClientThread clientThread;
@@ -141,12 +145,24 @@ public class DeveloperTools implements KeyListener {
 		frameTimerOverlay.reset();
 	}
 
+	// developer mode: commands from .runelite/lumina/command-117hd.txt, as if typed as ::117hd <line>
+	private final CommandFile commandFile = new CommandFile(
+		net.runelite.client.RuneLite.RUNELITE_DIR.toPath().resolve("lumina").resolve("command-117hd.txt"), this::runCommand);
+
+	@Subscribe
+	public void onGameTick(GameTick event) {
+		if (developerMode)
+			commandFile.poll();
+	}
+
 	@Subscribe
 	public void onCommandExecuted(CommandExecuted commandExecuted) {
 		if (!commandExecuted.getCommand().equalsIgnoreCase("117hd"))
 			return;
+		runCommand(commandExecuted.getArguments());
+	}
 
-		String[] args = commandExecuted.getArguments();
+	private void runCommand(String[] args) {
 		if (args.length < 1)
 			return;
 
@@ -192,6 +208,16 @@ public class DeveloperTools implements KeyListener {
 				break;
 			case "latlon":
 				handleLatLonCommand(args);
+				break;
+			case "cam":
+				if (args.length >= 4)
+					FrameCapture.setCamera(client, Integer.parseInt(args[1]), Integer.parseInt(args[2]), Integer.parseInt(args[3]));
+				break;
+			case "dump":
+				rs117.hd.renderer.SkyRenderer.dumpRequested = true;
+				break;
+			case "capture":
+				FrameCapture.capture(client, drawManager, "117 HD", args.length >= 2 ? args[1] : "capture");
 				break;
 		}
 
