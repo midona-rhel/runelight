@@ -2603,6 +2603,12 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 			int size = shadowMap.getSize();
 			if (!started)
 			{
+				if (!forLoad && staticBuild != this)
+				{
+					// queued for the drawn scene, then a load's build took over: starting now would draw over the map the
+					// load holds for its swap (startBuild drops the held one; f5a20af3, 21:06: the swap then found none)
+					return true;
+				}
 				started = true;
 				// one static build at a time: a load's takes over from one of the drawn scene's
 				staticBuild = this;
