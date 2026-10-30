@@ -197,6 +197,8 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 	// ~/.runelite/lumina/command-perfwip.txt once per client tick in developer mode
 	private CommandFile commandFile;
 	private final FrameSnapshot frameSnapshot = new FrameSnapshot();
+	private int framesSinceSwap = 1000;
+	private int lastSkyCacheMode;
 
 	// Frame pacing (Lumina's): with FPS unlocked and vsync off the client's own limiter sleeps whole milliseconds and
 	// lands late every sixth frame (a 14/21 ms saw-tooth at a 60 target), so the frame is paced here instead: sleep
@@ -3313,6 +3315,15 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		final boolean sky = skyGrid.isReady(aoScene);
 		frameSkylight = false;
 		final boolean halfPass = ao || frameFog || shadows || ground || sky;
+		if (framesSinceSwap < 6)
+		{
+			// B3 trace: the user sees one frame render normally, one "really sharp", then back, on every teleport — which
+			// passes ran in the frames after the swap tells which layer drops out
+			log.info(String.format("post-swap frame %d: ao=%b fog=%b shadows=%b(init %b) ground=%b sky=%b half=%b fogGround=%b voxels=%b skyCacheMode=%d",
+				framesSinceSwap, ao, frameFog, shadows, shadowMap.isInitialized(), ground, sky, halfPass, volumetricFog.hasGround(),
+				voxelBuilder.getVoxels() != null, lastSkyCacheMode));
+			framesSinceSwap++;
+		}
 		if (halfPass)
 		{
 			glBindFramebuffer(GL_FRAMEBUFFER, sceneTargets.getAoFbo());
@@ -3366,6 +3377,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		cpuTimer.begin(CpuTimer.SKY_CACHE);
 		int captured = skyCache.getCaptures();
 		int skyCacheMode = updateSkyCache();
+		lastSkyCacheMode = skyCacheMode;
 		cpuTimer.end(CpuTimer.SKY_CACHE);
 		if (captured != skyCache.getCaptures())
 		{
@@ -4650,6 +4662,7 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		}
 
 		hitchMonitor.job(HitchMonitor.SCENE_SWAP);
+		framesSinceSwap = 0;
 		// B3: every part of the swap frame timed, logged when the swap is slow, so the map-load hitch is attributed
 		long t0 = System.nanoTime();
 		areaHiding.swapped();
