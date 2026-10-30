@@ -1,5 +1,7 @@
 package com.midonarhel.runelight;
 
+import com.midonarhel.runelight.scene.GpuIntBuffer;
+
 import java.nio.IntBuffer;
 import java.util.Arrays;
 import net.runelite.api.GameObject;
@@ -12,7 +14,7 @@ import net.runelite.api.WallObject;
  * The opaque triangles of one zone as SceneUploader writes them, kept for the voxel proxy (Voxelizer), which is built
  * later on its worker thread. Positions are zone-local x and z and world y, as in the static vertex format.
  */
-final class VoxelCapture
+public final class VoxelCapture
 {
 	/** The bit of a wall object's number that tells it from the others. */
 	private static final int WALL = 0x40000000;
@@ -23,14 +25,14 @@ final class VoxelCapture
 	// per triangle: the scene object it is of (owner), 0 for none: the ground and what is not an object
 	int[] owner = new int[256];
 	// the object the triangles added now are of
-	int current;
+	public int current;
 	int count;
 
 	/**
 	 * A scene object's number, the same from its geometry (SceneUploader) and from the light that is on it (SceneLights),
 	 * whatever the object looks like at the moment (an impostor has the id of the object it stands for): its id and tile.
 	 */
-	static int ownerOf(TileObject object)
+	public static int ownerOf(TileObject object)
 	{
 		int x, y;
 		if (object instanceof GameObject)
@@ -77,7 +79,7 @@ final class VoxelCapture
 	}
 
 	/** Drops the spare capacity once the zone is uploaded. */
-	void trim()
+	public void trim()
 	{
 		foliage = Arrays.copyOf(foliage, count);
 		owner = Arrays.copyOf(owner, count);
@@ -88,23 +90,23 @@ final class VoxelCapture
 	 * A zone's opaque vertex buffer that also records its triangles. Every static vertex is one put22224 (position,
 	 * spare short, abhsl) followed by one put2222 (texture, uv, packed normal).
 	 */
-	static final class Buffer extends GpuIntBuffer
+	public static final class Buffer extends GpuIntBuffer
 	{
 		// transparency above this (abhsl's top byte, 0 opaque) doesn't block light
 		private static final int MAX_ALPHA = 127;
 
-		final VoxelCapture capture = new VoxelCapture();
+		public final VoxelCapture capture = new VoxelCapture();
 		private final int[] vx = new int[3], vy = new int[3], vz = new int[3], vw = new int[3], vc = new int[3],
 			vt = new int[3];
 		private int k;
 
-		Buffer(IntBuffer ib)
+		public Buffer(IntBuffer ib)
 		{
 			super(ib);
 		}
 
 		@Override
-		void put22224(int x, int y, int z, int w, int v)
+		public void put22224(int x, int y, int z, int w, int v)
 		{
 			super.put22224(x, y, z, w, v);
 			vx[k] = x;
@@ -115,7 +117,7 @@ final class VoxelCapture
 		}
 
 		@Override
-		void put2222(int x, int y, int z, int w)
+		public void put2222(int x, int y, int z, int w)
 		{
 			super.put2222(x, y, z, w);
 			vt[k] = x;

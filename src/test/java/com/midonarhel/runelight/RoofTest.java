@@ -1,5 +1,7 @@
 package com.midonarhel.runelight;
 
+import com.midonarhel.runelight.scene.Zone;
+
 import com.midonarhel.runelight.weather.WeatherAudio;
 
 import static org.junit.Assert.assertEquals;

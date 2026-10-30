@@ -1,5 +1,8 @@
 package com.midonarhel.runelight;
 
+import com.midonarhel.runelight.scene.SurfaceMaterials;
+import com.midonarhel.runelight.scene.WindSway;
+
 import com.midonarhel.runelight.sky.EnvironmentManager;
 
 import net.runelite.api.Constants;
@@ -27,7 +30,7 @@ import net.runelite.api.WallObject;
  * Bed depth and bed color only depend on a tile's own surroundings (at most {@link #MAX_LEVEL} tiles away), so
  * zones reused from the previous scene line up with newly uploaded ones.
  */
-final class WaterMap
+public final class WaterMap
 {
 	static final int SIZE = Constants.EXTENDED_SCENE_SIZE;
 	// heightRange's bound when the heights aren't known, far past any the game has
@@ -49,15 +52,15 @@ final class WaterMap
 
 	// vertex flags in the texture id short of terrain (above SurfaceMaterials' bits): the frag shader writes them
 	// to the material target so the composite knows bed (always under water) from land (never)
-	static final int BED_FLAG = 1 << SurfaceMaterials.SHIFT + 3;
-	static final int LAND_FLAG = 1 << SurfaceMaterials.SHIFT + 4;
+	public static final int BED_FLAG = 1 << SurfaceMaterials.SHIFT + 3;
+	public static final int LAND_FLAG = 1 << SurfaceMaterials.SHIFT + 4;
 
 	// 117 HD's bed depth per tile from shore (ProceduralGenerator.DEPTH_LEVEL_SLOPE * 0.55), cut off early so the
 	// depth never depends on tiles more than a zone away
 	static final int MAX_LEVEL = 8;
 	private static final int[] DEPTH = {82, 165, 258, 335, 385, 412, 451, 506};
 	// at least this deep in the middle of a water tile, so a stream between two banks still holds water
-	static final int MIN_DEPTH = 56;
+	public static final int MIN_DEPTH = 56;
 
 	// per tile: final water type, render level of the water tile (-1 none), the game's water texture, the bed color
 	final byte[] type = new byte[SIZE * SIZE];
@@ -65,7 +68,7 @@ final class WaterMap
 	final byte[] level = new byte[SIZE * SIZE];
 	private final short[] bedHsl = new short[SIZE * SIZE];
 	// per corner: depth level (0 at the shore)
-	final byte[] depthLevel = new byte[CORNERS * CORNERS];
+	public final byte[] depthLevel = new byte[CORNERS * CORNERS];
 	// per corner: the world flow map's flow right at the corner (finer than its tiles' average), NaN where unknown
 	private final float[] cornerFlowX = new float[CORNERS * CORNERS];
 	private final float[] cornerFlowZ = new float[CORNERS * CORNERS];
@@ -191,17 +194,17 @@ final class WaterMap
 		return texture >= 130 && texture <= 189 || texture == 208;
 	}
 
-	static boolean isWaterTexture(int texture)
+	public static boolean isWaterTexture(int texture)
 	{
 		return textureKind(texture) != NONE;
 	}
 
-	static WaterMap build(Scene scene, WaterOverrides overrides)
+	public static WaterMap build(Scene scene, WaterOverrides overrides)
 	{
 		return build(scene, overrides, WaterFlow.world());
 	}
 
-	static WaterMap build(Scene scene, WaterOverrides overrides, WaterFlow flowMap)
+	public static WaterMap build(Scene scene, WaterOverrides overrides, WaterFlow flowMap)
 	{
 		WaterMap m = new WaterMap();
 		m.load(scene, overrides, flowMap);
@@ -591,7 +594,7 @@ final class WaterMap
 	 * Whether a terrain tile at (ex, ey) on render level {@code lvl} with texture {@code texture} is uploaded as
 	 * bed. Water elsewhere (stacked on another plane) keeps its vanilla look.
 	 */
-	boolean isBed(int ex, int ey, int lvl, int texture)
+	public boolean isBed(int ex, int ey, int lvl, int texture)
 	{
 		if (ex < 0 || ey < 0 || ex >= SIZE || ey >= SIZE || !isWaterTexture(texture))
 		{
@@ -600,7 +603,7 @@ final class WaterMap
 		return level[ey * SIZE + ex] == lvl;
 	}
 
-	boolean hasBed(int ex, int ey, int lvl)
+	public boolean hasBed(int ex, int ey, int lvl)
 	{
 		return ex >= 0 && ey >= 0 && ex < SIZE && ey < SIZE && level[ey * SIZE + ex] == lvl;
 	}
@@ -608,7 +611,7 @@ final class WaterMap
 	/**
 	 * How far the bed sinks at corner (cx, cy), world units (y down, so added to the height).
 	 */
-	int bedOffset(int cx, int cy)
+	public int bedOffset(int cx, int cy)
 	{
 		if (cx < 0 || cy < 0 || cx >= CORNERS || cy >= CORNERS)
 		{
@@ -620,7 +623,7 @@ final class WaterMap
 	/**
 	 * Bed offset inside tile (ex, ey) at tile-local position (lx, lz) in 0-128, bilinear between its corners.
 	 */
-	int bedOffset(int ex, int ey, int lx, int lz)
+	public int bedOffset(int ex, int ey, int lx, int lz)
 	{
 		float fx = lx / 128f, fz = lz / 128f;
 		float s = bedOffset(ex, ey) + (bedOffset(ex + 1, ey) - bedOffset(ex, ey)) * fx;
@@ -632,7 +635,7 @@ final class WaterMap
 	 * Whether bed tile (ex, ey) touches the shore at a corner, so its corners can't hold it deep enough and it is
 	 * uploaded with a sunken middle.
 	 */
-	boolean isShoreTile(int ex, int ey)
+	public boolean isShoreTile(int ex, int ey)
 	{
 		return depthLevel(ex, ey) == 0 || depthLevel(ex + 1, ey) == 0 || depthLevel(ex, ey + 1) == 0
 			|| depthLevel(ex + 1, ey + 1) == 0;
@@ -642,7 +645,7 @@ final class WaterMap
 	 * How far the middle of bed tile (ex, ey) sinks: as deep as its corners on average, and at least
 	 * {@link #MIN_DEPTH}.
 	 */
-	int centerOffset(int ex, int ey)
+	public int centerOffset(int ex, int ey)
 	{
 		int avg = bedOffset(ex, ey) + bedOffset(ex + 1, ey) + bedOffset(ex, ey + 1) + bedOffset(ex + 1, ey + 1) + 2 >> 2;
 		return Math.max(avg, MIN_DEPTH);
@@ -651,7 +654,7 @@ final class WaterMap
 	/**
 	 * The heights of render level {@code lvl} with the bed lowered.
 	 */
-	int[][] bedHeights(int lvl)
+	public int[][] bedHeights(int lvl)
 	{
 		return bedHeights[lvl];
 	}
@@ -664,7 +667,7 @@ final class WaterMap
 	 * water tiles' around it, so neighboring tiles of different ground agree on it; a little darker deeper down and a
 	 * little uneven.
 	 */
-	int bedColor(int cx, int cy, int depth)
+	public int bedColor(int cx, int cy, int depth)
 	{
 		int hue = 0, sat = 0, light = 0, n = 0, first = -1;
 		for (int y = cy - 1; y <= cy; ++y)
@@ -725,7 +728,7 @@ final class WaterMap
 		return l;
 	}
 
-	int depthLevel(int cx, int cy)
+	public int depthLevel(int cx, int cy)
 	{
 		if (cx < 0 || cy < 0 || cx >= CORNERS || cy >= CORNERS)
 		{
@@ -1199,7 +1202,7 @@ final class WaterMap
 	 * Whether scene local (x, height, z) is over a water tile, within `tolerance` of the game's water level there (not,
 	 * say, on a bridge over it).
 	 */
-	boolean atWaterLevel(int x, int height, int z, int tolerance)
+	public boolean atWaterLevel(int x, int height, int z, int tolerance)
 	{
 		int off = RuneLightPlugin.SCENE_OFFSET << 7;
 		int ex = x + off, ez = z + off, tx = ex >> 7, tz = ez >> 7;
@@ -1244,7 +1247,7 @@ final class WaterMap
 	/**
 	 * The sunk bed's height (y down) at scene local (x, z) over a water tile (atWaterLevel).
 	 */
-	int bedHeight(int x, int z)
+	public int bedHeight(int x, int z)
 	{
 		int off = RuneLightPlugin.SCENE_OFFSET << 7;
 		int ex = x + off, ez = z + off, tx = ex >> 7, tz = ez >> 7;
@@ -1257,7 +1260,7 @@ final class WaterMap
 	/**
 	 * Whether extended tile (x, y) or one of its neighbours is water.
 	 */
-	boolean nearWater(int x, int y)
+	public boolean nearWater(int x, int y)
 	{
 		for (int dy = -1; dy <= 1; ++dy)
 		{

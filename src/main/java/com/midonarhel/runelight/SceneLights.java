@@ -1,5 +1,7 @@
 package com.midonarhel.runelight;
 
+import com.midonarhel.runelight.scene.ModelData;
+
 import com.midonarhel.runelight.sky.EnvironmentManager;
 
 import com.google.gson.Gson;

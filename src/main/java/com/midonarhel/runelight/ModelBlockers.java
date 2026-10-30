@@ -1,5 +1,7 @@
 package com.midonarhel.runelight;
 
+import com.midonarhel.runelight.scene.Zone;
+
 import java.io.DataOutputStream;
 import java.io.IOException;
 import java.util.Arrays;
@@ -28,7 +30,7 @@ import java.util.Arrays;
  * GL-free. Zones are rasterized once and keep their cells (Zone.modelBlockers); the scene's cells are assembled from
  * them.
  */
-final class ModelBlockers
+public final class ModelBlockers
 {
 	static final int PLANES = WallMap.PLANES;
 	static final int HEIGHT_BINS = 16;
@@ -51,11 +53,11 @@ final class ModelBlockers
 
 
 	/** One zone's cells with models, a record for each object in a cell: key (cx + MARGIN) | (cz + MARGIN) << 7 | storey << 14, the object, the bins' mask, the boxes. */
-	static final class Zone
+	public static final class Zone
 	{
-		final int[] keys, owners;
-		final short[] masks;
-		final byte[] boxes;
+		public final int[] keys, owners;
+		public final short[] masks;
+		public final byte[] boxes;
 
 		Zone(int[] keys, int[] owners, short[] masks, byte[] boxes)
 		{

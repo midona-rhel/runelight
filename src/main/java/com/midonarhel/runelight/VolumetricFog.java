@@ -23,7 +23,7 @@ import static org.lwjgl.opengl.GL33C.*;
  * All fog parameters are set in {@link #updateParameters}, so a later per-area environment system only has to
  * change the values there (or the {@code area*} multipliers).
  */
-class VolumetricFog
+public class VolumetricFog
 {
 	static final Shader PROGRAM = new Shader()
 		.add(GL_VERTEX_SHADER, "composite_vert.glsl")
@@ -278,7 +278,7 @@ class VolumetricFog
 	 * A loaded scene's ground (texels packed without rooms, by SceneLoader) into the texture not drawn, before its swap:
 	 * a scheduler job, client thread.
 	 */
-	void prepareNext(FogGround g, float[] texels)
+	public void prepareNext(FogGround g, float[] texels)
 	{
 		easeFromBack = false;
 		texGroundBack = upload(texGroundBack, texels);

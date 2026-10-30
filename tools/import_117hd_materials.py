@@ -34,7 +34,7 @@ vanilla water textures, which SurfaceMaterials treats as fake wherever a model c
 
 Usage (from a 117HD/RLHD checkout):
   tools/import_117hd_materials.py <RLHD>/src/main/resources/rs117/hd/scene \
-      src/main/resources/com/midonarhel/runelight/materials.json
+      src/main/resources/com/midonarhel/runelight/scene/materials.json
 
 117 HD is BSD 2-Clause licensed; its notice is reproduced in LICENSE.
 """
