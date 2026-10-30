@@ -1,4 +1,6 @@
-package com.midonarhel.runelight;
+package com.midonarhel.runelight.frame;
+
+import com.midonarhel.runelight.*;
 
 import com.midonarhel.runelight.dev.CpuTimer;
 

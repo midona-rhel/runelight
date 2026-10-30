@@ -1,4 +1,6 @@
-package com.midonarhel.runelight;
+package com.midonarhel.runelight.frame;
+
+import com.midonarhel.runelight.*;
 
 import static org.lwjgl.opengl.GL33C.*;
 
@@ -8,9 +10,9 @@ import static org.lwjgl.opengl.GL33C.*;
  * draw() scales it up to the window (upscale_frag.glsl). The interface is drawn afterwards at the window's full
  * resolution. Not allocated at 100%, where the composite draws into the window directly.
  */
-class Upscaler
+public class Upscaler
 {
-	static final Shader PROGRAM = new Shader()
+	public static final Shader PROGRAM = new Shader()
 		.add(GL_VERTEX_SHADER, "composite_vert.glsl")
 		.add(GL_FRAGMENT_SHADER, "upscale_frag.glsl");
 
@@ -19,7 +21,7 @@ class Upscaler
 	private int stencil;
 	private int program, uniSharpness, uniOutSize;
 
-	void setProgram(int program)
+	public void setProgram(int program)
 	{
 		this.program = program;
 		uniSharpness = glGetUniformLocation(program, "sharpness");
@@ -29,13 +31,13 @@ class Upscaler
 		glUseProgram(0);
 	}
 
-	void freeProgram()
+	public void freeProgram()
 	{
 		glDeleteProgram(program);
 		program = 0;
 	}
 
-	void init(int width, int height)
+	public void init(int width, int height)
 	{
 		texture = glGenTextures();
 		glBindTexture(GL_TEXTURE_2D, texture);
@@ -62,7 +64,7 @@ class Upscaler
 		}
 	}
 
-	void free()
+	public void free()
 	{
 		if (fbo != 0)
 		{
@@ -73,12 +75,12 @@ class Upscaler
 		}
 	}
 
-	boolean isInitialized()
+	public boolean isInitialized()
 	{
 		return fbo != 0;
 	}
 
-	int getFbo()
+	public int getFbo()
 	{
 		return fbo;
 	}
@@ -87,7 +89,7 @@ class Upscaler
 	 * Scale the target up into the framebuffer bound for drawing, which is outWidth x outHeight. A fullscreen
 	 * triangle's VAO must be bound.
 	 */
-	void draw(int outWidth, int outHeight, float sharpness)
+	public void draw(int outWidth, int outHeight, float sharpness)
 	{
 		glViewport(0, 0, outWidth, outHeight);
 		glUseProgram(program);

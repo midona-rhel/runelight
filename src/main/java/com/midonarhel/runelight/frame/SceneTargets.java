@@ -1,4 +1,6 @@
-package com.midonarhel.runelight;
+package com.midonarhel.runelight.frame;
+
+import com.midonarhel.runelight.*;
 
 import static org.lwjgl.opengl.GL33C.*;
 
@@ -8,7 +10,7 @@ import static org.lwjgl.opengl.GL33C.*;
  * where the surface changes (composite_frag.glsl), and every other pass reads sample 0. Only the transparency layer,
  * which is lit as it is drawn, is resolved, into a plain texture.
  */
-class SceneTargets
+public class SceneTargets
 {
 	static final int COLOR_FORMAT = GL_RGBA8;
 	static final int NORMAL_FORMAT = GL_RGB10_A2;
@@ -20,7 +22,7 @@ class SceneTargets
 	private final int[] partTextures = new int[2], partFbos = new int[2];
 
 	/** Full-resolution linear-light intermediates; distinct textures avoid framebuffer feedback. */
-	void drawPart(int part, int unit)
+	public void drawPart(int part, int unit)
 	{
 		glActiveTexture(GL_TEXTURE0);
 		for (int i = 0; i < 2; i++)
@@ -93,7 +95,7 @@ class SceneTargets
 	// no cloud: nothing scattered, all the sky through
 	private static final float[] CLEAR_SKY = {0, 0, 0, 1};
 
-	void init(int width, int height, int samples, float halfRatio)
+	public void init(int width, int height, int samples, float halfRatio)
 	{
 		this.halfRatio = halfRatio;
 		this.width = width;
@@ -156,7 +158,7 @@ class SceneTargets
 		denoiseFog = false;
 	}
 
-	void free()
+	public void free()
 	{
 		freeFog();
 		freeHalf();
@@ -184,42 +186,42 @@ class SceneTargets
 		}
 	}
 
-	boolean isInitialized()
+	public boolean isInitialized()
 	{
 		return fboScene != 0;
 	}
 
-	int getRenderFbo()
+	public int getRenderFbo()
 	{
 		return fboScene;
 	}
 
-	int getWidth()
+	public int getWidth()
 	{
 		return width;
 	}
 
-	int getHeight()
+	public int getHeight()
 	{
 		return height;
 	}
 
-	int getAoFbo()
+	public int getAoFbo()
 	{
 		return fboAo;
 	}
 
-	float getHalfRatio()
+	public float getHalfRatio()
 	{
 		return halfRatio;
 	}
 
-	int getAoWidth()
+	public int getAoWidth()
 	{
 		return aoWidth;
 	}
 
-	int getAoHeight()
+	public int getAoHeight()
 	{
 		return aoHeight;
 	}
@@ -241,7 +243,7 @@ class SceneTargets
 	 * Bind the framebuffer of the composite's half resolution pass, with its viewport, drawing the clouds, the water's
 	 * shaded surface or both, cleared (the clouds to clear sky, the water to none).
 	 */
-	void bindHalf(boolean clouds, boolean water)
+	public void bindHalf(boolean clouds, boolean water)
 	{
 		if (fboHalf == 0)
 		{
@@ -298,12 +300,12 @@ class SceneTargets
 		}
 	}
 
-	int cloudTexture()
+	public int cloudTexture()
 	{
 		return texClouds;
 	}
 
-	int waterShadedTexture()
+	public int waterShadedTexture()
 	{
 		return texWaterShaded;
 	}
@@ -322,7 +324,7 @@ class SceneTargets
 	 * The framebuffer the fog pass renders into, at the AO targets' size: with denoised, the one {@link #denoise}
 	 * smooths into the composite's fog target, else that target itself.
 	 */
-	int fogFbo(boolean denoised)
+	public int fogFbo(boolean denoised)
 	{
 		if (fboFog == 0)
 		{
@@ -362,7 +364,7 @@ class SceneTargets
 	 * fullscreen triangle's VAO bound. Leaves the shadow and fog units holding the AO pass's and the fog pass's own
 	 * targets: bind the smoothed ones for the composite.
 	 */
-	void denoise(int fogUniform, int aoUnit, int shadowUnit, int fogUnit, boolean fog)
+	public void denoise(int fogUniform, int aoUnit, int shadowUnit, int fogUnit, boolean fog)
 	{
 		glViewport(0, 0, aoWidth, aoHeight);
 		glUniform1i(fogUniform, fog ? 1 : 0);
@@ -389,20 +391,20 @@ class SceneTargets
 	}
 
 	/** The half resolution fog, for the composite; after {@link #fogFbo} (and {@link #denoise} when it smooths it). */
-	void bindFog(int unit)
+	public void bindFog(int unit)
 	{
 		bind(unit, texFog);
 	}
 
 	/** The half resolution shadows smoothed by {@link #denoise}, for the composite. */
-	void bindShadow(int unit)
+	public void bindShadow(int unit)
 	{
 		glActiveTexture(GL_TEXTURE0 + unit);
 		glBindTexture(GL_TEXTURE_2D, texShadow);
 		glActiveTexture(GL_TEXTURE0);
 	}
 
-	void bindAo(int unit)
+	public void bindAo(int unit)
 	{
 		glActiveTexture(GL_TEXTURE0 + unit);
 		glBindTexture(GL_TEXTURE_2D, texAo);
@@ -413,7 +415,7 @@ class SceneTargets
 	 * Resolve the transparency layer, the one target a pass reads averaged: it is lit already, so its samples average
 	 * to the pixel's. No-op without MSAA.
 	 */
-	void resolveAlpha()
+	public void resolveAlpha()
 	{
 		if (samples == 0)
 		{
@@ -431,7 +433,7 @@ class SceneTargets
 	 * sample's alpha says whether geometry covers it), the rest to 0, depth to far (reverse-z). Call with the render
 	 * framebuffer bound.
 	 */
-	void clear(float r, float g, float b)
+	public void clear(float r, float g, float b)
 	{
 		glDrawBuffers(ALL_BUFFERS);
 		clearColor[0] = r;
@@ -448,26 +450,26 @@ class SceneTargets
 	/**
 	 * Route drawing to the transparency layer, or back to the opaque color and normal targets.
 	 */
-	void setAlphaPass(boolean alpha)
+	public void setAlphaPass(boolean alpha)
 	{
 		glDrawBuffers(alpha ? ALPHA_BUFFERS : OPAQUE_BUFFERS);
 	}
 
-	void bindMaterial(int unit)
+	public void bindMaterial(int unit)
 	{
 		glActiveTexture(GL_TEXTURE0 + unit);
 		glBindTexture(target, texMaterial);
 		glActiveTexture(GL_TEXTURE0);
 	}
 
-	void unbindMaterial(int unit)
+	public void unbindMaterial(int unit)
 	{
 		glActiveTexture(GL_TEXTURE0 + unit);
 		glBindTexture(target, 0);
 		glActiveTexture(GL_TEXTURE0);
 	}
 
-	void bindAlphaLayer(int unit)
+	public void bindAlphaLayer(int unit)
 	{
 		glActiveTexture(GL_TEXTURE0 + unit);
 		glBindTexture(GL_TEXTURE_2D, texAlpha);
@@ -477,7 +479,7 @@ class SceneTargets
 	/**
 	 * Bind color, normal and depth to consecutive texture units starting at {@code firstUnit}.
 	 */
-	void bindTextures(int firstUnit)
+	public void bindTextures(int firstUnit)
 	{
 		glActiveTexture(GL_TEXTURE0 + firstUnit);
 		glBindTexture(target, texColor);
@@ -488,7 +490,7 @@ class SceneTargets
 		glActiveTexture(GL_TEXTURE0);
 	}
 
-	void unbindTextures(int firstUnit)
+	public void unbindTextures(int firstUnit)
 	{
 		for (int i = 0; i < 3; ++i)
 		{

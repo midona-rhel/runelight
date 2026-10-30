@@ -1,4 +1,6 @@
-package com.midonarhel.runelight;
+package com.midonarhel.runelight.frame;
+
+import com.midonarhel.runelight.*;
 
 import java.nio.ByteBuffer;
 import java.nio.IntBuffer;
@@ -16,7 +18,7 @@ import static org.lwjgl.opengl.GL33C.*;
  * The canvas array is safe to read meanwhile: the copy is waited for before the client's draw call returns, and the
  * client thread draws nothing into the canvas during it.
  */
-class InterfaceUpload
+public class InterfaceUpload
 {
 	private static final Logger log = LoggerFactory.getLogger(InterfaceUpload.class);
 
@@ -35,7 +37,7 @@ class InterfaceUpload
 	 * Map the buffer and start copying the canvas into it. The buffer is left unbound, so other uploads made
 	 * before {@link #finish} don't read from it.
 	 */
-	void start(int pbo, int[] pixels, int width, int height)
+	public void start(int pbo, int[] pixels, int width, int height)
 	{
 		this.pbo = pbo;
 		this.width = width;
@@ -71,7 +73,7 @@ class InterfaceUpload
 	/**
 	 * Wait for the copy. Call before {@link #finish}; split from it so the wait can be timed apart.
 	 */
-	void await()
+	public void await()
 	{
 		for (int t = 0; t < THREADS; ++t)
 		{
@@ -96,7 +98,7 @@ class InterfaceUpload
 	/**
 	 * Unmap the buffer and fill the texture from it. Returns whether the texture has this frame's canvas.
 	 */
-	boolean finish(int texture)
+	public boolean finish(int texture)
 	{
 		await();
 		if (!mapped)
@@ -147,7 +149,7 @@ class InterfaceUpload
 	}
 
 	/** Drop the worker threads; the buffer belongs to the caller. Call after {@link #finish}. */
-	void free()
+	public void free()
 	{
 		await();
 		if (pool != null)

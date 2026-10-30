@@ -24,6 +24,10 @@
  */
 package com.midonarhel.runelight;
 
+import com.midonarhel.runelight.frame.InterfaceUpload;
+import com.midonarhel.runelight.frame.SceneTargets;
+import com.midonarhel.runelight.frame.Upscaler;
+
 import com.midonarhel.runelight.scene.AreaHiding;
 import com.midonarhel.runelight.scene.EdgeFade;
 import com.midonarhel.runelight.scene.GLBuffer;
