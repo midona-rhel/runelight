@@ -1,5 +1,7 @@
 package com.midonarhel.runelight;
 
+import com.midonarhel.runelight.scene.ModelData;
+
 import com.google.gson.Gson;
 import java.lang.reflect.Proxy;
 import java.util.ArrayList;

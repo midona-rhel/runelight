@@ -1,14 +1,14 @@
 package com.midonarhel.runelight;
 
 /** IEEE half floats, for the sky grid's texels. */
-final class Half
+public final class Half
 {
 	private Half()
 	{
 	}
 
 	/** The half float bits of f, rounded to nearest. */
-	static short toHalf(float f)
+	public static short toHalf(float f)
 	{
 		int bits = Float.floatToIntBits(f);
 		int sign = bits >>> 16 & 0x8000;
@@ -46,7 +46,7 @@ final class Half
 		return (short) half;
 	}
 
-	static float fromHalf(short h)
+	public static float fromHalf(short h)
 	{
 		int s = (h & 0x8000) << 16;
 		int e = h >> 10 & 0x1f;

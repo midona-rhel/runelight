@@ -16,12 +16,12 @@ import java.util.Collection;
  * GL-free and immutable once built, so the light map's workers can read it. Arrays are [plane][x][y] in
  * extended scene tiles, like RoomMap; x is east, y north.
  */
-final class WallMap
+public final class WallMap
 {
 	static final int PLANES = 4;
 
 	// per tile bits
-	static final int NORTH = 1, EAST = 2, SOUTH = 4, WEST = 8;
+	public static final int NORTH = 1, EAST = 2, SOUTH = 4, WEST = 8;
 	// diagonal from the south-west corner to the north-east one ("/"), and from the north-west to the south-east ("\")
 	static final int DIAG_SW_NE = 16, DIAG_NW_SE = 32;
 
@@ -484,7 +484,7 @@ final class WallMap
 	// Tile halves, for splitting rooms: a tile crossed by a diagonal wall is two halves
 
 	/** Which half of a tile with these bits an edge (side) belongs to: 0 or 1; always 0 without a diagonal. */
-	static int half(int b, int side)
+	public static int half(int b, int side)
 	{
 		if ((b & DIAG_SW_NE) != 0)
 		{

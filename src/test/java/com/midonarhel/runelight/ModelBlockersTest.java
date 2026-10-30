@@ -1,5 +1,7 @@
 package com.midonarhel.runelight;
 
+import com.midonarhel.runelight.scene.Zone;
+
 import java.util.Arrays;
 import org.junit.Test;
 import static org.junit.Assert.assertEquals;

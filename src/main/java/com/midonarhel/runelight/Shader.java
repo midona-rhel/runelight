@@ -32,7 +32,7 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import static org.lwjgl.opengl.GL33C.*;
 
-class Shader
+public class Shader
 {
 	// Driver log line prefixes: "ERROR: 0:42:" (Apple/AMD/Intel), "0(42) :" (NVIDIA), "0:42(5):" (Mesa)
 	private static final Pattern LOG_LINE = Pattern.compile("^(\\s*(?:ERROR|WARNING|error|warning)?:?\\s*)\\d+[:(](\\d+)\\)?");
@@ -57,7 +57,7 @@ class Shader
 		return this;
 	}
 
-	int compile(Template template) throws ShaderException
+	public int compile(Template template) throws ShaderException
 	{
 		int program = glCreateProgram();
 		int[] shaders = new int[units.size()];

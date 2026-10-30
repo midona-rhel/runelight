@@ -1,5 +1,7 @@
 package com.midonarhel.runelight;
 
+import com.midonarhel.runelight.scene.Zone;
+
 import java.util.Arrays;
 
 /**
@@ -8,7 +10,7 @@ import java.util.Arrays;
  * through it, and how high the surface reaches in it (the roof's height is read from that). Zones are voxelized once and the result kept with the zone, so a reused zone after a region load isn't
  * redone; the scene's grid (VoxelGrid) is assembled from them.
  */
-final class Voxelizer
+public final class Voxelizer
 {
 	static final int VOXEL = VoxelGrid.VOXEL;
 	// floats per voxel in Zone.data
@@ -18,26 +20,26 @@ final class Voxelizer
 	private static final int LAYER_BIAS = 2048;
 
 	/** One zone's voxels: sums of the surface area and of the foliage's. */
-	static final class Zone
+	public static final class Zone
 	{
 		// (lx + MARGIN) | (lz + MARGIN) << 7 | (layer + LAYER_BIAS) << 14
-		int[] keys;
+		public int[] keys;
 		// per voxel: the surface area (square world units) in it, the part of it that is foliage, and the world y of
 		// the highest point of the surface found in it (y down, so the least), +infinity if none was found
-		float[] data;
-		int count;
+		public float[] data;
+		public int count;
 
-		static int lx(int key)
+		public static int lx(int key)
 		{
 			return (key & 0x7f) - MARGIN;
 		}
 
-		static int lz(int key)
+		public static int lz(int key)
 		{
 			return (key >> 7 & 0x7f) - MARGIN;
 		}
 
-		static int layer(int key)
+		public static int layer(int key)
 		{
 			return (key >>> 14) - LAYER_BIAS;
 		}

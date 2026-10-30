@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Make RuneLight's weather sounds (src/main/resources/com/midonarhel/runelight/sounds) from their CC0 sources.
+Make RuneLight's weather sounds (src/main/resources/com/midonarhel/runelight/weather/sounds) from their CC0 sources.
 
   rain.wav          heavy rain, heard from afar: no single drop stands out, it is one even wash. The source's average
                     spectrum given to random-phase noise (its colour without its drops), with the recording's

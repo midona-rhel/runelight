@@ -17,14 +17,14 @@ import net.runelite.api.Tile;
  *
  * The building rooms come with it ({@link #texels}), so the fog's march has them in the same fetch as the ground.
  */
-final class FogGround
+public final class FogGround
 {
 	static final int PLANES = Constants.MAX_Z;
-	static final int CORNERS = WaterMap.CORNERS;
+	public static final int CORNERS = WaterMap.CORNERS;
 	/** Texture width: the planes' pages side by side. */
-	static final int WIDTH = PLANES * CORNERS;
+	public static final int WIDTH = PLANES * CORNERS;
 	/** Floats per corner in {@link #texels}. */
-	static final int CHANNELS = 4;
+	public static final int CHANNELS = 4;
 	// world y the rooms reach up to where nothing stops them (y points down)
 	private static final float NO_TOP = -1e6f;
 	// corners per side of the blocks that hold the highest ground, for the fog's per-frame bound
@@ -38,7 +38,7 @@ final class FogGround
 	// per plane and block, the smallest y (the highest ground) in it
 	private final float[][] blockTop = new float[PLANES][BLOCKS * BLOCKS];
 
-	static FogGround build(Scene scene)
+	public static FogGround build(Scene scene)
 	{
 		FogGround g = new FogGround();
 		g.load(scene.getExtendedTiles(), scene.getTileHeights());
@@ -131,7 +131,7 @@ final class FogGround
 	 * @param rooms null: no rooms
 	 * @param open null: none open
 	 */
-	void texels(RoomMap rooms, OpenRooms open, float[] out)
+	public void texels(RoomMap rooms, OpenRooms open, float[] out)
 	{
 		final int size = WaterMap.SIZE;
 		final int n = rooms != null ? Math.min(rooms.size, size) : 0;

@@ -1,5 +1,7 @@
 package com.midonarhel.runelight;
 
+import com.midonarhel.runelight.scene.Zone;
+
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -18,7 +20,7 @@ import org.slf4j.LoggerFactory;
  * zones keep theirs (Voxelizer), and assembled into the scene's grid (VoxelGrid) with the water's surface. The result
  * is handed to the skylight as SceneVoxels.
  */
-class VoxelBuilder
+public class VoxelBuilder
 {
 	private static final Logger log = LoggerFactory.getLogger(VoxelBuilder.class);
 
@@ -96,7 +98,7 @@ class VoxelBuilder
 	 *
 	 * @return the build's number, for swapTo
 	 */
-	int buildNext(Scene scene, Zone[][] zones, WaterMap water)
+	public int buildNext(Scene scene, Zone[][] zones, WaterMap water)
 	{
 		int g = submitBuild(scene, zones, water, true);
 		synchronized (this)

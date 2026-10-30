@@ -24,6 +24,11 @@
  */
 package com.midonarhel.runelight;
 
+import com.midonarhel.runelight.weather.Weather;
+
+import com.midonarhel.runelight.sky.Clouds;
+import com.midonarhel.runelight.sky.Lightning;
+
 import net.runelite.client.config.Config;
 import net.runelite.client.config.ConfigGroup;
 import net.runelite.client.config.ConfigSection;
