@@ -93,6 +93,8 @@ final class WaterMap
 	// how far above the surface (world units) the foot of a model may hover and still stand in it: on a bank tile the
 	// corners climb, and the model sits at their mean
 	private static final float CONTACT_HOVER = 48f;
+	// world units either side of a line between two tiles or two cells within which a point counts as on it, in both
+	private static final float EDGE_SLACK = 0.5f;
 	// at a corner right by one the flow keeps 1 - CONTACT_SLOW of itself and churns at least CONTACT_TURB (rougher
 	// waves, short of the rapids' foam)
 	private static final float CONTACT_SLOW = 0.6f;
@@ -1312,57 +1314,87 @@ final class WaterMap
 				pz[k] = vz[v[k]] * cos - vx[v[k]] * sin + oz;
 				py[k] = vy[v[k]] + height;
 			}
-			int tx = (int) ((px[0] + px[1] + px[2]) / 3) >> 7, ty = (int) ((pz[0] + pz[1] + pz[2]) / 3) >> 7;
-			if (tx < 0 || ty < 0 || tx >= SIZE || ty >= SIZE || Float.isNaN(surfaceY[ty * SIZE + tx]))
+			// the water tiles under the face's middle: a face on the line between two tiles (a rim's inner face on the pool's
+			// edge) stands in both, whichever side the line rounds to
+			float mx = (px[0] + px[1] + px[2]) / 3, mz = (pz[0] + pz[1] + pz[2]) / 3;
+			int tx0 = (int) Math.floor((mx - EDGE_SLACK) / 128), tx1 = (int) Math.floor((mx + EDGE_SLACK) / 128);
+			int ty0 = (int) Math.floor((mz - EDGE_SLACK) / 128), ty1 = (int) Math.floor((mz + EDGE_SLACK) / 128);
+			float last = Float.NaN;
+			for (int ty = ty0; ty <= ty1; ++ty)
+			{
+				for (int tx = tx0; tx <= tx1; ++tx)
+				{
+					if (tx < 0 || ty < 0 || tx >= SIZE || ty >= SIZE || Float.isNaN(surfaceY[ty * SIZE + tx])
+						|| surfaceY[ty * SIZE + tx] == last)
+					{
+						continue;
+					}
+					last = surfaceY[ty * SIZE + tx];
+					any |= cut(px, py, pz, last, foot, cx, cz, marked);
+				}
+			}
+		}
+		return any;
+	}
+
+	/**
+	 * Mark the cells along where a face (px, py, pz) crosses surface level surfaceY (y down) of the tile under it, or just
+	 * above the model's foot where that hovers over it; whether it does.
+	 */
+	private static boolean cut(float[] px, float[] py, float[] pz, float surfaceY, float foot, float[] cx, float[] cz,
+		boolean[] marked)
+	{
+		// cut a hair above the surface (y down), so what ends right at it counts as standing in it
+		float s = surfaceY - CONTACT_TOLERANCE;
+		if (foot < s)
+		{
+			// a foot above the surface: standing in it if it hovers only a little, else clear of it
+			if (s - foot > CONTACT_HOVER)
+			{
+				return false;
+			}
+			s = foot - CONTACT_TOLERANCE;
+		}
+		int n = 0;
+		for (int k = 0; k < 3 && n < 2; ++k)
+		{
+			int k2 = (k + 1) % 3;
+			float da = py[k] - s, db = py[k2] - s;
+			if (da == db || da * db > 0)
 			{
 				continue;
 			}
-			// cut a hair above the surface (y down), so what ends right at it counts as standing in it
-			float s = surfaceY[ty * SIZE + tx] - CONTACT_TOLERANCE;
-			if (foot < s)
+			float t = da / (da - db);
+			cx[n] = px[k] + (px[k2] - px[k]) * t;
+			cz[n] = pz[k] + (pz[k2] - pz[k]) * t;
+			++n;
+		}
+		if (n == 0)
+		{
+			return false;
+		}
+		if (n == 1)
+		{
+			cx[1] = cx[0];
+			cz[1] = cz[0];
+		}
+		// along the cut, half a cell at a time; a point on the line between two cells marks both
+		float cell = 128f / CONTACT_RES;
+		int steps = 1 + (int) (Math.hypot(cx[1] - cx[0], cz[1] - cz[0]) / (cell * 0.5f));
+		boolean any = false;
+		for (int i = 0; i <= steps; ++i)
+		{
+			float t = (float) i / steps;
+			float x = cx[0] + (cx[1] - cx[0]) * t, z = cz[0] + (cz[1] - cz[0]) * t;
+			for (int gz = (int) Math.floor((z - EDGE_SLACK) / cell); gz <= (int) Math.floor((z + EDGE_SLACK) / cell); ++gz)
 			{
-				// a foot above the surface: standing in it if it hovers only a little, else clear of it
-				if (s - foot > CONTACT_HOVER)
+				for (int gx = (int) Math.floor((x - EDGE_SLACK) / cell); gx <= (int) Math.floor((x + EDGE_SLACK) / cell); ++gx)
 				{
-					continue;
-				}
-				s = foot - CONTACT_TOLERANCE;
-			}
-			int n = 0;
-			for (int k = 0; k < 3 && n < 2; ++k)
-			{
-				int k2 = (k + 1) % 3;
-				float da = py[k] - s, db = py[k2] - s;
-				if (da == db || da * db > 0)
-				{
-					continue;
-				}
-				float t = da / (da - db);
-				cx[n] = px[k] + (px[k2] - px[k]) * t;
-				cz[n] = pz[k] + (pz[k2] - pz[k]) * t;
-				++n;
-			}
-			if (n == 0)
-			{
-				continue;
-			}
-			if (n == 1)
-			{
-				cx[1] = cx[0];
-				cz[1] = cz[0];
-			}
-			// along the cut, half a cell at a time
-			float cell = 128f / CONTACT_RES;
-			int steps = 1 + (int) (Math.hypot(cx[1] - cx[0], cz[1] - cz[0]) / (cell * 0.5f));
-			for (int i = 0; i <= steps; ++i)
-			{
-				float t = (float) i / steps;
-				int gx = (int) ((cx[0] + (cx[1] - cx[0]) * t) / cell);
-				int gz = (int) ((cz[0] + (cz[1] - cz[0]) * t) / cell);
-				if (gx >= 0 && gz >= 0 && gx < CONTACT_SIZE && gz < CONTACT_SIZE)
-				{
-					marked[gz * CONTACT_SIZE + gx] = true;
-					any = true;
+					if (gx >= 0 && gz >= 0 && gx < CONTACT_SIZE && gz < CONTACT_SIZE)
+					{
+						marked[gz * CONTACT_SIZE + gx] = true;
+						any = true;
+					}
 				}
 			}
 		}

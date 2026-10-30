@@ -4,6 +4,8 @@ import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
 import java.lang.reflect.Proxy;
+import net.runelite.api.GroundObject;
+import net.runelite.api.Model;
 import net.runelite.api.Point;
 import net.runelite.api.Scene;
 import net.runelite.api.SceneTilePaint;
@@ -22,6 +24,11 @@ public class WaterMapTest
 	}
 
 	private static Tile tile(int x, int y, int texture)
+	{
+		return tile(x, y, texture, null);
+	}
+
+	private static Tile tile(int x, int y, int texture, GroundObject ground)
 	{
 		SceneTilePaint paint = proxy(SceneTilePaint.class, m ->
 		{
@@ -46,6 +53,8 @@ public class WaterMapTest
 					return 0;
 				case "getSceneLocation":
 					return loc;
+				case "getGroundObject":
+					return ground;
 				default:
 					return null;
 			}
@@ -375,5 +384,122 @@ public class WaterMapTest
 		// and a gentle slope between two pools
 		m = fallStrip(64, false, 2);
 		assertFalse(m.fall[83 * N + 81]);
+	}
+
+	/**
+	 * A walled pool, 2 tiles by 4 (extended x 80-81, y 80-83) on flat ground, its rim one model standing in the water along
+	 * all four of its edges: vertical faces on the edges' lines from below the surface to above it.
+	 */
+	private static WaterMap walledPool()
+	{
+		int x0 = 80 * 128, x1 = 82 * 128, z0 = 80 * 128, z1 = 84 * 128;
+		// the model's origin: the middle of the pool's sw tile, scene local
+		int ox = x0 + 64, oz = z0 + 64;
+		float[][] edges = {{x0, z0, x0, z1}, {x1, z0, x1, z1}, {x0, z0, x1, z0}, {x0, z1, x1, z1}};
+		float[] vx = new float[16], vy = new float[16], vz = new float[16];
+		int[] f1 = new int[8], f2 = new int[8], f3 = new int[8];
+		for (int e = 0; e < 4; ++e)
+		{
+			float[] l = edges[e];
+			for (int k = 0; k < 4; ++k)
+			{
+				vx[e * 4 + k] = (k < 2 ? l[0] : l[2]) - ox;
+				vz[e * 4 + k] = (k < 2 ? l[1] : l[3]) - oz;
+				vy[e * 4 + k] = (k & 1) == 0 ? -50 : 50;
+			}
+			f1[e * 2] = e * 4;
+			f2[e * 2] = e * 4 + 1;
+			f3[e * 2] = e * 4 + 2;
+			f1[e * 2 + 1] = e * 4 + 1;
+			f2[e * 2 + 1] = e * 4 + 3;
+			f3[e * 2 + 1] = e * 4 + 2;
+		}
+		int[] colors = new int[8];
+		Model rim = proxy(Model.class, m ->
+		{
+			switch (m)
+			{
+				case "getVerticesX":
+					return vx;
+				case "getVerticesY":
+					return vy;
+				case "getVerticesZ":
+					return vz;
+				case "getFaceIndices1":
+					return f1;
+				case "getFaceIndices2":
+					return f2;
+				case "getFaceIndices3":
+					return f3;
+				case "getFaceColors1":
+				case "getFaceColors3":
+					return colors;
+				case "getVerticesCount":
+					return 16;
+				case "getFaceCount":
+					return 8;
+				default:
+					return null;
+			}
+		});
+		GroundObject ground = proxy(GroundObject.class, m ->
+		{
+			switch (m)
+			{
+				case "getRenderable":
+					return rim;
+				case "getX":
+					return ox - (OFF << 7);
+				case "getY":
+					return oz - (OFF << 7);
+				case "getId":
+				case "getZ":
+					return 0;
+				default:
+					return null;
+			}
+		});
+		Tile[][][] tiles = new Tile[4][N][N];
+		for (int x = 0; x < N; ++x)
+		{
+			for (int y = 0; y < N; ++y)
+			{
+				boolean water = x >= 80 && x < 82 && y >= 80 && y < 84;
+				tiles[0][x][y] = tile(x, y, water ? 1 : -1, x == 80 && y == 80 ? ground : null);
+			}
+		}
+		int[][][] heights = new int[4][N + 1][N + 1];
+		Scene scene = proxy(Scene.class, m ->
+		{
+			switch (m)
+			{
+				case "getExtendedTiles":
+					return tiles;
+				case "getTileHeights":
+					return heights;
+				case "getBaseX":
+				case "getBaseY":
+					return 3200;
+				default:
+					return null;
+			}
+		});
+		return WaterMap.build(scene, null, null);
+	}
+
+	@Test
+	public void aRimFoamsAlongAllFourEdgesOfAPool()
+	{
+		WaterMap m = walledPool();
+		int cells = WaterMap.CONTACT_RES, size = WaterMap.CONTACT_SIZE;
+		// the cells just inside each edge, halfway along it
+		int west = m.contact[82 * cells * size + 80 * cells] & 255;
+		int east = m.contact[82 * cells * size + 82 * cells - 1] & 255;
+		int south = m.contact[80 * cells * size + 81 * cells] & 255;
+		int north = m.contact[(84 * cells - 1) * size + 81 * cells] & 255;
+		assertTrue("west " + west, west > 128);
+		assertEquals("east as west", west, east);
+		assertEquals("north as south", south, north);
+		assertEquals("south as west", west, south);
 	}
 }
