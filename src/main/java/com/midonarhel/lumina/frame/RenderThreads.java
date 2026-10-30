@@ -111,19 +111,30 @@ public final class RenderThreads
 		}
 	}
 
-	void unmapAlpha()
+	/** Unmaps every thread's opaque and alpha VAOs: the frame's uploads are over, the draws can start. */
+	void unmap()
 	{
-		for (int i = 0; i < rts.length; ++i)
+		for (int i = 0; i < rts.length; ++i) // NOPMD: ForLoopCanBeForeach
 		{
+			rts[i].vaoO.unmap();
 			rts[i].vaoA.unmap();
 		}
 	}
 
-	void drawOpaque()
+	/** Draws every thread's opaque ranges (after {@link #unmap}); repeatable until {@link #resetOpaque}. */
+	void drawOpaque(DrawUniforms u)
 	{
 		for (int i = 0; i < rts.length; ++i) // NOPMD: ForLoopCanBeForeach
 		{
-			rts[i].vaoO.draw();
+			rts[i].vaoO.draw(u);
+		}
+	}
+
+	void resetOpaque()
+	{
+		for (int i = 0; i < rts.length; ++i) // NOPMD: ForLoopCanBeForeach
+		{
+			rts[i].vaoO.reset();
 		}
 	}
 

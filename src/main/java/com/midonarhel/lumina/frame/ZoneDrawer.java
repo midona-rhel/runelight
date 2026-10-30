@@ -47,17 +47,15 @@ import net.runelite.api.TileObject;
 import net.runelite.api.WorldView;
 import net.runelite.api.hooks.DrawCallbacks;
 import net.runelite.client.callback.RenderCallbackManager;
-import static com.midonarhel.lumina.frame.FrameRenderer.checkGLErrors;
 import static com.midonarhel.lumina.frame.SceneProgram.IDENTITY;
-import static com.midonarhel.lumina.frame.SceneProgram.uniEntityProj;
-import static com.midonarhel.lumina.frame.SceneProgram.uniEntityTint;
 import static com.midonarhel.lumina.scene.SceneContext.SCENE_OFFSET;
-import static org.lwjgl.opengl.GL33C.*;
 
 /**
- * The draw callbacks the client makes while it traverses the scene: the zones' opaque and alpha geometry (drawn
- * from their uploaded buffers, alpha sorted per frame) and the dynamic and temporary models (uploaded into the
- * render threads' VAO lists per frame, alpha faces sorted into the zones). Area hiding is checked here at draw time.
+ * The draw callbacks the client makes while it traverses the scene: the zones' opaque and alpha geometry (recorded
+ * into the frame's {@link DrawList}, alpha sorted per frame, drawn from their uploaded buffers at the replay) and the
+ * dynamic and temporary models (uploaded into the render threads' VAO lists per frame, alpha faces sorted into the
+ * zones). Area hiding is checked here at record time. No draw is issued here (only the model VAOs are mapped and
+ * written): {@link FrameRenderer} replays the list at the top-level post scene callback.
  */
 @Slf4j
 public final class ZoneDrawer
@@ -72,6 +70,9 @@ public final class ZoneDrawer
 
 	// the client's camera of the frame, set by the frame before the top-level scene is drawn
 	int cameraYaw, cameraPitch;
+	// the frame's recorder and the client-thread timer, attached by the FrameRenderer
+	private DrawList drawList;
+	private CpuTimer cpuTimer;
 
 	public ZoneDrawer(RenderCallbackManager renderCallbackManager, ModelOverrideManager modelOverrideManager,
 		RenderThreads renderThreads, SceneLoader scenes, AreaHiding areaHiding)
@@ -83,112 +84,99 @@ public final class ZoneDrawer
 		this.areaHiding = areaHiding;
 	}
 
+	void attach(DrawList drawList, CpuTimer cpuTimer)
+	{
+		this.drawList = drawList;
+		this.cpuTimer = cpuTimer;
+	}
+
 	public void drawZoneOpaque(Scene scene, int zx, int zz)
 	{
+		cpuTimer.begin(CpuTimer.RECORD);
+		drawList.trace('o', -1, scene.getWorldViewId());
+
 		SceneContext ctx = scenes.context(scene);
-		if (ctx == null)
+		if (ctx != null)
 		{
-			return;
+			Zone z = ctx.zones[zx][zz];
+			if (z.initialized && !areaHiding.isZoneHidden(ctx, zx, zz))
+			{
+				int offset = scene.getWorldViewId() == WorldView.TOPLEVEL ? (SCENE_OFFSET >> 3) : 0;
+				// 117 HD draws opaque zones without blending; the gap fillers go with the ground level
+				drawList.zoneOpaque(z, zx - offset, zz - offset, ctx.minLevel, ctx.level, ctx.maxLevel, ctx.hideRoofIds, ctx.minLevel == 0);
+			}
 		}
 
-		Zone z = ctx.zones[zx][zz];
-		if (!z.initialized || areaHiding.isZoneHidden(ctx, zx, zz))
-		{
-			return;
-		}
-
-		int offset = scene.getWorldViewId() == WorldView.TOPLEVEL ? (SCENE_OFFSET >> 3) : 0;
-		// 117 HD draws opaque zones without blending
-		glDisable(GL_BLEND);
-		z.renderOpaque(zx - offset, zz - offset, ctx.minLevel, ctx.level, ctx.maxLevel, ctx.hideRoofIds);
-		if (ctx.minLevel == 0)
-		{
-			z.renderGapFillers(zx - offset, zz - offset);
-		}
-		glEnable(GL_BLEND);
-
-		checkGLErrors();
+		cpuTimer.end(CpuTimer.RECORD);
 	}
 
 	public void drawZoneAlpha(Scene scene, int level, int zx, int zz)
 	{
+		cpuTimer.begin(CpuTimer.RECORD);
+		drawList.trace('a', level, scene.getWorldViewId());
+
 		SceneContext ctx = scenes.context(scene);
-		if (ctx == null)
+		if (ctx != null)
 		{
-			return;
+			Zone z = ctx.zones[zx][zz];
+			if (z.initialized && !areaHiding.isZoneHidden(ctx, zx, zz))
+			{
+				int offset = scene.getWorldViewId() == WorldView.TOPLEVEL ? (SCENE_OFFSET >> 3) : 0;
+				int dx = ctx.cameraX - ((zx - offset) << 10);
+				int dz = ctx.cameraZ - ((zz - offset) << 10);
+				boolean close = dx * dx + dz * dz < ALPHA_ZSORT_CLOSE * ALPHA_ZSORT_CLOSE;
+
+				// the sort is CPU work on the zone's model list, done now; the draw reads the list at the replay
+				if (level == 0)
+				{
+					z.alphaSort(zx - offset, zz - offset, ctx.cameraX, ctx.cameraY, ctx.cameraZ);
+					z.multizoneLocs(scene, zx - offset, zz - offset, ctx.cameraX, ctx.cameraZ, ctx.zones);
+				}
+
+				boolean unsorted = !close || (scene.getOverrideAmount() > 0);
+				// 117 HD: colour without depth writes, then (top level only) depth without colour, so opaque models
+				// drawn later on higher planes test against alpha
+				drawList.zoneAlpha(z, zx - offset, zz - offset, cameraYaw, cameraPitch, ctx.minLevel, ctx.level, ctx.maxLevel, level,
+					ctx.hideRoofIds, unsorted, scene.getWorldViewId() == WorldView.TOPLEVEL);
+			}
 		}
 
-		Zone z = ctx.zones[zx][zz];
-		if (!z.initialized || areaHiding.isZoneHidden(ctx, zx, zz))
-		{
-			return;
-		}
-
-		int offset = scene.getWorldViewId() == WorldView.TOPLEVEL ? (SCENE_OFFSET >> 3) : 0;
-		int dx = ctx.cameraX - ((zx - offset) << 10);
-		int dz = ctx.cameraZ - ((zz - offset) << 10);
-		boolean close = dx * dx + dz * dz < ALPHA_ZSORT_CLOSE * ALPHA_ZSORT_CLOSE;
-
-		if (level == 0)
-		{
-			z.alphaSort(zx - offset, zz - offset, ctx.cameraX, ctx.cameraY, ctx.cameraZ);
-			z.multizoneLocs(scene, zx - offset, zz - offset, ctx.cameraX, ctx.cameraZ, ctx.zones);
-		}
-
-		RenderThread rt = renderThreads.get(0);
-		boolean unsorted = !close || (scene.getOverrideAmount() > 0);
-		// 117 HD: colour without depth writes, then (top level only) depth without colour, so opaque models drawn
-		// later on higher planes test against alpha
-		z.renderAlpha(rt.modelUploader, zx - offset, zz - offset, cameraYaw, cameraPitch, ctx.minLevel, ctx.level, ctx.maxLevel, level, ctx.hideRoofIds, unsorted, false);
-		if (scene.getWorldViewId() == WorldView.TOPLEVEL)
-		{
-			glColorMask(false, false, false, false);
-			z.renderAlpha(rt.modelUploader, zx - offset, zz - offset, cameraYaw, cameraPitch, ctx.minLevel, ctx.level, ctx.maxLevel, level, ctx.hideRoofIds, unsorted, true);
-			glColorMask(true, true, true, true);
-		}
-
-		checkGLErrors();
+		cpuTimer.end(CpuTimer.RECORD);
 	}
 
 	public void drawPass(Scene scene, int pass)
 	{
-		SceneContext ctx = scenes.context(scene);
-		if (ctx == null)
-		{
-			return;
-		}
+		cpuTimer.begin(CpuTimer.RECORD);
+		drawList.trace(pass == DrawCallbacks.PASS_OPAQUE ? 'D' : pass == DrawCallbacks.PRE_PASS_ALPHA ? 'E' : 'A', -1, scene.getWorldViewId());
 
-		if (pass == DrawCallbacks.PASS_OPAQUE)
+		SceneContext ctx = scenes.context(scene);
+		if (ctx != null)
 		{
-			if (scene.getWorldViewId() == WorldView.TOPLEVEL)
+			if (pass == DrawCallbacks.PASS_OPAQUE)
 			{
-				renderThreads.drawOpaque();
-			}
-			else
-			{
-				glUniformMatrix4fv(uniEntityProj, false, IDENTITY);
-			}
-		}
-		else if (pass == DrawCallbacks.PASS_ALPHA)
-		{
-			for (int x = 0; x < ctx.sizeX; ++x)
-			{
-				for (int z = 0; z < ctx.sizeZ; ++z)
+				if (scene.getWorldViewId() == WorldView.TOPLEVEL)
 				{
-					Zone zone = ctx.zones[x][z];
-					zone.removeTemp();
+					drawList.dynamicOpaque();
+				}
+				else
+				{
+					drawList.entityProj(IDENTITY);
 				}
 			}
+			else if (pass == DrawCallbacks.PASS_ALPHA)
+			{
+				// the temporary alpha models are dropped at the replay, after this worldview's alpha draws
+				drawList.removeTemp(ctx);
+			}
+			else if (pass == DrawCallbacks.PRE_PASS_ALPHA)
+			{
+				// the VAOs stay mapped until the replay unmaps them all at once
+				drawList.entityProj(ctx.projection);
+				drawList.entityTint(scene.getOverrideHue(), scene.getOverrideSaturation(), scene.getOverrideLuminance(), scene.getOverrideAmount());
+			}
 		}
-		else if (pass == DrawCallbacks.PRE_PASS_ALPHA)
-		{
-			renderThreads.unmapAlpha();
 
-			glUniformMatrix4fv(uniEntityProj, false, ctx.projection);
-			glUniform4i(uniEntityTint, scene.getOverrideHue(), scene.getOverrideSaturation(), scene.getOverrideLuminance(), scene.getOverrideAmount());
-		}
-
-		checkGLErrors();
+		cpuTimer.end(CpuTimer.RECORD);
 	}
 
 	public void drawDynamic(int renderThreadId, Projection worldProjection, Scene scene, TileObject tileObject, Renderable r, Model m, int orient, int x, int y, int z)
@@ -276,6 +264,20 @@ public final class ZoneDrawer
 	}
 
 	public void drawTemp(Projection worldProjection, Scene scene, GameObject gameObject, Model m, int orient, int x, int y, int z)
+	{
+		cpuTimer.begin(CpuTimer.RECORD);
+		drawList.trace('t', -1, scene.getWorldViewId());
+		try
+		{
+			uploadTemp(worldProjection, scene, gameObject, m, orient, x, y, z);
+		}
+		finally
+		{
+			cpuTimer.end(CpuTimer.RECORD);
+		}
+	}
+
+	private void uploadTemp(Projection worldProjection, Scene scene, GameObject gameObject, Model m, int orient, int x, int y, int z)
 	{
 		SceneContext ctx = scenes.context(scene);
 		if (ctx == null)

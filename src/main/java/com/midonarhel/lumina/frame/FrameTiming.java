@@ -6,10 +6,11 @@ import lombok.extern.slf4j.Slf4j;
 import net.runelite.api.Client;
 
 /**
- * The frame's CPU and GPU timers and the frame boundaries they are driven from: the scene (between the first
- * pre-scene and the last post-scene callback, so boats drawn inside or after the top level are counted either way),
- * the UI upload, blit and draw, the swap, and the time outside the plugin. A running {@link Snapshot} (developer
- * mode, ::lumina snapshot) records every frame's times until it is done.
+ * The frame's CPU and GPU timers and the frame boundaries they are driven from: the scene CPU time (between the
+ * first pre-scene and the last post-scene callback, so boats drawn inside or after the top level are counted either
+ * way; the record and replay steps inside it), the scene GPU time (the replay of the recorded draws, one contiguous
+ * pass), the UI upload, blit and draw, the swap, and the time outside the plugin. A running {@link Snapshot}
+ * (developer mode, ::lumina snapshot) records every frame's times until it is done.
  */
 @Slf4j
 public final class FrameTiming
@@ -47,7 +48,6 @@ public final class FrameTiming
 			cpuTimer.end(CpuTimer.OUTSIDE);
 			cpuTimer.end(CpuTimer.CLIENT_UI);
 			cpuTimer.begin(CpuTimer.CLIENT_SCENE);
-			gpuTimer.begin(GpuTimer.SCENE);
 		}
 	}
 
@@ -55,10 +55,27 @@ public final class FrameTiming
 	{
 		if (sceneDepth > 0 && --sceneDepth == 0)
 		{
-			gpuTimer.end();
 			cpuTimer.end(CpuTimer.CLIENT_SCENE);
 			cpuTimer.begin(CpuTimer.CLIENT_UI);
 		}
+	}
+
+	/**
+	 * The replay of the frame's recorded draws starts (inside the scene): its CPU time is the replay step, not the
+	 * client's traversal. The caller brackets the GPU scene pass with {@link #gpuTimer} itself, after the hook that
+	 * runs other passes first.
+	 */
+	void beginReplay()
+	{
+		cpuTimer.end(CpuTimer.CLIENT_SCENE);
+		cpuTimer.begin(CpuTimer.REPLAY);
+	}
+
+	void endReplay()
+	{
+		gpuTimer.end();
+		cpuTimer.end(CpuTimer.REPLAY);
+		cpuTimer.begin(CpuTimer.CLIENT_SCENE);
 	}
 
 	void endFrame()

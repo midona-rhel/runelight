@@ -27,9 +27,6 @@ package com.midonarhel.lumina.frame;
 import java.util.Arrays;
 import net.runelite.api.Renderable;
 import net.runelite.api.Scene;
-import static com.midonarhel.lumina.frame.SceneProgram.uniBase;
-import static com.midonarhel.lumina.frame.SceneProgram.uniEntityProj;
-import static com.midonarhel.lumina.frame.SceneProgram.uniEntityTint;
 import static org.lwjgl.opengl.GL33C.*;
 
 public class VAO
@@ -150,11 +147,12 @@ public class VAO
 		r.renderMethod = (byte) renderMode;
 	}
 
-	void draw()
+	/** Draws the ranges added this frame, setting {@code u}'s uniforms per range. The VBO must be unmapped. */
+	void draw(DrawUniforms u)
 	{
 		assert !vbo.mapped;
 
-		glUniform3i(uniBase, 0, 0, 0);
+		glUniform3i(u.base, 0, 0, 0);
 
 		int start = 0;
 		for (int i = 0; i < off; ++i)
@@ -164,8 +162,8 @@ public class VAO
 
 			int count = end - start;
 
-			glUniformMatrix4fv(uniEntityProj, false, range.projection);
-			glUniform4i(uniEntityTint, range.h, range.s, range.l, range.a);
+			glUniformMatrix4fv(u.entityProj, false, range.projection);
+			glUniform4i(u.entityTint, range.h, range.s, range.l, range.a);
 
 			glBindVertexArray(vao);
 

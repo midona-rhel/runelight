@@ -42,6 +42,8 @@ public class VAOList
 	private boolean needAlloc;
 
 	private int curIdx;
+	// VAOs unmapped by the last unmap(): the ones draw() draws and reset() resets
+	private int unmapped;
 	final List<VAO> vaos = new ArrayList<>();
 
 	VAOList(boolean rt)
@@ -120,6 +122,7 @@ public class VAOList
 			}
 		}
 		curIdx = 0;
+		unmapped = sz;
 		return sz;
 	}
 
@@ -133,15 +136,26 @@ public class VAOList
 		curIdx = 0;
 	}
 
-	public void draw()
+	/**
+	 * Draws the ranges of the VAOs the last {@link #unmap} unmapped, with {@code u}'s uniforms. May be called more
+	 * than once (a shadow pass and the scene pass draw the same ranges); {@link #reset} ends the frame.
+	 */
+	void draw(DrawUniforms u)
 	{
-		int sz = unmap();
-		for (int i = 0; i < sz; ++i)
+		for (int i = 0; i < unmapped; ++i)
 		{
-			VAO vao = vaos.get(i);
-			vao.draw();
-			vao.reset();
+			vaos.get(i).draw(u);
 		}
+	}
+
+	/** Forgets the frame's ranges after the last draw of them. */
+	void reset()
+	{
+		for (int i = 0; i < unmapped; ++i)
+		{
+			vaos.get(i).reset();
+		}
+		unmapped = 0;
 	}
 
 	int size()

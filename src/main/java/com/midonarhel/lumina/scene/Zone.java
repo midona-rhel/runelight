@@ -24,6 +24,7 @@
  */
 package com.midonarhel.lumina.scene;
 
+import com.midonarhel.lumina.frame.DrawUniforms;
 import com.midonarhel.lumina.frame.VAO;
 import com.midonarhel.lumina.frame.VBO;
 import java.nio.IntBuffer;
@@ -43,7 +44,6 @@ import net.runelite.api.Scene;
 import net.runelite.api.WorldView;
 import static com.midonarhel.lumina.scene.ModelUploader.MAX_DIAMETER;
 import static com.midonarhel.lumina.scene.ModelUploader.MAX_VERTEX_COUNT;
-import static com.midonarhel.lumina.frame.SceneProgram.uniBase;
 import static com.midonarhel.lumina.scene.SceneContext.SCENE_OFFSET;
 import org.lwjgl.BufferUtils;
 import static org.lwjgl.opengl.GL33C.*;
@@ -230,7 +230,7 @@ public class Zone
 		}
 	}
 
-	public void renderOpaque(int zx, int zz, int minLevel, int currentLevel, int maxLevel, Set<Integer> hiddenRoofIds)
+	public void renderOpaque(DrawUniforms u, int zx, int zz, int minLevel, int currentLevel, int maxLevel, Set<Integer> hiddenRoofIds)
 	{
 		drawOff.clear();
 		drawEnd.clear();
@@ -289,7 +289,7 @@ public class Zone
 
 		if (drawOff.limit() > 0)
 		{
-			glUniform3i(uniBase, zx << 10, 0, zz << 10);
+			glUniform3i(u.base, zx << 10, 0, zz << 10);
 			glBindVertexArray(glVao);
 			glMultiDrawArrays(GL_TRIANGLES, drawOff, drawEnd);
 		}
@@ -299,7 +299,7 @@ public class Zone
 	 * 117 HD's gap fillers: drawn at a constant depth just above the sky's (glDepthRange MIN_NORMAL), so all other
 	 * geometry draws over them.
 	 */
-	public void renderGapFillers(int zx, int zz)
+	public void renderGapFillers(DrawUniforms u, int zx, int zz)
 	{
 		int start = levelOffsets[LEVEL_TERRAIN];
 		int end = levelOffsets[LEVEL_GAP_FILLER];
@@ -311,7 +311,7 @@ public class Zone
 		drawEnd.clear();
 		pushRange(start, end);
 		convertForDraw(VERT_SIZE);
-		glUniform3i(uniBase, zx << 10, 0, zz << 10);
+		glUniform3i(u.base, zx << 10, 0, zz << 10);
 		glBindVertexArray(glVao);
 		glDepthRange(Float.MIN_NORMAL, Float.MIN_NORMAL);
 		glMultiDrawArrays(GL_TRIANGLES, drawOff, drawEnd);
@@ -572,7 +572,7 @@ public class Zone
 	// whether renderAlpha writes depth only (117 HD's second alpha pass), else colour without depth writes
 	private static boolean depthOnly;
 
-	public void renderAlpha(ModelUploader mu, int zx, int zz, int cyaw, int cpitch, int minLevel, int currentLevel, int maxLevel, int level, Set<Integer> hiddenRoofIds, boolean useStaticUnsorted, boolean depthOnly)
+	public void renderAlpha(DrawUniforms u, ModelUploader mu, int zx, int zz, int cyaw, int cpitch, int minLevel, int currentLevel, int maxLevel, int level, Set<Integer> hiddenRoofIds, boolean useStaticUnsorted, boolean depthOnly)
 	{
 		Zone.depthOnly = depthOnly;
 		// 117 HD draws static alpha unsorted in its depth-only pass
@@ -614,7 +614,7 @@ public class Zone
 				|| lastzx != (zx - m.zofx) || lastzz != (zz - m.zofz)
 			)
 			{
-				flush();
+				flush(u);
 			}
 
 			lastVao = m.vao;
@@ -685,7 +685,7 @@ public class Zone
 					continue;
 				}
 
-				flush();
+				flush(u);
 			}
 
 			final int start = m.startpos / (VERT_SIZE >> 2); // ints to verts
@@ -702,16 +702,16 @@ public class Zone
 			}
 		}
 
-		flush();
+		flush(u);
 	}
 
-	private void flush()
+	private void flush(DrawUniforms u)
 	{
 		if (lastDrawMode == TEMP)
 		{
 			convertForDraw(VAO.VERT_SIZE);
 			assert drawOff.limit() > 0;
-			glUniform3i(uniBase, 0, 0, 0);
+			glUniform3i(u.base, 0, 0, 0);
 			glBindVertexArray(lastVao);
 			glDepthMask(depthOnly);
 			glMultiDrawArrays(GL_TRIANGLES, drawOff, drawEnd);
@@ -722,7 +722,7 @@ public class Zone
 		else if (lastDrawMode == STATIC)
 		{
 			alphaElements.flip();
-			glUniform3i(uniBase, lastzx << 10, 0, lastzz << 10);
+			glUniform3i(u.base, lastzx << 10, 0, lastzz << 10);
 			glBindVertexArray(lastVao);
 			glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, elementBufferId);
 			glBufferData(GL_ELEMENT_ARRAY_BUFFER, alphaElements, GL_STREAM_DRAW);
@@ -736,7 +736,7 @@ public class Zone
 		{
 			convertForDraw(VERT_SIZE);
 			assert drawOff.limit() > 0;
-			glUniform3i(uniBase, lastzx << 10, 0, lastzz << 10);
+			glUniform3i(u.base, lastzx << 10, 0, lastzz << 10);
 			glBindVertexArray(lastVao);
 			glDepthMask(depthOnly);
 			glMultiDrawArrays(GL_TRIANGLES, drawOff, drawEnd);

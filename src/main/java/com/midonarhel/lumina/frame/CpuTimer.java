@@ -18,9 +18,14 @@ public class CpuTimer
 	public static final int SWAP = 3;
 	// from our swap to the next scene: the client's game loop, other plugins
 	public static final int OUTSIDE = 4;
-	public static final int STAGES = 5;
+	// inside client_scene: our draw callbacks on the client thread, recording the frame's draws (DrawList) and
+	// uploading temporary models
+	public static final int RECORD = 5;
+	// inside client_scene: replaying the recorded draws at the top-level post scene callback
+	public static final int REPLAY = 6;
+	public static final int STAGES = 7;
 
-	public static final String[] NAMES = {"client_scene", "client_ui", "draw", "swap", "outside"};
+	public static final String[] NAMES = {"client_scene", "client_ui", "draw", "swap", "outside", "record", "replay"};
 
 	private final long[] start = new long[STAGES];
 	private final double[] frame = new double[STAGES];

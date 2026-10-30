@@ -32,8 +32,8 @@ import static org.lwjgl.opengl.GL33C.*;
  * The scene, sky and UI shader programs and the locations of their uniforms. Compiled from the shader files next to
  * the plugin class through a {@link Template}; recompiled when a setting that is a shader define changes.
  * <p>
- * {@link #uniBase}, {@link #uniEntityProj} and {@link #uniEntityTint} are set per draw by {@code Zone} and
- * {@link VAO}, which is why they are static.
+ * The per-draw uniforms (base, entity projection, entity tint) are a {@link DrawUniforms} per program, passed to
+ * {@code Zone} and {@link VAO} draws explicitly.
  */
 public final class SceneProgram
 {
@@ -59,9 +59,8 @@ public final class SceneProgram
 	// 117 HD's HdPlugin.COLOR_FILTER_FADE_DURATION
 	private static final float COLOR_FILTER_FADE_DURATION = 500;
 
-	public static int uniBase;
-	public static int uniEntityProj;
-	public static int uniEntityTint;
+	// the per-draw uniforms of the scene program (Zone and VAO draws)
+	DrawUniforms sceneUniforms;
 
 	int glProgram;
 	int glUiProgram;
@@ -146,15 +145,13 @@ public final class SceneProgram
 	private void initUniforms()
 	{
 		uniWorldProj = glGetUniformLocation(glProgram, "worldProj");
-		uniEntityProj = glGetUniformLocation(glProgram, "entityProj");
-		uniEntityTint = glGetUniformLocation(glProgram, "entityTint");
+		sceneUniforms = new DrawUniforms(glProgram);
 		uniBrightness = glGetUniformLocation(glProgram, "brightness");
 		uniDrawDistance = glGetUniformLocation(glProgram, "drawDistance");
 		uniExpandedMapLoadingChunks = glGetUniformLocation(glProgram, "expandedMapLoadingChunks");
 		uniTextureLightMode = glGetUniformLocation(glProgram, "textureLightMode");
 		uniBlockMain = glGetUniformBlockIndex(glProgram, "uniforms");
 		uniTextures = glGetUniformLocation(glProgram, "textures");
-		uniBase = glGetUniformLocation(glProgram, "base");
 		uniColorblindIntensity = glGetUniformLocation(glProgram, "colorblindIntensity");
 		uniDebugView = glGetUniformLocation(glProgram, "debugView");
 		uniGammaCorrection = glGetUniformLocation(glProgram, "gammaCorrection");

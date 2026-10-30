@@ -67,8 +67,6 @@ import net.runelite.client.ui.ClientUI;
 import net.runelite.client.ui.DrawManager;
 import net.runelite.rlawt.AWTContext;
 import static com.midonarhel.lumina.frame.SceneProgram.IDENTITY;
-import static com.midonarhel.lumina.frame.SceneProgram.uniEntityProj;
-import static com.midonarhel.lumina.frame.SceneProgram.uniEntityTint;
 import org.lwjgl.opengl.GL;
 import static org.lwjgl.opengl.GL33C.*;
 
@@ -76,7 +74,14 @@ import static org.lwjgl.opengl.GL33C.*;
  * The per-frame render path of the GL plugin: the scene FBO (with MSAA) the client's scene is drawn into, the
  * uniforms of a frame (camera, projection, lighting from the {@link LightingSource}, output adjustments), the sky
  * pass, the blit to the window, the interface texture and the UI pass with its upscaling, the buffer swap and the
- * frame timers. Owns the GL resources this needs; the zones and models themselves are drawn by {@link ZoneDrawer}.
+ * frame timers. Owns the GL resources this needs.
+ * <p>
+ * The scene is drawn in two steps. While the client runs its draw callbacks (pre scene, zones, passes, post scene,
+ * for the top level and every sub-worldview such as boats), {@link ZoneDrawer} and this class only record the draws
+ * into the frame's {@link DrawList} and upload the frame's models; the GL state the scene needs (FBO, viewport,
+ * program, uniforms, blend, cull, depth) is set at the top-level pre scene callback and persists. At the top-level
+ * post scene callback {@link #replayScene} draws the whole list in recording order, as one contiguous GPU pass, and
+ * the passes that need the frame's geometry before it is drawn (the shadow maps) run just before the replay.
  * All methods run on the client thread with the GL context current.
  */
 @Slf4j
@@ -121,6 +126,16 @@ public final class FrameRenderer
 
 	private final FrameTiming timing;
 	private final SceneProgram programs = new SceneProgram();
+
+	// the frame's recorded scene draws and what replays them
+	private final DrawList drawList = new DrawList();
+	private final SceneExecutor executor = new SceneExecutor();
+	// the vanilla skybox model's own VAO list: uploaded at the top-level pre scene callback, drawn at the replay
+	private VAOList skyboxVaos;
+	// the one-frame callback trace (DrawList.trace): armed by traceNextFrame(), and automatically for the first
+	// frame and for the first frame after a sub-worldview was seen
+	private boolean traceArmed;
+	private int autoTrace;
 
 	private AWTContext awtContext;
 	private Canvas canvas;
@@ -176,6 +191,7 @@ public final class FrameRenderer
 		this.zoneDrawer = zoneDrawer;
 		this.renderThreads = renderThreads;
 		this.timing = new FrameTiming(client);
+		zoneDrawer.attach(drawList, timing.cpuTimer);
 		startNanos = System.nanoTime();
 	}
 
@@ -346,6 +362,7 @@ public final class FrameRenderer
 		Zone.initBuffer();
 
 		renderThreads.initVaoLists();
+		skyboxVaos = new VAOList(false);
 	}
 
 	private void initGlBuffer(GLBuffer glBuffer)
@@ -361,6 +378,11 @@ public final class FrameRenderer
 		Zone.freeBuffer();
 
 		renderThreads.freeVaoLists();
+		if (skyboxVaos != null)
+		{
+			skyboxVaos.free();
+			skyboxVaos = null;
+		}
 	}
 
 	private void destroyGlBuffer(GLBuffer glBuffer)
@@ -491,11 +513,61 @@ public final class FrameRenderer
 		sceneFboValid = false;
 	}
 
+	/** Traces the callback order of the next frame to the log (one line, developer use). */
+	public void traceNextFrame()
+	{
+		traceArmed = true;
+	}
+
 	public void preSceneDraw(Scene scene, Projection entityProjection,
 		float cameraX, float cameraY, float cameraZ, float cameraPitch, float cameraYaw,
 		int minLevel, int level, int maxLevel, Set<Integer> hideRoofIds)
 	{
 		timing.beginScene();
+		timing.cpuTimer.begin(CpuTimer.RECORD);
+		try
+		{
+			recordPreScene(scene, entityProjection, cameraX, cameraY, cameraZ, cameraPitch, cameraYaw, minLevel, level, maxLevel, hideRoofIds);
+		}
+		finally
+		{
+			timing.cpuTimer.end(CpuTimer.RECORD);
+		}
+	}
+
+	private void recordPreScene(Scene scene, Projection entityProjection,
+		float cameraX, float cameraY, float cameraZ, float cameraPitch, float cameraYaw,
+		int minLevel, int level, int maxLevel, Set<Integer> hideRoofIds)
+	{
+		boolean topLevel = scene.getWorldViewId() == WorldView.TOPLEVEL;
+		if (topLevel)
+		{
+			if (autoTrace == 0)
+			{
+				// the first frame: the base callback order
+				traceArmed = true;
+				autoTrace = 1;
+			}
+			if (traceArmed)
+			{
+				drawList.traceNextFrame();
+				traceArmed = false;
+			}
+			if (!drawList.isEmpty())
+			{
+				// callbacks after the top-level post scene callback would be drawn a frame late: the in-game trace
+				// must show where sub-worldviews are drawn
+				log.warn("{} draw commands recorded after the replay, dropped", drawList.size());
+				drawList.reset();
+			}
+		}
+		else if (autoTrace == 1)
+		{
+			// a sub-worldview (a boat): trace the next frame, with it
+			traceArmed = true;
+			autoTrace = 2;
+		}
+		drawList.trace('P', -1, scene.getWorldViewId());
 
 		SceneContext ctx = scenes.context(scene);
 		if (ctx == null)
@@ -511,7 +583,7 @@ public final class FrameRenderer
 		ctx.maxLevel = maxLevel;
 		ctx.hideRoofIds = hideRoofIds;
 
-		if (scene.getWorldViewId() == WorldView.TOPLEVEL)
+		if (topLevel)
 		{
 			renderThreads.map();
 
@@ -522,8 +594,8 @@ public final class FrameRenderer
 		else
 		{
 			System.arraycopy(((FloatProjection) entityProjection).getProjection(), 0, ctx.projection, 0, 16);
-			glUniformMatrix4fv(uniEntityProj, false, ctx.projection);
-			glUniform4i(uniEntityTint, scene.getOverrideHue(), scene.getOverrideSaturation(), scene.getOverrideLuminance(), scene.getOverrideAmount());
+			drawList.entityProj(ctx.projection);
+			drawList.entityTint(scene.getOverrideHue(), scene.getOverrideSaturation(), scene.getOverrideLuminance(), scene.getOverrideAmount());
 		}
 	}
 
@@ -687,9 +759,9 @@ public final class FrameRenderer
 		frameGammaCorrection = gammaCorrection;
 		frameDitherTime = ditherTime;
 
-		glUniformMatrix4fv(uniEntityProj, false, IDENTITY);
+		glUniformMatrix4fv(programs.sceneUniforms.entityProj, false, IDENTITY);
 
-		glUniform4i(uniEntityTint, 0, 0, 0, 0);
+		glUniform4i(programs.sceneUniforms.entityTint, 0, 0, 0, 0);
 
 		// Bind uniforms
 		glUniformBlockBinding(programs.glProgram, programs.uniBlockMain, 0);
@@ -707,37 +779,152 @@ public final class FrameRenderer
 		glDepthFunc(GL_GEQUAL);
 		glEnable(GL_DEPTH_TEST);
 
-		drawSky(scene, invProjection, gammaCorrection, ditherTime, cameraX, cameraY, cameraZ);
+		recordSky(scene, cameraX, cameraY, cameraZ);
 
 		checkGLErrors();
 	}
 
 	/**
-	 * Clears the scene and draws its background: 117 HD's sky (SkyRenderer.clear and the sky pass) unless a vanilla
-	 * skybox is shown, which 117 HD draws over black.
+	 * Records the frame's first commands: the clear and the scene's background. 117 HD's sky (SkyRenderer.clear and
+	 * the sky pass) unless a vanilla skybox is shown, which 117 HD draws over black; the skybox model is uploaded now
+	 * into its own VAO and drawn at the replay. Under Lumina's source the sky comes after the opaque geometry.
 	 */
-	private void drawSky(Scene scene, float[] invProjection, float gammaCorrection, float ditherTime, float cameraX, float cameraY, float cameraZ)
+	private void recordSky(Scene scene, float cameraX, float cameraY, float cameraZ)
 	{
+		drawList.clear();
+
 		Model skybox = scene.getSkybox();
 		if (!lighting.vanillaSkybox || skybox == null)
+		{
+			if (!lighting.luminaLighting)
+			{
+				// 117 HD draws the sky behind the scene (at depth 0, after it); drawn first here without depth
+				drawList.skyHd117();
+			}
+			return;
+		}
+
+		int size = skybox.getFaceCount() * 3 * VAO.VERT_SIZE;
+		RenderThread rt = renderThreads.get(0);
+		VAO o = skyboxVaos.get(size);
+		rt.modelUploader.uploadTempModel(skybox, null, 0, 0, 0, 0, 0,
+			(int) cameraX, (int) cameraY, (int) cameraZ, o.vbo.vb, 255);
+
+		float[] skyboxProjection = Mat4.translate(cameraX, cameraY, cameraZ);
+		o.addRange(skyboxProjection, scene, Renderable.RENDERMODE_UNSORTED_NO_DEPTH);
+
+		drawList.skyboxVanilla();
+		// the skybox draw leaves its own projection set
+		drawList.entityProj(IDENTITY);
+	}
+
+	/**
+	 * Lumina's sky pass: recorded by the plugin after the top-level scene's opaque pass (DrawCallbacks.PASS_OPAQUE),
+	 * as 117 HD places its sky. Draws where nothing has been drawn yet, at the far depth with the scene's GEQUAL test
+	 * and no depth write, so the opaque geometry drawn later still wins and the alpha geometry blends over it. Nothing
+	 * under 117 HD's source or with a vanilla skybox shown.
+	 */
+	public void drawSkyAfterOpaque(Scene scene)
+	{
+		if (!lighting.luminaLighting || (lighting.vanillaSkybox && scene.getSkybox() != null) || frameInvProjection == null)
+		{
+			return;
+		}
+		drawList.skyLumina();
+	}
+
+	public void postSceneDraw(Scene scene)
+	{
+		timing.cpuTimer.begin(CpuTimer.RECORD);
+		drawList.trace('Q', -1, scene.getWorldViewId());
+		if (scene.getWorldViewId() != WorldView.TOPLEVEL)
+		{
+			drawList.entityTint(0, 0, 0, 0);
+			drawList.entityProj(IDENTITY);
+		}
+		timing.cpuTimer.end(CpuTimer.RECORD);
+
+		if (scene.getWorldViewId() == WorldView.TOPLEVEL)
+		{
+			replayScene();
+		}
+
+		timing.endScene();
+	}
+
+	/**
+	 * Draws the frame's recorded scene: unmaps the frame's model VAOs, replays the {@link DrawList} in recording order
+	 * into the scene FBO, then leaves the scene's GL state the way the client's draw expects it. The GL state the
+	 * replay runs in is the one {@link #preSceneDrawToplevel} set: the scene FBO and viewport bound, the scene
+	 * program in use with the frame's uniforms, blending on (SRC_ALPHA, ONE_MINUS_SRC_ALPHA, ONE, ONE), face culling
+	 * on, the depth test on with GL_GEQUAL (reverse depth: the far plane is 0), depth and colour writes on.
+	 */
+	private void replayScene()
+	{
+		timing.beginReplay();
+
+		// every upload of the frame is done: the VAOs can be drawn, by any pass, until the resets below
+		renderThreads.unmap();
+		skyboxVaos.unmap();
+
+		// ===== SHADOW PASS HOOK =====
+		// The shadow passes go here, before the scene is drawn, so the scene shader samples this frame's maps: the
+		// static map from the zones (drawList's ZONE_OPAQUE commands replayed into a shadow executor) and the dynamic
+		// casters from renderThreads.drawOpaque(shadowUniforms) (the ranges are drawn again by the replay below).
+		// Each pass must save and restore what it changes of the state described above: the draw FBO (fboScene) and
+		// the viewport (glDpiAwareViewport of the scene), the program (programs.glProgram), the depth function
+		// (GL_GEQUAL), blending (on), face culling, and leave depth and colour writes on. Nothing else of the frame
+		// runs between here and the replay.
+
+		timing.gpuTimer.begin(GpuTimer.SCENE);
+		drawList.replay(executor);
+
+		renderThreads.resetOpaque();
+		skyboxVaos.reset();
+
+		String traceLine = drawList.traceLine();
+		if (traceLine != null)
+		{
+			log.info("Draw callbacks of frame {} (P pre, o zone opaque, t temp model, D pass opaque, E pre pass alpha, a<level> zone alpha, A pass alpha, Q post; @worldview, x count): {}",
+				timing.gpuTimer.getFrame(), traceLine);
+		}
+		drawList.reset();
+
+		// Done rendering the scene
+		glDisable(GL_BLEND);
+		glDisable(GL_CULL_FACE);
+		glDisable(GL_DEPTH_TEST);
+
+		glBindFramebuffer(GL_DRAW_FRAMEBUFFER, awtContext.getFramebuffer(false));
+		sceneFboValid = true;
+
+		timing.endReplay();
+		checkGLErrors();
+	}
+
+	/**
+	 * The GL side of the replay: each recorded command drawn with the scene program, with the state changes the draw
+	 * made when it was issued directly from the callback.
+	 */
+	private final class SceneExecutor implements DrawList.Executor
+	{
+		@Override
+		public void clear()
 		{
 			glClearColor(0f, 0f, 0f, 1f);
 			glClearDepth(0d);
 			glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+		}
 
-			if (lighting.luminaLighting)
-			{
-				// Lumina's sky is drawn after the opaque geometry (drawSkyAfterOpaque)
-				return;
-			}
-
-			// 117 HD draws the sky behind the scene (at depth 0, after it); drawn first here without depth
+		@Override
+		public void skyHd117()
+		{
 			glUseProgram(programs.glSkyProgram);
 			programs.skyLightingUniforms.upload(lighting);
-			glUniformMatrix4fv(programs.uniSkyInvProjection, false, invProjection);
-			glUniform1f(programs.uniSkyGammaCorrection, gammaCorrection);
+			glUniformMatrix4fv(programs.uniSkyInvProjection, false, frameInvProjection);
+			glUniform1f(programs.uniSkyGammaCorrection, frameGammaCorrection);
 			programs.skyOutputUniforms.upload();
-			glUniform1f(programs.uniSkyElapsedTime, ditherTime);
+			glUniform1f(programs.uniSkyElapsedTime, frameDitherTime);
 			glUniform1f(programs.uniSkyColorblindIntensity, config.colorBlindIntensity());
 			glDisable(GL_BLEND);
 			glDisable(GL_DEPTH_TEST);
@@ -748,67 +935,77 @@ public final class FrameRenderer
 			glEnable(GL_DEPTH_TEST);
 			glEnable(GL_BLEND);
 			glUseProgram(programs.glProgram);
-			return;
 		}
 
-		glClearColor(0f, 0f, 0f, 1f);
-		glClearDepth(0d);
-		glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
-
-		int size = skybox.getFaceCount() * 3 * VAO.VERT_SIZE;
-		RenderThread rt = renderThreads.get(0);
-		VAO o = rt.vaoO.get(size);
-		rt.modelUploader.uploadTempModel(skybox, null, 0, 0, 0, 0, 0,
-			(int) cameraX, (int) cameraY, (int) cameraZ, o.vbo.vb, 255);
-
-		float[] skyboxProjection = Mat4.translate(cameraX, cameraY, cameraZ);
-		o.addRange(skyboxProjection, scene, Renderable.RENDERMODE_UNSORTED_NO_DEPTH);
-
-		rt.vaoO.draw();
-
-		glUniformMatrix4fv(uniEntityProj, false, IDENTITY);
-	}
-
-	/**
-	 * Lumina's sky pass: called by the plugin after the top-level scene's opaque pass (DrawCallbacks.PASS_OPAQUE), as
-	 * 117 HD places its sky. Draws where nothing has been drawn yet, at the far depth with the scene's GEQUAL test and
-	 * no depth write, so the opaque geometry drawn later still wins and the alpha geometry blends over it. Nothing
-	 * under 117 HD's source or with a vanilla skybox shown.
-	 */
-	public void drawSkyAfterOpaque(Scene scene)
-	{
-		if (!lighting.luminaLighting || (lighting.vanillaSkybox && scene.getSkybox() != null) || frameInvProjection == null)
+		@Override
+		public void skyboxVanilla()
 		{
-			return;
+			skyboxVaos.draw(programs.sceneUniforms);
 		}
-		skyRenderer.draw(lighting, frameInvProjection, frameGammaCorrection, frameDitherTime, config.colorBlindIntensity(), vaoUiHandle);
-		glUseProgram(programs.glProgram);
-		checkGLErrors();
-	}
 
-	public void postSceneDraw(Scene scene)
-	{
-		if (scene.getWorldViewId() == WorldView.TOPLEVEL)
+		@Override
+		public void skyLumina()
 		{
-			postDrawToplevel();
+			skyRenderer.draw(lighting, frameInvProjection, frameGammaCorrection, frameDitherTime, config.colorBlindIntensity(), vaoUiHandle);
+			glUseProgram(programs.glProgram);
 		}
-		else
+
+		@Override
+		public void entityProj(float[] projection)
 		{
-			glUniform4i(uniEntityTint, 0, 0, 0, 0);
-			glUniformMatrix4fv(uniEntityProj, false, IDENTITY);
+			glUniformMatrix4fv(programs.sceneUniforms.entityProj, false, projection);
 		}
 
-		timing.endScene();
-	}
+		@Override
+		public void entityTint(int h, int s, int l, int a)
+		{
+			glUniform4i(programs.sceneUniforms.entityTint, h, s, l, a);
+		}
 
-	private void postDrawToplevel()
-	{
-		glDisable(GL_BLEND);
-		glDisable(GL_CULL_FACE);
-		glDisable(GL_DEPTH_TEST);
+		@Override
+		public void zoneOpaque(Zone zone, int zx, int zz, int minLevel, int level, int maxLevel, Set<Integer> hideRoofIds, boolean gapFillers)
+		{
+			// 117 HD draws opaque zones without blending
+			glDisable(GL_BLEND);
+			zone.renderOpaque(programs.sceneUniforms, zx, zz, minLevel, level, maxLevel, hideRoofIds);
+			if (gapFillers)
+			{
+				zone.renderGapFillers(programs.sceneUniforms, zx, zz);
+			}
+			glEnable(GL_BLEND);
+		}
 
-		glBindFramebuffer(GL_DRAW_FRAMEBUFFER, awtContext.getFramebuffer(false));
-		sceneFboValid = true;
+		@Override
+		public void dynamicOpaque()
+		{
+			renderThreads.drawOpaque(programs.sceneUniforms);
+		}
+
+		@Override
+		public void zoneAlpha(Zone zone, int zx, int zz, int cameraYaw, int cameraPitch, int minLevel, int level, int maxLevel,
+			int alphaLevel, Set<Integer> hideRoofIds, boolean unsorted, boolean depthPass)
+		{
+			RenderThread rt = renderThreads.get(0);
+			zone.renderAlpha(programs.sceneUniforms, rt.modelUploader, zx, zz, cameraYaw, cameraPitch, minLevel, level, maxLevel, alphaLevel, hideRoofIds, unsorted, false);
+			if (depthPass)
+			{
+				glColorMask(false, false, false, false);
+				zone.renderAlpha(programs.sceneUniforms, rt.modelUploader, zx, zz, cameraYaw, cameraPitch, minLevel, level, maxLevel, alphaLevel, hideRoofIds, unsorted, true);
+				glColorMask(true, true, true, true);
+			}
+		}
+
+		@Override
+		public void removeTemp(SceneContext ctx)
+		{
+			for (int x = 0; x < ctx.sizeX; ++x)
+			{
+				for (int z = 0; z < ctx.sizeZ; ++z)
+				{
+					ctx.zones[x][z].removeTemp();
+				}
+			}
+		}
 	}
 
 	private void blitSceneFbo()
