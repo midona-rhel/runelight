@@ -507,12 +507,13 @@ vec4 shadeScene(ivec2 px, SceneSample sm, vec4 transparent) {
 
   vec3 lit;
   // Where nothing but the volumetric fog is left to change the lit color, it stays linear and is fogged as it is,
-  // instead of going to sRGB and back (applyFogSample)
+  // instead of going to sRGB and back (applyFogSample). Not on the faces models draw as water: waterUnder only holds
+  // within the real water's rect, so a fountain was water only while a river or moat was in view.
   bool linearLit = false;
   if (compositePart != 5) {
     lit = shadeLinear(color.rgb, light);
     linearLit = fogDone && compositePart == 0 && wet.x <= 0.0 && transparent == vec4(0.0)
-      && !waterUnder(px, material.b);
+      && !waterUnder(px, material.b) && !materialFakeWater(material);
     if (!linearLit) {
       lit = linearToSrgb(lit);
       if (wet.x > 0.0) {
