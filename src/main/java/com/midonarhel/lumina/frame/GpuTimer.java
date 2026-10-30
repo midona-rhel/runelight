@@ -22,9 +22,13 @@ public class GpuTimer
 	public static final int UI_UPLOAD = 1;
 	public static final int BLIT = 2;
 	public static final int UI = 3;
-	public static final int STAGES = 4;
+	/** The static shadow map's build share of the frame (only on frames that build or redraw part of it). */
+	public static final int SHADOW_STATIC = 4;
+	/** The dynamic shadow map (only on frames with dynamic casters). */
+	public static final int SHADOW_DYNAMIC = 5;
+	public static final int STAGES = 6;
 
-	public static final String[] NAMES = {"scene", "ui_upload", "blit", "ui"};
+	public static final String[] NAMES = {"scene", "ui_upload", "blit", "ui", "shadow_static", "shadow_dynamic"};
 
 	// frames in flight before a slot is read back; drivers may queue 3+ frames ahead, so leave room or most frames
 	// would be dropped as not ready

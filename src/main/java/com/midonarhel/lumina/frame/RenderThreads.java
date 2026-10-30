@@ -122,12 +122,25 @@ public final class RenderThreads
 	}
 
 	/** Draws every thread's opaque ranges (after {@link #unmap}); repeatable until {@link #resetOpaque}. */
-	void drawOpaque(DrawUniforms u)
+	public void drawOpaque(DrawUniforms u)
 	{
 		for (int i = 0; i < rts.length; ++i) // NOPMD: ForLoopCanBeForeach
 		{
 			rts[i].vaoO.draw(u);
 		}
+	}
+
+	/** Whether any thread uploaded an opaque range this frame (after {@link #unmap}): the dynamic shadow casters. */
+	public boolean hasOpaqueRanges()
+	{
+		for (int i = 0; i < rts.length; ++i) // NOPMD: ForLoopCanBeForeach
+		{
+			if (rts[i].vaoO.hasRanges())
+			{
+				return true;
+			}
+		}
+		return false;
 	}
 
 	void resetOpaque()

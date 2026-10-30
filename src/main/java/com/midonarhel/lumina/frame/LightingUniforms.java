@@ -28,8 +28,10 @@ import com.midonarhel.lumina.lighting.Lighting;
 import static org.lwjgl.opengl.GL33C.glGetUniformLocation;
 import static org.lwjgl.opengl.GL33C.glUniform1f;
 import static org.lwjgl.opengl.GL33C.glUniform1i;
+import static org.lwjgl.opengl.GL33C.glUniform2f;
 import static org.lwjgl.opengl.GL33C.glUniform3f;
 import static org.lwjgl.opengl.GL33C.glUniform3fv;
+import static org.lwjgl.opengl.GL33C.glUniformMatrix4fv;
 
 /**
  * The uniform locations of one shader program for the {@link Lighting} values (frag.glsl, fog.glsl, sky.glsl,
@@ -44,9 +46,23 @@ public final class LightingUniforms
 	private final int moonDiskColor, moonIllumination, moonVisibility, skyFogColor, skyFogDensity, skyFogHorizonHeight;
 	private final int groundFogLight, skyVisibility, starHorizonHeight;
 	private final int luminaLighting, skyFillSh, skyFillBounce, sunVisibility, fogSkyGlow;
+	private final int shadowsOn, shadowStaticProj, shadowDynamicProj, shadowStaticMap, shadowDynamicMap, shadowTexel, shadowBias,
+		shadowNormalOffset;
+
+	/** The texture units the shadow maps are bound to (unit 0 is the UI's, 1 the texture array's). */
+	public static final int SHADOW_STATIC_UNIT = 2;
+	public static final int SHADOW_DYNAMIC_UNIT = 3;
 
 	public LightingUniforms(int program)
 	{
+		shadowsOn = glGetUniformLocation(program, "shadowsOn");
+		shadowStaticProj = glGetUniformLocation(program, "shadowStaticProj");
+		shadowDynamicProj = glGetUniformLocation(program, "shadowDynamicProj");
+		shadowStaticMap = glGetUniformLocation(program, "shadowStaticMap");
+		shadowDynamicMap = glGetUniformLocation(program, "shadowDynamicMap");
+		shadowTexel = glGetUniformLocation(program, "shadowTexel");
+		shadowBias = glGetUniformLocation(program, "shadowBias");
+		shadowNormalOffset = glGetUniformLocation(program, "shadowNormalOffset");
 		luminaLighting = glGetUniformLocation(program, "luminaLighting");
 		skyFillSh = glGetUniformLocation(program, "skyFillSh");
 		skyFillBounce = glGetUniformLocation(program, "skyFillBounce");
@@ -126,6 +142,22 @@ public final class LightingUniforms
 		vec3(skyFillBounce, l.skyFillBounce);
 		glUniform1f(sunVisibility, l.sunVisibility);
 		glUniform1f(fogSkyGlow, l.fogSkyGlow);
+		uploadShadow(l);
+	}
+
+	/**
+	 * Uploads the shadow values alone (shadow.glsl), after the shadow passes filled them; the program must be in use.
+	 */
+	public void uploadShadow(Lighting l)
+	{
+		glUniform1i(shadowsOn, l.shadowsOn);
+		glUniformMatrix4fv(shadowStaticProj, false, l.shadowStaticProj);
+		glUniformMatrix4fv(shadowDynamicProj, false, l.shadowDynamicProj);
+		glUniform1i(shadowStaticMap, SHADOW_STATIC_UNIT);
+		glUniform1i(shadowDynamicMap, SHADOW_DYNAMIC_UNIT);
+		glUniform2f(shadowTexel, l.shadowTexel[0], l.shadowTexel[1]);
+		glUniform2f(shadowBias, l.shadowBias[0], l.shadowBias[1]);
+		glUniform1f(shadowNormalOffset, l.shadowNormalOffset);
 	}
 
 	private static void vec3(int location, float[] v)

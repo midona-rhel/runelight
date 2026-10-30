@@ -13,7 +13,7 @@ public final class DrawUniforms
 	public final int entityProj;
 	public final int entityTint;
 
-	DrawUniforms(int program)
+	public DrawUniforms(int program)
 	{
 		base = glGetUniformLocation(program, "base");
 		entityProj = glGetUniformLocation(program, "entityProj");

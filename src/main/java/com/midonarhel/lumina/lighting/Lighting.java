@@ -24,6 +24,8 @@
  */
 package com.midonarhel.lumina.lighting;
 
+import com.midonarhel.lumina.frame.Mat4;
+
 /**
  * The scene's light, fog and sky for the current frame: the single place these values flow through on the Java side.
  * A {@link LightingSource} fills it once per frame and the plugin uploads it unchanged as the scene and sky shaders'
@@ -93,4 +95,17 @@ public final class Lighting
 	 * sky pass: 1 under the open sky, 0 underground (the fog is the area's own colour there).
 	 */
 	public float fogSkyGlow;
+
+	// Lumina's shadows (shadow.ShadowRenderer fills these after its passes; 0 when they did not run)
+	/** Which maps the receiver samples: bit 1 the static map, bit 2 the dynamic map; 0 for no shadows. */
+	public int shadowsOn;
+	/** Local world to the static map's (u, v, depth) in [0,1], column-major. */
+	public final float[] shadowStaticProj = Mat4.identity();
+	public final float[] shadowDynamicProj = Mat4.identity();
+	/** One texel in uv of the static and the dynamic map. */
+	public final float[] shadowTexel = new float[2];
+	/** The receiver's depth bias of each map, in its [0,1] depth units. */
+	public final float[] shadowBias = new float[2];
+	/** The receiver's offset along the normal, world units. */
+	public float shadowNormalOffset;
 }

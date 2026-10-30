@@ -148,6 +148,19 @@ public class VAOList
 		}
 	}
 
+	/** Whether the VAOs the last {@link #unmap} unmapped hold any range. */
+	boolean hasRanges()
+	{
+		for (int i = 0; i < unmapped; ++i)
+		{
+			if (vaos.get(i).off > 0)
+			{
+				return true;
+			}
+		}
+		return false;
+	}
+
 	/** Forgets the frame's ranges after the last draw of them. */
 	void reset()
 	{
