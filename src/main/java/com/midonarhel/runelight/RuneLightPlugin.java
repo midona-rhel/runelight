@@ -188,8 +188,6 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 	@Inject
 	private OverlayManager overlayManager;
 
-	@Inject
-	private RuneLightOverlay overlay;
 
 	@Inject
 	@Named("developerMode")
@@ -729,7 +727,6 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 				shaderWatcher.start();
 			}
 		}
-		overlayManager.add(overlay);
 		glErrorChecks = config.glErrorChecks();
 
 		VertexShading.undoVanillaShading = config.removeBakedShading();
@@ -926,7 +923,6 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 	@Override
 	protected void shutDown()
 	{
-		overlayManager.remove(overlay);
 		if (sceneLights != null)
 		{
 			eventBus.unregister(sceneLights);
@@ -1862,7 +1858,8 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		float cameraX, float cameraY, float cameraZ, float cameraPitch, float cameraYaw)
 	{
 		// the hitch monitor reads the GPU's times too, but only when someone is reading the debug log
-		gpuTimer.setEnabled(config.gpuPassTimings());
+		// the GPU pass timers run only for the developer `timers` command (the timings panel is gone, 2026-10-30)
+		gpuTimer.setEnabled(false);
 		captureFrameState(scene, cameraX, cameraY, cameraZ);
 		wadeSteps.update(client.getTopLevelWorldView(), client.getLocalPlayer(), cameraX, cameraZ,
 			weather.groundActive() && client.getGameState() == GameState.LOGGED_IN);
@@ -4866,7 +4863,12 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		else if (args.length >= 1 && args[0].equals("timers"))
 		{
 			// the smoothed per-pass GPU and per-step CPU times the overlay shows, to the log, so a tool can read them;
-			// needs the "gpuPassTimings" setting on (set gpuPassTimings true) and the FPS uncapped to mean anything
+			// switches the GPU pass timers on at first use; the numbers mean something only with the FPS uncapped
+			if (!gpuTimer.isEnabled())
+			{
+				gpuTimer.setEnabled(true);
+				log.info("timers: GPU pass timers switched on; run `timers` again in a few seconds for values");
+			}
 			StringBuilder sb = new StringBuilder("timers: render_scale=").append(config.renderScale())
 				.append(" cpu_frame=").append(String.format("%.2f", getCpuFrameMs()));
 			sb.append(" gpu_enabled=").append(gpuTimer.isEnabled());

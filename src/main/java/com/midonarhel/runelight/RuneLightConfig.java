@@ -890,30 +890,7 @@ public interface RuneLightConfig extends Config
 	)
 	String developmentSection = "development";
 
-	@ConfigItem(
-		keyName = "showTimings",
-		name = "Show timings",
-		description = "Overlay with the frame time and the CPU time per step.",
-		section = developmentSection,
-		position = 101
-	)
-	default boolean showTimings()
-	{
-		return false;
-	}
 
-	@ConfigItem(
-		keyName = "gpuPassTimings",
-		name = "Time GPU passes",
-		description = "Adds the GPU time of every pass to the timings overlay. On macOS ending a timer query makes the "
-			+ "CPU wait for the GPU, so the measured frames stutter: leave it off except while measuring.",
-		section = developmentSection,
-		position = 102
-	)
-	default boolean gpuPassTimings()
-	{
-		return false;
-	}
 
 	@ConfigItem(
 		keyName = "glErrorChecks",
