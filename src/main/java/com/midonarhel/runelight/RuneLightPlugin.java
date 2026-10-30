@@ -45,6 +45,7 @@ import java.nio.FloatBuffer;
 import java.nio.IntBuffer;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.Path;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
@@ -193,6 +194,10 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 	@Inject
 	@Named("developerMode")
 	private boolean developerMode;
+
+	// reference-build comparison tools (Lumina's): ::runelight cam|capture|set, and the same from
+	// ~/.runelite/lumina/command-perfwip.txt once per client tick in developer mode
+	private CommandFile commandFile;
 
 	private static final Set<String> OTHER_RENDERERS = Set.of(
 		"net.runelite.client.plugins.gpu.GpuPlugin",
@@ -3753,6 +3758,15 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 	@Subscribe
 	public void onPostClientTick(PostClientTick event)
 	{
+		if (developerMode)
+		{
+			if (commandFile == null)
+			{
+				Path file = net.runelite.client.RuneLite.RUNELITE_DIR.toPath().resolve("lumina").resolve("command-perfwip.txt");
+				commandFile = new CommandFile(file, this::runCommand);
+			}
+			commandFile.poll();
+		}
 		WorldView wv = client.getTopLevelWorldView();
 		if (wv == null)
 		{
@@ -4732,9 +4746,39 @@ public class RuneLightPlugin extends Plugin implements DrawCallbacks
 		}
 	}
 
+	/**
+	 * The comparison commands shared with Lumina and the 117 HD reference build: cam yaw pitch zoom, capture [name]
+	 * (to ~/.runelite/lumina/captures), set key value (a RuneLight setting, e.g. fixedHour / dayCycleMinutes).
+	 */
+	private void runCommand(String[] args)
+	{
+		if (args.length >= 4 && args[0].equals("cam"))
+		{
+			FrameCapture.setCamera(client, Integer.parseInt(args[1]), Integer.parseInt(args[2]), Integer.parseInt(args[3]));
+		}
+		else if (args.length >= 1 && args[0].equals("capture"))
+		{
+			FrameCapture.capture(client, drawManager, "RuneLight (perf-wip)", args.length >= 2 ? args[1] : "capture");
+		}
+		else if (args.length >= 3 && args[0].equals("set"))
+		{
+			configManager.setConfiguration(RuneLightConfig.GROUP, args[1], args[2]);
+			log.info("Set {} = {}", args[1], args[2]);
+		}
+		else
+		{
+			log.info("Unknown ::runelight command: {}", String.join(" ", args));
+		}
+	}
+
 	@Subscribe
 	private void onCommandExecuted(CommandExecuted event)
 	{
+		if (event.getCommand().equals("runelight"))
+		{
+			runCommand(event.getArguments());
+			return;
+		}
 		if (event.getCommand().equals("gpumem"))
 		{
 			int totalSzKb = 0;
