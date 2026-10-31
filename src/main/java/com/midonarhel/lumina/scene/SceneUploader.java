@@ -1512,6 +1512,9 @@ public class SceneUploader
 			int n1 = VertexShading.encodeNormal(faceNormals, 0);
 			int n2 = VertexShading.encodeNormal(faceNormals, 1);
 			int n3 = VertexShading.encodeNormal(faceNormals, 2);
+			int l1 = VertexShading.normalLength(faceNormals, 0);
+			int l2 = VertexShading.normalLength(faceNormals, 1);
+			int l3 = VertexShading.normalLength(faceNormals, 2);
 
 			ModelUploader.computeFaceUvs(model, face, 0f, 0f, 0f, false, u, v);
 
@@ -1555,13 +1558,13 @@ public class SceneUploader
 			}
 
 			buf.put22224(vx1, vy1, vz1, sway ? swayCodes[triangleA] : 0, alphaBias | color1);
-			buf.put2222(texture, su0, sv0, n1);
+			buf.put2222(texture, su0, sv0, n1, l1);
 
 			buf.put22224(vx2, vy2, vz2, sway ? swayCodes[triangleB] : 0, alphaBias | color2);
-			buf.put2222(texture, su1, sv1, n2);
+			buf.put2222(texture, su1, sv1, n2, l2);
 
 			buf.put22224(vx3, vy3, vz3, sway ? swayCodes[triangleC] : 0, alphaBias | color3);
-			buf.put2222(texture, su2, sv2, n3);
+			buf.put2222(texture, su2, sv2, n3, l3);
 
 			len += 3;
 
@@ -1570,13 +1573,13 @@ public class SceneUploader
 				// 117 HD's doubleSidedFaces (zone SceneUploader 1926-1951): the face wound the other way, its normals
 				// turned round, into the same buffer (staticModelSize counts it)
 				buf.put22224(vx3, vy3, vz3, sway ? swayCodes[triangleC] : 0, alphaBias | color3);
-				buf.put2222(texture, su2, sv2, VertexShading.negateNormal(n3));
+				buf.put2222(texture, su2, sv2, VertexShading.negateNormal(n3), l3);
 
 				buf.put22224(vx2, vy2, vz2, sway ? swayCodes[triangleB] : 0, alphaBias | color2);
-				buf.put2222(texture, su1, sv1, VertexShading.negateNormal(n2));
+				buf.put2222(texture, su1, sv1, VertexShading.negateNormal(n2), l2);
 
 				buf.put22224(vx1, vy1, vz1, sway ? swayCodes[triangleA] : 0, alphaBias | color1);
-				buf.put2222(texture, su0, sv0, VertexShading.negateNormal(n1));
+				buf.put2222(texture, su0, sv0, VertexShading.negateNormal(n1), l1);
 
 				len += 3;
 			}
@@ -1588,9 +1591,9 @@ public class SceneUploader
 					: atWaterLevel[triangleB] && atWaterLevel[triangleC] ? 1 : -1;
 				if (e >= 0 && !(atWaterLevel[triangleA] && atWaterLevel[triangleB] && atWaterLevel[triangleC]))
 				{
-					fx[0] = vx1; fy[0] = vy1; fz[0] = vz1; fc[0] = color1; fn[0] = n1; fu[0] = su0; fv[0] = sv0;
-					fx[1] = vx2; fy[1] = vy2; fz[1] = vz2; fc[1] = color2; fn[1] = n2; fu[1] = su1; fv[1] = sv1;
-					fx[2] = vx3; fy[2] = vy3; fz[2] = vz3; fc[2] = color3; fn[2] = n3; fu[2] = su2; fv[2] = sv2;
+					fx[0] = vx1; fy[0] = vy1; fz[0] = vz1; fc[0] = color1; fn[0] = n1; fl[0] = l1; fu[0] = su0; fv[0] = sv0;
+					fx[1] = vx2; fy[1] = vy2; fz[1] = vz2; fc[1] = color2; fn[1] = n2; fl[1] = l2; fu[1] = su1; fv[1] = sv1;
+					fx[2] = vx3; fy[2] = vy3; fz[2] = vz3; fc[2] = color3; fn[2] = n3; fl[2] = l3; fu[2] = su2; fv[2] = sv2;
 					len += extrude(e, (e + 1) % 3, texture, alphaBias, vb);
 				}
 			}
@@ -1599,7 +1602,7 @@ public class SceneUploader
 		return len;
 	}
 
-	private final int[] fx = new int[3], fy = new int[3], fz = new int[3], fc = new int[3], fn = new int[3];
+	private final int[] fx = new int[3], fy = new int[3], fz = new int[3], fc = new int[3], fn = new int[3], fl = new int[3];
 	private final int[] fu = new int[3], fv = new int[3];
 
 	/**
@@ -1633,18 +1636,18 @@ public class SceneUploader
 		}
 		// (b, a, a') and (b, a', b'): below the edge, so the order is reversed to face the same way
 		buf.put22224(fx[b], fy[b], fz[b], 0, alphaBias | fc[b]);
-		buf.put2222(texture, fu[b], fv[b], fn[b]);
+		buf.put2222(texture, fu[b], fv[b], fn[b], fl[b]);
 		buf.put22224(fx[a], fy[a], fz[a], 0, alphaBias | fc[a]);
-		buf.put2222(texture, fu[a], fv[a], fn[a]);
+		buf.put2222(texture, fu[a], fv[a], fn[a], fl[a]);
 		buf.put22224(fx[a], ba, fz[a], 0, alphaBias | fc[a]);
-		buf.put2222(texture, uv[0], uv[1], fn[a]);
+		buf.put2222(texture, uv[0], uv[1], fn[a], fl[a]);
 
 		buf.put22224(fx[b], fy[b], fz[b], 0, alphaBias | fc[b]);
-		buf.put2222(texture, fu[b], fv[b], fn[b]);
+		buf.put2222(texture, fu[b], fv[b], fn[b], fl[b]);
 		buf.put22224(fx[a], ba, fz[a], 0, alphaBias | fc[a]);
-		buf.put2222(texture, uv[0], uv[1], fn[a]);
+		buf.put2222(texture, uv[0], uv[1], fn[a], fl[a]);
 		buf.put22224(fx[b], bb, fz[b], 0, alphaBias | fc[b]);
-		buf.put2222(texture, uv[2], uv[3], fn[b]);
+		buf.put2222(texture, uv[2], uv[3], fn[b], fl[b]);
 		return 6;
 	}
 

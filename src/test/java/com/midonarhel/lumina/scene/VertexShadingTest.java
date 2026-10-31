@@ -494,6 +494,76 @@ public class VertexShadingTest
 		}
 	}
 
+	/**
+	 * A gable roof: two 45-degree slopes of a 3-wide grid (100 apart), rows 0-2 rising to the ridge at row 2 and rows
+	 * 2-4 falling from it, all smooth, sharing the ridge's corners.
+	 */
+	private static Mesh gable()
+	{
+		Mesh m = new Mesh();
+		for (int j = 0; j < 5; ++j)
+		{
+			for (int i = 0; i < 3; ++i)
+			{
+				m.vertex(i * 100, -100 * Math.min(j, 4 - j), j * 100);
+			}
+		}
+		for (int j = 0; j < 4; ++j)
+		{
+			for (int i = 0; i < 2; ++i)
+			{
+				int a = j * 3 + i, b = a + 1, c = a + 3, d = c + 1;
+				m.face(a, c, b, true);
+				m.face(b, c, d, true);
+			}
+		}
+		return m;
+	}
+
+	@Test
+	public void aSlopeTriangleAtTheRidgeInterpolatesTheGamesNormalsUnnormalizedAs117HdDoes()
+	{
+		Mesh m = gable();
+		int[][] game = m.gameNormals();
+		// face 5 of the first slope: corners 4 (inside the slope, six coplanar faces: length 6 x 256), 6 and 7 (on
+		// the ridge, their sums half from the other slope: shorter, pointing up)
+		int f = 5;
+		assertEquals(4, m.i1[f]);
+		int[] n = new int[9];
+		assertEquals(VertexShading.VERTEX, m.normals(f, game, n));
+		float[] slope = m.unit(0);
+		float[] hd = new float[3], ours = new float[3], unit = new float[3];
+		for (int i = 0; i < 3; ++i)
+		{
+			float[] d = VertexShading.decodeNormal(VertexShading.encodeNormal(n, i));
+			int length = VertexShading.normalLength(n, i);
+			for (int k = 0; k < 3; ++k)
+			{
+				// at the centroid: 117 HD's raw ints, ours the encoded direction at its length, and every corner unit
+				hd[k] += n[i * 3 + k];
+				ours[k] += d[k] * length;
+				unit[k] += d[k];
+			}
+		}
+		normalize(hd);
+		normalize(ours);
+		normalize(unit);
+		// ours is 117 HD's to the octahedral encoding's precision
+		assertTrue(dot(ours, hd) > 0.9998f);
+		// and holds the slope's direction better than corners all of one length did
+		float off = (float) Math.toDegrees(Math.acos(Math.min(1f, dot(ours, slope))));
+		float offUnit = (float) Math.toDegrees(Math.acos(Math.min(1f, dot(unit, slope))));
+		assertTrue(off + " vs " + offUnit, off < offUnit - 2f);
+	}
+
+	private static void normalize(float[] v)
+	{
+		float l = (float) Math.sqrt(dot(v, v));
+		v[0] /= l;
+		v[1] /= l;
+		v[2] /= l;
+	}
+
 	@Test
 	public void aModelWithoutNormalsIsFlat()
 	{

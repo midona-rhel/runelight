@@ -323,6 +323,7 @@ public class ModelUploader
 					vertexBuffer[vbOff++] = alphaBias | color1;
 					vertexBuffer[vbOff++] = ((su0 & 0xffff) << 16 | (texture & 0xffff));
 					vertexBuffer[vbOff++] = (sv0 & 0xffff) | n1 << 16;
+					vertexBuffer[vbOff++] = VertexShading.normalLength(faceNormals, 0);
 
 					vertexBuffer[vbOff++] = Float.floatToIntBits(modelLocalX[v2]);
 					vertexBuffer[vbOff++] = Float.floatToIntBits(modelLocalY[v2]);
@@ -330,6 +331,7 @@ public class ModelUploader
 					vertexBuffer[vbOff++] = alphaBias | color2;
 					vertexBuffer[vbOff++] = ((su1 & 0xffff) << 16 | (texture & 0xffff));
 					vertexBuffer[vbOff++] = (sv1 & 0xffff) | n2 << 16;
+					vertexBuffer[vbOff++] = VertexShading.normalLength(faceNormals, 1);
 
 					vertexBuffer[vbOff++] = Float.floatToIntBits(modelLocalX[v3]);
 					vertexBuffer[vbOff++] = Float.floatToIntBits(modelLocalY[v3]);
@@ -337,6 +339,7 @@ public class ModelUploader
 					vertexBuffer[vbOff++] = alphaBias | color3;
 					vertexBuffer[vbOff++] = ((su2 & 0xffff) << 16 | (texture & 0xffff));
 					vertexBuffer[vbOff++] = (sv2 & 0xffff) | n3 << 16;
+					vertexBuffer[vbOff++] = VertexShading.normalLength(faceNormals, 2);
 				}
 			}
 		}
@@ -771,13 +774,13 @@ public class ModelUploader
 			texture |= bits;
 
 			putfff4(buffer, vx1, vy1, vz1, alphaBias | color1);
-			put2222(buffer, texture, su0, sv0, n1);
+			put2222(buffer, texture, su0, sv0, n1, VertexShading.normalLength(faceNormals, 0));
 
 			putfff4(buffer, vx2, vy2, vz2, alphaBias | color2);
-			put2222(buffer, texture, su1, sv1, n2);
+			put2222(buffer, texture, su1, sv1, n2, VertexShading.normalLength(faceNormals, 1));
 
 			putfff4(buffer, vx3, vy3, vz3, alphaBias | color3);
-			put2222(buffer, texture, su2, sv2, n3);
+			put2222(buffer, texture, su2, sv2, n3, VertexShading.normalLength(faceNormals, 2));
 
 			len += 3;
 		}
@@ -785,10 +788,11 @@ public class ModelUploader
 		return len;
 	}
 
-	static void put2222(IntBuffer vb, int x, int y, int z, int w)
+	static void put2222(IntBuffer vb, int x, int y, int z, int w, int length)
 	{
 		vb.put(((y & 0xffff) << 16) | (x & 0xffff));
 		vb.put(((w & 0xffff) << 16) | (z & 0xffff));
+		vb.put(length);
 	}
 
 	static void putfff4(IntBuffer vb, float x, float y, float z, int w)

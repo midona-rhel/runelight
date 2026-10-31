@@ -271,7 +271,7 @@ public final class Commands
 		}
 		else if (args.length >= 1 && args[0].equals("faces"))
 		{
-			faces(args.length >= 2 ? Integer.parseInt(args[1]) : 2);
+			faces(args.length >= 2 ? Integer.parseInt(args[1]) : 2, args.length >= 3 && args[2].equals("detail"));
 		}
 		else if (args.length >= 3 && args[0].equals("set"))
 		{
@@ -289,9 +289,10 @@ public final class Commands
 	 * uploaders see it, to ~/.runelite/lumina/captures/faces.txt and the log: per model its faces, how many the game
 	 * marks flat (faceColors3 == -1, lit by their own normal under 117 HD's rule), hidden (-2) and textured, whether it
 	 * has vertex normals (Model.getVertexNormalsX), how many of its vertices have a zero normal, and how many smooth
-	 * faces have all three zero (lit flat too).
+	 * faces have all three zero (lit flat too). Every plane, from the ground up (roofs stand on the planes above).
+	 * `faces [radius] detail` adds each face: its colours, texture, and per corner the vertex, position and normal.
 	 */
-	private void faces(int radius)
+	private void faces(int radius, boolean detail)
 	{
 		net.runelite.api.Player player = plugin.client.getLocalPlayer();
 		net.runelite.api.WorldView wv = plugin.client.getTopLevelWorldView();
@@ -300,40 +301,45 @@ public final class Commands
 			return;
 		}
 		net.runelite.api.coords.LocalPoint lp = player.getLocalLocation();
-		int px = lp.getSceneX(), py = lp.getSceneY(), plane = wv.getPlane();
+		int px = lp.getSceneX(), py = lp.getSceneY();
 		net.runelite.api.Tile[][][] tiles = wv.getScene().getTiles();
 		StringBuilder out = new StringBuilder("player " + player.getWorldLocation() + "\n");
-		for (int x = Math.max(0, px - radius); x <= Math.min(tiles[plane].length - 1, px + radius); ++x)
+		for (int plane = 0; plane < tiles.length; ++plane)
 		{
-			for (int y = Math.max(0, py - radius); y <= Math.min(tiles[plane][x].length - 1, py + radius); ++y)
+			for (int x = Math.max(0, px - radius); x <= Math.min(tiles[plane].length - 1, px + radius); ++x)
 			{
-				net.runelite.api.Tile t = tiles[plane][x][y];
-				if (t == null)
+				for (int y = Math.max(0, py - radius); y <= Math.min(tiles[plane][x].length - 1, py + radius); ++y)
 				{
-					continue;
-				}
-				for (net.runelite.api.GameObject o : t.getGameObjects())
-				{
-					if (o != null && o.getSceneMinLocation().equals(t.getSceneLocation()))
+					net.runelite.api.Tile t = tiles[plane][x][y];
+					if (t == null)
 					{
-						describe(out, "game", o.getId(), o.getRenderable());
+						continue;
 					}
-				}
-				if (t.getGroundObject() != null)
-				{
-					describe(out, "ground", t.getGroundObject().getId(), t.getGroundObject().getRenderable());
-				}
-				if (t.getWallObject() != null)
-				{
-					describe(out, "wall", t.getWallObject().getId(), t.getWallObject().getRenderable1());
-				}
-				if (t.getDecorativeObject() != null)
-				{
-					describe(out, "decoration", t.getDecorativeObject().getId(), t.getDecorativeObject().getRenderable());
+					out.append("tile ").append(t.getWorldLocation()).append('\n');
+					for (net.runelite.api.GameObject o : t.getGameObjects())
+					{
+						if (o != null && o.getSceneMinLocation().equals(t.getSceneLocation()))
+						{
+							out.append("orientation ").append(o.getModelOrientation()).append(' ');
+							describe(out, "game", o.getId(), o.getRenderable(), detail);
+						}
+					}
+					if (t.getGroundObject() != null)
+					{
+						describe(out, "ground", t.getGroundObject().getId(), t.getGroundObject().getRenderable(), detail);
+					}
+					if (t.getWallObject() != null)
+					{
+						describe(out, "wall", t.getWallObject().getId(), t.getWallObject().getRenderable1(), detail);
+					}
+					if (t.getDecorativeObject() != null)
+					{
+						describe(out, "decoration", t.getDecorativeObject().getId(), t.getDecorativeObject().getRenderable(), detail);
+					}
 				}
 			}
 		}
-		log.info("faces:\n{}", out);
+		log.info("faces:\n{}", detail ? "(detail: see faces.txt)" : out);
 		try
 		{
 			java.nio.file.Path dir = net.runelite.client.RuneLite.RUNELITE_DIR.toPath().resolve("lumina").resolve("captures");
@@ -346,7 +352,7 @@ public final class Commands
 		}
 	}
 
-	private void describe(StringBuilder out, String kind, int id, net.runelite.api.Renderable r)
+	private void describe(StringBuilder out, String kind, int id, net.runelite.api.Renderable r, boolean detail)
 	{
 		net.runelite.api.Model m = com.midonarhel.lumina.scene.ModelData.modelOf(r);
 		String name = plugin.client.getObjectDefinition(id).getName();
@@ -398,5 +404,26 @@ public final class Commands
 			.append(", smooth faces with three zero normals ").append(smoothAllZero)
 			.append(", shading group ").append(com.midonarhel.lumina.scene.SurfaceMaterials.shadingForObject(id, r))
 			.append('\n');
+		if (!detail)
+		{
+			return;
+		}
+		float[] vx = m.getVerticesX(), vy = m.getVerticesY(), vz = m.getVerticesZ();
+		int[] c1 = m.getFaceColors1(), c2 = m.getFaceColors2();
+		for (int f = 0; f < faces; ++f)
+		{
+			out.append("  face ").append(f).append(" c ").append(c1[f]).append(' ').append(c2[f]).append(' ').append(c3[f])
+				.append(" tex ").append(tex != null ? tex[f] : -1);
+			for (int v : new int[]{i1[f], i2[f], i3[f]})
+			{
+				out.append(" | v").append(v).append(" (").append((int) vx[v]).append(',').append((int) vy[v]).append(',')
+					.append((int) vz[v]).append(')');
+				if (normals)
+				{
+					out.append(" n ").append(nx[v]).append(',').append(ny[v]).append(',').append(nz[v]);
+				}
+			}
+			out.append('\n');
+		}
 	}
 }

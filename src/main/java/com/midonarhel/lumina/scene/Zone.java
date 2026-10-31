@@ -58,8 +58,9 @@ public class Zone
 	// Zone vertex format
 	// index 0: short vec3(x, y, z)
 	// index 1: int abhsl
-	// index 2: short vec4(id, u, v, 0)
-	static final int VERT_SIZE = 20;
+	// index 2: short vec4(id, u, v, octahedral normal)
+	// index 3: int normal length (VertexShading.normalLength)
+	static final int VERT_SIZE = 24;
 
 	int glVao;
 	int bufLen;
@@ -178,6 +179,9 @@ public class Zone
 
 		glEnableVertexAttribArray(2);
 		glVertexAttribIPointer(2, 4, GL_SHORT, VERT_SIZE, 12);
+
+		glEnableVertexAttribArray(3);
+		glVertexAttribIPointer(3, 1, GL_INT, VERT_SIZE, 20);
 
 		glBindVertexArray(0);
 		glBindBuffer(GL_ARRAY_BUFFER, 0);

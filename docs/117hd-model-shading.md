@@ -85,7 +85,10 @@ The legacy renderer differs only in where the face normal is made: it uploads ze
 ### 1.3 How the shaders use the normal
 
 Zone renderer, no geometry shader: `scene_vert.glsl:99–123` passes the vertex normal through (times the world view's
-matrix for boats etc.), interpolated; `scene_frag.glsl:205–211`: `N = normalize(IN.normal)` (or the derivative normal
+matrix for boats etc.), interpolated **unnormalized**: the vertex buffer holds the game's ints as they are
+(`VertexWriteCache.putStaticVertex` 146, "Unnormalized normals, assumed to be within short max", and
+`putDynamicTriangle`), so a corner whose normal sums many faces (length 6 × 256 inside a slope) outweighs one of few
+(a ridge corner, whose sum half cancels); `scene_frag.glsl:205–211`: `N = normalize(IN.normal)` (or the derivative normal
 when the user turns on the "Flat shading" setting, default off, `HdPluginConfig 1149–1157`). **No zero check and no
 facing flip in the zone renderer**: zeros never reach it whole (1.2), and the normal is used as uploaded, with back
 faces culled (`ZoneRenderer.scenePass`, `GL_CULL_FACE` on, 985–986). The lighting normal is `N` through the normal
@@ -208,6 +211,13 @@ Not ported, and why:
 - 117 HD's normal maps, parallax and the "Flat shading" setting: not in our pipeline.
 - Quantisation: 117 HD uploads `int(n * 2048)` per axis; we keep our 8+8-bit octahedral normal in the texture
   attribute's last short (≈0.5° steps), which carries any direction 117 HD's does.
+- Interpolation (fixed 2026-10-31, the user's thatched roof at the Ardougne market "blended things coming off" under a
+  high sun): the octahedral encoding normalized every corner, so a ridge corner's averaged normal spread across the
+  whole slope triangle; 117 HD interpolates the game's unnormalized sums (1.3). Each vertex now carries the normal's
+  length beside it (`VertexShading.normalLength`, attribute 3, one int: zone vertices 20 → 24 bytes, dynamic 24 → 28)
+  and `vert.glsl` scales the direction by it before interpolation. Normals that are not the game's (terrain, water
+  bed, ground fixes) carry length 1, as before. Synthetic gable (`VertexShadingTest`): at the centre of a slope
+  triangle touching the ridge, 20.0° off the slope as 117 HD against 23.9° with unit corners.
 
 ## 4. Override import
 

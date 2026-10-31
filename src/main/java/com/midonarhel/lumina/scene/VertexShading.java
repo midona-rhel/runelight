@@ -8,7 +8,9 @@ import com.midonarhel.lumina.*;
  *
  * Normals are octahedral-encoded into 16 bits, 8 per axis, and stored in the unused last short of the texture
  * attribute. 0 means "no vertex normal": the fragment shader uses the triangle's own normal instead. Encoded values
- * are 1-255 per axis so a valid normal is never 0.
+ * are 1-255 per axis so a valid normal is never 0. The normal's length goes beside it ({@link #normalLength}): 117 HD
+ * uploads the game's normals unnormalized and normalizes only after interpolation, so a corner whose normal is the
+ * sum of many faces outweighs one of few.
  */
 public final class VertexShading
 {
@@ -156,6 +158,21 @@ public final class VertexShading
 			normals[i + 1] = -2048;
 			normals[i + 2] = 0;
 		}
+	}
+
+	/**
+	 * Corner {@code i}'s normal length from {@link #faceNormals}: the vertex shader scales the encoded direction by it,
+	 * so the triangle interpolates the normals as 117 HD's does, unnormalized (VertexWriteCache.putStaticVertex and
+	 * putDynamicTriangle write the game's ints, scene_frag.glsl normalizes after interpolation). A game vertex normal
+	 * is a sum of unit (256) normals of the smooth faces at the vertex, and of a merged neighbour's (sharelight), so
+	 * where a roof's slope meets its ridge the slope's corner, which many coplanar faces share, holds the slope's
+	 * direction across most of the triangle; with every corner normalized the ridge's averaged normal spread over the
+	 * whole triangle, a slope lit in uneven triangles under a high sun.
+	 */
+	static int normalLength(int[] normals, int i)
+	{
+		long x = normals[i * 3], y = normals[i * 3 + 1], z = normals[i * 3 + 2];
+		return (int) Math.round(Math.sqrt(x * x + y * y + z * z));
 	}
 
 	/** Corner {@code i}'s normal from {@link #faceNormals}, encoded; 0 for a zero normal. */
