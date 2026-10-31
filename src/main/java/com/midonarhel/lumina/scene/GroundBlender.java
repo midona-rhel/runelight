@@ -293,7 +293,7 @@ public final class GroundBlender
 		}
 		// near-black, used under walls and such; only where no proper color touches the vertex
 		boolean lowPriority = color <= 2;
-		if (undo && VertexShading.undoVanillaShading)
+		if (undo)
 		{
 			color = undoShading(color, dhdx, dhdz);
 		}

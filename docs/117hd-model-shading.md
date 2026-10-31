@@ -183,8 +183,7 @@ redwood tops, `undoVanillaShading: false` on "Tree - Lighter", "Oak Tree - Light
   normal at each corner for every face, flat faces included (a flat face is undone with corner A's smooth normal
   instead of its face normal), in model space for every face (117 HD: rotated space for face normals); **textured faces
   keep the game's lit lightness** (117 HD: 90) — `frag.glsl:139–142` multiplies the texture by `fHsl / 127`, the baked
-  shading. Run before the HSL override (dynamic), as 117 HD. Toggle: `config.removeBakedShading()` →
-  `VertexShading.undoVanillaShading`.
+  shading. Run before the HSL override (dynamic), as 117 HD. Toggle at the time: `config.removeBakedShading()` → `VertexShading.undoVanillaShading`; removed 2026-10-31 (the user: "remove baked shading, according to how HD117 does it"), the undo is now always on.
 - **Overrides**: none of the six flags; `materials.json` carries transmissive/emissive/fake water only.
 
 ## 3. The differences, and what this segment does with each

@@ -886,7 +886,7 @@ public class SceneUploader
 	 */
 	private int groundColor(int own)
 	{
-		if (own < 0 || own == 12345678 || !VertexShading.undoVanillaShading)
+		if (own < 0 || own == 12345678)
 		{
 			return own;
 		}
@@ -1543,7 +1543,7 @@ public class SceneUploader
 				sv1 = SurfaceMaterials.fakeHeight(vertexY[triangleB], span[1]);
 				sv2 = SurfaceMaterials.fakeHeight(vertexY[triangleC], span[1]);
 			}
-			if (texture > 0 && VertexShading.undoVanillaShading)
+			if (texture > 0)
 			{
 				color1 = color2 = color3 = VertexShading.TEXTURED_COLOR;
 			}

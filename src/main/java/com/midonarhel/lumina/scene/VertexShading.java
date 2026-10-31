@@ -19,11 +19,8 @@ public final class VertexShading
 
 	// 117 HD's colour for textured faces (zone SceneUploader 1722-1728, 2289-2290): lightness 90, no hue or
 	// saturation, not undone. The texture is multiplied by it; the game's lit lightness would keep vanilla's shading.
-	// Used only while the baked shading is removed (undoVanillaShading): with it kept, textured faces keep the game's
-	// lightness as untextured faces keep its colours, so no model is half baked, half not.
+	// The baked shading is always removed, as in 117 HD's default shading mode (the user's decision, 2026-10-31).
 	static final int TEXTURED_COLOR = 90;
-
-	public static boolean undoVanillaShading = true;
 
 	private VertexShading()
 	{
@@ -181,10 +178,6 @@ public final class VertexShading
 
 	static int undoVanillaShading(int color, int nx, int ny, int nz)
 	{
-		if (!undoVanillaShading)
-		{
-			return color;
-		}
 		int s = color >> 7 & 0x7;
 		int l = color & 0x7f;
 		// brighten what vanilla darkened, assuming its light direction (1, 1, 1); capped, as 117 HD does,

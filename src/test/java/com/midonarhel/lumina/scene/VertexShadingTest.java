@@ -555,15 +555,6 @@ public class VertexShadingTest
 		assertEquals(10 << 10 | 6, VertexShading.undoVanillaShading(10 << 10 | 2, 2048, 0, 0));
 		// saturated colours are capped (saturation 2: 59)
 		assertEquals(10 << 10 | 2 << 7 | 59, VertexShading.undoVanillaShading(10 << 10 | 2 << 7 | 40, 2048, 2048, 2048));
-		VertexShading.undoVanillaShading = false;
-		try
-		{
-			assertEquals(color, VertexShading.undoVanillaShading(color, 2048, 0, 0));
-		}
-		finally
-		{
-			VertexShading.undoVanillaShading = true;
-		}
 	}
 
 	@Test
