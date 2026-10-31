@@ -279,7 +279,7 @@ void waterLamps(ivec2 px, vec3 s, float viewZ, vec3 nrm, vec3 toCamera, vec3 tAl
     Lamp lamp = lampAt(li);
     vec3 ld;
     float d;
-    vec3 color = lampLight(lamp, s, s, ld, d);
+    vec3 color = lampLight(lamp, s, s, false, ld, d);
     if (color == vec3(0.0))
       continue;
     surfaceLight += color * (max(-ld.y, 0.2) * LAMP_SURFACE);
