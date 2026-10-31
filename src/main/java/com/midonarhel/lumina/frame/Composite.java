@@ -314,7 +314,7 @@ public final class Composite
 		glUniform1f(c.sunAltitude, plugin.dayCycle.sunAltitude);
 		plugin.weather.setOvercastUniform(c.overcast);
 		plugin.weather.setLightUniform(c.weatherLight);
-		plugin.setEnvironmentUniforms(c.env);
+		plugin.skyFrame.setEnvironmentUniforms(c.env);
 
 		boolean shadows = plugin.frameShadows && plugin.shadowMap.isInitialized();
 		glUniform1i(c.shadowsEnabled, shadows ? 1 : 0);
@@ -497,10 +497,10 @@ public final class Composite
 			plugin.sceneTargets.bindShadow(SCENE_SHADOW_UNIT);
 		}
 
-		plugin.updateClouds();
+		plugin.skyFrame.updateClouds();
 		plugin.cpuTimer.begin(CpuTimer.SKY_CACHE);
 		int captured = plugin.skyCache.getCaptures();
-		int skyCacheMode = plugin.updateSkyCache();
+		int skyCacheMode = plugin.skyFrame.updateSkyCache();
 		plugin.lastSkyCacheMode = skyCacheMode;
 		plugin.cpuTimer.end(CpuTimer.SKY_CACHE);
 		if (captured != plugin.skyCache.getCaptures())
@@ -510,7 +510,7 @@ public final class Composite
 
 		plugin.skyCache.easeComposite(skyCacheMode);
 		plugin.compositeTime = (System.currentTimeMillis() - plugin.startMillis) / 1000f;
-		plugin.updateNightSky();
+		plugin.skyFrame.updateNightSky();
 		plugin.prepareLighting();
 		plugin.sceneTargets.bindAlphaLayer(ALPHA_LAYER_UNIT);
 

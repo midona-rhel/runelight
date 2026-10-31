@@ -25,6 +25,7 @@
 package com.midonarhel.lumina;
 
 import com.midonarhel.lumina.common.LogLimiter;
+import com.midonarhel.lumina.sky.SkyFrame;
 import com.midonarhel.lumina.weather.WeatherFrame;
 import com.midonarhel.lumina.common.Mat4;
 import com.midonarhel.lumina.common.Rumble;
@@ -430,7 +431,7 @@ public class LuminaPlugin extends Plugin implements DrawCallbacks
 	// The composite samples the sky cache and its irradiance on the weather occlusion map's two units: the composite
 	// draws before the weather passes bind the map there. The cache's own passes use them before either.
 	public static final int SKY_CACHE_UNIT = LuminaPlugin.COMPOSITE_TEXTURE_UNIT + 12;
-	private final float[] skyCacheOvercast = new float[7];
+	public final float[] skyCacheOvercast = new float[7];
 	public boolean frameFog;
 	// 117 HD fog depth that doubles the volumetric fog
 	private static final float AREA_FOG_DEPTH = 30;
@@ -519,7 +520,7 @@ public class LuminaPlugin extends Plugin implements DrawCallbacks
 	// per-frame state for the full-screen passes, captured during the scene draw
 	public float frameCameraX, frameCameraY, frameCameraZ;
 	public boolean frameOutdoors;
-	private boolean frameHasSkybox;
+	public boolean frameHasSkybox;
 	public boolean frameShadows;
 	public int frameSkyColor;
 	public int frameDrawDistance;
@@ -591,7 +592,7 @@ public class LuminaPlugin extends Plugin implements DrawCallbacks
 		public ModelUploader modelUploader;
 	}
 
-	private RenderThread[] rts;
+	public RenderThread[] rts;
 
 	public SceneUploader clientUploader, mapUploader;
 
@@ -1568,7 +1569,7 @@ public class LuminaPlugin extends Plugin implements DrawCallbacks
 			lastSwayTick = swayNow;
 			weather.getWind().apply(sceneWind, weather.isWindStill());
 		}
-		setEnvironmentUniforms(sceneEnvUniforms);
+		skyFrame.setEnvironmentUniforms(sceneEnvUniforms);
 		glUniform4f(uniFogColor, (sky >> 16 & 0xFF) / 255f, (sky >> 8 & 0xFF) / 255f, (sky & 0xFF) / 255f, 1f);
 		glUniform1i(uniDrawDistance, drawDistance * Perspective.LOCAL_TILE_SIZE);
 		glUniform1i(uniExpandedMapLoadingChunks, client.getExpandedMapLoading());
@@ -1620,36 +1621,14 @@ public class LuminaPlugin extends Plugin implements DrawCallbacks
 		glUniform1i(uniScenePointLights, framePointLights ? 1 : 0);
 		sceneLampWalls.apply(frameLightClusters ? lampWalls.header() : NO_WALLS);
 
-		drawSkybox(scene, sky, cameraX, cameraY, cameraZ);
+		skyFrame.drawSkybox(scene, sky, cameraX, cameraY, cameraZ);
 
 		checkGLErrors();
 		cpuTimer.begin(CpuTimer.CLIENT_SCENE);
 	}
 
-	private void drawSkybox(Scene scene, int sky, float cameraX, float cameraY, float cameraZ)
-	{
-		Model skybox = scene.getSkybox();
-		if (skybox == null)
-		{
-			sceneTargets.clear((sky >> 16 & 0xFF) / 255f, (sky >> 8 & 0xFF) / 255f, (sky & 0xFF) / 255f);
-			return;
-		}
-
-		sceneTargets.clear(0f, 0f, 0f);
-
-		int size = skybox.getFaceCount() * 3 * VAO.VERT_SIZE;
-		RenderThread rt = rts[0];
-		VAO o = rt.vaoO.get(size);
-		rt.modelUploader.uploadTempModel(skybox, 0, 0, 0, 0,
-			(int) cameraX, (int) cameraY, (int) cameraZ, o.vbo.vb, 0);
-
-		float[] skyboxProjection = Mat4.translate(cameraX, cameraY, cameraZ);
-		o.addRange(skyboxProjection, scene, Renderable.RENDERMODE_UNSORTED_NO_DEPTH);
-
-		rt.vaoO.draw();
-
-		glUniformMatrix4fv(uniEntityProj, false, IDENTITY);
-	}
+	// The sky's work each frame: the skybox draw, the night sky, clouds and sky cache updates, the area environment and its uniforms (SkyFrame)
+	public final SkyFrame skyFrame = new SkyFrame(this);
 
 	@Override
 	public void postSceneDraw(Scene scene)
@@ -1728,7 +1707,7 @@ public class LuminaPlugin extends Plugin implements DrawCallbacks
 		frameDrawDistance = getDrawDistance() * Perspective.LOCAL_TILE_SIZE;
 
 		cpuTimer.begin(CpuTimer.ENVIRONMENT);
-		frameOpenSky = updateEnvironment(scene);
+		frameOpenSky = skyFrame.updateEnvironment(scene);
 		cpuTimer.end(CpuTimer.ENVIRONMENT);
 		frameOutdoors = config.sunLighting() && frameOpenSky;
 
@@ -1825,22 +1804,9 @@ public class LuminaPlugin extends Plugin implements DrawCallbacks
 		}
 	}
 
-	public void updateNightSky()
-	{
-		float[] forward = viewRay(0, 0);
-		float[] above = viewRay(0, 2f / Math.max(frameViewport[3], 1));
-		float pixelAngle = 0;
-		if (forward != null && above != null)
-		{
-			pixelAngle = (float) Math.sqrt(Math.pow(forward[0] - above[0], 2) + Math.pow(forward[1] - above[1], 2)
-				+ Math.pow(forward[2] - above[2], 2));
-		}
-		nightSky.update(compositeTime, dayCycle.phase, forward, pixelAngle,
-			config.areaEnvironments() ? environmentManager.getBiome() : null, frameGameMillis, config.aurora());
-	}
 
 	/** The unit view ray through a point of the screen (-1 to 1) as frame.glsl's reconstructPosition; null before there is one. */
-	private float[] viewRay(float ndcX, float ndcY)
+	public float[] viewRay(float ndcX, float ndcY)
 	{
 		float[] m = frameInvViewProj;
 		float x = m[0] * ndcX + m[4] * ndcY + m[8] + m[12], y = m[1] * ndcX + m[5] * ndcY + m[9] + m[13];
@@ -1854,32 +1820,7 @@ public class LuminaPlugin extends Plugin implements DrawCallbacks
 	public final WeatherFrame weatherFrame = new WeatherFrame(this);
 
 
-	/**
-	 * Find the area the camera looks at and whether it is under the open sky. Without area data, the game's
-	 * black underground sky is the only hint.
-	 */
-	private boolean updateEnvironment(Scene scene)
-	{
-		if (!config.areaEnvironments())
-		{
-			int r = frameSkyColor >> 16 & 0xFF, g = frameSkyColor >> 8 & 0xFF, b = frameSkyColor & 0xFF;
-			return r + g + b > 24;
-		}
-		boolean loggedIn = client.getGameState() == GameState.LOGGED_IN;
-		environmentManager.update(loggedIn ? scene : null,
-			(int) client.getCameraFocalPointX(), (int) client.getCameraFocalPointZ(),
-			client.getTopLevelWorldView().getPlane(), frameSkyColor,
-			(System.currentTimeMillis() - startMillis) / 1000f);
-		return environmentManager.isOverworld();
-	}
 
-	public void setEnvironmentUniforms(EnvironmentUniforms u)
-	{
-		boolean on = config.areaEnvironments();
-		// the game's own skyboxes have their own colors; area fog would not match them, like in 117 HD
-		float fog = frameHasSkybox ? 0 : weather.distanceFogScale();
-		u.set(on ? environmentManager : null, fog, getDrawDistance(), edgeFade.focalX, edgeFade.focalZ);
-	}
 
 	// the shadow pass (ShadowPass): the map from the light each frame, its static cache, a strike's bolt map
 	public final ShadowPass shadowPass = new ShadowPass(this);
@@ -2108,48 +2049,7 @@ public class LuminaPlugin extends Plugin implements DrawCallbacks
 	}
 
 
-	public void updateClouds()
-	{
-		WorldView wv = client.getTopLevelWorldView();
-		long baseX = wv != null ? (long) wv.getBaseX() * Perspective.LOCAL_TILE_SIZE : 0;
-		long baseZ = wv != null ? (long) wv.getBaseY() * Perspective.LOCAL_TILE_SIZE : 0;
-		clouds.setWeather(weather.cloudWisp(), weather.cloudDark(), weather.getWind());
-		clouds.setEye(frameCameraX, frameCameraY, frameCameraZ, client.getCameraFocalPointX(),
-			client.getCameraFocalPointY(), client.getCameraFocalPointZ(), edgeFade.radius, config.skyHorizonAtEdge());
-		clouds.update(config.clouds(), config.cloudShadows(), config.cloudCoverage(), config.cloudSpeed(),
-			weather.cloudCover(), baseX, baseZ, weather.getField());
-	}
 
-	/**
-	 * Capture or blend the sky cache when the composite will use it, and return how it uses it (SkyCache.MODE_*).
-	 */
-	public int updateSkyCache()
-	{
-		// Loading a region keeps drawing the last frames; dropping the cache for them would switch the sky light.
-		// Without updates the composite eases from the last capture back to the analytic light (SkyCache).
-		GameState state = client.getGameState();
-		if (!frameOutdoors || (state != GameState.LOGGED_IN && state != GameState.LOADING))
-		{
-			skyCache.bind(SKY_CACHE_UNIT);
-			return 0;
-		}
-		int cycle = config.dayCycleMinutes();
-		double gameMinutes = cycle > 0 ? frameGameMillis / 60_000.0 : Double.NaN;
-		weather.getOvercast(skyCacheOvercast);
-		int settings = java.util.Objects.hash(config.clouds(), config.cloudCoverage(), cycle,
-			config.fixedHour(), Math.round(skyCacheOvercast[3] * 20),
-			Math.round(skyCacheOvercast[4] * 20), Math.round(skyCacheOvercast[5] * 20), Math.round(skyCacheOvercast[6] * 20),
-			Math.round(weather.cloudWisp() * 10), Math.round(weather.cloudDark() * 10));
-		if (config.clouds())
-		{
-			clouds.bindNoise(CLOUD_NOISE_UNIT);
-			weather.getField().bindSky(WEATHER_SKY_UNIT);
-		}
-		skyCache.update(clouds, gameMinutes, frameCameraX, frameCameraY, frameCameraZ,
-			dayCycle, skyCacheOvercast, settings, SKY_CACHE_UNIT);
-		skyCache.bind(SKY_CACHE_UNIT);
-		return SkyCache.MODE_LIGHT;
-	}
 
 	/** Start a build of the scene's voxels, which the skylight traces, if one is due. */
 	public void prepareVoxels()
@@ -2745,7 +2645,7 @@ public class LuminaPlugin extends Plugin implements DrawCallbacks
 		return config.renderScale().factor(clientUI.getGraphicsConfiguration().getDefaultTransform().getScaleX());
 	}
 
-	private int getDrawDistance()
+	public int getDrawDistance()
 	{
 		return Ints.constrainToRange(config.drawDistance(), 0, MAX_DISTANCE);
 	}

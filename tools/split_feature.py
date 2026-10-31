@@ -56,6 +56,12 @@ s = '\n'.join(remaining)
 for _, name, new in methods:
     s = re.sub(r'(?<![\w.])' + re.escape(name) + r'\(', f'{field}.{new}(', s)
     s = s.replace(f'this::{name}', f'{field}::{new}')
+for f in pathlib.Path('src/main/java/com/midonarhel/lumina').rglob('*.java'):
+    if f == sp.PLUGIN or f.name == f'{cls_name}.java': continue
+    t = f.read_text(); t2 = t
+    for _, name, new in methods:
+        t2 = re.sub(r'\bplugin\.' + re.escape(name) + r'\(', f'plugin.{field}.{new}(', t2)
+    if t2 != t: f.write_text(t2); print('callers redirected in', f.name)
 imp = f'import com.midonarhel.lumina.{pkg}.{cls_name};'
 if imp not in s:
     s = re.sub(r'(^import com\.midonarhel\.lumina\.[^\n]+\n)', r'\1' + imp + '\n', s, count=1, flags=re.M)
