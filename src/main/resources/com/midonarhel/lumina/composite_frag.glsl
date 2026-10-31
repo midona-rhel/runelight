@@ -378,15 +378,14 @@ vec4 shadeScene(ivec2 px, SceneSample sm, vec4 transparent) {
     }
     light = indirect
       + caster * envSun * max(ndl, 0.0) * shadow * mix(1.0, ao, AO_DIRECT);
-    // The ambient above is one mechanism (one constant plus the sky light, times the sky visibility and AO). A room's
-    // fill is a light of its own, not ambient: what the room lacks of the least light a room should have, from its
-    // lamps and its sky (RoomLight), spread over the whole room.
+    // A room's fill: what the room lacks of the least light a room should have, from its lamps and its sky
+    // (RoomLight), spread flat and directionless over the whole room like ambient, darkened by AO as the ambient is.
     int roomId = roomOfSurface(p + cameraPos, n);
     if (roomId > 0) {
       // how closed in the spot is: a room with its roof hidden still counts, a covered gateway open at both ends
       // doesn't, and the fill fades out toward a room's doorways and open sides instead of ending at its tiles' edge
       float enclosed = skylightOn == 1 ? 1.0 - smoothstep(INTERIOR_SKY_CLOSED, INTERIOR_SKY_OPEN, skyUpsampled) : 1.0;
-      light += interiorTint * roomFillLevel(roomId) * enclosed;
+      light += interiorTint * roomFillLevel(roomId) * enclosed * ao;
     }
     if (transmissive > 0.0) {
       // light through the leaf isn't occluded by the creases SSAO sees on its front
