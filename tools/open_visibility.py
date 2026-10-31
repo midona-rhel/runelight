@@ -2,7 +2,7 @@
 """Read javac's output on stdin and make the package-private classes and members it names public. Mechanical, for
 moves between packages; re-run compile afterwards. Usage: ./gradlew -q compileJava 2>&1 | tools/open_visibility.py"""
 import re, sys, pathlib
-root = pathlib.Path('src/main/java/com/midonarhel/runelight')
+root = pathlib.Path('src/main/java/com/midonarhel/lumina')
 files = {p.stem: p for p in root.rglob('*.java')}
 changed = set()
 def publicize_class(name):

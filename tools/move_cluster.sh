@@ -9,7 +9,7 @@ for i in $(seq 1 12); do
   echo "pass $i: $n errors"; [ "$n" = 0 ] && break
   echo "$out" | python3 -I tools/open_visibility.py | cut -c1-300
 done
-if [ "$n" != 0 ]; then echo "$out" | grep -A3 "error:" | grep -E "error:|symbol:" | sed 's|.*/com/midonarhel/runelight/||' | sort | uniq -c | sort -rn | head -16; exit 2; fi
+if [ "$n" != 0 ]; then echo "$out" | grep -A3 "error:" | grep -E "error:|symbol:" | sed 's|.*/com/midonarhel/lumina/||' | sort | uniq -c | sort -rn | head -16; exit 2; fi
 ./gradlew -q test 2>&1 | grep -v "^$" | head -3
 python3 -I - <<'PY' || exit 3
 import xml.etree.ElementTree as ET,glob,sys

@@ -6,8 +6,8 @@
 > below is the inventory as it was read before that, kept for its references.
 
 Read-only inventory of the old RuneLight renderer's lamp pipeline, for Track A3 and rule 2 of HANDOVER.md (one
-mechanism per quantity). Paths are under `src/main/java/com/midonarhel/runelight/` (Java) and
-`src/main/resources/com/midonarhel/runelight/` (GLSL) unless given in full. Line numbers are of the working tree at
+mechanism per quantity). Paths are under `src/main/java/com/midonarhel/lumina/` (Java) and
+`src/main/resources/com/midonarhel/lumina/` (GLSL) unless given in full. Line numbers are of the working tree at
 commit 7193e68a. "Unverified" marks what was not confirmed by reading (no build or run was made).
 
 Conventions used below: *client thread* is the RuneLite client thread the plugin draws on; *worker* is a thread the
@@ -553,7 +553,7 @@ retuned per A7) produces the normal both sun and lamps use, and `pointLightNorma
 - **Debug view** `DEBUG_LIGHT_CLUSTERS` (`composite_frag.glsl:482-486`): lights per pixel heat map. Keep.
 - **Funnel log** (`SceneLights.Funnel` :97-107, `logFunnel` :1146): where each definition's light went, 6 s after a
   load. Keep (it is the only accounting of lights that reach the screen).
-- **Tests**: 22 light-related test files in `src/test/java/com/midonarhel/runelight/` (`LightClustersTest`,
+- **Tests**: 22 light-related test files in `src/test/java/com/midonarhel/lumina/` (`LightClustersTest`,
   `LightMapTest`, `LightMapBakeTest`, `LightMapTimingTest`, `RoomMapTest`, `WallMapTest`, `ModelBlockersTest`,
   `SceneLightsBudgetTest`, …). Not run here.
 - **`Lightning.java`** matches the file glob but is weather (the strike's `strikeCaster`), not a point light; out of area.

@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """
-Convert 117 HD's light definitions into RuneLight's lights.json.
+Convert 117 HD's light definitions into Lumina's lights.json.
 
 117 HD names game objects, NPCs, animations and spot animations by their gameval names. This resolves those
 names to numeric IDs with 117 HD's gamevals.json, and the areas a light is restricted to to their boxes with its
-areas.json (so lights.json stands alone), and keeps the fields RuneLight uses. Every definition is imported; a
+areas.json (so lights.json stands alone), and keeps the fields Lumina uses. Every definition is imported; a
 field this script does not know, a name it cannot resolve, or a value 117 HD would not accept stops it.
 
 An area box is [minX, minY, minZ, maxX, maxY, maxZ] in world tiles and planes, as in area_hiding.json. Nested
@@ -12,12 +12,12 @@ areas, regions and region boxes are resolved. A definition with areas spawns onl
 one of them and outside every one of excludeAreas.
 
 outdoorLighting is kept as true: 117 HD's optional position only picks the environment whose sky it samples,
-and RuneLight has one sky. fadeOverlap is in 117 HD's schema, but nothing in its code reads it. alignment CENTER
+and Lumina has one sky. fadeOverlap is in 117 HD's schema, but nothing in its code reads it. alignment CENTER
 is not one of 117 HD's alignments; its loader reads it as CUSTOM, which is what is left out here.
 
 Usage (from a 117HD/RLHD checkout):
   tools/import_117hd_lights.py <RLHD>/src/main/resources/rs117/hd/scene \
-      src/main/resources/com/midonarhel/runelight/light/lights.json
+      src/main/resources/com/midonarhel/lumina/light/lights.json
 
 117 HD is BSD 2-Clause licensed; its notice is reproduced in LICENSE.
 """
@@ -72,7 +72,7 @@ def color(c):
 
 
 def schedule(s, where):
-    """Only the night-time schedule exists in RuneLight (its randomOffset is not used)."""
+    """Only the night-time schedule exists in Lumina (its randomOffset is not used)."""
     if s == "NIGHT":
         return "NIGHT"
     if isinstance(s, dict) and s.get("during") == "NIGHT" and not s.keys() - {"during", "randomOffset"}:

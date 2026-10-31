@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Convert 117 HD's areas that hide the rest of the map (hideOtherAreas) into RuneLight's area_hiding.json.
+Convert 117 HD's areas that hide the rest of the map (hideOtherAreas) into Lumina's area_hiding.json.
 
 Each entry keeps the order of 117 HD's areas.json, as which area the player is in is the first that contains them:
   - area: the boxes the player is inside, [minX, minY, minZ, maxX, maxY, maxZ] in world tiles and planes, with
@@ -9,7 +9,7 @@ Each entry keeps the order of 117 HD's areas.json, as which area the player is i
 
 Usage (from a 117HD/RLHD checkout):
   tools/import_117hd_areas.py <RLHD>/src/main/resources/rs117/hd/scene \
-      src/main/resources/com/midonarhel/runelight/scene/area_hiding.json
+      src/main/resources/com/midonarhel/lumina/scene/area_hiding.json
 
 117 HD is BSD 2-Clause licensed; its notice is reproduced in LICENSE.
 """

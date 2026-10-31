@@ -8,8 +8,8 @@ mechanism before touching it"). Scope: `DayCycle`, `GameClock`, `Climate*`, `Wea
 `sway`, `wind`, plus the data files and `tools/import_*.py`, `tools/water/*`, `tools/make_weather_sounds.py`.
 
 Size: 44 Java files, 16,226 lines; 28 GLSL files, 5,121 lines; data 1.5 MB (`water_flow.dat` 591 kB, `lights.json`
-excluded as not ours). Paths below are relative to `src/main/java/com/midonarhel/runelight/` (Java) and
-`src/main/resources/com/midonarhel/runelight/` (GLSL/data). `file:line` refers to the files as read; **`RuneLightPlugin.java`
+excluded as not ours). Paths below are relative to `src/main/java/com/midonarhel/lumina/` (Java) and
+`src/main/resources/com/midonarhel/lumina/` (GLSL/data). `file:line` refers to the files as read; **`RuneLightPlugin.java`
 was being edited while this was written (its line numbers moved by +12 and then +3 between reads), so its references are
 marked ≈.** Costs quote HANDOVER B1 (uncapped, 783×603 canvas, possibly at render scale 50 %, see the B1 caveat); anything
 not in B1 is marked *untimed*.

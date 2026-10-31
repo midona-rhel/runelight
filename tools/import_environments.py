@@ -1,22 +1,22 @@
 #!/usr/bin/env python3
 """
-Build RuneLight's environments.json: per-area ambience (ambient and sun tint, fog, sky haze) and the
+Build Lumina's environments.json: per-area ambience (ambient and sun tint, fog, sky haze) and the
 cave/overworld classification, from 117 HD's areas and environments plus 3D Weather's cave regions.
 
 Usage:
   tools/import_environments.py <RLHD>/src/main/resources/rs117/hd/scene \
       <3D-Weather>/src/main/java/com/weather3d/BiomeChunkMap.java \
-      src/main/resources/com/midonarhel/runelight/sky/environments.json
+      src/main/resources/com/midonarhel/lumina/sky/environments.json
 
 Lookup order in game (EnvironmentManager.java): 117 HD environments in their file order (specific before
 general), then CAVE_AREAS (looks for underground areas 117 HD leaves out), then the lighting of the biome the place
 has on the climate map (weather_regions.json, which decides the weather too), then 117 HD's OVERWORLD area (open
 sky), then a default by height (y >= 4160 is underground). Only the cave biomes' 64x64 regions are stored here.
 
-117 HD lights in its own units (strong ambient, strong sun, its own fog curve). RuneLight keeps its own
+117 HD lights in its own units (strong ambient, strong sun, its own fog curve). Lumina keeps its own
 time-of-day palette (sky.glsl), so each environment is stored relative to a baseline: the tint and strength
 of its ambient and sun relative to 117 HD's overworld (or to its typical cave for underground areas). 1.0
-means "RuneLight's normal look". Strength ratios are square-rooted and clamped so no area goes extreme.
+means "Lumina's normal look". Strength ratios are square-rooted and clamped so no area goes extreme.
 
 Not imported (yet):
   - environments gated on varbits/varps (quest states, cutscenes); the unconditional entry after them is used
@@ -190,7 +190,7 @@ def relative(color_lin, strength, base_lin, base_strength, value_range):
 
 
 def convert(env, cave):
-    """117 HD environment fields -> RuneLight multipliers, following 117 HD's defaults in Environment.java."""
+    """117 HD environment fields -> Lumina multipliers, following 117 HD's defaults in Environment.java."""
     white = [1.0, 1.0, 1.0]
     sun = to_linear(parse_color(env["directionalColor"])) if "directionalColor" in env else white
     sun_strength = env.get("directionalStrength", 0.25)

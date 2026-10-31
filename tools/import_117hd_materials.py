@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
-Derive RuneLight's surface materials (materials.json) from 117 HD's scene data.
+Derive Lumina's surface materials (materials.json) from 117 HD's scene data.
 
-RuneLight has two material behaviours:
+Lumina has two material behaviours:
   transmissive  thin foliage that is also lit from behind (leaves, bushes, plants, grass)
   emissive      surfaces that ignore lighting and show their own color, with a level 1-3 (3 = fully self-lit)
 
@@ -12,7 +12,7 @@ taken from what it does have:
   - objects with a wind displacement mode (117 HD sways exactly the trees, bushes, plants, flowers and grass)
     or whose override description names foliage, minus non-plants that happen to sway (banners, drains, ...),
     plus grown oak/willow/maple/yew/magic/teak/mahogany trees by gameval name
-  Foliage objects are whole trees; RuneLight keeps their brown and grey faces (bark) opaque by color.
+  Foliage objects are whole trees; Lumina keeps their brown and grey faces (bark) opaque by color.
 Emissive comes from:
   - vanilla textures whose material is "unlit" (lava, fire and infernal capes, magic stars)
   - objects and NPCs whose whole-model override uses an unlit material (portals, pyrefiends, ...)
@@ -27,14 +27,14 @@ Emissive comes from:
     only their hot-colored faces glow (117 HD has no emissive data for these; its glow there is its lights alone)
 
 Fake water is the third behaviour: models whose faces only pretend to be water (fountains, wells, troughs, barrels,
-sinks, pools, waterfalls). RuneLight draws those faces as real water (water.glsl waterFake). They come from the
+sinks, pools, waterfalls). Lumina draws those faces as real water (water.glsl waterFake). They come from the
 override groups whose material is one of 117 HD's flat water materials, in the same group form as the emissive ones
 (level 1: fake water), minus the ones that are not water (blood, portals, slime floors, pipes, vents), and from the
 vanilla water textures, which SurfaceMaterials treats as fake wherever a model carries them.
 
 Usage (from a 117HD/RLHD checkout):
   tools/import_117hd_materials.py <RLHD>/src/main/resources/rs117/hd/scene \
-      src/main/resources/com/midonarhel/runelight/scene/materials.json
+      src/main/resources/com/midonarhel/lumina/scene/materials.json
 
 117 HD is BSD 2-Clause licensed; its notice is reproduced in LICENSE.
 """
@@ -63,7 +63,7 @@ FIRE_LIGHT = re.compile(r"\bfires?\b|flames?|\blava\b|magma|campfire|bonfire|"
     r"(?<![a-z])(range|ovens?|stoves?|furnace)(?![a-z])", re.I)
 NOT_FIRE = re.compile(r"altar|lantern|cannon|statue|ship|orb", re.I)
 
-# 117 HD's materials for a flat sheet of water, which RuneLight draws as real water
+# 117 HD's materials for a flat sheet of water, which Lumina draws as real water
 FAKE_WATER_MATERIALS = {"WATER_FLAT", "WATER_FLAT_2", "WATER_FLAT_FORCE", "WATER_FLAT_FLOW", "WATER_FLAT_FLOW_2",
     "WATER_FOUNTAIN_FLAT", "WATER_FOUNTAIN_FLAT_LIGHT", "SWAMP_WATER_FLAT", "SWAMP_WATER_FLAT_FLOW"}
 # ...of which these overrides are not water (117 HD borrows the materials for blood, slime, portals and the like), or
@@ -224,7 +224,7 @@ def main():
             foliage_objects.update(objects)
         base = unlit(o.get("baseMaterial"))
         # a face with a texture takes the override's texture material, else its vanilla texture's; the unlit whole
-        # models RuneLight had before also kept their textured faces lit by their base
+        # models Lumina had before also kept their textured faces lit by their base
         textured = unlit(o.get("textureMaterial")) or base and not o.get("textureMaterial")
         rules = []
         for c in o.get("colorOverrides") or []:

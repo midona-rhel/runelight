@@ -1,7 +1,7 @@
 # The old RuneLight renderer (perf-wip) against Lumina (2026-10-30)
 
 Read-only comparison of two trees in this repository. OLD = branch `perf-wip` at `~/Code/runelight-perfwip`
-(package `com.midonarhel.runelight`, shaders in `src/main/resources/com/midonarhel/runelight/`, 42.7k lines of Java,
+(package `com.midonarhel.lumina`, shaders in `src/main/resources/com/midonarhel/lumina/`, 42.7k lines of Java,
 last commit 5fb9e4e0 "Terrain waterfalls"). NEW = branch `lumina` at `~/Code/runelight` (package
 `com.midonarhel.lumina`, 27k lines, working tree with the uncommitted `frame/ZoneCulling`). Every claim below names
 the file and line or function it was read from; nothing was run. Line numbers are of the files as they are today.

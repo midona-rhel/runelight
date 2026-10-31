@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Convert 117 HD's water definitions into RuneLight's water_overrides.json.
+Convert 117 HD's water definitions into Lumina's water_overrides.json.
 
 Two things are taken over as 117 HD has them:
   - tiles: its tile overrides, in order, each with the overlay and underlay ids it matches, its area as boxes and
@@ -9,11 +9,11 @@ Two things are taken over as 117 HD has them:
   - effects: the game objects whose ripples 117 HD hides (its model overrides' hideAsWaterEffect): either the whole
     model, or the faces of the first color rule matching each untextured face (a, h, s, l of its color), in order.
 
-117 HD's water types are mapped to RuneLight's (FRESH, OCEAN, OCEAN_DARK, OCEAN_PALE, SWAMP, CAVE).
+117 HD's water types are mapped to Lumina's (FRESH, OCEAN, OCEAN_DARK, OCEAN_PALE, SWAMP, CAVE).
 
 Usage (from a 117HD/RLHD checkout):
   tools/import_117hd_water.py <RLHD>/src/main/resources/rs117/hd/scene \
-      src/main/resources/com/midonarhel/runelight/water/water_overrides.json
+      src/main/resources/com/midonarhel/lumina/water/water_overrides.json
 
 117 HD is BSD 2-Clause licensed; its notice is reproduced in LICENSE.
 """

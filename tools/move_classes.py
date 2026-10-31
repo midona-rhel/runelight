@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
-"""Move Java classes of com.midonarhel.runelight into a subpackage: git mv, package line, imports in every file
+"""Move Java classes of com.midonarhel.lumina into a subpackage: git mv, package line, imports in every file
 that names them (main and test). Usage: tools/move_classes.py <subpackage> Class [Class...]. Visibility is left to
 the compiler: run ./gradlew compileJava compileTestJava afterwards and open what it names."""
 import re, subprocess, sys, pathlib
 sub, classes = sys.argv[1], sys.argv[2:]
-root = pathlib.Path('src/main/java/com/midonarhel/runelight'); troot = pathlib.Path('src/test/java/com/midonarhel/runelight')
-base = 'com.midonarhel.runelight'; target = f'{base}.{sub}'
+root = pathlib.Path('src/main/java/com/midonarhel/lumina'); troot = pathlib.Path('src/test/java/com/midonarhel/lumina')
+base = 'com.midonarhel.lumina'; target = f'{base}.{sub}'
 (root / sub).mkdir(exist_ok=True)
 moved = set(classes)
 for c in classes:
@@ -31,7 +31,7 @@ for c in classes:
 static_import = re.compile(r'^import (?:static )?com\.midonarhel\.runelight\.(' + '|'.join(map(re.escape, classes)) + r')\.', re.M)
 for d in [root, troot]:
     for f in d.rglob('*.java'):
-        s = f.read_text(); s2 = static_import.sub(lambda m: m.group(0).replace('com.midonarhel.runelight.' + m.group(1) + '.', target + '.' + m.group(1) + '.'), s)
+        s = f.read_text(); s2 = static_import.sub(lambda m: m.group(0).replace('com.midonarhel.lumina.' + m.group(1) + '.', target + '.' + m.group(1) + '.'), s)
         if s2 != s: f.write_text(s2)
 # explicit imports of the moved classes from the old package (subpackages had them) point at the new one
 old_import = re.compile(r'^(import (?:static )?)com\.midonarhel\.runelight\.(' + '|'.join(map(re.escape, classes)) + r')(\.[\w.*]+;|;)', re.M)

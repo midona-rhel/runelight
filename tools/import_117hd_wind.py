@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Derive RuneLight's wind sway table (wind.json) from 117 HD's model overrides.
+Derive Lumina's wind sway table (wind.json) from 117 HD's model overrides.
 
 117 HD marks the objects that sway in the wind with a windDisplacementMode, a windDisplacementModifier (-3 to 3,
 a strength multiplier of 0.25 to 2) and invertDisplacementStrength (hanging things: the bottom moves, not the
@@ -19,7 +19,7 @@ Output: {"objects": [[id, code], ...]} with code = mode | (modifier + 3) << 3 | 
 
 Usage (from a 117HD/RLHD checkout):
   tools/import_117hd_wind.py <RLHD>/src/main/resources/rs117/hd/scene \
-      src/main/resources/com/midonarhel/runelight/scene/wind.json
+      src/main/resources/com/midonarhel/lumina/scene/wind.json
 
 117 HD is BSD 2-Clause licensed; its notice is reproduced in LICENSE.
 """

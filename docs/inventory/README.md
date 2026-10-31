@@ -8,7 +8,7 @@ written. The user's rules apply throughout: one mechanism per quantity (render-p
 shading, sky palette, fog stack, clouds and aurora gating is kept; the water waves go; three platforms, GL 3.3–4.1
 floor; settings go down; the user's statement about a thing is tested before any diagnosis.
 
-Paths: Java under `src/main/java/com/midonarhel/runelight/`, GLSL under `src/main/resources/com/midonarhel/runelight/`.
+Paths: Java under `src/main/java/com/midonarhel/lumina/`, GLSL under `src/main/resources/com/midonarhel/lumina/`.
 
 ---
 

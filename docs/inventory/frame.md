@@ -2,7 +2,7 @@
 
 Read-only inventory of branch `lumen` (2026-10-30), judged against HANDOVER.md's rules: performance first (≤ 8 ms at
 4K), one mechanism per quantity, few settings, GL 3.3–4.1 on Windows/macOS/Linux (no compute). Paths are relative to
-`src/main/java/com/midonarhel/runelight/` (Java) and `src/main/resources/com/midonarhel/runelight/` (GLSL).
+`src/main/java/com/midonarhel/lumina/` (Java) and `src/main/resources/com/midonarhel/lumina/` (GLSL).
 Numbers are HANDOVER B1/B2/B3's; nothing here was run or built. "By reading" marks a conclusion from the code alone.
 
 Lighting, sky/weather/water, shadows and scene upload are other readers' areas; they appear here only where the frame

@@ -28,8 +28,8 @@ public final class ScenePerf {
         Object pm = get.invoke(injector, pmClass);
         Object plugin = null;
         for (Object p : (Collection<?>) pmClass.getMethod("getPlugins").invoke(pm))
-            if (p.getClass().getSimpleName().equals("RuneLightPlugin")) plugin = p;
-        if (plugin == null) throw new IllegalStateException("RuneLight is not running");
+            if (p.getClass().getSimpleName().equals("LuminaPlugin")) plugin = p;
+        if (plugin == null) throw new IllegalStateException("Lumina is not running");
         Object p = plugin;
         Class<?> ctClass = Class.forName("net.runelite.client.callback.ClientThread", true, loader);
         Object ct = get.invoke(injector, ctClass);
@@ -72,7 +72,7 @@ public final class ScenePerf {
                     meta.put("gpuStages", gpuNames); meta.put("cpuStages", cpuNames);
                     Map<String,Object> config = new TreeMap<>();
                     Object cfg = field(p, "config");
-                    Class<?> configClass = Class.forName("com.midonarhel.runelight.RuneLightConfig", true, loader);
+                    Class<?> configClass = Class.forName("com.midonarhel.lumina.LuminaConfig", true, loader);
                     for (Method m : configClass.getMethods()) if (m.getParameterCount() == 0 && m.getDeclaringClass() == configClass)
                         config.put(m.getName(), String.valueOf(m.invoke(cfg)));
                     meta.put("config", config);
@@ -94,7 +94,7 @@ public final class ScenePerf {
             } catch (Throwable e) {
                 try { java.io.StringWriter s = new java.io.StringWriter(); e.printStackTrace(new java.io.PrintWriter(s)); Files.writeString(dir.resolve("ERROR"), s.toString()); } catch (Exception ignored) {}
             }
-        }, "RuneLight scene performance capture").start();
+        }, "Lumina scene performance capture").start();
     }
     static double lastFrameMs(Object plugin) throws Exception {
         Object monitor = field(plugin, "hitchMonitor");

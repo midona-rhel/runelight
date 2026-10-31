@@ -14,7 +14,7 @@ repositories {
 }
 
 def runeLiteVersion = 'latest.release'
-def pluginMainClass = 'com.midonarhel.runelight.RuneLightPluginTest'
+def pluginMainClass = 'com.midonarhel.lumina.LuminaPluginTest'
 
 dependencies {
 	compileOnly group: 'net.runelite', name: 'client', version: runeLiteVersion
@@ -49,7 +49,7 @@ tasks.register('run', JavaExec) {
 tasks.register('sceneClusterReplay', JavaExec) {
     dependsOn testClasses
     classpath = sourceSets.test.runtimeClasspath
-    mainClass = 'com.midonarhel.runelight.SceneClusterReplay'
+    mainClass = 'com.midonarhel.lumina.SceneClusterReplay'
     doFirst {
         args project.property('sceneCapture'), project.property('replayOutput')
     }

@@ -1,7 +1,7 @@
 # Inventory: scene data to GPU, shadows, culling, vertex shading
 
 Branch `lumen` (the old RuneLight renderer), read-only survey of 2026-10-30. Paths are under
-`src/main/java/com/midonarhel/runelight/` (Java) and `src/main/resources/com/midonarhel/runelight/` (GLSL) unless
+`src/main/java/com/midonarhel/lumina/` (Java) and `src/main/resources/com/midonarhel/lumina/` (GLSL) unless
 given in full. Judged by HANDOVER.md's rules: performance first (≤ 8 ms at 4K, no hitches on scene load), one
 mechanism per quantity, few settings, GL 3.3–4.1 on three platforms; and the user's wishes: smooth mesh shading
 everywhere except 117 HD's flat-lit objects, ground-matched foliage and 117 HD's terrain colour rules, never blend
