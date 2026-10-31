@@ -72,6 +72,7 @@ import com.midonarhel.lumina.scene.Zone;
 import com.midonarhel.lumina.scene.ZonePool;
 
 import com.midonarhel.lumina.shadow.ShadowMap;
+import com.midonarhel.lumina.shadow.ShadowPass;
 
 import com.midonarhel.lumina.weather.Climate;
 import com.midonarhel.lumina.weather.WadeSteps;
@@ -220,7 +221,7 @@ public class LuminaPlugin extends Plugin implements DrawCallbacks
 	private static final int MAX_WORLDVIEWS = 4096;
 
 	@Inject
-	private Client client;
+	public Client client;
 
 	@Inject
 	private ConfigManager configManager;
@@ -232,7 +233,7 @@ public class LuminaPlugin extends Plugin implements DrawCallbacks
 	private ClientThread clientThread;
 
 	@Inject
-	private LuminaConfig config;
+	public LuminaConfig config;
 
 	@Inject
 	private TextureManager textureManager;
@@ -307,11 +308,11 @@ public class LuminaPlugin extends Plugin implements DrawCallbacks
 	final CpuTimer cpuTimer = new CpuTimer();
 
 	private Canvas canvas;
-	private AWTContext awtContext;
+	public AWTContext awtContext;
 	private Callback debugCallback;
 
 	private boolean lwjglInitted = false;
-	private GLCapabilities glCapabilities;
+	public GLCapabilities glCapabilities;
 
 	static final Shader PROGRAM = new Shader()
 		.add(GL_VERTEX_SHADER, "vert.glsl")
@@ -401,7 +402,7 @@ public class LuminaPlugin extends Plugin implements DrawCallbacks
 	private static final int SCENE_SHADOW_UNIT = LuminaPlugin.COMPOSITE_TEXTURE_UNIT + 18;
 	// Static scenery is drawn into a cached shadow map, redrawn only as the light turns or the player walks
 	// (renderStaticShadows). It looks the same as drawing it every frame, so it is no longer a setting.
-	private static final boolean SHADOW_CACHE = true;
+	public static final boolean SHADOW_CACHE = true;
 	// the game shows a black void around the scene (instances, player houses, dungeons): it stays dark
 	private boolean frameSkyVoid;
 	private final FrameUniforms aoFrame = new FrameUniforms();
@@ -447,14 +448,14 @@ public class LuminaPlugin extends Plugin implements DrawCallbacks
 	private int uniSceneOvercast;
 	private int uniSceneWeatherLight;
 	// the wind for foliage sway, on the scene and shadow programs
-	private Wind.Locations sceneWind, shadowWind;
+	public Wind.Locations sceneWind, shadowWind;
 	private long lastSwayTick;
-	private boolean swayTick = true;
+	public boolean swayTick = true;
 	private static final int ALPHA_LAYER_UNIT = LuminaPlugin.COMPOSITE_TEXTURE_UNIT + 8;
 	private static final int MATERIAL_UNIT = LuminaPlugin.COMPOSITE_TEXTURE_UNIT + 9;
 	private final SurfaceMaterials.Uniforms sceneMaterials = new SurfaceMaterials.Uniforms();
 	private final WindSway.Uniforms sceneSway = new WindSway.Uniforms();
-	private final WindSway.Uniforms shadowSway = new WindSway.Uniforms();
+	public final WindSway.Uniforms shadowSway = new WindSway.Uniforms();
 	private static final int FOG_TEXTURE_UNIT = LuminaPlugin.COMPOSITE_TEXTURE_UNIT + 10;
 	private static final int FOG_NOISE_UNIT = LuminaPlugin.COMPOSITE_TEXTURE_UNIT + 11;
 
@@ -487,24 +488,24 @@ public class LuminaPlugin extends Plugin implements DrawCallbacks
 		.add(GL_VERTEX_SHADER, "composite_vert.glsl")
 		.add(GL_FRAGMENT_SHADER, "shadow_max_frag.glsl");
 
-	private int glShadowProgram;
-	private int glShadowCopyProgram;
-	private int glShadowMaxProgram;
-	private int uniShadowLightProj;
-	private int uniShadowEntityProj;
-	private int uniShadowBase;
-	private int uniShadowTexturesReady;
-	private int uniShadowEmissiveCasts;
+	public int glShadowProgram;
+	public int glShadowCopyProgram;
+	public int glShadowMaxProgram;
+	public int uniShadowLightProj;
+	public int uniShadowEntityProj;
+	public int uniShadowBase;
+	public int uniShadowTexturesReady;
+	public int uniShadowEmissiveCasts;
 
 	private long lastSwapNanos;
 	private volatile double swapIntervalMs;
 
-	private final DayCycle dayCycle = new DayCycle();
+	public final DayCycle dayCycle = new DayCycle();
 	private final NightSky nightSky = new NightSky();
 	final EnvironmentManager environmentManager = new EnvironmentManager();
 	private final EnvironmentUniforms sceneEnvUniforms = new EnvironmentUniforms();
-	private final ShadowMap shadowMap = new ShadowMap();
-	private final Weather weather = new Weather();
+	public final ShadowMap shadowMap = new ShadowMap();
+	public final Weather weather = new Weather();
 	private volatile WeatherAudio weatherAudio;
 	private final float[] thunderStrike = new float[2];
 	// each region's forecast, temperature and ground, which follow the game clock
@@ -555,10 +556,10 @@ public class LuminaPlugin extends Plugin implements DrawCallbacks
 	private long startMillis = System.currentTimeMillis();
 
 	// per-frame state for the full-screen passes, captured during the scene draw
-	private float frameCameraX, frameCameraY, frameCameraZ;
+	public float frameCameraX, frameCameraY, frameCameraZ;
 	private boolean frameOutdoors;
 	private boolean frameHasSkybox;
-	private boolean frameShadows;
+	public boolean frameShadows;
 	private int frameSkyColor;
 	private int frameDrawDistance;
 
@@ -595,7 +596,7 @@ public class LuminaPlugin extends Plugin implements DrawCallbacks
 	private final InterfaceUpload interfaceUpload = new InterfaceUpload();
 	private final TempModels tempModels = new TempModels();
 
-	private int vaoUiHandle;
+	public int vaoUiHandle;
 	private int vboUiHandle;
 
 	private final SceneTargets sceneTargets = new SceneTargets();
@@ -604,7 +605,7 @@ public class LuminaPlugin extends Plugin implements DrawCallbacks
 	// composite samples the scene targets from these units; 0 is the UI texture and 1 the game texture array
 	private static final int COMPOSITE_TEXTURE_UNIT = 2;
 
-	private int textureArrayId;
+	public int textureArrayId;
 
 	private final GLBuffer glUniformBuffer = new GLBuffer("uniform buffer");
 
@@ -641,8 +642,8 @@ public class LuminaPlugin extends Plugin implements DrawCallbacks
 		public Zone[][] zones;
 
 		public int cameraX, cameraY, cameraZ;
-		private int minLevel, level, maxLevel;
-		private Set<Integer> hideRoofIds;
+		public int minLevel, level, maxLevel;
+		public Set<Integer> hideRoofIds;
 
 		public SceneContext(int sizeX, int sizeZ)
 		{
@@ -658,7 +659,7 @@ public class LuminaPlugin extends Plugin implements DrawCallbacks
 			}
 		}
 
-		/** A view of a loaded scene's zones not swapped in yet, with the drawn scene's levels (StaticShadowBuild). */
+		/** A view of a loaded scene's zones not swapped in yet, with the drawn scene's levels (ShadowPass.StaticShadowBuild). */
 		public SceneContext(Zone[][] zones, SceneContext levels)
 		{
 			this.sizeX = zones.length;
@@ -705,7 +706,7 @@ public class LuminaPlugin extends Plugin implements DrawCallbacks
 	// the drawn scenes: the top level and the sub world views (SceneLoader swaps them in)
 	public SceneContext root;
 	public SceneContext[] subs;
-	private SceneLoader sceneLoader;
+	public SceneLoader sceneLoader;
 
 	// Uniforms
 	private int uniFogColor;
@@ -1451,7 +1452,7 @@ public class LuminaPlugin extends Plugin implements DrawCallbacks
 		glUseProgram(0);
 	}
 
-	private float windSwayAmount()
+	public float windSwayAmount()
 	{
 		return config.windSway() ? config.windSwayStrength() / 100f : 0f;
 	}
@@ -2122,10 +2123,10 @@ public class LuminaPlugin extends Plugin implements DrawCallbacks
 			if (frameShadows)
 			{
 				cpuTimer.begin(CpuTimer.SHADOW_SUBMIT);
-				renderShadowMap();
+				shadowPass.render();
 				cpuTimer.end(CpuTimer.SHADOW_SUBMIT);
 			}
-			reportShadowMaps();
+			shadowPass.report();
 			cpuTimer.begin(CpuTimer.OCCLUSION);
 			if (weather.isActive())
 			{
@@ -2386,581 +2387,19 @@ public class LuminaPlugin extends Plugin implements DrawCallbacks
 		u.set(on ? environmentManager : null, fog, getDrawDistance(), edgeFade.focalX, edgeFade.focalZ);
 	}
 
-	/**
-	 * Draw the opaque scene near the player from the sun or moon. Runs after the main scene so it can reuse the
-	 * dynamic models already uploaded this frame; the composite pass then shadows the visible pixels.
-	 */
-	private void renderShadowMap()
+	// the shadow pass (ShadowPass): the map from the light each frame, its static cache, a strike's bolt map
+	public final ShadowPass shadowPass = new ShadowPass(this);
+
+	/** Draw the static shadow map of a scene being loaded (SceneLoader): see ShadowPass.prebuild. */
+	public ShadowPass.StaticShadowBuild prebuildStaticShadows(Scene scene, Zone[][] zones)
 	{
-		SceneContext ctx = root;
-		if (ctx == null || ctx.hideRoofIds == null || glShadowProgram == 0)
-		{
-			return;
-		}
-
-		int size = config.shadowResolution().getSize();
-		if (!shadowMap.isInitialized() || shadowMap.getSize() != size)
-		{
-			shadowMap.free();
-			shadowMap.init(size);
-		}
-
-		float fx = frameCameraX, fy = frameCameraY, fz = frameCameraZ;
-		Player player = client.getLocalPlayer();
-		if (player != null)
-		{
-			LocalPoint lp = player.getLocalLocation();
-			if (lp != null)
-			{
-				fx = lp.getX();
-				fz = lp.getY();
-				fy = Perspective.getTileHeight(client, lp, client.getTopLevelWorldView().getPlane());
-			}
-		}
-
-		float radius = config.shadowDistance() * Perspective.LOCAL_TILE_SIZE;
-		float depthRange = radius + 4096;
-		final boolean cache = SHADOW_CACHE;
-		if (!cache)
-		{
-			shadowMap.freeCache();
-			shadowMap.update(dayCycle.casterDir, fx, fy, fz, frameCameraX, frameCameraY, frameCameraZ,
-				radius, depthRange, glCapabilities.OpenGL45);
-			glBindFramebuffer(GL_FRAMEBUFFER, shadowMap.getFbo());
-			glViewport(0, 0, size, size);
-			glClearDepth(1.0);
-			glClear(GL_DEPTH_BUFFER_BIT);
-		}
-
-		glEnable(GL_DEPTH_TEST);
-		glDepthFunc(GL_LESS);
-		glDepthMask(true);
-		glDisable(GL_BLEND);
-		// both faces cast: OSRS models are not reliably closed, and backfaces reduce light leaking
-		glDisable(GL_CULL_FACE);
-		glEnable(GL_POLYGON_OFFSET_FILL);
-		glPolygonOffset(1.0f, 1.0f);
-
-		glUseProgram(glShadowProgram);
-		if (swayTick)
-		{
-			weather.getWind().apply(shadowWind, weather.isWindStill());
-		}
-		glUniform1i(uniShadowTexturesReady, textureArrayId != -1 ? 1 : 0);
-		glUniform1i(uniShadowEmissiveCasts, config.emissiveStrength() > 0 ? 0 : 1);
-		glUniformMatrix4fv(uniShadowEntityProj, false, IDENTITY);
-		// swaying plants are left out of the static cache and redrawn each frame (Wind.java)
-		final boolean swayShadows = windSwayAmount() > 0 && config.windSwayShadows();
-		shadowSway.set(swayShadows ? windSwayAmount() : 0);
-
-		// Zone and VAO draw through these shared uniform locations; point them at the shadow program
-		final int savedBase = uniBase, savedEntityProj = uniEntityProj, savedEntityTint = uniEntityTint;
-		uniBase = uniShadowBase;
-		uniEntityProj = uniShadowEntityProj;
-		uniEntityTint = -1;
-		try
-		{
-			if (cache)
-			{
-				renderStaticShadows(ctx, size, fx, fy, fz, radius, depthRange, swayShadows);
-				if (shadowMap.frontView() != null)
-				{
-					// this frame's map starts as a copy of the static one
-					glBindVertexArray(vaoUiHandle);
-					shadowMap.useFront(frameCameraX, frameCameraY, frameCameraZ, glShadowCopyProgram);
-					glUseProgram(glShadowProgram);
-				}
-				else
-				{
-					// no static map drawn yet (start-up, a setting changed; the scheduler draws it): this frame's map
-					// holds the moving models only
-					shadowMap.update(dayCycle.casterDir, fx, fy, fz, frameCameraX, frameCameraY, frameCameraZ,
-						radius, depthRange, glCapabilities.OpenGL45);
-					glBindFramebuffer(GL_FRAMEBUFFER, shadowMap.getFbo());
-					glViewport(0, 0, size, size);
-					glClearDepth(1.0);
-					glClear(GL_DEPTH_BUFFER_BIT);
-				}
-				glUniformMatrix4fv(uniShadowLightProj, false, shadowMap.lightProj);
-				if (swayShadows)
-				{
-					shadowZones(ctx, fx, fz, radius, null, 0, Integer.MAX_VALUE, Zone.SWAY_ONLY);
-				}
-			}
-			else
-			{
-				glUniformMatrix4fv(uniShadowLightProj, false, shadowMap.lightProj);
-				shadowZones(ctx, fx, fz, radius, null, 0, Integer.MAX_VALUE, Zone.SWAY_ALL);
-			}
-
-			// players, NPCs and other models drawn this frame
-			glUniform3i(uniShadowBase, 0, 0, 0);
-			glUniformMatrix4fv(uniShadowEntityProj, false, IDENTITY);
-			for (int i = 0; i < VAO.shadowDrawCount; ++i)
-			{
-				VAO.ShadowDraw d = VAO.shadowDraws.get(i);
-				glUniformMatrix4fv(uniShadowEntityProj, false, d.projection);
-				glBindVertexArray(d.vao);
-				glDrawArrays(GL_TRIANGLES, d.first, d.count);
-			}
-		}
-		finally
-		{
-			uniBase = savedBase;
-			uniEntityProj = savedEntityProj;
-			uniEntityTint = savedEntityTint;
-		}
-
-		glBindVertexArray(0);
-		glDisable(GL_POLYGON_OFFSET_FILL);
-		glDepthFunc(GL_GREATER);
-		glDisable(GL_DEPTH_TEST);
-		glUseProgram(0);
-		checkGLErrors();
+		return shadowPass.prebuild(scene, zones);
 	}
 
-	// Static shadow cache. The scenery is drawn around a focus snapped to this many world units, into a map this
-	// much larger, so it still covers the player until they walk out of the snapped cell.
-	private static final int SHADOW_CACHE_SNAP = 256;
-	// A new static map is drawn over this many frames while the old one is still used, so no frame pays for it all.
-	private static final int SHADOW_BUILD_FRAMES = 3;
-	// The light may turn until the shadow of a caster this tall (world units) has moved this many texels, which
-	// depends on how low the light is: shadows lengthen fast near the horizon.
-	private static final float SHADOW_CACHE_HEIGHT = 512;
-	private static final float SHADOW_CACHE_TEXELS = 1.0f;
-
-	private int[] shadowBuildZones = new int[64];
-	private int shadowBuildCount;
-	// the static map being drawn by the scheduler, null for none (one at a time)
-	private StaticShadowBuild staticBuild;
-
-	/**
-	 * A static shadow map drawn by the scheduler (SceneJobs) into the texture not in use, a share of its zones a frame:
-	 * at most a SHADOW_BUILD_FRAMES-th of them (the GPU's share) and as many as fit the frame's budget (the CPU's).
-	 * Drawn for the scene in use it replaces the front map when done (or is held beside it, for a strike's bolt); drawn
-	 * for a scene being loaded (SceneLoader) it is held until that scene is swapped in, and replaces the front then, or
-	 * when it is done if the swap came first: until then the old map stands in.
-	 */
-	public final class StaticShadowBuild implements SceneJobs.Job
+	/** A load was dropped before its swap (SceneLoader): see ShadowPass.drop. */
+	public void dropStaticShadows(ShadowPass.StaticShadowBuild dropped)
 	{
-		private final SceneContext ctx;
-		private final float[] dir;
-		private float fx, fy, fz;
-		// a load's scene: the focus is worked out from it on the client thread when the build starts
-		private final Scene scene;
-		// a bolt's map, held beside the front one; a load's map, for the scene not swapped in yet
-		private final boolean bolt;
-		private final boolean forLoad;
-		private volatile boolean swappedIn;
-		private boolean started, held;
-		private int build, next, perFrame, sway;
-		private float radius;
-
-		public StaticShadowBuild(SceneContext ctx, float[] dir, float fx, float fy, float fz, boolean bolt, boolean forLoad)
-		{
-			this.ctx = ctx;
-			this.dir = dir;
-			this.fx = fx;
-			this.fy = fy;
-			this.fz = fz;
-			this.scene = null;
-			this.bolt = bolt;
-			this.forLoad = forLoad;
-		}
-
-		public StaticShadowBuild(SceneContext ctx, float[] dir, Scene scene, boolean bolt, boolean forLoad)
-		{
-			this.ctx = ctx;
-			this.dir = dir;
-			this.scene = scene;
-			this.bolt = bolt;
-			this.forLoad = forLoad;
-		}
-
-		/**
-		 * A load's focus: where the player stands in the loaded scene when a region load keeps them inside it, else the
-		 * scene's centre (a teleport lands near it). Client thread.
-		 */
-		private void focusOnLoadedScene()
-		{
-			int tx = Constants.SCENE_SIZE / 2, tz = Constants.SCENE_SIZE / 2;
-			Player player = client.getLocalPlayer();
-			if (player != null)
-			{
-				int px = player.getWorldLocation().getX() - scene.getBaseX(), pz = player.getWorldLocation().getY() - scene.getBaseY();
-				if (px >= 0 && pz >= 0 && px < Constants.SCENE_SIZE && pz < Constants.SCENE_SIZE)
-				{
-					tx = px;
-					tz = pz;
-				}
-			}
-			fx = tx * Perspective.LOCAL_TILE_SIZE + 64f;
-			fz = tz * Perspective.LOCAL_TILE_SIZE + 64f;
-			fy = scene.getTileHeights()[0][tx + SCENE_OFFSET][tz + SCENE_OFFSET];
-		}
-
-		@Override
-		public boolean step(long deadline)
-		{
-			if (glShadowProgram == 0 || !shadowMap.isInitialized() || shadowMap.getSize() != config.shadowResolution().getSize())
-			{
-				return finish(false);
-			}
-			int size = shadowMap.getSize();
-			if (!started)
-			{
-				if (!forLoad && staticBuild != this)
-				{
-					// queued for the drawn scene, then a load's build took over: starting now would draw over the map the
-					// load holds for its swap (startBuild drops the held one; f5a20af3, 21:06: the swap then found none)
-					return true;
-				}
-				started = true;
-				// one static build at a time: a load's takes over from one of the drawn scene's
-				staticBuild = this;
-				if (scene != null)
-				{
-					focusOnLoadedScene();
-				}
-				float[] d = dir != null ? dir : dayCycle.casterDir;
-				radius = config.shadowDistance() * Perspective.LOCAL_TILE_SIZE;
-				sway = windSwayAmount() > 0 && config.windSwayShadows() ? Zone.SWAY_EXCLUDE : Zone.SWAY_ALL;
-				float sx = Math.round(fx / SHADOW_CACHE_SNAP) * (float) SHADOW_CACHE_SNAP;
-				float sz = Math.round(fz / SHADOW_CACHE_SNAP) * (float) SHADOW_CACHE_SNAP;
-				hitchMonitor.job(HitchMonitor.STATIC_SHADOWS);
-				shadowMap.startBuild(d, sx, fy, sz, radius + SHADOW_CACHE_SNAP, radius + 4096 + SHADOW_CACHE_SNAP,
-					glCapabilities.OpenGL45);
-				build = shadowMap.builds;
-				shadowBuildCount = 0;
-				shadowZones(ctx, sx, sz, radius + SHADOW_CACHE_SNAP, null, 0, 0, sway);
-				zones = Arrays.copyOf(shadowBuildZones, shadowBuildCount);
-				// a load's map is drawn behind the client's loading box, before its swap, which may come a frame or two
-				// after the load (a115b4c4: three frames late, the old place's map stood in and the new one landed in one
-				// frame, 33 % of pixels): all of it in its first frame, as far as the frame's budget goes
-				perFrame = forLoad ? zones.length : Math.max(1, (zones.length + SHADOW_BUILD_FRAMES - 1) / SHADOW_BUILD_FRAMES);
-			}
-			if (shadowMap.builds != build || !shadowMap.isBuilding())
-			{
-				// the map was forgotten (settings, levels) or another build took its place
-				return finish(false);
-			}
-			glGetIntegerv(GL_VIEWPORT, viewport);
-			beginShadowPass();
-			try
-			{
-				ShadowMap.View v = shadowMap.buildingView();
-				glBindFramebuffer(GL_FRAMEBUFFER, shadowMap.getBuildFbo());
-				glViewport(0, 0, size, size);
-				glUniformMatrix4fv(uniShadowLightProj, false, v.proj);
-				int end = Math.min(next + perFrame, zones.length);
-				while (next < end)
-				{
-					shadowZones(ctx, v.focusX, v.focusZ, v.radius, zones, next, next + 1, sway);
-					next++;
-					if (System.nanoTime() >= deadline)
-					{
-						break;
-					}
-				}
-				if (next < zones.length)
-				{
-					return false;
-				}
-				glBindVertexArray(vaoUiHandle);
-				if (bolt || forLoad && !swappedIn)
-				{
-					shadowMap.holdBuild(glShadowMaxProgram);
-					held = true;
-				}
-				else
-				{
-					shadowMap.finishBuild(glShadowMaxProgram);
-				}
-			}
-			finally
-			{
-				endShadowPass();
-				glBindFramebuffer(GL_FRAMEBUFFER, awtContext.getFramebuffer(false));
-				glViewport(viewport[0], viewport[1], viewport[2], viewport[3]);
-			}
-			return finish(true);
-		}
-
-		private int[] zones;
-		private final int[] viewport = new int[4];
-
-		private boolean finish(boolean drawn)
-		{
-			if (!drawn && started && shadowMap.builds == build && shadowMap.isBuilding())
-			{
-				shadowMap.invalidateCache();
-			}
-			if (staticBuild == this && (!held || !forLoad))
-			{
-				staticBuild = null;
-			}
-			return true;
-		}
-
-		/**
-		 * The scene this was drawn for is swapped in (client thread): the held map becomes the front one. Not drawn yet
-		 * (the swap came first), what is left of it is drawn now, so the scene never shows with the old place's map.
-		 */
-		public void swappedIn()
-		{
-			swappedIn = true;
-			boolean drawing = !held && staticBuild == this || !started;
-			if (drawing)
-			{
-				// done drawing, it takes the front itself (swappedIn is set); the queue then drops it
-				while (!step(Long.MAX_VALUE) && shadowMap.isBuilding())
-				{
-				}
-			}
-			else if (!held)
-			{
-				// it was given up (a setting or the levels changed while it was drawn): a new one is drawn as usual
-				shadowMap.refreshCache();
-			}
-			if (held)
-			{
-				shadowMap.swapFront();
-				// the old scene's map is in other coordinates: never swapped back
-				shadowMap.dropHeld();
-				held = false;
-				if (staticBuild == this)
-				{
-					staticBuild = null;
-				}
-			}
-		}
-	}
-
-	/**
-	 * Draw the static shadow map of a scene being loaded (SceneLoader, the map loader's thread, its zones uploaded):
-	 * around where the player will stand, the scene's centre after a teleport. Null when shadows are off.
-	 */
-	public StaticShadowBuild prebuildStaticShadows(Scene scene, Zone[][] zones)
-	{
-		if (!config.shadows() || glShadowProgram == 0)
-		{
-			return null;
-		}
-		StaticShadowBuild b = new StaticShadowBuild(new SceneContext(zones, root), null, scene, false, true);
-		sceneLoader.jobs.add("static shadows (load)", SceneJobs.LOAD, b);
-		return b;
-	}
-
-	/** A load was dropped before its swap (SceneLoader, client thread): its map is not to be used. */
-	public void dropStaticShadows(StaticShadowBuild dropped)
-	{
-		if (dropped != null && staticBuild == dropped)
-		{
-			staticBuild = null;
-			if (dropped.held)
-			{
-				shadowMap.dropHeld();
-			}
-		}
-	}
-
-	/** The swap, client thread: the loaded scene's static map replaces the front one if drawn (else when it is). */
-	private void swapStaticShadows(StaticShadowBuild loaded)
-	{
-		if (loaded != null)
-		{
-			loaded.swappedIn();
-		}
-		else
-		{
-			shadowMap.refreshCache();
-		}
-	}
-
-	/** The shadow program's state for drawing zones from the light; endShadowPass puts the frame's back. */
-	private void beginShadowPass()
-	{
-		glEnable(GL_DEPTH_TEST);
-		glDepthFunc(GL_LESS);
-		glDepthMask(true);
-		glDisable(GL_BLEND);
-		// both faces cast: OSRS models are not reliably closed, and backfaces reduce light leaking
-		glDisable(GL_CULL_FACE);
-		glEnable(GL_POLYGON_OFFSET_FILL);
-		glPolygonOffset(1.0f, 1.0f);
-
-		glUseProgram(glShadowProgram);
-		glUniform1i(uniShadowTexturesReady, textureArrayId != -1 ? 1 : 0);
-		glUniform1i(uniShadowEmissiveCasts, config.emissiveStrength() > 0 ? 0 : 1);
-		glUniformMatrix4fv(uniShadowEntityProj, false, IDENTITY);
-		final boolean swayShadows = windSwayAmount() > 0 && config.windSwayShadows();
-		shadowSway.set(swayShadows ? windSwayAmount() : 0);
-
-		// Zone and VAO draw through these shared uniform locations; point them at the shadow program
-		savedBase = uniBase;
-		savedEntityProj = uniEntityProj;
-		savedEntityTint = uniEntityTint;
-		uniBase = uniShadowBase;
-		uniEntityProj = uniShadowEntityProj;
-		uniEntityTint = -1;
-	}
-
-	private int savedBase, savedEntityProj, savedEntityTint;
-
-	private void endShadowPass()
-	{
-		uniBase = savedBase;
-		uniEntityProj = savedEntityProj;
-		uniEntityTint = savedEntityTint;
-		glBindVertexArray(0);
-		glDisable(GL_POLYGON_OFFSET_FILL);
-		glDepthFunc(GL_GREATER);
-		glDisable(GL_DEPTH_TEST);
-		glUseProgram(0);
-	}
-
-	/**
-	 * Keep the static shadow map current: when the light has turned, the player has walked out of the snapped cell, a
-	 * zone was rebuilt or a strike needs its bolt's map, queue a new one for the scheduler to draw (StaticShadowBuild).
-	 */
-	private void renderStaticShadows(SceneContext ctx, int size, float fx, float fy, float fz, float radius,
-		float depthRange, boolean swayShadows)
-	{
-		final int sway = swayShadows ? Zone.SWAY_EXCLUDE : Zone.SWAY_ALL;
-		int key = java.util.Objects.hash(System.identityHashCode(ctx), ctx.minLevel, ctx.level, ctx.maxLevel,
-			config.emissiveStrength() > 0, textureArrayId != -1, size, radius, sway);
-		shadowMap.checkCacheKey(key);
-		if (staticBuild != null)
-		{
-			return;
-		}
-
-		ShadowMap.View front = shadowMap.frontView();
-		if (front != null && shadowStale(front, fx, fy, fz, radius, size))
-		{
-			// the light turned to where the held map (a lightning strike's, or the sun's it left) is drawn for: use it
-			ShadowMap.View held = shadowMap.heldView();
-			if (held != null && !shadowStale(held, fx, fy, fz, radius, size))
-			{
-				shadowMap.swapFront();
-				return;
-			}
-		}
-		// a strike needs the map for its bolt drawn before its flash, beside the one in use
-		float[] bolt = weather.getLightning().getBoltDir();
-		boolean holdBolt = front != null && bolt != null && !shadowMap.isStale()
-			&& !shadowStale(front, fx, fy, fz, radius, size)
-			&& !directionMatches(front, bolt) && !directionMatches(shadowMap.heldView(), bolt);
-		if (front == null || shadowMap.isStale() || shadowStale(front, fx, fy, fz, radius, size) || holdBolt)
-		{
-			staticBuild = new StaticShadowBuild(ctx, holdBolt ? bolt.clone() : null, fx, fy, fz, holdBolt, false);
-			sceneLoader.jobs.add(holdBolt ? "static shadows (bolt)" : "static shadows", SceneJobs.SHOWN, staticBuild);
-		}
-	}
-
-	// cosine of the angle within which a static shadow map counts as drawn for a light
-	private static final float SHADOW_MATCH = 0.9999f;
-
-	private static boolean directionMatches(ShadowMap.View v, float[] d)
-	{
-		return v != null && d[0] * v.dir[0] + d[1] * v.dir[1] + d[2] * v.dir[2] > SHADOW_MATCH;
-	}
-
-	/**
-	 * Tell a strike what the shadow maps came to this frame: whether one is drawn for the bolt, and whether the map
-	 * in use is for the light in use. Without shadows, both are true.
-	 */
-	private void reportShadowMaps()
-	{
-		float[] bolt = weather.getLightning().getBoltDir();
-		ShadowMap.View front = shadowMap.frontView();
-		boolean ready = !frameShadows
-			|| bolt != null && (directionMatches(front, bolt) || directionMatches(shadowMap.heldView(), bolt));
-		weather.getLightning().setShadowMaps(ready, !frameShadows || directionMatches(front, dayCycle.casterDir));
-	}
-
-	private boolean shadowStale(ShadowMap.View v, float fx, float fy, float fz, float radius, int size)
-	{
-		float half = SHADOW_CACHE_SNAP * 0.5f;
-		if (Math.abs(fx - v.focusX) > half || Math.abs(fz - v.focusZ) > half || Math.abs(fy - v.focusY) > SHADOW_CACHE_SNAP)
-		{
-			return true;
-		}
-		float[] d = dayCycle.casterDir;
-		// sine of the angle between the light now and when the map was drawn
-		float cx = d[1] * v.dir[2] - d[2] * v.dir[1];
-		float cy = d[2] * v.dir[0] - d[0] * v.dir[2];
-		float cz = d[0] * v.dir[1] - d[1] * v.dir[0];
-		float angle = (float) Math.sqrt(cx * cx + cy * cy + cz * cz);
-		if (d[0] * v.dir[0] + d[1] * v.dir[1] + d[2] * v.dir[2] < 0)
-		{
-			return true;
-		}
-		// a shadow of height h is h / tan(elevation) long; it moves h / sin^2(elevation) per radian
-		float sinElevation = Math.max(-d[1], 0.1f);
-		float texel = 2 * radius / size;
-		return angle > SHADOW_CACHE_TEXELS * texel * sinElevation * sinElevation / SHADOW_CACHE_HEIGHT;
-	}
-
-	/**
-	 * The static zones around a focus. With list null and to 0, only collects them into shadowBuildZones; with list
-	 * null and to MAX_VALUE, draws all of them; else draws list[from..to).
-	 */
-	private void shadowZones(SceneContext ctx, float fx, float fz, float radius, int[] list, int from, int to, int sway)
-	{
-		// zones around the focus, with margin for tall casters just outside the map
-		int offset = SCENE_OFFSET >> 3;
-		float reach = radius + 2048;
-		if (list != null)
-		{
-			for (int i = from; i < to; ++i)
-			{
-				shadowZone(ctx, list[i] >> 16, list[i] & 0xFFFF, offset, sway);
-			}
-			return;
-		}
-		boolean collect = to == 0;
-		for (int x = 0; x < ctx.sizeX; ++x)
-		{
-			float cx = ((x - offset) << 10) + 512;
-			if (Math.abs(cx - fx) > reach)
-			{
-				continue;
-			}
-			for (int z = 0; z < ctx.sizeZ; ++z)
-			{
-				float cz = ((z - offset) << 10) + 512;
-				if (Math.abs(cz - fz) > reach)
-				{
-					continue;
-				}
-				if (!collect)
-				{
-					shadowZone(ctx, x, z, offset, sway);
-					continue;
-				}
-				Zone zone = ctx.zones[x][z];
-				if (zone.drawable() && zone.sizeO > 0)
-				{
-					if (shadowBuildCount == shadowBuildZones.length)
-					{
-						shadowBuildZones = Arrays.copyOf(shadowBuildZones, shadowBuildCount * 2);
-					}
-					shadowBuildZones[shadowBuildCount++] = x << 16 | z;
-				}
-			}
-		}
-	}
-
-	private static void shadowZone(SceneContext ctx, int x, int z, int offset, int sway)
-	{
-		Zone zone = ctx.zones[x][z];
-		if (!zone.drawable() || zone.sizeO <= 0)
-		{
-			return;
-		}
-		// every level and every roof, including ones hidden from the camera, so interiors stay shaded
-		zone.renderOpaque(x - offset, z - offset, ctx.minLevel, ctx.level, 3, Collections.emptySet(), sway);
+		shadowPass.drop(dropped);
 	}
 
 	/**
@@ -4259,7 +3698,7 @@ public class LuminaPlugin extends Plugin implements DrawCallbacks
 		long tWater = System.nanoTime();
 		volumetricFog.swap(d.fogGround);
 		voxelBuilder.swapTo(d.voxelBuild);
-		swapStaticShadows(d.shadows);
+		shadowPass.swapped(d.shadows);
 		long tEnd = System.nanoTime();
 		if (tEnd - t0 > 500_000)
 		{
@@ -4338,7 +3777,7 @@ public class LuminaPlugin extends Plugin implements DrawCallbacks
 		return Ints.constrainToRange(config.drawDistance(), 0, MAX_DISTANCE);
 	}
 
-	private void checkGLErrors()
+	public void checkGLErrors()
 	{
 		if (!glErrorChecks)
 		{

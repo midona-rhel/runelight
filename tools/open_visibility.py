@@ -69,6 +69,20 @@ for line in lines_in:
     m = re.search(r'error: method (\w+) in class (\w+) cannot be applied to given types', line) or re.search(r'error: no suitable method found for (\w+)\(', line)
     if m and m.lastindex == 2: publicize_overloads(m.group(2), m.group(1))
 for line in lines_in:
+    m = re.search(r'error: (\w+)(?:\([^)]*\))? has private access in ([\w.]+)', line)
+    if m:
+        cls = m.group(2).split('.')[-1]; member = m.group(1)
+        p = file_declaring(cls)
+        if p:
+            s = p.read_text()
+            if cls == member:
+                s2 = re.sub(r'^(\t*)private ((?:static |final )*(?:class|interface|enum|record) ' + re.escape(member) + r'\b)', r'\1public \2', s, count=1, flags=re.M)
+            else:
+                s2 = re.sub(r'^(\t+)private ((?:static |final |volatile |synchronized )*[\w<>\[\], ?.]*\s*\b' + re.escape(member) + r'\b\s*(?:\(|=|;|,))', r'\1public \2', s, count=1, flags=re.M)
+                if s2 == s:  # a constructor
+                    s2 = re.sub(r'^(\t+)private (' + re.escape(member) + r'\s*\()', r'\1public \2', s, count=1, flags=re.M)
+            if s2 != s: p.write_text(s2); changed.add(f'{cls}.{member} (was private)')
+        continue
     m = re.search(r'error: (\w+) is not public in ([\w.]+); cannot be accessed', line)
     if m:
         name, where = m.group(1), m.group(2).split('.')[-1]

@@ -1,5 +1,7 @@
 package com.midonarhel.lumina.scene;
 
+import com.midonarhel.lumina.shadow.ShadowPass;
+
 import com.midonarhel.lumina.fog.FogGround;
 
 import com.midonarhel.lumina.water.Water;
@@ -55,7 +57,7 @@ public final class SceneLoader
 		// the voxel build started for this scene (VoxelBuilder generation), 0 for none
 		public int voxelBuild;
 		// the static shadow map drawn for this scene before the swap, null for none
-		public LuminaPlugin.StaticShadowBuild shadows;
+		public ShadowPass.StaticShadowBuild shadows;
 
 		public SceneDerived(Scene scene, Zone[][] zones, Map<Integer, Integer> roofChanges, Water.Loaded water, FogGround fogGround)
 		{
