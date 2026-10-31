@@ -897,6 +897,9 @@ public class LuminaPlugin extends Plugin implements DrawCallbacks
 			| DrawCallbacks.ZBUF
 			// zones are culled by zoneInFrustum: a circle around the player and the real frustum (EdgeFade)
 			| DrawCallbacks.ZBUF_ZONE_FRUSTUM_CHECK
+			// the game's vertex normals (Model.getVertexNormalsX/Y/Z), which smooth faces are shaded with (VertexShading,
+			// 117 HD's rule); without this flag the client leaves them null and every face comes out flat
+			| DrawCallbacks.NORMALS
 			| DrawCallbacks.RENDER_THREADS(threads)
 		);
 	}
