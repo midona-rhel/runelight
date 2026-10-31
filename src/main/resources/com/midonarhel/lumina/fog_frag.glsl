@@ -194,33 +194,43 @@ float lampFalloffAlong(float s, float h, float r) {
   return s - (s * d + hs) / r + (h * h * s + s * s * s / 3.0) / (r * r);
 }
 
-// Light from the lamps scattered toward the camera along the ray dir, ending at tEnd, as a glow round each lamp: the
-// whole of its falloff along the ray through its sphere, whatever the ray ends at, times the fog where the lamp is (its
-// density, height layer, room and weather there, not where the ray passes): a circle round the lamp, like bloom, not a
-// shape of the march's shaping (the ring round the player, the fade from the camera, the ground under the ray). It
-// fades as the lamp goes behind what the ray ends at, and walls stop it as they stop the lamp's light
-// (light/lamp.glsl), from where the ray passes nearest the lamp.
-vec3 lampGlow(ivec2 px, vec3 dir, float t0, float tEnd, float density) {
+// Light from the lamps scattered toward the camera along the ray dir, as a glow round each lamp, like bloom: its
+// falloff integrated along the ray through its sphere (the whole of its reach: the user, "how far it reaches is fine"),
+// times the fog where the lamp is
+// (its density, height layer, room and weather there; none inside rooms, so a lamp indoors has none). The same for
+// every ray past it, whatever the ray ends at or where the march starts: a halo round the lamp on screen, fading to
+// nothing at its reach with no edge of its own (the falloff and its slope are 0 there). It shows as far as the lamp
+// itself does: hidden when the scene stands in front of the lamp's own point on screen (a wall between the camera and
+// it), not cut ray by ray, which drew the walls' and the march's edges into it as shapes that turned with the camera.
+vec3 lampGlow(ivec2 px, vec3 dir, float density) {
   LightMask lamps = clusterLights(columnEntry((vec2(px) + 0.5 - vec2(sceneViewport.xy)) / vec2(sceneViewport.zw)));
   float below = -fogHeight * FOG_BELOW;
   vec3 sum = vec3(0.0);
   int li;
   while (nextLight(lamps, li)) {
     Lamp lamp = lampAt(li);
+    float reach = lamp.radius;
     float tc = dot(lamp.pos, dir);
     float h2 = max(dot(lamp.pos, lamp.pos) - tc * tc, 0.0);
-    float r2 = lamp.radius * lamp.radius;
-    if (h2 >= r2 || tc < t0) {
+    if (h2 >= reach * reach || tc <= 0.0) {
       continue;
     }
-    // behind what the ray ends at, over half its reach
-    float shown = 1.0 - smoothstep(tEnd, tEnd + 0.5 * lamp.radius, tc);
-    if (shown <= 0.0) {
+    // the lamp's own point on screen, and what the scene shows there: in front of it by more than the lamp's size,
+    // the lamp is hidden, and so is its glow
+    vec4 clip = viewProj * vec4(lamp.pos, 1.0);
+    if (clip.w <= NEAR) {
       continue;
     }
-    float open = lampOpen(lamp, dir * tc, dir * tc);
-    if (open <= 0.0) {
-      continue;
+    float shown = 1.0;
+    ivec2 lampPx = ivec2(floor(vec2(sceneViewport.xy) + (clip.xy / clip.w * 0.5 + 0.5) * vec2(sceneViewport.zw)));
+    if (inViewport(lampPx)) {
+      float d = texelFetch(sceneDepth, lampPx, 0).r;
+      float size = lampSize(lamp);
+      float front = isSky(d) ? 1e9 : viewDepth(d);
+      shown = smoothstep(clip.w - 3.0 * size, clip.w - size, front);
+      if (shown <= 0.0) {
+        continue;
+      }
     }
     // the fog where the lamp is
     vec3 w = lamp.pos + cameraPos;
@@ -228,8 +238,8 @@ vec3 lampGlow(ivec2 px, vec3 dir, float t0, float tEnd, float density) {
     float sigma = density * exp(-max(ground.r - w.y, below) / fogHeight) * fogRoomFactor(ground, w.y)
       * weatherFogFactor(w.xz);
     // its whole falloff through the sphere (lampFalloffAlong from the nearest point, both ways)
-    float glow = 2.0 * lampFalloffAlong(sqrt(r2 - h2), sqrt(h2), lamp.radius) * sigma;
-    sum += lamp.color * (glow * open * shown);
+    float glow = 2.0 * lampFalloffAlong(sqrt(reach * reach - h2), sqrt(h2), reach) * sigma;
+    sum += lamp.color * (glow * shown);
   }
   return sum * FOG_LAMP_SCATTER;
 }
@@ -414,7 +424,7 @@ void main() {
     scatterSun += direct * ((1.0 - far) * scattered);
     trans *= stepTrans;
   }
-  vec3 lamps = glow ? lampGlow(px, dir, t0, t1, density) : vec3(0.0);
+  vec3 lamps = glow ? lampGlow(px, dir, density) : vec3(0.0);
 
   // Limit how much of the view the fog hides where the ray ends. The flat glow shrinks with the cover; the light
   // from the sun and the lamps mostly stays, so thick fog still shows where it is lit.

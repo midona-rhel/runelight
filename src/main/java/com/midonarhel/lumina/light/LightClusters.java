@@ -29,9 +29,10 @@ public class LightClusters
 	public static final int CLUSTERS_Y = 18;
 	public static final int CLUSTERS_Z = 24;
 	// A cluster lists at most this many lights, the most important first (PointLight.importance): when more overlap
-	// it, its least ones are left out there. 31 before the light map went (2026-10-30): with every static lamp on the
-	// clusters a dense square at night overflowed, and which lamp was left out changed as the camera turned (lamps-9)
-	public static final int MAX_LIGHTS_PER_CLUSTER = 48;
+	// it, its least ones are left out there, which shows as a lamp missing in screen tiles that move with the camera
+	// (lamps-9: 31 before the light map went, with every static lamp on the clusters). So it is as many as a count can
+	// hold: a lamp in reach is always there; the light buffer's 1024 is the only limit.
+	public static final int MAX_LIGHTS_PER_CLUSTER = Byte.MAX_VALUE;
 	static final int MAX_LIGHTS = 1024;
 	static final int LIGHTS_PER_TEXEL = 128;
 	public static final float NEAR = 50;

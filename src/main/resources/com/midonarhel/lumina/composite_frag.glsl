@@ -185,10 +185,11 @@ int clusterLightCount(int entry) {
 
 // The lamps' light on a surface at camera-relative p with normal n, the smooth normal the sun uses, from the lamps of
 // cluster entry (light/lamp.glsl): on its front, and through thin foliage from behind into through. Surfaces turned
-// away receive neither.
-vec3 lampsOnSurface(int entry, vec3 p, vec3 n, float transmissive, out vec3 through) {
+// away receive neither. The face normal faceN only moves the point off its surface for the wall check.
+vec3 lampsOnSurface(int entry, vec3 p, vec3 n, vec3 faceN, float transmissive, out vec3 through) {
   vec3 viewDir = transmissive > 0.0 ? normalize(-p) : vec3(0.0);
-  vec3 wallFrom = p + n * LAMP_WALL_BIAS;
+  // off the surface along its face's own normal: a smooth normal tilts toward a wall's top and ends
+  vec3 wallFrom = p + faceN * LAMP_WALL_BIAS;
   vec3 sum = vec3(0.0);
   through = vec3(0.0);
   LightMask lamps = clusterLights(entry);
@@ -404,7 +405,7 @@ vec4 shadeScene(ivec2 px, SceneSample sm, vec4 transparent) {
   int cluster = clusterAt(px, viewDepth(d));
   if ((compositePart == 0 || compositePart == 3) && pointLightsEnabled == 1 && inside) {
     vec3 through;
-    light += lampsOnSurface(cluster, p, n, transmissive, through) * mix(1.0, ao, AO_DIRECT);
+    light += lampsOnSurface(cluster, p, n, sm.faceNormal, transmissive, through) * mix(1.0, ao, AO_DIRECT);
     // the canopy interior SSAO darkens is exactly where light inside a tree shines through
     light += through;
   }

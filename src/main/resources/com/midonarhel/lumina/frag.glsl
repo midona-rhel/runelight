@@ -110,14 +110,16 @@ uniform int pointLightsEnabled;
 #include "light/lamp.glsl"
 
 // The lamps' light on a transparent face at camera-relative p with normal n, from its cluster: on its front, and
-// through a thin leaf from behind
-vec3 alphaLamps(vec3 p, vec3 n, float transmissive) {
+// through a thin leaf from behind. The face normal faceN only moves the point off its surface for the wall check;
+// whether and how much a lamp lights the face goes by n, the normal the sun uses
+vec3 alphaLamps(vec3 p, vec3 n, vec3 faceN, float transmissive) {
   if (pointLightsEnabled == 0 || fClip.w <= 0.0) {
     return vec3(0.0);
   }
   vec2 rel = fClip.xy / fClip.w * 0.5 + 0.5;
   vec3 viewDir = normalize(-p);
-  vec3 wallFrom = p + n * LAMP_WALL_BIAS;
+  // off the surface along its face's own normal: a smooth normal tilts toward a wall's top and ends
+  vec3 wallFrom = p + faceN * LAMP_WALL_BIAS;
   vec3 sum = vec3(0.0);
   LightMask lamps = clusterLights(clusterEntry(rel, fClip.w));
   int li;
@@ -210,7 +212,7 @@ void main() {
     } else {
       light = envCaveLight(n);
     }
-    light += alphaLamps(fWorldPos - cameraPos, n, materialTransmissive(fMaterial));
+    light += alphaLamps(fWorldPos - cameraPos, n, faceNormal, materialTransmissive(fMaterial));
     light = emissiveLight(light, materialEmissive(fMaterial));
     vec3 fog = envFog(outdoors == 1 && proceduralSky == 1 ? skyHorizon(sunAltitude) : fogColor.rgb, outdoors == 1,
       sunAltitude);
