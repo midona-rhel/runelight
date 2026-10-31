@@ -44,6 +44,8 @@ uniform sampler2D cloudHalf;
 
 #define TAU 6.28318530718
 
+// how much AO also darkens direct sun and point light; physically 0, but contact shading reads better with some
+#define AO_DIRECT 1.0
 
 
 #define TILE_SIZE 128.0
@@ -375,7 +377,7 @@ vec4 shadeScene(ivec2 px, SceneSample sm, vec4 transparent) {
     indirect += caster * envSun * max(ndl, 0.0) * (1.0 - shadow) * daylightFill * ao;
     }
     light = indirect
-      + caster * envSun * max(ndl, 0.0) * shadow;
+      + caster * envSun * max(ndl, 0.0) * shadow * mix(1.0, ao, AO_DIRECT);
     // The ambient above is one mechanism (one constant plus the sky light, times the sky visibility and AO). A room's
     // fill is a light of its own, not ambient: what the room lacks of the least light a room should have, from its
     // lamps and its sky (RoomLight), spread over the whole room.
@@ -403,7 +405,7 @@ vec4 shadeScene(ivec2 px, SceneSample sm, vec4 transparent) {
   int cluster = clusterAt(px, viewDepth(d));
   if ((compositePart == 0 || compositePart == 3) && pointLightsEnabled == 1 && inside) {
     vec3 through;
-    light += lampsOnSurface(cluster, p, n, sm.faceNormal, transmissive, through);
+    light += lampsOnSurface(cluster, p, n, sm.faceNormal, transmissive, through) * mix(1.0, ao, AO_DIRECT);
     // the canopy interior SSAO darkens is exactly where light inside a tree shines through
     light += through;
   }
