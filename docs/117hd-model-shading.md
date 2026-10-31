@@ -25,14 +25,32 @@ arrays, `AsyncCachedModel.java:152–158, 301–303`). 117 HD never computes per
 normal it computes is a face's own (1.2). `modelHasNormals` is false when any of the three arrays is null, and then
 every face of the model is flat (`flatNormals = !modelHasNormals || faceOverride.flatNormals`, 1847 / 2320).
 
-What the game puts in them is the client's model lighting (`ModelData.light` → its vertex normals; RuneLite's
-`Model.getVertexNormalsX` returns them, its API has no separate `calculateVertexNormals`): per vertex the sum, over the
-faces the model file marks smooth (render type 0), of each face's normal scaled to length 256 — not area-weighted, and
-flat faces (render type 1, `faceColors3 == -1` after lighting) do not contribute. Objects the scene merges with their
-neighbours (`mergeNormals`) get the merged sums. The client's implementation is in the obfuscated client and could not
-be read locally (the injected-client jar in the Gradle cache carries no `getVertexNormalsX`); none of this changes what
-we do, because after this segment we read the same arrays 117 HD reads.
+What the game puts in them, from the client's code (the deobfuscated client as OpenOSRS published it,
+`runescape-client/src/main/java/ModelData.java`, and RuneLite's cache library, `cache/.../definitions/
+ModelDefinition.computeNormals`, which mirrors it; read 2026-10-31 on GitHub, open-osrs/runelite and runelite/runelite):
 
+- **`ModelData.calculateVertexNormals`** (OpenOSRS ModelData ~1347–1402): one `VertexNormal` per vertex index. Per
+  face: `cross(B − A, C − A)` in ints, halved while a component is past ±8192, scaled to length 256
+  (`x = x * 256 / length`, length ≥ 1). The model file's **render type** of the face decides where it goes: type 0
+  (or no render-type array) → added to the `VertexNormal` of each of its three vertices (`++magnitude`); type 1 →
+  stored as that face's own `FaceNormal`, **added to no vertex**; types 2 and 3 → nothing. So a vertex normal is the
+  sum of the *unit* normals (not area-weighted) of the **smooth** faces that use that vertex index. Faces share a
+  vertex only by sharing its index: at an edge the model file splits (duplicated vertices) nothing is shared; at an
+  edge it shares, every smooth face around the vertex is summed **whatever the angle** — there is no crease angle.
+- **`ModelData.toModel`** (lighting, ~1490–1614): type 0 → three per-vertex lit colours from the vertex normals (or
+  the merged override, below); type 1 → one colour from the face normal and **`faceColors3 = −1`**; untextured
+  type 3 → colour 128 and `faceColors3 = −1`; type 2 and textured type 3 → `faceColors3 = −2` (not drawn). So
+  `faceColors3 == −1`, 117 HD's flat test, is exactly "the model file marks this face flat".
+- **Merging** (`ModelData` static merge, ~1434–1487, used for objects that merge normals with their neighbours): at a
+  vertex position two models share, each adds the other's normal into a per-vertex override (`vertexVertices`), which
+  type-0 lighting uses; faces whose three vertices all matched become type 2.
+- **What `Model.getVertexNormalsX/Y/Z` returns** (RuneLite's `RSModelDataMixin.vertexNormals()`, called from its
+  `toModel` replacement): per vertex the override if there is one, else the `VertexNormal`, x/y/z as ints; a vertex
+  only flat faces use has a `VertexNormal` with nothing added, so (0, 0, 0). Null arrays when the model has no
+  normals.
+
+The OpenOSRS deob predates today's client, and RuneLite's current mixins are not public; the cache library's
+`computeNormals` (current) has the same rule. Our tests reproduce this arithmetic (`VertexShadingTest.Mesh.gameNormals`).
 The arrays are in **model space**: 117 HD rotates them by the object's orientation itself (`rotateNormals`, 2837–2851,
 integer `SINE`/`COSINE` `>> 16`) after using them unrotated for the shading undo (1.4).
 
@@ -209,6 +227,32 @@ face's game colour and alpha as the emissive groups are): `FLAT_NORMALS` → the
 (colours stay per corner, as 117 HD's); `KEEP_SHADING` → no undo; `UPWARDS_NORMALS` → after the undo and rotation,
 `(0, −2048, 0)` on every corner — 117 HD swaps the lighting normal in its fragment shader instead, after the undo with
 the real normal; ours also tilts it with the wind, as any normal.
+
+## 5a. Smooth or hard, plainly
+
+Under 117 HD's code a face is shaded **hard** (its own normal on all three corners) when the model file marks it flat
+(render type 1 → `faceColors3 == −1`; 117 HD's `preserveVanillaNormals` is off by default), when its 117 HD override
+says `flatNormals`, or when the model has no normals; otherwise **smooth**, with the game's vertex normals: at each
+corner the unit-weighted sum of every smooth face sharing that vertex index, at any angle. There is no crease angle
+anywhere. So:
+
+- **A tree trunk** (an 8-sided prism) is **smooth** if the model marks its sides type 0 and they share their vertices:
+  each corner's normal lies between the two sides meeting there, so the trunk shades round (test
+  `aSmoothOctagonalTrunkTakesTheGamesVertexNormals`). It is **hard**, eight facets 45° apart, if the model marks the
+  sides flat (`aFlatOctagonalTrunkStaysFaceted`). 117 HD changes neither: the ordinary trees carry no `flatNormals`
+  override. Which one a given trunk is, is that model's data; this checkout cannot read the cache's models, so the
+  Auburnvale tree's own marking is for the client run to show.
+- **A canopy dome** the same: smooth-marked → round, every corner leaning out from the dome's middle; flat-marked →
+  facets (`aFlatCanopyIsFacetedAndASmoothOneRound`).
+- **A crate** is a box only when flat-marked; smooth-marked on shared corners its corners lean along the diagonals and
+  it shades round (`aCrateIsABoxOnlyWhenTheGameMarksItFlat`) — 117 HD keeps it so; the game's own data, not a
+  crease angle, keeps crates sharp.
+- **A two-sided leaf quad** (the quad twice, wound both ways, on shared vertices): smooth-marked, the game's sums
+  cancel to zero at every vertex, so 117 HD falls back to each face's own normal; flat-marked, the same normals
+  directly. Each side is lit by its own normal (`aTwoSidedLeafQuadLightsEachSideByItsOwnNormal`).
+- **Tile models** (shaped ground tiles): always smooth in 117 HD (its terrain normals, `ProceduralGenerator` 238–312,
+  area-weighted sums over all ground faces); ours are smooth too (central differences, docs/117hd-world-shading.md
+  §1.1).
 
 ## 5. What 117 HD's rule means for the tree canopies
 

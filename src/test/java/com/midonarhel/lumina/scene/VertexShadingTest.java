@@ -43,24 +43,44 @@ public class VertexShadingTest
 		}
 
 		/**
-		 * The vertex normals the game would give this mesh (the client's model lighting): per vertex the sum of the
-		 * smooth faces' normals, each scaled to length 256; flat faces add nothing.
+		 * The vertex normals the game would give this mesh, by the client's code (ModelData.calculateVertexNormals,
+		 * as RuneLite's cache ModelDefinition.computeNormals has it): per face cross(B - A, C - A) in ints, halved
+		 * while a component is past 8192, scaled to length 256; a smooth face (render type 0) adds it to each of its
+		 * three vertices, a flat one (type 1, faceColors3 == -1 once lit) to none. Model.getVertexNormalsX/Y/Z hand
+		 * these sums out (RSModelDataMixin.vertexNormals).
 		 */
 		int[][] gameNormals()
 		{
 			int[] nx = new int[vertices], ny = new int[vertices], nz = new int[vertices];
 			for (int f = 0; f < faces; ++f)
 			{
+				int a = i1[f], b = i2[f], c = i3[f];
+				int x1 = (int) vx[b] - (int) vx[a], y1 = (int) vy[b] - (int) vy[a], z1 = (int) vz[b] - (int) vz[a];
+				int x2 = (int) vx[c] - (int) vx[a], y2 = (int) vy[c] - (int) vy[a], z2 = (int) vz[c] - (int) vz[a];
+				int x = y1 * z2 - y2 * z1, y = z1 * x2 - z2 * x1, z = x1 * y2 - x2 * y1;
+				while (x > 8192 || y > 8192 || z > 8192 || x < -8192 || y < -8192 || z < -8192)
+				{
+					x >>= 1;
+					y >>= 1;
+					z >>= 1;
+				}
+				int length = (int) Math.sqrt(x * x + y * y + z * z);
+				if (length <= 0)
+				{
+					length = 1;
+				}
+				x = x * 256 / length;
+				y = y * 256 / length;
+				z = z * 256 / length;
 				if (!smooth[f])
 				{
 					continue;
 				}
-				float[] n = unit(f);
-				for (int v : new int[]{i1[f], i2[f], i3[f]})
+				for (int v : new int[]{a, b, c})
 				{
-					nx[v] += (int) (n[0] * 256);
-					ny[v] += (int) (n[1] * 256);
-					nz[v] += (int) (n[2] * 256);
+					nx[v] += x;
+					ny[v] += y;
+					nz[v] += z;
 				}
 			}
 			return new int[][]{nx, ny, nz};
@@ -247,6 +267,152 @@ public class VertexShadingTest
 				for (int i = 0; i < 3; ++i)
 				{
 					assertArrayEquals(new float[]{0, 0, expected}, corner(n, i), 1e-6f);
+				}
+			}
+		}
+	}
+
+	/**
+	 * A low-poly canopy: a dome of 8 segments, a band from a ring of radius 150 at y = 0 up to one of radius 100 at
+	 * y = -150, closed by a fan to an apex at y = -200 (the game's y points down), wound outward.
+	 */
+	private static Mesh dome(boolean smooth)
+	{
+		Mesh m = new Mesh();
+		for (int i = 0; i < 8; ++i)
+		{
+			double t = 2 * Math.PI * i / 8;
+			m.vertex((float) Math.round(150 * Math.cos(t)), 0, (float) Math.round(150 * Math.sin(t)));
+		}
+		for (int i = 0; i < 8; ++i)
+		{
+			double t = 2 * Math.PI * i / 8;
+			m.vertex((float) Math.round(100 * Math.cos(t)), -150, (float) Math.round(100 * Math.sin(t)));
+		}
+		int apex = m.vertex(0, -200, 0);
+		for (int i = 0; i < 8; ++i)
+		{
+			int b0 = i, b1 = (i + 1) % 8, t0 = 8 + i, t1 = 8 + (i + 1) % 8;
+			m.face(b0, b1, t1, smooth);
+			m.face(b0, t1, t0, smooth);
+		}
+		for (int i = 0; i < 8; ++i)
+		{
+			m.face(apex, 8 + i, 8 + (i + 1) % 8, smooth);
+		}
+		return m;
+	}
+
+	/** A crate: a 100-unit cube on its 8 shared corners, two triangles a side wound outward. */
+	private static Mesh crate(boolean smooth)
+	{
+		Mesh m = new Mesh();
+		for (int i = 0; i < 8; ++i)
+		{
+			m.vertex((i & 1) * 100 - 50, -((i >> 1 & 1) * 100), (i >> 2 & 1) * 100 - 50);
+		}
+		// sides as corner quads (a, b, c, d), split a-b-c and a-c-d with the outward winding
+		int[][] quads = {{0, 2, 6, 4}, {1, 5, 7, 3}, {0, 4, 5, 1}, {2, 3, 7, 6}, {0, 1, 3, 2}, {4, 6, 7, 5}};
+		for (int[] q : quads)
+		{
+			m.face(q[0], q[1], q[2], smooth);
+			m.face(q[0], q[2], q[3], smooth);
+		}
+		return m;
+	}
+
+	/** Direction from the point (cx, cy, cz) to the centroid of face f. */
+	private static float[] outward(Mesh m, int f, float cx, float cy, float cz)
+	{
+		float x = (m.vx[m.i1[f]] + m.vx[m.i2[f]] + m.vx[m.i3[f]]) / 3 - cx;
+		float y = (m.vy[m.i1[f]] + m.vy[m.i2[f]] + m.vy[m.i3[f]]) / 3 - cy;
+		float z = (m.vz[m.i1[f]] + m.vz[m.i2[f]] + m.vz[m.i3[f]]) / 3 - cz;
+		float l = (float) Math.sqrt(x * x + y * y + z * z);
+		return new float[]{x / l, y / l, z / l};
+	}
+
+	@Test
+	public void theTestDomeAndCrateAreWoundOutward()
+	{
+		Mesh d = dome(false), c = crate(false);
+		for (int f = 0; f < d.faces; ++f)
+		{
+			assertTrue(dot(d.unit(f), outward(d, f, 0, -50, 0)) > 0.3f);
+		}
+		for (int f = 0; f < c.faces; ++f)
+		{
+			assertTrue(dot(c.unit(f), outward(c, f, 0, -50, 0)) > 0.5f);
+		}
+	}
+
+	@Test
+	public void aFlatCanopyIsFacetedAndASmoothOneRound()
+	{
+		int[] n = new int[9];
+		// flat-marked: every face lit by its own normal, so neighbouring faces of the band step by about 45 degrees
+		Mesh flat = dome(false);
+		int[][] game = flat.gameNormals();
+		for (int f = 0; f < flat.faces; ++f)
+		{
+			assertEquals(VertexShading.FACE, flat.normals(f, game, n));
+			float[] u = flat.unit(f);
+			for (int i = 0; i < 3; ++i)
+			{
+				assertTrue(dot(corner(n, i), u) > 0.9999f);
+			}
+		}
+		flat.normals(0, game, n);
+		float[] band0 = corner(n, 0);
+		flat.normals(2, game, n);
+		assertTrue(dot(band0, corner(n, 0)) < 0.75f);
+		// smooth-marked: each corner the game's sum of the faces around it, pointing out from the dome's middle, so
+		// the corners of one face differ and the light rounds over the facets
+		Mesh smooth = dome(true);
+		game = smooth.gameNormals();
+		for (int f = 0; f < smooth.faces; ++f)
+		{
+			assertEquals(VertexShading.VERTEX, smooth.normals(f, game, n));
+			int[] idx = {smooth.i1[f], smooth.i2[f], smooth.i3[f]};
+			for (int i = 0; i < 3; ++i)
+			{
+				int v = idx[i];
+				float x = smooth.vx[v], y = smooth.vy[v] + 50, z = smooth.vz[v];
+				float l = (float) Math.sqrt(x * x + y * y + z * z);
+				assertTrue(dot(corner(n, i), new float[]{x / l, y / l, z / l}) > 0.6f);
+			}
+			assertTrue(dot(corner(n, 0), corner(n, 1)) < 0.999f || dot(corner(n, 1), corner(n, 2)) < 0.999f);
+		}
+	}
+
+	@Test
+	public void aCrateIsABoxOnlyWhenTheGameMarksItFlat()
+	{
+		int[] n = new int[9];
+		// flat-marked: each side its own axis normal, 90 degrees to the next: a box
+		Mesh flat = crate(false);
+		int[][] game = flat.gameNormals();
+		for (int f = 0; f < flat.faces; ++f)
+		{
+			assertEquals(VertexShading.FACE, flat.normals(f, game, n));
+			float[] c = corner(n, 0);
+			assertEquals(1f, Math.max(Math.abs(c[0]), Math.max(Math.abs(c[1]), Math.abs(c[2]))), 1e-3f);
+		}
+		// smooth-marked on shared corners: each corner sums the sides around it, so it leans out along the diagonal
+		// and the box shades round; 117 HD has no crease angle that would keep its edges
+		Mesh smooth = crate(true);
+		game = smooth.gameNormals();
+		for (int f = 0; f < smooth.faces; ++f)
+		{
+			assertEquals(VertexShading.VERTEX, smooth.normals(f, game, n));
+			int[] idx = {smooth.i1[f], smooth.i2[f], smooth.i3[f]};
+			for (int i = 0; i < 3; ++i)
+			{
+				float[] c = corner(n, i);
+				int v = idx[i];
+				float[] toCorner = {Math.signum(smooth.vx[v]), Math.signum(smooth.vy[v] + 50), Math.signum(smooth.vz[v])};
+				for (int k = 0; k < 3; ++k)
+				{
+					assertTrue(c[k] * toCorner[k] > 0.1f);
 				}
 			}
 		}
