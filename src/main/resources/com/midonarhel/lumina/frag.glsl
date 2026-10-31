@@ -111,7 +111,7 @@ uniform int pointLightsEnabled;
 
 // The lamps' light on a transparent face at camera-relative p with normal n, from its cluster: on its front, and
 // through a thin leaf from behind
-vec3 alphaLamps(vec3 p, vec3 n, vec3 faceN, float transmissive) {
+vec3 alphaLamps(vec3 p, vec3 n, float transmissive) {
   if (pointLightsEnabled == 0 || fClip.w <= 0.0) {
     return vec3(0.0);
   }
@@ -123,7 +123,7 @@ vec3 alphaLamps(vec3 p, vec3 n, vec3 faceN, float transmissive) {
   int li;
   while (nextLight(lamps, li)) {
     Lamp lamp = lampAt(li);
-    if (!lampReaches(lamp, p, n, faceN, transmissive > 0.0)) {
+    if (!lampReaches(lamp, p, n, transmissive > 0.0)) {
       continue;
     }
     vec3 ld;
@@ -210,7 +210,7 @@ void main() {
     } else {
       light = envCaveLight(n);
     }
-    light += alphaLamps(fWorldPos - cameraPos, n, faceNormal, materialTransmissive(fMaterial));
+    light += alphaLamps(fWorldPos - cameraPos, n, materialTransmissive(fMaterial));
     light = emissiveLight(light, materialEmissive(fMaterial));
     vec3 fog = envFog(outdoors == 1 && proceduralSky == 1 ? skyHorizon(sunAltitude) : fogColor.rgb, outdoors == 1,
       sunAltitude);
