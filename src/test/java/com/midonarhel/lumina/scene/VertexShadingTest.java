@@ -418,6 +418,82 @@ public class VertexShadingTest
 		}
 	}
 
+	/**
+	 * A thatched roof slope: a 3x3 grid of corners (100 apart) on a 45-degree slope, its middle corner pushed out by
+	 * 20 (the bumps a thatch model has), two triangles a cell, sharing the corners.
+	 */
+	private static Mesh roof(boolean smooth)
+	{
+		Mesh m = new Mesh();
+		for (int j = 0; j < 3; ++j)
+		{
+			for (int i = 0; i < 3; ++i)
+			{
+				float bump = i == 1 && j == 1 ? 20 : 0;
+				// the slope rises along z (y down): y = -z, pushed out along its normal (0, -1, 1)/sqrt2 by the bump
+				m.vertex(i * 100, -(j * 100) - bump * 0.7071f, j * 100 - bump * 0.7071f);
+			}
+		}
+		for (int j = 0; j < 2; ++j)
+		{
+			for (int i = 0; i < 2; ++i)
+			{
+				int a = j * 3 + i, b = a + 1, c = a + 3, d = c + 1;
+				m.face(a, c, b, smooth);
+				m.face(b, c, d, smooth);
+			}
+		}
+		return m;
+	}
+
+	@Test
+	public void aFlatMarkedRoofShowsItsTrianglesAndASmoothOneDoesNot()
+	{
+		int[] n = new int[9];
+		// flat-marked (faceColors3 == -1): every triangle lit by its own normal. Those on the bump (they share the
+		// middle corner) each point their own way, so each is its own tone, as 117 HD shows it too; those off it lie in
+		// the slope and share its normal, so a flat roof slope shows no triangles
+		Mesh flat = roof(false);
+		int[][] game = flat.gameNormals();
+		java.util.List<float[]> onBump = new java.util.ArrayList<>(), offBump = new java.util.ArrayList<>();
+		for (int f = 0; f < flat.faces; ++f)
+		{
+			assertEquals(VertexShading.FACE, flat.normals(f, game, n));
+			boolean bump = flat.i1[f] == 4 || flat.i2[f] == 4 || flat.i3[f] == 4;
+			(bump ? onBump : offBump).add(corner(n, 0));
+		}
+		for (int f = 0; f < onBump.size(); ++f)
+		{
+			for (int g = f + 1; g < onBump.size(); ++g)
+			{
+				assertTrue(dot(onBump.get(f), onBump.get(g)) < 0.9999f);
+			}
+		}
+		for (float[] o : offBump)
+		{
+			assertTrue(dot(o, offBump.get(0)) > 0.9999f);
+		}
+		// smooth-marked on shared corners: at every corner all its triangles carry the one game normal, so the light
+		// runs across the triangle edges with no step
+		Mesh smooth = roof(true);
+		game = smooth.gameNormals();
+		java.util.Map<Integer, float[]> at = new java.util.HashMap<>();
+		for (int f = 0; f < smooth.faces; ++f)
+		{
+			assertEquals(VertexShading.VERTEX, smooth.normals(f, game, n));
+			int[] idx = {smooth.i1[f], smooth.i2[f], smooth.i3[f]};
+			for (int i = 0; i < 3; ++i)
+			{
+				float[] c = corner(n, i);
+				float[] seen = at.putIfAbsent(idx[i], c);
+				if (seen != null)
+				{
+					assertArrayEquals(seen, c, 0f);
+				}
+			}
+		}
+	}
+
 	@Test
 	public void aModelWithoutNormalsIsFlat()
 	{

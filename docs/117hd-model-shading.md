@@ -250,6 +250,24 @@ anywhere. So:
 - **A two-sided leaf quad** (the quad twice, wound both ways, on shared vertices): smooth-marked, the game's sums
   cancel to zero at every vertex, so 117 HD falls back to each face's own normal; flat-marked, the same normals
   directly. Each side is lit by its own normal (`aTwoSidedLeafQuadLightsEachSideByItsOwnNormal`).
+- **A thatched roof** (roof pieces are scene objects, mostly textured: the thatch texture). Two things can show its
+  triangles, and 117 HD has exactly one of them:
+  - *The colour.* A textured face is drawn as its texture times a lightness. The game bakes that lightness per face
+    when it marks the face flat (one value per triangle) and per corner when smooth. 117 HD throws it away and uses
+    lightness 90 on every textured face (zone `SceneUploader` 1722–1728), so it never shows triangles through the
+    colour. Lumen as it runs today keeps the game's baked lightness on textured faces (`frag.glsl` `fHsl / 127`), so a
+    flat-marked roof shows each triangle in its own baked tone — the facets in the user's
+    `~/.runelite/lumina/bugs/roof-thatch-facets.png` (lumen + lamps-full, the crease rule, not this branch). This
+    branch uses 117 HD's 90 (0deb2859), so that cause is gone here.
+  - *The light.* Flat-marked faces are lit by their own normal under 117 HD's rule: triangles in one plane share it
+    (a straight slope shows nothing), triangles on a bump or a fold each have their own, and 117 HD shows those as
+    separate tones too; smooth-marked faces on shared corners shade with no step
+    (`aFlatMarkedRoofShowsItsTrianglesAndASmoothOneDoesNot`). 117 HD's thatch material adds a normal map, which breaks
+    the facets up a little; we have none (no texture images).
+  - So at the Ardougne market's thatched shops this branch should show a roof in one even tone per plane, with
+    triangles visible only where the model's surface bends and the game marks those faces flat — the same places
+    117 HD shows them. Which faces the model marks flat is data: `::runelight faces 2` beside the shop writes them
+    to `captures/faces.txt`.
 - **Tile models** (shaped ground tiles): always smooth in 117 HD (its terrain normals, `ProceduralGenerator` 238–312,
   area-weighted sums over all ground faces); ours are smooth too (central differences, docs/117hd-world-shading.md
   §1.1).
