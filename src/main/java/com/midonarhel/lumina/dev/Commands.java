@@ -261,6 +261,16 @@ public final class Commands
 			plugin.setupSyncMode();
 			log.info("Frame pacing {}", plugin.pacer.isPaceHere() ? "here (Lumina's pacer)" : "by the client's limiter");
 		}
+		else if (args.length >= 2 && args[0].equals("strike"))
+		{
+			// `strike hold`: a strike whose flash stays at its top until `strike off`; `strike` alone: one strike
+			com.midonarhel.lumina.sky.Lightning.hold = args[1].equals("hold");
+			if (!args[1].equals("off"))
+			{
+				plugin.weather.getLightning().strikeNow();
+			}
+			log.info("Lightning {}", com.midonarhel.lumina.sky.Lightning.hold ? "held at its top" : "released");
+		}
 		else if (args.length >= 1 && args[0].equals("swapcapture"))
 		{
 			// the eases after a swap (LayerEase) take 0.3 s: `swapcapture 30` spans them at 60 FPS
