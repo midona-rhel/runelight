@@ -84,7 +84,9 @@ public class SceneUploader
 	private final boolean[] atWaterLevel = new boolean[ModelUploader.MAX_VERTEX_COUNT];
 	// faces of the last static model left out as the game's ripples (117 HD's, WaterOverrides); Zone.addAlphaModel has
 	// to skip them as well
-	private final boolean[] rippleFace = new boolean[ModelUploader.MAX_FACE_COUNT];
+	// per face of the static model being uploaded, the triangles it wrote to the alpha buffer: 0, 1, or 2 when drawn
+	// double-sided (Zone.addAlphaModel keeps one sort key per triangle)
+	private final int[] alphaTriangles = new int[ModelUploader.MAX_FACE_COUNT];
 	private final GroundBlender groundBlender = new GroundBlender();
 	private final float[] slope = new float[2];
 	private final float[] tileSlopes = new float[8];
@@ -648,7 +650,7 @@ public class SceneUploader
 			zone.addAlphaModel(zone.glVaoA, model, pos, endpos,
 				x - basex, y, z - basez,
 				lx, lz, ux, uz,
-				rid, level, id, rippleFace);
+				rid, level, id, alphaTriangles);
 		}
 	}
 
@@ -1434,7 +1436,7 @@ public class SceneUploader
 		int len = 0;
 		for (int face = 0; face < triangleCount; ++face)
 		{
-			rippleFace[face] = false;
+			alphaTriangles[face] = 0;
 			int color1 = color1s[face];
 			int color2 = color2s[face];
 			int color3 = color3s[face];
@@ -1467,7 +1469,6 @@ public class SceneUploader
 			if (ripples && overrides.hidesFace(id, objectWorld[0], objectWorld[1], objectWorld[2],
 				faceTextures != null && faceTextures[face] != -1, transparencies != null ? transparencies[face] : 0, color1))
 			{
-				rippleFace[face] = true;
 				continue;
 			}
 
@@ -1548,6 +1549,10 @@ public class SceneUploader
 			}
 			texture |= bits;
 			GpuIntBuffer buf = alpha && !fake ? ab : vb;
+			if (buf == ab)
+			{
+				alphaTriangles[face] = (shade & SurfaceMaterials.DOUBLE_SIDED) != 0 ? 2 : 1;
+			}
 
 			buf.put22224(vx1, vy1, vz1, sway ? swayCodes[triangleA] : 0, alphaBias | color1);
 			buf.put2222(texture, su0, sv0, n1);

@@ -440,7 +440,11 @@ public class Zone
 
 	static final Queue<AlphaModel> modelCache = new ArrayDeque<>();
 
-	void addAlphaModel(int vao, Model model, int startpos, int endpos, int x, int y, int z, int lx, int lz, int ux, int uz, int rid, int level, int id, boolean[] skipped)
+	/**
+	 * @param alphaTriangles per face of the model, the triangles the uploader wrote for it to this model's range of
+	 *                       the alpha buffer (0, 1, or 2 for a double-sided face), in face order: one sort key each
+	 */
+	void addAlphaModel(int vao, Model model, int startpos, int endpos, int x, int y, int z, int lx, int lz, int ux, int uz, int rid, int level, int id, int[] alphaTriangles)
 	{
 		AlphaModel m = new AlphaModel();
 		m.id = id;
@@ -465,8 +469,6 @@ public class Zone
 		}
 
 		int faceCount = model.getFaceCount();
-		int[] color3 = model.getFaceColors3();
-		byte[] transparencies = model.getFaceTransparencies();
 		float[] vertexX = model.getVerticesX();
 		float[] vertexY = model.getVerticesY();
 		float[] vertexZ = model.getVerticesZ();
@@ -479,7 +481,7 @@ public class Zone
 
 		for (int f = 0; f < faceCount; ++f)
 		{
-			if (color3[f] == -2 || transparencies[f] == 0 || skipped[f])
+			if (alphaTriangles[f] == 0)
 			{
 				continue;
 			}
@@ -517,7 +519,7 @@ public class Zone
 		char bufferIdx = 0;
 		for (int f = 0; f < faceCount; ++f)
 		{
-			if (color3[f] == -2 || transparencies[f] == 0 || skipped[f])
+			if (alphaTriangles[f] == 0)
 			{
 				continue;
 			}
@@ -528,10 +530,14 @@ public class Zone
 
 			radius = Math.max(radius, fx * fx + fy * fy + fz * fz);
 
-			packedFaces[bufferIdx] = ((fx & ((1 << 11) - 1)) << 21)
+			int key = ((fx & ((1 << 11) - 1)) << 21)
 				| ((fy & ((1 << 10) - 1)) << 11)
 				| (fz & ((1 << 11) - 1));
-			bufferIdx++;
+			// a double-sided face's back triangle follows its front one and sorts with it
+			for (int t = 0; t < alphaTriangles[f]; ++t)
+			{
+				packedFaces[bufferIdx++] = key;
+			}
 		}
 
 		assert radius >= 0;
