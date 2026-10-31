@@ -46,7 +46,7 @@ public class ShaderWatcher
 		String prop = System.getProperty("runelight.shaderDir");
 		Path dir = prop != null
 			? Paths.get(prop)
-			: Paths.get(System.getProperty("user.dir"), "src", "main", "resources", "com", "midonarhel", "runelight");
+			: Paths.get(System.getProperty("user.dir"), "src", "main", "resources", "com", "midonarhel", "lumina");
 		dir = dir.toAbsolutePath().normalize();
 		if (!Files.isDirectory(dir) || !Files.isRegularFile(dir.resolve("frag.glsl")))
 		{
