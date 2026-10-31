@@ -173,13 +173,13 @@ redwood tops, `undoVanillaShading: false` on "Tree - Lighter", "Oak Tree - Light
 
 | # | difference | change | commit |
 |---|---|---|---|
-| D1 | normal source: ours area-weighted over all faces vs the game's `getVertexNormals*` | read the game's arrays (static `Model`, dynamic `ModelData` gains the three arrays) | see HANDOVER row |
-| D2 | flat faces: crease-angle smoothing + unlit colour vs face normal | 117 HD's rule: `!hasNormals ∨ flatNormals ∨ color3 == −1` → CPU face normal from rotated positions; `computeNormals`, `flatFaceNormals`, `SMOOTH_COS`, `COPLANAR_COS`, the unlit-colour swap go | |
-| D3 | all-zero smooth face | face normal, static re-rotates (copied), dynamic doesn't | |
-| D4 | shader flips the vertex normal to the camera side | used as uploaded; the derivative normal stays only for a 0 normal (terrain and others that send none) | |
-| D5 | undo normal: our smooth normal at every corner vs vertex normals (smooth, model space) / face normal (flat, rotated space) | as 117 HD | |
-| D6 | textured faces: game lightness vs 90 | 90, not undone | |
-| D7 | override flags | `flatNormals`, `upwardsNormals`, `undoVanillaShading: false` imported into `scene/model_shading.json` and applied per face in all three upload paths (§4); `doubleSidedFaces` and `inheritTileColorType` not (below) | |
+| D1 | normal source: ours area-weighted over all faces vs the game's `getVertexNormals*` | read the game's arrays (static `Model`, dynamic `ModelData` gains the three arrays) | 79d5c01d |
+| D2 | flat faces: crease-angle smoothing + unlit colour vs face normal | 117 HD's rule: `!hasNormals ∨ flatNormals ∨ color3 == −1` → CPU face normal from rotated positions; `computeNormals`, `flatFaceNormals`, `SMOOTH_COS`, `COPLANAR_COS`, the unlit-colour swap go | 79d5c01d |
+| D3 | all-zero smooth face | face normal, static re-rotates (copied), dynamic doesn't | 79d5c01d |
+| D4 | shader flips the vertex normal to the camera side | used as uploaded; the derivative normal stays only for a 0 normal (terrain and others that send none) | e2721038 |
+| D5 | undo normal: our smooth normal at every corner vs vertex normals (smooth, model space) / face normal (flat, rotated space) | as 117 HD | 0deb2859 |
+| D6 | textured faces: game lightness vs 90 | 90, not undone | 0deb2859 |
+| D7 | override flags | `flatNormals`, `upwardsNormals`, `undoVanillaShading: false` imported into `scene/model_shading.json` and applied per face in all three upload paths (§4); `doubleSidedFaces` and `inheritTileColorType` not (below) | 9ad03695 |
 
 Not ported, and why:
 
@@ -219,3 +219,4 @@ vertex normals. If the canopies the user saw as faceted are flat-marked faces, 1
 **lighting** back (the crease rule of 00894644 hid them); that is 117 HD's look, by its code
 (`SceneUploader.java:1852`), and is the user's call. Whether a given tree's canopy faces are flat-marked is in the
 model file, not in 117 HD's data: none of the ordinary trees has a `flatNormals` or `upwardsNormals` override.
+
