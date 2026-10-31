@@ -44,8 +44,6 @@ uniform sampler2D cloudHalf;
 
 #define TAU 6.28318530718
 
-// how much AO also darkens direct sun and point light; physically 0, but contact shading reads better with some
-#define AO_DIRECT 1.0
 
 
 #define TILE_SIZE 128.0
@@ -389,7 +387,7 @@ vec4 shadeScene(ivec2 px, SceneSample sm, vec4 transparent) {
     }
     }
     light = indirect
-      + caster * envSun * max(ndl, 0.0) * shadow * mix(1.0, ao, AO_DIRECT);
+      + caster * envSun * max(ndl, 0.0) * shadow;
     if (transmissive > 0.0) {
       // light through the leaf isn't occluded by the creases SSAO sees on its front
       light += caster * envSun * transmission(ndl, dot(-casterDir, normalize(-p)), transmissive) * shadow;
@@ -407,7 +405,7 @@ vec4 shadeScene(ivec2 px, SceneSample sm, vec4 transparent) {
   int cluster = clusterAt(px, viewDepth(d));
   if ((compositePart == 0 || compositePart == 3) && pointLightsEnabled == 1 && inside) {
     vec3 through;
-    light += lampsOnSurface(cluster, p, n, sm.faceNormal, transmissive, through) * mix(1.0, ao, AO_DIRECT);
+    light += lampsOnSurface(cluster, p, n, sm.faceNormal, transmissive, through);
     // the canopy interior SSAO darkens is exactly where light inside a tree shines through
     light += through;
   }
