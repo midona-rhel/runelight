@@ -397,6 +397,7 @@ public class LuminaPlugin extends Plugin implements DrawCallbacks
 	// lamp.glsl's lampWallsHeader with no walls bound
 	public static final float[] NO_WALLS = {0, 0, 0, 0, 1};
 	public int uniAlphaPass;
+	public int uniAlphaShadows, uniAlphaLightProj, uniAlphaShadowTexel, uniAlphaShadowDepthRange, uniAlphaDepthZeroToOne;
 	public int uniSceneOutdoors;
 	// the lamps on the transparent faces (frag.glsl's alpha pass)
 	public int uniScenePointLights;
@@ -1962,6 +1963,17 @@ public class LuminaPlugin extends Plugin implements DrawCallbacks
 			glDisable(GL_BLEND);
 		}
 		glUniform1i(uniAlphaPass, alpha ? 1 : 0);
+		// the shadow map as the shadow pass left it last frame, with that frame's matrix (frag.glsl alphaShadow)
+		boolean shadows = alpha && frameShadows && shadowMap.isInitialized();
+		glUniform1i(uniAlphaShadows, shadows ? 1 : 0);
+		if (shadows)
+		{
+			shadowMap.bindForSampling(SHADOW_RAW_UNIT, SHADOW_COMPARE_UNIT);
+			glUniformMatrix4fv(uniAlphaLightProj, false, shadowMap.lightProj);
+			glUniform1f(uniAlphaShadowTexel, 2 * shadowMap.getRadius() / shadowMap.getSize());
+			glUniform1f(uniAlphaShadowDepthRange, shadowMap.getDepthRange());
+			glUniform1i(uniAlphaDepthZeroToOne, glCapabilities.OpenGL45 ? 1 : 0);
+		}
 	}
 
 	/** Whether the window's framebuffer has a stencil (windowStencil); call with it bound. */

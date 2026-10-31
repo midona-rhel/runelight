@@ -61,8 +61,39 @@ layout(location = 2) out vec4 FragAlpha;  // transparency layer, see SceneTarget
 layout(location = 3) out vec4 FragMaterial;  // the material and the face's normal, see material_target.glsl
 
 // Transparent faces are drawn in a separate pass into their own layer and lit right here, because the composite
-// pass only sees the opaque surface behind them. Same lighting as the composite, without shadows.
+// pass only sees the opaque surface behind them. Same lighting as the composite; shadowed by the sun's map as 117 HD
+// shadows them (scene_frag.glsl), the map of the frame before, which is the one drawn when they are (the shadow pass
+// comes after the scene), with its own matrix, so it lines up but moving casters lag a frame.
 uniform int alphaPass;
+uniform int alphaShadows;             // 1 when there is a shadow map to shade them with
+uniform sampler2DShadow alphaShadowCompare;
+uniform mat4 alphaLightProj;          // world -> light clip, of the frame the map was drawn in
+uniform float alphaShadowTexel;       // world units per shadow map texel
+uniform float alphaShadowDepthRange;  // ShadowMap.getDepthRange
+uniform int alphaDepthZeroToOne;      // 1 with glClipControl (GL 4.5)
+
+// how much of the sun reaches world position p with normal n: 4 hardware-filtered compares a texel apart
+float alphaShadow(vec3 p, vec3 n) {
+  if (alphaShadows == 0) {
+    return 1.0;
+  }
+  // normal offset keeps a surface from shadowing itself, as shadow_pcss.glsl does
+  vec4 lc = alphaLightProj * vec4(p + n * alphaShadowTexel * 1.5, 1.0);
+  vec2 uv = lc.xy * 0.5 + 0.5;
+  float z = alphaDepthZeroToOne == 1 ? lc.z : lc.z * 0.5 + 0.5;
+  if (any(lessThan(uv, vec2(0.0))) || any(greaterThan(uv, vec2(1.0))) || z >= 1.0) {
+    return 1.0;
+  }
+  float bias = 2.0 * alphaShadowTexel / (2.0 * alphaShadowDepthRange);
+  vec2 t = vec2(textureSize(alphaShadowCompare, 0));
+  float lit = 0.0;
+  for (int i = 0; i < 4; ++i) {
+    vec2 o = vec2(i & 1, i >> 1) - 0.5;
+    lit += texture(alphaShadowCompare, vec3(uv + o / t, z - bias));
+  }
+  float edgeFade = smoothstep(0.0, 0.08, min(min(uv.x, uv.y), min(1.0 - uv.x, 1.0 - uv.y)));
+  return mix(1.0, lit * 0.25, edgeFade);
+}
 uniform int outdoors;
 uniform int proceduralSky;
 uniform vec3 casterDir;
@@ -174,7 +205,8 @@ void main() {
       float ndl = dot(n, casterDir);
       vec3 viewDir = normalize(vec3(cameraX, cameraY, cameraZ) - fWorldPos);
       light = (ambientLight(sunAltitude) + skyLight(sunAltitude) * max(-n.y, 0.0)) * envAmbient
-        + caster * envSun * (max(ndl, 0.0) + transmission(ndl, dot(-casterDir, viewDir), materialTransmissive(fMaterial)));
+        + caster * envSun * (max(ndl, 0.0) + transmission(ndl, dot(-casterDir, viewDir), materialTransmissive(fMaterial)))
+        * alphaShadow(fWorldPos, n);
     } else {
       light = envCaveLight(n);
     }

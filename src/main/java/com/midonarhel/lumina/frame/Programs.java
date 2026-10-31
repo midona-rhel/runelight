@@ -297,12 +297,18 @@ public final class Programs
 		glUseProgram(0);
 
 		plugin.uniAlphaPass = glGetUniformLocation(plugin.glProgram, "alphaPass");
+		plugin.uniAlphaShadows = glGetUniformLocation(plugin.glProgram, "alphaShadows");
+		plugin.uniAlphaLightProj = glGetUniformLocation(plugin.glProgram, "alphaLightProj");
+		plugin.uniAlphaShadowTexel = glGetUniformLocation(plugin.glProgram, "alphaShadowTexel");
+		plugin.uniAlphaShadowDepthRange = glGetUniformLocation(plugin.glProgram, "alphaShadowDepthRange");
+		plugin.uniAlphaDepthZeroToOne = glGetUniformLocation(plugin.glProgram, "alphaDepthZeroToOne");
 		plugin.uniSceneOutdoors = glGetUniformLocation(plugin.glProgram, "outdoors");
 		plugin.uniScenePointLights = glGetUniformLocation(plugin.glProgram, "pointLightsEnabled");
 		plugin.sceneLampWalls.locate(plugin.glProgram);
 		glUseProgram(plugin.glProgram);
 		glUniform1i(glGetUniformLocation(plugin.glProgram, "lightData"), LIGHT_DATA_UNIT);
 		glUniform1i(glGetUniformLocation(plugin.glProgram, "clusterData"), CLUSTER_DATA_UNIT);
+		glUniform1i(glGetUniformLocation(plugin.glProgram, "alphaShadowCompare"), SHADOW_COMPARE_UNIT);
 		plugin.uniSceneProceduralSky = glGetUniformLocation(plugin.glProgram, "proceduralSky");
 		plugin.uniSceneCasterDir = glGetUniformLocation(plugin.glProgram, "casterDir");
 		plugin.uniSceneSunIsCaster = glGetUniformLocation(plugin.glProgram, "sunIsCaster");
