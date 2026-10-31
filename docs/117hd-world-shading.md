@@ -30,22 +30,23 @@ commit each:
 
 | # | question | decision | commit |
 |---|---|---|---|
-| 5 | AO on direct light | AO on ambient only (`AO_DIRECT` gone) | 24d6ea8a |
-| 6 | ambient as one mechanism | (ambient + sky light) × sky visibility × area × AO; the room daylight floor gone, the room fill its own light term | 676bf249 |
+| 5 | AO on direct light | **reverted by the user** (bf7801fb): SSAO darkens sun and lamps again | 24d6ea8a, bf7801fb |
+| 6 | ambient as one mechanism | (ambient + sky light) × sky visibility × area × AO; the room daylight floor gone; the room fill flat and directionless, darkened by AO (the user) | 676bf249, 5a6794ad |
 | 7 | foliage materials (textures) | no: never load texture images | — |
 | 8 | specular | none | — |
 | 9 | fog haze | keep ours (the fog segment's) | — |
-| 11 | water bed colours | the tile's own: no 2×2 average, no bank grading; GroundBlender's vertex map gone, the class is `GroundColors` | 79f916d3 |
+| 11 | water bed colours | **reverted by the user** ("how we did it before"): 2×2 mean and bank grading back, `GroundBlender` with its land colour map | 79f916d3, 2c80ab50 |
 | 12 | double-sided upper floors | copied, counted in `zoneSize` | e0ccb260 |
-| 12 | tile geometry overrides (21 `heightOffset` / `doubleSidedFaces` entries), gap fillers | **not done**: the overrides need 117 HD's per-tile match over all 1,146 tile overrides (area boxes, id lists, any-match entries, file-order precedence, replacements), gap fillers a draw pass of their own at the far plane | — |
+| 12 | tile geometry overrides (21 `heightOffset` / `doubleSidedFaces` entries) | copied: matched through the water importer's tile-override list (117 HD's precedence), replacements at 117 HD's defaults | 5396df40 |
+| 12 | gap fillers | **not done**: needs a design for the deferred composite (see the HANDOVER row) | — |
 | 13 | wind normal tilt | deleted | 84370197 |
 | 14 | shadows on transparent faces | copied (last frame's map with its own matrix, 4-tap PCF) | 9b9f8650 |
 | 15 | interpolation space | keep ours | — |
 | 16 | `inheritTileColorType` | copied (static uploads) | 4986bba9 |
 | 16 | `doubleSidedFaces` + double-sided materials (every leaf texture) | copied for static models; the zone count in one function, which also closes S4 (translucent faces that become fake water) | 9d42eae1 |
 
-**Waiting for the user** (not touched): 1 daylight fill, 2 brightness curve, 3 light levels, 4 sun direction clamp,
-10 tone. The original wording of all sixteen follows.
+**The user, on the look questions**: 1 daylight fill and 2 brightness curve stay as the branch has them; 3 (a brighter,
+whiter sun), 4 (117 HD's sun angle) and 10 (clipping highlights) no. The original wording of all sixteen follows.
 
 ### The sixteen as first asked
 
