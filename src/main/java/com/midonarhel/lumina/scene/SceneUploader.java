@@ -574,6 +574,7 @@ public class SceneUploader
 	private void uploadZoneRenderable(Renderable r, Zone zone, int orient, int x, int y, int z, int lx, int lz, int ux, int uz, int id, GpuIntBuffer vb, GpuIntBuffer ab)
 	{
 		int material = SurfaceMaterials.forObject(id, r) | WindSway.forObject(id, r);
+		int shading = SurfaceMaterials.shadingForObject(id, r);
 		if (!swayFlushing && WindSway.sways(material))
 		{
 			swayDeferred.add(new SwayObject(r, orient, x, y, z, lx, lz, ux, uz, id, rid, owner));
@@ -588,14 +589,14 @@ public class SceneUploader
 		if (r instanceof Model)
 		{
 			model = (Model) r;
-			uploadStaticModel(model, orient, x - basex, y, z - basez, material, id, vb, ab);
+			uploadStaticModel(model, orient, x - basex, y, z - basez, material, shading, id, vb, ab);
 		}
 		else if (r instanceof DynamicObject)
 		{
 			model = ((DynamicObject) r).getModelZbuf();
 			if (model != null)
 			{
-				uploadStaticModel(model, orient, x - basex, y, z - basez, material, id, vb, ab);
+				uploadStaticModel(model, orient, x - basex, y, z - basez, material, shading, id, vb, ab);
 			}
 		}
 		if (vb instanceof VoxelCapture.Buffer)
@@ -1209,7 +1210,8 @@ public class SceneUploader
 	// the scene object being uploaded (VoxelCapture.ownerOf)
 	private int owner;
 
-	private int uploadStaticModel(Model model, int orient, int x, int y, int z, int material, int id, GpuIntBuffer vb, GpuIntBuffer ab)
+	private int uploadStaticModel(Model model, int orient, int x, int y, int z, int material, int shading, int id,
+		GpuIntBuffer vb, GpuIntBuffer ab)
 	{
 		final int vertexCount = model.getVerticesCount();
 		final int triangleCount = model.getFaceCount();
@@ -1316,6 +1318,9 @@ public class SceneUploader
 			{
 				continue;
 			}
+			// 117 HD's override flags for this face, by its colour as the game gives it
+			int shade = SurfaceMaterials.shading(shading, faceTextures != null ? faceTextures[face] : -1, color1,
+				SurfaceMaterials.opacity(transparencies, face));
 
 			int triangleA = indices1[face];
 			int triangleB = indices2[face];
@@ -1347,9 +1352,10 @@ public class SceneUploader
 			// 117 HD's normals: the face's own for flat faces (from the rotated positions), else the game's; vanilla
 			// shading undone with them on untextured faces, then the game's rotated by the orientation, like 117 HD's
 			// static upload also a face normal that stood in for three zero vertex normals (SceneUploader 1856, 1883)
-			int normalKind = VertexShading.faceNormals(faceNormals, normalsX, normalsY, normalsZ, flat,
+			int normalKind = VertexShading.faceNormals(faceNormals, normalsX, normalsY, normalsZ,
+				flat || (shade & SurfaceMaterials.FLAT_NORMALS) != 0,
 				triangleA, triangleB, triangleC, vx1, vy1, vz1, vx2, vy2, vz2, vx3, vy3, vz3);
-			if (faceTextures == null || faceTextures[face] == -1)
+			if ((faceTextures == null || faceTextures[face] == -1) && (shade & SurfaceMaterials.KEEP_SHADING) == 0)
 			{
 				color1 = VertexShading.undoVanillaShading(color1, faceNormals, 0);
 				color2 = VertexShading.undoVanillaShading(color2, faceNormals, 1);
@@ -1358,6 +1364,10 @@ public class SceneUploader
 			if (normalKind != VertexShading.FACE && orient != 0)
 			{
 				VertexShading.rotateNormals(faceNormals, orientSin, orientCos);
+			}
+			if ((shade & SurfaceMaterials.UPWARDS_NORMALS) != 0)
+			{
+				VertexShading.upwardsNormals(faceNormals);
 			}
 			int n1 = VertexShading.encodeNormal(faceNormals, 0);
 			int n2 = VertexShading.encodeNormal(faceNormals, 1);

@@ -179,7 +179,7 @@ redwood tops, `undoVanillaShading: false` on "Tree - Lighter", "Oak Tree - Light
 | D4 | shader flips the vertex normal to the camera side | used as uploaded; the derivative normal stays only for a 0 normal (terrain and others that send none) | |
 | D5 | undo normal: our smooth normal at every corner vs vertex normals (smooth, model space) / face normal (flat, rotated space) | as 117 HD | |
 | D6 | textured faces: game lightness vs 90 | 90, not undone | |
-| D7 | override flags | `flatNormals`, `upwardsNormals`, `undoVanillaShading: false` imported (§4); `doubleSidedFaces` and `inheritTileColorType` not (below) | |
+| D7 | override flags | `flatNormals`, `upwardsNormals`, `undoVanillaShading: false` imported into `scene/model_shading.json` and applied per face in all three upload paths (§4); `doubleSidedFaces` and `inheritTileColorType` not (below) | |
 
 Not ported, and why:
 
@@ -194,10 +194,21 @@ Not ported, and why:
 
 ## 4. Override import
 
-`tools/import_117hd_shading.py <RLHD>/src/main/resources/rs117/hd/scene src/main/resources/com/midonarhel/lumina/scene/materials.json`
-adds a `shading` section: groups in the same form as `emissiveGroups`/`fakeWater` (objects, npcs, untextured/textured
-scope, colour rules), each with the flags it sets. Overrides limited to areas or seasonal themes are skipped (we have no
-area test for these); the importer prints what it skipped.
+`tools/import_117hd_shading.py <RLHD>/src/main/resources/rs117/hd/scene src/main/resources/com/midonarhel/lumina/scene/model_shading.json`
+writes `shadingGroups` (its own file, so `import_117hd_materials.py` rewriting `materials.json` leaves it alone): groups
+in the same form as `emissiveGroups`/`fakeWater` (objects, npcs, the textured faces' flags, the untextured faces'
+default and colour rules), a level being the flags 1 flat normals, 2 upwards normals, 4 keep vanilla shading. Per id the
+last override without areas wins, as `ModelOverrideManager.addEntry` (132–218). At import (2026-10-31): 245 groups,
+4,179 objects, 21 NPCs. Skipped, and listed by the importer: 48 overrides limited to areas or seasons (Chinchompa
+hunting grass, Lumbridge/Edgeville walls, farmyard hay roofs, …) and the projectile/graphics ones (4 with flags).
+Approximation: two flat-normal overrides (the water and fire obelisks) have a `materialOverrides` entry that 117 HD
+uses for their water/lava-textured faces without the flag; ours flat-normals those faces too.
+
+At upload (`SurfaceMaterials.shadingForObject`/`shadingForRenderable` → `SurfaceMaterials.shading` per face, by the
+face's game colour and alpha as the emissive groups are): `FLAT_NORMALS` → the face normal as for a game-flat face
+(colours stay per corner, as 117 HD's); `KEEP_SHADING` → no undo; `UPWARDS_NORMALS` → after the undo and rotation,
+`(0, −2048, 0)` on every corner — 117 HD swaps the lighting normal in its fragment shader instead, after the undo with
+the real normal; ours also tilts it with the wind, as any normal.
 
 ## 5. What 117 HD's rule means for the tree canopies
 

@@ -58,7 +58,7 @@ public class TempModels
 		// read by the packing thread
 		private boolean sorted, noDepth;
 		private Projection projection;
-		private int orient, x, y, z, cameraX, cameraY, cameraZ, material;
+		private int orient, x, y, z, cameraX, cameraY, cameraZ, material, shading;
 
 		// written by the packing thread: opaque faces from 0, alpha faces from alphaStart
 		int[] out = new int[0];
@@ -103,7 +103,7 @@ public class TempModels
 					alpha.limit(end);
 					alpha.position(alphaStart);
 					uploader.uploadSortedModel(projection, model, orient, x, y, z,
-						cameraX, cameraY, cameraZ, opaque, alpha, noDepth, material);
+						cameraX, cameraY, cameraZ, opaque, alpha, noDepth, material, shading);
 					opaqueLen = opaque.position();
 					alphaLen = alpha.position() - alphaStart;
 				}
@@ -112,7 +112,7 @@ public class TempModels
 					int end = model.faceCount * FACE_SIZE;
 					buffers(end);
 					opaque.limit(end);
-					uploader.uploadTempModel(model, orient, x, y, z, cameraX, cameraY, cameraZ, opaque, material);
+					uploader.uploadTempModel(model, orient, x, y, z, cameraX, cameraY, cameraZ, opaque, material, shading);
 					opaqueLen = opaque.position();
 				}
 			}
@@ -147,9 +147,9 @@ public class TempModels
 	}
 
 	public void uploadTemp(LuminaPlugin.RenderThread rt, LuminaPlugin.SceneContext ctx, Scene scene, Model m,
-		int orient, int x, int y, int z, int material)
+		int orient, int x, int y, int z, int material, int shading)
 	{
-		Job job = next(rt, ctx, scene, m, orient, x, y, z, material);
+		Job job = next(rt, ctx, scene, m, orient, x, y, z, material, shading);
 		job.sorted = false;
 		start(job);
 	}
@@ -159,9 +159,10 @@ public class TempModels
 	 * @param alphaY height its alpha faces are sorted at among the zone's alpha models
 	 */
 	public void uploadSorted(LuminaPlugin.RenderThread rt, LuminaPlugin.SceneContext ctx, Scene scene, Projection projection,
-		Model m, int orient, int x, int y, int z, int material, boolean noDepth, int zx, int zz, int plane, int alphaY)
+		Model m, int orient, int x, int y, int z, int material, int shading, boolean noDepth, int zx, int zz, int plane,
+		int alphaY)
 	{
-		Job job = next(rt, ctx, scene, m, orient, x, y, z, material);
+		Job job = next(rt, ctx, scene, m, orient, x, y, z, material, shading);
 		job.sorted = true;
 		job.projection = projection;
 		job.noDepth = noDepth;
@@ -173,7 +174,7 @@ public class TempModels
 	}
 
 	private Job next(LuminaPlugin.RenderThread rt, LuminaPlugin.SceneContext ctx, Scene scene, Model m,
-		int orient, int x, int y, int z, int material)
+		int orient, int x, int y, int z, int material, int shading)
 	{
 		if (count == MAX_JOBS)
 		{
@@ -205,6 +206,7 @@ public class TempModels
 		job.cameraY = ctx.cameraY;
 		job.cameraZ = ctx.cameraZ;
 		job.material = material;
+		job.shading = shading;
 		return job;
 	}
 

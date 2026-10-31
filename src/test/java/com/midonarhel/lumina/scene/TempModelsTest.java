@@ -175,14 +175,14 @@ public class TempModelsTest
 	{
 		int n = m.getFaceCount() * FACE_SIZE;
 		IntBuffer o = IntBuffer.allocate(n), a = IntBuffer.allocate(n);
-		u.uploadSortedModel(PROJECTION, m, orient, x, 0, 0, 100, -300, -4000, o, a, prioritySort, 0);
+		u.uploadSortedModel(PROJECTION, m, orient, x, 0, 0, 100, -300, -4000, o, a, prioritySort, 0, 0);
 		return new int[][]{Arrays.copyOf(o.array(), o.position()), Arrays.copyOf(a.array(), a.position())};
 	}
 
 	private static int[] uploadTemp(ModelUploader u, Model m, int orient, int x)
 	{
 		IntBuffer o = IntBuffer.allocate(m.getFaceCount() * FACE_SIZE);
-		u.uploadTempModel(m, orient, x, 0, 0, 100, -300, -4000, o, 0);
+		u.uploadTempModel(m, orient, x, 0, 0, 100, -300, -4000, o, 0, 0);
 		return Arrays.copyOf(o.array(), o.position());
 	}
 
@@ -201,12 +201,12 @@ public class TempModelsTest
 			scramble(m, seed);
 
 			IntBuffer o = IntBuffer.allocate(temp.length + 64 * FACE_SIZE), a = IntBuffer.allocate(o.capacity());
-			u.uploadSortedModel(PROJECTION, d, 300 * seed, 0, 0, 0, 100, -300, -4000, o, a, true, 0);
+			u.uploadSortedModel(PROJECTION, d, 300 * seed, 0, 0, 0, 100, -300, -4000, o, a, true, 0, 0);
 			assertArrayEquals(sorted[0], Arrays.copyOf(o.array(), o.position()));
 			assertArrayEquals(sorted[1], Arrays.copyOf(a.array(), a.position()));
 
 			o.clear();
-			u.uploadTempModel(d, 300 * seed, 0, 0, 0, 100, -300, -4000, o, 0);
+			u.uploadTempModel(d, 300 * seed, 0, 0, 0, 100, -300, -4000, o, 0, 0);
 			assertArrayEquals(temp, Arrays.copyOf(o.array(), o.position()));
 		}
 	}
@@ -268,13 +268,13 @@ public class TempModelsTest
 					int[][] out = uploadSorted(reference, m, orient, i, noDepth);
 					expected.add(out[0]);
 					expected.add(out[1]);
-					rec.uploadSorted(null, ctx, null, PROJECTION, m, orient, i, 0, 0, 0, noDepth, 0, 0, 0, 0);
+					rec.uploadSorted(null, ctx, null, PROJECTION, m, orient, i, 0, 0, 0, 0, noDepth, 0, 0, 0, 0);
 				}
 				else
 				{
 					expected.add(uploadTemp(reference, m, orient, i));
 					expected.add(new int[0]);
-					rec.uploadTemp(null, ctx, null, m, orient, i, 0, 0, 0);
+					rec.uploadTemp(null, ctx, null, m, orient, i, 0, 0, 0, 0);
 				}
 				scramble(m, i);
 			}

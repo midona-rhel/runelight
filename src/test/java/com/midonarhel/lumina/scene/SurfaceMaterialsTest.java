@@ -152,4 +152,28 @@ public class SurfaceMaterialsTest
 		assertEquals(80, SurfaceMaterials.fakeHeight(-20, -100));
 		assertEquals(0, SurfaceMaterials.fakeHeight(-20, 40));
 	}
+	// model_shading.json, 117 HD's override flags (tools/import_117hd_shading.py)
+	private static final int NEWBIE_TREE = 9730, SHORT_GRASS = 731, TRANSLUCENT_FLAT = 36490, PLAIN_OBJECT = 2;
+
+	private static int shading(int objectId, int texture, int hsl, int opacity)
+	{
+		return SurfaceMaterials.shading(SurfaceMaterials.shadingForObject(objectId, null), texture, hsl, opacity);
+	}
+
+	@Test
+	public void shadingFlagsFollow117HdsOverrides()
+	{
+		// "Tree - Lighter": undoVanillaShading false on the whole model
+		assertEquals(SurfaceMaterials.KEEP_SHADING, shading(NEWBIE_TREE, -1, hsl(8, 3, 40), OPAQUE));
+		// "Short grass which shouldn't cast shadows": upwardsNormals, textured faces too
+		assertEquals(SurfaceMaterials.UPWARDS_NORMALS, shading(SHORT_GRASS, -1, hsl(20, 4, 50), OPAQUE));
+		assertEquals(SurfaceMaterials.UPWARDS_NORMALS, shading(SHORT_GRASS, 12, hsl(0, 0, 50), OPAQUE));
+		// a colour override ("a<255") flat-normals only the translucent untextured faces
+		assertEquals(SurfaceMaterials.FLAT_NORMALS, shading(TRANSLUCENT_FLAT, -1, hsl(20, 4, 50), 128));
+		assertEquals(0, shading(TRANSLUCENT_FLAT, -1, hsl(20, 4, 50), OPAQUE));
+		assertEquals(0, shading(TRANSLUCENT_FLAT, 12, hsl(20, 4, 50), 128));
+		// no override: nothing
+		assertEquals(0, shading(PLAIN_OBJECT, -1, hsl(20, 4, 50), OPAQUE));
+		assertEquals(0, SurfaceMaterials.shading(0, -1, hsl(20, 4, 50), OPAQUE));
+	}
 }

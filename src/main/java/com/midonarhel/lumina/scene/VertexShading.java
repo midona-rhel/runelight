@@ -133,6 +133,21 @@ public final class VertexShading
 		}
 	}
 
+	/**
+	 * 117 HD's upwardsNormals (scene_frag.glsl 359): the face is lit as if it faced straight up, (0, -1, 0) in the
+	 * game's y-down space, on all three corners. 117 HD swaps the normal in the shader, after undoing vanilla
+	 * shading with the real one; here it replaces the uploaded normal at the same point.
+	 */
+	static void upwardsNormals(int[] normals)
+	{
+		for (int i = 0; i < 9; i += 3)
+		{
+			normals[i] = 0;
+			normals[i + 1] = -2048;
+			normals[i + 2] = 0;
+		}
+	}
+
 	/** Corner {@code i}'s normal from {@link #faceNormals}, encoded; 0 for a zero normal. */
 	static int encodeNormal(int[] normals, int i)
 	{

@@ -290,6 +290,16 @@ public class VertexShadingTest
 	}
 
 	@Test
+	public void upwardsNormalsPointUpOnEveryCorner()
+	{
+		// 117 HD's upwardsNormals: (0, -1, 0), the game's y pointing down
+		int[] n = {2048, 5, 0, 0, 7, 1000, -300, 9, 400};
+		VertexShading.upwardsNormals(n);
+		assertArrayEquals(new int[]{0, -2048, 0, 0, -2048, 0, 0, -2048, 0}, n);
+		assertArrayEquals(new float[]{0, -1, 0}, VertexShading.decodeNormal(VertexShading.encodeNormal(n, 1)), 1e-6f);
+	}
+
+	@Test
 	public void undoBrightensWhatVanillaDarkenedWith117HdsConstants()
 	{
 		int color = 10 << 10 | 0 << 7 | 40; // hue 10, saturation 0, lightness 40

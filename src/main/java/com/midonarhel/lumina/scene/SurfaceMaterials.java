@@ -91,6 +91,16 @@ public final class SurfaceMaterials
 	// per texture id: the face bits (already shifted)
 	private static int[] textures = new int[0];
 
+	// 117 HD's per-model normal and shading flags (model_shading.json, from tools/import_117hd_shading.py): one
+	// group per distinct override, whose rules pick the flags of each untextured face by its colour as the override's
+	// colorOverrides do; per object and NPC 1 + its group's index, 0 for none
+	public static final int FLAT_NORMALS = 1;    // flatNormals: every face lit by its own normal
+	public static final int UPWARDS_NORMALS = 2; // upwardsNormals: lit as if facing straight up
+	public static final int KEEP_SHADING = 4;    // undoVanillaShading false: the game's shading kept
+	private static int[] shadingObjects = new int[0];
+	private static int[] shadingNpcs = new int[0];
+	private static Group[] shadingGroups = new Group[0];
+
 	private SurfaceMaterials()
 	{
 	}
@@ -131,6 +141,12 @@ public final class SurfaceMaterials
 		int[][] emissiveSpotanims;
 		// as emissiveGroups, a level above 0 meaning fake water
 		Group[] fakeWater;
+	}
+
+	private static class ShadingData
+	{
+		// as emissiveGroups, the levels being the shading flags
+		Group[] shadingGroups;
 	}
 
 	/**
@@ -235,6 +251,7 @@ public final class SurfaceMaterials
 
 	public static void load(Gson gson)
 	{
+		loadShading(gson);
 		Data d;
 		try (InputStream is = SurfaceMaterials.class.getResourceAsStream("materials.json"))
 		{
@@ -334,6 +351,46 @@ public final class SurfaceMaterials
 		groups = g;
 		fakeGroups = fake;
 		textures = tex;
+	}
+
+	private static void loadShading(Gson gson)
+	{
+		ShadingData d;
+		try (InputStream is = SurfaceMaterials.class.getResourceAsStream("model_shading.json"))
+		{
+			if (is == null)
+			{
+				log.warn("model_shading.json missing");
+				return;
+			}
+			d = gson.fromJson(new InputStreamReader(is, StandardCharsets.UTF_8), ShadingData.class);
+		}
+		catch (Exception ex)
+		{
+			log.error("Unable to load model_shading.json", ex);
+			return;
+		}
+		Group[] g = d.shadingGroups != null ? d.shadingGroups : new Group[0];
+		int[] obj = new int[maxId(null, null, null, g, true) + 1];
+		int[] npc = new int[maxId(null, null, null, g, false) + 1];
+		for (int i = 0; i < g.length; i++)
+		{
+			for (Rule r : g[i].rules)
+			{
+				r.compile();
+			}
+			for (int id : g[i].objects)
+			{
+				obj[id] = i + 1;
+			}
+			for (int id : g[i].npcs)
+			{
+				npc[id] = i + 1;
+			}
+		}
+		shadingObjects = obj;
+		shadingNpcs = npc;
+		shadingGroups = g;
 	}
 
 	private static int maxId(int[] plain, int[][] a, int[][] b, Group[] g, boolean objectGroups)
@@ -458,6 +515,68 @@ public final class SurfaceMaterials
 			return forObject(id, r);
 		}
 		return SNOW_NONE;
+	}
+
+	/**
+	 * The shading group of a static or animated scene object, for {@link #shading}; 0 for none. Prefers the
+	 * composition the dynamic object recorded, as {@link #forObject} does.
+	 */
+	public static int shadingForObject(int id, Renderable r)
+	{
+		int group = lookup(shadingObjects, id);
+		if (r instanceof DynamicObject)
+		{
+			var comp = ((DynamicObject) r).getRecordedObjectComposition();
+			if (comp != null)
+			{
+				int g = lookup(shadingObjects, comp.getId());
+				if (g != 0)
+				{
+					group = g;
+				}
+			}
+		}
+		return group;
+	}
+
+	/**
+	 * The shading group of an entity drawn as a temporary model (NPCs and objects; 117 HD's projectile and graphics
+	 * object flags are not imported), for {@link #shading}; 0 for none.
+	 */
+	public static int shadingForRenderable(Renderable r, long hash, int id)
+	{
+		if (r instanceof NPC)
+		{
+			NPC npc = (NPC) r;
+			int g = lookup(shadingNpcs, npc.getId());
+			NPCComposition base = npc.getComposition();
+			if (g == 0 && base != null && base.getConfigs() != null)
+			{
+				NPCComposition comp = npc.getTransformedComposition();
+				g = comp != null ? lookup(shadingNpcs, comp.getId()) : 0;
+			}
+			return g;
+		}
+		if ((hash >> 16 & 7) == HASH_TYPE_OBJECT)
+		{
+			return shadingForObject(id, r);
+		}
+		return 0;
+	}
+
+	/**
+	 * 117 HD's normal and shading flags for one face ({@link #FLAT_NORMALS}, {@link #UPWARDS_NORMALS},
+	 * {@link #KEEP_SHADING}): a textured face takes its override's, an untextured one those of the first colour
+	 * override its colour meets, else the override's.
+	 *
+	 * @param group   from {@link #shadingForObject} or {@link #shadingForRenderable}
+	 * @param texture the face's texture id, -1 for none
+	 * @param hsl     the face's packed HSL color as the game gives it (color1)
+	 * @param opacity the face's alpha, 255 minus its transparency (see {@link #opacity})
+	 */
+	static int shading(int group, int texture, int hsl, int opacity)
+	{
+		return group > 0 && group <= shadingGroups.length ? shadingGroups[group - 1].level(texture, hsl, opacity) : 0;
 	}
 
 	/**

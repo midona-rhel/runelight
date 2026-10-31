@@ -91,14 +91,14 @@ public class ModelUploader
 	private final ModelData live = new ModelData();
 
 	public int uploadSortedModel(Projection proj, Model model, int orientation, int x, int y, int z,
-		int cameraX, int cameraY, int cameraZ, IntBuffer opaqueBuffer, IntBuffer alphaBuffer, boolean prioritySort, int material)
+		int cameraX, int cameraY, int cameraZ, IntBuffer opaqueBuffer, IntBuffer alphaBuffer, boolean prioritySort, int material, int shading)
 	{
 		return uploadSortedModel(proj, live.wrap(model), orientation, x, y, z,
-			cameraX, cameraY, cameraZ, opaqueBuffer, alphaBuffer, prioritySort, material);
+			cameraX, cameraY, cameraZ, opaqueBuffer, alphaBuffer, prioritySort, material, shading);
 	}
 
 	public int uploadSortedModel(Projection proj, ModelData model, int orientation, int x, int y, int z,
-		int cameraX, int cameraY, int cameraZ, IntBuffer opaqueBuffer, IntBuffer alphaBuffer, boolean prioritySort, int material)
+		int cameraX, int cameraY, int cameraZ, IntBuffer opaqueBuffer, IntBuffer alphaBuffer, boolean prioritySort, int material, int shading)
 	{
 		final int vertexCount = model.vertexCount;
 		final float[] verticesX = model.verticesX;
@@ -249,6 +249,9 @@ public class ModelUploader
 					int color3 = faceColors3[faceIdx];
 
 					boolean flat = color3 == -1;
+					// 117 HD's override flags for this face, by its colour as the game gives it
+					int shade = SurfaceMaterials.shading(shading, faceTextures != null ? faceTextures[faceIdx] : -1,
+						color1, SurfaceMaterials.opacity(transparencies, faceIdx));
 					if (flat)
 					{
 						color2 = color3 = color1;
@@ -257,10 +260,11 @@ public class ModelUploader
 					// 117 HD's normals: the face's own for flat faces (from the rotated positions), else the game's; vanilla
 					// shading undone with them on untextured faces, then the game's rotated by the orientation unless a
 					// face normal stood in for three zero ones (SceneUploader 2351-2357)
-					int normalKind = VertexShading.faceNormals(faceNormals, normalsX, normalsY, normalsZ, flat, v1, v2, v3,
+					int normalKind = VertexShading.faceNormals(faceNormals, normalsX, normalsY, normalsZ,
+						flat || (shade & SurfaceMaterials.FLAT_NORMALS) != 0, v1, v2, v3,
 						modelLocalX[v1], modelLocalY[v1], modelLocalZ[v1], modelLocalX[v2], modelLocalY[v2], modelLocalZ[v2],
 						modelLocalX[v3], modelLocalY[v3], modelLocalZ[v3]);
-					if (faceTextures == null || faceTextures[faceIdx] == -1)
+					if ((faceTextures == null || faceTextures[faceIdx] == -1) && (shade & SurfaceMaterials.KEEP_SHADING) == 0)
 					{
 						color1 = VertexShading.undoVanillaShading(color1, faceNormals, 0);
 						color2 = VertexShading.undoVanillaShading(color2, faceNormals, 1);
@@ -269,6 +273,10 @@ public class ModelUploader
 					if (normalKind == VertexShading.VERTEX && orientation != 0)
 					{
 						VertexShading.rotateNormals(faceNormals, normalSin, normalCos);
+					}
+					if ((shade & SurfaceMaterials.UPWARDS_NORMALS) != 0)
+					{
+						VertexShading.upwardsNormals(faceNormals);
 					}
 					int n1 = VertexShading.encodeNormal(faceNormals, 0);
 					int n2 = VertexShading.encodeNormal(faceNormals, 1);
@@ -569,13 +577,13 @@ public class ModelUploader
 
 	// temp draw
 	public int uploadTempModel(Model model, int orientation, int x, int y, int z,
-		int cameraX, int cameraY, int cameraZ, IntBuffer buffer, int material)
+		int cameraX, int cameraY, int cameraZ, IntBuffer buffer, int material, int shading)
 	{
-		return uploadTempModel(live.wrap(model), orientation, x, y, z, cameraX, cameraY, cameraZ, buffer, material);
+		return uploadTempModel(live.wrap(model), orientation, x, y, z, cameraX, cameraY, cameraZ, buffer, material, shading);
 	}
 
 	public int uploadTempModel(ModelData model, int orientation, int x, int y, int z,
-		int cameraX, int cameraY, int cameraZ, IntBuffer buffer, int material)
+		int cameraX, int cameraY, int cameraZ, IntBuffer buffer, int material, int shading)
 	{
 		final int triangleCount = model.faceCount;
 		final int vertexCount = model.vertexCount;
@@ -666,6 +674,9 @@ public class ModelUploader
 			{
 				continue;
 			}
+			// 117 HD's override flags for this face, by its colour as the game gives it
+			int shade = SurfaceMaterials.shading(shading, faceTextures != null ? faceTextures[face] : -1, color1,
+				SurfaceMaterials.opacity(transparencies, face));
 
 			int triangleA = indices1[face];
 			int triangleB = indices2[face];
@@ -679,12 +690,12 @@ public class ModelUploader
 			// 117 HD's normals: the face's own for flat faces (from the rotated positions), else the game's; vanilla
 			// shading undone with them on untextured faces, then the game's rotated by the orientation unless a face
 			// normal stood in for three zero ones (SceneUploader 2351-2357)
-			int normalKind = VertexShading.faceNormals(faceNormals, normalsX, normalsY, normalsZ, flat,
-				triangleA, triangleB, triangleC,
+			int normalKind = VertexShading.faceNormals(faceNormals, normalsX, normalsY, normalsZ,
+				flat || (shade & SurfaceMaterials.FLAT_NORMALS) != 0, triangleA, triangleB, triangleC,
 				modelLocalX[triangleA], modelLocalY[triangleA], modelLocalZ[triangleA],
 				modelLocalX[triangleB], modelLocalY[triangleB], modelLocalZ[triangleB],
 				modelLocalX[triangleC], modelLocalY[triangleC], modelLocalZ[triangleC]);
-			if (faceTextures == null || faceTextures[face] == -1)
+			if ((faceTextures == null || faceTextures[face] == -1) && (shade & SurfaceMaterials.KEEP_SHADING) == 0)
 			{
 				color1 = VertexShading.undoVanillaShading(color1, faceNormals, 0);
 				color2 = VertexShading.undoVanillaShading(color2, faceNormals, 1);
@@ -693,6 +704,10 @@ public class ModelUploader
 			if (normalKind == VertexShading.VERTEX && orientation != 0)
 			{
 				VertexShading.rotateNormals(faceNormals, normalSin, normalCos);
+			}
+			if ((shade & SurfaceMaterials.UPWARDS_NORMALS) != 0)
+			{
+				VertexShading.upwardsNormals(faceNormals);
 			}
 			int n1 = VertexShading.encodeNormal(faceNormals, 0);
 			int n2 = VertexShading.encodeNormal(faceNormals, 1);

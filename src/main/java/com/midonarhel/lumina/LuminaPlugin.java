@@ -1640,7 +1640,7 @@ public class LuminaPlugin extends Plugin implements DrawCallbacks
 		RenderThread rt = rts[0];
 		VAO o = rt.vaoO.get(size);
 		rt.modelUploader.uploadTempModel(skybox, 0, 0, 0, 0,
-			(int) cameraX, (int) cameraY, (int) cameraZ, o.vbo.vb, 0);
+			(int) cameraX, (int) cameraY, (int) cameraZ, o.vbo.vb, 0, 0);
 
 		float[] skyboxProjection = Mat4.translate(cameraX, cameraY, cameraZ);
 		o.addRange(skyboxProjection, scene, Renderable.RENDERMODE_UNSORTED_NO_DEPTH);
@@ -2363,6 +2363,7 @@ public class LuminaPlugin extends Plugin implements DrawCallbacks
 
 		int size = m.getFaceCount() * 3 * VAO.VERT_SIZE;
 		int material = SurfaceMaterials.forObject(tileObject.getId(), r);
+		int shading = SurfaceMaterials.shadingForObject(tileObject.getId(), r);
 		if (m.getFaceTransparencies() == null)
 		{
 			RenderThread rt = rts[renderThreadId + 1];
@@ -2373,7 +2374,7 @@ public class LuminaPlugin extends Plugin implements DrawCallbacks
 			}
 
 			rt.modelUploader.uploadTempModel(m, orient, x, y, z,
-				ctx.cameraX, ctx.cameraY, ctx.cameraZ, o.vbo.vb, material);
+				ctx.cameraX, ctx.cameraY, ctx.cameraZ, o.vbo.vb, material, shading);
 			o.addRange(ctx.projection, scene, 0);
 		}
 		else
@@ -2394,7 +2395,7 @@ public class LuminaPlugin extends Plugin implements DrawCallbacks
 			try
 			{
 				sorter.uploadSortedModel(worldProjection, m, orient, x, y, z,
-					ctx.cameraX, ctx.cameraY, ctx.cameraZ, o.vbo.vb, a.vbo.vb, false, material);
+					ctx.cameraX, ctx.cameraY, ctx.cameraZ, o.vbo.vb, a.vbo.vb, false, material, shading);
 			}
 			catch (Exception ex)
 			{
@@ -2441,6 +2442,7 @@ public class LuminaPlugin extends Plugin implements DrawCallbacks
 		Renderable renderable = gameObject.getRenderable();
 		int renderMode = renderable.getRenderMode();
 		int material = SurfaceMaterials.forRenderable(renderable, gameObject.getHash(), gameObject.getId());
+		int shading = SurfaceMaterials.shadingForRenderable(renderable, gameObject.getHash(), gameObject.getId());
 		if (renderMode == Renderable.RENDERMODE_SORTED_NO_DEPTH || m.getFaceTransparencies() != null || m.getTransparency() != 0)
 		{
 			m.calculateBoundsCylinder();
@@ -2448,13 +2450,13 @@ public class LuminaPlugin extends Plugin implements DrawCallbacks
 			int zx = (gameObject.getX() >> 10) + offset;
 			int zz = (gameObject.getY() >> 10) + offset;
 			int plane = Math.min(ctx.maxLevel, gameObject.getPlane());
-			tempModels.uploadSorted(rts[0], ctx, scene, worldProjection, m, orient, x, y, z, material,
+			tempModels.uploadSorted(rts[0], ctx, scene, worldProjection, m, orient, x, y, z, material, shading,
 				renderMode == Renderable.RENDERMODE_SORTED_NO_DEPTH, zx, zz, plane,
 				y - renderable.getModelHeight() /* to render players over locs */);
 		}
 		else
 		{
-			tempModels.uploadTemp(rts[0], ctx, scene, m, orient, x, y, z, material);
+			tempModels.uploadTemp(rts[0], ctx, scene, m, orient, x, y, z, material, shading);
 		}
 	}
 
