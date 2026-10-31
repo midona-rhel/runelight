@@ -25,6 +25,7 @@
 package com.midonarhel.lumina;
 
 import com.midonarhel.lumina.common.LogLimiter;
+import com.midonarhel.lumina.frame.FrameState;
 import com.midonarhel.lumina.frame.GlObjects;
 import com.midonarhel.lumina.light.LampFrame;
 import com.midonarhel.lumina.visibility.VisibilityFrame;
@@ -437,7 +438,7 @@ public class LuminaPlugin extends Plugin implements DrawCallbacks
 	public final float[] skyCacheOvercast = new float[7];
 	public boolean frameFog;
 	// 117 HD fog depth that doubles the volumetric fog
-	private static final float AREA_FOG_DEPTH = 30;
+	public static final float AREA_FOG_DEPTH = 30;
 	// under the open sky rather than underground, from the area classification (or the game's sky color)
 	public boolean frameOpenSky;
 
@@ -1321,10 +1322,10 @@ public class LuminaPlugin extends Plugin implements DrawCallbacks
 	private void preSceneDrawToplevel(Scene scene,
 		float cameraX, float cameraY, float cameraZ, float cameraPitch, float cameraYaw)
 	{
-		captureFrameState(scene, cameraX, cameraY, cameraZ);
+		frameState.captureFrameState(scene, cameraX, cameraY, cameraZ);
 		wadeSteps.update(client.getTopLevelWorldView(), client.getLocalPlayer(), cameraX, cameraZ,
 			weather.groundActive() && client.getGameState() == GameState.LOGGED_IN);
-		updateEdge(scene, cameraX, cameraZ);
+		frameState.updateEdge(scene, cameraX, cameraZ);
 
 		// UBO
 		uniformBuffer.clear();
@@ -1585,79 +1586,9 @@ public class LuminaPlugin extends Plugin implements DrawCallbacks
 		cpuTimer.begin(CpuTimer.CLIENT_UI);
 	}
 
-	/**
-	 * Draw the scene targets to the window. Effects that work on the whole frame (fog, AO, grading) go in
-	 * composite_frag.glsl.
-	 */
-	private void captureFrameState(Scene scene, float cameraX, float cameraY, float cameraZ)
-	{
-		frameCameraX = cameraX;
-		frameCameraY = cameraY;
-		frameCameraZ = cameraZ;
-		frameSkyColor = client.getSkyboxColor();
-		frameHasSkybox = scene.getSkybox() != null;
-		{
-			// the game's own sky color is black where nothing exists around the scene; areas may still call it
-			// open sky (a player house has daylight)
-			int r = frameSkyColor >> 16 & 0xFF, g = frameSkyColor >> 8 & 0xFF, b = frameSkyColor & 0xFF;
-			frameSkyVoid = !frameHasSkybox && r + g + b <= 24;
-		}
-		frameDrawDistance = getDrawDistance() * Perspective.LOCAL_TILE_SIZE;
+	// The per-frame state: the camera, draw distance, sky and fog captured for this frame, the edge fade's focus, a view ray, the frame uniforms, the alpha pass's blend state (FrameState)
+	public final FrameState frameState = new FrameState(this);
 
-		cpuTimer.begin(CpuTimer.ENVIRONMENT);
-		frameOpenSky = skyFrame.updateEnvironment(scene);
-		cpuTimer.end(CpuTimer.ENVIRONMENT);
-		frameOutdoors = config.sunLighting() && frameOpenSky;
-
-		frameGameMillis = GameClock.gameMillis(System.currentTimeMillis(), config.dayCycleMinutes());
-		dayCycle.update(frameGameMillis, config.dayCycleMinutes(), config.fixedHour());
-
-		frameShadows = frameOutdoors && config.shadows() && client.getGameState() == GameState.LOGGED_IN;
-		VAO.clearShadowDraws();
-		VAO.recordShadowDraws = frameShadows;
-
-		cpuTimer.begin(CpuTimer.WEATHER);
-		weather.getLightning().setSunStrength(dayCycle.directStrength(volumetricFog.overcast[0], volumetricFog.overcast[1]));
-		weatherFrame.update(cameraX, cameraY, cameraZ);
-		dayCycle.applyStrike(weather.getLightning());
-		visibilityFrame.updateSkylight();
-		cpuTimer.end(CpuTimer.WEATHER);
-
-		frameFog = false;
-		Player player = client.getLocalPlayer();
-		LocalPoint lp = player != null ? player.getLocalLocation() : null;
-		if (config.volumetricFog() && lp != null && client.getGameState() == GameState.LOGGED_IN && volumetricFog.hasGround())
-		{
-			// thicker in rain and snow, and in areas 117 HD gives fog (its fogDepth: ~6 faint, 50 thick)
-			float areaFog = config.areaEnvironments() ? environmentManager.getFogDepth() : 0;
-			volumetricFog.areaDensity = weather.fogMultiplier()
-				* (1 + weather.areaFogWeight() * Math.min(areaFog / AREA_FOG_DEPTH, 2));
-			volumetricFog.areaHeight = weather.fogHeightMultiplier();
-			volumetricFog.weatherField = weather.getField();
-			volumetricFog.weatherFog = weather.fogMultiplier();
-			System.arraycopy(weather.getFogTint(), 0, volumetricFog.areaTint, 0, 3);
-			volumetricFog.updateParameters(config, lp.getX(), lp.getY(), client.getTopLevelWorldView().getPlane(), frameDrawDistance);
-			frameFog = true;
-		}
-	}
-
-	/**
-	 * Where the drawn world ends this frame (EdgeFade): a circle of the draw distance around the focal point, inside
-	 * the larger square the client is told to draw, with a fade as wide as the weather's fog asks.
-	 */
-	private void updateEdge(Scene scene, float cameraX, float cameraZ)
-	{
-		int drawDistance = getDrawDistance();
-		float fx = client.getCameraFocalPointX(), fz = client.getCameraFocalPointZ();
-		float offset = (float) Math.hypot(cameraX - fx, cameraZ - fz);
-		scene.setDrawDistance(EdgeFade.clientDrawDistance(drawDistance, offset));
-		// read back in case the client limits it
-		float radius = EdgeFade.radius(drawDistance, scene.getDrawDistance(), offset);
-		float areaFog = config.areaEnvironments() && !frameHasSkybox
-			? environmentManager.getFogDepth() * weather.distanceFogScale() : 0;
-		edgeFade.update(fx, fz, radius, client.getExpandedMapLoading(),
-			EdgeFade.fogginess(weather.fogMultiplier(), areaFog));
-	}
 
 	@Override
 	public boolean zoneInFrustum(int zx, int zz, int maxY, int minY)
@@ -1677,16 +1608,6 @@ public class LuminaPlugin extends Plugin implements DrawCallbacks
 	public final VisibilityFrame visibilityFrame = new VisibilityFrame(this);
 
 
-	/** The unit view ray through a point of the screen (-1 to 1) as frame.glsl's reconstructPosition; null before there is one. */
-	public float[] viewRay(float ndcX, float ndcY)
-	{
-		float[] m = frameInvViewProj;
-		float x = m[0] * ndcX + m[4] * ndcY + m[8] + m[12], y = m[1] * ndcX + m[5] * ndcY + m[9] + m[13];
-		float z = m[2] * ndcX + m[6] * ndcY + m[10] + m[14], w = m[3] * ndcX + m[7] * ndcY + m[11] + m[15];
-		float length = (float) Math.sqrt(x * x + y * y + z * z);
-		return length > 1e-6f && Math.abs(w) > 1e-9f ? new float[]{x / length * Math.signum(w), y / length * Math.signum(w),
-			z / length * Math.signum(w)} : null;
-	}
 
 	// The weather's work each frame: the field and the driver updated from the camera, and the weather sounds (WeatherFrame)
 	public final WeatherFrame weatherFrame = new WeatherFrame(this);
@@ -1709,25 +1630,6 @@ public class LuminaPlugin extends Plugin implements DrawCallbacks
 		shadowPass.drop(dropped);
 	}
 
-	/**
-	 * Transparent faces go to their own layer, blended as premultiplied "over" so the composite can put the layer
-	 * on top of the lit opaque scene. They don't write depth (Zone and VAO already turn depth writes off).
-	 */
-	private void setAlphaPass(boolean alpha)
-	{
-		sceneTargets.setAlphaPass(alpha);
-		if (alpha)
-		{
-			glEnable(GL_BLEND);
-			glBlendFuncSeparate(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA, GL_ONE, GL_ONE_MINUS_SRC_ALPHA);
-		}
-		else
-		{
-			// the opaque pass writes without blending (preSceneDrawToplevel)
-			glDisable(GL_BLEND);
-		}
-		glUniform1i(uniAlphaPass, alpha ? 1 : 0);
-	}
 
 	/** Whether the window's framebuffer has a stencil (windowStencil); call with it bound. */
 	public boolean hasWindowStencil()
@@ -1742,14 +1644,6 @@ public class LuminaPlugin extends Plugin implements DrawCallbacks
 		return windowStencil > 0;
 	}
 
-	public void setFrameUniforms(FrameUniforms u)
-	{
-		glUniformMatrix4fv(u.viewProj, false, frameViewProj);
-		glUniformMatrix4fv(u.invViewProj, false, frameInvViewProj);
-		glUniform4i(u.viewport, frameViewport[0], frameViewport[1], frameViewport[2], frameViewport[3]);
-		glUniform1i(u.depthZeroToOne, glCapabilities.OpenGL45 ? 1 : 0);
-		glUniform1f(u.halfRatio, sceneTargets.getHalfRatio());
-	}
 
 	// The lamps' work each frame: lamp collection and placement, the room light, the light clusters' upload (LampFrame)
 	public final LampFrame lampFrame = new LampFrame(this);
@@ -1883,7 +1777,7 @@ public class LuminaPlugin extends Plugin implements DrawCallbacks
 		}
 		else if (pass == DrawCallbacks.PASS_ALPHA)
 		{
-			setAlphaPass(false);
+			frameState.setAlphaPass(false);
 			for (int x = 0; x < ctx.sizeX; ++x)
 			{
 				for (int z = 0; z < ctx.sizeZ; ++z)
@@ -1902,7 +1796,7 @@ public class LuminaPlugin extends Plugin implements DrawCallbacks
 
 			glUniformMatrix4fv(uniEntityProj, false, ctx.projection);
 			glUniform4i(uniEntityTint, scene.getOverrideHue(), scene.getOverrideSaturation(), scene.getOverrideLuminance(), scene.getOverrideAmount());
-			setAlphaPass(true);
+			frameState.setAlphaPass(true);
 		}
 
 		checkGLErrors();

@@ -208,8 +208,8 @@ public final class SkyFrame
 
 	public void updateNightSky()
 	{
-		float[] forward = plugin.viewRay(0, 0);
-		float[] above = plugin.viewRay(0, 2f / Math.max(plugin.frameViewport[3], 1));
+		float[] forward = plugin.frameState.viewRay(0, 0);
+		float[] above = plugin.frameState.viewRay(0, 2f / Math.max(plugin.frameViewport[3], 1));
 		float pixelAngle = 0;
 		if (forward != null && above != null)
 		{
