@@ -45,6 +45,7 @@ import com.midonarhel.lumina.water.WaterOverrides;
 import com.midonarhel.lumina.water.WaterSurface;
 
 import com.midonarhel.lumina.frame.InterfaceUpload;
+import com.midonarhel.lumina.frame.FramePacer;
 import com.midonarhel.lumina.frame.SceneTargets;
 import com.midonarhel.lumina.frame.Upscaler;
 
@@ -286,47 +287,8 @@ public class LuminaPlugin extends Plugin implements DrawCallbacks
 	private int swapCaptureIndex;
 	private int lastSkyCacheMode;
 
-	// Frame pacing (Lumina's): with FPS unlocked and vsync off the client's own limiter sleeps whole milliseconds and
-	// lands late every sixth frame (a 14/21 ms saw-tooth at a 60 target), so the frame is paced here instead: sleep
-	// to within 1.5 ms of a deadline on a fixed grid, then spin; the client gets no target. `::runelight pace off`
-	// hands the target back to the client, to measure the difference.
-	private long frameTargetNanos;
-	private long nextFrameDeadline;
-	private boolean paceHere = true;
-
-	private void paceFrame()
-	{
-		if (frameTargetNanos == 0)
-		{
-			return;
-		}
-		long now = System.nanoTime();
-		if (nextFrameDeadline == 0 || now - nextFrameDeadline > frameTargetNanos)
-		{
-			// first frame, or so late the grid is lost: start it again from here
-			nextFrameDeadline = now + frameTargetNanos;
-			return;
-		}
-		long remaining = nextFrameDeadline - now;
-		while (remaining > 1_500_000L)
-		{
-			try
-			{
-				Thread.sleep(1);
-			}
-			catch (InterruptedException ex)
-			{
-				Thread.currentThread().interrupt();
-				break;
-			}
-			remaining = nextFrameDeadline - System.nanoTime();
-		}
-		while (System.nanoTime() < nextFrameDeadline)
-		{
-			Thread.onSpinWait();
-		}
-		nextFrameDeadline += frameTargetNanos;
-	}
+	// frame pacing (FramePacer): the client gets no target while the pacer holds the frame on its grid
+	private final FramePacer pacer = new FramePacer();
 
 	private static final Set<String> OTHER_RENDERERS = Set.of(
 		"net.runelite.client.plugins.gpu.GpuPlugin",
@@ -1220,17 +1182,7 @@ public class LuminaPlugin extends Plugin implements DrawCallbacks
 		}
 
 		int target = actualSwapInterval == 0 ? config.fpsTarget() : 0;
-		if (paceHere)
-		{
-			client.setUnlockedFpsTarget(0);
-			frameTargetNanos = target > 0 ? 1_000_000_000L / target : 0;
-		}
-		else
-		{
-			client.setUnlockedFpsTarget(target);
-			frameTargetNanos = 0;
-		}
-		nextFrameDeadline = 0;
+		client.setUnlockedFpsTarget(pacer.apply(target));
 		checkGLErrors();
 	}
 
@@ -4094,7 +4046,7 @@ public class LuminaPlugin extends Plugin implements DrawCallbacks
 		try
 		{
 			awtContext.swapBuffers();
-			paceFrame();
+			pacer.pace();
 		}
 		catch (RuntimeException ex)
 		{
@@ -4467,9 +4419,9 @@ public class LuminaPlugin extends Plugin implements DrawCallbacks
 		}
 		else if (args.length >= 2 && args[0].equals("pace"))
 		{
-			paceHere = args[1].equals("on");
+			pacer.setPaceHere(args[1].equals("on"));
 			setupSyncMode();
-			log.info("Frame pacing {}", paceHere ? "here (Lumina's pacer)" : "by the client's limiter");
+			log.info("Frame pacing {}", pacer.isPaceHere() ? "here (Lumina's pacer)" : "by the client's limiter");
 		}
 		else if (args.length >= 1 && args[0].equals("swapcapture"))
 		{
