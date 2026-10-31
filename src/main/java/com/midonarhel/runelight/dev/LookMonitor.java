@@ -1,5 +1,7 @@
 package com.midonarhel.runelight.dev;
 
+import com.midonarhel.runelight.common.LogLimiter;
+
 import com.midonarhel.runelight.weather.Weather;
 
 import com.midonarhel.runelight.sky.EnvironmentUniforms;

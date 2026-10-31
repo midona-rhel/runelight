@@ -1,4 +1,6 @@
-package com.midonarhel.runelight;
+package com.midonarhel.runelight.common;
+
+import com.midonarhel.runelight.*;
 
 /**
  * The one ease for a derived layer that cannot be swapped in with the scene it belongs to and arrives a few frames

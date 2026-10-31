@@ -1,5 +1,7 @@
 package com.midonarhel.runelight.visibility;
 
+import com.midonarhel.runelight.common.LayerEase;
+
 import com.midonarhel.runelight.*;
 
 import com.midonarhel.runelight.dev.SkyProbeOverlay;

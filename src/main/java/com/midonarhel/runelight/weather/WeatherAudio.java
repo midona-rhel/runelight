@@ -1,5 +1,7 @@
 package com.midonarhel.runelight.weather;
 
+import com.midonarhel.runelight.common.Rumble;
+
 import com.midonarhel.runelight.visibility.RoomMap;
 
 import com.midonarhel.runelight.*;

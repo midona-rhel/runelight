@@ -1,6 +1,6 @@
 package com.midonarhel.runelight.light;
 
-import com.midonarhel.runelight.LayerEase;
+import com.midonarhel.runelight.common.LayerEase;
 
 /**
  * When a light is there and how bright: 117 HD's life of a light. It spawns spawnDelay after it is made, fades in,

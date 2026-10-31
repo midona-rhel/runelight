@@ -1,5 +1,7 @@
 package com.midonarhel.runelight.dev;
 
+import com.midonarhel.runelight.common.Shader;
+
 import com.midonarhel.runelight.*;
 
 import java.io.IOException;

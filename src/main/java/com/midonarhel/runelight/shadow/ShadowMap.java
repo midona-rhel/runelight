@@ -1,5 +1,7 @@
 package com.midonarhel.runelight.shadow;
 
+import com.midonarhel.runelight.common.Mat4;
+
 import com.midonarhel.runelight.*;
 
 import static org.lwjgl.opengl.GL33C.*;

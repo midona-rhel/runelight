@@ -1,5 +1,7 @@
 package com.midonarhel.runelight.scene;
 
+import com.midonarhel.runelight.common.Mat4;
+
 import com.midonarhel.runelight.*;
 
 import static org.junit.Assert.assertEquals;

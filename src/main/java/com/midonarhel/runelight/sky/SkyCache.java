@@ -1,5 +1,8 @@
 package com.midonarhel.runelight.sky;
 
+import com.midonarhel.runelight.common.Shader;
+import com.midonarhel.runelight.common.ShaderException;
+
 import com.midonarhel.runelight.*;
 
 import com.midonarhel.runelight.template.Template;

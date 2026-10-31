@@ -23,7 +23,9 @@
  * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
  * SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
-package com.midonarhel.runelight;
+package com.midonarhel.runelight.common;
+
+import com.midonarhel.runelight.*;
 
 import com.midonarhel.runelight.template.Template;
 import java.util.ArrayList;

@@ -1,4 +1,6 @@
-package com.midonarhel.runelight;
+package com.midonarhel.runelight.common;
+
+import com.midonarhel.runelight.*;
 
 /**
  * The loudness of the thunder clip playing for a strike, which the light follows (Lightning): the clip's envelope,

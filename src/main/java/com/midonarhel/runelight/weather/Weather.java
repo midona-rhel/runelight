@@ -1,5 +1,9 @@
 package com.midonarhel.runelight.weather;
 
+import com.midonarhel.runelight.common.Mat4;
+import com.midonarhel.runelight.common.Shader;
+import com.midonarhel.runelight.common.ShaderException;
+
 import com.midonarhel.runelight.water.Water;
 
 import com.midonarhel.runelight.scene.Zone;

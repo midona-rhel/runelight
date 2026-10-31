@@ -1,6 +1,6 @@
 package com.midonarhel.runelight.light;
 
-import com.midonarhel.runelight.Mat4;
+import com.midonarhel.runelight.common.Mat4;
 
 import java.util.ArrayList;
 import java.util.List;

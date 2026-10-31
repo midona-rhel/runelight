@@ -1,4 +1,6 @@
-package com.midonarhel.runelight;
+package com.midonarhel.runelight.common;
+
+import com.midonarhel.runelight.*;
 
 /** IEEE half floats, for the sky grid's texels. */
 public final class Half

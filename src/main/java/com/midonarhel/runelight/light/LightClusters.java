@@ -2,7 +2,7 @@ package com.midonarhel.runelight.light;
 
 import com.midonarhel.runelight.visibility.RoomMap;
 
-import com.midonarhel.runelight.Mat4;
+import com.midonarhel.runelight.common.Mat4;
 import com.midonarhel.runelight.visibility.RoomMap;
 
 import java.nio.FloatBuffer;

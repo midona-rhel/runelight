@@ -1,6 +1,6 @@
 package com.midonarhel.runelight.light;
 
-import com.midonarhel.runelight.LayerEase;
+import com.midonarhel.runelight.common.LayerEase;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;

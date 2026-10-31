@@ -1,5 +1,7 @@
 package com.midonarhel.runelight.water;
 
+import com.midonarhel.runelight.common.Shader;
+
 import com.midonarhel.runelight.*;
 
 import java.nio.ByteBuffer;

@@ -1,5 +1,7 @@
 package com.midonarhel.runelight.dev;
 
+import com.midonarhel.runelight.common.Half;
+
 import com.midonarhel.runelight.visibility.SkyGrid;
 import com.midonarhel.runelight.visibility.WallMap;
 

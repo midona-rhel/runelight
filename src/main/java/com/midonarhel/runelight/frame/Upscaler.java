@@ -1,5 +1,7 @@
 package com.midonarhel.runelight.frame;
 
+import com.midonarhel.runelight.common.Shader;
+
 import com.midonarhel.runelight.*;
 
 import static org.lwjgl.opengl.GL33C.*;

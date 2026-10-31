@@ -1,5 +1,7 @@
 package com.midonarhel.runelight.sky;
 
+import com.midonarhel.runelight.common.Rumble;
+
 import com.midonarhel.runelight.*;
 
 import java.util.Random;

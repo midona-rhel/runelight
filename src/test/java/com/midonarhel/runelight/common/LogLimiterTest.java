@@ -1,4 +1,6 @@
-package com.midonarhel.runelight;
+package com.midonarhel.runelight.common;
+
+import com.midonarhel.runelight.*;
 
 import org.junit.Test;
 import static org.junit.Assert.assertEquals;

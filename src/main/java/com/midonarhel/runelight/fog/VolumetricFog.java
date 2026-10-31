@@ -1,5 +1,8 @@
 package com.midonarhel.runelight.fog;
 
+import com.midonarhel.runelight.common.LayerEase;
+import com.midonarhel.runelight.common.Shader;
+
 import com.midonarhel.runelight.visibility.OpenRooms;
 import com.midonarhel.runelight.visibility.RoomMap;
 

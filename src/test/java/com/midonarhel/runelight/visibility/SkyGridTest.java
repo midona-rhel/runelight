@@ -1,5 +1,7 @@
 package com.midonarhel.runelight.visibility;
 
+import com.midonarhel.runelight.common.Half;
+
 import com.midonarhel.runelight.*;
 
 import java.nio.file.Files;

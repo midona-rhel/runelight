@@ -24,6 +24,12 @@
  */
 package com.midonarhel.runelight;
 
+import com.midonarhel.runelight.common.LogLimiter;
+import com.midonarhel.runelight.common.Mat4;
+import com.midonarhel.runelight.common.Rumble;
+import com.midonarhel.runelight.common.Shader;
+import com.midonarhel.runelight.common.ShaderException;
+
 import com.midonarhel.runelight.visibility.BuildingLights;
 import com.midonarhel.runelight.visibility.OpenRooms;
 import com.midonarhel.runelight.visibility.RoomMap;

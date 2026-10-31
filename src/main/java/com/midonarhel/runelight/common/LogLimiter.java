@@ -1,4 +1,6 @@
-package com.midonarhel.runelight;
+package com.midonarhel.runelight.common;
+
+import com.midonarhel.runelight.*;
 
 import java.util.HashMap;
 import java.util.Map;
@@ -64,7 +66,7 @@ public final class LogLimiter
 		return held;
 	}
 
-	void warn(Logger log, String key, String message, Throwable t)
+	public void warn(Logger log, String key, String message, Throwable t)
 	{
 		int held = check(key);
 		if (held < 0)

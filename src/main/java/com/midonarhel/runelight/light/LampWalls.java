@@ -3,7 +3,7 @@ package com.midonarhel.runelight.light;
 import com.midonarhel.runelight.visibility.RoomMap;
 import com.midonarhel.runelight.visibility.WallMap;
 
-import com.midonarhel.runelight.LayerEase;
+import com.midonarhel.runelight.common.LayerEase;
 import com.midonarhel.runelight.visibility.RoomMap;
 import com.midonarhel.runelight.visibility.WallMap;
 
