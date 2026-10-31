@@ -45,6 +45,7 @@ import com.midonarhel.lumina.water.WaterOverrides;
 import com.midonarhel.lumina.water.WaterSurface;
 
 import com.midonarhel.lumina.frame.InterfaceUpload;
+import com.midonarhel.lumina.frame.Composite;
 import com.midonarhel.lumina.frame.FramePacer;
 import com.midonarhel.lumina.frame.SceneTargets;
 import com.midonarhel.lumina.frame.Upscaler;
@@ -210,7 +211,7 @@ import org.lwjgl.system.Configuration;
 )
 public class LuminaPlugin extends Plugin implements DrawCallbacks
 {
-	private static final Logger log = LoggerFactory.getLogger(LuminaPlugin.class);
+	public static final Logger log = LoggerFactory.getLogger(LuminaPlugin.class);
 
 	public static final int MAX_DISTANCE = 184;
 	// how far in, in tiles, the sky's light flowing in under cover falls to a third of its brightness
@@ -227,7 +228,7 @@ public class LuminaPlugin extends Plugin implements DrawCallbacks
 	private ConfigManager configManager;
 
 	@Inject
-	private ClientUI clientUI;
+	public ClientUI clientUI;
 
 	@Inject
 	private ClientThread clientThread;
@@ -244,7 +245,7 @@ public class LuminaPlugin extends Plugin implements DrawCallbacks
 	public final AreaHiding areaHiding = new AreaHiding();
 
 	@Inject
-	private DrawManager drawManager;
+	public DrawManager drawManager;
 
 	@Inject
 	private PluginManager pluginManager;
@@ -262,7 +263,7 @@ public class LuminaPlugin extends Plugin implements DrawCallbacks
 	private Gson gson;
 
 	private SceneLights sceneLights;
-	private BuildingLights buildingLights;
+	public BuildingLights buildingLights;
 
 	@Inject
 	private BuildingOverlay buildingOverlay;
@@ -279,14 +280,14 @@ public class LuminaPlugin extends Plugin implements DrawCallbacks
 	// ~/.runelite/lumina/command-perfwip.txt once per client tick in developer mode
 	private CommandFile commandFile;
 	private final FrameSnapshot frameSnapshot = new FrameSnapshot();
-	private int framesSinceSwap = 1000;
+	public int framesSinceSwap = 1000;
 	private final SceneLoadReport loadReport = new SceneLoadReport();
 	private boolean swapCaptureArmed;
 	private int swapCaptureFrames = 8;
 	// frames left to capture around a swap: set when loadScene finishes (before the client's swap), counts down per frame
-	private volatile int swapCaptureLeft;
-	private int swapCaptureIndex;
-	private int lastSkyCacheMode;
+	public volatile int swapCaptureLeft;
+	public int swapCaptureIndex;
+	public int lastSkyCacheMode;
 
 	// frame pacing (FramePacer): the client gets no target while the pacer holds the frame on its grid
 	private final FramePacer pacer = new FramePacer();
@@ -305,7 +306,7 @@ public class LuminaPlugin extends Plugin implements DrawCallbacks
 	private volatile String shaderError;
 	private float[] textureAnimations;
 
-	final CpuTimer cpuTimer = new CpuTimer();
+	public final CpuTimer cpuTimer = new CpuTimer();
 
 	private Canvas canvas;
 	public AWTContext awtContext;
@@ -334,96 +335,52 @@ public class LuminaPlugin extends Plugin implements DrawCallbacks
 		.add(GL_VERTEX_SHADER, "composite_vert.glsl")
 		.add(GL_FRAGMENT_SHADER, "denoise_frag.glsl");
 
-	// The composite (composite_frag.glsl) is compiled once for each of its passes, so that each program holds only its
-	// own path: a GPU gives a program the registers of its heaviest path, and the full resolution composite paid for
-	// the cloud march and the water's reflections. The passes share their uniforms, set on each before it draws
-	// (useComposite).
-	private static final int COMPOSITE_FULL = 0, COMPOSITE_CLOUDS = 1, COMPOSITE_WATER = 2, COMPOSITE_CLOUDS_WATER = 3,
-		COMPOSITE_EDGES = 4, COMPOSITE_MARK = 5;
-
-	/** One of the composite's programs and its uniforms. */
-	private static final class CompositeProgram
-	{
-		final int pass;
-		int program;
-		int part, aoEnabled, aoStrength;
-		int cameraPos, time, outdoors, proceduralSky, lightingEnabled, sunDir, moonDir, casterDir, sunIsCaster,
-			strikeLight, sunAltitude, overcast, weatherLight;
-		int shadowsEnabled, lightProjRel, shadowRadius, shadowDepthRange, shadowMapSize;
-		int pointLights, roomHeader, interiorTint, skylightOn;
-		final LampWalls.Uniforms lampWalls = new LampWalls.Uniforms();
-		int skyVoid, drawDistance, expandedChunks, clientSkyColor;
-		int lightningBolt, volumetricFog;
-		final FrameUniforms frame = new FrameUniforms();
-		final EnvironmentUniforms env = new EnvironmentUniforms();
-		final EdgeFade.Uniforms edge = new EdgeFade.Uniforms();
-		final SurfaceMaterials.Uniforms materials = new SurfaceMaterials.Uniforms();
-		final Clouds.Locations clouds = new Clouds.Locations();
-		final Water.CompositeUniforms water = new Water.CompositeUniforms();
-		final SkyCache.CompositeUniforms skyCache = new SkyCache.CompositeUniforms();
-		final NightSky.Uniforms night = new NightSky.Uniforms();
-		final WeatherGround.CompositeUniforms ground = new WeatherGround.CompositeUniforms();
-
-		CompositeProgram(int pass)
-		{
-			this.pass = pass;
-		}
-	}
-
-	private final CompositeProgram compositeFull = new CompositeProgram(COMPOSITE_FULL);
-	private final CompositeProgram compositeClouds = new CompositeProgram(COMPOSITE_CLOUDS);
-	private final CompositeProgram compositeWater = new CompositeProgram(COMPOSITE_WATER);
-	private final CompositeProgram compositeCloudsWater = new CompositeProgram(COMPOSITE_CLOUDS_WATER);
-	// with MSAA, the second surface of the pixels that have two, blended over the full pass
-	private final CompositeProgram compositeEdges = new CompositeProgram(COMPOSITE_EDGES);
-	// with MSAA, marks the pixels that have a second surface in the stencil, so the edge pass runs on those alone
-	private final CompositeProgram compositeMark = new CompositeProgram(COMPOSITE_MARK);
-	private final CompositeProgram[] composites = {compositeFull, compositeClouds, compositeWater, compositeCloudsWater,
-		compositeEdges, compositeMark};
+	// the composite pass (Composite): its programs, their uniforms, and the full-screen draw
+	public final Composite composite = new Composite(this);
 	// whether the window's framebuffer has a stencil, for the edge pass at 100% render scale; 0 unknown, 1 yes, -1 no.
 	// The GL bridge gives Windows and Linux one from the pixel format; on macOS it draws into an IOSurface's
 	// framebuffer, color alone
 	private int windowStencil;
-	private static final int COMPOSITE_PARTS_UNIT = 31;
+	public static final int COMPOSITE_PARTS_UNIT = 31;
 	// this frame's time for the composite's passes, seconds since the start
-	private float compositeTime;
+	public float compositeTime;
 	// this frame's point lights on, and whether the light clusters and the rooms were uploaded and bound
 	// (prepareLighting); whether the wet ground is drawn
-	private boolean framePointLights, frameLightClusters, frameGround;
+	public boolean framePointLights, frameLightClusters, frameGround;
 
-	private int glAoProgram;
-	private int glDenoiseProgram;
-	private int uniDenoiseFog;
-	private int uniAoRadius;
-	private int uniAoSamples;
-	private int uniAoShadowsEnabled, uniAoLightProjRel, uniAoShadowRadius, uniAoShadowDepthRange, uniAoShadowMapSize,
+	public int glAoProgram;
+	public int glDenoiseProgram;
+	public int uniDenoiseFog;
+	public int uniAoRadius;
+	public int uniAoSamples;
+	public int uniAoShadowsEnabled, uniAoLightProjRel, uniAoShadowRadius, uniAoShadowDepthRange, uniAoShadowMapSize,
 		uniAoShadowMaxTile, uniAoCasterDir, uniAoSunIsCaster, uniAoStrikeLight;
 	// the half resolution shadows the AO pass draws, for the composite
-	private static final int SCENE_SHADOW_UNIT = LuminaPlugin.COMPOSITE_TEXTURE_UNIT + 18;
+	public static final int SCENE_SHADOW_UNIT = LuminaPlugin.COMPOSITE_TEXTURE_UNIT + 18;
 	// Static scenery is drawn into a cached shadow map, redrawn only as the light turns or the player walks
 	// (renderStaticShadows). It looks the same as drawing it every frame, so it is no longer a setting.
 	public static final boolean SHADOW_CACHE = true;
 	// the game shows a black void around the scene (instances, player houses, dungeons): it stays dark
-	private boolean frameSkyVoid;
-	private final FrameUniforms aoFrame = new FrameUniforms();
+	public boolean frameSkyVoid;
+	public final FrameUniforms aoFrame = new FrameUniforms();
 
-	private static final int AO_TEXTURE_UNIT = LuminaPlugin.COMPOSITE_TEXTURE_UNIT + 3;
-	private static final int SHADOW_RAW_UNIT = LuminaPlugin.COMPOSITE_TEXTURE_UNIT + 4;
-	private static final int SHADOW_COMPARE_UNIT = LuminaPlugin.COMPOSITE_TEXTURE_UNIT + 5;
+	public static final int AO_TEXTURE_UNIT = LuminaPlugin.COMPOSITE_TEXTURE_UNIT + 3;
+	public static final int SHADOW_RAW_UNIT = LuminaPlugin.COMPOSITE_TEXTURE_UNIT + 4;
+	public static final int SHADOW_COMPARE_UNIT = LuminaPlugin.COMPOSITE_TEXTURE_UNIT + 5;
 	// the static shadow map's maxima, for the AO pass (ShadowMap.bindMax)
-	private static final int SHADOW_MAX_UNIT = LuminaPlugin.COMPOSITE_TEXTURE_UNIT + 22;
-	private static final int LIGHT_DATA_UNIT = LuminaPlugin.COMPOSITE_TEXTURE_UNIT + 6;
-	private static final int CLUSTER_DATA_UNIT = LuminaPlugin.COMPOSITE_TEXTURE_UNIT + 7;
+	public static final int SHADOW_MAX_UNIT = LuminaPlugin.COMPOSITE_TEXTURE_UNIT + 22;
+	public static final int LIGHT_DATA_UNIT = LuminaPlugin.COMPOSITE_TEXTURE_UNIT + 6;
+	public static final int CLUSTER_DATA_UNIT = LuminaPlugin.COMPOSITE_TEXTURE_UNIT + 7;
 	// the rooms (RoomTexture)
-	private static final int ROOM_TEXELS_UNIT = LuminaPlugin.COMPOSITE_TEXTURE_UNIT + 20;
+	public static final int ROOM_TEXELS_UNIT = LuminaPlugin.COMPOSITE_TEXTURE_UNIT + 20;
 	// the fog as marched at quarter resolution, read by its upsample
 	// the clouds at half resolution, which the composite's sky filters (composite_frag.glsl)
-	private static final int CLOUD_HALF_UNIT = LuminaPlugin.COMPOSITE_TEXTURE_UNIT + 23;
+	public static final int CLOUD_HALF_UNIT = LuminaPlugin.COMPOSITE_TEXTURE_UNIT + 23;
 
-	private final LightClusters lightClusters = new LightClusters();
+	public final LightClusters lightClusters = new LightClusters();
 	// the walls that stop the lamps, and the rooms (for their fill and the puddles), on the GPU
-	private final LampWalls lampWalls = new LampWalls();
-	private final RoomTexture roomTexture = new RoomTexture();
+	public final LampWalls lampWalls = new LampWalls();
+	public final RoomTexture roomTexture = new RoomTexture();
 	// how much light each building room gets and the fill it lacks (RoomLight)
 	private final RoomLight roomLight = new RoomLight();
 	private long roomLightNanos;
@@ -432,10 +389,10 @@ public class LuminaPlugin extends Plugin implements DrawCallbacks
 	private final LogLimiter logLimiter = new LogLimiter(10_000);
 	public final LookMonitor lookMonitor = new LookMonitor();
 	public final HitchMonitor hitchMonitor = new HitchMonitor();
-	private final java.util.ArrayList<PointLight> frameLights = new java.util.ArrayList<>();
+	public final java.util.ArrayList<PointLight> frameLights = new java.util.ArrayList<>();
 	private final PointLight testLight = new PointLight();
 	// lamp.glsl's lampWallsHeader with no walls bound
-	private static final float[] NO_WALLS = {0, 0, 0, 0, 1};
+	public static final float[] NO_WALLS = {0, 0, 0, 0, 1};
 	private int uniAlphaPass;
 	private int uniSceneOutdoors;
 	// the lamps on the transparent faces (frag.glsl's alpha pass)
@@ -451,26 +408,26 @@ public class LuminaPlugin extends Plugin implements DrawCallbacks
 	public Wind.Locations sceneWind, shadowWind;
 	private long lastSwayTick;
 	public boolean swayTick = true;
-	private static final int ALPHA_LAYER_UNIT = LuminaPlugin.COMPOSITE_TEXTURE_UNIT + 8;
-	private static final int MATERIAL_UNIT = LuminaPlugin.COMPOSITE_TEXTURE_UNIT + 9;
+	public static final int ALPHA_LAYER_UNIT = LuminaPlugin.COMPOSITE_TEXTURE_UNIT + 8;
+	public static final int MATERIAL_UNIT = LuminaPlugin.COMPOSITE_TEXTURE_UNIT + 9;
 	private final SurfaceMaterials.Uniforms sceneMaterials = new SurfaceMaterials.Uniforms();
 	private final WindSway.Uniforms sceneSway = new WindSway.Uniforms();
 	public final WindSway.Uniforms shadowSway = new WindSway.Uniforms();
-	private static final int FOG_TEXTURE_UNIT = LuminaPlugin.COMPOSITE_TEXTURE_UNIT + 10;
-	private static final int FOG_NOISE_UNIT = LuminaPlugin.COMPOSITE_TEXTURE_UNIT + 11;
+	public static final int FOG_TEXTURE_UNIT = LuminaPlugin.COMPOSITE_TEXTURE_UNIT + 10;
+	public static final int FOG_NOISE_UNIT = LuminaPlugin.COMPOSITE_TEXTURE_UNIT + 11;
 
 	public final VolumetricFog volumetricFog = new VolumetricFog();
-	private final Clouds clouds = new Clouds();
+	public final Clouds clouds = new Clouds();
 	// the half resolution pass's scissor, x0, y0 to x1, y1 exclusive: the water's rect, the clouds' rows (skyRows)
-	private final int[] halfScissor = new int[4], cloudRows = new int[2];
+	public final int[] halfScissor = new int[4], cloudRows = new int[2];
 	// the composite has no 3D sampler, so the clouds' 2D noise shares the fog noise's unit on the 2D target
-	private static final int CLOUD_NOISE_UNIT = FOG_NOISE_UNIT;
-	private final SkyCache skyCache = new SkyCache();
+	public static final int CLOUD_NOISE_UNIT = FOG_NOISE_UNIT;
+	public final SkyCache skyCache = new SkyCache();
 	// The composite samples the sky cache and its irradiance on the weather occlusion map's two units: the composite
 	// draws before the weather passes bind the map there. The cache's own passes use them before either.
-	private static final int SKY_CACHE_UNIT = LuminaPlugin.COMPOSITE_TEXTURE_UNIT + 12;
+	public static final int SKY_CACHE_UNIT = LuminaPlugin.COMPOSITE_TEXTURE_UNIT + 12;
 	private final float[] skyCacheOvercast = new float[7];
-	private boolean frameFog;
+	public boolean frameFog;
 	// 117 HD fog depth that doubles the volumetric fog
 	private static final float AREA_FOG_DEPTH = 30;
 	// under the open sky rather than underground, from the area classification (or the game's sky color)
@@ -501,8 +458,8 @@ public class LuminaPlugin extends Plugin implements DrawCallbacks
 	private volatile double swapIntervalMs;
 
 	public final DayCycle dayCycle = new DayCycle();
-	private final NightSky nightSky = new NightSky();
-	final EnvironmentManager environmentManager = new EnvironmentManager();
+	public final NightSky nightSky = new NightSky();
+	public final EnvironmentManager environmentManager = new EnvironmentManager();
 	private final EnvironmentUniforms sceneEnvUniforms = new EnvironmentUniforms();
 	public final ShadowMap shadowMap = new ShadowMap();
 	public final Weather weather = new Weather();
@@ -510,68 +467,68 @@ public class LuminaPlugin extends Plugin implements DrawCallbacks
 	private final float[] thunderStrike = new float[2];
 	// each region's forecast, temperature and ground, which follow the game clock
 	private final Climate climate = new Climate();
-	private final WeatherGround weatherGround = new WeatherGround();
+	public final WeatherGround weatherGround = new WeatherGround();
 	// where players and small NPCs have just walked through rain
-	private final WadeSteps wadeSteps = new WadeSteps();
+	public final WadeSteps wadeSteps = new WadeSteps();
 	// GameClock's time this frame
 	private long frameGameMillis;
 	// two units: the occlusion map's raw and compare views; their own, since the AO program's compare sampler must
 	// never find another program's color texture left on its unit (the sky cache and the water contact were there)
-	private static final int WEATHER_OCCLUSION_UNIT = LuminaPlugin.COMPOSITE_TEXTURE_UNIT + 26;
+	public static final int WEATHER_OCCLUSION_UNIT = LuminaPlugin.COMPOSITE_TEXTURE_UNIT + 26;
 	// the water: data and noise for its surface pass, then the surface and its half resolution shading for the
 	// composite; 16 and 17, past the composite's other units (the per-stage limit of 16 counts samplers a program
 	// uses, not unit numbers; units go up to the combined limit, 80 on macOS)
-	private static final int WATER_DATA_UNIT = LuminaPlugin.COMPOSITE_TEXTURE_UNIT + 14;
-	private static final int WATER_NOISE_UNIT = LuminaPlugin.COMPOSITE_TEXTURE_UNIT + 15;
+	public static final int WATER_DATA_UNIT = LuminaPlugin.COMPOSITE_TEXTURE_UNIT + 14;
+	public static final int WATER_NOISE_UNIT = LuminaPlugin.COMPOSITE_TEXTURE_UNIT + 15;
 	// the water surface pass's map of things standing in the water (WaterMap.contact)
-	private static final int WATER_CONTACT_UNIT = LuminaPlugin.COMPOSITE_TEXTURE_UNIT + 13;
+	public static final int WATER_CONTACT_UNIT = LuminaPlugin.COMPOSITE_TEXTURE_UNIT + 13;
 	// the terrain the volumetric fog lies on (VolumetricFog)
-	private static final int FOG_GROUND_UNIT = LuminaPlugin.COMPOSITE_TEXTURE_UNIT + 24;
+	public static final int FOG_GROUND_UNIT = LuminaPlugin.COMPOSITE_TEXTURE_UNIT + 24;
 	// the ground drawn before it while a new one eases in (VolumetricFog, LayerEase)
-	private static final int FOG_GROUND_PREV_UNIT = LuminaPlugin.COMPOSITE_TEXTURE_UNIT + 30;
+	public static final int FOG_GROUND_PREV_UNIT = LuminaPlugin.COMPOSITE_TEXTURE_UNIT + 30;
 	// the surface pass's wave maps either side of now (WaterSurface.bake)
-	private static final int WATER_WAVES_UNIT_A = LuminaPlugin.COMPOSITE_TEXTURE_UNIT + 17;
-	private static final int WATER_WAVES_UNIT_B = LuminaPlugin.COMPOSITE_TEXTURE_UNIT + 19;
+	public static final int WATER_WAVES_UNIT_A = LuminaPlugin.COMPOSITE_TEXTURE_UNIT + 17;
+	public static final int WATER_WAVES_UNIT_B = LuminaPlugin.COMPOSITE_TEXTURE_UNIT + 19;
 	// two units: the weather field (WeatherField) and its ground, for the fog and the weather passes
-	private static final int WEATHER_FIELD_UNIT = LuminaPlugin.COMPOSITE_TEXTURE_UNIT + 16;
+	public static final int WEATHER_FIELD_UNIT = LuminaPlugin.COMPOSITE_TEXTURE_UNIT + 16;
 	public final Water water = new Water();
-	private final float[] waterWind = new float[3];
+	public final float[] waterWind = new float[3];
 	public final VoxelBuilder voxelBuilder = new VoxelBuilder();
 	// the skylight's traced sky visibility for the AO pass, and the static lights' occlusion
-	private static final int SKY_GRID_UNIT = LuminaPlugin.COMPOSITE_TEXTURE_UNIT + 28;
+	public static final int SKY_GRID_UNIT = LuminaPlugin.COMPOSITE_TEXTURE_UNIT + 28;
 	// the weather field's sky (cover, wispiness, darkness around the player) for the clouds
-	private static final int WEATHER_SKY_UNIT = LuminaPlugin.COMPOSITE_TEXTURE_UNIT + 27;
-	private final SkyGridMap skyGrid = new SkyGridMap();
+	public static final int WEATHER_SKY_UNIT = LuminaPlugin.COMPOSITE_TEXTURE_UNIT + 27;
+	public final SkyGridMap skyGrid = new SkyGridMap();
 	// world units from the player's feet to the head, where the sky overhead is read for the weather sounds
 	private static final float WEATHER_HEAD = 120;
 	// the sky's light flowing in under cover
-	private static final int SKY_FIELD_UNIT = LuminaPlugin.COMPOSITE_TEXTURE_UNIT + 25;
-	private final SkyFieldMap skyField = new SkyFieldMap();
+	public static final int SKY_FIELD_UNIT = LuminaPlugin.COMPOSITE_TEXTURE_UNIT + 25;
+	public final SkyFieldMap skyField = new SkyFieldMap();
 	// whether the AO pass worked the sky visibility out this frame; whether it is wanted (under the open sky, logged
 	// in), and where the player is for the sky grid's tracing (world tiles)
-	private boolean frameSkylight;
-	private boolean frameSkylightWanted;
-	private float frameSkylightTileX, frameSkylightTileZ;
+	public boolean frameSkylight;
+	public boolean frameSkylightWanted;
+	public float frameSkylightTileX, frameSkylightTileZ;
 	// when the plugin started; animations count from here (the day, the seasons and the weather follow GameClock)
-	private long startMillis = System.currentTimeMillis();
+	public long startMillis = System.currentTimeMillis();
 
 	// per-frame state for the full-screen passes, captured during the scene draw
 	public float frameCameraX, frameCameraY, frameCameraZ;
-	private boolean frameOutdoors;
+	public boolean frameOutdoors;
 	private boolean frameHasSkybox;
 	public boolean frameShadows;
-	private int frameSkyColor;
-	private int frameDrawDistance;
+	public int frameSkyColor;
+	public int frameDrawDistance;
 
 	/**
 	 * Camera data for the full-screen passes. The matrices are camera-relative (no translation) to keep
 	 * world position reconstruction precise far from the world origin.
 	 */
-	private static final class FrameUniforms
+	public static final class FrameUniforms
 	{
-		int viewProj, invViewProj, viewport, depthZeroToOne, halfRatio;
+		public int viewProj, invViewProj, viewport, depthZeroToOne, halfRatio;
 
-		void locate(int program)
+		public void locate(int program)
 		{
 			viewProj = glGetUniformLocation(program, "viewProj");
 			invViewProj = glGetUniformLocation(program, "invViewProj");
@@ -581,10 +538,10 @@ public class LuminaPlugin extends Plugin implements DrawCallbacks
 		}
 	}
 
-	private final float[] frameViewProj = Mat4.identity();
-	private float[] frameInvViewProj = Mat4.identity();
+	public final float[] frameViewProj = Mat4.identity();
+	public float[] frameInvViewProj = Mat4.identity();
 	// scene viewport within the scene targets, in framebuffer pixels: x, y, width, height
-	private final int[] frameViewport = new int[4];
+	public final int[] frameViewport = new int[4];
 
 	static int glProgram;
 	private int glUiProgram;
@@ -599,11 +556,11 @@ public class LuminaPlugin extends Plugin implements DrawCallbacks
 	public int vaoUiHandle;
 	private int vboUiHandle;
 
-	private final SceneTargets sceneTargets = new SceneTargets();
+	public final SceneTargets sceneTargets = new SceneTargets();
 	private boolean sceneFboValid;
 
 	// composite samples the scene targets from these units; 0 is the UI texture and 1 the game texture array
-	private static final int COMPOSITE_TEXTURE_UNIT = 2;
+	public static final int COMPOSITE_TEXTURE_UNIT = 2;
 
 	public int textureArrayId;
 
@@ -611,12 +568,12 @@ public class LuminaPlugin extends Plugin implements DrawCallbacks
 
 	private int lastCanvasWidth;
 	private int lastCanvasHeight;
-	private int lastStretchedCanvasWidth;
-	private int lastStretchedCanvasHeight;
+	public int lastStretchedCanvasWidth;
+	public int lastStretchedCanvasHeight;
 	private AntiAliasingMode lastAntiAliasingMode;
 	// the share of the drawable's resolution the scene targets were made for (config render scale)
 	private double lastRenderFactor;
-	private final Upscaler upscaler = new Upscaler();
+	public final Upscaler upscaler = new Upscaler();
 	private int lastAnisotropicFilteringLevel = -1;
 	private float lastTextureLodBias;
 
@@ -711,7 +668,7 @@ public class LuminaPlugin extends Plugin implements DrawCallbacks
 	// Uniforms
 	private int uniFogColor;
 	private int uniDrawDistance;
-	private final EdgeFade edgeFade = new EdgeFade();
+	public final EdgeFade edgeFade = new EdgeFade();
 	private final EdgeFade.Uniforms sceneEdgeUniforms = new EdgeFade.Uniforms();
 	private int uniExpandedMapLoadingChunks;
 	private int uniSmoothBanding;
@@ -1188,7 +1145,7 @@ public class LuminaPlugin extends Plugin implements DrawCallbacks
 	}
 
 	// the scene targets' sample count the shaders are compiled for: they read multisample textures with MSAA
-	private int shaderSamples;
+	public int shaderSamples;
 
 	/**
 	 * Samples per pixel of the scene targets, 0 for none: the antialiasing mode's, or the window's when the driver
@@ -1268,7 +1225,7 @@ public class LuminaPlugin extends Plugin implements DrawCallbacks
 		Template template = createTemplate();
 		glProgram = PROGRAM.compile(template);
 		glUiProgram = UI_PROGRAM.compile(template);
-		for (CompositeProgram c : composites)
+		for (Composite.CompositeProgram c : composite.composites)
 		{
 			c.program = compileComposite(c.pass);
 		}
@@ -1337,9 +1294,9 @@ public class LuminaPlugin extends Plugin implements DrawCallbacks
 		sceneWind = Wind.locate(glProgram);
 		shadowWind = Wind.locate(glShadowProgram);
 		sceneEnvUniforms.locate(glProgram);
-		for (CompositeProgram c : composites)
+		for (Composite.CompositeProgram c : composite.composites)
 		{
-			locateComposite(c);
+			composite.locate(c);
 		}
 
 		uniDenoiseFog = glGetUniformLocation(glDenoiseProgram, "denoiseFog");
@@ -1393,64 +1350,6 @@ public class LuminaPlugin extends Plugin implements DrawCallbacks
 		glUseProgram(0);
 	}
 
-	private void locateComposite(CompositeProgram c)
-	{
-		int p = c.program;
-		c.part = glGetUniformLocation(p, "compositePart");
-		c.aoEnabled = glGetUniformLocation(p, "aoEnabled");
-		c.aoStrength = glGetUniformLocation(p, "aoStrength");
-		c.cameraPos = glGetUniformLocation(p, "cameraPos");
-		c.time = glGetUniformLocation(p, "time");
-		c.outdoors = glGetUniformLocation(p, "outdoors");
-		c.proceduralSky = glGetUniformLocation(p, "proceduralSky");
-		c.lightingEnabled = glGetUniformLocation(p, "lightingEnabled");
-		c.sunDir = glGetUniformLocation(p, "sunDir");
-		c.moonDir = glGetUniformLocation(p, "moonDir");
-		c.casterDir = glGetUniformLocation(p, "casterDir");
-		c.sunIsCaster = glGetUniformLocation(p, "sunIsCaster");
-		c.strikeLight = glGetUniformLocation(p, "strikeLight");
-		c.sunAltitude = glGetUniformLocation(p, "sunAltitude");
-		c.overcast = glGetUniformLocation(p, "weatherOvercast");
-		c.weatherLight = glGetUniformLocation(p, "weatherLight");
-		c.shadowsEnabled = glGetUniformLocation(p, "shadowsEnabled");
-		c.lightProjRel = glGetUniformLocation(p, "lightProjRel");
-		c.shadowRadius = glGetUniformLocation(p, "shadowRadius");
-		c.shadowDepthRange = glGetUniformLocation(p, "shadowDepthRange");
-		c.shadowMapSize = glGetUniformLocation(p, "shadowMapSize");
-		c.pointLights = glGetUniformLocation(p, "pointLightsEnabled");
-		c.roomHeader = glGetUniformLocation(p, "roomHeader");
-		c.lampWalls.locate(p);
-		c.interiorTint = glGetUniformLocation(p, "interiorTint");
-		c.skylightOn = glGetUniformLocation(p, "skylightOn");
-		c.skyVoid = glGetUniformLocation(p, "skyVoid");
-		c.drawDistance = glGetUniformLocation(p, "drawDistance");
-		c.expandedChunks = glGetUniformLocation(p, "expandedMapLoadingChunks");
-		c.clientSkyColor = glGetUniformLocation(p, "clientSkyColor");
-		c.lightningBolt = Lightning.locateComposite(p);
-		c.volumetricFog = VolumetricFog.locateComposite(p, FOG_TEXTURE_UNIT);
-		c.frame.locate(p);
-		c.env.locate(p);
-		c.edge.locate(p);
-		c.materials.locate(p);
-		c.ground.locate(p);
-		Clouds.locate(c.clouds, p, CLOUD_NOISE_UNIT, WEATHER_SKY_UNIT);
-		c.water.locate(p, WATER_DATA_UNIT, WATER_NOISE_UNIT);
-		c.skyCache.locate(p, SKY_CACHE_UNIT);
-		c.night.locate(p);
-		bindSceneSamplers(p);
-		glUseProgram(p);
-		glUniform1i(glGetUniformLocation(p, "sceneAo"), AO_TEXTURE_UNIT);
-		glUniform1i(glGetUniformLocation(p, "sceneShadow"), SCENE_SHADOW_UNIT);
-		glUniform1i(glGetUniformLocation(p, "compositeParts"), COMPOSITE_PARTS_UNIT);
-		glUniform1i(glGetUniformLocation(p, "shadowCompare"), SHADOW_COMPARE_UNIT);
-		glUniform1i(glGetUniformLocation(p, "lightData"), LIGHT_DATA_UNIT);
-		glUniform1i(glGetUniformLocation(p, "clusterData"), CLUSTER_DATA_UNIT);
-		glUniform1i(glGetUniformLocation(p, "roomTexels"), ROOM_TEXELS_UNIT);
-		glUniform1i(glGetUniformLocation(p, "cloudHalf"), CLOUD_HALF_UNIT);
-		glUniform1i(glGetUniformLocation(p, "sceneAlpha"), ALPHA_LAYER_UNIT);
-		glUniform1i(glGetUniformLocation(p, "sceneMaterial"), MATERIAL_UNIT);
-		glUseProgram(0);
-	}
 
 	public float windSwayAmount()
 	{
@@ -1463,7 +1362,7 @@ public class LuminaPlugin extends Plugin implements DrawCallbacks
 			CLUSTER_DATA_UNIT, FOG_NOISE_UNIT, WEATHER_FIELD_UNIT, WATER_DATA_UNIT, FOG_GROUND_UNIT, FOG_GROUND_PREV_UNIT);
 	}
 
-	private static void bindSceneSamplers(int program)
+	public static void bindSceneSamplers(int program)
 	{
 		glUseProgram(program);
 		glUniform1i(glGetUniformLocation(program, "sceneColor"), COMPOSITE_TEXTURE_UNIT);
@@ -1480,7 +1379,7 @@ public class LuminaPlugin extends Plugin implements DrawCallbacks
 		glDeleteProgram(glUiProgram);
 		glUiProgram = 0;
 
-		for (CompositeProgram c : composites)
+		for (Composite.CompositeProgram c : composite.composites)
 		{
 			glDeleteProgram(c.program);
 			c.program = 0;
@@ -1516,16 +1415,16 @@ public class LuminaPlugin extends Plugin implements DrawCallbacks
 		glBindVertexArray(vaoUiHandle);
 		Template template = createTemplate();
 		int scene = 0, ui = 0, ao = 0, denoise = 0, shadow = 0, shadowCopy = 0, shadowMax = 0, fog = 0, waterSurface = 0, upscale = 0;
-		int[] composite = new int[composites.length];
+		int[] programs = new int[composite.composites.length];
 		Weather.Programs weatherPrograms;
 		SkyCache.Programs skyCachePrograms;
 		try
 		{
 			scene = PROGRAM.compile(template);
 			ui = UI_PROGRAM.compile(template);
-			for (int i = 0; i < composites.length; ++i)
+			for (int i = 0; i < composite.composites.length; ++i)
 			{
-				composite[i] = compileComposite(composites[i].pass);
+				programs[i] = compileComposite(composite.composites[i].pass);
 			}
 			ao = AO_PROGRAM.compile(template);
 			denoise = DENOISE_PROGRAM.compile(template);
@@ -1552,7 +1451,7 @@ public class LuminaPlugin extends Plugin implements DrawCallbacks
 			// glDeleteProgram ignores 0
 			glDeleteProgram(scene);
 			glDeleteProgram(ui);
-			for (int program : composite)
+			for (int program : programs)
 			{
 				glDeleteProgram(program);
 			}
@@ -1581,9 +1480,9 @@ public class LuminaPlugin extends Plugin implements DrawCallbacks
 		shutdownProgram();
 		glProgram = scene;
 		glUiProgram = ui;
-		for (int i = 0; i < composites.length; ++i)
+		for (int i = 0; i < composite.composites.length; ++i)
 		{
-			composites[i].program = composite[i];
+			composite.composites[i].program = programs[i];
 		}
 		glAoProgram = ao;
 		glDenoiseProgram = denoise;
@@ -2235,7 +2134,7 @@ public class LuminaPlugin extends Plugin implements DrawCallbacks
 	}
 
 	/** Whether the composite draws the procedural sky: not over the game's own skybox, nor in a void. */
-	private boolean proceduralSky()
+	public boolean proceduralSky()
 	{
 		return config.proceduralSky() && !frameHasSkybox && !frameSkyVoid;
 	}
@@ -2269,7 +2168,7 @@ public class LuminaPlugin extends Plugin implements DrawCallbacks
 		}
 	}
 
-	private void updateNightSky()
+	public void updateNightSky()
 	{
 		float[] forward = viewRay(0, 0);
 		float[] above = viewRay(0, 2f / Math.max(frameViewport[3], 1));
@@ -2379,7 +2278,7 @@ public class LuminaPlugin extends Plugin implements DrawCallbacks
 		return environmentManager.isOverworld();
 	}
 
-	private void setEnvironmentUniforms(EnvironmentUniforms u)
+	public void setEnvironmentUniforms(EnvironmentUniforms u)
 	{
 		boolean on = config.areaEnvironments();
 		// the game's own skyboxes have their own colors; area fog would not match them, like in 117 HD
@@ -2423,7 +2322,7 @@ public class LuminaPlugin extends Plugin implements DrawCallbacks
 	}
 
 	/** Whether the window's framebuffer has a stencil (windowStencil); call with it bound. */
-	private boolean hasWindowStencil()
+	public boolean hasWindowStencil()
 	{
 		if (windowStencil == 0)
 		{
@@ -2435,7 +2334,7 @@ public class LuminaPlugin extends Plugin implements DrawCallbacks
 		return windowStencil > 0;
 	}
 
-	private void setFrameUniforms(FrameUniforms u)
+	public void setFrameUniforms(FrameUniforms u)
 	{
 		glUniformMatrix4fv(u.viewProj, false, frameViewProj);
 		glUniformMatrix4fv(u.invViewProj, false, frameInvViewProj);
@@ -2445,7 +2344,7 @@ public class LuminaPlugin extends Plugin implements DrawCallbacks
 	}
 
 	/** Bind the shadow map for the composite and the fog, once it is drawn. */
-	private void prepareLighting()
+	public void prepareLighting()
 	{
 		if (frameShadows && shadowMap.isInitialized())
 		{
@@ -2544,77 +2443,6 @@ public class LuminaPlugin extends Plugin implements DrawCallbacks
 		lightClusters.setRoomFill(rooms != null ? roomLight : null);
 	}
 
-	/**
-	 * Use one of the composite's programs and set this frame's uniforms on it: the same for each, whatever it uses.
-	 * After prepareLighting and the sky cache's easeComposite.
-	 */
-	private void useComposite(CompositeProgram c)
-	{
-		glUseProgram(c.program);
-		setFrameUniforms(c.frame);
-		skyCache.setComposite(c.skyCache, weather.skyHaze(), config.starBrightness() / 100f);
-		nightSky.set(c.night, config.nebulaStrength() / 100f);
-		glUniform1i(c.aoEnabled, config.ambientOcclusion() ? 1 : 0);
-		glUniform1f(c.aoStrength, config.aoStrength() / 100f);
-
-		glUniform3f(c.cameraPos, frameCameraX, frameCameraY, frameCameraZ);
-		glUniform1f(c.time, compositeTime);
-		glUniform1i(c.outdoors, frameOutdoors ? 1 : 0);
-		glUniform1i(c.proceduralSky, proceduralSky() ? 1 : 0);
-		glUniform1i(c.skyVoid, frameSkyVoid ? 1 : 0);
-		glUniform1i(c.lightingEnabled, 1);
-		glUniform3fv(c.sunDir, dayCycle.sunDir);
-		glUniform3fv(c.moonDir, dayCycle.moonDir);
-		glUniform3fv(c.casterDir, dayCycle.casterDir);
-		glUniform1i(c.sunIsCaster, dayCycle.sunIsCaster ? 1 : 0);
-		glUniform2fv(c.strikeLight, dayCycle.strikeLight);
-		glUniform1f(c.sunAltitude, dayCycle.sunAltitude);
-		weather.setOvercastUniform(c.overcast);
-		weather.setLightUniform(c.weatherLight);
-		setEnvironmentUniforms(c.env);
-
-		boolean shadows = frameShadows && shadowMap.isInitialized();
-		glUniform1i(c.shadowsEnabled, shadows ? 1 : 0);
-		if (shadows)
-		{
-			glUniformMatrix4fv(c.lightProjRel, false, shadowMap.lightProjRel);
-			glUniform1f(c.shadowRadius, shadowMap.getRadius());
-			glUniform1f(c.shadowDepthRange, shadowMap.getDepthRange());
-			glUniform1f(c.shadowMapSize, shadowMap.getSize());
-		}
-
-		if (frameLightClusters)
-		{
-			glUniform3fv(c.roomHeader, roomTexture.header());
-			c.lampWalls.apply(lampWalls.header());
-		}
-		else
-		{
-			// nothing bound: no rooms, no walls
-			glUniform3f(c.roomHeader, 0, 0, 0);
-			c.lampWalls.apply(NO_WALLS);
-		}
-		glUniform1i(c.pointLights, framePointLights ? 1 : 0);
-		glUniform1i(c.skylightOn, frameSkylight ? 1 : 0);
-		glUniform3f(c.interiorTint, BuildingLights.FILL_TINT[0], BuildingLights.FILL_TINT[1], BuildingLights.FILL_TINT[2]);
-
-		glUniform1i(c.drawDistance, frameDrawDistance);
-		c.edge.set(edgeFade);
-		glUniform1i(c.expandedChunks, client.getExpandedMapLoading());
-		glUniform3f(c.clientSkyColor,
-			(frameSkyColor >> 16 & 0xFF) / 255f, (frameSkyColor >> 8 & 0xFF) / 255f, (frameSkyColor & 0xFF) / 255f);
-
-		Scene groundScene = client.getTopLevelWorldView().getScene();
-		c.ground.set(frameGround && groundScene != null,
-			groundScene != null ? groundScene.getBaseX() * (float) Perspective.LOCAL_TILE_SIZE : 0,
-			groundScene != null ? groundScene.getBaseY() * (float) Perspective.LOCAL_TILE_SIZE : 0);
-		c.ground.setWade(wadeSteps.steps(frameCameraX, frameCameraZ));
-		glUniform1i(c.volumetricFog, frameFog ? 1 : 0);
-		clouds.apply(c.clouds);
-		weather.getLightning().bind(c.lightningBolt, frameCameraX, frameCameraZ);
-		c.materials.set(config);
-		water.setComposite(c.water, config);
-	}
 
 	/**
 	 * Gather this frame's point lights: scene lights from lights.json, plus the optional test light.
@@ -2684,38 +2512,8 @@ public class LuminaPlugin extends Plugin implements DrawCallbacks
 		return dayCycle.hour();
 	}
 
-	/**
-	 * Scissor the half resolution pass to the texels it draws: the water's rect, and the rows that can hold cloud
-	 * across the whole width; with both, the rows from the first to the last of either. Enables the scissor test.
-	 */
-	private void scissorHalf(boolean withClouds, boolean withWater)
-	{
-		int[] r = halfScissor;
-		if (withWater)
-		{
-			water.halfRect(r, sceneTargets.getHalfRatio());
-		}
-		if (withClouds)
-		{
-			clouds.skyRows(cloudRows, frameInvViewProj, frameViewport, sceneTargets.getAoWidth(),
-				sceneTargets.getAoHeight(), sceneTargets.getHalfRatio());
-			if (cloudRows[1] > cloudRows[0])
-			{
-				r[1] = withWater ? Math.min(r[1], cloudRows[0]) : cloudRows[0];
-				r[3] = withWater ? Math.max(r[3], cloudRows[1]) : cloudRows[1];
-				r[0] = 0;
-				r[2] = sceneTargets.getAoWidth();
-			}
-			else if (!withWater)
-			{
-				r[0] = r[1] = r[2] = r[3] = 0;
-			}
-		}
-		glEnable(GL_SCISSOR_TEST);
-		glScissor(r[0], r[1], Math.max(r[2] - r[0], 0), Math.max(r[3] - r[1], 0));
-	}
 
-	private void updateClouds()
+	public void updateClouds()
 	{
 		WorldView wv = client.getTopLevelWorldView();
 		long baseX = wv != null ? (long) wv.getBaseX() * Perspective.LOCAL_TILE_SIZE : 0;
@@ -2730,7 +2528,7 @@ public class LuminaPlugin extends Plugin implements DrawCallbacks
 	/**
 	 * Capture or blend the sky cache when the composite will use it, and return how it uses it (SkyCache.MODE_*).
 	 */
-	private int updateSkyCache()
+	public int updateSkyCache()
 	{
 		// Loading a region keeps drawing the last frames; dropping the cache for them would switch the sky light.
 		// Without updates the composite eases from the last capture back to the analytic light (SkyCache).
@@ -2759,7 +2557,7 @@ public class LuminaPlugin extends Plugin implements DrawCallbacks
 	}
 
 	/** Start a build of the scene's voxels, which the skylight traces, if one is due. */
-	private void prepareVoxels()
+	public void prepareVoxels()
 	{
 		WorldView wv = client.getTopLevelWorldView();
 		Scene scene = wv != null ? wv.getScene() : null;
@@ -2779,302 +2577,6 @@ public class LuminaPlugin extends Plugin implements DrawCallbacks
 		}
 	}
 
-	private void compositeScene()
-	{
-		int width = lastStretchedCanvasWidth;
-		int height = lastStretchedCanvasHeight;
-
-		final GraphicsConfiguration graphicsConfiguration = clientUI.getGraphicsConfiguration();
-		final AffineTransform transform = graphicsConfiguration.getDefaultTransform();
-
-		width = getScaledValue(transform.getScaleX(), width);
-		height = getScaledValue(transform.getScaleY(), height);
-
-		final boolean ao = config.ambientOcclusion();
-
-		sceneTargets.bindTextures(COMPOSITE_TEXTURE_UNIT);
-		// the water surface into its own target, against the scene's depth, before the composite reads it
-		weather.getWaterWind(waterWind);
-		water.drawSurface(config, waterWind, weather.waterRain(), frameOutdoors, sceneTargets.getWidth(),
-			sceneTargets.getHeight(), frameViewport, frameViewProj, frameInvViewProj, frameCameraX, frameCameraY,
-			frameCameraZ, edgeFade.focalX, edgeFade.focalZ, edgeFade.radius, dayCycle.casterDir, glCapabilities.OpenGL45,
-			WATER_DATA_UNIT, WATER_NOISE_UNIT, WATER_CONTACT_UNIT);
-		// fullscreen triangles are generated from gl_VertexID; core profile still needs some VAO bound
-		glBindVertexArray(vaoUiHandle);
-		cpuTimer.begin(CpuTimer.VOXELS);
-		prepareVoxels();
-		cpuTimer.end(CpuTimer.VOXELS);
-		cpuTimer.begin(CpuTimer.SKY_GRID);
-		BuildingLights buildings = buildingLights;
-		skyGrid.update(frameSkylightWanted, voxelBuilder.getVoxels(), buildings != null ? buildings.getWalls() : null,
-			frameSkylightTileX, frameSkylightTileZ, buildings != null ? buildings.getFloors() : null,
-			buildings != null ? buildings.getRooms() : null);
-		cpuTimer.end(CpuTimer.SKY_GRID);
-
-		// the AO pass also writes the half resolution depth and normals that the fog's upsample reads, and the
-		// shadows
-		WorldView aoView = client.getTopLevelWorldView();
-		Scene aoScene = aoView != null ? aoView.getScene() : null;
-		final boolean shadows = frameShadows && shadowMap.isInitialized();
-		final boolean ground = weather.groundActive();
-		frameGround = ground;
-		final boolean sky = skyGrid.isReady(aoScene);
-		frameSkylight = false;
-		final boolean halfPass = ao || frameFog || shadows || ground || sky;
-		if (framesSinceSwap < 6)
-		{
-			// B3 trace: the user sees one frame render normally, one "really sharp", then back, on every teleport — which
-			// passes ran in the frames after the swap tells which layer drops out
-			// identities of the derived data in use this frame: which one changes between the frames names the layer
-			log.info(String.format("post-swap frame %d: ao=%b fog=%b shadows=%b(init %b) ground=%b sky=%b half=%b skyCacheMode=%d captures=%d | voxels=%08x fogGround=%08x shadowFront=%08x rooms=%08x",
-				framesSinceSwap, ao, frameFog, shadows, shadowMap.isInitialized(), ground, sky, halfPass, lastSkyCacheMode, skyCache.getCaptures(),
-				System.identityHashCode(voxelBuilder.getVoxels()), System.identityHashCode(volumetricFog.groundForTrace()),
-				System.identityHashCode(shadowMap.frontView()),
-				System.identityHashCode(buildingLights != null ? buildingLights.getRooms() : null)));
-			framesSinceSwap++;
-		}
-		if (swapCaptureLeft > 0)
-		{
-			// the frames around the swap: k = frames since the load finished, s = frames since the swap (1000 = not yet)
-			FrameCapture.capture(client, drawManager, "Lumina (perf-wip)", String.format("swap-k%d-s%d", swapCaptureIndex, Math.min(framesSinceSwap, 999)));
-			swapCaptureIndex++;
-			swapCaptureLeft--;
-		}
-		if (halfPass)
-		{
-			glBindFramebuffer(GL_FRAMEBUFFER, sceneTargets.getAoFbo());
-			glViewport(0, 0, sceneTargets.getAoWidth(), sceneTargets.getAoHeight());
-			// the AO pass writes every texel: clearing first lets the GPU start the pass without loading the old
-			// contents (the fog, denoise, cloud and composite passes do the same)
-			glClear(GL_COLOR_BUFFER_BIT);
-			glUseProgram(glAoProgram);
-			setFrameUniforms(aoFrame);
-			glUniform1f(uniAoRadius, config.aoRadius() / 100f * Perspective.LOCAL_TILE_SIZE);
-			glUniform1i(uniAoSamples, ao ? config.aoQuality().pick(6, 8, 12) : 0);
-			glUniform1i(uniAoShadowsEnabled, shadows ? 1 : 0);
-			if (shadows)
-			{
-				glUniformMatrix4fv(uniAoLightProjRel, false, shadowMap.lightProjRel);
-				glUniform1f(uniAoShadowRadius, shadowMap.getRadius());
-				glUniform1f(uniAoShadowDepthRange, shadowMap.getDepthRange());
-				glUniform1f(uniAoShadowMapSize, shadowMap.getSize());
-				glUniform3fv(uniAoCasterDir, dayCycle.casterDir);
-				glUniform1i(uniAoSunIsCaster, dayCycle.sunIsCaster ? 1 : 0);
-				glUniform2fv(uniAoStrikeLight, dayCycle.strikeLight);
-				shadowMap.bindForSampling(SHADOW_RAW_UNIT, SHADOW_COMPARE_UNIT);
-				glUniform1i(uniAoShadowMaxTile, shadowMap.bindMax(SHADOW_MAX_UNIT));
-			}
-			sceneTargets.bindMaterial(MATERIAL_UNIT);
-			water.bindAo(config, WATER_DATA_UNIT);
-			if (ground)
-			{
-				weather.bindGround(weatherGround, WEATHER_OCCLUSION_UNIT, WEATHER_FIELD_UNIT, frameCameraX, frameCameraY,
-					frameCameraZ);
-			}
-			else
-			{
-				weatherGround.setAoOff();
-			}
-			frameSkylight = skyGrid.bindAo(SKY_GRID_UNIT, aoScene, frameCameraX, frameCameraY, frameCameraZ);
-			skyField.bindAo(SKY_FIELD_UNIT, frameCameraX, frameCameraZ);
-			glDrawArrays(GL_TRIANGLES, 0, 3);
-			SkyGridMap.unbind(SKY_GRID_UNIT);
-			SkyFieldMap.unbind(SKY_FIELD_UNIT);
-			// the sky cache takes the occlusion map's unit next, without its sampler objects
-			ShadowMap.unbind(WEATHER_OCCLUSION_UNIT, WEATHER_OCCLUSION_UNIT + 1);
-			sceneTargets.bindAo(AO_TEXTURE_UNIT);
-			sceneTargets.bindShadow(SCENE_SHADOW_UNIT);
-		}
-
-		updateClouds();
-		cpuTimer.begin(CpuTimer.SKY_CACHE);
-		int captured = skyCache.getCaptures();
-		int skyCacheMode = updateSkyCache();
-		lastSkyCacheMode = skyCacheMode;
-		cpuTimer.end(CpuTimer.SKY_CACHE);
-		if (captured != skyCache.getCaptures())
-		{
-			hitchMonitor.job(HitchMonitor.SKY_CAPTURE);
-		}
-
-		skyCache.easeComposite(skyCacheMode);
-		compositeTime = (System.currentTimeMillis() - startMillis) / 1000f;
-		updateNightSky();
-		prepareLighting();
-		sceneTargets.bindAlphaLayer(ALPHA_LAYER_UNIT);
-
-		weather.bindField(WEATHER_FIELD_UNIT, WEATHER_SKY_UNIT);
-		final boolean denoise = halfPass && glDenoiseProgram != 0;
-		boolean denoiseFog = false;
-		// after prepareLighting, which binds the shadow map and light clusters the fog also samples
-		if (frameFog)
-		{
-			volumetricFog.waterTexture = water.dataTexture(config);
-			// in a void the sun doesn't light the fog: it would glow over the black around the scene
-			final boolean fogSun = frameOutdoors && !frameSkyVoid;
-			final ShadowMap fogShadows = shadows ? shadowMap : null;
-			denoiseFog = denoise && volumetricFog.hasShafts(fogSun, fogShadows);
-			volumetricFog.render(sceneTargets.fogFbo(denoiseFog), sceneTargets.getAoWidth(),
-				sceneTargets.getAoHeight(), sceneTargets.getHalfRatio(), FOG_NOISE_UNIT,
-				frameViewProj, frameInvViewProj, frameViewport, glCapabilities.OpenGL45,
-				frameCameraX, frameCameraY, frameCameraZ, (System.currentTimeMillis() - startMillis) / 1000f,
-				fogSun, proceduralSky(), frameSkyColor, dayCycle, fogShadows,
-				config.pointLights() && lightClusters.isInitialized() && lightClusters.hasFogLights(),
-				lampWalls.header());
-		}
-		// the AO, the shadows and the fog's sun shafts are all dithered: smoothed together at half resolution before
-		// the composite upsamples them
-		if (denoise)
-		{
-			glUseProgram(glDenoiseProgram);
-			sceneTargets.denoise(uniDenoiseFog, AO_TEXTURE_UNIT, SCENE_SHADOW_UNIT, FOG_TEXTURE_UNIT, denoiseFog);
-			sceneTargets.bindShadow(SCENE_SHADOW_UNIT);
-		}
-		if (frameFog)
-		{
-			sceneTargets.bindFog(FOG_TEXTURE_UNIT);
-		}
-		if (clouds.isEnabled())
-		{
-			clouds.bindNoise(CLOUD_NOISE_UNIT);
-		}
-		sceneTargets.bindMaterial(MATERIAL_UNIT);
-		water.bind(config, WATER_DATA_UNIT);
-		// The clouds, which the composite's sky filters, and the water's shading (water.glsl) at half resolution, with
-		// everything bound for the composite: in one pass when both are drawn, timed as the clouds'
-		final boolean halfClouds = clouds.isEnabled() && frameOutdoors && proceduralSky();
-		final boolean halfWater = water.enabled(config);
-		if (halfClouds || halfWater)
-		{
-			// their targets are not bound while drawn into
-			glActiveTexture(GL_TEXTURE0 + CLOUD_HALF_UNIT);
-			glBindTexture(GL_TEXTURE_2D, 0);
-			glActiveTexture(GL_TEXTURE0 + WATER_NOISE_UNIT);
-			glBindTexture(GL_TEXTURE_2D, 0);
-			sceneTargets.bindHalf(halfClouds, halfWater);
-			glDisable(GL_BLEND);
-			useComposite(!halfWater ? compositeClouds : halfClouds ? compositeCloudsWater : compositeWater);
-			scissorHalf(halfClouds, halfWater);
-			glDrawArrays(GL_TRIANGLES, 0, 3);
-			glDisable(GL_SCISSOR_TEST);
-			glActiveTexture(GL_TEXTURE0 + CLOUD_HALF_UNIT);
-			glBindTexture(GL_TEXTURE_2D, halfClouds ? sceneTargets.cloudTexture() : 0);
-			glActiveTexture(GL_TEXTURE0 + WATER_NOISE_UNIT);
-			glBindTexture(GL_TEXTURE_2D, halfWater ? sceneTargets.waterShadedTexture() : 0);
-			glActiveTexture(GL_TEXTURE0);
-		}
-
-		useComposite(compositeFull);
-		if (log.isDebugEnabled())
-		{
-			lookMonitor.frame(compositeFull.env, weather, frameLights.size(),
-				environmentManager.getWorldPoint(), environmentManager.getBiome());
-		}
-
-		if (config.debugView() == DebugView.FINAL && !Boolean.parseBoolean(System.getProperty("runelight.compositeCombined", "true")))
-		{
-			for (int part = 1; part <= 4; part++)
-			{
-				sceneTargets.drawPart(part, COMPOSITE_PARTS_UNIT);
-				glUniform1i(compositeFull.part, part);
-				glDrawArrays(GL_TRIANGLES, 0, 3);
-			}
-			sceneTargets.drawPart(5, COMPOSITE_PARTS_UNIT);
-			glUniform1i(compositeFull.part, 5);
-		}
-
-		// below 100% render scale the composite and the weather draw at the scene's size into the upscaler's target
-		final boolean upscale = upscaler.isInitialized();
-		final int sceneWidth = upscale ? sceneTargets.getWidth() : width;
-		final int sceneHeight = upscale ? sceneTargets.getHeight() : height;
-		// the interface texture is filled before the drawable's pass starts, so the composite, the weather and the
-		// interface all draw in one pass: an upload between them would end it and store and reload the drawable
-		finishInterfaceUpload();
-		final int target = upscale ? upscaler.getFbo() : awtContext.getFramebuffer(false);
-		glBindFramebuffer(GL_FRAMEBUFFER, target);
-		final boolean edges = shaderSamples > 0;
-		final boolean stencil = edges && (upscale || target == 0 && hasWindowStencil());
-		glViewport(0, 0, sceneWidth, sceneHeight);
-		glClear(stencil ? GL_COLOR_BUFFER_BIT | GL_STENCIL_BUFFER_BIT : GL_COLOR_BUFFER_BIT);
-		glDrawArrays(GL_TRIANGLES, 0, 3);
-		glUniform1i(compositeFull.part, 0);
-		if (edges)
-		{
-			if (stencil)
-			{
-				// the pixels with a second surface, by a small program, so the edge pass's full shading never starts
-				// on the others; without a stencil the edge pass discards them itself
-				glUseProgram(compositeMark.program);
-				setFrameUniforms(compositeMark.frame);
-				glEnable(GL_STENCIL_TEST);
-				glStencilFunc(GL_ALWAYS, 1, 0xFF);
-				glStencilOp(GL_KEEP, GL_KEEP, GL_REPLACE);
-				glColorMask(false, false, false, false);
-				glDrawArrays(GL_TRIANGLES, 0, 3);
-				glColorMask(true, true, true, true);
-				glStencilFunc(GL_EQUAL, 1, 0xFF);
-				glStencilOp(GL_KEEP, GL_KEEP, GL_KEEP);
-			}
-			// the second surfaces, over the first by their share of the samples; the target's alpha stays
-			useComposite(compositeEdges);
-			glEnable(GL_BLEND);
-			glBlendFuncSeparate(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA, GL_ZERO, GL_ONE);
-			glDrawArrays(GL_TRIANGLES, 0, 3);
-			glDisable(GL_BLEND);
-			glDisable(GL_STENCIL_TEST);
-		}
-		glActiveTexture(GL_TEXTURE0 + COMPOSITE_PARTS_UNIT);
-		glBindTexture(GL_TEXTURE_2D_ARRAY, 0);
-		glActiveTexture(GL_TEXTURE0);
-		glActiveTexture(GL_TEXTURE0 + CLOUD_HALF_UNIT);
-		glBindTexture(GL_TEXTURE_2D, 0);
-		glActiveTexture(GL_TEXTURE0);
-		// before the weather binds its occlusion map on the same unit
-		SkyCache.unbind(SKY_CACHE_UNIT);
-
-		if (weather.isActive() && config.debugView() == DebugView.FINAL)
-		{
-			weather.draw(frameViewProj, frameInvViewProj, frameViewport, glCapabilities.OpenGL45,
-				frameCameraX, frameCameraY, frameCameraZ, dayCycle, water, config,
-				WEATHER_OCCLUSION_UNIT,
-				config.pointLights() && lightClusters.isInitialized(),
-				lampWalls.header(), frameDrawDistance,
-				wadeSteps.steps(frameCameraX, frameCameraZ));
-			glViewport(0, 0, sceneWidth, sceneHeight);
-		}
-		// the weather draws splashes by the water pass's pixels
-		Water.unbind(WATER_DATA_UNIT, WATER_NOISE_UNIT);
-
-		if (upscale)
-		{
-			glBindFramebuffer(GL_FRAMEBUFFER, awtContext.getFramebuffer(false));
-			// the weather pass leaves its own vertex array bound (or none); the fullscreen triangle needs one bound
-			glBindVertexArray(vaoUiHandle);
-			upscaler.draw(width, height, config.upscaleSharpness() / 100f);
-		}
-
-		glBindVertexArray(0);
-		sceneTargets.unbindTextures(COMPOSITE_TEXTURE_UNIT);
-		glActiveTexture(GL_TEXTURE0 + AO_TEXTURE_UNIT);
-		glBindTexture(GL_TEXTURE_2D, 0);
-		glActiveTexture(GL_TEXTURE0 + SCENE_SHADOW_UNIT);
-		glBindTexture(GL_TEXTURE_2D, 0);
-		glActiveTexture(GL_TEXTURE0 + SHADOW_MAX_UNIT);
-		glBindTexture(GL_TEXTURE_2D, 0);
-		glActiveTexture(GL_TEXTURE0);
-		ShadowMap.unbind(SHADOW_RAW_UNIT, SHADOW_COMPARE_UNIT);
-		LightClusters.unbind(LIGHT_DATA_UNIT, CLUSTER_DATA_UNIT);
-		RoomTexture.unbind(ROOM_TEXELS_UNIT);
-		glActiveTexture(GL_TEXTURE0 + ALPHA_LAYER_UNIT);
-		glBindTexture(GL_TEXTURE_2D, 0);
-		sceneTargets.unbindMaterial(MATERIAL_UNIT);
-		VolumetricFog.unbind(FOG_TEXTURE_UNIT);
-		Clouds.unbind(CLOUD_NOISE_UNIT);
-		WeatherField.unbind(WEATHER_FIELD_UNIT, WEATHER_FIELD_UNIT + 1, WEATHER_SKY_UNIT);
-		glUseProgram(0);
-
-		checkGLErrors();
-	}
 
 	@Override
 	public void drawZoneOpaque(Projection entityProjection, Scene scene, int zx, int zz)
@@ -3394,7 +2896,7 @@ public class LuminaPlugin extends Plugin implements DrawCallbacks
 	// the interface texture holds this frame's canvas (finishInterfaceUpload)
 	private boolean interfaceFinished;
 
-	private void finishInterfaceUpload()
+	public void finishInterfaceUpload()
 	{
 		if (interfaceFinished)
 		{
@@ -3452,11 +2954,11 @@ public class LuminaPlugin extends Plugin implements DrawCallbacks
 
 		interfaceFinished = false;
 		boolean composited = false;
-		if (sceneFboValid && sceneTargets.isInitialized() && compositeFull.program != 0)
+		if (sceneFboValid && sceneTargets.isInitialized() && composite.compositeFull.program != 0)
 		{
 			try
 			{
-				compositeScene();
+				composite.draw();
 				composited = true;
 			}
 			catch (RuntimeException ex)
@@ -3745,7 +3247,7 @@ public class LuminaPlugin extends Plugin implements DrawCallbacks
 
 
 
-	private int getScaledValue(final double scale, final int value)
+	public int getScaledValue(final double scale, final int value)
 	{
 		return (int) (value * scale);
 	}
