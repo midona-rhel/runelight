@@ -201,7 +201,7 @@ vec3 lampsOnSurface(int entry, vec3 p, vec3 n, vec3 faceN, float transmissive, o
     }
     vec3 ld;
     float d;
-    vec3 c = lampLight(lamp, p, wallFrom, ld, d);
+    vec3 c = lampLight(lamp, p, wallFrom, false, ld, d);
     float ndl = dot(n, ld);
     sum += c * lampWrap(lamp, ndl, d);
     // thin foliage is also lit from behind: magic tree canopies glow around the lamps inside them

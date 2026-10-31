@@ -150,7 +150,7 @@ vec3 weatherPointLights(vec3 p, vec4 clip, vec3 n) {
     Lamp lamp = lampAt(li);
     vec3 ld;
     float d;
-    vec3 color = lampLight(lamp, p, p, ld, d);
+    vec3 color = lampLight(lamp, p, p, particle, ld, d);
     // drops between the camera and a light glow against it
     float k = particle ? 1.0 + WEATHER_FORWARD_SCATTER * pow(max(dot(ld, view), 0.0), WEATHER_FORWARD_POWER)
       : lampWrap(lamp, dot(n, ld), d);
