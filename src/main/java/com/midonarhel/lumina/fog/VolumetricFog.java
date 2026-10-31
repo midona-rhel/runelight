@@ -458,14 +458,15 @@ public class VolumetricFog
 	}
 
 	/**
-	 * Whether {@link #render} with these outdoors and shadows draws the sun shafts (fog_frag.glsl's shafts), the only
-	 * part of the fog with grain: the shadow map is sampled at jittered points along each ray. The shader also leaves
-	 * them out while the caster's light is nil, which the day cycle never quite reaches: at its switch from the sun to
-	 * the moon both are faint, but not 0.
+	 * Whether {@link #render} with these outdoors, shadows and lamps draws grain the denoise must smooth: the sun shafts
+	 * (fog_frag.glsl's shafts: the shadow map sampled at jittered points along each ray) or the lamps' glow (each lamp's
+	 * walls and floors looked for at jittered points along the ray, lampGlow). The shader also leaves the shafts out
+	 * while the caster's light is nil, which the day cycle never quite reaches: at its switch from the sun to the moon
+	 * both are faint, but not 0.
 	 */
-	public boolean hasShafts(boolean outdoors, ShadowMap shadows)
+	public boolean hasGrain(boolean outdoors, ShadowMap shadows, boolean lamps)
 	{
-		return outdoors && shadows != null;
+		return outdoors && shadows != null || lamps;
 	}
 
 	/**
