@@ -10,7 +10,7 @@ import static org.junit.Assert.assertEquals;
  * The terrain colour rule: 117 HD's undo of vanilla's baked ground light (ProceduralGenerator 726-756), applied to
  * each tile's own colours.
  */
-public class GroundColorsTest
+public class GroundBlenderTest
 {
 	/** 117 HD's code, transcribed: its normal is (dhdx, -1, dhdz), y down. */
 	private static int hd(int color, float nx, float ny, float nz)
@@ -39,7 +39,7 @@ public class GroundColorsTest
 			{
 				for (float dz : slopes)
 				{
-					assertEquals(hd(color, dx, -1, dz), GroundColors.undoShading(color, dx, dz));
+					assertEquals(hd(color, dx, -1, dz), GroundBlender.undoShading(color, dx, dz));
 				}
 			}
 		}
@@ -49,8 +49,8 @@ public class GroundColorsTest
 	public void flatGroundGainsAQuarterUpToTheCap()
 	{
 		// a flat tile faces straight up, away from neither side of vanilla's light: only the 1.25 gain and the cap
-		assertEquals(50, GroundColors.undoShading(40, 0, 0) & 0x7f);
-		assertEquals(55, GroundColors.undoShading(50, 0, 0) & 0x7f);
-		assertEquals(21 << 10 | 3 << 7, GroundColors.undoShading(21 << 10 | 3 << 7 | 40, 0, 0) & ~0x7f);
+		assertEquals(50, GroundBlender.undoShading(40, 0, 0) & 0x7f);
+		assertEquals(55, GroundBlender.undoShading(50, 0, 0) & 0x7f);
+		assertEquals(21 << 10 | 3 << 7, GroundBlender.undoShading(21 << 10 | 3 << 7 | 40, 0, 0) & ~0x7f);
 	}
 }
