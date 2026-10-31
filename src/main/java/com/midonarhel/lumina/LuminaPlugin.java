@@ -47,6 +47,7 @@ import com.midonarhel.lumina.water.WaterSurface;
 import com.midonarhel.lumina.frame.InterfaceUpload;
 import com.midonarhel.lumina.frame.Composite;
 import com.midonarhel.lumina.frame.FramePacer;
+import com.midonarhel.lumina.frame.Programs;
 import com.midonarhel.lumina.frame.SceneTargets;
 import com.midonarhel.lumina.frame.Upscaler;
 
@@ -302,9 +303,9 @@ public class LuminaPlugin extends Plugin implements DrawCallbacks
 	// cached: checkGLErrors runs per draw call, too often for a config proxy lookup
 	private volatile boolean glErrorChecks;
 
-	private ShaderWatcher shaderWatcher;
-	private volatile String shaderError;
-	private float[] textureAnimations;
+	public ShaderWatcher shaderWatcher;
+	public volatile String shaderError;
+	public float[] textureAnimations;
 
 	public final CpuTimer cpuTimer = new CpuTimer();
 
@@ -315,23 +316,23 @@ public class LuminaPlugin extends Plugin implements DrawCallbacks
 	private boolean lwjglInitted = false;
 	public GLCapabilities glCapabilities;
 
-	static final Shader PROGRAM = new Shader()
+	public static final Shader PROGRAM = new Shader()
 		.add(GL_VERTEX_SHADER, "vert.glsl")
 		.add(GL_FRAGMENT_SHADER, "frag.glsl");
 
-	static final Shader UI_PROGRAM = new Shader()
+	public static final Shader UI_PROGRAM = new Shader()
 		.add(GL_VERTEX_SHADER, "vertui.glsl")
 		.add(GL_FRAGMENT_SHADER, "fragui.glsl");
 
-	static final Shader COMPOSITE_PROGRAM = new Shader()
+	public static final Shader COMPOSITE_PROGRAM = new Shader()
 		.add(GL_VERTEX_SHADER, "composite_vert.glsl")
 		.add(GL_FRAGMENT_SHADER, "composite_frag.glsl");
 
-	static final Shader AO_PROGRAM = new Shader()
+	public static final Shader AO_PROGRAM = new Shader()
 		.add(GL_VERTEX_SHADER, "composite_vert.glsl")
 		.add(GL_FRAGMENT_SHADER, "ao_frag.glsl");
 
-	static final Shader DENOISE_PROGRAM = new Shader()
+	public static final Shader DENOISE_PROGRAM = new Shader()
 		.add(GL_VERTEX_SHADER, "composite_vert.glsl")
 		.add(GL_FRAGMENT_SHADER, "denoise_frag.glsl");
 
@@ -393,25 +394,25 @@ public class LuminaPlugin extends Plugin implements DrawCallbacks
 	private final PointLight testLight = new PointLight();
 	// lamp.glsl's lampWallsHeader with no walls bound
 	public static final float[] NO_WALLS = {0, 0, 0, 0, 1};
-	private int uniAlphaPass;
-	private int uniSceneOutdoors;
+	public int uniAlphaPass;
+	public int uniSceneOutdoors;
 	// the lamps on the transparent faces (frag.glsl's alpha pass)
-	private int uniScenePointLights;
-	private final LampWalls.Uniforms sceneLampWalls = new LampWalls.Uniforms();
-	private int uniSceneProceduralSky;
-	private int uniSceneCasterDir;
-	private int uniSceneSunIsCaster, uniSceneStrikeLight;
-	private int uniSceneSunAltitude;
-	private int uniSceneOvercast;
-	private int uniSceneWeatherLight;
+	public int uniScenePointLights;
+	public final LampWalls.Uniforms sceneLampWalls = new LampWalls.Uniforms();
+	public int uniSceneProceduralSky;
+	public int uniSceneCasterDir;
+	public int uniSceneSunIsCaster, uniSceneStrikeLight;
+	public int uniSceneSunAltitude;
+	public int uniSceneOvercast;
+	public int uniSceneWeatherLight;
 	// the wind for foliage sway, on the scene and shadow programs
 	public Wind.Locations sceneWind, shadowWind;
 	private long lastSwayTick;
 	public boolean swayTick = true;
 	public static final int ALPHA_LAYER_UNIT = LuminaPlugin.COMPOSITE_TEXTURE_UNIT + 8;
 	public static final int MATERIAL_UNIT = LuminaPlugin.COMPOSITE_TEXTURE_UNIT + 9;
-	private final SurfaceMaterials.Uniforms sceneMaterials = new SurfaceMaterials.Uniforms();
-	private final WindSway.Uniforms sceneSway = new WindSway.Uniforms();
+	public final SurfaceMaterials.Uniforms sceneMaterials = new SurfaceMaterials.Uniforms();
+	public final WindSway.Uniforms sceneSway = new WindSway.Uniforms();
 	public final WindSway.Uniforms shadowSway = new WindSway.Uniforms();
 	public static final int FOG_TEXTURE_UNIT = LuminaPlugin.COMPOSITE_TEXTURE_UNIT + 10;
 	public static final int FOG_NOISE_UNIT = LuminaPlugin.COMPOSITE_TEXTURE_UNIT + 11;
@@ -433,15 +434,15 @@ public class LuminaPlugin extends Plugin implements DrawCallbacks
 	// under the open sky rather than underground, from the area classification (or the game's sky color)
 	private boolean frameOpenSky;
 
-	static final Shader SHADOW_PROGRAM = new Shader()
+	public static final Shader SHADOW_PROGRAM = new Shader()
 		.add(GL_VERTEX_SHADER, "shadow_vert.glsl")
 		.add(GL_FRAGMENT_SHADER, "shadow_frag.glsl");
 
-	static final Shader SHADOW_COPY_PROGRAM = new Shader()
+	public static final Shader SHADOW_COPY_PROGRAM = new Shader()
 		.add(GL_VERTEX_SHADER, "composite_vert.glsl")
 		.add(GL_FRAGMENT_SHADER, "shadow_copy_frag.glsl");
 
-	static final Shader SHADOW_MAX_PROGRAM = new Shader()
+	public static final Shader SHADOW_MAX_PROGRAM = new Shader()
 		.add(GL_VERTEX_SHADER, "composite_vert.glsl")
 		.add(GL_FRAGMENT_SHADER, "shadow_max_frag.glsl");
 
@@ -460,7 +461,7 @@ public class LuminaPlugin extends Plugin implements DrawCallbacks
 	public final DayCycle dayCycle = new DayCycle();
 	public final NightSky nightSky = new NightSky();
 	public final EnvironmentManager environmentManager = new EnvironmentManager();
-	private final EnvironmentUniforms sceneEnvUniforms = new EnvironmentUniforms();
+	public final EnvironmentUniforms sceneEnvUniforms = new EnvironmentUniforms();
 	public final ShadowMap shadowMap = new ShadowMap();
 	public final Weather weather = new Weather();
 	private volatile WeatherAudio weatherAudio;
@@ -543,8 +544,8 @@ public class LuminaPlugin extends Plugin implements DrawCallbacks
 	// scene viewport within the scene targets, in framebuffer pixels: x, y, width, height
 	public final int[] frameViewport = new int[4];
 
-	static int glProgram;
-	private int glUiProgram;
+	public static int glProgram;
+	public int glUiProgram;
 
 	private int interfaceTexture;
 	// the interface texture's filter as last set: changed only with the UI scaling mode
@@ -666,24 +667,24 @@ public class LuminaPlugin extends Plugin implements DrawCallbacks
 	public SceneLoader sceneLoader;
 
 	// Uniforms
-	private int uniFogColor;
-	private int uniDrawDistance;
+	public int uniFogColor;
+	public int uniDrawDistance;
 	public final EdgeFade edgeFade = new EdgeFade();
-	private final EdgeFade.Uniforms sceneEdgeUniforms = new EdgeFade.Uniforms();
-	private int uniExpandedMapLoadingChunks;
-	private int uniSmoothBanding;
-	private int uniWorldProj;
+	public final EdgeFade.Uniforms sceneEdgeUniforms = new EdgeFade.Uniforms();
+	public int uniExpandedMapLoadingChunks;
+	public int uniSmoothBanding;
+	public int uniWorldProj;
 	public static int uniEntityProj;
 	public static int uniEntityTint;
-	private int uniBrightness;
-	private int uniTexSourceDimensions;
-	private int uniTexTargetDimensions;
-	private int uniUiAlphaOverlay;
-	private int uniTextureAnimations;
-	private int uniTextureLightMode;
-	private int uniTick;
-	private int uniColorblindIntensity;
-	private int uniUiColorblindIntensity;
+	public int uniBrightness;
+	public int uniTexSourceDimensions;
+	public int uniTexTargetDimensions;
+	public int uniUiAlphaOverlay;
+	public int uniTextureAnimations;
+	public int uniTextureLightMode;
+	public int uniTick;
+	public int uniColorblindIntensity;
+	public int uniUiColorblindIntensity;
 	public static int uniBase;
 
 	public static final float[] IDENTITY = Mat4.identity();
@@ -828,7 +829,7 @@ public class LuminaPlugin extends Plugin implements DrawCallbacks
 
 				initBuffers();
 				initVao();
-				initProgram();
+				programs.initProgram();
 				initInterfaceTexture();
 				if (glCapabilities.OpenGL45)
 				{
@@ -964,7 +965,7 @@ public class LuminaPlugin extends Plugin implements DrawCallbacks
 				sceneLoader.free();
 
 				shutdownInterfaceTexture();
-				shutdownProgram();
+				programs.shutdownProgram();
 				shutdownVao();
 				shutdownBuffers();
 				shutdownFbo();
@@ -1078,7 +1079,7 @@ public class LuminaPlugin extends Plugin implements DrawCallbacks
 				{
 					log.debug("Recompiling shaders");
 					// keeps the running programs if the new ones fail, and puts the texture animations back
-					reloadShaders();
+					programs.reloadShaders();
 				});
 			}
 			else if (configChanged.getKey().equals("numThreads"))
@@ -1151,7 +1152,7 @@ public class LuminaPlugin extends Plugin implements DrawCallbacks
 	 * Samples per pixel of the scene targets, 0 for none: the antialiasing mode's, or the window's when the driver
 	 * forces its own, within what the multisample textures can hold.
 	 */
-	private int sceneSamples()
+	public int sceneSamples()
 	{
 		// bind the default framebuffer to check whether anti-aliasing is forced
 		glBindFramebuffer(GL_FRAMEBUFFER, awtContext.getFramebuffer(false));
@@ -1163,192 +1164,11 @@ public class LuminaPlugin extends Plugin implements DrawCallbacks
 		return samples > 1 ? samples : 0;
 	}
 
-	private Template createTemplate()
-	{
-		Template template = new Template();
-		template.add(key ->
-		{
-			switch (key)
-			{
-				case "texture_config":
-					return "#define TEXTURE_COUNT " + TextureManager.TEXTURE_COUNT + "\n";
-				case "sampling_mode":
-					return "#define SAMPLING_MODE " + config.uiScalingMode().ordinal() + "\n";
-				case "cluster_config":
-					return "#define CLUSTERS_X " + LightClusters.CLUSTERS_X + "\n"
-						+ "#define CLUSTERS_Y " + LightClusters.CLUSTERS_Y + "\n"
-						+ "#define CLUSTERS_Z " + LightClusters.CLUSTERS_Z + "\n"
-						+ "#define CLUSTER_ENTRIES " + LightClusters.CLUSTER_ENTRIES + "\n"
-						+ "#define CLUSTER_NEAR " + LightClusters.NEAR + "\n"
-						+ "#define CLUSTER_FAR " + LightClusters.FAR + "\n"
-						+ "#define ROOM_FILL_BASE " + LightClusters.ROOM_FILL_BASE + "\n"
-						+ "#define LAMP_WALLS_BASE " + LightClusters.LAMP_WALLS_BASE + "\n"
-						+ "#define LAMP_WALL_LAYER_TEXELS " + LampWalls.LAYER_TEXELS + "\n";
-				case "composite_mode":
-					// Compile out the diagnostic branches and intermediate samplers in normal rendering.
-					// Changing this diagnostic property requires a shader reload.
-					return Boolean.parseBoolean(System.getProperty("runelight.compositeCombined", "true"))
-						? "const int compositePart = 0;\n" : "uniform int compositePart;\n";
-				case "msaa_config":
-					// the scene targets' samples (scene_samplers.glsl): the programs are compiled for them
-					return "#define MSAA_SAMPLES " + shaderSamples + "\n";
-				case "colorblind_mode":
-					return "#define COLORBLIND_MODE " + config.colorBlindMode().ordinal() + "\n";
-				case "debug_view":
-					// the composite's debug branches compile out; changing the view reloads the shaders
-					return "const int debugView = " + config.debugView().ordinal() + ";\n";
-			}
-			return null;
-		});
-		ShaderWatcher watcher = shaderWatcher;
-		if (watcher != null)
-		{
-			template.addDirectory(watcher.getDirectory());
-		}
-		template.addInclude(LuminaPlugin.class);
-		return template;
-	}
+	// the shader programs (Programs): template, compile, uniform locations, hot reload, free
+	public final Programs programs = new Programs(this);
 
-	/** One of the composite's programs (composite_frag.glsl's COMPOSITE_PASS). */
-	private int compileComposite(int pass) throws ShaderException
-	{
-		return COMPOSITE_PROGRAM.compile(createTemplate()
-			.add(key -> key.equals("composite_pass") ? "#define COMPOSITE_PASS " + pass + "\n" : null));
-	}
 
-	private void initProgram() throws ShaderException
-	{
-		shaderSamples = sceneSamples();
-		// macOS core profile has no default VAO, so the shaders won't validate unless a VAO is bound
-		glBindVertexArray(vaoUiHandle);
 
-		Template template = createTemplate();
-		glProgram = PROGRAM.compile(template);
-		glUiProgram = UI_PROGRAM.compile(template);
-		for (Composite.CompositeProgram c : composite.composites)
-		{
-			c.program = compileComposite(c.pass);
-		}
-		glAoProgram = AO_PROGRAM.compile(template);
-		glDenoiseProgram = DENOISE_PROGRAM.compile(template);
-		glShadowProgram = SHADOW_PROGRAM.compile(template);
-		glShadowCopyProgram = SHADOW_COPY_PROGRAM.compile(template);
-		glShadowMaxProgram = SHADOW_MAX_PROGRAM.compile(template);
-		setFogProgram(VolumetricFog.PROGRAM.compile(template));
-		water.setSurfaceProgram(WaterSurface.PROGRAM.compile(template), COMPOSITE_TEXTURE_UNIT + 2, WATER_DATA_UNIT,
-			WATER_NOISE_UNIT, WATER_CONTACT_UNIT, WATER_WAVES_UNIT_A, WATER_WAVES_UNIT_B);
-		weather.setPrograms(weather.compile(template), COMPOSITE_TEXTURE_UNIT, MATERIAL_UNIT, WEATHER_OCCLUSION_UNIT, SHADOW_COMPARE_UNIT, ALPHA_LAYER_UNIT,
-			LIGHT_DATA_UNIT, CLUSTER_DATA_UNIT, WATER_DATA_UNIT, WEATHER_FIELD_UNIT);
-		skyCache.setPrograms(skyCache.compile(template), CLOUD_NOISE_UNIT, WEATHER_SKY_UNIT, SKY_CACHE_UNIT);
-		upscaler.setProgram(Upscaler.PROGRAM.compile(template));
-
-		glBindVertexArray(0);
-
-		initUniforms();
-	}
-
-	private void initUniforms()
-	{
-		uniWorldProj = glGetUniformLocation(glProgram, "worldProj");
-		uniEntityProj = glGetUniformLocation(glProgram, "entityProj");
-		uniEntityTint = glGetUniformLocation(glProgram, "entityTint");
-		uniSmoothBanding = glGetUniformLocation(glProgram, "smoothBanding");
-		uniBrightness = glGetUniformLocation(glProgram, "brightness");
-		uniFogColor = glGetUniformLocation(glProgram, "fogColor");
-		uniDrawDistance = glGetUniformLocation(glProgram, "drawDistance");
-		sceneEdgeUniforms.locate(glProgram);
-		uniExpandedMapLoadingChunks = glGetUniformLocation(glProgram, "expandedMapLoadingChunks");
-		uniTextureLightMode = glGetUniformLocation(glProgram, "textureLightMode");
-		uniTick = glGetUniformLocation(glProgram, "tick");
-		// program state, kept until the program is linked again
-		glUniformBlockBinding(glProgram, glGetUniformBlockIndex(glProgram, "uniforms"), 0);
-		glUseProgram(glProgram);
-		glUniform1i(glGetUniformLocation(glProgram, "textures"), 1); // texture sampler array is bound to texture1
-		glUseProgram(0);
-		uniTextureAnimations = glGetUniformLocation(glProgram, "textureAnimations");
-		uniBase = glGetUniformLocation(glProgram, "base");
-		uniColorblindIntensity = glGetUniformLocation(glProgram, "colorblindIntensity");
-
-		uniTexTargetDimensions = glGetUniformLocation(glUiProgram, "targetDimensions");
-		uniTexSourceDimensions = glGetUniformLocation(glUiProgram, "sourceDimensions");
-		uniUiAlphaOverlay = glGetUniformLocation(glUiProgram, "alphaOverlay");
-		uniUiColorblindIntensity = glGetUniformLocation(glUiProgram, "colorblindIntensity");
-		glUseProgram(glUiProgram);
-		glUniform1i(glGetUniformLocation(glUiProgram, "tex"), 0);
-		glUseProgram(0);
-
-		uniAlphaPass = glGetUniformLocation(glProgram, "alphaPass");
-		uniSceneOutdoors = glGetUniformLocation(glProgram, "outdoors");
-		uniScenePointLights = glGetUniformLocation(glProgram, "pointLightsEnabled");
-		sceneLampWalls.locate(glProgram);
-		glUseProgram(glProgram);
-		glUniform1i(glGetUniformLocation(glProgram, "lightData"), LIGHT_DATA_UNIT);
-		glUniform1i(glGetUniformLocation(glProgram, "clusterData"), CLUSTER_DATA_UNIT);
-		uniSceneProceduralSky = glGetUniformLocation(glProgram, "proceduralSky");
-		uniSceneCasterDir = glGetUniformLocation(glProgram, "casterDir");
-		uniSceneSunIsCaster = glGetUniformLocation(glProgram, "sunIsCaster");
-		uniSceneStrikeLight = glGetUniformLocation(glProgram, "strikeLight");
-		uniSceneSunAltitude = glGetUniformLocation(glProgram, "sunAltitude");
-		uniSceneOvercast = glGetUniformLocation(glProgram, "weatherOvercast");
-		uniSceneWeatherLight = glGetUniformLocation(glProgram, "weatherLight");
-		sceneWind = Wind.locate(glProgram);
-		shadowWind = Wind.locate(glShadowProgram);
-		sceneEnvUniforms.locate(glProgram);
-		for (Composite.CompositeProgram c : composite.composites)
-		{
-			composite.locate(c);
-		}
-
-		uniDenoiseFog = glGetUniformLocation(glDenoiseProgram, "denoiseFog");
-		glUseProgram(glDenoiseProgram);
-		glUniform1i(glGetUniformLocation(glDenoiseProgram, "sceneAo"), AO_TEXTURE_UNIT);
-		glUniform1i(glGetUniformLocation(glDenoiseProgram, "sceneShadow"), SCENE_SHADOW_UNIT);
-		glUniform1i(glGetUniformLocation(glDenoiseProgram, "sceneFog"), FOG_TEXTURE_UNIT);
-		glUseProgram(0);
-		uniAoRadius = glGetUniformLocation(glAoProgram, "aoRadius");
-		uniAoSamples = glGetUniformLocation(glAoProgram, "aoSamples");
-		uniAoShadowsEnabled = glGetUniformLocation(glAoProgram, "shadowsEnabled");
-		uniAoLightProjRel = glGetUniformLocation(glAoProgram, "lightProjRel");
-		uniAoShadowRadius = glGetUniformLocation(glAoProgram, "shadowRadius");
-		uniAoShadowDepthRange = glGetUniformLocation(glAoProgram, "shadowDepthRange");
-		uniAoShadowMapSize = glGetUniformLocation(glAoProgram, "shadowMapSize");
-		uniAoShadowMaxTile = glGetUniformLocation(glAoProgram, "shadowMaxTile");
-		uniAoCasterDir = glGetUniformLocation(glAoProgram, "casterDir");
-		uniAoSunIsCaster = glGetUniformLocation(glAoProgram, "sunIsCaster");
-		uniAoStrikeLight = glGetUniformLocation(glAoProgram, "strikeLight");
-		glUseProgram(glAoProgram);
-		glUniform1i(glGetUniformLocation(glAoProgram, "shadowRaw"), SHADOW_RAW_UNIT);
-		glUniform1i(glGetUniformLocation(glAoProgram, "shadowCompare"), SHADOW_COMPARE_UNIT);
-		glUniform1i(glGetUniformLocation(glAoProgram, "shadowMax"), SHADOW_MAX_UNIT);
-		glUniform1i(glGetUniformLocation(glAoProgram, "sceneMaterial"), MATERIAL_UNIT);
-		glUseProgram(0);
-		aoFrame.locate(glAoProgram);
-		bindSceneSamplers(glAoProgram);
-		weatherGround.locate(glAoProgram, WEATHER_OCCLUSION_UNIT, WEATHER_FIELD_UNIT);
-		skyGrid.locateAo(glAoProgram, SKY_GRID_UNIT);
-		skyField.locateAo(glAoProgram, SKY_FIELD_UNIT);
-		water.locateAo(glAoProgram, WATER_DATA_UNIT);
-		// the shadow samplers' units hold an empty depth map until their maps are bound
-		ShadowMap.unbind(SHADOW_RAW_UNIT, SHADOW_COMPARE_UNIT);
-		ShadowMap.unbind(WEATHER_OCCLUSION_UNIT, WEATHER_OCCLUSION_UNIT + 1);
-
-		sceneMaterials.locate(glProgram);
-		sceneSway.locate(glProgram);
-
-		uniShadowLightProj = glGetUniformLocation(glShadowProgram, "lightProj");
-		uniShadowEntityProj = glGetUniformLocation(glShadowProgram, "entityProj");
-		uniShadowBase = glGetUniformLocation(glShadowProgram, "base");
-		uniShadowTexturesReady = glGetUniformLocation(glShadowProgram, "texturesReady");
-		uniShadowEmissiveCasts = glGetUniformLocation(glShadowProgram, "emissiveCasts");
-		shadowSway.locate(glShadowProgram);
-		glUseProgram(glShadowProgram);
-		glUniform1i(glGetUniformLocation(glShadowProgram, "textures"), 1); // game texture array lives on unit 1
-		glUseProgram(glShadowCopyProgram);
-		glUniform1i(glGetUniformLocation(glShadowCopyProgram, "staticDepth"), 0);
-		glUseProgram(glShadowMaxProgram);
-		glUniform1i(glGetUniformLocation(glShadowMaxProgram, "source"), 0);
-		glUseProgram(0);
-	}
 
 
 	public float windSwayAmount()
@@ -1356,7 +1176,7 @@ public class LuminaPlugin extends Plugin implements DrawCallbacks
 		return config.windSway() ? config.windSwayStrength() / 100f : 0f;
 	}
 
-	private void setFogProgram(int program)
+	public void setFogProgram(int program)
 	{
 		volumetricFog.setProgram(program, COMPOSITE_TEXTURE_UNIT + 2, SHADOW_COMPARE_UNIT, LIGHT_DATA_UNIT,
 			CLUSTER_DATA_UNIT, FOG_NOISE_UNIT, WEATHER_FIELD_UNIT, WATER_DATA_UNIT, FOG_GROUND_UNIT, FOG_GROUND_PREV_UNIT);
@@ -1371,148 +1191,7 @@ public class LuminaPlugin extends Plugin implements DrawCallbacks
 		glUseProgram(0);
 	}
 
-	private void shutdownProgram()
-	{
-		glDeleteProgram(glProgram);
-		glProgram = 0;
 
-		glDeleteProgram(glUiProgram);
-		glUiProgram = 0;
-
-		for (Composite.CompositeProgram c : composite.composites)
-		{
-			glDeleteProgram(c.program);
-			c.program = 0;
-		}
-
-		glDeleteProgram(glAoProgram);
-		glAoProgram = 0;
-
-		glDeleteProgram(glDenoiseProgram);
-		glDenoiseProgram = 0;
-
-		glDeleteProgram(glShadowProgram);
-		glShadowProgram = 0;
-
-		glDeleteProgram(glShadowCopyProgram);
-		glShadowCopyProgram = 0;
-
-		glDeleteProgram(glShadowMaxProgram);
-		glShadowMaxProgram = 0;
-
-		weather.freePrograms();
-		water.freeSurfaceProgram();
-		skyCache.freePrograms();
-		upscaler.freeProgram();
-	}
-
-	/**
-	 * Recompile every program. On failure the previous programs stay in use, so a typo while editing
-	 * a shader shows an error instead of taking down the renderer.
-	 */
-	private boolean reloadShaders()
-	{
-		glBindVertexArray(vaoUiHandle);
-		Template template = createTemplate();
-		int scene = 0, ui = 0, ao = 0, denoise = 0, shadow = 0, shadowCopy = 0, shadowMax = 0, fog = 0, waterSurface = 0, upscale = 0;
-		int[] programs = new int[composite.composites.length];
-		Weather.Programs weatherPrograms;
-		SkyCache.Programs skyCachePrograms;
-		try
-		{
-			scene = PROGRAM.compile(template);
-			ui = UI_PROGRAM.compile(template);
-			for (int i = 0; i < composite.composites.length; ++i)
-			{
-				programs[i] = compileComposite(composite.composites[i].pass);
-			}
-			ao = AO_PROGRAM.compile(template);
-			denoise = DENOISE_PROGRAM.compile(template);
-			shadow = SHADOW_PROGRAM.compile(template);
-			shadowCopy = SHADOW_COPY_PROGRAM.compile(template);
-			shadowMax = SHADOW_MAX_PROGRAM.compile(template);
-			fog = VolumetricFog.PROGRAM.compile(template);
-			waterSurface = WaterSurface.PROGRAM.compile(template);
-			upscale = Upscaler.PROGRAM.compile(template);
-			weatherPrograms = weather.compile(template);
-			try
-			{
-				skyCachePrograms = skyCache.compile(template);
-			}
-			catch (ShaderException ex)
-			{
-				glDeleteProgram(weatherPrograms.rain);
-				glDeleteProgram(weatherPrograms.snow);
-				throw ex;
-			}
-		}
-		catch (ShaderException ex)
-		{
-			// glDeleteProgram ignores 0
-			glDeleteProgram(scene);
-			glDeleteProgram(ui);
-			for (int program : programs)
-			{
-				glDeleteProgram(program);
-			}
-			glDeleteProgram(ao);
-			glDeleteProgram(denoise);
-			glDeleteProgram(shadow);
-			glDeleteProgram(shadowCopy);
-			glDeleteProgram(shadowMax);
-			glDeleteProgram(fog);
-			glDeleteProgram(waterSurface);
-			glDeleteProgram(upscale);
-			String msg = ex.getMessage();
-			if (!msg.equals(shaderError))
-			{
-				shaderError = msg;
-				log.error("Shader reload failed:\n{}", msg);
-				chat("Shader error: " + firstLines(msg, 3));
-			}
-			return false;
-		}
-		finally
-		{
-			glBindVertexArray(0);
-		}
-
-		shutdownProgram();
-		glProgram = scene;
-		glUiProgram = ui;
-		for (int i = 0; i < composite.composites.length; ++i)
-		{
-			composite.composites[i].program = programs[i];
-		}
-		glAoProgram = ao;
-		glDenoiseProgram = denoise;
-		glShadowProgram = shadow;
-		glShadowCopyProgram = shadowCopy;
-		glShadowMaxProgram = shadowMax;
-		setFogProgram(fog);
-		water.setSurfaceProgram(waterSurface, COMPOSITE_TEXTURE_UNIT + 2, WATER_DATA_UNIT, WATER_NOISE_UNIT,
-			WATER_CONTACT_UNIT, WATER_WAVES_UNIT_A, WATER_WAVES_UNIT_B);
-		weather.setPrograms(weatherPrograms, COMPOSITE_TEXTURE_UNIT, MATERIAL_UNIT, WEATHER_OCCLUSION_UNIT, SHADOW_COMPARE_UNIT, ALPHA_LAYER_UNIT,
-			LIGHT_DATA_UNIT, CLUSTER_DATA_UNIT, WATER_DATA_UNIT, WEATHER_FIELD_UNIT);
-		skyCache.setPrograms(skyCachePrograms, CLOUD_NOISE_UNIT, WEATHER_SKY_UNIT, SKY_CACHE_UNIT);
-		upscaler.setProgram(upscale);
-		initUniforms();
-
-		if (textureAnimations != null)
-		{
-			glUseProgram(glProgram);
-			glUniform2fv(uniTextureAnimations, textureAnimations);
-			glUseProgram(0);
-		}
-
-		if (shaderError != null)
-		{
-			chat("Shaders OK again.");
-		}
-		shaderError = null;
-		log.info("Shaders reloaded");
-		return true;
-	}
 
 	String getShaderError()
 	{
@@ -1544,7 +1223,7 @@ public class LuminaPlugin extends Plugin implements DrawCallbacks
 		return null;
 	}
 
-	private void chat(String message)
+	public void chat(String message)
 	{
 		chatMessageManager.queue(QueuedMessage.builder()
 			.type(ChatMessageType.GAMEMESSAGE)
@@ -1552,20 +1231,6 @@ public class LuminaPlugin extends Plugin implements DrawCallbacks
 			.build());
 	}
 
-	private static String firstLines(String s, int n)
-	{
-		String[] lines = s.split("\n");
-		StringBuilder sb = new StringBuilder();
-		for (int i = 0; i < Math.min(n, lines.length); ++i)
-		{
-			if (i > 0)
-			{
-				sb.append(" | ");
-			}
-			sb.append(lines[i].trim());
-		}
-		return sb.toString();
-	}
 
 	private void initVao()
 	{
@@ -1818,7 +1483,7 @@ public class LuminaPlugin extends Plugin implements DrawCallbacks
 					// the programs read the scene as multisample textures or not: recompiled to match
 					final int compiled = shaderSamples;
 					shaderSamples = samples;
-					if (!reloadShaders())
+					if (!programs.reloadShaders())
 					{
 						shaderSamples = samples = compiled;
 					}
@@ -2925,7 +2590,7 @@ public class LuminaPlugin extends Plugin implements DrawCallbacks
 		if (watcher != null && watcher.poll())
 		{
 			hitchMonitor.job(HitchMonitor.SHADER_RELOAD);
-			reloadShaders();
+			programs.reloadShaders();
 		}
 
 		final TextureProvider textureProvider = client.getTextureProvider();
