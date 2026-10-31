@@ -125,7 +125,6 @@ public class ModelUploader
 		final int[] normalsX = model.normalsX;
 		final int[] normalsY = model.normalsY;
 		final int[] normalsZ = model.normalsZ;
-		final boolean hasNormals = normalsX != null && normalsY != null && normalsZ != null;
 		final int[] faceNormals = this.faceNormals;
 		// fake water: faces drawn as real water, with their height above the foot of the model's water in u and below the top of it in v
 		final float[] span = SurfaceMaterials.fakeSpan(material, faceTextures, faceCount, faceColors1, transparencies,
@@ -250,25 +249,23 @@ public class ModelUploader
 					int color3 = faceColors3[faceIdx];
 
 					boolean flat = color3 == -1;
-					if (hasNormals && (faceTextures == null || faceTextures[faceIdx] == -1))
-					{
-						color1 = VertexShading.undoVanillaShading(color1, normalsX[v1], normalsY[v1], normalsZ[v1]);
-						if (!flat)
-						{
-							color2 = VertexShading.undoVanillaShading(color2, normalsX[v2], normalsY[v2], normalsZ[v2]);
-							color3 = VertexShading.undoVanillaShading(color3, normalsX[v3], normalsY[v3], normalsZ[v3]);
-						}
-					}
 					if (flat)
 					{
 						color2 = color3 = color1;
 					}
 
-					// 117 HD's normals: the face's own for flat faces (from the rotated positions), else the game's,
-					// rotated by the orientation unless a face normal stood in for three zero ones (SceneUploader 2357)
+					// 117 HD's normals: the face's own for flat faces (from the rotated positions), else the game's; vanilla
+					// shading undone with them on untextured faces, then the game's rotated by the orientation unless a
+					// face normal stood in for three zero ones (SceneUploader 2351-2357)
 					int normalKind = VertexShading.faceNormals(faceNormals, normalsX, normalsY, normalsZ, flat, v1, v2, v3,
 						modelLocalX[v1], modelLocalY[v1], modelLocalZ[v1], modelLocalX[v2], modelLocalY[v2], modelLocalZ[v2],
 						modelLocalX[v3], modelLocalY[v3], modelLocalZ[v3]);
+					if (faceTextures == null || faceTextures[faceIdx] == -1)
+					{
+						color1 = VertexShading.undoVanillaShading(color1, faceNormals, 0);
+						color2 = VertexShading.undoVanillaShading(color2, faceNormals, 1);
+						color3 = VertexShading.undoVanillaShading(color3, faceNormals, 2);
+					}
 					if (normalKind == VertexShading.VERTEX && orientation != 0)
 					{
 						VertexShading.rotateNormals(faceNormals, normalSin, normalCos);
@@ -304,6 +301,10 @@ public class ModelUploader
 						sv0 = SurfaceMaterials.fakeHeight(verticesY[v1], span[1]);
 						sv1 = SurfaceMaterials.fakeHeight(verticesY[v2], span[1]);
 						sv2 = SurfaceMaterials.fakeHeight(verticesY[v3], span[1]);
+					}
+					if (texture > 0)
+					{
+						color1 = color2 = color3 = VertexShading.TEXTURED_COLOR;
 					}
 					texture |= bits;
 
@@ -606,7 +607,6 @@ public class ModelUploader
 		final int[] normalsX = model.normalsX;
 		final int[] normalsY = model.normalsY;
 		final int[] normalsZ = model.normalsZ;
-		final boolean hasNormals = normalsX != null && normalsY != null && normalsZ != null;
 		final int[] faceNormals = this.faceNormals;
 		final int normalSin = orientation != 0 ? Perspective.SINE[orientation] : 0;
 		final int normalCos = orientation != 0 ? Perspective.COSINE[orientation] : 0;
@@ -671,27 +671,25 @@ public class ModelUploader
 			int triangleB = indices2[face];
 			int triangleC = indices3[face];
 
-			if (hasNormals && (faceTextures == null || faceTextures[face] == -1))
-			{
-				color1 = VertexShading.undoVanillaShading(color1, normalsX[triangleA], normalsY[triangleA], normalsZ[triangleA]);
-				if (!flat)
-				{
-					color2 = VertexShading.undoVanillaShading(color2, normalsX[triangleB], normalsY[triangleB], normalsZ[triangleB]);
-					color3 = VertexShading.undoVanillaShading(color3, normalsX[triangleC], normalsY[triangleC], normalsZ[triangleC]);
-				}
-			}
 			if (flat)
 			{
 				color2 = color3 = color1;
 			}
 
-			// 117 HD's normals: the face's own for flat faces (from the rotated positions), else the game's,
-			// rotated by the orientation unless a face normal stood in for three zero ones (SceneUploader 2357)
+			// 117 HD's normals: the face's own for flat faces (from the rotated positions), else the game's; vanilla
+			// shading undone with them on untextured faces, then the game's rotated by the orientation unless a face
+			// normal stood in for three zero ones (SceneUploader 2351-2357)
 			int normalKind = VertexShading.faceNormals(faceNormals, normalsX, normalsY, normalsZ, flat,
 				triangleA, triangleB, triangleC,
 				modelLocalX[triangleA], modelLocalY[triangleA], modelLocalZ[triangleA],
 				modelLocalX[triangleB], modelLocalY[triangleB], modelLocalZ[triangleB],
 				modelLocalX[triangleC], modelLocalY[triangleC], modelLocalZ[triangleC]);
+			if (faceTextures == null || faceTextures[face] == -1)
+			{
+				color1 = VertexShading.undoVanillaShading(color1, faceNormals, 0);
+				color2 = VertexShading.undoVanillaShading(color2, faceNormals, 1);
+				color3 = VertexShading.undoVanillaShading(color3, faceNormals, 2);
+			}
 			if (normalKind == VertexShading.VERTEX && orientation != 0)
 			{
 				VertexShading.rotateNormals(faceNormals, normalSin, normalCos);
@@ -750,6 +748,10 @@ public class ModelUploader
 				sv0 = SurfaceMaterials.fakeHeight(verticesY[triangleA], span[1]);
 				sv1 = SurfaceMaterials.fakeHeight(verticesY[triangleB], span[1]);
 				sv2 = SurfaceMaterials.fakeHeight(verticesY[triangleC], span[1]);
+			}
+			if (texture > 0)
+			{
+				color1 = color2 = color3 = VertexShading.TEXTURED_COLOR;
 			}
 			texture |= bits;
 

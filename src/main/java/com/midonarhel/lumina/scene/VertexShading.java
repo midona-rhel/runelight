@@ -17,6 +17,10 @@ public final class VertexShading
 	private static final int IGNORE_LOW_LIGHTNESS = 3;
 	private static final float LIGHTNESS_MULTIPLIER = 3;
 
+	// 117 HD's colour for textured faces (zone SceneUploader 1722-1728, 2289-2290): lightness 90, no hue or
+	// saturation, not undone. The texture is multiplied by it; the game's lit lightness would keep vanilla's shading.
+	static final int TEXTURED_COLOR = 90;
+
 	public static boolean undoVanillaShading = true;
 
 	private VertexShading()
@@ -138,9 +142,15 @@ public final class VertexShading
 	/**
 	 * Vanilla bakes lighting from a fixed direction into vertex colors. Like 117 HD's default shading mode, keep
 	 * the vanilla colors (and their gradients) but brighten what that light darkened, so our own lighting does
-	 * the directional shading: 117 HD's undoVanillaShading (zone SceneUploader 2751-2793), for one corner with that
-	 * corner's normal (see {@link #faceNormals} for which).
+	 * the directional shading: 117 HD's undoVanillaShading (zone SceneUploader 2751-2793), for one corner of an
+	 * untextured face with that corner's normal from {@link #faceNormals} before rotation: the game's vertex normal
+	 * in model space, or the face's own normal (rotated space) for a flat face.
 	 */
+	static int undoVanillaShading(int color, int[] normals, int i)
+	{
+		return undoVanillaShading(color, normals[i * 3], normals[i * 3 + 1], normals[i * 3 + 2]);
+	}
+
 	static int undoVanillaShading(int color, int nx, int ny, int nz)
 	{
 		if (!undoVanillaShading)

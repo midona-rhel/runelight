@@ -315,6 +315,31 @@ public class VertexShadingTest
 	}
 
 	@Test
+	public void aFlatFaceIsUndoneByItsOwnNormalAndASmoothOneByTheGames()
+	{
+		// as the uploaders do: faceNormals first, then each corner undone with its normal from it
+		int color = 20 << 10 | 1 << 7 | 30;
+		Mesh flat = prism(8, false), smooth = prism(8, true);
+		int[] n = new int[9];
+		flat.normals(0, flat.gameNormals(), n);
+		int[] undone = new int[3];
+		for (int i = 0; i < 3; ++i)
+		{
+			undone[i] = VertexShading.undoVanillaShading(color, n, i);
+		}
+		// one colour over the facet, brightened by how much the face turns to (1, 1, 1)
+		float[] f = corner(n, 0);
+		int expected = Math.min(30 + (int) ((f[0] + f[1] + f[2]) * 0.57735026f * (10 - 30 + 27 * 3)), 61);
+		assertArrayEquals(new int[]{20 << 10 | 1 << 7 | expected, 20 << 10 | 1 << 7 | expected, 20 << 10 | 1 << 7 | expected}, undone);
+		// smooth: each corner by the game's vertex normal there, so the corners differ (a dark unsaturated colour,
+		// which the cap leaves alone)
+		int dark = 20 << 10 | 10;
+		int[][] game = smooth.gameNormals();
+		smooth.normals(0, game, n);
+		assertTrue(VertexShading.undoVanillaShading(dark, n, 0) != VertexShading.undoVanillaShading(dark, n, 1));
+	}
+
+	@Test
 	public void normalsRoundTripThroughTheOctahedralEncoding()
 	{
 		float[][] cases = {{0, 1, 0}, {0, -1, 0}, {1, 0, 0}, {0, 0, -1}, {0.577f, 0.577f, 0.577f}, {-0.3f, 0.2f, -0.933f}};
