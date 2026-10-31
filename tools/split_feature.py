@@ -10,7 +10,10 @@ instance members the moved code reads get `plugin.`; its statics come in by stat
 import re, pathlib, sys
 sys.path.insert(0, 'tools'); import split_plugin as sp
 
-pkg, cls_name, field, doc, *specs = sys.argv[1:]
+args = sys.argv[1:]
+delegate = '--delegate' in args
+args = [a for a in args if a != '--delegate']
+pkg, cls_name, field, doc, *specs = args
 lines = sp.PLUGIN.read_text().split('\n')
 members = sp.plugin_members(lines)
 methods = []
@@ -24,14 +27,25 @@ for marker, _, _ in methods:
     assert len(hits) == 1, (marker, len(hits))
 region, remaining, at = sp.cut(lines, blocks)
 moved = {n for _, n, _ in methods} | {nn for _, _, nn in methods}
-params = set()
+params = set(); delegates = []
 for marker, name, new in methods:
     decl = next(l for l in region.split('\n') if (marker + '(') in l)
-    params |= set(re.findall(r'(\w+)\s*[,)]', decl[decl.find('(') :]))
+    # the declaration may run over several lines: gather to the closing parenthesis
+    rl = region.split('\n'); k = rl.index(decl); sig = decl
+    while sig.count('(') > sig.count(')'):
+        k += 1; sig += ' ' + rl[k].strip()
+    arglist = sig[sig.find('(') + 1 : sig.rfind(')')]
+    names = [a.strip().split()[-1] for a in re.split(r',(?![^<]*>)', arglist) if a.strip()]
+    params |= set(names)
+    ret = re.sub(r'^\t(?:private |protected |public )?(?:static )?(?:final )?(?:synchronized )?', '', sig[: sig.find(name + '(')]).strip()
+    head = re.sub(r'^\t(?:private |protected |public )?', '\tpublic ', sig[: sig.rfind(')') + 1])
+    body = f'{field}.{new}({", ".join(names)});'
+    delegates.append('\t@Override\n' + head + '\n\t{\n\t\t' + ('' if ret == 'void' else 'return ') + body + '\n\t}\n')
     newdecl = re.sub(r'^(\t)(?:private |protected |public )?', r'\1public ', decl).replace(name + '(', new + '(', 1)
     region = region.replace(decl, newdecl, 1)
     if new != name:
         region = re.sub(r'(?<![\w.])' + re.escape(name) + r'\(', new + '(', region)
+region = re.sub(r'^\t@Override\n', '', region, flags=re.M)  # the moved methods implement nothing in their new class
 region, inst = sp.prefix(region, members, moved, extra_locals=tuple(params))
 statics = sp.statics_used(region, members)
 remaining = sp.open_statics(remaining, statics)
@@ -51,11 +65,12 @@ public final class {cls_name}
 
 ''' + region + '}\n'
 pathlib.Path(f'src/main/java/com/midonarhel/lumina/{pkg}/{cls_name}.java').write_text(cls)
-remaining[at:at] = [f'\t// {doc.split(".")[0]} ({cls_name})', f'\tpublic final {cls_name} {field} = new {cls_name}(this);']
+remaining[at:at] = [f'\t// {doc.split(".")[0]} ({cls_name})', f'\tpublic final {cls_name} {field} = new {cls_name}(this);'] + (['\n'.join(delegates)] if delegate else [])
 s = '\n'.join(remaining)
-for _, name, new in methods:
-    s = re.sub(r'(?<![\w.])' + re.escape(name) + r'\(', f'{field}.{new}(', s)
-    s = s.replace(f'this::{name}', f'{field}::{new}')
+if not delegate:
+    for _, name, new in methods:
+        s = re.sub(r'(?<![\w.])' + re.escape(name) + r'\(', f'{field}.{new}(', s)
+        s = s.replace(f'this::{name}', f'{field}::{new}')
 for f in pathlib.Path('src/main/java/com/midonarhel/lumina').rglob('*.java'):
     if f == sp.PLUGIN or f.name == f'{cls_name}.java': continue
     t = f.read_text(); t2 = t
