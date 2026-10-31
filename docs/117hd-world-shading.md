@@ -38,7 +38,7 @@ commit each:
 | 11 | water bed colours | **reverted by the user** ("how we did it before"): 2×2 mean and bank grading back, `GroundBlender` with its land colour map | 79f916d3, 2c80ab50 |
 | 12 | double-sided upper floors | copied, counted in `zoneSize` | e0ccb260 |
 | 12 | tile geometry overrides (21 `heightOffset` / `doubleSidedFaces` entries) | copied: matched through the water importer's tile-override list (117 HD's precedence), replacements at 117 HD's defaults | 5396df40 |
-| 12 | gap fillers | **not done**: needs a design for the deferred composite (see the HANDOVER row) | — |
+| 12 | gap fillers | **the user: keep ours** (none): 117 HD's far-plane black does not carry over to our deferred composite, and the simple version (black at the hole surface) would hide what is in the hole | — |
 | 13 | wind normal tilt | deleted | 84370197 |
 | 14 | shadows on transparent faces | copied (last frame's map with its own matrix, 4-tap PCF) | 9b9f8650 |
 | 15 | interpolation space | keep ours | — |
