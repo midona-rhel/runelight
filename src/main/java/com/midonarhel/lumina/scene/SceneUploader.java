@@ -293,6 +293,7 @@ public class SceneUploader
 			{
 				rid = o.rid;
 				owner = o.owner;
+				tile = o.tile;
 				uploadZoneRenderable(o.r, zone, o.orient, o.x, o.y, o.z, o.lx, o.lz, o.ux, o.uz, o.id, vb, ab);
 			}
 		}
@@ -376,6 +377,7 @@ public class SceneUploader
 
 	private int uploadZoneTile(Scene scene, Zone zone, Tile t, GpuIntBuffer vertexBuffer, GpuIntBuffer ab)
 	{
+		tile = t;
 		int len = 0;
 		boolean drawTile = renderCallbackManager.drawTile(scene, t);
 
@@ -550,10 +552,13 @@ public class SceneUploader
 	{
 		final Renderable r;
 		final int orient, x, y, z, lx, lz, ux, uz, id, rid, owner;
+		final Tile tile;
 
-		SwayObject(Renderable r, int orient, int x, int y, int z, int lx, int lz, int ux, int uz, int id, int rid, int owner)
+		SwayObject(Renderable r, int orient, int x, int y, int z, int lx, int lz, int ux, int uz, int id, int rid, int owner,
+			Tile tile)
 		{
 			this.r = r;
+			this.tile = tile;
 			this.orient = orient;
 			this.x = x;
 			this.y = y;
@@ -574,7 +579,7 @@ public class SceneUploader
 		int shading = SurfaceMaterials.shadingForObject(id, r);
 		if (!swayFlushing && WindSway.sways(material))
 		{
-			swayDeferred.add(new SwayObject(r, orient, x, y, z, lx, lz, ux, uz, id, rid, owner));
+			swayDeferred.add(new SwayObject(r, orient, x, y, z, lx, lz, ux, uz, id, rid, owner, tile));
 			return;
 		}
 		if (vb instanceof VoxelCapture.Buffer)
@@ -741,6 +746,40 @@ public class SceneUploader
 		float dhdx = (heights[x1][y] - heights[x0][y]) / (float) ((x1 - x0) * Perspective.LOCAL_TILE_SIZE);
 		float dhdz = (heights[x][y1] - heights[x][y0]) / (float) ((y1 - y0) * Perspective.LOCAL_TILE_SIZE);
 		return VertexShading.encodeNormal(dhdx, -1, dhdz);
+	}
+
+	/**
+	 * 117 HD's inheritTileColorType (zone SceneUploader 1733-1793): the colour of the tile under the object being
+	 * uploaded, as the game gives it: an untextured, coloured, not hidden tile paint's four corners averaged, else an
+	 * untextured tile model's first underlay face's colour A (its first overlay face's, when {@code overlay} and the
+	 * tile has an overlay); -1 when the tile gives none.
+	 */
+	private int tileColor(boolean overlay)
+	{
+		if (tile == null)
+		{
+			return -1;
+		}
+		SceneTilePaint paint = tile.getSceneTilePaint();
+		SceneTileModel model = tile.getSceneTileModel();
+		if (paint != null && paint.getTexture() == -1 && paint.getRBG() != 0 && paint.getNeColor() != HIDDEN_HSL)
+		{
+			// one hue and saturation per tile, so the lightness can be averaged in packed form
+			return (paint.getSwColor() + paint.getNwColor() + paint.getNeColor() + paint.getSeColor()) / 4;
+		}
+		if (model != null && model.getTriangleTextureId() == null)
+		{
+			int[] colors = model.getTriangleColorA();
+			boolean wantOverlay = overlay && model.getModelOverlay() != 0;
+			for (int i = 0; i < colors.length; ++i)
+			{
+				if (GroundColors.isOverlayFace(model.getShape(), i) == wantOverlay)
+				{
+					return colors[i] != HIDDEN_HSL ? colors[i] : -1;
+				}
+			}
+		}
+		return -1;
 	}
 
 	/**
@@ -1084,6 +1123,9 @@ public class SceneUploader
 	private int objectBias;
 	// the scene object being uploaded (VoxelCapture.ownerOf)
 	private int owner;
+	private static final int HIDDEN_HSL = 12345678;
+	// the tile whose objects are being uploaded (117 HD's inheritTileColorType reads its ground colour)
+	private Tile tile;
 
 	private int uploadStaticModel(Model model, int orient, int x, int y, int z, int material, int shading, int id,
 		GpuIntBuffer vb, GpuIntBuffer ab)
@@ -1196,6 +1238,17 @@ public class SceneUploader
 			// 117 HD's override flags for this face, by its colour as the game gives it
 			int shade = SurfaceMaterials.shading(shading, faceTextures != null ? faceTextures[face] : -1, color1,
 				SurfaceMaterials.opacity(transparencies, face));
+			if ((shade & (SurfaceMaterials.INHERIT_UNDERLAY | SurfaceMaterials.INHERIT_OVERLAY)) != 0
+				&& (faceTextures == null || faceTextures[face] == -1))
+			{
+				int inherited = tileColor((shade & SurfaceMaterials.INHERIT_OVERLAY) != 0);
+				if (inherited != -1)
+				{
+					// the ground's colour as the game gives it, shading kept (117 HD: keepShading)
+					color1 = color2 = color3 = inherited;
+					shade |= SurfaceMaterials.KEEP_SHADING;
+				}
+			}
 
 			int triangleA = indices1[face];
 			int triangleB = indices2[face];

@@ -3,11 +3,13 @@
 Import 117 HD's per-model normal and shading flags as Lumina's model_shading.json ("shadingGroups"), next to
 materials.json (its own file, so that import_117hd_materials.py rewriting materials.json leaves it alone).
 
-117 HD's model overrides (model_overrides.json) carry three flags that change a model's normals or its shading
+117 HD's model overrides (model_overrides.json) carry four flags that change a model's normals, its shading or its colour
 (docs/117hd-model-shading.md §1.6):
   flatNormals              every face lit by its own normal, as if the game marked it flat      -> flag 1
   upwardsNormals           the lighting normal points straight up (grass, ground clutter)        -> flag 2
   undoVanillaShading=false the game's baked shading is kept, not undone                          -> flag 4
+  inheritTileColorType     UNDERLAY / OVERLAY: an untextured face takes the colour of the ground
+                           tile under the object (its underlay or overlay), shading kept          -> flag 8 / 16
 An override applies to whole models (objectIds, npcIds), and its colorOverrides to the untextured faces whose colour
 meets their "colors" condition, the first that matches deciding, with the sub-override's own flags (they inherit
 nothing from the parent). Textured faces take the parent's flags. Lumina's groups have the same form as its emissive
@@ -32,6 +34,8 @@ import sys
 FLAT_NORMALS = 1
 UPWARDS_NORMALS = 2
 KEEP_SHADING = 4
+INHERIT_UNDERLAY = 8
+INHERIT_OVERLAY = 16
 
 # the condition parser and gameval lookups are import_117hd_materials.py's
 _spec = importlib.util.spec_from_file_location("import_117hd_materials",
@@ -48,6 +52,11 @@ def flags(o):
         f |= UPWARDS_NORMALS
     if o.get("undoVanillaShading") is False:
         f |= KEEP_SHADING
+    inherit = o.get("inheritTileColorType")
+    if inherit == "UNDERLAY":
+        f |= INHERIT_UNDERLAY
+    elif inherit == "OVERLAY":
+        f |= INHERIT_OVERLAY
     return f
 
 
@@ -102,7 +111,8 @@ def main():
     count = lambda flag: sum(1 for g in data["shadingGroups"]
         if g["untextured"] & flag or any(r["level"] & flag for r in g["rules"]))
     print(f"{len(data['shadingGroups'])} shading groups: {count(FLAT_NORMALS)} with flat normals, "
-        f"{count(UPWARDS_NORMALS)} upwards, {count(KEEP_SHADING)} keeping vanilla shading; "
+        f"{count(UPWARDS_NORMALS)} upwards, {count(KEEP_SHADING)} keeping vanilla shading, "
+        f"{count(INHERIT_UNDERLAY | INHERIT_OVERLAY)} taking the tile's colour; "
         f"{sum(len(g['objects']) for g in data['shadingGroups'])} objects, "
         f"{sum(len(g['npcs']) for g in data['shadingGroups'])} NPCs")
     for s in skipped:

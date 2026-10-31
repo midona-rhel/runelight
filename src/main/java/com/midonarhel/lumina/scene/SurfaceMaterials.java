@@ -97,6 +97,8 @@ public final class SurfaceMaterials
 	public static final int FLAT_NORMALS = 1;    // flatNormals: every face lit by its own normal
 	public static final int UPWARDS_NORMALS = 2; // upwardsNormals: lit as if facing straight up
 	public static final int KEEP_SHADING = 4;    // undoVanillaShading false: the game's shading kept
+	public static final int INHERIT_UNDERLAY = 8; // inheritTileColorType UNDERLAY: the ground tile's underlay colour
+	public static final int INHERIT_OVERLAY = 16; // inheritTileColorType OVERLAY: the ground tile's overlay colour
 	private static int[] shadingObjects = new int[0];
 	private static int[] shadingNpcs = new int[0];
 	private static Group[] shadingGroups = new Group[0];
@@ -565,8 +567,8 @@ public final class SurfaceMaterials
 	}
 
 	/**
-	 * 117 HD's normal and shading flags for one face ({@link #FLAT_NORMALS}, {@link #UPWARDS_NORMALS},
-	 * {@link #KEEP_SHADING}): a textured face takes its override's, an untextured one those of the first colour
+	 * 117 HD's normal, shading and colour flags for one face ({@link #FLAT_NORMALS}, {@link #UPWARDS_NORMALS},
+	 * {@link #KEEP_SHADING}, {@link #INHERIT_UNDERLAY}, {@link #INHERIT_OVERLAY}): a textured face takes its override's, an untextured one those of the first colour
 	 * override its colour meets, else the override's.
 	 *
 	 * @param group   from {@link #shadingForObject} or {@link #shadingForRenderable}

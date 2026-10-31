@@ -153,7 +153,7 @@ public class SurfaceMaterialsTest
 		assertEquals(0, SurfaceMaterials.fakeHeight(-20, 40));
 	}
 	// model_shading.json, 117 HD's override flags (tools/import_117hd_shading.py)
-	private static final int NEWBIE_TREE = 9730, SHORT_GRASS = 731, TRANSLUCENT_FLAT = 36490, PLAIN_OBJECT = 2;
+	private static final int NEWBIE_TREE = 9730, SHORT_GRASS = 731, TRANSLUCENT_FLAT = 36490, OVERLAY_COLOURED = 176, UNDERLAY_GRASS = 1272, PLAIN_OBJECT = 2;
 
 	private static int shading(int objectId, int texture, int hsl, int opacity)
 	{
@@ -172,6 +172,10 @@ public class SurfaceMaterialsTest
 		assertEquals(SurfaceMaterials.FLAT_NORMALS, shading(TRANSLUCENT_FLAT, -1, hsl(20, 4, 50), 128));
 		assertEquals(0, shading(TRANSLUCENT_FLAT, -1, hsl(20, 4, 50), OPAQUE));
 		assertEquals(0, shading(TRANSLUCENT_FLAT, 12, hsl(20, 4, 50), 128));
+		// an object that takes its tile's overlay colour; short grass that takes the underlay's and is lit from above
+		assertEquals(SurfaceMaterials.INHERIT_OVERLAY, shading(OVERLAY_COLOURED, -1, hsl(8, 3, 30), OPAQUE));
+		assertEquals(SurfaceMaterials.INHERIT_UNDERLAY | SurfaceMaterials.UPWARDS_NORMALS,
+			shading(UNDERLAY_GRASS, -1, hsl(20, 4, 30), OPAQUE));
 		// no override: nothing
 		assertEquals(0, shading(PLAIN_OBJECT, -1, hsl(20, 4, 50), OPAQUE));
 		assertEquals(0, SurfaceMaterials.shading(0, -1, hsl(20, 4, 50), OPAQUE));
