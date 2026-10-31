@@ -25,6 +25,7 @@
 package com.midonarhel.lumina;
 
 import com.midonarhel.lumina.common.LogLimiter;
+import com.midonarhel.lumina.frame.GlObjects;
 import com.midonarhel.lumina.light.LampFrame;
 import com.midonarhel.lumina.visibility.VisibilityFrame;
 import com.midonarhel.lumina.sky.SkyFrame;
@@ -224,7 +225,7 @@ public class LuminaPlugin extends Plugin implements DrawCallbacks
 	// how far in, in tiles, the sky's light flowing in under cover falls to a third of its brightness
 	public static final int SKYLIGHT_REACH = 3;
 	public static final int SCENE_OFFSET = (Constants.EXTENDED_SCENE_SIZE - Constants.SCENE_SIZE) / 2; // offset for sxy -> msxy
-	private static final int UNIFORM_BUFFER_SIZE = 5 * Float.BYTES;
+	public static final int UNIFORM_BUFFER_SIZE = 5 * Float.BYTES;
 	public static final int NUM_ZONES = Constants.EXTENDED_SCENE_SIZE >> 3;
 	private static final int MAX_WORLDVIEWS = 4096;
 
@@ -561,7 +562,7 @@ public class LuminaPlugin extends Plugin implements DrawCallbacks
 	private final TempModels tempModels = new TempModels();
 
 	public int vaoUiHandle;
-	private int vboUiHandle;
+	public int vboUiHandle;
 
 	public final SceneTargets sceneTargets = new SceneTargets();
 	private boolean sceneFboValid;
@@ -571,7 +572,7 @@ public class LuminaPlugin extends Plugin implements DrawCallbacks
 
 	public int textureArrayId;
 
-	private final GLBuffer glUniformBuffer = new GLBuffer("uniform buffer");
+	public final GLBuffer glUniformBuffer = new GLBuffer("uniform buffer");
 
 	public int lastCanvasWidth;
 	public int lastCanvasHeight;
@@ -584,7 +585,7 @@ public class LuminaPlugin extends Plugin implements DrawCallbacks
 	private int lastAnisotropicFilteringLevel = -1;
 	private float lastTextureLodBias;
 
-	private GpuFloatBuffer uniformBuffer;
+	public GpuFloatBuffer uniformBuffer;
 
 	private int cameraYaw, cameraPitch;
 
@@ -833,8 +834,8 @@ public class LuminaPlugin extends Plugin implements DrawCallbacks
 
 				setupSyncMode();
 
-				initBuffers();
-				initVao();
+				glObjects.initBuffers();
+				glObjects.initVao();
 				programs.initProgram();
 				uiBlit.init();
 				if (glCapabilities.OpenGL45)
@@ -972,8 +973,8 @@ public class LuminaPlugin extends Plugin implements DrawCallbacks
 
 				shutdownInterfaceTexture();
 				programs.shutdownProgram();
-				shutdownVao();
-				shutdownBuffers();
+				glObjects.shutdownVao();
+				glObjects.shutdownBuffers();
 				shutdownFbo();
 				lwjglInitted = false;
 			}
@@ -1238,96 +1239,17 @@ public class LuminaPlugin extends Plugin implements DrawCallbacks
 	}
 
 
-	private void initVao()
-	{
-		// Create UI VAO
-		vaoUiHandle = glGenVertexArrays();
-		// Create UI buffer
-		vboUiHandle = glGenBuffers();
-		glBindVertexArray(vaoUiHandle);
+	// The frame's GL objects: the vertex arrays, the mapped buffers and the render-target FBO, created at start-up and on a size or sample change, freed at shutdown (GlObjects)
+	public final GlObjects glObjects = new GlObjects(this);
 
-		FloatBuffer vboUiBuf = GpuFloatBuffer.allocateDirect(5 * 4);
-		vboUiBuf.put(new float[]{
-			// positions     // texture coords
-			1f, 1f, 0f, 1f, 0f, // top right
-			1f, -1f, 0f, 1f, 1f, // bottom right
-			-1f, -1f, 0f, 0f, 1f, // bottom left
-			-1f, 1f, 0f, 0f, 0f  // top left
-		});
-		vboUiBuf.rewind();
-		glBindBuffer(GL_ARRAY_BUFFER, vboUiHandle);
-		glBufferData(GL_ARRAY_BUFFER, vboUiBuf, GL_STATIC_DRAW);
 
-		// position attribute
-		glVertexAttribPointer(0, 3, GL_FLOAT, false, 5 * Float.BYTES, 0);
-		glEnableVertexAttribArray(0);
 
-		// texture coord attribute
-		glVertexAttribPointer(1, 2, GL_FLOAT, false, 5 * Float.BYTES, 3 * Float.BYTES);
-		glEnableVertexAttribArray(1);
-
-		// unbind VAO/VBO
-		glBindVertexArray(0);
-		glBindBuffer(GL_ARRAY_BUFFER, 0);
-	}
-
-	private void shutdownVao()
-	{
-		glDeleteBuffers(vboUiHandle);
-		vboUiHandle = 0;
-
-		glDeleteVertexArrays(vaoUiHandle);
-		vaoUiHandle = 0;
-	}
-
-	private void initBuffers()
-	{
-		uniformBuffer = new GpuFloatBuffer(UNIFORM_BUFFER_SIZE);
-		initGlBuffer(glUniformBuffer);
-		Zone.initBuffer();
-
-		for (int i = 0; i < rts.length; ++i)
-		{
-			rts[i].vaoO = new VAOList(i > 0);
-			rts[i].vaoA = new VAOList(i > 0);
-		}
-	}
-
-	private void initGlBuffer(GLBuffer glBuffer)
+	public void initGlBuffer(GLBuffer glBuffer)
 	{
 		glBuffer.glBufferId = glGenBuffers();
 	}
 
-	private void shutdownBuffers()
-	{
-		destroyGlBuffer(glUniformBuffer);
-		uniformBuffer = null;
-		Zone.freeBuffer();
 
-		for (int i = 0; i < rts.length; ++i) // NOPMD: ForLoopCanBeForeach
-		{
-			if (rts[i].vaoO != null)
-			{
-				rts[i].vaoO.free();
-				rts[i].vaoO = null;
-			}
-			if (rts[i].vaoA != null)
-			{
-				rts[i].vaoA.free();
-				rts[i].vaoA = null;
-			}
-		}
-	}
-
-	private void destroyGlBuffer(GLBuffer glBuffer)
-	{
-		if (glBuffer.glBufferId != -1)
-		{
-			glDeleteBuffers(glBuffer.glBufferId);
-			glBuffer.glBufferId = -1;
-		}
-		glBuffer.size = -1;
-	}
 
 	// the interface over the scene (UiBlit): its texture, the banded upload, the quad that draws it
 	public final UiBlit uiBlit = new UiBlit(this);
@@ -1340,32 +1262,6 @@ public class LuminaPlugin extends Plugin implements DrawCallbacks
 		interfaceTexture = -1;
 	}
 
-	private void initFbo(int width, int height, int aaSamples, double renderFactor)
-	{
-		final GraphicsConfiguration graphicsConfiguration = clientUI.getGraphicsConfiguration();
-		final AffineTransform transform = graphicsConfiguration.getDefaultTransform();
-
-		width = Math.max(1, getScaledValue(transform.getScaleX() * renderFactor, width));
-		height = Math.max(1, getScaledValue(transform.getScaleY() * renderFactor, height));
-
-		if (aaSamples > 0)
-		{
-			glEnable(GL_MULTISAMPLE);
-		}
-		else
-		{
-			glDisable(GL_MULTISAMPLE);
-		}
-
-		sceneTargets.init(width, height, aaSamples, (float) Math.max(1, 2 * renderFactor));
-		if (renderFactor != 1)
-		{
-			upscaler.init(width, height);
-		}
-
-		// Reset
-		glBindFramebuffer(GL_FRAMEBUFFER, awtContext.getFramebuffer(false));
-	}
 
 	private void shutdownFbo()
 	{
@@ -1484,7 +1380,7 @@ public class LuminaPlugin extends Plugin implements DrawCallbacks
 					}
 				}
 
-				initFbo(stretchedCanvasWidth, stretchedCanvasHeight, samples, renderFactor);
+				glObjects.initFbo(stretchedCanvasWidth, stretchedCanvasHeight, samples, renderFactor);
 
 				lastStretchedCanvasWidth = stretchedCanvasWidth;
 				lastStretchedCanvasHeight = stretchedCanvasHeight;
