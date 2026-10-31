@@ -1196,8 +1196,8 @@ public class SceneUploader
 	}
 
 	// scene upload
-	private final int[] flatNormals = new int[3];
-	private final VertexShading.Normals computedNormals = new VertexShading.Normals();
+	// a face's three corner normals (VertexShading.faceNormals)
+	private final int[] faceNormals = new int[9];
 
 	// Faces lying exactly on top of each other (a wall's overlay on the wall, a decoration on its wall) would fight over
 	// the depth test pixel by pixel. The game draws them in order instead: a model's faces by render priority, and a
@@ -1232,18 +1232,12 @@ public class SceneUploader
 		final byte[] bias = model.getFaceBias();
 		final byte[] priorities = model.getFaceRenderPriorities();
 
-		final VertexShading.Normals computed = this.computedNormals;
-		computed.ensure(model.getVerticesCount());
-		VertexShading.computeNormals(model.getVerticesCount(), vertexX, vertexY, vertexZ,
-			model.getFaceCount(), indices1, indices2, indices3, color3s, computed);
-		final float[] normalsX = computed.x;
-		final float[] normalsY = computed.y;
-		final float[] normalsZ = computed.z;
-		final boolean hasNormals = true;
-		final short[] unlitColors = model.getUnlitFaceColors();
-		final int[] flatNormals = this.flatNormals;
-		final float normalSin = orient != 0 ? Perspective.SINEF[orient] : 0;
-		final float normalCos = orient != 0 ? Perspective.COSINEF[orient] : 1;
+		// the game's vertex normals, as 117 HD reads them; null when the model has none (every face flat then)
+		final int[] normalsX = model.getVertexNormalsX();
+		final int[] normalsY = model.getVertexNormalsY();
+		final int[] normalsZ = model.getVertexNormalsZ();
+		final boolean hasNormals = normalsX != null && normalsY != null && normalsZ != null;
+		final int[] faceNormals = this.faceNormals;
 
 		int orientSin = 0;
 		int orientCos = 0;
@@ -1334,35 +1328,18 @@ public class SceneUploader
 				continue;
 			}
 
-			if (faceTextures == null || faceTextures[face] == -1)
+			if (hasNormals && (faceTextures == null || faceTextures[face] == -1))
 			{
-				color1 = VertexShading.baseColor(color1, face, triangleA, normalsX, normalsY, normalsZ);
+				color1 = VertexShading.undoVanillaShading(color1, normalsX[triangleA], normalsY[triangleA], normalsZ[triangleA]);
 				if (!flat)
 				{
-					color2 = VertexShading.baseColor(color2, face, triangleB, normalsX, normalsY, normalsZ);
-					color3 = VertexShading.baseColor(color3, face, triangleC, normalsX, normalsY, normalsZ);
+					color2 = VertexShading.undoVanillaShading(color2, normalsX[triangleB], normalsY[triangleB], normalsZ[triangleB]);
+					color3 = VertexShading.undoVanillaShading(color3, normalsX[triangleC], normalsY[triangleC], normalsZ[triangleC]);
 				}
 			}
 			if (flat)
 			{
 				color2 = color3 = color1;
-			}
-
-			boolean smooth = !flat && hasNormals;
-			int n1 = smooth ? VertexShading.vertexNormal(normalsX, normalsY, normalsZ, triangleA, normalSin, normalCos) : 0;
-			int n2 = smooth ? VertexShading.vertexNormal(normalsX, normalsY, normalsZ, triangleB, normalSin, normalCos) : 0;
-			int n3 = smooth ? VertexShading.vertexNormal(normalsX, normalsY, normalsZ, triangleC, normalSin, normalCos) : 0;
-			if (flat && hasNormals
-				&& VertexShading.flatFaceNormals(computed, face, triangleA, triangleB, triangleC, normalSin, normalCos, flatNormals))
-			{
-				n1 = flatNormals[0];
-				n2 = flatNormals[1];
-				n3 = flatNormals[2];
-				// one color over the rounded surface: the per-face lit colors would still show the facets
-				if (unlitColors != null && (faceTextures == null || faceTextures[face] == -1))
-				{
-					color1 = color2 = color3 = unlitColors[face] & 0xffff;
-				}
 			}
 
 			int vx1 = modelLocalXI[triangleA];
@@ -1376,6 +1353,19 @@ public class SceneUploader
 			int vx3 = modelLocalXI[triangleC];
 			int vy3 = modelLocalYI[triangleC];
 			int vz3 = modelLocalZI[triangleC];
+
+			// 117 HD's normals: the face's own for flat faces (from the rotated positions), else the game's,
+			// rotated by the orientation; like 117 HD's static upload, also a face normal that stood in for three
+			// zero vertex normals (SceneUploader 1856, 1883)
+			int normalKind = VertexShading.faceNormals(faceNormals, normalsX, normalsY, normalsZ, flat,
+				triangleA, triangleB, triangleC, vx1, vy1, vz1, vx2, vy2, vz2, vx3, vy3, vz3);
+			if (normalKind != VertexShading.FACE && orient != 0)
+			{
+				VertexShading.rotateNormals(faceNormals, orientSin, orientCos);
+			}
+			int n1 = VertexShading.encodeNormal(faceNormals, 0);
+			int n2 = VertexShading.encodeNormal(faceNormals, 1);
+			int n3 = VertexShading.encodeNormal(faceNormals, 2);
 
 			ModelUploader.computeFaceUvs(model, face, 0f, 0f, 0f, false, u, v);
 
