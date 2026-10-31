@@ -1,0 +1,63 @@
+#!/usr/bin/env python3
+"""Split methods out of LuminaPlugin into a feature class that holds `plugin`.
+
+  tools/split_feature.py <package> <Class> <fieldName> "<javadoc sentence>" method[=newName] ...
+
+Each method is named by the text of its declaration line up to the opening parenthesis, e.g. `private void updateWeather`
+(the marker must occur once). The method moves with its comment block, renamed when `=newName` is given, made public,
+and every call in the plugin becomes `<fieldName>.<newName>(...)` (method references `this::name` likewise). Plugin
+instance members the moved code reads get `plugin.`; its statics come in by static import and are opened."""
+import re, pathlib, sys
+sys.path.insert(0, 'tools'); import split_plugin as sp
+
+pkg, cls_name, field, doc, *specs = sys.argv[1:]
+lines = sp.PLUGIN.read_text().split('\n')
+members = sp.plugin_members(lines)
+methods = []
+for spec in specs:
+    marker, _, new = spec.partition('=')
+    name = marker.split()[-1]
+    methods.append((marker, name, new or name))
+blocks = [(m + '(', 'method') for m, _, _ in methods]
+for marker, _, _ in methods:
+    hits = [l for l in lines if (marker + '(') in l]
+    assert len(hits) == 1, (marker, len(hits))
+region, remaining, at = sp.cut(lines, blocks)
+moved = {n for _, n, _ in methods} | {nn for _, _, nn in methods}
+params = set()
+for marker, name, new in methods:
+    decl = next(l for l in region.split('\n') if (marker + '(') in l)
+    params |= set(re.findall(r'(\w+)\s*[,)]', decl[decl.find('(') :]))
+    newdecl = re.sub(r'^(\t)(?:private |protected |public )?', r'\1public ', decl).replace(name + '(', new + '(', 1)
+    region = region.replace(decl, newdecl, 1)
+    if new != name:
+        region = re.sub(r'(?<![\w.])' + re.escape(name) + r'\(', new + '(', region)
+region, inst = sp.prefix(region, members, moved, extra_locals=tuple(params))
+statics = sp.statics_used(region, members)
+remaining = sp.open_statics(remaining, statics)
+imports = sp.imports_of(lines)
+header = f'package com.midonarhel.lumina.{pkg};\n\n' + '\n'.join(i for i in imports if f'.{pkg}.' not in i) + '\nimport com.midonarhel.lumina.LuminaPlugin;\nimport com.midonarhel.lumina.LuminaConfig;\nimport com.midonarhel.lumina.LuminaPlugin.*;\nimport static com.midonarhel.lumina.LuminaPlugin.*;\n\n'
+cls = header + f'''/**
+ * {doc} Split out of the plugin class verbatim; it reads the plugin's frame state through {{@code plugin}}.
+ */
+public final class {cls_name}
+{{
+	private final LuminaPlugin plugin;
+
+	public {cls_name}(LuminaPlugin plugin)
+	{{
+		this.plugin = plugin;
+	}}
+
+''' + region + '}\n'
+pathlib.Path(f'src/main/java/com/midonarhel/lumina/{pkg}/{cls_name}.java').write_text(cls)
+remaining[at:at] = [f'\t// {doc.split(".")[0]} ({cls_name})', f'\tpublic final {cls_name} {field} = new {cls_name}(this);']
+s = '\n'.join(remaining)
+for _, name, new in methods:
+    s = re.sub(r'(?<![\w.])' + re.escape(name) + r'\(', f'{field}.{new}(', s)
+    s = s.replace(f'this::{name}', f'{field}::{new}')
+imp = f'import com.midonarhel.lumina.{pkg}.{cls_name};'
+if imp not in s:
+    s = re.sub(r'(^import com\.midonarhel\.lumina\.[^\n]+\n)', r'\1' + imp + '\n', s, count=1, flags=re.M)
+sp.PLUGIN.write_text(s)
+print(f'plugin {s.count(chr(10))} lines; {cls_name} {cls.count(chr(10))} lines; prefixed {len(inst)}; statics opened {len(statics)}')

@@ -25,6 +25,7 @@
 package com.midonarhel.lumina;
 
 import com.midonarhel.lumina.common.LogLimiter;
+import com.midonarhel.lumina.weather.WeatherFrame;
 import com.midonarhel.lumina.common.Mat4;
 import com.midonarhel.lumina.common.Rumble;
 import com.midonarhel.lumina.common.Shader;
@@ -263,7 +264,7 @@ public class LuminaPlugin extends Plugin implements DrawCallbacks
 	private EventBus eventBus;
 
 	@Inject
-	private Gson gson;
+	public Gson gson;
 
 	private SceneLights sceneLights;
 	public BuildingLights buildingLights;
@@ -434,7 +435,7 @@ public class LuminaPlugin extends Plugin implements DrawCallbacks
 	// 117 HD fog depth that doubles the volumetric fog
 	private static final float AREA_FOG_DEPTH = 30;
 	// under the open sky rather than underground, from the area classification (or the game's sky color)
-	private boolean frameOpenSky;
+	public boolean frameOpenSky;
 
 	public static final Shader SHADOW_PROGRAM = new Shader()
 		.add(GL_VERTEX_SHADER, "shadow_vert.glsl")
@@ -466,15 +467,15 @@ public class LuminaPlugin extends Plugin implements DrawCallbacks
 	public final EnvironmentUniforms sceneEnvUniforms = new EnvironmentUniforms();
 	public final ShadowMap shadowMap = new ShadowMap();
 	public final Weather weather = new Weather();
-	private volatile WeatherAudio weatherAudio;
-	private final float[] thunderStrike = new float[2];
+	public volatile WeatherAudio weatherAudio;
+	public final float[] thunderStrike = new float[2];
 	// each region's forecast, temperature and ground, which follow the game clock
-	private final Climate climate = new Climate();
+	public final Climate climate = new Climate();
 	public final WeatherGround weatherGround = new WeatherGround();
 	// where players and small NPCs have just walked through rain
 	public final WadeSteps wadeSteps = new WadeSteps();
 	// GameClock's time this frame
-	private long frameGameMillis;
+	public long frameGameMillis;
 	// two units: the occlusion map's raw and compare views; their own, since the AO program's compare sampler must
 	// never find another program's color texture left on its unit (the sky cache and the water contact were there)
 	public static final int WEATHER_OCCLUSION_UNIT = LuminaPlugin.COMPOSITE_TEXTURE_UNIT + 26;
@@ -503,7 +504,7 @@ public class LuminaPlugin extends Plugin implements DrawCallbacks
 	public static final int WEATHER_SKY_UNIT = LuminaPlugin.COMPOSITE_TEXTURE_UNIT + 27;
 	public final SkyGridMap skyGrid = new SkyGridMap();
 	// world units from the player's feet to the head, where the sky overhead is read for the weather sounds
-	private static final float WEATHER_HEAD = 120;
+	public static final float WEATHER_HEAD = 120;
 	// the sky's light flowing in under cover
 	public static final int SKY_FIELD_UNIT = LuminaPlugin.COMPOSITE_TEXTURE_UNIT + 25;
 	public final SkyFieldMap skyField = new SkyFieldMap();
@@ -1740,7 +1741,7 @@ public class LuminaPlugin extends Plugin implements DrawCallbacks
 
 		cpuTimer.begin(CpuTimer.WEATHER);
 		weather.getLightning().setSunStrength(dayCycle.directStrength(volumetricFog.overcast[0], volumetricFog.overcast[1]));
-		updateWeather(cameraX, cameraY, cameraZ);
+		weatherFrame.update(cameraX, cameraY, cameraZ);
 		dayCycle.applyStrike(weather.getLightning());
 		updateSkylight();
 		cpuTimer.end(CpuTimer.WEATHER);
@@ -1849,71 +1850,9 @@ public class LuminaPlugin extends Plugin implements DrawCallbacks
 			z / length * Math.signum(w)} : null;
 	}
 
-	private void updateWeather(float cameraX, float cameraY, float cameraZ)
-	{
-		WorldView wv = client.getTopLevelWorldView();
-		if (wv == null)
-		{
-			return;
-		}
-		float fx = cameraX, fy = cameraY, fz = cameraZ;
-		int plane = wv.getPlane();
-		Player player = client.getLocalPlayer();
-		LocalPoint lp = player != null ? player.getLocalLocation() : null;
-		if (lp != null)
-		{
-			fx = lp.getX();
-			fz = lp.getY();
-			fy = Perspective.getTileHeight(client, lp, plane);
-		}
-		boolean sky = frameOpenSky && client.getGameState() == GameState.LOGGED_IN;
-		String biomeName = config.areaEnvironments() ? environmentManager.getBiome() : null;
-		ShaderWatcher watcher = shaderWatcher;
-		if (watcher != null)
-		{
-			WeatherData.reloadIfChanged(watcher.getDirectory(), gson);
-		}
-		climate.update(frameGameMillis, Climate.SEASON_DAYS);
-		weather.updateField(sky ? wv.getScene() : null, plane, environmentManager, config.areaEnvironments(), biomeName,
-			config.weatherMode(), climate, config.weatherIntensity(), config.weatherBuildup(), dayCycle.hour(), fx, fz);
-		weather.update(config.weatherBuildup(), true, config.weatherLightning(), sky, fx, fy, fz, plane);
-		weather.getOvercast(volumetricFog.overcast);
-		updateWeatherAudio(fx, fy, fz);
-	}
+	// The weather's work each frame: the field and the driver updated from the camera, and the weather sounds (WeatherFrame)
+	public final WeatherFrame weatherFrame = new WeatherFrame(this);
 
-	/**
-	 * Hand the weather's sounds this frame's rain, how far indoors the player is, the volume (the setting times the
-	 * game's own sound effects volume) and any thunder that has just begun.
-	 */
-	private void updateWeatherAudio(float x, float y, float z)
-	{
-		WeatherAudio audio = weatherAudio;
-		if (audio == null)
-		{
-			return;
-		}
-		float volume = 0;
-		if (client.getGameState() == GameState.LOGGED_IN)
-		{
-			Preferences prefs = client.getPreferences();
-			volume = config.weatherSounds() / 100f * (prefs != null ? Math.min(1, prefs.getSoundEffectVolume() / 127f) : 1);
-		}
-		BuildingLights buildings = buildingLights;
-		// the sky seen straight up at the player's head, from the skylight's grid; the room map where there is none
-		WorldView wv = client.getTopLevelWorldView();
-		float sky = skyGrid.upVisibility(wv != null ? wv.getScene() : null, x, y - WEATHER_HEAD, z);
-		float indoors = WeatherAudio.indoorMix(sky, buildings != null ? buildings.getRooms() : null, x, y - 40, z);
-		audio.update(weather.rainLoudness(), indoors, volume);
-		// the thunder plays at any volume above 0; the light follows its rumble either way
-		if (weather.getLightning().takeThunder(thunderStrike))
-		{
-			Rumble rumble = audio.thunder(thunderStrike[0], thunderStrike[1], volume > 0);
-			if (rumble != null)
-			{
-				weather.getLightning().rumble(rumble);
-			}
-		}
-	}
 
 	/**
 	 * Find the area the camera looks at and whether it is under the open sky. Without area data, the game's
