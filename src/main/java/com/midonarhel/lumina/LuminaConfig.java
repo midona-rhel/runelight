@@ -44,7 +44,6 @@ import com.midonarhel.lumina.config.DebugView;
 import com.midonarhel.lumina.config.Quality;
 import com.midonarhel.lumina.config.RenderScale;
 import com.midonarhel.lumina.config.ShadowResolution;
-import com.midonarhel.lumina.config.SwayFps;
 import com.midonarhel.lumina.config.UIScalingMode;
 import com.midonarhel.lumina.config.WaterDebug;
 import com.midonarhel.lumina.config.WeatherMode;
@@ -64,10 +63,8 @@ public interface LuminaConfig extends Config
 
 	@ConfigItem(
 		keyName = "renderScale",
-		name = "Render scale",
-		description = "The 3D scene's resolution as a share of the window's pixels. It is scaled up to the window and "
-			+ "the interface is drawn at full resolution on top. 1x (no HiDPI) renders at the window's size in "
-			+ "points, which is half the pixels on a Retina display and the same as 100% elsewhere.",
+		name = "3D resolution",
+		description = "Hide the map around an area that stands apart from it, like an instance or a cave.",
 		section = renderingSection,
 		position = 11
 	)
@@ -81,7 +78,7 @@ public interface LuminaConfig extends Config
 	@ConfigItem(
 		keyName = "upscaleSharpness",
 		name = "Upscale sharpness",
-		description = "Sharpens the scaled-up scene without ringing. Only used when the render scale is below 100%.",
+		description = "Developer: tint and label the rooms found on your floor.",
 		section = renderingSection,
 		position = 12
 	)
@@ -93,7 +90,7 @@ public interface LuminaConfig extends Config
 	@ConfigItem(
 		keyName = "antiAliasingMode",
 		name = "Anti aliasing",
-		description = "Configures the anti-aliasing mode.",
+		description = "Developer: tint and label the rooms found on your floor.",
 		section = renderingSection,
 		position = 13
 	)
@@ -106,7 +103,7 @@ public interface LuminaConfig extends Config
 	@ConfigItem(
 		keyName = "anisotropicFilteringLevel",
 		name = "Anisotropic filtering",
-		description = "Sharpens textures seen at a slant.",
+		description = "Developer: tint and label the rooms found on your floor.",
 		section = renderingSection,
 		position = 14
 	)
@@ -119,7 +116,7 @@ public interface LuminaConfig extends Config
 	@ConfigItem(
 		keyName = "drawDistance",
 		name = "Draw distance",
-		description = "How far the world is drawn, in tiles.",
+		description = "Developer: tint and label the rooms found on your floor.",
 		section = renderingSection,
 		position = 15
 	)
@@ -132,7 +129,7 @@ public interface LuminaConfig extends Config
 	@ConfigItem(
 		keyName = "expandedMapLoadingChunks",
 		name = "Extended map loading",
-		description = "Extra map area to load, in 8 tile chunks.",
+		description = "Developer: tint and label the rooms found on your floor.",
 		section = renderingSection,
 		position = 16
 	)
@@ -144,7 +141,7 @@ public interface LuminaConfig extends Config
 	@ConfigItem(
 		keyName = "uiScalingMode",
 		name = "UI scaling mode",
-		description = "Sampling function to use for the UI in stretched mode.",
+		description = "Developer: tint and label the rooms found on your floor.",
 		section = renderingSection,
 		position = 17
 	)
@@ -156,7 +153,7 @@ public interface LuminaConfig extends Config
 	@ConfigItem(
 		keyName = "unlockFps",
 		name = "Unlock FPS",
-		description = "Removes the 50 FPS cap for camera movement.",
+		description = "Developer: tint and label the rooms found on your floor.",
 		section = renderingSection,
 		position = 18
 	)
@@ -168,7 +165,7 @@ public interface LuminaConfig extends Config
 	@ConfigItem(
 		keyName = "vsyncMode",
 		name = "Vsync mode",
-		description = "Method to synchronize frame rate with refresh rate.",
+		description = "Developer: tint and label the rooms found on your floor.",
 		section = renderingSection,
 		position = 19
 	)
@@ -181,7 +178,7 @@ public interface LuminaConfig extends Config
 	@ConfigItem(
 		keyName = "fpsTarget",
 		name = "FPS target",
-		description = "Target FPS when 'Unlock FPS' is enabled and 'Vsync mode' is off.",
+		description = "Developer: tint and label the rooms found on your floor.",
 		section = renderingSection,
 		position = 20
 	)
@@ -199,7 +196,7 @@ public interface LuminaConfig extends Config
 
 	@ConfigSection(
 		name = "Lighting",
-		description = "Sun, shadows, ambient occlusion, point lights and interiors",
+		description = "Developer: tint and label the rooms found on your floor.",
 		position = 30
 	)
 	String lightingSection = "lighting";
@@ -207,7 +204,7 @@ public interface LuminaConfig extends Config
 	@ConfigItem(
 		keyName = "sunLighting",
 		name = "Sun and moon lighting",
-		description = "Day and night cycle with directional light from the sun or moon. Off underground.",
+		description = "Developer: tint and label the rooms found on your floor.",
 		section = lightingSection,
 		position = 31
 	)
@@ -221,9 +218,7 @@ public interface LuminaConfig extends Config
 	@ConfigItem(
 		keyName = "buildingLightBrightness",
 		name = "Interior brightness",
-		description = "How much light dim rooms of buildings get, by day and at night, in percent. A room with lights "
-			+ "or open to the day gets little or none; a closed-in one is lifted to a dim but readable level. 0 "
-			+ "turns it off.",
+		description = "Developer: tint and label the rooms found on your floor.",
 		section = lightingSection,
 		position = 32
 	)
@@ -235,7 +230,7 @@ public interface LuminaConfig extends Config
 	@ConfigItem(
 		keyName = "pointLights",
 		name = "Point lights",
-		description = "Lights from torches, fires and other sources. They do not cast shadows.",
+		description = "Developer: tint and label the rooms found on your floor.",
 		section = lightingSection,
 		position = 33
 	)
@@ -249,8 +244,7 @@ public interface LuminaConfig extends Config
 	@ConfigItem(
 		keyName = "emissiveStrength",
 		name = "Glowing materials",
-		description = "Brightness of lava, fire, magic, spells and spirits like ghosts, which show their own color "
-			+ "instead of being shaded, shadowed or darkened by ambient occlusion, in percent. 0 turns it off.",
+		description = "Developer: tint and label the rooms found on your floor.",
 		section = lightingSection,
 		position = 34
 	)
@@ -259,25 +253,22 @@ public interface LuminaConfig extends Config
 		return 100;
 	}
 
-	@Range(max = 300)
-	@Units(Units.PERCENT)
 	@ConfigItem(
-		keyName = "transmissionStrength",
+		keyName = "leafTransmission",
 		name = "Light through leaves",
-		description = "How much light passes through leaves, bushes and plants from behind, so tree canopies glow "
-			+ "around the lights inside them, in percent. 0 turns it off.",
+		description = "Developer: tint and label the rooms found on your floor.",
 		section = lightingSection,
 		position = 35
 	)
-	default int transmissionStrength()
+	default boolean leafTransmission()
 	{
-		return 100;
+		return true;
 	}
 
 	@ConfigItem(
 		keyName = "shadows",
 		name = "Shadows",
-		description = "Soft shadows from the sun or moon.",
+		description = "Developer: tint and label the rooms found on your floor.",
 		section = lightingSection,
 		position = 36
 	)
@@ -290,7 +281,7 @@ public interface LuminaConfig extends Config
 	@ConfigItem(
 		keyName = "shadowDistance",
 		name = "Shadow distance",
-		description = "How far from your character shadows are drawn, in tiles.",
+		description = "Developer: tint and label the rooms found on your floor.",
 		section = lightingSection,
 		position = 37
 	)
@@ -302,7 +293,7 @@ public interface LuminaConfig extends Config
 	@ConfigItem(
 		keyName = "shadowResolution",
 		name = "Shadow resolution",
-		description = "Shadow map size. Higher is sharper and costs more.",
+		description = "Developer: tint and label the rooms found on your floor.",
 		section = lightingSection,
 		position = 38
 	)
@@ -314,7 +305,7 @@ public interface LuminaConfig extends Config
 	@ConfigItem(
 		keyName = "ambientOcclusion",
 		name = "Ambient occlusion",
-		description = "Soft shadowing in corners, creases and under objects (SSAO).",
+		description = "Developer: tint and label the rooms found on your floor.",
 		section = lightingSection,
 		position = 39
 	)
@@ -328,7 +319,7 @@ public interface LuminaConfig extends Config
 	@ConfigItem(
 		keyName = "aoStrength",
 		name = "AO strength",
-		description = "How dark occluded areas get, in percent.",
+		description = "Developer: tint and label the rooms found on your floor.",
 		section = lightingSection,
 		position = 40
 	)
@@ -342,7 +333,7 @@ public interface LuminaConfig extends Config
 	@ConfigItem(
 		keyName = "aoRadius",
 		name = "AO radius",
-		description = "How far occlusion reaches, in percent of a tile.",
+		description = "Developer: tint and label the rooms found on your floor.",
 		section = lightingSection,
 		position = 41
 	)
@@ -354,7 +345,7 @@ public interface LuminaConfig extends Config
 	@ConfigItem(
 		keyName = "aoQuality",
 		name = "AO quality",
-		description = "Samples per pixel of ambient occlusion: 12 on high, 8 on medium, 6 on low. Lower is noisier.",
+		description = "Developer: tint and label the rooms found on your floor.",
 		section = lightingSection,
 		position = 42
 	)
@@ -366,8 +357,7 @@ public interface LuminaConfig extends Config
 	@ConfigItem(
 		keyName = "removeBakedShading",
 		name = "Remove baked shading",
-		description = "The game bakes light from one fixed direction into model colors. Remove it so the sun, moon and "
-			+ "lights do the shading. Reloads the scene when changed.",
+		description = "Developer: tint and label the rooms found on your floor.",
 		section = lightingSection,
 		position = 43
 	)
@@ -379,8 +369,7 @@ public interface LuminaConfig extends Config
 	@ConfigItem(
 		keyName = "groundBlending",
 		name = "Ground blending",
-		description = "Blend ground colors smoothly across tile borders and give paths soft edges, like 117 HD. Also "
-			+ "removes the light the game bakes into the ground. Reloads the scene when changed.",
+		description = "Developer: tint and label the rooms found on your floor.",
 		section = lightingSection,
 		position = 44
 	)
@@ -391,7 +380,7 @@ public interface LuminaConfig extends Config
 
 	@ConfigSection(
 		name = "Sky & time of day",
-		description = "The sky, the clock and the clouds",
+		description = "Developer: tint and label the rooms found on your floor.",
 		position = 40
 	)
 	String skySection = "sky";
@@ -399,7 +388,7 @@ public interface LuminaConfig extends Config
 	@ConfigItem(
 		keyName = "proceduralSky",
 		name = "Procedural sky",
-		description = "Draw a sky that follows the time of day. Areas with their own skybox keep it.",
+		description = "Developer: tint and label the rooms found on your floor.",
 		section = skySection,
 		position = 41
 	)
@@ -413,8 +402,7 @@ public interface LuminaConfig extends Config
 	@ConfigItem(
 		keyName = "dayCycleMinutes",
 		name = "Day length",
-		description = "Real minutes per full day and night; the time follows the real clock, so it is the same whenever "
-			+ "you play. 0 holds the time at the fixed hour (the weather goes on at 24 minutes a day).",
+		description = "Developer: tint and label the rooms found on your floor.",
 		section = skySection,
 		position = 42
 	)
@@ -427,7 +415,7 @@ public interface LuminaConfig extends Config
 	@ConfigItem(
 		keyName = "fixedHour",
 		name = "Fixed hour",
-		description = "Time of day to hold when day length is 0. 6 is sunrise, 12 midday.",
+		description = "Developer: tint and label the rooms found on your floor.",
 		section = skySection,
 		position = 43
 	)
@@ -439,7 +427,7 @@ public interface LuminaConfig extends Config
 	@ConfigItem(
 		keyName = "clouds",
 		name = "Clouds",
-		description = "Clouds drifting across the procedural sky, lit by the sun and moon. Rain and snow cover the sky.",
+		description = "Developer: tint and label the rooms found on your floor.",
 		section = skySection,
 		position = 44
 	)
@@ -453,7 +441,7 @@ public interface LuminaConfig extends Config
 	@ConfigItem(
 		keyName = "clearWeatherClouds",
 		name = "Clear weather clouds",
-		description = "How much of the sky clouds cover in clear weather, in percent; cloudier weather adds to it.",
+		description = "Developer: tint and label the rooms found on your floor.",
 		section = skySection,
 		position = 45
 	)
@@ -467,7 +455,7 @@ public interface LuminaConfig extends Config
 	@ConfigItem(
 		keyName = "cloudSpeed",
 		name = "Cloud speed",
-		description = "How fast the clouds drift, in percent.",
+		description = "Developer: tint and label the rooms found on your floor.",
 		section = skySection,
 		position = 46
 	)
@@ -481,7 +469,7 @@ public interface LuminaConfig extends Config
 	@ConfigItem(
 		keyName = "starBrightness",
 		name = "Star brightness",
-		description = "How bright the stars are, in percent.",
+		description = "Developer: tint and label the rooms found on your floor.",
 		section = skySection,
 		position = 49
 	)
@@ -495,8 +483,7 @@ public interface LuminaConfig extends Config
 	@ConfigItem(
 		keyName = "nebulaStrength",
 		name = "Nebula strength",
-		description = "How bright the colored nebula clouds and the Milky Way are in the night sky, in percent. 0 hides "
-			+ "them and the crowding of stars in the Milky Way.",
+		description = "Developer: tint and label the rooms found on your floor.",
 		section = skySection,
 		position = 50
 	)
@@ -508,8 +495,7 @@ public interface LuminaConfig extends Config
 	@ConfigItem(
 		keyName = "aurora",
 		name = "Aurora",
-		description = "Curtains of light in the night sky of the far north: the Fremennik lands and the frozen north "
-			+ "around Weiss. Needs area ambience.",
+		description = "Developer: tint and label the rooms found on your floor.",
 		section = skySection,
 		position = 51
 	)
@@ -521,7 +507,7 @@ public interface LuminaConfig extends Config
 	@ConfigItem(
 		keyName = "cloudShadows",
 		name = "Cloud shadows",
-		description = "Clouds shade the ground from the sun or moon as they pass over.",
+		description = "Developer: tint and label the rooms found on your floor.",
 		section = skySection,
 		position = 47
 	)
@@ -533,8 +519,7 @@ public interface LuminaConfig extends Config
 	@ConfigItem(
 		keyName = "skyHorizonAtEdge",
 		name = "Horizon at world edge",
-		description = "Put the sky's horizon where the drawn world ends, so the clouds come down to the land at any "
-			+ "camera angle.",
+		description = "Developer: tint and label the rooms found on your floor.",
 		section = skySection,
 		position = 48
 	)
@@ -545,7 +530,7 @@ public interface LuminaConfig extends Config
 
 	@ConfigSection(
 		name = "Weather",
-		description = "Automatic regional weather, rain, snow and storms",
+		description = "Developer: tint and label the rooms found on your floor.",
 		position = 50
 	)
 	String weatherSection = "weather";
@@ -553,10 +538,7 @@ public interface LuminaConfig extends Config
 	@ConfigItem(
 		keyName = "weatherMode",
 		name = "Weather",
-		description = "Automatic: each region's weather changes every 8 game hours by its biome and the season (deserts "
-			+ "sunny with sandstorms, swamps foggy and wet, mountains snowy in winter). Off keeps it clear; any "
-			+ "other choice holds that weather everywhere. Sheltered places, also under roofs the game hides, "
-			+ "stay dry.",
+		description = "Developer: tint and label the rooms found on your floor.",
 		section = weatherSection,
 		position = 51
 	)
@@ -570,8 +552,7 @@ public interface LuminaConfig extends Config
 	@ConfigItem(
 		keyName = "weatherIntensity",
 		name = "Intensity",
-		description = "How heavy the rain or snow is, in percent. In automatic weather, 60 is each weather's own "
-			+ "amount.",
+		description = "Developer: tint and label the rooms found on your floor.",
 		section = weatherSection,
 		position = 52
 	)
@@ -583,7 +564,7 @@ public interface LuminaConfig extends Config
 	@ConfigItem(
 		keyName = "weatherBuildup",
 		name = "Gradual buildup",
-		description = "Weather changes blend over a minute and the ground gets wet or white over time.",
+		description = "Developer: tint and label the rooms found on your floor.",
 		section = weatherSection,
 		position = 53
 	)
@@ -595,7 +576,7 @@ public interface LuminaConfig extends Config
 	@ConfigItem(
 		keyName = "weatherLightning",
 		name = "Lightning",
-		description = "Occasional lightning in storms that briefly lights the sky and the scene.",
+		description = "Developer: tint and label the rooms found on your floor.",
 		section = weatherSection,
 		position = 54
 	)
@@ -609,7 +590,7 @@ public interface LuminaConfig extends Config
 	@ConfigItem(
 		keyName = "weatherSounds",
 		name = "Weather sounds",
-		description = "Volume of the rain and the thunder, on top of the game's sound effects volume. 0 turns them off.",
+		description = "Developer: tint and label the rooms found on your floor.",
 		section = weatherSection,
 		position = 55
 	)
@@ -620,7 +601,7 @@ public interface LuminaConfig extends Config
 
 	@ConfigSection(
 		name = "Water",
-		description = "Water you can see into, with waves that follow the rivers, reflections and glints",
+		description = "Developer: tint and label the rooms found on your floor.",
 		position = 60
 	)
 	String waterSection = "water";
@@ -628,8 +609,7 @@ public interface LuminaConfig extends Config
 	@ConfigItem(
 		keyName = "water",
 		name = "Water",
-		description = "Draw water as a surface over a lowered bed: clear water shows the bed and darkens with depth, "
-			+ "swamps and caves are murky, rivers flow from their sources to the sea. Reloads the scene.",
+		description = "Developer: tint and label the rooms found on your floor.",
 		section = waterSection,
 		position = 61
 	)
@@ -641,8 +621,7 @@ public interface LuminaConfig extends Config
 	@ConfigItem(
 		keyName = "waterReflections",
 		name = "World reflections",
-		description = "Rough reflections of the scene (trees, walls, the shore) in the water, besides the sky. A few "
-			+ "screen-space taps per water pixel.",
+		description = "Developer: tint and label the rooms found on your floor.",
 		section = waterSection,
 		position = 62
 	)
@@ -654,7 +633,7 @@ public interface LuminaConfig extends Config
 	@ConfigItem(
 		keyName = "waterCaustics",
 		name = "Caustics",
-		description = "Rippling sunlight on the bed of clear, shallow water (117 HD's caustics).",
+		description = "Developer: tint and label the rooms found on your floor.",
 		section = waterSection,
 		position = 63
 	)
@@ -665,7 +644,7 @@ public interface LuminaConfig extends Config
 
 	@ConfigSection(
 		name = "Fog",
-		description = "Volumetric fog",
+		description = "Developer: tint and label the rooms found on your floor.",
 		position = 70
 	)
 	String fogSection = "fog";
@@ -673,7 +652,7 @@ public interface LuminaConfig extends Config
 	@ConfigItem(
 		keyName = "volumetricFog",
 		name = "Volumetric fog",
-		description = "Light fog around your character that thins out with distance, lit by the sun, moon and lights.",
+		description = "Developer: tint and label the rooms found on your floor.",
 		section = fogSection,
 		position = 71
 	)
@@ -685,8 +664,7 @@ public interface LuminaConfig extends Config
 	@ConfigItem(
 		keyName = "fogQuality",
 		name = "Fog quality",
-		description = "Steps through the volumetric fog: 12 on high, 8 on medium, 6 on low. Lower is grainier in sun "
-			+ "shafts.",
+		description = "Developer: tint and label the rooms found on your floor.",
 		section = fogSection,
 		position = 72
 	)
@@ -699,7 +677,7 @@ public interface LuminaConfig extends Config
 	@ConfigItem(
 		keyName = "volumetricFogDensity",
 		name = "Fog density",
-		description = "How thick the fog is near the ground.",
+		description = "Developer: tint and label the rooms found on your floor.",
 		section = fogSection,
 		position = 73
 	)
@@ -710,7 +688,7 @@ public interface LuminaConfig extends Config
 
 	@ConfigSection(
 		name = "Environment",
-		description = "Per-area ambience and wind",
+		description = "Developer: tint and label the rooms found on your floor.",
 		position = 80
 	)
 	String environmentSection = "environment";
@@ -718,9 +696,7 @@ public interface LuminaConfig extends Config
 	@ConfigItem(
 		keyName = "areaEnvironments",
 		name = "Area ambience",
-		description = "Recognise caves and dungeons by area and give areas their own light colors, fog and sky haze "
-			+ "(deserts, swamps, snow, the Wilderness, caves). Off: only the game's sky color decides what is "
-			+ "underground.",
+		description = "Developer: tint and label the rooms found on your floor.",
 		section = environmentSection,
 		position = 81
 	)
@@ -732,7 +708,7 @@ public interface LuminaConfig extends Config
 	@ConfigItem(
 		keyName = "windSway",
 		name = "Sway in the wind",
-		description = "Trees bend and plants flutter with the weather's wind: barely in calm air, hard in a storm.",
+		description = "Developer: tint and label the rooms found on your floor.",
 		section = environmentSection,
 		position = 82
 	)
@@ -741,49 +717,12 @@ public interface LuminaConfig extends Config
 		return true;
 	}
 
-	@Range(max = 200)
-	@Units(Units.PERCENT)
-	@ConfigItem(
-		keyName = "windSwayStrength",
-		name = "Sway strength",
-		description = "How far plants move, in percent.",
-		section = environmentSection,
-		position = 83
-	)
-	default int windSwayStrength()
-	{
-		return 100;
-	}
 
-	@ConfigItem(
-		keyName = "windSwayShadows",
-		name = "Sway in shadows",
-		description = "Shadows of swaying plants move with them. Costs redrawing those plants into the shadow map every "
-			+ "frame.",
-		section = environmentSection,
-		position = 84
-	)
-	default boolean windSwayShadows()
-	{
-		return true;
-	}
 
-	@ConfigItem(
-		keyName = "windSwayFps",
-		name = "Sway frame rate",
-		description = "Animate swaying plants at a low frame rate like the game's own animations, or smoothly every "
-			+ "frame.",
-		section = environmentSection,
-		position = 85
-	)
-	default SwayFps windSwayFps()
-	{
-		return SwayFps.SMOOTH;
-	}
 
 	@ConfigSection(
 		name = "Advanced",
-		description = "Rarely needed switches",
+		description = "Developer: tint and label the rooms found on your floor.",
 		position = 90,
 		closedByDefault = true
 	)
@@ -793,7 +732,7 @@ public interface LuminaConfig extends Config
 	@ConfigItem(
 		keyName = "numThreads",
 		name = "Threads",
-		description = "Number of render threads to use.",
+		description = "Developer: tint and label the rooms found on your floor.",
 		section = advancedSection,
 		position = 91
 	)
@@ -805,7 +744,7 @@ public interface LuminaConfig extends Config
 	@ConfigItem(
 		keyName = "smoothBanding",
 		name = "Remove color banding",
-		description = "Smooths out the color banding that is present in the CPU renderer.",
+		description = "Developer: tint and label the rooms found on your floor.",
 		section = advancedSection,
 		position = 92
 	)
@@ -817,7 +756,7 @@ public interface LuminaConfig extends Config
 	@ConfigItem(
 		keyName = "brightTextures",
 		name = "Bright textures",
-		description = "Use old texture lighting method which results in brighter game textures.",
+		description = "Developer: tint and label the rooms found on your floor.",
 		section = advancedSection,
 		position = 93
 	)
@@ -829,7 +768,7 @@ public interface LuminaConfig extends Config
 	@ConfigItem(
 		keyName = "removeVertexSnapping",
 		name = "Remove vertex snapping",
-		description = "Removes vertex snapping from most animations.",
+		description = "Developer: tint and label the rooms found on your floor.",
 		section = advancedSection,
 		position = 94
 	)
@@ -841,7 +780,7 @@ public interface LuminaConfig extends Config
 	@ConfigItem(
 		keyName = "colorBlindMode",
 		name = "Colorblindness correction",
-		description = "Adjusts colors to account for colorblindness.",
+		description = "Developer: tint and label the rooms found on your floor.",
 		section = advancedSection,
 		position = 95
 	)
@@ -855,7 +794,7 @@ public interface LuminaConfig extends Config
 	@ConfigItem(
 		keyName = "colorBlindIntensity",
 		name = "Colorblindness intensity",
-		description = "Strength of the colorblindness correction effect.",
+		description = "Developer: tint and label the rooms found on your floor.",
 		section = advancedSection,
 		position = 96
 	)
@@ -867,7 +806,7 @@ public interface LuminaConfig extends Config
 	@ConfigItem(
 		keyName = "hideUnrelatedMaps",
 		name = "Hide unrelated maps",
-		description = "Hide unrelated map areas you shouldn't see.",
+		description = "Developer: tint and label the rooms found on your floor.",
 		section = advancedSection,
 		position = 97
 	)
@@ -879,9 +818,7 @@ public interface LuminaConfig extends Config
 	@ConfigItem(
 		keyName = "hideOtherAreas",
 		name = "Hide other areas",
-		description = "While you are in an area that stands apart from the map around it (an instance, a cave, a "
-			+ "cutscene spot, an island, as 117 HD lists them), the rest of the loaded map is not drawn. Loads "
-			+ "the map again.",
+		description = "Developer: tint and label the rooms found on your floor.",
 		section = advancedSection,
 		position = 98
 	)
@@ -892,7 +829,7 @@ public interface LuminaConfig extends Config
 
 	@ConfigSection(
 		name = "Development",
-		description = "Tools for working on the renderer",
+		description = "Developer: tint and label the rooms found on your floor.",
 		position = 100,
 		closedByDefault = true
 	)
@@ -903,7 +840,7 @@ public interface LuminaConfig extends Config
 	@ConfigItem(
 		keyName = "glErrorChecks",
 		name = "Check GL errors",
-		description = "Call glGetError after each draw step and log failures. Slow; leave off when measuring.",
+		description = "Developer: tint and label the rooms found on your floor.",
 		section = developmentSection,
 		position = 103
 	)
@@ -915,7 +852,7 @@ public interface LuminaConfig extends Config
 	@ConfigItem(
 		keyName = "debugView",
 		name = "Debug view",
-		description = "Show one of the scene buffers instead of the final image.",
+		description = "Developer: tint and label the rooms found on your floor.",
 		section = developmentSection,
 		position = 104
 	)
@@ -927,7 +864,7 @@ public interface LuminaConfig extends Config
 	@ConfigItem(
 		keyName = "waterDebugView",
 		name = "Water debug",
-		description = "Tint water by type and show which way it flows, or show its waves as a relief.",
+		description = "Developer: tint and label the rooms found on your floor.",
 		section = developmentSection,
 		position = 105
 	)
@@ -939,7 +876,7 @@ public interface LuminaConfig extends Config
 	@ConfigItem(
 		keyName = "testLight",
 		name = "Test light on player",
-		description = "A warm point light carried by your character, for checking point lighting.",
+		description = "Developer: tint and label the rooms found on your floor.",
 		section = developmentSection,
 		position = 106
 	)
@@ -951,7 +888,7 @@ public interface LuminaConfig extends Config
 	@ConfigItem(
 		keyName = "strikeLightning",
 		name = "Strike lightning",
-		description = "One lightning strike now, in any weather. Unticks itself.",
+		description = "Developer: tint and label the rooms found on your floor.",
 		section = developmentSection,
 		position = 107
 	)
@@ -963,7 +900,7 @@ public interface LuminaConfig extends Config
 	@ConfigItem(
 		keyName = "weatherFieldMap",
 		name = "Show weather map",
-		description = "A small map of the weather around you in the timings overlay.",
+		description = "Developer: tint and label the rooms found on your floor.",
 		section = developmentSection,
 		position = 108
 	)
@@ -975,9 +912,7 @@ public interface LuminaConfig extends Config
 	@ConfigItem(
 		keyName = "showBuildings",
 		name = "Show detected buildings",
-		description = "Tint the rooms found on your floor, label each with its id (R) and level (L), mark where their "
-			+ "lights are and outline the tiles where a hole in the floor links a room to the one above or "
-			+ "below.",
+		description = "Developer: tint and label the rooms found on your floor.",
 		section = developmentSection,
 		position = 109
 	)

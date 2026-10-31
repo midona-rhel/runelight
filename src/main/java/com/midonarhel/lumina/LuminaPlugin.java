@@ -1182,7 +1182,7 @@ public class LuminaPlugin extends Plugin implements DrawCallbacks
 
 	public float windSwayAmount()
 	{
-		return config.windSway() ? config.windSwayStrength() / 100f : 0f;
+		return config.windSway() ? 1f : 0f;
 	}
 
 	public void setFogProgram(int program)
@@ -1462,7 +1462,8 @@ public class LuminaPlugin extends Plugin implements DrawCallbacks
 		// plants can be held to a low animation rate like the game's own animations: the wind uniforms then only
 		// change on those ticks (the scene and shadow programs keep the last values in between)
 		long swayNow = System.nanoTime();
-		int swayFps = config.windSwayFps().getFps();
+		// plants animate at the game's own 15 fps
+		final int swayFps = 15;
 		swayTick = swayFps <= 0 || swayNow - lastSwayTick >= 1_000_000_000L / swayFps;
 		if (swayTick)
 		{
