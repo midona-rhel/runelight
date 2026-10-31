@@ -186,60 +186,56 @@ float phase(float cosTheta) {
   return mix(1.0, hg, FOG_PHASE_FORWARD);
 }
 
-// The integral of the lamp's falloff (lampFalloff: (1 - d / r)^2) along a line passing h from it, from the point
-// nearest it to s along the line: d^2 = h^2 + s^2, and the integral of d is (s d + h^2 asinh(s / h)) / 2
-float lampFalloffAlong(float s, float h, float r) {
-  float d = sqrt(h * h + s * s);
-  float hs = h > 1e-3 ? h * h * asinh(s / h) : 0.0;
-  return s - (s * d + hs) / r + (h * h * s + s * s * s / 3.0) / (r * r);
-}
+// samples along the part of a ray in a lamp's reach where the lamp's light is looked for: walls and floors stop it
+// there as they stop its light on surfaces
+#define FOG_LAMP_SAMPLES 4
 
-// Light from the lamps scattered toward the camera along the ray dir, as a glow round each lamp, like bloom: its
-// falloff integrated along the ray through its sphere (the whole of its reach: the user, "how far it reaches is fine"),
-// times the fog where the lamp is
-// (its density, height layer, room and weather there; none inside rooms, so a lamp indoors has none). The same for
-// every ray past it, whatever the ray ends at or where the march starts: a halo round the lamp on screen, fading to
-// nothing at its reach with no edge of its own (the falloff and its slope are 0 there). It shows as far as the lamp
-// itself does: hidden when the scene stands in front of the lamp's own point on screen (a wall between the camera and
-// it), not cut ray by ray, which drew the walls' and the march's edges into it as shapes that turned with the camera.
-vec3 lampGlow(ivec2 px, vec3 dir, float density) {
+// Light from the lamps scattered toward the camera along the ray dir, up to tEnd (what the ray ends at), as a glow
+// round each lamp: its falloff along the part of the ray in its reach, times the fog where the lamp is (its density,
+// height layer, room and weather there; none inside rooms), and only where the lamp's light gets to: FOG_LAMP_SAMPLES
+// points spread over that part of the ray (jitter, the fog's own, which the denoise smooths) each take the lamp's
+// light past the walls and floors as a surface there would (lampOpen). So a wall cuts the glow where it stands, the
+// lamp on screen or off, and the glow fades across the cut rather than switching. No other edge: the falloff is 0 at
+// the reach, and the ray's end clips the glow as it clips everything behind it.
+vec3 lampGlow(ivec2 px, vec3 dir, float tEnd, float density, float jitter) {
   LightMask lamps = clusterLights(columnEntry((vec2(px) + 0.5 - vec2(sceneViewport.xy)) / vec2(sceneViewport.zw)));
   float below = -fogHeight * FOG_BELOW;
   vec3 sum = vec3(0.0);
   int li;
   while (nextLight(lamps, li)) {
     Lamp lamp = lampAt(li);
-    float reach = lamp.radius;
     float tc = dot(lamp.pos, dir);
     float h2 = max(dot(lamp.pos, lamp.pos) - tc * tc, 0.0);
-    if (h2 >= reach * reach || tc <= 0.0) {
+    float r2 = lamp.radius * lamp.radius;
+    if (h2 >= r2) {
       continue;
     }
-    // the lamp's own point on screen, and what the scene shows there: in front of it by more than the lamp's size,
-    // the lamp is hidden, and so is its glow
-    vec4 clip = viewProj * vec4(lamp.pos, 1.0);
-    if (clip.w <= NEAR) {
+    float hc = sqrt(r2 - h2);
+    float a = max(tc - hc, 0.0);
+    float b = min(tc + hc, tEnd);
+    if (b <= a) {
       continue;
-    }
-    float shown = 1.0;
-    ivec2 lampPx = ivec2(floor(vec2(sceneViewport.xy) + (clip.xy / clip.w * 0.5 + 0.5) * vec2(sceneViewport.zw)));
-    if (inViewport(lampPx)) {
-      float d = texelFetch(sceneDepth, lampPx, 0).r;
-      float size = lampSize(lamp);
-      float front = isSky(d) ? 1e9 : viewDepth(d);
-      shown = smoothstep(clip.w - 3.0 * size, clip.w - size, front);
-      if (shown <= 0.0) {
-        continue;
-      }
     }
     // the fog where the lamp is
     vec3 w = lamp.pos + cameraPos;
     vec4 ground = fogGroundAt(w.xz);
     float sigma = density * exp(-max(ground.r - w.y, below) / fogHeight) * fogRoomFactor(ground, w.y)
       * weatherFogFactor(w.xz);
-    // its whole falloff through the sphere (lampFalloffAlong from the nearest point, both ways)
-    float glow = 2.0 * lampFalloffAlong(sqrt(reach * reach - h2), sqrt(h2), reach) * sigma;
-    sum += lamp.color * (glow * shown);
+    if (sigma <= 0.0) {
+      continue;
+    }
+    // its falloff along [a, b], each sample standing for its share of it where the lamp's light reaches
+    float step = (b - a) / float(FOG_LAMP_SAMPLES);
+    float glow = 0.0;
+    for (int i = 0; i < FOG_LAMP_SAMPLES; ++i) {
+      vec3 q = dir * (a + (float(i) + jitter) * step);
+      vec3 l = lamp.pos - q;
+      float d2 = dot(l, l);
+      if (d2 < r2) {
+        glow += lampFalloff(d2, r2) * lampOpen(lamp, q, q);
+      }
+    }
+    sum += lamp.color * (glow * step * sigma);
   }
   return sum * FOG_LAMP_SCATTER;
 }
@@ -424,7 +420,7 @@ void main() {
     scatterSun += direct * ((1.0 - far) * scattered);
     trans *= stepTrans;
   }
-  vec3 lamps = glow ? lampGlow(px, dir, density) : vec3(0.0);
+  vec3 lamps = glow ? lampGlow(px, dir, t1, density, jitter) : vec3(0.0);
 
   // Limit how much of the view the fog hides where the ray ends. The flat glow shrinks with the cover; the light
   // from the sun and the lamps mostly stays, so thick fog still shows where it is lit.

@@ -524,13 +524,14 @@ public final class Composite
 			// in a void the sun doesn't light the fog: it would glow over the black around the scene
 			final boolean fogSun = plugin.frameOutdoors && !plugin.frameSkyVoid;
 			final ShadowMap fogShadows = shadows ? plugin.shadowMap : null;
-			denoiseFog = denoise && plugin.volumetricFog.hasShafts(fogSun, fogShadows);
+			final boolean fogLamps = plugin.config.pointLights() && plugin.lightClusters.isInitialized()
+				&& plugin.lightClusters.hasFogLights();
+			denoiseFog = denoise && plugin.volumetricFog.hasGrain(fogSun, fogShadows, fogLamps);
 			plugin.volumetricFog.render(plugin.sceneTargets.fogFbo(denoiseFog), plugin.sceneTargets.getAoWidth(),
 				plugin.sceneTargets.getAoHeight(), plugin.sceneTargets.getHalfRatio(), FOG_NOISE_UNIT,
 				plugin.frameViewProj, plugin.frameInvViewProj, plugin.frameViewport, plugin.glCapabilities.OpenGL45,
 				plugin.frameCameraX, plugin.frameCameraY, plugin.frameCameraZ, (System.currentTimeMillis() - plugin.startMillis) / 1000f,
-				fogSun, plugin.proceduralSky(), plugin.frameSkyColor, plugin.dayCycle, fogShadows,
-				plugin.config.pointLights() && plugin.lightClusters.isInitialized() && plugin.lightClusters.hasFogLights(),
+				fogSun, plugin.proceduralSky(), plugin.frameSkyColor, plugin.dayCycle, fogShadows, fogLamps,
 				plugin.lampWalls.header());
 		}
 		// the AO, the shadows and the fog's sun shafts are all dithered: smoothed together at half resolution before
