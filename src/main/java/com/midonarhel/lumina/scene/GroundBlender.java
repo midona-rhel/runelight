@@ -9,22 +9,19 @@ import net.runelite.api.Tile;
 import net.runelite.api.WorldView;
 
 /**
- * Ground color blending, the color half of 117 HD's ground blending (ProceduralGenerator.TerrainDataGenerator).
+ * The ground's colour rules: 117 HD's undo of the light vanilla bakes into terrain colours
+ * (ProceduralGenerator.TerrainDataGenerator), which tiles keep their colours raw, the corner slopes it goes by, and
+ * the land colour at each ground vertex for the water bed's banks (SceneUploader.shoreColor).
  *
- * Vanilla gives every tile its own corner colors, so where a path (overlay) meets grass (underlay) the two tiles
- * have different colors at the same vertex: a hard edge that zigzags along the tile shapes. Here every untextured
- * ground vertex gets one color, shared by all tiles and tile-model faces that touch it, so colors interpolate
- * across tile borders. Overlay colors win over underlay colors at a shared vertex, and near-black colors (used
- * under walls) only win where nothing else touches the vertex. Textured tiles (water, lava, ...) keep their own
- * colors and don't contribute.
+ * Every tile is drawn in its own corner colours: colours are never blended between tiles (the user's rule). The
+ * per-vertex map below exists only for the bed: at a bank vertex it holds the land colour 117 HD's priorities would
+ * pick there (an overlay over an underlay, a near-black colour only where nothing else touches the vertex).
  *
- * Built per zone at upload time from the zone's tiles plus a one-tile border, which covers every tile touching
- * the zone's vertices, so the result doesn't depend on which zone is uploaded first or on the scene being whole.
+ * The map is built per zone at upload time from the zone's tiles plus a one-tile border, which covers every tile
+ * touching the zone's vertices, so the result doesn't depend on which zone is uploaded first or on the scene being whole.
  */
 public final class GroundBlender
 {
-	public static boolean enabled = true;
-
 	private static final int HIDDEN_HSL = 12345678;
 
 	// 117 HD's table of which faces of a tile model are overlay faces, indexed by shape - 1
@@ -53,17 +50,17 @@ public final class GroundBlender
 	private static final int MAX_LIGHTNESS = 55; // keeps bright ground from washing out
 
 	private static final int HIGH_PRIORITY = 1 << 16;
-	private static final int TOUCHES_OVERLAY = 1 << 17;
-	private static final int TOUCHES_UNDERLAY = 1 << 18;
 	private static final int HAS_COLOR = 1 << 19;
 
-	// lookup result flags
-	static final int BORDER = 1 << 16;
+	// lookup result flag: the vertex has a land colour
 	static final int BLENDED = 1 << 17;
 
-	// Overlays 117 HD never blends anywhere: carpets, bricks, cobblestone and tiled floors, lava, black tiles.
-	// Blending would smear their crisp patterns. (117 HD has ~400 more area-specific exceptions; not imported.)
-	private static final int[] UNBLENDED_OVERLAYS = {7, 13, 19, 27, 28, 37, 46, 117, 128, 137, 156, 163, 171, 179, 199};
+	// Overlays whose tiles 117 HD leaves in the game's colours, not undone: its tile overrides with "blended": false
+	// at its defaults (tile_overrides.json, area ALL: OVERLAY_SWAMP_WATER 7 128 156, OVERLAY_CARPET 13 163, LAVA 19,
+	// OVERLAY_BRICK_BROWN 27 46, OVERLAY_28 28, VANILLA_BLACK_TILE 37; OVERWORLD: the Savannah church tiles 199). In
+	// 117 HD the undo happens only to colours that go into its blending, so these, like textured tiles, stay raw.
+	// (Its ~400 area-limited ones are not imported.)
+	private static final int[] UNBLENDED_OVERLAYS = {7, 13, 19, 27, 28, 37, 46, 128, 156, 163, 199};
 	private static final boolean[] unblendedOverlay = new boolean[1 << 16];
 
 	static
@@ -91,7 +88,7 @@ public final class GroundBlender
 	private final float[] corners = new float[8];
 
 	/**
-	 * Collect the blended vertex colors around zone (mzx, mzz).
+	 * Collect the land colours at the ground vertices around zone (mzx, mzz).
 	 */
 	void build(Scene scene, int mzx, int mzz)
 	{
@@ -133,8 +130,8 @@ public final class GroundBlender
 	}
 
 	/**
-	 * The ground vertex at extended local position (x, height, z), or -1 if no ground tile touches it: its blended
-	 * color in the low 16 bits when {@link #BLENDED} is set, and {@link #BORDER} where overlay and underlay meet.
+	 * The ground vertex at extended local position (x, height, z), or -1 if no ground tile touches it: its land
+	 * colour in the low 16 bits when {@link #BLENDED} is set.
 	 */
 	int lookup(int x, int height, int z)
 	{
@@ -148,14 +145,13 @@ public final class GroundBlender
 			if (keys[i] == key)
 			{
 				int v = values[i];
-				int border = (v & (TOUCHES_OVERLAY | TOUCHES_UNDERLAY)) == (TOUCHES_OVERLAY | TOUCHES_UNDERLAY) ? BORDER : 0;
-				return border | ((v & HAS_COLOR) != 0 ? BLENDED | v & 0xffff : 0);
+				return (v & HAS_COLOR) != 0 ? BLENDED | v & 0xffff : 0;
 			}
 		}
 	}
 
 	/**
-	 * Whether tile (ex, ey) on {@code level} keeps its own colors because its overlay is never blended.
+	 * Whether tile (ex, ey) on {@code level} keeps the game's colours, not undone: an overlay 117 HD never blends.
 	 */
 	boolean unblended(int level, int ex, int ey)
 	{
@@ -229,12 +225,12 @@ public final class GroundBlender
 				return;
 			}
 			boolean overlay = overlayIds != null && overlayIds[level][ex][ey] != 0;
-			// without blending every tile is drawn in its own colors, so every one is a color the water bed may take
-			boolean blend = !enabled || !unblended(level, ex, ey);
-			addCorner(h, ex, ey, paint.getSwColor(), overlay, blend);
-			addCorner(h, ex + 1, ey, paint.getSeColor(), overlay, blend);
-			addCorner(h, ex + 1, ey + 1, paint.getNeColor(), overlay, blend);
-			addCorner(h, ex, ey + 1, paint.getNwColor(), overlay, blend);
+			// in the colours the land is drawn in: undone unless 117 HD leaves the tile raw
+			boolean undo = !unblended(level, ex, ey);
+			addCorner(h, ex, ey, paint.getSwColor(), overlay, undo);
+			addCorner(h, ex + 1, ey, paint.getSeColor(), overlay, undo);
+			addCorner(h, ex + 1, ey + 1, paint.getNeColor(), overlay, undo);
+			addCorner(h, ex, ey + 1, paint.getNwColor(), overlay, undo);
 			return;
 		}
 
@@ -254,8 +250,8 @@ public final class GroundBlender
 		final int[] colorB = model.getTriangleColorB();
 		final int[] colorC = model.getTriangleColorC();
 		final int[] textures = model.getTriangleTextureId();
-		// a tile model with any texture (shores) keeps its overlay faces' own colors, as in 117 HD
-		final boolean blendOverlay = textures == null && !unblended(level, ex, ey);
+		// a tile model with any texture (shores) keeps its overlay faces' colours raw, as in 117 HD
+		final boolean undoOverlay = textures == null && !unblended(level, ex, ey);
 		final int shape = model.getShape();
 		final int baseX = (ex - offset) << 7, baseZ = (ey - offset) << 7;
 		tileSlopes(h, ex, ey, slope, corners);
@@ -267,49 +263,41 @@ public final class GroundBlender
 				continue;
 			}
 			boolean overlay = isOverlayFace(shape, face);
-			boolean blend = !enabled || !overlay || blendOverlay;
-			addModelVertex(vertexX, vertexY, vertexZ, faceX[face], colorA[face], overlay, blend, baseX, baseZ);
-			addModelVertex(vertexX, vertexY, vertexZ, faceY[face], colorB[face], overlay, blend, baseX, baseZ);
-			addModelVertex(vertexX, vertexY, vertexZ, faceZ[face], colorC[face], overlay, blend, baseX, baseZ);
+			boolean undo = !overlay || undoOverlay;
+			addModelVertex(vertexX, vertexY, vertexZ, faceX[face], colorA[face], overlay, undo, baseX, baseZ);
+			addModelVertex(vertexX, vertexY, vertexZ, faceY[face], colorB[face], overlay, undo, baseX, baseZ);
+			addModelVertex(vertexX, vertexY, vertexZ, faceZ[face], colorC[face], overlay, undo, baseX, baseZ);
 		}
 	}
 
-	private void addCorner(int[][] h, int x, int y, int color, boolean overlay, boolean blend)
+	private void addCorner(int[][] h, int x, int y, int color, boolean overlay, boolean undo)
 	{
 		cornerSlope(h, x, y, slope);
-		add(x << 7, h[x][y], y << 7, color, overlay, blend, slope[0], slope[1]);
+		add(x << 7, h[x][y], y << 7, color, overlay, undo, slope[0], slope[1]);
 	}
 
-	private void addModelVertex(int[] vx, int[] vy, int[] vz, int v, int color, boolean overlay, boolean blend, int baseX, int baseZ)
+	private void addModelVertex(int[] vx, int[] vy, int[] vz, int v, int color, boolean overlay, boolean undo, int baseX, int baseZ)
 	{
 		interpolateSlope(corners, (vx[v] - baseX) / 128f, (vz[v] - baseZ) / 128f, slope);
-		add(vx[v] + (offset << 7), vy[v], vz[v] + (offset << 7), color, overlay, blend, slope[0], slope[1]);
+		add(vx[v] + (offset << 7), vy[v], vz[v] + (offset << 7), color, overlay, undo, slope[0], slope[1]);
 	}
 
 	/**
-	 * @param blend whether the color takes part in blending; unblended tiles still mark overlay/underlay borders
+	 * @param undo whether the land at this vertex is drawn with vanilla's light undone (SceneUploader.groundColor)
 	 */
-	private void add(int x, int height, int z, int color, boolean overlay, boolean blend, float dhdx, float dhdz)
+	private void add(int x, int height, int z, int color, boolean overlay, boolean undo, float dhdx, float dhdz)
 	{
-		int touch = overlay ? TOUCHES_OVERLAY : TOUCHES_UNDERLAY;
-		int value = 0;
-		boolean lowPriority = false;
 		if (color < 0 || color == HIDDEN_HSL)
 		{
-			blend = false;
+			return;
 		}
-		if (blend)
+		// near-black, used under walls and such; only where no proper color touches the vertex
+		boolean lowPriority = color <= 2;
+		if (undo && VertexShading.undoVanillaShading)
 		{
-			// near-black, used under walls and such; only where no proper color touches the vertex
-			lowPriority = color <= 2;
-			// the land drawn without blending keeps vanilla's colors as they are (SceneUploader): so does the bed's
-			// shore taken from here
-			if (VertexShading.undoVanillaShading && enabled)
-			{
-				color = undoShading(color, dhdx, dhdz);
-			}
-			value = HAS_COLOR | (lowPriority ? 0 : HIGH_PRIORITY) | color & 0xffff;
+			color = undoShading(color, dhdx, dhdz);
 		}
+		int value = HAS_COLOR | (lowPriority ? 0 : HIGH_PRIORITY) | color & 0xffff;
 
 		int key = key(x, height, z);
 		for (int i = hash(key); ; i = i + 1 & MASK)
@@ -322,18 +310,18 @@ public final class GroundBlender
 				}
 				stamps[i] = stamp;
 				keys[i] = key;
-				values[i] = touch | value;
+				values[i] = value;
 				++count;
 				return;
 			}
 			if (keys[i] == key)
 			{
-				int old = values[i] | touch;
+				int old = values[i];
 				// 117 HD's rules: overlays replace what's there, underlays only fill empty vertices, and a low
 				// priority color never replaces a high priority one, so paths keep their color up to their edge.
 				// Unlike 117 HD a proper underlay color also replaces a near-black one, so wall bases don't leave
 				// dark smudges on the grass beside them.
-				if (blend && !(lowPriority && (old & HIGH_PRIORITY) != 0)
+				if (!(lowPriority && (old & HIGH_PRIORITY) != 0)
 					&& (overlay || (old & HAS_COLOR) == 0 || !lowPriority && (old & HIGH_PRIORITY) == 0))
 				{
 					old = old & ~(HAS_COLOR | HIGH_PRIORITY | 0xffff) | value;
@@ -346,17 +334,18 @@ public final class GroundBlender
 
 	static int undoShading(int color, float dhdx, float dhdz)
 	{
-		// how much the normal (dhdx, -1, dhdz) faces +x +z, which vanilla's light leaves dark
-		float dot = (dhdx + dhdz) / (1.4142135f * (float) Math.sqrt(dhdx * dhdx + 1 + dhdz * dhdz));
+		// how much the normal (dhdx, -1, dhdz) faces +x +z, which vanilla's light leaves dark; the arithmetic as
+		// 117 HD's (ProceduralGenerator 733-755, its mix(a, b, t) = a (1 - t) + b t), so the truncations land alike
+		float dot = (dhdx + dhdz) / (float) Math.sqrt(2 * (dhdx * dhdx + 1 + dhdz * dhdz));
 		int l = color & 0x7f;
 
 		float lighten = Math.max(dot, 0);
 		int adjusted = (int) (Math.max(l - LIGHTEN_SUBTRACT, 0) * LIGHTEN_MULTIPLIER + LIGHTEN_BASE);
-		l = (int) (l + (adjusted - l) * lighten);
+		l = (int) (l * (1 - lighten) + adjusted * lighten);
 
 		float darken = -Math.min(dot, 0);
 		int darkened = (int) (l * DARKEN_MULTIPLIER);
-		l = (int) (GAIN * (l + (darkened - l) * darken));
+		l = (int) (GAIN * (l * (1 - darken) + darkened * darken));
 
 		l = Math.min(l, MAX_LIGHTNESS);
 		return color & ~0x7f | l;

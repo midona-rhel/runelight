@@ -1,7 +1,7 @@
 // Plants swaying in the wind, after 117 HD's wind displacement. Swaying model vertices carry a code in the fourth
 // position short (see WindSway.java): a bend weight (world units the vertex moves per unit of bend: 0 at the base,
 // growing up the object along its bend curve), the object's anchor tile modulo 8, and a jiggle flag for ivy.
-// Everything else reads 0, -1 (ground) or 1 (dynamic models) there, which all mean still.
+// Everything else reads 0 or 1 (dynamic models) there, which both mean still.
 //
 // Each object moves as one body: its phase, gust and the rolling wave all come from its anchor tile, never from the
 // vertex, so every vertex of an object bends the same way at the same time, only by its own weight. Vertices shared
@@ -36,7 +36,7 @@ uniform float windSway;     // amplitude multiplier from the config, 0 holds sti
 // left alone when hasNormal is false) with the bend.
 vec3 windDisplacement(float code, vec3 worldPos, inout vec3 normal, bool hasNormal) {
   int c = int(code);
-  // below 128 the bend is 0: still, which also covers the ground's -1 and dynamic models' 1
+  // below 128 the bend is 0: still, which also covers dynamic models' 1
   if (c < 128 || windSway <= 0.0)
     return vec3(0.0);
   float b = float(c >> 7 & 255) / 255.0;

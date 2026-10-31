@@ -17,8 +17,8 @@ import static org.lwjgl.opengl.GL33C.glUniform2f;
 /**
  * Plants that sway in the wind, after 117 HD's wind displacement (wind.json, from tools/import_117hd_wind.py).
  *
- * Each vertex of a swaying object carries a code in the fourth position short of the static vertex format, which
- * otherwise only ground vertices use (GroundBlender's -1). sway.glsl turns it into a displacement:
+ * Each vertex of a swaying object carries a code in the fourth position short of the static vertex format,
+ * which otherwise reads 0. sway.glsl turns it into a displacement:
  *   bits 0-2   the object's anchor tile x modulo 8, bits 3-5 z: the shader finds the anchor tile from it, and
  *              takes the object's phase, gust and rolling wave from there, so the whole object moves as one
  *   bit  6     jiggle: a small rustle up and down instead of a bend (ivy on walls)

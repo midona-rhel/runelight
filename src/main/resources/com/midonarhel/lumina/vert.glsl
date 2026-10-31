@@ -68,8 +68,6 @@ flat out int fTextureId;
 out vec2 fUv;
 out vec3 fWorldPos;
 out vec3 fNormal;       // vertex normal, world space; zero where the vertex has none
-out vec4 fBorderColor;  // color * border weight, border weight
-out vec3 fInnerColor;   // color * (1 - border weight)
 out vec4 fClip;         // clip position, for the lamps' cluster (light/lamp.glsl)
 flat out int fMaterial;  // SurfaceMaterials bits: emissive level in 0-1, transmissive in 2; water bed 3, land 4, snow 5-6
 #ifdef ZBUF_DEBUG
@@ -117,9 +115,6 @@ void main() {
 #else
   fColor = vec4(rgb, 1.f - a);
 #endif
-  float border = vertf.w < -0.5 ? 1.0 : 0.0;
-  fBorderColor = vec4(rgb * border, border);
-  fInnerColor = rgb * (1.0 - border);
 
   // the texture id + 1 in the low bits, material bits above it (SurfaceMaterials.java)
   fTextureId = tex.x & 0x1ff;

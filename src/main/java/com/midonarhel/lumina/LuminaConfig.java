@@ -376,19 +376,6 @@ public interface LuminaConfig extends Config
 		return true;
 	}
 
-	@ConfigItem(
-		keyName = "groundBlending",
-		name = "Ground blending",
-		description = "Blend ground colors smoothly across tile borders and give paths soft edges, like 117 HD. Also "
-			+ "removes the light the game bakes into the ground. Reloads the scene when changed.",
-		section = lightingSection,
-		position = 44
-	)
-	default boolean groundBlending()
-	{
-		return true;
-	}
-
 	@ConfigSection(
 		name = "Sky & time of day",
 		description = "The sky, the clock and the clouds",

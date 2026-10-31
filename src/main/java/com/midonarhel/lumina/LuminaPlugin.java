@@ -725,7 +725,6 @@ public class LuminaPlugin extends Plugin implements DrawCallbacks
 		glErrorChecks = config.glErrorChecks();
 
 		VertexShading.undoVanillaShading = config.removeBakedShading();
-		GroundBlender.enabled = config.groundBlending();
 
 		sceneLights = new SceneLights(client);
 		sceneLights.load(gson);
@@ -1040,18 +1039,6 @@ public class LuminaPlugin extends Plugin implements DrawCallbacks
 				{
 					// colors are baked into the vertex data at upload, so reload the scene
 					VertexShading.undoVanillaShading = config.removeBakedShading();
-					if (client.getGameState() == GameState.LOGGED_IN)
-					{
-						client.setGameState(GameState.LOADING);
-					}
-				});
-			}
-			else if (configChanged.getKey().equals("groundBlending"))
-			{
-				clientThread.invokeLater(() ->
-				{
-					// blended colors are baked into the terrain vertices at upload
-					GroundBlender.enabled = config.groundBlending();
 					if (client.getGameState() == GameState.LOGGED_IN)
 					{
 						client.setGameState(GameState.LOADING);
