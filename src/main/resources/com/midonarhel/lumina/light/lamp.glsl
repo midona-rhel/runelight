@@ -217,11 +217,11 @@ vec3 lampLight(Lamp lamp, vec3 p, vec3 wallFrom, out vec3 ld, out float d) {
   return open > 0.0 ? lamp.color * (lampFalloff(d2, r2) * open) : vec3(0.0);
 }
 
-// Whether the lamp is within reach of a surface at p and in front of it: its smooth normal n (wrapped by the lamp's
-// size) and its face's normal faceN (a face turned away from the lamp is lit only through, with backToo)
-bool lampReaches(Lamp lamp, vec3 p, vec3 n, vec3 faceN, bool backToo) {
+// Whether the lamp is within reach of a surface at p and in front of it by its smooth normal n, wrapped by the lamp's
+// size, as the sun's light is by its normal (a face's own normal cut the light triangle by triangle across a round
+// mesh); a surface turned away is lit only through, with backToo
+bool lampReaches(Lamp lamp, vec3 p, vec3 n, bool backToo) {
   vec3 l = lamp.pos - p;
   float d2 = dot(l, l);
-  return d2 < lamp.radius * lamp.radius
-    && (backToo || dot(n, l) > -lampSize(lamp) && dot(faceN, l) > -LAMP_WALL_BIAS);
+  return d2 < lamp.radius * lamp.radius && (backToo || dot(n, l) > -lampSize(lamp));
 }

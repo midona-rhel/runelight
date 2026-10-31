@@ -96,7 +96,7 @@ vec3 alphaLamps(vec3 p, vec3 n, vec3 faceN, float transmissive) {
   int li;
   while (nextLight(lamps, li)) {
     Lamp lamp = lampAt(li);
-    if (!lampReaches(lamp, p, n, faceN, transmissive > 0.0)) {
+    if (!lampReaches(lamp, p, n, transmissive > 0.0)) {
       continue;
     }
     vec3 ld;
