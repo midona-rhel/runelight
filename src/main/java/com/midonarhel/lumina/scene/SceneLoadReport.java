@@ -57,6 +57,7 @@ public final class SceneLoadReport
 	{
 		loadStartNanos = System.nanoTime();
 		countsAtLoad = new int[]{buffersCreated, buffersDeleted, arraysCreated, arraysDeleted};
+		CreaseNormals.takeCost();
 		preSwapMs = 0;
 		preSwapCalls = 0;
 		stages.setLength(0);
@@ -158,13 +159,13 @@ public final class SceneLoadReport
 			}
 			long loadEnd = loadEndNanos;
 			log.info(String.format("Scene load report: load→swap %.0f ms = our loadScene %.0f (%s) + the client's until its swap %.0f; pre-swap client work %.1f ms in %d steps; swap frame %.1f ms, ours %.1f (swapScene %.1f, %d freed, %d reused); "
-					+ "GL buffers +%d -%d, vertex arrays +%d -%d (%s); upload threads: %s; next 2 s: %d frames, %d over %.0f ms (frame:ms/ours:ms%s), max %.1f ms, our max %.1f, our mean %.2f",
+					+ "GL buffers +%d -%d, vertex arrays +%d -%d (%s); upload threads: %s; crease normals (load and the 2 s after): %s; next 2 s: %d frames, %d over %.0f ms (frame:ms/ours:ms%s), max %.1f ms, our max %.1f, our mean %.2f",
 				loadStartNanos == 0 ? 0 : (swapNanos - loadStartNanos) / 1e6,
 				loadStartNanos == 0 || loadEnd == 0 ? 0 : (loadEnd - loadStartNanos) / 1e6, stagesText,
 				loadEnd == 0 ? 0 : (swapNanos - loadEnd) / 1e6, preSwapMs, preSwapCalls,
 				swapFrameMs, swapFrameOurs, swapMs, swapFreed, swapReused,
 				buffersCreated - at[0], buffersDeleted - at[1], arraysCreated - at[2], arraysDeleted - at[3],
-				pool != null ? pool.takeCounts() : "no pool", uploadThreadsText,
+				pool != null ? pool.takeCounts() : "no pool", uploadThreadsText, CreaseNormals.takeCost(),
 				frames - 1, slow, SLOW_MS, slowText, maxMs, maxOurs, frames > 1 ? oursAfter / (frames - 1) : 0));
 			swapNanos = 0;
 			loadStartNanos = 0;

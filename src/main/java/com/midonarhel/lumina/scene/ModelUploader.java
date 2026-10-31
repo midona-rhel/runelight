@@ -87,6 +87,7 @@ public class ModelUploader
 
 	// a face's three corner normals (VertexShading.faceNormals)
 	private final int[] faceNormals = new int[9];
+	private final CreaseNormals crease = new CreaseNormals();
 	private final float[] projected = new float[3];
 	private final ModelData live = new ModelData();
 
@@ -126,6 +127,8 @@ public class ModelUploader
 		final int[] normalsY = model.normalsY;
 		final int[] normalsZ = model.normalsZ;
 		final int[] faceNormals = this.faceNormals;
+		// our smooth normals light the smooth faces (CreaseNormals); the game's still undo its shading, which they lit
+		crease.compute(model);
 		// fake water: faces drawn as real water, with their height above the foot of the model's water in u and below the top of it in v
 		final float[] span = SurfaceMaterials.fakeSpan(material, faceTextures, faceCount, faceColors1, transparencies,
 			indices1, indices2, indices3, verticesY);
@@ -269,6 +272,11 @@ public class ModelUploader
 						color1 = VertexShading.undoVanillaShading(color1, faceNormals, 0);
 						color2 = VertexShading.undoVanillaShading(color2, faceNormals, 1);
 						color3 = VertexShading.undoVanillaShading(color3, faceNormals, 2);
+					}
+					if (normalKind != VertexShading.FACE && crease.has(faceIdx))
+					{
+						crease.corner(faceIdx, faceNormals);
+						normalKind = VertexShading.VERTEX;
 					}
 					if (normalKind == VertexShading.VERTEX && orientation != 0)
 					{
@@ -619,6 +627,8 @@ public class ModelUploader
 		final int[] normalsY = model.normalsY;
 		final int[] normalsZ = model.normalsZ;
 		final int[] faceNormals = this.faceNormals;
+		// our smooth normals light the smooth faces (CreaseNormals); the game's still undo its shading, which they lit
+		crease.compute(model);
 		final int normalSin = orientation != 0 ? Perspective.SINE[orientation] : 0;
 		final int normalCos = orientation != 0 ? Perspective.COSINE[orientation] : 0;
 		// fake water: faces drawn as real water, with their height above the foot of the model's water in u and below the top of it in v
@@ -703,6 +713,11 @@ public class ModelUploader
 				color1 = VertexShading.undoVanillaShading(color1, faceNormals, 0);
 				color2 = VertexShading.undoVanillaShading(color2, faceNormals, 1);
 				color3 = VertexShading.undoVanillaShading(color3, faceNormals, 2);
+			}
+			if (normalKind != VertexShading.FACE && crease.has(face))
+			{
+				crease.corner(face, faceNormals);
+				normalKind = VertexShading.VERTEX;
 			}
 			if (normalKind == VertexShading.VERTEX && orientation != 0)
 			{

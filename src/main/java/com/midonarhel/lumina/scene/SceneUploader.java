@@ -1324,6 +1324,7 @@ public class SceneUploader
 	// scene upload
 	// a face's three corner normals (VertexShading.faceNormals)
 	private final int[] faceNormals = new int[9];
+	private final CreaseNormals crease = new CreaseNormals();
 
 	// Faces lying exactly on top of each other (a wall's overlay on the wall, a decoration on its wall) would fight over
 	// the depth test pixel by pixel. The game draws them in order instead: a model's faces by render priority, and a
@@ -1369,6 +1370,8 @@ public class SceneUploader
 		final int[] normalsY = model.getVertexNormalsY();
 		final int[] normalsZ = model.getVertexNormalsZ();
 		final int[] faceNormals = this.faceNormals;
+		// our smooth normals light the smooth faces (CreaseNormals); the game's still undo its shading, which they lit
+		crease.compute(model);
 
 		int orientSin = 0;
 		int orientCos = 0;
@@ -1500,6 +1503,11 @@ public class SceneUploader
 				color1 = VertexShading.undoVanillaShading(color1, faceNormals, 0);
 				color2 = VertexShading.undoVanillaShading(color2, faceNormals, 1);
 				color3 = VertexShading.undoVanillaShading(color3, faceNormals, 2);
+			}
+			if (normalKind != VertexShading.FACE && crease.has(face))
+			{
+				crease.corner(face, faceNormals);
+				normalKind = VertexShading.VERTEX;
 			}
 			if (normalKind != VertexShading.FACE && orient != 0)
 			{
