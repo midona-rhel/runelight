@@ -110,6 +110,7 @@ public class SceneUploader
 	void zoneSize(Scene scene, Zone zone, int mzx, int mzz)
 	{
 		Tile[][][] tiles = scene.getExtendedTiles();
+		sizeScene = scene;
 		sizeWater = water != null && scene.getWorldViewId() == WorldView.TOPLEVEL ? water : null;
 
 		for (int z = 3; z >= 0; --z)
@@ -310,10 +311,14 @@ public class SceneUploader
 
 	private void zoneSize(Zone z, Tile t)
 	{
+		Point tp = t.getSceneLocation();
+		int toEx = sizeScene.getWorldViewId() == WorldView.TOPLEVEL ? LuminaPlugin.SCENE_OFFSET : 0;
+		// upper floors get their back faces too (doubleSidedTile); counted for every face, bed faces included
+		int sides = doubleSidedTile(sizeScene, t.getRenderLevel(), tp.getX() + toEx, tp.getY() + toEx) ? 2 : 1;
 		SceneTilePaint paint = t.getSceneTilePaint();
 		if (paint != null)
 		{
-			z.sizeO += 2;
+			z.sizeO += 2 * sides;
 			if (sizeWater != null)
 			{
 				Point p = t.getSceneLocation();
@@ -328,7 +333,7 @@ public class SceneUploader
 		SceneTileModel model = t.getSceneTileModel();
 		if (model != null)
 		{
-			z.sizeO += model.getFaceX().length;
+			z.sizeO += model.getFaceX().length * sides;
 		}
 
 		WallObject wallObject = t.getWallObject();
@@ -719,7 +724,39 @@ public class SceneUploader
 		vertexBuffer.put22224(lx3, ly3, lz3, 0, hsl3);
 		vertexBuffer.put2222(tex, 0, 256, n3);
 
-		return 6;
+		if (!doubleSidedTile(scene, tileZ, tileX, tileY))
+		{
+			return 6;
+		}
+		// the same two triangles wound the other way, their normals turned round
+		vertexBuffer.put22224(lx1, ly1, lz1, 0, hsl1);
+		vertexBuffer.put2222(tex, 256, 0, VertexShading.negateNormal(n1));
+
+		vertexBuffer.put22224(lx3, ly3, lz3, 0, hsl3);
+		vertexBuffer.put2222(tex, 0, 256, VertexShading.negateNormal(n3));
+
+		vertexBuffer.put22224(lx2, ly2, lz2, 0, hsl2);
+		vertexBuffer.put2222(tex, 256, 256, VertexShading.negateNormal(n2));
+
+		vertexBuffer.put22224(lx3, ly3, lz3, 0, hsl3);
+		vertexBuffer.put2222(tex, 0, 256, VertexShading.negateNormal(n3));
+
+		vertexBuffer.put22224(lx1, ly1, lz1, 0, hsl1);
+		vertexBuffer.put2222(tex, 256, 0, VertexShading.negateNormal(n1));
+
+		vertexBuffer.put22224(lx0, ly0, lz0, 0, hsl0);
+		vertexBuffer.put2222(tex, 0, 0, VertexShading.negateNormal(n0));
+		return 12;
+	}
+
+	/**
+	 * 117 HD's double-sided ground (zone SceneUploader 1131, 1505): a tile above the ground level that nothing below
+	 * shows through (no TILE_FLAG_VIS_BELOW) is drawn from below too, so upper floors and bridges don't vanish when
+	 * the camera is under them. Extended coordinates.
+	 */
+	private static boolean doubleSidedTile(Scene scene, int level, int ex, int ey)
+	{
+		return level != 0 && (scene.getExtendedTileSettings()[level][ex][ey] & Constants.TILE_FLAG_VIS_BELOW) == 0;
 	}
 
 	/**
@@ -834,6 +871,7 @@ public class SceneUploader
 			markLandVertices(sceneTileModel);
 		}
 
+		final boolean doubleSided = doubleSidedTile(scene, tileZ, ex, ey);
 		int cnt = 0;
 		// on shore tiles the land faces first, so the water faces' vertices on the bank take the very color the land
 		// has there (landColor)
@@ -917,6 +955,20 @@ public class SceneUploader
 
 			vertexBuffer.put22224(lx2, ly2, lz2, 0, hsl2);
 			vertexBuffer.put2222(tex | texMaterial, (int) ((vertexX[vertex2] - lx) * 2f), (int) ((vertexZ[vertex2] - lz) * 2f), n2);
+
+			if (doubleSided)
+			{
+				// the face wound the other way, its normals turned round
+				vertexBuffer.put22224(lx2, ly2, lz2, 0, hsl2);
+				vertexBuffer.put2222(tex | texMaterial, (int) ((vertexX[vertex2] - lx) * 2f), (int) ((vertexZ[vertex2] - lz) * 2f), VertexShading.negateNormal(n2));
+
+				vertexBuffer.put22224(lx1, ly1, lz1, 0, hsl1);
+				vertexBuffer.put2222(tex | texMaterial, (int) ((vertexX[vertex1] - lx) * 2f), (int) ((vertexZ[vertex1] - lz) * 2f), VertexShading.negateNormal(n1));
+
+				vertexBuffer.put22224(lx0, ly0, lz0, 0, hsl0);
+				vertexBuffer.put2222(tex | texMaterial, (int) ((vertexX[vertex0] - lx) * 2f), (int) ((vertexZ[vertex0] - lz) * 2f), VertexShading.negateNormal(n0));
+				cnt += 3;
+			}
 		}
 
 		return cnt;
@@ -1123,6 +1175,8 @@ public class SceneUploader
 	private int objectBias;
 	// the scene object being uploaded (VoxelCapture.ownerOf)
 	private int owner;
+	// the scene zoneSize counts
+	private Scene sizeScene;
 	private static final int HIDDEN_HSL = 12345678;
 	// the tile whose objects are being uploaded (117 HD's inheritTileColorType reads its ground colour)
 	private Tile tile;

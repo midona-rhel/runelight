@@ -46,6 +46,17 @@ public final class VertexShading
 		return qu | qv << 8;
 	}
 
+	/** The encoded normal pointing the other way; 0 stays 0. */
+	static int negateNormal(int packed)
+	{
+		if (packed == 0)
+		{
+			return 0;
+		}
+		float[] n = decodeNormal(packed);
+		return encodeNormal(-n[0], -n[1], -n[2]);
+	}
+
 	static float[] decodeNormal(int packed)
 	{
 		float u = ((packed & 0xff) - 1) / 254f * 2 - 1;

@@ -359,5 +359,12 @@ public class VertexShadingTest
 			assertTrue(dot(c, d) > 0.995f);
 		}
 		assertEquals(0, VertexShading.encodeNormal(0, 0, 0));
+		// a back face's normal: turned round, 0 kept
+		for (float[] c : cases)
+		{
+			float[] d = VertexShading.decodeNormal(VertexShading.negateNormal(VertexShading.encodeNormal(c[0], c[1], c[2])));
+			assertTrue(dot(c, d) < -0.99f);
+		}
+		assertEquals(0, VertexShading.negateNormal(0));
 	}
 }
