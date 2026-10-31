@@ -39,4 +39,19 @@ public class WaterOverridesTest
 		assertFalse(o.hidesFace(6707, 3240, 3230, 0, false, 0, 10 << 10 | 2 << 7 | 60));
 		assertFalse(o.hasRipples(1));
 	}
+
+	@Test
+	public void groundGeometry()
+	{
+		WaterOverrides o = WaterOverrides.get();
+		// CATHERBY_BEACH_LADDER_FIX: overlay 11 on that one tile is lowered 200 (heightOffset -200)
+		assertEquals(-200, o.heightOffset(2842, 3424, 0, 11, -1));
+		assertEquals(-200, o.heightOffset(2842, 3424, 0, 11, 0));
+		// the underlay alone doesn't match an overlay rule, nor does the tile next to it
+		assertEquals(0, o.heightOffset(2842, 3424, 0, -1, 0));
+		assertEquals(0, o.heightOffset(2843, 3424, 0, 11, 0));
+		// VARROCK_GRAND_EXCHANGE_ROOF: overlay 8 there is drawn double-sided
+		assertTrue(o.doubleSided(3165, 3490, 1, 8, -1));
+		assertFalse(o.doubleSided(3165, 3490, 1, -1, 8));
+	}
 }

@@ -317,7 +317,10 @@ public class SceneUploader
 		Point tp = t.getSceneLocation();
 		int toEx = sizeScene.getWorldViewId() == WorldView.TOPLEVEL ? LuminaPlugin.SCENE_OFFSET : 0;
 		// upper floors get their back faces too (doubleSidedTile); counted for every face, bed faces included
-		int sides = doubleSidedTile(sizeScene, t.getRenderLevel(), tp.getX() + toEx, tp.getY() + toEx) ? 2 : 1;
+		int tx = tp.getX() + toEx, ty = tp.getY() + toEx, level = t.getRenderLevel();
+		int sides = doubleSidedTile(sizeScene, level, tx, ty) || tileFix(sizeScene, level, tx, ty, true, true).doubleSided
+			|| tileFix(sizeScene, level, tx, ty, true, false).doubleSided || tileFix(sizeScene, level, tx, ty, false, true).doubleSided
+			? 2 : 1;
 		SceneTilePaint paint = t.getSceneTilePaint();
 		if (paint != null)
 		{
@@ -692,25 +695,27 @@ public class SceneUploader
 
 		// 0,0
 		final int lx0 = lx;
-		final int ly0 = swHeight;
+		// 117 HD's tile overrides: a height fix for this tile (heightOffset), and its ground drawn from below too
+		final TileFix fix = tileFix(scene, tileZ, tileX, tileY, true, true);
+		final int ly0 = swHeight - fix.height;
 		final int lz0 = lz;
 		final int hsl0 = swColor;
 
 		// 1,0
 		final int lx1 = lx + Perspective.LOCAL_TILE_SIZE;
-		final int ly1 = seHeight;
+		final int ly1 = seHeight - fix.height;
 		final int lz1 = lz;
 		final int hsl1 = seColor;
 
 		// 1,1
 		final int lx2 = lx + Perspective.LOCAL_TILE_SIZE;
-		final int ly2 = neHeight;
+		final int ly2 = neHeight - fix.height;
 		final int lz2 = lz + Perspective.LOCAL_TILE_SIZE;
 		final int hsl2 = neColor;
 
 		// 0,1
 		final int lx3 = lx;
-		final int ly3 = nwHeight;
+		final int ly3 = nwHeight - fix.height;
 		final int lz3 = lz + Perspective.LOCAL_TILE_SIZE;
 		final int hsl3 = nwColor;
 
@@ -741,7 +746,7 @@ public class SceneUploader
 		vertexBuffer.put22224(lx3, ly3, lz3, 0, hsl3);
 		vertexBuffer.put2222(tex, 0, 256, n3);
 
-		if (!doubleSidedTile(scene, tileZ, tileX, tileY))
+		if (!doubleSidedTile(scene, tileZ, tileX, tileY) && !fix.doubleSided)
 		{
 			return 6;
 		}
@@ -764,6 +769,43 @@ public class SceneUploader
 		vertexBuffer.put22224(lx0, ly0, lz0, 0, hsl0);
 		vertexBuffer.put2222(tex, 0, 0, VertexShading.negateNormal(n0));
 		return 12;
+	}
+
+	/** What 117 HD's tile overrides change about a tile's ground geometry. */
+	private static final class TileFix
+	{
+		static final TileFix NONE = new TileFix(0, false);
+		final int height; // world units up
+		final boolean doubleSided;
+
+		TileFix(int height, boolean doubleSided)
+		{
+			this.height = height;
+			this.doubleSided = doubleSided;
+		}
+	}
+
+	private final int[] fixWorld = new int[3];
+
+	/**
+	 * The ground geometry 117 HD's tile overrides give tile (ex, ey) on {@code level}, extended coordinates, matched
+	 * by its overlay id, its underlay id or both (zone SceneUploader 1076-1079, 1131, 1440-1442, 1505: the plain tile
+	 * by both, a shaped tile's overlay faces by the overlay alone, its underlay faces by the underlay alone). Top-level
+	 * scenes only, where world coordinates are known.
+	 */
+	private TileFix tileFix(Scene scene, int level, int ex, int ey, boolean byOverlay, boolean byUnderlay)
+	{
+		if (scene.getWorldViewId() != WorldView.TOPLEVEL
+			|| !EnvironmentManager.toWorld(scene, ex - LuminaPlugin.SCENE_OFFSET, ey - LuminaPlugin.SCENE_OFFSET, level, fixWorld))
+		{
+			return TileFix.NONE;
+		}
+		WaterOverrides o = WaterOverrides.get();
+		int overlay = byOverlay ? scene.getOverlayIds()[level][ex][ey] & 0xffff : -1;
+		int underlay = byUnderlay ? scene.getUnderlayIds()[level][ex][ey] & 0xffff : -1;
+		int height = o.heightOffset(fixWorld[0], fixWorld[1], fixWorld[2], overlay, underlay);
+		boolean doubleSided = o.doubleSided(fixWorld[0], fixWorld[1], fixWorld[2], overlay, underlay);
+		return height == 0 && !doubleSided ? TileFix.NONE : new TileFix(height, doubleSided);
 	}
 
 	/**
@@ -890,6 +932,9 @@ public class SceneUploader
 		}
 
 		final boolean doubleSided = doubleSidedTile(scene, tileZ, ex, ey);
+		// 117 HD's tile overrides for its overlay faces (by the overlay id alone) and its underlay faces (the underlay's)
+		final TileFix overlayFix = tileFix(scene, tileZ, ex, ey, true, false);
+		final TileFix underlayFix = tileFix(scene, tileZ, ex, ey, false, true);
 		int cnt = 0;
 		// on shore tiles the land faces first, so the water faces' vertices on the bank take the very color the land
 		// has there (landColor)
@@ -926,15 +971,16 @@ public class SceneUploader
 
 			// vertexes are stored in scene local, convert to tile local
 			int lx0 = vertexX[vertex0] - basex;
-			int ly0 = vertexY[vertex0];
+			final TileFix fix = GroundBlender.isOverlayFace(shape, i) ? overlayFix : underlayFix;
+			int ly0 = vertexY[vertex0] - fix.height;
 			int lz0 = vertexZ[vertex0] - basez;
 
 			int lx1 = vertexX[vertex1] - basex;
-			int ly1 = vertexY[vertex1];
+			int ly1 = vertexY[vertex1] - fix.height;
 			int lz1 = vertexZ[vertex1] - basez;
 
 			int lx2 = vertexX[vertex2] - basex;
-			int ly2 = vertexY[vertex2];
+			int ly2 = vertexY[vertex2] - fix.height;
 			int lz2 = vertexZ[vertex2] - basez;
 
 			int tex = triangleTextures != null ? triangleTextures[i] + 1 : 0;
@@ -974,7 +1020,7 @@ public class SceneUploader
 			vertexBuffer.put22224(lx2, ly2, lz2, 0, hsl2);
 			vertexBuffer.put2222(tex | texMaterial, (int) ((vertexX[vertex2] - lx) * 2f), (int) ((vertexZ[vertex2] - lz) * 2f), n2);
 
-			if (doubleSided)
+			if (doubleSided || fix.doubleSided)
 			{
 				// the face wound the other way, its normals turned round
 				vertexBuffer.put22224(lx2, ly2, lz2, 0, hsl2);
