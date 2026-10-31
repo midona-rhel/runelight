@@ -99,6 +99,9 @@ public final class SurfaceMaterials
 	public static final int KEEP_SHADING = 4;    // undoVanillaShading false: the game's shading kept
 	public static final int INHERIT_UNDERLAY = 8; // inheritTileColorType UNDERLAY: the ground tile's underlay colour
 	public static final int INHERIT_OVERLAY = 16; // inheritTileColorType OVERLAY: the ground tile's overlay colour
+	public static final int DOUBLE_SIDED = 32;    // doubleSidedFaces, or a double-sided material: drawn from behind too
+	// vanilla textures whose 117 HD material is double-sided (every leaf texture)
+	private static boolean[] doubleSidedTexture = new boolean[0];
 	private static int[] shadingObjects = new int[0];
 	private static int[] shadingNpcs = new int[0];
 	private static Group[] shadingGroups = new Group[0];
@@ -149,6 +152,7 @@ public final class SurfaceMaterials
 	{
 		// as emissiveGroups, the levels being the shading flags
 		Group[] shadingGroups;
+		int[] doubleSidedTextures;
 	}
 
 	/**
@@ -390,9 +394,21 @@ public final class SurfaceMaterials
 				npc[id] = i + 1;
 			}
 		}
+		boolean[] dst = new boolean[TextureManager.TEXTURE_COUNT];
+		if (d.doubleSidedTextures != null)
+		{
+			for (int t : d.doubleSidedTextures)
+			{
+				if (t >= 0 && t < dst.length)
+				{
+					dst[t] = true;
+				}
+			}
+		}
 		shadingObjects = obj;
 		shadingNpcs = npc;
 		shadingGroups = g;
+		doubleSidedTexture = dst;
 	}
 
 	private static int maxId(int[] plain, int[][] a, int[][] b, Group[] g, boolean objectGroups)
@@ -578,7 +594,22 @@ public final class SurfaceMaterials
 	 */
 	static int shading(int group, int texture, int hsl, int opacity)
 	{
-		return group > 0 && group <= shadingGroups.length ? shadingGroups[group - 1].level(texture, hsl, opacity) : 0;
+		int flags = group > 0 && group <= shadingGroups.length ? shadingGroups[group - 1].level(texture, hsl, opacity) : 0;
+		if (texture >= 0 && texture < doubleSidedTexture.length && doubleSidedTexture[texture])
+		{
+			flags |= DOUBLE_SIDED;
+		}
+		return flags;
+	}
+
+	/**
+	 * Whether a face of a model with these flags might be drawn as fake water, which the uploaders put in the opaque
+	 * buffer even when the face is translucent: its texture is a water one, or the model has a fake water group
+	 * (whose rules go by the face's colour after the shading undo, which the zone size count doesn't have).
+	 */
+	static boolean mayBeFake(int model, int texture)
+	{
+		return isWaterTexture(texture) || (model >> FAKE_SHIFT & GROUP_MASK) != 0;
 	}
 
 	/**

@@ -503,26 +503,40 @@ public class SceneUploader
 			return;
 		}
 
+		staticModelSize(z, m, SurfaceMaterials.forObject(id, r), SurfaceMaterials.shadingForObject(id, r));
+	}
+
+	/**
+	 * The triangles uploadStaticModel writes for model m, by its rules: a translucent face to the alpha buffer unless
+	 * it is drawn as fake water (then the opaque one; a face that might be is counted in both, the count not having
+	 * the undone colour fake water goes by), a double-sided face twice, plus what a standing object extrudes to the
+	 * water bed. The one place a static model is counted.
+	 */
+	private static void staticModelSize(Zone z, Model m, int material, int shading)
+	{
 		byte[] transparencies = m.getFaceTransparencies();
+		short[] textures = m.getFaceTextures();
+		int[] colors1 = m.getFaceColors1();
 		int faceCount = m.getFaceCount();
 		z.sizeO += standingSize(m, transparencies);
-		if (transparencies != null)
+		for (int face = 0; face < faceCount; ++face)
 		{
-			for (int face = 0; face < faceCount; ++face)
+			int texture = textures != null ? textures[face] : -1;
+			int sides = (SurfaceMaterials.shading(shading, texture, colors1[face],
+				SurfaceMaterials.opacity(transparencies, face)) & SurfaceMaterials.DOUBLE_SIDED) != 0 ? 2 : 1;
+			if (transparencies != null && transparencies[face] != 0)
 			{
-				boolean alpha = transparencies[face] != 0;
-				if (alpha)
+				z.sizeA += sides;
+				if (SurfaceMaterials.mayBeFake(material, texture))
 				{
-					z.sizeA++;
-				}
-				else
-				{
-					z.sizeO++;
+					z.sizeO += sides;
 				}
 			}
-			return;
+			else
+			{
+				z.sizeO += sides;
+			}
 		}
-		z.sizeO += faceCount;
 	}
 
 	// at most the triangles uploadStaticModel extrudes to the bed for a static object standing in the water
@@ -1402,6 +1416,22 @@ public class SceneUploader
 			buf.put2222(texture, su2, sv2, n3);
 
 			len += 3;
+
+			if ((shade & SurfaceMaterials.DOUBLE_SIDED) != 0)
+			{
+				// 117 HD's doubleSidedFaces (zone SceneUploader 1926-1951): the face wound the other way, its normals
+				// turned round, into the same buffer (staticModelSize counts it)
+				buf.put22224(vx3, vy3, vz3, sway ? swayCodes[triangleC] : 0, alphaBias | color3);
+				buf.put2222(texture, su2, sv2, VertexShading.negateNormal(n3));
+
+				buf.put22224(vx2, vy2, vz2, sway ? swayCodes[triangleB] : 0, alphaBias | color2);
+				buf.put2222(texture, su1, sv1, VertexShading.negateNormal(n2));
+
+				buf.put22224(vx1, vy1, vz1, sway ? swayCodes[triangleA] : 0, alphaBias | color1);
+				buf.put2222(texture, su0, sv0, VertexShading.negateNormal(n1));
+
+				len += 3;
+			}
 
 			if (standing && !alpha)
 			{

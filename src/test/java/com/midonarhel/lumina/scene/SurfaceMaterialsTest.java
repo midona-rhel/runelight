@@ -176,8 +176,20 @@ public class SurfaceMaterialsTest
 		assertEquals(SurfaceMaterials.INHERIT_OVERLAY, shading(OVERLAY_COLOURED, -1, hsl(8, 3, 30), OPAQUE));
 		assertEquals(SurfaceMaterials.INHERIT_UNDERLAY | SurfaceMaterials.UPWARDS_NORMALS,
 			shading(UNDERLAY_GRASS, -1, hsl(20, 4, 30), OPAQUE));
+		// a leaf texture is double-sided on any model, as its 117 HD material (LEAVES_SIDE) is
+		assertEquals(SurfaceMaterials.DOUBLE_SIDED, shading(PLAIN_OBJECT, 8, hsl(0, 0, 50), OPAQUE));
 		// no override: nothing
 		assertEquals(0, shading(PLAIN_OBJECT, -1, hsl(20, 4, 50), OPAQUE));
 		assertEquals(0, SurfaceMaterials.shading(0, -1, hsl(20, 4, 50), OPAQUE));
+	}
+
+	@Test
+	public void fakeWaterIsForeseenForTheZoneCount()
+	{
+		// a water texture on any model, or a model with a fake water group, may put translucent faces in the opaque
+		// buffer; a plain model's may not
+		assertTrue(SurfaceMaterials.mayBeFake(SurfaceMaterials.forObject(PLAIN_OBJECT), 1));
+		assertTrue(SurfaceMaterials.mayBeFake(SurfaceMaterials.forObject(754), -1)); // a fake water group (fountain)
+		assertFalse(SurfaceMaterials.mayBeFake(SurfaceMaterials.forObject(PLAIN_OBJECT), -1));
 	}
 }

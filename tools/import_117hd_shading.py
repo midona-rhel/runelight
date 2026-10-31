@@ -3,13 +3,17 @@
 Import 117 HD's per-model normal and shading flags as Lumina's model_shading.json ("shadingGroups"), next to
 materials.json (its own file, so that import_117hd_materials.py rewriting materials.json leaves it alone).
 
-117 HD's model overrides (model_overrides.json) carry four flags that change a model's normals, its shading or its colour
+117 HD's model overrides (model_overrides.json) carry five flags that change a model's normals, its shading or its colour
 (docs/117hd-model-shading.md §1.6):
   flatNormals              every face lit by its own normal, as if the game marked it flat      -> flag 1
   upwardsNormals           the lighting normal points straight up (grass, ground clutter)        -> flag 2
   undoVanillaShading=false the game's baked shading is kept, not undone                          -> flag 4
   inheritTileColorType     UNDERLAY / OVERLAY: an untextured face takes the colour of the ground
                            tile under the object (its underlay or overlay), shading kept          -> flag 8 / 16
+  doubleSidedFaces         the face is drawn from behind too (static models)                      -> flag 32
+A face is also double-sided where its material is (materials.json "doubleSidedFaces"): an untextured face by the
+override's baseMaterial, a textured one by its textureMaterial, else by its vanilla texture's material — written as
+"doubleSidedTextures", the vanilla texture ids whose material is double-sided (every leaf texture).
 An override applies to whole models (objectIds, npcIds), and its colorOverrides to the untextured faces whose colour
 meets their "colors" condition, the first that matches deciding, with the sub-override's own flags (they inherit
 nothing from the parent). Textured faces take the parent's flags. Lumina's groups have the same form as its emissive
@@ -36,6 +40,7 @@ UPWARDS_NORMALS = 2
 KEEP_SHADING = 4
 INHERIT_UNDERLAY = 8
 INHERIT_OVERLAY = 16
+DOUBLE_SIDED = 32
 
 # the condition parser and gameval lookups are import_117hd_materials.py's
 _spec = importlib.util.spec_from_file_location("import_117hd_materials",
@@ -44,8 +49,12 @@ materials = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(materials)
 
 
-def flags(o):
+def flags(o, double_sided_materials, textured=False):
+    """The flags of override o for its untextured faces, or its textured ones."""
     f = 0
+    material = o.get("textureMaterial") if textured else o.get("baseMaterial", o.get("material"))
+    if o.get("doubleSidedFaces") or material in double_sided_materials:
+        f |= DOUBLE_SIDED
     if o.get("flatNormals"):
         f |= FLAT_NORMALS
     if o.get("upwardsNormals"):
@@ -66,53 +75,70 @@ def main():
     scene, out = sys.argv[1], sys.argv[2]
     overrides = materials.load_json(os.path.join(scene, "model_overrides.json"))
     gamevals = materials.load_json(os.path.join(scene, "gamevals.json"))
+    hd_materials = materials.load_json(os.path.join(scene, "materials.json"))
     warnings, skipped = [], []
+
+    by_name = {m["name"]: m for m in hd_materials}
+
+    def prop(name, key, depth=0):
+        m = by_name.get(name)
+        if m is None or depth > 16:
+            return None
+        if key in m:
+            return m[key]
+        parent = m.get("parent")
+        return prop(parent, key, depth + 1) if parent else None
+
+    double_materials = {m["name"] for m in hd_materials if prop(m["name"], "doubleSidedFaces")}
+    double_textures = sorted(m["vanillaTextureIndex"] for m in hd_materials
+        if m["name"] in double_materials and m.get("vanillaTextureIndex") is not None)
 
     # per id, the override that applies: (flags, rules) or None, the last unrestricted one winning
     applies = {"objects": {}, "npcs": {}}
     for o in overrides:
         desc = o.get("description", "")
         restricted = bool(o.get("areas")) or o.get("seasonalTheme") is not None
-        base = flags(o)
+        base = flags(o, double_materials)
+        textured = flags(o, double_materials, True)
         rules = []
         for c in o.get("colorOverrides") or []:
             try:
-                rules.append([flags(c), materials.conditions(c.get("colors"))])
+                rules.append([flags(c, double_materials), materials.conditions(c.get("colors"))])
             except ValueError as ex:
                 warnings.append(f"{ex} in {desc}")
         # the first matching rule decides a face, so those after the last one that differs from the default are moot
         while rules and rules[-1][0] == base:
             rules.pop()
         if restricted:
-            if base or rules:
+            if base or textured or rules:
                 skipped.append(desc)
             continue
         if base and (o.get("projectileIds") or o.get("graphicsObjectIds")):
             skipped.append(desc + " (projectiles/graphics)")
         for kind, key in (("objects", "objectIds"), ("npcs", "npcIds")):
             for i in materials.resolve(o.get(key), gamevals[kind], desc, warnings):
-                applies[kind][i] = (base, json.dumps(rules)) if base or rules else None
+                applies[kind][i] = (base, textured, json.dumps(rules)) if base or textured or rules else None
 
-    groups = {}  # (flags, rules) -> [objects, npcs]
+    groups = {}  # (untextured flags, textured flags, rules) -> [objects, npcs]
     for kind, index in (("objects", 0), ("npcs", 1)):
         for i, a in applies[kind].items():
             if a is not None:
                 groups.setdefault(a, [set(), set()])[index].add(i)
 
-    data = {"shadingGroups": [
-
-        {"objects": sorted(objects), "npcs": sorted(npcs), "untextured": base, "textured": base,
+    data = {"doubleSidedTextures": double_textures, "shadingGroups": [
+        {"objects": sorted(objects), "npcs": sorted(npcs), "untextured": base, "textured": textured,
             "rules": [{"level": level, "when": when} for level, when in json.loads(rules)]}
-        for (base, rules), (objects, npcs) in sorted(groups.items(), key=lambda g: (g[0][0], g[0][1]))]}
+        for (base, textured, rules), (objects, npcs) in sorted(groups.items(), key=lambda g: g[0])]}
     with open(out, "w", encoding="utf-8") as f:
         json.dump(data, f, separators=(",", ":"))
         f.write("\n")
 
     count = lambda flag: sum(1 for g in data["shadingGroups"]
-        if g["untextured"] & flag or any(r["level"] & flag for r in g["rules"]))
+        if (g["untextured"] | g["textured"]) & flag or any(r["level"] & flag for r in g["rules"]))
     print(f"{len(data['shadingGroups'])} shading groups: {count(FLAT_NORMALS)} with flat normals, "
         f"{count(UPWARDS_NORMALS)} upwards, {count(KEEP_SHADING)} keeping vanilla shading, "
-        f"{count(INHERIT_UNDERLAY | INHERIT_OVERLAY)} taking the tile's colour; "
+        f"{count(INHERIT_UNDERLAY | INHERIT_OVERLAY)} taking the tile's colour, {count(DOUBLE_SIDED)} double-sided; "
+        f"{len(double_textures)} double-sided vanilla textures; "
         f"{sum(len(g['objects']) for g in data['shadingGroups'])} objects, "
         f"{sum(len(g['npcs']) for g in data['shadingGroups'])} NPCs")
     for s in skipped:
