@@ -24,6 +24,8 @@
  */
 package com.midonarhel.runelight;
 
+import com.midonarhel.runelight.fog.VolumetricFog;
+
 import com.midonarhel.runelight.water.Water;
 import com.midonarhel.runelight.water.WaterOverrides;
 import com.midonarhel.runelight.water.WaterSurface;

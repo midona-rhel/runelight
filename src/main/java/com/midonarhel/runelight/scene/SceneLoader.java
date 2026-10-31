@@ -1,5 +1,7 @@
 package com.midonarhel.runelight.scene;
 
+import com.midonarhel.runelight.fog.FogGround;
+
 import com.midonarhel.runelight.water.Water;
 import com.midonarhel.runelight.water.WaterMap;
 import com.midonarhel.runelight.water.WaterOverrides;

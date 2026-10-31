@@ -59,6 +59,15 @@ for i, l in enumerate(lines_in):
     m = re.search(r'symbol:\s+(?:class|variable) (\w+)$', l)
     if m and m.group(1) in files and any('cannot find symbol' in x for x in lines_in[max(0,i-4):i]):
         publicize_class(m.group(1))
+def publicize_overloads(cls, member):
+    p = file_declaring(cls)
+    if not p: return
+    s = p.read_text()
+    s2, n = re.subn(r'^(\t+)((?:static |final |synchronized |abstract )*[\w<>\[\], ?.]+\s+' + re.escape(member) + r'\s*\()', r'\1public \2', s, flags=re.M)
+    if n: p.write_text(s2); changed.add(f'{cls}.{member} (all overloads)')
+for line in lines_in:
+    m = re.search(r'error: method (\w+) in class (\w+) cannot be applied to given types', line) or re.search(r'error: no suitable method found for (\w+)\(', line)
+    if m and m.lastindex == 2: publicize_overloads(m.group(2), m.group(1))
 for line in lines_in:
     m = re.search(r'error: (\w+) is not public in ([\w.]+); cannot be accessed', line)
     if m:

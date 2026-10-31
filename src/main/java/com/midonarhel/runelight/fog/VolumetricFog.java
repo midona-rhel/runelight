@@ -1,4 +1,6 @@
-package com.midonarhel.runelight;
+package com.midonarhel.runelight.fog;
+
+import com.midonarhel.runelight.*;
 
 import com.midonarhel.runelight.water.WaterMap;
 
@@ -26,7 +28,7 @@ import static org.lwjgl.opengl.GL33C.*;
  */
 public class VolumetricFog
 {
-	static final Shader PROGRAM = new Shader()
+	public static final Shader PROGRAM = new Shader()
 		.add(GL_VERTEX_SHADER, "composite_vert.glsl")
 		.add(GL_FRAGMENT_SHADER, "fog_frag.glsl");
 
@@ -58,14 +60,14 @@ public class VolumetricFog
 
 	// Per-area overrides for an environment system: multipliers on the configured values, and a color tint
 	// on the fog's ambient light. 1 leaves the config as it is.
-	float areaDensity = 1;
-	float areaHeight = 1;
-	final float[] areaTint = {1, 1, 1};
+	public float areaDensity = 1;
+	public float areaHeight = 1;
+	public final float[] areaTint = {1, 1, 1};
 	// sky.glsl's weatherOvercast for this frame (Weather.java): cover, rain or snow, lightning flash; then weatherLight
-	final float[] overcast = {0, 0, 0, 0, 0, 0, 0};
+	public final float[] overcast = {0, 0, 0, 0, 0, 0, 0};
 	// the weather field, for fog by region, and the weather's fog multiplier at the player it is relative to
-	WeatherField weatherField;
-	float weatherFog = 1;
+	public WeatherField weatherField;
+	public float weatherFog = 1;
 	private int waterUnit, groundUnit;
 	// the terrain the fog lies on: built when a scene loads (any thread), taken when it swaps in
 	private FogGround ground;
@@ -79,10 +81,10 @@ public class VolumetricFog
 	private int groundPrevUnit;
 	// the building rooms (null: none), and those whose roof is hidden (OpenRooms): lit by their own lamps and
 	// thicker than the other rooms. Both go into the ground texture (FogGround.texels), sent again when they change.
-	RoomMap rooms;
-	OpenRooms openRooms;
+	public RoomMap rooms;
+	public OpenRooms openRooms;
 	// the scene's water to stop the rays at
-	int waterTexture;
+	public int waterTexture;
 	private static final int[] NONE_OPEN = new int[OpenRooms.WORDS];
 	private FogGround sentGround;
 	private RoomMap sentRooms;
@@ -138,7 +140,7 @@ public class VolumetricFog
 	/**
 	 * Take ownership of the freshly compiled fog program (PROGRAM) and look up its uniforms.
 	 */
-	void setProgram(int program, int sceneDepthUnit, int shadowCompareUnit, int lightDataUnit,
+	public void setProgram(int program, int sceneDepthUnit, int shadowCompareUnit, int lightDataUnit,
 		int clusterDataUnit, int noiseUnit, int weatherFieldUnit, int waterUnit, int groundUnit, int groundPrevUnit)
 	{
 		this.waterUnit = waterUnit;
@@ -219,7 +221,7 @@ public class VolumetricFog
 	 * Point a composite program's fog sampler at {@code fogUnit}, and return the location of its switch, which says
 	 * whether it applies the fog rendered this frame. Call with each newly compiled composite.
 	 */
-	static int locateComposite(int compositeProgram, int fogUnit)
+	public static int locateComposite(int compositeProgram, int fogUnit)
 	{
 		glUseProgram(compositeProgram);
 		glUniform1i(glGetUniformLocation(compositeProgram, "sceneFog"), fogUnit);
@@ -234,7 +236,7 @@ public class VolumetricFog
 	 * @param plane the plane the player is on: which floor the fog lies on
 	 * @param drawDistance world units, the fog never reaches past it
 	 */
-	void updateParameters(RuneLightConfig config, float x, float z, int plane, float drawDistance)
+	public void updateParameters(RuneLightConfig config, float x, float z, int plane, float drawDistance)
 	{
 		final float tile = 128;
 		// 1% is an extinction of 1e-5 per unit: at the default 25% about half the light is lost over 22 tiles
@@ -254,7 +256,7 @@ public class VolumetricFog
 	/**
 	 * The loaded scene became the current one: take its terrain (FogGround.build, by SceneLoader). Client thread.
 	 */
-	void swap(FogGround g)
+	public void swap(FogGround g)
 	{
 		if (g == null)
 		{
@@ -388,36 +390,36 @@ public class VolumetricFog
 	}
 
 	/** The ground texels last SENT to the GPU (for the post-swap trace): the texture the fog reads this frame. */
-	Object groundForTrace()
+	public Object groundForTrace()
 	{
 		return sentGround;
 	}
 
 	/** Whether a scene's terrain has been uploaded: the fog has nothing to lie on before. */
-	boolean hasGround()
+	public boolean hasGround()
 	{
 		return ground != null;
 	}
 
 	/** World x of the fog's center: the player. */
-	float getCenterX()
+	public float getCenterX()
 	{
 		return centerX;
 	}
 
-	float getCenterZ()
+	public float getCenterZ()
 	{
 		return centerZ;
 	}
 
 	/** Horizontal distance from the center where the fog has faded out, world units. */
-	float getRadius()
+	public float getRadius()
 	{
 		return fadeEnd;
 	}
 
 	/** World y of the top of the fog's layer (fog_frag.glsl clips the rays to below it); y points down. */
-	float getTop()
+	public float getTop()
 	{
 		return highestY - height * TOP;
 	}
@@ -428,7 +430,7 @@ public class VolumetricFog
 	 * largest scattering per unit length, which is at most the fog's extinction: the density, e^BELOW at most from the
 	 * height, the open rooms' share over the plain rooms', the weather field's most and the noise and banks' peaks.
 	 */
-	float getMinGlow()
+	public float getMinGlow()
 	{
 		float field = 1;
 		WeatherField f = weatherField;
@@ -455,7 +457,7 @@ public class VolumetricFog
 	 * them out while the caster's light is nil, which the day cycle never quite reaches: at its switch from the sun to
 	 * the moon both are faint, but not 0.
 	 */
-	boolean hasShafts(boolean outdoors, ShadowMap shadows)
+	public boolean hasShafts(boolean outdoors, ShadowMap shadows)
 	{
 		return outdoors && shadows != null;
 	}
@@ -464,7 +466,7 @@ public class VolumetricFog
 	 * Render the fog into the half resolution framebuffer {@code fbo}. Expects the scene depth, shadow map and light
 	 * clusters already bound to the units given to {@link #setProgram}, and a VAO bound.
 	 */
-	void render(int fbo, int halfWidth, int halfHeight, float halfRatio, int noiseUnit, float[] viewProj,
+	public void render(int fbo, int halfWidth, int halfHeight, float halfRatio, int noiseUnit, float[] viewProj,
 		float[] invViewProj, int[] viewport, boolean zeroToOne,
 		float cameraX, float cameraY, float cameraZ, float time,
 		boolean outdoors, boolean proceduralSky, int skyColor, DayCycle day,
@@ -571,14 +573,14 @@ public class VolumetricFog
 		glActiveTexture(GL_TEXTURE0);
 	}
 
-	static void unbind(int fogUnit)
+	public static void unbind(int fogUnit)
 	{
 		glActiveTexture(GL_TEXTURE0 + fogUnit);
 		glBindTexture(GL_TEXTURE_2D, 0);
 		glActiveTexture(GL_TEXTURE0);
 	}
 
-	void free()
+	public void free()
 	{
 		if (texNoise != 0)
 		{

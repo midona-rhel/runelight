@@ -7,12 +7,12 @@ import java.util.Set;
  * the sky, so their lamps shine up over the walls into the fog (fog_frag.glsl). A bit per room id (RoomMap), kept
  * between frames and only rebuilt when the hidden roofs, the player's level or the rooms change.
  */
-final class OpenRooms
+public final class OpenRooms
 {
 	// room ids are 12 bits (RoomMap.ANY)
-	static final int WORDS = (RoomMap.ANY + 31) / 32;
+	public static final int WORDS = (RoomMap.ANY + 31) / 32;
 
-	final int[] bits = new int[WORDS];
+	public final int[] bits = new int[WORDS];
 	private int count;
 	private BuildingDetector.Result builtFor;
 	private int builtLevel = -1, builtHash;
@@ -24,7 +24,7 @@ final class OpenRooms
 	}
 
 	/** Whether the room (id as in RoomMap) is open. */
-	boolean isOpen(int room)
+	public boolean isOpen(int room)
 	{
 		return room > 0 && room < RoomMap.ANY && (bits[room >> 5] >>> (room & 31) & 1) != 0;
 	}

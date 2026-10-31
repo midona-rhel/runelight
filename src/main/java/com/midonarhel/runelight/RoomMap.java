@@ -243,8 +243,8 @@ public final class RoomMap
 
 	// as rooms.glsl: how far above a floor (world units) a point must be to be on that storey, and how far above
 	// its storey's floor a point may be and still be inside the room
-	static final float PLANE_MARGIN = 2;
-	static final float STOREY = 420;
+	public static final float PLANE_MARGIN = 2;
+	public static final float STOREY = 420;
 
 	/**
 	 * The room of a point at local world position, the CPU twin of rooms.glsl's roomAt: 0 outdoors, -1 outside the map.
