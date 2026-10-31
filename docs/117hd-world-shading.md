@@ -23,7 +23,31 @@ taken from 117 HD, and the user's "never blend terrain colours between tiles".
 | Lighting equation | same structure (linear light, N·L sun, constant ambient, up-facing sky light); different levels and four extra mechanisms of ours: the brightness `pow` on albedo, the 0.7 daylight fill in shadows, SSAO on direct light, the 30–68° caster clamp (§3) |
 | Wind | 117 HD's zone renderer has none and no 117 HD wind tilts a normal; ours tilts it (OPEN) |
 
-## Open questions for the user
+## Open questions — state
+
+Settled 2026-10-31 by the user's standing rules (relayed by the session that started this one) and landed, one
+commit each:
+
+| # | question | decision | commit |
+|---|---|---|---|
+| 5 | AO on direct light | AO on ambient only (`AO_DIRECT` gone) | 24d6ea8a |
+| 6 | ambient as one mechanism | (ambient + sky light) × sky visibility × area × AO; the room daylight floor gone, the room fill its own light term | 676bf249 |
+| 7 | foliage materials (textures) | no: never load texture images | — |
+| 8 | specular | none | — |
+| 9 | fog haze | keep ours (the fog segment's) | — |
+| 11 | water bed colours | the tile's own: no 2×2 average, no bank grading; GroundBlender's vertex map gone, the class is `GroundColors` | 79f916d3 |
+| 12 | double-sided upper floors | copied, counted in `zoneSize` | e0ccb260 |
+| 12 | tile geometry overrides (21 `heightOffset` / `doubleSidedFaces` entries), gap fillers | **not done**: the overrides need 117 HD's per-tile match over all 1,146 tile overrides (area boxes, id lists, any-match entries, file-order precedence, replacements), gap fillers a draw pass of their own at the far plane | — |
+| 13 | wind normal tilt | deleted | 84370197 |
+| 14 | shadows on transparent faces | copied (last frame's map with its own matrix, 4-tap PCF) | 9b9f8650 |
+| 15 | interpolation space | keep ours | — |
+| 16 | `inheritTileColorType` | copied (static uploads) | 4986bba9 |
+| 16 | `doubleSidedFaces` + double-sided materials (every leaf texture) | copied for static models; the zone count in one function, which also closes S4 (translucent faces that become fake water) | 9d42eae1 |
+
+**Waiting for the user** (not touched): 1 daylight fill, 2 brightness curve, 3 light levels, 4 sun direction clamp,
+10 tone. The original wording of all sixteen follows.
+
+### The sixteen as first asked
 
 1. **Daylight fill** (`composite_frag.glsl:375-376`): ours puts back 0.7 × the sun inside shadows wherever the sky is
    open; 117 HD has nothing like it. Open-ground shadow contrast 1.35:1 here vs 4.7:1 in 117 HD — the largest single
