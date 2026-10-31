@@ -63,7 +63,7 @@ def publicize_overloads(cls, member):
     p = file_declaring(cls)
     if not p: return
     s = p.read_text()
-    s2, n = re.subn(r'^(\t+)((?:static |final |synchronized |abstract )*[\w<>\[\], ?.]+\s+' + re.escape(member) + r'\s*\()', r'\1public \2', s, flags=re.M)
+    s2, n = re.subn(r'^(\t+)(?:private |protected )?((?:static |final |synchronized |abstract )*[\w<>\[\]?.]+(?:<[^>]*>)?\s+' + re.escape(member) + r'\s*\()', r'\1public \2', s, flags=re.M)
     if n: p.write_text(s2); changed.add(f'{cls}.{member} (all overloads)')
 for line in lines_in:
     m = re.search(r'error: method (\w+) in class (\w+) cannot be applied to given types', line) or re.search(r'error: no suitable method found for (\w+)\(', line)

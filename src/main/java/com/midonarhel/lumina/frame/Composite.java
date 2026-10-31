@@ -600,7 +600,7 @@ public final class Composite
 		final int sceneHeight = upscale ? plugin.sceneTargets.getHeight() : height;
 		// the interface texture is filled before the drawable's pass starts, so the composite, the weather and the
 		// interface all draw in one pass: an upload between them would end it and store and reload the drawable
-		plugin.finishInterfaceUpload();
+		plugin.uiBlit.finish();
 		final int target = upscale ? plugin.upscaler.getFbo() : plugin.awtContext.getFramebuffer(false);
 		glBindFramebuffer(GL_FRAMEBUFFER, target);
 		final boolean edges = plugin.shaderSamples > 0;

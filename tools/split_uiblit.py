@@ -5,13 +5,13 @@ members = sp.plugin_members(lines)
 blocks = [
   ('private void drawUi(final int overlayColor, final int canvasHeight, final int canvasWidth)', 'method'),
   ('private void prepareInterfaceTexture(int canvasWidth, int canvasHeight)', 'method'),
-  ('private void finishInterfaceUpload()', 'method'),
+  ('void finishInterfaceUpload()', 'method'),
   ('private void initInterfaceTexture()', 'method'),
 ]
 region, remaining, at = sp.cut(lines, blocks)
 moved = {'drawUi', 'prepareInterfaceTexture', 'finishInterfaceUpload', 'initInterfaceTexture'}
 for a, b in [('\tprivate void drawUi(', '\tpublic void draw('), ('\tprivate void prepareInterfaceTexture(', '\tpublic void prepare('),
-             ('\tprivate void finishInterfaceUpload()', '\tpublic void finish()'), ('\tprivate void initInterfaceTexture()', '\tpublic void init()')]:
+             ('void finishInterfaceUpload()', 'void finish()'), ('\tprivate void initInterfaceTexture()', '\tpublic void init()')]:
     assert region.count(a) == 1, a
     region = region.replace(a, b)
 region = re.sub(r'(?<![\w.])finishInterfaceUpload\(\)', 'finish()', region)

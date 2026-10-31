@@ -48,6 +48,7 @@ import com.midonarhel.lumina.frame.InterfaceUpload;
 import com.midonarhel.lumina.frame.Composite;
 import com.midonarhel.lumina.frame.FramePacer;
 import com.midonarhel.lumina.frame.Programs;
+import com.midonarhel.lumina.frame.UiBlit;
 import com.midonarhel.lumina.frame.SceneTargets;
 import com.midonarhel.lumina.frame.Upscaler;
 
@@ -548,11 +549,11 @@ public class LuminaPlugin extends Plugin implements DrawCallbacks
 	public static int glProgram;
 	public int glUiProgram;
 
-	private int interfaceTexture;
+	public int interfaceTexture;
 	// the interface texture's filter as last set: changed only with the UI scaling mode
-	private int interfaceFilter;
-	private int interfacePbo;
-	private final InterfaceUpload interfaceUpload = new InterfaceUpload();
+	public int interfaceFilter;
+	public int interfacePbo;
+	public final InterfaceUpload interfaceUpload = new InterfaceUpload();
 	private final TempModels tempModels = new TempModels();
 
 	public int vaoUiHandle;
@@ -568,8 +569,8 @@ public class LuminaPlugin extends Plugin implements DrawCallbacks
 
 	private final GLBuffer glUniformBuffer = new GLBuffer("uniform buffer");
 
-	private int lastCanvasWidth;
-	private int lastCanvasHeight;
+	public int lastCanvasWidth;
+	public int lastCanvasHeight;
 	public int lastStretchedCanvasWidth;
 	public int lastStretchedCanvasHeight;
 	private AntiAliasingMode lastAntiAliasingMode;
@@ -831,7 +832,7 @@ public class LuminaPlugin extends Plugin implements DrawCallbacks
 				initBuffers();
 				initVao();
 				programs.initProgram();
-				initInterfaceTexture();
+				uiBlit.init();
 				if (glCapabilities.OpenGL45)
 				{
 					glClipControl(GL_LOWER_LEFT, GL_ZERO_TO_ONE); // 1 near 0 far
@@ -1324,19 +1325,8 @@ public class LuminaPlugin extends Plugin implements DrawCallbacks
 		glBuffer.size = -1;
 	}
 
-	private void initInterfaceTexture()
-	{
-		interfacePbo = glGenBuffers();
-
-		interfaceTexture = glGenTextures();
-		glBindTexture(GL_TEXTURE_2D, interfaceTexture);
-		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
-		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-		interfaceFilter = GL_LINEAR;
-		glBindTexture(GL_TEXTURE_2D, 0);
-	}
+	// the interface over the scene (UiBlit): its texture, the banded upload, the quad that draws it
+	public final UiBlit uiBlit = new UiBlit(this);
 
 	private void shutdownInterfaceTexture()
 	{
@@ -2541,41 +2531,10 @@ public class LuminaPlugin extends Plugin implements DrawCallbacks
 
 
 
-	private void prepareInterfaceTexture(int canvasWidth, int canvasHeight)
-	{
-		if (canvasWidth != lastCanvasWidth || canvasHeight != lastCanvasHeight)
-		{
-			lastCanvasWidth = canvasWidth;
-			lastCanvasHeight = canvasHeight;
-
-			glBindTexture(GL_TEXTURE_2D, interfaceTexture);
-			glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, canvasWidth, canvasHeight, 0, GL_BGRA, GL_UNSIGNED_BYTE, 0);
-			glBindTexture(GL_TEXTURE_2D, 0);
-		}
-
-		final BufferProvider bufferProvider = client.getBufferProvider();
-		// copied on worker threads while the composite is submitted; interfaceUpload.finish fills the texture
-		interfaceUpload.start(interfacePbo, bufferProvider.getPixels(), bufferProvider.getWidth(),
-			bufferProvider.getHeight());
-	}
 
 	// the interface texture holds this frame's canvas (finishInterfaceUpload)
-	private boolean interfaceFinished;
+	public boolean interfaceFinished;
 
-	public void finishInterfaceUpload()
-	{
-		if (interfaceFinished)
-		{
-			return;
-		}
-		interfaceFinished = true;
-		cpuTimer.begin(CpuTimer.UI_UPLOAD);
-		interfaceUpload.await();
-		cpuTimer.end(CpuTimer.UI_UPLOAD);
-		// the composite samples none of unit 0, and the interface draws from it
-		glActiveTexture(GL_TEXTURE0);
-		interfaceUpload.finish(interfaceTexture);
-	}
 
 	@Override
 	public void draw(int overlayColor)
@@ -2615,7 +2574,7 @@ public class LuminaPlugin extends Plugin implements DrawCallbacks
 		final int canvasWidth = client.getCanvasWidth();
 
 		cpuTimer.begin(CpuTimer.UI_UPLOAD);
-		prepareInterfaceTexture(canvasWidth, canvasHeight);
+		uiBlit.prepare(canvasWidth, canvasHeight);
 		cpuTimer.end(CpuTimer.UI_UPLOAD);
 
 		interfaceFinished = false;
@@ -2636,7 +2595,7 @@ public class LuminaPlugin extends Plugin implements DrawCallbacks
 				glActiveTexture(GL_TEXTURE0);
 			}
 		}
-		finishInterfaceUpload();
+		uiBlit.finish();
 		glBindFramebuffer(GL_FRAMEBUFFER, awtContext.getFramebuffer(false));
 		if (!composited)
 		{
@@ -2647,7 +2606,7 @@ public class LuminaPlugin extends Plugin implements DrawCallbacks
 		}
 
 		// Texture on UI
-		drawUi(overlayColor, canvasHeight, canvasWidth);
+		uiBlit.draw(overlayColor, canvasHeight, canvasWidth);
 
 		cpuTimer.begin(CpuTimer.SWAP);
 		try
@@ -2709,62 +2668,6 @@ public class LuminaPlugin extends Plugin implements DrawCallbacks
 		checkGLErrors();
 	}
 
-	private void drawUi(final int overlayColor, final int canvasHeight, final int canvasWidth)
-	{
-		glEnable(GL_BLEND);
-		glBlendFunc(GL_ONE, GL_ONE_MINUS_SRC_ALPHA);
-		glBindTexture(GL_TEXTURE_2D, interfaceTexture);
-
-		// Use the texture bound in the first pass
-		final UIScalingMode uiScalingMode = config.uiScalingMode();
-		glUseProgram(glUiProgram);
-		glUniform2i(uniTexSourceDimensions, canvasWidth, canvasHeight);
-		glUniform4f(uniUiAlphaOverlay,
-			(overlayColor >> 16 & 0xFF) / 255f,
-			(overlayColor >> 8 & 0xFF) / 255f,
-			(overlayColor & 0xFF) / 255f,
-			(overlayColor >>> 24) / 255f
-		);
-		glUniform1f(uniUiColorblindIntensity, config.colorBlindIntensity());
-
-		final GraphicsConfiguration graphicsConfiguration = clientUI.getGraphicsConfiguration();
-		final AffineTransform t = graphicsConfiguration.getDefaultTransform();
-
-		if (client.isStretchedEnabled())
-		{
-			Dimension dim = client.getStretchedDimensions();
-			glDpiAwareViewport(0, 0, dim.width, dim.height);
-			glUniform2i(uniTexTargetDimensions, getScaledValue(t.getScaleX(), dim.width), getScaledValue(t.getScaleY(), dim.height));
-		}
-		else
-		{
-			glDpiAwareViewport(0, 0, canvasWidth, canvasHeight);
-			glUniform2i(uniTexTargetDimensions, getScaledValue(t.getScaleX(), canvasWidth), getScaledValue(t.getScaleY(), canvasHeight));
-		}
-
-		// Set the sampling function used when stretching the UI.
-		// This is probably better done with sampler objects instead of texture parameters, but this is easier and likely more portable.
-		// See https://www.khronos.org/opengl/wiki/Sampler_Object for details.
-		// GL_NEAREST makes sampling for bicubic/xBR simpler, so it should be used whenever linear/hybrid isn't
-		final int function = uiScalingMode == UIScalingMode.LINEAR || uiScalingMode == UIScalingMode.HYBRID ? GL_LINEAR : GL_NEAREST;
-		if (function != interfaceFilter)
-		{
-			glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, function);
-			glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, function);
-			interfaceFilter = function;
-		}
-
-		// Texture on UI
-		glBindVertexArray(vaoUiHandle);
-		glDrawArrays(GL_TRIANGLE_FAN, 0, 4);
-
-		// Reset
-		glBindTexture(GL_TEXTURE_2D, 0);
-		glBindVertexArray(0);
-		glUseProgram(0);
-		glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
-		glDisable(GL_BLEND);
-	}
 
 	// the developer commands (Commands): ::runelight …, the command file, the screenshot
 	public final Commands commands = new Commands(this);
@@ -2881,13 +2784,13 @@ public class LuminaPlugin extends Plugin implements DrawCallbacks
 		return (int) (value * scale);
 	}
 
-	private void glDpiAwareViewport(final int x, final int y, final int width, final int height)
+	public void glDpiAwareViewport(final int x, final int y, final int width, final int height)
 	{
 		glDpiAwareViewport(x, y, width, height, 1);
 	}
 
 	/** renderFactor shrinks the viewport with the scene targets (RenderScale). */
-	private void glDpiAwareViewport(final int x, final int y, final int width, final int height, final double renderFactor)
+	public void glDpiAwareViewport(final int x, final int y, final int width, final int height, final double renderFactor)
 	{
 		final GraphicsConfiguration graphicsConfiguration = clientUI.getGraphicsConfiguration();
 		final AffineTransform t = graphicsConfiguration.getDefaultTransform();
