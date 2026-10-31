@@ -194,8 +194,9 @@ float phase(float cosTheta) {
 // round each lamp: its falloff along the part of the ray in its reach, times the fog where the lamp is (its density,
 // height layer, room and weather there; none inside rooms), and only where the lamp's light gets to: FOG_LAMP_SAMPLES
 // points spread over that part of the ray (jitter, the fog's own, which the denoise smooths) each take the lamp's
-// light past the walls and floors as a surface there would (lampOpen). So a wall cuts the glow where it stands, the
-// lamp on screen or off, and the glow fades across the cut rather than switching. No other edge: the falloff is 0 at
+// light past the walls and floors (lampOpen, its walls ending at their tops: above a wall the glow spreads on into the
+// air). So a wall cuts the glow where it stands, the lamp on screen or off, and the glow fades across the cut rather
+// than switching. No other edge: the falloff is 0 at
 // the reach, and the ray's end clips the glow as it clips everything behind it.
 vec3 lampGlow(ivec2 px, vec3 dir, float tEnd, float density, float jitter) {
   LightMask lamps = clusterLights(columnEntry((vec2(px) + 0.5 - vec2(sceneViewport.xy)) / vec2(sceneViewport.zw)));
@@ -232,7 +233,7 @@ vec3 lampGlow(ivec2 px, vec3 dir, float tEnd, float density, float jitter) {
       vec3 l = lamp.pos - q;
       float d2 = dot(l, l);
       if (d2 < r2) {
-        glow += lampFalloff(d2, r2) * lampOpen(lamp, q, q);
+        glow += lampFalloff(d2, r2) * lampOpen(lamp, q, q, true);
       }
     }
     sum += lamp.color * (glow * step * sigma);
