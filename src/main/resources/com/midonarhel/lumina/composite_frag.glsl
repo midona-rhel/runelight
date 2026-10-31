@@ -188,7 +188,8 @@ int clusterLightCount(int entry) {
 // through. Opaque back faces receive neither.
 vec3 lampsOnSurface(int entry, vec3 p, vec3 n, vec3 faceN, float transmissive, out vec3 through) {
   vec3 viewDir = transmissive > 0.0 ? normalize(-p) : vec3(0.0);
-  vec3 wallFrom = p + n * LAMP_WALL_BIAS;
+  // off the surface along its face's own normal: a smooth normal tilts toward a wall's top and ends
+  vec3 wallFrom = p + faceN * LAMP_WALL_BIAS;
   vec3 sum = vec3(0.0);
   through = vec3(0.0);
   LightMask lamps = clusterLights(entry);

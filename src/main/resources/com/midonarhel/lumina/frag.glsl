@@ -89,7 +89,8 @@ vec3 alphaLamps(vec3 p, vec3 n, vec3 faceN, float transmissive) {
   }
   vec2 rel = fClip.xy / fClip.w * 0.5 + 0.5;
   vec3 viewDir = normalize(-p);
-  vec3 wallFrom = p + n * LAMP_WALL_BIAS;
+  // off the surface along its face's own normal: a smooth normal tilts toward a wall's top and ends
+  vec3 wallFrom = p + faceN * LAMP_WALL_BIAS;
   vec3 sum = vec3(0.0);
   LightMask lamps = clusterLights(clusterEntry(rel, fClip.w));
   int li;

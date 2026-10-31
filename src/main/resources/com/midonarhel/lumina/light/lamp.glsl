@@ -2,13 +2,13 @@
 // lamps (the composite, the transparent faces, the fog, the weather, the water) takes their light from here: the same
 // falloff, colour, size and occlusion.
 //
-// A lamp lights a point unless a wall or a floor stands between them. Walls: those of the lamp's storey (WallMap: the
-// edges the collision map says block sight, so doors open and close as the game has them, and diagonal walls), as tall
-// as the storey, walked tile by tile along the line from the point to the lamp (lampWallsShareIn): a wall the line
-// passes over doesn't stop it. Floors: where the line leaves the
+// A lamp lights a point unless a wall or a floor stands between them, and then none of it reaches the point. Walls:
+// those of the lamp's storey (WallMap: the edges the collision map says block sight, so doors open and close as the
+// game has them, and diagonal walls), as tall as the world, walked tile by tile along the line from the point to the
+// lamp (lampWallBetweenIn). Floors: where the line leaves the
 // lamp's storey through its ceiling or its floor, the tile it goes through must be open there (a ladder's hole, a
 // courtyard), else it stops. Nothing else stops a lamp. The lamp is a ball of lampSize: its light wraps a little past
-// a surface's horizon, and a wall's end throws a soft edge as wide as the ball seen past it.
+// a surface's horizon, so the wall a torch hangs on is lit to its top.
 //
 // When the walls change (a door) the new ones ease in over 0.3 s (LayerEase): the layers of the walls before are kept,
 // and both are walked.
@@ -40,10 +40,8 @@ uniform float lampWallsEase;         // the weight of the walls now against thos
 // edge of the tile or inside the tile the wall belongs to, and a reconstructed position is a little off its surface.
 #define LAMP_WALL_BIAS 16.0
 // a point this far (world units) past the lamp's ceiling or floor is on another storey: the floor lets it through
-// only where it is open
-#define LAMP_FLOOR_MARGIN 16.0
-// how tall walls are where the storey above isn't known (world units): a storey's height
-#define LAMP_WALL_HEIGHT 240.0
+// only where it is open. Only rounding's slack: the foot of an upper storey's walls is on that storey.
+#define LAMP_FLOOR_MARGIN 4.0
 // The size of the ball a lamp is, a share of its reach, and its least and most (world units): a torch of reach 525
 // about 40, a furnace's 1050 about 85
 #define LAMP_SIZE_SHARE 0.08
@@ -75,15 +73,6 @@ float lampFalloff(float d2, float r2) {
 
 float lampSize(Lamp lamp) {
   return clamp(lamp.radius * LAMP_SIZE_SHARE, LAMP_SIZE_MIN, LAMP_SIZE_MAX);
-}
-
-// the top of the walls of the lamp's storey (camera-relative y, down): its ceiling, or a storey's height over its
-// floor where no ceiling is known; with no floor known either, no top
-float lampWallTop(Lamp lamp) {
-  if (lamp.floorY > 1e8) {
-    return -1e9;
-  }
-  return lamp.floorY - lamp.ceilY > 120.0 && lamp.ceilY > -1e8 ? lamp.ceilY : lamp.floorY - LAMP_WALL_HEIGHT;
 }
 
 // How much of a ball lamp at distance d a surface takes at cosine ndl to its middle: the cosine, wrapped past the
@@ -120,38 +109,20 @@ bool lampCrossesDiagonal(uint bits, ivec2 t, vec2 a, vec2 d, float t0, float t1)
   return (bits & LAMP_WALL_NW_SE) != 0u && (u0.x + u0.y - 1.0) * (u1.x + u1.y - 1.0) < 0.0;
 }
 
-// The share of a ball lamp seen past one tile edge the line crosses at fraction f (0 to 1) along the edge, h the
-// ball's half width there (tiles): the edge is a wall (wall) or open, and the edges on either side of it along the
-// same line are walls or open (below, above). A wall's open end, or an opening's walled end, within h of the crossing
-// gives a soft edge: half the ball at the corner itself.
-float lampEdgeShare(bool wall, bool below, bool above, float f, float h) {
-  if (wall) {
-    // the distance into the wall from its nearer open end
-    float e = min(below ? 2.0 : f, above ? 2.0 : 1.0 - f);
-    return h > 0.0 ? smoothstep(0.0, 1.0, 0.5 - e / (2.0 * h)) : 0.0;
-  }
-  // the distance out of the opening from its nearer walled end
-  float e = min(below ? f : 2.0, above ? 1.0 - f : 2.0);
-  return h > 0.0 ? smoothstep(0.0, 1.0, 0.5 + e / (2.0 * h)) : 1.0;
-}
-
-// How much of the lamp the walls of a layer let through to camera-relative point from (0 to 1): the line on the ground
-// from it to the lamp's origin, walked tile by tile as WallMap.blocked does on the CPU. The ends' own tiles' edges
-// don't count past the line's ends.
-float lampWallsShareIn(vec3 from, Lamp lamp, float size, int layer) {
+// Whether a wall of the lamp's storey, in a layer of the walls, stands between camera-relative point from and the
+// lamp's origin: the line on the ground between them walked tile by tile as WallMap.blocked does on the CPU. A wall is
+// as tall as the world: whatever its height, a lamp on one side lights nothing on the other. The ends' own tiles'
+// edges don't count past the line's ends.
+bool lampWallBetweenIn(vec3 from, Lamp lamp, int layer) {
   int tiles = int(layer == 0 ? lampWallsHeader.x : lampWallsHeader.z);
   if (tiles == 0) {
-    return 1.0;
+    return false;
   }
   float offset = layer == 0 ? lampWallsHeader.y : lampWallsHeader.w;
   int storey = lamp.walls;
-  // the line's height at a crossing is between the point's and the lamp's; walls reach up to top
-  float top = lampWallTop(lamp);
   vec2 a = (from.xz + cameraPos.xz) / 128.0 + offset;
   vec2 b = (lamp.origin + cameraPos.xz) / 128.0 + offset;
   vec2 d = b - a;
-  // the ball's half width in tiles at the lamp; at a crossing it is that times how far along the line it is
-  float ball = size / 128.0;
   ivec2 t = ivec2(floor(a));
   ivec2 e = ivec2(floor(b));
   ivec2 s = ivec2(sign(d));
@@ -162,57 +133,32 @@ float lampWallsShareIn(vec3 from, Lamp lamp, float size, int layer) {
   float tEnter = 0.0;
   uint xSide = s.x > 0 ? LAMP_WALL_EAST : LAMP_WALL_WEST;
   uint ySide = s.y > 0 ? LAMP_WALL_NORTH : LAMP_WALL_SOUTH;
-  float share = 1.0;
   for (int i = 0; i <= LAMP_WALL_STEPS; ++i) {
     uint bits = lampWallBits(t, storey, layer, tiles);
     float tExit = min(min(tMax.x, tMax.y), 1.0);
     if (lampCrossesDiagonal(bits, t, a, d, tEnter, tExit)) {
-      // stopped as far as the wall reaches up where the line crosses it
-      float y = mix(from.y, lamp.pos.y, 0.5 * (tEnter + tExit));
-      float hy = max(size * 0.5 * (tEnter + tExit), 4.0);
-      share *= 1.0 - smoothstep(top - hy, top + hy, y);
-      if (share <= 0.004) {
-        return 0.0;
-      }
+      return true;
     }
     if (i >= steps) {
-      return share;
+      return false;
     }
-    bool alongX = tMax.x < tMax.y;
-    float tc = alongX ? tMax.x : tMax.y;
-    bool wall = (bits & (alongX ? xSide : ySide)) != 0u;
-    // where along the edge the line crosses it, and the ball's half width there
-    float c = alongX ? a.y + d.y * tc : a.x + d.x * tc;
-    float f = c - floor(c);
-    float h = ball * tc;
-    // how much of the ball the walls here would stop by their height: all of it below their top, none over it
-    float y = mix(from.y, lamp.pos.y, tc);
-    float hy = max(size * tc, 4.0);
-    float low = smoothstep(top - hy, top + hy, y);
-    if (wall && f > h && f < 1.0 - h) {
-      share *= 1.0 - low;
-    } else if (low > 0.0 && (wall || f < h || f > 1.0 - h)) {
-      // near a corner: the edges either side of this one along the same line
-      ivec2 side = alongX ? ivec2(0, 1) : ivec2(1, 0);
-      uint edge = alongX ? xSide : ySide;
-      bool below = (lampWallBits(t - side, storey, layer, tiles) & edge) != 0u;
-      bool above = (lampWallBits(t + side, storey, layer, tiles) & edge) != 0u;
-      share *= 1.0 - (1.0 - lampEdgeShare(wall, below, above, f, h)) * low;
-    }
-    if (share <= 0.004) {
-      return 0.0;
-    }
-    if (alongX) {
+    if (tMax.x < tMax.y) {
+      if ((bits & xSide) != 0u) {
+        return true;
+      }
       t.x += s.x;
       tEnter = tMax.x;
       tMax.x += delta.x;
     } else {
+      if ((bits & ySide) != 0u) {
+        return true;
+      }
       t.y += s.y;
       tEnter = tMax.y;
       tMax.y += delta.y;
     }
   }
-  return share;
+  return false;
 }
 
 // Whether the storey's floors let the lamp's line to camera-relative point p through, in a layer of the ceilings:
@@ -240,19 +186,18 @@ bool lampFloorsOpenIn(vec3 p, Lamp lamp, int layer) {
   return ((lampTileBits(t, layer, tiles) >> uint(ceiling)) & 1u) == 0u;
 }
 
-// How much of the lamp reaches camera-relative point p past the walls and floors, the walls looked for from wallFrom
-// (p, or p moved off its surface by LAMP_WALL_BIAS): 0 to 1, soft at walls' ends, and while new walls ease in, between
-// the walls before and now
+// Whether the lamp reaches camera-relative point p past the walls and floors, the walls looked for from wallFrom (p,
+// or p moved off its surface by LAMP_WALL_BIAS): 1 or 0, and while new walls ease in (a door), between the walls
+// before and now
 float lampOpen(Lamp lamp, vec3 p, vec3 wallFrom) {
   if (lamp.walls < 0) {
     return 1.0;
   }
-  float size = lampSize(lamp);
-  float now = lampFloorsOpenIn(p, lamp, 2) ? lampWallsShareIn(wallFrom, lamp, size, 0) : 0.0;
+  float now = lampFloorsOpenIn(p, lamp, 2) && !lampWallBetweenIn(wallFrom, lamp, 0) ? 1.0 : 0.0;
   if (lampWallsEase >= 1.0) {
     return now;
   }
-  float before = lampFloorsOpenIn(p, lamp, 3) ? lampWallsShareIn(wallFrom, lamp, size, 1) : 0.0;
+  float before = lampFloorsOpenIn(p, lamp, 3) && !lampWallBetweenIn(wallFrom, lamp, 1) ? 1.0 : 0.0;
   return mix(before, now, lampWallsEase);
 }
 
