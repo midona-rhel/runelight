@@ -1,5 +1,9 @@
 package com.midonarhel.runelight.dev;
 
+import com.midonarhel.runelight.visibility.BuildingDetector;
+import com.midonarhel.runelight.visibility.BuildingLights;
+import com.midonarhel.runelight.visibility.RoomMap;
+
 import com.midonarhel.runelight.*;
 
 import java.awt.Color;

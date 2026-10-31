@@ -1,9 +1,11 @@
 package com.midonarhel.runelight.light;
 
+import com.midonarhel.runelight.visibility.WallMap;
+
 import com.midonarhel.runelight.scene.ModelData;
 import com.midonarhel.runelight.RuneLightPlugin;
 import com.midonarhel.runelight.scene.SceneJobs;
-import com.midonarhel.runelight.WallMap;
+import com.midonarhel.runelight.visibility.WallMap;
 
 import com.midonarhel.runelight.scene.ModelData;
 

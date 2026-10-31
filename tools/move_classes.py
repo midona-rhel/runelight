@@ -33,6 +33,12 @@ for d in [root, troot]:
     for f in d.rglob('*.java'):
         s = f.read_text(); s2 = static_import.sub(lambda m: m.group(0).replace('com.midonarhel.runelight.' + m.group(1) + '.', target + '.' + m.group(1) + '.'), s)
         if s2 != s: f.write_text(s2)
+# explicit imports of the moved classes from the old package (subpackages had them) point at the new one
+old_import = re.compile(r'^(import (?:static )?)com\.midonarhel\.runelight\.(' + '|'.join(map(re.escape, classes)) + r')(\.[\w.*]+;|;)', re.M)
+for d in [root, troot]:
+    for f in d.rglob('*.java'):
+        s = f.read_text(); s2 = old_import.sub(lambda m: f'{m.group(1)}{target}.{m.group(2)}{m.group(3)}', s)
+        if s2 != s: f.write_text(s2)
 word = re.compile(r'\b(' + '|'.join(map(re.escape, classes)) + r')\b')
 touched = []
 for d in [root, troot]:

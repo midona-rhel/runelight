@@ -1,4 +1,6 @@
-package com.midonarhel.runelight;
+package com.midonarhel.runelight.visibility;
+
+import com.midonarhel.runelight.*;
 
 /**
  * The base scene's voxels as a build left them (VoxelBuilder), for the skylight's grid (SkyGrid): the voxel grid and the

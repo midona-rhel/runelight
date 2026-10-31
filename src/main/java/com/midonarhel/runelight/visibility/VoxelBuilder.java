@@ -1,4 +1,6 @@
-package com.midonarhel.runelight;
+package com.midonarhel.runelight.visibility;
+
+import com.midonarhel.runelight.*;
 
 import com.midonarhel.runelight.water.WaterMap;
 
@@ -46,7 +48,7 @@ public class VoxelBuilder
 	private volatile SceneVoxels voxels;
 
 	/** The drawn scene's newest voxels, null before the first build; a new object after every build. */
-	SceneVoxels getVoxels()
+	public SceneVoxels getVoxels()
 	{
 		return voxels;
 	}
@@ -61,7 +63,7 @@ public class VoxelBuilder
 	}
 
 	/** The worker. */
-	void free()
+	public void free()
 	{
 		if (worker != null)
 		{
@@ -94,7 +96,7 @@ public class VoxelBuilder
 	 * The scene loaded with build g was swapped in, client thread: its voxels are the drawn scene's now if they are
 	 * done, else as soon as they are; until then the old ones stand in for every consumer.
 	 */
-	void swapTo(int g)
+	public void swapTo(int g)
 	{
 		buildRequested = false;
 		lastBuildMillis = System.currentTimeMillis();
@@ -120,7 +122,7 @@ public class VoxelBuilder
 	}
 
 	/** A zone was rebuilt: rebuild the voxels once the changes settle. */
-	void zonesChanged()
+	public void zonesChanged()
 	{
 		buildRequested = true;
 		long now = System.currentTimeMillis();
@@ -134,7 +136,7 @@ public class VoxelBuilder
 	 * @param zones the top level scene's zones, [x][z] in extended zone coordinates
 	 * @param water the scene's water map, null with none
 	 */
-	void prepare(boolean wanted, Scene scene, Zone[][] zones, WaterMap water)
+	public void prepare(boolean wanted, Scene scene, Zone[][] zones, WaterMap water)
 	{
 		long now = System.currentTimeMillis();
 		boolean loading;
@@ -152,7 +154,7 @@ public class VoxelBuilder
 	}
 
 	/** Builds submitted so far; a change means a build started. */
-	int builds()
+	public int builds()
 	{
 		return generation.get();
 	}

@@ -1,5 +1,10 @@
 package com.midonarhel.runelight.weather;
 
+import com.midonarhel.runelight.visibility.RoomMapTest;
+
+import com.midonarhel.runelight.visibility.RoomMap;
+import com.midonarhel.runelight.visibility.SkyGrid;
+
 import com.midonarhel.runelight.*;
 
 import org.junit.Test;

@@ -1,4 +1,6 @@
-package com.midonarhel.runelight;
+package com.midonarhel.runelight.visibility;
+
+import com.midonarhel.runelight.*;
 
 import java.nio.FloatBuffer;
 import org.lwjgl.BufferUtils;
@@ -10,7 +12,7 @@ import static org.lwjgl.opengl.GL33C.*;
  * Sent when the map or its version changes, from the texels RoomMap packs on its worker; the map sent before stands
  * until they are ready.
  */
-final class RoomTexture
+public final class RoomTexture
 {
 	private int texture;
 	private RoomMap sent;
@@ -19,7 +21,7 @@ final class RoomTexture
 	private final float[] header = new float[3];
 
 	/** The rooms now (null: none). */
-	void update(RoomMap rooms)
+	public void update(RoomMap rooms)
 	{
 		if (rooms == null)
 		{
@@ -64,26 +66,26 @@ final class RoomTexture
 	}
 
 	/** rooms.glsl's roomHeader: 1 when there is a map, its size, its offset. */
-	float[] header()
+	public float[] header()
 	{
 		return header;
 	}
 
-	void bind(int unit)
+	public void bind(int unit)
 	{
 		glActiveTexture(GL_TEXTURE0 + unit);
 		glBindTexture(GL_TEXTURE_2D_ARRAY, texture);
 		glActiveTexture(GL_TEXTURE0);
 	}
 
-	static void unbind(int unit)
+	public static void unbind(int unit)
 	{
 		glActiveTexture(GL_TEXTURE0 + unit);
 		glBindTexture(GL_TEXTURE_2D_ARRAY, 0);
 		glActiveTexture(GL_TEXTURE0);
 	}
 
-	void free()
+	public void free()
 	{
 		if (texture != 0)
 		{

@@ -1,4 +1,6 @@
-package com.midonarhel.runelight;
+package com.midonarhel.runelight.visibility;
+
+import com.midonarhel.runelight.*;
 
 import com.midonarhel.runelight.dev.SkyProbeOverlay;
 
@@ -18,7 +20,7 @@ import static org.lwjgl.opengl.GL33C.*;
  * corners within READY_RINGS of the player are traced; until then, and after a move into the next region until its
  * voxels are built, the last texture stays, moved to where it belongs, as the probes do.
  */
-final class SkyGridMap
+public final class SkyGridMap
 {
 	private static final Logger log = LoggerFactory.getLogger(SkyGridMap.class);
 
@@ -34,8 +36,8 @@ final class SkyGridMap
 
 	private final int resolution;
 
-	SkyGridMap() { this(1); }
-	SkyGridMap(int resolution)
+	public SkyGridMap() { this(1); }
+	public SkyGridMap(int resolution)
 	{
 		this.resolution=resolution;
 	}
@@ -83,7 +85,7 @@ final class SkyGridMap
 	 * @param voxels the newest voxels, null before the first build
 	 * @param worldTileX, worldTileZ the player, in world tiles
 	 */
-	void update(boolean wanted, SceneVoxels voxels, WallMap walls, float worldTileX, float worldTileZ, byte[] floors, RoomMap rooms)
+	public void update(boolean wanted, SceneVoxels voxels, WallMap walls, float worldTileX, float worldTileZ, byte[] floors, RoomMap rooms)
 	{
 		this.wanted = wanted;
 		if (!wanted)
@@ -303,7 +305,7 @@ final class SkyGridMap
 	}
 
 	/** Whether the AO pass can look the sky visibility up this frame, in the given scene. */
-	boolean isReady(Scene scene)
+	public boolean isReady(Scene scene)
 	{
 		return wanted && ready && texture != 0 && scene != null && shownInstance == scene.isInstance()
 			&& (!shownInstance || scene.getBaseX() == shownBaseX && scene.getBaseY() == shownBaseY);
@@ -315,7 +317,7 @@ final class SkyGridMap
 	 *
 	 * @param x, y, z in the scene's local units, y down
 	 */
-	float upVisibility(Scene scene, float x, float y, float z)
+	public float upVisibility(Scene scene, float x, float y, float z)
 	{
 		SkyGrid s = sky;
 		if (s == null || !isReady(scene))
@@ -326,7 +328,7 @@ final class SkyGridMap
 		return s.upVisibility(x - (shownBaseX - scene.getBaseX()) * SkyGrid.TILE, y, z - (shownBaseY - scene.getBaseY()) * SkyGrid.TILE);
 	}
 
-	void free()
+	public void free()
 	{
 		if (worker != null)
 		{
@@ -364,7 +366,7 @@ final class SkyGridMap
 	}
 
 	/** Look up the AO program's uniforms; the texture is sampled on {@code unit}, the one easing out on unit + 1. */
-	void locateAo(int program, int unit)
+	public void locateAo(int program, int unit)
 	{
 		uniOn = glGetUniformLocation(program, "skylightOn");
 		uniCamera = glGetUniformLocation(program, "skyGridCamera");
@@ -382,7 +384,7 @@ final class SkyGridMap
 	 * With the AO program in use: switch the skylight on (binding the texture on unit) when it is ready, else off.
 	 * {@link #unbind} after the pass.
 	 */
-	boolean bindAo(int unit, Scene scene, float cameraX, float cameraY, float cameraZ)
+	public boolean bindAo(int unit, Scene scene, float cameraX, float cameraY, float cameraZ)
 	{
 		boolean on = isReady(scene);
 		glUniform1i(uniOn, on ? 1 : 0);
@@ -414,7 +416,7 @@ final class SkyGridMap
 		return on;
 	}
 
-	static void unbind(int unit)
+	public static void unbind(int unit)
 	{
 		glActiveTexture(GL_TEXTURE0 + unit);
 		glBindTexture(GL_TEXTURE_3D, 0);

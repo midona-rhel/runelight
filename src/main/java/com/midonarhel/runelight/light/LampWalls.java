@@ -1,8 +1,11 @@
 package com.midonarhel.runelight.light;
 
+import com.midonarhel.runelight.visibility.RoomMap;
+import com.midonarhel.runelight.visibility.WallMap;
+
 import com.midonarhel.runelight.LayerEase;
-import com.midonarhel.runelight.RoomMap;
-import com.midonarhel.runelight.WallMap;
+import com.midonarhel.runelight.visibility.RoomMap;
+import com.midonarhel.runelight.visibility.WallMap;
 
 import java.util.Arrays;
 import java.util.concurrent.ExecutorService;

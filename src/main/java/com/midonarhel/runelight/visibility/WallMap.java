@@ -1,4 +1,6 @@
-package com.midonarhel.runelight;
+package com.midonarhel.runelight.visibility;
+
+import com.midonarhel.runelight.*;
 
 import java.io.DataOutputStream;
 import java.io.IOException;

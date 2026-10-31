@@ -24,6 +24,14 @@
  */
 package com.midonarhel.runelight;
 
+import com.midonarhel.runelight.visibility.BuildingLights;
+import com.midonarhel.runelight.visibility.OpenRooms;
+import com.midonarhel.runelight.visibility.RoomMap;
+import com.midonarhel.runelight.visibility.RoomTexture;
+import com.midonarhel.runelight.visibility.SkyFieldMap;
+import com.midonarhel.runelight.visibility.SkyGridMap;
+import com.midonarhel.runelight.visibility.VoxelBuilder;
+
 import com.midonarhel.runelight.fog.VolumetricFog;
 
 import com.midonarhel.runelight.water.Water;

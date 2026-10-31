@@ -1,5 +1,8 @@
 package com.midonarhel.runelight.dev;
 
+import com.midonarhel.runelight.visibility.SkyGrid;
+import com.midonarhel.runelight.visibility.WallMap;
+
 import com.midonarhel.runelight.*;
 
 import java.awt.Color;

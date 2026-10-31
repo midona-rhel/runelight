@@ -24,6 +24,8 @@
  */
 package com.midonarhel.runelight.scene;
 
+import com.midonarhel.runelight.visibility.VoxelCapture;
+
 import com.midonarhel.runelight.water.WaterMap;
 import com.midonarhel.runelight.water.WaterOverrides;
 

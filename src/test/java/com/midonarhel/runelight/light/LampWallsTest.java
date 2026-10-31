@@ -1,6 +1,8 @@
 package com.midonarhel.runelight.light;
 
-import com.midonarhel.runelight.WallMap;
+import com.midonarhel.runelight.visibility.WallMap;
+
+import com.midonarhel.runelight.visibility.WallMap;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;

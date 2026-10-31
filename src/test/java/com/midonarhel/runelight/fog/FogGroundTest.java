@@ -1,5 +1,9 @@
 package com.midonarhel.runelight.fog;
 
+import com.midonarhel.runelight.visibility.BuildingDetector;
+import com.midonarhel.runelight.visibility.OpenRooms;
+import com.midonarhel.runelight.visibility.RoomMap;
+
 import com.midonarhel.runelight.*;
 
 import org.junit.Test;

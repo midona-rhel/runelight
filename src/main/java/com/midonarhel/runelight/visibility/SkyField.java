@@ -1,4 +1,6 @@
-package com.midonarhel.runelight;
+package com.midonarhel.runelight.visibility;
+
+import com.midonarhel.runelight.*;
 
 /**
  * The sky's light flowing in under cover, per tile of a plane (the skylight's horizontal half; skylight_ao.glsl):

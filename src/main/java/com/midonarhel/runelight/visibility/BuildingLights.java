@@ -1,4 +1,6 @@
-package com.midonarhel.runelight;
+package com.midonarhel.runelight.visibility;
+
+import com.midonarhel.runelight.*;
 
 import java.util.IdentityHashMap;
 import java.util.Map;
@@ -34,7 +36,7 @@ public class BuildingLights
 	private static final int HIDDEN_HSL = 12345678;
 
 	// the color of a room's fill, linear, of luminance 1: warm incandescent (sRGB 255, 196, 132); RoomLight says how much
-	static final float[] FILL_TINT = tint(1f, 0.552f, 0.231f);
+	public static final float[] FILL_TINT = tint(1f, 0.552f, 0.231f);
 	// sun altitudes (degrees) over which the lights fade in at dusk
 	static final float FADE_START_ALTITUDE = 6;
 	static final float FADE_END_ALTITUDE = -6;
@@ -76,7 +78,7 @@ public class BuildingLights
 		return new float[]{r / luminance, g / luminance, b / luminance};
 	}
 
-	BuildingLights(Client client)
+	public BuildingLights(Client client)
 	{
 		this.client = client;
 	}
@@ -92,19 +94,19 @@ public class BuildingLights
 	}
 
 	/** The scene's walls, null before a scene is built; a new object whenever they change. */
-	WallMap getWalls()
+	public WallMap getWalls()
 	{
 		return walls;
 	}
 
 	/** Which planes have a floor on each extended tile (floorTiles), null before a scene is built. */
-	byte[] getFloors()
+	public byte[] getFloors()
 	{
 		return filledTiles;
 	}
 
 	/** Analyse the scene drawn now, on the worker; the old result is gone at once, the new one comes with apply. */
-	void rebuild()
+	public void rebuild()
 	{
 		builtFor = null;
 		result = new BuildingDetector.Result();
@@ -184,7 +186,7 @@ public class BuildingLights
 	}
 
 	/** Take the worker's newest result, if one is waiting: client thread, once a frame before the consumers. */
-	void apply()
+	public void apply()
 	{
 		Runnable r = pending.getAndSet(null);
 		if (r != null)
@@ -193,7 +195,7 @@ public class BuildingLights
 		}
 	}
 
-	void shutDown()
+	public void shutDown()
 	{
 		worker.shutdownNow();
 	}

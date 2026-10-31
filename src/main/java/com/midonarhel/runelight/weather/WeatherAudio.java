@@ -1,5 +1,7 @@
 package com.midonarhel.runelight.weather;
 
+import com.midonarhel.runelight.visibility.RoomMap;
+
 import com.midonarhel.runelight.*;
 
 import java.io.BufferedInputStream;

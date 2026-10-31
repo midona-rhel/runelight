@@ -1,4 +1,6 @@
-package com.midonarhel.runelight;
+package com.midonarhel.runelight.visibility;
+
+import com.midonarhel.runelight.*;
 
 import java.nio.FloatBuffer;
 import java.util.concurrent.ExecutorService;
@@ -11,7 +13,7 @@ import static org.lwjgl.opengl.GL33C.*;
  * thread for the player's plane whenever the walls (a door opens), the rooms, the plane or the reach change, then
  * uploaded. Until the first result the skylight keeps to the traced sky visibility alone (SkyGrid).
  */
-final class SkyFieldMap
+public final class SkyFieldMap
 {
 	private static final class Job
 	{
@@ -49,7 +51,7 @@ final class SkyFieldMap
 	 * Once a frame: follow the scene's walls, rooms and floors for the plane. Passing nothing (the skylight is off, or
 	 * no scene) frees the texture.
 	 */
-	void update(WallMap walls, RoomMap rooms, byte[] floors, int plane, float reachTiles)
+	public void update(WallMap walls, RoomMap rooms, byte[] floors, int plane, float reachTiles)
 	{
 		if (walls == null || rooms == null || plane < 0 || plane >= WallMap.PLANES || walls.size != rooms.size)
 		{
@@ -106,7 +108,7 @@ final class SkyFieldMap
 		uploaded = job;
 	}
 
-	void free()
+	public void free()
 	{
 		if (worker != null)
 		{
@@ -124,7 +126,7 @@ final class SkyFieldMap
 	}
 
 	/** Look up the AO program's uniforms; the texture is sampled on {@code unit}. */
-	void locateAo(int program, int unit)
+	public void locateAo(int program, int unit)
 	{
 		uniOn = glGetUniformLocation(program, "skyFieldOn");
 		uniMap = glGetUniformLocation(program, "skyFieldMap");
@@ -137,7 +139,7 @@ final class SkyFieldMap
 	 * With the AO program in use: bind the newest uploaded texture on unit (the last one stands in while the next is
 	 * worked out), and say where it lies. {@link #unbind} after the pass.
 	 */
-	void bindAo(int unit, float cameraX, float cameraZ)
+	public void bindAo(int unit, float cameraX, float cameraZ)
 	{
 		boolean on = texture != 0 && uploaded != null;
 		glUniform1i(uniOn, on ? 1 : 0);
@@ -154,7 +156,7 @@ final class SkyFieldMap
 		}
 	}
 
-	static void unbind(int unit)
+	public static void unbind(int unit)
 	{
 		glActiveTexture(GL_TEXTURE0 + unit);
 		glBindTexture(GL_TEXTURE_2D, 0);

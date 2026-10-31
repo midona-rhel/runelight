@@ -1,4 +1,6 @@
-package com.midonarhel.runelight;
+package com.midonarhel.runelight.visibility;
+
+import com.midonarhel.runelight.*;
 
 import java.util.Set;
 
@@ -18,7 +20,7 @@ public final class OpenRooms
 	private int builtLevel = -1, builtHash;
 
 	/** Rooms that are open; 0 means none, so nothing needs testing. */
-	int count()
+	public int count()
 	{
 		return count;
 	}
@@ -34,7 +36,7 @@ public final class OpenRooms
 	 * @param hidden the roof ids the client hides
 	 * @param level the player's level: only roofs on levels above it are hidden (Zone.renderOpaque)
 	 */
-	void update(BuildingDetector.Result rooms, Set<Integer> hidden, int level)
+	public void update(BuildingDetector.Result rooms, Set<Integer> hidden, int level)
 	{
 		int hash = hidden == null ? 0 : hidden.hashCode();
 		if (rooms == builtFor && level == builtLevel && hash == builtHash)

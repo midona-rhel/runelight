@@ -1,9 +1,14 @@
 package com.midonarhel.runelight.light;
 
-import com.midonarhel.runelight.BuildingDetector;
-import com.midonarhel.runelight.RoomMap;
-import com.midonarhel.runelight.RoomMapTest;
-import com.midonarhel.runelight.WallMap;
+import com.midonarhel.runelight.visibility.RoomMapTest;
+
+import com.midonarhel.runelight.visibility.BuildingDetector;
+import com.midonarhel.runelight.visibility.RoomMap;
+import com.midonarhel.runelight.visibility.WallMap;
+
+import com.midonarhel.runelight.visibility.BuildingDetector;
+import com.midonarhel.runelight.visibility.RoomMap;
+import com.midonarhel.runelight.visibility.WallMap;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertTrue;

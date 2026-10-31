@@ -24,6 +24,9 @@
  */
 package com.midonarhel.runelight.scene;
 
+import com.midonarhel.runelight.visibility.VoxelCapture;
+import com.midonarhel.runelight.visibility.Voxelizer;
+
 import com.midonarhel.runelight.*;
 
 import org.slf4j.Logger;
