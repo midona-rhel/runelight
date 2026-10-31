@@ -25,6 +25,13 @@
 package com.midonarhel.lumina;
 
 import com.midonarhel.lumina.common.LogLimiter;
+import com.midonarhel.lumina.scene.SceneDraw;
+import com.midonarhel.lumina.frame.FrameState;
+import com.midonarhel.lumina.frame.GlObjects;
+import com.midonarhel.lumina.light.LampFrame;
+import com.midonarhel.lumina.visibility.VisibilityFrame;
+import com.midonarhel.lumina.sky.SkyFrame;
+import com.midonarhel.lumina.weather.WeatherFrame;
 import com.midonarhel.lumina.common.Mat4;
 import com.midonarhel.lumina.common.Rumble;
 import com.midonarhel.lumina.common.Shader;
@@ -218,9 +225,9 @@ public class LuminaPlugin extends Plugin implements DrawCallbacks
 
 	public static final int MAX_DISTANCE = 184;
 	// how far in, in tiles, the sky's light flowing in under cover falls to a third of its brightness
-	static final int SKYLIGHT_REACH = 3;
+	public static final int SKYLIGHT_REACH = 3;
 	public static final int SCENE_OFFSET = (Constants.EXTENDED_SCENE_SIZE - Constants.SCENE_SIZE) / 2; // offset for sxy -> msxy
-	private static final int UNIFORM_BUFFER_SIZE = 5 * Float.BYTES;
+	public static final int UNIFORM_BUFFER_SIZE = 5 * Float.BYTES;
 	public static final int NUM_ZONES = Constants.EXTENDED_SCENE_SIZE >> 3;
 	private static final int MAX_WORLDVIEWS = 4096;
 
@@ -254,7 +261,7 @@ public class LuminaPlugin extends Plugin implements DrawCallbacks
 	private PluginManager pluginManager;
 
 	@Inject
-	private RenderCallbackManager renderCallbackManager;
+	public RenderCallbackManager renderCallbackManager;
 
 	@Inject
 	private ChatMessageManager chatMessageManager;
@@ -263,9 +270,9 @@ public class LuminaPlugin extends Plugin implements DrawCallbacks
 	private EventBus eventBus;
 
 	@Inject
-	private Gson gson;
+	public Gson gson;
 
-	private SceneLights sceneLights;
+	public SceneLights sceneLights;
 	public BuildingLights buildingLights;
 
 	@Inject
@@ -385,15 +392,15 @@ public class LuminaPlugin extends Plugin implements DrawCallbacks
 	public final LampWalls lampWalls = new LampWalls();
 	public final RoomTexture roomTexture = new RoomTexture();
 	// how much light each building room gets and the fill it lacks (RoomLight)
-	private final RoomLight roomLight = new RoomLight();
-	private long roomLightNanos;
-	private final OpenRooms openRooms = new OpenRooms();
+	public final RoomLight roomLight = new RoomLight();
+	public long roomLightNanos;
+	public final OpenRooms openRooms = new OpenRooms();
 	// repeating errors are logged once per interval
-	private final LogLimiter logLimiter = new LogLimiter(10_000);
+	public final LogLimiter logLimiter = new LogLimiter(10_000);
 	public final LookMonitor lookMonitor = new LookMonitor();
 	public final HitchMonitor hitchMonitor = new HitchMonitor();
 	public final java.util.ArrayList<PointLight> frameLights = new java.util.ArrayList<>();
-	private final PointLight testLight = new PointLight();
+	public final PointLight testLight = new PointLight();
 	// lamp.glsl's lampWallsHeader with no walls bound
 	public static final float[] NO_WALLS = {0, 0, 0, 0, 1};
 	public int uniAlphaPass;
@@ -430,12 +437,12 @@ public class LuminaPlugin extends Plugin implements DrawCallbacks
 	// The composite samples the sky cache and its irradiance on the weather occlusion map's two units: the composite
 	// draws before the weather passes bind the map there. The cache's own passes use them before either.
 	public static final int SKY_CACHE_UNIT = LuminaPlugin.COMPOSITE_TEXTURE_UNIT + 12;
-	private final float[] skyCacheOvercast = new float[7];
+	public final float[] skyCacheOvercast = new float[7];
 	public boolean frameFog;
 	// 117 HD fog depth that doubles the volumetric fog
-	private static final float AREA_FOG_DEPTH = 30;
+	public static final float AREA_FOG_DEPTH = 30;
 	// under the open sky rather than underground, from the area classification (or the game's sky color)
-	private boolean frameOpenSky;
+	public boolean frameOpenSky;
 
 	public static final Shader SHADOW_PROGRAM = new Shader()
 		.add(GL_VERTEX_SHADER, "shadow_vert.glsl")
@@ -467,15 +474,15 @@ public class LuminaPlugin extends Plugin implements DrawCallbacks
 	public final EnvironmentUniforms sceneEnvUniforms = new EnvironmentUniforms();
 	public final ShadowMap shadowMap = new ShadowMap();
 	public final Weather weather = new Weather();
-	private volatile WeatherAudio weatherAudio;
-	private final float[] thunderStrike = new float[2];
+	public volatile WeatherAudio weatherAudio;
+	public final float[] thunderStrike = new float[2];
 	// each region's forecast, temperature and ground, which follow the game clock
-	private final Climate climate = new Climate();
+	public final Climate climate = new Climate();
 	public final WeatherGround weatherGround = new WeatherGround();
 	// where players and small NPCs have just walked through rain
 	public final WadeSteps wadeSteps = new WadeSteps();
 	// GameClock's time this frame
-	private long frameGameMillis;
+	public long frameGameMillis;
 	// two units: the occlusion map's raw and compare views; their own, since the AO program's compare sampler must
 	// never find another program's color texture left on its unit (the sky cache and the water contact were there)
 	public static final int WEATHER_OCCLUSION_UNIT = LuminaPlugin.COMPOSITE_TEXTURE_UNIT + 26;
@@ -504,7 +511,7 @@ public class LuminaPlugin extends Plugin implements DrawCallbacks
 	public static final int WEATHER_SKY_UNIT = LuminaPlugin.COMPOSITE_TEXTURE_UNIT + 27;
 	public final SkyGridMap skyGrid = new SkyGridMap();
 	// world units from the player's feet to the head, where the sky overhead is read for the weather sounds
-	private static final float WEATHER_HEAD = 120;
+	public static final float WEATHER_HEAD = 120;
 	// the sky's light flowing in under cover
 	public static final int SKY_FIELD_UNIT = LuminaPlugin.COMPOSITE_TEXTURE_UNIT + 25;
 	public final SkyFieldMap skyField = new SkyFieldMap();
@@ -519,7 +526,7 @@ public class LuminaPlugin extends Plugin implements DrawCallbacks
 	// per-frame state for the full-screen passes, captured during the scene draw
 	public float frameCameraX, frameCameraY, frameCameraZ;
 	public boolean frameOutdoors;
-	private boolean frameHasSkybox;
+	public boolean frameHasSkybox;
 	public boolean frameShadows;
 	public int frameSkyColor;
 	public int frameDrawDistance;
@@ -555,10 +562,10 @@ public class LuminaPlugin extends Plugin implements DrawCallbacks
 	public int interfaceFilter;
 	public int interfacePbo;
 	public final InterfaceUpload interfaceUpload = new InterfaceUpload();
-	private final TempModels tempModels = new TempModels();
+	public final TempModels tempModels = new TempModels();
 
 	public int vaoUiHandle;
-	private int vboUiHandle;
+	public int vboUiHandle;
 
 	public final SceneTargets sceneTargets = new SceneTargets();
 	private boolean sceneFboValid;
@@ -568,7 +575,7 @@ public class LuminaPlugin extends Plugin implements DrawCallbacks
 
 	public int textureArrayId;
 
-	private final GLBuffer glUniformBuffer = new GLBuffer("uniform buffer");
+	public final GLBuffer glUniformBuffer = new GLBuffer("uniform buffer");
 
 	public int lastCanvasWidth;
 	public int lastCanvasHeight;
@@ -581,9 +588,9 @@ public class LuminaPlugin extends Plugin implements DrawCallbacks
 	private int lastAnisotropicFilteringLevel = -1;
 	private float lastTextureLodBias;
 
-	private GpuFloatBuffer uniformBuffer;
+	public GpuFloatBuffer uniformBuffer;
 
-	private int cameraYaw, cameraPitch;
+	public int cameraYaw, cameraPitch;
 
 	public static class RenderThread
 	{
@@ -591,7 +598,7 @@ public class LuminaPlugin extends Plugin implements DrawCallbacks
 		public ModelUploader modelUploader;
 	}
 
-	private RenderThread[] rts;
+	public RenderThread[] rts;
 
 	public SceneUploader clientUploader, mapUploader;
 
@@ -829,8 +836,8 @@ public class LuminaPlugin extends Plugin implements DrawCallbacks
 
 				setupSyncMode();
 
-				initBuffers();
-				initVao();
+				glObjects.initBuffers();
+				glObjects.initVao();
 				programs.initProgram();
 				uiBlit.init();
 				if (glCapabilities.OpenGL45)
@@ -971,8 +978,8 @@ public class LuminaPlugin extends Plugin implements DrawCallbacks
 
 				shutdownInterfaceTexture();
 				programs.shutdownProgram();
-				shutdownVao();
-				shutdownBuffers();
+				glObjects.shutdownVao();
+				glObjects.shutdownBuffers();
 				shutdownFbo();
 				lwjglInitted = false;
 			}
@@ -1166,7 +1173,7 @@ public class LuminaPlugin extends Plugin implements DrawCallbacks
 
 	public float windSwayAmount()
 	{
-		return config.windSway() ? config.windSwayStrength() / 100f : 0f;
+		return config.windSway() ? 1f : 0f;
 	}
 
 	public void setFogProgram(int program)
@@ -1225,96 +1232,17 @@ public class LuminaPlugin extends Plugin implements DrawCallbacks
 	}
 
 
-	private void initVao()
-	{
-		// Create UI VAO
-		vaoUiHandle = glGenVertexArrays();
-		// Create UI buffer
-		vboUiHandle = glGenBuffers();
-		glBindVertexArray(vaoUiHandle);
+	// The frame's GL objects: the vertex arrays, the mapped buffers and the render-target FBO, created at start-up and on a size or sample change, freed at shutdown (GlObjects)
+	public final GlObjects glObjects = new GlObjects(this);
 
-		FloatBuffer vboUiBuf = GpuFloatBuffer.allocateDirect(5 * 4);
-		vboUiBuf.put(new float[]{
-			// positions     // texture coords
-			1f, 1f, 0f, 1f, 0f, // top right
-			1f, -1f, 0f, 1f, 1f, // bottom right
-			-1f, -1f, 0f, 0f, 1f, // bottom left
-			-1f, 1f, 0f, 0f, 0f  // top left
-		});
-		vboUiBuf.rewind();
-		glBindBuffer(GL_ARRAY_BUFFER, vboUiHandle);
-		glBufferData(GL_ARRAY_BUFFER, vboUiBuf, GL_STATIC_DRAW);
 
-		// position attribute
-		glVertexAttribPointer(0, 3, GL_FLOAT, false, 5 * Float.BYTES, 0);
-		glEnableVertexAttribArray(0);
 
-		// texture coord attribute
-		glVertexAttribPointer(1, 2, GL_FLOAT, false, 5 * Float.BYTES, 3 * Float.BYTES);
-		glEnableVertexAttribArray(1);
-
-		// unbind VAO/VBO
-		glBindVertexArray(0);
-		glBindBuffer(GL_ARRAY_BUFFER, 0);
-	}
-
-	private void shutdownVao()
-	{
-		glDeleteBuffers(vboUiHandle);
-		vboUiHandle = 0;
-
-		glDeleteVertexArrays(vaoUiHandle);
-		vaoUiHandle = 0;
-	}
-
-	private void initBuffers()
-	{
-		uniformBuffer = new GpuFloatBuffer(UNIFORM_BUFFER_SIZE);
-		initGlBuffer(glUniformBuffer);
-		Zone.initBuffer();
-
-		for (int i = 0; i < rts.length; ++i)
-		{
-			rts[i].vaoO = new VAOList(i > 0);
-			rts[i].vaoA = new VAOList(i > 0);
-		}
-	}
-
-	private void initGlBuffer(GLBuffer glBuffer)
+	public void initGlBuffer(GLBuffer glBuffer)
 	{
 		glBuffer.glBufferId = glGenBuffers();
 	}
 
-	private void shutdownBuffers()
-	{
-		destroyGlBuffer(glUniformBuffer);
-		uniformBuffer = null;
-		Zone.freeBuffer();
 
-		for (int i = 0; i < rts.length; ++i) // NOPMD: ForLoopCanBeForeach
-		{
-			if (rts[i].vaoO != null)
-			{
-				rts[i].vaoO.free();
-				rts[i].vaoO = null;
-			}
-			if (rts[i].vaoA != null)
-			{
-				rts[i].vaoA.free();
-				rts[i].vaoA = null;
-			}
-		}
-	}
-
-	private void destroyGlBuffer(GLBuffer glBuffer)
-	{
-		if (glBuffer.glBufferId != -1)
-		{
-			glDeleteBuffers(glBuffer.glBufferId);
-			glBuffer.glBufferId = -1;
-		}
-		glBuffer.size = -1;
-	}
 
 	// the interface over the scene (UiBlit): its texture, the banded upload, the quad that draws it
 	public final UiBlit uiBlit = new UiBlit(this);
@@ -1327,32 +1255,6 @@ public class LuminaPlugin extends Plugin implements DrawCallbacks
 		interfaceTexture = -1;
 	}
 
-	private void initFbo(int width, int height, int aaSamples, double renderFactor)
-	{
-		final GraphicsConfiguration graphicsConfiguration = clientUI.getGraphicsConfiguration();
-		final AffineTransform transform = graphicsConfiguration.getDefaultTransform();
-
-		width = Math.max(1, getScaledValue(transform.getScaleX() * renderFactor, width));
-		height = Math.max(1, getScaledValue(transform.getScaleY() * renderFactor, height));
-
-		if (aaSamples > 0)
-		{
-			glEnable(GL_MULTISAMPLE);
-		}
-		else
-		{
-			glDisable(GL_MULTISAMPLE);
-		}
-
-		sceneTargets.init(width, height, aaSamples, (float) Math.max(1, 2 * renderFactor));
-		if (renderFactor != 1)
-		{
-			upscaler.init(width, height);
-		}
-
-		// Reset
-		glBindFramebuffer(GL_FRAMEBUFFER, awtContext.getFramebuffer(false));
-	}
 
 	private void shutdownFbo()
 	{
@@ -1412,10 +1314,10 @@ public class LuminaPlugin extends Plugin implements DrawCallbacks
 	private void preSceneDrawToplevel(Scene scene,
 		float cameraX, float cameraY, float cameraZ, float cameraPitch, float cameraYaw)
 	{
-		captureFrameState(scene, cameraX, cameraY, cameraZ);
+		frameState.captureFrameState(scene, cameraX, cameraY, cameraZ);
 		wadeSteps.update(client.getTopLevelWorldView(), client.getLocalPlayer(), cameraX, cameraZ,
 			weather.groundActive() && client.getGameState() == GameState.LOGGED_IN);
-		updateEdge(scene, cameraX, cameraZ);
+		frameState.updateEdge(scene, cameraX, cameraZ);
 
 		// UBO
 		uniformBuffer.clear();
@@ -1471,7 +1373,7 @@ public class LuminaPlugin extends Plugin implements DrawCallbacks
 					}
 				}
 
-				initFbo(stretchedCanvasWidth, stretchedCanvasHeight, samples, renderFactor);
+				glObjects.initFbo(stretchedCanvasWidth, stretchedCanvasHeight, samples, renderFactor);
 
 				lastStretchedCanvasWidth = stretchedCanvasWidth;
 				lastStretchedCanvasHeight = stretchedCanvasHeight;
@@ -1551,14 +1453,15 @@ public class LuminaPlugin extends Plugin implements DrawCallbacks
 		// plants can be held to a low animation rate like the game's own animations: the wind uniforms then only
 		// change on those ticks (the scene and shadow programs keep the last values in between)
 		long swayNow = System.nanoTime();
-		int swayFps = config.windSwayFps().getFps();
+		// plants animate at the game's own 15 fps
+		final int swayFps = 15;
 		swayTick = swayFps <= 0 || swayNow - lastSwayTick >= 1_000_000_000L / swayFps;
 		if (swayTick)
 		{
 			lastSwayTick = swayNow;
 			weather.getWind().apply(sceneWind, weather.isWindStill());
 		}
-		setEnvironmentUniforms(sceneEnvUniforms);
+		skyFrame.setEnvironmentUniforms(sceneEnvUniforms);
 		glUniform4f(uniFogColor, (sky >> 16 & 0xFF) / 255f, (sky >> 8 & 0xFF) / 255f, (sky & 0xFF) / 255f, 1f);
 		glUniform1i(uniDrawDistance, drawDistance * Perspective.LOCAL_TILE_SIZE);
 		glUniform1i(uniExpandedMapLoadingChunks, client.getExpandedMapLoading());
@@ -1605,41 +1508,19 @@ public class LuminaPlugin extends Plugin implements DrawCallbacks
 		glEnable(GL_DEPTH_TEST);
 
 		// the lamps before the scene: its transparent faces are lit as they are drawn (frag.glsl)
-		prepareLamps();
+		lampFrame.prepareLamps();
 		glUseProgram(glProgram);
 		glUniform1i(uniScenePointLights, framePointLights ? 1 : 0);
 		sceneLampWalls.apply(frameLightClusters ? lampWalls.header() : NO_WALLS);
 
-		drawSkybox(scene, sky, cameraX, cameraY, cameraZ);
+		skyFrame.drawSkybox(scene, sky, cameraX, cameraY, cameraZ);
 
 		checkGLErrors();
 		cpuTimer.begin(CpuTimer.CLIENT_SCENE);
 	}
 
-	private void drawSkybox(Scene scene, int sky, float cameraX, float cameraY, float cameraZ)
-	{
-		Model skybox = scene.getSkybox();
-		if (skybox == null)
-		{
-			sceneTargets.clear((sky >> 16 & 0xFF) / 255f, (sky >> 8 & 0xFF) / 255f, (sky & 0xFF) / 255f);
-			return;
-		}
-
-		sceneTargets.clear(0f, 0f, 0f);
-
-		int size = skybox.getFaceCount() * 3 * VAO.VERT_SIZE;
-		RenderThread rt = rts[0];
-		VAO o = rt.vaoO.get(size);
-		rt.modelUploader.uploadTempModel(skybox, 0, 0, 0, 0,
-			(int) cameraX, (int) cameraY, (int) cameraZ, o.vbo.vb, 0, 0);
-
-		float[] skyboxProjection = Mat4.translate(cameraX, cameraY, cameraZ);
-		o.addRange(skyboxProjection, scene, Renderable.RENDERMODE_UNSORTED_NO_DEPTH);
-
-		rt.vaoO.draw();
-
-		glUniformMatrix4fv(uniEntityProj, false, IDENTITY);
-	}
+	// The sky's work each frame: the skybox draw, the night sky, clouds and sky cache updates, the area environment and its uniforms (SkyFrame)
+	public final SkyFrame skyFrame = new SkyFrame(this);
 
 	@Override
 	public void postSceneDraw(Scene scene)
@@ -1698,79 +1579,9 @@ public class LuminaPlugin extends Plugin implements DrawCallbacks
 		cpuTimer.begin(CpuTimer.CLIENT_UI);
 	}
 
-	/**
-	 * Draw the scene targets to the window. Effects that work on the whole frame (fog, AO, grading) go in
-	 * composite_frag.glsl.
-	 */
-	private void captureFrameState(Scene scene, float cameraX, float cameraY, float cameraZ)
-	{
-		frameCameraX = cameraX;
-		frameCameraY = cameraY;
-		frameCameraZ = cameraZ;
-		frameSkyColor = client.getSkyboxColor();
-		frameHasSkybox = scene.getSkybox() != null;
-		{
-			// the game's own sky color is black where nothing exists around the scene; areas may still call it
-			// open sky (a player house has daylight)
-			int r = frameSkyColor >> 16 & 0xFF, g = frameSkyColor >> 8 & 0xFF, b = frameSkyColor & 0xFF;
-			frameSkyVoid = !frameHasSkybox && r + g + b <= 24;
-		}
-		frameDrawDistance = getDrawDistance() * Perspective.LOCAL_TILE_SIZE;
+	// The per-frame state: the camera, draw distance, sky and fog captured for this frame, the edge fade's focus, a view ray, the frame uniforms, the alpha pass's blend state (FrameState)
+	public final FrameState frameState = new FrameState(this);
 
-		cpuTimer.begin(CpuTimer.ENVIRONMENT);
-		frameOpenSky = updateEnvironment(scene);
-		cpuTimer.end(CpuTimer.ENVIRONMENT);
-		frameOutdoors = config.sunLighting() && frameOpenSky;
-
-		frameGameMillis = GameClock.gameMillis(System.currentTimeMillis(), config.dayCycleMinutes());
-		dayCycle.update(frameGameMillis, config.dayCycleMinutes(), config.fixedHour());
-
-		frameShadows = frameOutdoors && config.shadows() && client.getGameState() == GameState.LOGGED_IN;
-		VAO.clearShadowDraws();
-		VAO.recordShadowDraws = frameShadows;
-
-		cpuTimer.begin(CpuTimer.WEATHER);
-		weather.getLightning().setSunStrength(dayCycle.directStrength(volumetricFog.overcast[0], volumetricFog.overcast[1]));
-		updateWeather(cameraX, cameraY, cameraZ);
-		dayCycle.applyStrike(weather.getLightning());
-		updateSkylight();
-		cpuTimer.end(CpuTimer.WEATHER);
-
-		frameFog = false;
-		Player player = client.getLocalPlayer();
-		LocalPoint lp = player != null ? player.getLocalLocation() : null;
-		if (config.volumetricFog() && lp != null && client.getGameState() == GameState.LOGGED_IN && volumetricFog.hasGround())
-		{
-			// thicker in rain and snow, and in areas 117 HD gives fog (its fogDepth: ~6 faint, 50 thick)
-			float areaFog = config.areaEnvironments() ? environmentManager.getFogDepth() : 0;
-			volumetricFog.areaDensity = weather.fogMultiplier()
-				* (1 + weather.areaFogWeight() * Math.min(areaFog / AREA_FOG_DEPTH, 2));
-			volumetricFog.areaHeight = weather.fogHeightMultiplier();
-			volumetricFog.weatherField = weather.getField();
-			volumetricFog.weatherFog = weather.fogMultiplier();
-			System.arraycopy(weather.getFogTint(), 0, volumetricFog.areaTint, 0, 3);
-			volumetricFog.updateParameters(config, lp.getX(), lp.getY(), client.getTopLevelWorldView().getPlane(), frameDrawDistance);
-			frameFog = true;
-		}
-	}
-
-	/**
-	 * Where the drawn world ends this frame (EdgeFade): a circle of the draw distance around the focal point, inside
-	 * the larger square the client is told to draw, with a fade as wide as the weather's fog asks.
-	 */
-	private void updateEdge(Scene scene, float cameraX, float cameraZ)
-	{
-		int drawDistance = getDrawDistance();
-		float fx = client.getCameraFocalPointX(), fz = client.getCameraFocalPointZ();
-		float offset = (float) Math.hypot(cameraX - fx, cameraZ - fz);
-		scene.setDrawDistance(EdgeFade.clientDrawDistance(drawDistance, offset));
-		// read back in case the client limits it
-		float radius = EdgeFade.radius(drawDistance, scene.getDrawDistance(), offset);
-		float areaFog = config.areaEnvironments() && !frameHasSkybox
-			? environmentManager.getFogDepth() * weather.distanceFogScale() : 0;
-		edgeFade.update(fx, fz, radius, client.getExpandedMapLoading(),
-			EdgeFade.fogginess(weather.fogMultiplier(), areaFog));
-	}
 
 	@Override
 	public boolean zoneInFrustum(int zx, int zz, int maxY, int minY)
@@ -1786,152 +1597,16 @@ public class LuminaPlugin extends Plugin implements DrawCallbacks
 		return config.proceduralSky() && !frameHasSkybox && !frameSkyVoid;
 	}
 
-	/**
-	 * Whether the skylight (or the roof rule for lights) is wanted this frame and where the player is, for the sky
-	 * grid; the light flowing in under cover follows the walls.
-	 */
-	private void updateSkylight()
-	{
-		WorldView wv = client.getTopLevelWorldView();
-		boolean wanted = wv != null && frameOutdoors && client.getGameState() == GameState.LOGGED_IN;
-		frameSkylightWanted = wanted;
-		int plane = wv != null ? wv.getPlane() : 0;
-		Player player = client.getLocalPlayer();
-		LocalPoint lp = player != null ? player.getLocalLocation() : null;
-		Scene scene = wv != null ? wv.getScene() : null;
-		if (wanted && lp != null && scene != null)
-		{
-			frameSkylightTileX = scene.getBaseX() + lp.getX() / (float) Perspective.LOCAL_TILE_SIZE;
-			frameSkylightTileZ = scene.getBaseY() + lp.getY() / (float) Perspective.LOCAL_TILE_SIZE;
-		}
-		BuildingLights buildings = buildingLights;
-		if (wanted && buildings != null)
-		{
-			skyField.update(buildings.getWalls(), buildings.getRooms(), buildings.getFloors(), plane, SKYLIGHT_REACH);
-		}
-		else
-		{
-			skyField.free();
-		}
-	}
+	// The static visibility's work each frame: the skylight grid update and the voxel handover (VisibilityFrame)
+	public final VisibilityFrame visibilityFrame = new VisibilityFrame(this);
 
-	public void updateNightSky()
-	{
-		float[] forward = viewRay(0, 0);
-		float[] above = viewRay(0, 2f / Math.max(frameViewport[3], 1));
-		float pixelAngle = 0;
-		if (forward != null && above != null)
-		{
-			pixelAngle = (float) Math.sqrt(Math.pow(forward[0] - above[0], 2) + Math.pow(forward[1] - above[1], 2)
-				+ Math.pow(forward[2] - above[2], 2));
-		}
-		nightSky.update(compositeTime, dayCycle.phase, forward, pixelAngle,
-			config.areaEnvironments() ? environmentManager.getBiome() : null, frameGameMillis, config.aurora());
-	}
 
-	/** The unit view ray through a point of the screen (-1 to 1) as frame.glsl's reconstructPosition; null before there is one. */
-	private float[] viewRay(float ndcX, float ndcY)
-	{
-		float[] m = frameInvViewProj;
-		float x = m[0] * ndcX + m[4] * ndcY + m[8] + m[12], y = m[1] * ndcX + m[5] * ndcY + m[9] + m[13];
-		float z = m[2] * ndcX + m[6] * ndcY + m[10] + m[14], w = m[3] * ndcX + m[7] * ndcY + m[11] + m[15];
-		float length = (float) Math.sqrt(x * x + y * y + z * z);
-		return length > 1e-6f && Math.abs(w) > 1e-9f ? new float[]{x / length * Math.signum(w), y / length * Math.signum(w),
-			z / length * Math.signum(w)} : null;
-	}
 
-	private void updateWeather(float cameraX, float cameraY, float cameraZ)
-	{
-		WorldView wv = client.getTopLevelWorldView();
-		if (wv == null)
-		{
-			return;
-		}
-		float fx = cameraX, fy = cameraY, fz = cameraZ;
-		int plane = wv.getPlane();
-		Player player = client.getLocalPlayer();
-		LocalPoint lp = player != null ? player.getLocalLocation() : null;
-		if (lp != null)
-		{
-			fx = lp.getX();
-			fz = lp.getY();
-			fy = Perspective.getTileHeight(client, lp, plane);
-		}
-		boolean sky = frameOpenSky && client.getGameState() == GameState.LOGGED_IN;
-		String biomeName = config.areaEnvironments() ? environmentManager.getBiome() : null;
-		ShaderWatcher watcher = shaderWatcher;
-		if (watcher != null)
-		{
-			WeatherData.reloadIfChanged(watcher.getDirectory(), gson);
-		}
-		climate.update(frameGameMillis, Climate.SEASON_DAYS);
-		weather.updateField(sky ? wv.getScene() : null, plane, environmentManager, config.areaEnvironments(), biomeName,
-			config.weatherMode(), climate, config.weatherIntensity(), config.weatherBuildup(), dayCycle.hour(), fx, fz);
-		weather.update(config.weatherBuildup(), true, config.weatherLightning(), sky, fx, fy, fz, plane);
-		weather.getOvercast(volumetricFog.overcast);
-		updateWeatherAudio(fx, fy, fz);
-	}
+	// The weather's work each frame: the field and the driver updated from the camera, and the weather sounds (WeatherFrame)
+	public final WeatherFrame weatherFrame = new WeatherFrame(this);
 
-	/**
-	 * Hand the weather's sounds this frame's rain, how far indoors the player is, the volume (the setting times the
-	 * game's own sound effects volume) and any thunder that has just begun.
-	 */
-	private void updateWeatherAudio(float x, float y, float z)
-	{
-		WeatherAudio audio = weatherAudio;
-		if (audio == null)
-		{
-			return;
-		}
-		float volume = 0;
-		if (client.getGameState() == GameState.LOGGED_IN)
-		{
-			Preferences prefs = client.getPreferences();
-			volume = config.weatherSounds() / 100f * (prefs != null ? Math.min(1, prefs.getSoundEffectVolume() / 127f) : 1);
-		}
-		BuildingLights buildings = buildingLights;
-		// the sky seen straight up at the player's head, from the skylight's grid; the room map where there is none
-		WorldView wv = client.getTopLevelWorldView();
-		float sky = skyGrid.upVisibility(wv != null ? wv.getScene() : null, x, y - WEATHER_HEAD, z);
-		float indoors = WeatherAudio.indoorMix(sky, buildings != null ? buildings.getRooms() : null, x, y - 40, z);
-		audio.update(weather.rainLoudness(), indoors, volume);
-		// the thunder plays at any volume above 0; the light follows its rumble either way
-		if (weather.getLightning().takeThunder(thunderStrike))
-		{
-			Rumble rumble = audio.thunder(thunderStrike[0], thunderStrike[1], volume > 0);
-			if (rumble != null)
-			{
-				weather.getLightning().rumble(rumble);
-			}
-		}
-	}
 
-	/**
-	 * Find the area the camera looks at and whether it is under the open sky. Without area data, the game's
-	 * black underground sky is the only hint.
-	 */
-	private boolean updateEnvironment(Scene scene)
-	{
-		if (!config.areaEnvironments())
-		{
-			int r = frameSkyColor >> 16 & 0xFF, g = frameSkyColor >> 8 & 0xFF, b = frameSkyColor & 0xFF;
-			return r + g + b > 24;
-		}
-		boolean loggedIn = client.getGameState() == GameState.LOGGED_IN;
-		environmentManager.update(loggedIn ? scene : null,
-			(int) client.getCameraFocalPointX(), (int) client.getCameraFocalPointZ(),
-			client.getTopLevelWorldView().getPlane(), frameSkyColor,
-			(System.currentTimeMillis() - startMillis) / 1000f);
-		return environmentManager.isOverworld();
-	}
 
-	public void setEnvironmentUniforms(EnvironmentUniforms u)
-	{
-		boolean on = config.areaEnvironments();
-		// the game's own skyboxes have their own colors; area fog would not match them, like in 117 HD
-		float fog = frameHasSkybox ? 0 : weather.distanceFogScale();
-		u.set(on ? environmentManager : null, fog, getDrawDistance(), edgeFade.focalX, edgeFade.focalZ);
-	}
 
 	// the shadow pass (ShadowPass): the map from the light each frame, its static cache, a strike's bolt map
 	public final ShadowPass shadowPass = new ShadowPass(this);
@@ -1948,36 +1623,6 @@ public class LuminaPlugin extends Plugin implements DrawCallbacks
 		shadowPass.drop(dropped);
 	}
 
-	/**
-	 * Transparent faces go to their own layer, blended as premultiplied "over" so the composite can put the layer
-	 * on top of the lit opaque scene. They don't write depth (Zone and VAO already turn depth writes off).
-	 */
-	private void setAlphaPass(boolean alpha)
-	{
-		sceneTargets.setAlphaPass(alpha);
-		if (alpha)
-		{
-			glEnable(GL_BLEND);
-			glBlendFuncSeparate(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA, GL_ONE, GL_ONE_MINUS_SRC_ALPHA);
-		}
-		else
-		{
-			// the opaque pass writes without blending (preSceneDrawToplevel)
-			glDisable(GL_BLEND);
-		}
-		glUniform1i(uniAlphaPass, alpha ? 1 : 0);
-		// the shadow map as the shadow pass left it last frame, with that frame's matrix (frag.glsl alphaShadow)
-		boolean shadows = alpha && frameShadows && shadowMap.isInitialized();
-		glUniform1i(uniAlphaShadows, shadows ? 1 : 0);
-		if (shadows)
-		{
-			shadowMap.bindForSampling(SHADOW_RAW_UNIT, SHADOW_COMPARE_UNIT);
-			glUniformMatrix4fv(uniAlphaLightProj, false, shadowMap.lightProj);
-			glUniform1f(uniAlphaShadowTexel, 2 * shadowMap.getRadius() / shadowMap.getSize());
-			glUniform1f(uniAlphaShadowDepthRange, shadowMap.getDepthRange());
-			glUniform1i(uniAlphaDepthZeroToOne, glCapabilities.OpenGL45 ? 1 : 0);
-		}
-	}
 
 	/** Whether the window's framebuffer has a stencil (windowStencil); call with it bound. */
 	public boolean hasWindowStencil()
@@ -1992,146 +1637,13 @@ public class LuminaPlugin extends Plugin implements DrawCallbacks
 		return windowStencil > 0;
 	}
 
-	public void setFrameUniforms(FrameUniforms u)
-	{
-		glUniformMatrix4fv(u.viewProj, false, frameViewProj);
-		glUniformMatrix4fv(u.invViewProj, false, frameInvViewProj);
-		glUniform4i(u.viewport, frameViewport[0], frameViewport[1], frameViewport[2], frameViewport[3]);
-		glUniform1i(u.depthZeroToOne, glCapabilities.OpenGL45 ? 1 : 0);
-		glUniform1f(u.halfRatio, sceneTargets.getHalfRatio());
-	}
 
-	/** Bind the shadow map for the composite and the fog, once it is drawn. */
-	public void prepareLighting()
-	{
-		if (frameShadows && shadowMap.isInitialized())
-		{
-			shadowMap.bindForSampling(SHADOW_RAW_UNIT, SHADOW_COMPARE_UNIT);
-		}
-	}
-
-	/**
-	 * Gather, cull, upload and bind this frame's lamps, the walls that stop them and the rooms, before the scene is
-	 * drawn: for its transparent faces, the composite, the fog, the weather and the water.
-	 */
-	private void prepareLamps()
-	{
-		boolean points = config.pointLights();
-		BuildingLights buildings = buildingLights;
-		RoomMap rooms = buildings != null ? buildings.getRooms() : null;
-		volumetricFog.rooms = rooms;
-		volumetricFog.openRooms = null;
-		framePointLights = points;
-		frameLightClusters = points || rooms != null;
-		if (frameLightClusters)
-		{
-			if (!lightClusters.isInitialized())
-			{
-				lightClusters.init();
-			}
-			cpuTimer.begin(CpuTimer.LIGHTS);
-			if (points)
-			{
-				collectLights();
-			}
-			else
-			{
-				frameLights.clear();
-			}
-			cpuTimer.end(CpuTimer.LIGHTS);
-			lampWalls.update(points && buildings != null ? buildings.getWalls() : null, rooms,
-				buildings != null ? buildings.getFloors() : null);
-			lightClusters.setWalls(lampWalls);
-			roomTexture.update(rooms);
-			updateRoomLight(config.interiorBrightness() > 0 ? rooms : null);
-			// the fog comes back into the rooms whose roof the client hides
-			SceneContext roofCtx = root;
-			if (frameFog && rooms != null && roofCtx != null)
-			{
-				openRooms.update(buildings.getResult(), roofCtx.hideRoofIds, roofCtx.level);
-				volumetricFog.openRooms = openRooms.count() > 0 ? openRooms : null;
-			}
-			cpuTimer.begin(CpuTimer.CLUSTERS);
-			// the fog integrates the lights along each pixel's ray from per-column lists
-			lightClusters.setFog(frameFog, volumetricFog.getCenterX() - frameCameraX,
-				volumetricFog.getCenterZ() - frameCameraZ, volumetricFog.getRadius(),
-				volumetricFog.getTop() - frameCameraY, volumetricFog.getMinGlow());
-			lightClusters.cull(frameLights, frameViewProj, frameCameraX, frameCameraY, frameCameraZ);
-			if (lightClusters.getOverflows() > 0 && logLimiter.check("lightClusterOverflow") >= 0)
-			{
-				// each one left its least important lights out there (LightClusters.MAX_LIGHTS_PER_CLUSTER)
-				log.info("Light clusters: {} lamp listings over the cap of {} a cluster", lightClusters.getOverflows(),
-					LightClusters.MAX_LIGHTS_PER_CLUSTER);
-			}
-			cpuTimer.end(CpuTimer.CLUSTERS);
-			cpuTimer.begin(CpuTimer.LIGHT_UPLOAD);
-			lightClusters.upload();
-			cpuTimer.end(CpuTimer.LIGHT_UPLOAD);
-			lightClusters.bind(LIGHT_DATA_UNIT, CLUSTER_DATA_UNIT);
-			roomTexture.bind(ROOM_TEXELS_UNIT);
-		}
-	}
-
-	/**
-	 * Work out the fill the rooms are given for the time of day, and hand it to the light buffer. Caves and dungeons
-	 * have no buildings, and frameOutdoors stands in until areas are classified.
-	 */
-	private void updateRoomLight(RoomMap rooms)
-	{
-		long now = System.nanoTime();
-		float dt = roomLightNanos == 0 ? 0 : Math.min((now - roomLightNanos) / 1e9f, 0.5f);
-		roomLightNanos = now;
-		BuildingLights buildings = buildingLights;
-		SceneLights lights = sceneLights;
-		roomLight.setRooms(rooms);
-		if (rooms != null && buildings != null)
-		{
-			roomLight.followWalls(buildings.getWalls(), buildings.getFloors(), SKYLIGHT_REACH);
-			// the rooms' lamps are the fixed ones, as they are now; with no lamps on, none
-			roomLight.followLamps(out ->
-			{
-				if (framePointLights && lights != null)
-				{
-					lights.steadyLamps(out);
-				}
-			}, buildings.getWalls(), dt);
-		}
-		float target = frameOutdoors ? RoomLight.target(dayCycle.sunAltitude, config.interiorBrightness() / 100f) : 0;
-		roomLight.update(dt, target, dayCycle.sunAltitude);
-		lightClusters.setRoomFill(rooms != null ? roomLight : null);
-	}
+	// The lamps' work each frame: lamp collection and placement, the room light, the light clusters' upload (LampFrame)
+	public final LampFrame lampFrame = new LampFrame(this);
 
 
-	/**
-	 * Gather this frame's point lights: scene lights from lights.json, plus the optional test light.
-	 */
-	private void collectLights()
-	{
-		frameLights.clear();
-		// 0 by day, 1 once the sun is well below the horizon
-		float t = Math.max(0, Math.min(1, (-2 - dayCycle.sunAltitude) / 8));
-		float night = frameOutdoors ? t * t * (3 - 2 * t) : 1;
-		SceneLights lights = sceneLights;
-		if (lights != null)
-		{
-			float time = (System.currentTimeMillis() - startMillis) / 1000f;
-			// around the focal point like the drawn world (EdgeFade), so lights don't come and go as the camera turns
-			lights.collect(frameLights, time, night, dayCycle.sunAltitude, edgeFade.focalX, edgeFade.focalZ,
-				edgeFade.radius);
-		}
-		if (config.testLight())
-		{
-			Player player = client.getLocalPlayer();
-			LocalPoint lp = player != null ? player.getLocalLocation() : null;
-			if (lp != null)
-			{
-				float ground = Perspective.getTileHeight(client, lp, client.getTopLevelWorldView().getPlane());
-				// a little above head height (y points down), warm like a torch, reaching about 5 tiles
-				frameLights.add(testLight.set(lp.getX(), ground - 250, lp.getY(), 5 * Perspective.LOCAL_TILE_SIZE,
-					1.0f, 0.72f, 0.42f, 6f).onPlane(client.getTopLevelWorldView().getPlane()));
-			}
-		}
-	}
+
+
 
 	int getLightDefinitionCount()
 	{
@@ -2171,313 +1683,55 @@ public class LuminaPlugin extends Plugin implements DrawCallbacks
 	}
 
 
-	public void updateClouds()
-	{
-		WorldView wv = client.getTopLevelWorldView();
-		long baseX = wv != null ? (long) wv.getBaseX() * Perspective.LOCAL_TILE_SIZE : 0;
-		long baseZ = wv != null ? (long) wv.getBaseY() * Perspective.LOCAL_TILE_SIZE : 0;
-		clouds.setWeather(weather.cloudWisp(), weather.cloudDark(), weather.getWind());
-		clouds.setEye(frameCameraX, frameCameraY, frameCameraZ, client.getCameraFocalPointX(),
-			client.getCameraFocalPointY(), client.getCameraFocalPointZ(), edgeFade.radius, config.skyHorizonAtEdge());
-		clouds.update(config.clouds(), config.cloudShadows(), config.cloudCoverage(), config.cloudSpeed(),
-			weather.cloudCover(), baseX, baseZ, weather.getField());
-	}
-
-	/**
-	 * Capture or blend the sky cache when the composite will use it, and return how it uses it (SkyCache.MODE_*).
-	 */
-	public int updateSkyCache()
-	{
-		// Loading a region keeps drawing the last frames; dropping the cache for them would switch the sky light.
-		// Without updates the composite eases from the last capture back to the analytic light (SkyCache).
-		GameState state = client.getGameState();
-		if (!frameOutdoors || (state != GameState.LOGGED_IN && state != GameState.LOADING))
-		{
-			skyCache.bind(SKY_CACHE_UNIT);
-			return 0;
-		}
-		int cycle = config.dayCycleMinutes();
-		double gameMinutes = cycle > 0 ? frameGameMillis / 60_000.0 : Double.NaN;
-		weather.getOvercast(skyCacheOvercast);
-		int settings = java.util.Objects.hash(config.clouds(), config.cloudCoverage(), cycle,
-			config.fixedHour(), Math.round(skyCacheOvercast[3] * 20),
-			Math.round(skyCacheOvercast[4] * 20), Math.round(skyCacheOvercast[5] * 20), Math.round(skyCacheOvercast[6] * 20),
-			Math.round(weather.cloudWisp() * 10), Math.round(weather.cloudDark() * 10));
-		if (config.clouds())
-		{
-			clouds.bindNoise(CLOUD_NOISE_UNIT);
-			weather.getField().bindSky(WEATHER_SKY_UNIT);
-		}
-		skyCache.update(clouds, gameMinutes, frameCameraX, frameCameraY, frameCameraZ,
-			dayCycle, skyCacheOvercast, settings, SKY_CACHE_UNIT);
-		skyCache.bind(SKY_CACHE_UNIT);
-		return SkyCache.MODE_LIGHT;
-	}
-
-	/** Start a build of the scene's voxels, which the skylight traces, if one is due. */
-	public void prepareVoxels()
-	{
-		WorldView wv = client.getTopLevelWorldView();
-		Scene scene = wv != null ? wv.getScene() : null;
-		try
-		{
-			int builds = voxelBuilder.builds();
-			voxelBuilder.prepare(frameSkylightWanted, scene, root != null ? root.zones : null, clientUploader.water);
-			if (builds != voxelBuilder.builds())
-			{
-				hitchMonitor.job(HitchMonitor.VOXEL_BUILD);
-			}
-		}
-		catch (RuntimeException ex)
-		{
-			logLimiter.warn(log, "voxels " + ex, "Voxel build failed", ex);
-			voxelBuilder.free();
-		}
-	}
 
 
+
+
+	// The scene draw: zones opaque and alpha, the draw pass, dynamic and temporary models, zone invalidation, called from the plugin's DrawCallbacks (SceneDraw)
+	public final SceneDraw sceneDraw = new SceneDraw(this);
 	@Override
 	public void drawZoneOpaque(Projection entityProjection, Scene scene, int zx, int zz)
 	{
-		SceneContext ctx = context(scene);
-		if (ctx == null)
-		{
-			return;
-		}
-
-		Zone z = ctx.zones[zx][zz];
-		if (!z.initialized)
-		{
-			return;
-		}
-
-		int offset = scene.getWorldViewId() == WorldView.TOPLEVEL ? (SCENE_OFFSET >> 3) : 0;
-		z.renderOpaque(zx - offset, zz - offset, ctx.minLevel, ctx.level, ctx.maxLevel, ctx.hideRoofIds);
-
-		checkGLErrors();
+		sceneDraw.drawZoneOpaque(entityProjection, scene, zx, zz);
 	}
-
-	private static final int ALPHA_ZSORT_CLOSE = 2048;
 
 	@Override
 	public void drawZoneAlpha(Projection entityProjection, Scene scene, int level, int zx, int zz)
 	{
-		tempModels.flush();
-		SceneContext ctx = context(scene);
-		if (ctx == null)
-		{
-			return;
-		}
-
-		Zone z = ctx.zones[zx][zz];
-		if (!z.initialized)
-		{
-			return;
-		}
-
-		int offset = scene.getWorldViewId() == WorldView.TOPLEVEL ? (SCENE_OFFSET >> 3) : 0;
-		int dx = ctx.cameraX - ((zx - offset) << 10);
-		int dz = ctx.cameraZ - ((zz - offset) << 10);
-		boolean close = dx * dx + dz * dz < ALPHA_ZSORT_CLOSE * ALPHA_ZSORT_CLOSE;
-
-		if (level == 0)
-		{
-			z.alphaSort(zx - offset, zz - offset, ctx.cameraX, ctx.cameraY, ctx.cameraZ);
-			z.multizoneLocs(scene, zx - offset, zz - offset, ctx.cameraX, ctx.cameraZ, ctx.zones);
-		}
-
-		RenderThread rt = rts[0];
-		z.renderAlpha(rt.modelUploader, zx - offset, zz - offset, cameraYaw, cameraPitch, ctx.minLevel, ctx.level, ctx.maxLevel, level, ctx.hideRoofIds, !close || (scene.getOverrideAmount() > 0));
-
-		checkGLErrors();
+		sceneDraw.drawZoneAlpha(entityProjection, scene, level, zx, zz);
 	}
 
 	@Override
 	public void drawPass(Projection projection, Scene scene, int pass)
 	{
-		// the temp models must be in the buffers before they are drawn or unmapped
-		tempModels.flush();
-		SceneContext ctx = context(scene);
-		if (ctx == null)
-		{
-			return;
-		}
-
-		if (pass == DrawCallbacks.PASS_OPAQUE)
-		{
-			if (scene.getWorldViewId() == WorldView.TOPLEVEL)
-			{
-				for (int i = 0; i < rts.length; ++i) // NOPMD: ForLoopCanBeForeach
-				{
-					rts[i].vaoO.draw();
-				}
-			}
-			else
-			{
-				glUniformMatrix4fv(uniEntityProj, false, IDENTITY);
-			}
-		}
-		else if (pass == DrawCallbacks.PASS_ALPHA)
-		{
-			setAlphaPass(false);
-			for (int x = 0; x < ctx.sizeX; ++x)
-			{
-				for (int z = 0; z < ctx.sizeZ; ++z)
-				{
-					Zone zone = ctx.zones[x][z];
-					zone.removeTemp();
-				}
-			}
-		}
-		else if (pass == DrawCallbacks.PRE_PASS_ALPHA)
-		{
-			for (int i = 0; i < rts.length; ++i)
-			{
-				rts[i].vaoA.unmap();
-			}
-
-			glUniformMatrix4fv(uniEntityProj, false, ctx.projection);
-			glUniform4i(uniEntityTint, scene.getOverrideHue(), scene.getOverrideSaturation(), scene.getOverrideLuminance(), scene.getOverrideAmount());
-			setAlphaPass(true);
-		}
-
-		checkGLErrors();
+		sceneDraw.drawPass(projection, scene, pass);
 	}
 
 	@Override
 	public void drawDynamic(int renderThreadId, Projection worldProjection, Scene scene, TileObject tileObject, Renderable r, Model m, int orient, int x, int y, int z)
 	{
-		SceneContext ctx = context(scene);
-		if (ctx == null)
-		{
-			return;
-		}
-
-		if (!renderCallbackManager.drawObject(scene, tileObject))
-		{
-			return;
-		}
-		// past the edge of the world (EdgeFade) it would be all sky; the client's larger square still offers it
-		if (scene.getWorldViewId() == WorldView.TOPLEVEL && !edgeFade.modelVisible(x, z))
-		{
-			return;
-		}
-
-		int size = m.getFaceCount() * 3 * VAO.VERT_SIZE;
-		int material = SurfaceMaterials.forObject(tileObject.getId(), r);
-		int shading = SurfaceMaterials.shadingForObject(tileObject.getId(), r);
-		if (m.getFaceTransparencies() == null)
-		{
-			RenderThread rt = rts[renderThreadId + 1];
-			VAO o = rt.vaoO.get(size);
-			if (o == null)
-			{
-				return;
-			}
-
-			rt.modelUploader.uploadTempModel(m, orient, x, y, z,
-				ctx.cameraX, ctx.cameraY, ctx.cameraZ, o.vbo.vb, material, shading);
-			o.addRange(ctx.projection, scene, 0);
-		}
-		else
-		{
-			m.calculateBoundsCylinder();
-
-			RenderThread rt = rts[renderThreadId + 1];
-			VAO o = rt.vaoO.get(size);
-			VAO a = rt.vaoA.get(size);
-			if (o == null || a == null)
-			{
-				return;
-			}
-
-			ModelUploader sorter = rt.modelUploader;
-
-			int start = a.vbo.vb.position();
-			try
-			{
-				sorter.uploadSortedModel(worldProjection, m, orient, x, y, z,
-					ctx.cameraX, ctx.cameraY, ctx.cameraZ, o.vbo.vb, a.vbo.vb, false, material, shading);
-			}
-			catch (Exception ex)
-			{
-				log.debug("error drawing entity", ex);
-			}
-			int end = a.vbo.vb.position();
-
-			o.addRange(ctx.projection, scene, 0);
-
-			if (end > start)
-			{
-				int offset = scene.getWorldViewId() == WorldView.TOPLEVEL ? SCENE_OFFSET : 0;
-				int zx = (x >> 10) + (offset >> 3);
-				int zz = (z >> 10) + (offset >> 3);
-				Zone zone = ctx.zones[zx][zz];
-
-				// level is checked prior to this callback being run, in order to cull clickboxes, but
-				// tileObject.getPlane()>maxLevel if visbelow is set - lower the object to the max level
-				int plane = Math.min(ctx.maxLevel, tileObject.getPlane());
-				// renderable modelheight is typically not set here because DynamicObject doesn't compute it on the returned model
-				zone.addTempAlphaModel(a.vao, start, end, plane, x & 1023, y, z & 1023);
-			}
-		}
+		sceneDraw.drawDynamic(renderThreadId, worldProjection, scene, tileObject, r, m, orient, x, y, z);
 	}
 
 	@Override
 	public void drawTemp(Projection worldProjection, Scene scene, GameObject gameObject, Model m, int orient, int x, int y, int z)
 	{
-		SceneContext ctx = context(scene);
-		if (ctx == null)
-		{
-			return;
-		}
-
-		if (!renderCallbackManager.drawObject(scene, gameObject))
-		{
-			return;
-		}
-		if (scene.getWorldViewId() == WorldView.TOPLEVEL && !edgeFade.modelVisible(x, z))
-		{
-			return;
-		}
-
-		Renderable renderable = gameObject.getRenderable();
-		int renderMode = renderable.getRenderMode();
-		int material = SurfaceMaterials.forRenderable(renderable, gameObject.getHash(), gameObject.getId());
-		int shading = SurfaceMaterials.shadingForRenderable(renderable, gameObject.getHash(), gameObject.getId());
-		if (renderMode == Renderable.RENDERMODE_SORTED_NO_DEPTH || m.getFaceTransparencies() != null || m.getTransparency() != 0)
-		{
-			m.calculateBoundsCylinder();
-			int offset = scene.getWorldViewId() == WorldView.TOPLEVEL ? (SCENE_OFFSET >> 3) : 0;
-			int zx = (gameObject.getX() >> 10) + offset;
-			int zz = (gameObject.getY() >> 10) + offset;
-			int plane = Math.min(ctx.maxLevel, gameObject.getPlane());
-			tempModels.uploadSorted(rts[0], ctx, scene, worldProjection, m, orient, x, y, z, material, shading,
-				renderMode == Renderable.RENDERMODE_SORTED_NO_DEPTH, zx, zz, plane,
-				y - renderable.getModelHeight() /* to render players over locs */);
-		}
-		else
-		{
-			tempModels.uploadTemp(rts[0], ctx, scene, m, orient, x, y, z, material, shading);
-		}
+		sceneDraw.drawTemp(worldProjection, scene, gameObject, m, orient, x, y, z);
 	}
 
 	@Override
 	public void invalidateZone(Scene scene, int zx, int zz)
 	{
-		SceneContext ctx = context(scene);
-		if (ctx == null)
-		{
-			return;
-		}
-
-		Zone z = ctx.zones[zx][zz];
-		if (!z.invalidate)
-		{
-			z.invalidate = true;
-			log.trace("Zone invalidated: wx={} x={} z={}", scene.getWorldViewId(), zx, zz);
-		}
+		sceneDraw.invalidateZone(scene, zx, zz);
 	}
+
+
+	public static final int ALPHA_ZSORT_CLOSE = 2048;
+
+
+
+
+
 
 	@Subscribe
 	public void onPostClientTick(PostClientTick event)
@@ -2810,7 +2064,7 @@ public class LuminaPlugin extends Plugin implements DrawCallbacks
 		return config.renderScale().factor(clientUI.getGraphicsConfiguration().getDefaultTransform().getScaleX());
 	}
 
-	private int getDrawDistance()
+	public int getDrawDistance()
 	{
 		return Ints.constrainToRange(config.drawDistance(), 0, MAX_DISTANCE);
 	}

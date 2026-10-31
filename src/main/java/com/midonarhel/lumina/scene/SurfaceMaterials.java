@@ -129,7 +129,7 @@ public final class SurfaceMaterials
 		public void set(LuminaConfig config)
 		{
 			glUniform1f(emissive, config.emissiveStrength() / 100f);
-			glUniform1f(transmission, config.transmissionStrength() / 100f);
+			glUniform1f(transmission, config.leafTransmission() ? 1f : 0f);
 		}
 	}
 

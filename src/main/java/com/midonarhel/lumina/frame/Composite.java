@@ -294,7 +294,7 @@ public final class Composite
 	private void use(CompositeProgram c)
 	{
 		glUseProgram(c.program);
-		plugin.setFrameUniforms(c.frame);
+		plugin.frameState.setFrameUniforms(c.frame);
 		plugin.skyCache.setComposite(c.skyCache, plugin.weather.skyHaze(), plugin.config.starBrightness() / 100f);
 		plugin.nightSky.set(c.night, plugin.config.nebulaStrength() / 100f);
 		glUniform1i(c.aoEnabled, plugin.config.ambientOcclusion() ? 1 : 0);
@@ -314,7 +314,7 @@ public final class Composite
 		glUniform1f(c.sunAltitude, plugin.dayCycle.sunAltitude);
 		plugin.weather.setOvercastUniform(c.overcast);
 		plugin.weather.setLightUniform(c.weatherLight);
-		plugin.setEnvironmentUniforms(c.env);
+		plugin.skyFrame.setEnvironmentUniforms(c.env);
 
 		boolean shadows = plugin.frameShadows && plugin.shadowMap.isInitialized();
 		glUniform1i(c.shadowsEnabled, shadows ? 1 : 0);
@@ -413,7 +413,7 @@ public final class Composite
 		// fullscreen triangles are generated from gl_VertexID; core profile still needs some VAO bound
 		glBindVertexArray(plugin.vaoUiHandle);
 		plugin.cpuTimer.begin(CpuTimer.VOXELS);
-		plugin.prepareVoxels();
+		plugin.visibilityFrame.prepareVoxels();
 		plugin.cpuTimer.end(CpuTimer.VOXELS);
 		plugin.cpuTimer.begin(CpuTimer.SKY_GRID);
 		BuildingLights buildings = plugin.buildingLights;
@@ -459,7 +459,7 @@ public final class Composite
 			// contents (the fog, denoise, cloud and composite passes do the same)
 			glClear(GL_COLOR_BUFFER_BIT);
 			glUseProgram(plugin.glAoProgram);
-			plugin.setFrameUniforms(plugin.aoFrame);
+			plugin.frameState.setFrameUniforms(plugin.aoFrame);
 			glUniform1f(plugin.uniAoRadius, plugin.config.aoRadius() / 100f * Perspective.LOCAL_TILE_SIZE);
 			glUniform1i(plugin.uniAoSamples, ao ? plugin.config.aoQuality().pick(6, 8, 12) : 0);
 			glUniform1i(plugin.uniAoShadowsEnabled, shadows ? 1 : 0);
@@ -497,10 +497,10 @@ public final class Composite
 			plugin.sceneTargets.bindShadow(SCENE_SHADOW_UNIT);
 		}
 
-		plugin.updateClouds();
+		plugin.skyFrame.updateClouds();
 		plugin.cpuTimer.begin(CpuTimer.SKY_CACHE);
 		int captured = plugin.skyCache.getCaptures();
-		int skyCacheMode = plugin.updateSkyCache();
+		int skyCacheMode = plugin.skyFrame.updateSkyCache();
 		plugin.lastSkyCacheMode = skyCacheMode;
 		plugin.cpuTimer.end(CpuTimer.SKY_CACHE);
 		if (captured != plugin.skyCache.getCaptures())
@@ -510,8 +510,8 @@ public final class Composite
 
 		plugin.skyCache.easeComposite(skyCacheMode);
 		plugin.compositeTime = (System.currentTimeMillis() - plugin.startMillis) / 1000f;
-		plugin.updateNightSky();
-		plugin.prepareLighting();
+		plugin.skyFrame.updateNightSky();
+		plugin.lampFrame.prepareLighting();
 		plugin.sceneTargets.bindAlphaLayer(ALPHA_LAYER_UNIT);
 
 		plugin.weather.bindField(WEATHER_FIELD_UNIT, WEATHER_SKY_UNIT);
@@ -616,7 +616,7 @@ public final class Composite
 				// the pixels with a second surface, by a small program, so the edge pass's full shading never starts
 				// on the others; without a stencil the edge pass discards them itself
 				glUseProgram(compositeMark.program);
-				plugin.setFrameUniforms(compositeMark.frame);
+				plugin.frameState.setFrameUniforms(compositeMark.frame);
 				glEnable(GL_STENCIL_TEST);
 				glStencilFunc(GL_ALWAYS, 1, 0xFF);
 				glStencilOp(GL_KEEP, GL_KEEP, GL_REPLACE);

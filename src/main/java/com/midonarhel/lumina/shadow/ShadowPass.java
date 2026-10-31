@@ -247,7 +247,7 @@ public final class ShadowPass
 		glUniform1i(plugin.uniShadowEmissiveCasts, plugin.config.emissiveStrength() > 0 ? 0 : 1);
 		glUniformMatrix4fv(plugin.uniShadowEntityProj, false, IDENTITY);
 		// swaying plants are left out of the static cache and redrawn each frame (Wind.java)
-		final boolean swayShadows = plugin.windSwayAmount() > 0 && plugin.config.windSwayShadows();
+		final boolean swayShadows = false /* plants never sway in the shadow map */;
 		plugin.shadowSway.set(swayShadows ? plugin.windSwayAmount() : 0);
 
 		// Zone and VAO draw through these shared uniform locations; point them at the shadow program
@@ -421,7 +421,7 @@ public final class ShadowPass
 				}
 				float[] d = dir != null ? dir : plugin.dayCycle.casterDir;
 				radius = plugin.config.shadowDistance() * Perspective.LOCAL_TILE_SIZE;
-				sway = plugin.windSwayAmount() > 0 && plugin.config.windSwayShadows() ? Zone.SWAY_EXCLUDE : Zone.SWAY_ALL;
+				sway = false /* plants never sway in the shadow map */ ? Zone.SWAY_EXCLUDE : Zone.SWAY_ALL;
 				float sx = Math.round(fx / SHADOW_CACHE_SNAP) * (float) SHADOW_CACHE_SNAP;
 				float sz = Math.round(fz / SHADOW_CACHE_SNAP) * (float) SHADOW_CACHE_SNAP;
 				plugin.hitchMonitor.job(HitchMonitor.STATIC_SHADOWS);
@@ -590,7 +590,7 @@ public final class ShadowPass
 		glUniform1i(plugin.uniShadowTexturesReady, plugin.textureArrayId != -1 ? 1 : 0);
 		glUniform1i(plugin.uniShadowEmissiveCasts, plugin.config.emissiveStrength() > 0 ? 0 : 1);
 		glUniformMatrix4fv(plugin.uniShadowEntityProj, false, IDENTITY);
-		final boolean swayShadows = plugin.windSwayAmount() > 0 && plugin.config.windSwayShadows();
+		final boolean swayShadows = false /* plants never sway in the shadow map */;
 		plugin.shadowSway.set(swayShadows ? plugin.windSwayAmount() : 0);
 
 		// Zone and VAO draw through these shared uniform locations; point them at the shadow program
