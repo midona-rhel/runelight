@@ -1,5 +1,7 @@
 package com.midonarhel.runelight;
 
+import com.midonarhel.runelight.water.WaterMap;
+
 import net.runelite.api.Constants;
 import net.runelite.api.Perspective;
 import net.runelite.api.Scene;

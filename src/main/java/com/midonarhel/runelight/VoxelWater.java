@@ -1,5 +1,7 @@
 package com.midonarhel.runelight;
 
+import com.midonarhel.runelight.water.WaterMap;
+
 /**
  * The water surface for the voxel grid. The surface is not geometry (the composite draws it, water.glsl) and the bed
  * under it is left out of the capture (VoxelCapture), so the grid gets the surface as one layer of voxels at its

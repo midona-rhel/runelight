@@ -1,4 +1,6 @@
-package com.midonarhel.runelight;
+package com.midonarhel.runelight.water;
+
+import com.midonarhel.runelight.*;
 
 import com.google.gson.Gson;
 import java.io.InputStream;
@@ -115,7 +117,7 @@ public final class WaterOverrides
 		}
 	}
 
-	static void load(Gson gson)
+	public static void load(Gson gson)
 	{
 		try (InputStream is = WaterOverrides.class.getResourceAsStream("water_overrides.json"))
 		{

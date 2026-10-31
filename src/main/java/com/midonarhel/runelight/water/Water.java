@@ -1,4 +1,6 @@
-package com.midonarhel.runelight;
+package com.midonarhel.runelight.water;
+
+import com.midonarhel.runelight.*;
 
 import java.awt.image.BufferedImage;
 import java.io.IOException;
@@ -97,7 +99,7 @@ public class Water
 	}
 
 	/** A composite program's water uniforms. */
-	static final class CompositeUniforms
+	public static final class CompositeUniforms
 	{
 		private int enabled = -1, time = -1, reflections = -1, caustics = -1, debug = -1, slotType = -1,
 			rect = -1, fakeOn = -1;
@@ -123,7 +125,7 @@ public class Water
 	/**
 	 * Look up the AO program's water uniforms. Call with each newly compiled AO program.
 	 */
-	void locateAo(int program, int surfaceUnit)
+	public void locateAo(int program, int surfaceUnit)
 	{
 		uniAoOn = glGetUniformLocation(program, "waterAoOn");
 		uniAoRect = glGetUniformLocation(program, "waterAoRect");
@@ -135,7 +137,7 @@ public class Water
 	/**
 	 * With the AO program in use, after {@link #drawSurface}: the surface bound so the AO fades out under the water.
 	 */
-	void bindAo(RuneLightConfig config, int surfaceUnit)
+	public void bindAo(RuneLightConfig config, int surfaceUnit)
 	{
 		boolean enabled = enabled(config);
 		glUniform1i(uniAoOn, enabled ? 1 : 0);
@@ -162,7 +164,7 @@ public class Water
 	/**
 	 * The surface pass's program, newly compiled (0 to drop it).
 	 */
-	void setSurfaceProgram(int program, int depthUnit, int dataUnit, int noiseUnit, int contactUnit, int waveUnitA,
+	public void setSurfaceProgram(int program, int depthUnit, int dataUnit, int noiseUnit, int contactUnit, int waveUnitA,
 		int waveUnitB)
 	{
 		surface.freeProgram();
@@ -172,7 +174,7 @@ public class Water
 		}
 	}
 
-	void freeSurfaceProgram()
+	public void freeSurfaceProgram()
 	{
 		surface.freeProgram();
 	}
@@ -229,7 +231,7 @@ public class Water
 	 * The loaded scene became the current one: draw its water, uploaded before (uploadNext; done here if it was not).
 	 * GL thread; no GL call when it was uploaded before.
 	 */
-	void swap(Loaded loaded)
+	public void swap(Loaded loaded)
 	{
 		if (uploaded != loaded)
 		{
@@ -300,7 +302,7 @@ public class Water
 	/**
 	 * The scene's water data texture when the water is drawn, else 0: the volumetric fog stops at the surface.
 	 */
-	int dataTexture(RuneLightConfig config)
+	public int dataTexture(RuneLightConfig config)
 	{
 		return config.water() && hasData ? texData : 0;
 	}
@@ -316,7 +318,7 @@ public class Water
 	 * @param casterDir      toward the light that casts shadows (the caustics follow it)
 	 * @param depthZeroToOne whether glClipControl maps depth to 0-1 (frame.glsl)
 	 */
-	void drawSurface(RuneLightConfig config, float[] wind, float rain, boolean outdoors, int width, int height,
+	public void drawSurface(RuneLightConfig config, float[] wind, float rain, boolean outdoors, int width, int height,
 		int[] viewport, float[] viewProj, float[] invViewProj, float camX, float camY, float camZ, float focusX,
 		float focusZ, float reach, float[] casterDir, boolean depthZeroToOne, int dataUnit, int noiseUnit, int contactUnit)
 	{
@@ -369,7 +371,7 @@ public class Water
 	 * Bind the surface for the composite, after {@link #drawSurface}, before its half resolution pass
 	 * ({@link #halfRect}).
 	 */
-	void bind(RuneLightConfig config, int surfaceUnit)
+	public void bind(RuneLightConfig config, int surfaceUnit)
 	{
 		if (enabled(config))
 		{
@@ -382,7 +384,7 @@ public class Water
 	/**
 	 * With a composite program in use: set this frame's uniforms on it.
 	 */
-	void setComposite(CompositeUniforms u, RuneLightConfig config)
+	public void setComposite(CompositeUniforms u, RuneLightConfig config)
 	{
 		boolean enabled = enabled(config);
 		glUniform1i(u.enabled, enabled ? 1 : 0);
@@ -406,7 +408,7 @@ public class Water
 	}
 
 	/** Whether the water is drawn this frame: its passes run. */
-	boolean enabled(RuneLightConfig config)
+	public boolean enabled(RuneLightConfig config)
 	{
 		return visible && config.water() && hasData && surface.texture() != 0 && surface.mesh() != null;
 	}
@@ -416,7 +418,7 @@ public class Water
 	 * surface's rect, which the pass is scissored to: x0, y0 to x1, y1 exclusive into r. Texel x reads pixels from
 	 * x * halfRatio (halfmap.glsl's halfToFull), 2 at full render scale and 1 at 50% and below.
 	 */
-	void halfRect(int[] r, float halfRatio)
+	public void halfRect(int[] r, float halfRatio)
 	{
 		r[0] = (int) Math.floor(rect[0] / halfRatio);
 		r[1] = (int) Math.floor(rect[1] / halfRatio);
@@ -445,7 +447,7 @@ public class Water
 	/**
 	 * After the composite: its two water units, which the surface pass used for the data and the noise.
 	 */
-	static void unbind(int surfaceUnit, int shadedUnit)
+	public static void unbind(int surfaceUnit, int shadedUnit)
 	{
 		glActiveTexture(GL_TEXTURE0 + surfaceUnit);
 		glBindTexture(GL_TEXTURE_2D, 0);
@@ -455,7 +457,7 @@ public class Water
 		glActiveTexture(GL_TEXTURE0);
 	}
 
-	void free()
+	public void free()
 	{
 		surface.free();
 		if (texData != 0)

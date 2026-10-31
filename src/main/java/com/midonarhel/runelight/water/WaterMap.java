@@ -1,4 +1,6 @@
-package com.midonarhel.runelight;
+package com.midonarhel.runelight.water;
+
+import com.midonarhel.runelight.*;
 
 import com.midonarhel.runelight.scene.SurfaceMaterials;
 import com.midonarhel.runelight.scene.WindSway;
@@ -32,17 +34,17 @@ import net.runelite.api.WallObject;
  */
 public final class WaterMap
 {
-	static final int SIZE = Constants.EXTENDED_SCENE_SIZE;
+	public static final int SIZE = Constants.EXTENDED_SCENE_SIZE;
 	// heightRange's bound when the heights aren't known, far past any the game has
 	static final int HEIGHT_UNKNOWN = 1 << 20;
-	static final int CORNERS = SIZE + 1;
+	public static final int CORNERS = SIZE + 1;
 	// pages of the data texture, side by side
 	static final int PAGES = 3;
 	// farthest the shore distance field is kept (tiles); the waves are all within it
 	static final float SHORE_FIELD_REACH = 32f;
 
 	// water types, indices into the palette in water.glsl
-	static final int NONE = 0;
+	public static final int NONE = 0;
 	static final int FRESH = 1;
 	static final int OCEAN = 2;
 	static final int OCEAN_DARK = 3;
@@ -63,9 +65,9 @@ public final class WaterMap
 	public static final int MIN_DEPTH = 56;
 
 	// per tile: final water type, render level of the water tile (-1 none), the game's water texture, the bed color
-	final byte[] type = new byte[SIZE * SIZE];
+	public final byte[] type = new byte[SIZE * SIZE];
 	final short[] waterTexture = new short[SIZE * SIZE];
-	final byte[] level = new byte[SIZE * SIZE];
+	public final byte[] level = new byte[SIZE * SIZE];
 	// per tile: its water is a plain painted tile (no shaped tile model), whose bed is one quad or a fan (SceneUploader)
 	final boolean[] painted = new boolean[SIZE * SIZE];
 	private final short[] bedHsl = new short[SIZE * SIZE];
@@ -87,7 +89,7 @@ public final class WaterMap
 	// page 1 (distance to shore in tiles, wave energy 0-1, share of the corner's tiles that are water, turbulence 0-1),
 	// page 2 (straight line distance to the nearest land corner in tiles; a free channel, 0; the fall frame x, z)
 	float[] texture;
-	boolean hasWater;
+	public boolean hasWater;
 
 	// Things standing in the water (posts, rocks, hulls): where they cross the surface, on a grid of CONTACT_RES cells
 	// a tile, spread out over CONTACT_REACH cells as a closeness 0-255 (255 where one crosses); null with none. The

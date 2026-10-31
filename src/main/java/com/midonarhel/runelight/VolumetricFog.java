@@ -1,5 +1,7 @@
 package com.midonarhel.runelight;
 
+import com.midonarhel.runelight.water.WaterMap;
+
 import com.midonarhel.runelight.light.LampWalls;
 import com.midonarhel.runelight.shadow.ShadowMap;
 import com.midonarhel.runelight.sky.DayCycle;

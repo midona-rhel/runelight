@@ -1,4 +1,6 @@
-package com.midonarhel.runelight;
+package com.midonarhel.runelight.water;
+
+import com.midonarhel.runelight.*;
 
 import java.util.Arrays;
 

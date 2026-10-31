@@ -24,6 +24,10 @@
  */
 package com.midonarhel.runelight;
 
+import com.midonarhel.runelight.water.Water;
+import com.midonarhel.runelight.water.WaterOverrides;
+import com.midonarhel.runelight.water.WaterSurface;
+
 import com.midonarhel.runelight.frame.InterfaceUpload;
 import com.midonarhel.runelight.frame.SceneTargets;
 import com.midonarhel.runelight.frame.Upscaler;

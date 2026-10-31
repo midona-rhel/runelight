@@ -24,6 +24,9 @@
  */
 package com.midonarhel.runelight.scene;
 
+import com.midonarhel.runelight.water.WaterMap;
+import com.midonarhel.runelight.water.WaterOverrides;
+
 import com.midonarhel.runelight.*;
 
 import com.midonarhel.runelight.sky.EnvironmentManager;

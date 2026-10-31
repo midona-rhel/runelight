@@ -1,4 +1,6 @@
-package com.midonarhel.runelight;
+package com.midonarhel.runelight.water;
+
+import com.midonarhel.runelight.*;
 
 import java.nio.ByteBuffer;
 import java.nio.ShortBuffer;
@@ -25,9 +27,9 @@ import static org.lwjgl.opengl.GL33C.*;
  * too it lay at the water's level over anything standing on land lower than that (a skirt of water around pools set
  * into sloping ground).
  */
-class WaterSurface
+public class WaterSurface
 {
-	static final Shader PROGRAM = new Shader()
+	public static final Shader PROGRAM = new Shader()
 		.add(GL_VERTEX_SHADER, "water_vert.glsl")
 		.add(GL_FRAGMENT_SHADER, "water_frag.glsl");
 

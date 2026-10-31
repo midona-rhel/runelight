@@ -13,7 +13,7 @@ Two things are taken over as 117 HD has them:
 
 Usage (from a 117HD/RLHD checkout):
   tools/import_117hd_water.py <RLHD>/src/main/resources/rs117/hd/scene \
-      src/main/resources/com/midonarhel/runelight/water_overrides.json
+      src/main/resources/com/midonarhel/runelight/water/water_overrides.json
 
 117 HD is BSD 2-Clause licensed; its notice is reproduced in LICENSE.
 """

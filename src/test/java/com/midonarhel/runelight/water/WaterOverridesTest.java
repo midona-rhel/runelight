@@ -1,4 +1,6 @@
-package com.midonarhel.runelight;
+package com.midonarhel.runelight.water;
+
+import com.midonarhel.runelight.*;
 
 import com.google.gson.Gson;
 import static org.junit.Assert.assertEquals;

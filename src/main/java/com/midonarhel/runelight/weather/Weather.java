@@ -1,5 +1,7 @@
 package com.midonarhel.runelight.weather;
 
+import com.midonarhel.runelight.water.Water;
+
 import com.midonarhel.runelight.scene.Zone;
 
 import com.midonarhel.runelight.shadow.ShadowMap;

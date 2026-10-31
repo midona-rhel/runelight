@@ -1,5 +1,7 @@
 package com.midonarhel.runelight;
 
+import com.midonarhel.runelight.water.WaterMap;
+
 import com.midonarhel.runelight.scene.Zone;
 
 import java.util.concurrent.ExecutionException;
