@@ -2,7 +2,6 @@ package com.midonarhel.lumina.water;
 
 import com.midonarhel.lumina.*;
 
-import com.midonarhel.lumina.scene.SceneUploader;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
@@ -217,27 +216,17 @@ public class WaterMapTest
 	}
 
 	@Test
-	public void bedTakesTheBankColors()
-	{
-		int grass = 15 << 10 | 4 << 7 | 30, sand = 8 << 10 | 2 << 7 | 50;
-		assertEquals(-1, SceneUploader.mixHsl(new int[]{-1, -1, -1, -1}, 4));
-		assertEquals(grass, SceneUploader.mixHsl(new int[]{grass, -1, grass, -1}, 4));
-		int m = SceneUploader.mixHsl(new int[]{grass, sand, -1, -1}, 4);
-		assertEquals(12, m >> 10 & 63);
-		assertEquals(3, m >> 7 & 7);
-		assertEquals(40, m & 127);
-	}
-
-	@Test
 	public void typeByTexture()
 	{
 		// 117 HD's rule, tile by tile: the swamp texture gives swamp water, the plain ones fresh
 		assertEquals(WaterMap.FRESH, lake(1).type[90 * N + 90]);
 		assertEquals(WaterMap.SWAMP, lake(25).type[90 * N + 90]);
 		// the bed is mud in a swamp, sand otherwise
-		int sand = lake(1).bedColor(85, 85, 0);
-		int mud = lake(25).bedColor(85, 85, 0);
+		int sand = lake(1).bedColor(90, 90, 90, 90, 0);
+		int mud = lake(25).bedColor(90, 90, 90, 90, 0);
 		assertTrue((sand & 127) > (mud & 127));
+		// the tile's own colour at every corner, whatever the tiles around it are
+		assertEquals(mud & ~127, lake(25).bedColor(90, 90, 91, 91, 0) & ~127);
 	}
 
 	@Test

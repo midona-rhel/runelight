@@ -85,7 +85,6 @@ public class SceneUploader
 	// faces of the last static model left out as the game's ripples (117 HD's, WaterOverrides); Zone.addAlphaModel has
 	// to skip them as well
 	private final boolean[] rippleFace = new boolean[ModelUploader.MAX_FACE_COUNT];
-	private final GroundBlender groundBlender = new GroundBlender();
 	private final float[] slope = new float[2];
 	private final float[] tileSlopes = new float[8];
 	// the corner slopes of the surface as drawn, the water bed sunk in (tileSlopes: as vanilla lit it)
@@ -156,8 +155,6 @@ public class SceneUploader
 			}
 		}
 
-		// the land colours at the ground vertices, which the water bed takes at its banks (shoreColor)
-		groundBlender.build(scene, mzx, mzz);
 
 		zone.rids = new int[4][roofIds.size()];
 		zone.roofStart = new int[4][roofIds.size()];
@@ -648,21 +645,21 @@ public class SceneUploader
 
 		if (water != null && scene.getWorldViewId() == WorldView.TOPLEVEL && water.isBed(tileX, tileY, tileZ, tile.getTexture()))
 		{
-			return uploadBed(tileZ, tileX, tileY, vertexBuffer, lx, lz, tileHeights[tileZ]);
+			return uploadBed(tileZ, tileX, tileY, vertexBuffer, lx, lz);
 		}
 
 		// each tile in its own corner colours, never blended with its neighbours', with vanilla's baked light undone
 		// as 117 HD undoes it, unless the tile is textured or an overlay 117 HD leaves raw
-		if (tile.getTexture() == -1 && !groundBlender.unblended(tileZ, tileX, tileY))
+		if (tile.getTexture() == -1 && !GroundColors.unblended(scene, tileZ, tileX, tileY))
 		{
 			int[][] h = tileHeights[tileZ];
-			GroundBlender.cornerSlope(h, tileX, tileY, slope);
+			GroundColors.cornerSlope(h, tileX, tileY, slope);
 			swColor = groundColor(swColor);
-			GroundBlender.cornerSlope(h, tileX + 1, tileY, slope);
+			GroundColors.cornerSlope(h, tileX + 1, tileY, slope);
 			seColor = groundColor(seColor);
-			GroundBlender.cornerSlope(h, tileX + 1, tileY + 1, slope);
+			GroundColors.cornerSlope(h, tileX + 1, tileY + 1, slope);
 			neColor = groundColor(neColor);
-			GroundBlender.cornerSlope(h, tileX, tileY + 1, slope);
+			GroundColors.cornerSlope(h, tileX, tileY + 1, slope);
 			nwColor = groundColor(nwColor);
 		}
 
@@ -748,7 +745,7 @@ public class SceneUploader
 
 	/**
 	 * A tile's own colour at a ground vertex with vanilla's baked terrain lighting undone, 117 HD's rule with its
-	 * constants (GroundBlender.undoShading), for the slope in {@link #slope}; hidden and missing colours as they are.
+	 * constants (GroundColors.undoShading), for the slope in {@link #slope}; hidden and missing colours as they are.
 	 */
 	private int groundColor(int own)
 	{
@@ -756,7 +753,7 @@ public class SceneUploader
 		{
 			return own;
 		}
-		return GroundBlender.undoShading(own, slope[0], slope[1]);
+		return GroundColors.undoShading(own, slope[0], slope[1]);
 	}
 
 	private int upload(Scene scene, SceneTileModel sceneTileModel, int tileZ, int tileX, int tileY, GpuIntBuffer vertexBuffer)
@@ -784,11 +781,11 @@ public class SceneUploader
 
 		// Smooth normals like plain tiles have, so a shaped tile (path edge, shore) shades the same as its neighbors
 		// instead of showing its triangles. Its heights are bilinear in the tile's corner heights.
-		GroundBlender.tileSlopes(scene.getTileHeights()[tileZ], ex, ey, slope, tileSlopes);
-		GroundBlender.tileSlopes(surfaceHeights(scene, tileZ), ex, ey, slope, surfaceSlopes);
+		GroundColors.tileSlopes(scene.getTileHeights()[tileZ], ex, ey, slope, tileSlopes);
+		GroundColors.tileSlopes(surfaceHeights(scene, tileZ), ex, ey, slope, surfaceSlopes);
 		// 117 HD: on shaped tiles with any texture (shores) the overlay faces keep the game's colours, as do the
 		// overlays it leaves raw
-		final boolean undoOverlay = triangleTextures == null && !groundBlender.unblended(tileZ, ex, ey);
+		final boolean undoOverlay = triangleTextures == null && !GroundColors.unblended(scene, tileZ, ex, ey);
 		final int shape = sceneTileModel.getShape();
 		// shore tiles: the water faces are lowered into the bed, the land faces and their vertices stay
 		final boolean bedTile = triangleTextures != null && water != null && scene.getWorldViewId() == WorldView.TOPLEVEL
@@ -796,7 +793,6 @@ public class SceneUploader
 		if (bedTile)
 		{
 			markLandVertices(sceneTileModel);
-			bedTileHeights = scene.getTileHeights()[tileZ];
 		}
 
 		int cnt = 0;
@@ -857,7 +853,7 @@ public class SceneUploader
 
 			// the tile's own colours, undone as 117 HD undoes them, except textured faces and the overlay faces
 			// 117 HD leaves raw
-			if (tex == 0 && (!GroundBlender.isOverlayFace(shape, i) || undoOverlay))
+			if (tex == 0 && (!GroundColors.isOverlayFace(shape, i) || undoOverlay))
 			{
 				hsl2 = groundColor(hsl2);
 				slope[0] = s1x;
@@ -890,18 +886,17 @@ public class SceneUploader
 	/**
 	 * A water tile as the bed under the water: lowered, no texture, bed colored, flagged for the composite.
 	 */
-	private int uploadBed(int tileZ, int tileX, int tileY, GpuIntBuffer vb, int lx, int lz, int[][] heights)
+	private int uploadBed(int tileZ, int tileX, int tileY, GpuIntBuffer vb, int lx, int lz)
 	{
 		final int[][] bed = water.bedHeights(tileZ);
 		final int x0 = tileX << 7, z0 = tileY << 7;
 		final int tex = WaterMap.BED_FLAG;
-		// The bed's color at each corner: the bank's where the corner is on it, grading into the bed's own over the
-		// next two corners out (bedCornerColor). Per corner, never a whole tile: tiles in the bank's color showed under
-		// the water as dark squares, and sand right up to a dark bank as a bright band along the shore.
-		final int c0 = bedCornerColor(tileX, tileY, heights);
-		final int c1 = bedCornerColor(tileX + 1, tileY, heights);
-		final int c2 = bedCornerColor(tileX + 1, tileY + 1, heights);
-		final int c3 = bedCornerColor(tileX, tileY + 1, heights);
+		// the bed's colour at each corner: the tile's own, never its neighbours' or the bank's (no blending between
+		// tiles)
+		final int c0 = bedCornerColor(tileX, tileY, tileX, tileY);
+		final int c1 = bedCornerColor(tileX, tileY, tileX + 1, tileY);
+		final int c2 = bedCornerColor(tileX, tileY, tileX + 1, tileY + 1);
+		final int c3 = bedCornerColor(tileX, tileY, tileX, tileY + 1);
 		final int n0 = terrainNormal(bed, tileX, tileY);
 		final int n1 = terrainNormal(bed, tileX + 1, tileY);
 		final int n2 = terrainNormal(bed, tileX + 1, tileY + 1);
@@ -917,8 +912,8 @@ public class SceneUploader
 			final int hc = (h0 + h1 + h2 + h3 + 2 >> 2) - (water.bedOffset(tileX, tileY) + water.bedOffset(tileX + 1, tileY)
 				+ water.bedOffset(tileX + 1, tileY + 1) + water.bedOffset(tileX, tileY + 1) + 2 >> 2) + water.centerOffset(tileX, tileY);
 			final int cc = lerpHsl(lerpHsl(c0, c1, 0.5f), lerpHsl(c3, c2, 0.5f), 0.5f);
-			GroundBlender.tileSlopes(bed, tileX, tileY, slope, surfaceSlopes);
-			GroundBlender.interpolateSlope(surfaceSlopes, 0.5f, 0.5f, slope);
+			GroundColors.tileSlopes(bed, tileX, tileY, slope, surfaceSlopes);
+			GroundColors.interpolateSlope(surfaceSlopes, 0.5f, 0.5f, slope);
 			final int nc = VertexShading.encodeNormal(slope[0], -1, slope[1]);
 			final int h = s >> 1;
 			// counterclockwise around the middle: sw, se, ne, nw, with the sunk sides' middles between
@@ -936,7 +931,7 @@ public class SceneUploader
 					final int mh = (ch[a] + ch[b] + 1 >> 1) - (water.bedOffset(tileX + WaterMap.SIDE_X0[k], tileY + WaterMap.SIDE_Y0[k])
 						+ water.bedOffset(tileX + WaterMap.SIDE_X1[k], tileY + WaterMap.SIDE_Y1[k]) + 1 >> 1) + side;
 					final int mc = lerpHsl(cl[a], cl[b], 0.5f);
-					GroundBlender.interpolateSlope(surfaceSlopes, (mx - lx) / (float) s, (mz - lz) / (float) s, slope);
+					GroundColors.interpolateSlope(surfaceSlopes, (mx - lx) / (float) s, (mz - lz) / (float) s, slope);
 					final int mn = VertexShading.encodeNormal(slope[0], -1, slope[1]);
 					bedFan(vb, lx + h, hc, lz + h, cc, nc, px, py, pz, pc, pn, mx, mh, mz, mc, mn, tex);
 					px = mx;
@@ -974,52 +969,12 @@ public class SceneUploader
 		return 6;
 	}
 
-	// how much of the nearby bank's color a bed corner keeps, by its distance in corners from the nearest bank corner
-	private static final float[] BANK_SHARE = {1f, 0.7f, 0.35f};
-	private static final int BANK_REACH = BANK_SHARE.length - 1;
-
 	/**
-	 * The bed's color at corner (cx, cy), extended coordinates: the bank's where the
-	 * corner is on it, else the bed's own blended toward the color of the bank corners within BANK_REACH corners
-	 * (the nearer the more, darkened with depth as the bed's own is), the more the nearer the closest of them is.
+	 * The bed's colour at corner (cx, cy) of water tile (tx, ty): the tile's own (WaterMap.bedColor).
 	 */
-	private int bedCornerColor(int cx, int cy, int[][] heights)
+	private int bedCornerColor(int tx, int ty, int cx, int cy)
 	{
-		int own = water.bedColor(cx, cy, water.depthLevel(cx, cy));
-		int hue = 0, sat = 0, light = 0, count = 0, nearest = BANK_REACH + 1;
-		int maxX = heights.length - 1, maxY = heights[0].length - 1;
-		for (int dy = -BANK_REACH; dy <= BANK_REACH; ++dy)
-		{
-			for (int dx = -BANK_REACH; dx <= BANK_REACH; ++dx)
-			{
-				int x = cx + dx, y = cy + dy;
-				if (x < 0 || y < 0 || x > maxX || y > maxY)
-				{
-					continue;
-				}
-				int c = shoreColor(x << 7, heights[x][y], y << 7);
-				if (c < 0)
-				{
-					continue;
-				}
-				int d = Math.max(Math.abs(dx), Math.abs(dy));
-				if (d == 0)
-				{
-					return c;
-				}
-				nearest = Math.min(nearest, d);
-				hue += c >> 10 & 63;
-				sat += c >> 7 & 7;
-				light += c & 127;
-				++count;
-			}
-		}
-		if (count == 0)
-		{
-			return own;
-		}
-		int bank = (hue + count / 2) / count << 10 | (sat + count / 2) / count << 7 | (light + count / 2) / count;
-		return lerpHsl(own, bank, BANK_SHARE[nearest]);
+		return water.bedColor(tx, ty, cx, cy, water.depthLevel(cx, cy));
 	}
 
 	/**
@@ -1041,52 +996,6 @@ public class SceneUploader
 		int s = Math.round((a >> 7 & 7) + ((b >> 7 & 7) - (a >> 7 & 7)) * t);
 		int l = Math.round((a & 127) + ((b & 127) - (a & 127)) * t);
 		return h << 10 | s << 7 | l;
-	}
-
-	// the unlowered heights of the level of the shore tile model being uploaded
-	private int[][] bedTileHeights;
-
-	/**
-	 * The land's (blended) color at the ground vertex at extended local position (x, height, z), or -1 where no
-	 * land touches it. Whether or not the land itself is blended: without it the bed took its own sandy color right
-	 * up to the waterline, a pale band all along the shore.
-	 */
-	private int shoreColor(int x, int height, int z)
-	{
-		int v = groundBlender.lookup(x, height, z);
-		if (v == -1 || (v & GroundBlender.BLENDED) == 0)
-		{
-			return -1;
-		}
-		// Near-black ground colors (wall bases, black tiles, ground hidden under objects) carried onto the bed
-		// showed under the water as dark squares, the refraction wobbling their edges: the bed keeps its own there.
-		// Only those: dark mud banks are a real color, and leaving them out left the bed lighter than its bank.
-		return (v & 127) < MIN_SHORE_LIGHTNESS ? -1 : v & 0xffff;
-	}
-
-	private static final int MIN_SHORE_LIGHTNESS = 3;
-
-	/**
-	 * The mean of the first n packed HSL colors that aren't -1, or -1 if all are.
-	 */
-	public static int mixHsl(int[] c, int n)
-	{
-		int h = 0, sat = 0, l = 0, count = 0;
-		for (int i = 0; i < n; ++i)
-		{
-			if (c[i] >= 0)
-			{
-				h += c[i] >> 10 & 63;
-				sat += c[i] >> 7 & 7;
-				l += c[i] & 127;
-				++count;
-			}
-		}
-		if (count == 0)
-		{
-			return -1;
-		}
-		return (h + count / 2) / count << 10 | (sat + count / 2) / count << 7 | (l + count / 2) / count;
 	}
 
 	private static void bedFan(GpuIntBuffer vb, int xc, int yc, int zc, int cc, int nc,
@@ -1136,21 +1045,15 @@ public class SceneUploader
 			// inside the tile a vertex can go deeper than its corners without opening a crack to the next tile
 			: edge ? water.bedOffset(ex, ey, ox, oz) : Math.max(water.bedOffset(ex, ey, ox, oz), WaterMap.MIN_DEPTH);
 		int depth = corner ? water.depthLevel(cx, cy) : water.depthLevel(ex + Math.round(ox / 128f), ey + Math.round(oz / 128f));
-		GroundBlender.interpolateSlope(surfaceSlopes, ox / 128f, oz / 128f, slope);
-		// the land's color where the vertex stays on the bank (land touches it, nothing sinks it), else the tile's
-		// corner colors blended across it (see uploadBed)
-		int off = LuminaPlugin.SCENE_OFFSET << 7;
+		GroundColors.interpolateSlope(surfaceSlopes, ox / 128f, oz / 128f, slope);
+		// the tile's own land colour where the vertex stays on the bank (a land face of this tile shares it, nothing
+		// sinks it), else the tile's bed corner colours across it (see uploadBed)
 		int color = sink == 0 ? landColor[v] : -1;
-		if (sink == 0 && color < 0)
-		{
-			color = shoreColor(x + off, y, z + off);
-		}
 		if (color < 0)
 		{
 			float fx = Math.min(Math.max(ox / 128f, 0), 1), fz = Math.min(Math.max(oz / 128f, 0), 1);
-			int[][] h = bedTileHeights;
-			color = lerpHsl(lerpHsl(bedCornerColor(ex, ey, h), bedCornerColor(ex + 1, ey, h), fx),
-				lerpHsl(bedCornerColor(ex, ey + 1, h), bedCornerColor(ex + 1, ey + 1, h), fx), fz);
+			color = lerpHsl(lerpHsl(bedCornerColor(ex, ey, ex, ey), bedCornerColor(ex, ey, ex + 1, ey), fx),
+				lerpHsl(bedCornerColor(ex, ey, ex, ey + 1), bedCornerColor(ex, ey, ex + 1, ey + 1), fx), fz);
 		}
 		vb.put22224(x - basex, y + sink, z - basez, 0, color);
 		vb.put2222(WaterMap.BED_FLAG, 0, 0, VertexShading.encodeNormal(slope[0], -1, slope[1]));
@@ -1162,9 +1065,9 @@ public class SceneUploader
 	 */
 	private int modelNormal(int x, int z)
 	{
-		GroundBlender.interpolateSlope(surfaceSlopes, x / 128f, z / 128f, slope);
+		GroundColors.interpolateSlope(surfaceSlopes, x / 128f, z / 128f, slope);
 		int n = VertexShading.encodeNormal(slope[0], -1, slope[1]);
-		GroundBlender.interpolateSlope(tileSlopes, x / 128f, z / 128f, slope);
+		GroundColors.interpolateSlope(tileSlopes, x / 128f, z / 128f, slope);
 		return n;
 	}
 

@@ -26,7 +26,7 @@ import com.midonarhel.lumina.scene.AreaHiding;
 import com.midonarhel.lumina.scene.EdgeFade;
 import com.midonarhel.lumina.scene.GLBuffer;
 import com.midonarhel.lumina.scene.GpuFloatBuffer;
-import com.midonarhel.lumina.scene.GroundBlender;
+import com.midonarhel.lumina.scene.GroundColors;
 import com.midonarhel.lumina.scene.Interactables;
 import com.midonarhel.lumina.scene.ModelUploader;
 import com.midonarhel.lumina.scene.RegionManager;

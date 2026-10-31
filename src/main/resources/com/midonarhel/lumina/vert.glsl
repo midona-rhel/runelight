@@ -40,7 +40,7 @@
 #define FOG_CORNER_ROUNDING 1.5
 #define FOG_CORNER_ROUNDING_SQUARED (FOG_CORNER_ROUNDING * FOG_CORNER_ROUNDING)
 
-layout(location = 0) in vec4 vertf; // w: -1 on ground vertices between overlay and underlay (GroundBlender), wind code on swaying models
+layout(location = 0) in vec4 vertf; // w: the wind code on swaying models, 0 or 1 otherwise
 layout(location = 1) in int abhsl;
 layout(location = 2) in ivec4 tex;
 
