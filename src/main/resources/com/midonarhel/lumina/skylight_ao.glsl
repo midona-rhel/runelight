@@ -8,7 +8,7 @@
 
 uniform int skylightOn;
 // RGBA16F: four horizontal parts, two per triangle half (up/+x/-x/+z, then -z).
-// Slice 0: floor heights/diagonals, floor flags, room floor heights, protected room bits.
+// Slice 0: floor heights/diagonals, floor flags, room floor heights, each plane's roof share at the corner.
 // The final slice samples above captured geometry. Visibility slices store sample x/y/z in the -z part's g/b/a.
 uniform sampler3D skyGrid;
 uniform float skyGridScale;
@@ -159,16 +159,19 @@ float skyGridVisibility(sampler3D grid, float scale, vec3 w, vec3 n) {
   // The extra sample is above captured geometry. Enclosed/roofed tiles on this storey
   // retain the original reconstruction, including when their roof is hidden by the renderer.
   vec4 roomFloors = textureLod(grid, vec3(uv + vec2(0.5, 0.0), 0.5 / SKY_GRID_D), 0.0);
-  int roomMask = int(textureLod(grid, vec3(uv + vec2(0.75, 0.0), 0.5 / SKY_GRID_D), 0.0).r + 0.5);
+  // each plane's share of roof flags at the tile's corners, blended over the tile like the values and shared across
+  // open edges (SkyGrid.roofShares): the map flags whole tiles, in a staircase along a diagonal roof
+  vec4 roofed = textureLod(grid, vec3(uv + vec2(0.75, 0.0), 0.5 / SKY_GRID_D), 0.0);
   int roomPlane = 0;
   // Upward-facing roof/floor surfaces belong to the storey at their height; the one-unit
   // normal offset already selects the exposed side. Do not move a roof lip into the room below.
   for (int k = 1; k < 4; ++k) if (w.y <= roomFloors[k]) roomPlane = k;
-  float exterior = (roomMask & (1 << roomPlane)) == 0 ? 1.0 : 0.0;
+  float exterior = 1.0 - roofed[roomPlane];
   if (exterior < 1.0 && n.y < -0.3) {
     // the highest surface over the tile, blended between its corners like the values (slice 0, part 1, g)
     float top = textureLod(grid, vec3(uv + vec2(0.25, 0.0), 0.5 / SKY_GRID_D), 0.0).g;
-    exterior = (1.0 - smoothstep(top + SKY_TOP_SLACK, top + SKY_TOP_SLACK + SKY_TOP_FADE, w.y)) * smoothstep(0.3, 0.7, -n.y);
+    exterior = mix(exterior, 1.0, (1.0 - smoothstep(top + SKY_TOP_SLACK, top + SKY_TOP_SLACK + SKY_TOP_FADE, w.y))
+      * smoothstep(0.3, 0.7, -n.y));
   }
   float lower = skyGridLevel(grid, scale, tile, f, lo, loDiagonal, n, w);
   float original;
@@ -270,11 +273,10 @@ float skylightVisibility(vec3 p, vec3 n) {
   // it keeps its full range.
   // The field's cover is the map's under-roof flags, which a roof itself is flagged with too: a face the grid finds
   // out of doors (a roof top, a terrace) is not under cover, whatever the flags say.
+  // Cover blends the two linearly: where it is partial (the corners an open roof edge shares) the value lies between
+  // the outdoor one and the covered one, never below both.
   float cover = skyFieldOn == 1 ? field.g * (1.0 - skyExterior) : 0.0;
-  float outdoors = 1.0 - cover;
-  v = mix(v, 1.0 - (1.0 - v) * SKY_OUTDOOR_STRENGTH, outdoors);
-  if (skyFieldOn == 1) {
-    v = mix(v, max(v, field.r), cover);
-  }
-  return v;
+  float outside = 1.0 - (1.0 - v) * SKY_OUTDOOR_STRENGTH;
+  float inside = skyFieldOn == 1 ? max(v, field.r) : v;
+  return mix(outside, inside, cover);
 }

@@ -32,7 +32,9 @@ import java.nio.ShortBuffer;
  *
  * The 3D RGBA16F texture has four horizontal parts: half 0's up/+x/-x/+z and -z, then the same for half 1.
  * Each tile is a 2x2 block of actual corners. Slice 0 stores three floor heights and packed diagonal kinds in
- * part 0, actual floor flags in part 1, room floor heights in part 2 and protected room bits in part 3.
+ * part 0, actual floor flags in part 1, room floor heights in part 2 and, in part 3, each plane's roof share at the
+ * corner (roofShares: shared across open edges like the values, so the shader's indoor/outdoor switch blends over a
+ * tile instead of flipping at its edge).
  * Part 1 also keeps, in g, the world y of the highest surface at each corner (topAt), which tells a roof top from
  * what stands under the roof.
  * Slice 1 + floor * HEIGHTS.length + height stores visibility; the final slice stores exterior visibility.
@@ -136,6 +138,7 @@ public final class SkyGrid
 			.order(ByteOrder.nativeOrder()).asShortBuffer();
 		ground = new float[FLOORS * corners * corners];
 		floors = new byte[size * size];
+		roofs = new byte[size * size];
 		active = new boolean[LEVELS * corners * corners];
 		dirty = new boolean[active.length];
 	}
@@ -151,6 +154,8 @@ public final class SkyGrid
 	private final float[] ground;
 	// Actual scene floors per tile (z * size + x), one bit per plane; the ground floor always
 	private final byte[] floors;
+	// per tile (z * size + x), a bit per plane under a roof by the map's flags (RoomMap.roofed); all where unknown
+	private final byte[] roofs;
 	// units to trace, [(level * corners + z) * corners + x]
 	public final boolean[] active;
 	int nearbyUnits, supportUnits;
@@ -169,6 +174,8 @@ public final class SkyGrid
 	private final int[] group = new int[8];
 	private final int[] members = new int[8];
 	private final int[] bits = new int[4];
+	private final float[] shares = new float[4 * RoomMap.PLANES], shareSum = new float[8];
+	private final int[] shareCount = new int[8];
 
 	public int baseX()
 	{
@@ -490,17 +497,93 @@ public final class SkyGrid
 						if (rooms.roofed[i]) mask |= 1 << f;
 					}
 				}
+				roofs[z * size + x] = (byte) mask;
 				for (int dz = 0; dz < 2; ++dz)
 					for (int dx = 0; dx < 2; ++dx)
 					{
 						int a = texel(2 * x + dx + 4 * size, 2 * z + dz, 0);
 						for (int f = 0; f < RoomMap.PLANES; ++f)
 							texels.put(a + f, Half.toHalf(known ? rooms.floors[rooms.index(f, rx, rz)] : 0));
-						texels.put(texel(2 * x + dx + 6 * size, 2 * z + dz, 0), Half.toHalf(mask));
 					}
 			}
+		for (int cz = 0; cz < corners; ++cz)
+			for (int cx = 0; cx < corners; ++cx)
+				roofShares(cx, cz);
 		selectNearbySamples();
 		change(0, 0, size - 1, size - 1, 0, 0);
+	}
+
+	/**
+	 * Each plane's roof share at a corner, into every touching tile's copy of it (slice 0, part 3, a channel per
+	 * plane): the mean of the roof flags of the quadrants that reach each other without crossing a wall, as the values
+	 * are shared. The map flags whole tiles, and along a diagonal roof it flags them in a staircase, every other tile
+	 * of the open ground under the eaves (Ardougne market, 2026-10-31); read per tile, the shader's indoor/outdoor
+	 * switch flipped at each of their edges, a checkerboard. Shared, it blends over the tiles there and stays sharp
+	 * at walls.
+	 */
+	private void roofShares(int cx, int cz)
+	{
+		java.util.Arrays.fill(shares, 0);
+		for (int f = 0; f < RoomMap.PLANES; ++f)
+		{
+			int present = groupCorner(cx, cz, f);
+			java.util.Arrays.fill(shareSum, 0);
+			java.util.Arrays.fill(shareCount, 0);
+			for (int node = 0; node < 8; ++node)
+			{
+				if (group[node] < 0) continue;
+				int q = node / 2, root = find(node);
+				shareSum[root] += roofs[(cz + QZ[q]) * size + cx + QX[q]] >> f & 1;
+				shareCount[root]++;
+			}
+			for (int q = 0; q < 4; ++q)
+			{
+				if ((present & (1 << q)) == 0) continue;
+				float sum = 0;
+				int n = 0;
+				for (int h = 0; h < 2; ++h)
+				{
+					if (group[2 * q + h] < 0) continue;
+					int root = find(2 * q + h);
+					sum += shareSum[root] / shareCount[root];
+					n++;
+				}
+				shares[q * RoomMap.PLANES + f] = sum / n;
+			}
+		}
+		for (int q = 0; q < 4; ++q)
+		{
+			int tx = cx + QX[q], tz = cz + QZ[q];
+			if (tx < 0 || tz < 0 || tx >= size || tz >= size) continue;
+			int t = texel(2 * tx + (QX[q] < 0 ? 1 : 0) + 6 * size, 2 * tz + (QZ[q] < 0 ? 1 : 0), 0);
+			for (int f = 0; f < RoomMap.PLANES; ++f) texels.put(t + f, Half.toHalf(shares[q * RoomMap.PLANES + f]));
+		}
+	}
+
+	/**
+	 * Group the quadrants around a corner on a floor (their tiles' halves that touch it, nodes 2 * quadrant + half)
+	 * that reach each other without crossing a wall: fills bits and group. Returns the quadrants inside the grid.
+	 */
+	private int groupCorner(int cx, int cz, int f)
+	{
+		java.util.Arrays.fill(group, -1);
+		int present = 0;
+		for (int q = 0; q < 4; ++q)
+		{
+			int tx = cx + QX[q], tz = cz + QZ[q];
+			if (tx < 0 || tz < 0 || tx >= size || tz >= size) continue;
+			present |= 1 << q;
+			bits[q] = wallBits(f, tx, tz);
+			int hx = WallMap.half(bits[q], QX[q] < 0 ? WallMap.EAST : WallMap.WEST);
+			int hz = WallMap.half(bits[q], QZ[q] < 0 ? WallMap.NORTH : WallMap.SOUTH);
+			group[2 * q + hx] = 2 * q + hx;
+			group[2 * q + hz] = 2 * q + hz;
+		}
+		join(present, bits, 0, 1, WallMap.EAST, WallMap.WEST, cx - 1, cz - 1, f);
+		join(present, bits, 2, 3, WallMap.EAST, WallMap.WEST, cx - 1, cz, f);
+		join(present, bits, 0, 2, WallMap.NORTH, WallMap.SOUTH, cx - 1, cz - 1, f);
+		join(present, bits, 1, 3, WallMap.NORTH, WallMap.SOUTH, cx, cz - 1, f);
+		return present;
 	}
 
 	/** Select geometry-adjacent samples at either grid resolution. */
@@ -819,35 +902,24 @@ public final class SkyGrid
 		int f = surface ? FLOORS - 1 : level / HEIGHTS.length;
 		float height = surface ? HEIGHTS[HEIGHTS.length - 1] : HEIGHTS[level % HEIGHTS.length];
 		float y = surface ? surfaceY(cx, cz) : ground(f, cx, cz) - height;
-		java.util.Arrays.fill(group, -1);
-		int present = 0;
-		for (int q = 0; q < 4; ++q)
-		{
-			int tx = cx + QX[q], tz = cz + QZ[q];
-			if (tx < 0 || tz < 0 || tx >= size || tz >= size) continue;
-			present |= 1 << q;
-			bits[q] = surface ? 0 : wallBits(f, tx, tz);
-			int hx = WallMap.half(bits[q], QX[q] < 0 ? WallMap.EAST : WallMap.WEST);
-			int hz = WallMap.half(bits[q], QZ[q] < 0 ? WallMap.NORTH : WallMap.SOUTH);
-			group[2 * q + hx] = 2 * q + hx;
-			group[2 * q + hz] = 2 * q + hz;
-			for (int h = 0; h < 2; ++h)
-				if (group[2 * q + h] >= 0) startPoint(2 * q + h, cx, cz, bits[q], y, height, false);
-		}
-		int off = 0;
+		int present = surface ? 0 : groupCorner(cx, cz, f);
 		if (surface)
 		{
+			java.util.Arrays.fill(group, -1);
+			for (int q = 0; q < 4; ++q)
+			{
+				int tx = cx + QX[q], tz = cz + QZ[q];
+				if (tx < 0 || tz < 0 || tx >= size || tz >= size) continue;
+				present |= 1 << q;
+				bits[q] = 0;
+			}
 			int root = Integer.numberOfTrailingZeros(present) * 2;
 			for (int q = 0; q < 4; ++q)
 				if ((present & (1 << q)) != 0) group[q * 2] = root;
 		}
-		else
-		{
-			join(present, bits, 0, 1, WallMap.EAST, WallMap.WEST, cx - 1 + off, cz - 1 + off, f);
-			join(present, bits, 2, 3, WallMap.EAST, WallMap.WEST, cx - 1 + off, cz + off, f);
-			join(present, bits, 0, 2, WallMap.NORTH, WallMap.SOUTH, cx - 1 + off, cz - 1 + off, f);
-			join(present, bits, 1, 3, WallMap.NORTH, WallMap.SOUTH, cx + off, cz - 1 + off, f);
-		}
+		for (int q = 0; q < 4; ++q)
+			for (int h = 0; h < 2; ++h)
+				if ((present & (1 << q)) != 0 && group[2 * q + h] >= 0) startPoint(2 * q + h, cx, cz, bits[q], y, height, false);
 
 		int unit = (level * corners + cz) * corners + cx;
 		int rot = rotation(unit);
@@ -864,8 +936,7 @@ public final class SkyGrid
 			for (int k = 0; followTerrain && k < m; ++k)
 			{
 				int q = members[k] / 2, tx = cx + QX[q], tz = cz + QZ[q];
-				int mask = (int) Half.fromHalf(texels.get(texel(2 * tx + 6 * size, 2 * tz, 0)));
-				if ((mask & 1) != 0) followTerrain = false;
+				if ((roofs[tz * size + tx] & 1) != 0) followTerrain = false;
 			}
 			if (followTerrain)
 				for (int k = 0; k < m; ++k)
