@@ -41,7 +41,6 @@ flat in int fTextureId;
 in vec2 fUv;
 in vec3 fWorldPos;
 in vec3 fNormal;
-in float fNormalValid;
 in vec4 fBorderColor;
 in vec3 fInnerColor;
 in vec4 fClip;
@@ -167,16 +166,14 @@ void main() {
   // opaque surfaces are lit and fogged later by the composite pass
   FragColor = c;
 
-  // The triangle's own normal from screen-space derivatives, facing the camera. Used for faces the game marks
-  // as flat shaded, and as the reference that orients the smooth vertex normal.
+  // The triangle's own normal from screen-space derivatives, facing the camera: the normal where the vertices
+  // carry none (0, see VertexShading.java), as 117 HD's legacy geometry shader substitutes the triangle's normal.
+  // A normal that is there is used as uploaded, not turned toward the camera: 117 HD's zone renderer
+  // (scene_frag.glsl, N = normalize(IN.normal)); back faces are culled, so what is drawn faces the camera.
   vec3 faceNormal = normalize(cross(dFdx(fWorldPos), dFdy(fWorldPos)));
   if (dot(faceNormal, vec3(cameraX, cameraY, cameraZ) - fWorldPos) < 0.0)
     faceNormal = -faceNormal;
-  vec3 n = faceNormal;
-  if (fNormalValid > 0.5 && dot(fNormal, fNormal) > 1e-8) {
-    vec3 sn = normalize(fNormal);
-    n = dot(sn, faceNormal) < 0.0 ? -sn : sn;
-  }
+  vec3 n = dot(fNormal, fNormal) > 1e-8 ? normalize(fNormal) : faceNormal;
   FragNormal = vec4(n * 0.5 + 0.5, c.a);
   // alpha 1 marks the sample as covered by geometry (SceneTargets.clear); the opaque pass writes without blending
   FragMaterial = materialPack(fMaterial, faceNormal, fUv * 256.0);
