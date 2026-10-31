@@ -269,6 +269,10 @@ public final class Commands
 			log.info("Armed: {} frames from the end of the next scene load (spanning the swap) are captured as swap-k0..{}",
 				plugin.swapCaptureFrames, plugin.swapCaptureFrames - 1);
 		}
+		else if (args.length >= 1 && args[0].equals("faces"))
+		{
+			faces(args.length >= 2 ? Integer.parseInt(args[1]) : 2);
+		}
 		else if (args.length >= 3 && args[0].equals("set"))
 		{
 			plugin.configManager.setConfiguration(LuminaConfig.GROUP, args[1], args[2]);
@@ -278,5 +282,121 @@ public final class Commands
 		{
 			log.info("Unknown ::runelight command: {}", String.join(" ", args));
 		}
+	}
+
+	/**
+	 * ::runelight faces [radius]: the shading data of the scene objects within radius tiles of the player, as the
+	 * uploaders see it, to ~/.runelite/lumina/captures/faces.txt and the log: per model its faces, how many the game
+	 * marks flat (faceColors3 == -1, lit by their own normal under 117 HD's rule), hidden (-2) and textured, whether it
+	 * has vertex normals (Model.getVertexNormalsX), how many of its vertices have a zero normal, and how many smooth
+	 * faces have all three zero (lit flat too).
+	 */
+	private void faces(int radius)
+	{
+		net.runelite.api.Player player = plugin.client.getLocalPlayer();
+		net.runelite.api.WorldView wv = plugin.client.getTopLevelWorldView();
+		if (player == null || wv == null)
+		{
+			return;
+		}
+		net.runelite.api.coords.LocalPoint lp = player.getLocalLocation();
+		int px = lp.getSceneX(), py = lp.getSceneY(), plane = wv.getPlane();
+		net.runelite.api.Tile[][][] tiles = wv.getScene().getTiles();
+		StringBuilder out = new StringBuilder("player " + player.getWorldLocation() + "\n");
+		for (int x = Math.max(0, px - radius); x <= Math.min(tiles[plane].length - 1, px + radius); ++x)
+		{
+			for (int y = Math.max(0, py - radius); y <= Math.min(tiles[plane][x].length - 1, py + radius); ++y)
+			{
+				net.runelite.api.Tile t = tiles[plane][x][y];
+				if (t == null)
+				{
+					continue;
+				}
+				for (net.runelite.api.GameObject o : t.getGameObjects())
+				{
+					if (o != null && o.getSceneMinLocation().equals(t.getSceneLocation()))
+					{
+						describe(out, "game", o.getId(), o.getRenderable());
+					}
+				}
+				if (t.getGroundObject() != null)
+				{
+					describe(out, "ground", t.getGroundObject().getId(), t.getGroundObject().getRenderable());
+				}
+				if (t.getWallObject() != null)
+				{
+					describe(out, "wall", t.getWallObject().getId(), t.getWallObject().getRenderable1());
+				}
+				if (t.getDecorativeObject() != null)
+				{
+					describe(out, "decoration", t.getDecorativeObject().getId(), t.getDecorativeObject().getRenderable());
+				}
+			}
+		}
+		log.info("faces:\n{}", out);
+		try
+		{
+			java.nio.file.Path dir = net.runelite.client.RuneLite.RUNELITE_DIR.toPath().resolve("lumina").resolve("captures");
+			java.nio.file.Files.createDirectories(dir);
+			java.nio.file.Files.write(dir.resolve("faces.txt"), out.toString().getBytes(java.nio.charset.StandardCharsets.UTF_8));
+		}
+		catch (java.io.IOException ex)
+		{
+			log.warn("Couldn't write faces.txt", ex);
+		}
+	}
+
+	private void describe(StringBuilder out, String kind, int id, net.runelite.api.Renderable r)
+	{
+		net.runelite.api.Model m = com.midonarhel.lumina.scene.ModelData.modelOf(r);
+		String name = plugin.client.getObjectDefinition(id).getName();
+		if (m == null)
+		{
+			out.append(kind).append(' ').append(id).append(' ').append(name).append(": no model\n");
+			return;
+		}
+		int[] c3 = m.getFaceColors3();
+		short[] tex = m.getFaceTextures();
+		int[] nx = m.getVertexNormalsX(), ny = m.getVertexNormalsY(), nz = m.getVertexNormalsZ();
+		int[] i1 = m.getFaceIndices1(), i2 = m.getFaceIndices2(), i3 = m.getFaceIndices3();
+		int faces = m.getFaceCount(), flat = 0, hidden = 0, textured = 0, zeroVertices = 0, smoothAllZero = 0;
+		boolean normals = nx != null && ny != null && nz != null;
+		for (int f = 0; f < faces; ++f)
+		{
+			if (c3[f] == -1)
+			{
+				++flat;
+			}
+			else if (c3[f] == -2)
+			{
+				++hidden;
+			}
+			else if (normals && (nx[i1[f]] | ny[i1[f]] | nz[i1[f]]) == 0 && (nx[i2[f]] | ny[i2[f]] | nz[i2[f]]) == 0
+				&& (nx[i3[f]] | ny[i3[f]] | nz[i3[f]]) == 0)
+			{
+				++smoothAllZero;
+			}
+			if (tex != null && tex[f] != -1)
+			{
+				++textured;
+			}
+		}
+		if (normals)
+		{
+			for (int v = 0; v < m.getVerticesCount(); ++v)
+			{
+				if ((nx[v] | ny[v] | nz[v]) == 0)
+				{
+					++zeroVertices;
+				}
+			}
+		}
+		out.append(kind).append(' ').append(id).append(' ').append(name)
+			.append(": faces ").append(faces).append(", flat (c3 -1) ").append(flat).append(", hidden ").append(hidden)
+			.append(", textured ").append(textured).append(", vertex normals ").append(normals ? "yes" : "NONE")
+			.append(", zero-normal vertices ").append(zeroVertices).append('/').append(m.getVerticesCount())
+			.append(", smooth faces with three zero normals ").append(smoothAllZero)
+			.append(", shading group ").append(com.midonarhel.lumina.scene.SurfaceMaterials.shadingForObject(id, r))
+			.append('\n');
 	}
 }
