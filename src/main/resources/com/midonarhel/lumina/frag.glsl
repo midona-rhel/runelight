@@ -103,7 +103,7 @@ vec3 alphaLamps(vec3 p, vec3 n, vec3 faceN, float transmissive) {
     float d;
     vec3 c = lampLight(lamp, p, wallFrom, false, ld, d);
     float ndl = dot(n, ld);
-    sum += c * (lampWrap(lamp, ndl, d) + transmission(ndl, dot(-ld, viewDir), transmissive));
+    sum += c * (max(ndl, 0.0) + transmission(ndl, dot(-ld, viewDir), transmissive));
   }
   return sum;
 }

@@ -7,8 +7,8 @@
 // game has them, and diagonal walls), as tall as the world, walked tile by tile along the line from the point to the
 // lamp (lampWallsShareIn). Floors: where the line leaves the
 // lamp's storey through its ceiling or its floor, the tile it goes through must be open there (a ladder's hole, a
-// courtyard), else it stops. Nothing else stops a lamp. The lamp is a ball of lampSize: its light wraps a little past
-// a surface's horizon, so the wall a torch hangs on is lit to its top.
+// courtyard), else it stops. Nothing else stops a lamp. A surface takes a lamp's light by the plain cosine to it, its
+// smooth normal's, as it takes the sun's. The lamp's size (lampSize) only softens the tops of walls in the air.
 //
 // When the walls change (a door) the new ones ease in over 0.3 s (LayerEase): the layers of the walls before are kept,
 // and both are walked.
@@ -75,13 +75,6 @@ float lampFalloff(float d2, float r2) {
 
 float lampSize(Lamp lamp) {
   return clamp(lamp.radius * LAMP_SIZE_SHARE, LAMP_SIZE_MIN, LAMP_SIZE_MAX);
-}
-
-// How much of a ball lamp at distance d a surface takes at cosine ndl to its middle: the cosine, wrapped past the
-// horizon by the ball's size seen from there, so the wall a torch hangs on is lit up to its top
-float lampWrap(Lamp lamp, float ndl, float d) {
-  float w = min(lampSize(lamp) / max(d, 1.0), 1.0);
-  return max((ndl + w) / (1.0 + w), 0.0);
 }
 
 // a tile's bits in a layer: the walls (layer 0 now, 1 before) or the ceilings (2 now, 3 before: bit storey set where
@@ -232,8 +225,8 @@ float lampOpen(Lamp lamp, vec3 p, vec3 wallFrom, bool inAir) {
 
 // The light the lamp gives camera-relative point p: its colour times its falloff, 0 outside its radius or behind a
 // wall or floor (lampOpen, the walls looked for from wallFrom; a point in the air, inAir, as lampOpen has it). ld: the
-// unit direction from p to the lamp, d the distance. Before any N.L: the caller says how the point takes it (lampWrap
-// for a surface).
+// unit direction from p to the lamp, d the distance. Before any N.L: the caller says how the point takes it (the
+// cosine for a surface).
 vec3 lampLight(Lamp lamp, vec3 p, vec3 wallFrom, bool inAir, out vec3 ld, out float d) {
   vec3 l = lamp.pos - p;
   float d2 = dot(l, l);
@@ -247,11 +240,11 @@ vec3 lampLight(Lamp lamp, vec3 p, vec3 wallFrom, bool inAir, out vec3 ld, out fl
   return open > 0.0 ? lamp.color * (lampFalloff(d2, r2) * open) : vec3(0.0);
 }
 
-// Whether the lamp is within reach of a surface at p and in front of it by its smooth normal n, wrapped by the lamp's
-// size, as the sun's light is by its normal (a face's own normal cut the light triangle by triangle across a round
-// mesh); a surface turned away is lit only through, with backToo
+// Whether the lamp is within reach of a surface at p and in front of it by its smooth normal n, as the sun's light is
+// by its normal (a face's own normal cut the light triangle by triangle across a round mesh); a surface turned away is
+// lit only through, with backToo. No wrap past the horizon: it lit a roof's slope from the lanterns under its eave.
 bool lampReaches(Lamp lamp, vec3 p, vec3 n, bool backToo) {
   vec3 l = lamp.pos - p;
   float d2 = dot(l, l);
-  return d2 < lamp.radius * lamp.radius && (backToo || dot(n, l) > -lampSize(lamp));
+  return d2 < lamp.radius * lamp.radius && (backToo || dot(n, l) > 0.0);
 }
