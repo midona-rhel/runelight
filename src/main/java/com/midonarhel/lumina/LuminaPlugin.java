@@ -96,6 +96,7 @@ import com.midonarhel.lumina.sky.SkyCache;
 
 import com.midonarhel.lumina.dev.BuildingOverlay;
 import com.midonarhel.lumina.dev.CommandFile;
+import com.midonarhel.lumina.dev.Commands;
 import com.midonarhel.lumina.dev.CpuTimer;
 import com.midonarhel.lumina.dev.FrameCapture;
 import com.midonarhel.lumina.dev.FrameSnapshot;
@@ -226,7 +227,7 @@ public class LuminaPlugin extends Plugin implements DrawCallbacks
 	public Client client;
 
 	@Inject
-	private ConfigManager configManager;
+	public ConfigManager configManager;
 
 	@Inject
 	public ClientUI clientUI;
@@ -280,18 +281,18 @@ public class LuminaPlugin extends Plugin implements DrawCallbacks
 	// reference-build comparison tools (Lumina's): ::runelight cam|capture|set, and the same from
 	// ~/.runelite/lumina/command-perfwip.txt once per client tick in developer mode
 	private CommandFile commandFile;
-	private final FrameSnapshot frameSnapshot = new FrameSnapshot();
+	public final FrameSnapshot frameSnapshot = new FrameSnapshot();
 	public int framesSinceSwap = 1000;
 	private final SceneLoadReport loadReport = new SceneLoadReport();
-	private boolean swapCaptureArmed;
-	private int swapCaptureFrames = 8;
+	public boolean swapCaptureArmed;
+	public int swapCaptureFrames = 8;
 	// frames left to capture around a swap: set when loadScene finishes (before the client's swap), counts down per frame
 	public volatile int swapCaptureLeft;
 	public int swapCaptureIndex;
 	public int lastSkyCacheMode;
 
 	// frame pacing (FramePacer): the client gets no target while the pacer holds the frame on its grid
-	private final FramePacer pacer = new FramePacer();
+	public final FramePacer pacer = new FramePacer();
 
 	private static final Set<String> OTHER_RENDERERS = Set.of(
 		"net.runelite.client.plugins.gpu.GpuPlugin",
@@ -1110,7 +1111,7 @@ public class LuminaPlugin extends Plugin implements DrawCallbacks
 		}
 	}
 
-	private void setupSyncMode()
+	public void setupSyncMode()
 	{
 		final boolean unlockFps = config.unlockFps();
 		client.setUnlockedFps(unlockFps);
@@ -2492,7 +2493,7 @@ public class LuminaPlugin extends Plugin implements DrawCallbacks
 			if (commandFile == null)
 			{
 				Path file = net.runelite.client.RuneLite.RUNELITE_DIR.toPath().resolve("lumina").resolve("command-perfwip.txt");
-				commandFile = new CommandFile(file, this::runCommand);
+				commandFile = new CommandFile(file, commands::run);
 			}
 			commandFile.poll();
 		}
@@ -2698,7 +2699,7 @@ public class LuminaPlugin extends Plugin implements DrawCallbacks
 		hitchMonitor.endFrame(swapIntervalNow, cpuTimer);
 		loadReport.frame(swapIntervalNow, cpuTimer);
 		cpuTimer.begin(CpuTimer.OUTSIDE);
-		drawManager.processDrawComplete(this::screenshot);
+		drawManager.processDrawComplete(commands::screenshot);
 
 		glBindFramebuffer(GL_FRAMEBUFFER, awtContext.getFramebuffer(false));
 
@@ -2765,45 +2766,8 @@ public class LuminaPlugin extends Plugin implements DrawCallbacks
 		glDisable(GL_BLEND);
 	}
 
-	/**
-	 * Convert the front framebuffer to an Image
-	 *
-	 * @return
-	 */
-	private Image screenshot()
-	{
-		int width = client.getCanvasWidth();
-		int height = client.getCanvasHeight();
-
-		if (client.isStretchedEnabled())
-		{
-			Dimension dim = client.getStretchedDimensions();
-			width = dim.width;
-			height = dim.height;
-		}
-
-		final GraphicsConfiguration graphicsConfiguration = clientUI.getGraphicsConfiguration();
-		final AffineTransform t = graphicsConfiguration.getDefaultTransform();
-		width = getScaledValue(t.getScaleX(), width);
-		height = getScaledValue(t.getScaleY(), height);
-
-		BufferedImage image = new BufferedImage(width, height, BufferedImage.TYPE_INT_RGB);
-		int[] pixels = ((DataBufferInt) image.getRaster().getDataBuffer()).getData();
-
-		glReadBuffer(awtContext.getBufferMode());
-		glReadPixels(0, 0, width, height, GL_BGRA, GL_UNSIGNED_INT_8_8_8_8_REV, pixels);
-
-		// glReadPixels returns rows bottom-up, flip them to top-down
-		int[] row = new int[width];
-		for (int y0 = 0, y1 = height - 1; y0 < y1; ++y0, --y1)
-		{
-			System.arraycopy(pixels, y0 * width, row, 0, width);
-			System.arraycopy(pixels, y1 * width, pixels, y0 * width, width);
-			System.arraycopy(row, 0, pixels, y1 * width, width);
-		}
-
-		return image;
-	}
+	// the developer commands (Commands): ::runelight …, the command file, the screenshot
+	public final Commands commands = new Commands(this);
 
 	@Override
 	public void loadScene(WorldView worldView, Scene scene)
@@ -2987,73 +2951,13 @@ public class LuminaPlugin extends Plugin implements DrawCallbacks
 		}
 	}
 
-	/**
-	 * The comparison commands shared with Lumina and the 117 HD reference build: cam yaw pitch zoom, capture [name]
-	 * (to ~/.runelite/lumina/captures), set key value (a Lumina setting, e.g. fixedHour / dayCycleMinutes).
-	 */
-	private void runCommand(String[] args)
-	{
-		if (args.length >= 4 && args[0].equals("cam"))
-		{
-			FrameCapture.setCamera(client, Integer.parseInt(args[1]), Integer.parseInt(args[2]), Integer.parseInt(args[3]));
-		}
-		else if (args.length >= 1 && args[0].equals("capture"))
-		{
-			FrameCapture.capture(client, drawManager, "Lumina (perf-wip)", args.length >= 2 ? args[1] : "capture");
-		}
-		else if (args.length >= 1 && args[0].equals("snapshot") && !frameSnapshot.running())
-		{
-			int seconds = args.length >= 2 ? Math.max(1, Math.min(120, Integer.parseInt(args[1]))) : 10;
-			boolean uncapped = args.length >= 3 && args[2].equals("uncapped");
-			int target = config.fpsTarget();
-			if (uncapped)
-			{
-				configManager.setConfiguration(LuminaConfig.GROUP, "fpsTarget", 999);
-			}
-			java.util.List<String> header = new java.util.ArrayList<>();
-			header.add("renderer: Lumina (perf-wip)");
-			header.add("canvas: " + client.getCanvasWidth() + "x" + client.getCanvasHeight());
-			header.add("camera: yaw " + client.getCameraYaw() + ", pitch " + client.getCameraPitch() + ", scale " + client.getScale());
-			header.add("unlock_fps: " + config.unlockFps() + ", fps_target: " + (uncapped ? 999 : target) + ", vsync: " + config.syncMode());
-			header.add("render_scale: " + config.renderScale() + ", ao: " + config.ambientOcclusion());
-			header.add("location: " + (client.getLocalPlayer() == null ? "none" : client.getLocalPlayer().getWorldLocation()));
-			frameSnapshot.start(header, seconds, uncapped ? () ->
-			{
-				configManager.setConfiguration(LuminaConfig.GROUP, "fpsTarget", target);
-				log.info("Snapshot done: fpsTarget back to {}", target);
-			} : null);
-		}
-		else if (args.length >= 2 && args[0].equals("pace"))
-		{
-			pacer.setPaceHere(args[1].equals("on"));
-			setupSyncMode();
-			log.info("Frame pacing {}", pacer.isPaceHere() ? "here (Lumina's pacer)" : "by the client's limiter");
-		}
-		else if (args.length >= 1 && args[0].equals("swapcapture"))
-		{
-			// the eases after a swap (LayerEase) take 0.3 s: `swapcapture 30` spans them at 60 FPS
-			swapCaptureFrames = args.length >= 2 ? Math.max(1, Math.min(60, Integer.parseInt(args[1]))) : 8;
-			swapCaptureArmed = true;
-			log.info("Armed: {} frames from the end of the next scene load (spanning the swap) are captured as swap-k0..{}",
-				swapCaptureFrames, swapCaptureFrames - 1);
-		}
-		else if (args.length >= 3 && args[0].equals("set"))
-		{
-			configManager.setConfiguration(LuminaConfig.GROUP, args[1], args[2]);
-			log.info("Set {} = {}", args[1], args[2]);
-		}
-		else
-		{
-			log.info("Unknown ::runelight command: {}", String.join(" ", args));
-		}
-	}
 
 	@Subscribe
 	private void onCommandExecuted(CommandExecuted event)
 	{
 		if (event.getCommand().equals("runelight"))
 		{
-			runCommand(event.getArguments());
+			commands.run(event.getArguments());
 			return;
 		}
 		if (event.getCommand().equals("gpumem"))
