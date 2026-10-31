@@ -19,6 +19,8 @@ public final class VertexShading
 
 	// 117 HD's colour for textured faces (zone SceneUploader 1722-1728, 2289-2290): lightness 90, no hue or
 	// saturation, not undone. The texture is multiplied by it; the game's lit lightness would keep vanilla's shading.
+	// Used only while the baked shading is removed (undoVanillaShading): with it kept, textured faces keep the game's
+	// lightness as untextured faces keep its colours, so no model is half baked, half not.
 	static final int TEXTURED_COLOR = 90;
 
 	public static boolean undoVanillaShading = true;

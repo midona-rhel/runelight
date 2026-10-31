@@ -310,7 +310,7 @@ public class ModelUploader
 						sv1 = SurfaceMaterials.fakeHeight(verticesY[v2], span[1]);
 						sv2 = SurfaceMaterials.fakeHeight(verticesY[v3], span[1]);
 					}
-					if (texture > 0)
+					if (texture > 0 && VertexShading.undoVanillaShading)
 					{
 						color1 = color2 = color3 = VertexShading.TEXTURED_COLOR;
 					}
@@ -764,7 +764,7 @@ public class ModelUploader
 				sv1 = SurfaceMaterials.fakeHeight(verticesY[triangleB], span[1]);
 				sv2 = SurfaceMaterials.fakeHeight(verticesY[triangleC], span[1]);
 			}
-			if (texture > 0)
+			if (texture > 0 && VertexShading.undoVanillaShading)
 			{
 				color1 = color2 = color3 = VertexShading.TEXTURED_COLOR;
 			}

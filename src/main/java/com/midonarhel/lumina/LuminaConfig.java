@@ -366,8 +366,8 @@ public interface LuminaConfig extends Config
 	@ConfigItem(
 		keyName = "removeBakedShading",
 		name = "Remove baked shading",
-		description = "The game bakes light from one fixed direction into model colors. Remove it so the sun, moon and "
-			+ "lights do the shading. Reloads the scene when changed.",
+		description = "Removes the light the game paints into models and the ground, so the sun, moon and lamps do all "
+			+ "the shading.",
 		section = lightingSection,
 		position = 43
 	)

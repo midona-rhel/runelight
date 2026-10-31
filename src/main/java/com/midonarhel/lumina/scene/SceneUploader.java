@@ -1542,7 +1542,7 @@ public class SceneUploader
 				sv1 = SurfaceMaterials.fakeHeight(vertexY[triangleB], span[1]);
 				sv2 = SurfaceMaterials.fakeHeight(vertexY[triangleC], span[1]);
 			}
-			if (texture > 0)
+			if (texture > 0 && VertexShading.undoVanillaShading)
 			{
 				color1 = color2 = color3 = VertexShading.TEXTURED_COLOR;
 			}
