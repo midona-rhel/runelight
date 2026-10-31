@@ -25,6 +25,7 @@
 package com.midonarhel.lumina;
 
 import com.midonarhel.lumina.common.LogLimiter;
+import com.midonarhel.lumina.visibility.VisibilityFrame;
 import com.midonarhel.lumina.sky.SkyFrame;
 import com.midonarhel.lumina.weather.WeatherFrame;
 import com.midonarhel.lumina.common.Mat4;
@@ -220,7 +221,7 @@ public class LuminaPlugin extends Plugin implements DrawCallbacks
 
 	public static final int MAX_DISTANCE = 184;
 	// how far in, in tiles, the sky's light flowing in under cover falls to a third of its brightness
-	static final int SKYLIGHT_REACH = 3;
+	public static final int SKYLIGHT_REACH = 3;
 	public static final int SCENE_OFFSET = (Constants.EXTENDED_SCENE_SIZE - Constants.SCENE_SIZE) / 2; // offset for sxy -> msxy
 	private static final int UNIFORM_BUFFER_SIZE = 5 * Float.BYTES;
 	public static final int NUM_ZONES = Constants.EXTENDED_SCENE_SIZE >> 3;
@@ -391,7 +392,7 @@ public class LuminaPlugin extends Plugin implements DrawCallbacks
 	private long roomLightNanos;
 	private final OpenRooms openRooms = new OpenRooms();
 	// repeating errors are logged once per interval
-	private final LogLimiter logLimiter = new LogLimiter(10_000);
+	public final LogLimiter logLimiter = new LogLimiter(10_000);
 	public final LookMonitor lookMonitor = new LookMonitor();
 	public final HitchMonitor hitchMonitor = new HitchMonitor();
 	public final java.util.ArrayList<PointLight> frameLights = new java.util.ArrayList<>();
@@ -1722,7 +1723,7 @@ public class LuminaPlugin extends Plugin implements DrawCallbacks
 		weather.getLightning().setSunStrength(dayCycle.directStrength(volumetricFog.overcast[0], volumetricFog.overcast[1]));
 		weatherFrame.update(cameraX, cameraY, cameraZ);
 		dayCycle.applyStrike(weather.getLightning());
-		updateSkylight();
+		visibilityFrame.updateSkylight();
 		cpuTimer.end(CpuTimer.WEATHER);
 
 		frameFog = false;
@@ -1775,34 +1776,8 @@ public class LuminaPlugin extends Plugin implements DrawCallbacks
 		return config.proceduralSky() && !frameHasSkybox && !frameSkyVoid;
 	}
 
-	/**
-	 * Whether the skylight (or the roof rule for lights) is wanted this frame and where the player is, for the sky
-	 * grid; the light flowing in under cover follows the walls.
-	 */
-	private void updateSkylight()
-	{
-		WorldView wv = client.getTopLevelWorldView();
-		boolean wanted = wv != null && frameOutdoors && client.getGameState() == GameState.LOGGED_IN;
-		frameSkylightWanted = wanted;
-		int plane = wv != null ? wv.getPlane() : 0;
-		Player player = client.getLocalPlayer();
-		LocalPoint lp = player != null ? player.getLocalLocation() : null;
-		Scene scene = wv != null ? wv.getScene() : null;
-		if (wanted && lp != null && scene != null)
-		{
-			frameSkylightTileX = scene.getBaseX() + lp.getX() / (float) Perspective.LOCAL_TILE_SIZE;
-			frameSkylightTileZ = scene.getBaseY() + lp.getY() / (float) Perspective.LOCAL_TILE_SIZE;
-		}
-		BuildingLights buildings = buildingLights;
-		if (wanted && buildings != null)
-		{
-			skyField.update(buildings.getWalls(), buildings.getRooms(), buildings.getFloors(), plane, SKYLIGHT_REACH);
-		}
-		else
-		{
-			skyField.free();
-		}
-	}
+	// The static visibility's work each frame: the skylight grid update and the voxel handover (VisibilityFrame)
+	public final VisibilityFrame visibilityFrame = new VisibilityFrame(this);
 
 
 	/** The unit view ray through a point of the screen (-1 to 1) as frame.glsl's reconstructPosition; null before there is one. */
@@ -2051,26 +2026,6 @@ public class LuminaPlugin extends Plugin implements DrawCallbacks
 
 
 
-	/** Start a build of the scene's voxels, which the skylight traces, if one is due. */
-	public void prepareVoxels()
-	{
-		WorldView wv = client.getTopLevelWorldView();
-		Scene scene = wv != null ? wv.getScene() : null;
-		try
-		{
-			int builds = voxelBuilder.builds();
-			voxelBuilder.prepare(frameSkylightWanted, scene, root != null ? root.zones : null, clientUploader.water);
-			if (builds != voxelBuilder.builds())
-			{
-				hitchMonitor.job(HitchMonitor.VOXEL_BUILD);
-			}
-		}
-		catch (RuntimeException ex)
-		{
-			logLimiter.warn(log, "voxels " + ex, "Voxel build failed", ex);
-			voxelBuilder.free();
-		}
-	}
 
 
 	@Override

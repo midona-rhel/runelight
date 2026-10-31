@@ -413,7 +413,7 @@ public final class Composite
 		// fullscreen triangles are generated from gl_VertexID; core profile still needs some VAO bound
 		glBindVertexArray(plugin.vaoUiHandle);
 		plugin.cpuTimer.begin(CpuTimer.VOXELS);
-		plugin.prepareVoxels();
+		plugin.visibilityFrame.prepareVoxels();
 		plugin.cpuTimer.end(CpuTimer.VOXELS);
 		plugin.cpuTimer.begin(CpuTimer.SKY_GRID);
 		BuildingLights buildings = plugin.buildingLights;
