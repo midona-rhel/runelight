@@ -64,7 +64,7 @@ public interface LuminaConfig extends Config
 	@ConfigItem(
 		keyName = "renderScale",
 		name = "3D resolution",
-		description = "Hide the map around an area that stands apart from it, like an instance or a cave.",
+		description = "Resolution of the 3D scene, as a share of the window. The interface stays sharp.",
 		section = renderingSection,
 		position = 11
 	)
@@ -218,7 +218,7 @@ public interface LuminaConfig extends Config
 	@ConfigItem(
 		keyName = "buildingLightBrightness",
 		name = "Interior brightness",
-		description = "Developer: tint and label the rooms found on your floor.",
+		description = "How much light dim rooms get, in percent.",
 		section = lightingSection,
 		position = 32
 	)
@@ -818,7 +818,7 @@ public interface LuminaConfig extends Config
 	@ConfigItem(
 		keyName = "hideOtherAreas",
 		name = "Hide other areas",
-		description = "Developer: tint and label the rooms found on your floor.",
+		description = "Hide the map around an area that stands apart from it, like an instance or a cave.",
 		section = advancedSection,
 		position = 98
 	)
