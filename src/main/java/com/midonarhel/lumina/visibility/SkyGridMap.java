@@ -51,6 +51,10 @@ public final class SkyGridMap
 	private SceneVoxels handedVoxels;
 	private WallMap handedWalls;
 	private byte[] handedFloors;
+	private RoomMap handedRooms;
+	// `::runelight skydump`: written at the next update with no trace running (SkyGridDump)
+	private java.nio.file.Path dumpTo;
+	private float dumpTileX, dumpTileZ;
 	private volatile boolean jobFresh;
 	private boolean wanted;
 	private int texture;
@@ -108,6 +112,19 @@ public final class SkyGridMap
 		{
 			upload();
 		}
+		if (dumpTo != null && sky != null && handedVoxels != null)
+		{
+			try
+			{
+				SkyGridDump.write(dumpTo, handedVoxels, handedWalls, handedRooms, handedFloors, sky, dumpTileX, dumpTileZ);
+				log.info("Sky grid dumped to {}", dumpTo);
+			}
+			catch (java.io.IOException ex)
+			{
+				log.warn("Sky grid dump failed", ex);
+			}
+			dumpTo = null;
+		}
 		boolean newVoxels = voxels != handedVoxels || floors != handedFloors, newWalls = walls != handedWalls;
 		if (voxels == null || !newVoxels && !newWalls && sky.dirtyCount() == 0)
 		{
@@ -127,6 +144,7 @@ public final class SkyGridMap
 		handedVoxels = voxels;
 		handedWalls = walls;
 		handedFloors = floors;
+		handedRooms = rooms;
 		SkyGrid s = sky;
 		job = worker.submit(() ->
 		{
@@ -181,6 +199,14 @@ public final class SkyGridMap
 				log.warn("Sky grid job failed", ex);
 			}
 		});
+	}
+
+	/** Write the grid's inputs and texels at the next update with no trace running (`::runelight skydump`). */
+	public void requestDump(java.nio.file.Path file, float worldTileX, float worldTileZ)
+	{
+		dumpTo = file;
+		dumpTileX = worldTileX;
+		dumpTileZ = worldTileZ;
 	}
 
 	java.util.List<float[]> debugProbes(float x, float z)

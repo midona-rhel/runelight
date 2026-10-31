@@ -271,6 +271,14 @@ public final class Commands
 			}
 			log.info("Lightning {}", com.midonarhel.lumina.sky.Lightning.hold ? "held at its top" : "released");
 		}
+		else if (args.length >= 1 && args[0].equals("skydump"))
+		{
+			// the sky grid's inputs and texels, for tracing the spot again offline (SkyGridReplay)
+			java.nio.file.Path file = FrameCapture.DIR.getParent().resolve("dumps")
+				.resolve("skygrid-" + (args.length >= 2 ? args[1] : "dump") + ".bin.gz");
+			plugin.skyGrid.requestDump(file, plugin.frameSkylightTileX, plugin.frameSkylightTileZ);
+			log.info("Sky grid dump requested: {}", file);
+		}
 		else if (args.length >= 1 && args[0].equals("swapcapture"))
 		{
 			// the eases after a swap (LayerEase) take 0.3 s: `swapcapture 30` spans them at 60 FPS
