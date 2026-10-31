@@ -194,14 +194,14 @@ float lampFalloffAlong(float s, float h, float r) {
   return s - (s * d + hs) / r + (h * h * s + s * s * s / 3.0) / (r * r);
 }
 
-// A lamp's glow in the fog reaches this share of its light's reach: a halo round it, not a cloud as wide as the light
-#define FOG_LAMP_REACH 0.5
-
 // Light from the lamps scattered toward the camera along the ray dir, as a glow round each lamp, like bloom: its
-// falloff integrated along the ray through a sphere of FOG_LAMP_REACH of its reach, times the fog where the lamp is
+// falloff integrated along the ray through its sphere (the whole of its reach: the user, "how far it reaches is fine"),
+// times the fog where the lamp is
 // (its density, height layer, room and weather there; none inside rooms, so a lamp indoors has none). The same for
-// every ray past it: a circle round the lamp on screen, with no edge of its own. It shows as far as the lamp itself
-// does: hidden when the scene stands in front of the lamp's own point on screen (a wall between the camera and it).
+// every ray past it, whatever the ray ends at or where the march starts: a halo round the lamp on screen, fading to
+// nothing at its reach with no edge of its own (the falloff and its slope are 0 there). It shows as far as the lamp
+// itself does: hidden when the scene stands in front of the lamp's own point on screen (a wall between the camera and
+// it), not cut ray by ray, which drew the walls' and the march's edges into it as shapes that turned with the camera.
 vec3 lampGlow(ivec2 px, vec3 dir, float density) {
   LightMask lamps = clusterLights(columnEntry((vec2(px) + 0.5 - vec2(sceneViewport.xy)) / vec2(sceneViewport.zw)));
   float below = -fogHeight * FOG_BELOW;
@@ -209,7 +209,7 @@ vec3 lampGlow(ivec2 px, vec3 dir, float density) {
   int li;
   while (nextLight(lamps, li)) {
     Lamp lamp = lampAt(li);
-    float reach = lamp.radius * FOG_LAMP_REACH;
+    float reach = lamp.radius;
     float tc = dot(lamp.pos, dir);
     float h2 = max(dot(lamp.pos, lamp.pos) - tc * tc, 0.0);
     if (h2 >= reach * reach || tc <= 0.0) {
