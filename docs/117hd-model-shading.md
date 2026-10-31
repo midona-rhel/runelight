@@ -281,48 +281,6 @@ anywhere. So:
   area-weighted sums over all ground faces); ours are smooth too (central differences, docs/117hd-world-shading.md
   §1.1).
 
-## 5b. Our own smooth normals: welded, creased (the user's experiment, 2026-10-31)
-
-The user, on the thatched roof at the Ardougne market: "since these verts are basically inside each other, why don't
-we merge them and recalc the mesh shading based on that? Let's try that." This replaces 117 HD's normal source (the
-game's vertex normals, 1.1) for lighting; the vanilla-shading undo keeps the game's normals, which the game lit with.
-
-**Why the game's normals shade the roof unevenly** (dump `faces 6 detail` at 2657,3301, 74 roof objects, analysis in
-the shared notes, `roof-faces-analysis.txt`): no roof face is flat-marked, and the pieces agree at all 101 corners they
-share (the client merges neighbours' normals), so there are no seams. But a slope's corner sums every smooth face of the
-model at that vertex whatever the angle: the timbers, the eave underside, the hip. Of 537 textured roof corners only
-70 are within 5 degrees of their own face; plain slope tiles lean 14 degrees at the eave, hip and corner pieces 20-40,
-34 corners more than 90. 117 HD lights with these same numbers.
-
-**The mechanism** (`scene/CreaseNormals`): weld a model's vertices by integer position; a smooth face's corner takes
-the sum of the welded smooth faces at that corner within the crease angle of its own normal, each weighted by its
-angle at the corner; flat-marked (-1) and hidden (-2) faces neither take nor give. Angle, not area, weighting: an
-8-sided trunk whose sides each have their own vertices (split, as models often are) leaned 7.7 degrees toward the side
-that meets the corner with two triangles under area weighting; with corner angles a quad weighs the same however it
-is split. Scene models are done at zone upload; every other model keeps the normals of its first upload, cached by the
-client's face index array (an animated model's frames share it), as the game's normals are also one set for all
-frames.
-
-**The crease angle, 62 degrees**, from the folds measured (dihedral angles between faces sharing an edge, roof dump,
-and the test meshes in `VertexShadingTest`):
-
-| fold | angle | wanted | at 62 |
-|---|---|---|---|
-| thatch bumps within a slope | 0-30 | round | round |
-| 8-sided trunk, 6-sided trunk | 45, 60 | round (the user: the magic tree's trunk is smooth) | round |
-| roof hips (corner pieces 1641; 1604/1605) | 46.7, 50.2 | crisp | **round** |
-| roof ridge at this pitch (36.9 degrees) | 73.7 | crisp | crisp |
-| timbers, gables, crate edges | 90 | crisp | crisp |
-| eave to its underside | 125-180 | crisp | crisp |
-| a two-sided leaf's sides | 180 | apart | apart |
-
-No single angle keeps the hips crisp and rounds an octagonal trunk (45 against 46.7); 62 picks the trunks. Textured
-roof corners within 5 degrees of their face: game normals 70 of 537, crease 62 389, crease 44 483 (the rest at 62 are
-the hips' corners, 25-30 degrees). At 44 the hips stay crisp and 8-sided trunks facet.
-
-**Cost**: 77 ns a face, 7 µs per model on the dumped models (199 models, 18,492 faces: 1.4 ms), a 4000-face model
-0.26 ms, once. The scene load report logs the load's total (`crease normals ...`).
-
 ## 5. What 117 HD's rule means for the tree canopies
 
 Under 117 HD's code a canopy face the game marks flat (`faceColors3 == −1`) is lit with its own face normal — a hard

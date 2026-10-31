@@ -21,8 +21,6 @@ public final class ModelData
 
 	public int faceCount;
 	public int[] indices1, indices2, indices3;
-	// the client's own face index array, which CreaseNormals caches the model's normals by (copy's are reused buffers)
-	int[] normalsKey;
 	public int[] colors1, colors2, colors3;
 	public short[] unlitColors;
 	byte[] priorities;
@@ -74,7 +72,6 @@ public final class ModelData
 		indices1 = m.getFaceIndices1();
 		indices2 = m.getFaceIndices2();
 		indices3 = m.getFaceIndices3();
-		normalsKey = indices1;
 		colors1 = m.getFaceColors1();
 		colors2 = m.getFaceColors2();
 		colors3 = m.getFaceColors3();
@@ -106,7 +103,6 @@ public final class ModelData
 		indices1 = copy(3, m.getFaceIndices1(), f);
 		indices2 = copy(4, m.getFaceIndices2(), f);
 		indices3 = copy(5, m.getFaceIndices3(), f);
-		normalsKey = m.getFaceIndices1();
 		colors1 = copy(6, m.getFaceColors1(), f);
 		colors2 = copy(7, m.getFaceColors2(), f);
 		colors3 = copy(8, m.getFaceColors3(), f);
