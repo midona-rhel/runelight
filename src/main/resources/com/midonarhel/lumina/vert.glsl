@@ -101,7 +101,7 @@ void main() {
   } else {
     fNormal = vec3(0.0);
   }
-  worldPos.xyz += windDisplacement(vertf.w, worldPos.xyz, fNormal, packedNormal != 0);
+  worldPos.xyz += windDisplacement(vertf.w, worldPos.xyz);
   vec4 screenPos = worldProj * worldPos;
   fWorldPos = worldPos.xyz;
   fClip = screenPos;

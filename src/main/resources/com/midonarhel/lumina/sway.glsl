@@ -29,12 +29,10 @@ uniform float windSway;     // amplitude multiplier from the config, 0 holds sti
 #define WIND_LEAF_FREQ 2.7
 // ivy on walls: a small rustle up and down, which stays along any wall (relative to the rocking)
 #define WIND_JIGGLE 0.1
-// How much a bend tilts the normal (1 follows a straight shear)
-#define WIND_NORMAL_TILT 1.0
 
-// Displacement in world units (y down) for a vertex at worldPos with the given code. Tilts normal (world space,
-// left alone when hasNormal is false) with the bend.
-vec3 windDisplacement(float code, vec3 worldPos, inout vec3 normal, bool hasNormal) {
+// Displacement in world units (y down) for a vertex at worldPos with the given code. The normal stays as uploaded:
+// 117 HD's wind tilts no normal.
+vec3 windDisplacement(float code, vec3 worldPos) {
   int c = int(code);
   // below 128 the bend is 0: still, which also covers dynamic models' 1
   if (c < 128 || windSway <= 0.0)
@@ -67,9 +65,5 @@ vec3 windDisplacement(float code, vec3 worldPos, inout vec3 normal, bool hasNorm
   d.xz = slope * w;
   // a bent stem keeps its length, so its top comes down a little
   d.y = 0.5 * dot(slope, slope) * w;
-  if (hasNormal) {
-    normal.y += dot(slope, normal.xz) * WIND_NORMAL_TILT;
-    normal = normalize(normal);
-  }
   return d;
 }
