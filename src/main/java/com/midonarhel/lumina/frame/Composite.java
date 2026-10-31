@@ -511,7 +511,7 @@ public final class Composite
 		plugin.skyCache.easeComposite(skyCacheMode);
 		plugin.compositeTime = (System.currentTimeMillis() - plugin.startMillis) / 1000f;
 		plugin.skyFrame.updateNightSky();
-		plugin.prepareLighting();
+		plugin.lampFrame.prepareLighting();
 		plugin.sceneTargets.bindAlphaLayer(ALPHA_LAYER_UNIT);
 
 		plugin.weather.bindField(WEATHER_FIELD_UNIT, WEATHER_SKY_UNIT);

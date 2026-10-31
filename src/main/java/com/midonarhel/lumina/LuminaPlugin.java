@@ -25,6 +25,7 @@
 package com.midonarhel.lumina;
 
 import com.midonarhel.lumina.common.LogLimiter;
+import com.midonarhel.lumina.light.LampFrame;
 import com.midonarhel.lumina.visibility.VisibilityFrame;
 import com.midonarhel.lumina.sky.SkyFrame;
 import com.midonarhel.lumina.weather.WeatherFrame;
@@ -268,7 +269,7 @@ public class LuminaPlugin extends Plugin implements DrawCallbacks
 	@Inject
 	public Gson gson;
 
-	private SceneLights sceneLights;
+	public SceneLights sceneLights;
 	public BuildingLights buildingLights;
 
 	@Inject
@@ -388,15 +389,15 @@ public class LuminaPlugin extends Plugin implements DrawCallbacks
 	public final LampWalls lampWalls = new LampWalls();
 	public final RoomTexture roomTexture = new RoomTexture();
 	// how much light each building room gets and the fill it lacks (RoomLight)
-	private final RoomLight roomLight = new RoomLight();
-	private long roomLightNanos;
-	private final OpenRooms openRooms = new OpenRooms();
+	public final RoomLight roomLight = new RoomLight();
+	public long roomLightNanos;
+	public final OpenRooms openRooms = new OpenRooms();
 	// repeating errors are logged once per interval
 	public final LogLimiter logLimiter = new LogLimiter(10_000);
 	public final LookMonitor lookMonitor = new LookMonitor();
 	public final HitchMonitor hitchMonitor = new HitchMonitor();
 	public final java.util.ArrayList<PointLight> frameLights = new java.util.ArrayList<>();
-	private final PointLight testLight = new PointLight();
+	public final PointLight testLight = new PointLight();
 	// lamp.glsl's lampWallsHeader with no walls bound
 	public static final float[] NO_WALLS = {0, 0, 0, 0, 1};
 	public int uniAlphaPass;
@@ -1617,7 +1618,7 @@ public class LuminaPlugin extends Plugin implements DrawCallbacks
 		glEnable(GL_DEPTH_TEST);
 
 		// the lamps before the scene: its transparent faces are lit as they are drawn (frag.glsl)
-		prepareLamps();
+		lampFrame.prepareLamps();
 		glUseProgram(glProgram);
 		glUniform1i(uniScenePointLights, framePointLights ? 1 : 0);
 		sceneLampWalls.apply(frameLightClusters ? lampWalls.header() : NO_WALLS);
@@ -1854,137 +1855,12 @@ public class LuminaPlugin extends Plugin implements DrawCallbacks
 		glUniform1f(u.halfRatio, sceneTargets.getHalfRatio());
 	}
 
-	/** Bind the shadow map for the composite and the fog, once it is drawn. */
-	public void prepareLighting()
-	{
-		if (frameShadows && shadowMap.isInitialized())
-		{
-			shadowMap.bindForSampling(SHADOW_RAW_UNIT, SHADOW_COMPARE_UNIT);
-		}
-	}
-
-	/**
-	 * Gather, cull, upload and bind this frame's lamps, the walls that stop them and the rooms, before the scene is
-	 * drawn: for its transparent faces, the composite, the fog, the weather and the water.
-	 */
-	private void prepareLamps()
-	{
-		boolean points = config.pointLights();
-		BuildingLights buildings = buildingLights;
-		RoomMap rooms = buildings != null ? buildings.getRooms() : null;
-		volumetricFog.rooms = rooms;
-		volumetricFog.openRooms = null;
-		framePointLights = points;
-		frameLightClusters = points || rooms != null;
-		if (frameLightClusters)
-		{
-			if (!lightClusters.isInitialized())
-			{
-				lightClusters.init();
-			}
-			cpuTimer.begin(CpuTimer.LIGHTS);
-			if (points)
-			{
-				collectLights();
-			}
-			else
-			{
-				frameLights.clear();
-			}
-			cpuTimer.end(CpuTimer.LIGHTS);
-			lampWalls.update(points && buildings != null ? buildings.getWalls() : null, rooms,
-				buildings != null ? buildings.getFloors() : null);
-			lightClusters.setWalls(lampWalls);
-			roomTexture.update(rooms);
-			updateRoomLight(config.interiorBrightness() > 0 ? rooms : null);
-			// the fog comes back into the rooms whose roof the client hides
-			SceneContext roofCtx = root;
-			if (frameFog && rooms != null && roofCtx != null)
-			{
-				openRooms.update(buildings.getResult(), roofCtx.hideRoofIds, roofCtx.level);
-				volumetricFog.openRooms = openRooms.count() > 0 ? openRooms : null;
-			}
-			cpuTimer.begin(CpuTimer.CLUSTERS);
-			// the fog integrates the lights along each pixel's ray from per-column lists
-			lightClusters.setFog(frameFog, volumetricFog.getCenterX() - frameCameraX,
-				volumetricFog.getCenterZ() - frameCameraZ, volumetricFog.getRadius(),
-				volumetricFog.getTop() - frameCameraY, volumetricFog.getMinGlow());
-			lightClusters.cull(frameLights, frameViewProj, frameCameraX, frameCameraY, frameCameraZ);
-			if (lightClusters.getOverflows() > 0 && logLimiter.check("lightClusterOverflow") >= 0)
-			{
-				// each one left its least important lights out there (LightClusters.MAX_LIGHTS_PER_CLUSTER)
-				log.info("Light clusters: {} lamp listings over the cap of {} a cluster", lightClusters.getOverflows(),
-					LightClusters.MAX_LIGHTS_PER_CLUSTER);
-			}
-			cpuTimer.end(CpuTimer.CLUSTERS);
-			cpuTimer.begin(CpuTimer.LIGHT_UPLOAD);
-			lightClusters.upload();
-			cpuTimer.end(CpuTimer.LIGHT_UPLOAD);
-			lightClusters.bind(LIGHT_DATA_UNIT, CLUSTER_DATA_UNIT);
-			roomTexture.bind(ROOM_TEXELS_UNIT);
-		}
-	}
-
-	/**
-	 * Work out the fill the rooms are given for the time of day, and hand it to the light buffer. Caves and dungeons
-	 * have no buildings, and frameOutdoors stands in until areas are classified.
-	 */
-	private void updateRoomLight(RoomMap rooms)
-	{
-		long now = System.nanoTime();
-		float dt = roomLightNanos == 0 ? 0 : Math.min((now - roomLightNanos) / 1e9f, 0.5f);
-		roomLightNanos = now;
-		BuildingLights buildings = buildingLights;
-		SceneLights lights = sceneLights;
-		roomLight.setRooms(rooms);
-		if (rooms != null && buildings != null)
-		{
-			roomLight.followWalls(buildings.getWalls(), buildings.getFloors(), SKYLIGHT_REACH);
-			// the rooms' lamps are the fixed ones, as they are now; with no lamps on, none
-			roomLight.followLamps(out ->
-			{
-				if (framePointLights && lights != null)
-				{
-					lights.steadyLamps(out);
-				}
-			}, buildings.getWalls(), dt);
-		}
-		float target = frameOutdoors ? RoomLight.target(dayCycle.sunAltitude, config.interiorBrightness() / 100f) : 0;
-		roomLight.update(dt, target, dayCycle.sunAltitude);
-		lightClusters.setRoomFill(rooms != null ? roomLight : null);
-	}
+	// The lamps' work each frame: lamp collection and placement, the room light, the light clusters' upload (LampFrame)
+	public final LampFrame lampFrame = new LampFrame(this);
 
 
-	/**
-	 * Gather this frame's point lights: scene lights from lights.json, plus the optional test light.
-	 */
-	private void collectLights()
-	{
-		frameLights.clear();
-		// 0 by day, 1 once the sun is well below the horizon
-		float t = Math.max(0, Math.min(1, (-2 - dayCycle.sunAltitude) / 8));
-		float night = frameOutdoors ? t * t * (3 - 2 * t) : 1;
-		SceneLights lights = sceneLights;
-		if (lights != null)
-		{
-			float time = (System.currentTimeMillis() - startMillis) / 1000f;
-			// around the focal point like the drawn world (EdgeFade), so lights don't come and go as the camera turns
-			lights.collect(frameLights, time, night, dayCycle.sunAltitude, edgeFade.focalX, edgeFade.focalZ,
-				edgeFade.radius);
-		}
-		if (config.testLight())
-		{
-			Player player = client.getLocalPlayer();
-			LocalPoint lp = player != null ? player.getLocalLocation() : null;
-			if (lp != null)
-			{
-				float ground = Perspective.getTileHeight(client, lp, client.getTopLevelWorldView().getPlane());
-				// a little above head height (y points down), warm like a torch, reaching about 5 tiles
-				frameLights.add(testLight.set(lp.getX(), ground - 250, lp.getY(), 5 * Perspective.LOCAL_TILE_SIZE,
-					1.0f, 0.72f, 0.42f, 6f).onPlane(client.getTopLevelWorldView().getPlane()));
-			}
-		}
-	}
+
+
 
 	int getLightDefinitionCount()
 	{
