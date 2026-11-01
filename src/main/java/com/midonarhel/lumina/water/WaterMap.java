@@ -141,10 +141,6 @@ public final class WaterMap
 	private static final float FALL_DROP = 128f;
 	// extended tile steps of a fall's four directions
 	private static final int[] FALL_DX = {1, -1, 0, 0}, FALL_DZ = {0, 0, 1, -1};
-	// the frame reaches this many tiles above a fall's lip and below its foot, across the fall's own width only: the foam
-	// it lays out (around something standing in a fall) runs down the fall, and out to its sides it ran a one tile fall's
-	// motion down the tiles beside it too
-	private static final int FRAME_UP = 1, FRAME_DOWN = 1;
 	// per tile: a fall's
 	final boolean[] fall = new boolean[SIZE * SIZE];
 	// per corner, in the fall's frame: the fall's direction (a unit vector in the scene's x, z) times 1 plus the length the
@@ -835,14 +831,19 @@ public final class WaterMap
 		float[] surfaceY = surfaceLevels(heights);
 		boolean[] marked = new boolean[CONTACT_SIZE * CONTACT_SIZE];
 		boolean any = eachModel(tiles, (id, r, orient, x, height, z) -> crossings(id, r, orient, x, height, z, surfaceY, marked));
+		// falls foam on their faces, lips and feet in the water by them
 		boolean falls = false;
 		for (int i = 0; i < fall.length && !falls; ++i)
 		{
 			falls = fall[i];
 		}
+		for (int c = 0; c < lipStrength.length && !falls; ++c)
+		{
+			falls = lipStrength[c] > 0 || footStrength[c] > 0;
+		}
 		if (any || falls)
 		{
-			contact = contactFrom(marked);
+			contact = contactFrom(marked, surfaceY);
 		}
 	}
 
@@ -959,12 +960,12 @@ public final class WaterMap
 	}
 
 	/**
-	 * The contact map from the cells where things cross the surface (marked), and a fall's face: the whole of it, its foam
-	 * carried down it from its lip to its foot (water_frag.glsl fallFoamHeight). A fall's lip and foot are none: their bands
-	 * stood still at the top and bottom of every fall; the water pours over and lands as it runs (the lips' pull, the feet's
-	 * push).
+	 * The contact map from the cells where things cross the surface (marked); a fall's face, the whole of it, its foam
+	 * carried down it from its lip to its foot (water_frag.glsl fallFoamHeight); and the water at its lip and foot as much as
+	 * they pull it in and push it out (lipStrength, footStrength, at their level): the foam there is carried in to the lip
+	 * and out from the foot all round by that water's own flow, and thins out with the pull, to none where nothing pulls.
 	 */
-	byte[] contactFrom(boolean[] marked)
+	byte[] contactFrom(boolean[] marked, float[] surfaceY)
 	{
 		// each crossing raises the closeness of the cells within CONTACT_REACH of it (the foam is drawn on running water
 		// only: water_frag.glsl hardFoam)
@@ -972,12 +973,44 @@ public final class WaterMap
 		spread(marked, CONTACT_REACH, c);
 		for (int i = 0; i < c.length; ++i)
 		{
-			if (fall[(i / CONTACT_SIZE / CONTACT_RES) * SIZE + (i % CONTACT_SIZE) / CONTACT_RES])
+			int gx = i % CONTACT_SIZE, gz = i / CONTACT_SIZE, t = (gz / CONTACT_RES) * SIZE + gx / CONTACT_RES;
+			if (fall[t])
 			{
 				c[i] = (byte) 255;
 			}
+			else if (!Float.isNaN(surfaceY[t]))
+			{
+				float fx = (gx + 0.5f) / CONTACT_RES, fz = (gz + 0.5f) / CONTACT_RES;
+				float near = Math.max(lineNear(lipStrength, lipLevel, fx, fz, surfaceY[t]),
+					lineNear(footStrength, footLevel, fx, fz, surfaceY[t]));
+				c[i] = (byte) Math.max(c[i] & 255, Math.round(near * 255));
+			}
 		}
 		return c;
+	}
+
+	/**
+	 * A lip's or foot's strength (per corner, with its level) at (fx, fz) in tiles, filtered between the corners, over water
+	 * at surface level `surface` only (within LIP_LEVEL of the line's).
+	 */
+	private static float lineNear(float[] strength, float[] lineLevel, float fx, float fz, float surface)
+	{
+		int x0 = (int) Math.floor(fx), z0 = (int) Math.floor(fz);
+		float u = fx - x0, v = fz - z0, sum = 0;
+		for (int k = 0; k < 4; ++k)
+		{
+			int cx = x0 + (k & 1), cz = z0 + (k >> 1);
+			if (cx < 0 || cz < 0 || cx >= CORNERS || cz >= CORNERS)
+			{
+				continue;
+			}
+			int c = cz * CORNERS + cx;
+			if (strength[c] > 0 && Math.abs(surface - lineLevel[c]) <= LIP_LEVEL)
+			{
+				sum += strength[c] * ((k & 1) != 0 ? u : 1 - u) * ((k >> 1) != 0 ? v : 1 - v);
+			}
+		}
+		return sum;
 	}
 
 	/**
@@ -1220,7 +1253,9 @@ public final class WaterMap
 		// the frame: along the fall from its lip, across it between the tile's sides
 		boolean alongX = FALL_DX[k] != 0;
 		int across = alongX ? y : x;
-		for (int u = -FRAME_UP; u <= n + FRAME_DOWN; ++u)
+		// on the fall's own corners only: the foam it lays out runs straight down the fall; beyond its lip and foot the
+		// water's own flow (pulled to the lip, pushed from the foot, all round) carries it
+		for (int u = 0; u <= n; ++u)
 		{
 			float length = 1 + longer[Math.max(0, Math.min(n, u))];
 			for (int v = across; v <= across + 1; ++v)
@@ -1241,8 +1276,8 @@ public final class WaterMap
 	/**
 	 * Per corner of the CORNERS grid, the pull toward the nearest of the lines (segments as fallEdgesOf gives them): the
 	 * unit direction there, scaled down to 0 at reach tiles, the lip's height and the strength itself (1 on the lip, 0 at
-	 * the reach; a corner right on the lip has no direction). Only the corners across from a line count, within half a
-	 * tile past its ends. Corners with no lip in reach keep zeros.
+	 * the reach, eased; a corner right on the lip has no direction), all round it. Corners with no lip in reach keep
+	 * zeros.
 	 */
 	static void pullToLines(java.util.List<float[]> lips, float reach, float[] pullX, float[] pullZ, float[] level, float[] best)
 	{
@@ -1262,17 +1297,13 @@ public final class WaterMap
 				for (int cx = x0; cx <= x1; ++cx)
 				{
 					float qx = cx * 128f - l[0], qz = cz * 128f - l[1];
-					// only across the fall's own width: a corner more than half a tile past the line's ends is beside the
-					// fall, and pulling it there ran the water a tile either side of a one tile fall into it as well
-					float along = len2 > 0 ? (qx * dx + qz * dz) / (float) Math.sqrt(len2) : 0;
-					if (along < -64 || along > Math.sqrt(len2) + 64)
-					{
-						continue;
-					}
 					float t = len2 > 0 ? Math.max(0, Math.min(1, (qx * dx + qz * dz) / len2)) : 0;
 					float ex = dx * t - qx, ez = dz * t - qz;
 					float d = (float) Math.sqrt(ex * ex + ez * ez) / 128f;
-					float strength = 1 - d / reach;
+					// round the line, its ends too (the water gathers to a lip and spreads from a foot in a circle), easing
+					// out to none at the reach, so the water beyond, which nothing pulls, takes over with no edge
+					float s = 1 - d / reach;
+					float strength = s <= 0 ? 0 : s * s * (3 - 2 * s);
 					int c = cz * CORNERS + cx;
 					if (strength <= best[c])
 					{
@@ -1693,12 +1724,14 @@ public final class WaterMap
 					turbulence /= count;
 					if (lipStrength[c] > 0 && Math.abs(height - lipLevel[c]) <= LIP_LEVEL)
 					{
+						running = Math.max(running, lipStrength[c] * count);
 						// the water above a fall runs to its lip
 						fx += lipPullX[c] * LIP_FLOW;
 						fz += lipPullZ[c] * LIP_FLOW;
 					}
 					if (footStrength[c] > 0 && Math.abs(height - footLevel[c]) <= LIP_LEVEL)
 					{
+						running = Math.max(running, footStrength[c] * count);
 						// the pool a fall lands in is pushed out from its foot
 						fx -= footPullX[c] * FOOT_FLOW;
 						fz -= footPullZ[c] * FOOT_FLOW;

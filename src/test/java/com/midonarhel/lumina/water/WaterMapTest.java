@@ -250,9 +250,11 @@ public class WaterMapTest
 		WaterMap.pullToLines(lips, 2.5f, px, pz, level, strength);
 		int near = 8 * n + 6, far = 4 * n + 6, beside = 10 * n + 12;
 		assertEquals(0f, px[near], 1e-4f);
-		assertEquals(1f - 2f / 2.5f, pz[near], 1e-4f);
+		// two tiles out of 2.5: 0.2 of the way in, eased (smoothstep)
+		float eased = 0.2f * 0.2f * (3 - 2 * 0.2f);
+		assertEquals(eased, pz[near], 1e-4f);
 		assertEquals(100f, level[near], 0f);
-		assertEquals(1f - 2f / 2.5f, strength[near], 1e-4f);
+		assertEquals(eased, strength[near], 1e-4f);
 		// on the lip: no direction, full strength
 		assertEquals(1f, strength[10 * n + 6], 1e-4f);
 		assertEquals(0f, pz[10 * n + 6], 0f);
@@ -325,7 +327,8 @@ public class WaterMapTest
 		assertEquals(1f, m.texture[(83 * w + p2 + 81) * 4 + 3], 1e-5f);
 		assertEquals(0f, m.texture[(83 * w + p2 + 81) * 4 + 2], 0f);
 		assertEquals((float) Math.sqrt(5), m.texture[(84 * w + p2 + 81) * 4 + 3], 1e-5f);
-		assertEquals((float) Math.sqrt(5), m.texture[(85 * w + p2 + 81) * 4 + 3], 1e-5f);
+		// the frame is the fall's own corners only: below its foot the pool's own flow carries the foam out
+		assertEquals(0f, m.texture[(85 * w + p2 + 81) * 4 + 3], 0f);
 		// a tile below the foot the frame ends: the foam it lays out is the foot's, which reaches less than a tile
 		assertEquals(0f, m.texture[(86 * w + p2 + 81) * 4 + 3], 0f);
 		// it runs down the fall, its own tile only: the corners it shares with the water beside and below it keep theirs
@@ -336,12 +339,15 @@ public class WaterMapTest
 			int x = mesh.tiles[i * 4] & 0xFF, y = mesh.tiles[i * 4 + 1] & 0xFF;
 			assertEquals("tile " + x + ", " + y, y == 83 && x >= 80 && x < 83, (mesh.tiles[i * 4 + 3] & WaterSurface.FALL) != 0);
 		}
-		// foam over all its face, none in the pools at its lip and foot: nothing stands in this water
+		// foam over all its face; in the pools at its lip and foot, thinning out with the pull and push, none beyond them
 		int cells = WaterMap.CONTACT_RES, size = WaterMap.CONTACT_SIZE;
 		assertEquals(255, m.contact[(83 * cells + 1) * size + 81 * cells + 1] & 255);
 		assertEquals(255, m.contact[(84 * cells - 1) * size + 81 * cells + 2] & 255);
-		assertEquals(0, m.contact[(83 * cells - 1) * size + 81 * cells + 1] & 255);
-		assertEquals(0, m.contact[(84 * cells) * size + 81 * cells + 1] & 255);
+		int lipNear = m.contact[(83 * cells - 1) * size + 81 * cells + 1] & 255, lipFar = m.contact[(81 * cells) * size + 81 * cells + 1] & 255;
+		int footNear = m.contact[(84 * cells) * size + 81 * cells + 1] & 255, footFar = m.contact[(86 * cells) * size + 81 * cells + 1] & 255;
+		assertTrue(lipNear > lipFar && lipFar > 0);
+		assertTrue(footNear > footFar && footFar > 0);
+		assertEquals(0, m.contact[(77 * cells) * size + 81 * cells + 1] & 255);
 	}
 
 	@Test
@@ -548,19 +554,19 @@ public class WaterMapTest
 	}
 
 	@Test
-	public void aFallPullsOnlyTheWaterAcrossFromIt()
+	public void aFallPullsAllRoundItsLipEasingOut()
 	{
 		int n = WaterMap.CORNERS;
 		float[] px = new float[n * n], pz = new float[n * n], level = new float[n * n], strength = new float[n * n];
 		// a lip one tile wide, along z = 10 tiles from x = 5 to 6
 		java.util.List<float[]> lips = java.util.Collections.singletonList(new float[]{5 * 128f, 10 * 128f, 6 * 128f, 10 * 128f, 0f});
 		WaterMap.pullToLines(lips, 2.5f, px, pz, level, strength);
-		// its own corners, on it and upstream of it, are pulled; the corners a tile beside it are not
-		assertTrue(strength[10 * n + 5] > 0 && strength[10 * n + 6] > 0);
+		// round it: upstream of it and beside its ends, pulled toward it, less the further, none at the reach
 		assertTrue(pz[8 * n + 5] > 0 && pz[8 * n + 6] > 0);
-		assertEquals(0f, strength[10 * n + 4], 0f);
-		assertEquals(0f, strength[10 * n + 7], 0f);
-		assertEquals(0f, strength[9 * n + 7], 0f);
+		assertTrue(px[10 * n + 4] > 0 && px[10 * n + 7] < 0);
+		assertTrue(strength[10 * n + 4] > strength[10 * n + 3] && strength[10 * n + 3] > 0);
+		assertEquals(0f, strength[10 * n + 2], 0f);
+		assertEquals(0f, strength[10 * n + 9], 0f);
 	}
 
 	@Test
@@ -586,10 +592,12 @@ public class WaterMapTest
 		{
 			assertEquals(0f, lake.texture[(90 * w + p2 + c) * 4 + 1], 0f);
 		}
-		// a fall runs: the corners of its tiles count, the still pools above and below it don't
+		// a fall runs, and the still pools by it as much as its lip pulls and its foot pushes them, less the further out
 		WaterMap fall = fallStrip(256, false, 2);
-		assertEquals(1f, fall.texture[(83 * w + p2 + 81) * 4 + 1] * 2, 1e-5f * 2);
-		assertEquals(0f, fall.texture[(81 * w + p2 + 81) * 4 + 1], 0f);
-		assertEquals(0f, fall.texture[(86 * w + p2 + 81) * 4 + 1], 0f);
+		assertEquals(1f, fall.texture[(83 * w + p2 + 81) * 4 + 1], 1e-5f);
+		float lip1 = fall.texture[(82 * w + p2 + 81) * 4 + 1], lip2 = fall.texture[(81 * w + p2 + 81) * 4 + 1];
+		assertTrue(lip1 > lip2 && lip2 > 0 && lip1 < 1);
+		assertTrue(fall.texture[(85 * w + p2 + 81) * 4 + 1] > 0);
+		assertEquals(0f, fall.texture[(77 * w + p2 + 81) * 4 + 1], 0f);
 	}
 }
