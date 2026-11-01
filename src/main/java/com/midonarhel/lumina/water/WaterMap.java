@@ -110,24 +110,22 @@ public final class WaterMap
 	private static final float CONTACT_TURB = 0.25f;
 	byte[] contact;
 
-	// Waterfalls: the water above a fall flows toward its lip and churns there, so the rapids' foam drifts to the edge
-	// and gathers along it, to pour over. Per corner, within LIP_REACH tiles of a lip: the unit direction to it times
+	// Waterfalls: the water above a fall flows toward its lip, to pour over; its foam there is the lip's contact (one
+	// mechanism for the foam by a fall: no churn of its own, which laid the rapids' foam over two tiles of pool). Per corner, within LIP_REACH tiles of a lip: the unit direction to it times
 	// 1 at the lip and 0 at the reach (x, z), and the lip's height (y down). A corner's water counts only at the lip's
 	// own level (LIP_LEVEL world units), not the pool the fall lands in.
 	private static final float LIP_REACH = 2.5f;
 	private static final float LIP_LEVEL = 48f;
-	// tiles a second of flow toward the lip at the lip, and the turbulence there
+	// tiles a second of flow toward the lip at the lip
 	private static final float LIP_FLOW = 1.2f;
-	private static final float LIP_CHURN = 2f;
 	// a steep face of fake water is a fall's: its normal's vertical part below this
 	private static final float LIP_STEEP = 0.5f;
 	private final float[] lipPullX = new float[CORNERS * CORNERS];
 	private final float[] lipPullZ = new float[CORNERS * CORNERS];
 	private final float[] lipLevel = new float[CORNERS * CORNERS];
 	private final float[] lipStrength = new float[CORNERS * CORNERS];
-	// where it lands: the foot of a fall is a contact source reaching FOOT_REACH contact cells, and the pool's water is
+	// where it lands: the foot of a fall is a contact source reaching as far as any (CONTACT_REACH), and the pool's water is
 	// pushed out from it, FOOT_FLOW tiles a second at the foot, as far as FOOT_PUSH tiles; the same fields as the lip's
-	private static final int FOOT_REACH = 10;
 	private static final float FOOT_PUSH = 3f;
 	private static final float FOOT_FLOW = 0.8f;
 	private final float[] footPullX = new float[CORNERS * CORNERS];
@@ -144,13 +142,9 @@ public final class WaterMap
 	// extended tile steps of a fall's four directions
 	private static final int[] FALL_DX = {1, -1, 0, 0}, FALL_DZ = {0, 0, 1, -1};
 	// the frame reaches this many tiles above a fall's lip and below its foot, as far as the lip's and the foot's contact
-	// (CONTACT_REACH, FOOT_REACH) spreads, across the fall's own width only: the foam it lays out runs down the fall, and
-	// out to its sides it ran a one tile fall's motion down the tiles beside it too
-	private static final int FRAME_UP = 3, FRAME_DOWN = 4;
-	// the contact on a fall's face, per cell: all of it at the lip and the foot, FALL_THIN less in the middle, so the foam is
-	// dense where the water goes over and where it lands
-	private static final float FALL_THIN = 0.4f;
-	private byte[] fallContact;
+	// (CONTACT_REACH) spreads, across the fall's own width only: the foam it lays out runs down the fall, and out to its
+	// sides it ran a one tile fall's motion down the tiles beside it too
+	private static final int FRAME_UP = 1, FRAME_DOWN = 1;
 	// per tile: a fall's
 	final boolean[] fall = new boolean[SIZE * SIZE];
 	// per corner, in the fall's frame: the fall's direction (a unit vector in the scene's x, z) times 1 plus the length the
@@ -787,44 +781,63 @@ public final class WaterMap
 	 */
 	private void findContacts(Tile[][][] tiles, int[][][] heights, java.util.List<float[]> lips, java.util.List<float[]> feet)
 	{
-		WaterBodies b = bodies;
-		// each water tile's surface: its lowest corner (y down), as buildTexture takes it
-		float[] surfaceY = new float[SIZE * SIZE];
-		java.util.Arrays.fill(surfaceY, Float.NaN);
-		for (int i = 0; i < surfaceY.length; ++i)
-		{
-			if (b.water[i])
-			{
-				int x = i % SIZE, y = i / SIZE;
-				int[][] h = heights[level[i]];
-				surfaceY[i] = Math.max(Math.max(h[x][y], h[x + 1][y]), Math.max(h[x][y + 1], h[x + 1][y + 1]));
-			}
-		}
+		float[] surfaceY = surfaceLevels(heights);
 		boolean[] marked = new boolean[CONTACT_SIZE * CONTACT_SIZE];
 		boolean any = eachModel(tiles, (id, r, orient, x, height, z) -> crossings(id, r, orient, x, height, z, surfaceY, marked));
 		if (!any && lips.isEmpty() && feet.isEmpty())
 		{
 			return;
 		}
+		contact = contactFrom(marked, surfaceY, lips, feet);
+	}
+
+	/**
+	 * Each water tile's surface: its lowest corner (y down), as buildTexture takes it; NaN on land.
+	 */
+	float[] surfaceLevels(int[][][] heights)
+	{
+		float[] surfaceY = new float[SIZE * SIZE];
+		java.util.Arrays.fill(surfaceY, Float.NaN);
+		for (int i = 0; i < surfaceY.length; ++i)
+		{
+			if (bodies.water[i])
+			{
+				int x = i % SIZE, y = i / SIZE;
+				int[][] h = heights[level[i]];
+				surfaceY[i] = Math.max(Math.max(h[x][y], h[x + 1][y]), Math.max(h[x][y + 1], h[x + 1][y + 1]));
+			}
+		}
+		return surfaceY;
+	}
+
+	/**
+	 * The contact map from the cells where things cross the surface (marked) and the falls' lips and feet.
+	 */
+	byte[] contactFrom(boolean[] marked, float[] surfaceY, java.util.List<float[]> lips, java.util.List<float[]> feet)
+	{
 		// each crossing raises the closeness of the cells within CONTACT_REACH of it
 		byte[] c = new byte[marked.length];
 		spread(marked, CONTACT_REACH, c);
 		// the lips and feet of the waterfalls count only on the water at their own level: the upper pool by the lip, the
-		// lower one by the foot
+		// lower one by the foot; never on a fall's own face, which is water running down and nothing else (its level is its
+		// foot's, so the foot's foam climbed it)
+		float[] pools = surfaceY.clone();
+		for (int i = 0; i < pools.length; ++i)
+		{
+			if (fall[i])
+			{
+				pools[i] = Float.NaN;
+			}
+		}
 		for (float[] l : lips)
 		{
-			spreadLine(l, CONTACT_REACH, surfaceY, c);
+			spreadLine(l, CONTACT_REACH, pools, c);
 		}
 		for (float[] f : feet)
 		{
-			spreadLine(f, FOOT_REACH, surfaceY, c);
+			spreadLine(f, CONTACT_REACH, pools, c);
 		}
-		// the foam on a fall's face
-		for (int i = 0; fallContact != null && i < fallContact.length; ++i)
-		{
-			c[i] = (byte) Math.max(c[i] & 255, fallContact[i] & 255);
-		}
-		contact = c;
+		return c;
 	}
 
 	/**
@@ -1080,26 +1093,12 @@ public final class WaterMap
 	 */
 	private void markFall(int[][][] heights, int x, int y, int k, int n, java.util.List<float[]> lips, java.util.List<float[]> feet)
 	{
-		if (fallContact == null)
-		{
-			fallContact = new byte[CONTACT_SIZE * CONTACT_SIZE];
-		}
 		// how much longer than its run each tile's slope is, tiles: the foam is laid out along the slope
 		float[] longer = new float[n + 1];
 		for (int j = 0; j < n; ++j)
 		{
 			int tx = x + j * FALL_DX[k], ty = y + j * FALL_DZ[k];
 			fall[ty * SIZE + tx] = true;
-			for (int cy = 0; cy < CONTACT_RES; ++cy)
-			{
-				for (int cx = 0; cx < CONTACT_RES; ++cx)
-				{
-					int a = FALL_DX[k] != 0 ? (FALL_DX[k] > 0 ? cx : CONTACT_RES - 1 - cx) : (FALL_DZ[k] > 0 ? cy : CONTACT_RES - 1 - cy);
-					float along = (j * CONTACT_RES + a + 0.5f) / (n * CONTACT_RES);
-					fallContact[(ty * CONTACT_RES + cy) * CONTACT_SIZE + tx * CONTACT_RES + cx] =
-						(byte) Math.round(255 * (1 - FALL_THIN * 4 * along * (1 - along)));
-				}
-			}
 			float drop = edgeHeight(heights, tx, ty, k ^ 1) - edgeHeight(heights, tx, ty, k);
 			longer[j + 1] = longer[j] + (float) Math.sqrt(1 + drop * drop / (128f * 128f)) - 1;
 		}
@@ -1545,17 +1544,15 @@ public final class WaterMap
 					turbulence /= count;
 					if (lipStrength[c] > 0 && Math.abs(height - lipLevel[c]) <= LIP_LEVEL)
 					{
-						// the water above a fall runs to its lip and churns there
+						// the water above a fall runs to its lip
 						fx += lipPullX[c] * LIP_FLOW;
 						fz += lipPullZ[c] * LIP_FLOW;
-						turbulence = Math.max(turbulence, Math.min(LIP_CHURN * lipStrength[c], 1f));
 					}
 					if (footStrength[c] > 0 && Math.abs(height - footLevel[c]) <= LIP_LEVEL)
 					{
 						// the pool a fall lands in is pushed out from its foot
 						fx -= footPullX[c] * FOOT_FLOW;
 						fz -= footPullZ[c] * FOOT_FLOW;
-						turbulence = Math.max(turbulence, Math.min(LIP_CHURN * footStrength[c], 1f));
 					}
 					if (contact != null)
 					{
