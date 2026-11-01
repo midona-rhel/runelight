@@ -255,6 +255,10 @@ public final class Commands
 				log.info("Snapshot done: fpsTarget back to {}", target);
 			} : null);
 		}
+		else if (args.length >= 1 && args[0].equals("tiles"))
+		{
+			com.midonarhel.lumina.light.LampTiles.dump(plugin, args.length >= 2 ? args[1] : "tiles");
+		}
 		else if (args.length >= 2 && args[0].equals("pace"))
 		{
 			plugin.pacer.setPaceHere(args[1].equals("on"));

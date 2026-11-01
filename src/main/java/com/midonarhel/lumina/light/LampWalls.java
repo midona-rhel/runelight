@@ -147,6 +147,18 @@ public final class LampWalls
 		return texels;
 	}
 
+	/** The shown walls' bits and ceiling bit for a storey's extended tile, as the shader reads them (LampTiles). */
+	int[] tileBits(int plane, int x, int y)
+	{
+		Packed s = shown;
+		if (s == null || x < 0 || y < 0 || x >= s.walls.size || y >= s.walls.size)
+		{
+			return new int[2];
+		}
+		int i = y * s.walls.size + x;
+		return new int[]{(int) s.tiles[i] >> (6 * plane) & 63, (int) s.ceilings[i] >> plane & 1};
+	}
+
 	/** Changes whenever the texels do. */
 	public int version()
 	{
