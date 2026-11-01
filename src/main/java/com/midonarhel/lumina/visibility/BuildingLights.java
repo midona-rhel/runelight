@@ -141,6 +141,8 @@ public class BuildingLights
 		builtBaseY = scene.getBaseY();
 		int[][][] flags = copy(collisionFlags());
 		handedFlags = flags;
+		// here, on the client thread: an animated wall's model may only be made on it
+		boolean[] drawn = drawnWalls(scene);
 		int request = newestRequest = ++requests;
 		int wallsScene = ++wallScene;
 		worker.execute(() ->
@@ -150,7 +152,6 @@ public class BuildingLights
 			// spawn events follow once the result is taken
 			Map<GameObject, WallMap.Diagonal> found = new IdentityHashMap<>();
 			findDiagonals(scene, found);
-			boolean[] drawn = drawnWalls(scene);
 			RoofMap roofMap = RoofMap.build(scene);
 			BuildingDetector.Result r = BuildingDetector.detect(scene.getExtendedTileSettings(), scene.getRoofs());
 			BuildingDetector.Result coarseResult = r;
@@ -416,11 +417,20 @@ public class BuildingLights
 		return drawn;
 	}
 
-	/** Whether the renderable draws anything: a model with vertices (wall object 85 by Ardougne's stalls has none). */
+	/**
+	 * Whether the renderable draws anything: a model with vertices (wall object 85 by Ardougne's stalls has none). An
+	 * animated one's model is made by getModel, which the client allows only on its thread.
+	 */
 	private static boolean hasModel(Renderable r)
 	{
 		Model m = r instanceof Model ? (Model) r : r != null ? r.getModel() : null;
 		return m != null && m.getVerticesCount() > 0;
+	}
+
+	/** hasModel off the client thread: a plain model by its vertices, an animated one counts as drawn. */
+	private static boolean drawnOffThread(Renderable r)
+	{
+		return r instanceof Model ? ((Model) r).getVerticesCount() > 0 : r != null;
 	}
 
 	private static void addDiagonal(GameObject go, Tile tile, Map<GameObject, WallMap.Diagonal> into)
@@ -435,12 +445,12 @@ public class BuildingLights
 			return;
 		}
 		Renderable r = go.getRenderable();
-		if (!hasModel(r))
+		if (!drawnOffThread(r))
 		{
 			// a wall nobody sees
 			return;
 		}
-		Model model = r instanceof Model ? (Model) r : r.getModel();
+		Model model = r instanceof Model ? (Model) r : null;
 		int kind = model != null
 			? WallMap.diagonalOf(model.getVerticesX(), model.getVerticesZ(), model.getVerticesCount(), go.getModelOrientation(),
 				go.getConfig() >> 6 & 3)

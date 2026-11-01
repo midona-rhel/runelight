@@ -98,8 +98,9 @@ public final class RoofMap
 	/** The object's lowest point, world y (down); NaN with no model. */
 	private static float lowest(GameObject go)
 	{
+		// off the client thread (BuildingLights' worker): only a plain model; an animated one's is made on the client's
 		Renderable r = go.getRenderable();
-		Model model = r instanceof Model ? (Model) r : r != null ? r.getModel() : null;
+		Model model = r instanceof Model ? (Model) r : null;
 		if (model == null || model.getVerticesCount() == 0)
 		{
 			return Float.NaN;
