@@ -47,6 +47,9 @@ public class Lightning
 	private static final float PULSE_RISE = 0.05f;
 	private static final float PULSE_HOLD = 0.4f;
 	private static final float PULSE_FALL = 0.4f;
+	// developer: hold the next strike's flash at its top until released (`::runelight strike hold|off`), to look at the
+	// scene under the bolt's light
+	public static volatile boolean hold;
 	// A flicker is a second, quicker flare that starts while the flash is falling, when it has fallen to this share
 	// of its top (least, most), and rises to this share of the top, then holds and falls in these seconds.
 	private static final float FLARE_START_MIN = 0.4f;
@@ -173,6 +176,10 @@ public class Lightning
 			return;
 		}
 
+		if (hold)
+		{
+			age = Math.min(age, PULSE_RISE + PULSE_HOLD * 0.5f);
+		}
 		flash = peak * pulse(age);
 		if (flicker)
 		{
@@ -186,7 +193,7 @@ public class Lightning
 				+ ", shadow map for the bolt " + (boltMapReady ? "drawn" : "not drawn"));
 		}
 		takeover = now;
-		if (age >= (flicker ? flareAt + FLARE_RISE + FLARE_HOLD + FLARE_FALL : PULSE_RISE + PULSE_HOLD + PULSE_FALL))
+		if (!hold && age >= (flicker ? flareAt + FLARE_RISE + FLARE_HOLD + FLARE_FALL : PULSE_RISE + PULSE_HOLD + PULSE_FALL))
 		{
 			stop();
 		}

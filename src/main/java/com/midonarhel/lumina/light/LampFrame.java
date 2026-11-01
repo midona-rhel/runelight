@@ -266,7 +266,7 @@ public final class LampFrame
 	 */
 	public void updateRoomLight(RoomMap rooms)
 	{
-		long now = System.nanoTime();
+		long now = com.midonarhel.lumina.common.Clock.nanos();
 		float dt = plugin.roomLightNanos == 0 ? 0 : Math.min((now - plugin.roomLightNanos) / 1e9f, 0.5f);
 		plugin.roomLightNanos = now;
 		BuildingLights buildings = plugin.buildingLights;
@@ -301,7 +301,7 @@ public final class LampFrame
 		SceneLights lights = plugin.sceneLights;
 		if (lights != null)
 		{
-			float time = (System.currentTimeMillis() - plugin.startMillis) / 1000f;
+			float time = (com.midonarhel.lumina.common.Clock.millis() - plugin.startMillis) / 1000f;
 			// around the focal point like the drawn world (EdgeFade), so lights don't come and go as the camera turns
 			lights.collect(plugin.frameLights, time, night, plugin.dayCycle.sunAltitude, plugin.edgeFade.focalX, plugin.edgeFade.focalZ,
 				plugin.edgeFade.radius);

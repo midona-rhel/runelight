@@ -51,6 +51,10 @@ public final class SkyGridMap
 	private SceneVoxels handedVoxels;
 	private WallMap handedWalls;
 	private byte[] handedFloors;
+	private RoomMap handedRooms;
+	// `::runelight skydump`: written at the next update with no trace running (SkyGridDump)
+	private java.nio.file.Path dumpTo;
+	private float dumpTileX, dumpTileZ;
 	private volatile boolean jobFresh;
 	private boolean wanted;
 	private int texture;
@@ -108,6 +112,19 @@ public final class SkyGridMap
 		{
 			upload();
 		}
+		if (dumpTo != null && sky != null && handedVoxels != null)
+		{
+			try
+			{
+				SkyGridDump.write(dumpTo, handedVoxels, handedWalls, handedRooms, handedFloors, sky, dumpTileX, dumpTileZ);
+				log.info("Sky grid dumped to {}", dumpTo);
+			}
+			catch (java.io.IOException ex)
+			{
+				log.warn("Sky grid dump failed", ex);
+			}
+			dumpTo = null;
+		}
 		boolean newVoxels = voxels != handedVoxels || floors != handedFloors, newWalls = walls != handedWalls;
 		if (voxels == null || !newVoxels && !newWalls && sky.dirtyCount() == 0)
 		{
@@ -127,6 +144,7 @@ public final class SkyGridMap
 		handedVoxels = voxels;
 		handedWalls = walls;
 		handedFloors = floors;
+		handedRooms = rooms;
 		SkyGrid s = sky;
 		job = worker.submit(() ->
 		{
@@ -181,6 +199,14 @@ public final class SkyGridMap
 				log.warn("Sky grid job failed", ex);
 			}
 		});
+	}
+
+	/** Write the grid's inputs and texels at the next update with no trace running (`::runelight skydump`). */
+	public void requestDump(java.nio.file.Path file, float worldTileX, float worldTileZ)
+	{
+		dumpTo = file;
+		dumpTileX = worldTileX;
+		dumpTileZ = worldTileZ;
 	}
 
 	java.util.List<float[]> debugProbes(float x, float z)
@@ -281,7 +307,7 @@ public final class SkyGridMap
 				prevBaseX = shownBaseX;
 				prevBaseY = shownBaseY;
 				prevInstance = shownInstance;
-				shownSince = System.nanoTime();
+				shownSince = com.midonarhel.lumina.common.Clock.nanos();
 				freshInFlight = false;
 				swapWhenUploaded = false;
 				pendingMove = false;
@@ -296,7 +322,7 @@ public final class SkyGridMap
 			if (shownSince == 0 || !covers(shownBaseX, shownBaseY, shownInstance, sky.baseX(), sky.baseY(), sky.instance()))
 			{
 				// the first place shown, or one far from the last: it eases in from open sky
-				shownSince = System.nanoTime();
+				shownSince = com.midonarhel.lumina.common.Clock.nanos();
 				prevTexture = 0;
 			}
 			pendingMove = false;
@@ -401,7 +427,7 @@ public final class SkyGridMap
 			// covers the scene, else open sky
 			int sx = scene.getBaseX(), sy = scene.getBaseY();
 			boolean inst = scene.isInstance();
-			float w = covers(shownBaseX, shownBaseY, shownInstance, sx, sy, inst) ? LayerEase.weight(shownSince, System.nanoTime()) : 0;
+			float w = covers(shownBaseX, shownBaseY, shownInstance, sx, sy, inst) ? LayerEase.weight(shownSince, com.midonarhel.lumina.common.Clock.nanos()) : 0;
 			boolean prevOn = w < 1 && prevTexture != 0 && prevTexture != texture
 				&& covers(prevBaseX, prevBaseY, prevInstance, sx, sy, inst);
 			glUniform1f(uniWeight, w);

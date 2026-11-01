@@ -371,23 +371,9 @@ public final class SceneLoader
 		SceneDerived d = new SceneDerived(scene, newZones, roofChanges, join(waterBuild), join(fogGroundBuild));
 		t = stage("water mesh + fog ground wait", t);
 		// the water's surface tiles, data and contact into the textures not drawn, before the swap, which flips them
-		Water.Loaded water = d.water;
-		jobs.add("water", SceneJobs.LOAD, deadline ->
-		{
-			plugin.water.uploadNext(water);
-			return true;
-		});
+		queueDerived(d);
 		if (d.fogGround != null)
 		{
-			// the fog's ground drawn from the swap on (its rooms come after it, and ease in): uploaded before it
-			FogGround g = d.fogGround;
-			float[] texels = new float[FogGround.WIDTH * FogGround.CORNERS * FogGround.CHANNELS];
-			g.texels(null, null, texels);
-			jobs.add("fog ground", SceneJobs.LOAD, deadline ->
-			{
-				plugin.volumetricFog.prepareNext(g, texels);
-				return true;
-			});
 			t = stage("fog ground texels", t);
 		}
 		// what is derived from the drawn zones starts now, before the swap: the voxels on their worker, the static
@@ -406,6 +392,65 @@ public final class SceneLoader
 		next = d;
 		report.loadReturned();
 		plugin.loadBuilt();
+	}
+
+	/** The water's and the fog ground's uploads of a loaded scene, as jobs before its swap. */
+	private void queueDerived(SceneDerived d)
+	{
+		Water.Loaded water = d.water;
+		jobs.add("water", SceneJobs.LOAD, deadline ->
+		{
+			plugin.water.uploadNext(water);
+			return true;
+		});
+		if (d.fogGround != null)
+		{
+			// the fog's ground drawn from the swap on (its rooms come after it, and ease in): uploaded before it
+			FogGround g = d.fogGround;
+			float[] texels = new float[FogGround.WIDTH * FogGround.CORNERS * FogGround.CHANNELS];
+			g.texels(null, null, texels);
+			jobs.add("fog ground", SceneJobs.LOAD, deadline ->
+			{
+				plugin.volumetricFog.prepareNext(g, texels);
+				return true;
+			});
+		}
+	}
+
+	/**
+	 * A top level scene from a dump (dev/SceneDump, the offline renderer), client thread: its zones restored
+	 * (ZoneSnapshot), its water map and fog ground as the load built them. Derived and queued as a load's are, and
+	 * swapped in by {@link #swap}; the voxels are the dump's (VoxelBuilder.restore), not built again.
+	 */
+	public void restore(Scene scene, Zone[][] zones, WaterMap waterMap, FogGround fogGround)
+	{
+		for (Zone[] column : plugin.root.zones)
+		{
+			for (Zone zone : column)
+			{
+				zone.cull = true;
+			}
+		}
+		plugin.mapUploader.water = waterMap;
+		SceneDerived d = new SceneDerived(scene, zones, new HashMap<>(), Water.prepare(waterMap), fogGround);
+		queueDerived(d);
+		d.shadows = plugin.prebuildStaticShadows(scene, zones);
+		next = d;
+	}
+
+	/** A sub world view's zones from a dump, drawable at once (as swapSub leaves them). */
+	public void restoreSub(int worldViewId, Zone[][] zones)
+	{
+		LuminaPlugin.SceneContext ctx = new LuminaPlugin.SceneContext(zones.length, zones[0].length);
+		ctx.zones = zones;
+		for (Zone[] column : zones)
+		{
+			for (Zone zone : column)
+			{
+				zone.initialized = true;
+			}
+		}
+		plugin.subs[worldViewId] = ctx;
 	}
 
 	private long stage(String name, long since)
@@ -879,6 +924,12 @@ public final class SceneLoader
 				}
 			}
 		}
+	}
+
+	/** Whether scene jobs wait to run (the offline renderer runs frames until none do). */
+	public boolean jobsPending()
+	{
+		return !jobs.idle();
 	}
 
 	/** Client thread, after the frame is presented: the jobs' share of this frame. */

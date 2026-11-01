@@ -124,7 +124,7 @@ public final class EdgeFade
 		sceneMin = sceneMin(expandedChunks);
 		sceneMax = sceneMax(expandedChunks);
 		float target = targetWidth(radius, fogginess);
-		long now = System.currentTimeMillis();
+		long now = com.midonarhel.lumina.common.Clock.millis();
 		float dt = Math.max(0, Math.min(0.1f, (now - widthMillis) / 1000f));
 		widthMillis = now;
 		// weather and areas change gradually already; this only keeps a sudden change from snapping

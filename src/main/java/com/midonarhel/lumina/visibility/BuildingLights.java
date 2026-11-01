@@ -200,6 +200,30 @@ public class BuildingLights
 		}
 	}
 
+	/**
+	 * The analysis of a scene from a dump (dev/SceneDump, the offline renderer), in place of the worker's: client
+	 * thread, before the frame.
+	 */
+	public void restore(Scene scene, BuildingDetector.Result result, BuildingDetector.Result coarse, RoomMap rooms,
+		WallMap walls, byte[] floors)
+	{
+		pending.set(null);
+		builtFor = scene;
+		builtBaseX = scene.getBaseX();
+		builtBaseY = scene.getBaseY();
+		this.result = result != null ? result : new BuildingDetector.Result();
+		this.coarse = coarse;
+		this.rooms = rooms;
+		this.walls = walls;
+		filledTiles = floors;
+	}
+
+	/** The coarse analysis (before the walls split it), for the scene dump. */
+	public BuildingDetector.Result getCoarse()
+	{
+		return coarse;
+	}
+
 	/** Take the worker's newest result, if one is waiting: client thread, once a frame before the consumers. */
 	public void apply()
 	{

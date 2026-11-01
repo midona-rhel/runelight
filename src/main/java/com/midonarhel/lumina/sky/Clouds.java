@@ -239,7 +239,7 @@ public class Clouds
 		float cloudCover, long baseX, long baseZ, WeatherField field)
 	{
 		this.field = field;
-		long now = System.nanoTime();
+		long now = com.midonarhel.lumina.common.Clock.nanos();
 		float dt = lastNanos == 0 ? 0 : Math.min((now - lastNanos) / 1e9f, 0.25f);
 		lastNanos = now;
 

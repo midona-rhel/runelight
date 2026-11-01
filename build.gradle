@@ -54,3 +54,22 @@ tasks.register('sceneClusterReplay', JavaExec) {
         args project.property('sceneCapture'), project.property('replayOutput')
     }
 }
+
+// The offline renderer (docs/offline-render.md): a scene dump (::runelight scenedump name) drawn headless through the
+// plugin's own frame, to ~/.runelite/lumina/dumps/<name>/offline/. -Pdump=name (or a directory, or synthetic);
+// -Pargs="hour=6 views=all key=value ..." for the overrides.
+tasks.register('renderDump', JavaExec) {
+	dependsOn testClasses
+	classpath = sourceSets.test.runtimeClasspath
+	mainClass = 'com.midonarhel.lumina.harness.RenderDump'
+	workingDir = projectDir
+	jvmArgs '-ea:com.midonarhel...'
+	doFirst {
+		args = [project.property('dump')] + (project.hasProperty('args') ? project.property('args').toString().split(' ').findAll { it } : [])
+	}
+}
+
+// -Dlumina.dump=name (and the other lumina.* properties) reach the tests: OfflineRenderDumpTest draws and checks that dump
+test {
+	systemProperties System.getProperties().findAll { it.key.toString().startsWith('lumina.') }
+}

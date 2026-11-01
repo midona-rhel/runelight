@@ -133,7 +133,7 @@ public final class LampWalls
 			// another scene's walls stand somewhere else: the new ones ease in over none
 			before = shown != null && shown.walls.scene == p.walls.scene ? shown : null;
 			shown = p;
-			since = System.nanoTime();
+			since = com.midonarhel.lumina.common.Clock.nanos();
 			Arrays.fill(texels, 0);
 			System.arraycopy(shown.tiles, 0, texels, 0, shown.tiles.length);
 			System.arraycopy(shown.ceilings, 0, texels, 2 * LAYER_TEXELS * 4, shown.ceilings.length);
@@ -167,7 +167,7 @@ public final class LampWalls
 			System.arraycopy(roofBottoms, 0, texels, ROOF_LAYER * LAYER_TEXELS * 4, n);
 			++version;
 		}
-		float weight = shown != null ? LayerEase.weight(since, System.nanoTime()) : 1;
+		float weight = shown != null ? LayerEase.weight(since, com.midonarhel.lumina.common.Clock.nanos()) : 1;
 		if (weight >= 1)
 		{
 			before = null;
