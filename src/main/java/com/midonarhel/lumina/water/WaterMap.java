@@ -815,9 +815,9 @@ public final class WaterMap
 	 */
 	byte[] contactFrom(boolean[] marked, float[] surfaceY, java.util.List<float[]> lips, java.util.List<float[]> feet)
 	{
-		// each crossing raises the closeness of the cells within CONTACT_REACH of it
+		// each crossing of something standing in the water raises the closeness of the cells within CONTACT_REACH of it
 		byte[] c = new byte[marked.length];
-		spread(marked, CONTACT_REACH, c);
+		spread(standingIn(marked, surfaceY), CONTACT_REACH, c);
 		// the lips and feet of the waterfalls count only on the water at their own level: the upper pool by the lip, the
 		// lower one by the foot; never on a fall's own face, which is water running down and nothing else (its level is its
 		// foot's, so the foot's foam climbed it)
@@ -838,6 +838,39 @@ public final class WaterMap
 			spreadLine(f, CONTACT_REACH, pools, c);
 		}
 		return c;
+	}
+
+	/**
+	 * The crossings of things standing in the water: those with water (surfaceY, per tile) all round them, cell by cell. A
+	 * wall or kerb lining a bank crosses the surface along it too, and spread from there it covered the water a tile or two
+	 * wide (channels, ledges, small pools) in foam from bank to bank: the user's "foam in the empty water tiles". A bank
+	 * built up in stone is a bank, as one of earth is.
+	 */
+	static boolean[] standingIn(boolean[] marked, float[] surfaceY)
+	{
+		boolean[] in = new boolean[marked.length];
+		for (int cy = 0; cy < CONTACT_SIZE; ++cy)
+		{
+			for (int cx = 0; cx < CONTACT_SIZE; ++cx)
+			{
+				if (!marked[cy * CONTACT_SIZE + cx])
+				{
+					continue;
+				}
+				boolean water = true;
+				for (int dy = -1; dy <= 1 && water; ++dy)
+				{
+					for (int dx = -1; dx <= 1 && water; ++dx)
+					{
+						int x = cx + dx, y = cy + dy;
+						water = x >= 0 && y >= 0 && x < CONTACT_SIZE && y < CONTACT_SIZE
+							&& !Float.isNaN(surfaceY[y / CONTACT_RES * SIZE + x / CONTACT_RES]);
+					}
+				}
+				in[cy * CONTACT_SIZE + cx] = water;
+			}
+		}
+		return in;
 	}
 
 	/**
