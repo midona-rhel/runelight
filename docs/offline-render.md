@@ -36,7 +36,14 @@ A dump of a full scene is tens to hundreds of MB; the zones are most of it. Taki
 ./gradlew renderDump -Pdump=<name> -Pargs="hour=21 views=all"
 ./gradlew renderDump -Pdump=<name> -Pargs="yaw=1024 pitch=300 shadows=false fogQuality=HIGH"
 ./gradlew renderDump -Pdump=synthetic                    # the dump made in code (no client needed)
+./gradlew renderDump -Pdump=faces:FILE:ID[:TEXTURES_DUMP]  # the models of a `::runelight faces N detail` file
 ```
+
+`faces:` (`harness/FacesDump`) puts the models of a `faces [radius] detail` file (each face's colours, texture,
+corners and the game's normals) into the synthetic scene as dynamic models around the object ID nearest the file's
+player tile, planes 240 apart, with the game's textures from a live dump: how the upload code and the shaders shade
+those exact models, on any branch (a branch that makes its own normals ignores the file's). A live dump can't show a
+change to the static upload: its zones are the vertices its own build uploaded.
 
 Writes to `<dump>/offline/` (or `out=dir`): `final.png`, `view-<name>.png` for the debug views (default NORMALS,
 SKYLIGHT, LIGHTING, SHADOWS, AMBIENT_OCCLUSION, DEPTH; `views=all`, `views=none`, or a list), and `diff.png` with the

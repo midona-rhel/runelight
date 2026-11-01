@@ -341,12 +341,16 @@ public final class DumpRenderer implements AutoCloseable
 	/** The free camera's opaque zones: every one of the top level scene's (the client culled to its own frustum). */
 	private void drawAllOpaque(Scene scene)
 	{
-		LuminaPlugin.SceneContext ctx = plugin.root;
-		for (int x = 0; x < ctx.sizeX; ++x)
+		// the zones the dump has (a scene made in code has only some: SyntheticDump, FacesDump)
+		for (int v = 0; v < dump.views.size(); ++v)
 		{
-			for (int z = 0; z < ctx.sizeZ; ++z)
+			if (dump.views.get(v)[0] != net.runelite.api.WorldView.TOPLEVEL)
 			{
-				plugin.drawZoneOpaque(null, scene, x, z);
+				continue;
+			}
+			for (com.midonarhel.lumina.scene.ZoneSnapshot z : dump.zones.get(v))
+			{
+				plugin.drawZoneOpaque(null, scene, z.x, z.z);
 			}
 		}
 	}

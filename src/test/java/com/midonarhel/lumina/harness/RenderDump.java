@@ -115,12 +115,18 @@ public final class RenderDump
 		System.exit(0);
 	}
 
-	/** A dump by name (under SceneDump.DIR), by directory, or the synthetic one. */
+	/** A dump by name (under SceneDump.DIR), by directory, the synthetic one, or a faces file's models. */
 	public static SceneDump.Loaded load(String name) throws IOException
 	{
 		if (name.equals("synthetic"))
 		{
 			return SyntheticDump.make();
+		}
+		if (name.startsWith("faces:"))
+		{
+			// faces:FILE:CENTRE_ID[:TEXTURES_DUMP], the models of a `faces [radius] detail` file (FacesDump)
+			String[] p = name.split(":");
+			return FacesDump.make(Paths.get(p[1]), Integer.parseInt(p[2]), p.length > 3 ? Paths.get(p[3]) : null);
 		}
 		Path dir = Paths.get(name);
 		if (!Files.isDirectory(dir))
