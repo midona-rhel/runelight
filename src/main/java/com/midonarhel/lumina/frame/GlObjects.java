@@ -273,8 +273,7 @@ public final class GlObjects
 
 	public void initFbo(int width, int height, int aaSamples, double renderFactor)
 	{
-		final GraphicsConfiguration graphicsConfiguration = plugin.clientUI.getGraphicsConfiguration();
-		final AffineTransform transform = graphicsConfiguration.getDefaultTransform();
+		final AffineTransform transform = plugin.dpiTransform();
 
 		width = Math.max(1, plugin.getScaledValue(transform.getScaleX() * renderFactor, width));
 		height = Math.max(1, plugin.getScaledValue(transform.getScaleY() * renderFactor, height));
@@ -295,6 +294,6 @@ public final class GlObjects
 		}
 
 		// Reset
-		glBindFramebuffer(GL_FRAMEBUFFER, plugin.awtContext.getFramebuffer(false));
+		glBindFramebuffer(GL_FRAMEBUFFER, plugin.windowFramebuffer());
 	}
 }

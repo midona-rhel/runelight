@@ -307,7 +307,7 @@ public final class SkyGridMap
 				prevBaseX = shownBaseX;
 				prevBaseY = shownBaseY;
 				prevInstance = shownInstance;
-				shownSince = System.nanoTime();
+				shownSince = com.midonarhel.lumina.common.Clock.nanos();
 				freshInFlight = false;
 				swapWhenUploaded = false;
 				pendingMove = false;
@@ -322,7 +322,7 @@ public final class SkyGridMap
 			if (shownSince == 0 || !covers(shownBaseX, shownBaseY, shownInstance, sky.baseX(), sky.baseY(), sky.instance()))
 			{
 				// the first place shown, or one far from the last: it eases in from open sky
-				shownSince = System.nanoTime();
+				shownSince = com.midonarhel.lumina.common.Clock.nanos();
 				prevTexture = 0;
 			}
 			pendingMove = false;
@@ -427,7 +427,7 @@ public final class SkyGridMap
 			// covers the scene, else open sky
 			int sx = scene.getBaseX(), sy = scene.getBaseY();
 			boolean inst = scene.isInstance();
-			float w = covers(shownBaseX, shownBaseY, shownInstance, sx, sy, inst) ? LayerEase.weight(shownSince, System.nanoTime()) : 0;
+			float w = covers(shownBaseX, shownBaseY, shownInstance, sx, sy, inst) ? LayerEase.weight(shownSince, com.midonarhel.lumina.common.Clock.nanos()) : 0;
 			boolean prevOn = w < 1 && prevTexture != 0 && prevTexture != texture
 				&& covers(prevBaseX, prevBaseY, prevInstance, sx, sy, inst);
 			glUniform1f(uniWeight, w);

@@ -173,6 +173,8 @@ import static com.midonarhel.lumina.LuminaPlugin.*;
 public final class Commands
 {
 	private final LuminaPlugin plugin;
+	// developer: the skylight's traced visibility switched off (`::runelight skylight off`)
+	public static volatile boolean skylightOff;
 
 	public Commands(LuminaPlugin plugin)
 	{
@@ -196,15 +198,23 @@ public final class Commands
 			height = dim.height;
 		}
 
-		final GraphicsConfiguration graphicsConfiguration = plugin.clientUI.getGraphicsConfiguration();
-		final AffineTransform t = graphicsConfiguration.getDefaultTransform();
+		final AffineTransform t = plugin.dpiTransform();
 		width = plugin.getScaledValue(t.getScaleX(), width);
 		height = plugin.getScaledValue(t.getScaleY(), height);
 
 		BufferedImage image = new BufferedImage(width, height, BufferedImage.TYPE_INT_RGB);
 		int[] pixels = ((DataBufferInt) image.getRaster().getDataBuffer()).getData();
 
-		glReadBuffer(plugin.awtContext.getBufferMode());
+		if (plugin.offscreenFramebuffer >= 0)
+		{
+			// the offline renderer's framebuffer
+			glBindFramebuffer(GL_READ_FRAMEBUFFER, plugin.offscreenFramebuffer);
+			glReadBuffer(GL_COLOR_ATTACHMENT0);
+		}
+		else
+		{
+			glReadBuffer(plugin.awtContext.getBufferMode());
+		}
 		glReadPixels(0, 0, width, height, GL_BGRA, GL_UNSIGNED_INT_8_8_8_8_REV, pixels);
 
 		// glReadPixels returns rows bottom-up, flip them to top-down
@@ -261,6 +271,13 @@ public final class Commands
 			plugin.setupSyncMode();
 			log.info("Frame pacing {}", plugin.pacer.isPaceHere() ? "here (Lumina's pacer)" : "by the client's limiter");
 		}
+		else if (args.length >= 2 && args[0].equals("skylight"))
+		{
+			// developer A/B: `skylight off` draws the frame as if the sky grid had no answer (the shader's open-sky
+			// fallback), `skylight on` restores it
+			skylightOff = args[1].equals("off");
+			log.info("Skylight {}", skylightOff ? "off" : "on");
+		}
 		else if (args.length >= 2 && args[0].equals("strike"))
 		{
 			// `strike hold`: a strike whose flash stays at its top until `strike off`; `strike` alone: one strike
@@ -286,6 +303,11 @@ public final class Commands
 			plugin.swapCaptureArmed = true;
 			log.info("Armed: {} frames from the end of the next scene load (spanning the swap) are captured as swap-k0..{}",
 				plugin.swapCaptureFrames, plugin.swapCaptureFrames - 1);
+		}
+		else if (args.length >= 2 && args[0].equals("scenedump"))
+		{
+			// the next frame and everything it is drawn from, for the offline renderer (docs/offline-render.md)
+			plugin.sceneDump.arm(args[1]);
 		}
 		else if (args.length >= 3 && args[0].equals("set"))
 		{

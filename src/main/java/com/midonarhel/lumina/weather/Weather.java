@@ -605,7 +605,7 @@ public class Weather
 	public boolean update(boolean gradual, boolean varying, boolean lightningEnabled, boolean outdoors,
 		float fx, float fy, float fz, int plane)
 	{
-		long now = System.currentTimeMillis();
+		long now = com.midonarhel.lumina.common.Clock.millis();
 		float dt = lastMillis == 0 ? 0 : Math.min((now - lastMillis) / 1000f, 0.25f);
 		lastMillis = now;
 		openSky = outdoors;
@@ -734,7 +734,7 @@ public class Weather
 	public void updateField(Scene scene, int plane, EnvironmentManager env, boolean areas, String biome, WeatherMode mode,
 		Climate climate, int intensityPercent, boolean gradual, double hour, float fx, float fz)
 	{
-		long now = System.currentTimeMillis();
+		long now = com.midonarhel.lumina.common.Clock.millis();
 		float dt = fieldMillis == 0 ? 0 : Math.min((now - fieldMillis) / 1000f, 0.25f);
 		fieldMillis = now;
 		if (scene == null)
@@ -1008,7 +1008,7 @@ public class Weather
 		glDisable(GL_CULL_FACE);
 		glEnable(GL_BLEND);
 
-		float time = ((System.currentTimeMillis() - GameClock.EPOCH_MILLIS) % CLOCK_WRAP_MILLIS) / 1000f;
+		float time = ((com.midonarhel.lumina.common.Clock.millis() - GameClock.EPOCH_MILLIS) % CLOCK_WRAP_MILLIS) / 1000f;
 
 		// only the game viewport; gl_FragCoord stays in whole-target pixels, as the scene textures expect
 		glViewport(viewport[0], viewport[1], viewport[2], viewport[3]);

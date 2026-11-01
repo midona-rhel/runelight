@@ -113,6 +113,154 @@ public final class ModelData
 		return this;
 	}
 
+	/** A copy of the model's data of its own (the scene dump's frame tape, dev/FrameTape). */
+	public static ModelData copyOf(Model m)
+	{
+		return new ModelData().copy(m);
+	}
+
+	/** The data for the scene dump: every array (null kept) and the scalars. */
+	public void write(java.io.DataOutputStream out) throws java.io.IOException
+	{
+		out.writeInt(vertexCount);
+		out.writeInt(faceCount);
+		Object[] arrays = {verticesX, verticesY, verticesZ, indices1, indices2, indices3, colors1, colors2, colors3,
+			unlitColors, priorities, textures, transparencies, bias, textureFaces, texIndices1, texIndices2, texIndices3};
+		for (Object a : arrays)
+		{
+			writeArray(out, a);
+		}
+		out.writeByte(transparency);
+		out.writeInt(radius);
+		out.writeInt(diameter);
+		out.writeByte(overrideAmount);
+		out.writeByte(overrideHue);
+		out.writeByte(overrideSaturation);
+		out.writeByte(overrideLuminance);
+	}
+
+	public static ModelData read(java.io.DataInputStream in) throws java.io.IOException
+	{
+		ModelData m = new ModelData();
+		m.vertexCount = in.readInt();
+		m.faceCount = in.readInt();
+		m.verticesX = (float[]) readArray(in);
+		m.verticesY = (float[]) readArray(in);
+		m.verticesZ = (float[]) readArray(in);
+		m.indices1 = (int[]) readArray(in);
+		m.indices2 = (int[]) readArray(in);
+		m.indices3 = (int[]) readArray(in);
+		m.colors1 = (int[]) readArray(in);
+		m.colors2 = (int[]) readArray(in);
+		m.colors3 = (int[]) readArray(in);
+		m.unlitColors = (short[]) readArray(in);
+		m.priorities = (byte[]) readArray(in);
+		m.textures = (short[]) readArray(in);
+		m.transparencies = (byte[]) readArray(in);
+		m.bias = (byte[]) readArray(in);
+		m.textureFaces = (byte[]) readArray(in);
+		m.texIndices1 = (int[]) readArray(in);
+		m.texIndices2 = (int[]) readArray(in);
+		m.texIndices3 = (int[]) readArray(in);
+		m.transparency = in.readByte();
+		m.radius = in.readInt();
+		m.diameter = in.readInt();
+		m.overrideAmount = in.readByte();
+		m.overrideHue = in.readByte();
+		m.overrideSaturation = in.readByte();
+		m.overrideLuminance = in.readByte();
+		return m;
+	}
+
+	private static void writeArray(java.io.DataOutputStream out, Object a) throws java.io.IOException
+	{
+		if (a == null)
+		{
+			out.writeByte(0);
+			return;
+		}
+		int n = Array.getLength(a);
+		if (a instanceof float[])
+		{
+			out.writeByte('F');
+			out.writeInt(n);
+			for (float v : (float[]) a)
+			{
+				out.writeFloat(v);
+			}
+		}
+		else if (a instanceof int[])
+		{
+			out.writeByte('I');
+			out.writeInt(n);
+			for (int v : (int[]) a)
+			{
+				out.writeInt(v);
+			}
+		}
+		else if (a instanceof short[])
+		{
+			out.writeByte('S');
+			out.writeInt(n);
+			for (short v : (short[]) a)
+			{
+				out.writeShort(v);
+			}
+		}
+		else
+		{
+			out.writeByte('B');
+			out.writeInt(n);
+			out.write((byte[]) a);
+		}
+	}
+
+	private static Object readArray(java.io.DataInputStream in) throws java.io.IOException
+	{
+		int kind = in.readByte();
+		if (kind == 0)
+		{
+			return null;
+		}
+		int n = in.readInt();
+		switch (kind)
+		{
+			case 'F':
+			{
+				float[] a = new float[n];
+				for (int i = 0; i < n; ++i)
+				{
+					a[i] = in.readFloat();
+				}
+				return a;
+			}
+			case 'I':
+			{
+				int[] a = new int[n];
+				for (int i = 0; i < n; ++i)
+				{
+					a[i] = in.readInt();
+				}
+				return a;
+			}
+			case 'S':
+			{
+				short[] a = new short[n];
+				for (int i = 0; i < n; ++i)
+				{
+					a[i] = in.readShort();
+				}
+				return a;
+			}
+			default:
+			{
+				byte[] a = new byte[n];
+				in.readFully(a);
+				return a;
+			}
+		}
+	}
+
 	private void scalars(Model m)
 	{
 		transparency = m.getTransparency();

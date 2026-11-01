@@ -247,8 +247,7 @@ public final class UiBlit
 		);
 		glUniform1f(plugin.uniUiColorblindIntensity, plugin.config.colorBlindIntensity());
 
-		final GraphicsConfiguration graphicsConfiguration = plugin.clientUI.getGraphicsConfiguration();
-		final AffineTransform t = graphicsConfiguration.getDefaultTransform();
+		final AffineTransform t = plugin.dpiTransform();
 
 		if (plugin.client.isStretchedEnabled())
 		{
