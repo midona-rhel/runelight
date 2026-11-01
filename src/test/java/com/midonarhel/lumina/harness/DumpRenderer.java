@@ -61,6 +61,8 @@ public final class DumpRenderer implements AutoCloseable
 		// the camera, null for the dump's; the zones of the whole scene are drawn when it moves (the tape's are those the
 		// client's frustum kept)
 		public Integer cameraYaw, cameraPitch, scale;
+		// the world tile the camera turns about, null for the dump's focal point (the player)
+		public int[] focus;
 		// the hour to hold (day length Fixed, fixedHour), null for the dump's clock
 		public Integer hour;
 		// the buildings (walls, rooms, floors, roofs, drawn walls): "dumped" as the client had them; "rebuild" built again
@@ -107,7 +109,7 @@ public final class DumpRenderer implements AutoCloseable
 			world.settings.put("fixedHour", String.valueOf(options.hour));
 		}
 		SceneDump.Manifest m = dump.manifest;
-		if (options.cameraYaw != null || options.cameraPitch != null)
+		if (options.cameraYaw != null || options.cameraPitch != null || options.focus != null)
 		{
 			freeCamera = true;
 		}
@@ -463,10 +465,16 @@ public final class DumpRenderer implements AutoCloseable
 		float dist = (float) Math.sqrt(dx * dx + dy * dy + dz * dz);
 		double turn = unitsPerTurn(dump);
 		double yaw = world.cameraYaw * Math.PI * 2 / turn, pitch = world.cameraPitch * Math.PI * 2 / turn;
+		float fx = m.focalX, fz = m.focalZ;
+		if (options.focus != null)
+		{
+			fx = (options.focus[0] - m.baseX) * 128 + 64;
+			fz = (options.focus[1] - m.baseY) * 128 + 64;
+		}
 		// (orbit is checked against a dump's own camera by OfflineRenderTest)
-		f[0] = m.focalX + (float) (dist * orbit(yaw, pitch)[0]);
+		f[0] = fx + (float) (dist * orbit(yaw, pitch)[0]);
 		f[1] = m.focalY + (float) (dist * orbit(yaw, pitch)[1]);
-		f[2] = m.focalZ + (float) (dist * orbit(yaw, pitch)[2]);
+		f[2] = fz + (float) (dist * orbit(yaw, pitch)[2]);
 		f[3] = (float) pitch;
 		f[4] = (float) yaw;
 		return f;

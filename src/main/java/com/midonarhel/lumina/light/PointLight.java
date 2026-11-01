@@ -56,6 +56,71 @@ public class PointLight
 		return this;
 	}
 
+	/**
+	 * Drop the lamps that stand twice: the same light at the same place, from two objects on two storeys (the game keeps
+	 * some wall decorations on both planes; stall5 had 5 of 106 lamps so, each lighting what it reaches twice). The one on
+	 * the lower storey stays; the order of the rest is kept.
+	 */
+	static void dropDoubles(java.util.List<PointLight> lights)
+	{
+		if (lights.size() < 2)
+		{
+			return;
+		}
+		java.util.Map<Long, Integer> at = new java.util.HashMap<>(lights.size() * 2);
+		boolean[] drop = null;
+		for (int i = 0; i < lights.size(); ++i)
+		{
+			PointLight l = lights.get(i);
+			long key = (long) Math.round(l.x) * 73856093L ^ (long) Math.round(l.y) * 19349663L ^ (long) Math.round(l.z) * 83492791L
+				^ (long) Float.floatToIntBits(l.radius) * 2654435761L ^ (long) Float.floatToIntBits(l.r + 2 * l.g + 4 * l.b) * 40503L;
+			Integer j = at.get(key);
+			if (j == null)
+			{
+				at.put(key, i);
+				continue;
+			}
+			PointLight k = lights.get(j);
+			if (!k.same(l))
+			{
+				continue;
+			}
+			if (drop == null)
+			{
+				drop = new boolean[lights.size()];
+			}
+			// the lower storey's stays
+			if (l.plane >= 0 && (k.plane < 0 || l.plane < k.plane))
+			{
+				drop[j] = true;
+				at.put(key, i);
+			}
+			else
+			{
+				drop[i] = true;
+			}
+		}
+		if (drop == null)
+		{
+			return;
+		}
+		int w = 0;
+		for (int i = 0; i < lights.size(); ++i)
+		{
+			if (!drop[i])
+			{
+				lights.set(w++, lights.get(i));
+			}
+		}
+		lights.subList(w, lights.size()).clear();
+	}
+
+	private boolean same(PointLight o)
+	{
+		return Math.abs(x - o.x) < 1 && Math.abs(y - o.y) < 1 && Math.abs(z - o.z) < 1 && radius == o.radius && r == o.r && g == o.g
+			&& b == o.b;
+	}
+
 	/** What a full cluster keeps it by: more is kept first. */
 	PointLight importance(float importance)
 	{

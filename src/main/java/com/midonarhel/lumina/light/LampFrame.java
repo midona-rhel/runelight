@@ -281,6 +281,7 @@ public final class LampFrame
 				if (plugin.framePointLights && lights != null)
 				{
 					lights.steadyLamps(out);
+					PointLight.dropDoubles(out);
 				}
 			}, buildings.getWalls(), dt);
 		}
@@ -305,6 +306,7 @@ public final class LampFrame
 			// around the focal point like the drawn world (EdgeFade), so lights don't come and go as the camera turns
 			lights.collect(plugin.frameLights, time, night, plugin.dayCycle.sunAltitude, plugin.edgeFade.focalX, plugin.edgeFade.focalZ,
 				plugin.edgeFade.radius);
+			PointLight.dropDoubles(plugin.frameLights);
 		}
 		if (plugin.config.testLight())
 		{

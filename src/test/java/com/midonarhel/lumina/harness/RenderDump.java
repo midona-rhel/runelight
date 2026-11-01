@@ -95,6 +95,12 @@ public final class RenderDump
 				case "step":
 					o.frameSeconds = Double.parseDouble(v);
 					break;
+				case "focus":
+				{
+					String[] xy = v.split(",");
+					o.focus = new int[]{Integer.parseInt(xy[0].trim()), Integer.parseInt(xy[1].trim())};
+					break;
+				}
 				case "buildings":
 					o.buildings = v;
 					break;
