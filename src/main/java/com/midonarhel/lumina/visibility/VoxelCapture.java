@@ -60,7 +60,7 @@ public final class VoxelCapture
 		return (owner & WALL) != 0;
 	}
 
-	void add(int x0, int y0, int z0, int x1, int y1, int z1, int x2, int y2, int z2, boolean foliage)
+	public void add(int x0, int y0, int z0, int x1, int y1, int z1, int x2, int y2, int z2, boolean foliage)
 	{
 		if (count == this.foliage.length)
 		{

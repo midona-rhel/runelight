@@ -33,7 +33,7 @@ public final class WallMap
 	public static final int LOS_NORTH = 0x400, LOS_EAST = 0x1000, LOS_SOUTH = 0x4000, LOS_WEST = 0x10000;
 	public static final int LOS_FULL = 0x20000;
 	// CollisionDataFlag: movement blocked toward a side
-	static final int MOVE_NORTH = 0x2, MOVE_EAST = 0x8, MOVE_SOUTH = 0x20, MOVE_WEST = 0x80;
+	public static final int MOVE_NORTH = 0x2, MOVE_EAST = 0x8, MOVE_SOUTH = 0x20, MOVE_WEST = 0x80;
 
 	// object config: type in the low 5 bits, rotation in bits 6-7; type 9 is a diagonal wall
 	static final int TYPE_DIAGONAL_WALL = 9;
@@ -236,7 +236,7 @@ public final class WallMap
 	}
 
 	/** Whether a solid object fills the tile: it blocks sight across all of it, and no diagonal wall is why. */
-	boolean solid(int plane, int x, int y)
+	public boolean solid(int plane, int x, int y)
 	{
 		if (plane < 0 || plane >= PLANES || x < 0 || y < 0 || x >= size || y >= size)
 		{
@@ -266,7 +266,7 @@ public final class WallMap
 	 * Whether the edge between tile (x, y) and its neighbor toward side holds a wall that stops movement and not sight
 	 * (bars, a fence, a railing, a low wall, a closed gate), and no wall that stops sight.
 	 */
-	boolean seeThrough(int plane, int x, int y, int side)
+	public boolean seeThrough(int plane, int x, int y, int side)
 	{
 		if (plane < 0 || plane >= PLANES || edge(plane, x, y, side))
 		{
@@ -286,7 +286,7 @@ public final class WallMap
 	}
 
 	/** Whether any edge of the tile is seeThrough. */
-	boolean anySeeThrough(int plane, int x, int y)
+	public boolean anySeeThrough(int plane, int x, int y)
 	{
 		return seeThrough(plane, x, y, NORTH) || seeThrough(plane, x, y, EAST) || seeThrough(plane, x, y, SOUTH)
 			|| seeThrough(plane, x, y, WEST);
@@ -324,6 +324,36 @@ public final class WallMap
 			}
 		}
 		return false;
+	}
+
+	/**
+	 * Mark the light map's cells (cellsPerTile to a tile's side) of every tile whose walls or solid objects differ from
+	 * another map of the same size, and the cell around them: a wall stands on its tile's edge (LightMap: the lights
+	 * near them are baked again).
+	 */
+	public void diff(WallMap o, CellChanges changes, int cellsPerTile)
+	{
+		int n = cellsPerTile;
+		for (int plane = 0; plane < PLANES; ++plane)
+		{
+			for (int x = 0; x < size; ++x)
+			{
+				int i = index(plane, x, 0);
+				for (int y = 0; y < size; ++y, ++i)
+				{
+					if (bits[i] != o.bits[i] || full[i] != o.full[i] || see[i] != o.see[i])
+					{
+						for (int dz = 0; dz < n; ++dz)
+						{
+							for (int dx = 0; dx < n; ++dx)
+							{
+								changes.mark(x * n + dx, y * n + dz, 1);
+							}
+						}
+					}
+				}
+			}
+		}
 	}
 
 	/** Same walls (and size) as another map. */
