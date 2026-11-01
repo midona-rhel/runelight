@@ -601,8 +601,9 @@ uniform int waterFakeOn;  // the water setting: off draws the faces as their typ
 // The fake water face at pixel px (camera-relative p, facing camera normal faceN, color albedo (sRGB), the sun's
 // shadow), lit as lit (sRGB): its color as water, sRGB.
 vec3 waterFake(ivec2 px, vec3 p, vec3 faceN, vec3 albedo, float shadow, vec3 lit) {
-  // the slimy greens are swamp water, the rest fresh
-  int type = albedo.g > albedo.b * 1.15 ? 5 : 1;
+  // the slimy greens are swamp water, the rest fresh; a fall's colour is the beds of its pools (SceneUploader), fresh
+  float fall = 1.0 - smoothstep(FALL_STEEP.x, FALL_STEEP.y, abs(faceN.y));
+  int type = fall < 0.5 && albedo.g > albedo.b * 1.15 ? 5 : 1;
   vec4 look = WATER_LOOK[type];
   if (waterFakeOn == 0) {
     vec3 c = WATER_SURFACE_COLOR[type];
@@ -611,7 +612,6 @@ vec3 waterFake(ivec2 px, vec3 p, vec3 faceN, vec3 albedo, float shadow, vec3 lit
   float dist = length(p);
   vec3 v = p / dist;
   vec3 world = p + cameraPos;
-  float fall = 1.0 - smoothstep(FALL_STEEP.x, FALL_STEEP.y, abs(faceN.y));
   float side = length(faceN.xz);
   vec2 tang = side > 1e-3 ? vec2(-faceN.z, faceN.x) / side : vec2(1.0, 0.0);
 

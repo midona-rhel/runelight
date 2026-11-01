@@ -1010,6 +1010,31 @@ public class SceneUploader
 	 * corner is on it, else the bed's own blended toward the color of the bank corners within BANK_REACH corners
 	 * (the nearer the more, darkened with depth as the bed's own is), the more the nearer the closest of them is.
 	 */
+	// a fake water face is a fall's when its normal's vertical part is below this (water.glsl FALL_STEEP)
+	private static final float FALL_FACE = 0.5f;
+
+	/**
+	 * Whether the face over model vertices a, b, c (modelLocal*I) stands steep enough to be a fall's.
+	 */
+	private boolean fallFace(int a, int b, int c)
+	{
+		float ax = modelLocalXI[b] - modelLocalXI[a], ay = modelLocalYI[b] - modelLocalYI[a], az = modelLocalZI[b] - modelLocalZI[a];
+		float bx = modelLocalXI[c] - modelLocalXI[a], by = modelLocalYI[c] - modelLocalYI[a], bz = modelLocalZI[c] - modelLocalZI[a];
+		float nx = ay * bz - az * by, ny = az * bx - ax * bz, nz = ax * by - ay * bx;
+		float len = (float) Math.sqrt(nx * nx + ny * ny + nz * nz);
+		return len > 1e-3f && Math.abs(ny) / len < FALL_FACE;
+	}
+
+	/**
+	 * A fall's vertex v's colour: the bed of the water corner it belongs to (WaterMap.fallCorner), or its own without one.
+	 */
+	private int fallColor(int v, int own)
+	{
+		int off = LuminaPlugin.SCENE_OFFSET << 7;
+		int[] c = water.fallCorner(modelLocalXI[v] + basex + off, modelLocalYI[v], modelLocalZI[v] + basez + off);
+		return c == null ? own : bedCornerColor(c[0], c[1], scene.getTileHeights()[c[2]]);
+	}
+
 	private int bedCornerColor(int cx, int cy, int[][] heights)
 	{
 		int own = water.bedColor(cx, cy, water.depthLevel(cx, cy));
@@ -1400,6 +1425,13 @@ public class SceneUploader
 			{
 				texture = 0;
 				alphaBias &= 0xffffff;
+				if (sinkWater && fallFace(triangleA, triangleB, triangleC))
+				{
+					// a fall shows the beds of the pools it pours from and lands in, as they show under their water
+					color1 = fallColor(triangleA, color1);
+					color2 = fallColor(triangleB, color2);
+					color3 = fallColor(triangleC, color3);
+				}
 				su0 = SurfaceMaterials.fakeHeight(span[0], vertexY[triangleA]);
 				su1 = SurfaceMaterials.fakeHeight(span[0], vertexY[triangleB]);
 				su2 = SurfaceMaterials.fakeHeight(span[0], vertexY[triangleC]);

@@ -847,6 +847,49 @@ public final class WaterMap
 	}
 
 	/**
+	 * The water corner a waterfall's vertex at extended world (x, height, z) takes its colour from, {cx, cy, level}: of the
+	 * water tiles within a tile of it, the one whose surface (its lowest corner) is nearest its height, and that tile's
+	 * corner nearest it; null with none. The top of a fall takes the pool it pours from, its foot the one it lands in, so
+	 * its colour runs from one to the other (SceneUploader colours a fall's faces with those corners' beds).
+	 */
+	public int[] fallCorner(int x, int height, int z)
+	{
+		if (tileHeights == null)
+		{
+			return null;
+		}
+		int tx = x >> 7, ty = z >> 7, best = -1;
+		float nearest = Float.MAX_VALUE;
+		for (int dy = -1; dy <= 1; ++dy)
+		{
+			for (int dx = -1; dx <= 1; ++dx)
+			{
+				int ex = tx + dx, ey = ty + dy;
+				if (ex < 0 || ey < 0 || ex >= SIZE || ey >= SIZE || level[ey * SIZE + ex] < 0)
+				{
+					continue;
+				}
+				int[][] h = tileHeights[level[ey * SIZE + ex]];
+				int surface = Math.max(Math.max(h[ex][ey], h[ex + 1][ey]), Math.max(h[ex][ey + 1], h[ex + 1][ey + 1]));
+				// a tile beside the vertex's own counts a little less, so a tie goes to the one under it
+				float d = Math.abs(surface - height) + (dx != 0 || dy != 0 ? 1 : 0);
+				if (d < nearest)
+				{
+					nearest = d;
+					best = ey * SIZE + ex;
+				}
+			}
+		}
+		if (best < 0)
+		{
+			return null;
+		}
+		int ex = best % SIZE, ey = best / SIZE;
+		int cx = Math.max(ex, Math.min(ex + 1, (x + 64) >> 7)), cy = Math.max(ey, Math.min(ey + 1, (z + 64) >> 7));
+		return new int[]{cx, cy, level[best]};
+	}
+
+	/**
 	 * Each water tile's surface: its lowest corner (y down), as buildTexture takes it; NaN on land.
 	 */
 	float[] surfaceLevels(int[][][] heights)
