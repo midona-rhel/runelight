@@ -150,7 +150,7 @@ final class LightLife
 	 */
 	float brightness()
 	{
-		float b = easeSince != 0 ? LayerEase.weight(easeSince, System.nanoTime()) : 1;
+		float b = easeSince != 0 ? LayerEase.weight(easeSince, com.midonarhel.lumina.common.Clock.nanos()) : 1;
 		if (fadeIn > 0)
 		{
 			b *= saturate((elapsed - spawnDelay) / fadeIn);

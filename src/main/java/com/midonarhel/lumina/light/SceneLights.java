@@ -242,6 +242,17 @@ public class SceneLights
 		this.client = client;
 	}
 
+	// a dump's lamps (dev/SceneDump), which collect and steadyLamps hand out in place of the scene's: the offline
+	// renderer has no game objects to place lights on
+	private List<PointLight> replayCollected, replaySteady;
+
+	/** collect and steadyLamps give these from now on: the offline renderer, with a dump's lamps. */
+	public void replay(List<PointLight> collected, List<PointLight> steady)
+	{
+		replayCollected = collected;
+		replaySteady = steady;
+	}
+
 	/** The queue the lights are placed from (null: at once, in the event, as for tests). */
 	public void setJobs(SceneJobs jobs)
 	{
@@ -354,7 +365,7 @@ public class SceneLights
 			float ground = Perspective.getTileHeight(client, lp, d.plane);
 			d.locate(at, lp.getX(), ground, lp.getY(), 0, 1, 1);
 			worldLights.add(new Placed(d, at, d.plane, (d.worldX * 31 + d.worldY) * 0.61803398875f % 1f, false, null, false,
-				System.nanoTime()));
+				com.midonarhel.lumina.common.Clock.nanos()));
 			worldLightTiles.add(tileKey(d.plane, lp.getX() >> 7, lp.getY() >> 7));
 		}
 
@@ -634,7 +645,7 @@ public class SceneLights
 			}
 			d.locate(at, x, ground, z, orientation, sizeX, sizeY);
 			out.add(new Placed(d, onTile(object, at, lp), plane, System.identityHashCode(object) * 0.61803398875f % 1f,
-				fadesIn, object, false, System.nanoTime()));
+				fadesIn, object, false, com.midonarhel.lumina.common.Clock.nanos()));
 		}
 		return out;
 	}
@@ -780,7 +791,7 @@ public class SceneLights
 			autoTally.merge(client.getObjectDefinition(id).getName(), 1, Integer::sum);
 		}
 		return new Placed(d, at, plane, System.identityHashCode(object) * 0.61803398875f % 1f, fadesIn, object, true,
-			System.nanoTime());
+			com.midonarhel.lumina.common.Clock.nanos());
 	}
 
 	private boolean nearWorldLight(float x, float z, int plane)
@@ -1177,6 +1188,11 @@ public class SceneLights
 	public void collect(List<PointLight> out, float time, float night, float sunAltitude, float camX, float camZ,
 		float maxDistance)
 	{
+		if (replayCollected != null)
+		{
+			out.addAll(replayCollected);
+			return;
+		}
 		poolUsed = 0;
 		autoLights.clear();
 		if (client.getGameState() != GameState.LOGGED_IN)
@@ -1336,6 +1352,11 @@ public class SceneLights
 	 */
 	public void steadyLamps(List<PointLight> out)
 	{
+		if (replaySteady != null)
+		{
+			out.addAll(replaySteady);
+			return;
+		}
 		for (TrackedObject t : objects.values())
 		{
 			for (Placed p : t.lights)

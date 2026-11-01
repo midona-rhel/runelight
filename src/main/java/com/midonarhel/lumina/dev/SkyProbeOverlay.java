@@ -113,7 +113,7 @@ public final class SkyProbeOverlay extends Overlay
 				for (int half = 0; half < 2; half++)
 				{
 					if (half != hx && half != hz) continue;
-					int index = (((level+1)*sky.textureHeight+2*tz+dz)*sky.textureWidth
+					int index = (((SkyGrid.VISIBILITY+level)*sky.textureHeight+2*tz+dz)*sky.textureWidth
 						+ (half*4+2)*sky.size+2*tx+dx)*4;
 					if (Half.fromHalf(sky.texels.get(index-2*sky.size*4)) < 0) continue;
 					float x = cx*sky.spacing + Half.fromHalf(sky.texels.get(index+1));

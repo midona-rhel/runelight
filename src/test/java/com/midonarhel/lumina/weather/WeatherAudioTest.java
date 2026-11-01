@@ -513,7 +513,7 @@ public class WeatherAudioTest
 	{
 		for (int k = 0; k < 4; ++k)
 		{
-			g.texels.put(g.texel(2 * tx + (k & 1), 2 * tz + (k >> 1), level + 1), Half.toHalf(corners[k]));
+			g.texels.put(g.texel(2 * tx + (k & 1), 2 * tz + (k >> 1), SkyGrid.VISIBILITY + level), Half.toHalf(corners[k]));
 		}
 	}
 

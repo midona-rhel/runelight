@@ -209,7 +209,7 @@ public final class FrameState
 		plugin.cpuTimer.end(CpuTimer.ENVIRONMENT);
 		plugin.frameOutdoors = plugin.config.sunLighting() && plugin.frameOpenSky;
 
-		plugin.frameGameMillis = GameClock.gameMillis(System.currentTimeMillis(), plugin.config.dayCycleMinutes());
+		plugin.frameGameMillis = GameClock.gameMillis(com.midonarhel.lumina.common.Clock.millis(), plugin.config.dayCycleMinutes());
 		plugin.dayCycle.update(plugin.frameGameMillis, plugin.config.dayCycleMinutes(), plugin.config.fixedHour());
 
 		plugin.frameShadows = plugin.frameOutdoors && plugin.config.shadows() && plugin.client.getGameState() == GameState.LOGGED_IN;

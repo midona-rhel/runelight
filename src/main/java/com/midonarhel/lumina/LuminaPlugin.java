@@ -63,7 +63,6 @@ import com.midonarhel.lumina.scene.AreaHiding;
 import com.midonarhel.lumina.scene.EdgeFade;
 import com.midonarhel.lumina.scene.GLBuffer;
 import com.midonarhel.lumina.scene.GpuFloatBuffer;
-import com.midonarhel.lumina.scene.GroundBlender;
 import com.midonarhel.lumina.scene.Interactables;
 import com.midonarhel.lumina.scene.ModelUploader;
 import com.midonarhel.lumina.scene.RegionManager;
@@ -76,7 +75,6 @@ import com.midonarhel.lumina.scene.TempModels;
 import com.midonarhel.lumina.scene.TextureManager;
 import com.midonarhel.lumina.scene.VAO;
 import com.midonarhel.lumina.scene.VAOList;
-import com.midonarhel.lumina.scene.VertexShading;
 import com.midonarhel.lumina.scene.WindSway;
 import com.midonarhel.lumina.scene.Zone;
 import com.midonarhel.lumina.scene.ZonePool;
@@ -108,6 +106,8 @@ import com.midonarhel.lumina.dev.Commands;
 import com.midonarhel.lumina.dev.CpuTimer;
 import com.midonarhel.lumina.dev.FrameCapture;
 import com.midonarhel.lumina.dev.FrameSnapshot;
+import com.midonarhel.lumina.dev.FrameTape;
+import com.midonarhel.lumina.dev.SceneDump;
 import com.midonarhel.lumina.dev.HitchMonitor;
 import com.midonarhel.lumina.dev.LookMonitor;
 import com.midonarhel.lumina.dev.ShaderWatcher;
@@ -521,7 +521,7 @@ public class LuminaPlugin extends Plugin implements DrawCallbacks
 	public boolean frameSkylightWanted;
 	public float frameSkylightTileX, frameSkylightTileZ;
 	// when the plugin started; animations count from here (the day, the seasons and the weather follow GameClock)
-	public long startMillis = System.currentTimeMillis();
+	public long startMillis = com.midonarhel.lumina.common.Clock.millis();
 
 	// per-frame state for the full-screen passes, captured during the scene draw
 	public float frameCameraX, frameCameraY, frameCameraZ;
@@ -730,40 +730,19 @@ public class LuminaPlugin extends Plugin implements DrawCallbacks
 				shaderWatcher.start();
 			}
 		}
-		glErrorChecks = config.glErrorChecks();
-
+		initState();
 
 		sceneLights = new SceneLights(client);
 		sceneLights.load(gson);
-		SurfaceMaterials.load(gson);
-		WaterOverrides.load(gson);
-		areaHiding.load(gson);
-		WindSway.load(gson);
 		eventBus.register(sceneLights);
 		clientThread.invoke(sceneLights::rebuild);
+		// the lights of a scene's objects are placed from the scene jobs, not in the client's event posts
+		sceneLights.setJobs(sceneJobs());
 		weatherAudio = new WeatherAudio();
 		buildingLights = new BuildingLights(client);
 		eventBus.register(buildingLights);
 		clientThread.invoke(buildingLights::rebuild);
 		overlayManager.add(buildingOverlay);
-		environmentManager.load(gson);
-		WeatherData.load(gson);
-		startMillis = System.currentTimeMillis();
-
-		root = new SceneContext(NUM_ZONES, NUM_ZONES);
-		subs = new SceneContext[MAX_WORLDVIEWS];
-		int numThreads = config.numThreads();
-		rts = new RenderThread[numThreads + 1];
-		for (int i = 0; i < rts.length; ++i)
-		{
-			var rt = rts[i] = new RenderThread();
-			rt.modelUploader = new ModelUploader();
-		}
-		clientUploader = new SceneUploader(renderCallbackManager);
-		mapUploader = new SceneUploader(renderCallbackManager);
-		sceneLoader = new SceneLoader(this, client, clientThread, config, loadReport, renderCallbackManager);
-		// the lights of a scene's objects are placed from the scene jobs, not in the client's event posts
-		sceneLights.setJobs(sceneJobs());
 		clientThread.invoke(() ->
 		{
 			try
@@ -835,14 +814,7 @@ public class LuminaPlugin extends Plugin implements DrawCallbacks
 
 				setupSyncMode();
 
-				glObjects.initBuffers();
-				glObjects.initVao();
-				programs.initProgram();
-				uiBlit.init();
-				if (glCapabilities.OpenGL45)
-				{
-					glClipControl(GL_LOWER_LEFT, GL_ZERO_TO_ONE); // 1 near 0 far
-				}
+				initGlObjects();
 
 				client.setDrawCallbacks(this);
 				active = true;
@@ -889,7 +861,50 @@ public class LuminaPlugin extends Plugin implements DrawCallbacks
 		});
 	}
 
-	private int renderThreads()
+	/**
+	 * The plugin's state that needs neither the client nor GL: the data files, the scene contexts, the render threads'
+	 * uploaders and the scene loader. startUp, and the offline renderer (docs/offline-render.md).
+	 */
+	public void initState()
+	{
+		glErrorChecks = config.glErrorChecks();
+
+		SurfaceMaterials.load(gson);
+		WaterOverrides.load(gson);
+		areaHiding.load(gson);
+		WindSway.load(gson);
+		environmentManager.load(gson);
+		WeatherData.load(gson);
+		startMillis = com.midonarhel.lumina.common.Clock.millis();
+
+		root = new SceneContext(NUM_ZONES, NUM_ZONES);
+		subs = new SceneContext[MAX_WORLDVIEWS];
+		int numThreads = config.numThreads();
+		rts = new RenderThread[numThreads + 1];
+		for (int i = 0; i < rts.length; ++i)
+		{
+			var rt = rts[i] = new RenderThread();
+			rt.modelUploader = new ModelUploader();
+		}
+		clientUploader = new SceneUploader(renderCallbackManager);
+		mapUploader = new SceneUploader(renderCallbackManager);
+		sceneLoader = new SceneLoader(this, client, clientThread, config, loadReport, renderCallbackManager);
+	}
+
+	/** The GL objects of the frame, with a context current: startUp, and the offline renderer. */
+	public void initGlObjects()
+	{
+		glObjects.initBuffers();
+		glObjects.initVao();
+		programs.initProgram();
+		uiBlit.init();
+		if (glCapabilities.OpenGL45)
+		{
+			glClipControl(GL_LOWER_LEFT, GL_ZERO_TO_ONE); // 1 near 0 far
+		}
+	}
+
+	public int renderThreads()
 	{
 		return Math.min(Runtime.getRuntime().availableProcessors() - 1, config.numThreads());
 	}
@@ -1142,7 +1157,7 @@ public class LuminaPlugin extends Plugin implements DrawCallbacks
 	public int sceneSamples()
 	{
 		// bind the default framebuffer to check whether anti-aliasing is forced
-		glBindFramebuffer(GL_FRAMEBUFFER, awtContext.getFramebuffer(false));
+		glBindFramebuffer(GL_FRAMEBUFFER, windowFramebuffer());
 		final int forced = glGetInteger(GL_SAMPLES);
 		final int max = Math.min(glGetInteger(GL_MAX_SAMPLES),
 			Math.min(glGetInteger(GL_MAX_COLOR_TEXTURE_SAMPLES), glGetInteger(GL_MAX_DEPTH_TEXTURE_SAMPLES)));
@@ -1254,6 +1269,17 @@ public class LuminaPlugin extends Plugin implements DrawCallbacks
 		float cameraX, float cameraY, float cameraZ, float cameraPitch, float cameraYaw,
 		int minLevel, int level, int maxLevel, Set<Integer> hideRoofIds)
 	{
+		if (scene.getWorldViewId() == WorldView.TOPLEVEL)
+		{
+			// an armed scene dump records from here to the end of draw
+			sceneDump.frameStarting(scene);
+		}
+		FrameTape tape = frameTape;
+		if (tape != null)
+		{
+			tape.pre(scene, entityProjection, cameraX, cameraY, cameraZ, cameraPitch, cameraYaw, minLevel, level, maxLevel,
+				hideRoofIds);
+		}
 		tempModels.flush();
 		if (scene.getWorldViewId() == WorldView.TOPLEVEL && buildingLights != null)
 		{
@@ -1416,7 +1442,7 @@ public class LuminaPlugin extends Plugin implements DrawCallbacks
 
 		glDpiAwareViewport(renderWidthOff, renderCanvasHeight - renderViewportHeight - renderHeightOff, renderViewportWidth, renderViewportHeight, lastRenderFactor);
 		{
-			final AffineTransform t = clientUI.getGraphicsConfiguration().getDefaultTransform();
+			final AffineTransform t = dpiTransform();
 			frameViewport[0] = getScaledValue(t.getScaleX() * lastRenderFactor, renderWidthOff);
 			frameViewport[1] = getScaledValue(t.getScaleY() * lastRenderFactor, renderCanvasHeight - renderViewportHeight - renderHeightOff);
 			frameViewport[2] = getScaledValue(t.getScaleX() * lastRenderFactor, renderViewportWidth);
@@ -1439,7 +1465,7 @@ public class LuminaPlugin extends Plugin implements DrawCallbacks
 		weather.setLightUniform(uniSceneWeatherLight);
 		// plants can be held to a low animation rate like the game's own animations: the wind uniforms then only
 		// change on those ticks (the scene and shadow programs keep the last values in between)
-		long swayNow = System.nanoTime();
+		long swayNow = com.midonarhel.lumina.common.Clock.nanos();
 		// plants animate at the game's own 15 fps
 		final int swayFps = 15;
 		swayTick = swayFps <= 0 || swayNow - lastSwayTick >= 1_000_000_000L / swayFps;
@@ -1512,6 +1538,11 @@ public class LuminaPlugin extends Plugin implements DrawCallbacks
 	@Override
 	public void postSceneDraw(Scene scene)
 	{
+		FrameTape tape = frameTape;
+		if (tape != null)
+		{
+			tape.post(scene);
+		}
 		tempModels.flush();
 		if (scene.getWorldViewId() == WorldView.TOPLEVEL)
 		{
@@ -1561,7 +1592,7 @@ public class LuminaPlugin extends Plugin implements DrawCallbacks
 			glDepthFunc(GL_GREATER);
 		}
 		VAO.recordShadowDraws = false;
-		glBindFramebuffer(GL_DRAW_FRAMEBUFFER, awtContext.getFramebuffer(false));
+		glBindFramebuffer(GL_DRAW_FRAMEBUFFER, windowFramebuffer());
 		sceneFboValid = true;
 		cpuTimer.begin(CpuTimer.CLIENT_UI);
 	}
@@ -1679,18 +1710,33 @@ public class LuminaPlugin extends Plugin implements DrawCallbacks
 	@Override
 	public void drawZoneOpaque(Projection entityProjection, Scene scene, int zx, int zz)
 	{
+		FrameTape tape = frameTape;
+		if (tape != null)
+		{
+			tape.zoneOpaque(scene, zx, zz);
+		}
 		sceneDraw.drawZoneOpaque(entityProjection, scene, zx, zz);
 	}
 
 	@Override
 	public void drawZoneAlpha(Projection entityProjection, Scene scene, int level, int zx, int zz)
 	{
+		FrameTape tape = frameTape;
+		if (tape != null)
+		{
+			tape.zoneAlpha(scene, level, zx, zz);
+		}
 		sceneDraw.drawZoneAlpha(entityProjection, scene, level, zx, zz);
 	}
 
 	@Override
 	public void drawPass(Projection projection, Scene scene, int pass)
 	{
+		FrameTape tape = frameTape;
+		if (tape != null)
+		{
+			tape.pass(scene, projection, pass);
+		}
 		sceneDraw.drawPass(projection, scene, pass);
 	}
 
@@ -1790,6 +1836,12 @@ public class LuminaPlugin extends Plugin implements DrawCallbacks
 		{
 			return;
 		}
+		FrameTape tape = frameTape;
+		if (tape != null)
+		{
+			tape.draw(overlayColor);
+			sceneDump.ui(client.getBufferProvider());
+		}
 
 		ShaderWatcher watcher = shaderWatcher;
 		if (watcher != null && watcher.poll())
@@ -1841,7 +1893,7 @@ public class LuminaPlugin extends Plugin implements DrawCallbacks
 			}
 		}
 		uiBlit.finish();
-		glBindFramebuffer(GL_FRAMEBUFFER, awtContext.getFramebuffer(false));
+		glBindFramebuffer(GL_FRAMEBUFFER, windowFramebuffer());
 		if (!composited)
 		{
 			// the composite covers the whole drawable; without it the window is cleared here instead. Clearing it
@@ -1856,8 +1908,12 @@ public class LuminaPlugin extends Plugin implements DrawCallbacks
 		cpuTimer.begin(CpuTimer.SWAP);
 		try
 		{
-			awtContext.swapBuffers();
-			pacer.pace();
+			// the offline renderer's framebuffer is read back, not presented
+			if (offscreenFramebuffer < 0)
+			{
+				awtContext.swapBuffers();
+				pacer.pace();
+			}
 		}
 		catch (RuntimeException ex)
 		{
@@ -1905,10 +1961,12 @@ public class LuminaPlugin extends Plugin implements DrawCallbacks
 		cpuTimer.begin(CpuTimer.OUTSIDE);
 		drawManager.processDrawComplete(commands::screenshot);
 
-		glBindFramebuffer(GL_FRAMEBUFFER, awtContext.getFramebuffer(false));
+		glBindFramebuffer(GL_FRAMEBUFFER, windowFramebuffer());
 
 		// the scene loads' GL work, within its budget, after the frame is presented: its time is the next frame's
 		sceneLoader.runJobs();
+		// an armed scene dump's frame is done: what it drew from is read back and written
+		sceneDump.frameDone();
 
 		checkGLErrors();
 	}
@@ -1916,6 +1974,9 @@ public class LuminaPlugin extends Plugin implements DrawCallbacks
 
 	// the developer commands (Commands): ::runelight …, the command file, the screenshot
 	public final Commands commands = new Commands(this);
+	// the scene dump (::runelight scenedump name) and the frame it records, null between dumps (docs/offline-render.md)
+	public final SceneDump sceneDump = new SceneDump(this);
+	public volatile FrameTape frameTape;
 
 	@Override
 	public void loadScene(WorldView worldView, Scene scene)
@@ -2024,6 +2085,23 @@ public class LuminaPlugin extends Plugin implements DrawCallbacks
 
 
 
+	// The offline renderer (docs/offline-render.md) draws into a framebuffer of its own at a fixed DPI scale, with no
+	// window: both stay unset (-1, null) in the client.
+	public int offscreenFramebuffer = -1;
+	public AffineTransform offscreenTransform;
+
+	/** The framebuffer the frame ends in: the window's (the GL bridge's), or the offline renderer's. */
+	public int windowFramebuffer()
+	{
+		return offscreenFramebuffer >= 0 ? offscreenFramebuffer : awtContext.getFramebuffer(false);
+	}
+
+	/** The window's DPI scale (its graphics configuration's), or the offline renderer's. */
+	public AffineTransform dpiTransform()
+	{
+		return offscreenTransform != null ? offscreenTransform : clientUI.getGraphicsConfiguration().getDefaultTransform();
+	}
+
 	public int getScaledValue(final double scale, final int value)
 	{
 		return (int) (value * scale);
@@ -2037,8 +2115,7 @@ public class LuminaPlugin extends Plugin implements DrawCallbacks
 	/** renderFactor shrinks the viewport with the scene targets (RenderScale). */
 	public void glDpiAwareViewport(final int x, final int y, final int width, final int height, final double renderFactor)
 	{
-		final GraphicsConfiguration graphicsConfiguration = clientUI.getGraphicsConfiguration();
-		final AffineTransform t = graphicsConfiguration.getDefaultTransform();
+		final AffineTransform t = dpiTransform();
 		glViewport(
 			getScaledValue(t.getScaleX() * renderFactor, x),
 			getScaledValue(t.getScaleY() * renderFactor, y),
@@ -2048,7 +2125,7 @@ public class LuminaPlugin extends Plugin implements DrawCallbacks
 
 	private double renderFactor()
 	{
-		return config.renderScale().factor(clientUI.getGraphicsConfiguration().getDefaultTransform().getScaleX());
+		return config.renderScale().factor(dpiTransform().getScaleX());
 	}
 
 	public int getDrawDistance()

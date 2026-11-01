@@ -99,7 +99,7 @@ public class VoxelBuilder
 	public void swapTo(int g)
 	{
 		buildRequested = false;
-		lastBuildMillis = System.currentTimeMillis();
+		lastBuildMillis = com.midonarhel.lumina.common.Clock.millis();
 		synchronized (this)
 		{
 			if (g != 0 && g == nextBuild && nextVoxels != null)
@@ -121,11 +121,25 @@ public class VoxelBuilder
 		}
 	}
 
+	/** The drawn scene's voxels from a dump (dev/SceneDump, the offline renderer), not built again; client thread. */
+	public void restore(SceneVoxels v)
+	{
+		buildRequested = false;
+		lastBuildMillis = com.midonarhel.lumina.common.Clock.millis();
+		synchronized (this)
+		{
+			nextBuild = 0;
+			nextVoxels = null;
+			publishOnDone = 0;
+		}
+		voxels = v;
+	}
+
 	/** A zone was rebuilt: rebuild the voxels once the changes settle. */
 	public void zonesChanged()
 	{
 		buildRequested = true;
-		long now = System.currentTimeMillis();
+		long now = com.midonarhel.lumina.common.Clock.millis();
 		buildAfterMillis = Math.max(now + REBUILD_DELAY_MILLIS, lastBuildMillis + MIN_REBUILD_MILLIS);
 	}
 
@@ -138,7 +152,7 @@ public class VoxelBuilder
 	 */
 	public void prepare(boolean wanted, Scene scene, Zone[][] zones, WaterMap water)
 	{
-		long now = System.currentTimeMillis();
+		long now = com.midonarhel.lumina.common.Clock.millis();
 		boolean loading;
 		synchronized (this)
 		{

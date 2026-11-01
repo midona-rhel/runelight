@@ -349,7 +349,7 @@ public class VolumetricFog
 		texGround = texGroundBack;
 		texGroundBack = t;
 		easeFromBack = sameGround && texGroundBack != 0;
-		groundSince = System.nanoTime();
+		groundSince = com.midonarhel.lumina.common.Clock.nanos();
 	}
 
 	/** Texels into tex (made when 0), returned; the active unit and its binding as they were. */
@@ -558,7 +558,7 @@ public class VolumetricFog
 		glActiveTexture(GL_TEXTURE0 + groundUnit);
 		sendGround();
 		glBindTexture(GL_TEXTURE_2D, texGround);
-		float before = easeFromBack ? 1 - LayerEase.weight(groundSince, System.nanoTime()) : 0;
+		float before = easeFromBack ? 1 - LayerEase.weight(groundSince, com.midonarhel.lumina.common.Clock.nanos()) : 0;
 		easeFromBack = before > 0;
 		glUniform1f(u.uniGroundPrevWeight, before);
 		glActiveTexture(GL_TEXTURE0 + groundPrevUnit);

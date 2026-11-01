@@ -235,7 +235,7 @@ public final class SkyFrame
 		plugin.environmentManager.update(loggedIn ? scene : null,
 			(int) plugin.client.getCameraFocalPointX(), (int) plugin.client.getCameraFocalPointZ(),
 			plugin.client.getTopLevelWorldView().getPlane(), plugin.frameSkyColor,
-			(System.currentTimeMillis() - plugin.startMillis) / 1000f);
+			(com.midonarhel.lumina.common.Clock.millis() - plugin.startMillis) / 1000f);
 		return plugin.environmentManager.isOverworld();
 	}
 

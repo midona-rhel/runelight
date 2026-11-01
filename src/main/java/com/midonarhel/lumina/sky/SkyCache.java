@@ -320,7 +320,7 @@ public class SkyCache
 	 */
 	public void easeComposite(int mode)
 	{
-		long now = System.currentTimeMillis();
+		long now = com.midonarhel.lumina.common.Clock.millis();
 		// a long frame (loading) must not jump it
 		float dt = Math.max(0, Math.min(0.1f, (now - weightMillis) / 1000f));
 		weightMillis = now;
@@ -387,7 +387,7 @@ public class SkyCache
 		glDisable(GL_CULL_FACE);
 		glDisable(GL_SCISSOR_TEST);
 		glColorMask(true, true, true, true);
-		long now = System.currentTimeMillis();
+		long now = com.midonarhel.lumina.common.Clock.millis();
 		if (now - lastUpdateMillis > STALE_MILLIS)
 		{
 			// After a pause the old capture is stale: capture at once. While the composite still shows it (a

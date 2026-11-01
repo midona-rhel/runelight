@@ -1,5 +1,7 @@
 package com.midonarhel.lumina.scene;
 
+import com.midonarhel.lumina.dev.FrameTape;
+
 import com.midonarhel.lumina.common.LogLimiter;
 import com.midonarhel.lumina.frame.FrameState;
 import com.midonarhel.lumina.frame.GlObjects;
@@ -294,11 +296,33 @@ public final class SceneDraw
 			return;
 		}
 
-		int size = m.getFaceCount() * 3 * VAO.VERT_SIZE;
 		int material = SurfaceMaterials.forObject(tileObject.getId(), r);
 		int shading = SurfaceMaterials.shadingForObject(tileObject.getId(), r);
+		drawDynamicModel(renderThreadId, worldProjection, scene, m, material, shading, tileObject.getPlane(), orient, x,
+			y, z);
+	}
+
+	/**
+	 * A dynamic model past drawDynamic's filters, with its material, its shading group and its object's plane worked
+	 * out: what the offline renderer (dev/FrameTape) records and replays.
+	 */
+	public void drawDynamicModel(int renderThreadId, Projection worldProjection, Scene scene, Model m, int material,
+		int shading, int objectPlane, int orient, int x, int y, int z)
+	{
+		SceneContext ctx = plugin.context(scene);
+		if (ctx == null)
+		{
+			return;
+		}
+
+		int size = m.getFaceCount() * 3 * VAO.VERT_SIZE;
+		FrameTape tape = plugin.frameTape;
 		if (m.getFaceTransparencies() == null)
 		{
+			if (tape != null)
+			{
+				tape.dynamic(renderThreadId, worldProjection, scene, m, material, shading, objectPlane, orient, x, y, z);
+			}
 			RenderThread rt = plugin.rts[renderThreadId + 1];
 			VAO o = rt.vaoO.get(size);
 			if (o == null)
@@ -313,6 +337,10 @@ public final class SceneDraw
 		else
 		{
 			m.calculateBoundsCylinder();
+			if (tape != null)
+			{
+				tape.dynamic(renderThreadId, worldProjection, scene, m, material, shading, objectPlane, orient, x, y, z);
+			}
 
 			RenderThread rt = plugin.rts[renderThreadId + 1];
 			VAO o = rt.vaoO.get(size);
@@ -347,7 +375,7 @@ public final class SceneDraw
 
 				// level is checked prior to this callback being run, in order to cull clickboxes, but
 				// tileObject.getPlane()>maxLevel if visbelow is set - lower the object to the max level
-				int plane = Math.min(ctx.maxLevel, tileObject.getPlane());
+				int plane = Math.min(ctx.maxLevel, objectPlane);
 				// renderable modelheight is typically not set here because DynamicObject doesn't compute it on the returned model
 				zone.addTempAlphaModel(a.vao, start, end, plane, x & 1023, y, z & 1023);
 			}
@@ -377,17 +405,51 @@ public final class SceneDraw
 		int shading = SurfaceMaterials.shadingForRenderable(renderable, gameObject.getHash(), gameObject.getId());
 		if (renderMode == Renderable.RENDERMODE_SORTED_NO_DEPTH || m.getFaceTransparencies() != null || m.getTransparency() != 0)
 		{
-			m.calculateBoundsCylinder();
 			int offset = scene.getWorldViewId() == WorldView.TOPLEVEL ? (SCENE_OFFSET >> 3) : 0;
 			int zx = (gameObject.getX() >> 10) + offset;
 			int zz = (gameObject.getY() >> 10) + offset;
 			int plane = Math.min(ctx.maxLevel, gameObject.getPlane());
-			plugin.tempModels.uploadSorted(plugin.rts[0], ctx, scene, worldProjection, m, orient, x, y, z, material, shading,
+			drawTempModel(worldProjection, scene, m, orient, x, y, z, material, shading, true,
 				renderMode == Renderable.RENDERMODE_SORTED_NO_DEPTH, zx, zz, plane,
 				y - renderable.getModelHeight() /* to render players over locs */);
 		}
 		else
 		{
+			drawTempModel(worldProjection, scene, m, orient, x, y, z, material, shading, false, false, 0, 0, 0, 0);
+		}
+	}
+
+	/**
+	 * A temporary model past drawTemp's filters, with its material and shading group, sorted (with its zone, plane and
+	 * alpha height) or not: what the offline renderer (dev/FrameTape) records and replays.
+	 */
+	public void drawTempModel(Projection worldProjection, Scene scene, Model m, int orient, int x, int y, int z,
+		int material, int shading, boolean sorted, boolean noDepth, int zx, int zz, int plane, int alphaY)
+	{
+		SceneContext ctx = plugin.context(scene);
+		if (ctx == null)
+		{
+			return;
+		}
+
+		FrameTape tape = plugin.frameTape;
+		if (sorted)
+		{
+			m.calculateBoundsCylinder();
+			if (tape != null)
+			{
+				tape.temp(worldProjection, scene, m, orient, x, y, z, material, shading, true, noDepth, zx, zz, plane,
+					alphaY);
+			}
+			plugin.tempModels.uploadSorted(plugin.rts[0], ctx, scene, worldProjection, m, orient, x, y, z, material,
+				shading, noDepth, zx, zz, plane, alphaY);
+		}
+		else
+		{
+			if (tape != null)
+			{
+				tape.temp(worldProjection, scene, m, orient, x, y, z, material, shading, false, false, 0, 0, 0, 0);
+			}
 			plugin.tempModels.uploadTemp(plugin.rts[0], ctx, scene, m, orient, x, y, z, material, shading);
 		}
 	}
