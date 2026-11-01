@@ -33,6 +33,7 @@ public class SkyGridReplay
 		RoomMap rooms;
 		byte[] floors;
 		short[] texels;
+		String name = "dump";
 	}
 
 	static Dump read(Path file) throws Exception
@@ -660,6 +661,81 @@ public class SkyGridReplay
 		return out.toString();
 	}
 
+	/**
+	 * The ground over tiles x0..x1 by z0..z1, 8 x 8 samples a tile, x10, walls drawn (- and | on straight edges, / and \\
+	 * on diagonals): term 0 the value, 1 the trace, 2 the field's light, 3 the cover.
+	 */
+	static String regionMap(Shader sh, WallMap walls, int x0, int x1, int z0, int z1, int term)
+	{
+		StringBuilder out = new StringBuilder();
+		float[] up = {0, -1, 0};
+		for (int tz = z1; tz >= z0; --tz)
+			for (int j = 7; j >= 0; --j)
+			{
+				out.append(j == 7 ? String.format("%3d ", tz) : "    ");
+				for (int tx = x0; tx <= x1; ++tx)
+				{
+					int bits = walls.get(0, tx + walls.offset, tz + walls.offset);
+					for (int i = 0; i < 8; ++i)
+					{
+						float fx = (i + 0.5f) / 8, fz = (j + 0.5f) / 8;
+						if ((bits & WallMap.NORTH) != 0 && j == 7 || (bits & WallMap.SOUTH) != 0 && j == 0) { out.append('-'); continue; }
+						if ((bits & WallMap.EAST) != 0 && i == 7 || (bits & WallMap.WEST) != 0 && i == 0) { out.append('|'); continue; }
+						if ((bits & WallMap.DIAG_SW_NE) != 0 && i == j) { out.append('/'); continue; }
+						if ((bits & WallMap.DIAG_NW_SE) != 0 && i + j == 7) { out.append('\\'); continue; }
+						float x = (tx + fx) * 128, z = (tz + fz) * 128;
+						float v = sh.skylight(new float[]{x, groundY(sh, x, z), z}, up);
+						float t = term == 0 ? v : term == 1 ? sh.lastOriginal : term == 2 ? sh.lastField : sh.lastCover;
+						out.append((char) ('0' + Math.max(0, Math.min(9, (int) (t * 10)))));
+					}
+					out.append(' ');
+				}
+				out.append('\n');
+			}
+		return out.toString();
+	}
+
+	/**
+	 * The ground over tiles x0..x1 by z0..z1 as a picture, 24 pixels a tile, north up, walls red: term as regionMap.
+	 * Written to build/replay/.
+	 */
+	static void regionImage(Shader sh, WallMap walls, int x0, int x1, int z0, int z1, int term, String name) throws java.io.IOException
+	{
+		regionImage(sh, walls, x0, x1, z0, z1, term, name, 24, 1);
+	}
+
+	static void regionImage(Shader sh, WallMap walls, int x0, int x1, int z0, int z1, int term, String name, int px, float gain) throws java.io.IOException
+	{
+		int w = (x1 - x0 + 1) * px, h = (z1 - z0 + 1) * px;
+		java.awt.image.BufferedImage im = new java.awt.image.BufferedImage(w, h, java.awt.image.BufferedImage.TYPE_INT_RGB);
+		float[] up = {0, -1, 0};
+		for (int y = 0; y < h; ++y)
+			for (int x = 0; x < w; ++x)
+			{
+				float wx = (x0 + (x + 0.5f) / px) * 128, wz = (z1 + 1 - (y + 0.5f) / px) * 128;
+				float v = sh.skylight(new float[]{wx, groundY(sh, wx, wz), wz}, up);
+				float t = term == 0 ? v : term == 1 ? sh.lastOriginal : term == 2 ? sh.lastField : sh.lastCover;
+				if (term == 4)
+				{
+					// the value's gradient, per tile: kinks show as edges
+					float e2 = 128f / px;
+					float vx = sh.skylight(new float[]{wx + e2, groundY(sh, wx + e2, wz), wz}, up), vz = sh.skylight(new float[]{wx, groundY(sh, wx, wz + e2), wz + e2}, up);
+					t = (float) Math.hypot(vx - v, vz - v) * px;
+				}
+				int g = Math.max(0, Math.min(255, Math.round(255 * t * gain)));
+				int tx = (int) Math.floor(wx / 128), tz = (int) Math.floor(wz / 128);
+				float fx = wx / 128 - tx, fz = wz / 128 - tz, e = 1.5f / px;
+				int bits = walls.get(0, tx + walls.offset, tz + walls.offset);
+				boolean wall = (bits & WallMap.NORTH) != 0 && fz > 1 - e || (bits & WallMap.SOUTH) != 0 && fz < e
+					|| (bits & WallMap.EAST) != 0 && fx > 1 - e || (bits & WallMap.WEST) != 0 && fx < e
+					|| (bits & WallMap.DIAG_SW_NE) != 0 && Math.abs(fx - fz) < e || (bits & WallMap.DIAG_NW_SE) != 0 && Math.abs(fx + fz - 1) < e;
+				im.setRGB(x, y, wall ? 0xc03030 : g * 0x010101);
+			}
+		java.nio.file.Path dir = Paths.get("build", "replay");
+		Files.createDirectories(dir);
+		javax.imageio.ImageIO.write(im, "png", dir.resolve(name + ".png").toFile());
+	}
+
 	static int[] tileRoofs(Dump d, int size)
 	{
 		int[] out = new int[size * size];
@@ -699,6 +775,50 @@ public class SkyGridReplay
 	private static int pct(float v)
 	{
 		return Math.max(-9, Math.min(99, Math.round(v * 100)));
+	}
+
+	/**
+	 * Kinks: at every open tile edge within radius, how much the value's slope across the edge changes (per tile, from
+	 * 1/8 tile before it to 1/8 after it), split by where the cover is: under cover (> 0.9), out of doors (< 0.1),
+	 * between. Returns mean and largest per group.
+	 */
+	static String kinks(Shader sh, WallMap walls, int cx, int cz, int radius)
+	{
+		float[] up = {0, -1, 0};
+		double[] sum = new double[3];
+		float[] max = new float[3];
+		int[] n = new int[3];
+		float h = 1 / 8f;
+		for (int tz = cz - radius; tz <= cz + radius; ++tz)
+			for (int tx = cx - radius; tx <= cx + radius; ++tx)
+				for (int axis = 0; axis < 2; ++axis)
+				{
+					int bits = walls.get(0, tx + walls.offset, tz + walls.offset);
+					if ((bits & (axis == 0 ? WallMap.EAST : WallMap.NORTH)) != 0 || WallMap.split(bits)) continue;
+					int ox = tx + (axis == 0 ? 1 : 0), oz = tz + (axis == 0 ? 0 : 1);
+					if (WallMap.split(walls.get(0, ox + walls.offset, oz + walls.offset))) continue;
+					for (int k = 0; k < 4; ++k)
+					{
+						float along = (k + 0.5f) / 4;
+						float[] v = new float[4];
+						float cover = 0;
+						for (int q = 0; q < 4; ++q)
+						{
+							float off = new float[]{-2 * h, -h, h, 2 * h}[q];
+							float x = axis == 0 ? (tx + 1 + off) * 128 : (tx + along) * 128, z = axis == 0 ? (tz + along) * 128 : (tz + 1 + off) * 128;
+							v[q] = sh.skylight(new float[]{x, groundY(sh, x, z), z}, up);
+							cover += sh.lastCover / 4;
+						}
+						// the slope before the edge and after it, per tile
+						float kink = Math.abs((v[3] - v[2]) / h - (v[1] - v[0]) / h);
+						int g = cover > 0.9f ? 0 : cover < 0.1f ? 1 : 2;
+						sum[g] += kink;
+						max[g] = Math.max(max[g], kink);
+						n[g]++;
+					}
+				}
+		return String.format("covered mean %.3f max %.3f (%d) | outdoors mean %.3f max %.3f (%d) | between mean %.3f max %.3f (%d)",
+			sum[0] / Math.max(1, n[0]), max[0], n[0], sum[1] / Math.max(1, n[1]), max[1], n[1], sum[2] / Math.max(1, n[2]), max[2], n[2]);
 	}
 
 	static float groundY(Shader sh, float x, float z)
@@ -776,12 +896,14 @@ public class SkyGridReplay
 			for (Path file : (Iterable<Path>) files.filter(f -> f.getFileName().toString().startsWith("skygrid-")).sorted()::iterator)
 			{
 				System.out.println("=== " + file.getFileName());
-				replay(read(file));
+				Dump d = read(file);
+				d.name = file.getFileName().toString().replace("skygrid-", "").replace(".bin.gz", "");
+				replay(d);
 			}
 		}
 	}
 
-	private static void replay(Dump d)
+	private static void replay(Dump d) throws java.io.IOException
 	{
 		int cx = (int) Math.floor(d.playerX - d.voxels.baseX), cz = (int) Math.floor(d.playerZ - d.voxels.baseY);
 		float[] field = field(d, 0);
@@ -813,6 +935,35 @@ public class SkyGridReplay
 		System.out.println(tileTable(d, now, cx, cz, 8));
 		System.out.println(wallFaces(now, d, cx, cz, 8));
 		System.out.println(diagonalFaces(before, now, d.walls, cx, cz, 8));
+		for (int term = 0; term < 4; ++term)
+			for (Shader sh : new Shader[]{before, now})
+				regionImage(sh, d.walls, cx - 8, cx + 8, cz - 8, cz + 8, term, d.name + "-" + new String[]{"value", "trace", "field", "cover"}[term]
+					+ (sh == before ? "-before" : "-now"));
+		for (Shader sh : new Shader[]{before, now})
+		{
+			String which = sh == before ? "before" : "now";
+			System.out.println("slope change across open tile edges (per tile), " + which + ": " + kinks(sh, d.walls, cx, cz, 8));
+			regionImage(sh, d.walls, cx - 5, cx + 2, cz - 5, cz + 1, 4, d.name + "-close-slope-" + which, 48, 2);
+		}
+		if (d.name.equals("doorway"))
+		{
+			// from the doorway (tile 46,48) south into the room, and across it at a tile in
+			StringBuilder p = new StringBuilder("doorway profile, x 46.5, z from 49 down (value / trace / field / cover):\n");
+			for (float z = 49.0f; z >= 43.9f; z -= 1 / 8f)
+			{
+				float x = 46.5f * 128, wz = z * 128;
+				float b = before.skylight(new float[]{x, groundY(before, x, wz), wz}, new float[]{0, -1, 0});
+				String bt = String.format("%3d %3d %3d %3d", pct(b), pct(before.lastOriginal), pct(before.lastField), pct(before.lastCover));
+				float v = now.skylight(new float[]{x, groundY(now, x, wz), wz}, new float[]{0, -1, 0});
+				String nt = String.format("%3d %3d %3d %3d", pct(v), pct(now.lastOriginal), pct(now.lastField), pct(now.lastCover));
+				p.append(String.format("  z %.3f  before %s | now %s%n", z, bt, nt));
+			}
+			System.out.println(p);
+		}
+		for (Shader sh : new Shader[]{before, now})
+			for (int term = 0; term < 3; ++term)
+				regionImage(sh, d.walls, cx - 5, cx + 2, cz - 5, cz + 1, term, d.name + "-close-" + new String[]{"value", "trace", "field"}[term]
+					+ (sh == before ? "-before" : "-now"), 48, 4);
 		System.out.println("diagonal tiles, 8 x 8 a tile, x10 (. on the wall line), before | now:\n" + diagonalMap(before, now, d.walls, cx, cz, 8));
 		System.out.println("terms at tile centres (diagonal tiles: the half away from the SW corner), now: trace/surface/exterior/cover/field -> value\n"
 			+ terms(now, d.walls, cx - 5, cx + 4, cz - 5, cz + 3));
