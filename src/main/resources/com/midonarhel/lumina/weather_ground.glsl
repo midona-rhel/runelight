@@ -1,37 +1,50 @@
 // Snow and rain puddles on the surfaces themselves (WeatherGround.java), applied to the albedo before the composite
 // lights it. The AO pass leaves how much cover each pixel gets (weather_ground_ao.glsl); this decides where it lies.
-// Snow is blobs of world space noise compared with a level that falls as the cover builds: a blob starts at a noise
-// peak and grows outward, its edge crisp and two-tone like the water's foam, an outer band of shaded snow round the
-// bright snow. Puddles grow where water collects, in hollows and along walls (RoomMap.pool), as the ground soaks, their
-// edges pushed around by noise, drawn as a water of their own reflecting the sky. Both edges are distances in pixels,
-// worked out from the gradients and the surface's footprint on screen, so they stay a pixel wide at any angle. Needs
-// frame.glsl, rooms.glsl and water.glsl.
+// Snow is world space noise compared with a level that falls as the cover builds: it settles first where the noise
+// peaks and spreads outward, its edge soft over about a tile, and while the cover is thin it is a dusting the
+// ground shows through. On scenery it lies on what faces up, as the first snow did (f204e8e2): the tops of leaves
+// and objects white at full brightness, fading smoothly down their sides and in soft patches. Puddles grow where
+// water collects, in hollows and along walls (RoomMap.pool), as the ground soaks, their edges pushed around by noise,
+// drawn as a water of their own reflecting the sky; their edge is a distance in pixels, worked out from the gradient
+// and the surface's footprint on screen, so it stays a pixel wide at any angle. Needs frame.glsl, rooms.glsl and
+// water.glsl.
 
 #include "weather_wade.glsl"
 
 uniform int weatherGroundOn;
 uniform vec2 weatherNoiseOrigin;  // world x and z of local (scene) 0, world units
 
-// snow: noise wavelength in world units, and the noise level its blobs start at (peaks) and end at (all covered)
+// snow: noise wavelength in world units, the noise level it starts at (peaks) and the level at which all is
+// covered, and how soft its edge is in noise levels (about a tile at this wavelength)
 #define SNOW_SCALE 640.0
-#define SNOW_FIRST 0.45
-#define SNOW_ALL -0.6
-// the cover moves the snow's edge in this many small steps, not continuously: it spreads in discrete little advances
-#define SNOW_STEPS 16.0
-// the outer band's width in world units, and its least in noise levels (a young blob has nothing else yet)
-#define SNOW_RIM 14.0
-#define SNOW_RIM_MIN 0.02
-// how white the tops of scenery get
-#define SNOW_SCENERY 0.8
+#define SNOW_FIRST 0.5
+#define SNOW_ALL -0.8
+#define SNOW_SOFT 0.12
+// two finer octaves that break the edge up: their wavelengths in world units and strengths in noise levels
+#define SNOW_DETAIL_SCALE 90.0
+#define SNOW_DETAIL 0.14
+#define SNOW_GRAIN_SCALE 26.0
+#define SNOW_GRAIN 0.07
+// how opaque the thinnest cover is (a dusting), and the cover from which the snow is solid
+#define SNOW_DUST 0.4
+#define SNOW_SOLID 0.45
 #define SNOW_COLOR vec3(0.94, 0.96, 0.99)
-#define SNOW_RIM_COLOR vec3(0.72, 0.8, 0.92)
 // how far a snow covered surface's normal is rounded toward up
 #define SNOW_ROUND 0.7
 // the steepest ground snow settles on: none at the first, all of it at the second (up component of the normal); a
-// steeper face is SNOW_SLOPE noise levels further from snow, so the blobs shrink on it
+// steeper face is SNOW_SLOPE noise levels further from snow, so the patches shrink on it
 #define SNOW_STEEP 0.55
 #define SNOW_FLAT 0.8
 #define SNOW_SLOPE 2.0
+// scenery: the faces that take snow, none at the first up component and all at the second (f204e8e2), and the noise
+// level its patches start at, falling by SNOW_SCENERY_SPREAD as the cover builds, with their soft edge. Scenery with
+// an action (material a under 1) takes it on its tops only, from SNOW_SCENERY_TOPS, so its sides stay readable
+#define SNOW_SCENERY_STEEP 0.25
+#define SNOW_SCENERY_TOPS 0.65
+#define SNOW_SCENERY_FLAT 0.9
+#define SNOW_SCENERY_FIRST 0.35
+#define SNOW_SCENERY_SPREAD 0.45
+#define SNOW_SCENERY_SOFT 0.4
 
 // puddles: they grow from where water collects (RoomMap.pool: hollows and the feet of walls), the edge pushed around
 // by noise of this wavelength (world units) and strength so they are gloopy rather than round; the pool level at
@@ -135,24 +148,28 @@ vec2 weatherGroundSurface(inout vec3 color, inout vec3 n, vec3 p, vec3 world, ve
   }
   float up = max(-n.y, 0.0);
   vec2 xz = world.xz + weatherNoiseOrigin;
-  vec2 dx, dy;
-  groundFootprint(pc, p, n, dx, dy);
   if (cover > 0.0) {
-    vec3 noise = groundBlobs(xz, SNOW_SCALE);
-    float steps = ceil(cover * SNOW_STEPS) / SNOW_STEPS;
-    float f = noise.x - mix(SNOW_FIRST, SNOW_ALL, steps) - SNOW_SLOPE * (1.0 - smoothstep(SNOW_STEEP, SNOW_FLAT, up));
-    vec2 df = vec2(dot(noise.yz, dx), dot(noise.yz, dy));
-    float snow = groundEdge(f, df) * eligible;
-    float rim = max(SNOW_RIM * length(noise.yz), SNOW_RIM_MIN);
-    float inner = groundEdge(f - rim, df);
+    float noise = groundBlobs(xz, SNOW_SCALE).x + SNOW_DETAIL * groundPerlin(xz / SNOW_DETAIL_SCALE).x
+      + SNOW_GRAIN * groundPerlin(xz / SNOW_GRAIN_SCALE + 31.0).x;
+    // thin cover is a dusting, the ground showing through
+    float opacity = mix(SNOW_DUST, 1.0, smoothstep(0.0, SNOW_SOLID, cover));
+    float snow;
     if (land) {
-      n = normalize(mix(n, vec3(0.0, -1.0, 0.0), SNOW_ROUND * snow));
+      float depth = noise - mix(SNOW_FIRST, SNOW_ALL, cover) - SNOW_SLOPE * (1.0 - smoothstep(SNOW_STEEP, SNOW_FLAT, up));
+      snow = smoothstep(0.0, SNOW_SOFT, depth);
     } else {
-      snow *= material.a * SNOW_SCENERY;
+      float depth = noise + SNOW_SCENERY_SPREAD * cover - SNOW_SCENERY_FIRST;
+      float steep = material.a < 0.99 ? SNOW_SCENERY_TOPS : SNOW_SCENERY_STEEP;
+      snow = smoothstep(steep, SNOW_SCENERY_FLAT, up) * smoothstep(-SNOW_SCENERY_SOFT, 0.0, depth)
+        * smoothstep(0.0, SNOW_SOLID, cover) * step(0.01, material.a);
     }
-    color = mix(color, mix(SNOW_RIM_COLOR, SNOW_COLOR, inner), snow);
+    snow *= opacity * eligible;
+    n = normalize(mix(n, vec3(0.0, -1.0, 0.0), SNOW_ROUND * snow));
+    color = mix(color, SNOW_COLOR, snow);
     return vec2(0.0);
   }
+  vec2 dx, dy;
+  groundFootprint(pc, p, n, dx, dy);
   // the pool level the water has reached, lower as the ground soaks, and the edge's noise
   vec2 grad;
   float pool = puddlePoolAt(world, grad) * smoothstep(PUDDLE_STEEP, PUDDLE_FLAT, up);

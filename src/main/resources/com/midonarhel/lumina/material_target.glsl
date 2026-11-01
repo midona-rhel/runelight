@@ -17,7 +17,7 @@
 // the world units a step of the fake water's distance from the end of its water is (8 bits)
 #define END_STEP 0.5
 
-// share of the snow that settles on scenery with an action
+// scenery with an action: below 1, it takes snow on its tops only (weather_ground.glsl)
 #define SNOW_REDUCED 0.4
 
 // The target's value for a surface: its SurfaceMaterials bits (as the vertex shader passes them), its face's normal and
