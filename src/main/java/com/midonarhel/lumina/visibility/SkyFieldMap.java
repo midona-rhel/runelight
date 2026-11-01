@@ -76,7 +76,8 @@ public final class SkyFieldMap
 			{
 				boolean[] covered = SkyField.covered(job.rooms, job.floors, job.plane);
 				float[] light = SkyField.propagate(job.walls, covered, job.plane, job.falloff);
-				job.texels = SkyField.pack(job.walls, job.plane, light, covered);
+				job.texels = SkyField.pack(job.walls, job.plane, light, covered,
+					SkyField.cornerLight(job.walls, job.plane, covered, job.falloff));
 				done = job;
 			});
 		}

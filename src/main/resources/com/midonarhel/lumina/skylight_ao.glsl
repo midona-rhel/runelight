@@ -22,7 +22,8 @@ uniform sampler3D skyGridPrev;
 uniform int skyGridPrevOn;
 uniform vec3 skyGridPrevCamera;
 // Room-fill corner values (SkyField.java): rg/ba light and cover per half; g also holds 2 * diagonal kind. The rows
-// below them, as many again, hold each corner's gradient per tile: rg the light's (east, north), ba the cover's.
+// below them, as many again, hold each corner's gradient per tile: rg the light's (east, north), ba the cover's; on a
+// tile a diagonal splits, rg half 0's light gradient and ba half 1's.
 // Texture coordinates are
 // camera-relative world xz * skyFieldMap.xy + skyFieldMap.zw
 uniform sampler2D skyField;
@@ -254,10 +255,21 @@ float skyGridVisibility(sampler3D grid, float scale, vec3 w, vec3 n) {
   return original;
 }
 
+// A value over a tile from its corners' values and gradients per tile (SW, SE, NW, NE; gx east, gz north): cubic
+// Hermite in each axis, so tiles that share their corners' values and gradients meet with the same slope.
+float skyHermite(vec2 f, vec4 v, vec4 gx, vec4 gz) {
+  vec2 v1 = f * f * (3.0 - 2.0 * f), v0 = 1.0 - v1;
+  vec2 d0 = f * (1.0 - f) * (1.0 - f), d1 = -f * f * (1.0 - f);
+  return dot(v, vec4(v0.x * v0.y, v1.x * v0.y, v0.x * v1.y, v1.x * v1.y))
+    + dot(gx, vec4(d0.x * v0.y, d1.x * v0.y, d0.x * v1.y, d1.x * v1.y))
+    + dot(gz, vec4(v0.x * d0.y, v1.x * d0.y, v0.x * d1.y, v1.x * d1.y));
+}
+
 // Reconstruct the field from shared corners across open edges. Each tile owns copies of its corners, so
-// sampling never pulls a texel through a wall. A tile no diagonal splits blends its corners' values and gradients
-// (cubic Hermite), so the light keeps its slope across tile edges (bilinear, it bent at each: a stepped falloff from
-// a doorway); diagonal halves use separate channels and triangle weights.
+// sampling never pulls a texel through a wall. The light blends cubically from the corners' values and gradients
+// (skyHermite), so it keeps its slope across tile edges (bilinear, it bent at each: a stepped falloff from a doorway);
+// on a tile a diagonal splits, each half from its own corners, the one its triangle lacks carried on from the
+// triangle's plane. Diagonal halves use separate channels; their cover blends linearly over the triangle.
 vec2 skyFieldVisibility(vec3 p) {
   ivec2 dims = textureSize(skyField, 0);
   float tiles = float(dims.x) * 0.5;
@@ -271,30 +283,35 @@ vec2 skyFieldVisibility(vec3 p) {
   int diagonal = int(floor(sw.g * 0.5));
   float code = 2.0 * float(diagonal);
   sw.g -= code; se.g -= code; nw.g -= code; ne.g -= code;
+  ivec2 below = base + ivec2(0, dims.x);
+  vec4 gsw = texelFetch(skyField, below, 0);
+  vec4 gse = texelFetch(skyField, below + ivec2(1, 0), 0);
+  vec4 gnw = texelFetch(skyField, below + ivec2(0, 1), 0);
+  vec4 gne = texelFetch(skyField, below + ivec2(1, 1), 0);
   vec2 field = vec2(0.0);
   if (diagonal == 0) {
-    ivec2 below = base + ivec2(0, dims.x);
-    vec4 gsw = texelFetch(skyField, below, 0);
-    vec4 gse = texelFetch(skyField, below + ivec2(1, 0), 0);
-    vec4 gnw = texelFetch(skyField, below + ivec2(0, 1), 0);
-    vec4 gne = texelFetch(skyField, below + ivec2(1, 1), 0);
-    // per axis: the value weights of the 0 and 1 corners, and the gradient weights
-    vec2 v1 = f * f * (3.0 - 2.0 * f), v0 = 1.0 - v1;
-    vec2 d0 = f * (1.0 - f) * (1.0 - f), d1 = -f * f * (1.0 - f);
-    field = sw.rg * v0.x * v0.y + se.rg * v1.x * v0.y + nw.rg * v0.x * v1.y + ne.rg * v1.x * v1.y
-      + gsw.xz * d0.x * v0.y + gse.xz * d1.x * v0.y + gnw.xz * d0.x * v1.y + gne.xz * d1.x * v1.y
-      + gsw.yw * v0.x * d0.y + gse.yw * v1.x * d0.y + gnw.yw * v0.x * d1.y + gne.yw * v1.x * d1.y;
-    field = clamp(field, 0.0, 1.0);
-  } else if (diagonal == 1) {
-    field = f.y > f.x
-      ? sw.rg * (1.0 - f.y) + nw.rg * (f.y - f.x) + ne.rg * f.x
-      : sw.ba * (1.0 - f.x) + se.ba * (f.x - f.y) + ne.ba * f.y;
-  } else if (diagonal == 2) {
-    field = f.x + f.y > 1.0
-      ? nw.rg * (1.0 - f.x) + ne.rg * (f.x + f.y - 1.0) + se.rg * (1.0 - f.y)
-      : sw.ba * (1.0 - f.x - f.y) + se.ba * f.x + nw.ba * f.y;
+    field = vec2(skyHermite(f, vec4(sw.r, se.r, nw.r, ne.r), vec4(gsw.x, gse.x, gnw.x, gne.x), vec4(gsw.y, gse.y, gnw.y, gne.y)),
+      skyHermite(f, vec4(sw.g, se.g, nw.g, ne.g), vec4(gsw.z, gse.z, gnw.z, gne.z), vec4(gsw.w, gse.w, gnw.w, gne.w)));
+  } else {
+    bool north = diagonal == 1 ? f.y > f.x : f.x + f.y > 1.0;
+    // the half's light and gradients; the corner its triangle lacks: SE of "/"'s north half, NW of its south one,
+    // SW of "\"'s north half, NE of its south one
+    vec4 light = north ? vec4(sw.r, se.r, nw.r, ne.r) : vec4(sw.b, se.b, nw.b, ne.b);
+    vec4 gx = north ? vec4(gsw.x, gse.x, gnw.x, gne.x) : vec4(gsw.z, gse.z, gnw.z, gne.z);
+    vec4 gz = north ? vec4(gsw.y, gse.y, gnw.y, gne.y) : vec4(gsw.w, gse.w, gnw.w, gne.w);
+    int k = diagonal == 1 ? (north ? 1 : 2) : (north ? 0 : 3);
+    // carried on from the triangle's plane: the corners along x and along z, less the one across
+    light[k] = light[k ^ 1] + light[k ^ 2] - light[3 - k];
+    float sx = (k & 1) == 1 ? 1.0 : -1.0, sz = (k >> 1) == 1 ? 1.0 : -1.0;
+    gx[k] = sx * (light[k] - light[k ^ 1]);
+    gz[k] = sz * (light[k] - light[k ^ 2]);
+    vec4 tri = diagonal == 1
+      ? (north ? vec4(1.0 - f.y, 0.0, f.y - f.x, f.x) : vec4(1.0 - f.x, f.x - f.y, 0.0, f.y))
+      : (north ? vec4(0.0, 1.0 - f.y, 1.0 - f.x, f.x + f.y - 1.0) : vec4(1.0 - f.x - f.y, f.x, f.y, 0.0));
+    vec4 cover = north ? vec4(sw.g, se.g, nw.g, ne.g) : vec4(sw.a, se.a, nw.a, ne.a);
+    field = vec2(skyHermite(f, light, gx, gz), dot(tri, cover));
   }
-  return field;
+  return clamp(field, 0.0, 1.0);
 }
 
 // 1 under the open sky. Under cover (the reconstructed field's green channel) the light flowing in through

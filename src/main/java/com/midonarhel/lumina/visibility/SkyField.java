@@ -21,6 +21,10 @@ public final class SkyField
 	private static final int STRAIGHT = 10, DIAGONAL = 14;
 	// the light isn't followed once it is below this
 	private static final float MIN_LIGHT = 1 / 255f;
+	// how much further on (tiles) cornerLight counts a corner than its distance from the open sky: the flood counts from
+	// the open tiles' centres and the corners averaged it, which put its light 0.59 tiles further on (sd 0.45, over
+	// 8,000 covered corners in each of four Ardougne dumps); kept, so rooms keep their brightness
+	private static final float CORNER_LAG = 0.6f;
 	private static final int[] DX = {0, 1, 0, -1}, DY = {1, 0, -1, 0};
 	private static final int[] SIDE = {WallMap.NORTH, WallMap.EAST, WallMap.SOUTH, WallMap.WEST};
 	private static final int[] OPPOSITE = {WallMap.SOUTH, WallMap.WEST, WallMap.NORTH, WallMap.EAST};
@@ -219,11 +223,20 @@ public final class SkyField
 	 * centred difference across open edges and a one-sided one at a wall. The shader blends a tile no diagonal splits
 	 * from its corners' values and gradients (cubic Hermite, skylight_ao.glsl's skyFieldVisibility), so the light
 	 * flowing into a room keeps its slope across tile edges: rebuilt bilinearly, it bent at every edge, the stepped
-	 * falloff from a doorway the user saw (2026-11-01). Halves of a split tile stay linear and give their triangle's
-	 * gradient; along a straight edge of such a half the corner's gradient is the triangle's slope, so the whole tile
-	 * beside it is linear along that edge too and the two meet without a step.
+	 * falloff from a doorway the user saw (2026-11-01). A tile a diagonal splits has its halves' light gradients
+	 * instead (RG half 0, BA half 1; its cover stays linear): the shader blends each half the same way, the corner
+	 * missing from its triangle carried on from the triangle's plane, so a half meets its neighbours as smoothly.
 	 */
 	static float[] pack(WallMap walls, int plane, float[] light, boolean[] covered)
+	{
+		return pack(walls, plane, light, covered, null);
+	}
+
+	/**
+	 * As pack, with each corner copy's light the given one (cornerLight: by the straight-line distance from the open
+	 * sky) instead of the mean of its tiles' flood values; null: the mean.
+	 */
+	static float[] pack(WallMap walls, int plane, float[] light, boolean[] covered, float[] corners)
 	{
 		int size = walls.size, width = size * TEXELS_PER_TILE;
 		float[] out = new float[2 * width * width * 4];
@@ -256,58 +269,47 @@ public final class SkyField
 						// A triangle's opposite corner is never sampled.
 						if (parent[node] < 0) continue;
 						int root = cornerRoot(parent, node);
-						out[o + 2 * h] = sum[root] / count[root];
+						out[o + 2 * h] = corners != null ? corners[(cx * (size + 1) + cy) * 8 + root] : sum[root] / count[root];
 						out[o + 2 * h + 1] = coverSum[root] / count[root];
 					}
 				}
 			}
 		}
 		// the gradients, from the values; then the diagonal kinds go into G. Per root: the mean of its members' slopes
-		// (light east, north, cover east, north), and of its split halves' along the straight edges they own
-		float[] slope = new float[8 * 4], edge = new float[8 * 4], one = new float[4];
-		int[] edgeCount = new int[8 * 2];
+		// (light east, north, cover east, north)
+		float[] slope = new float[8 * 4];
 		for (int cx = 0; cx <= size; ++cx)
 		{
 			for (int cy = 0; cy <= size; ++cy)
 			{
 				java.util.Arrays.fill(count, 0);
 				java.util.Arrays.fill(slope, 0);
-				java.util.Arrays.fill(edge, 0);
-				java.util.Arrays.fill(edgeCount, 0);
 				int present = groupCorner(walls, plane, size, cx, cy, bits, tiles, parent);
 				for (int node = 0; node < 8; ++node)
 				{
 					if (parent[node] < 0) continue;
-					int q = node >> 1, root = cornerRoot(parent, node), h = node & 1, kx = 1 - (q & 1), ky = 1 - (q >> 1);
-					java.util.Arrays.fill(one, 0);
-					tileSlope(out, width, cx - 1 + (q & 1), cy - 1 + (q >> 1), kx, ky, bits[q], h, one, 0);
-					for (int k = 0; k < 4; ++k) slope[root * 4 + k] += one[k];
+					int q = node >> 1, root = cornerRoot(parent, node);
+					tileSlope(out, width, cx - 1 + (q & 1), cy - 1 + (q >> 1), 1 - (q & 1), 1 - (q >> 1), bits[q], node & 1, slope, root * 4);
 					count[root]++;
-					if (!WallMap.split(bits[q])) continue;
-					// the half's straight edges through the corner: along east (its south or north edge), along north
-					if (WallMap.half(bits[q], ky == 0 ? WallMap.SOUTH : WallMap.NORTH) == h)
-					{
-						edge[root * 4] += one[0];
-						edge[root * 4 + 2] += one[2];
-						edgeCount[root * 2]++;
-					}
-					if (WallMap.half(bits[q], kx == 0 ? WallMap.WEST : WallMap.EAST) == h)
-					{
-						edge[root * 4 + 1] += one[1];
-						edge[root * 4 + 3] += one[3];
-						edgeCount[root * 2 + 1]++;
-					}
 				}
 				for (int q = 0; q < 4; ++q)
 				{
-					if ((present & (1 << q)) == 0 || WallMap.split(bits[q])) continue;
+					if ((present & (1 << q)) == 0) continue;
 					int x = cx - 1 + (q & 1), y = cy - 1 + (q >> 1);
 					int o = (width * width + (2 * y + 1 - (q >> 1)) * width + 2 * x + 1 - (q & 1)) * 4;
-					int root = cornerRoot(parent, 2 * q);
-					for (int k = 0; k < 4; ++k)
+					if (!WallMap.split(bits[q]))
 					{
-						int along = edgeCount[root * 2 + (k & 1)];
-						out[o + k] = along > 0 ? edge[root * 4 + k] / along : slope[root * 4 + k] / count[root];
+						int root = cornerRoot(parent, 2 * q);
+						for (int k = 0; k < 4; ++k) out[o + k] = slope[root * 4 + k] / count[root];
+						continue;
+					}
+					// each half's light gradient, where the half touches the corner
+					for (int h = 0; h < 2; ++h)
+					{
+						if (parent[2 * q + h] < 0) continue;
+						int root = cornerRoot(parent, 2 * q + h);
+						out[o + 2 * h] = slope[root * 4] / count[root];
+						out[o + 2 * h + 1] = slope[root * 4 + 1] / count[root];
 					}
 				}
 			}
@@ -324,6 +326,214 @@ public final class SkyField
 			}
 		}
 		return out;
+	}
+
+	/**
+	 * The sky's light at every corner copy, by the straight-line distance (tiles) from the open sky through what the
+	 * walls leave open, as falloff^distance: an any-angle shortest path (Theta*) over the corner copies, which steps
+	 * across the tiles a copy belongs to and goes straight from a node's parent where nothing stands between them
+	 * (WallMap.blocked). The tile flood (propagate) goes by edges and corners with a cost of 10 and 14, so its light
+	 * fell off in octagons, and averaging it at the corners dented them by the walls: the steps in the light a doorway
+	 * lets into a room (2026-11-01). Here the light falls off in circles round the opening's ends. A source corner
+	 * gives light from the halves of the open edges at it (an open tile on one side, a covered one on the other, no
+	 * wall), so the distance is to the opening's line, not to the corners on it: points one tile apart creased the
+	 * light halfway between them.
+	 *
+	 * Returns [(cx * (size + 1) + cy) * 8 + root]: a corner's group roots (groupCorner) hold the light, 1 where the
+	 * group has an open tile, 0 where the light doesn't reach.
+	 */
+	static float[] cornerLight(WallMap walls, int plane, boolean[] covered, float falloff)
+	{
+		return cornerLight(walls, plane, covered, falloff, null);
+	}
+
+	/** As cornerLight; paths, when given, gets {distance, parent node, x, z} per node, for tests. */
+	static float[] cornerLight(WallMap walls, int plane, boolean[] covered, float falloff, float[][] paths)
+	{
+		int size = walls.size, corners = size + 1;
+		int[] bits = new int[4], tiles = new int[4], parent = new int[8];
+		// per corner: each node's root, -1 where none; the roots' positions (extended tiles), nudged into their tiles
+		int[] rootOf = new int[corners * corners * 8];
+		float[] px = new float[rootOf.length], pz = new float[rootOf.length];
+		float[] dist = new float[rootOf.length];
+		int[] from = new int[rootOf.length];
+		java.util.Arrays.fill(dist, Float.POSITIVE_INFINITY);
+		java.util.Arrays.fill(from, -1);
+		boolean[] open = new boolean[rootOf.length];
+		// per source node: the open edges at its corner it gives light from, a bit per side (east 1, north 2, west 4,
+		// south 8), each the half of the edge next to the corner
+		byte[] edges = new byte[rootOf.length];
+		float reach = (float) (Math.log(MIN_LIGHT) / Math.log(falloff));
+		java.util.PriorityQueue<long[]> queue = new java.util.PriorityQueue<>((a, b) -> Double.compare(Double.longBitsToDouble(a[0]), Double.longBitsToDouble(b[0])));
+		for (int cx = 0; cx < corners; ++cx)
+		{
+			for (int cy = 0; cy < corners; ++cy)
+			{
+				int c = (cx * corners + cy) * 8;
+				java.util.Arrays.fill(rootOf, c, c + 8, -1);
+				int present = groupCorner(walls, plane, size, cx, cy, bits, tiles, parent);
+				float[] sx = new float[8], sz = new float[8];
+				int[] n = new int[8];
+				boolean[] anyOpen = new boolean[8], anyCovered = new boolean[8];
+				for (int node = 0; node < 8; ++node)
+				{
+					if (parent[node] < 0) continue;
+					int q = node >> 1, root = cornerRoot(parent, node);
+					rootOf[c + node] = root;
+					int x = cx - 1 + (q & 1), y = cy - 1 + (q >> 1);
+					float[] centre = halfCentre(bits[q], x, y, node & 1);
+					sx[root] += centre[0];
+					sz[root] += centre[1];
+					n[root]++;
+					boolean cov = covered[tiles[q]];
+					anyOpen[root] |= !cov;
+					anyCovered[root] |= cov;
+				}
+				for (int root = 0; root < 8; ++root)
+				{
+					if (n[root] == 0) continue;
+					int id = c + root;
+					px[id] = cx + 0.02f * (sx[root] / n[root] - cx);
+					pz[id] = cy + 0.02f * (sz[root] / n[root] - cy);
+					if (anyOpen[root])
+					{
+						open[id] = true;
+						// only the open corners by covered tiles have anything to give
+						boolean touches = anyCovered[root];
+						for (int q = 0; !touches && q < 4; ++q) touches = (present & (1 << q)) != 0 && covered[tiles[q]];
+						if (touches)
+						{
+							edges[id] = (byte) openEdges(walls, plane, size, covered, cx, cy);
+							dist[id] = 0;
+							from[id] = id;
+							queue.add(new long[]{Double.doubleToLongBits(0), id});
+						}
+					}
+				}
+			}
+		}
+		while (!queue.isEmpty())
+		{
+			long[] e = queue.poll();
+			int u = (int) e[1];
+			if (Double.longBitsToDouble(e[0]) > dist[u]) continue;
+			int ucx = u / 8 / corners, ucy = u / 8 % corners, uc = (ucx * corners + ucy) * 8;
+			int p = from[u];
+			// the tiles of u's group, and their other corners
+			for (int node = 0; node < 8; ++node)
+			{
+				if (rootOf[uc + node] != u - uc) continue;
+				int q = node >> 1, h = node & 1, tx = ucx - 1 + (q & 1), ty = ucy - 1 + (q >> 1);
+				int b = walls.get(plane, tx, ty);
+				if (tx < 0 || ty < 0 || tx >= size || ty >= size || walls.solid(plane, tx, ty) && dist[u] > 0) continue;
+				boolean split = WallMap.split(b);
+				for (int k = 0; k < 4; ++k)
+				{
+					int vcx = tx + (k & 1), vcy = ty + (k >> 1);
+					if (vcx == ucx && vcy == ucy) continue;
+					int q2 = (tx - vcx + 1) + 2 * (ty - vcy + 1);
+					int vc = (vcx * corners + vcy) * 8, vroot = rootOf[vc + 2 * q2 + (split ? h : 0)];
+					if (vroot < 0) continue;
+					int v = vc + vroot;
+					if (open[v]) continue;
+					float d;
+					int via;
+					if (p != u && !walls.blocked(plane, local(px[p], walls), local(pz[p], walls), local(px[v], walls), local(pz[v], walls)))
+					{
+						d = dist[p] + reachFrom(p, edges[p], corners, px[v], pz[v], px[p], pz[p]);
+						via = p;
+					}
+					else
+					{
+						d = dist[u] + reachFrom(u, edges[u], corners, px[v], pz[v], px[u], pz[u]);
+						via = u;
+					}
+					if (d < dist[v] && d <= reach)
+					{
+						dist[v] = d;
+						from[v] = via;
+						queue.add(new long[]{Double.doubleToLongBits(d), v});
+					}
+				}
+			}
+		}
+		if (paths != null)
+		{
+			paths[0] = dist;
+			paths[1] = new float[from.length];
+			for (int i = 0; i < from.length; ++i) paths[1][i] = from[i];
+			paths[2] = px;
+			paths[3] = pz;
+		}
+		float[] out = new float[rootOf.length];
+		for (int id = 0; id < out.length; ++id)
+		{
+			out[id] = open[id] ? 1 : dist[id] <= reach ? (float) Math.pow(falloff, dist[id] + CORNER_LAG) : 0;
+		}
+		return out;
+	}
+
+	/**
+	 * The distance from node s (a corner's group) to (x, z): from the open edges it gives light from where it has
+	 * some, else from its position (sx, sz).
+	 */
+	private static float reachFrom(int s, int sides, int corners, float x, float z, float sx, float sz)
+	{
+		if (sides == 0)
+		{
+			return (float) Math.hypot(x - sx, z - sz);
+		}
+		int cx = s / 8 / corners, cz = s / 8 % corners;
+		float best = Float.POSITIVE_INFINITY;
+		for (int k = 0; k < 4; ++k)
+		{
+			if ((sides & (1 << k)) == 0) continue;
+			// the half edge from the corner a half tile toward the side
+			float ex = k == 0 ? 0.5f : k == 2 ? -0.5f : 0, ez = k == 1 ? 0.5f : k == 3 ? -0.5f : 0;
+			float t = Math.max(0, Math.min(1, ((x - cx) * ex + (z - cz) * ez) / 0.25f));
+			best = Math.min(best, (float) Math.hypot(x - cx - t * ex, z - cz - t * ez));
+		}
+		return best;
+	}
+
+	/**
+	 * The open edges at corner (cx, cz), a bit per side (east 1, north 2, west 4, south 8): an edge from the corner with
+	 * an open tile on one side and a covered one on the other and no wall on it.
+	 */
+	private static int openEdges(WallMap walls, int plane, int size, boolean[] covered, int cx, int cz)
+	{
+		int out = 0;
+		// per side: the two tiles either side of the edge from the corner, and the side of the first the edge is on
+		int[][] t = {{cx, cz - 1, cx, cz, WallMap.NORTH}, {cx - 1, cz, cx, cz, WallMap.EAST},
+			{cx - 1, cz - 1, cx - 1, cz, WallMap.NORTH}, {cx - 1, cz - 1, cx, cz - 1, WallMap.EAST}};
+		for (int k = 0; k < 4; ++k)
+		{
+			int ax = t[k][0], az = t[k][1], bx = t[k][2], bz = t[k][3];
+			if (ax < 0 || az < 0 || bx < 0 || bz < 0 || ax >= size || az >= size || bx >= size || bz >= size) continue;
+			if (covered[ax * size + az] == covered[bx * size + bz] || walls.edge(plane, ax, az, t[k][4])) continue;
+			out |= 1 << k;
+		}
+		return out;
+	}
+
+	/** Extended tiles to the local world units WallMap.blocked takes. */
+	private static float local(float t, WallMap walls)
+	{
+		return (t - walls.offset) * 128;
+	}
+
+	/** The centre of a tile's half (its triangle's centroid where a diagonal splits it), extended tiles. */
+	private static float[] halfCentre(int bits, int x, int y, int half)
+	{
+		if ((bits & WallMap.DIAG_SW_NE) != 0)
+		{
+			return half == 0 ? new float[]{x + 1 / 3f, y + 2 / 3f} : new float[]{x + 2 / 3f, y + 1 / 3f};
+		}
+		if ((bits & WallMap.DIAG_NW_SE) != 0)
+		{
+			return half == 0 ? new float[]{x + 2 / 3f, y + 2 / 3f} : new float[]{x + 1 / 3f, y + 1 / 3f};
+		}
+		return new float[]{x + 0.5f, y + 0.5f};
 	}
 
 	/**
