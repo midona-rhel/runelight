@@ -664,9 +664,10 @@ vec3 waterFake(ivec2 px, vec3 p, vec3 faceN, vec3 albedo, float shadow, vec3 lit
   spec += waterSunGlint(waterGlitterNormal(nrm), v, 0.0, look.z, foam, shadow);
 
   // ---- what is under it: the face as the composite lit it, wet, FAKE_DEPTH down, as waterOver takes the bed; a fall's
-  // face holds its pools' bed colour (SceneUploader), lit as their bed is (composite_frag.glsl), as shallow as they are at
-  // a bank
-  float depth = down > 0.0 ? BED_MIN : FAKE_DEPTH;
+  // face holds its pools' bed colour (SceneUploader), lit as their bed is (composite_frag.glsl), and is coloured as the
+  // water at their bank (half a tile from the shore, nominalDepth): what shows between the pool it pours from and the one
+  // it lands in
+  float depth = down > 0.0 ? nominalDepth(0.5) : FAKE_DEPTH;
   vec3 under = srgbToLinear(lit * WET_SAND) * srgbToLinear(waterDepthTint(type, depth));
   float alpha = max(look.x * smoothstep(0.0, SURFACE_DEPTH, depth), covered);
   return linearToSrgb(clamp(waterShoulder(mix(under, surface, alpha) + spec), 0.0, 1.0));
