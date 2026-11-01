@@ -69,9 +69,12 @@ public class OfflineRenderDumpTest
 				double[] o = DumpRenderer.orbit(e.floats[4], e.floats[3]);
 				double err = Math.abs(dx / dist - o[0]) + Math.abs(dy / dist - o[1]) + Math.abs(dz / dist - o[2]);
 				assertTrue("orbit off by " + err + ": offset " + dx / dist + ", " + dy / dist + ", " + dz / dist, err < 0.05);
-				// and the angles are the client's units turned to radians
-				assertTrue(Math.abs(e.floats[4] - m.cameraYaw * Math.PI * 2 / 2048) < 0.01
-					|| Math.abs(Math.abs(e.floats[4] - m.cameraYaw * Math.PI * 2 / 2048) - Math.PI * 2) < 0.01);
+				// and the angles are the client's units turned to radians (DumpRenderer.unitsPerTurn)
+				double turn = DumpRenderer.unitsPerTurn(dump);
+				double yaw = m.cameraYaw * Math.PI * 2 / turn, pitch = m.cameraPitch * Math.PI * 2 / turn;
+				double yawErr = Math.abs(Math.IEEEremainder(e.floats[4] - yaw, Math.PI * 2));
+				assertTrue("yaw " + e.floats[4] + " rad, " + m.cameraYaw + " of " + turn + " a turn", yawErr < 0.01);
+				assertTrue("pitch " + e.floats[3] + " rad, " + m.cameraPitch + " of " + turn + " a turn", Math.abs(e.floats[3] - pitch) < 0.01);
 				return;
 			}
 		}
@@ -84,13 +87,15 @@ public class OfflineRenderDumpTest
 		DumpRenderer.Options o = new DumpRenderer.Options();
 		o.settings.put("antiAliasingMode", "DISABLED");
 		o.settings.put("renderScale", "FULL");
-		List<PointLight> lamps = (List<PointLight>) dump.derived.get("lamps.collected");
+		List<PointLight> lamps;
 		WallMap walls = (WallMap) dump.derived.get("buildings.walls");
 		StringBuilder failures = new StringBuilder();
 		try (DumpRenderer r = new DumpRenderer(dump, o))
 		{
 			BufferedImage on = r.render();
 			FrameProbe probe = new FrameProbe(r.plugin, r.width, r.height);
+			// the lamps the frame drew: the dump's and the frame's own (the test light)
+			lamps = new java.util.ArrayList<>(r.plugin.frameLights);
 			r.set("debugView", "NORMALS");
 			BufferedImage normals = r.renderAgain();
 			r.set("debugView", "SKYLIGHT");

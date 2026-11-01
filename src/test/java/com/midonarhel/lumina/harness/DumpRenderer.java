@@ -365,7 +365,8 @@ public final class DumpRenderer implements AutoCloseable
 		SceneDump.Manifest m = dump.manifest;
 		float dx = camera[0] - m.focalX, dy = camera[1] - m.focalY, dz = camera[2] - m.focalZ;
 		float dist = (float) Math.sqrt(dx * dx + dy * dy + dz * dz);
-		double yaw = world.cameraYaw * Math.PI * 2 / 2048, pitch = world.cameraPitch * Math.PI * 2 / 2048;
+		double turn = unitsPerTurn(dump);
+		double yaw = world.cameraYaw * Math.PI * 2 / turn, pitch = world.cameraPitch * Math.PI * 2 / turn;
 		// (orbit is checked against a dump's own camera by OfflineRenderTest)
 		f[0] = m.focalX + (float) (dist * orbit(yaw, pitch)[0]);
 		f[1] = m.focalY + (float) (dist * orbit(yaw, pitch)[1]);
@@ -373,6 +374,23 @@ public final class DumpRenderer implements AutoCloseable
 		f[3] = (float) pitch;
 		f[4] = (float) yaw;
 		return f;
+	}
+
+	/**
+	 * The client's camera units per turn: 2048 in the old clients, 16384 in this one (getCameraYaw 15349 = 5.89 rad in
+	 * the first dump). Read off the dump: the units whose pitch matches the radians the tape's scene draw was given.
+	 */
+	public static double unitsPerTurn(SceneDump.Loaded dump)
+	{
+		for (FrameTape.Event e : dump.tape.events)
+		{
+			if (e.type == FrameTape.PRE && e.worldView == WorldView.TOPLEVEL && dump.manifest.cameraPitch != 0)
+			{
+				double perTurn = dump.manifest.cameraPitch * Math.PI * 2 / e.floats[3];
+				return Math.abs(perTurn - 16384) < Math.abs(perTurn - 2048) ? 16384 : 2048;
+			}
+		}
+		return 2048;
 	}
 
 	/** The unit offset of the camera from the focal point for the client's yaw and pitch (radians). */

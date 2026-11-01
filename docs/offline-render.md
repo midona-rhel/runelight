@@ -75,6 +75,23 @@ and 0.05), and any setting as `key=value`.
 - A lightning strike in progress at the dump (strikes are seeded, not restored).
 - Partial eases: a layer still easing in at the dump's frame is drawn eased in fully.
 - Zone voxels for rebuilds (the scene's `SceneVoxels` is restored; zones carry no voxel capture).
+- The interface is the dump's: with the camera overridden, the client's overlays (tile markers, names) stay where they
+  were.
+
+The lamps: `lamps.collected` is what `SceneLights.collect` gave, without the test light (`testLight` setting), which
+`LampFrame.collectLights` adds after it in the replay as in the client. The first dumps (`lampsWithoutTestLight` false)
+held it at the end of the list; `SceneDump.load` takes it off — it was drawn twice, a warm pool round the player.
+
+The camera's units are read off the dump (`DumpRenderer.unitsPerTurn`): this client gives 16384 a turn.
+
+## The first live dump (2026-11-01, `first`, 0d56ae85; 36 MB, 0.7 s to collect)
+
+- Against `reference.png` (2350 × 1810): mean 0.80, 4.80 % of pixels off by more than 8 with the test light twice;
+  **mean 0.06, max 35, 0.00 % (107 pixels) off by more than 8** without. What is left is single pixels at edges.
+- Camera orbit and units: the client's.
+- Lamps behind walls: 299,868 pixels behind walls, 1 lit (rise max 7); 288,405 of 776,969 in the open lit.
+- Skylight steps: 6,071 in 5,417,066 open ground pairs (0.112 %), **4,694 of them on tile edges** — under the test's 0.2 %,
+  but most are where tiles meet (`offline-test/skylight-steps.png`).
 
 ## Checks (`harness/Checks`)
 

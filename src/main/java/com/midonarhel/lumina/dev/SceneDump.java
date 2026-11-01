@@ -108,6 +108,9 @@ public final class SceneDump
 		public List<String> skipped = new ArrayList<>();
 		// the frame tape's largest projection error (FrameTape.Proj.error)
 		public float projectionError;
+		// lamps.collected is what the scene's lamps gave (SceneLights.collect), without the test light the frame adds
+		// after them (LampFrame.collectLights); false in the first dumps, whose list ends with it (load takes it off)
+		public boolean lampsWithoutTestLight;
 	}
 
 	private final LuminaPlugin plugin;
@@ -500,7 +503,11 @@ public final class SceneDump
 			d.put("buildings.walls", buildings.getWalls());
 			d.put("buildings.floors", buildings.getFloors());
 		}
-		d.put("lamps.collected", new ArrayList<>(plugin.frameLights));
+		// what SceneLights.collect gave: the test light is the frame's own (LampFrame.collectLights adds it again)
+		List<PointLight> collected = new ArrayList<>(plugin.frameLights);
+		collected.removeIf(l -> l == plugin.testLight);
+		d.put("lamps.collected", collected);
+		m.lampsWithoutTestLight = true;
 		List<PointLight> steady = new ArrayList<>();
 		if (plugin.sceneLights != null)
 		{
@@ -720,6 +727,16 @@ public final class SceneDump
 		{
 			l.derived = (Map<String, Object>) new PlainData.Reader(in).read();
 		}
+		if (!l.manifest.lampsWithoutTestLight && "true".equals(l.manifest.settings.get("testLight")))
+		{
+			// a first dump's lamps end with the frame's test light (LampFrame.collectLights): the replay adds it itself
+			List<PointLight> collected = (List<PointLight>) l.derived.get("lamps.collected");
+			if (collected != null && !collected.isEmpty() && isTestLight(collected.get(collected.size() - 1)))
+			{
+				collected.remove(collected.size() - 1);
+			}
+			l.manifest.lampsWithoutTestLight = true;
+		}
 		try (DataInputStream in = gunzip(dir.resolve("textures.bin.gz")))
 		{
 			// none: the client had no texture provider
@@ -746,6 +763,14 @@ public final class SceneDump
 			l.uiPixels = readInts(in);
 		}
 		return l;
+	}
+
+	/** LampFrame.collectLights's test light: five tiles' reach, warm like a torch, intensity 6. */
+	private static boolean isTestLight(PointLight p)
+	{
+		return ((Number) PlainData.get(p, "radius")).floatValue() == 5 * 128 && ((Number) PlainData.get(p, "r")).floatValue() == 1f
+			&& ((Number) PlainData.get(p, "g")).floatValue() == 0.72f && ((Number) PlainData.get(p, "b")).floatValue() == 0.42f
+			&& ((Number) PlainData.get(p, "intensity")).floatValue() == 6f;
 	}
 
 	// ---------------------------------------------------------------------------------------------------------------
