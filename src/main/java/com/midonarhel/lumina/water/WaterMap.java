@@ -782,24 +782,82 @@ public final class WaterMap
 		return depthLevel[cy * CORNERS + cx];
 	}
 
-	/**
-	 * Find where the scene's objects cross the water's surface into {@link #contact}.
-	 */
-	private void findContacts(Tile[][][] tiles, int[][][] heights, java.util.List<float[]> lips, java.util.List<float[]> feet)
+	/** One model the contact map found crossing the water's surface, as crossings takes it: for the scene dump. */
+	public static final class ContactModel
 	{
-		WaterBodies b = bodies;
-		// each water tile's surface: its lowest corner (y down), as buildTexture takes it
+		public int id, orient, x, height, z, vertexCount, faceCount;
+		public float[] vx, vy, vz;
+		public int[] f1, f2, f3, colors;
+	}
+
+	/**
+	 * The models of the scene's objects that cross its water's surface (findContacts' crossings), copied: what the contact
+	 * map is made from, for the scene dump (the offline bench replays them). Scene loaded, client thread.
+	 */
+	public java.util.List<ContactModel> contactModels(Scene scene)
+	{
+		java.util.List<ContactModel> out = new java.util.ArrayList<>();
+		if (!hasWater || tileHeights == null)
+		{
+			return out;
+		}
+		float[] surfaceY = surfaceLevels(tileHeights);
+		boolean[] scratch = new boolean[CONTACT_SIZE * CONTACT_SIZE];
+		eachModel(scene.getExtendedTiles(), (id, r, orient, x, height, z) ->
+		{
+			Model m = standingModel(id, r);
+			if (m == null || !crossings(m.getVerticesX(), m.getVerticesY(), m.getVerticesZ(), m.getVerticesCount(),
+				m.getFaceIndices1(), m.getFaceIndices2(), m.getFaceIndices3(), m.getFaceColors3(), m.getFaceCount(), orient, x,
+				height, z, surfaceY, scratch))
+			{
+				return false;
+			}
+			ContactModel c = new ContactModel();
+			c.id = id;
+			c.orient = orient;
+			c.x = x;
+			c.height = height;
+			c.z = z;
+			c.vertexCount = m.getVerticesCount();
+			c.faceCount = m.getFaceCount();
+			c.vx = java.util.Arrays.copyOf(m.getVerticesX(), c.vertexCount);
+			c.vy = java.util.Arrays.copyOf(m.getVerticesY(), c.vertexCount);
+			c.vz = java.util.Arrays.copyOf(m.getVerticesZ(), c.vertexCount);
+			c.f1 = java.util.Arrays.copyOf(m.getFaceIndices1(), c.faceCount);
+			c.f2 = java.util.Arrays.copyOf(m.getFaceIndices2(), c.faceCount);
+			c.f3 = java.util.Arrays.copyOf(m.getFaceIndices3(), c.faceCount);
+			c.colors = java.util.Arrays.copyOf(m.getFaceColors3(), c.faceCount);
+			out.add(c);
+			return true;
+		});
+		return out;
+	}
+
+	/**
+	 * Each water tile's surface: its lowest corner (y down), as buildTexture takes it; NaN on land.
+	 */
+	float[] surfaceLevels(int[][][] heights)
+	{
 		float[] surfaceY = new float[SIZE * SIZE];
 		java.util.Arrays.fill(surfaceY, Float.NaN);
 		for (int i = 0; i < surfaceY.length; ++i)
 		{
-			if (b.water[i])
+			if (bodies.water[i])
 			{
 				int x = i % SIZE, y = i / SIZE;
 				int[][] h = heights[level[i]];
 				surfaceY[i] = Math.max(Math.max(h[x][y], h[x + 1][y]), Math.max(h[x][y + 1], h[x + 1][y + 1]));
 			}
 		}
+		return surfaceY;
+	}
+
+	/**
+	 * Find where the scene's objects cross the water's surface into {@link #contact}.
+	 */
+	private void findContacts(Tile[][][] tiles, int[][][] heights, java.util.List<float[]> lips, java.util.List<float[]> feet)
+	{
+		float[] surfaceY = surfaceLevels(heights);
 		boolean[] marked = new boolean[CONTACT_SIZE * CONTACT_SIZE];
 		boolean any = eachModel(tiles, (id, r, orient, x, height, z) -> crossings(id, r, orient, x, height, z, surfaceY, marked));
 		if (!any && lips.isEmpty() && feet.isEmpty())
@@ -1337,27 +1395,41 @@ public final class WaterMap
 	private static boolean crossings(int id, Renderable r, int orient, int x, int height, int z, float[] surfaceY,
 		boolean[] marked)
 	{
+		Model m = standingModel(id, r);
+		return m != null && crossings(m.getVerticesX(), m.getVerticesY(), m.getVerticesZ(), m.getVerticesCount(),
+			m.getFaceIndices1(), m.getFaceIndices2(), m.getFaceIndices3(), m.getFaceColors3(), m.getFaceCount(), orient, x, height,
+			z, surfaceY, marked);
+	}
+
+	/**
+	 * The model an object's renderable draws, unless it is one that sways in the wind (reeds): those are left out of the
+	 * contact.
+	 */
+	private static Model standingModel(int id, Renderable r)
+	{
 		Model m = r instanceof Model ? (Model) r
 			: r instanceof DynamicObject ? ((DynamicObject) r).getModelZbuf() : null;
-		if (m == null || WindSway.sways(WindSway.forObject(id, r)))
-		{
-			return false;
-		}
-		float[] vx = m.getVerticesX(), vy = m.getVerticesY(), vz = m.getVerticesZ();
-		int[] f1 = m.getFaceIndices1(), f2 = m.getFaceIndices2(), f3 = m.getFaceIndices3();
-		int[] colors = m.getFaceColors3();
+		return m == null || WindSway.sways(WindSway.forObject(id, r)) ? null : m;
+	}
+
+	/**
+	 * crossings on a model's arrays (vertices x, y, z and their count; faces' vertices, third colours and their count).
+	 */
+	static boolean crossings(float[] vx, float[] vy, float[] vz, int vertexCount, int[] f1, int[] f2, int[] f3, int[] colors,
+		int faceCount, int orient, int x, int height, int z, float[] surfaceY, boolean[] marked)
+	{
 		float sin = orient != 0 ? Perspective.SINE[orient] / 65536f : 0;
 		float cos = orient != 0 ? Perspective.COSINE[orient] / 65536f : 1;
 		float ox = x + (LuminaPlugin.SCENE_OFFSET << 7), oz = z + (LuminaPlugin.SCENE_OFFSET << 7);
 		float foot = Float.NEGATIVE_INFINITY;
-		for (int v = 0; v < m.getVerticesCount(); ++v)
+		for (int v = 0; v < vertexCount; ++v)
 		{
 			foot = Math.max(foot, vy[v] + height);
 		}
 		float[] px = new float[3], py = new float[3], pz = new float[3];
 		float[] cx = new float[2], cz = new float[2];
 		boolean any = false;
-		for (int f = 0; f < m.getFaceCount(); ++f)
+		for (int f = 0; f < faceCount; ++f)
 		{
 			if (colors[f] == -2)
 			{

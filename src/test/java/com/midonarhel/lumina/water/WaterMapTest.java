@@ -401,6 +401,8 @@ public class WaterMapTest
 	 * A walled pool, 2 tiles by 4 (extended x 80-81, y 80-83) on flat ground, its rim one model standing in the water along
 	 * all four of its edges: vertical faces on the edges' lines from below the surface to above it.
 	 */
+	private static Scene lastScene;
+
 	private static WaterMap walledPool()
 	{
 		int x0 = 80 * 128, x1 = 82 * 128, z0 = 80 * 128, z1 = 84 * 128;
@@ -495,6 +497,7 @@ public class WaterMapTest
 					return null;
 			}
 		});
+		lastScene = scene;
 		return WaterMap.build(scene, null, null);
 	}
 
@@ -565,5 +568,32 @@ public class WaterMapTest
 			float z = m.texture[(84 * w + p2 + cx) * 4 + 3];
 			assertEquals("corner " + cx, cx >= 80 && cx <= 83, z != 0f);
 		}
+	}
+
+	@Test
+	public void theSceneDumpGetsTheModelsTheContactIsMadeFrom()
+	{
+		WaterMap m = walledPool();
+		java.util.List<WaterMap.ContactModel> models = m.contactModels(lastScene);
+		assertEquals(1, models.size());
+		WaterMap.ContactModel c = models.get(0);
+		assertEquals(16, c.vertexCount);
+		assertEquals(8, c.faceCount);
+		// replayed, they give the contact's crossings back: every cell the map spread from is marked again
+		boolean[] marked = new boolean[WaterMap.CONTACT_SIZE * WaterMap.CONTACT_SIZE];
+		assertTrue(WaterMap.crossings(c.vx, c.vy, c.vz, c.vertexCount, c.f1, c.f2, c.f3, c.colors, c.faceCount, c.orient, c.x,
+			c.height, c.z, m.surfaceLevels(WaterMapTest.heights(lastScene)), marked));
+		for (int i = 0; i < marked.length; ++i)
+		{
+			if ((m.contact[i] & 255) == 255)
+			{
+				assertTrue("cell " + i, marked[i]);
+			}
+		}
+	}
+
+	private static int[][][] heights(Scene scene)
+	{
+		return scene.getTileHeights();
 	}
 }
