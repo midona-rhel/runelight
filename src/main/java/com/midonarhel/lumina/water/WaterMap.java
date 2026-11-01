@@ -1002,8 +1002,10 @@ public final class WaterMap
 			else if (!Float.isNaN(surfaceY[t]))
 			{
 				float fx = (gx + 0.5f) / CONTACT_RES, fz = (gz + 0.5f) / CONTACT_RES;
+				// squared: the foam keeps close to the fall, a tile or so, while its pull reaches further
 				float near = Math.max(lineNear(lipStrength, lipLevel, fx, fz, surfaceY[t]),
 					lineNear(footStrength, footLevel, fx, fz, surfaceY[t]));
+				near *= near;
 				c[i] = (byte) Math.max(c[i] & 255, Math.round(near * 255));
 			}
 		}

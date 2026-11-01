@@ -672,6 +672,6 @@ vec3 waterFake(ivec2 px, vec3 p, vec3 faceN, vec3 albedo, float shadow, float co
 
   // ---- over what is under it as the real water is (waterFinish): the face as the composite lit it (a fall's holds its
   // pools' bed colour, lit as their bed is: SceneUploader, composite_frag.glsl), coloured by the depth the water's colour
-  // goes by (the uploader's: a fall's, the water's at its top and its foot, blended down it)
-  return waterFinish(lit, vec3(0.0), type, colorDepth, SOFT_EDGE, nrm, v, vec4(surface, covered), spec, hard, shadow);
+  // goes by (the uploader's: a fall's, the water's at its top and its foot, blended down it), as deep as that water
+  return waterFinish(lit, vec3(0.0), type, colorDepth, colorDepth, nrm, v, vec4(surface, covered), spec, hard, shadow);
 }
