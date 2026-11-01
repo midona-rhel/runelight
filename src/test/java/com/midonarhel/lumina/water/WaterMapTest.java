@@ -575,4 +575,21 @@ public class WaterMapTest
 			assertEquals("corner " + cx, cx >= 80 && cx <= 83, z != 0f);
 		}
 	}
+
+	@Test
+	public void onlyRunningWaterFoams()
+	{
+		int w = WaterMap.CORNERS * WaterMap.PAGES, p2 = 2 * WaterMap.CORNERS;
+		// a lake the world flow map leaves still: none of it runs, so none of it foams (water_frag.glsl waterRuns)
+		WaterMap lake = lake(1);
+		for (int c = 80; c <= 100; ++c)
+		{
+			assertEquals(0f, lake.texture[(90 * w + p2 + c) * 4 + 1], 0f);
+		}
+		// a fall runs: the corners of its tiles count, the still pools above and below it don't
+		WaterMap fall = fallStrip(256, false, 2);
+		assertEquals(1f, fall.texture[(83 * w + p2 + 81) * 4 + 1] * 2, 1e-5f * 2);
+		assertEquals(0f, fall.texture[(81 * w + p2 + 81) * 4 + 1], 0f);
+		assertEquals(0f, fall.texture[(86 * w + p2 + 81) * 4 + 1], 0f);
+	}
 }

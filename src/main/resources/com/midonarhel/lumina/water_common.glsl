@@ -98,8 +98,8 @@ vec4 waterPage1(sampler2D data, vec2 c) {
   return textureLod(data, (c + vec2(waterGrid.y, 0.0) + 0.5) / vec2(3.0 * waterGrid.y, waterGrid.y), 0.0);
 }
 
-// page 2: the straight line distance to the nearest land corner in tiles, the share of the corner's water that is open
-// sea (the shore waves' field, WaterMap), the terrain falls' frame x, z
+// page 2: the straight line distance to the nearest land corner in tiles, the share of the corner's water that runs
+// (WaterMap.runs: a fall's, or moved by the world flow map; only that foams), the terrain falls' frame x, z
 vec4 waterPage2(sampler2D data, vec2 c) {
   return textureLod(data, (c + vec2(2.0 * waterGrid.y, 0.0) + 0.5) / vec2(3.0 * waterGrid.y, waterGrid.y), 0.0);
 }

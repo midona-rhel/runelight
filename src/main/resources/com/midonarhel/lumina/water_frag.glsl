@@ -191,6 +191,13 @@ float fallFoamHeight(vec2 laid, vec2 frame, float lod) {
   return waterFoamStill(laid, normalize(frame) * (CELL_SCALE_B * waterCycle(FLOW_CYCLE)), lod);
 }
 
+// How much the water at xz runs (WaterMap.runs, filtered between corners): only that foams. A still pool, lake or pond,
+// one the world flow map leaves still, takes none, whatever stands in it or flows into it from a fall (the user: "foam
+// only in water with flow maps").
+float waterRuns(vec2 xz) {
+  return waterPage2(waterData, xz / WATER_TILE + waterGrid.x).g;
+}
+
 // The waves' slope at xz and the foam on them (the wave map's, WaterSurface.bake), for water of this type and flow
 void waterWaveField(vec2 xz, int type, vec2 flow, out vec2 slope, out float foam) {
   float speed = WATER_FLOW_SPEED[type];
@@ -239,7 +246,8 @@ void waterWaveField(vec2 xz, int type, vec2 flow, out vec2 slope, out float foam
   float fast = length(waterPage0(waterData, xz / WATER_TILE + waterGrid.x).gb) * WATER_TILE * speed;
   float bankFoam = smoothstep(BANK_FOAM_FLOW.x, BANK_FOAM_FLOW.y, fast)
     * (1.0 - smoothstep(BANK_FOAM_REACH.x, BANK_FOAM_REACH.y, data.r));
-  float churn = max(smoothstep(TURB_FOAM.x, TURB_FOAM.y, turb), bankFoam * BANK_FOAM);
+  // only running water foams (waterRuns)
+  float churn = max(smoothstep(TURB_FOAM.x, TURB_FOAM.y, turb), bankFoam * BANK_FOAM) * waterRuns(xz);
   // a fall's foam is the hard edged one of its frame, in every pixel
   if (churn > 0.0 && fallFrame(xz) == vec2(0.0)) {
     float h = waterFoamHeight(xz, base, m0, m1, w0, flowing, lodFoam);
@@ -256,8 +264,7 @@ vec2 hardFoam(vec2 xz, vec2 base, vec2 m0, vec2 m1, float w0, float flowing, flo
   float laidLod = waterLod(max(length(dFdx(laid)), length(dFdy(laid))), CELL_SCALE_B);
   float cells = frame != vec2(0.0) ? fallFoamHeight(laid, frame, laidLod)
     : waterFoamHeight(xz, base, m0, m1, w0, flowing, waterLod(footprint, CELL_SCALE_B));
-  // only running water foams: a still pool, lake or pond takes none, whatever stands in it (the user)
-  return contactFoam(xz, cells) * flowing;
+  return contactFoam(xz, cells) * waterRuns(xz);
 }
 
 void main() {

@@ -87,7 +87,8 @@ public final class WaterMap
 	// page 0 (surface height, on land the nearest water's; flow x, flow z in tiles/s; type of the tile whose sw corner
 	// this is),
 	// page 1 (distance to shore in tiles, wave energy 0-1, share of the corner's tiles that are water, turbulence 0-1),
-	// page 2 (straight line distance to the nearest land corner in tiles; a free channel, 0; the fall frame x, z)
+	// page 2 (straight line distance to the nearest land corner in tiles; the share of the corner's water that runs (runs);
+	// the fall frame x, z)
 	float[] texture;
 	public boolean hasWater;
 
@@ -1494,6 +1495,29 @@ public final class WaterMap
 
 	// ---------------------------------------------------------------------------------------------------------
 
+	// map flow (tiles a second) below the first a tile's water stands, from the second it runs
+	private static final float MAP_STILL = 0.02f, MAP_RUNS = 0.1f;
+
+	/**
+	 * How much tile i's water runs, 0-1: a fall's, or water the world flow map moves (WaterFlow); a pool, lake or pond the
+	 * map leaves still (or has no flow for) stands, whatever a fall nearby or the body's own drift does to it. Only running
+	 * water foams (water_frag.glsl): the user, "foam only in water with flow maps".
+	 */
+	float runs(int i)
+	{
+		if (fall[i])
+		{
+			return 1;
+		}
+		if (!bodies.hasMapFlow(i))
+		{
+			return 0;
+		}
+		float v = (float) Math.hypot(bodies.mapFlowX[i], bodies.mapFlowZ[i]);
+		float t = Math.max(0, Math.min(1, (v - MAP_STILL) / (MAP_RUNS - MAP_STILL)));
+		return t * t * (3 - 2 * t);
+	}
+
 	private void buildTexture(int[][][] heights, boolean[] landCorner)
 	{
 		WaterBodies b = bodies;
@@ -1506,7 +1530,7 @@ public final class WaterMap
 			for (int cx = 0; cx < CORNERS; ++cx)
 			{
 				// over the water tiles touching this corner
-				float height = 0, fx = 0, fz = 0, shore = 0, energy = 0, turbulence = 0;
+				float height = 0, fx = 0, fz = 0, shore = 0, energy = 0, turbulence = 0, running = 0;
 				// the map's flow of the tiles here and how much the scene sped it up, for the corner's own map flow
 				float mx = 0, mz = 0, gain = 0;
 				int mapped = 0;
@@ -1552,6 +1576,7 @@ public final class WaterMap
 							++mapped;
 						}
 						shore += b.shore[i];
+						running += runs(i);
 						energy += b.energy[i];
 						turbulence += b.turbulence[i];
 						++count;
@@ -1615,7 +1640,7 @@ public final class WaterMap
 				t[p1 + 3] = turbulence;
 				int p2 = (cy * w + 2 * CORNERS + cx) * 4;
 				t[p2] = toLand[cy * CORNERS + cx];
-				t[p2 + 1] = 0;
+				t[p2 + 1] = count > 0 ? running / count : 0;
 				t[p2 + 2] = frameX[cy * CORNERS + cx];
 				t[p2 + 3] = frameZ[cy * CORNERS + cx];
 			}
