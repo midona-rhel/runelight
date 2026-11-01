@@ -15,12 +15,17 @@
 // When the walls change (a door) the new ones ease in over 0.3 s (LayerEase): the layers of the walls before are kept,
 // and both are walked.
 //
+// The fixed lamps are baked into the light map besides (light/lamp_map.glsl): how much of the lamp the line of sight
+// from its disc, the light wrapping round corners, the blur, the models and the other storeys' openings let reach the
+// point. A lamp the map carries lights a point by the stricter of the map and the walls (lampOpen: the least of the two);
+// one it has not baked yet, or that moves, by the walls alone.
+//
 // Needs cluster_config and cameraPos (world position of the camera); positions are camera-relative.
 
-// per lamp three texels: (position, radius), (colour times strength, the storey whose walls stop it or -1), (the
-// point its lines start from: x, z, its storey's floor y, ceiling y); then the rooms' fill; then from LAMP_WALLS_BASE
-// five layers of LAMP_WALL_LAYER_TEXELS: the walls now and before, the ceilings now and before, the drawn roofs
-// (LampWalls.java)
+// per lamp four texels: (position, radius), (colour times strength, the storey whose walls stop it or -1), (the
+// point its lines start from: x, z, its storey's floor y, ceiling y), (its id in the light map, 0: none, and the map's
+// share as it eases in); then the rooms' fill; then from LAMP_WALLS_BASE five layers of LAMP_WALL_LAYER_TEXELS: the walls
+// now and before, the ceilings now and before, the drawn roofs (LampWalls.java); then the light map (LightMapBuffer.java)
 uniform samplerBuffer lightData;
 uniform usamplerBuffer clusterData;  // per cluster: a bit per lamp in view (light_clusters.glsl)
 uniform vec4 lampWallsHeader;        // now and before: tiles a side (0: no walls), extended tiles before local tile 0
@@ -61,13 +66,16 @@ struct Lamp {
   vec2 origin;   // camera-relative x, z its lines start from: in its own tile, off the walls it hangs on
   float floorY;  // its storey's floor and ceiling (camera-relative y, down)
   float ceilY;
+  int mapId;     // its table id in the light map, 0 for a lamp the map doesn't carry
+  float mapEase; // the map's share of its visibility, 0 to 1 as it eases in (the walls' alone the rest)
 };
 
 Lamp lampAt(int li) {
-  vec4 a = texelFetch(lightData, li * 3);
-  vec4 b = texelFetch(lightData, li * 3 + 1);
-  vec4 c = texelFetch(lightData, li * 3 + 2);
-  return Lamp(a.xyz, a.w, b.rgb, int(b.w), c.xy, c.z, c.w);
+  vec4 a = texelFetch(lightData, li * 4);
+  vec4 b = texelFetch(lightData, li * 4 + 1);
+  vec4 c = texelFetch(lightData, li * 4 + 2);
+  vec4 d = texelFetch(lightData, li * 4 + 3);
+  return Lamp(a.xyz, a.w, b.rgb, int(b.w), c.xy, c.z, c.w, int(d.x + 0.5), d.y);
 }
 
 // 117 HD's falloff, from the squared distance and the squared radius (below 1 inside it)
@@ -232,13 +240,15 @@ bool lampFloorsOpenIn(vec3 p, Lamp lamp, int layer) {
   return ((lampTileBits(t, layer, tiles) >> uint(ceiling)) & 1u) == 0u;
 }
 
-// How much of the lamp reaches camera-relative point p, the walls looked for from wallFrom (p, or p moved off its
-// surface by LAMP_WALL_BIAS). On a surface: past the walls, as tall as the world, and the floors and ceilings, 1 or 0.
-// In the air (inAir: the fog's glow, raindrops): past the walls up to their tops, soft over the lamp's size, and no
+#include "light/lamp_map.glsl"
+
+// How much of the lamp the walls let reach camera-relative point p, the walls looked for from wallFrom (p, or p moved
+// off its surface by LAMP_WALL_BIAS). On a surface: past the walls, as tall as the world, and the floors and ceilings, 1
+// or 0. In the air (inAir: the fog's glow, raindrops): past the walls up to their tops, soft over the lamp's size, and no
 // floor or ceiling: the light in the air spreads on smoothly where it no longer meets anything drawn, and a roof the
 // client hides drew its plane into the glow (the user's "phantom roof"). While new walls ease in (a door), between
 // the walls before and now.
-float lampOpen(Lamp lamp, vec3 p, vec3 wallFrom, bool inAir) {
+float lampWallsOpen(Lamp lamp, vec3 p, vec3 wallFrom, bool inAir) {
   if (lamp.walls < 0) {
     return 1.0;
   }
@@ -248,6 +258,16 @@ float lampOpen(Lamp lamp, vec3 p, vec3 wallFrom, bool inAir) {
   }
   float before = inAir || lampFloorsOpenIn(p, lamp, 3) ? lampWallsShareIn(wallFrom, lamp, 1, inAir) : 0.0;
   return mix(before, now, lampWallsEase);
+}
+
+// How much of the lamp reaches camera-relative point p: what the walls let through (lampWallsOpen), and for a lamp the
+// light map carries, no more than the map lets through (lampMapVisibility, as it eases in): the stricter of the two.
+float lampOpen(Lamp lamp, vec3 p, vec3 wallFrom, bool inAir) {
+  float open = lampWallsOpen(lamp, p, wallFrom, inAir);
+  if (lamp.mapId > 0 && open > 0.0) {
+    open = min(open, mix(1.0, lampMapVisibility(lamp.mapId, p, wallFrom), lamp.mapEase));
+  }
+  return open;
 }
 
 // The light the lamp gives camera-relative point p: its colour times its falloff, 0 outside its radius or behind a

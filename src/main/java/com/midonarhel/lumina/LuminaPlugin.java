@@ -391,6 +391,10 @@ public class LuminaPlugin extends Plugin implements DrawCallbacks
 	public final LightClusters lightClusters = new LightClusters();
 	// the walls that stop the lamps, and the rooms (for their fill and the puddles), on the GPU
 	public final LampWalls lampWalls = new LampWalls();
+	// the fixed lamps' visibility, baked on its own threads (LightMap), and as the light buffer holds it
+	public final com.midonarhel.lumina.light.LightMap lightMap = new com.midonarhel.lumina.light.LightMap(
+		com.midonarhel.lumina.light.LightMap.defaultThreads(), com.midonarhel.lumina.light.LightMap.burstThreads());
+	public final com.midonarhel.lumina.light.LightMapBuffer lightMapBuffer = new com.midonarhel.lumina.light.LightMapBuffer();
 	public final RoomTexture roomTexture = new RoomTexture();
 	// how much light each building room gets and the fill it lacks (RoomLight)
 	public final RoomLight roomLight = new RoomLight();
@@ -934,8 +938,10 @@ public class LuminaPlugin extends Plugin implements DrawCallbacks
 		if (sceneLights != null)
 		{
 			eventBus.unregister(sceneLights);
+			sceneLights.setLightMap(null);
 			sceneLights = null;
 		}
+		lightMap.free();
 		overlayManager.remove(buildingOverlay);
 		hitchMonitor.stop();
 		if (weatherAudio != null)

@@ -36,28 +36,21 @@ A dump of a full scene is tens to hundreds of MB; the zones are most of it. Taki
 ./gradlew renderDump -Pdump=<name> -Pargs="hour=21 views=all"
 ./gradlew renderDump -Pdump=<name> -Pargs="yaw=1024 pitch=300 shadows=false fogQuality=HIGH"
 ./gradlew renderDump -Pdump=synthetic                    # the dump made in code (no client needed)
-./gradlew renderDump -Pdump=faces:FILE:ID[:TEXTURES_DUMP]  # the models of a `::runelight faces N detail` file
 ```
-
-`faces:` (`harness/FacesDump`) puts the models of a `faces [radius] detail` file (each face's colours, texture,
-corners and the game's normals) into the synthetic scene as dynamic models around the object ID nearest the file's
-player tile, planes 240 apart, with the game's textures from a live dump: how the upload code and the shaders shade
-those exact models, on any branch (a branch that makes its own normals ignores the file's). A live dump can't show a
-change to the static upload: its zones are the vertices its own build uploaded.
 
 Writes to `<dump>/offline/` (or `out=dir`): `final.png`, `view-<name>.png` for the debug views (default NORMALS,
 SKYLIGHT, LIGHTING, SHADOWS, AMBIENT_OCCLUSION, DEPTH; `views=all`, `views=none`, or a list), and `diff.png` with the
-numbers against `reference.png`. Options: `hour=h` (holds the hour: dayLength FIXED, fixedHour h), `yaw=`, `pitch=`,
+numbers against `reference.png`. Options: `hour=h` (holds the hour: dayCycleMinutes 0, fixedHour h), `yaw=`, `pitch=`,
 `scale=` (the camera; with yaw or pitch changed the whole scene's zones are drawn, as the client only drew those in its
 frustum; dynamic models are the client's), `warmup=s` and `step=s` (seconds of frames before the dump's time, default 6
 and 0.05), `buildings=rebuild` (the buildings — walls, rooms, floors, roofs,
 the drawn walls — built again by BuildingLights from the dump's scene objects, faked as the scene's tiles, instead of
 restored as the client had them; dumps from 2026-11-01 on hold `sceneObjects`), `probe=x,y;x,y` (prints the walls on
-those world tiles' edges), `time=n` (draws the dump's frame n more times and prints the GPU time per frame, GL_TIME_ELAPSED
-around the whole frame, and the CPU time of its draw calls: median and least), `snowCover=c` (the weather field's snow
-on the ground set to c everywhere; with `weatherMode=OVERCAST` or another weather that neither snows nor takes the
-climate's ground, so it stays), `weatherState=off` (the dump's weather state is not put back: a weather given by
-`weatherMode` draws as itself), and any setting as `key=value`.
+those world tiles' edges), `lightMap=off` (the fixed lamps without the light map, stopped by the walls alone),
+`mapProbe=x,y` (prints the light map's baked grids of the three lamps nearest that world tile), and any setting as
+`key=value`. The light map bakes on its own threads from the first warm-up frame; the warm-up waits for the bakes after
+that frame (the time is printed) and the lamps ease in over the frames left. Its models (`voxels.models`, ModelBlockers)
+are in dumps from 2026-11-01's light map on; with an older dump it bakes with the walls and solid tiles alone.
 
 ### How it works (`src/test/java/com/midonarhel/lumina/harness/`)
 
@@ -86,7 +79,7 @@ climate's ground, so it stays), `weatherState=off` (the dump's weather state is 
 
 - Lamps placed after the dump's frame, flicker beyond the frame (the lamps are the frame's).
 - Ripples of walking actors in the wet (`WadeSteps`: no actors in the dump).
-- A lightning strike in progress at the dump (strikes follow the real time, Lightning.due, and are not restored).
+- A lightning strike in progress at the dump (strikes are seeded, not restored).
 - Partial eases: a layer still easing in at the dump's frame is drawn eased in fully.
 - Zone voxels for rebuilds (the scene's `SceneVoxels` is restored; zones carry no voxel capture).
 - The interface is the dump's: with the camera overridden, the client's overlays (tile markers, names) stay where they

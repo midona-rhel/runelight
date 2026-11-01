@@ -7,6 +7,7 @@ import com.midonarhel.lumina.dev.FrameTape;
 import com.midonarhel.lumina.dev.PlainData;
 import com.midonarhel.lumina.dev.SceneDump;
 import com.midonarhel.lumina.fog.FogGround;
+import com.midonarhel.lumina.light.LampsAccess;
 import com.midonarhel.lumina.light.PointLight;
 import com.midonarhel.lumina.light.SceneLights;
 import com.midonarhel.lumina.scene.ModelFake;
@@ -70,6 +71,10 @@ public final class DumpRenderer implements AutoCloseable
 		public String buildings = "dumped";
 		// false: no roofs stop the lamps (the buildings' roofs left out), to see what they stop
 		public boolean lampRoofs = true;
+		// lightMap=off: the fixed lamps without the light map, stopped by the walls alone (to see what it changes)
+		public boolean lightMap = true;
+		// mapProbe=x,y: the light map's grids of the lamps nearest that world tile, printed after the render
+		public int[] mapProbe;
 		// world tiles (x, y) whose walls are printed
 		public final List<int[]> probes = new ArrayList<>();
 		// snow cover on the ground everywhere (the weather field's cells), null for the dump's; give it a weather that
@@ -214,6 +219,7 @@ public final class DumpRenderer implements AutoCloseable
 				(com.midonarhel.lumina.visibility.RoofMap) d.get("buildings.roofs"), (boolean[]) d.get("buildings.drawnWalls"));
 		}
 		WallMap walls = plugin.buildingLights.getWalls();
+		plugin.lampFrame.lightMapOff = !options.lightMap;
 		if (!options.lampRoofs)
 		{
 			BuildingLights b = plugin.buildingLights;
@@ -256,7 +262,11 @@ public final class DumpRenderer implements AutoCloseable
 				plugin.sceneLoader.restoreSub(view[0], zones);
 			}
 		}
-		VoxelsRestore.restore(plugin.voxelBuilder, d.get("voxels"));
+		VoxelsRestore.restore(plugin.voxelBuilder, d.get("voxels"), d.get("voxels.models"));
+		if (d.get("voxels.models") == null)
+		{
+			System.out.println("light map: the dump has no models (voxels.models): baked with the walls and solid tiles alone");
+		}
 		plugin.framesSinceSwap = 1000;
 		restoreState();
 
@@ -284,10 +294,45 @@ public final class DumpRenderer implements AutoCloseable
 			if (i == 0)
 			{
 				restoreState();
+				int[] counts = plugin.lightMap.counts();
+				System.out.printf("light map: %d lamps on it, %d live, %d blocks in place%n", counts[0], counts[1],
+					LampsAccess.blocksInPlace(plugin.lightMapBuffer));
+				if (options.mapProbe != null)
+				{
+					int off = com.midonarhel.lumina.LuminaPlugin.SCENE_OFFSET;
+					float px = (options.mapProbe[0] - m.baseX + 0.5f) * 128, pz = (options.mapProbe[1] - m.baseY + 0.5f) * 128;
+					System.out.print(LampsAccess.mapProbe(plugin.lightMap, px, pz, 3, off * 4));
+				}
 			}
+			long frameStart = System.nanoTime();
 			frame();
+			if (i == frames)
+			{
+				awaitLightMap(frameStart);
+			}
 		}
 		return readBack();
+	}
+
+	/**
+	 * The light map's bakes run on its threads from the first frame (the client's frames go on meanwhile, the lamps lit
+	 * by the walls alone until baked): the warm-up's frames wait for them here, so they send the blocks and the lamps ease
+	 * in over the frames left, as the client's would after a scene load.
+	 */
+	private void awaitLightMap(long start)
+	{
+		long until = start + 300_000_000_000L;
+		while (plugin.lightMap.busy())
+		{
+			if (System.nanoTime() > until)
+			{
+				throw new IllegalStateException("light map: still baking after 300 s");
+			}
+			java.util.concurrent.locks.LockSupport.parkNanos(2_000_000);
+		}
+		long[] stats = plugin.lightMap.stats();
+		System.out.printf("light map: baked in %.0f ms from the first frame (%d bakes, %.0f ms of bake work, %d blocks put together in %.0f ms)%n",
+			(System.nanoTime() - start) / 1e6, stats[0], stats[1] / 1e6, stats[2], stats[3] / 1e6);
 	}
 
 	/** One more frame at the dump's time (after a setting changed, say) and the result. */

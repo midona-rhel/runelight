@@ -37,12 +37,15 @@ public class LightClusters
 	static final int LIGHTS_PER_TEXEL = 128;
 	public static final float NEAR = 50;
 	public static final float FAR = 25600;
-	// the light buffer: three texels a lamp (lamp.glsl), then the rooms' fill (RoomLight.table, rooms.glsl), a texel per
+	// the light buffer: four texels a lamp (lamp.glsl), then the rooms' fill (RoomLight.table, rooms.glsl), a texel per
 	// room id, x the fill's luminance, then the walls and ceilings that stop the lamps, now and before (LampWalls):
-	// 41023 texels, within the 65536 GL 3.3 promises a buffer texture
-	public static final int ROOM_FILL_BASE = MAX_LIGHTS * 3;
+	// 50511 texels, within the 65536 GL 3.3 promises a buffer texture. Then from LIGHT_MAP_BASE the light map
+	// (LightMapBuffer), as large as its blocks need: past 65536, as the cluster masks are, which macOS's GL takes.
+	static final int LAMP_TEXELS = 4;
+	public static final int ROOM_FILL_BASE = MAX_LIGHTS * LAMP_TEXELS;
 	public static final int LAMP_WALLS_BASE = ROOM_FILL_BASE + RoomMap.ANY;
 	public static final int LIGHT_TEXELS = LAMP_WALLS_BASE + LampWalls.LAYERS * LampWalls.LAYER_TEXELS;
+	public static final int LIGHT_MAP_BASE = LIGHT_TEXELS;
 
 	private static final int CLUSTER_COUNT = CLUSTERS_X * CLUSTERS_Y * CLUSTERS_Z;
 	// Fog columns, stored after the clusters: per screen tile, the lights that glow in the fog anywhere along its
@@ -66,12 +69,15 @@ public class LightClusters
 	private RoomLight roomFill;
 	private final int[] uploadedFill = new int[SETS];
 	private final int[] uploadedWalls = new int[SETS];
+	// the light map (null: none), and the texels each copy of the light buffer has room for
+	private LightMapBuffer lightMap;
+	private final int[] lightTexels = new int[SETS];
 	private FloatBuffer fillStaging;
 	// the view the cluster bounds were computed for: they only change with the camera
 	private final float[] boundsViewProj = new float[16];
 	private boolean boundsValid;
 
-	private final FloatBuffer lightData = BufferUtils.createFloatBuffer(MAX_LIGHTS * 12);
+	private final FloatBuffer lightData = BufferUtils.createFloatBuffer(MAX_LIGHTS * LAMP_TEXELS * 4);
 	// the frame's lights by importance, most first: packed for sorting, then their indices in the list
 	private final long[] byImportance = new long[MAX_LIGHTS];
 	private final float[] origin = new float[2];
@@ -122,11 +128,16 @@ public class LightClusters
 		for (int i = 0; i < SETS; ++i)
 		{
 			glBindBuffer(GL_TEXTURE_BUFFER, lightBuffers[i]);
-			glBufferData(GL_TEXTURE_BUFFER, (long) LIGHT_TEXELS * 4 * Float.BYTES, GL_DYNAMIC_DRAW);
+			lightTexels[i] = LIGHT_MAP_BASE + LightMapBuffer.BLOCKS;
+			glBufferData(GL_TEXTURE_BUFFER, (long) lightTexels[i] * 4 * Float.BYTES, GL_DYNAMIC_DRAW);
 			glBindTexture(GL_TEXTURE_BUFFER, lightTextures[i]);
 			glTexBuffer(GL_TEXTURE_BUFFER, GL_RGBA32F, lightBuffers[i]);
 			uploadedFill[i] = -1;
 			uploadedWalls[i] = -1;
+			if (lightMap != null)
+			{
+				lightMap.invalidate(i);
+			}
 
 			glBindBuffer(GL_TEXTURE_BUFFER, clusterBuffers[i]);
 			bufferTexels[i] = texels;
@@ -202,6 +213,19 @@ public class LightClusters
 	public void setWalls(LampWalls lampWalls)
 	{
 		walls = lampWalls;
+	}
+
+	/** The light map (null: none), which goes up with the lights: the lamps' map ids are its table's. */
+	public void setLightMap(LightMapBuffer map)
+	{
+		if (map != lightMap && map != null)
+		{
+			for (int i = 0; i < SETS; ++i)
+			{
+				map.invalidate(i);
+			}
+		}
+		lightMap = map;
 	}
 
 	/** The fill the rooms get (null: none), which goes up with the lights. */
@@ -292,6 +316,9 @@ public class LightClusters
 				.put(lampWalls != null ? lampWalls.wallsFor(l.plane, origin[0], origin[1], l.radius) : -1);
 			// its storey's floor and ceiling; none known, far off
 			lightData.put(origin[0] - camX).put(origin[1] - camZ).put(clampY(l.floorY - camY)).put(clampY(l.ceilY - camY));
+			// its id in the light map (0: not on it, lit by the walls alone) and the map's share as it eases in
+			boolean mapped = l.mapId > 0 && lightMap != null;
+			lightData.put(mapped ? l.mapId : 0).put(mapped ? l.mapEase : 0).put(0).put(0);
 
 			if (fogColumns)
 			{
@@ -445,6 +472,27 @@ public class LightClusters
 	{
 		set = (set + 1) % SETS;
 		glBindBuffer(GL_TEXTURE_BUFFER, lightBuffers[set]);
+		LightMapBuffer map = lightMap;
+		int needed = LIGHT_MAP_BASE + (map != null ? map.texels() : LightMapBuffer.BLOCKS);
+		if (needed > lightTexels[set])
+		{
+			// room for the map's blocks, and a little more: the copy is made anew, and everything goes into it again
+			lightTexels[set] = needed + (needed - LIGHT_MAP_BASE) / 4;
+			glBufferData(GL_TEXTURE_BUFFER, (long) lightTexels[set] * 4 * Float.BYTES, GL_DYNAMIC_DRAW);
+			glBindTexture(GL_TEXTURE_BUFFER, lightTextures[set]);
+			glTexBuffer(GL_TEXTURE_BUFFER, GL_RGBA32F, lightBuffers[set]);
+			glBindTexture(GL_TEXTURE_BUFFER, 0);
+			uploadedFill[set] = -1;
+			uploadedWalls[set] = -1;
+			if (map != null)
+			{
+				map.invalidate(set);
+			}
+		}
+		if (map != null)
+		{
+			map.upload(set, LIGHT_MAP_BASE);
+		}
 		RoomLight fill = roomFill;
 		if (fill != null && fill.version() != uploadedFill[set])
 		{

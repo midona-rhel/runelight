@@ -9,6 +9,8 @@ import com.midonarhel.lumina.common.Rumble;
 import com.midonarhel.lumina.common.Shader;
 import com.midonarhel.lumina.common.ShaderException;
 import com.midonarhel.lumina.visibility.BuildingLights;
+import com.midonarhel.lumina.visibility.ModelBlockers;
+import com.midonarhel.lumina.visibility.WallMap;
 import com.midonarhel.lumina.visibility.OpenRooms;
 import com.midonarhel.lumina.visibility.RoomMap;
 import com.midonarhel.lumina.visibility.RoomTexture;
@@ -181,6 +183,24 @@ public final class LampFrame
 {
 	private final LuminaPlugin plugin;
 
+	// The light map's blocks are put into the light buffer by a scene job (LIGHT_MAP_JOB), a few a frame and more while
+	// the sending has taken less than the job's time, up to the most: a scene load has hundreds, and the light buffer's
+	// copies take them as they come round (LightClusters.upload).
+	static final String LIGHT_MAP_JOB = "light map";
+	private static final int LIGHT_MAP_BLOCKS_PER_FRAME = 2;
+	private static final int LIGHT_MAP_BLOCKS_MAX = 96;
+	// what the light map was last given to stop light, and what that was made from
+	private LightBlockers lightBlockers;
+	private WallMap blockerWalls;
+	private ModelBlockers blockerModels;
+	private RoomMap blockerRooms;
+	private byte[] blockerFloors;
+	private boolean lightMapJob;
+	// when the job last ran or was queued: a job the queue dropped (a shutdown) is queued again after a while
+	private long lightMapJobNanos;
+	// the offline renderer's lightMap=off: no light map, the walls alone stop the lamps (no setting of the plugin's)
+	public boolean lightMapOff;
+
 	public LampFrame(LuminaPlugin plugin)
 	{
 		this.plugin = plugin;
@@ -223,6 +243,7 @@ public final class LampFrame
 			{
 				plugin.frameLights.clear();
 			}
+			updateLightMap(points, buildings, rooms);
 			plugin.cpuTimer.end(CpuTimer.LIGHTS);
 			// the roofs as drawn: those the client hides over the player stop nothing
 			SceneContext drawn = plugin.root;
@@ -258,6 +279,76 @@ public final class LampFrame
 			plugin.lightClusters.bind(LIGHT_DATA_UNIT, CLUSTER_DATA_UNIT);
 			plugin.roomTexture.bind(ROOM_TEXELS_UNIT);
 		}
+	}
+
+	/**
+	 * Give the light map the scene's walls, solid objects, models and floors and the view; hand the frame's fixed lamps to
+	 * it (SceneLights.mapLamps: those it carries get their ids in it); and have its finished blocks sent by a scene job.
+	 * Without lamps, walls or floors there is no map, and every lamp is stopped by the walls alone.
+	 */
+	private void updateLightMap(boolean points, BuildingLights buildings, RoomMap rooms)
+	{
+		SceneLights lights = plugin.sceneLights;
+		WallMap walls = buildings != null ? buildings.getWalls() : null;
+		byte[] floors = buildings != null ? buildings.getFloors() : null;
+		LightMap map = plugin.lightMap;
+		if (!points || lightMapOff || lights == null || walls == null || rooms == null || floors == null || rooms.size != walls.size
+			|| floors.length != walls.size * walls.size || walls.size > LightMapBuffer.MAX_TILES)
+		{
+			if (lights != null)
+			{
+				lights.setLightMap(null);
+				lights.mapLamps(plugin.frameLights);
+			}
+			plugin.lightMapBuffer.setScene(null, 0);
+			plugin.lightClusters.setLightMap(null);
+			return;
+		}
+		lights.setLightMap(map);
+		// a scene's models are not the previous scene's: the lights wait for them a moment (LightMap.setBlockers)
+		boolean modelsAwaited = plugin.voxelBuilder.modelsAwaited();
+		ModelBlockers models = modelsAwaited ? null : plugin.voxelBuilder.getModelBlockers();
+		if (models != null && models.cells != walls.size * LightBlockers.CELLS_PER_TILE)
+		{
+			models = null;
+		}
+		if (walls != blockerWalls || models != blockerModels || rooms != blockerRooms || floors != blockerFloors)
+		{
+			lightBlockers = new LightBlockers(walls, models, rooms.floors, floors);
+			blockerWalls = walls;
+			blockerModels = models;
+			blockerRooms = rooms;
+			blockerFloors = floors;
+		}
+		map.setBlockers(lightBlockers, modelsAwaited);
+		map.setFocus(plugin.edgeFade.focalX, plugin.edgeFade.focalZ);
+		plugin.lightMapBuffer.setScene(lightBlockers, lightBlockers.cells / LightMap.BLOCK);
+		lights.mapLamps(plugin.frameLights);
+		plugin.lightClusters.setLightMap(plugin.lightMapBuffer);
+		if (lightMapJob && System.nanoTime() - lightMapJobNanos < 2_000_000_000L)
+		{
+			return;
+		}
+		if (!map.hasReady())
+		{
+			// no block to send: the lights whose blocks are all sent go live, and the ids of those gone are freed
+			map.update(0, 0, 0, plugin.lightMapBuffer);
+			return;
+		}
+		lightMapJob = true;
+		lightMapJobNanos = System.nanoTime();
+		plugin.sceneLoader.jobs.add(LIGHT_MAP_JOB, SceneJobs.SHOWN, deadline ->
+		{
+			lightMapJobNanos = System.nanoTime();
+			long left = deadline - System.nanoTime();
+			map.update(LIGHT_MAP_BLOCKS_PER_FRAME, Math.max(0, left), LIGHT_MAP_BLOCKS_MAX, plugin.lightMapBuffer);
+			boolean done = !map.hasReady();
+			if (done)
+			{
+				lightMapJob = false;
+			}
+			return done;
+		});
 	}
 
 	/**

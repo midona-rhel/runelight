@@ -1,5 +1,6 @@
 package com.midonarhel.lumina.light;
 
+import com.midonarhel.lumina.visibility.VoxelCapture;
 import com.midonarhel.lumina.visibility.WallMap;
 
 import com.midonarhel.lumina.scene.ModelData;
@@ -147,6 +148,9 @@ public class SceneLights
 		// the scene object it is on (VoxelCapture.ownerOf, 0: none), for the scene dump: whose models the light map's
 		// bake leaves out for it (its own fixture)
 		final int owner;
+		// what the light map bakes of it (LightMap), null for a light that can't be baked: one that comes and goes with an
+		// animation or for a time, or follows the sky
+		final LightMap.Source bake;
 
 		Placed(LightDefinition def, float[] at, int plane, float seed, boolean fadesIn, TileObject object, boolean auto,
 			long easeSince)
@@ -165,6 +169,13 @@ public class SceneLights
 			// its lines start where it is; LampWalls moves them off the walls it hangs on
 			ox = x;
 			oz = z;
+			// the most the light's radius is (see emit)
+			float reach = def.kind == LightDefinition.FLICKER ? def.radius * 1.5f
+				: def.kind == LightDefinition.PULSE && def.duration > 0 ? def.radius * (1 + def.range / 100f) : def.radius;
+			// a light that reaches further than the bake does would end at its edge: it stays with the walls alone
+			this.bake = def.outdoorLighting || def.animationSpecific() || def.fixedDespawnTime || reach > LightMapBake.MAX_RADIUS ? null
+				: new LightMap.Source(plane, x, y, z, reach, def.red, def.green, def.blue, def.strength, def.nightOnly,
+				def.nightMultiplier, object == null ? 0 : VoxelCapture.ownerOf(object));
 		}
 	}
 
@@ -231,6 +242,12 @@ public class SceneLights
 	private int lastPlane = -1;
 	private float lastTime = -1;
 
+	// the map the static lights are baked into (null: none, the walls alone stop them); the frame's lamps' bakes, by
+	// their PointLight.bakeSlot; the dump's lamps' (replay)
+	private LightMap lightMap;
+	private final List<LightMap.Source> frameBakes = new ArrayList<>();
+	private List<LightMap.Source> replayBakes;
+
 	// per-frame pool so collecting lights does not allocate
 	private final List<PointLight> pool = new ArrayList<>();
 	private int poolUsed;
@@ -256,6 +273,75 @@ public class SceneLights
 	{
 		replayCollected = collected;
 		replaySteady = steady;
+		// the fixed ones (a steady lamp stands where they are) are baked as the client bakes its fixed lamps: with the
+		// reach of the steady lamp, which a flickering one has; the others (moving, fading) are not
+		replayBakes = new ArrayList<>();
+		for (PointLight l : collected)
+		{
+			l.mapId = 0;
+			l.mapEase = 0;
+			l.bakeSlot = -1;
+			PointLight fixed = null;
+			if (steady != null)
+			{
+				for (PointLight f : steady)
+				{
+					if (f.plane == l.plane && Math.abs(f.x - l.x) < 1 && Math.abs(f.y - l.y) < 1 && Math.abs(f.z - l.z) < 1)
+					{
+						fixed = f;
+						break;
+					}
+				}
+			}
+			float reach = fixed != null ? Math.max(fixed.radius, l.radius) : 0;
+			if (fixed == null || l.plane < 0 || reach > LightMapBake.MAX_RADIUS)
+			{
+				continue;
+			}
+			l.bakeSlot = replayBakes.size();
+			replayBakes.add(new LightMap.Source(l.plane, l.x, l.y, l.z, reach, l.r, l.g, l.b, fixed.intensity, false, 1,
+				l.owner));
+		}
+	}
+
+	/**
+	 * The map the static lights are baked into (null: none, the walls alone stop them). A new one, or none, lets go of
+	 * what the old one held.
+	 */
+	public void setLightMap(LightMap map)
+	{
+		if (map != lightMap && lightMap != null)
+		{
+			lightMap.clear();
+		}
+		lightMap = map;
+	}
+
+	/**
+	 * After the frame's lamps are gathered and their doubles dropped (PointLight.dropDoubles): the map is given the fixed
+	 * lamps in reach to bake (LightMap.add, safe to repeat), and each lamp it carries is told its id in it and the map's
+	 * share as it eases in.
+	 */
+	public void mapLamps(List<PointLight> lamps)
+	{
+		LightMap map = lightMap;
+		long now = com.midonarhel.lumina.common.Clock.nanos();
+		for (PointLight l : lamps)
+		{
+			l.mapId = 0;
+			l.mapEase = 0;
+			if (map == null || l.bakeSlot < 0 || l.bakeSlot >= frameBakes.size())
+			{
+				continue;
+			}
+			LightMap.Source s = frameBakes.get(l.bakeSlot);
+			if (!map.add(s) || !LightMap.isLive(s))
+			{
+				continue;
+			}
+			l.mapId = s.id;
+			l.mapEase = LightMap.liveWeight(s, now);
+		}
 	}
 
 	/** The queue the lights are placed from (null: at once, in the event, as for tests). */
@@ -336,6 +422,10 @@ public class SceneLights
 
 	private void clear()
 	{
+		if (lightMap != null)
+		{
+			lightMap.clear();
+		}
 		pending.clear();
 		pendingFadesIn.clear();
 		scanPlane = -1;
@@ -586,11 +676,21 @@ public class SceneLights
 		// they fade out and wait their despawn delay
 		for (Placed p : t.lights)
 		{
+			unbake(p);
 			if (!p.auto)
 			{
 				p.life.update(true, 0);
 				orphans.add(p);
 			}
+		}
+	}
+
+	/** The light is going: the map lets go of it, and the walls alone stop it as it fades out. */
+	private void unbake(Placed p)
+	{
+		if (lightMap != null && p.bake != null)
+		{
+			lightMap.remove(p.bake, true);
 		}
 	}
 
@@ -894,6 +994,10 @@ public class SceneLights
 			if (id != t.resolvedId)
 			{
 				t.resolvedId = id;
+				for (Placed p : t.lights)
+				{
+					unbake(p);
+				}
 				t.lights = placeObjectLights(entry.getKey(), id, true);
 			}
 		}
@@ -1193,8 +1297,10 @@ public class SceneLights
 	public void collect(List<PointLight> out, float time, float night, float sunAltitude, float camX, float camZ,
 		float maxDistance)
 	{
+		frameBakes.clear();
 		if (replayCollected != null)
 		{
+			frameBakes.addAll(replayBakes);
 			out.addAll(replayCollected);
 			return;
 		}
@@ -1347,9 +1453,11 @@ public class SceneLights
 			}
 			return;
 		}
+		// a light that has faded in and stays is the map's; fading or going, the walls alone stop it
+		LightMap.Source bake = lightMap != null && parentExists && p.life.brightness() >= 1 ? p.bake : null;
 		List<PointLight> to = p.auto ? autoLights : out;
 		int before = to.size();
-		emit(to, p.def, p.life, p.x, p.y, p.z, p.ox, p.oz, p.plane, p.seed, false);
+		emit(to, p.def, p.life, p.x, p.y, p.z, p.ox, p.oz, p.plane, p.seed, false, bake);
 		if (to.size() > before)
 		{
 			to.get(to.size() - 1).owner = p.owner;
@@ -1374,7 +1482,7 @@ public class SceneLights
 			{
 				if (p.life.visible())
 				{
-					emit(out, p.def, p.life, p.x, p.y, p.z, p.ox, p.oz, p.plane, p.seed, true);
+					emit(out, p.def, p.life, p.x, p.y, p.z, p.ox, p.oz, p.plane, p.seed, true, null);
 				}
 			}
 		}
@@ -1382,7 +1490,7 @@ public class SceneLights
 		{
 			if (p.life.visible())
 			{
-				emit(out, p.def, p.life, p.x, p.y, p.z, p.ox, p.oz, p.plane, p.seed, true);
+				emit(out, p.def, p.life, p.x, p.y, p.z, p.ox, p.oz, p.plane, p.seed, true, null);
 			}
 		}
 	}
@@ -1407,16 +1515,18 @@ public class SceneLights
 		l.life.update(parentExists, frameDt);
 		if (l.life.visible())
 		{
-			emit(out, l.def, l.life, l.x, l.y, l.z, l.x, l.z, l.plane, l.seed, false);
+			emit(out, l.def, l.life, l.x, l.y, l.z, l.x, l.z, l.plane, l.seed, false, null);
 		}
 	}
 
 	/**
 	 * @param steady without the flicker's or pulse's change of the moment (a flickering light keeps its larger radius),
 	 * into a new object, uncounted
+	 * @param bake the light's place in the light map, null for a light that isn't on it: with it, the light is baked
+	 * once it is in reach (mapLamps), and let go of when it is far out of reach
 	 */
 	private void emit(List<PointLight> out, LightDefinition d, LightLife life, float x, float y, float z, float ox,
-		float oz, int lightPlane, float seed, boolean steady)
+		float oz, int lightPlane, float seed, boolean steady, LightMap.Source bake)
 	{
 		Funnel funnel = steady ? null : this.funnel;
 		float dx = x - camX, dz = z - camZ;
@@ -1426,6 +1536,11 @@ public class SceneLights
 			if (funnel != null)
 			{
 				++funnel.outOfReach;
+			}
+			float far = reach + LightMap.EVICT_MARGIN;
+			if (bake != null && dx * dx + dz * dz > far * far)
+			{
+				lightMap.remove(bake, false);
 			}
 			return;
 		}
@@ -1504,7 +1619,14 @@ public class SceneLights
 			++funnel.clusters;
 			funnel.strength(strength);
 		}
-		out.add(pool.get(poolUsed++).set(x, y, z, radius, red, green, blue, strength).onPlane(lightPlane)
-			.from(ox, oz, floorY, ceilY).importance(d.strength * d.radius));
+		PointLight lamp = pool.get(poolUsed++).set(x, y, z, radius, red, green, blue, strength).onPlane(lightPlane)
+			.from(ox, oz, floorY, ceilY).importance(d.strength * d.radius);
+		if (bake != null)
+		{
+			lamp.bakeSlot = frameBakes.size();
+			lamp.owner = bake.owner;
+			frameBakes.add(bake);
+		}
+		out.add(lamp);
 	}
 }

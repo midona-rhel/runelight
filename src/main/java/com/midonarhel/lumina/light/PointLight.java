@@ -17,7 +17,13 @@ public class PointLight
 	float ox, oz, floorY = Float.POSITIVE_INFINITY, ceilY = Float.NEGATIVE_INFINITY;
 	// what decides which lights a full cluster keeps (LightClusters): steady, its definition's strength times reach
 	float importance;
-	// the scene object it is on (VoxelCapture.ownerOf, 0: none): written to scene dumps for the light map's bake
+	// The light map (LightMap): the lamp's id in it once it carries the lamp (0: it doesn't, the walls alone stop it),
+	// and its share as it eases in (LayerEase). Set after the frame's lamps are gathered (SceneLights.mapLamps).
+	int mapId;
+	float mapEase;
+	// the frame's bake of the lamp (SceneLights' list of them), -1 for a lamp the map doesn't bake: one that moves, comes
+	// and goes, or fades; and the scene object it is on (VoxelCapture.ownerOf, 0: none), whose geometry never shades it
+	int bakeSlot = -1;
 	int owner;
 
 	public PointLight set(float x, float y, float z, float radius, float r, float g, float b, float intensity)
@@ -36,6 +42,9 @@ public class PointLight
 		floorY = Float.POSITIVE_INFINITY;
 		ceilY = Float.NEGATIVE_INFINITY;
 		importance = intensity * radius;
+		mapId = 0;
+		mapEase = 0;
+		bakeSlot = -1;
 		owner = 0;
 		return this;
 	}

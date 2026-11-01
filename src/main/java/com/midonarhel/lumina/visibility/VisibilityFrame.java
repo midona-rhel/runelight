@@ -220,7 +220,8 @@ public final class VisibilityFrame
 		try
 		{
 			int builds = plugin.voxelBuilder.builds();
-			plugin.voxelBuilder.prepare(plugin.frameSkylightWanted, scene, plugin.root != null ? plugin.root.zones : null, plugin.clientUploader.water);
+			// the light map's models are made with the voxels
+			plugin.voxelBuilder.prepare(plugin.frameSkylightWanted || plugin.config.pointLights(), scene, plugin.root != null ? plugin.root.zones : null, plugin.clientUploader.water);
 			if (builds != plugin.voxelBuilder.builds())
 			{
 				plugin.hitchMonitor.job(HitchMonitor.VOXEL_BUILD);

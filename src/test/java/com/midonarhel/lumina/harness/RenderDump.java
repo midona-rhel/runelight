@@ -104,6 +104,15 @@ public final class RenderDump
 				case "buildings":
 					o.buildings = v;
 					break;
+				case "mapProbe":
+				{
+					String[] xy = v.split(",");
+					o.mapProbe = new int[]{Integer.parseInt(xy[0].trim()), Integer.parseInt(xy[1].trim())};
+					break;
+				}
+				case "lightMap":
+					o.lightMap = !v.equals("off") && !v.equals("false");
+					break;
 				case "lampRoofs":
 					o.lampRoofs = !v.equals("off") && !v.equals("false");
 					break;
