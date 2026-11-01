@@ -941,6 +941,27 @@ public final class WaterMap
 	}
 
 	/**
+	 * The depth (world units) the water's colour goes by at corner (cx, cy): the shore distance's (water_common.glsl
+	 * nominalDepth on page 1's), as the real surface takes it; for the falls (the uploaders put it in their faces).
+	 */
+	public int colorDepth(int cx, int cy)
+	{
+		if (texture == null || cx < 0 || cy < 0 || cx >= CORNERS || cy >= CORNERS)
+		{
+			return 0;
+		}
+		float shore = texture[(cy * CORNERS * PAGES + CORNERS + cx) * 4];
+		if (shore <= 0)
+		{
+			return 0;
+		}
+		float lvl = Math.max(0, Math.min(7.999f, shore - 0.5f));
+		int i = (int) lvl;
+		float a = i == 0 ? 0 : DEPTH[i - 1], b = DEPTH[i];
+		return Math.round(Math.max(a + (b - a) * (lvl - i), MIN_DEPTH * Math.min(shore, 1)));
+	}
+
+	/**
 	 * Each water tile's surface: its lowest corner (y down), as buildTexture takes it; NaN on land.
 	 */
 	float[] surfaceLevels(int[][][] heights)

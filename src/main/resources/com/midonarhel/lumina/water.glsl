@@ -483,6 +483,38 @@ bool waterUnder(ivec2 px, float mask) {
     && all(lessThan(px, waterRect.zw));
 }
 
+// The water over what is under it, the real surface's and the faces models draw as water's alike: lit, its colour as
+// seen through the water (sRGB), with the caustics on it; the water type, the depth its colour goes by and its own
+// depth (vertical, for the fade in at the waterline); the surface's normal, the view direction; the shaded surface
+// (linear, how much it covers in a) and its highlights; the hard edged foam's tint and core (waterHardFoamOf); the sun's
+// shadow. sRGB.
+vec3 waterFinish(vec3 lit, vec3 caustics, int type, float colorDepth, float depth, vec3 nrm, vec3 v, vec4 surface,
+  vec3 spec, vec2 hard, float shadow) {
+  vec3 under = max(srgbToLinear(lit * WET_SAND) + caustics, vec3(0.0)) * srgbToLinear(waterDepthTint(type, colorDepth));
+  // what is seen through a wave face turned toward the camera is a little brighter, turned away darker
+  vec2 slope = nrm.xz / nrm.y;
+  under *= max(1.0 + WAVE_SHADE * dot(slope, v.xz) / max(length(v.xz), 0.25), 0.0);
+  float alpha = max(WATER_LOOK[type].x * smoothstep(0.0, SURFACE_DEPTH, colorDepth), surface.a);
+  // the hard edged foam (around things standing in the water, on falls and by them), in its two flat tones, over the
+  // water as it is lit from above
+  if (hard.x > 0.0) {
+    vec3 up = vec3(0.0, -1.0, 0.0);
+    vec3 topLight = outdoors == 1 && lightingEnabled == 1
+      ? ambientLight(sunAltitude) * envAmbient + skyLight(sunAltitude) * envAmbient
+        + strikeCaster(sunIsCaster == 1 ? sunLight(sunAltitude) : moonLight(sunAltitude)) * envSun * max(dot(up, casterDir), 0.0) * shadow
+      : vec3(1.0);
+    float share = mix(FOAM_TINT * hard.x, FOAM_CORE, hard.y);
+    surface.rgb = mix(surface.rgb, srgbToLinear(mix(WATER_FOAM_COLOR[type], vec3(1.0), FOAM_WHITE)) * mix(topLight, vec3(1.0), 0.5), share);
+    alpha = max(alpha, share);
+    spec *= 1.0 - share;
+  }
+  vec3 color = waterShoulder(mix(under, surface.rgb, alpha) + spec);
+  // over the waterline the water fades in over the bed and its caustics: no hard edge where it meets the bank or a
+  // leg in the water
+  vec3 bed = max(srgbToLinear(lit) + caustics, vec3(0.0));
+  return linearToSrgb(clamp(mix(bed, color, smoothstep(0.0, 1.0, depth / SOFT_EDGE)), 0.0, 1.0));
+}
+
 // p: camera-relative position of this pixel's scene surface (the bed, or something else under the water)
 // albedo (sRGB), shadow: its color and sun shadow from the composite; lit: its lit color (sRGB); mask: the material
 // target's water channel (frag.glsl)
@@ -548,32 +580,8 @@ vec3 waterOver(ivec2 px, inout vec3 p, vec3 albedo, float shadow, vec3 lit, floa
     float dark = CAUSTIC_RANGE.x * smoothstep(0.0, CAUSTIC_DARK, depth);
     caustics = srgbToLinear(albedo) * caster * (k * clamp(caustic, dark, CAUSTIC_RANGE.y));
   }
-  vec3 under = max(srgbToLinear(lit * WET_SAND) + caustics, vec3(0.0)) * srgbToLinear(waterDepthTint(type, colorDepth));
-  // what is seen through a wave face turned toward the camera is a little brighter, turned away darker
-  vec3 v = p / dist;
-  spec += waterGlitter(px, nrm, v, WATER_LOOK[type].z, foam, shadow);
-  vec2 slope = nrm.xz / nrm.y;
-  under *= max(1.0 + WAVE_SHADE * dot(slope, v.xz) / max(length(v.xz), 0.25), 0.0);
-  float alpha = max(WATER_LOOK[type].x * smoothstep(0.0, SURFACE_DEPTH, colorDepth), surface.a);
-  // the foam around things standing in the water, in the flat tones the falls have, over the
-  // water as it is lit from above
-  vec2 hard = waterHardFoamOf(ws);
-  if (hard.x > 0.0) {
-    vec3 up = vec3(0.0, -1.0, 0.0);
-    vec3 topLight = outdoors == 1 && lightingEnabled == 1
-      ? ambientLight(sunAltitude) * envAmbient + skyLight(sunAltitude) * envAmbient
-        + strikeCaster(sunIsCaster == 1 ? sunLight(sunAltitude) : moonLight(sunAltitude)) * envSun * max(dot(up, casterDir), 0.0) * shadow
-      : vec3(1.0);
-    float share = mix(FOAM_TINT * hard.x, FOAM_CORE, hard.y);
-    surface.rgb = mix(surface.rgb, srgbToLinear(mix(WATER_FOAM_COLOR[type], vec3(1.0), FOAM_WHITE)) * mix(topLight, vec3(1.0), 0.5), share);
-    alpha = max(alpha, share);
-    spec *= 1.0 - share;
-  }
-  vec3 color = waterShoulder(mix(under, surface.rgb, alpha) + spec);
-  // over the waterline the water fades in over the bed and its caustics: no hard edge where it meets the bank or a
-  // leg in the water
-  vec3 bed = max(srgbToLinear(lit) + caustics, vec3(0.0));
-  vec3 result = linearToSrgb(clamp(mix(bed, color, smoothstep(0.0, 1.0, depth / SOFT_EDGE)), 0.0, 1.0));
+  spec += waterGlitter(px, nrm, p / dist, WATER_LOOK[type].z, foam, shadow);
+  vec3 result = waterFinish(lit, caustics, type, colorDepth, depth, nrm, p / dist, surface, spec, waterHardFoamOf(ws), shadow);
   p = s;
   return result;
 }
@@ -587,8 +595,6 @@ vec3 waterOver(ivec2 px, inout vec3 p, vec3 albedo, float shadow, vec3 lit, floa
 // Everything here is ALU: the composite has no sampler to spare.
 uniform int waterFakeOn;  // the water setting: off draws the faces as their type's plain color
 
-// how deep the water counts as being, for the color it fades into (world units)
-#define FAKE_DEPTH 100.0
 // a face is a fall when its normal's vertical part is below the second and not a pool's at all below the first
 #define FALL_STEEP vec2(0.5, 0.85)
 // A fall is real water running straight down it at FALL_FLOW world units a second, its ripples carried with it as running
@@ -605,7 +611,7 @@ bool waterFakeFall(vec3 faceN) {
 
 // The fake water face at pixel px (camera-relative p, facing camera normal faceN, color albedo (sRGB), the sun's
 // shadow), lit as lit (sRGB): its color as water, sRGB.
-vec3 waterFake(ivec2 px, vec3 p, vec3 faceN, vec3 albedo, float shadow, vec3 lit) {
+vec3 waterFake(ivec2 px, vec3 p, vec3 faceN, vec3 albedo, float shadow, float colorDepth, vec3 lit) {
   // the slimy greens are swamp water, the rest fresh; a fall's colour is the beds of its pools (SceneUploader), fresh
   float fall = 1.0 - smoothstep(FALL_STEEP.x, FALL_STEEP.y, abs(faceN.y));
   int type = fall < 0.5 && albedo.g > albedo.b * 1.15 ? 5 : 1;
@@ -646,13 +652,14 @@ vec3 waterFake(ivec2 px, vec3 p, vec3 faceN, vec3 albedo, float shadow, vec3 lit
   vec2 fallSlope = slope.x * tang + slope.y * out2;
   vec3 nrm = normalize(down > 0.0 ? vec3(-fallSlope.x, -1.0, -fallSlope.y) : faceN + vec3(-slope.x, 0.0, -slope.y));
 
-  // its foam, down it: a whole repeat of the cells (64) every waterCycle, so the scroll never jumps
-  float foam = 0.0;
+  // its foam, down it, cut as the hard edged foam is (x the tint, y the core): a whole repeat of the cells (64) every
+  // waterCycle, so the scroll never jumps
+  vec2 hard = vec2(0.0);
   if (down > 0.0) {
     vec2 cell = vec2(q.x, q.y) / POOL_CELL - vec2(0.0, 64.0 * waterCycle(64.0 * POOL_CELL / FALL_FLOW));
     float h = waterFoamCells(cell);
     float ha = max(fwidth(h), 1e-4);
-    foam = mix(FOAM_TINT * waterEdge(FOAM_CUT.y - h, ha), FOAM_CORE, waterEdge(FOAM_CUT.x - h, ha));
+    hard = vec2(waterEdge(FOAM_CUT.y - h, ha), waterEdge(FOAM_CUT.x - h, ha));
   }
 
   // ---- the surface shaded as the real water's (waterShadeSurface); a fall reflects the sky only: the world a level
@@ -660,15 +667,11 @@ vec3 waterFake(ivec2 px, vec3 p, vec3 faceN, vec3 albedo, float shadow, vec3 lit
   // finding the wall above the fall a hard line ran across its face
   vec3 surface, spec, surfaceLight;
   float covered;
-  waterShadeSurface(px, p, v, nrm, type, foam, shadow, down == 0.0, surface, covered, spec, surfaceLight);
-  spec += waterSunGlint(waterGlitterNormal(nrm), v, 0.0, look.z, foam, shadow);
+  waterShadeSurface(px, p, v, nrm, type, 0.0, shadow, down == 0.0, surface, covered, spec, surfaceLight);
+  spec += waterSunGlint(waterGlitterNormal(nrm), v, 0.0, look.z, 0.0, shadow);
 
-  // ---- what is under it: the face as the composite lit it, wet, FAKE_DEPTH down, as waterOver takes the bed; a fall's
-  // face holds its pools' bed colour (SceneUploader), lit as their bed is (composite_frag.glsl), and is coloured as the
-  // water at their bank (half a tile from the shore, nominalDepth): what shows between the pool it pours from and the one
-  // it lands in
-  float depth = down > 0.0 ? nominalDepth(0.5) : FAKE_DEPTH;
-  vec3 under = srgbToLinear(lit * WET_SAND) * srgbToLinear(waterDepthTint(type, depth));
-  float alpha = max(look.x * smoothstep(0.0, SURFACE_DEPTH, depth), covered);
-  return linearToSrgb(clamp(waterShoulder(mix(under, surface, alpha) + spec), 0.0, 1.0));
+  // ---- over what is under it as the real water is (waterFinish): the face as the composite lit it (a fall's holds its
+  // pools' bed colour, lit as their bed is: SceneUploader, composite_frag.glsl), coloured by the depth the water's colour
+  // goes by (the uploader's: a fall's, the water's at its top and its foot, blended down it)
+  return waterFinish(lit, vec3(0.0), type, colorDepth, SOFT_EDGE, nrm, v, vec4(surface, covered), spec, hard, shadow);
 }

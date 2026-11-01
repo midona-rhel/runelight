@@ -277,7 +277,7 @@ struct SceneSample {
   vec3 normal;    // as stored, n * 0.5 + 0.5
   vec4 material;  // materialUnpack
   vec3 faceNormal;
-  float end;      // fake water: its distance from the nearer end of the model's water, its foot or its top, world units
+  float end;      // fake water: the depth its colour goes by, world units (the uploaders')
 };
 
 SceneSample sceneSample(ivec2 px, int s) {
@@ -468,7 +468,7 @@ vec4 shadeScene(ivec2 px, SceneSample sm, vec4 transparent) {
       }
       lit = waterOver(px, p, color.rgb, shadow, lit, material.b);
       if (materialFakeWater(material)) {
-        lit = waterFake(px, p, sm.faceNormal, color.rgb, shadow, lit);
+        lit = waterFake(px, p, sm.faceNormal, color.rgb, shadow, sm.end, lit);
       }
       if (compositePart == 4) { return vec4(lit, 1.0); }
     }

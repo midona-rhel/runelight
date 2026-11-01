@@ -600,4 +600,18 @@ public class WaterMapTest
 		assertTrue(fall.texture[(85 * w + p2 + 81) * 4 + 1] > 0);
 		assertEquals(0f, fall.texture[(77 * w + p2 + 81) * 4 + 1], 0f);
 	}
+
+	@Test
+	public void aFallsColourDepthIsTheWatersAtItsCorner()
+	{
+		// the shader's nominalDepth on the shore field: 0 on land, MIN_DEPTH at the shore's first tile, the lake's middle
+		// as deep as the table goes
+		WaterMap m = lake(1);
+		assertEquals(0, m.colorDepth(10, 10));
+		int w = WaterMap.CORNERS * WaterMap.PAGES;
+		float shore = m.texture[(90 * w + WaterMap.CORNERS + 81) * 4];
+		assertTrue(shore > 0 && shore < 2);
+		assertTrue(m.colorDepth(81, 90) >= WaterMap.MIN_DEPTH * Math.min(shore, 1) - 1);
+		assertTrue(m.colorDepth(90, 90) > m.colorDepth(81, 90));
+	}
 }

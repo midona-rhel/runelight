@@ -133,9 +133,6 @@ public class ModelUploader
 		final float[] normalsZ = computed.z;
 		final boolean hasNormals = true;
 		final short[] unlitColors = model.unlitColors;
-		// fake water: faces drawn as real water, with their height above the foot of the model's water in u and below the top of it in v
-		final float[] span = SurfaceMaterials.fakeSpan(material, faceTextures, faceCount, faceColors1, transparencies,
-			indices1, indices2, indices3, verticesY);
 
 		float orientSine = 0;
 		float orientCosine = 0;
@@ -308,20 +305,22 @@ public class ModelUploader
 						// drawn as real water: opaque, untextured, its height above the foot in u, below the top in v
 						texture = 0;
 						alphaBias &= 0xffffff;
-						su0 = SurfaceMaterials.fakeHeight(span[0], verticesY[v1]);
-						su1 = SurfaceMaterials.fakeHeight(span[0], verticesY[v2]);
-						su2 = SurfaceMaterials.fakeHeight(span[0], verticesY[v3]);
-						sv0 = SurfaceMaterials.fakeHeight(verticesY[v1], span[1]);
-						sv1 = SurfaceMaterials.fakeHeight(verticesY[v2], span[1]);
-						sv2 = SurfaceMaterials.fakeHeight(verticesY[v3], span[1]);
+						// the depth its colour goes by in u and v (material_target.glsl)
+						su0 = sv0 = su1 = sv1 = su2 = sv2 = SurfaceMaterials.FAKE_DEPTH;
 						WaterMap w = water;
 						if (w != null && WaterMap.fallFace(modelLocalX[v1], modelLocalY[v1], modelLocalZ[v1], modelLocalX[v2],
 							modelLocalY[v2], modelLocalZ[v2], modelLocalX[v3], modelLocalY[v3], modelLocalZ[v3]))
 						{
-							// a fall shows the beds of the pools it pours from and lands in, as they show under their water
-							color1 = fallColor(w, modelLocalX[v1], modelLocalY[v1], modelLocalZ[v1], color1);
-							color2 = fallColor(w, modelLocalX[v2], modelLocalY[v2], modelLocalZ[v2], color2);
-							color3 = fallColor(w, modelLocalX[v3], modelLocalY[v3], modelLocalZ[v3], color3);
+							// a fall shows the water it runs between, at its top and its foot (fallWater)
+							long f1 = fallWater(w, modelLocalX[v1], modelLocalY[v1], modelLocalZ[v1], color1, su0);
+							long f2 = fallWater(w, modelLocalX[v2], modelLocalY[v2], modelLocalZ[v2], color2, su1);
+							long f3 = fallWater(w, modelLocalX[v3], modelLocalY[v3], modelLocalZ[v3], color3, su2);
+							color1 = (int) (f1 >> 32);
+							color2 = (int) (f2 >> 32);
+							color3 = (int) (f3 >> 32);
+							su0 = sv0 = (int) f1;
+							su1 = sv1 = (int) f2;
+							su2 = sv2 = (int) f3;
 						}
 					}
 					texture |= bits;
@@ -630,9 +629,6 @@ public class ModelUploader
 		final float[] normalsZ = computed.z;
 		final boolean hasNormals = true;
 		final short[] unlitColors = model.unlitColors;
-		// fake water: faces drawn as real water, with their height above the foot of the model's water in u and below the top of it in v
-		final float[] span = SurfaceMaterials.fakeSpan(material, faceTextures, triangleCount, color1s, transparencies,
-			indices1, indices2, indices3, verticesY);
 
 		float orientSine = 0;
 		float orientCosine = 0;
@@ -767,19 +763,20 @@ public class ModelUploader
 				// drawn as real water: opaque, untextured, its height above the foot in u, below the top in v
 				texture = 0;
 				alphaBias &= 0xffffff;
-				su0 = SurfaceMaterials.fakeHeight(span[0], verticesY[triangleA]);
-				su1 = SurfaceMaterials.fakeHeight(span[0], verticesY[triangleB]);
-				su2 = SurfaceMaterials.fakeHeight(span[0], verticesY[triangleC]);
-				sv0 = SurfaceMaterials.fakeHeight(verticesY[triangleA], span[1]);
-				sv1 = SurfaceMaterials.fakeHeight(verticesY[triangleB], span[1]);
-				sv2 = SurfaceMaterials.fakeHeight(verticesY[triangleC], span[1]);
+				// the depth its colour goes by in u and v (material_target.glsl)
+				su0 = sv0 = su1 = sv1 = su2 = sv2 = SurfaceMaterials.FAKE_DEPTH;
 				WaterMap w = water;
 				if (w != null && WaterMap.fallFace(vx1, vy1, vz1, vx2, vy2, vz2, vx3, vy3, vz3))
 				{
-					// a fall shows the beds of the pools it pours from and lands in, as they show under their water
-					color1 = fallColor(w, vx1, vy1, vz1, color1);
-					color2 = fallColor(w, vx2, vy2, vz2, color2);
-					color3 = fallColor(w, vx3, vy3, vz3, color3);
+					// a fall shows the water it runs between, at its top and its foot (fallWater)
+					long f1 = fallWater(w, vx1, vy1, vz1, color1, su0), f2 = fallWater(w, vx2, vy2, vz2, color2, su1);
+					long f3 = fallWater(w, vx3, vy3, vz3, color3, su2);
+					color1 = (int) (f1 >> 32);
+					color2 = (int) (f2 >> 32);
+					color3 = (int) (f3 >> 32);
+					su0 = sv0 = (int) f1;
+					su1 = sv1 = (int) f2;
+					su2 = sv2 = (int) f3;
 				}
 			}
 			texture |= bits;
@@ -805,15 +802,16 @@ public class ModelUploader
 	public static volatile WaterMap water;
 
 	/**
-	 * A fall's vertex at scene local (x, y, z): the colour of the bed of the water corner it belongs to (WaterMap.fallCorner,
-	 * as the scene uploader drew it), or its own without one.
+	 * A fall's vertex at scene local (x, y, z): of the water corner it belongs to (WaterMap.fallCorner), the bed's colour as
+	 * the scene uploader drew it (high int) and the depth its colour goes by (low int); its own colour and depth without
+	 * one.
 	 */
-	private static int fallColor(WaterMap w, float x, float y, float z, int own)
+	private static long fallWater(WaterMap w, float x, float y, float z, int color, int depth)
 	{
 		int off = LuminaPlugin.SCENE_OFFSET << 7;
 		int[] c = w.fallCorner((int) x + off, (int) y, (int) z + off);
 		int hsl = c == null ? -1 : w.bedCorner(c[0], c[1]);
-		return hsl < 0 ? own : hsl;
+		return (long) (hsl < 0 ? color : hsl) << 32 | (c == null ? depth : w.colorDepth(c[0], c[1])) & 0xffffffffL;
 	}
 
 	static void put2222(IntBuffer vb, int x, int y, int z, int w)
