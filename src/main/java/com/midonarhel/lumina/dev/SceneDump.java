@@ -504,22 +504,19 @@ public final class SceneDump
 			d.put("buildings.floors", buildings.getFloors());
 			d.put("buildings.roofs", buildings.getRoofs());
 			d.put("buildings.drawnWalls", buildings.getDrawnWalls());
-			// what the walls are built from, so the bench can build them again (WallMap.build): the collision flags, the
-			// diagonal walls, and the drawn walls scanned now on the client thread
-			d.put("buildings.flags", buildings.getFlags());
-			d.put("buildings.diagonals", buildings.getDiagonals());
-			Scene top = plugin.client.getTopLevelWorldView() != null ? plugin.client.getTopLevelWorldView().getScene() : null;
-			boolean[] drawnScan = null;
+			// what the buildings are made from, so the bench can build them again (SceneObjects)
+			WorldView topView = plugin.client.getTopLevelWorldView();
+			SceneObjects objects = null;
 			try
 			{
-				drawnScan = top != null ? com.midonarhel.lumina.visibility.BuildingLights.scanDrawnWalls(top) : null;
+				objects = topView != null && topView.getScene() != null ? SceneObjects.record(topView) : null;
 			}
 			catch (RuntimeException e)
 			{
-				// a scene with no tiles to scan (the offline renderer's fakes)
-				log.debug("no drawn-wall scan: {}", e.toString());
+				// a scene with no tiles to record (the offline renderer's fakes)
+				log.debug("no scene objects: {}", e.toString());
 			}
-			d.put("buildings.drawnScan", drawnScan);
+			d.put("sceneObjects", objects);
 		}
 		// what SceneLights.collect gave: the test light is the frame's own (LampFrame.collectLights adds it again)
 		List<PointLight> collected = new ArrayList<>(plugin.frameLights);

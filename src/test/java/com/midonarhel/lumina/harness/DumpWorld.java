@@ -30,6 +30,8 @@ public final class DumpWorld
 {
 	public final SceneDump.Loaded dump;
 	public final SceneDump.Manifest m;
+	// the scene's tiles faked from the dump's scene objects, null where it holds none
+	public final SceneObjectFakes sceneObjects;
 	public final Map<String, String> settings = new HashMap<>();
 	public final Map<Integer, WorldView> worldViews = new HashMap<>();
 	public final Map<Integer, Scene> scenes = new HashMap<>();
@@ -58,6 +60,11 @@ public final class DumpWorld
 			}
 		}
 		config = config();
+		// the scene's tiles and collision maps, where the dump holds what they are made of (for buildings=rebuild)
+		Object objects = dump.derived.get("sceneObjects");
+		sceneObjects = objects instanceof com.midonarhel.lumina.dev.SceneObjects
+			? new SceneObjectFakes((com.midonarhel.lumina.dev.SceneObjects) objects, com.midonarhel.lumina.LuminaPlugin.SCENE_OFFSET)
+			: null;
 		for (int[] view : dump.views)
 		{
 			int id = view[0];
@@ -93,6 +100,12 @@ public final class DumpWorld
 		Map<String, Object> a = getters(prefix);
 		int[] o = sceneOverrides.getOrDefault(id, new int[4]);
 		a.put("getWorldViewId", id);
+		if (id == WorldView.TOPLEVEL && sceneObjects != null)
+		{
+			a.put("getExtendedTiles", sceneObjects.tiles);
+			a.put("getBaseX", m.baseX);
+			a.put("getBaseY", m.baseY);
+		}
 		a.put("getOverrideHue", o[0]);
 		a.put("getOverrideSaturation", o[1]);
 		a.put("getOverrideLuminance", o[2]);
@@ -122,6 +135,10 @@ public final class DumpWorld
 		}
 		if (id == WorldView.TOPLEVEL)
 		{
+			if (sceneObjects != null)
+			{
+				a.put("getCollisionMaps", sceneObjects.maps);
+			}
 			a.put("getPlane", m.plane);
 			a.put("getBaseX", m.baseX);
 			a.put("getBaseY", m.baseY);

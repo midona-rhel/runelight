@@ -85,8 +85,8 @@ public final class RenderDump
 				case "step":
 					o.frameSeconds = Double.parseDouble(v);
 					break;
-				case "walls":
-					o.walls = v;
+				case "buildings":
+					o.buildings = v;
 					break;
 				case "probe":
 					for (String t : v.split(";"))

@@ -43,10 +43,10 @@ SKYLIGHT, LIGHTING, SHADOWS, AMBIENT_OCCLUSION, DEPTH; `views=all`, `views=none`
 numbers against `reference.png`. Options: `hour=h` (holds the hour: dayCycleMinutes 0, fixedHour h), `yaw=`, `pitch=`,
 `scale=` (the camera; with yaw or pitch changed the whole scene's zones are drawn, as the client only drew those in its
 frustum; dynamic models are the client's), `warmup=s` and `step=s` (seconds of frames before the dump's time, default 6
-and 0.05), `walls=dumped|flags|drawn` (the walls as the client had them; built again from the dump's collision flags
-and diagonal walls, every edge they block; or only where a drawn wall stands, from the dump's own scan of the wall
-objects: dumps from 2026-11-01 on hold `buildings.flags`, `buildings.diagonals` and `buildings.drawnScan`),
-`probe=x,y;x,y` (prints the walls on those world tiles' edges), and any setting as `key=value`.
+and 0.05), `buildings=rebuild` (the buildings — walls, rooms, floors, roofs,
+the drawn walls — built again by BuildingLights from the dump's scene objects, faked as the scene's tiles, instead of
+restored as the client had them; dumps from 2026-11-01 on hold `sceneObjects`), `probe=x,y;x,y` (prints the walls on
+those world tiles' edges), and any setting as `key=value`.
 
 ### How it works (`src/test/java/com/midonarhel/lumina/harness/`)
 

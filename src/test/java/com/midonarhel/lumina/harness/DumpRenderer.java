@@ -63,9 +63,9 @@ public final class DumpRenderer implements AutoCloseable
 		public Integer cameraYaw, cameraPitch, scale;
 		// the hour to hold (dayCycleMinutes 0, fixedHour), null for the dump's clock
 		public Integer hour;
-		// the walls: "dumped" as the client had them; "flags" built again from the dump's collision flags and diagonal
-		// walls, every edge the flags block; "drawn" the same where a drawn wall stands (the dump's own scan)
-		public String walls = "dumped";
+		// the buildings (walls, rooms, floors, roofs, drawn walls): "dumped" as the client had them; "rebuild" built again
+		// by BuildingLights from the dump's scene objects (DumpWorld's faked tiles), as the client builds them
+		public String buildings = "dumped";
 		// world tiles (x, y) whose walls are printed
 		public final List<int[]> probes = new ArrayList<>();
 	}
@@ -176,35 +176,43 @@ public final class DumpRenderer implements AutoCloseable
 		plugin.sceneLights.replay((List<PointLight>) d.getOrDefault("lamps.collected", new ArrayList<>()),
 			(List<PointLight>) d.getOrDefault("lamps.steady", new ArrayList<>()));
 		plugin.buildingLights = new BuildingLights(world.client);
-		WallMap walls = (WallMap) d.get("buildings.walls");
-		if (!options.walls.equals("dumped"))
+		if (options.buildings.equals("rebuild"))
 		{
-			int[][][] flags = (int[][][]) d.get("buildings.flags");
-			if (flags == null)
+			if (world.sceneObjects == null)
 			{
-				throw new IllegalStateException("walls=" + options.walls + ": the dump has no collision flags (buildings.flags)");
+				throw new IllegalStateException("buildings=rebuild: the dump has no scene objects (sceneObjects)");
 			}
-			boolean[] drawn = options.walls.equals("drawn") ? (boolean[]) d.get("buildings.drawnScan") : null;
-			if (options.walls.equals("drawn") && drawn == null)
+			// as the client does on a scene load: the analysis on the buildings worker, taken on this (the client) thread
+			plugin.buildingLights.rebuild();
+			long until = System.nanoTime() + 60_000_000_000L;
+			while (plugin.buildingLights.getWalls() == null)
 			{
-				throw new IllegalStateException("walls=drawn: the dump has no drawn-wall scan (buildings.drawnScan)");
+				if (System.nanoTime() > until)
+				{
+					throw new IllegalStateException("buildings=rebuild: no walls after 60 s (the buildings worker threw?)");
+				}
+				java.util.concurrent.locks.LockSupport.parkNanos(5_000_000);
+				plugin.buildingLights.apply();
 			}
-			walls = WallMap.build(flags, (List<WallMap.Diagonal>) d.get("buildings.diagonals"), drawn,
-				net.runelite.api.Constants.EXTENDED_SCENE_SIZE, com.midonarhel.lumina.LuminaPlugin.SCENE_OFFSET,
-				walls != null ? walls.scene : 1);
 		}
+		else
+		{
+			plugin.buildingLights.restore(top, (BuildingDetector.Result) d.get("buildings.result"),
+				(BuildingDetector.Result) d.get("buildings.coarse"), (RoomMap) d.get("buildings.rooms"),
+				(WallMap) d.get("buildings.walls"), (byte[]) d.get("buildings.floors"),
+				(com.midonarhel.lumina.visibility.RoofMap) d.get("buildings.roofs"), (boolean[]) d.get("buildings.drawnWalls"));
+		}
+		WallMap walls = plugin.buildingLights.getWalls();
 		for (int[] t : options.probes)
 		{
 			int x = t[0] - dump.manifest.baseX + com.midonarhel.lumina.LuminaPlugin.SCENE_OFFSET;
 			int y = t[1] - dump.manifest.baseY + com.midonarhel.lumina.LuminaPlugin.SCENE_OFFSET;
-			System.out.printf("walls (%s) at %d,%d: N %b E %b S %b W %b%n", options.walls, t[0], t[1],
-				walls != null && walls.edge(0, x, y, WallMap.NORTH), walls != null && walls.edge(0, x, y, WallMap.EAST),
-				walls != null && walls.edge(0, x, y, WallMap.SOUTH), walls != null && walls.edge(0, x, y, WallMap.WEST));
+			int bits = walls == null ? 0 : (walls.edge(0, x, y, WallMap.NORTH) ? WallMap.NORTH : 0)
+				| (walls.edge(0, x, y, WallMap.EAST) ? WallMap.EAST : 0) | (walls.edge(0, x, y, WallMap.SOUTH) ? WallMap.SOUTH : 0)
+				| (walls.edge(0, x, y, WallMap.WEST) ? WallMap.WEST : 0) | walls.get(0, x, y) & (WallMap.DIAG_SW_NE | WallMap.DIAG_NW_SE);
+			// as LampWalls packs a tile for lamp.glsl: N 1, E 2, S 4, W 8, the diagonals 16 and 32
+			System.out.printf("lamp bits (buildings %s) at %d,%d plane 0: %d%n", options.buildings, t[0], t[1], bits);
 		}
-		plugin.buildingLights.restore(top, (BuildingDetector.Result) d.get("buildings.result"),
-			(BuildingDetector.Result) d.get("buildings.coarse"), (RoomMap) d.get("buildings.rooms"),
-			walls, (byte[]) d.get("buildings.floors"),
-			(com.midonarhel.lumina.visibility.RoofMap) d.get("buildings.roofs"), (boolean[]) d.get("buildings.drawnWalls"));
 
 		// the zones into buffers of the loader's pool, then swapped in as a load's
 		for (int v = 0; v < dump.views.size(); ++v)
