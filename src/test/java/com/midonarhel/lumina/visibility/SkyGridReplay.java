@@ -18,8 +18,8 @@ import org.junit.Test;
  * Replays a `::runelight skydump` (SkyGridDump): reads the sky grid's inputs, traces them again with the current
  * SkyGrid, and evaluates skylight_ao.glsl's skylightVisibility for the ground around the player on the CPU, from the
  * dumped texels (read as the shader before SkyGrid.roofShares read them: the market dump is from before it) and from
- * the new trace, printed as maps with how the ground steps across tile edges. Runs only when the dump named by
- * -Dskydump (default ~/.runelite/lumina/dumps/skygrid-market.bin.gz) exists. Shader is a copy of the GLSL: change
+ * the new trace, printed as maps with how the ground steps across tile edges, for every skygrid-*.bin.gz in
+ * ~/.runelite/lumina/dumps (none there: it does nothing). Shader is a copy of the GLSL: change
  * both together.
  */
 public class SkyGridReplay
@@ -149,6 +149,10 @@ public class SkyGridReplay
 		// the shader before SkyGrid.roofShares (its texels: slice 0's part 3 holds the tile's roof bits, read per
 		// tile), which also blended cover in two steps
 		boolean before;
+		// the tile roof bits the shader read before roofShares, [z * size + x], from the dump's rooms
+		int[] tileRoofs;
+		// the last skylight()'s terms, for the breakdown
+		float lastOriginal, lastSurface, lastCover, lastField;
 		float skyExterior;
 
 		Shader(short[] tex, int resolution, float[] field, WallMap walls)
@@ -279,7 +283,7 @@ public class SkyGridReplay
 			float[] roomFloors = {meta(tx, tz, fx, fz, 4 * size, 0), meta(tx, tz, fx, fz, 4 * size, 1), meta(tx, tz, fx, fz, 4 * size, 2), meta(tx, tz, fx, fz, 4 * size, 3)};
 			int roomPlane = 0;
 			for (int k = 1; k < 4; ++k) if (w[1] <= roomFloors[k]) roomPlane = k;
-			float exterior = before ? (((int) (t(2 * tx + 6 * size, 2 * tz, 0, 0) + 0.5f) & (1 << roomPlane)) == 0 ? 1 : 0)
+			float exterior = before ? ((tileRoofs[tz * size + tx] & (1 << roomPlane)) == 0 ? 1 : 0)
 				: 1 - meta(tx, tz, fx, fz, 6 * size, roomPlane);
 			if (exterior < 1 && n[1] < -0.3f)
 			{
@@ -305,6 +309,8 @@ public class SkyGridReplay
 				if (original < 0) original = Math.max(0, level(tx, tz, fx, fz, 9, 0, n, w));
 			}
 			skyExterior = exterior;
+			lastOriginal = original;
+			lastSurface = -1;
 			if (exterior > 0)
 			{
 				float[] a = surface(tx, tz, fx, fz, lo, loD, w, n), b = surface(tx, tz, fx, fz, hi, hiD, w, n);
@@ -315,6 +321,7 @@ public class SkyGridReplay
 				ty += top[1] * sw;
 				if (ty > 0.0001f)
 				{
+					lastSurface = tv / ty;
 					float m = smoothstep(0, 0.5f, -n[1]) * exterior;
 					return original + (tv / ty - original) * m;
 				}
@@ -376,6 +383,8 @@ public class SkyGridReplay
 			float[] fl = field(o[0], o[2]);
 			float v = grid(o, n);
 			float cover = fl[1] * (1 - skyExterior);
+			lastCover = cover;
+			lastField = fl[0];
 			float outdoors = 1 - cover;
 			if (before)
 			{
@@ -483,6 +492,47 @@ public class SkyGridReplay
 		return String.format("mean %.3f, max %.3f, %d of %d over 0.1 (inside tiles: mean %.3f)", sum / n, max, over10, n, inside / m);
 	}
 
+	static int[] tileRoofs(Dump d, int size)
+	{
+		int[] out = new int[size * size];
+		for (int z = 0; z < size; ++z)
+			for (int x = 0; x < size; ++x)
+			{
+				int rx = x + d.rooms.offset, rz = z + d.rooms.offset, mask = 0;
+				for (int f = 0; f < RoomMap.PLANES; ++f) if (d.rooms.roofed[d.rooms.index(f, rx, rz)]) mask |= 1 << f;
+				out[z * size + x] = mask;
+			}
+		return out;
+	}
+
+	static String terms(Shader sh, WallMap walls, int x0, int x1, int z0, int z1)
+	{
+		StringBuilder out = new StringBuilder();
+		float[] up = {0, -1, 0};
+		for (int tz = z1; tz >= z0; --tz)
+		{
+			out.append(String.format("%3d ", tz));
+			for (int tx = x0; tx <= x1; ++tx)
+			{
+				int bits = walls.get(0, tx + walls.offset, tz + walls.offset);
+				float fx = 0.5f, fz = 0.5f;
+				if ((bits & WallMap.DIAG_SW_NE) != 0) { fx = 0.75f; fz = 0.25f; }
+				if ((bits & WallMap.DIAG_NW_SE) != 0) { fx = 0.75f; fz = 0.75f; }
+				float x = (tx + fx) * 128, z = (tz + fz) * 128;
+				float v = sh.skylight(new float[]{x, groundY(sh, x, z), z}, up);
+				out.append(String.format("%s%2d/%2d/%2d/%2d/%2d>%2d ", WallMap.split(bits) ? "*" : " ", pct(sh.lastOriginal), pct(sh.lastSurface),
+					pct(sh.skyExterior), pct(sh.lastCover), pct(sh.lastField), pct(v)));
+			}
+			out.append('\n');
+		}
+		return out.toString();
+	}
+
+	private static int pct(float v)
+	{
+		return Math.max(-9, Math.min(99, Math.round(v * 100)));
+	}
+
 	static float groundY(Shader sh, float x, float z)
 	{
 		int tx = (int) (x / 128), tz = (int) (z / 128);
@@ -551,10 +601,20 @@ public class SkyGridReplay
 	@Test
 	public void replay() throws Exception
 	{
-		Path file = Paths.get(System.getProperty("skydump",
-			System.getProperty("user.home") + "/.runelite/lumina/dumps/skygrid-market.bin.gz"));
-		Assume.assumeTrue(Files.exists(file));
-		Dump d = read(file);
+		Path dir = Paths.get(System.getProperty("user.home"), ".runelite", "lumina", "dumps");
+		Assume.assumeTrue(Files.isDirectory(dir));
+		try (java.util.stream.Stream<Path> files = Files.list(dir))
+		{
+			for (Path file : (Iterable<Path>) files.filter(f -> f.getFileName().toString().startsWith("skygrid-")).sorted()::iterator)
+			{
+				System.out.println("=== " + file.getFileName());
+				replay(read(file));
+			}
+		}
+	}
+
+	private static void replay(Dump d)
+	{
 		int cx = (int) Math.floor(d.playerX - d.voxels.baseX), cz = (int) Math.floor(d.playerZ - d.voxels.baseY);
 		float[] field = field(d, 0);
 		System.out.println("player local tile " + cx + "," + cz + " base " + d.voxels.baseX + "," + d.voxels.baseY);
@@ -573,13 +633,16 @@ public class SkyGridReplay
 		System.out.println("retraced texels differing from the dump: " + differ + " of " + again.length
 			+ " (and " + part3 + " in slice 0's room flags)");
 		Shader now = new Shader(again, d.resolution, field, d.walls);
-		Shader before = new Shader(d.texels, d.resolution, field, d.walls);
+		Shader before = new Shader(again, d.resolution, field, d.walls);
 		before.before = true;
-		System.out.println("ground skylight from the dumped texels, as the shader read them before (x100):\n"
+		before.tileRoofs = tileRoofs(d, s.size);
+		System.out.println("ground skylight as the shader read the grid before roofShares (x100):\n"
 			+ fineMap(before, cx - 6, cx + 5, cz - 6, cz + 1));
-		System.out.println("tile-edge steps over tiles +-8 (open ground, no wall on the edge), dumped/before: " + edgeSteps(before, d.walls, cx, cz, 8)
+		System.out.println("tile-edge steps over tiles +-8 (open ground, no wall on the edge), before: " + edgeSteps(before, d.walls, cx, cz, 8)
 			+ "; retraced/now: " + edgeSteps(now, d.walls, cx, cz, 8));
 		System.out.println(tileTable(d, now, cx, cz, 8));
+		System.out.println("terms at tile centres (diagonal tiles: the half away from the SW corner), now: trace/surface/exterior/cover/field -> value\n"
+			+ terms(now, d.walls, cx - 5, cx + 4, cz - 5, cz + 3));
 		System.out.println("ground skylight retraced (0-9):\n" + groundMap(now, null, cx, cz, 8, 4));
 		System.out.println("ground skylight retraced x100, 2 x 2 per tile, tiles " + (cx - 6) + ".." + (cx + 5) + " by " + (cz - 6) + ".." + (cz + 1) + ":\n" + fineMap(now, cx - 6, cx + 5, cz - 6, cz + 1));
 	}
