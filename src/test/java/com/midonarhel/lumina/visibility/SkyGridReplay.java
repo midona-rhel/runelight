@@ -194,6 +194,30 @@ public class SkyGridReplay
 			return north ? new float[]{0, 1 - fz, 1 - fx, fx + fz - 1} : new float[]{1 - fx - fz, fx, fz, 0};
 		}
 
+		/** skylight_ao.glsl's skyRoofShare: the corners of the point's own half, with the triangle weights. */
+		float roofShare(int tx, int tz, float fx, float fz, int diagonal, int plane)
+		{
+			boolean north = diagonal == 1 ? fz > fx : fx + fz > 1;
+			int slice = diagonal != 0 && !north ? SkyGrid.HALF_ROOFS : 0;
+			float[] wt = weights(diagonal, fx, fz);
+			float share = 0;
+			for (int k = 0; k < 4; ++k)
+				if (wt[k] > 0) share += wt[k] * t(2 * tx + (k & 1) + 6 * size, 2 * tz + (k >> 1), slice, plane);
+			return share;
+		}
+
+		/** skylight_ao.glsl's skyDiagonalAt. */
+		int diagonalAt(float[] w)
+		{
+			float txf = w[0] * scale / 128, tzf = w[2] * scale / 128;
+			if (txf < 0 || tzf < 0 || txf >= size || tzf >= size) return 0;
+			int tx = (int) Math.floor(txf), tz = (int) Math.floor(tzf);
+			float fx = txf - tx, fz = tzf - tz;
+			int floorMask = (int) (meta(tx, tz, fx, fz, 2 * size, 0) + 0.5f), storey = 0;
+			for (int k = 1; k < 3; ++k) if ((floorMask & (1 << k)) != 0 && w[1] < meta(tx, tz, fx, fz, 0, k)) storey = k;
+			return diag((int) (meta(tx, tz, fx, fz, 0, 3) + 0.5f), storey * 3);
+		}
+
 		float level(int tx, int tz, float fx, float fz, int level, int diagonal, float[] n, float[] w)
 		{
 			boolean north = diagonal == 1 ? fz > fx : fx + fz > 1;
@@ -204,7 +228,7 @@ public class SkyGridReplay
 			for (int k = 0; k < 4; ++k)
 			{
 				if (wt[k] <= 0) continue;
-				int x = half + 2 * tx + (k & 1), y = 2 * tz + (k >> 1), s = 1 + level;
+				int x = half + 2 * tx + (k & 1), y = 2 * tz + (k >> 1), s = SkyGrid.VISIBILITY + level;
 				if (t(x, y, s, 0) < 0) continue;
 				float sx = (tx + (k & 1)) * (128f / scale) + t(x + 2 * size, y, s, 1), sy = t(x + 2 * size, y, s, 2),
 					sz = (tz + (k >> 1)) * (128f / scale) + t(x + 2 * size, y, s, 3);
@@ -230,7 +254,7 @@ public class SkyGridReplay
 			for (int k = 0; k < 4; ++k)
 			{
 				if (wt[k] <= 0) continue;
-				int x = half + 2 * tx + (k & 1), y = 2 * tz + (k >> 1), s = 1 + level;
+				int x = half + 2 * tx + (k & 1), y = 2 * tz + (k >> 1), s = SkyGrid.VISIBILITY + level;
 				float a0 = t(x, y, s, 0);
 				if (a0 < 0) continue;
 				float sx = (tx + (k & 1)) * (128f / scale) + t(x + 2 * size, y, s, 1), sy = t(x + 2 * size, y, s, 2),
@@ -284,7 +308,7 @@ public class SkyGridReplay
 			int roomPlane = 0;
 			for (int k = 1; k < 4; ++k) if (w[1] <= roomFloors[k]) roomPlane = k;
 			float exterior = before ? ((tileRoofs[tz * size + tx] & (1 << roomPlane)) == 0 ? 1 : 0)
-				: 1 - meta(tx, tz, fx, fz, 6 * size, roomPlane);
+				: 1 - roofShare(tx, tz, fx, fz, loD, roomPlane);
 			if (exterior < 1 && n[1] < -0.3f)
 			{
 				float top = meta(tx, tz, fx, fz, 2 * size, 1);
@@ -379,6 +403,21 @@ public class SkyGridReplay
 					if (toEdge < SKY_EDGE_REACH) step = (toEdge + 1) * Math.signum(d);
 				}
 				o[axis == 0 ? 0 : 2] += step;
+			}
+			if (!before && n[1] < 0.1f)
+			{
+				int diagonal = diagonalAt(o);
+				if (diagonal != 0)
+				{
+					float ax = diagonal == 1 ? -0.70710678f : 0.70710678f, az = 0.70710678f, cell = 128f / scale;
+					float s = (o[0] - ((float) Math.floor(o[0] / cell) + 0.5f) * cell) * ax + (o[2] - ((float) Math.floor(o[2] / cell) + 0.5f) * cell) * az;
+					float d = n[0] * ax + n[2] * az;
+					if (Math.abs(d) > SKY_SQUARE && s * d < 0 && Math.abs(s) < SKY_EDGE_REACH)
+					{
+						o[0] += ax * (Math.signum(d) - s);
+						o[2] += az * (Math.signum(d) - s);
+					}
+				}
 			}
 			float[] fl = field(o[0], o[2]);
 			float v = grid(o, n);
@@ -532,6 +571,95 @@ public class SkyGridReplay
 		return out.toString();
 	}
 
+	/**
+	 * Every diagonal-wall tile within radius: the ground at each half's centre, and the panel's two faces (each looking
+	 * into one half, 120 above the ground) with the panel on the diagonal and 11 units off it either way (Ardougne's
+	 * stand 11 units outside), before | now. Values x100, half 0 (north) first.
+	 */
+	static String diagonalFaces(Shader before, Shader now, WallMap walls, int cx, int cz, int radius)
+	{
+		StringBuilder out = new StringBuilder("diagonal tiles (kind: ground h0/h1; faces into h0/h1 with the panel at -11, 0, +11 toward h0), before | now:\n");
+		for (int tz = cz - radius; tz <= cz + radius; ++tz)
+			for (int tx = cx - radius; tx <= cx + radius; ++tx)
+			{
+				int bits = walls.get(0, tx + walls.offset, tz + walls.offset);
+				if (!WallMap.split(bits)) continue;
+				boolean slash = (bits & WallMap.DIAG_SW_NE) != 0;
+				float ax = slash ? -0.70710678f : 0.70710678f, az = 0.70710678f;
+				float mx = (tx + 0.5f) * 128, mz = (tz + 0.5f) * 128;
+				out.append(String.format("  (%d,%d) %s:", tx, tz, slash ? "/" : "\\"));
+				for (Shader sh : new Shader[]{before, now})
+				{
+					StringBuilder row = new StringBuilder();
+					for (int h = 0; h < 2; ++h)
+					{
+						float sg = h == 0 ? 1 : -1, x = mx + ax * sg * 30, z = mz + az * sg * 30;
+						row.append(h == 0 ? " ground " : "/").append(pct(sh.skylight(new float[]{x, groundY(sh, x, z), z}, new float[]{0, -1, 0})));
+					}
+					row.append(" faces");
+					for (float off : new float[]{-11, 0, 11})
+						for (int h = 0; h < 2; ++h)
+						{
+							float sg = h == 0 ? 1 : -1, x = mx + ax * (off + sg * 0.5f), z = mz + az * (off + sg * 0.5f);
+							float v = sh.skylight(new float[]{x, groundY(sh, x, z) - 120, z}, new float[]{ax * sg, 0, az * sg});
+							row.append(h == 0 ? " " : "/").append(pct(v));
+						}
+					out.append(row).append(sh == before ? "  |" : "\n");
+				}
+			}
+		return out.toString();
+	}
+
+	/** The ground around the diagonal-wall tiles near (cx, cz), 8 x 8 samples a tile, before and now side by side. */
+	static String diagonalMap(Shader before, Shader now, WallMap walls, int cx, int cz, int radius)
+	{
+		int x0 = Integer.MAX_VALUE, x1 = Integer.MIN_VALUE, z0 = Integer.MAX_VALUE, z1 = Integer.MIN_VALUE;
+		for (int tz = cz - radius; tz <= cz + radius; ++tz)
+			for (int tx = cx - radius; tx <= cx + radius; ++tx)
+				if (WallMap.split(walls.get(0, tx + walls.offset, tz + walls.offset)) && Math.abs(tx - cx) + Math.abs(tz - cz) <= 6)
+				{
+					x0 = Math.min(x0, tx - 1);
+					x1 = Math.max(x1, tx + 1);
+					z0 = Math.min(z0, tz - 1);
+					z1 = Math.max(z1, tz + 1);
+				}
+		if (x1 < x0) return "none\n";
+		StringBuilder out = new StringBuilder();
+		float[] up = {0, -1, 0};
+		for (int tz = z1; tz >= z0; --tz)
+		{
+			for (int j = 7; j >= 0; --j)
+			{
+				for (Shader sh : new Shader[]{before, now})
+				{
+					out.append(j == 7 ? String.format("%3d ", tz) : "    ");
+					for (int tx = x0; tx <= x1; ++tx)
+					{
+						int bits = walls.get(0, tx + walls.offset, tz + walls.offset);
+						for (int i = 0; i < 8; ++i)
+						{
+							float fx = (i + 0.5f) / 8, fz = (j + 0.5f) / 8;
+							boolean line = (bits & WallMap.DIAG_SW_NE) != 0 && Math.abs(fx - fz) < 0.07f
+								|| (bits & WallMap.DIAG_NW_SE) != 0 && Math.abs(fx + fz - 1) < 0.07f;
+							if (line)
+							{
+								out.append('.');
+								continue;
+							}
+							float x = (tx + fx) * 128, z = (tz + fz) * 128;
+							float v = sh.skylight(new float[]{x, groundY(sh, x, z), z}, up);
+							out.append((char) ('0' + Math.max(0, Math.min(9, (int) (v * 10)))));
+						}
+						out.append(WallMap.split(bits) ? '*' : ' ');
+					}
+					out.append("   ");
+				}
+				out.append('\n');
+			}
+		}
+		return out.toString();
+	}
+
 	static int[] tileRoofs(Dump d, int size)
 	{
 		int[] out = new int[size * size];
@@ -661,15 +789,17 @@ public class SkyGridReplay
 		SkyGrid s = retrace(d);
 		short[] again = new short[s.texels.capacity()];
 		s.texels.duplicate().get(again);
-		// slice 0's part 3 (the room flags) is laid out by the current SkyGrid, which a dump from another build may not
+		// the room flags (part 3 of the first slices) and where the visibility starts are laid out by the current
+		// SkyGrid, which a dump from another build may not: visibility is compared slice for slice from its first
+		int sliceSize = s.textureWidth * s.textureHeight * 4, dumpFirst = d.texels.length / sliceSize - SkyGrid.LEVELS;
 		int differ = 0, part3 = 0;
-		for (int i = 0; i < again.length; ++i)
-		{
-			if (again[i] == d.texels[i]) continue;
-			int texel = i / 4, x = texel % s.textureWidth, slice = texel / (s.textureWidth * s.textureHeight);
-			if (slice == 0 && x >= 6 * s.size) part3++;
-			else differ++;
-		}
+		for (int i = 0; i < sliceSize; ++i)
+			if (again[i] != d.texels[i] && (i / 4) % s.textureWidth < 6 * s.size) differ++;
+		for (int level = 0; level < SkyGrid.LEVELS; ++level)
+			for (int i = 0; i < sliceSize; ++i)
+				if (again[(SkyGrid.VISIBILITY + level) * sliceSize + i] != d.texels[(dumpFirst + level) * sliceSize + i]) differ++;
+		for (int i = 0; i < sliceSize; ++i)
+			if (again[i] != d.texels[i] && (i / 4) % s.textureWidth >= 6 * s.size) part3++;
 		System.out.println("retraced texels differing from the dump: " + differ + " of " + again.length
 			+ " (and " + part3 + " in slice 0's room flags)");
 		Shader now = new Shader(again, d.resolution, field, d.walls);
@@ -682,6 +812,8 @@ public class SkyGridReplay
 			+ "; retraced/now: " + edgeSteps(now, d.walls, cx, cz, 8));
 		System.out.println(tileTable(d, now, cx, cz, 8));
 		System.out.println(wallFaces(now, d, cx, cz, 8));
+		System.out.println(diagonalFaces(before, now, d.walls, cx, cz, 8));
+		System.out.println("diagonal tiles, 8 x 8 a tile, x10 (. on the wall line), before | now:\n" + diagonalMap(before, now, d.walls, cx, cz, 8));
 		System.out.println("terms at tile centres (diagonal tiles: the half away from the SW corner), now: trace/surface/exterior/cover/field -> value\n"
 			+ terms(now, d.walls, cx - 5, cx + 4, cz - 5, cz + 3));
 		System.out.println("ground skylight retraced (0-9):\n" + groundMap(now, null, cx, cz, 8, 4));

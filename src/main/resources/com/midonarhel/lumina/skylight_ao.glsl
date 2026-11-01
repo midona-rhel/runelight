@@ -8,8 +8,9 @@
 
 uniform int skylightOn;
 // RGBA16F: four horizontal parts, two per triangle half (up/+x/-x/+z, then -z).
-// Slice 0: floor heights/diagonals, floor flags, room floor heights, each plane's roof share at the corner.
-// The final slice samples above captured geometry. Visibility slices store sample x/y/z in the -z part's g/b/a.
+// Slice 0: floor heights/diagonals, floor flags, room floor heights, each plane's roof share at the corner (half 0);
+// slice 1's part 3: the roof shares of half 1. Visibility from slice 2 (SkyGrid.VISIBILITY); the final slice samples
+// above captured geometry. Visibility slices store sample x/y/z in the -z part's g/b/a.
 uniform sampler3D skyGrid;
 uniform float skyGridScale;
 uniform vec3 skyGridCamera;  // the camera in the grid's coordinates: tile 0 at 0
@@ -30,7 +31,9 @@ uniform vec4 skyFieldMap;
 #define SKY_GRID_TILES 104.0
 #define SKY_GRID_W (8.0 * SKY_GRID_TILES)
 #define SKY_GRID_H (2.0 * SKY_GRID_TILES)
-#define SKY_GRID_D 11.0
+#define SKY_GRID_D 12.0
+// the first visibility slice (SkyGrid.VISIBILITY)
+#define SKY_GRID_VISIBILITY 2.0
 #define SKY_GRID_LOW 40.0
 #define SKY_GRID_STEP 72.0
 // Nudge off the surface to choose its facing side at a tile boundary. A larger offset can cross
@@ -66,7 +69,7 @@ float skyGridLevel(sampler3D grid, float scale, vec2 tile, vec2 f, int level, in
   vec4 a = vec4(0.0);
   float minusZ = 0.0;
   float validWeight = 0.0;
-  float z = (1.5 + float(level)) / SKY_GRID_D;
+  float z = (SKY_GRID_VISIBILITY + 0.5 + float(level)) / SKY_GRID_D;
   {
     // Weights in SW, SE, NW, NE order; the opposite corner of each triangle has zero weight.
     vec4 weights = diagonal == 0 ? vec4((1.0-f.x)*(1.0-f.y), f.x*(1.0-f.y), (1.0-f.x)*f.y, f.x*f.y) : diagonal == 1
@@ -107,7 +110,7 @@ vec2 skySurfaceLevel(sampler3D grid, float scale, vec2 tile, vec2 f, int level, 
     if (weights[k] <= 0.0) continue;
     vec2 corner = vec2(k & 1, k >> 1);
     vec2 uv = (2.0*tile+0.5+corner)/(vec2(SKY_GRID_W,SKY_GRID_H)*scale)+vec2(halfOffset,0.0);
-    float z = (1.5+float(level))/SKY_GRID_D;
+    float z = (SKY_GRID_VISIBILITY+0.5+float(level))/SKY_GRID_D;
     vec4 a = textureLod(grid,vec3(uv,z),0.0);
     if (a.x < 0.0) continue;
     vec4 b = textureLod(grid,vec3(uv+vec2(0.25,0.0),z),0.0);
@@ -123,6 +126,37 @@ vec2 skySurfaceLevel(sampler3D grid, float scale, vec2 tile, vec2 f, int level, 
     sum+=vec2(value,1.0)*weight;
   }
   return sum;
+}
+
+// A plane's roof share at a point (SkyGrid.roofShares): the tile's four corners blended like the values, and on a
+// tile a diagonal wall splits, the point's own half only (slice 0 holds half 0's shares, slice 1 half 1's), so the
+// indoors and the outdoors either side of the wall never blend across it.
+float skyRoofShare(sampler3D grid, float scale, vec2 tile, vec2 f, int diagonal, int plane) {
+  bool north = diagonal == 1 ? f.y > f.x : f.x + f.y > 1.0;
+  float z = (diagonal != 0 && !north ? 1.5 : 0.5) / SKY_GRID_D;
+  vec4 weights = diagonal == 0 ? vec4((1.0-f.x)*(1.0-f.y), f.x*(1.0-f.y), (1.0-f.x)*f.y, f.x*f.y) : diagonal == 1
+    ? (north ? vec4(1.0 - f.y, 0.0, f.y - f.x, f.x) : vec4(1.0 - f.x, f.x - f.y, 0.0, f.y))
+    : (north ? vec4(0.0, 1.0 - f.y, 1.0 - f.x, f.x + f.y - 1.0) : vec4(1.0 - f.x - f.y, f.x, f.y, 0.0));
+  float share = 0.0;
+  for (int k = 0; k < 4; ++k) {
+    if (weights[k] <= 0.0) continue;
+    vec2 uv = (2.0 * tile + 0.5 + vec2(k & 1, k >> 1)) / (vec2(SKY_GRID_W, SKY_GRID_H) * scale) + vec2(0.75, 0.0);
+    share += weights[k] * textureLod(grid, vec3(uv, z), 0.0)[plane];
+  }
+  return share;
+}
+
+// The diagonal wall kind (0 none, 1 "/", 2 "\") of the tile at a point, on the floor it stands on, as
+// skyGridVisibility picks it.
+int skyDiagonalAt(sampler3D grid, float scale, vec3 w) {
+  vec2 t = w.xz * scale / 128.0;
+  if (any(lessThan(t, vec2(0.0))) || any(greaterThanEqual(t, vec2(SKY_GRID_TILES*scale)))) return 0;
+  vec2 uv = (2.0 * floor(t) + 0.5 + fract(t)) / (vec2(SKY_GRID_W, SKY_GRID_H)*scale);
+  vec4 meta = textureLod(grid, vec3(uv, 0.5 / SKY_GRID_D), 0.0);
+  int floorMask = int(textureLod(grid, vec3(uv + vec2(0.25, 0.0), 0.5 / SKY_GRID_D), 0.0).r + 0.5);
+  int storey = 0;
+  for (int k = 1; k < 3; ++k) if ((floorMask & (1 << k)) != 0 && w.y < meta[k]) storey = k;
+  return int(meta.w + 0.5) / (storey == 0 ? 1 : storey == 1 ? 3 : 9) % 3;
 }
 
 // how far out of doors the last skyGridVisibility found its face (a roof, a terrace, open ground: 1)
@@ -159,14 +193,13 @@ float skyGridVisibility(sampler3D grid, float scale, vec3 w, vec3 n) {
   // The extra sample is above captured geometry. Enclosed/roofed tiles on this storey
   // retain the original reconstruction, including when their roof is hidden by the renderer.
   vec4 roomFloors = textureLod(grid, vec3(uv + vec2(0.5, 0.0), 0.5 / SKY_GRID_D), 0.0);
-  // each plane's share of roof flags at the tile's corners, blended over the tile like the values and shared across
-  // open edges (SkyGrid.roofShares): the map flags whole tiles, in a staircase along a diagonal roof
-  vec4 roofed = textureLod(grid, vec3(uv + vec2(0.75, 0.0), 0.5 / SKY_GRID_D), 0.0);
   int roomPlane = 0;
   // Upward-facing roof/floor surfaces belong to the storey at their height; the one-unit
   // normal offset already selects the exposed side. Do not move a roof lip into the room below.
   for (int k = 1; k < 4; ++k) if (w.y <= roomFloors[k]) roomPlane = k;
-  float exterior = 1.0 - roofed[roomPlane];
+  // the share of roof flags here, blended like the values and shared across open edges: the map flags whole tiles,
+  // in a staircase along a diagonal roof
+  float exterior = 1.0 - skyRoofShare(grid, scale, tile, f, loDiagonal, roomPlane);
   if (exterior < 1.0 && n.y < -0.3) {
     // the highest surface over the tile, blended between its corners like the values (slice 0, part 1, g)
     float top = textureLod(grid, vec3(uv + vec2(0.25, 0.0), 0.5 / SKY_GRID_D), 0.0).g;
@@ -260,6 +293,21 @@ float skylightVisibility(vec3 p, vec3 n) {
       o.x += step;
     } else {
       o.z += step;
+    }
+  }
+  // A diagonal wall is one panel standing off its tile's diagonal (Ardougne's stand 11 units outside it), so a face
+  // of it can lie in the half it doesn't look into, and read the outdoors from inside: a face square to the diagonal,
+  // within SKY_EDGE_REACH of it on the far side from where it looks, reads the half it faces, as a face on a
+  // straight wall reads the tile it faces.
+  if (n.y < 0.1) {
+    vec3 gd = o + skyGridCamera;
+    int diagonal = skyDiagonalAt(skyGrid, scale, gd);
+    if (diagonal != 0) {
+      // toward half 0 (north-west of "/", north-east of "\"), and the point's distance from the diagonal along it
+      vec2 axis = diagonal == 1 ? vec2(-0.70710678, 0.70710678) : vec2(0.70710678, 0.70710678);
+      float cell = 128.0 / scale;
+      float s = dot(gd.xz - (floor(gd.xz / cell) + 0.5) * cell, axis), d = dot(n.xz, axis);
+      if (abs(d) > SKY_SQUARE && s * d < 0.0 && abs(s) < SKY_EDGE_REACH) o.xz += axis * (sign(d) - s);
     }
   }
   vec2 field = skyFieldOn == 1 ? skyFieldVisibility(o) : vec2(0.0);

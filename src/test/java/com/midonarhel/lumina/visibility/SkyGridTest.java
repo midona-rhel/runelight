@@ -69,7 +69,7 @@ public class SkyGridTest
 		int meta = ((2 * tz) * SkyGrid.TEX_W + 2 * tx) * 4 + 3;
 		int half = Half.fromHalf(s.texels.get(meta)) % 3 != 0 && j == 0 ? 1 : 0;
 		int x = half * 4 * SkyGrid.SIZE + (lobe == MINUS_Z ? 2 * SkyGrid.SIZE : 0) + 2 * tx + i, y = 2 * tz + j;
-		int t = (((1 + height) * SkyGrid.TEX_H + y) * SkyGrid.TEX_W + x) * 4 + (lobe == MINUS_Z ? 0 : lobe);
+		int t = (((SkyGrid.VISIBILITY + height) * SkyGrid.TEX_H + y) * SkyGrid.TEX_W + x) * 4 + (lobe == MINUS_Z ? 0 : lobe);
 		return Half.fromHalf(s.texels.get(t));
 	}
 
