@@ -502,6 +502,8 @@ public final class SceneDump
 			d.put("buildings.rooms", buildings.getRooms());
 			d.put("buildings.walls", buildings.getWalls());
 			d.put("buildings.floors", buildings.getFloors());
+			d.put("buildings.roofs", buildings.getRoofs());
+			d.put("buildings.drawnWalls", buildings.getDrawnWalls());
 		}
 		// what SceneLights.collect gave: the test light is the frame's own (LampFrame.collectLights adds it again)
 		List<PointLight> collected = new ArrayList<>(plugin.frameLights);

@@ -207,6 +207,15 @@ public class BuildingLights
 	public void restore(Scene scene, BuildingDetector.Result result, BuildingDetector.Result coarse, RoomMap rooms,
 		WallMap walls, byte[] floors)
 	{
+		restore(scene, result, coarse, rooms, walls, floors, null, null);
+	}
+
+	/** As the scene dump has them, the roofs and drawn walls too (null: none). */
+	public void restore(Scene scene, BuildingDetector.Result result, BuildingDetector.Result coarse, RoomMap rooms,
+		WallMap walls, byte[] floors, RoofMap roofs, boolean[] drawn)
+	{
+		this.roofs = roofs;
+		drawnWalls = drawn;
 		pending.set(null);
 		builtFor = scene;
 		builtBaseX = scene.getBaseX();
@@ -216,6 +225,12 @@ public class BuildingLights
 		this.rooms = rooms;
 		this.walls = walls;
 		filledTiles = floors;
+	}
+
+	/** Per extended tile, whether a drawn wall object stands there (drawnWalls), for the scene dump. */
+	public boolean[] getDrawnWalls()
+	{
+		return drawnWalls;
 	}
 
 	/** The coarse analysis (before the walls split it), for the scene dump. */
@@ -391,7 +406,7 @@ public class BuildingLights
 				{
 					Tile tile = tiles[plane][x][y];
 					WallObject w = tile != null ? tile.getWallObject() : null;
-					if (w != null && (w.getRenderable1() != null || w.getRenderable2() != null))
+					if (w != null && (hasModel(w.getRenderable1()) || hasModel(w.getRenderable2())))
 					{
 						drawn[(plane * size + x) * size + y] = true;
 					}
@@ -399,6 +414,13 @@ public class BuildingLights
 			}
 		}
 		return drawn;
+	}
+
+	/** Whether the renderable draws anything: a model with vertices (wall object 85 by Ardougne's stalls has none). */
+	private static boolean hasModel(Renderable r)
+	{
+		Model m = r instanceof Model ? (Model) r : r != null ? r.getModel() : null;
+		return m != null && m.getVerticesCount() > 0;
 	}
 
 	private static void addDiagonal(GameObject go, Tile tile, Map<GameObject, WallMap.Diagonal> into)
@@ -413,7 +435,7 @@ public class BuildingLights
 			return;
 		}
 		Renderable r = go.getRenderable();
-		if (r == null)
+		if (!hasModel(r))
 		{
 			// a wall nobody sees
 			return;

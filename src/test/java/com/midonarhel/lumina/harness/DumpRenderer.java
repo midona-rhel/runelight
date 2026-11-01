@@ -173,7 +173,8 @@ public final class DumpRenderer implements AutoCloseable
 		plugin.buildingLights = new BuildingLights(world.client);
 		plugin.buildingLights.restore(top, (BuildingDetector.Result) d.get("buildings.result"),
 			(BuildingDetector.Result) d.get("buildings.coarse"), (RoomMap) d.get("buildings.rooms"),
-			(WallMap) d.get("buildings.walls"), (byte[]) d.get("buildings.floors"));
+			(WallMap) d.get("buildings.walls"), (byte[]) d.get("buildings.floors"),
+			(com.midonarhel.lumina.visibility.RoofMap) d.get("buildings.roofs"), (boolean[]) d.get("buildings.drawnWalls"));
 
 		// the zones into buffers of the loader's pool, then swapped in as a load's
 		for (int v = 0; v < dump.views.size(); ++v)
