@@ -390,6 +390,10 @@ public final class Composite
 		glScissor(r[0], r[1], Math.max(r[2] - r[0], 0), Math.max(r[3] - r[1], 0));
 	}
 
+	// developer: GL_TIME_ELAPSED queries, when set, around the AO pass's draw (the skylight's) and the full composite's
+	// (harness GpuCostProbe); null otherwise
+	public static int[] passTimers;
+
 	public void draw()
 	{
 		int width = plugin.lastStretchedCanvasWidth;
@@ -488,7 +492,14 @@ public final class Composite
 			plugin.frameSkylight = plugin.skyGrid.bindAo(SKY_GRID_UNIT, aoScene, plugin.frameCameraX, plugin.frameCameraY, plugin.frameCameraZ)
 				&& !com.midonarhel.lumina.dev.Commands.skylightOff;
 			plugin.skyField.bindAo(SKY_FIELD_UNIT, plugin.frameCameraX, plugin.frameCameraZ);
+			if (passTimers != null)
+			{
+				// timed with the skylight switched off: the AO program's skylight too, so its cost shows
+				if (com.midonarhel.lumina.dev.Commands.skylightOff) glUniform1i(glGetUniformLocation(plugin.glAoProgram, "skylightOn"), 0);
+				glBeginQuery(org.lwjgl.opengl.GL33C.GL_TIME_ELAPSED, passTimers[0]);
+			}
 			glDrawArrays(GL_TRIANGLES, 0, 3);
+			if (passTimers != null) glEndQuery(org.lwjgl.opengl.GL33C.GL_TIME_ELAPSED);
 			SkyGridMap.unbind(SKY_GRID_UNIT);
 			SkyFieldMap.unbind(SKY_FIELD_UNIT);
 			// the sky cache takes the occlusion map's unit next, without its sampler objects
@@ -607,7 +618,9 @@ public final class Composite
 		final boolean stencil = edges && (upscale || target == 0 && plugin.hasWindowStencil());
 		glViewport(0, 0, sceneWidth, sceneHeight);
 		glClear(stencil ? GL_COLOR_BUFFER_BIT | GL_STENCIL_BUFFER_BIT : GL_COLOR_BUFFER_BIT);
+		if (passTimers != null) glBeginQuery(org.lwjgl.opengl.GL33C.GL_TIME_ELAPSED, passTimers[1]);
 		glDrawArrays(GL_TRIANGLES, 0, 3);
+		if (passTimers != null) glEndQuery(org.lwjgl.opengl.GL33C.GL_TIME_ELAPSED);
 		glUniform1i(compositeFull.part, 0);
 		if (edges)
 		{
