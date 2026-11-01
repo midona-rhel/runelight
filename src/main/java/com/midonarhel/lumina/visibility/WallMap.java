@@ -442,11 +442,8 @@ public final class WallMap
 			}
 			if (Math.abs(tMaxX - tMaxZ) < 1e-9)
 			{
-				// through a corner: blocked when both ways around it are
-				int xSide = sx > 0 ? EAST : WEST, zSide = sz > 0 ? NORTH : SOUTH;
-				boolean viaX = edge(plane, tx, tz, xSide) || edge(plane, tx + sx, tz, zSide);
-				boolean viaZ = edge(plane, tx, tz, zSide) || edge(plane, tx, tz + sz, xSide);
-				if (viaX && viaZ)
+				// through a corner: blocked when walls leave it on both sides of the line
+				if (cornerBlocks(plane, tx + (sx > 0 ? 1 : 0), tz + (sz > 0 ? 1 : 0), sx, sz))
 				{
 					return true;
 				}
@@ -477,6 +474,37 @@ public final class WallMap
 				tMaxZ += tDeltaZ;
 			}
 		}
+	}
+
+	/**
+	 * Whether a line through tile corner (cx, cz) going (sx, sz) (a diagonal direction) squeezes between walls that
+	 * meet there: some wall leaves the corner on each side of it. The walls leaving a corner are the four edges along
+	 * it and the diagonals of the four tiles round it that end there; one alone is a wall's end, which the line passes.
+	 * Diagonals count as edges do: two diagonal walls meeting end to end (a zigzag front's joint) let nothing through,
+	 * where only the edges were looked at (light came through every joint of Ardougne's zigzag fronts, 2026-11-01).
+	 */
+	private boolean cornerBlocks(int plane, int cx, int cz, int sx, int sz)
+	{
+		// the walls leaving the corner by compass direction: 0 east, 1 north-east ... 7 south-east
+		int sw = get(plane, cx - 1, cz - 1), se = get(plane, cx, cz - 1), nw = get(plane, cx - 1, cz), ne = get(plane, cx, cz);
+		boolean[] ray = {
+			(se & NORTH) != 0 || (ne & SOUTH) != 0,
+			(ne & DIAG_SW_NE) != 0,
+			(nw & EAST) != 0 || (ne & WEST) != 0,
+			(nw & DIAG_NW_SE) != 0,
+			(sw & NORTH) != 0 || (nw & SOUTH) != 0,
+			(sw & DIAG_SW_NE) != 0,
+			(sw & EAST) != 0 || (se & WEST) != 0,
+			(se & DIAG_NW_SE) != 0,
+		};
+		int t = sx > 0 ? (sz > 0 ? 1 : 7) : (sz > 0 ? 3 : 5);
+		boolean left = false, right = false;
+		for (int k = 1; k <= 3; ++k)
+		{
+			left |= ray[(t + k) & 7];
+			right |= ray[(t - k) & 7];
+		}
+		return left && right;
 	}
 
 	/** Whether the segment, between parameters t0 and t1, strictly crosses a diagonal of tile (tx, tz). */

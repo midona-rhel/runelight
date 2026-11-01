@@ -105,6 +105,26 @@ public class WallMapTest
 	}
 
 	@Test
+	public void diagonalWallsMeetingEndToEndLetNothingThroughTheirJoint()
+	{
+		// two "\\" walls end to end, (10, 11) from (10, 12) to (11, 11) and (11, 10) from (11, 11) to (12, 10): a line
+		// from tile (11, 11) to tile (10, 10) passes exactly through their joint at corner (11, 11)
+		List<WallMap.Diagonal> d = new ArrayList<>();
+		d.add(new WallMap.Diagonal(0, 10, 11, WallMap.DIAG_NW_SE));
+		d.add(new WallMap.Diagonal(0, 11, 10, WallMap.DIAG_NW_SE));
+		int[][][] f = noFlags();
+		f[0][10 - OFFSET][11 - OFFSET] |= WallMap.LOS_FULL;
+		f[0][11 - OFFSET][10 - OFFSET] |= WallMap.LOS_FULL;
+		WallMap w = WallMap.build(f, d, SIZE, OFFSET, 1);
+		assertTrue(w.blocked(0, world(11), world(11), world(10), world(10)));
+		// one of them alone ends there: the line passes its end
+		WallMap one = WallMap.build(f, Collections.singletonList(d.get(0)), SIZE, OFFSET, 1);
+		assertFalse(one.blocked(0, world(11), world(11), world(10), world(10)));
+		// along the wall line, through the joint, on one side of both: nothing crossed
+		assertFalse(w.blocked(0, world(9) + 64, world(12), world(12), world(9) + 64));
+	}
+
+	@Test
 	public void diagonalWalls()
 	{
 		List<WallMap.Diagonal> d = new ArrayList<>();
