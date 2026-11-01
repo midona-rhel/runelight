@@ -53,6 +53,24 @@ public class WallMapTest
 	}
 
 	@Test
+	public void aWallNobodySeesIsNoWall()
+	{
+		// a drawn wall west of (10, 10), and the same flags west of (14, 10) from a wall object with no model (the
+		// box the game puts round a market stall's counter)
+		int[][][] f = noFlags();
+		westWall(f, 10, 10);
+		westWall(f, 14, 10);
+		boolean[] drawn = new boolean[WallMap.PLANES * SIZE * SIZE];
+		drawn[(0 * SIZE + 10) * SIZE + 10] = true;
+		WallMap w = WallMap.build(f, null, drawn, SIZE, OFFSET, 1);
+		assertTrue(w.edge(0, 10, 10, WallMap.WEST));
+		assertTrue(w.edge(0, 9, 10, WallMap.EAST));
+		assertFalse(w.edge(0, 14, 10, WallMap.WEST));
+		assertFalse(w.edge(0, 13, 10, WallMap.EAST));
+		assertFalse(w.blocked(0, world(13), world(10), world(15), world(10)));
+	}
+
+	@Test
 	public void straightWallBlocks()
 	{
 		int[][][] f = noFlags();

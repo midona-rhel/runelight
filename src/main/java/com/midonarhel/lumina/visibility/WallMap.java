@@ -10,8 +10,9 @@ import java.util.Collection;
 /**
  * The walls of a scene per plane: for every tile, which of its four edges hold a wall and whether a diagonal wall
  * crosses it. Walls are the edges the collision map says block line of sight (closed doors and windows included,
- * fences and railings not; an open door is no wall), plus the diagonal walls, which the collision map only shows
- * as a fully blocked tile, from their objects. Edges that stop movement but not sight (bars, fences, railings,
+ * fences and railings not; an open door is no wall) where a wall the game draws stands (an invisible wall, a wall
+ * object with no model such as the ones boxing in a market stall, is none), plus the diagonal walls, which the
+ * collision map only shows as a fully blocked tile, from their objects. Edges that stop movement but not sight (bars, fences, railings,
  * low walls, gates) are kept apart (seeThrough): they let light through. Rooms split along these walls
  * (BuildingDetector.split), and they are the one thing that stops a lamp (LampWalls, light/lamp.glsl; on the CPU
  * {@link #blocked}).
@@ -119,6 +120,16 @@ public final class WallMap
 	 */
 	public static WallMap build(int[][][] flags, Collection<Diagonal> diagonals, int size, int offset, int scene)
 	{
+		return build(flags, diagonals, null, size, offset, scene);
+	}
+
+	/**
+	 * @param drawn per extended tile, (plane * size + x) * size + y: whether a wall object with a model stands there; an
+	 * edge the collision map blocks is a wall only where the tile on either side of it has one. null: every edge counts
+	 */
+	public static WallMap build(int[][][] flags, Collection<Diagonal> diagonals, boolean[] drawn, int size, int offset,
+		int scene)
+	{
 		WallMap m = new WallMap(size, offset, scene);
 		for (int plane = 0; plane < PLANES; ++plane)
 		{
@@ -157,6 +168,10 @@ public final class WallMap
 				}
 			}
 		}
+		if (drawn != null && drawn.length == PLANES * size * size)
+		{
+			m.keepDrawn(drawn);
+		}
 		if (diagonals != null)
 		{
 			for (Diagonal d : diagonals)
@@ -176,6 +191,33 @@ public final class WallMap
 			}
 		}
 		return m;
+	}
+
+	/** Drop the edges with no drawn wall on either side: a wall nobody sees stops no light. */
+	private void keepDrawn(boolean[] drawn)
+	{
+		byte[] kept = bits.clone();
+		for (int plane = 0; plane < PLANES; ++plane)
+		{
+			for (int x = 0; x < size; ++x)
+			{
+				for (int y = 0; y < size; ++y)
+				{
+					int i = index(plane, x, y);
+					int b = bits[i];
+					if (b == 0 || drawn[i])
+					{
+						continue;
+					}
+					if ((b & NORTH) != 0 && !(y + 1 < size && drawn[index(plane, x, y + 1)])) b &= ~NORTH;
+					if ((b & SOUTH) != 0 && !(y > 0 && drawn[index(plane, x, y - 1)])) b &= ~SOUTH;
+					if ((b & EAST) != 0 && !(x + 1 < size && drawn[index(plane, x + 1, y)])) b &= ~EAST;
+					if ((b & WEST) != 0 && !(x > 0 && drawn[index(plane, x - 1, y)])) b &= ~WEST;
+					kept[i] = (byte) b;
+				}
+			}
+		}
+		System.arraycopy(kept, 0, bits, 0, bits.length);
 	}
 
 	int index(int plane, int x, int y)
