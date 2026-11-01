@@ -314,6 +314,15 @@ public class ModelUploader
 						sv0 = SurfaceMaterials.fakeHeight(verticesY[v1], span[1]);
 						sv1 = SurfaceMaterials.fakeHeight(verticesY[v2], span[1]);
 						sv2 = SurfaceMaterials.fakeHeight(verticesY[v3], span[1]);
+						WaterMap w = water;
+						if (w != null && WaterMap.fallFace(modelLocalX[v1], modelLocalY[v1], modelLocalZ[v1], modelLocalX[v2],
+							modelLocalY[v2], modelLocalZ[v2], modelLocalX[v3], modelLocalY[v3], modelLocalZ[v3]))
+						{
+							// a fall shows the beds of the pools it pours from and lands in, as they show under their water
+							color1 = fallColor(w, modelLocalX[v1], modelLocalY[v1], modelLocalZ[v1], color1);
+							color2 = fallColor(w, modelLocalX[v2], modelLocalY[v2], modelLocalZ[v2], color2);
+							color3 = fallColor(w, modelLocalX[v3], modelLocalY[v3], modelLocalZ[v3], color3);
+						}
 					}
 					texture |= bits;
 
