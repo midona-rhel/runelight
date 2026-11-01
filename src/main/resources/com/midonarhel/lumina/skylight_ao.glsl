@@ -9,7 +9,8 @@
 uniform int skylightOn;
 // RGBA16F: four horizontal parts, two per triangle half (up/+x/-x/+z, then -z).
 // Slice 0: floor heights/diagonals, floor flags, room floor heights, each plane's roof share at the corner (half 0);
-// slice 1's part 3: the roof shares of half 1. Visibility from slice 2 (SkyGrid.VISIBILITY); the final slice samples
+// slice 1's part 3: the roof shares of half 1, its parts 0 and 1 the gradients of half 0's (per tile, east and
+// north; planes 0 and 1 in part 0, 2 and 3 in part 1). Visibility from slice 2 (SkyGrid.VISIBILITY); the final slice samples
 // above captured geometry. Visibility slices store sample x/y/z in the -z part's g/b/a.
 uniform sampler3D skyGrid;
 uniform float skyGridScale;
@@ -20,7 +21,8 @@ uniform float skyGridWeight;
 uniform sampler3D skyGridPrev;
 uniform int skyGridPrevOn;
 uniform vec3 skyGridPrevCamera;
-// Room-fill corner values (SkyField.java): rg/ba light and cover per half; g also holds 2 * diagonal kind.
+// Room-fill corner values (SkyField.java): rg/ba light and cover per half; g also holds 2 * diagonal kind. The rows
+// below them, as many again, hold each corner's gradient per tile: rg the light's (east, north), ba the cover's.
 // Texture coordinates are
 // camera-relative world xz * skyFieldMap.xy + skyFieldMap.zw
 uniform sampler2D skyField;
@@ -128,19 +130,37 @@ vec2 skySurfaceLevel(sampler3D grid, float scale, vec2 tile, vec2 f, int level, 
   return sum;
 }
 
-// A plane's roof share at a point (SkyGrid.roofShares): the tile's four corners blended like the values, and on a
-// tile a diagonal wall splits, the point's own half only (slice 0 holds half 0's shares, slice 1 half 1's), so the
-// indoors and the outdoors either side of the wall never blend across it.
+// A plane's roof share at a point (SkyGrid.roofShares): the tile's four corners blended, and on a tile a diagonal
+// wall splits, the point's own half only with its triangle's weights (slice 0 holds half 0's shares, slice 1 half
+// 1's), so the indoors and the outdoors either side of the wall never blend across it. A whole tile blends its
+// corners' shares and gradients (SkyGrid.roofGradients) cubically, so the share keeps its slope across tile edges.
 float skyRoofShare(sampler3D grid, float scale, vec2 tile, vec2 f, int diagonal, int plane) {
   bool north = diagonal == 1 ? f.y > f.x : f.x + f.y > 1.0;
   float z = (diagonal != 0 && !north ? 1.5 : 0.5) / SKY_GRID_D;
-  vec4 weights = diagonal == 0 ? vec4((1.0-f.x)*(1.0-f.y), f.x*(1.0-f.y), (1.0-f.x)*f.y, f.x*f.y) : diagonal == 1
+  vec2 size = vec2(SKY_GRID_W, SKY_GRID_H) * scale;
+  if (diagonal == 0) {
+    // per axis: the value weights of the 0 and 1 corners, and the gradient weights (cubic Hermite)
+    vec2 v1 = f * f * (3.0 - 2.0 * f), v0 = 1.0 - v1;
+    vec2 d0 = f * (1.0 - f) * (1.0 - f), d1 = -f * f * (1.0 - f);
+    float share = 0.0;
+    for (int k = 0; k < 4; ++k) {
+      vec2 corner = vec2(k & 1, k >> 1);
+      vec2 uv = (2.0 * tile + 0.5 + corner) / size;
+      vec2 wv = mix(v0, v1, corner), wd = mix(d0, d1, corner);
+      vec4 g = textureLod(grid, vec3(uv + vec2(plane < 2 ? 0.0 : 0.25, 0.0), 1.5 / SKY_GRID_D), 0.0);
+      vec2 gradient = plane % 2 == 0 ? g.xy : g.zw;
+      share += textureLod(grid, vec3(uv + vec2(0.75, 0.0), 0.5 / SKY_GRID_D), 0.0)[plane] * wv.x * wv.y
+        + gradient.x * wd.x * wv.y + gradient.y * wv.x * wd.y;
+    }
+    return clamp(share, 0.0, 1.0);
+  }
+  vec4 weights = diagonal == 1
     ? (north ? vec4(1.0 - f.y, 0.0, f.y - f.x, f.x) : vec4(1.0 - f.x, f.x - f.y, 0.0, f.y))
     : (north ? vec4(0.0, 1.0 - f.y, 1.0 - f.x, f.x + f.y - 1.0) : vec4(1.0 - f.x - f.y, f.x, f.y, 0.0));
   float share = 0.0;
   for (int k = 0; k < 4; ++k) {
     if (weights[k] <= 0.0) continue;
-    vec2 uv = (2.0 * tile + 0.5 + vec2(k & 1, k >> 1)) / (vec2(SKY_GRID_W, SKY_GRID_H) * scale) + vec2(0.75, 0.0);
+    vec2 uv = (2.0 * tile + 0.5 + vec2(k & 1, k >> 1)) / size + vec2(0.75, 0.0);
     share += weights[k] * textureLod(grid, vec3(uv, z), 0.0)[plane];
   }
   return share;
@@ -235,11 +255,13 @@ float skyGridVisibility(sampler3D grid, float scale, vec3 w, vec3 n) {
 }
 
 // Reconstruct the field from shared corners across open edges. Each tile owns copies of its corners, so
-// sampling never pulls a texel through a wall. Diagonal halves use separate channels and triangle weights.
+// sampling never pulls a texel through a wall. A tile no diagonal splits blends its corners' values and gradients
+// (cubic Hermite), so the light keeps its slope across tile edges (bilinear, it bent at each: a stepped falloff from
+// a doorway); diagonal halves use separate channels and triangle weights.
 vec2 skyFieldVisibility(vec3 p) {
   ivec2 dims = textureSize(skyField, 0);
-  vec2 t = clamp((p.xz * skyFieldMap.xy + skyFieldMap.zw) * (vec2(dims) * 0.5),
-    vec2(0.0), vec2(dims) * 0.5 - 0.0001);
+  float tiles = float(dims.x) * 0.5;
+  vec2 t = clamp((p.xz * skyFieldMap.xy + skyFieldMap.zw) * tiles, vec2(0.0), vec2(tiles - 0.0001));
   ivec2 base = ivec2(floor(t)) * 2;
   vec2 f = fract(t);
   vec4 sw = texelFetch(skyField, base, 0);
@@ -249,8 +271,21 @@ vec2 skyFieldVisibility(vec3 p) {
   int diagonal = int(floor(sw.g * 0.5));
   float code = 2.0 * float(diagonal);
   sw.g -= code; se.g -= code; nw.g -= code; ne.g -= code;
-  vec2 field = mix(mix(sw.rg, se.rg, f.x), mix(nw.rg, ne.rg, f.x), f.y);
-  if (diagonal == 1) {
+  vec2 field = vec2(0.0);
+  if (diagonal == 0) {
+    ivec2 below = base + ivec2(0, dims.x);
+    vec4 gsw = texelFetch(skyField, below, 0);
+    vec4 gse = texelFetch(skyField, below + ivec2(1, 0), 0);
+    vec4 gnw = texelFetch(skyField, below + ivec2(0, 1), 0);
+    vec4 gne = texelFetch(skyField, below + ivec2(1, 1), 0);
+    // per axis: the value weights of the 0 and 1 corners, and the gradient weights
+    vec2 v1 = f * f * (3.0 - 2.0 * f), v0 = 1.0 - v1;
+    vec2 d0 = f * (1.0 - f) * (1.0 - f), d1 = -f * f * (1.0 - f);
+    field = sw.rg * v0.x * v0.y + se.rg * v1.x * v0.y + nw.rg * v0.x * v1.y + ne.rg * v1.x * v1.y
+      + gsw.xz * d0.x * v0.y + gse.xz * d1.x * v0.y + gnw.xz * d0.x * v1.y + gne.xz * d1.x * v1.y
+      + gsw.yw * v0.x * d0.y + gse.yw * v1.x * d0.y + gnw.yw * v0.x * d1.y + gne.yw * v1.x * d1.y;
+    field = clamp(field, 0.0, 1.0);
+  } else if (diagonal == 1) {
     field = f.y > f.x
       ? sw.rg * (1.0 - f.y) + nw.rg * (f.y - f.x) + ne.rg * f.x
       : sw.ba * (1.0 - f.x) + se.ba * (f.x - f.y) + ne.ba * f.y;

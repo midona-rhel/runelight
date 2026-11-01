@@ -35,7 +35,9 @@ import java.nio.ShortBuffer;
  * part 0, actual floor flags in part 1, room floor heights in part 2 and, in part 3, each plane's roof share at the
  * corner for the tile's half 0 (roofShares: shared across open edges like the values, so the shader's indoor/outdoor
  * switch blends over a tile instead of flipping at its edge); slice 1's part 3 holds half 1's (the same where no
- * diagonal wall splits the tile).
+ * diagonal wall splits the tile), and its parts 0 and 1 the corners' gradients of half 0's shares, per tile (east,
+ * north), planes 0-1 and 2-3 (roofGradients: the shader blends them cubically, so they keep their slope across tile
+ * edges).
  * Part 1 also keeps, in g, the world y of the highest surface at each corner (topAt), which tells a roof top from
  * what stands under the roof.
  * Slice VISIBILITY + floor * HEIGHTS.length + height stores visibility; the final slice stores exterior visibility.
@@ -182,6 +184,8 @@ public final class SkyGrid
 	private final int[] bits = new int[4];
 	private final float[] shares = new float[8 * RoomMap.PLANES], shareSum = new float[8];
 	private final int[] shareCount = new int[8];
+	private final float[] gradients = new float[4 * RoomMap.PLANES * 2], gradientNorth = new float[8], edgeSlope = new float[16];
+	private final int[] edgeCount = new int[16];
 
 	public int baseX()
 	{
@@ -519,6 +523,9 @@ public final class SkyGrid
 		for (int cz = 0; cz < corners; ++cz)
 			for (int cx = 0; cx < corners; ++cx)
 				roofShares(cx, cz);
+		for (int cz = 0; cz < corners; ++cz)
+			for (int cx = 0; cx < corners; ++cx)
+				roofGradients(cx, cz);
 		selectNearbySamples();
 		change(0, 0, size - 1, size - 1, 0, HALF_ROOFS);
 	}
@@ -598,6 +605,94 @@ public final class SkyGrid
 				for (int f = 0; f < RoomMap.PLANES; ++f) texels.put(t + f, Half.toHalf(shares[(2 * q + h) * RoomMap.PLANES + f]));
 			}
 		}
+	}
+
+	/**
+	 * Each plane's roof share gradient at a corner, per tile (east, north), into every touching tile's copy of it
+	 * (slice HALF_ROOFS, part 0 for planes 0 and 1, part 1 for 2 and 3): the mean over the halves joined at the corner of
+	 * their slopes there, so a centred difference across open edges and a one-sided one at a wall. The shader blends
+	 * a tile no diagonal splits from its corners' shares and gradients (cubic Hermite): bilinear, the indoor/outdoor
+	 * switch bent at every tile edge, a step in the light a doorway lets into a room (2026-11-01). Along a straight
+	 * edge of a split tile's half (linear in the shader) the gradient is the triangle's slope, so the tiles meet there
+	 * without a step.
+	 */
+	private void roofGradients(int cx, int cz)
+	{
+		java.util.Arrays.fill(gradients, 0);
+		for (int f = 0; f < RoomMap.PLANES; ++f)
+		{
+			int present = groupCorner(cx, cz, f);
+			java.util.Arrays.fill(shareSum, 0);
+			java.util.Arrays.fill(gradientNorth, 0);
+			java.util.Arrays.fill(shareCount, 0);
+			java.util.Arrays.fill(edgeSlope, 0);
+			java.util.Arrays.fill(edgeCount, 0);
+			for (int node = 0; node < 8; ++node)
+			{
+				if (group[node] < 0) continue;
+				int q = node / 2, root = find(node), tx = cx + QX[q], tz = cz + QZ[q], h = node % 2;
+				int slice = h == 0 ? 0 : HALF_ROOFS, x = 2 * tx + 6 * size, y = 2 * tz;
+				float sw = share(x, y, slice, f), se = share(x + 1, y, slice, f), nw = share(x, y + 1, slice, f), ne = share(x + 1, y + 1, slice, f);
+				// the corner is the tile's (kx, ky): 1 east, north
+				int kx = QX[q] < 0 ? 1 : 0, ky = QZ[q] < 0 ? 1 : 0;
+				int b = bits[q];
+				float east, north;
+				if ((b & WallMap.DIAG_SW_NE) != 0)
+				{
+					east = h == 0 ? ne - nw : se - sw;
+					north = h == 0 ? nw - sw : ne - se;
+				}
+				else if ((b & WallMap.DIAG_NW_SE) != 0)
+				{
+					east = h == 0 ? ne - nw : se - sw;
+					north = h == 0 ? ne - se : nw - sw;
+				}
+				else
+				{
+					east = ky == 0 ? se - sw : ne - nw;
+					north = kx == 0 ? nw - sw : ne - se;
+				}
+				shareSum[root] += east;
+				gradientNorth[root] += north;
+				shareCount[root]++;
+				if (!WallMap.split(b)) continue;
+				// the half's straight edges through the corner: along east (its south or north edge), along north
+				if (WallMap.half(b, ky == 0 ? WallMap.SOUTH : WallMap.NORTH) == h)
+				{
+					edgeSlope[root * 2] += east;
+					edgeCount[root * 2]++;
+				}
+				if (WallMap.half(b, kx == 0 ? WallMap.WEST : WallMap.EAST) == h)
+				{
+					edgeSlope[root * 2 + 1] += north;
+					edgeCount[root * 2 + 1]++;
+				}
+			}
+			for (int q = 0; q < 4; ++q)
+			{
+				if ((present & (1 << q)) == 0) continue;
+				int node = group[2 * q] >= 0 ? 2 * q : 2 * q + 1, root = find(node);
+				gradients[(q * RoomMap.PLANES + f) * 2] = edgeCount[root * 2] > 0 ? edgeSlope[root * 2] / edgeCount[root * 2]
+					: shareSum[root] / shareCount[root];
+				gradients[(q * RoomMap.PLANES + f) * 2 + 1] = edgeCount[root * 2 + 1] > 0 ? edgeSlope[root * 2 + 1] / edgeCount[root * 2 + 1]
+					: gradientNorth[root] / shareCount[root];
+			}
+		}
+		for (int q = 0; q < 4; ++q)
+		{
+			int tx = cx + QX[q], tz = cz + QZ[q];
+			if (tx < 0 || tz < 0 || tx >= size || tz >= size) continue;
+			for (int part = 0; part < 2; ++part)
+			{
+				int t = texel(2 * tx + (QX[q] < 0 ? 1 : 0) + part * 2 * size, 2 * tz + (QZ[q] < 0 ? 1 : 0), HALF_ROOFS);
+				for (int c = 0; c < 4; ++c) texels.put(t + c, Half.toHalf(gradients[(q * RoomMap.PLANES + 2 * part) * 2 + c]));
+			}
+		}
+	}
+
+	private float share(int x, int y, int slice, int plane)
+	{
+		return Half.fromHalf(texels.get(texel(x, y, slice) + plane));
 	}
 
 	/**

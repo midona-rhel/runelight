@@ -198,6 +198,21 @@ public class SkyGridReplay
 		/** skylight_ao.glsl's skyRoofShare: the corners of the point's own half, with the triangle weights. */
 		float roofShare(int tx, int tz, float fx, float fz, int diagonal, int plane)
 		{
+			if (diagonal == 0)
+			{
+				float vx1 = fx * fx * (3 - 2 * fx), vz1 = fz * fz * (3 - 2 * fz);
+				float[] vx = {1 - vx1, vx1}, vz = {1 - vz1, vz1};
+				float[] dx = {fx * (1 - fx) * (1 - fx), -fx * fx * (1 - fx)}, dz = {fz * (1 - fz) * (1 - fz), -fz * fz * (1 - fz)};
+				float share = 0;
+				for (int k = 0; k < 4; ++k)
+				{
+					int i = k & 1, j = k >> 1, x = 2 * tx + i, y = 2 * tz + j;
+					int gx = x + (plane < 2 ? 0 : 2 * size), c = plane % 2 == 0 ? 0 : 2;
+					share += t(x + 6 * size, y, 0, plane) * vx[i] * vz[j]
+						+ t(gx, y, SkyGrid.HALF_ROOFS, c) * dx[i] * vz[j] + t(gx, y, SkyGrid.HALF_ROOFS, c + 1) * vx[i] * dz[j];
+				}
+				return Math.max(0, Math.min(1, share));
+			}
 			boolean north = diagonal == 1 ? fz > fx : fx + fz > 1;
 			int slice = diagonal != 0 && !north ? SkyGrid.HALF_ROOFS : 0;
 			float[] wt = weights(diagonal, fx, fz);
@@ -369,9 +384,16 @@ public class SkyGridReplay
 			nw[1] -= code;
 			ne[1] -= code;
 			float[] out = new float[2];
+			// skylight_ao.glsl's Hermite blend: value and gradient weights per axis
+			float vx1 = fx * fx * (3 - 2 * fx), vx0 = 1 - vx1, vz1 = fz * fz * (3 - 2 * fz), vz0 = 1 - vz1;
+			float dx0 = fx * (1 - fx) * (1 - fx), dx1 = -fx * fx * (1 - fx), dz0 = fz * (1 - fz) * (1 - fz), dz1 = -fz * fz * (1 - fz);
+			float[] gsw = texel(bx, bz + fieldWidth), gse = texel(bx + 1, bz + fieldWidth), gnw = texel(bx, bz + 1 + fieldWidth), gne = texel(bx + 1, bz + 1 + fieldWidth);
 			for (int c = 0; c < 2; ++c)
 			{
-				float v = (sw[c] * (1 - fx) + se[c] * fx) * (1 - fz) + (nw[c] * (1 - fx) + ne[c] * fx) * fz;
+				float v = before ? (sw[c] * (1 - fx) + se[c] * fx) * (1 - fz) + (nw[c] * (1 - fx) + ne[c] * fx) * fz
+					: Math.max(0, Math.min(1, sw[c] * vx0 * vz0 + se[c] * vx1 * vz0 + nw[c] * vx0 * vz1 + ne[c] * vx1 * vz1
+					+ gsw[2 * c] * dx0 * vz0 + gse[2 * c] * dx1 * vz0 + gnw[2 * c] * dx0 * vz1 + gne[2 * c] * dx1 * vz1
+					+ gsw[2 * c + 1] * vx0 * dz0 + gse[2 * c + 1] * vx1 * dz0 + gnw[2 * c + 1] * vx0 * dz1 + gne[2 * c + 1] * vx1 * dz1));
 				if (diagonal == 1)
 					v = fz > fx ? sw[c] * (1 - fz) + nw[c] * (fz - fx) + ne[c] * fx
 						: sw[c + 2] * (1 - fx) + se[c + 2] * (fx - fz) + ne[c + 2] * fz;
@@ -944,6 +966,7 @@ public class SkyGridReplay
 			String which = sh == before ? "before" : "now";
 			System.out.println("slope change across open tile edges (per tile), " + which + ": " + kinks(sh, d.walls, cx, cz, 8));
 			regionImage(sh, d.walls, cx - 5, cx + 2, cz - 5, cz + 1, 4, d.name + "-close-slope-" + which, 48, 2);
+			regionImage(sh, d.walls, cx - 5, cx + 2, cz - 5, cz + 1, 0, d.name + "-close-shown-" + which, 48, 1);
 		}
 		if (d.name.equals("doorway"))
 		{
@@ -955,7 +978,7 @@ public class SkyGridReplay
 				float b = before.skylight(new float[]{x, groundY(before, x, wz), wz}, new float[]{0, -1, 0});
 				String bt = String.format("%3d %3d %3d %3d", pct(b), pct(before.lastOriginal), pct(before.lastField), pct(before.lastCover));
 				float v = now.skylight(new float[]{x, groundY(now, x, wz), wz}, new float[]{0, -1, 0});
-				String nt = String.format("%3d %3d %3d %3d", pct(v), pct(now.lastOriginal), pct(now.lastField), pct(now.lastCover));
+				String nt = String.format("%3d %3d %3d %3d (exterior %3d)", pct(v), pct(now.lastOriginal), pct(now.lastField), pct(now.lastCover), pct(now.skyExterior));
 				p.append(String.format("  z %.3f  before %s | now %s%n", z, bt, nt));
 			}
 			System.out.println(p);
