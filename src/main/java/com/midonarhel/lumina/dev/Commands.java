@@ -173,6 +173,8 @@ import static com.midonarhel.lumina.LuminaPlugin.*;
 public final class Commands
 {
 	private final LuminaPlugin plugin;
+	// developer: the skylight's traced visibility switched off (`::runelight skylight off`)
+	public static volatile boolean skylightOff;
 
 	public Commands(LuminaPlugin plugin)
 	{
@@ -260,6 +262,13 @@ public final class Commands
 			plugin.pacer.setPaceHere(args[1].equals("on"));
 			plugin.setupSyncMode();
 			log.info("Frame pacing {}", plugin.pacer.isPaceHere() ? "here (Lumina's pacer)" : "by the client's limiter");
+		}
+		else if (args.length >= 2 && args[0].equals("skylight"))
+		{
+			// developer A/B: `skylight off` draws the frame as if the sky grid had no answer (the shader's open-sky
+			// fallback), `skylight on` restores it
+			skylightOff = args[1].equals("off");
+			log.info("Skylight {}", skylightOff ? "off" : "on");
 		}
 		else if (args.length >= 2 && args[0].equals("strike"))
 		{

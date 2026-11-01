@@ -486,7 +486,8 @@ public final class Composite
 			{
 				plugin.weatherGround.setAoOff();
 			}
-			plugin.frameSkylight = plugin.skyGrid.bindAo(SKY_GRID_UNIT, aoScene, plugin.frameCameraX, plugin.frameCameraY, plugin.frameCameraZ);
+			plugin.frameSkylight = plugin.skyGrid.bindAo(SKY_GRID_UNIT, aoScene, plugin.frameCameraX, plugin.frameCameraY, plugin.frameCameraZ)
+				&& !com.midonarhel.lumina.dev.Commands.skylightOff;
 			plugin.skyField.bindAo(SKY_FIELD_UNIT, plugin.frameCameraX, plugin.frameCameraZ);
 			glDrawArrays(GL_TRIANGLES, 0, 3);
 			SkyGridMap.unbind(SKY_GRID_UNIT);
