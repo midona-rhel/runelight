@@ -43,6 +43,8 @@ public class BuildingsRebuildTest
 		wall(s, 110, 100, mesh(true, 0));
 		wall(s, 120, 100, mesh(false, 8));
 
+		// through the dump's format and back, as a dump has them
+		s = roundTrip(s);
 		SceneObjectFakes fakes = new SceneObjectFakes(s, OFFSET);
 		Map<String, Object> sc = new HashMap<>();
 		sc.put("getExtendedTiles", fakes.tiles);
@@ -73,6 +75,21 @@ public class BuildingsRebuildTest
 		assertFalse(w.edge(0, 109, 100, WallMap.EAST));
 		assertTrue("an animated wall does", w.edge(0, 120, 100, WallMap.WEST));
 		b.shutDown();
+	}
+
+	private static SceneObjects roundTrip(SceneObjects s)
+	{
+		try
+		{
+			java.io.ByteArrayOutputStream bytes = new java.io.ByteArrayOutputStream();
+			new com.midonarhel.lumina.dev.PlainData.Writer(new java.io.DataOutputStream(bytes)).write(s);
+			return (SceneObjects) new com.midonarhel.lumina.dev.PlainData.Reader(
+				new java.io.DataInputStream(new java.io.ByteArrayInputStream(bytes.toByteArray()))).read();
+		}
+		catch (java.io.IOException e)
+		{
+			throw new java.io.UncheckedIOException(e);
+		}
 	}
 
 	private static SceneObjects.Mesh mesh(boolean plain, int count)
