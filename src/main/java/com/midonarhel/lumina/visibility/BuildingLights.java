@@ -228,6 +228,27 @@ public class BuildingLights
 		filledTiles = floors;
 	}
 
+	/** The collision flags the walls were last built from (local tiles, [plane][x][y]), for the scene dump. */
+	public int[][][] getFlags()
+	{
+		return handedFlags;
+	}
+
+	/** The diagonal walls now, for the scene dump. */
+	public java.util.List<WallMap.Diagonal> getDiagonals()
+	{
+		return new java.util.ArrayList<>(diagonals.values());
+	}
+
+	/**
+	 * drawnWalls for the scene dump, made now on the client thread: what the walls would be built with, whatever the
+	 * walls in use were built with.
+	 */
+	public static boolean[] scanDrawnWalls(Scene scene)
+	{
+		return drawnWalls(scene);
+	}
+
 	/** Per extended tile, whether a drawn wall object stands there (drawnWalls), for the scene dump. */
 	public boolean[] getDrawnWalls()
 	{

@@ -85,6 +85,16 @@ public final class RenderDump
 				case "step":
 					o.frameSeconds = Double.parseDouble(v);
 					break;
+				case "walls":
+					o.walls = v;
+					break;
+				case "probe":
+					for (String t : v.split(";"))
+					{
+						String[] xy = t.split(",");
+						o.probes.add(new int[]{Integer.parseInt(xy[0].trim()), Integer.parseInt(xy[1].trim())});
+					}
+					break;
 				default:
 					o.settings.put(k, v);
 			}

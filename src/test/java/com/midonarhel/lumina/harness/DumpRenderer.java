@@ -63,6 +63,11 @@ public final class DumpRenderer implements AutoCloseable
 		public Integer cameraYaw, cameraPitch, scale;
 		// the hour to hold (dayCycleMinutes 0, fixedHour), null for the dump's clock
 		public Integer hour;
+		// the walls: "dumped" as the client had them; "flags" built again from the dump's collision flags and diagonal
+		// walls, every edge the flags block; "drawn" the same where a drawn wall stands (the dump's own scan)
+		public String walls = "dumped";
+		// world tiles (x, y) whose walls are printed
+		public final List<int[]> probes = new ArrayList<>();
 	}
 
 	public final SceneDump.Loaded dump;
@@ -171,9 +176,34 @@ public final class DumpRenderer implements AutoCloseable
 		plugin.sceneLights.replay((List<PointLight>) d.getOrDefault("lamps.collected", new ArrayList<>()),
 			(List<PointLight>) d.getOrDefault("lamps.steady", new ArrayList<>()));
 		plugin.buildingLights = new BuildingLights(world.client);
+		WallMap walls = (WallMap) d.get("buildings.walls");
+		if (!options.walls.equals("dumped"))
+		{
+			int[][][] flags = (int[][][]) d.get("buildings.flags");
+			if (flags == null)
+			{
+				throw new IllegalStateException("walls=" + options.walls + ": the dump has no collision flags (buildings.flags)");
+			}
+			boolean[] drawn = options.walls.equals("drawn") ? (boolean[]) d.get("buildings.drawnScan") : null;
+			if (options.walls.equals("drawn") && drawn == null)
+			{
+				throw new IllegalStateException("walls=drawn: the dump has no drawn-wall scan (buildings.drawnScan)");
+			}
+			walls = WallMap.build(flags, (List<WallMap.Diagonal>) d.get("buildings.diagonals"), drawn,
+				net.runelite.api.Constants.EXTENDED_SCENE_SIZE, com.midonarhel.lumina.LuminaPlugin.SCENE_OFFSET,
+				walls != null ? walls.scene : 1);
+		}
+		for (int[] t : options.probes)
+		{
+			int x = t[0] - dump.manifest.baseX + com.midonarhel.lumina.LuminaPlugin.SCENE_OFFSET;
+			int y = t[1] - dump.manifest.baseY + com.midonarhel.lumina.LuminaPlugin.SCENE_OFFSET;
+			System.out.printf("walls (%s) at %d,%d: N %b E %b S %b W %b%n", options.walls, t[0], t[1],
+				walls != null && walls.edge(0, x, y, WallMap.NORTH), walls != null && walls.edge(0, x, y, WallMap.EAST),
+				walls != null && walls.edge(0, x, y, WallMap.SOUTH), walls != null && walls.edge(0, x, y, WallMap.WEST));
+		}
 		plugin.buildingLights.restore(top, (BuildingDetector.Result) d.get("buildings.result"),
 			(BuildingDetector.Result) d.get("buildings.coarse"), (RoomMap) d.get("buildings.rooms"),
-			(WallMap) d.get("buildings.walls"), (byte[]) d.get("buildings.floors"),
+			walls, (byte[]) d.get("buildings.floors"),
 			(com.midonarhel.lumina.visibility.RoofMap) d.get("buildings.roofs"), (boolean[]) d.get("buildings.drawnWalls"));
 
 		// the zones into buffers of the loader's pool, then swapped in as a load's
