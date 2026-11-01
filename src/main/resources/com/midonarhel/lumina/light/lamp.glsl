@@ -241,19 +241,10 @@ vec3 lampLight(Lamp lamp, vec3 p, vec3 wallFrom, bool inAir, out vec3 ld, out fl
 }
 
 // Whether the lamp is within reach of a surface at p and in front of it by its smooth normal n, as the sun's light is
-// by its normal; a surface turned away is lit only through, with backToo. No wrap past the horizon: it lit a roof's
-// slope from the lanterns under its eave.
+// by its normal (a face's own normal cut the light triangle by triangle across a round mesh); a surface turned away is
+// lit only through, with backToo. No wrap past the horizon: it lit a roof's slope from the lanterns under its eave.
 bool lampReaches(Lamp lamp, vec3 p, vec3 n, bool backToo) {
   vec3 l = lamp.pos - p;
   float d2 = dot(l, l);
   return d2 < lamp.radius * lamp.radius && (backToo || dot(n, l) > 0.0);
-}
-
-// How much of a lamp in direction ld (unit) a face with normal faceN takes by its own facing: none when the face turns
-// away from the lamp, which then stands behind the face's own surface (a roof's slope above the lanterns under its
-// eave, lit through the smooth normal the eave's vertices share with its underside), all of it facing it, eased over
-// a few degrees so a round mesh's terminator doesn't step from face to face
-#define LAMP_FACE_EASE 0.1
-float lampFacing(vec3 faceN, vec3 ld) {
-  return smoothstep(0.0, LAMP_FACE_EASE, dot(faceN, ld));
 }
