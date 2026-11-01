@@ -66,6 +66,9 @@ public final class DumpRenderer implements AutoCloseable
 		// snow cover on the ground everywhere (the weather field's cells), null for the dump's; give it a weather that
 		// neither snows nor works the ground out from the climate (weatherMode=OVERCAST), or it moves on from there
 		public Float snowCover;
+		// false: the weather's state (Weather's and the field's) is not put back from the dump, so a weather given by
+		// weatherMode draws as itself, from the warm-up
+		public boolean restoreWeather = true;
 	}
 
 	public final SceneDump.Loaded dump;
@@ -284,6 +287,10 @@ public final class DumpRenderer implements AutoCloseable
 	{
 		for (String[] f : SceneDump.stateFields(plugin))
 		{
+			if (!options.restoreWeather && (f[0].equals("weather") || f[0].equals("weatherField")))
+			{
+				continue;
+			}
 			String key = "state." + f[0] + "." + f[1];
 			if (!dump.derived.containsKey(key))
 			{

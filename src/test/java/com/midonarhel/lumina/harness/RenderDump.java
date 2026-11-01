@@ -83,6 +83,9 @@ public final class RenderDump
 				case "time":
 					timeFrames = Integer.parseInt(v);
 					break;
+				case "weatherState":
+					o.restoreWeather = !v.equals("off") && !v.equals("false");
+					break;
 				case "snowCover":
 					o.snowCover = Float.parseFloat(v);
 					break;
