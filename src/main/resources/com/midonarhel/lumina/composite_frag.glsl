@@ -463,7 +463,7 @@ vec4 shadeScene(ivec2 px, SceneSample sm, vec4 transparent) {
       }
       lit = waterOver(px, p, color.rgb, shadow, lit, material.b);
       if (materialFakeWater(material)) {
-        lit = waterFake(px, p, sm.faceNormal, color.rgb, shadow, sm.end, lit);
+        lit = waterFake(px, p, sm.faceNormal, color.rgb, shadow, lit);
       }
       if (compositePart == 4) { return vec4(lit, 1.0); }
     }
