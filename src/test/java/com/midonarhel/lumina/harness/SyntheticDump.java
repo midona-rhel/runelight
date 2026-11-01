@@ -154,6 +154,32 @@ public final class SyntheticDump
 
 	public static final int LAMP_X = (int) (57.5 * 128);
 
+	/**
+	 * The synthetic scene with a zigzag front of diagonal walls and a lamp: along local row 52, x 48 to 66, tiles
+	 * alternating between a south-west to north-east wall and a north-west to south-east one, so neighbours meet end to
+	 * end at tile corners (the joints of Ardougne's zigzag fronts); north of it a lamp of six tiles' reach. The ground
+	 * south of the front is behind it.
+	 */
+	public static SceneDump.Loaded withZigzagAndLamp(double lampX, double lampZ)
+	{
+		SceneDump.Loaded l = make();
+		int[][][] flags = new int[4][104][104];
+		List<com.midonarhel.lumina.visibility.WallMap.Diagonal> diagonals = new ArrayList<>();
+		for (int x = 48; x <= 66; ++x)
+		{
+			flags[0][x][52] |= com.midonarhel.lumina.visibility.WallMap.LOS_FULL;
+			diagonals.add(new com.midonarhel.lumina.visibility.WallMap.Diagonal(0, x + 40, 52 + 40,
+				(x & 1) == 0 ? com.midonarhel.lumina.visibility.WallMap.DIAG_SW_NE : com.midonarhel.lumina.visibility.WallMap.DIAG_NW_SE));
+		}
+		l.derived.put("buildings.walls", com.midonarhel.lumina.visibility.WallMap.build(flags, diagonals, 184, 40, 1));
+		List<com.midonarhel.lumina.light.PointLight> lamps = new ArrayList<>();
+		lamps.add(new com.midonarhel.lumina.light.PointLight().set((float) (lampX * 128), -120, (float) (lampZ * 128), 6 * 128,
+			1f, 0.75f, 0.45f, 6f).onPlane(0));
+		l.derived.put("lamps.collected", lamps);
+		l.derived.put("lamps.steady", lamps);
+		return l;
+	}
+
 	private static FrameTape.Event event(int type, int[] ints)
 	{
 		FrameTape.Event e = new FrameTape.Event();

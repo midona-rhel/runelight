@@ -57,6 +57,40 @@ public class OfflineChecksSyntheticTest
 
 	@Test
 	@SuppressWarnings("unchecked")
+	public void noLampLightThroughAZigzagFront() throws Exception
+	{
+		// lamps over a joint where the front peaks, over one where it dips, and between: lines through the joints
+		int k = 0;
+		StringBuilder failures = new StringBuilder();
+		for (double[] at : new double[][]{{57.0, 54.5}, {58.0, 54.5}, {57.5, 55.2}, {55.3, 53.9}})
+		{
+			SceneDump.Loaded dump = SyntheticDump.withZigzagAndLamp(at[0], at[1]);
+			DumpRenderer.Options o = options();
+			o.hour = 0;
+			try (DumpRenderer r = new DumpRenderer(dump, o))
+			{
+				BufferedImage on = r.render();
+				FrameProbe probe = new FrameProbe(r.plugin, r.width, r.height);
+				r.set("pointLights", "false");
+				BufferedImage off = r.renderAgain();
+				Checks.LampLeak leak = Checks.lampLeak(on, off, probe, (List<PointLight>) dump.derived.get("lamps.collected"),
+					(WallMap) dump.derived.get("buildings.walls"), 0, 6);
+				Files.createDirectories(OUT);
+				ImageIO.write(on, "png", OUT.resolve("zigzag-" + k + "-on.png").toFile());
+				ImageIO.write(leak.image, "png", OUT.resolve("zigzag-" + k + "-leak.png").toFile());
+				System.out.println("zigzag lamp at " + at[0] + ", " + at[1] + ": " + leak);
+				if (leak.openLit <= 1000 || leak.behind <= 1000 || leak.lit != 0)
+				{
+					failures.append(at[0]).append(", ").append(at[1]).append(": ").append(leak).append('\n');
+				}
+			}
+			++k;
+		}
+		assertTrue(failures.toString(), failures.length() == 0);
+	}
+
+	@Test
+	@SuppressWarnings("unchecked")
 	public void noLampLightBehindTheWall() throws Exception
 	{
 		SceneDump.Loaded dump = SyntheticDump.withWallAndLamp();
