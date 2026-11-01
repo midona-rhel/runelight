@@ -881,8 +881,8 @@ public final class WaterMap
 	}
 
 	/**
-	 * Whether a fake water face (vertices x, y, z) stands steep enough to be a fall's: its normal's vertical part below
-	 * FALL_FACE (water.glsl FALL_STEEP).
+	 * Whether a fake water face (vertices x, y, z) stands steep enough to be a fall's, as water.glsl draws it: its normal's
+	 * vertical part below FALL_FACE.
 	 */
 	public static boolean fallFace(float ax, float ay, float az, float bx, float by, float bz, float cx, float cy, float cz)
 	{
@@ -892,7 +892,9 @@ public final class WaterMap
 		return len > 1e-3f && Math.abs(ny) / len < FALL_FACE;
 	}
 
-	private static final float FALL_FACE = 0.5f;
+	// water.glsl draws a face as a fall where 1 - smoothstep(FALL_STEEP: 0.5, 0.85, its normal's vertical part) is half or
+	// more: below this
+	private static final float FALL_FACE = 0.675f;
 
 	/**
 	 * The water corner a waterfall's vertex at extended world (x, height, z) takes its colour from, {cx, cy, level}: of the
