@@ -238,6 +238,12 @@ public final class SkyField
 	 */
 	static float[] pack(WallMap walls, int plane, float[] light, boolean[] covered, float[] corners)
 	{
+		return pack(walls, plane, light, covered, corners, cornerRoots(walls, plane));
+	}
+
+	/** As pack, with the corners' groups worked out once (cornerRoots), as cornerLight takes them. */
+	static float[] pack(WallMap walls, int plane, float[] light, boolean[] covered, float[] corners, int[] rootOf)
+	{
 		int size = walls.size, width = size * TEXELS_PER_TILE;
 		float[] out = new float[2 * width * width * 4];
 		int[] bits = new int[4], tiles = new int[4], parent = new int[8], count = new int[8];
@@ -249,7 +255,7 @@ public final class SkyField
 				java.util.Arrays.fill(count, 0);
 				java.util.Arrays.fill(sum, 0);
 				java.util.Arrays.fill(coverSum, 0);
-				int present = groupCorner(walls, plane, size, cx, cy, bits, tiles, parent);
+				int present = corner(walls, plane, size, cx, cy, rootOf, bits, tiles, parent);
 				for (int node = 0; node < 8; ++node)
 				{
 					if (parent[node] < 0) continue;
@@ -282,9 +288,15 @@ public final class SkyField
 		{
 			for (int cy = 0; cy <= size; ++cy)
 			{
+				// out in the open (the tiles whose corners the slopes here read all uncovered): light 1, cover 0, no gradient
+				boolean open = true;
+				for (int x = Math.max(0, cx - 2); open && x <= Math.min(size - 1, cx + 1); ++x)
+					for (int y = Math.max(0, cy - 2); open && y <= Math.min(size - 1, cy + 1); ++y)
+						open = !covered[x * size + y];
+				if (open) continue;
 				java.util.Arrays.fill(count, 0);
 				java.util.Arrays.fill(slope, 0);
-				int present = groupCorner(walls, plane, size, cx, cy, bits, tiles, parent);
+				int present = corner(walls, plane, size, cx, cy, rootOf, bits, tiles, parent);
 				for (int node = 0; node < 8; ++node)
 				{
 					if (parent[node] < 0) continue;
@@ -344,46 +356,57 @@ public final class SkyField
 	 */
 	static float[] cornerLight(WallMap walls, int plane, boolean[] covered, float falloff)
 	{
-		return cornerLight(walls, plane, covered, falloff, null);
+		return cornerLight(walls, plane, covered, falloff, cornerRoots(walls, plane), null);
 	}
 
-	/** As cornerLight; paths, when given, gets {distance, parent node, x, z} per node, for tests. */
-	static float[] cornerLight(WallMap walls, int plane, boolean[] covered, float falloff, float[][] paths)
+	/**
+	 * As cornerLight, with the corners' groups (cornerRoots); paths, when given, gets {distance, parent node, x, z} per
+	 * node, for tests. Lazy Theta*: a node is reached through its predecessor's parent on trust, and the line of sight
+	 * between them checked once, when it is taken from the queue (if blocked, it takes the best of its settled
+	 * neighbours instead), so WallMap.blocked runs once a node, not once an edge.
+	 */
+	static float[] cornerLight(WallMap walls, int plane, boolean[] covered, float falloff, int[] rootOf, float[][] paths)
 	{
-		int size = walls.size, corners = size + 1;
-		int[] bits = new int[4], tiles = new int[4], parent = new int[8];
-		// per corner: each node's root, -1 where none; the roots' positions (extended tiles), nudged into their tiles
-		int[] rootOf = new int[corners * corners * 8];
-		float[] px = new float[rootOf.length], pz = new float[rootOf.length];
-		float[] dist = new float[rootOf.length];
-		int[] from = new int[rootOf.length];
+		int size = walls.size, corners = size + 1, nodes = rootOf.length;
+		// the roots' positions (extended tiles), nudged into their tiles
+		float[] px = new float[nodes], pz = new float[nodes];
+		float[] dist = new float[nodes];
+		int[] from = new int[nodes];
 		java.util.Arrays.fill(dist, Float.POSITIVE_INFINITY);
 		java.util.Arrays.fill(from, -1);
-		boolean[] open = new boolean[rootOf.length];
+		boolean[] open = new boolean[nodes], settled = new boolean[nodes];
 		// per source node: the open edges at its corner it gives light from, a bit per side (east 1, north 2, west 4,
 		// south 8), each the half of the edge next to the corner
-		byte[] edges = new byte[rootOf.length];
+		byte[] edges = new byte[nodes];
 		float reach = (float) (Math.log(MIN_LIGHT) / Math.log(falloff));
-		java.util.PriorityQueue<long[]> queue = new java.util.PriorityQueue<>((a, b) -> Double.compare(Double.longBitsToDouble(a[0]), Double.longBitsToDouble(b[0])));
+		Heap heap = new Heap(1024);
+		float[] sx = new float[8], sz = new float[8];
+		int[] n = new int[8], tiles = new int[4], bits = new int[4];
+		boolean[] anyOpen = new boolean[8], anyCovered = new boolean[8];
 		for (int cx = 0; cx < corners; ++cx)
 		{
 			for (int cy = 0; cy < corners; ++cy)
 			{
-				int c = (cx * corners + cy) * 8;
-				java.util.Arrays.fill(rootOf, c, c + 8, -1);
-				int present = groupCorner(walls, plane, size, cx, cy, bits, tiles, parent);
-				float[] sx = new float[8], sz = new float[8];
-				int[] n = new int[8];
-				boolean[] anyOpen = new boolean[8], anyCovered = new boolean[8];
+				int c = (cx * corners + cy) * 8, present = 0;
+				java.util.Arrays.fill(sx, 0);
+				java.util.Arrays.fill(sz, 0);
+				java.util.Arrays.fill(n, 0);
+				java.util.Arrays.fill(anyOpen, false);
+				java.util.Arrays.fill(anyCovered, false);
+				for (int q = 0; q < 4; ++q)
+				{
+					int x = cx - 1 + (q & 1), y = cy - 1 + (q >> 1);
+					if (x < 0 || y < 0 || x >= size || y >= size) continue;
+					present |= 1 << q;
+					tiles[q] = x * size + y;
+					bits[q] = walls.get(plane, x, y);
+				}
 				for (int node = 0; node < 8; ++node)
 				{
-					if (parent[node] < 0) continue;
-					int q = node >> 1, root = cornerRoot(parent, node);
-					rootOf[c + node] = root;
-					int x = cx - 1 + (q & 1), y = cy - 1 + (q >> 1);
-					float[] centre = halfCentre(bits[q], x, y, node & 1);
-					sx[root] += centre[0];
-					sz[root] += centre[1];
+					int root = rootOf[c + node];
+					if (root < 0) continue;
+					int q = node >> 1, x = cx - 1 + (q & 1), y = cy - 1 + (q >> 1);
+					halfCentre(bits[q], x, y, node & 1, sx, sz, root);
 					n[root]++;
 					boolean cov = covered[tiles[q]];
 					anyOpen[root] |= !cov;
@@ -406,54 +429,57 @@ public final class SkyField
 							edges[id] = (byte) openEdges(walls, plane, size, covered, cx, cy);
 							dist[id] = 0;
 							from[id] = id;
-							queue.add(new long[]{Double.doubleToLongBits(0), id});
+							heap.push(id, 0);
 						}
 					}
 				}
 			}
 		}
-		while (!queue.isEmpty())
+		int[] around = new int[24];
+		while (heap.size > 0)
 		{
-			long[] e = queue.poll();
-			int u = (int) e[1];
-			if (Double.longBitsToDouble(e[0]) > dist[u]) continue;
-			int ucx = u / 8 / corners, ucy = u / 8 % corners, uc = (ucx * corners + ucy) * 8;
+			float key = heap.topKey();
+			int u = heap.pop();
+			if (settled[u] || key > dist[u]) continue;
 			int p = from[u];
-			// the tiles of u's group, and their other corners
-			for (int node = 0; node < 8; ++node)
+			if (p != u && walls.blocked(plane, local(px[p], walls), local(pz[p], walls), local(px[u], walls), local(pz[u], walls)))
 			{
-				if (rootOf[uc + node] != u - uc) continue;
-				int q = node >> 1, h = node & 1, tx = ucx - 1 + (q & 1), ty = ucy - 1 + (q >> 1);
-				int b = walls.get(plane, tx, ty);
-				if (tx < 0 || ty < 0 || tx >= size || ty >= size || walls.solid(plane, tx, ty) && dist[u] > 0) continue;
-				boolean split = WallMap.split(b);
-				for (int k = 0; k < 4; ++k)
+				// the parent taken on trust can't see it: the best of its settled neighbours
+				float best = Float.POSITIVE_INFINITY;
+				int via = -1;
+				for (int k = 0, m = neighbours(walls, plane, size, corners, rootOf, dist, u, around); k < m; ++k)
 				{
-					int vcx = tx + (k & 1), vcy = ty + (k >> 1);
-					if (vcx == ucx && vcy == ucy) continue;
-					int q2 = (tx - vcx + 1) + 2 * (ty - vcy + 1);
-					int vc = (vcx * corners + vcy) * 8, vroot = rootOf[vc + 2 * q2 + (split ? h : 0)];
-					if (vroot < 0) continue;
-					int v = vc + vroot;
-					if (open[v]) continue;
-					float d;
-					int via;
-					if (p != u && !walls.blocked(plane, local(px[p], walls), local(pz[p], walls), local(px[v], walls), local(pz[v], walls)))
+					int w = around[k];
+					if (!settled[w]) continue;
+					float d = dist[w] + reachFrom(w, edges[w], corners, px[u], pz[u], px[w], pz[w]);
+					if (d < best)
 					{
-						d = dist[p] + reachFrom(p, edges[p], corners, px[v], pz[v], px[p], pz[p]);
-						via = p;
+						best = d;
+						via = w;
 					}
-					else
-					{
-						d = dist[u] + reachFrom(u, edges[u], corners, px[v], pz[v], px[u], pz[u]);
-						via = u;
-					}
-					if (d < dist[v] && d <= reach)
-					{
-						dist[v] = d;
-						from[v] = via;
-						queue.add(new long[]{Double.doubleToLongBits(d), v});
-					}
+				}
+				if (via < 0 || best > reach)
+				{
+					dist[u] = Float.POSITIVE_INFINITY;
+					continue;
+				}
+				dist[u] = best;
+				from[u] = via;
+			}
+			settled[u] = true;
+			int pu = from[u];
+			for (int k = 0, m = neighbours(walls, plane, size, corners, rootOf, dist, u, around); k < m; ++k)
+			{
+				int v = around[k];
+				if (open[v] || settled[v]) continue;
+				// through u's parent, on trust (checked when v is taken)
+				int via = pu != u ? pu : u;
+				float d = dist[via] + reachFrom(via, edges[via], corners, px[v], pz[v], px[via], pz[via]);
+				if (d < dist[v] && d <= reach)
+				{
+					dist[v] = d;
+					from[v] = via;
+					heap.push(v, d);
 				}
 			}
 		}
@@ -465,12 +491,134 @@ public final class SkyField
 			paths[2] = px;
 			paths[3] = pz;
 		}
-		float[] out = new float[rootOf.length];
-		for (int id = 0; id < out.length; ++id)
+		float[] out = new float[nodes];
+		for (int id = 0; id < nodes; ++id)
 		{
 			out[id] = open[id] ? 1 : dist[id] <= reach ? (float) Math.pow(falloff, dist[id] + CORNER_LAG) : 0;
 		}
 		return out;
+	}
+
+	/**
+	 * The nodes node u reaches across the tiles of its group (their other corners' groups holding the same tile half),
+	 * into out; returns how many. A solid tile passes nothing on.
+	 */
+	private static int neighbours(WallMap walls, int plane, int size, int corners, int[] rootOf, float[] dist, int u, int[] out)
+	{
+		int ucx = u / 8 / corners, ucy = u / 8 % corners, uc = (ucx * corners + ucy) * 8, m = 0;
+		for (int node = 0; node < 8; ++node)
+		{
+			if (rootOf[uc + node] != u - uc) continue;
+			int q = node >> 1, h = node & 1, tx = ucx - 1 + (q & 1), ty = ucy - 1 + (q >> 1);
+			if (tx < 0 || ty < 0 || tx >= size || ty >= size || walls.solid(plane, tx, ty) && dist[u] > 0) continue;
+			boolean split = WallMap.split(walls.get(plane, tx, ty));
+			for (int k = 0; k < 4; ++k)
+			{
+				int vcx = tx + (k & 1), vcy = ty + (k >> 1);
+				if (vcx == ucx && vcy == ucy) continue;
+				int q2 = (tx - vcx + 1) + 2 * (ty - vcy + 1);
+				int vc = (vcx * corners + vcy) * 8, vroot = rootOf[vc + 2 * q2 + (split ? h : 0)];
+				if (vroot >= 0) out[m++] = vc + vroot;
+			}
+		}
+		return m;
+	}
+
+	/**
+	 * A corner's quadrants as groupCorner gives them, from cornerRoots: bits and tiles of the quadrants inside the map,
+	 * parent each node's root (a root its own parent), -1 where none. Returns the quadrants inside the map.
+	 */
+	private static int corner(WallMap walls, int plane, int size, int cx, int cy, int[] rootOf, int[] bits, int[] tiles, int[] parent)
+	{
+		int c = (cx * (size + 1) + cy) * 8, present = 0;
+		for (int q = 0; q < 4; ++q)
+		{
+			int x = cx - 1 + (q & 1), y = cy - 1 + (q >> 1);
+			if (x < 0 || y < 0 || x >= size || y >= size) continue;
+			present |= 1 << q;
+			tiles[q] = x * size + y;
+			bits[q] = walls.get(plane, x, y);
+		}
+		for (int node = 0; node < 8; ++node) parent[node] = rootOf[c + node];
+		return present;
+	}
+
+	/** Each corner's groups (groupCorner) once: [(cx * (size + 1) + cy) * 8 + node] the node's root, -1 where none. */
+	static int[] cornerRoots(WallMap walls, int plane)
+	{
+		int size = walls.size, corners = size + 1;
+		int[] bits = new int[4], tiles = new int[4], parent = new int[8];
+		int[] rootOf = new int[corners * corners * 8];
+		for (int cx = 0; cx < corners; ++cx)
+		{
+			for (int cy = 0; cy < corners; ++cy)
+			{
+				int c = (cx * corners + cy) * 8;
+				groupCorner(walls, plane, size, cx, cy, bits, tiles, parent);
+				for (int node = 0; node < 8; ++node) rootOf[c + node] = parent[node] < 0 ? -1 : cornerRoot(parent, node);
+			}
+		}
+		return rootOf;
+	}
+
+	/** A binary min-heap of nodes by distance (repeats allowed; the stale ones are skipped when taken). */
+	private static final class Heap
+	{
+		int[] ids;
+		float[] keys;
+		int size;
+
+		Heap(int capacity)
+		{
+			ids = new int[capacity];
+			keys = new float[capacity];
+		}
+
+		void push(int id, float key)
+		{
+			if (size == ids.length)
+			{
+				ids = java.util.Arrays.copyOf(ids, size * 2);
+				keys = java.util.Arrays.copyOf(keys, size * 2);
+			}
+			int i = size++;
+			while (i > 0)
+			{
+				int up = (i - 1) >> 1;
+				if (keys[up] <= key) break;
+				ids[i] = ids[up];
+				keys[i] = keys[up];
+				i = up;
+			}
+			ids[i] = id;
+			keys[i] = key;
+		}
+
+		float topKey()
+		{
+			return keys[0];
+		}
+
+		int pop()
+		{
+			int top = ids[0];
+			int id = ids[--size];
+			float key = keys[size];
+			int i = 0;
+			while (true)
+			{
+				int c = 2 * i + 1;
+				if (c >= size) break;
+				if (c + 1 < size && keys[c + 1] < keys[c]) c++;
+				if (keys[c] >= key) break;
+				ids[i] = ids[c];
+				keys[i] = keys[c];
+				i = c;
+			}
+			ids[i] = id;
+			keys[i] = key;
+			return top;
+		}
 	}
 
 	/**
@@ -520,6 +668,14 @@ public final class SkyField
 	private static float local(float t, WallMap walls)
 	{
 		return (t - walls.offset) * 128;
+	}
+
+	/** Add the centre of a tile's half (halfCentre) to sx[at], sz[at]. */
+	private static void halfCentre(int bits, int x, int y, int half, float[] sx, float[] sz, int at)
+	{
+		float[] c = halfCentre(bits, x, y, half);
+		sx[at] += c[0];
+		sz[at] += c[1];
 	}
 
 	/** The centre of a tile's half (its triangle's centroid where a diagonal splits it), extended tiles. */

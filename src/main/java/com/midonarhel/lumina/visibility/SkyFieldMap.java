@@ -76,8 +76,9 @@ public final class SkyFieldMap
 			{
 				boolean[] covered = SkyField.covered(job.rooms, job.floors, job.plane);
 				float[] light = SkyField.propagate(job.walls, covered, job.plane, job.falloff);
+				int[] groups = SkyField.cornerRoots(job.walls, job.plane);
 				job.texels = SkyField.pack(job.walls, job.plane, light, covered,
-					SkyField.cornerLight(job.walls, job.plane, covered, job.falloff));
+					SkyField.cornerLight(job.walls, job.plane, covered, job.falloff, groups, null), groups);
 				done = job;
 			});
 		}

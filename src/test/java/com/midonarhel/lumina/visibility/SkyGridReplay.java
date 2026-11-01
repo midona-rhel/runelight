@@ -1147,7 +1147,7 @@ public class SkyGridReplay
 			// where the light at a few corners deep in the room comes from: the path back to its source
 			float[][] paths = new float[4][];
 			boolean[] covered = SkyField.covered(d.rooms, d.floors, 0);
-			SkyField.cornerLight(d.walls, 0, covered, SkyField.falloffOf(com.midonarhel.lumina.LuminaPlugin.SKYLIGHT_REACH), paths);
+			SkyField.cornerLight(d.walls, 0, covered, SkyField.falloffOf(com.midonarhel.lumina.LuminaPlugin.SKYLIGHT_REACH), SkyField.cornerRoots(d.walls, 0), paths);
 			int corners = d.walls.size + 1, off = d.walls.offset;
 			for (int[] c : new int[][]{{46, 44}, {44, 45}, {46, 46}})
 			{

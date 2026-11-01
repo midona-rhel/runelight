@@ -23,12 +23,13 @@ public class CpuCostProbe
 		Path dir = Paths.get(System.getProperty("user.home"), ".runelite", "lumina", "dumps");
 		Assume.assumeTrue(System.getProperty("lumina.out") != null && Files.isDirectory(dir));
 		int runs = Integer.parseInt(System.getProperty("lumina.runs", "15"));
-		Method cornerLight = null;
+		Method cornerLight = null, cornerRoots = null, pack6 = null;
 		for (Method m : SkyField.class.getDeclaredMethods())
-			if (m.getName().equals("cornerLight") && m.getParameterCount() == 4) cornerLight = m;
-		Method pack5 = null;
-		for (Method m : SkyField.class.getDeclaredMethods())
-			if (m.getName().equals("pack") && m.getParameterCount() == 5) pack5 = m;
+		{
+			if (m.getName().equals("cornerLight") && m.getParameterCount() == 6) cornerLight = m;
+			if (m.getName().equals("cornerRoots")) cornerRoots = m;
+			if (m.getName().equals("pack") && m.getParameterCount() == 6) pack6 = m;
+		}
 		StringBuilder out = new StringBuilder();
 		try (java.util.stream.Stream<Path> files = Files.list(dir))
 		{
@@ -45,9 +46,10 @@ public class CpuCostProbe
 					boolean[] covered = SkyField.covered(d.rooms, d.floors, 0);
 					float[] light = SkyField.propagate(d.walls, covered, 0, falloff);
 					long t1 = System.nanoTime();
-					float[] c = cornerLight != null ? (float[]) cornerLight.invoke(null, d.walls, 0, covered, falloff) : null;
+					int[] groups = cornerRoots != null ? (int[]) cornerRoots.invoke(null, d.walls, 0) : null;
+					float[] c = cornerLight != null ? (float[]) cornerLight.invoke(null, d.walls, 0, covered, falloff, groups, null) : null;
 					long t2 = System.nanoTime();
-					packed = pack5 != null ? (float[]) pack5.invoke(null, d.walls, 0, light, covered, c) : SkyField.pack(d.walls, 0, light, covered);
+					packed = pack6 != null ? (float[]) pack6.invoke(null, d.walls, 0, light, covered, c, groups) : SkyField.pack(d.walls, 0, light, covered);
 					long t3 = System.nanoTime();
 					s.setRooms(d.rooms);
 					long t4 = System.nanoTime();
