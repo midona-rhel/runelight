@@ -968,6 +968,15 @@ public class SkyGridReplay
 			regionImage(sh, d.walls, cx - 5, cx + 2, cz - 5, cz + 1, 4, d.name + "-close-slope-" + which, 48, 2);
 			regionImage(sh, d.walls, cx - 5, cx + 2, cz - 5, cz + 1, 0, d.name + "-close-shown-" + which, 48, 1);
 		}
+		if (d.name.equals("market"))
+		{
+			// the stall by the user at 2657,3305 (optA captures): tile 48,57, walled on all four sides by the collision map
+			for (Shader sh : new Shader[]{before, now})
+				regionImage(sh, d.walls, 44, 53, 53, 61, 0, "market-stall-" + (sh == before ? "before" : "now"), 48, 1);
+			StringBuilder st = new StringBuilder("stall 48,57 and around, terms at tile centres, now:\n");
+			st.append(terms(now, d.walls, 46, 50, 55, 59));
+			System.out.println(st);
+		}
 		if (d.name.equals("doorway"))
 		{
 			// from the doorway (tile 46,48) south into the room, and across it at a tile in
