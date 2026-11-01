@@ -1048,6 +1048,36 @@ public class SkyGridReplay
 			double mean = sum / n;
 			System.out.printf("old corner light is the new one %.2f tiles further on (sd %.2f, %d corners)%n", mean, Math.sqrt(sq / n - mean * mean), n);
 		}
+		if (d.name.equals("doorway"))
+		{
+			// the tiles at the diagonal door: per tile (world x,y) and half, the field's light at its corners as the old
+			// flood gave it (lumina, option A) and as cornerLight gives it (now), and its plane-0 roof share
+			float[] old = field(d, 0, false), fresh = field(d, 0, true);
+			StringBuilder tb = new StringBuilder("corner table (SW SE NW NE; '-' a corner the half lacks), light old -> now, roof share:\n");
+			int width = d.walls.size * SkyField.TEXELS_PER_TILE, off = d.walls.offset;
+			for (int tz = 49; tz >= 46; --tz)
+				for (int tx = 44; tx <= 47; ++tx)
+				{
+					int bits = d.walls.get(0, tx + off, tz + off);
+					boolean split = WallMap.split(bits);
+					String kind = (bits & WallMap.DIAG_SW_NE) != 0 ? "/" : (bits & WallMap.DIAG_NW_SE) != 0 ? "\\" : " ";
+					for (int h = 0; h < (split ? 2 : 1); ++h)
+					{
+						StringBuilder row = new StringBuilder(String.format("  %d,%d %s %s:", tx + d.voxels.baseX, tz + d.voxels.baseY, kind,
+							!split ? "whole" : (bits & WallMap.DIAG_SW_NE) != 0 ? (h == 0 ? "NW half" : "SE half") : (h == 0 ? "NE half" : "SW half")));
+						for (int k = 0; k < 4; ++k)
+						{
+							int i = k & 1, j = k >> 1;
+							boolean lacks = split && ((bits & WallMap.DIAG_SW_NE) != 0 ? (h == 0 ? k == 1 : k == 2) : (h == 0 ? k == 0 : k == 3));
+							int o = (((2 * (tz + off) + j) * width) + 2 * (tx + off) + i) * 4 + 2 * h;
+							float share = now.t(2 * tx + i + 6 * now.size, 2 * tz + j, h == 0 ? 0 : SkyGrid.HALF_ROOFS, 0);
+							row.append(lacks ? "      -      " : String.format(" %.2f->%.2f r%.2f", old[o], fresh[o], share));
+						}
+						tb.append(row).append('\n');
+					}
+				}
+			System.out.println(tb);
+		}
 		if (d.name.equals("market"))
 		{
 			// the stall by the user at 2657,3305 (optA captures): tile 48,57, walled on all four sides by the collision map
