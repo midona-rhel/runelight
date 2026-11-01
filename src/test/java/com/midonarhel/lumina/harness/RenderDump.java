@@ -83,6 +83,9 @@ public final class RenderDump
 				case "time":
 					timeFrames = Integer.parseInt(v);
 					break;
+				case "snowCover":
+					o.snowCover = Float.parseFloat(v);
+					break;
 				case "warmup":
 					o.warmupSeconds = Double.parseDouble(v);
 					break;

@@ -63,6 +63,9 @@ public final class DumpRenderer implements AutoCloseable
 		public Integer cameraYaw, cameraPitch, scale;
 		// the hour to hold (dayCycleMinutes 0, fixedHour), null for the dump's clock
 		public Integer hour;
+		// snow cover on the ground everywhere (the weather field's cells), null for the dump's; give it a weather that
+		// neither snows nor works the ground out from the climate (weatherMode=OVERCAST), or it moves on from there
+		public Float snowCover;
 	}
 
 	public final SceneDump.Loaded dump;
@@ -296,6 +299,13 @@ public final class DumpRenderer implements AutoCloseable
 		}
 		// the weather field's textures take the state again
 		PlainData.set(plugin.weather.getField(), "uploaded", false);
+		if (options.snowCover != null)
+		{
+			float[][] state = (float[][]) PlainData.get(plugin.weather.getField(), "state");
+			java.util.Arrays.fill(state[com.midonarhel.lumina.weather.WeatherField.SNOW_COVER], options.snowCover);
+			// the field is blurred and uploaded on its next update, which is this frame's
+			PlainData.set(plugin.weather, "fieldDt", 1f);
+		}
 		Double age = dump.manifest.state.get("water.age");
 		if (age != null)
 		{

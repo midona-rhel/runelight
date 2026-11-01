@@ -44,7 +44,9 @@ numbers against `reference.png`. Options: `hour=h` (holds the hour: dayCycleMinu
 `scale=` (the camera; with yaw or pitch changed the whole scene's zones are drawn, as the client only drew those in its
 frustum; dynamic models are the client's), `warmup=s` and `step=s` (seconds of frames before the dump's time, default 6
 and 0.05), `time=n` (draws the dump's frame n more times and prints the GPU time per frame, GL_TIME_ELAPSED
-around the whole frame, and the CPU time of its draw calls: median and least), and any setting as `key=value`.
+around the whole frame, and the CPU time of its draw calls: median and least), `snowCover=c` (the weather field's snow
+on the ground set to c everywhere; with `weatherMode=OVERCAST` or another weather that neither snows nor takes the
+climate's ground, so it stays), and any setting as `key=value`.
 
 ### How it works (`src/test/java/com/midonarhel/lumina/harness/`)
 
