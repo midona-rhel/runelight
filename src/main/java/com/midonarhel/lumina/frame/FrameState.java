@@ -288,6 +288,17 @@ public final class FrameState
 			glDisable(GL_BLEND);
 		}
 		glUniform1i(plugin.uniAlphaPass, alpha ? 1 : 0);
+		// the shadow map as the shadow pass left it last frame, with that frame's matrix (frag.glsl alphaShadow)
+		boolean shadows = alpha && plugin.frameShadows && plugin.shadowMap.isInitialized();
+		glUniform1i(plugin.uniAlphaShadows, shadows ? 1 : 0);
+		if (shadows)
+		{
+			plugin.shadowMap.bindForSampling(SHADOW_RAW_UNIT, SHADOW_COMPARE_UNIT);
+			glUniformMatrix4fv(plugin.uniAlphaLightProj, false, plugin.shadowMap.lightProj);
+			glUniform1f(plugin.uniAlphaShadowTexel, 2 * plugin.shadowMap.getRadius() / plugin.shadowMap.getSize());
+			glUniform1f(plugin.uniAlphaShadowDepthRange, plugin.shadowMap.getDepthRange());
+			glUniform1i(plugin.uniAlphaDepthZeroToOne, plugin.glCapabilities.OpenGL45 ? 1 : 0);
+		}
 	}
 
 	public void setFrameUniforms(FrameUniforms u)

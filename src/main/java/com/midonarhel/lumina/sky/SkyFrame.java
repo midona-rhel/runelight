@@ -196,7 +196,7 @@ public final class SkyFrame
 		RenderThread rt = plugin.rts[0];
 		VAO o = rt.vaoO.get(size);
 		rt.modelUploader.uploadTempModel(skybox, 0, 0, 0, 0,
-			(int) cameraX, (int) cameraY, (int) cameraZ, o.vbo.vb, 0);
+			(int) cameraX, (int) cameraY, (int) cameraZ, o.vbo.vb, 0, 0);
 
 		float[] skyboxProjection = Mat4.translate(cameraX, cameraY, cameraZ);
 		o.addRange(skyboxProjection, scene, Renderable.RENDERMODE_UNSORTED_NO_DEPTH);

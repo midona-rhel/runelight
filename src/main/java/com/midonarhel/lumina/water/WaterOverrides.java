@@ -33,6 +33,9 @@ public final class WaterOverrides
 		int[] overlays, underlays;
 		String type;
 		int[][] area;
+		// the geometry it gives the ground (117 HD's heightOffset, up in world units, and doubleSidedFaces)
+		int heightOffset;
+		boolean doubleSided;
 		transient int index, waterType;
 	}
 
@@ -145,6 +148,31 @@ public final class WaterOverrides
 	 */
 	int tileType(int x, int y, int plane, int overlayId, int underlayId)
 	{
+		Tile match = match(x, y, plane, overlayId, underlayId);
+		return match == null ? WaterMap.NONE : match.waterType;
+	}
+
+	/**
+	 * How far up 117 HD's tile overrides move the ground of a tile at world (x, y, plane), matched by these ids
+	 * (-1 for one not asked: its overlay faces match by the overlay alone, its underlay faces by the underlay alone,
+	 * the plain tile by both, as 117 HD's SceneContext keeps them); 0 where none does.
+	 */
+	public int heightOffset(int x, int y, int plane, int overlayId, int underlayId)
+	{
+		Tile match = match(x, y, plane, overlayId, underlayId);
+		return match == null ? 0 : match.heightOffset;
+	}
+
+	/** Whether 117 HD's tile overrides draw that ground double-sided (doubleSidedFaces); ids as {@link #heightOffset}. */
+	public boolean doubleSided(int x, int y, int plane, int overlayId, int underlayId)
+	{
+		Tile match = match(x, y, plane, overlayId, underlayId);
+		return match != null && match.doubleSided;
+	}
+
+	/** 117 HD's TileOverrideManager.getOverrideBeforeReplacements: the override a tile gets, or null. */
+	private Tile match(int x, int y, int plane, int overlayId, int underlayId)
+	{
 		Tile match = first(overlays.get(overlayId), x, y, plane);
 		if (match == null)
 		{
@@ -163,7 +191,7 @@ public final class WaterOverrides
 				break;
 			}
 		}
-		return match == null ? WaterMap.NONE : match.waterType;
+		return match;
 	}
 
 	private static Tile first(List<Tile> list, int x, int y, int plane)

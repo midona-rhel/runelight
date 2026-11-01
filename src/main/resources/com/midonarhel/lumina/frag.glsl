@@ -41,9 +41,6 @@ flat in int fTextureId;
 in vec2 fUv;
 in vec3 fWorldPos;
 in vec3 fNormal;
-in float fNormalValid;
-in vec4 fBorderColor;
-in vec3 fInnerColor;
 in vec4 fClip;
 flat in int fMaterial;
 #ifdef ZBUF_DEBUG
@@ -64,8 +61,39 @@ layout(location = 2) out vec4 FragAlpha;  // transparency layer, see SceneTarget
 layout(location = 3) out vec4 FragMaterial;  // the material and the face's normal, see material_target.glsl
 
 // Transparent faces are drawn in a separate pass into their own layer and lit right here, because the composite
-// pass only sees the opaque surface behind them. Same lighting as the composite, without shadows.
+// pass only sees the opaque surface behind them. Same lighting as the composite; shadowed by the sun's map as 117 HD
+// shadows them (scene_frag.glsl), the map of the frame before, which is the one drawn when they are (the shadow pass
+// comes after the scene), with its own matrix, so it lines up but moving casters lag a frame.
 uniform int alphaPass;
+uniform int alphaShadows;             // 1 when there is a shadow map to shade them with
+uniform sampler2DShadow alphaShadowCompare;
+uniform mat4 alphaLightProj;          // world -> light clip, of the frame the map was drawn in
+uniform float alphaShadowTexel;       // world units per shadow map texel
+uniform float alphaShadowDepthRange;  // ShadowMap.getDepthRange
+uniform int alphaDepthZeroToOne;      // 1 with glClipControl (GL 4.5)
+
+// how much of the sun reaches world position p with normal n: 4 hardware-filtered compares a texel apart
+float alphaShadow(vec3 p, vec3 n) {
+  if (alphaShadows == 0) {
+    return 1.0;
+  }
+  // normal offset keeps a surface from shadowing itself, as shadow_pcss.glsl does
+  vec4 lc = alphaLightProj * vec4(p + n * alphaShadowTexel * 1.5, 1.0);
+  vec2 uv = lc.xy * 0.5 + 0.5;
+  float z = alphaDepthZeroToOne == 1 ? lc.z : lc.z * 0.5 + 0.5;
+  if (any(lessThan(uv, vec2(0.0))) || any(greaterThan(uv, vec2(1.0))) || z >= 1.0) {
+    return 1.0;
+  }
+  float bias = 2.0 * alphaShadowTexel / (2.0 * alphaShadowDepthRange);
+  vec2 t = vec2(textureSize(alphaShadowCompare, 0));
+  float lit = 0.0;
+  for (int i = 0; i < 4; ++i) {
+    vec2 o = vec2(i & 1, i >> 1) - 0.5;
+    lit += texture(alphaShadowCompare, vec3(uv + o / t, z - bias));
+  }
+  float edgeFade = smoothstep(0.0, 0.08, min(min(uv.x, uv.y), min(1.0 - uv.x, 1.0 - uv.y)));
+  return mix(1.0, lit * 0.25, edgeFade);
+}
 uniform int outdoors;
 uniform int proceduralSky;
 uniform vec3 casterDir;
@@ -82,7 +110,8 @@ uniform int pointLightsEnabled;
 #include "light/lamp.glsl"
 
 // The lamps' light on a transparent face at camera-relative p with normal n, from its cluster: on its front, and
-// through a thin leaf from behind
+// through a thin leaf from behind. The face normal faceN only moves the point off its surface for the wall check;
+// whether and how much a lamp lights the face goes by n, the normal the sun uses
 vec3 alphaLamps(vec3 p, vec3 n, vec3 faceN, float transmissive) {
   if (pointLightsEnabled == 0 || fClip.w <= 0.0) {
     return vec3(0.0);
@@ -149,15 +178,6 @@ void main() {
     // pick interpolated hsl or rgb depending on smooth banding setting
     vec3 hsl = vec3(int(fHsl) >> 10 & 63, int(fHsl) >> 7 & 7, int(fHsl) & 127);
     vec3 rgb = mix(fColor.rgb, hslToRgb(hsl), smoothBanding);
-    // Ground blending, 117 HD's overlay mix: where a triangle has vertices both on and off an overlay/underlay
-    // border, interpolate each group's colors separately and switch between them over the middle half of the
-    // way, so paths keep a soft but defined edge instead of smearing across the neighboring tile.
-    float w = fBorderColor.a;
-    if (w > 0.001 && w < 0.999 && smoothBanding < 0.5) {
-      vec3 borderRgb = fBorderColor.rgb / w;
-      vec3 innerRgb = fInnerColor / (1.0 - w);
-      rgb = mix(innerRgb, borderRgb, clamp(w * 2.0 - 1.0, 0.0, 1.0));
-    }
     c = vec4(rgb, fColor.a);
   }
 
@@ -168,16 +188,14 @@ void main() {
   // opaque surfaces are lit and fogged later by the composite pass
   FragColor = c;
 
-  // The triangle's own normal from screen-space derivatives, facing the camera. Used for faces the game marks
-  // as flat shaded, and as the reference that orients the smooth vertex normal.
+  // The triangle's own normal from screen-space derivatives, facing the camera: the normal where the vertices
+  // carry none (0, see VertexShading.java), as 117 HD's legacy geometry shader substitutes the triangle's normal.
+  // A normal that is there is used as uploaded, not turned toward the camera: 117 HD's zone renderer
+  // (scene_frag.glsl, N = normalize(IN.normal)); back faces are culled, so what is drawn faces the camera.
   vec3 faceNormal = normalize(cross(dFdx(fWorldPos), dFdy(fWorldPos)));
   if (dot(faceNormal, vec3(cameraX, cameraY, cameraZ) - fWorldPos) < 0.0)
     faceNormal = -faceNormal;
-  vec3 n = faceNormal;
-  if (fNormalValid > 0.5 && dot(fNormal, fNormal) > 1e-8) {
-    vec3 sn = normalize(fNormal);
-    n = dot(sn, faceNormal) < 0.0 ? -sn : sn;
-  }
+  vec3 n = dot(fNormal, fNormal) > 1e-8 ? normalize(fNormal) : faceNormal;
   FragNormal = vec4(n * 0.5 + 0.5, c.a);
   // alpha 1 marks the sample as covered by geometry (SceneTargets.clear); the opaque pass writes without blending
   FragMaterial = materialPack(fMaterial, faceNormal, fUv * 256.0);
@@ -189,7 +207,8 @@ void main() {
       float ndl = dot(n, casterDir);
       vec3 viewDir = normalize(vec3(cameraX, cameraY, cameraZ) - fWorldPos);
       light = (ambientLight(sunAltitude) + skyLight(sunAltitude) * max(-n.y, 0.0)) * envAmbient
-        + caster * envSun * (max(ndl, 0.0) + transmission(ndl, dot(-casterDir, viewDir), materialTransmissive(fMaterial)));
+        + caster * envSun * (max(ndl, 0.0) + transmission(ndl, dot(-casterDir, viewDir), materialTransmissive(fMaterial)))
+        * alphaShadow(fWorldPos, n);
     } else {
       light = envCaveLight(n);
     }

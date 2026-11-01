@@ -92,7 +92,7 @@ public final class VoxelCapture
 
 	/**
 	 * A zone's opaque vertex buffer that also records its triangles. Every static vertex is one put22224 (position,
-	 * spare short, abhsl) followed by one put2222 (texture, uv, packed normal).
+	 * spare short, abhsl) followed by one put2222 (texture, uv, packed normal, normal length).
 	 */
 	public static final class Buffer extends GpuIntBuffer
 	{
@@ -121,9 +121,9 @@ public final class VoxelCapture
 		}
 
 		@Override
-		public void put2222(int x, int y, int z, int w)
+		public void put2222(int x, int y, int z, int w, int length)
 		{
-			super.put2222(x, y, z, w);
+			super.put2222(x, y, z, w, length);
 			vt[k] = x;
 			if (++k == 3)
 			{

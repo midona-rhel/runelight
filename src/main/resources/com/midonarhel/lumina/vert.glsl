@@ -43,6 +43,7 @@
 layout(location = 0) in vec4 vertf; // w: -1 on ground vertices between overlay and underlay (GroundBlender), wind code on swaying models
 layout(location = 1) in int abhsl;
 layout(location = 2) in ivec4 tex;
+layout(location = 3) in int normalLength; // the normal's length, which it is interpolated with (VertexShading.normalLength)
 
 layout(std140) uniform uniforms {
   float cameraYaw;
@@ -67,10 +68,7 @@ noperspective centroid out float fHsl;
 flat out int fTextureId;
 out vec2 fUv;
 out vec3 fWorldPos;
-out vec3 fNormal;       // smooth vertex normal, world space; only meaningful when fNormalValid is 1
-out float fNormalValid;
-out vec4 fBorderColor;  // color * border weight, border weight
-out vec3 fInnerColor;   // color * (1 - border weight)
+out vec3 fNormal;       // vertex normal, world space; zero where the vertex has none
 out vec4 fClip;         // clip position, for the lamps' cluster (light/lamp.glsl)
 flat out int fMaterial;  // SurfaceMaterials bits: emissive level in 0-1, transmissive in 2; water bed 3, land 4, snow 5-6
 #ifdef ZBUF_DEBUG
@@ -92,7 +90,8 @@ void main() {
 
   vec4 worldPos = entityProj * vert;
 
-  // octahedral normal in the last texture short, 0 for flat-shaded faces (see VertexShading.java)
+  // octahedral normal in the last texture short, 0 for none (see VertexShading.java), at its length: interpolated
+  // unnormalized as 117 HD's, normalized in the fragment shader
   int packedNormal = tex.w & 0xffff;
   if (packedNormal != 0) {
     vec2 o = vec2(float(packedNormal & 0xff), float(packedNormal >> 8 & 0xff));
@@ -100,13 +99,11 @@ void main() {
     vec3 n = vec3(o, 1.0 - abs(o.x) - abs(o.y));
     if (n.z < 0.0)
       n.xy = (1.0 - abs(n.yx)) * vec2(n.x >= 0.0 ? 1.0 : -1.0, n.y >= 0.0 ? 1.0 : -1.0);
-    fNormal = mat3(entityProj) * n;
-    fNormalValid = 1.0;
+    fNormal = mat3(entityProj) * (normalize(n) * float(normalLength));
   } else {
     fNormal = vec3(0.0);
-    fNormalValid = 0.0;
   }
-  worldPos.xyz += windDisplacement(vertf.w, worldPos.xyz, fNormal, packedNormal != 0);
+  worldPos.xyz += windDisplacement(vertf.w, worldPos.xyz);
   vec4 screenPos = worldProj * worldPos;
   fWorldPos = worldPos.xyz;
   fClip = screenPos;
@@ -120,9 +117,6 @@ void main() {
 #else
   fColor = vec4(rgb, 1.f - a);
 #endif
-  float border = vertf.w < -0.5 ? 1.0 : 0.0;
-  fBorderColor = vec4(rgb * border, border);
-  fInnerColor = rgb * (1.0 - border);
 
   // the texture id + 1 in the low bits, material bits above it (SurfaceMaterials.java)
   fTextureId = tex.x & 0x1ff;

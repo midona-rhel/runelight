@@ -63,7 +63,6 @@ import com.midonarhel.lumina.scene.AreaHiding;
 import com.midonarhel.lumina.scene.EdgeFade;
 import com.midonarhel.lumina.scene.GLBuffer;
 import com.midonarhel.lumina.scene.GpuFloatBuffer;
-import com.midonarhel.lumina.scene.GroundBlender;
 import com.midonarhel.lumina.scene.Interactables;
 import com.midonarhel.lumina.scene.ModelUploader;
 import com.midonarhel.lumina.scene.RegionManager;
@@ -76,7 +75,6 @@ import com.midonarhel.lumina.scene.TempModels;
 import com.midonarhel.lumina.scene.TextureManager;
 import com.midonarhel.lumina.scene.VAO;
 import com.midonarhel.lumina.scene.VAOList;
-import com.midonarhel.lumina.scene.VertexShading;
 import com.midonarhel.lumina.scene.WindSway;
 import com.midonarhel.lumina.scene.Zone;
 import com.midonarhel.lumina.scene.ZonePool;
@@ -406,6 +404,7 @@ public class LuminaPlugin extends Plugin implements DrawCallbacks
 	// lamp.glsl's lampWallsHeader with no walls bound
 	public static final float[] NO_WALLS = {0, 0, 0, 0, 1};
 	public int uniAlphaPass;
+	public int uniAlphaShadows, uniAlphaLightProj, uniAlphaShadowTexel, uniAlphaShadowDepthRange, uniAlphaDepthZeroToOne;
 	public int uniSceneOutdoors;
 	// the lamps on the transparent faces (frag.glsl's alpha pass)
 	public int uniScenePointLights;
@@ -869,8 +868,6 @@ public class LuminaPlugin extends Plugin implements DrawCallbacks
 	public void initState()
 	{
 		glErrorChecks = config.glErrorChecks();
-		VertexShading.undoVanillaShading = config.removeBakedShading();
-		GroundBlender.enabled = config.groundBlending();
 
 		SurfaceMaterials.load(gson);
 		WaterOverrides.load(gson);
@@ -921,6 +918,9 @@ public class LuminaPlugin extends Plugin implements DrawCallbacks
 			| DrawCallbacks.ZBUF
 			// zones are culled by zoneInFrustum: a circle around the player and the real frustum (EdgeFade)
 			| DrawCallbacks.ZBUF_ZONE_FRUSTUM_CHECK
+			// the game's vertex normals (Model.getVertexNormalsX/Y/Z), which smooth faces are shaded with (VertexShading,
+			// 117 HD's rule); without this flag the client leaves them null and every face comes out flat
+			| DrawCallbacks.NORMALS
 			| DrawCallbacks.RENDER_THREADS(threads)
 		);
 	}
@@ -1052,30 +1052,6 @@ public class LuminaPlugin extends Plugin implements DrawCallbacks
 				clientThread.invokeLater(() ->
 				{
 					client.setExpandedMapLoading(config.expandedMapLoadingZones());
-					if (client.getGameState() == GameState.LOGGED_IN)
-					{
-						client.setGameState(GameState.LOADING);
-					}
-				});
-			}
-			else if (configChanged.getKey().equals("removeBakedShading"))
-			{
-				clientThread.invokeLater(() ->
-				{
-					// colors are baked into the vertex data at upload, so reload the scene
-					VertexShading.undoVanillaShading = config.removeBakedShading();
-					if (client.getGameState() == GameState.LOGGED_IN)
-					{
-						client.setGameState(GameState.LOADING);
-					}
-				});
-			}
-			else if (configChanged.getKey().equals("groundBlending"))
-			{
-				clientThread.invokeLater(() ->
-				{
-					// blended colors are baked into the terrain vertices at upload
-					GroundBlender.enabled = config.groundBlending();
 					if (client.getGameState() == GameState.LOGGED_IN)
 					{
 						client.setGameState(GameState.LOADING);

@@ -3,11 +3,14 @@ package com.midonarhel.lumina.scene;
 import com.midonarhel.lumina.*;
 
 /**
- * Per-vertex shading data for the uploaders: smooth normals and the base (unshaded) face colors.
+ * Per-vertex shading data for the model uploaders, by 117 HD's code (docs/117hd-model-shading.md): the normals (the
+ * game's vertex normals, or the face's own for flat faces) and the face colors with vanilla's baked shading undone.
  *
  * Normals are octahedral-encoded into 16 bits, 8 per axis, and stored in the unused last short of the texture
- * attribute. 0 means "no vertex normal": the face is flat shaded and the fragment shader uses the triangle's
- * own normal instead. Encoded values are 1-255 per axis so a valid normal is never 0.
+ * attribute. 0 means "no vertex normal": the fragment shader uses the triangle's own normal instead. Encoded values
+ * are 1-255 per axis so a valid normal is never 0. The normal's length goes beside it ({@link #normalLength}): 117 HD
+ * uploads the game's normals unnormalized and normalizes only after interpolation, so a corner whose normal is the
+ * sum of many faces outweighs one of few.
  */
 public final class VertexShading
 {
@@ -16,7 +19,10 @@ public final class VertexShading
 	private static final int IGNORE_LOW_LIGHTNESS = 3;
 	private static final float LIGHTNESS_MULTIPLIER = 3;
 
-	public static boolean undoVanillaShading = true;
+	// 117 HD's colour for textured faces (zone SceneUploader 1722-1728, 2289-2290): lightness 90, no hue or
+	// saturation, not undone. The texture is multiplied by it; the game's lit lightness would keep vanilla's shading.
+	// The baked shading is always removed, as in 117 HD's default shading mode (the user's decision, 2026-10-31).
+	static final int TEXTURED_COLOR = 90;
 
 	private VertexShading()
 	{
@@ -41,6 +47,17 @@ public final class VertexShading
 		return qu | qv << 8;
 	}
 
+	/** The encoded normal pointing the other way; 0 stays 0. */
+	static int negateNormal(int packed)
+	{
+		if (packed == 0)
+		{
+			return 0;
+		}
+		float[] n = decodeNormal(packed);
+		return encodeNormal(-n[0], -n[1], -n[2]);
+	}
+
 	static float[] decodeNormal(int packed)
 	{
 		float u = ((packed & 0xff) - 1) / 254f * 2 - 1;
@@ -56,232 +73,138 @@ public final class VertexShading
 		return new float[]{u / l, v / l, z / l};
 	}
 
-	/**
-	 * Encoded normal of model vertex {@code v}, rotated by the model's orientation like its position is.
-	 * Returns 0 when the model has no normal for that vertex.
-	 */
-	static int vertexNormal(float[] nx, float[] ny, float[] nz, int v, float orientSine, float orientCosine)
-	{
-		float x = nx[v], y = ny[v], z = nz[v];
-		if (orientSine != 0 || orientCosine != 1)
-		{
-			float x0 = x;
-			x = z * orientSine + x0 * orientCosine;
-			z = z * orientCosine - x0 * orientSine;
-		}
-		return encodeNormal(x, y, z);
-	}
-
-	// The crease angle for faces the game marks flat: at each corner the normal averages the neighbouring faces
-	// that meet this one within the angle, so low-poly round shapes (tree trunks, canopies, rocks) read as round
-	// while real corners (crates, walls) stay sharp. Per corner, not per face: a canopy face whose one corner sits
-	// on a sharp fold still shades smoothly at its other two.
-	private static final float SMOOTH_COS = 0.643f; // cos(50 degrees): 5-sided and rounder prisms smooth, cubes don't
-	// a neighbour on the same plane (the other triangle of a quad) bends no normal, so it doesn't make a face "rounded"
-	private static final float COPLANAR_COS = 0.9995f;
+	// what faceNormals put in its output
+	static final int FACE = 0;        // the face's own normal, by the flat rule: already in rotated space
+	static final int VERTEX = 1;      // the game's three vertex normals, in model space: rotate them after the undo
+	static final int ZERO_VERTEX = 2; // the face's own normal, because the game's three were all zero
 
 	/**
-	 * Normals for a face the game marks as flat shaded: at each corner, the area-weighted average of this face
-	 * and the faces around that corner folded less than the crease angle from it (a face on the same plane with
-	 * the opposite winding, double-sided foliage, counts flipped rather than cancelling). Where no neighbour is
-	 * within the angle the corner keeps the face's own normal. Positions are in unrotated model space.
+	 * A face's three corner normals as 117 HD makes them (zone SceneUploader, uploadStaticModel 1847-1876 and
+	 * uploadTempModel 2320-2350): the face's own normal for every corner when the model has no normals, its override
+	 * says flat, or the game marks the face flat (color3 == -1; 117 HD's preserveVanillaNormals is off by default);
+	 * otherwise the game's vertex normals ({@code Model.getVertexNormalsX/Y/Z}, sums of the smooth faces' normals,
+	 * model space), or the face's own normal again when all three are zero. A face that has one or two zero vertex
+	 * normals keeps those zeros (the shader's fallback, frag.glsl). No smoothing of flat faces: 117 HD has none.
 	 *
-	 * @param face this face's index, in {@code n}'s face arrays (see {@link #computeNormals})
-	 * @param out receives the three encoded normals
-	 * @return true if any corner was smoothed, so the caller gives the face one colour over its rounded surface
+	 * @param out nine ints, x y z per corner, as 117 HD's (the face normal is unit length times 2048)
+	 * @param nx the game's vertex normals, or null when the model has none
+	 * @param x1 the corners' positions, rotated by the object's orientation as 117 HD's are
+	 * @return {@link #FACE}, {@link #VERTEX} or {@link #ZERO_VERTEX}
 	 */
-	static boolean flatFaceNormals(Normals n, int face, int a, int b, int c, float orientSine, float orientCosine,
-		int[] out)
+	static int faceNormals(int[] out, int[] nx, int[] ny, int[] nz, boolean flat, int a, int b, int c,
+		float x1, float y1, float z1, float x2, float y2, float z2, float x3, float y3, float z3)
 	{
-		float fl = n.faceArea[face];
-		if (fl < 1e-6f)
+		if (flat || nx == null || ny == null || nz == null)
 		{
-			out[0] = out[1] = out[2] = 0;
-			return false;
+			faceNormal(out, x1, y1, z1, x2, y2, z2, x3, y3, z3);
+			return FACE;
 		}
-		float fx = n.faceX[face] / fl, fy = n.faceY[face] / fl, fz = n.faceZ[face] / fl;
-		boolean smoothed = false;
-		int[] idx = {a, b, c};
-		for (int i = 0; i < 3; ++i)
+		boolean zero = (out[0] = nx[a]) == 0;
+		zero &= (out[1] = ny[a]) == 0;
+		zero &= (out[2] = nz[a]) == 0;
+		zero &= (out[3] = nx[b]) == 0;
+		zero &= (out[4] = ny[b]) == 0;
+		zero &= (out[5] = nz[b]) == 0;
+		zero &= (out[6] = nx[c]) == 0;
+		zero &= (out[7] = ny[c]) == 0;
+		zero &= (out[8] = nz[c]) == 0;
+		if (zero)
 		{
-			int v = idx[i];
-			float sx = n.faceX[face], sy = n.faceY[face], sz = n.faceZ[face];
-			for (int k = n.adjacencyStart[v], end = n.adjacencyStart[v + 1]; k < end; ++k)
-			{
-				int g = n.adjacency[k];
-				if (g == face)
-				{
-					continue;
-				}
-				float gl = n.faceArea[g];
-				if (gl < 1e-6f)
-				{
-					continue;
-				}
-				float gx = n.faceX[g], gy = n.faceY[g], gz = n.faceZ[g];
-				float cos = (fx * gx + fy * gy + fz * gz) / gl;
-				if (cos > SMOOTH_COS)
-				{
-					sx += gx;
-					sy += gy;
-					sz += gz;
-					smoothed |= cos < COPLANAR_COS;
-				}
-				else if (cos < -SMOOTH_COS)
-				{
-					sx -= gx;
-					sy -= gy;
-					sz -= gz;
-					smoothed |= cos > -COPLANAR_COS;
-				}
-			}
-			out[i] = rotatedNormal(sx, sy, sz, orientSine, orientCosine);
+			faceNormal(out, x1, y1, z1, x2, y2, z2, x3, y3, z3);
+			return ZERO_VERTEX;
 		}
-		return smoothed;
+		return VERTEX;
 	}
 
-	private static int rotatedNormal(float x, float y, float z, float orientSine, float orientCosine)
+	/** 117 HD's face normal (zone SceneUploader.calculateFaceNormal): cross(B - A, C - A), unit length times 2048. */
+	static void faceNormal(int[] out, float x1, float y1, float z1, float x2, float y2, float z2,
+		float x3, float y3, float z3)
 	{
-		if (orientSine != 0 || orientCosine != 1)
-		{
-			float x0 = x;
-			x = z * orientSine + x0 * orientCosine;
-			z = z * orientCosine - x0 * orientSine;
-		}
-		return encodeNormal(x, y, z);
+		float e0x = x2 - x1, e0y = y2 - y1, e0z = z2 - z1;
+		float e1x = x3 - x1, e1y = y3 - y1, e1z = z3 - z1;
+		float nx = e0y * e1z - e0z * e1y;
+		float ny = e0z * e1x - e0x * e1z;
+		float nz = e0x * e1y - e0y * e1x;
+		float length = (float) Math.sqrt(nx * nx + ny * ny + nz * nz);
+		nx /= length;
+		ny /= length;
+		nz /= length;
+		out[0] = out[3] = out[6] = (int) (nx * 2048);
+		out[1] = out[4] = out[7] = (int) (ny * 2048);
+		out[2] = out[5] = out[8] = (int) (nz * 2048);
 	}
 
-	/**
-	 * Normals computed from the model's own geometry, into {@code n}: per face its unnormalised normal (the length
-	 * is twice its area, the weight), per vertex the area-weighted sum of the visible faces around it (the smooth
-	 * normal for faces the game shades smoothly, {@link #vertexNormal}), and which faces meet at each vertex (for
-	 * {@link #flatFaceNormals}). Doesn't depend on the game providing normals, which it doesn't always do, and
-	 * which 117 HD found to be inaccurate anyway. The sign follows the face winding, which is consistent within a
-	 * model; the fragment shader aligns it with the triangle's facing regardless.
-	 */
-	static void computeNormals(int vertexCount, float[] vx, float[] vy, float[] vz,
-		int faceCount, int[] i1, int[] i2, int[] i3, int[] colors3, Normals n)
+	/** 117 HD's rotateNormals: the three corner normals about y, by the game's 65536-scaled sine and cosine. */
+	static void rotateNormals(int[] normals, int orientSin, int orientCos)
 	{
-		n.ensure(vertexCount, faceCount);
-		float[] nx = n.x, ny = n.y, nz = n.z;
-		int[] start = n.adjacencyStart;
-		java.util.Arrays.fill(nx, 0, vertexCount, 0);
-		java.util.Arrays.fill(ny, 0, vertexCount, 0);
-		java.util.Arrays.fill(nz, 0, vertexCount, 0);
-		java.util.Arrays.fill(start, 0, vertexCount + 1, 0);
-		for (int f = 0; f < faceCount; ++f)
+		for (int i = 0; i < 9; i += 3)
 		{
-			if (colors3[f] == -2)
-			{
-				n.faceArea[f] = 0;
-				continue;
-			}
-			int a = i1[f], b = i2[f], c = i3[f];
-			float ux = vx[b] - vx[a], uy = vy[b] - vy[a], uz = vz[b] - vz[a];
-			float wx = vx[c] - vx[a], wy = vy[c] - vy[a], wz = vz[c] - vz[a];
-			// unnormalized cross product: its length weights the face by area
-			float fx = uy * wz - uz * wy, fy = uz * wx - ux * wz, fz = ux * wy - uy * wx;
-			n.faceX[f] = fx;
-			n.faceY[f] = fy;
-			n.faceZ[f] = fz;
-			n.faceArea[f] = (float) Math.sqrt(fx * fx + fy * fy + fz * fz);
-			nx[a] += fx;
-			ny[a] += fy;
-			nz[a] += fz;
-			nx[b] += fx;
-			ny[b] += fy;
-			nz[b] += fz;
-			nx[c] += fx;
-			ny[c] += fy;
-			nz[c] += fz;
-			// counting sort of the faces by vertex: counts first, shifted so start[v + 1] ends up as v's first slot
-			++start[a + 1];
-			++start[b + 1];
-			++start[c + 1];
-		}
-		for (int v = 0; v < vertexCount; ++v)
-		{
-			start[v + 1] += start[v];
-		}
-		int[] adjacency = n.adjacency;
-		int[] fill = n.adjacencyFill;
-		System.arraycopy(start, 0, fill, 0, vertexCount);
-		for (int f = 0; f < faceCount; ++f)
-		{
-			if (colors3[f] == -2)
-			{
-				continue;
-			}
-			adjacency[fill[i1[f]]++] = f;
-			adjacency[fill[i2[f]]++] = f;
-			adjacency[fill[i3[f]]++] = f;
+			int x = normals[i], z = normals[i + 2];
+			normals[i] = z * orientSin + x * orientCos >> 16;
+			normals[i + 2] = z * orientCos - x * orientSin >> 16;
 		}
 	}
 
 	/**
-	 * Scratch for {@link #computeNormals}, grown as needed: per vertex the smooth normal (x, y, z), per face its
-	 * unnormalised normal and that normal's length, and the faces around each vertex as a compressed list
-	 * ({@code adjacency[adjacencyStart[v] .. adjacencyStart[v + 1])}).
+	 * 117 HD's upwardsNormals (scene_frag.glsl 359): the face is lit as if it faced straight up, (0, -1, 0) in the
+	 * game's y-down space, on all three corners. 117 HD swaps the normal in the shader, after undoing vanilla
+	 * shading with the real one; here it replaces the uploaded normal at the same point.
 	 */
-	static final class Normals
+	static void upwardsNormals(int[] normals)
 	{
-		float[] x = new float[0], y = new float[0], z = new float[0];
-		float[] faceX = new float[0], faceY = new float[0], faceZ = new float[0], faceArea = new float[0];
-		int[] adjacencyStart = new int[1], adjacencyFill = new int[0], adjacency = new int[0];
-
-		void ensure(int vertices)
+		for (int i = 0; i < 9; i += 3)
 		{
-			if (x.length < vertices)
-			{
-				int size = Math.max(vertices, x.length * 2);
-				x = new float[size];
-				y = new float[size];
-				z = new float[size];
-				adjacencyStart = new int[size + 1];
-				adjacencyFill = new int[size];
-			}
+			normals[i] = 0;
+			normals[i + 1] = -2048;
+			normals[i + 2] = 0;
 		}
+	}
 
-		void ensure(int vertices, int faces)
-		{
-			ensure(vertices);
-			if (faceArea.length < faces)
-			{
-				int size = Math.max(faces, faceArea.length * 2);
-				faceX = new float[size];
-				faceY = new float[size];
-				faceZ = new float[size];
-				faceArea = new float[size];
-				adjacency = new int[size * 3];
-			}
-		}
+	/**
+	 * Corner {@code i}'s normal length from {@link #faceNormals}: the vertex shader scales the encoded direction by it,
+	 * so the triangle interpolates the normals as 117 HD's does, unnormalized (VertexWriteCache.putStaticVertex and
+	 * putDynamicTriangle write the game's ints, scene_frag.glsl normalizes after interpolation). A game vertex normal
+	 * is a sum of unit (256) normals of the smooth faces at the vertex, and of a merged neighbour's (sharelight), so
+	 * where a roof's slope meets its ridge the slope's corner, which many coplanar faces share, holds the slope's
+	 * direction across most of the triangle; with every corner normalized the ridge's averaged normal spread over the
+	 * whole triangle, a slope lit in uneven triangles under a high sun.
+	 */
+	static int normalLength(int[] normals, int i)
+	{
+		long x = normals[i * 3], y = normals[i * 3 + 1], z = normals[i * 3 + 2];
+		return (int) Math.round(Math.sqrt(x * x + y * y + z * z));
+	}
+
+	/** Corner {@code i}'s normal from {@link #faceNormals}, encoded; 0 for a zero normal. */
+	static int encodeNormal(int[] normals, int i)
+	{
+		return encodeNormal(normals[i * 3], normals[i * 3 + 1], normals[i * 3 + 2]);
 	}
 
 	/**
 	 * Vanilla bakes lighting from a fixed direction into vertex colors. Like 117 HD's default shading mode, keep
 	 * the vanilla colors (and their gradients) but brighten what that light darkened, so our own lighting does
-	 * the directional shading. Untextured faces only: textured faces store a bare lightness that the fragment
-	 * shader multiplies the texture by.
-	 *
-	 * @param nx unrotated model vertex normals (vanilla lights in model space), or null
+	 * the directional shading: 117 HD's undoVanillaShading (zone SceneUploader 2751-2793), for one corner of an
+	 * untextured face with that corner's normal from {@link #faceNormals} before rotation: the game's vertex normal
+	 * in model space, or the face's own normal (rotated space) for a flat face.
 	 */
-	static int baseColor(int color, int face, int vertex, float[] nx, float[] ny, float[] nz)
+	static int undoVanillaShading(int color, int[] normals, int i)
 	{
-		if (!undoVanillaShading || nx == null)
-		{
-			return color;
-		}
-		// brighten what vanilla darkened, assuming its light direction (1, 1, 1); capped, as 117 HD does,
-		// because models are not all lit the same way and full correction overshoots
+		return undoVanillaShading(color, normals[i * 3], normals[i * 3 + 1], normals[i * 3 + 2]);
+	}
+
+	static int undoVanillaShading(int color, int nx, int ny, int nz)
+	{
 		int s = color >> 7 & 0x7;
 		int l = color & 0x7f;
-		float adjust = BASE_LIGHTEN - l + (l < IGNORE_LOW_LIGHTNESS ? 0 : (l - IGNORE_LOW_LIGHTNESS) * LIGHTNESS_MULTIPLIER);
-		float x = nx[vertex], y = ny[vertex], z = nz[vertex];
-		float len = x * x + y * y + z * z;
-		if (len > 0)
+		// brighten what vanilla darkened, assuming its light direction (1, 1, 1); capped, as 117 HD does,
+		// because models are not all lit the same way and full correction overshoots
+		float adjust = BASE_LIGHTEN - l + (l < IGNORE_LOW_LIGHTNESS ? 0f : (l - IGNORE_LOW_LIGHTNESS) * LIGHTNESS_MULTIPLIER);
+		float len = nx * nx + ny * ny + nz * nz;
+		if (len > 0f)
 		{
-			float dot = (x + y + z) * 0.57735026f / (float) Math.sqrt(len);
-			if (dot > 0)
+			float dot = (nx + ny + nz) * 0.57735026f / (float) Math.sqrt(len);
+			if (dot > 0f)
 			{
 				l += (int) (dot * adjust);
 			}

@@ -116,7 +116,7 @@ public final class SyntheticDump
 		{
 			t.events.add(event(FrameTape.ZONE_OPAQUE, new int[]{z.x, z.z}));
 		}
-		FrameTape.Event box = event(FrameTape.DYNAMIC, new int[]{-1, 0, 0, 0, MID, 0, MID});
+		FrameTape.Event box = event(FrameTape.DYNAMIC, new int[]{-1, 0, 0, 0, 0, MID, 0, MID});
 		box.model = 0;
 		box.projection = 0;
 		t.events.add(box);

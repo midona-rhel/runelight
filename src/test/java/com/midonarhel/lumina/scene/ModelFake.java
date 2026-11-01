@@ -19,6 +19,9 @@ public final class ModelFake
 		a.put("getVerticesX", d.verticesX);
 		a.put("getVerticesY", d.verticesY);
 		a.put("getVerticesZ", d.verticesZ);
+		a.put("getVertexNormalsX", d.normalsX);
+		a.put("getVertexNormalsY", d.normalsY);
+		a.put("getVertexNormalsZ", d.normalsZ);
 		a.put("getFaceCount", d.faceCount);
 		a.put("getFaceIndices1", d.indices1);
 		a.put("getFaceIndices2", d.indices2);
@@ -50,7 +53,8 @@ public final class ModelFake
 	/** The fields the tape keeps, for the tests. */
 	public static Object[] fields(ModelData d)
 	{
-		return new Object[]{d.vertexCount, d.verticesX, d.verticesY, d.verticesZ, d.faceCount, d.indices1, d.indices2,
+		return new Object[]{d.vertexCount, d.verticesX, d.verticesY, d.verticesZ, d.normalsX, d.normalsY, d.normalsZ,
+			d.faceCount, d.indices1, d.indices2,
 			d.indices3, d.colors1, d.colors2, d.colors3, d.unlitColors, d.priorities, d.textures, d.transparencies, d.bias,
 			d.textureFaces, d.texIndices1, d.texIndices2, d.texIndices3, d.transparency, d.radius, d.diameter,
 			d.overrideAmount, d.overrideHue, d.overrideSaturation, d.overrideLuminance};

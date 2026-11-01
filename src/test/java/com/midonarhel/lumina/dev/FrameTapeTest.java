@@ -72,8 +72,8 @@ public class FrameTapeTest
 		Scene top = scene(-1);
 		t.pre(top, proj, 1, 2, 3, 0.5f, 1.5f, 0, 1, 3, Set.of(7, 9));
 		t.zoneOpaque(top, 4, 5);
-		t.dynamic(0, proj, top, fake, 12, 1, 512, 100, 200, 300);
-		t.temp(proj, scene(3), fake, 0, 1, 2, 3, 4, true, false, 5, 6, 1, 99);
+		t.dynamic(0, proj, top, fake, 12, 259, 1, 512, 100, 200, 300);
+		t.temp(proj, scene(3), fake, 0, 1, 2, 3, 4, 259, true, false, 5, 6, 1, 99);
 		t.post(top);
 		t.draw(0x80112233);
 
@@ -101,7 +101,7 @@ public class FrameTapeTest
 		assertEquals(4, pre.ints[6]);
 
 		FrameTape.Event dyn = back.events.get(2);
-		assertArrayEquals(new int[]{0, 12, 1, 512, 100, 200, 300}, dyn.ints);
+		assertArrayEquals(new int[]{0, 12, 259, 1, 512, 100, 200, 300}, dyn.ints);
 		assertEquals(0, dyn.projection);
 		Object[] want = ModelFake.fields(model()), have = ModelFake.fields(back.models.get(dyn.model));
 		for (int i = 0; i < want.length; ++i)

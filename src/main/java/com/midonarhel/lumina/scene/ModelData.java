@@ -16,6 +16,8 @@ public final class ModelData
 {
 	public int vertexCount;
 	public float[] verticesX, verticesY, verticesZ;
+	// the game's vertex normals (117 HD's source for smooth faces), null when the model has none
+	public int[] normalsX, normalsY, normalsZ;
 
 	public int faceCount;
 	public int[] indices1, indices2, indices3;
@@ -33,7 +35,7 @@ public final class ModelData
 	byte overrideAmount, overrideHue, overrideSaturation, overrideLuminance;
 
 	// copy's arrays, one per array field, kept between models
-	private final Object[] owned = new Object[18];
+	private final Object[] owned = new Object[21];
 
 	/**
 	 * The model a renderable draws, as SceneUploader finds it: the renderable itself, or an animated object's model;
@@ -62,6 +64,9 @@ public final class ModelData
 		verticesX = m.getVerticesX();
 		verticesY = m.getVerticesY();
 		verticesZ = m.getVerticesZ();
+		normalsX = m.getVertexNormalsX();
+		normalsY = m.getVertexNormalsY();
+		normalsZ = m.getVertexNormalsZ();
 
 		faceCount = m.getFaceCount();
 		indices1 = m.getFaceIndices1();
@@ -90,6 +95,9 @@ public final class ModelData
 		verticesX = copy(0, m.getVerticesX(), v);
 		verticesY = copy(1, m.getVerticesY(), v);
 		verticesZ = copy(2, m.getVerticesZ(), v);
+		normalsX = copy(18, m.getVertexNormalsX(), v);
+		normalsY = copy(19, m.getVertexNormalsY(), v);
+		normalsZ = copy(20, m.getVertexNormalsZ(), v);
 
 		int f = faceCount = m.getFaceCount();
 		indices1 = copy(3, m.getFaceIndices1(), f);
@@ -124,8 +132,9 @@ public final class ModelData
 	{
 		out.writeInt(vertexCount);
 		out.writeInt(faceCount);
-		Object[] arrays = {verticesX, verticesY, verticesZ, indices1, indices2, indices3, colors1, colors2, colors3,
-			unlitColors, priorities, textures, transparencies, bias, textureFaces, texIndices1, texIndices2, texIndices3};
+		Object[] arrays = {verticesX, verticesY, verticesZ, normalsX, normalsY, normalsZ, indices1, indices2, indices3,
+			colors1, colors2, colors3, unlitColors, priorities, textures, transparencies, bias, textureFaces, texIndices1,
+			texIndices2, texIndices3};
 		for (Object a : arrays)
 		{
 			writeArray(out, a);
@@ -147,6 +156,9 @@ public final class ModelData
 		m.verticesX = (float[]) readArray(in);
 		m.verticesY = (float[]) readArray(in);
 		m.verticesZ = (float[]) readArray(in);
+		m.normalsX = (int[]) readArray(in);
+		m.normalsY = (int[]) readArray(in);
+		m.normalsZ = (int[]) readArray(in);
 		m.indices1 = (int[]) readArray(in);
 		m.indices2 = (int[]) readArray(in);
 		m.indices3 = (int[]) readArray(in);

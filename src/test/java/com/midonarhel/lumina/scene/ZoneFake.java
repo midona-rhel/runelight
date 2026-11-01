@@ -29,6 +29,7 @@ public final class ZoneFake
 					v[i++] = c;
 					v[i++] = 0;
 					v[i++] = (n & 0xffff) << 16;
+					v[i++] = 1; // the normal's length (VertexShading.normalLength)
 				}
 			}
 		}

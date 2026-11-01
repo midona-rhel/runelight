@@ -85,20 +85,20 @@ public class ModelUploader
 		v = new float[3];
 	}
 
-	private final int[] flatNormals = new int[3];
-	private final VertexShading.Normals computedNormals = new VertexShading.Normals();
+	// a face's three corner normals (VertexShading.faceNormals)
+	private final int[] faceNormals = new int[9];
 	private final float[] projected = new float[3];
 	private final ModelData live = new ModelData();
 
 	public int uploadSortedModel(Projection proj, Model model, int orientation, int x, int y, int z,
-		int cameraX, int cameraY, int cameraZ, IntBuffer opaqueBuffer, IntBuffer alphaBuffer, boolean prioritySort, int material)
+		int cameraX, int cameraY, int cameraZ, IntBuffer opaqueBuffer, IntBuffer alphaBuffer, boolean prioritySort, int material, int shading)
 	{
 		return uploadSortedModel(proj, live.wrap(model), orientation, x, y, z,
-			cameraX, cameraY, cameraZ, opaqueBuffer, alphaBuffer, prioritySort, material);
+			cameraX, cameraY, cameraZ, opaqueBuffer, alphaBuffer, prioritySort, material, shading);
 	}
 
 	public int uploadSortedModel(Projection proj, ModelData model, int orientation, int x, int y, int z,
-		int cameraX, int cameraY, int cameraZ, IntBuffer opaqueBuffer, IntBuffer alphaBuffer, boolean prioritySort, int material)
+		int cameraX, int cameraY, int cameraZ, IntBuffer opaqueBuffer, IntBuffer alphaBuffer, boolean prioritySort, int material, int shading)
 	{
 		final int vertexCount = model.vertexCount;
 		final float[] verticesX = model.verticesX;
@@ -121,15 +121,11 @@ public class ModelUploader
 		final byte modelTransparency = model.transparency;
 		final byte[] bias = model.bias;
 
-		final VertexShading.Normals computed = this.computedNormals;
-		computed.ensure(vertexCount);
-		VertexShading.computeNormals(vertexCount, verticesX, verticesY, verticesZ,
-			model.faceCount, indices1, indices2, indices3, faceColors3, computed);
-		final float[] normalsX = computed.x;
-		final float[] normalsY = computed.y;
-		final float[] normalsZ = computed.z;
-		final boolean hasNormals = true;
-		final short[] unlitColors = model.unlitColors;
+		// the game's vertex normals, as 117 HD reads them; null when the model has none (every face flat then)
+		final int[] normalsX = model.normalsX;
+		final int[] normalsY = model.normalsY;
+		final int[] normalsZ = model.normalsZ;
+		final int[] faceNormals = this.faceNormals;
 		// fake water: faces drawn as real water, with their height above the foot of the model's water in u and below the top of it in v
 		final float[] span = SurfaceMaterials.fakeSpan(material, faceTextures, faceCount, faceColors1, transparencies,
 			indices1, indices2, indices3, verticesY);
@@ -151,8 +147,8 @@ public class ModelUploader
 			modelCameraX = modelCameraZ * inverseSine + cameraX0 * inverseCosine >> 16;
 			modelCameraZ = modelCameraZ * inverseCosine - cameraX0 * inverseSine >> 16;
 		}
-		final float normalSin = orientSine;
-		final float normalCos = orientation != 0 ? orientCosine : 1;
+		final int normalSin = orientation != 0 ? Perspective.SINE[orientation] : 0;
+		final int normalCos = orientation != 0 ? Perspective.COSINE[orientation] : 0;
 
 		float[] p = proj.project(x, y, z, projected);
 		int zero = (int) p[2];
@@ -253,36 +249,38 @@ public class ModelUploader
 					int color3 = faceColors3[faceIdx];
 
 					boolean flat = color3 == -1;
-					if (faceTextures == null || faceTextures[faceIdx] == -1)
-					{
-						color1 = VertexShading.baseColor(color1, faceIdx, v1, normalsX, normalsY, normalsZ);
-						if (!flat)
-						{
-							color2 = VertexShading.baseColor(color2, faceIdx, v2, normalsX, normalsY, normalsZ);
-							color3 = VertexShading.baseColor(color3, faceIdx, v3, normalsX, normalsY, normalsZ);
-						}
-					}
+					// 117 HD's override flags for this face, by its colour as the game gives it
+					int shade = SurfaceMaterials.shading(shading, faceTextures != null ? faceTextures[faceIdx] : -1,
+						color1, SurfaceMaterials.opacity(transparencies, faceIdx));
 					if (flat)
 					{
 						color2 = color3 = color1;
 					}
 
-					boolean smooth = !flat && hasNormals;
-					int n1 = smooth ? VertexShading.vertexNormal(normalsX, normalsY, normalsZ, v1, normalSin, normalCos) : 0;
-					int n2 = smooth ? VertexShading.vertexNormal(normalsX, normalsY, normalsZ, v2, normalSin, normalCos) : 0;
-					int n3 = smooth ? VertexShading.vertexNormal(normalsX, normalsY, normalsZ, v3, normalSin, normalCos) : 0;
-					if (flat && hasNormals
-						&& VertexShading.flatFaceNormals(computed, faceIdx, v1, v2, v3, normalSin, normalCos, flatNormals))
+					// 117 HD's normals: the face's own for flat faces (from the rotated positions), else the game's; vanilla
+					// shading undone with them on untextured faces, then the game's rotated by the orientation unless a
+					// face normal stood in for three zero ones (SceneUploader 2351-2357)
+					int normalKind = VertexShading.faceNormals(faceNormals, normalsX, normalsY, normalsZ,
+						flat || (shade & SurfaceMaterials.FLAT_NORMALS) != 0, v1, v2, v3,
+						modelLocalX[v1], modelLocalY[v1], modelLocalZ[v1], modelLocalX[v2], modelLocalY[v2], modelLocalZ[v2],
+						modelLocalX[v3], modelLocalY[v3], modelLocalZ[v3]);
+					if ((faceTextures == null || faceTextures[faceIdx] == -1) && (shade & SurfaceMaterials.KEEP_SHADING) == 0)
 					{
-						n1 = flatNormals[0];
-						n2 = flatNormals[1];
-						n3 = flatNormals[2];
-						// one color over the rounded surface: the per-face lit colors would still show the facets
-						if (unlitColors != null && (faceTextures == null || faceTextures[faceIdx] == -1))
-						{
-							color1 = color2 = color3 = unlitColors[faceIdx] & 0xffff;
-						}
+						color1 = VertexShading.undoVanillaShading(color1, faceNormals, 0);
+						color2 = VertexShading.undoVanillaShading(color2, faceNormals, 1);
+						color3 = VertexShading.undoVanillaShading(color3, faceNormals, 2);
 					}
+					if (normalKind == VertexShading.VERTEX && orientation != 0)
+					{
+						VertexShading.rotateNormals(faceNormals, normalSin, normalCos);
+					}
+					if ((shade & SurfaceMaterials.UPWARDS_NORMALS) != 0)
+					{
+						VertexShading.upwardsNormals(faceNormals);
+					}
+					int n1 = VertexShading.encodeNormal(faceNormals, 0);
+					int n2 = VertexShading.encodeNormal(faceNormals, 1);
+					int n3 = VertexShading.encodeNormal(faceNormals, 2);
 
 					// HSL override is not applied to textured faces
 					if (faceTextures == null || faceTextures[faceIdx] == -1)
@@ -312,6 +310,10 @@ public class ModelUploader
 						sv1 = SurfaceMaterials.fakeHeight(verticesY[v2], span[1]);
 						sv2 = SurfaceMaterials.fakeHeight(verticesY[v3], span[1]);
 					}
+					if (texture > 0)
+					{
+						color1 = color2 = color3 = VertexShading.TEXTURED_COLOR;
+					}
 					texture |= bits;
 
 					int vbOff = faceIdx * FACE_SIZE;
@@ -321,6 +323,7 @@ public class ModelUploader
 					vertexBuffer[vbOff++] = alphaBias | color1;
 					vertexBuffer[vbOff++] = ((su0 & 0xffff) << 16 | (texture & 0xffff));
 					vertexBuffer[vbOff++] = (sv0 & 0xffff) | n1 << 16;
+					vertexBuffer[vbOff++] = VertexShading.normalLength(faceNormals, 0);
 
 					vertexBuffer[vbOff++] = Float.floatToIntBits(modelLocalX[v2]);
 					vertexBuffer[vbOff++] = Float.floatToIntBits(modelLocalY[v2]);
@@ -328,6 +331,7 @@ public class ModelUploader
 					vertexBuffer[vbOff++] = alphaBias | color2;
 					vertexBuffer[vbOff++] = ((su1 & 0xffff) << 16 | (texture & 0xffff));
 					vertexBuffer[vbOff++] = (sv1 & 0xffff) | n2 << 16;
+					vertexBuffer[vbOff++] = VertexShading.normalLength(faceNormals, 1);
 
 					vertexBuffer[vbOff++] = Float.floatToIntBits(modelLocalX[v3]);
 					vertexBuffer[vbOff++] = Float.floatToIntBits(modelLocalY[v3]);
@@ -335,6 +339,7 @@ public class ModelUploader
 					vertexBuffer[vbOff++] = alphaBias | color3;
 					vertexBuffer[vbOff++] = ((su2 & 0xffff) << 16 | (texture & 0xffff));
 					vertexBuffer[vbOff++] = (sv2 & 0xffff) | n3 << 16;
+					vertexBuffer[vbOff++] = VertexShading.normalLength(faceNormals, 2);
 				}
 			}
 		}
@@ -575,13 +580,13 @@ public class ModelUploader
 
 	// temp draw
 	public int uploadTempModel(Model model, int orientation, int x, int y, int z,
-		int cameraX, int cameraY, int cameraZ, IntBuffer buffer, int material)
+		int cameraX, int cameraY, int cameraZ, IntBuffer buffer, int material, int shading)
 	{
-		return uploadTempModel(live.wrap(model), orientation, x, y, z, cameraX, cameraY, cameraZ, buffer, material);
+		return uploadTempModel(live.wrap(model), orientation, x, y, z, cameraX, cameraY, cameraZ, buffer, material, shading);
 	}
 
 	public int uploadTempModel(ModelData model, int orientation, int x, int y, int z,
-		int cameraX, int cameraY, int cameraZ, IntBuffer buffer, int material)
+		int cameraX, int cameraY, int cameraZ, IntBuffer buffer, int material, int shading)
 	{
 		final int triangleCount = model.faceCount;
 		final int vertexCount = model.vertexCount;
@@ -609,15 +614,13 @@ public class ModelUploader
 		final byte overrideSat = model.overrideSaturation;
 		final byte overrideLum = model.overrideLuminance;
 
-		final VertexShading.Normals computed = this.computedNormals;
-		computed.ensure(vertexCount);
-		VertexShading.computeNormals(vertexCount, verticesX, verticesY, verticesZ,
-			triangleCount, indices1, indices2, indices3, color3s, computed);
-		final float[] normalsX = computed.x;
-		final float[] normalsY = computed.y;
-		final float[] normalsZ = computed.z;
-		final boolean hasNormals = true;
-		final short[] unlitColors = model.unlitColors;
+		// the game's vertex normals, as 117 HD reads them; null when the model has none (every face flat then)
+		final int[] normalsX = model.normalsX;
+		final int[] normalsY = model.normalsY;
+		final int[] normalsZ = model.normalsZ;
+		final int[] faceNormals = this.faceNormals;
+		final int normalSin = orientation != 0 ? Perspective.SINE[orientation] : 0;
+		final int normalCos = orientation != 0 ? Perspective.COSINE[orientation] : 0;
 		// fake water: faces drawn as real water, with their height above the foot of the model's water in u and below the top of it in v
 		final float[] span = SurfaceMaterials.fakeSpan(material, faceTextures, triangleCount, color1s, transparencies,
 			indices1, indices2, indices3, verticesY);
@@ -674,42 +677,44 @@ public class ModelUploader
 			{
 				continue;
 			}
+			// 117 HD's override flags for this face, by its colour as the game gives it
+			int shade = SurfaceMaterials.shading(shading, faceTextures != null ? faceTextures[face] : -1, color1,
+				SurfaceMaterials.opacity(transparencies, face));
 
 			int triangleA = indices1[face];
 			int triangleB = indices2[face];
 			int triangleC = indices3[face];
 
-			if (faceTextures == null || faceTextures[face] == -1)
-			{
-				color1 = VertexShading.baseColor(color1, face, triangleA, normalsX, normalsY, normalsZ);
-				if (!flat)
-				{
-					color2 = VertexShading.baseColor(color2, face, triangleB, normalsX, normalsY, normalsZ);
-					color3 = VertexShading.baseColor(color3, face, triangleC, normalsX, normalsY, normalsZ);
-				}
-			}
 			if (flat)
 			{
 				color2 = color3 = color1;
 			}
 
-			float normalCos = orientation != 0 ? orientCosine : 1;
-			boolean smooth = !flat && hasNormals;
-			int n1 = smooth ? VertexShading.vertexNormal(normalsX, normalsY, normalsZ, triangleA, orientSine, normalCos) : 0;
-			int n2 = smooth ? VertexShading.vertexNormal(normalsX, normalsY, normalsZ, triangleB, orientSine, normalCos) : 0;
-			int n3 = smooth ? VertexShading.vertexNormal(normalsX, normalsY, normalsZ, triangleC, orientSine, normalCos) : 0;
-			if (flat && hasNormals
-				&& VertexShading.flatFaceNormals(computed, face, triangleA, triangleB, triangleC, orientSine, normalCos, flatNormals))
+			// 117 HD's normals: the face's own for flat faces (from the rotated positions), else the game's; vanilla
+			// shading undone with them on untextured faces, then the game's rotated by the orientation unless a face
+			// normal stood in for three zero ones (SceneUploader 2351-2357)
+			int normalKind = VertexShading.faceNormals(faceNormals, normalsX, normalsY, normalsZ,
+				flat || (shade & SurfaceMaterials.FLAT_NORMALS) != 0, triangleA, triangleB, triangleC,
+				modelLocalX[triangleA], modelLocalY[triangleA], modelLocalZ[triangleA],
+				modelLocalX[triangleB], modelLocalY[triangleB], modelLocalZ[triangleB],
+				modelLocalX[triangleC], modelLocalY[triangleC], modelLocalZ[triangleC]);
+			if ((faceTextures == null || faceTextures[face] == -1) && (shade & SurfaceMaterials.KEEP_SHADING) == 0)
 			{
-				n1 = flatNormals[0];
-				n2 = flatNormals[1];
-				n3 = flatNormals[2];
-				// one color over the rounded surface: the per-face lit colors would still show the facets
-				if (unlitColors != null && (faceTextures == null || faceTextures[face] == -1))
-				{
-					color1 = color2 = color3 = unlitColors[face] & 0xffff;
-				}
+				color1 = VertexShading.undoVanillaShading(color1, faceNormals, 0);
+				color2 = VertexShading.undoVanillaShading(color2, faceNormals, 1);
+				color3 = VertexShading.undoVanillaShading(color3, faceNormals, 2);
 			}
+			if (normalKind == VertexShading.VERTEX && orientation != 0)
+			{
+				VertexShading.rotateNormals(faceNormals, normalSin, normalCos);
+			}
+			if ((shade & SurfaceMaterials.UPWARDS_NORMALS) != 0)
+			{
+				VertexShading.upwardsNormals(faceNormals);
+			}
+			int n1 = VertexShading.encodeNormal(faceNormals, 0);
+			int n2 = VertexShading.encodeNormal(faceNormals, 1);
+			int n3 = VertexShading.encodeNormal(faceNormals, 2);
 
 			// HSL override is not applied to textured faces
 			if (faceTextures == null || faceTextures[face] == -1)
@@ -762,16 +767,20 @@ public class ModelUploader
 				sv1 = SurfaceMaterials.fakeHeight(verticesY[triangleB], span[1]);
 				sv2 = SurfaceMaterials.fakeHeight(verticesY[triangleC], span[1]);
 			}
+			if (texture > 0)
+			{
+				color1 = color2 = color3 = VertexShading.TEXTURED_COLOR;
+			}
 			texture |= bits;
 
 			putfff4(buffer, vx1, vy1, vz1, alphaBias | color1);
-			put2222(buffer, texture, su0, sv0, n1);
+			put2222(buffer, texture, su0, sv0, n1, VertexShading.normalLength(faceNormals, 0));
 
 			putfff4(buffer, vx2, vy2, vz2, alphaBias | color2);
-			put2222(buffer, texture, su1, sv1, n2);
+			put2222(buffer, texture, su1, sv1, n2, VertexShading.normalLength(faceNormals, 1));
 
 			putfff4(buffer, vx3, vy3, vz3, alphaBias | color3);
-			put2222(buffer, texture, su2, sv2, n3);
+			put2222(buffer, texture, su2, sv2, n3, VertexShading.normalLength(faceNormals, 2));
 
 			len += 3;
 		}
@@ -779,10 +788,11 @@ public class ModelUploader
 		return len;
 	}
 
-	static void put2222(IntBuffer vb, int x, int y, int z, int w)
+	static void put2222(IntBuffer vb, int x, int y, int z, int w, int length)
 	{
 		vb.put(((y & 0xffff) << 16) | (x & 0xffff));
 		vb.put(((w & 0xffff) << 16) | (z & 0xffff));
+		vb.put(length);
 	}
 
 	static void putfff4(IntBuffer vb, float x, float y, float z, int w)

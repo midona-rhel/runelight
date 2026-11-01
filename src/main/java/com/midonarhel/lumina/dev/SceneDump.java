@@ -63,7 +63,9 @@ public final class SceneDump
 {
 	private static final org.slf4j.Logger log = org.slf4j.LoggerFactory.getLogger(SceneDump.class);
 
-	public static final int VERSION = 1;
+	// 2: zone vertices of 24 bytes (the normal's length), the shading group on dynamic and temporary models, the game's
+	// vertex normals with each model
+	public static final int VERSION = 2;
 	public static final Path DIR = RuneLite.RUNELITE_DIR.toPath().resolve("lumina").resolve("dumps");
 
 	/** What the client said this frame, the settings and the time: manifest.json. */

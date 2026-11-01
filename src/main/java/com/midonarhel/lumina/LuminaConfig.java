@@ -354,30 +354,6 @@ public interface LuminaConfig extends Config
 		return Quality.HIGH;
 	}
 
-	@ConfigItem(
-		keyName = "removeBakedShading",
-		name = "Remove baked shading",
-		description = "Remove the shading the game bakes into model colours.",
-		section = lightingSection,
-		position = 43
-	)
-	default boolean removeBakedShading()
-	{
-		return true;
-	}
-
-	@ConfigItem(
-		keyName = "groundBlending",
-		name = "Ground blending",
-		description = "Blend ground colours across tile borders.",
-		section = lightingSection,
-		position = 44
-	)
-	default boolean groundBlending()
-	{
-		return true;
-	}
-
 	@ConfigSection(
 		name = "Sky & time of day",
 		description = "The sky, the clock and the clouds",

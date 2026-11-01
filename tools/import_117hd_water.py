@@ -5,7 +5,9 @@ Convert 117 HD's water definitions into Lumina's water_overrides.json.
 Two things are taken over as 117 HD has them:
   - tiles: its tile overrides, in order, each with the overlay and underlay ids it matches, its area as boxes and
     the water type it gives (null where it gives none, so a tile it matches first keeps its vanilla water texture's
-    type). WaterOverrides.java matches them the way 117 HD's TileOverrideManager does.
+    type), and the geometry it gives the ground: heightOffset (world units, up) and doubleSided (doubleSidedFaces),
+    after its replacements as they resolve at 117 HD's default settings. WaterOverrides.java matches them the way
+    117 HD's TileOverrideManager does.
   - effects: the game objects whose ripples 117 HD hides (its model overrides' hideAsWaterEffect): either the whole
     model, or the faces of the first color rule matching each untextured face (a, h, s, l of its color), in order.
 
@@ -138,10 +140,56 @@ def condition(expr):
     return out
 
 
+# 117 HD's defaults for the variables its tile overrides' replacements test (HdPluginConfig: ground textures on,
+# ground blending ON = colours and textures, seasonal theme automatic, which is not winter for most of the year)
+CONSTANTS = {"textures": True, "groundTextures": True, "blendingColors": True, "blendingTextures": True,
+    "blendingTexturesOnly": False, "blendingColorsOnly": False, "season == SeasonalTheme.WINTER": False}
+
+
+def constant(expr):
+    """A replacement condition at 117 HD's defaults: True/False, or None where it depends on the tile's colour."""
+    if isinstance(expr, bool):
+        return expr
+    if isinstance(expr, list):
+        values = [constant(e) for e in expr]
+        return True if True in values else None if None in values else False
+    value = False
+    for term in expr.split("||"):
+        all_true = True
+        for c in term.split("&&"):
+            c = c.strip()
+            negate = c.startswith("!")
+            name = c[1:].strip() if negate else c
+            if name not in CONSTANTS:
+                return None
+            if CONSTANTS[name] == negate:
+                all_true = False
+        value = value or all_true
+    return value
+
+
+def geometry(o, by_name, warnings, depth=0):
+    """(heightOffset, doubleSided) of tile override o after its replacements at 117 HD's defaults."""
+    own = (o.get("heightOffset", 0), bool(o.get("doubleSidedFaces")))
+    for name, expr in (o.get("replacements") or {}).items():
+        c = constant(expr)
+        target = by_name.get(name) if name != "NONE" else {}
+        if target is None or depth > 16:
+            continue
+        g = geometry(target, by_name, warnings, depth + 1)
+        if c is None:
+            if g != own:
+                warnings.append(f"{o.get('name')}: replacement {name} by the tile's colour changes its geometry; not taken")
+            continue
+        if c:
+            return g
+    return own
+
+
 def prune(tiles):
     """
-    Drops the overrides that give no water and can't keep a tile from one that does: one only matters where it could
-    be matched first on a tile some water override covers (sharing an id with it, an overlay ahead of a water
+    Drops the overrides that give no water or geometry and can't keep a tile from one that does: one only matters
+    where it could be matched first on a tile some water or geometry override covers (sharing an id with it, an overlay ahead of a water
     underlay, or matching any id ahead of it).
     """
     def ids(t):
@@ -151,12 +199,12 @@ def prune(tiles):
         return any(a[0] <= b[3] and b[0] <= a[3] and a[1] <= b[4] and b[1] <= a[4] and a[2] <= b[5] and b[2] <= a[5]
             for w in others for a in t["area"] for b in w["area"])
 
-    water = [t for t in tiles if t["type"]]
+    water = [t for t in tiles if t["type"] or t.get("heightOffset") or t.get("doubleSided")]
     water_underlays = [t for t in water if t["underlays"]]
     water_any = [t for t in water if not ids(t)]
     kept = []
     for t in tiles:
-        if t["type"]:
+        if t["type"] or t.get("heightOffset") or t.get("doubleSided"):
             kept.append(t)
         elif not ids(t):
             if meets(t, water):
@@ -173,16 +221,24 @@ def main():
     gamevals = load(f"{scene}/gamevals.json")
     objects = gamevals["objects"]
 
-    tiles = []
-    for o in load(f"{scene}/tile_overrides.json"):
+    tiles, warnings = [], []
+    raw_tiles = load(f"{scene}/tile_overrides.json")
+    by_name = {o["name"]: o for o in raw_tiles if o.get("name")}
+    for o in raw_tiles:
         if not o.get("area") or o["area"] == "NONE":
             continue
-        tiles.append({
+        t = {
             "overlays": o.get("overlayIds"),
             "underlays": o.get("underlayIds"),
             "type": water_type(o.get("waterType")),
             "area": resolve(o["area"]),
-        })
+        }
+        height, double = geometry(o, by_name, warnings)
+        if height:
+            t["heightOffset"] = height
+        if double:
+            t["doubleSided"] = True
+        tiles.append(t)
 
     tiles = prune(tiles)
 
@@ -211,7 +267,10 @@ def main():
 
     with open(out_path, "w", encoding="utf-8") as f:
         json.dump({"tiles": tiles, "effects": effects}, f, separators=(",", ":"))
-    print(f"{len(tiles)} tile overrides ({sum(1 for t in tiles if t['type'])} water), {len(effects)} ripple effects")
+    print(f"{len(tiles)} tile overrides ({sum(1 for t in tiles if t['type'])} water, "
+        f"{sum(1 for t in tiles if t.get('heightOffset') or t.get('doubleSided'))} geometry), {len(effects)} ripple effects")
+    for w in warnings:
+        print("warning:", w)
 
 
 if __name__ == "__main__":

@@ -43,8 +43,9 @@ public class VAO
 	// Temporary vertex format
 	// index 0: vec3(x, y, z)
 	// index 1: int abhsl
-	// index 2: short vec4(id, u, v, 0)
-	public static final int VERT_SIZE = 24;
+	// index 2: short vec4(id, u, v, octahedral normal)
+	// index 3: int normal length (VertexShading.normalLength)
+	public static final int VERT_SIZE = 28;
 
 	public final VBO vbo;
 	public int vao;
@@ -71,6 +72,9 @@ public class VAO
 
 		glEnableVertexAttribArray(2);
 		glVertexAttribIPointer(2, 4, GL_SHORT, VERT_SIZE, 16);
+
+		glEnableVertexAttribArray(3);
+		glVertexAttribIPointer(3, 1, GL_INT, VERT_SIZE, 24);
 
 		glBindBuffer(GL_ARRAY_BUFFER, 0);
 		glBindVertexArray(0);

@@ -84,7 +84,9 @@ public class SceneUploader
 	private final boolean[] atWaterLevel = new boolean[ModelUploader.MAX_VERTEX_COUNT];
 	// faces of the last static model left out as the game's ripples (117 HD's, WaterOverrides); Zone.addAlphaModel has
 	// to skip them as well
-	private final boolean[] rippleFace = new boolean[ModelUploader.MAX_FACE_COUNT];
+	// per face of the static model being uploaded, the triangles it wrote to the alpha buffer: 0, 1, or 2 when drawn
+	// double-sided (Zone.addAlphaModel keeps one sort key per triangle)
+	private final int[] alphaTriangles = new int[ModelUploader.MAX_FACE_COUNT];
 	private final GroundBlender groundBlender = new GroundBlender();
 	private final float[] slope = new float[2];
 	private final float[] tileSlopes = new float[8];
@@ -111,6 +113,7 @@ public class SceneUploader
 	void zoneSize(Scene scene, Zone zone, int mzx, int mzz)
 	{
 		Tile[][][] tiles = scene.getExtendedTiles();
+		sizeScene = scene;
 		sizeWater = water != null && scene.getWorldViewId() == WorldView.TOPLEVEL ? water : null;
 
 		for (int z = 3; z >= 0; --z)
@@ -156,7 +159,7 @@ public class SceneUploader
 			}
 		}
 
-		// built with blending off too: the water bed takes the bank's colors from it either way (shoreColor)
+		// the land colours at the ground vertices, which the water bed takes at its banks (shoreColor)
 		groundBlender.build(scene, mzx, mzz);
 
 		zone.rids = new int[4][roofIds.size()];
@@ -296,6 +299,7 @@ public class SceneUploader
 			{
 				rid = o.rid;
 				owner = o.owner;
+				tile = o.tile;
 				uploadZoneRenderable(o.r, zone, o.orient, o.x, o.y, o.z, o.lx, o.lz, o.ux, o.uz, o.id, vb, ab);
 			}
 		}
@@ -312,10 +316,17 @@ public class SceneUploader
 
 	private void zoneSize(Zone z, Tile t)
 	{
+		Point tp = t.getSceneLocation();
+		int toEx = sizeScene.getWorldViewId() == WorldView.TOPLEVEL ? LuminaPlugin.SCENE_OFFSET : 0;
+		// upper floors get their back faces too (doubleSidedTile); counted for every face, bed faces included
+		int tx = tp.getX() + toEx, ty = tp.getY() + toEx, level = t.getRenderLevel();
+		int sides = doubleSidedTile(sizeScene, level, tx, ty) || tileFix(sizeScene, level, tx, ty, true, true).doubleSided
+			|| tileFix(sizeScene, level, tx, ty, true, false).doubleSided || tileFix(sizeScene, level, tx, ty, false, true).doubleSided
+			? 2 : 1;
 		SceneTilePaint paint = t.getSceneTilePaint();
 		if (paint != null)
 		{
-			z.sizeO += 2;
+			z.sizeO += 2 * sides;
 			if (sizeWater != null)
 			{
 				Point p = t.getSceneLocation();
@@ -330,7 +341,7 @@ public class SceneUploader
 		SceneTileModel model = t.getSceneTileModel();
 		if (model != null)
 		{
-			z.sizeO += model.getFaceX().length;
+			z.sizeO += model.getFaceX().length * sides;
 		}
 
 		WallObject wallObject = t.getWallObject();
@@ -379,6 +390,7 @@ public class SceneUploader
 
 	private int uploadZoneTile(Scene scene, Zone zone, Tile t, GpuIntBuffer vertexBuffer, GpuIntBuffer ab)
 	{
+		tile = t;
 		int len = 0;
 		boolean drawTile = renderCallbackManager.drawTile(scene, t);
 
@@ -499,26 +511,40 @@ public class SceneUploader
 			return;
 		}
 
+		staticModelSize(z, m, SurfaceMaterials.forObject(id, r), SurfaceMaterials.shadingForObject(id, r));
+	}
+
+	/**
+	 * The triangles uploadStaticModel writes for model m, by its rules: a translucent face to the alpha buffer unless
+	 * it is drawn as fake water (then the opaque one; a face that might be is counted in both, the count not having
+	 * the undone colour fake water goes by), a double-sided face twice, plus what a standing object extrudes to the
+	 * water bed. The one place a static model is counted.
+	 */
+	private static void staticModelSize(Zone z, Model m, int material, int shading)
+	{
 		byte[] transparencies = m.getFaceTransparencies();
+		short[] textures = m.getFaceTextures();
+		int[] colors1 = m.getFaceColors1();
 		int faceCount = m.getFaceCount();
 		z.sizeO += standingSize(m, transparencies);
-		if (transparencies != null)
+		for (int face = 0; face < faceCount; ++face)
 		{
-			for (int face = 0; face < faceCount; ++face)
+			int texture = textures != null ? textures[face] : -1;
+			int sides = (SurfaceMaterials.shading(shading, texture, colors1[face],
+				SurfaceMaterials.opacity(transparencies, face)) & SurfaceMaterials.DOUBLE_SIDED) != 0 ? 2 : 1;
+			if (transparencies != null && transparencies[face] != 0)
 			{
-				boolean alpha = transparencies[face] != 0;
-				if (alpha)
+				z.sizeA += sides;
+				if (SurfaceMaterials.mayBeFake(material, texture))
 				{
-					z.sizeA++;
-				}
-				else
-				{
-					z.sizeO++;
+					z.sizeO += sides;
 				}
 			}
-			return;
+			else
+			{
+				z.sizeO += sides;
+			}
 		}
-		z.sizeO += faceCount;
 	}
 
 	// at most the triangles uploadStaticModel extrudes to the bed for a static object standing in the water
@@ -553,10 +579,13 @@ public class SceneUploader
 	{
 		final Renderable r;
 		final int orient, x, y, z, lx, lz, ux, uz, id, rid, owner;
+		final Tile tile;
 
-		SwayObject(Renderable r, int orient, int x, int y, int z, int lx, int lz, int ux, int uz, int id, int rid, int owner)
+		SwayObject(Renderable r, int orient, int x, int y, int z, int lx, int lz, int ux, int uz, int id, int rid, int owner,
+			Tile tile)
 		{
 			this.r = r;
+			this.tile = tile;
 			this.orient = orient;
 			this.x = x;
 			this.y = y;
@@ -574,9 +603,10 @@ public class SceneUploader
 	private void uploadZoneRenderable(Renderable r, Zone zone, int orient, int x, int y, int z, int lx, int lz, int ux, int uz, int id, GpuIntBuffer vb, GpuIntBuffer ab)
 	{
 		int material = SurfaceMaterials.forObject(id, r) | WindSway.forObject(id, r);
+		int shading = SurfaceMaterials.shadingForObject(id, r);
 		if (!swayFlushing && WindSway.sways(material))
 		{
-			swayDeferred.add(new SwayObject(r, orient, x, y, z, lx, lz, ux, uz, id, rid, owner));
+			swayDeferred.add(new SwayObject(r, orient, x, y, z, lx, lz, ux, uz, id, rid, owner, tile));
 			return;
 		}
 		if (vb instanceof VoxelCapture.Buffer)
@@ -588,14 +618,14 @@ public class SceneUploader
 		if (r instanceof Model)
 		{
 			model = (Model) r;
-			uploadStaticModel(model, orient, x - basex, y, z - basez, material, id, vb, ab);
+			uploadStaticModel(model, orient, x - basex, y, z - basez, material, shading, id, vb, ab);
 		}
 		else if (r instanceof DynamicObject)
 		{
 			model = ((DynamicObject) r).getModelZbuf();
 			if (model != null)
 			{
-				uploadStaticModel(model, orient, x - basex, y, z - basez, material, id, vb, ab);
+				uploadStaticModel(model, orient, x - basex, y, z - basez, material, shading, id, vb, ab);
 			}
 		}
 		if (vb instanceof VoxelCapture.Buffer)
@@ -620,7 +650,7 @@ public class SceneUploader
 			zone.addAlphaModel(zone.glVaoA, model, pos, endpos,
 				x - basex, y, z - basez,
 				lx, lz, ux, uz,
-				rid, level, id, rippleFace);
+				rid, level, id, alphaTriangles);
 		}
 	}
 
@@ -650,50 +680,44 @@ public class SceneUploader
 			return uploadBed(tileZ, tileX, tileY, vertexBuffer, lx, lz, tileHeights[tileZ]);
 		}
 
-		int swFlag = 0, seFlag = 0, neFlag = 0, nwFlag = 0;
-		if (GroundBlender.enabled && tile.getTexture() == -1)
+		// each tile in its own corner colours, never blended with its neighbours', with vanilla's baked light undone
+		// as 117 HD undoes it, unless the tile is textured or an overlay 117 HD leaves raw
+		if (tile.getTexture() == -1 && !groundBlender.unblended(tileZ, tileX, tileY))
 		{
-			boolean blend = !groundBlender.unblended(tileZ, tileX, tileY);
 			int[][] h = tileHeights[tileZ];
-			int sw = groundBlender.lookup(tileX << 7, swHeight, tileY << 7);
-			int se = groundBlender.lookup(tileX + 1 << 7, seHeight, tileY << 7);
-			int ne = groundBlender.lookup(tileX + 1 << 7, neHeight, tileY + 1 << 7);
-			int nw = groundBlender.lookup(tileX << 7, nwHeight, tileY + 1 << 7);
 			GroundBlender.cornerSlope(h, tileX, tileY, slope);
-			swColor = groundColor(swColor, sw, blend);
+			swColor = groundColor(swColor);
 			GroundBlender.cornerSlope(h, tileX + 1, tileY, slope);
-			seColor = groundColor(seColor, se, blend);
+			seColor = groundColor(seColor);
 			GroundBlender.cornerSlope(h, tileX + 1, tileY + 1, slope);
-			neColor = groundColor(neColor, ne, blend);
+			neColor = groundColor(neColor);
 			GroundBlender.cornerSlope(h, tileX, tileY + 1, slope);
-			nwColor = groundColor(nwColor, nw, blend);
-			swFlag = borderFlag(sw);
-			seFlag = borderFlag(se);
-			neFlag = borderFlag(ne);
-			nwFlag = borderFlag(nw);
+			nwColor = groundColor(nwColor);
 		}
 
 		// 0,0
 		final int lx0 = lx;
-		final int ly0 = swHeight;
+		// 117 HD's tile overrides: a height fix for this tile (heightOffset), and its ground drawn from below too
+		final TileFix fix = tileFix(scene, tileZ, tileX, tileY, true, true);
+		final int ly0 = swHeight - fix.height;
 		final int lz0 = lz;
 		final int hsl0 = swColor;
 
 		// 1,0
 		final int lx1 = lx + Perspective.LOCAL_TILE_SIZE;
-		final int ly1 = seHeight;
+		final int ly1 = seHeight - fix.height;
 		final int lz1 = lz;
 		final int hsl1 = seColor;
 
 		// 1,1
 		final int lx2 = lx + Perspective.LOCAL_TILE_SIZE;
-		final int ly2 = neHeight;
+		final int ly2 = neHeight - fix.height;
 		final int lz2 = lz + Perspective.LOCAL_TILE_SIZE;
 		final int hsl2 = neColor;
 
 		// 0,1
 		final int lx3 = lx;
-		final int ly3 = nwHeight;
+		final int ly3 = nwHeight - fix.height;
 		final int lz3 = lz + Perspective.LOCAL_TILE_SIZE;
 		final int hsl3 = nwColor;
 
@@ -706,25 +730,94 @@ public class SceneUploader
 		final int n2 = terrainNormal(surface, tileX + 1, tileY + 1);
 		final int n3 = terrainNormal(surface, tileX, tileY + 1);
 
-		vertexBuffer.put22224(lx2, ly2, lz2, neFlag, hsl2);
+		vertexBuffer.put22224(lx2, ly2, lz2, 0, hsl2);
 		vertexBuffer.put2222(tex, 256, 256, n2);
 
-		vertexBuffer.put22224(lx3, ly3, lz3, nwFlag, hsl3);
+		vertexBuffer.put22224(lx3, ly3, lz3, 0, hsl3);
 		vertexBuffer.put2222(tex, 0, 256, n3);
 
-		vertexBuffer.put22224(lx1, ly1, lz1, seFlag, hsl1);
+		vertexBuffer.put22224(lx1, ly1, lz1, 0, hsl1);
 		vertexBuffer.put2222(tex, 256, 0, n1);
 
-		vertexBuffer.put22224(lx0, ly0, lz0, swFlag, hsl0);
+		vertexBuffer.put22224(lx0, ly0, lz0, 0, hsl0);
 		vertexBuffer.put2222(tex, 0, 0, n0);
 
-		vertexBuffer.put22224(lx1, ly1, lz1, seFlag, hsl1);
+		vertexBuffer.put22224(lx1, ly1, lz1, 0, hsl1);
 		vertexBuffer.put2222(tex, 256, 0, n1);
 
-		vertexBuffer.put22224(lx3, ly3, lz3, nwFlag, hsl3);
+		vertexBuffer.put22224(lx3, ly3, lz3, 0, hsl3);
 		vertexBuffer.put2222(tex, 0, 256, n3);
 
-		return 6;
+		if (!doubleSidedTile(scene, tileZ, tileX, tileY) && !fix.doubleSided)
+		{
+			return 6;
+		}
+		// the same two triangles wound the other way, their normals turned round
+		vertexBuffer.put22224(lx1, ly1, lz1, 0, hsl1);
+		vertexBuffer.put2222(tex, 256, 0, VertexShading.negateNormal(n1));
+
+		vertexBuffer.put22224(lx3, ly3, lz3, 0, hsl3);
+		vertexBuffer.put2222(tex, 0, 256, VertexShading.negateNormal(n3));
+
+		vertexBuffer.put22224(lx2, ly2, lz2, 0, hsl2);
+		vertexBuffer.put2222(tex, 256, 256, VertexShading.negateNormal(n2));
+
+		vertexBuffer.put22224(lx3, ly3, lz3, 0, hsl3);
+		vertexBuffer.put2222(tex, 0, 256, VertexShading.negateNormal(n3));
+
+		vertexBuffer.put22224(lx1, ly1, lz1, 0, hsl1);
+		vertexBuffer.put2222(tex, 256, 0, VertexShading.negateNormal(n1));
+
+		vertexBuffer.put22224(lx0, ly0, lz0, 0, hsl0);
+		vertexBuffer.put2222(tex, 0, 0, VertexShading.negateNormal(n0));
+		return 12;
+	}
+
+	/** What 117 HD's tile overrides change about a tile's ground geometry. */
+	private static final class TileFix
+	{
+		static final TileFix NONE = new TileFix(0, false);
+		final int height; // world units up
+		final boolean doubleSided;
+
+		TileFix(int height, boolean doubleSided)
+		{
+			this.height = height;
+			this.doubleSided = doubleSided;
+		}
+	}
+
+	private final int[] fixWorld = new int[3];
+
+	/**
+	 * The ground geometry 117 HD's tile overrides give tile (ex, ey) on {@code level}, extended coordinates, matched
+	 * by its overlay id, its underlay id or both (zone SceneUploader 1076-1079, 1131, 1440-1442, 1505: the plain tile
+	 * by both, a shaped tile's overlay faces by the overlay alone, its underlay faces by the underlay alone). Top-level
+	 * scenes only, where world coordinates are known.
+	 */
+	private TileFix tileFix(Scene scene, int level, int ex, int ey, boolean byOverlay, boolean byUnderlay)
+	{
+		if (scene.getWorldViewId() != WorldView.TOPLEVEL
+			|| !EnvironmentManager.toWorld(scene, ex - LuminaPlugin.SCENE_OFFSET, ey - LuminaPlugin.SCENE_OFFSET, level, fixWorld))
+		{
+			return TileFix.NONE;
+		}
+		WaterOverrides o = WaterOverrides.get();
+		int overlay = byOverlay ? scene.getOverlayIds()[level][ex][ey] & 0xffff : -1;
+		int underlay = byUnderlay ? scene.getUnderlayIds()[level][ex][ey] & 0xffff : -1;
+		int height = o.heightOffset(fixWorld[0], fixWorld[1], fixWorld[2], overlay, underlay);
+		boolean doubleSided = o.doubleSided(fixWorld[0], fixWorld[1], fixWorld[2], overlay, underlay);
+		return height == 0 && !doubleSided ? TileFix.NONE : new TileFix(height, doubleSided);
+	}
+
+	/**
+	 * 117 HD's double-sided ground (zone SceneUploader 1131, 1505): a tile above the ground level that nothing below
+	 * shows through (no TILE_FLAG_VIS_BELOW) is drawn from below too, so upper floors and bridges don't vanish when
+	 * the camera is under them. Extended coordinates.
+	 */
+	private static boolean doubleSidedTile(Scene scene, int level, int ex, int ey)
+	{
+		return level != 0 && (scene.getExtendedTileSettings()[level][ex][ey] & Constants.TILE_FLAG_VIS_BELOW) == 0;
 	}
 
 	/**
@@ -753,26 +846,47 @@ public class SceneUploader
 		return VertexShading.encodeNormal(dhdx, -1, dhdz);
 	}
 
-	// marks a vertex where overlay and underlay ground meet, in the static format's spare position short; the
-	// fragment shader narrows color transitions toward these vertices, as 117 HD does with its overlay mix
-	private static final int BORDER_FLAG = -1;
-
-	private static int borderFlag(int lookup)
+	/**
+	 * 117 HD's inheritTileColorType (zone SceneUploader 1733-1793): the colour of the tile under the object being
+	 * uploaded, as the game gives it: an untextured, coloured, not hidden tile paint's four corners averaged, else an
+	 * untextured tile model's first underlay face's colour A (its first overlay face's, when {@code overlay} and the
+	 * tile has an overlay); -1 when the tile gives none.
+	 */
+	private int tileColor(boolean overlay)
 	{
-		return lookup != -1 && (lookup & GroundBlender.BORDER) != 0 ? BORDER_FLAG : 0;
+		if (tile == null)
+		{
+			return -1;
+		}
+		SceneTilePaint paint = tile.getSceneTilePaint();
+		SceneTileModel model = tile.getSceneTileModel();
+		if (paint != null && paint.getTexture() == -1 && paint.getRBG() != 0 && paint.getNeColor() != HIDDEN_HSL)
+		{
+			// one hue and saturation per tile, so the lightness can be averaged in packed form
+			return (paint.getSwColor() + paint.getNwColor() + paint.getNeColor() + paint.getSeColor()) / 4;
+		}
+		if (model != null && model.getTriangleTextureId() == null)
+		{
+			int[] colors = model.getTriangleColorA();
+			boolean wantOverlay = overlay && model.getModelOverlay() != 0;
+			for (int i = 0; i < colors.length; ++i)
+			{
+				if (GroundBlender.isOverlayFace(model.getShape(), i) == wantOverlay)
+				{
+					return colors[i] != HIDDEN_HSL ? colors[i] : -1;
+				}
+			}
+		}
+		return -1;
 	}
 
 	/**
-	 * The color for a ground vertex: the blended color shared with the neighboring tiles, or the tile's own,
-	 * with vanilla's baked terrain lighting undone either way (for the slope in {@link #slope}).
+	 * A tile's own colour at a ground vertex with vanilla's baked terrain lighting undone, 117 HD's rule with its
+	 * constants (GroundBlender.undoShading), for the slope in {@link #slope}; hidden and missing colours as they are.
 	 */
-	private int groundColor(int own, int lookup, boolean blend)
+	private int groundColor(int own)
 	{
-		if (blend && lookup != -1 && (lookup & GroundBlender.BLENDED) != 0)
-		{
-			return lookup & 0xffff;
-		}
-		if (own < 0 || own == 12345678 || !VertexShading.undoVanillaShading)
+		if (own < 0 || own == 12345678)
 		{
 			return own;
 		}
@@ -804,11 +918,11 @@ public class SceneUploader
 
 		// Smooth normals like plain tiles have, so a shaped tile (path edge, shore) shades the same as its neighbors
 		// instead of showing its triangles. Its heights are bilinear in the tile's corner heights.
-		final boolean blending = GroundBlender.enabled;
 		GroundBlender.tileSlopes(scene.getTileHeights()[tileZ], ex, ey, slope, tileSlopes);
 		GroundBlender.tileSlopes(surfaceHeights(scene, tileZ), ex, ey, slope, surfaceSlopes);
-		// 117 HD: on shaped tiles with any texture (shores) the overlay faces keep their own colors
-		final boolean blendOverlay = triangleTextures == null && !groundBlender.unblended(tileZ, ex, ey);
+		// 117 HD: on shaped tiles with any texture (shores) the overlay faces keep the game's colours, as do the
+		// overlays it leaves raw
+		final boolean undoOverlay = triangleTextures == null && !groundBlender.unblended(tileZ, ex, ey);
 		final int shape = sceneTileModel.getShape();
 		// shore tiles: the water faces are lowered into the bed, the land faces and their vertices stay
 		final boolean bedTile = triangleTextures != null && water != null && scene.getWorldViewId() == WorldView.TOPLEVEL
@@ -819,6 +933,10 @@ public class SceneUploader
 			bedTileHeights = scene.getTileHeights()[tileZ];
 		}
 
+		final boolean doubleSided = doubleSidedTile(scene, tileZ, ex, ey);
+		// 117 HD's tile overrides for its overlay faces (by the overlay id alone) and its underlay faces (the underlay's)
+		final TileFix overlayFix = tileFix(scene, tileZ, ex, ey, true, false);
+		final TileFix underlayFix = tileFix(scene, tileZ, ex, ey, false, true);
 		int cnt = 0;
 		// on shore tiles the land faces first, so the water faces' vertices on the bank take the very color the land
 		// has there (landColor)
@@ -855,15 +973,16 @@ public class SceneUploader
 
 			// vertexes are stored in scene local, convert to tile local
 			int lx0 = vertexX[vertex0] - basex;
-			int ly0 = vertexY[vertex0];
+			final TileFix fix = GroundBlender.isOverlayFace(shape, i) ? overlayFix : underlayFix;
+			int ly0 = vertexY[vertex0] - fix.height;
 			int lz0 = vertexZ[vertex0] - basez;
 
 			int lx1 = vertexX[vertex1] - basex;
-			int ly1 = vertexY[vertex1];
+			int ly1 = vertexY[vertex1] - fix.height;
 			int lz1 = vertexZ[vertex1] - basez;
 
 			int lx2 = vertexX[vertex2] - basex;
-			int ly2 = vertexY[vertex2];
+			int ly2 = vertexY[vertex2] - fix.height;
 			int lz2 = vertexZ[vertex2] - basez;
 
 			int tex = triangleTextures != null ? triangleTextures[i] + 1 : 0;
@@ -875,24 +994,17 @@ public class SceneUploader
 			float s1x = slope[0], s1z = slope[1];
 			int n2 = modelNormal(vertexX[vertex2] - lx, vertexZ[vertex2] - lz);
 
-			int f0 = 0, f1 = 0, f2 = 0;
-			if (blending && tex == 0)
+			// the tile's own colours, undone as 117 HD undoes them, except textured faces and the overlay faces
+			// 117 HD leaves raw
+			if (tex == 0 && (!GroundBlender.isOverlayFace(shape, i) || undoOverlay))
 			{
-				boolean blend = !GroundBlender.isOverlayFace(shape, i) || blendOverlay;
-				int o = offset << 7;
-				int b0 = groundBlender.lookup(vertexX[vertex0] + o, ly0, vertexZ[vertex0] + o);
-				int b1 = groundBlender.lookup(vertexX[vertex1] + o, ly1, vertexZ[vertex1] + o);
-				int b2 = groundBlender.lookup(vertexX[vertex2] + o, ly2, vertexZ[vertex2] + o);
-				hsl2 = groundColor(hsl2, b2, blend);
+				hsl2 = groundColor(hsl2);
 				slope[0] = s1x;
 				slope[1] = s1z;
-				hsl1 = groundColor(hsl1, b1, blend);
+				hsl1 = groundColor(hsl1);
 				slope[0] = s0x;
 				slope[1] = s0z;
-				hsl0 = groundColor(hsl0, b0, blend);
-				f0 = borderFlag(b0);
-				f1 = borderFlag(b1);
-				f2 = borderFlag(b2);
+				hsl0 = groundColor(hsl0);
 			}
 			if (bedTile)
 			{
@@ -901,14 +1013,28 @@ public class SceneUploader
 				landColor[vertex2] = hsl2;
 			}
 
-			vertexBuffer.put22224(lx0, ly0, lz0, f0, hsl0);
+			vertexBuffer.put22224(lx0, ly0, lz0, 0, hsl0);
 			vertexBuffer.put2222(tex | texMaterial, (int) ((vertexX[vertex0] - lx) * 2f), (int) ((vertexZ[vertex0] - lz) * 2f), n0);
 
-			vertexBuffer.put22224(lx1, ly1, lz1, f1, hsl1);
+			vertexBuffer.put22224(lx1, ly1, lz1, 0, hsl1);
 			vertexBuffer.put2222(tex | texMaterial, (int) ((vertexX[vertex1] - lx) * 2f), (int) ((vertexZ[vertex1] - lz) * 2f), n1);
 
-			vertexBuffer.put22224(lx2, ly2, lz2, f2, hsl2);
+			vertexBuffer.put22224(lx2, ly2, lz2, 0, hsl2);
 			vertexBuffer.put2222(tex | texMaterial, (int) ((vertexX[vertex2] - lx) * 2f), (int) ((vertexZ[vertex2] - lz) * 2f), n2);
+
+			if (doubleSided || fix.doubleSided)
+			{
+				// the face wound the other way, its normals turned round
+				vertexBuffer.put22224(lx2, ly2, lz2, 0, hsl2);
+				vertexBuffer.put2222(tex | texMaterial, (int) ((vertexX[vertex2] - lx) * 2f), (int) ((vertexZ[vertex2] - lz) * 2f), VertexShading.negateNormal(n2));
+
+				vertexBuffer.put22224(lx1, ly1, lz1, 0, hsl1);
+				vertexBuffer.put2222(tex | texMaterial, (int) ((vertexX[vertex1] - lx) * 2f), (int) ((vertexZ[vertex1] - lz) * 2f), VertexShading.negateNormal(n1));
+
+				vertexBuffer.put22224(lx0, ly0, lz0, 0, hsl0);
+				vertexBuffer.put2222(tex | texMaterial, (int) ((vertexX[vertex0] - lx) * 2f), (int) ((vertexZ[vertex0] - lz) * 2f), VertexShading.negateNormal(n0));
+				cnt += 3;
+			}
 		}
 
 		return cnt;
@@ -1196,8 +1322,8 @@ public class SceneUploader
 	}
 
 	// scene upload
-	private final int[] flatNormals = new int[3];
-	private final VertexShading.Normals computedNormals = new VertexShading.Normals();
+	// a face's three corner normals (VertexShading.faceNormals)
+	private final int[] faceNormals = new int[9];
 
 	// Faces lying exactly on top of each other (a wall's overlay on the wall, a decoration on its wall) would fight over
 	// the depth test pixel by pixel. The game draws them in order instead: a model's faces by render priority, and a
@@ -1208,8 +1334,14 @@ public class SceneUploader
 	private int objectBias;
 	// the scene object being uploaded (VoxelCapture.ownerOf)
 	private int owner;
+	// the scene zoneSize counts
+	private Scene sizeScene;
+	private static final int HIDDEN_HSL = 12345678;
+	// the tile whose objects are being uploaded (117 HD's inheritTileColorType reads its ground colour)
+	private Tile tile;
 
-	private int uploadStaticModel(Model model, int orient, int x, int y, int z, int material, int id, GpuIntBuffer vb, GpuIntBuffer ab)
+	private int uploadStaticModel(Model model, int orient, int x, int y, int z, int material, int shading, int id,
+		GpuIntBuffer vb, GpuIntBuffer ab)
 	{
 		final int vertexCount = model.getVerticesCount();
 		final int triangleCount = model.getFaceCount();
@@ -1232,18 +1364,11 @@ public class SceneUploader
 		final byte[] bias = model.getFaceBias();
 		final byte[] priorities = model.getFaceRenderPriorities();
 
-		final VertexShading.Normals computed = this.computedNormals;
-		computed.ensure(model.getVerticesCount());
-		VertexShading.computeNormals(model.getVerticesCount(), vertexX, vertexY, vertexZ,
-			model.getFaceCount(), indices1, indices2, indices3, color3s, computed);
-		final float[] normalsX = computed.x;
-		final float[] normalsY = computed.y;
-		final float[] normalsZ = computed.z;
-		final boolean hasNormals = true;
-		final short[] unlitColors = model.getUnlitFaceColors();
-		final int[] flatNormals = this.flatNormals;
-		final float normalSin = orient != 0 ? Perspective.SINEF[orient] : 0;
-		final float normalCos = orient != 0 ? Perspective.COSINEF[orient] : 1;
+		// the game's vertex normals, as 117 HD reads them; null when the model has none (every face flat then)
+		final int[] normalsX = model.getVertexNormalsX();
+		final int[] normalsY = model.getVertexNormalsY();
+		final int[] normalsZ = model.getVertexNormalsZ();
+		final int[] faceNormals = this.faceNormals;
 
 		int orientSin = 0;
 		int orientCos = 0;
@@ -1311,7 +1436,7 @@ public class SceneUploader
 		int len = 0;
 		for (int face = 0; face < triangleCount; ++face)
 		{
-			rippleFace[face] = false;
+			alphaTriangles[face] = 0;
 			int color1 = color1s[face];
 			int color2 = color2s[face];
 			int color3 = color3s[face];
@@ -1323,6 +1448,20 @@ public class SceneUploader
 			{
 				continue;
 			}
+			// 117 HD's override flags for this face, by its colour as the game gives it
+			int shade = SurfaceMaterials.shading(shading, faceTextures != null ? faceTextures[face] : -1, color1,
+				SurfaceMaterials.opacity(transparencies, face));
+			if ((shade & (SurfaceMaterials.INHERIT_UNDERLAY | SurfaceMaterials.INHERIT_OVERLAY)) != 0
+				&& (faceTextures == null || faceTextures[face] == -1))
+			{
+				int inherited = tileColor((shade & SurfaceMaterials.INHERIT_OVERLAY) != 0);
+				if (inherited != -1)
+				{
+					// the ground's colour as the game gives it, shading kept (117 HD: keepShading)
+					color1 = color2 = color3 = inherited;
+					shade |= SurfaceMaterials.KEEP_SHADING;
+				}
+			}
 
 			int triangleA = indices1[face];
 			int triangleB = indices2[face];
@@ -1330,39 +1469,12 @@ public class SceneUploader
 			if (ripples && overrides.hidesFace(id, objectWorld[0], objectWorld[1], objectWorld[2],
 				faceTextures != null && faceTextures[face] != -1, transparencies != null ? transparencies[face] : 0, color1))
 			{
-				rippleFace[face] = true;
 				continue;
 			}
 
-			if (faceTextures == null || faceTextures[face] == -1)
-			{
-				color1 = VertexShading.baseColor(color1, face, triangleA, normalsX, normalsY, normalsZ);
-				if (!flat)
-				{
-					color2 = VertexShading.baseColor(color2, face, triangleB, normalsX, normalsY, normalsZ);
-					color3 = VertexShading.baseColor(color3, face, triangleC, normalsX, normalsY, normalsZ);
-				}
-			}
 			if (flat)
 			{
 				color2 = color3 = color1;
-			}
-
-			boolean smooth = !flat && hasNormals;
-			int n1 = smooth ? VertexShading.vertexNormal(normalsX, normalsY, normalsZ, triangleA, normalSin, normalCos) : 0;
-			int n2 = smooth ? VertexShading.vertexNormal(normalsX, normalsY, normalsZ, triangleB, normalSin, normalCos) : 0;
-			int n3 = smooth ? VertexShading.vertexNormal(normalsX, normalsY, normalsZ, triangleC, normalSin, normalCos) : 0;
-			if (flat && hasNormals
-				&& VertexShading.flatFaceNormals(computed, face, triangleA, triangleB, triangleC, normalSin, normalCos, flatNormals))
-			{
-				n1 = flatNormals[0];
-				n2 = flatNormals[1];
-				n3 = flatNormals[2];
-				// one color over the rounded surface: the per-face lit colors would still show the facets
-				if (unlitColors != null && (faceTextures == null || faceTextures[face] == -1))
-				{
-					color1 = color2 = color3 = unlitColors[face] & 0xffff;
-				}
 			}
 
 			int vx1 = modelLocalXI[triangleA];
@@ -1376,6 +1488,33 @@ public class SceneUploader
 			int vx3 = modelLocalXI[triangleC];
 			int vy3 = modelLocalYI[triangleC];
 			int vz3 = modelLocalZI[triangleC];
+
+			// 117 HD's normals: the face's own for flat faces (from the rotated positions), else the game's; vanilla
+			// shading undone with them on untextured faces, then the game's rotated by the orientation, like 117 HD's
+			// static upload also a face normal that stood in for three zero vertex normals (SceneUploader 1856, 1883)
+			int normalKind = VertexShading.faceNormals(faceNormals, normalsX, normalsY, normalsZ,
+				flat || (shade & SurfaceMaterials.FLAT_NORMALS) != 0,
+				triangleA, triangleB, triangleC, vx1, vy1, vz1, vx2, vy2, vz2, vx3, vy3, vz3);
+			if ((faceTextures == null || faceTextures[face] == -1) && (shade & SurfaceMaterials.KEEP_SHADING) == 0)
+			{
+				color1 = VertexShading.undoVanillaShading(color1, faceNormals, 0);
+				color2 = VertexShading.undoVanillaShading(color2, faceNormals, 1);
+				color3 = VertexShading.undoVanillaShading(color3, faceNormals, 2);
+			}
+			if (normalKind != VertexShading.FACE && orient != 0)
+			{
+				VertexShading.rotateNormals(faceNormals, orientSin, orientCos);
+			}
+			if ((shade & SurfaceMaterials.UPWARDS_NORMALS) != 0)
+			{
+				VertexShading.upwardsNormals(faceNormals);
+			}
+			int n1 = VertexShading.encodeNormal(faceNormals, 0);
+			int n2 = VertexShading.encodeNormal(faceNormals, 1);
+			int n3 = VertexShading.encodeNormal(faceNormals, 2);
+			int l1 = VertexShading.normalLength(faceNormals, 0);
+			int l2 = VertexShading.normalLength(faceNormals, 1);
+			int l3 = VertexShading.normalLength(faceNormals, 2);
 
 			ModelUploader.computeFaceUvs(model, face, 0f, 0f, 0f, false, u, v);
 
@@ -1407,19 +1546,43 @@ public class SceneUploader
 				sv1 = SurfaceMaterials.fakeHeight(vertexY[triangleB], span[1]);
 				sv2 = SurfaceMaterials.fakeHeight(vertexY[triangleC], span[1]);
 			}
+			if (texture > 0)
+			{
+				color1 = color2 = color3 = VertexShading.TEXTURED_COLOR;
+			}
 			texture |= bits;
 			GpuIntBuffer buf = alpha && !fake ? ab : vb;
+			if (buf == ab)
+			{
+				alphaTriangles[face] = (shade & SurfaceMaterials.DOUBLE_SIDED) != 0 ? 2 : 1;
+			}
 
 			buf.put22224(vx1, vy1, vz1, sway ? swayCodes[triangleA] : 0, alphaBias | color1);
-			buf.put2222(texture, su0, sv0, n1);
+			buf.put2222(texture, su0, sv0, n1, l1);
 
 			buf.put22224(vx2, vy2, vz2, sway ? swayCodes[triangleB] : 0, alphaBias | color2);
-			buf.put2222(texture, su1, sv1, n2);
+			buf.put2222(texture, su1, sv1, n2, l2);
 
 			buf.put22224(vx3, vy3, vz3, sway ? swayCodes[triangleC] : 0, alphaBias | color3);
-			buf.put2222(texture, su2, sv2, n3);
+			buf.put2222(texture, su2, sv2, n3, l3);
 
 			len += 3;
+
+			if ((shade & SurfaceMaterials.DOUBLE_SIDED) != 0)
+			{
+				// 117 HD's doubleSidedFaces (zone SceneUploader 1926-1951): the face wound the other way, its normals
+				// turned round, into the same buffer (staticModelSize counts it)
+				buf.put22224(vx3, vy3, vz3, sway ? swayCodes[triangleC] : 0, alphaBias | color3);
+				buf.put2222(texture, su2, sv2, VertexShading.negateNormal(n3), l3);
+
+				buf.put22224(vx2, vy2, vz2, sway ? swayCodes[triangleB] : 0, alphaBias | color2);
+				buf.put2222(texture, su1, sv1, VertexShading.negateNormal(n2), l2);
+
+				buf.put22224(vx1, vy1, vz1, sway ? swayCodes[triangleA] : 0, alphaBias | color1);
+				buf.put2222(texture, su0, sv0, VertexShading.negateNormal(n1), l1);
+
+				len += 3;
+			}
 
 			if (standing && !alpha)
 			{
@@ -1428,9 +1591,9 @@ public class SceneUploader
 					: atWaterLevel[triangleB] && atWaterLevel[triangleC] ? 1 : -1;
 				if (e >= 0 && !(atWaterLevel[triangleA] && atWaterLevel[triangleB] && atWaterLevel[triangleC]))
 				{
-					fx[0] = vx1; fy[0] = vy1; fz[0] = vz1; fc[0] = color1; fn[0] = n1; fu[0] = su0; fv[0] = sv0;
-					fx[1] = vx2; fy[1] = vy2; fz[1] = vz2; fc[1] = color2; fn[1] = n2; fu[1] = su1; fv[1] = sv1;
-					fx[2] = vx3; fy[2] = vy3; fz[2] = vz3; fc[2] = color3; fn[2] = n3; fu[2] = su2; fv[2] = sv2;
+					fx[0] = vx1; fy[0] = vy1; fz[0] = vz1; fc[0] = color1; fn[0] = n1; fl[0] = l1; fu[0] = su0; fv[0] = sv0;
+					fx[1] = vx2; fy[1] = vy2; fz[1] = vz2; fc[1] = color2; fn[1] = n2; fl[1] = l2; fu[1] = su1; fv[1] = sv1;
+					fx[2] = vx3; fy[2] = vy3; fz[2] = vz3; fc[2] = color3; fn[2] = n3; fl[2] = l3; fu[2] = su2; fv[2] = sv2;
 					len += extrude(e, (e + 1) % 3, texture, alphaBias, vb);
 				}
 			}
@@ -1439,7 +1602,7 @@ public class SceneUploader
 		return len;
 	}
 
-	private final int[] fx = new int[3], fy = new int[3], fz = new int[3], fc = new int[3], fn = new int[3];
+	private final int[] fx = new int[3], fy = new int[3], fz = new int[3], fc = new int[3], fn = new int[3], fl = new int[3];
 	private final int[] fu = new int[3], fv = new int[3];
 
 	/**
@@ -1473,18 +1636,18 @@ public class SceneUploader
 		}
 		// (b, a, a') and (b, a', b'): below the edge, so the order is reversed to face the same way
 		buf.put22224(fx[b], fy[b], fz[b], 0, alphaBias | fc[b]);
-		buf.put2222(texture, fu[b], fv[b], fn[b]);
+		buf.put2222(texture, fu[b], fv[b], fn[b], fl[b]);
 		buf.put22224(fx[a], fy[a], fz[a], 0, alphaBias | fc[a]);
-		buf.put2222(texture, fu[a], fv[a], fn[a]);
+		buf.put2222(texture, fu[a], fv[a], fn[a], fl[a]);
 		buf.put22224(fx[a], ba, fz[a], 0, alphaBias | fc[a]);
-		buf.put2222(texture, uv[0], uv[1], fn[a]);
+		buf.put2222(texture, uv[0], uv[1], fn[a], fl[a]);
 
 		buf.put22224(fx[b], fy[b], fz[b], 0, alphaBias | fc[b]);
-		buf.put2222(texture, fu[b], fv[b], fn[b]);
+		buf.put2222(texture, fu[b], fv[b], fn[b], fl[b]);
 		buf.put22224(fx[a], ba, fz[a], 0, alphaBias | fc[a]);
-		buf.put2222(texture, uv[0], uv[1], fn[a]);
+		buf.put2222(texture, uv[0], uv[1], fn[a], fl[a]);
 		buf.put22224(fx[b], bb, fz[b], 0, alphaBias | fc[b]);
-		buf.put2222(texture, uv[2], uv[3], fn[b]);
+		buf.put2222(texture, uv[2], uv[3], fn[b], fl[b]);
 		return 6;
 	}
 

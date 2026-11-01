@@ -183,9 +183,9 @@ int clusterLightCount(int entry) {
   return count;
 }
 
-// The lamps' light on a surface at camera-relative p with normal n, the smooth normal the sun uses, and face normal
-// faceN, from the lamps of cluster entry (light/lamp.glsl): on its front, and through thin foliage from behind into
-// through. Opaque back faces receive neither.
+// The lamps' light on a surface at camera-relative p with normal n, the smooth normal the sun uses, from the lamps of
+// cluster entry (light/lamp.glsl): on its front, and through thin foliage from behind into through. Surfaces turned
+// away receive neither. The face normal faceN only moves the point off its surface for the wall check.
 vec3 lampsOnSurface(int entry, vec3 p, vec3 n, vec3 faceN, float transmissive, out vec3 through) {
   vec3 viewDir = transmissive > 0.0 ? normalize(-p) : vec3(0.0);
   // off the surface along its face's own normal: a smooth normal tilts toward a wall's top and ends
@@ -372,25 +372,22 @@ vec4 shadeScene(ivec2 px, SceneSample sm, vec4 transparent) {
     if (compositePart != 2) {
     vec3 plain = ambientLight(sunAltitude) + skyFill(n, sunAltitude, up);
     indirect = skylightAmbient(plain) * envAmbient * ao;
-    // Retain the later skylight daylight fill and the tuned indoor ambient floor.
+    // the daylight fill: sun put back inside shadows where the sky is open (open question 1 of
+    // docs/117hd-world-shading.md: 117 HD has none)
     float daylightFill = skylightOn == 1 ? 0.7 * clamp(skyUpsampled, 0.0, 1.0) : 0.0;
     indirect += caster * envSun * max(ndl, 0.0) * (1.0 - shadow) * daylightFill * ao;
+    }
+    light = indirect
+      + caster * envSun * max(ndl, 0.0) * shadow * mix(1.0, ao, AO_DIRECT);
+    // A room's fill: what the room lacks of the least light a room should have, from its lamps and its sky
+    // (RoomLight), spread flat and directionless over the whole room like ambient, darkened by AO as the ambient is.
     int roomId = roomOfSurface(p + cameraPos, n);
     if (roomId > 0) {
       // how closed in the spot is: a room with its roof hidden still counts, a covered gateway open at both ends
       // doesn't, and the fill fades out toward a room's doorways and open sides instead of ending at its tiles' edge
       float enclosed = skylightOn == 1 ? 1.0 - smoothstep(INTERIOR_SKY_CLOSED, INTERIOR_SKY_OPEN, skyUpsampled) : 1.0;
-      // the daylight a room gets at least, through its windows and doors
-      vec3 roomDaylight = ambientLight(sunAltitude) + skyFill(vec3(0.0, -1.0, 0.0), sunAltitude, 1.0)
-        + caster * envSun * (0.7 * max(-casterDir.y, 0.0));
-      indirect = max(indirect, roomDaylight * envAmbient * enclosed * 0.3 * ao);
-      // what the room lacks of the least light a room should have, from its lamps and its sky (RoomLight): a soft fill
-      // over the whole room
-      indirect += interiorTint * roomFillLevel(roomId) * enclosed * ao;
+      light += interiorTint * roomFillLevel(roomId) * enclosed * ao;
     }
-    }
-    light = indirect
-      + caster * envSun * max(ndl, 0.0) * shadow * mix(1.0, ao, AO_DIRECT);
     if (transmissive > 0.0) {
       // light through the leaf isn't occluded by the creases SSAO sees on its front
       light += caster * envSun * transmission(ndl, dot(-casterDir, normalize(-p)), transmissive) * shadow;

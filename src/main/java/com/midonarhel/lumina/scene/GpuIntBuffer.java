@@ -54,10 +54,18 @@ public class GpuIntBuffer
 		buffer.put(v);
 	}
 
+	// the second half of a static vertex: texture, u, v, the octahedral normal, then the length the normal is
+	// interpolated with (VertexShading.normalLength); one for normals that carry no length of the game's
 	public void put2222(int x, int y, int z, int w)
+	{
+		put2222(x, y, z, w, 1);
+	}
+
+	public void put2222(int x, int y, int z, int w, int length)
 	{
 		buffer.put(((y & 0xffff) << 16) | (x & 0xffff));
 		buffer.put(((w & 0xffff) << 16) | (z & 0xffff));
+		buffer.put(length);
 	}
 
 	public void flip()

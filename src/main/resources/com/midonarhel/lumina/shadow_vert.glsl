@@ -19,8 +19,7 @@ out vec2 fUv;
 
 void main() {
   vec4 worldPos = entityProj * vec4(vertf.xyz + base, 1.0);
-  vec3 noNormal = vec3(0.0);
-  worldPos.xyz += windDisplacement(vertf.w, worldPos.xyz, noNormal, false);
+  worldPos.xyz += windDisplacement(vertf.w, worldPos.xyz);
   gl_Position = lightProj * worldPos;
   fTextureId = tex.x & 0x1ff;  // material bits above, see SurfaceMaterials.java
   fEmissive = tex.x >> 9 & 3;

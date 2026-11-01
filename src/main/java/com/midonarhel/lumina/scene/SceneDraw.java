@@ -297,15 +297,17 @@ public final class SceneDraw
 		}
 
 		int material = SurfaceMaterials.forObject(tileObject.getId(), r);
-		drawDynamicModel(renderThreadId, worldProjection, scene, m, material, tileObject.getPlane(), orient, x, y, z);
+		int shading = SurfaceMaterials.shadingForObject(tileObject.getId(), r);
+		drawDynamicModel(renderThreadId, worldProjection, scene, m, material, shading, tileObject.getPlane(), orient, x,
+			y, z);
 	}
 
 	/**
-	 * A dynamic model past drawDynamic's filters, with its material and its object's plane worked out: what the
-	 * offline renderer (dev/FrameTape) records and replays.
+	 * A dynamic model past drawDynamic's filters, with its material, its shading group and its object's plane worked
+	 * out: what the offline renderer (dev/FrameTape) records and replays.
 	 */
 	public void drawDynamicModel(int renderThreadId, Projection worldProjection, Scene scene, Model m, int material,
-		int objectPlane, int orient, int x, int y, int z)
+		int shading, int objectPlane, int orient, int x, int y, int z)
 	{
 		SceneContext ctx = plugin.context(scene);
 		if (ctx == null)
@@ -319,7 +321,7 @@ public final class SceneDraw
 		{
 			if (tape != null)
 			{
-				tape.dynamic(renderThreadId, worldProjection, scene, m, material, objectPlane, orient, x, y, z);
+				tape.dynamic(renderThreadId, worldProjection, scene, m, material, shading, objectPlane, orient, x, y, z);
 			}
 			RenderThread rt = plugin.rts[renderThreadId + 1];
 			VAO o = rt.vaoO.get(size);
@@ -329,7 +331,7 @@ public final class SceneDraw
 			}
 
 			rt.modelUploader.uploadTempModel(m, orient, x, y, z,
-				ctx.cameraX, ctx.cameraY, ctx.cameraZ, o.vbo.vb, material);
+				ctx.cameraX, ctx.cameraY, ctx.cameraZ, o.vbo.vb, material, shading);
 			o.addRange(ctx.projection, scene, 0);
 		}
 		else
@@ -337,7 +339,7 @@ public final class SceneDraw
 			m.calculateBoundsCylinder();
 			if (tape != null)
 			{
-				tape.dynamic(renderThreadId, worldProjection, scene, m, material, objectPlane, orient, x, y, z);
+				tape.dynamic(renderThreadId, worldProjection, scene, m, material, shading, objectPlane, orient, x, y, z);
 			}
 
 			RenderThread rt = plugin.rts[renderThreadId + 1];
@@ -354,7 +356,7 @@ public final class SceneDraw
 			try
 			{
 				sorter.uploadSortedModel(worldProjection, m, orient, x, y, z,
-					ctx.cameraX, ctx.cameraY, ctx.cameraZ, o.vbo.vb, a.vbo.vb, false, material);
+					ctx.cameraX, ctx.cameraY, ctx.cameraZ, o.vbo.vb, a.vbo.vb, false, material, shading);
 			}
 			catch (Exception ex)
 			{
@@ -400,28 +402,29 @@ public final class SceneDraw
 		Renderable renderable = gameObject.getRenderable();
 		int renderMode = renderable.getRenderMode();
 		int material = SurfaceMaterials.forRenderable(renderable, gameObject.getHash(), gameObject.getId());
+		int shading = SurfaceMaterials.shadingForRenderable(renderable, gameObject.getHash(), gameObject.getId());
 		if (renderMode == Renderable.RENDERMODE_SORTED_NO_DEPTH || m.getFaceTransparencies() != null || m.getTransparency() != 0)
 		{
 			int offset = scene.getWorldViewId() == WorldView.TOPLEVEL ? (SCENE_OFFSET >> 3) : 0;
 			int zx = (gameObject.getX() >> 10) + offset;
 			int zz = (gameObject.getY() >> 10) + offset;
 			int plane = Math.min(ctx.maxLevel, gameObject.getPlane());
-			drawTempModel(worldProjection, scene, m, orient, x, y, z, material, true,
+			drawTempModel(worldProjection, scene, m, orient, x, y, z, material, shading, true,
 				renderMode == Renderable.RENDERMODE_SORTED_NO_DEPTH, zx, zz, plane,
 				y - renderable.getModelHeight() /* to render players over locs */);
 		}
 		else
 		{
-			drawTempModel(worldProjection, scene, m, orient, x, y, z, material, false, false, 0, 0, 0, 0);
+			drawTempModel(worldProjection, scene, m, orient, x, y, z, material, shading, false, false, 0, 0, 0, 0);
 		}
 	}
 
 	/**
-	 * A temporary model past drawTemp's filters, sorted (with its zone, plane and alpha height) or not: what the offline
-	 * renderer (dev/FrameTape) records and replays.
+	 * A temporary model past drawTemp's filters, with its material and shading group, sorted (with its zone, plane and
+	 * alpha height) or not: what the offline renderer (dev/FrameTape) records and replays.
 	 */
 	public void drawTempModel(Projection worldProjection, Scene scene, Model m, int orient, int x, int y, int z,
-		int material, boolean sorted, boolean noDepth, int zx, int zz, int plane, int alphaY)
+		int material, int shading, boolean sorted, boolean noDepth, int zx, int zz, int plane, int alphaY)
 	{
 		SceneContext ctx = plugin.context(scene);
 		if (ctx == null)
@@ -435,18 +438,19 @@ public final class SceneDraw
 			m.calculateBoundsCylinder();
 			if (tape != null)
 			{
-				tape.temp(worldProjection, scene, m, orient, x, y, z, material, true, noDepth, zx, zz, plane, alphaY);
+				tape.temp(worldProjection, scene, m, orient, x, y, z, material, shading, true, noDepth, zx, zz, plane,
+					alphaY);
 			}
 			plugin.tempModels.uploadSorted(plugin.rts[0], ctx, scene, worldProjection, m, orient, x, y, z, material,
-				noDepth, zx, zz, plane, alphaY);
+				shading, noDepth, zx, zz, plane, alphaY);
 		}
 		else
 		{
 			if (tape != null)
 			{
-				tape.temp(worldProjection, scene, m, orient, x, y, z, material, false, false, 0, 0, 0, 0);
+				tape.temp(worldProjection, scene, m, orient, x, y, z, material, shading, false, false, 0, 0, 0, 0);
 			}
-			plugin.tempModels.uploadTemp(plugin.rts[0], ctx, scene, m, orient, x, y, z, material);
+			plugin.tempModels.uploadTemp(plugin.rts[0], ctx, scene, m, orient, x, y, z, material, shading);
 		}
 	}
 

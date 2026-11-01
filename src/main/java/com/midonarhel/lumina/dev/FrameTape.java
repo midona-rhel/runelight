@@ -91,19 +91,19 @@ public final class FrameTape
 	}
 
 	public synchronized void dynamic(int renderThreadId, Projection worldProjection, Scene scene, Model m, int material,
-		int objectPlane, int orient, int x, int y, int z)
+		int shading, int objectPlane, int orient, int x, int y, int z)
 	{
 		Event e = add(DYNAMIC, scene);
-		e.ints = new int[]{renderThreadId, material, objectPlane, orient, x, y, z};
+		e.ints = new int[]{renderThreadId, material, shading, objectPlane, orient, x, y, z};
 		e.projection = projection(worldProjection);
 		e.model = model(m);
 	}
 
 	public synchronized void temp(Projection worldProjection, Scene scene, Model m, int orient, int x, int y, int z,
-		int material, boolean sorted, boolean noDepth, int zx, int zz, int plane, int alphaY)
+		int material, int shading, boolean sorted, boolean noDepth, int zx, int zz, int plane, int alphaY)
 	{
 		Event e = add(TEMP, scene);
-		e.ints = new int[]{orient, x, y, z, material, sorted ? 1 : 0, noDepth ? 1 : 0, zx, zz, plane, alphaY};
+		e.ints = new int[]{orient, x, y, z, material, shading, sorted ? 1 : 0, noDepth ? 1 : 0, zx, zz, plane, alphaY};
 		e.projection = projection(worldProjection);
 		e.model = model(m);
 	}
