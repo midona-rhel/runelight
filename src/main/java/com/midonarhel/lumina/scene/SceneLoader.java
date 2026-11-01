@@ -926,6 +926,12 @@ public final class SceneLoader
 		}
 	}
 
+	/** Whether scene jobs wait to run (the offline renderer runs frames until none do). */
+	public boolean jobsPending()
+	{
+		return !jobs.idle();
+	}
+
 	/** Client thread, after the frame is presented: the jobs' share of this frame. */
 	public void runJobs()
 	{

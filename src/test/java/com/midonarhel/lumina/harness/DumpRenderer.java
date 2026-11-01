@@ -1,0 +1,442 @@
+package com.midonarhel.lumina.harness;
+
+import com.google.gson.Gson;
+import com.midonarhel.lumina.LuminaPlugin;
+import com.midonarhel.lumina.common.Clock;
+import com.midonarhel.lumina.dev.FrameTape;
+import com.midonarhel.lumina.dev.PlainData;
+import com.midonarhel.lumina.dev.SceneDump;
+import com.midonarhel.lumina.fog.FogGround;
+import com.midonarhel.lumina.light.PointLight;
+import com.midonarhel.lumina.light.SceneLights;
+import com.midonarhel.lumina.scene.ModelFake;
+import com.midonarhel.lumina.scene.Zone;
+import com.midonarhel.lumina.scene.ZoneSnapshot;
+import com.midonarhel.lumina.visibility.BuildingDetector;
+import com.midonarhel.lumina.visibility.BuildingLights;
+import com.midonarhel.lumina.visibility.RoomMap;
+import com.midonarhel.lumina.visibility.VoxelsRestore;
+import com.midonarhel.lumina.visibility.WallMap;
+import com.midonarhel.lumina.water.WaterMap;
+import java.awt.geom.AffineTransform;
+import java.awt.image.BufferedImage;
+import java.awt.image.DataBufferInt;
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.HashSet;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
+import net.runelite.api.FloatProjection;
+import net.runelite.api.Model;
+import net.runelite.api.Projection;
+import net.runelite.api.Scene;
+import net.runelite.api.WorldView;
+import net.runelite.client.callback.RenderCallbackManager;
+import net.runelite.client.ui.DrawManager;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import static org.lwjgl.opengl.GL33C.*;
+
+/**
+ * The offline renderer (docs/offline-render.md): a scene dump drawn again with no client and no window, by the plugin
+ * itself. A LuminaPlugin is made with the dump's client faked (DumpWorld), its zones restored into buffers of its own
+ * (ZoneSnapshot), its derived data handed to the classes that hold it (the scene loader's restore and swap, the voxel
+ * builder, the buildings, the lamps), and the frame tape played through the plugin's draw callbacks into a
+ * framebuffer of the renderer's, frame after frame up to the dump's time so what eases or accumulates settles as it had
+ * in the client. Nothing of the renderer is reimplemented: the frame is the plugin's frame.
+ */
+public final class DumpRenderer implements AutoCloseable
+{
+	private static final Logger log = LoggerFactory.getLogger(DumpRenderer.class);
+
+	/** How the frame is drawn: the warm-up before the dump's time, and the overrides. */
+	public static final class Options
+	{
+		// simulated seconds of frames before the dump's frame, and the step between them
+		public double warmupSeconds = 6;
+		public double frameSeconds = 0.05;
+		// settings by key, over the dump's
+		public final Map<String, String> settings = new HashMap<>();
+		// the camera, null for the dump's; the zones of the whole scene are drawn when it moves (the tape's are those the
+		// client's frustum kept)
+		public Integer cameraYaw, cameraPitch, scale;
+		// the hour to hold (dayCycleMinutes 0, fixedHour), null for the dump's clock
+		public Integer hour;
+	}
+
+	public final SceneDump.Loaded dump;
+	public final DumpWorld world;
+	public final Options options;
+	public final LuminaPlugin plugin;
+	private final HeadlessGl gl;
+	private int fbo, colorRb;
+	public final int width, height;
+	private final Map<Integer, Projection> projections = new HashMap<>();
+	private final Map<Integer, Model> models = new HashMap<>();
+	// the camera of the dump's top level scene draw, and its focal point (for the camera overrides)
+	private final float[] camera = new float[5];
+	private boolean freeCamera;
+	private final long dumpNanos;
+
+	public DumpRenderer(SceneDump.Loaded dump, Options options) throws ReflectiveOperationException
+	{
+		this.dump = dump;
+		this.options = options;
+		world = new DumpWorld(dump);
+		world.settings.putAll(options.settings);
+		if (options.hour != null)
+		{
+			world.settings.put("dayCycleMinutes", "0");
+			world.settings.put("fixedHour", String.valueOf(options.hour));
+		}
+		SceneDump.Manifest m = dump.manifest;
+		if (options.cameraYaw != null || options.cameraPitch != null)
+		{
+			freeCamera = true;
+		}
+		world.cameraYaw = options.cameraYaw != null ? options.cameraYaw : m.cameraYaw;
+		world.cameraPitch = options.cameraPitch != null ? options.cameraPitch : m.cameraPitch;
+		world.scale = options.scale != null ? options.scale : m.scale;
+
+		// the clock at the warm-up's start: the plugin's state is made then
+		dumpNanos = m.nanos;
+		long warmupNanos = (long) (options.warmupSeconds * 1e9);
+		Clock.set(m.millis - warmupNanos / 1_000_000, m.nanos - warmupNanos);
+
+		gl = new HeadlessGl();
+		plugin = new LuminaPlugin();
+		inject("client", world.client);
+		inject("config", world.config);
+		inject("gson", new Gson());
+		inject("drawManager", new DrawManager());
+		inject("renderCallbackManager", new RenderCallbackManager());
+		inject("textureManager", new com.midonarhel.lumina.scene.TextureManager());
+
+		int canvasW = m.stretched ? m.stretchedWidth : m.canvasWidth;
+		int canvasH = m.stretched ? m.stretchedHeight : m.canvasHeight;
+		width = (int) (canvasW * m.dpiScaleX);
+		height = (int) (canvasH * m.dpiScaleY);
+		plugin.offscreenTransform = AffineTransform.getScaleInstance(m.dpiScaleX, m.dpiScaleY);
+		createFramebuffer();
+		plugin.offscreenFramebuffer = fbo;
+
+		plugin.initState();
+		plugin.startMillis = m.startMillis;
+		plugin.glCapabilities = gl.capabilities;
+		PlainData.set(plugin, "lwjglInitted", true);
+		plugin.initGlObjects();
+		plugin.textureArrayId = -1;
+		plugin.lastCanvasWidth = plugin.lastCanvasHeight = -1;
+		plugin.lastStretchedCanvasWidth = plugin.lastStretchedCanvasHeight = -1;
+		plugin.tempModels.setThreads(plugin.renderThreads());
+		restore();
+	}
+
+	private void inject(String field, Object value) throws ReflectiveOperationException
+	{
+		var f = LuminaPlugin.class.getDeclaredField(field);
+		f.setAccessible(true);
+		f.set(plugin, value);
+	}
+
+	private void createFramebuffer()
+	{
+		// color alone, as the window's framebuffer on macOS (LuminaPlugin.hasWindowStencil)
+		fbo = glGenFramebuffers();
+		colorRb = glGenRenderbuffers();
+		glBindRenderbuffer(GL_RENDERBUFFER, colorRb);
+		glRenderbufferStorage(GL_RENDERBUFFER, GL_RGBA8, width, height);
+		glBindFramebuffer(GL_FRAMEBUFFER, fbo);
+		glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_RENDERBUFFER, colorRb);
+		int status = glCheckFramebufferStatus(GL_FRAMEBUFFER);
+		if (status != GL_FRAMEBUFFER_COMPLETE)
+		{
+			throw new IllegalStateException("offscreen framebuffer: " + status);
+		}
+		glBindFramebuffer(GL_FRAMEBUFFER, 0);
+		glBindRenderbuffer(GL_RENDERBUFFER, 0);
+	}
+
+	@SuppressWarnings("unchecked")
+	private void restore()
+	{
+		Map<String, Object> d = dump.derived;
+		Scene top = world.scenes.get(WorldView.TOPLEVEL);
+
+		// the lamps and the buildings as the dump had them
+		plugin.sceneLights = new SceneLights(world.client);
+		plugin.sceneLights.replay((List<PointLight>) d.getOrDefault("lamps.collected", new ArrayList<>()),
+			(List<PointLight>) d.getOrDefault("lamps.steady", new ArrayList<>()));
+		plugin.buildingLights = new BuildingLights(world.client);
+		plugin.buildingLights.restore(top, (BuildingDetector.Result) d.get("buildings.result"),
+			(BuildingDetector.Result) d.get("buildings.coarse"), (RoomMap) d.get("buildings.rooms"),
+			(WallMap) d.get("buildings.walls"), (byte[]) d.get("buildings.floors"));
+
+		// the zones into buffers of the loader's pool, then swapped in as a load's
+		for (int v = 0; v < dump.views.size(); ++v)
+		{
+			int[] view = dump.views.get(v);
+			Zone[][] zones = new Zone[view[1]][view[2]];
+			for (int x = 0; x < view[1]; ++x)
+			{
+				for (int z = 0; z < view[2]; ++z)
+				{
+					zones[x][z] = new Zone();
+				}
+			}
+			for (ZoneSnapshot s : dump.zones.get(v))
+			{
+				s.restore(zones[s.x][s.z], plugin.sceneLoader);
+			}
+			if (view[0] == WorldView.TOPLEVEL)
+			{
+				plugin.sceneLoader.restore(top, zones, (WaterMap) d.get("waterMap"), (FogGround) d.get("fogGround"));
+				plugin.sceneLoader.swap(top);
+			}
+			else
+			{
+				plugin.sceneLoader.restoreSub(view[0], zones);
+			}
+		}
+		VoxelsRestore.restore(plugin.voxelBuilder, d.get("voxels"));
+		plugin.framesSinceSwap = 1000;
+
+		for (FrameTape.Event e : dump.tape.events)
+		{
+			if (e.type == FrameTape.PRE && e.worldView == WorldView.TOPLEVEL)
+			{
+				System.arraycopy(e.floats, 0, camera, 0, 5);
+				break;
+			}
+		}
+	}
+
+	/** Draws the warm-up and the dump's frame, and gives the frame as presented. */
+	public BufferedImage render()
+	{
+		SceneDump.Manifest m = dump.manifest;
+		long step = (long) (options.frameSeconds * 1e9);
+		long warmup = (long) (options.warmupSeconds * 1e9);
+		int frames = (int) Math.max(1, warmup / step);
+		for (int i = frames; i >= 0; --i)
+		{
+			long back = i * step;
+			Clock.set(m.millis - back / 1_000_000, dumpNanos - back);
+			if (i == 0)
+			{
+				restoreState();
+			}
+			frame();
+		}
+		return readBack();
+	}
+
+	/** One more frame at the dump's time (after a setting changed, say) and the result. */
+	public BufferedImage renderAgain()
+	{
+		SceneDump.Manifest m = dump.manifest;
+		Clock.set(m.millis, dumpNanos);
+		restoreState();
+		frame();
+		return readBack();
+	}
+
+	/** The frame state's time-integrated scalars as the dump had them (SceneDump.STATE). */
+	private void restoreState()
+	{
+		Map<String, Double> state = dump.manifest.state;
+		for (String[] s : SceneDump.STATE)
+		{
+			Double v = state.get(s[0] + "." + s[1]);
+			if (v == null)
+			{
+				continue;
+			}
+			Object owner = SceneDump.stateOwner(plugin, s[0]);
+			Class<?> type = PlainData.field(owner.getClass(), s[1]).getType();
+			PlainData.set(owner, s[1], type == float.class ? (Object) v.floatValue() : (Object) v);
+		}
+		Double age = state.get("water.age");
+		if (age != null)
+		{
+			PlainData.set(plugin.water, "startNanos", Clock.nanos() - age.longValue());
+		}
+	}
+
+	/** One frame: the tape played through the plugin's callbacks. */
+	public void frame()
+	{
+		boolean drawnAll = false;
+		for (FrameTape.Event e : dump.tape.events)
+		{
+			Scene scene = world.scenes.get(e.worldView);
+			int[] a = e.ints;
+			switch (e.type)
+			{
+				case FrameTape.PRE:
+				{
+					Set<Integer> roofs = null;
+					if (a[7] >= 0)
+					{
+						roofs = new HashSet<>();
+						for (int i = 0; i < a[7]; ++i)
+						{
+							roofs.add(a[8 + i]);
+						}
+					}
+					float[] f = cameraFor(e);
+					plugin.preSceneDraw(scene, projection(e.projection), f[0], f[1], f[2], f[3], f[4], a[0], a[1], a[2], roofs);
+					break;
+				}
+				case FrameTape.ZONE_OPAQUE:
+					if (freeCamera && e.worldView == WorldView.TOPLEVEL)
+					{
+						if (!drawnAll)
+						{
+							drawAllOpaque(scene);
+							drawnAll = true;
+						}
+						break;
+					}
+					plugin.drawZoneOpaque(null, scene, a[0], a[1]);
+					break;
+				case FrameTape.ZONE_ALPHA:
+					plugin.drawZoneAlpha(null, scene, a[0], a[1], a[2]);
+					break;
+				case FrameTape.PASS:
+					plugin.drawPass(projection(e.projection), scene, a[0]);
+					break;
+				case FrameTape.DYNAMIC:
+					plugin.sceneDraw.drawDynamicModel(a[0], projection(e.projection), scene, model(e.model), a[1], a[2], a[3],
+						a[4], a[5], a[6]);
+					break;
+				case FrameTape.TEMP:
+					plugin.sceneDraw.drawTempModel(projection(e.projection), scene, model(e.model), a[0], a[1], a[2], a[3], a[4],
+						a[5] != 0, a[6] != 0, a[7], a[8], a[9], a[10]);
+					break;
+				case FrameTape.POST:
+					plugin.postSceneDraw(scene);
+					break;
+				case FrameTape.DRAW:
+					plugin.draw(a[0]);
+					break;
+				default:
+					throw new IllegalStateException("tape event " + e.type);
+			}
+		}
+	}
+
+	/** The free camera's opaque zones: every one of the top level scene's (the client culled to its own frustum). */
+	private void drawAllOpaque(Scene scene)
+	{
+		LuminaPlugin.SceneContext ctx = plugin.root;
+		for (int x = 0; x < ctx.sizeX; ++x)
+		{
+			for (int z = 0; z < ctx.sizeZ; ++z)
+			{
+				plugin.drawZoneOpaque(null, scene, x, z);
+			}
+		}
+	}
+
+	/**
+	 * The camera of a scene draw: the dump's, or turned about the focal point to the overridden yaw and pitch (the
+	 * client's orbit: the camera is the focal point less its distance along the view direction).
+	 */
+	private float[] cameraFor(FrameTape.Event e)
+	{
+		float[] f = e.floats.clone();
+		if (!freeCamera || e.worldView != WorldView.TOPLEVEL)
+		{
+			return f;
+		}
+		SceneDump.Manifest m = dump.manifest;
+		float dx = camera[0] - m.focalX, dy = camera[1] - m.focalY, dz = camera[2] - m.focalZ;
+		float dist = (float) Math.sqrt(dx * dx + dy * dy + dz * dz);
+		double yaw = world.cameraYaw * Math.PI * 2 / 2048, pitch = world.cameraPitch * Math.PI * 2 / 2048;
+		// (orbit is checked against a dump's own camera by OfflineRenderTest)
+		f[0] = m.focalX + (float) (dist * orbit(yaw, pitch)[0]);
+		f[1] = m.focalY + (float) (dist * orbit(yaw, pitch)[1]);
+		f[2] = m.focalZ + (float) (dist * orbit(yaw, pitch)[2]);
+		f[3] = (float) pitch;
+		f[4] = (float) yaw;
+		return f;
+	}
+
+	/** The unit offset of the camera from the focal point for the client's yaw and pitch (radians). */
+	public static double[] orbit(double yaw, double pitch)
+	{
+		// the view is rotateX(pitch) rotateY(yaw) (LuminaPlugin.preSceneDrawToplevel), looking along +z: its forward
+		// direction in the world is (-sin yaw cos pitch, sin pitch, cos yaw cos pitch), the camera sits behind it
+		return new double[]{Math.sin(yaw) * Math.cos(pitch), -Math.sin(pitch), -Math.cos(yaw) * Math.cos(pitch)};
+	}
+
+	private Projection projection(int index)
+	{
+		if (index < 0)
+		{
+			return null;
+		}
+		return projections.computeIfAbsent(index, i ->
+		{
+			FrameTape.Proj p = dump.tape.projections.get(i);
+			float[] matrix = p.matrix != null ? p.matrix : new float[]{1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1};
+			Fakes.Answer project = args ->
+			{
+				float[] out = args.length > 3 ? (float[]) args[3] : new float[3];
+				return FrameTape.project(p.affine, (Float) args[0], (Float) args[1], (Float) args[2], out);
+			};
+			return Fakes.of(FloatProjection.class, Map.of("getProjection", matrix, "project", project));
+		});
+	}
+
+	private Model model(int index)
+	{
+		return models.computeIfAbsent(index, i -> ModelFake.of(dump.tape.models.get(i)));
+	}
+
+	/** The offscreen framebuffer as an image, top row first. */
+	public BufferedImage readBack()
+	{
+		BufferedImage image = new BufferedImage(width, height, BufferedImage.TYPE_INT_RGB);
+		int[] pixels = ((DataBufferInt) image.getRaster().getDataBuffer()).getData();
+		glBindFramebuffer(GL_READ_FRAMEBUFFER, fbo);
+		glReadBuffer(GL_COLOR_ATTACHMENT0);
+		glPixelStorei(GL_PACK_ALIGNMENT, 4);
+		glReadPixels(0, 0, width, height, GL_BGRA, GL_UNSIGNED_INT_8_8_8_8_REV, pixels);
+		glBindFramebuffer(GL_READ_FRAMEBUFFER, 0);
+		int[] row = new int[width];
+		for (int y0 = 0, y1 = height - 1; y0 < y1; ++y0, --y1)
+		{
+			System.arraycopy(pixels, y0 * width, row, 0, width);
+			System.arraycopy(pixels, y1 * width, pixels, y0 * width, width);
+			System.arraycopy(row, 0, pixels, y1 * width, width);
+		}
+		for (int i = 0; i < pixels.length; ++i)
+		{
+			pixels[i] &= 0xFFFFFF;
+		}
+		return image;
+	}
+
+	/** A setting changed, as the plugin hears it: the debug view and the like recompile the programs. */
+	public void set(String key, String value)
+	{
+		world.settings.put(key, value);
+		if (key.equals("debugView") || key.equals("uiScalingMode") || key.equals("colorBlindMode"))
+		{
+			plugin.programs.reloadShaders();
+		}
+	}
+
+	@Override
+	public void close()
+	{
+		plugin.tempModels.free();
+		glDeleteFramebuffers(fbo);
+		glDeleteRenderbuffers(colorRb);
+		gl.close();
+		Clock.release();
+	}
+}

@@ -204,27 +204,15 @@ public final class SceneDump
 			{
 				m.projectionError = Math.max(m.projectionError, p.error);
 			}
-			byte[] uiBytes = bytes(out ->
-			{
-				out.writeInt(m.uiWidth);
-				out.writeInt(m.uiHeight);
-				writeInts(out, ui != null ? ui : new int[0]);
-			});
+			byte[] uiBytes = uiBytes(m.uiWidth, m.uiHeight, ui != null ? ui : new int[0]);
 			log.info("Scene dump {}: collected in {} ms ({} events, {} models), writing", n, (System.nanoTime() - start) / 1_000_000,
 				t.events.size(), t.models.size());
-			Gson gson = new GsonBuilder().setPrettyPrinting().serializeSpecialFloatingPointValues().create();
 			Path dir = DIR.resolve(n);
 			new Thread(() ->
 			{
 				try
 				{
-					Files.createDirectories(dir);
-					Files.write(dir.resolve("manifest.json"), gson.toJson(m).getBytes(StandardCharsets.UTF_8));
-					gzip(dir.resolve("zones.bin.gz"), zones);
-					gzip(dir.resolve("derived.bin.gz"), derived);
-					gzip(dir.resolve("textures.bin.gz"), textures);
-					gzip(dir.resolve("dynamic.bin.gz"), dynamic);
-					gzip(dir.resolve("ui.bin.gz"), uiBytes);
+					write(dir, m, zones, derived, textures, dynamic, uiBytes);
 					log.info("Scene dump written: {}", dir);
 				}
 				catch (IOException ex)
@@ -366,30 +354,44 @@ public final class SceneDump
 			}
 		}
 		m.worldViews = views;
+		List<int[]> sizes = new ArrayList<>();
+		List<List<ZoneSnapshot>> zones = new ArrayList<>();
+		for (int v = 0; v < views.size(); ++v)
+		{
+			LuminaPlugin.SceneContext ctx = contexts.get(v);
+			sizes.add(new int[]{views.get(v), ctx.sizeX, ctx.sizeZ});
+			List<ZoneSnapshot> list = new ArrayList<>();
+			for (int x = 0; x < ctx.sizeX; ++x)
+			{
+				for (int z = 0; z < ctx.sizeZ; ++z)
+				{
+					Zone zone = ctx.zones[x][z];
+					ZoneSnapshot s = zone != null ? ZoneSnapshot.of(zone, x, z) : null;
+					if (s != null)
+					{
+						list.add(s);
+					}
+				}
+			}
+			zones.add(list);
+		}
+		return zonesBytes(sizes, zones);
+	}
+
+	/** zones.bin.gz's content: per world view its id, size in zones and drawn zones. */
+	static byte[] zonesBytes(List<int[]> views, List<List<ZoneSnapshot>> zones) throws IOException
+	{
 		return bytes(out ->
 		{
 			out.writeInt(views.size());
 			for (int v = 0; v < views.size(); ++v)
 			{
-				LuminaPlugin.SceneContext ctx = contexts.get(v);
-				out.writeInt(views.get(v));
-				out.writeInt(ctx.sizeX);
-				out.writeInt(ctx.sizeZ);
-				List<ZoneSnapshot> list = new ArrayList<>();
-				for (int x = 0; x < ctx.sizeX; ++x)
-				{
-					for (int z = 0; z < ctx.sizeZ; ++z)
-					{
-						Zone zone = ctx.zones[x][z];
-						ZoneSnapshot s = zone != null ? ZoneSnapshot.of(zone, x, z) : null;
-						if (s != null)
-						{
-							list.add(s);
-						}
-					}
-				}
-				out.writeInt(list.size());
-				for (ZoneSnapshot s : list)
+				int[] view = views.get(v);
+				out.writeInt(view[0]);
+				out.writeInt(view[1]);
+				out.writeInt(view[2]);
+				out.writeInt(zones.get(v).size());
+				for (ZoneSnapshot s : zones.get(v))
 				{
 					s.write(out);
 				}
@@ -428,12 +430,18 @@ public final class SceneDump
 			plugin.sceneLights.steadyLamps(steady);
 		}
 		d.put("lamps.steady", steady);
+		return derivedBytes(d, m.skipped);
+	}
+
+	/** derived.bin.gz's content: the map as plain data; what it left out is added to skipped. */
+	static byte[] derivedBytes(Map<String, Object> d, List<String> skipped) throws IOException
+	{
 		ByteArrayOutputStream bytes = new ByteArrayOutputStream();
 		try (DataOutputStream out = new DataOutputStream(bytes))
 		{
 			PlainData.Writer w = new PlainData.Writer(out);
 			w.write(d);
-			m.skipped = w.skipped;
+			skipped.addAll(w.skipped);
 		}
 		return bytes.toByteArray();
 	}
@@ -480,37 +488,97 @@ public final class SceneDump
 		TextureProvider tp = plugin.client.getTextureProvider();
 		if (tp == null)
 		{
-			return bytes(out -> out.writeBoolean(false));
+			return texturesBytes(false, 0, new int[0][], new int[0], new int[0]);
 		}
 		Texture[] textures = tp.getTextures();
 		double brightness = tp.getBrightness();
+		int n = textures != null ? textures.length : 0;
+		int[][] pixels = new int[n][];
+		int[] direction = new int[n], speed = new int[n];
 		// as the texture array is made (TextureManager.initTextureArray): at brightness 1, the shader applies it
 		tp.setBrightness(1.0d);
 		try
 		{
-			return bytes(out ->
+			for (int i = 0; i < n; ++i)
 			{
-				out.writeBoolean(true);
-				out.writeDouble(brightness);
-				out.writeInt(textures.length);
-				for (int i = 0; i < textures.length; ++i)
+				Texture t = textures[i];
+				if (t != null)
 				{
-					Texture t = textures[i];
-					int[] pixels = t != null ? tp.load(i) : null;
-					out.writeBoolean(t != null);
-					if (t != null)
-					{
-						out.writeInt(t.getAnimationDirection());
-						out.writeInt(t.getAnimationSpeed());
-						writeInts(out, pixels != null ? pixels : new int[0]);
-					}
+					int[] p = tp.load(i);
+					pixels[i] = p != null ? p.clone() : new int[0];
+					direction[i] = t.getAnimationDirection();
+					speed[i] = t.getAnimationSpeed();
 				}
-			});
+			}
 		}
 		finally
 		{
 			tp.setBrightness(brightness);
 		}
+		return texturesBytes(true, brightness, pixels, direction, speed);
+	}
+
+	/** textures.bin.gz's content: whether there was a provider, its brightness, per id the texture or none. */
+	static byte[] texturesBytes(boolean present, double brightness, int[][] pixels, int[] direction, int[] speed)
+		throws IOException
+	{
+		return bytes(out ->
+		{
+			out.writeBoolean(present);
+			if (!present)
+			{
+				return;
+			}
+			out.writeDouble(brightness);
+			out.writeInt(pixels.length);
+			for (int i = 0; i < pixels.length; ++i)
+			{
+				out.writeBoolean(pixels[i] != null);
+				if (pixels[i] != null)
+				{
+					out.writeInt(direction[i]);
+					out.writeInt(speed[i]);
+					writeInts(out, pixels[i]);
+				}
+			}
+		});
+	}
+
+	/** ui.bin.gz's content. */
+	static byte[] uiBytes(int width, int height, int[] pixels) throws IOException
+	{
+		return bytes(out ->
+		{
+			out.writeInt(width);
+			out.writeInt(height);
+			writeInts(out, pixels);
+		});
+	}
+
+	/** The dump's files into dir (the reference capture is FrameCapture's). */
+	static void write(Path dir, Manifest m, byte[] zones, byte[] derived, byte[] textures, byte[] dynamic, byte[] ui)
+		throws IOException
+	{
+		Gson gson = new GsonBuilder().setPrettyPrinting().serializeSpecialFloatingPointValues().create();
+		Files.createDirectories(dir);
+		Files.write(dir.resolve("manifest.json"), gson.toJson(m).getBytes(StandardCharsets.UTF_8));
+		gzip(dir.resolve("zones.bin.gz"), zones);
+		gzip(dir.resolve("derived.bin.gz"), derived);
+		gzip(dir.resolve("textures.bin.gz"), textures);
+		gzip(dir.resolve("dynamic.bin.gz"), dynamic);
+		gzip(dir.resolve("ui.bin.gz"), ui);
+	}
+
+	/** A dump read back (or made in code) written again, as the client writes one: load(dir) reads it. */
+	public static void save(Loaded l, Path dir) throws IOException
+	{
+		Manifest m = l.manifest;
+		m.uiWidth = l.uiWidth;
+		m.uiHeight = l.uiHeight;
+		write(dir, m, zonesBytes(l.views, l.zones), derivedBytes(l.derived, m.skipped),
+			texturesBytes(l.texturePixels != null, l.textureBrightness, l.texturePixels != null ? l.texturePixels : new int[0][],
+				l.textureDirection != null ? l.textureDirection : new int[0], l.textureSpeed != null ? l.textureSpeed : new int[0]),
+			bytes(l.tape::write), uiBytes(l.uiWidth, l.uiHeight, l.uiPixels != null ? l.uiPixels : new int[0]));
 	}
 
 	// ---------------------------------------------------------------------------------------------------------------
