@@ -154,6 +154,10 @@ public class SkyGridReplay
 		int[] tileRoofs;
 		// the last skylight()'s terms, for the breakdown
 		float lastOriginal, lastSurface, lastCover, lastField, lastFieldCover;
+		// skylight_ao.glsl's skyFieldOpen and skyExteriorByField; the field's plane
+		float fieldOpen = -1;
+		boolean exteriorByField;
+		int fieldPlane;
 		float skyExterior;
 
 		Shader(short[] tex, int resolution, float[] field, WallMap walls)
@@ -323,8 +327,9 @@ public class SkyGridReplay
 			float[] roomFloors = {meta(tx, tz, fx, fz, 4 * size, 0), meta(tx, tz, fx, fz, 4 * size, 1), meta(tx, tz, fx, fz, 4 * size, 2), meta(tx, tz, fx, fz, 4 * size, 3)};
 			int roomPlane = 0;
 			for (int k = 1; k < 4; ++k) if (w[1] <= roomFloors[k]) roomPlane = k;
+			exteriorByField = !before && roomPlane == fieldPlane && fieldOpen >= 0;
 			float exterior = before ? ((tileRoofs[tz * size + tx] & (1 << roomPlane)) == 0 ? 1 : 0)
-				: 1 - roofShare(tx, tz, fx, fz, loD, roomPlane);
+				: exteriorByField ? fieldOpen : 1 - roofShare(tx, tz, fx, fz, loD, roomPlane);
 			if (exterior < 1 && n[1] < -0.3f)
 			{
 				float top = meta(tx, tz, fx, fz, 2 * size, 1);
@@ -479,8 +484,9 @@ public class SkyGridReplay
 				}
 			}
 			float[] fl = field(o[0], o[2]);
+			fieldOpen = before ? -1 : (float) Math.pow(fl[0], 4);
 			float v = grid(o, n);
-			float cover = fl[1] * (1 - skyExterior);
+			float cover = (exteriorByField ? 1 : fl[1]) * (1 - skyExterior);
 			lastCover = cover;
 			lastField = fl[0];
 			lastFieldCover = fl[1];

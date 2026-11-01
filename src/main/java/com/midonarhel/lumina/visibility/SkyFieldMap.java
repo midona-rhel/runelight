@@ -45,7 +45,7 @@ public final class SkyFieldMap
 	private volatile Job done;
 	private Job uploaded;
 	private int texture;
-	private int uniOn, uniMap;
+	private int uniOn, uniMap, uniPlane;
 
 	/**
 	 * Once a frame: follow the scene's walls, rooms and floors for the plane. Passing nothing (the skylight is off, or
@@ -132,6 +132,7 @@ public final class SkyFieldMap
 	{
 		uniOn = glGetUniformLocation(program, "skyFieldOn");
 		uniMap = glGetUniformLocation(program, "skyFieldMap");
+		uniPlane = glGetUniformLocation(program, "skyFieldPlane");
 		glUseProgram(program);
 		glUniform1i(glGetUniformLocation(program, "skyField"), unit);
 		glUseProgram(0);
@@ -152,6 +153,7 @@ public final class SkyFieldMap
 			float scale = 1 / (128 * size);
 			glUniform4f(uniMap, scale, scale, (cameraX / 128 + uploaded.walls.offset) / size,
 				(cameraZ / 128 + uploaded.walls.offset) / size);
+			glUniform1i(uniPlane, uploaded.plane);
 			glActiveTexture(GL_TEXTURE0 + unit);
 			glBindTexture(GL_TEXTURE_2D, texture);
 			glActiveTexture(GL_TEXTURE0);

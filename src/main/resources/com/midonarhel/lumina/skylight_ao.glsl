@@ -29,6 +29,14 @@ uniform vec3 skyGridPrevCamera;
 uniform sampler2D skyField;
 uniform int skyFieldOn;
 uniform vec4 skyFieldMap;
+// the plane the field is worked out for (the player's)
+uniform int skyFieldPlane;
+// On the field's plane, how far out of doors a point is comes from the field's light, the sky flowing in from the
+// openings by straight-line distance: its light to this power, 1 at an opening's line and about 0.12 a tile in, so
+// the indoors begins within about a tile of the opening as the roof flags had it, smoothly; open ground under eaves
+// near the street (its light near 1) stays out of doors. The roof flags, tile by tile, made the doorway's edge a fan of
+// tile shapes (2026-11-01).
+#define SKY_FIELD_OPEN_POWER 4.0
 
 // as SkyGrid.java
 #define SKY_GRID_TILES 104.0
@@ -182,6 +190,10 @@ int skyDiagonalAt(sampler3D grid, float scale, vec3 w) {
 
 // how far out of doors the last skyGridVisibility found its face (a roof, a terrace, open ground: 1)
 float skyExterior;
+// set by skylightVisibility before it reads the grid: how far out of doors the field puts the point (its light to
+// SKY_FIELD_OPEN_POWER), -1 without a field; and whether skyGridVisibility took the face's storey from it
+float skyFieldOpen = -1.0;
+bool skyExteriorByField;
 
 float skyGridVisibility(sampler3D grid, float scale, vec3 w, vec3 n) {
   skyExterior = 1.0;
@@ -218,9 +230,10 @@ float skyGridVisibility(sampler3D grid, float scale, vec3 w, vec3 n) {
   // Upward-facing roof/floor surfaces belong to the storey at their height; the one-unit
   // normal offset already selects the exposed side. Do not move a roof lip into the room below.
   for (int k = 1; k < 4; ++k) if (w.y <= roomFloors[k]) roomPlane = k;
-  // the share of roof flags here, blended like the values and shared across open edges: the map flags whole tiles,
-  // in a staircase along a diagonal roof
-  float exterior = 1.0 - skyRoofShare(grid, scale, tile, f, loDiagonal, roomPlane);
+  // on the field's plane, from the field (SKY_FIELD_OPEN_POWER); on others, the share of roof flags here, blended like
+  // the values and shared across open edges: the map flags whole tiles, in a staircase along a diagonal roof
+  skyExteriorByField = roomPlane == skyFieldPlane && skyFieldOpen >= 0.0;
+  float exterior = skyExteriorByField ? skyFieldOpen : 1.0 - skyRoofShare(grid, scale, tile, f, loDiagonal, roomPlane);
   if (exterior < 1.0 && n.y < -0.3) {
     // the highest surface over the tile, blended between its corners like the values (slice 0, part 1, g)
     float top = textureLod(grid, vec3(uv + vec2(0.25, 0.0), 0.5 / SKY_GRID_D), 0.0).g;
@@ -363,6 +376,7 @@ float skylightVisibility(vec3 p, vec3 n) {
     }
   }
   vec2 field = skyFieldOn == 1 ? skyFieldVisibility(o) : vec2(0.0);
+  skyFieldOpen = skyFieldOn == 1 ? pow(field.r, SKY_FIELD_OPEN_POWER) : -1.0;
   float v = skyGridVisibility(skyGrid, scale, o + skyGridCamera, n);
   if (skyGridWeight < 1.0) {
     float before = skyGridPrevOn == 1 ? skyGridVisibility(skyGridPrev, scale, o + skyGridPrevCamera, n) : 1.0;
@@ -374,8 +388,9 @@ float skylightVisibility(vec3 p, vec3 n) {
   // The field's cover is the map's under-roof flags, which a roof itself is flagged with too: a face the grid finds
   // out of doors (a roof top, a terrace) is not under cover, whatever the flags say.
   // Cover blends the two linearly: where it is partial (the corners an open roof edge shares) the value lies between
-  // the outdoor one and the covered one, never below both.
-  float cover = skyFieldOn == 1 ? field.g * (1.0 - skyExterior) : 0.0;
+  // the outdoor one and the covered one, never below both. Where the field gave the face's storey its exterior, that
+  // alone is the cover's complement (the field's own cover is the flags').
+  float cover = skyFieldOn == 1 ? (skyExteriorByField ? 1.0 : field.g) * (1.0 - skyExterior) : 0.0;
   float outside = 1.0 - (1.0 - v) * SKY_OUTDOOR_STRENGTH;
   float inside = skyFieldOn == 1 ? max(v, field.r) : v;
   return mix(outside, inside, cover);
