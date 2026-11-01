@@ -111,6 +111,10 @@ public final class SceneDump
 	}
 
 	private final LuminaPlugin plugin;
+	// where dumps go (DIR; a test's own directory)
+	public Path root = DIR;
+	// the last dump's writer, for whoever waits for its files
+	public volatile Thread writer;
 	private volatile String armed;
 	private String name;
 	private Manifest manifest;
@@ -131,7 +135,7 @@ public final class SceneDump
 			return;
 		}
 		armed = name;
-		log.info("Scene dump armed: the next frame goes to {}", DIR.resolve(name));
+		log.info("Scene dump armed: the next frame goes to {}", root.resolve(name));
 	}
 
 	/** The top level scene's draw begins (preSceneDraw): the armed dump's frame starts here. */
@@ -157,13 +161,13 @@ public final class SceneDump
 		plugin.frameTape = tape;
 		try
 		{
-			Files.createDirectories(DIR.resolve(n));
+			Files.createDirectories(root.resolve(n));
 		}
 		catch (IOException ex)
 		{
 			log.warn("Scene dump {}: can't make its directory", n, ex);
 		}
-		FrameCapture.capture(client, plugin.drawManager, manifest.renderer, DIR.resolve(n), "reference");
+		FrameCapture.capture(client, plugin.drawManager, manifest.renderer, root.resolve(n), "reference");
 	}
 
 	/** The frame's interface (draw, before it is uploaded). */
@@ -207,8 +211,8 @@ public final class SceneDump
 			byte[] uiBytes = uiBytes(m.uiWidth, m.uiHeight, ui != null ? ui : new int[0]);
 			log.info("Scene dump {}: collected in {} ms ({} events, {} models), writing", n, (System.nanoTime() - start) / 1_000_000,
 				t.events.size(), t.models.size());
-			Path dir = DIR.resolve(n);
-			new Thread(() ->
+			Path dir = root.resolve(n);
+			Thread w = new Thread(() ->
 			{
 				try
 				{
@@ -219,7 +223,9 @@ public final class SceneDump
 				{
 					log.warn("Scene dump {} not written", n, ex);
 				}
-			}, "Scene dump").start();
+			}, "Scene dump");
+			writer = w;
+			w.start();
 		}
 		catch (IOException | RuntimeException ex)
 		{
@@ -287,20 +293,64 @@ public final class SceneDump
 		m.casterDir = plugin.dayCycle.casterDir.clone();
 		m.sunIsCaster = plugin.dayCycle.sunIsCaster;
 		m.settings = settings(plugin.config);
-		for (String[] s : STATE)
-		{
-			Object owner = stateOwner(plugin, s[0]);
-			m.state.put(s[0] + "." + s[1], ((Number) PlainData.get(owner, s[1])).doubleValue());
-		}
 		// the water's clock as an age: its start is restored as now minus this
 		m.state.put("water.age", (double) (Clock.nanos() - (Long) PlainData.get(plugin.water, "startNanos")));
+		for (String[] f : stateFields(plugin))
+		{
+			Object v = PlainData.get(stateOwner(plugin, f[0]), f[1]);
+			if (v instanceof Number)
+			{
+				m.state.put(f[0] + "." + f[1], ((Number) v).doubleValue());
+			}
+		}
 	}
 
-	/** The frame state's time-integrated scalars, owner and field: restored by the offline renderer before its last frame. */
+	/**
+	 * The frame state a warm-up of a few seconds doesn't settle, owner and field: integrated since the client started
+	 * (the clouds' and the water's drift, the wind's phase) or over minutes (the weather's wetness and snow, its eased
+	 * cover, fog and light, the weather field around the player). The dump keeps them (derived.bin.gz, "state.owner.field";
+	 * the numbers also in the manifest) and the offline renderer puts them back before the warm-up and its last frame.
+	 * "*" takes every field of the owner but its GL names and upload bookkeeping.
+	 */
 	public static final String[][] STATE = {
 		{"clouds", "windX"}, {"clouds", "windZ"},
 		{"water", "driftX"}, {"water", "driftZ"}, {"water", "strength"},
+		{"weather", "cover"}, {"weather", "rainAmount"}, {"weather", "snowAmount"}, {"weather", "fog"}, {"weather", "areaFog"},
+		{"weather", "distanceFog"}, {"weather", "cloudWisp"}, {"weather", "cloudDark"}, {"weather", "light"},
+		{"weather", "fogTint"}, {"weather", "rainStyle"}, {"weather", "flakeStyle"}, {"weather", "type"},
+		{"weather", "fogHeight"}, {"weather", "humidity"}, {"weather", "storm"}, {"weather", "snowiness"},
+		{"weather", "rainEffective"}, {"weather", "snowEffective"}, {"weather", "gust"}, {"weather", "windX"},
+		{"weather", "windZ"}, {"weather", "windOffsetX"}, {"weather", "windOffsetZ"}, {"weather", "rainFall"},
+		{"weather", "snowFall"}, {"weather", "clockWraps"}, {"weather", "wetness"}, {"weather", "snowCover"},
+		{"wind", "*"},
+		{"weatherField", "*"},
 	};
+
+	// what "*" leaves out: GL names, upload state, scratch
+	private static final java.util.Set<String> NOT_STATE = java.util.Set.of("texField", "texGround", "texSky", "texSizeX",
+		"texSizeZ", "uploaded", "fieldBytes", "groundBytes", "skyBytes", "blurTmp", "corner", "cornerWeight");
+
+	/** STATE with each "*" spelled out: owner, field. */
+	public static List<String[]> stateFields(LuminaPlugin plugin)
+	{
+		List<String[]> out = new ArrayList<>();
+		for (String[] s : STATE)
+		{
+			if (!s[1].equals("*"))
+			{
+				out.add(s);
+				continue;
+			}
+			for (java.lang.reflect.Field f : PlainData.fields(stateOwner(plugin, s[0]).getClass()))
+			{
+				if (!NOT_STATE.contains(f.getName()) && !f.isSynthetic())
+				{
+					out.add(new String[]{s[0], f.getName()});
+				}
+			}
+		}
+		return out;
+	}
 
 	public static Object stateOwner(LuminaPlugin plugin, String owner)
 	{
@@ -310,6 +360,12 @@ public final class SceneDump
 				return plugin.clouds;
 			case "water":
 				return plugin.water;
+			case "weather":
+				return plugin.weather;
+			case "wind":
+				return plugin.weather.getWind();
+			case "weatherField":
+				return plugin.weather.getField();
 			default:
 				throw new IllegalArgumentException(owner);
 		}
@@ -430,6 +486,10 @@ public final class SceneDump
 			plugin.sceneLights.steadyLamps(steady);
 		}
 		d.put("lamps.steady", steady);
+		for (String[] f : stateFields(plugin))
+		{
+			d.put("state." + f[0] + "." + f[1], PlainData.get(stateOwner(plugin, f[0]), f[1]));
+		}
 		return derivedBytes(d, m.skipped);
 	}
 

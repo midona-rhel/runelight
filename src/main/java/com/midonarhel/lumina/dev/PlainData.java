@@ -666,7 +666,7 @@ public final class PlainData
 	}
 
 	/** The instance fields of c and its superclasses of ours, accessible. */
-	static List<Field> fields(Class<?> c)
+	public static List<Field> fields(Class<?> c)
 	{
 		List<Field> out = new ArrayList<>();
 		for (Class<?> k = c; k != null && k.getName().startsWith(OURS); k = k.getSuperclass())

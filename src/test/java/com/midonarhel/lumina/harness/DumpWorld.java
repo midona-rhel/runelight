@@ -10,6 +10,7 @@ import java.util.Map;
 import net.runelite.api.BufferProvider;
 import net.runelite.api.Client;
 import net.runelite.api.GameState;
+import net.runelite.api.IndexedObjectSet;
 import net.runelite.api.Player;
 import net.runelite.api.Preferences;
 import net.runelite.api.Scene;
@@ -114,6 +115,11 @@ public final class DumpWorld
 		a.put("getId", id);
 		a.put("getScene", scene);
 		a.put("isTopLevel", id == WorldView.TOPLEVEL);
+		// no actors: their ripples in the wet (WadeSteps) are not in the dump
+		for (String set : new String[]{"players", "npcs", "worldEntities", "worldViews"})
+		{
+			a.put(set, empty());
+		}
 		if (id == WorldView.TOPLEVEL)
 		{
 			a.put("getPlane", m.plane);
@@ -121,6 +127,11 @@ public final class DumpWorld
 			a.put("getBaseY", m.baseY);
 		}
 		return Fakes.of(WorldView.class, a);
+	}
+
+	private static IndexedObjectSet<?> empty()
+	{
+		return Fakes.of(IndexedObjectSet.class, Map.of("iterator", (Fakes.Answer) args -> java.util.Collections.emptyIterator()));
 	}
 
 	private Client client()

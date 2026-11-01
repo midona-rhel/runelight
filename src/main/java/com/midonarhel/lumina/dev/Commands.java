@@ -205,7 +205,16 @@ public final class Commands
 		BufferedImage image = new BufferedImage(width, height, BufferedImage.TYPE_INT_RGB);
 		int[] pixels = ((DataBufferInt) image.getRaster().getDataBuffer()).getData();
 
-		glReadBuffer(plugin.awtContext.getBufferMode());
+		if (plugin.offscreenFramebuffer >= 0)
+		{
+			// the offline renderer's framebuffer
+			glBindFramebuffer(GL_READ_FRAMEBUFFER, plugin.offscreenFramebuffer);
+			glReadBuffer(GL_COLOR_ATTACHMENT0);
+		}
+		else
+		{
+			glReadBuffer(plugin.awtContext.getBufferMode());
+		}
 		glReadPixels(0, 0, width, height, GL_BGRA, GL_UNSIGNED_INT_8_8_8_8_REV, pixels);
 
 		// glReadPixels returns rows bottom-up, flip them to top-down

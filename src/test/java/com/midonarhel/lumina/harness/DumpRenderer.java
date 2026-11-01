@@ -201,6 +201,7 @@ public final class DumpRenderer implements AutoCloseable
 		}
 		VoxelsRestore.restore(plugin.voxelBuilder, d.get("voxels"));
 		plugin.framesSinceSwap = 1000;
+		restoreState();
 
 		for (FrameTape.Event e : dump.tape.events)
 		{
@@ -242,22 +243,30 @@ public final class DumpRenderer implements AutoCloseable
 		return readBack();
 	}
 
-	/** The frame state's time-integrated scalars as the dump had them (SceneDump.STATE). */
+	/**
+	 * The frame state a warm-up doesn't settle as the dump had it (SceneDump.STATE): before the warm-up, so it starts
+	 * from there, and again before the dump's frame, so that frame has it exactly.
+	 */
 	private void restoreState()
 	{
-		Map<String, Double> state = dump.manifest.state;
-		for (String[] s : SceneDump.STATE)
+		for (String[] f : SceneDump.stateFields(plugin))
 		{
-			Double v = state.get(s[0] + "." + s[1]);
-			if (v == null)
+			String key = "state." + f[0] + "." + f[1];
+			if (!dump.derived.containsKey(key))
 			{
 				continue;
 			}
-			Object owner = SceneDump.stateOwner(plugin, s[0]);
-			Class<?> type = PlainData.field(owner.getClass(), s[1]).getType();
-			PlainData.set(owner, s[1], type == float.class ? (Object) v.floatValue() : (Object) v);
+			Object v = dump.derived.get(key);
+			Object owner = SceneDump.stateOwner(plugin, f[0]);
+			if (v == null && PlainData.field(owner.getClass(), f[1]).getType().isPrimitive())
+			{
+				continue;
+			}
+			PlainData.set(owner, f[1], v);
 		}
-		Double age = state.get("water.age");
+		// the weather field's textures take the state again
+		PlainData.set(plugin.weather.getField(), "uploaded", false);
+		Double age = dump.manifest.state.get("water.age");
 		if (age != null)
 		{
 			PlainData.set(plugin.water, "startNanos", Clock.nanos() - age.longValue());
