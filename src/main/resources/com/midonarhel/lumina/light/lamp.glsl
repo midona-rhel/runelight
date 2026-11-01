@@ -7,7 +7,9 @@
 // game has them, and diagonal walls), as tall as the world, walked tile by tile along the line from the point to the
 // lamp (lampWallsShareIn). Floors: where the line leaves the
 // lamp's storey through its ceiling or its floor, the tile it goes through must be open there (a ladder's hole, a
-// courtyard), else it stops. Nothing else stops a lamp. A surface takes a lamp's light by the plain cosine to it, its
+// courtyard), else it stops. Roofs, as drawn: where the line passes through a roofed tile's roof height (the lowest
+// point of its roof objects, eaves included), it stops; a roof the client hides over the player stops nothing. Nothing
+// else stops a lamp. A surface takes a lamp's light by the plain cosine to it, its
 // smooth normal's, as it takes the sun's. The lamp's size (lampSize) only softens the tops of walls in the air.
 //
 // When the walls change (a door) the new ones ease in over 0.3 s (LayerEase): the layers of the walls before are kept,
@@ -17,7 +19,8 @@
 
 // per lamp three texels: (position, radius), (colour times strength, the storey whose walls stop it or -1), (the
 // point its lines start from: x, z, its storey's floor y, ceiling y); then the rooms' fill; then from LAMP_WALLS_BASE
-// four layers of LAMP_WALL_LAYER_TEXELS: the walls now and before, the ceilings now and before (LampWalls.java)
+// five layers of LAMP_WALL_LAYER_TEXELS: the walls now and before, the ceilings now and before, the drawn roofs
+// (LampWalls.java)
 uniform samplerBuffer lightData;
 uniform usamplerBuffer clusterData;  // per cluster: a bit per lamp in view (light_clusters.glsl)
 uniform vec4 lampWallsHeader;        // now and before: tiles a side (0: no walls), extended tiles before local tile 0
@@ -87,6 +90,19 @@ uint lampTileBits(ivec2 t, int layer, int size) {
   return uint(texelFetch(lightData, LAMP_WALLS_BASE + layer * LAMP_WALL_LAYER_TEXELS + (i >> 2))[i & 3]);
 }
 
+// the drawn roofs' layer: a tile's lowest roof point, world y plus this; 0 where no drawn roof is (RoofMap.BIAS)
+#define LAMP_ROOF_BIAS 65536.0
+
+// the lowest point of the drawn roof on tile t (camera-relative y, down); none: far below everything
+float lampRoofBottom(ivec2 t, int size) {
+  if (any(lessThan(t, ivec2(0))) || any(greaterThanEqual(t, ivec2(size)))) {
+    return 1e9;
+  }
+  int i = t.y * size + t.x;
+  float v = texelFetch(lightData, LAMP_WALLS_BASE + 4 * LAMP_WALL_LAYER_TEXELS + (i >> 2))[i & 3];
+  return v > 0.0 ? v - LAMP_ROOF_BIAS - cameraPos.y : 1e9;
+}
+
 uint lampWallBits(ivec2 t, int storey, int layer, int size) {
   return (lampTileBits(t, layer, size) >> uint(6 * storey)) & 63u;
 }
@@ -116,7 +132,8 @@ float lampWallTop(Lamp lamp) {
 // How much of the lamp the walls of the lamp's storey, in a layer of the walls, let through to camera-relative point
 // from: the line on the ground between them and the lamp's origin, walked tile by tile as WallMap.blocked does on the
 // CPU; the ends' own tiles' edges don't count past the line's ends. For a surface (toTop false) a wall is as tall as
-// the world: whatever its height, a lamp on one side lights nothing on the other, 0 or 1. For the fog (toTop) a wall
+// the world: whatever its height, a lamp on one side lights nothing on the other, 0 or 1; and a drawn roof stops the
+// line where it passes through the roof's height on a roofed tile. For the fog (toTop) a wall
 // reaches its top (lampWallTop) and no higher, with a soft edge of the lamp's size over it: the light in the air
 // above a wall spreads on, where a wall as tall as the world drew its plane up into the sky.
 float lampWallsShareIn(vec3 from, Lamp lamp, int layer, bool toTop) {
@@ -142,9 +159,19 @@ float lampWallsShareIn(vec3 from, Lamp lamp, int layer, bool toTop) {
   float tEnter = 0.0;
   uint xSide = s.x > 0 ? LAMP_WALL_EAST : LAMP_WALL_WEST;
   uint ySide = s.y > 0 ? LAMP_WALL_NORTH : LAMP_WALL_SOUTH;
+  // the roofs are the shown walls' tiles
+  int roofTiles = int(lampWallsHeader.x);
+  vec2 roofT = vec2(offset - lampWallsHeader.y);
   for (int i = 0; i <= LAMP_WALL_STEPS; ++i) {
     uint bits = lampWallBits(t, storey, layer, tiles);
     float tExit = min(min(tMax.x, tMax.y), 1.0);
+    if (!toTop && roofTiles > 0) {
+      float roof = lampRoofBottom(t - ivec2(roofT), roofTiles);
+      // the line's height over the tile is between its heights where it enters and leaves it
+      if (roof < 1e8 && (mix(from.y, lamp.pos.y, tEnter) - roof) * (mix(from.y, lamp.pos.y, tExit) - roof) < 0.0) {
+        return 0.0;
+      }
+    }
     bool alongX = tMax.x < tMax.y;
     // a wall crossed, diagonal or on the edge being stepped over, and where along the line
     float tw = -1.0;

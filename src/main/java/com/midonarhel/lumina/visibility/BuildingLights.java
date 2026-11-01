@@ -13,6 +13,7 @@ import net.runelite.api.Renderable;
 import net.runelite.api.Scene;
 import net.runelite.api.SceneTilePaint;
 import net.runelite.api.Tile;
+import net.runelite.api.WallObject;
 import net.runelite.api.WorldView;
 import net.runelite.api.events.GameObjectDespawned;
 import net.runelite.api.events.GameObjectSpawned;
@@ -51,6 +52,9 @@ public class BuildingLights
 	// The walls (WallMap) the rooms are split along and the lamps are stopped by (LampWalls): from the collision maps,
 	// as doors open and close, plus the diagonal wall objects, followed through spawn events.
 	private volatile WallMap walls;
+	private volatile RoofMap roofs;
+	// per extended tile, (plane * size + x) * size + y: a wall object with a model stands there (drawnWalls)
+	private volatile boolean[] drawnWalls;
 	private final Map<GameObject, WallMap.Diagonal> diagonals = new IdentityHashMap<>();
 	private BuildingDetector.Result coarse;
 	// which planes have a floor on every tile (RoomMap.setFloors), kept for the rooms rebuilt as doors open
@@ -99,6 +103,12 @@ public class BuildingLights
 		return walls;
 	}
 
+	/** The scene's roofs (RoofMap), null before a scene is built. */
+	public RoofMap getRoofs()
+	{
+		return roofs;
+	}
+
 	/** Which planes have a floor on each extended tile (floorTiles), null before a scene is built. */
 	public byte[] getFloors()
 	{
@@ -112,6 +122,7 @@ public class BuildingLights
 		result = new BuildingDetector.Result();
 		rooms = null;
 		walls = null;
+		roofs = null;
 		coarse = null;
 		filledTiles = null;
 		diagonals.clear();
@@ -139,11 +150,13 @@ public class BuildingLights
 			// spawn events follow once the result is taken
 			Map<GameObject, WallMap.Diagonal> found = new IdentityHashMap<>();
 			findDiagonals(scene, found);
+			boolean[] drawn = drawnWalls(scene);
+			RoofMap roofMap = RoofMap.build(scene);
 			BuildingDetector.Result r = BuildingDetector.detect(scene.getExtendedTileSettings(), scene.getRoofs());
 			BuildingDetector.Result coarseResult = r;
 			byte[][][] settings = scene.getExtendedTileSettings();
-			WallMap w = WallMap.build(flags, found.values(), settings != null && settings.length > 0 ? settings[0].length : 0,
-				LuminaPlugin.SCENE_OFFSET, wallsScene);
+			WallMap w = WallMap.build(flags, found.values(), drawn,
+				settings != null && settings.length > 0 ? settings[0].length : 0, LuminaPlugin.SCENE_OFFSET, wallsScene);
 			r = BuildingDetector.split(r, settings, w);
 			RoomMap m = RoomMap.build(r, settings, scene.getTileHeights(), LuminaPlugin.SCENE_OFFSET);
 			byte[] filled = null;
@@ -169,9 +182,11 @@ public class BuildingLights
 				diagonals.clear();
 				diagonals.putAll(found);
 				coarse = coarseResult;
+				drawnWalls = drawn;
 				filledTiles = filledDone;
 				rooms = m;
 				walls = w;
+				roofs = roofMap;
 				result = done;
 			});
 		});
@@ -306,6 +321,7 @@ public class BuildingLights
 			result = new BuildingDetector.Result();
 				rooms = null;
 			walls = null;
+			roofs = null;
 			coarse = null;
 			diagonals.clear();
 		}
@@ -333,6 +349,34 @@ public class BuildingLights
 		}
 	}
 
+	/**
+	 * Per extended tile, (plane * size + x) * size + y: whether a wall object the game draws (one with a model) stands
+	 * there. The game boxes some things in with walls it never draws (a market stall's counter): they block sight on its
+	 * collision map but are no wall to the eye, nor to a lamp.
+	 */
+	private static boolean[] drawnWalls(Scene scene)
+	{
+		Tile[][][] tiles = scene.getExtendedTiles();
+		int size = tiles != null && tiles.length > 0 ? tiles[0].length : 0;
+		boolean[] drawn = new boolean[WallMap.PLANES * size * size];
+		for (int plane = 0; plane < WallMap.PLANES && tiles != null && plane < tiles.length; ++plane)
+		{
+			for (int x = 0; x < size && x < tiles[plane].length; ++x)
+			{
+				for (int y = 0; y < size && y < tiles[plane][x].length; ++y)
+				{
+					Tile tile = tiles[plane][x][y];
+					WallObject w = tile != null ? tile.getWallObject() : null;
+					if (w != null && (w.getRenderable1() != null || w.getRenderable2() != null))
+					{
+						drawn[(plane * size + x) * size + y] = true;
+					}
+				}
+			}
+		}
+		return drawn;
+	}
+
 	private static void addDiagonal(GameObject go, Tile tile, Map<GameObject, WallMap.Diagonal> into)
 	{
 		if (go == null || tile == null || (go.getConfig() & 0x1F) != WallMap.TYPE_DIAGONAL_WALL)
@@ -345,7 +389,12 @@ public class BuildingLights
 			return;
 		}
 		Renderable r = go.getRenderable();
-		Model model = r instanceof Model ? (Model) r : r != null ? r.getModel() : null;
+		if (r == null)
+		{
+			// a wall nobody sees
+			return;
+		}
+		Model model = r instanceof Model ? (Model) r : r.getModel();
 		int kind = model != null
 			? WallMap.diagonalOf(model.getVerticesX(), model.getVerticesZ(), model.getVerticesCount(), go.getModelOrientation(),
 				go.getConfig() >> 6 & 3)
@@ -413,11 +462,12 @@ public class BuildingLights
 			int[][][] flags = copy(flagsNow);
 			handedFlags = flags;
 			java.util.List<WallMap.Diagonal> diagonalsNow = new java.util.ArrayList<>(diagonals.values());
+			boolean[] drawnNow = drawnWalls;
 			int request = newestRequest = ++requests;
 			Scene sceneNow = scene;
 			worker.execute(() ->
 			{
-				WallMap w = WallMap.build(flags, diagonalsNow, old.size, old.offset, old.scene);
+				WallMap w = WallMap.build(flags, diagonalsNow, drawnNow, old.size, old.offset, old.scene);
 				if (w.sameWalls(old))
 				{
 					return;

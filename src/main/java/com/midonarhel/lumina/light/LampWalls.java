@@ -4,10 +4,12 @@ import com.midonarhel.lumina.visibility.RoomMap;
 import com.midonarhel.lumina.visibility.WallMap;
 
 import com.midonarhel.lumina.common.LayerEase;
+import com.midonarhel.lumina.visibility.RoofMap;
 import com.midonarhel.lumina.visibility.RoomMap;
 import com.midonarhel.lumina.visibility.WallMap;
 
 import java.util.Arrays;
+import java.util.Set;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicReference;
@@ -22,9 +24,12 @@ import static org.lwjgl.opengl.GL33C.*;
  * texture of its own: on macOS's GL 4.1 a program may sample 16 textures, and the composite is at that.
  *
  * And the ceilings: per tile, a bit per storey where its ceiling covers the tile, so a lamp's line leaving its storey up
- * or down stops there: a floor on the storey above (a tile paint or model there, BuildingLights.floorTiles), or over the
- * top storey of a building its roof (RoomMap.roofed) where no floor above is near. A tile with no floor amid floor
- * above (a ladder's hole) is open, as is open ground.
+ * or down stops there: a floor on the storey above (a tile paint or model there, BuildingLights.floorTiles). A tile with
+ * no floor amid floor above (a ladder's hole) is open, as is open ground.
+ *
+ * And the roofs, as the client draws them (RoofMap): per tile the lowest point of its roof objects, eaves included, so
+ * a lamp's line through that height on the tile goes through the roof. The roofs the client hides over the player
+ * stop nothing; the layer is redone when they change.
  *
  * Also, per storey, how many walls lie in every rectangle of tiles (a summed-area table), so a lamp with no wall in its
  * reach is marked as such and the shader doesn't walk its lines at all.
@@ -36,8 +41,9 @@ import static org.lwjgl.opengl.GL33C.*;
  */
 public final class LampWalls
 {
-	/** The layers: the walls now and before, the ceilings now and before. */
-	public static final int LAYERS = 4;
+	/** The layers: the walls now and before, the ceilings now and before, the drawn roofs now. */
+	public static final int LAYERS = 5;
+	static final int ROOF_LAYER = 4;
 	/** Texels of a layer: the largest scene's tiles, four to a texel. */
 	public static final int LAYER_TEXELS = (Constants.EXTENDED_SCENE_SIZE * Constants.EXTENDED_SCENE_SIZE + 3) / 4;
 
@@ -58,15 +64,17 @@ public final class LampWalls
 		final float[] tiles, ceilings;
 		// per storey, (size + 1)^2 counts of wall tiles south and west of each tile corner
 		final int[][] counts;
+		final RoofMap roofs;
 
-		Packed(WallMap walls, RoomMap rooms, byte[] floors)
+		Packed(WallMap walls, RoomMap rooms, byte[] floors, RoofMap roofs)
 		{
 			this.walls = walls;
 			this.rooms = rooms;
 			this.floors = floors;
+			this.roofs = roofs != null && roofs.size == walls.size ? roofs : null;
 			tiles = pack(walls);
-			ceilings = ceilings(walls.size, rooms, floors);
-			counts = counts(walls, ceilings);
+			ceilings = ceilings(walls.size, floors);
+			counts = counts(walls, ceilings, this.roofs);
 		}
 	}
 
@@ -78,6 +86,11 @@ public final class LampWalls
 	private WallMap wanted;
 	private RoomMap wantedRooms;
 	private byte[] wantedFloors;
+	private RoofMap wantedRoofs;
+	// the roofs' layer as sent: for which packed walls, hidden roofs and player level
+	private Packed roofsFor;
+	private int roofsHidden, roofsLevel;
+	private float[] roofBottoms;
 	private Packed shown, before;
 	private long since;
 	private final AtomicReference<Packed> ready = new AtomicReference<>();
@@ -86,21 +99,23 @@ public final class LampWalls
 	private final float[] header = new float[5];
 
 	/**
-	 * The walls, rooms and floors now (BuildingLights; walls null: none, nothing stops a lamp): packed on the worker when
-	 * they changed, taken when packed.
+	 * The walls, rooms, floors and roofs now (BuildingLights; walls null: none, nothing stops a lamp): packed on the worker
+	 * when they changed, taken when packed. The roofs the client hides (its hidden roof ids, over the player's level)
+	 * stop nothing: the roofs' layer follows them.
 	 */
-	public void update(WallMap walls, RoomMap rooms, byte[] floors)
+	public void update(WallMap walls, RoomMap rooms, byte[] floors, RoofMap roofs, Set<Integer> hiddenRoofs, int level)
 	{
 		if (walls != null && walls.size * walls.size > LAYER_TEXELS * 4)
 		{
 			// larger than any scene: none
 			walls = null;
 		}
-		if (walls != wanted || rooms != wantedRooms || floors != wantedFloors)
+		if (walls != wanted || rooms != wantedRooms || floors != wantedFloors || roofs != wantedRoofs)
 		{
 			wanted = walls;
 			wantedRooms = rooms;
 			wantedFloors = floors;
+			wantedRoofs = roofs;
 			if (walls == null)
 			{
 				shown = before = null;
@@ -108,11 +123,11 @@ public final class LampWalls
 			else
 			{
 				WallMap packing = walls;
-				WORKER.execute(() -> ready.set(new Packed(packing, rooms, floors)));
+				WORKER.execute(() -> ready.set(new Packed(packing, rooms, floors, roofs)));
 			}
 		}
 		Packed p = ready.get();
-		if (p != null && p.walls == wanted && p.rooms == wantedRooms && p.floors == wantedFloors)
+		if (p != null && p.walls == wanted && p.rooms == wantedRooms && p.floors == wantedFloors && p.roofs == wantedRoofs)
 		{
 			ready.compareAndSet(p, null);
 			// another scene's walls stand somewhere else: the new ones ease in over none
@@ -127,6 +142,29 @@ public final class LampWalls
 				System.arraycopy(before.tiles, 0, texels, LAYER_TEXELS * 4, before.tiles.length);
 				System.arraycopy(before.ceilings, 0, texels, 3 * LAYER_TEXELS * 4, before.ceilings.length);
 			}
+			roofsFor = null;
+			++version;
+		}
+		int hiddenHash = hiddenRoofs == null ? 0 : hiddenRoofs.hashCode();
+		if (shown != null && (shown != roofsFor || hiddenHash != roofsHidden || level != roofsLevel))
+		{
+			roofsFor = shown;
+			roofsHidden = hiddenHash;
+			roofsLevel = level;
+			int n = shown.walls.size * shown.walls.size;
+			if (roofBottoms == null || roofBottoms.length < n)
+			{
+				roofBottoms = new float[n];
+			}
+			if (shown.roofs != null)
+			{
+				shown.roofs.bottoms(hiddenRoofs, level, roofBottoms);
+			}
+			else
+			{
+				Arrays.fill(roofBottoms, 0);
+			}
+			System.arraycopy(roofBottoms, 0, texels, ROOF_LAYER * LAYER_TEXELS * 4, n);
 			++version;
 		}
 		float weight = shown != null ? LayerEase.weight(since, System.nanoTime()) : 1;
@@ -190,24 +228,23 @@ public final class LampWalls
 
 	/**
 	 * The ceilings: rows from the south, east along each, a float per tile with bit p set where storey p's ceiling covers
-	 * the tile: a floor on storey p + 1 there, or a roof over storey p with no floor on p + 1 on the tile or beside it.
+	 * the tile: a floor on storey p + 1 there. Roofs are the roofs' layer's, as drawn.
 	 */
-	static float[] ceilings(int size, RoomMap rooms, byte[] floors)
+	static float[] ceilings(int size, byte[] floors)
 	{
 		float[] out = new float[size * size];
-		boolean roofs = rooms != null && rooms.size == size;
-		boolean floorsKnown = floors != null && floors.length == size * size;
+		if (floors == null || floors.length != size * size)
+		{
+			return out;
+		}
 		for (int y = 0; y < size; ++y)
 		{
 			for (int x = 0; x < size; ++x)
 			{
 				int v = 0;
-				for (int p = 0; p < WallMap.PLANES; ++p)
+				for (int p = 0; p + 1 < WallMap.PLANES; ++p)
 				{
-					boolean floorAbove = floorsKnown && p + 1 < WallMap.PLANES && (floors[x * size + y] >> (p + 1) & 1) != 0;
-					boolean roof = roofs && rooms.roofed[rooms.index(p, x, y)]
-						&& !(floorsKnown && p + 1 < WallMap.PLANES && floorNear(floors, size, p + 1, x, y));
-					if (floorAbove || roof)
+					if ((floors[x * size + y] >> (p + 1) & 1) != 0)
 					{
 						v |= 1 << p;
 					}
@@ -216,22 +253,6 @@ public final class LampWalls
 			}
 		}
 		return out;
-	}
-
-	/** Whether storey p has a floor on the tile or one beside it (in its 3 by 3). */
-	private static boolean floorNear(byte[] floors, int size, int p, int x, int y)
-	{
-		for (int i = Math.max(x - 1, 0); i <= Math.min(x + 1, size - 1); ++i)
-		{
-			for (int j = Math.max(y - 1, 0); j <= Math.min(y + 1, size - 1); ++j)
-			{
-				if ((floors[i * size + j] >> p & 1) != 0)
-				{
-					return true;
-				}
-			}
-		}
-		return false;
 	}
 
 	/** A tile's bits as the shader reads them. */
@@ -248,8 +269,11 @@ public final class LampWalls
 		return b;
 	}
 
-	/** Per storey, the tiles with a wall, or a ceiling above or below the storey, south and west of each tile corner. */
-	static int[][] counts(WallMap walls, float[] ceilings)
+	/**
+	 * Per storey, the tiles with a wall, or a ceiling above or below the storey, or a roof (drawn or not), south and west
+	 * of each tile corner.
+	 */
+	static int[][] counts(WallMap walls, float[] ceilings, RoofMap roofs)
 	{
 		int size = walls.size, n = size + 1;
 		int[][] out = new int[WallMap.PLANES][];
@@ -262,7 +286,8 @@ public final class LampWalls
 				{
 					int ceiling = ceilings != null ? (int) ceilings[y * size + x] : 0;
 					int below = plane > 0 ? ceiling >> (plane - 1) & 1 : 0;
-					int wall = walls.get(plane, x, y) != 0 || (ceiling >> plane & 1) != 0 || below != 0 ? 1 : 0;
+					int wall = walls.get(plane, x, y) != 0 || (ceiling >> plane & 1) != 0 || below != 0
+						|| roofs != null && roofs.any(x, y) ? 1 : 0;
 					c[(x + 1) * n + y + 1] = wall + c[x * n + y + 1] + c[(x + 1) * n + y] - c[x * n + y];
 				}
 			}

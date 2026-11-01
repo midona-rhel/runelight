@@ -44,7 +44,7 @@ public class LampWallsTest
 	public void aLampKnowsWhetherAnyWallIsInItsReach()
 	{
 		WallMap walls = westWall(10, 10, true);
-		int[][] counts = LampWalls.counts(walls, null);
+		int[][] counts = LampWalls.counts(walls, null, null);
 		// local world position of extended tile 13's middle: three tiles east of the wall
 		float x = (13 - OFFSET + 0.5f) * 128, z = (10 - OFFSET + 0.5f) * 128;
 		assertTrue(LampWalls.anyIn(walls, counts, 0, x, z, 4 * 128));
@@ -77,13 +77,13 @@ public class LampWallsTest
 				floors[x * SIZE + y] = (byte) (x == 11 && y == 11 ? 1 : 3);
 			}
 		}
-		float[] ceilings = LampWalls.ceilings(SIZE, null, floors);
+		float[] ceilings = LampWalls.ceilings(SIZE, floors);
 		assertEquals(1, (int) ceilings[10 * SIZE + 10] & 1);
 		assertEquals("the hole", 0, (int) ceilings[11 * SIZE + 11] & 1);
 		assertEquals("open ground", 0, (int) ceilings[3 * SIZE + 3] & 1);
 		// a ceiling in reach marks the lamp as one to test, with no wall about
 		WallMap none = WallMap.build(new int[4][LOCAL][LOCAL], null, SIZE, OFFSET, 1);
-		int[][] counts = LampWalls.counts(none, ceilings);
+		int[][] counts = LampWalls.counts(none, ceilings, null);
 		float x = (10 - OFFSET + 0.5f) * 128;
 		assertTrue(LampWalls.anyIn(none, counts, 0, x, x, 128));
 		assertTrue("and for the storey above, its floor", LampWalls.anyIn(none, counts, 1, x, x, 128));

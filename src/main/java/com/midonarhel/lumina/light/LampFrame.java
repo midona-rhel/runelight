@@ -224,13 +224,16 @@ public final class LampFrame
 				plugin.frameLights.clear();
 			}
 			plugin.cpuTimer.end(CpuTimer.LIGHTS);
+			// the roofs as drawn: those the client hides over the player stop nothing
+			SceneContext drawn = plugin.root;
 			plugin.lampWalls.update(points && buildings != null ? buildings.getWalls() : null, rooms,
-				buildings != null ? buildings.getFloors() : null);
+				buildings != null ? buildings.getFloors() : null, buildings != null ? buildings.getRoofs() : null,
+				drawn != null ? drawn.hideRoofIds : null, drawn != null ? drawn.level : 0);
 			plugin.lightClusters.setWalls(plugin.lampWalls);
 			plugin.roomTexture.update(rooms);
 			updateRoomLight(plugin.config.interiorBrightness() > 0 ? rooms : null);
 			// the fog comes back into the rooms whose roof the client hides
-			SceneContext roofCtx = plugin.root;
+			SceneContext roofCtx = drawn;
 			if (plugin.frameFog && rooms != null && roofCtx != null)
 			{
 				plugin.openRooms.update(buildings.getResult(), roofCtx.hideRoofIds, roofCtx.level);
