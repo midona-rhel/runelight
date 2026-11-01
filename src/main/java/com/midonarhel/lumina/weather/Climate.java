@@ -59,9 +59,9 @@ public final class Climate
 	static final float FULL_COVER_CM = 10;
 	// frozen biomes always have at least this much
 	static final float FROZEN_SNOW_CM = 30;
-	// wetness per game hour per unit of rain, and per cm of snow melting
+	// wetness per game hour per unit of rain (only rain wets the ground: melting snow does not, which would wet it
+	// under a dry sky)
 	static final float WET_PER_HOUR = 3;
-	static final float MELT_WET = 0.08f;
 	// drying per game hour at 10 degrees under an overcast sky; full sun dries 2.5 times as fast
 	static final float DRY_PER_HOUR = 0.2f;
 	// below zero wet ground freezes rather than dries
@@ -310,7 +310,7 @@ public final class Climate
 			}
 			snowB = Math.max(0, snow);
 
-			float gain = WET_PER_HOUR * rain * w.wetRate + MELT_WET * melt;
+			float gain = WET_PER_HOUR * rain * w.wetRate;
 			float dry = rain > 0.02f ? 0
 				: DRY_PER_HOUR * (0.25f + Math.max(0, Math.min(t, 30)) / 10) * (1 + 1.5f * sun) * (t < 0 ? FROZEN_DRY : 1);
 			wetB = Math.max(0, Math.min(1, wetA + gain - dry));
@@ -327,14 +327,10 @@ public final class Climate
 			slot = s;
 		}
 
-		/** Snow cover for the shaders, 0 bare to 1 fully white: the depth, or frost in a freezing fog. */
+		/** Snow cover for the shaders, 0 bare to 1 fully white, from the depth. */
 		float snowCover()
 		{
 			float cover = Math.min(1, snowCm / FULL_COVER_CM);
-			if (type.frost > 0 && temperature < 0.5f)
-			{
-				cover = Math.max(cover, type.frost);
-			}
 			return cover;
 		}
 	}

@@ -198,15 +198,15 @@ public class WeatherFieldTest
 			assertEquals(id, 0, s[WeatherField.SNOW_COVER][0], 0);
 			assertEquals(0, s[WeatherField.WET][0], 0);
 		}
-		// freezing fog leaves frost, and only that much
+		// freezing fog lays nothing: with no snow falling the ground never whitens
 		WeatherType frost = WeatherTestData.type("FREEZING_FOG");
 		WeatherField.targets(frost, null, 0.6f, 12, t);
-		s[WeatherField.SNOW_COVER][0] = 0;
+		s[WeatherField.SNOW_COVER][0] = s[WeatherField.SNOW][0] = 0;
 		for (int i = 0; i < 4 * 1200; ++i)
 		{
 			WeatherField.step(s, 0, t, 0.25f);
 		}
-		assertEquals(frost.frost, s[WeatherField.SNOW_COVER][0], 0.02f);
+		assertEquals(0, s[WeatherField.SNOW_COVER][0], 0);
 		// a monsoon soaks the ground faster than drizzle
 		float[] wet = new float[2];
 		String[] ids = {"DRIZZLE", "MONSOON"};

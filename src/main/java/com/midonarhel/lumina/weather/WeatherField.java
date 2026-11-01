@@ -57,6 +57,9 @@ public final class WeatherField
 
 	// seconds a biome's change of weather takes to blend its targets over, before the cells' own easing
 	static final float TRANSITION_SECONDS = 40;
+	// rain or snow below this is not falling; the ground's catch-up to the climate, cover per second while it falls
+	static final float FALLING = 0.003f;
+	static final float GROUND_CATCH_UP = 1 / 60f;
 	// share of the way to their target cover at which the clouds let all the rain or snow fall (from PRECIP_GATE)
 	static final float PRECIP_FULL = 0.97f;
 
@@ -244,7 +247,10 @@ public final class WeatherField
 				types[i] = null;
 				System.arraycopy(noSky, 0, target, 0, TARGETS);
 			}
-			if (snap || !hasState[i])
+			boolean fresh = snap || !hasState[i];
+			// the ground as it was, before step() eases it as manual weather would
+			float wet = state[WET][i], cover = state[SNOW_COVER][i];
+			if (fresh)
 			{
 				for (int c = 0; c < CHANNELS; ++c)
 				{
@@ -265,16 +271,33 @@ public final class WeatherField
 			}
 			if (groundFor != null)
 			{
-				// the ground has a history of its own (Climate): snow stays until it thaws
+				// the ground has a history of its own (Climate): snow stays until it thaws; it grows here only while
+				// something falls here
 				String gb = biomes[i];
 				float[] g = sky[i] ? groundByBiome.computeIfAbsent(gb == null ? "" : gb, k -> groundFor.apply(gb)) : null;
-				state[WET][i] = g != null ? g[0] : 0;
-				state[SNOW_COVER][i] = g != null ? g[1] : 0;
+				state[WET][i] = ground(wet, g != null ? g[0] : 0, state[RAIN][i], fresh, dt);
+				state[SNOW_COVER][i] = ground(cover, g != null ? g[1] : 0, state[SNOW][i], fresh, dt);
 			}
 			anything |= state[RAIN][i] > 0 || state[SNOW][i] > 0 || state[WET][i] > 0 || state[SNOW_COVER][i] > 0;
 		}
 		initialized = n > 0;
 		blur();
+	}
+
+	/**
+	 * A cell's wet ground or snow cover following the climate's: down at once (drying, melting), up only while rain
+	 * or snow is falling on the cell ({@code falling}, the cell's own eased amount) and at most at {@link
+	 * #GROUND_CATCH_UP} a second. The climate books a game hour's snow by the weather of its middle and lays it from
+	 * the start of the forecast's change, while the clouds build before anything falls; held back here, nothing on the
+	 * ground grows under a dry sky. A cell seen for the first time takes the climate's ground as it is.
+	 */
+	private static float ground(float now, float climate, float falling, boolean fresh, float dt)
+	{
+		if (fresh || climate <= now)
+		{
+			return climate;
+		}
+		return falling > FALLING ? Math.min(climate, now + dt * GROUND_CATCH_UP) : now;
 	}
 
 	/**
@@ -377,7 +400,7 @@ public final class WeatherField
 
 	/**
 	 * One cell's easing, with Weather's time constants: clouds build before rain starts, wet ground dries, snow
-	 * cover builds at the type's rate (none for dust and ash) and frost holds a thin cover.
+	 * cover builds at the type's rate while snow falls and nothing grows under a dry sky; frost holds what is there.
 	 */
 	static void step(float[][] s, int i, float[] t, float dt)
 	{
@@ -413,10 +436,6 @@ public final class WeatherField
 		if (snow > 0.02f && snowRate > 0.01f)
 		{
 			c = Math.min(1, c + dt / Weather.SNOW_BUILD_SECONDS * Math.min(1, snow * 2) * snowRate);
-		}
-		else if (c < frost - 0.01f)
-		{
-			c = Math.min(frost, c + dt / (Weather.SNOW_BUILD_SECONDS * 2));
 		}
 		else
 		{
