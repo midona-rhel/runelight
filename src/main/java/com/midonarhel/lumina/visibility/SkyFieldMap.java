@@ -98,7 +98,8 @@ public final class SkyFieldMap
 		}
 		glBindTexture(GL_TEXTURE_2D, texture);
 		glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
-		glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA16F, w, w, 0, GL_RGBA, GL_FLOAT, buf);
+		// the corners' values, then their gradients (SkyField.pack)
+		glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA16F, w, 2 * w, 0, GL_RGBA, GL_FLOAT, buf);
 		glPixelStorei(GL_UNPACK_ALIGNMENT, 4);
 		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
 		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);

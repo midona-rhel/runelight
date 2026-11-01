@@ -213,39 +213,30 @@ public final class SkyField
 	 * Two texels per tile axis, representing its actual corners. RG and BA hold each half's light and cover;
 	 * G additionally encodes twice the diagonal kind (0, 1, 2). Open edges share corner values; walls keep
 	 * separate values, including the two sides of a diagonal ending at a corner. Propagation itself is unchanged.
+	 *
+	 * Below those rows, as many again: each corner copy's gradient, per tile, of the light (RG: east, north) and of the
+	 * cover (BA), shared like the values: the mean over the tiles joined at the corner of their slopes there, so a
+	 * centred difference across open edges and a one-sided one at a wall. The shader blends a tile no diagonal splits
+	 * from its corners' values and gradients (cubic Hermite, skylight_ao.glsl's skyFieldVisibility), so the light
+	 * flowing into a room keeps its slope across tile edges: rebuilt bilinearly, it bent at every edge, the stepped
+	 * falloff from a doorway the user saw (2026-11-01). Halves of a split tile stay linear and give their triangle's
+	 * gradient; along a straight edge of such a half the corner's gradient is the triangle's slope, so the whole tile
+	 * beside it is linear along that edge too and the two meet without a step.
 	 */
 	static float[] pack(WallMap walls, int plane, float[] light, boolean[] covered)
 	{
 		int size = walls.size, width = size * TEXELS_PER_TILE;
-		float[] out = new float[width * width * 4];
+		float[] out = new float[2 * width * width * 4];
 		int[] bits = new int[4], tiles = new int[4], parent = new int[8], count = new int[8];
 		float[] sum = new float[8], coverSum = new float[8];
 		for (int cx = 0; cx <= size; ++cx)
 		{
 			for (int cy = 0; cy <= size; ++cy)
 			{
-				java.util.Arrays.fill(parent, -1);
 				java.util.Arrays.fill(count, 0);
 				java.util.Arrays.fill(sum, 0);
 				java.util.Arrays.fill(coverSum, 0);
-				int present = 0;
-				// Quadrants around this corner: SW, SE, NW, NE.
-				for (int q = 0; q < 4; ++q)
-				{
-					int x = cx - 1 + (q & 1), y = cy - 1 + (q >> 1);
-					if (x < 0 || y < 0 || x >= size || y >= size) continue;
-					present |= 1 << q;
-					tiles[q] = x * size + y;
-					bits[q] = walls.get(plane, x, y);
-					int hx = WallMap.half(bits[q], (q & 1) == 0 ? WallMap.EAST : WallMap.WEST);
-					int hy = WallMap.half(bits[q], q < 2 ? WallMap.NORTH : WallMap.SOUTH);
-					parent[2 * q + hx] = 2 * q + hx;
-					parent[2 * q + hy] = 2 * q + hy;
-				}
-				joinCorner(walls, plane, cx - 1, cy - 1, present, bits, parent, 0, 1, WallMap.EAST, WallMap.WEST);
-				joinCorner(walls, plane, cx - 1, cy, present, bits, parent, 2, 3, WallMap.EAST, WallMap.WEST);
-				joinCorner(walls, plane, cx - 1, cy - 1, present, bits, parent, 0, 2, WallMap.NORTH, WallMap.SOUTH);
-				joinCorner(walls, plane, cx, cy - 1, present, bits, parent, 1, 3, WallMap.NORTH, WallMap.SOUTH);
+				int present = groupCorner(walls, plane, size, cx, cy, bits, tiles, parent);
 				for (int node = 0; node < 8; ++node)
 				{
 					if (parent[node] < 0) continue;
@@ -268,12 +259,133 @@ public final class SkyField
 						out[o + 2 * h] = sum[root] / count[root];
 						out[o + 2 * h + 1] = coverSum[root] / count[root];
 					}
-					out[o + 1] += (bits[q] & WallMap.DIAG_SW_NE) != 0 ? 2
-						: (bits[q] & WallMap.DIAG_NW_SE) != 0 ? 4 : 0;
 				}
 			}
 		}
+		// the gradients, from the values; then the diagonal kinds go into G. Per root: the mean of its members' slopes
+		// (light east, north, cover east, north), and of its split halves' along the straight edges they own
+		float[] slope = new float[8 * 4], edge = new float[8 * 4], one = new float[4];
+		int[] edgeCount = new int[8 * 2];
+		for (int cx = 0; cx <= size; ++cx)
+		{
+			for (int cy = 0; cy <= size; ++cy)
+			{
+				java.util.Arrays.fill(count, 0);
+				java.util.Arrays.fill(slope, 0);
+				java.util.Arrays.fill(edge, 0);
+				java.util.Arrays.fill(edgeCount, 0);
+				int present = groupCorner(walls, plane, size, cx, cy, bits, tiles, parent);
+				for (int node = 0; node < 8; ++node)
+				{
+					if (parent[node] < 0) continue;
+					int q = node >> 1, root = cornerRoot(parent, node), h = node & 1, kx = 1 - (q & 1), ky = 1 - (q >> 1);
+					java.util.Arrays.fill(one, 0);
+					tileSlope(out, width, cx - 1 + (q & 1), cy - 1 + (q >> 1), kx, ky, bits[q], h, one, 0);
+					for (int k = 0; k < 4; ++k) slope[root * 4 + k] += one[k];
+					count[root]++;
+					if (!WallMap.split(bits[q])) continue;
+					// the half's straight edges through the corner: along east (its south or north edge), along north
+					if (WallMap.half(bits[q], ky == 0 ? WallMap.SOUTH : WallMap.NORTH) == h)
+					{
+						edge[root * 4] += one[0];
+						edge[root * 4 + 2] += one[2];
+						edgeCount[root * 2]++;
+					}
+					if (WallMap.half(bits[q], kx == 0 ? WallMap.WEST : WallMap.EAST) == h)
+					{
+						edge[root * 4 + 1] += one[1];
+						edge[root * 4 + 3] += one[3];
+						edgeCount[root * 2 + 1]++;
+					}
+				}
+				for (int q = 0; q < 4; ++q)
+				{
+					if ((present & (1 << q)) == 0 || WallMap.split(bits[q])) continue;
+					int x = cx - 1 + (q & 1), y = cy - 1 + (q >> 1);
+					int o = (width * width + (2 * y + 1 - (q >> 1)) * width + 2 * x + 1 - (q & 1)) * 4;
+					int root = cornerRoot(parent, 2 * q);
+					for (int k = 0; k < 4; ++k)
+					{
+						int along = edgeCount[root * 2 + (k & 1)];
+						out[o + k] = along > 0 ? edge[root * 4 + k] / along : slope[root * 4 + k] / count[root];
+					}
+				}
+			}
+		}
+		for (int x = 0; x < size; ++x)
+		{
+			for (int y = 0; y < size; ++y)
+			{
+				int b = walls.get(plane, x, y);
+				float code = (b & WallMap.DIAG_SW_NE) != 0 ? 2 : (b & WallMap.DIAG_NW_SE) != 0 ? 4 : 0;
+				for (int j = 0; j < 2; ++j)
+					for (int i = 0; i < 2; ++i)
+						out[((2 * y + j) * width + 2 * x + i) * 4 + 1] += code;
+			}
+		}
 		return out;
+	}
+
+	/**
+	 * The quadrants around corner (cx, cy) (SW, SE, NW, NE) that reach each other without crossing a wall: parent holds
+	 * the groups of their halves' nodes (2 * quadrant + half), -1 where a half doesn't touch the corner. Returns the
+	 * quadrants inside the map.
+	 */
+	private static int groupCorner(WallMap walls, int plane, int size, int cx, int cy, int[] bits, int[] tiles, int[] parent)
+	{
+		java.util.Arrays.fill(parent, -1);
+		int present = 0;
+		for (int q = 0; q < 4; ++q)
+		{
+			int x = cx - 1 + (q & 1), y = cy - 1 + (q >> 1);
+			if (x < 0 || y < 0 || x >= size || y >= size) continue;
+			present |= 1 << q;
+			tiles[q] = x * size + y;
+			bits[q] = walls.get(plane, x, y);
+			int hx = WallMap.half(bits[q], (q & 1) == 0 ? WallMap.EAST : WallMap.WEST);
+			int hy = WallMap.half(bits[q], q < 2 ? WallMap.NORTH : WallMap.SOUTH);
+			parent[2 * q + hx] = 2 * q + hx;
+			parent[2 * q + hy] = 2 * q + hy;
+		}
+		joinCorner(walls, plane, cx - 1, cy - 1, present, bits, parent, 0, 1, WallMap.EAST, WallMap.WEST);
+		joinCorner(walls, plane, cx - 1, cy, present, bits, parent, 2, 3, WallMap.EAST, WallMap.WEST);
+		joinCorner(walls, plane, cx - 1, cy - 1, present, bits, parent, 0, 2, WallMap.NORTH, WallMap.SOUTH);
+		joinCorner(walls, plane, cx, cy - 1, present, bits, parent, 1, 3, WallMap.NORTH, WallMap.SOUTH);
+		return present;
+	}
+
+	/**
+	 * Add a tile half's slopes, per tile, at its corner (kx, ky) (1 east, north) to slope[at..at + 3]: light east,
+	 * north, cover east, north. A whole tile's are its edges' through the corner; a half's, its triangle's.
+	 */
+	private static void tileSlope(float[] out, int width, int x, int y, int kx, int ky, int bits, int half, float[] slope, int at)
+	{
+		for (int c = 0; c < 2; ++c)
+		{
+			int ch = 2 * half + c;
+			float sw = out[((2 * y) * width + 2 * x) * 4 + ch], se = out[((2 * y) * width + 2 * x + 1) * 4 + ch];
+			float nw = out[((2 * y + 1) * width + 2 * x) * 4 + ch], ne = out[((2 * y + 1) * width + 2 * x + 1) * 4 + ch];
+			float east, north;
+			if ((bits & WallMap.DIAG_SW_NE) != 0)
+			{
+				// half 0 the north-west triangle (SW, NW, NE), half 1 the south-east one (SW, SE, NE)
+				east = half == 0 ? ne - nw : se - sw;
+				north = half == 0 ? nw - sw : ne - se;
+			}
+			else if ((bits & WallMap.DIAG_NW_SE) != 0)
+			{
+				// half 0 the north-east triangle (NW, NE, SE), half 1 the south-west one (SW, NW, SE)
+				east = half == 0 ? ne - nw : se - sw;
+				north = half == 0 ? ne - se : nw - sw;
+			}
+			else
+			{
+				east = ky == 0 ? se - sw : ne - nw;
+				north = kx == 0 ? nw - sw : ne - se;
+			}
+			slope[at + 2 * c] += east;
+			slope[at + 2 * c + 1] += north;
+		}
 	}
 
 	private static void joinCorner(WallMap walls, int plane, int x, int y, int present, int[] bits,

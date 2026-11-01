@@ -196,6 +196,38 @@ public class SkyFieldTest
 	}
 
 	@Test
+	public void packedGradientsAreSharedAndStopAtWalls()
+	{
+		// a tunnel of covered tiles from x 10 to 17, rows 10 to 12, open at its west end; a wall across it on the east
+		// edge of x 15
+		int[][][] f = noFlags();
+		for (int x = 10; x <= 17; ++x)
+		{
+			f[0][x][10] |= WallMap.LOS_SOUTH;
+			f[0][x][12] |= WallMap.LOS_NORTH;
+		}
+		for (int y = 10; y <= 12; ++y)
+		{
+			f[0][15][y] |= WallMap.LOS_EAST;
+		}
+		WallMap w = WallMap.build(f, null, SIZE, 0, 1);
+		boolean[] c = cover(10, 10, 17, 12);
+		float[] t = SkyField.pack(w, 0, SkyField.propagate(w, c, 0, FALL), c);
+		int width = SIZE * SkyField.TEXELS_PER_TILE, below = width * width * 4;
+		// texel of tile (x, 11)'s corner (i, 0): its light, and its gradient's east part
+		java.util.function.IntBinaryOperator texel = (x, i) -> ((11 * 2) * width + 2 * x + i) * 4;
+		// in the open part of the tunnel the corner between tiles 12 and 13 has the centred difference of its
+		// neighbours, and both tiles' copies have it
+		float centred = (t[texel.applyAsInt(13, 1)] - t[texel.applyAsInt(12, 0)]) / 2;
+		assertTrue("the light falls eastward", centred < 0);
+		assertEquals(centred, t[below + texel.applyAsInt(12, 1)], 1e-5f);
+		assertEquals(centred, t[below + texel.applyAsInt(13, 0)], 1e-5f);
+		// at the wall the corner of tile 15 against it takes tile 15's own slope only
+		float oneSided = t[texel.applyAsInt(15, 1)] - t[texel.applyAsInt(15, 0)];
+		assertEquals(oneSided, t[below + texel.applyAsInt(15, 1)], 1e-5f);
+	}
+
+	@Test
 	public void coveredFromRoofsAndFloorsAbove()
 	{
 		byte[][][] settings = new byte[4][SIZE][SIZE];
