@@ -32,6 +32,24 @@ public final class WeatherField
 	// cells of blur on each side, on top of the bilinear filter: region borders blend over about 80 tiles
 	static final int BLUR = 2;
 	private static final float[] KERNEL = {1, 2, 3, 2, 1};
+	// seconds a biome's change of weather takes to blend its targets over, before the cells' own easing
+	static final float TRANSITION_SECONDS = 40;
+	// share of the way to their target cover at which the clouds let all the rain or snow fall (from PRECIP_GATE)
+	static final float PRECIP_FULL = 0.97f;
+	// the sky's cells of blur on each side (a Gaussian of SKY_SIGMA cells): the clouds are blobs of about four cells,
+	// and a cover that changes within one makes their outlines follow the bilinear grid, straight edges that kink at
+	// every cell line; over about a dozen cells the cover changes across several clouds instead
+	static final int SKY_BLUR = 6;
+	private static final float SKY_SIGMA = 3;
+	private static final float[] SKY_KERNEL = new float[2 * SKY_BLUR + 1];
+
+	static
+	{
+		for (int k = -SKY_BLUR; k <= SKY_BLUR; ++k)
+		{
+			SKY_KERNEL[k + SKY_BLUR] = (float) Math.exp(-k * k / (2.0 * SKY_SIGMA * SKY_SIGMA));
+		}
+	}
 
 	// channels of the eased state; the first six are uploaded as textures (8 bits)
 	public static final int COVER = 0, RAIN = 1, SNOW = 2, FOG = 3, WET = 4, SNOW_COVER = 5, GPU_CHANNELS = 6;
@@ -86,11 +104,15 @@ public final class WeatherField
 	private final Map<String, float[]> byBiome = new HashMap<>();
 	private final Map<String, WeatherType> typeByBiome = new HashMap<>();
 	private final Map<String, float[]> groundByBiome = new HashMap<>();
+	// per biome, the change of weather in progress (Transition)
+	private final Map<String, Transition> transitions = new HashMap<>();
 	private float[] blurTmp = new float[0];
 	// cells with weather of their own; new cells start in their weather as it is on the next update
 	private boolean[] hasState = new boolean[0];
 	// blurred and quantized to 0..255 like the textures, so CPU samples match the GPU's
 	private float[][] smooth = new float[CHANNELS][0];
+	// the sky's channels (cover, wisp, dark) under the sky's wider blur, for the clouds
+	private float[][] skySmooth = new float[3][0];
 	private byte[] fieldBytes = new byte[0];
 	private byte[] groundBytes = new byte[0];
 	private byte[] skyBytes = new byte[0];
@@ -149,6 +171,7 @@ public final class WeatherField
 		state = next;
 		hasState = kept;
 		smooth = new float[CHANNELS][n];
+		skySmooth = new float[3][n];
 		fieldBytes = new byte[n * 4];
 		groundBytes = new byte[n * 2];
 		skyBytes = new byte[n * 3];
@@ -200,6 +223,7 @@ public final class WeatherField
 					WeatherType type = typeFor.apply(b);
 					t = new float[TARGETS];
 					targets(type, b, scale, hour, t);
+					transition(key, type, t, gradual && !snap ? dt : -1);
 					byBiome.put(key, t);
 					typeByBiome.put(key, type);
 				}
@@ -242,6 +266,57 @@ public final class WeatherField
 		}
 		initialized = n > 0;
 		blur();
+	}
+
+	/**
+	 * When a biome's weather changes, its targets go from the old weather's (as they were shown) to the new one's
+	 * along a smoothstep over {@link #TRANSITION_SECONDS}: the cells' easing then starts and ends gently, rather than
+	 * setting off at full speed toward a target that jumped. {@code t} is the new weather's targets, blended in
+	 * place; dt below 0 takes them at once.
+	 */
+	private void transition(String key, WeatherType type, float[] t, float dt)
+	{
+		Transition tr = transitions.get(key);
+		if (tr == null || dt < 0)
+		{
+			tr = new Transition(type, t);
+			transitions.put(key, tr);
+			return;
+		}
+		if (tr.type != type)
+		{
+			System.arraycopy(tr.shown, 0, tr.from, 0, TARGETS);
+			tr.type = type;
+			tr.elapsed = 0;
+		}
+		tr.elapsed = Math.min(tr.elapsed + dt, TRANSITION_SECONDS);
+		float x = tr.elapsed / TRANSITION_SECONDS;
+		float w = x * x * (3 - 2 * x);
+		for (int c = 0; c < TARGETS; ++c)
+		{
+			// a fixed sky whiteness (below 0: none) is not a number to blend
+			if (c != SKY_WHITE || tr.from[c] >= 0 && t[c] >= 0)
+			{
+				t[c] = tr.from[c] + (t[c] - tr.from[c]) * w;
+			}
+		}
+		System.arraycopy(t, 0, tr.shown, 0, TARGETS);
+	}
+
+	/** A biome's change of weather: the weather it goes to, the targets it comes from, and how far along it is. */
+	private static final class Transition
+	{
+		WeatherType type;
+		final float[] from = new float[TARGETS];
+		final float[] shown = new float[TARGETS];
+		float elapsed = TRANSITION_SECONDS;
+
+		Transition(WeatherType type, float[] t)
+		{
+			this.type = type;
+			System.arraycopy(t, 0, from, 0, TARGETS);
+			System.arraycopy(t, 0, shown, 0, TARGETS);
+		}
 	}
 
 	/**
@@ -297,11 +372,12 @@ public final class WeatherField
 	 */
 	static void step(float[][] s, int i, float[] t, float dt)
 	{
-		float tr = t[RAIN], ts = t[SNOW];
-		if (s[RAIN][i] + s[SNOW][i] == 0 && s[COVER][i] < Weather.PRECIP_GATE * t[COVER])
-		{
-			tr = ts = 0;
-		}
+		// rain or snow comes in as the clouds finish building: none until they are PRECIP_GATE of the way to their
+		// target cover, all of it once they are there, smoothly between
+		float built = t[COVER] > 0 ? s[COVER][i] / t[COVER] : 1;
+		float gate = Math.max(0, Math.min(1, (built - Weather.PRECIP_GATE) / (PRECIP_FULL - Weather.PRECIP_GATE)));
+		gate = gate * gate * (3 - 2 * gate);
+		float tr = t[RAIN] * gate, ts = t[SNOW] * gate;
 		s[COVER][i] = Weather.ease(s[COVER][i], t[COVER], dt, Weather.CLOUD_SECONDS);
 		s[RAIN][i] = settle(Weather.ease(s[RAIN][i], tr, dt, Weather.PRECIP_SECONDS), tr);
 		s[SNOW][i] = settle(Weather.ease(s[SNOW][i], ts, dt, Weather.PRECIP_SECONDS), ts);
@@ -392,6 +468,9 @@ public final class WeatherField
 				}
 			}
 		}
+		blurSky(state[COVER], skySmooth[0], tmp);
+		blurSky(state[CLOUD_WISP], skySmooth[1], tmp);
+		blurSky(state[CLOUD_DARK], skySmooth[2], tmp);
 		boolean changed = false;
 		for (int i = 0; i < n; ++i)
 		{
@@ -401,14 +480,47 @@ public final class WeatherField
 			changed |= put(fieldBytes, i * 4 + 3, smooth[FOG][i], FOG_RANGE);
 			changed |= put(groundBytes, i * 2, smooth[WET][i], 1);
 			changed |= put(groundBytes, i * 2 + 1, smooth[SNOW_COVER][i], 1);
-			changed |= put(skyBytes, i * 3, smooth[COVER][i], 1);
-			changed |= put(skyBytes, i * 3 + 1, smooth[CLOUD_WISP][i], 1);
+			changed |= put(skyBytes, i * 3, skySmooth[0][i], 1);
+			changed |= put(skyBytes, i * 3 + 1, skySmooth[1][i], 1);
 			// the darkness offset is -1 to 1
-			changed |= put(skyBytes, i * 3 + 2, (smooth[CLOUD_DARK][i] + 1) / 2, 1);
+			changed |= put(skyBytes, i * 3 + 2, (skySmooth[2][i] + 1) / 2, 1);
 		}
 		if (changed)
 		{
 			uploaded = false;
+		}
+	}
+
+	/** Separable blur with the sky's kernel, edges clamped. */
+	private void blurSky(float[] src, float[] dst, float[] tmp)
+	{
+		for (int z = 0; z < sizeZ; ++z)
+		{
+			for (int x = 0; x < sizeX; ++x)
+			{
+				float sum = 0, w = 0;
+				for (int k = -SKY_BLUR; k <= SKY_BLUR; ++k)
+				{
+					int xx = Math.max(0, Math.min(sizeX - 1, x + k));
+					sum += SKY_KERNEL[k + SKY_BLUR] * src[z * sizeX + xx];
+					w += SKY_KERNEL[k + SKY_BLUR];
+				}
+				tmp[z * sizeX + x] = sum / w;
+			}
+		}
+		for (int z = 0; z < sizeZ; ++z)
+		{
+			for (int x = 0; x < sizeX; ++x)
+			{
+				float sum = 0, w = 0;
+				for (int k = -SKY_BLUR; k <= SKY_BLUR; ++k)
+				{
+					int zz = Math.max(0, Math.min(sizeZ - 1, z + k));
+					sum += SKY_KERNEL[k + SKY_BLUR] * tmp[zz * sizeX + x];
+					w += SKY_KERNEL[k + SKY_BLUR];
+				}
+				dst[z * sizeX + x] = sum / w;
+			}
 		}
 	}
 

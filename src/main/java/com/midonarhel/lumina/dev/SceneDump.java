@@ -333,7 +333,8 @@ public final class SceneDump
 
 	// what "*" leaves out: GL names, upload state, scratch
 	private static final java.util.Set<String> NOT_STATE = java.util.Set.of("texField", "texGround", "texSky", "texSizeX",
-		"texSizeZ", "uploaded", "fieldBytes", "groundBytes", "skyBytes", "blurTmp", "corner", "cornerWeight");
+		"texSizeZ", "uploaded", "fieldBytes", "groundBytes", "skyBytes", "blurTmp", "skySmooth", "transitions", "corner",
+		"cornerWeight");
 
 	/** STATE with each "*" spelled out: owner, field. */
 	public static List<String[]> stateFields(LuminaPlugin plugin)

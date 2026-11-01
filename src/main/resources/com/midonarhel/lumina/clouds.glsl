@@ -58,6 +58,9 @@ uniform float cloudGround;     // world y of the focal point: the cloud shadows 
 // infinitely far, which also caps how long a ray at the horizon spends in the slab
 #define CLOUD_CURVE 0.12
 #define CLOUD_FADE 120000.0
+// the weather field's sky gives way to the player's weather between these distances from its middle, in shares of
+// its size (0.5 is the middle of an edge)
+#define CLOUD_SKY_FADE vec2(0.3, 0.48)
 // A ray crossing the slab at a slant passes about 1 + CLOUD_SLANT * (distance across) / CLOUD_BLOB clouds' worth of
 // sky, so a share c of the sky covered overhead piles up toward the horizon, where most of what OSRS's camera sees of
 // the sky is. The cover along a ray is lowered to make up for it, so the share of the visible sky that is cloud
@@ -162,8 +165,12 @@ vec3 cloudSkyWeather(vec2 world) {
   if (cloudSkyRect.z == 0.0) {
     return vec3(cloudWeather, cloudType);
   }
-  vec3 w = textureLod(weatherSkyTex, (world - cloudSkyRect.xy) * cloudSkyRect.zw, 0.0).rgb;
-  return vec3(w.xy, w.z * 2.0 - 1.0);
+  vec2 uv = (world - cloudSkyRect.xy) * cloudSkyRect.zw;
+  vec3 w = textureLod(weatherSkyTex, uv, 0.0).rgb;
+  // past the field the texture's edge would stretch out to the horizon in straight streaks: toward its edge the
+  // field gives way to the player's weather, round, so no line of the grid shows
+  float far = smoothstep(CLOUD_SKY_FADE.x, CLOUD_SKY_FADE.y, length(uv - 0.5));
+  return mix(vec3(w.xy, w.z * 2.0 - 1.0), vec3(cloudWeather, cloudType), far);
 }
 
 // The sky under a stretch of the slab: x coverage, y how wispy, z how rainy (the weather's cover). xz: noise
