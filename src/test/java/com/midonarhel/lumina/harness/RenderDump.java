@@ -36,6 +36,7 @@ public final class RenderDump
 		SceneDump.Loaded dump = load(args[0]);
 		Path out = dump.dir != null ? dump.dir.resolve("offline") : Paths.get("build", "offline", "synthetic");
 		DumpRenderer.Options o = new DumpRenderer.Options();
+		int timeFrames = 0;
 		List<DebugView> views = new ArrayList<>(List.of(DebugView.NORMALS, DebugView.SKYLIGHT, DebugView.LIGHTING,
 			DebugView.SHADOWS, DebugView.AMBIENT_OCCLUSION, DebugView.DEPTH));
 		for (int i = 1; i < args.length; ++i)
@@ -79,6 +80,9 @@ public final class RenderDump
 				case "scale":
 					o.scale = Integer.parseInt(v);
 					break;
+				case "time":
+					timeFrames = Integer.parseInt(v);
+					break;
 				case "warmup":
 					o.warmupSeconds = Double.parseDouble(v);
 					break;
@@ -104,6 +108,12 @@ public final class RenderDump
 				Checks.Diff diff = Checks.diff(ref, img);
 				ImageIO.write(diff.image, "png", out.resolve("diff.png").toFile());
 				System.out.println("against reference.png: " + diff);
+			}
+			if (timeFrames > 0)
+			{
+				double[] t = r.time(timeFrames);
+				System.out.printf("frame time over %d frames: GPU median %.3f ms (min %.3f), CPU median %.3f ms (min %.3f)%n",
+					timeFrames, t[0], t[1], t[2], t[3]);
 			}
 			for (DebugView view : views)
 			{

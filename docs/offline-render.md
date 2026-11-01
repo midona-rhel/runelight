@@ -43,7 +43,8 @@ SKYLIGHT, LIGHTING, SHADOWS, AMBIENT_OCCLUSION, DEPTH; `views=all`, `views=none`
 numbers against `reference.png`. Options: `hour=h` (holds the hour: dayCycleMinutes 0, fixedHour h), `yaw=`, `pitch=`,
 `scale=` (the camera; with yaw or pitch changed the whole scene's zones are drawn, as the client only drew those in its
 frustum; dynamic models are the client's), `warmup=s` and `step=s` (seconds of frames before the dump's time, default 6
-and 0.05), and any setting as `key=value`.
+and 0.05), `time=n` (draws the dump's frame n more times and prints the GPU time per frame, GL_TIME_ELAPSED
+around the whole frame, and the CPU time of its draw calls: median and least), and any setting as `key=value`.
 
 ### How it works (`src/test/java/com/midonarhel/lumina/harness/`)
 

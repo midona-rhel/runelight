@@ -246,6 +246,34 @@ public final class DumpRenderer implements AutoCloseable
 	}
 
 	/**
+	 * GPU and CPU time of the dump's frame, drawn {@code frames} more times at the dump's time: per frame the GPU's
+	 * elapsed time (GL_TIME_ELAPSED around the whole frame) and the CPU time of the draw calls. Gives
+	 * {gpu median, gpu min, cpu median, cpu min} in ms.
+	 */
+	public double[] time(int frames)
+	{
+		SceneDump.Manifest m = dump.manifest;
+		int query = glGenQueries();
+		double[] gpu = new double[frames], cpu = new double[frames];
+		for (int i = 0; i < frames; ++i)
+		{
+			Clock.set(m.millis, dumpNanos);
+			restoreState();
+			glFinish();
+			glBeginQuery(GL_TIME_ELAPSED, query);
+			long t0 = System.nanoTime();
+			frame();
+			cpu[i] = (System.nanoTime() - t0) / 1e6;
+			glEndQuery(GL_TIME_ELAPSED);
+			gpu[i] = glGetQueryObjecti64(query, GL_QUERY_RESULT) / 1e6;
+		}
+		glDeleteQueries(query);
+		java.util.Arrays.sort(gpu);
+		java.util.Arrays.sort(cpu);
+		return new double[]{gpu[frames / 2], gpu[0], cpu[frames / 2], cpu[0]};
+	}
+
+	/**
 	 * The frame state a warm-up doesn't settle as the dump had it (SceneDump.STATE): before the warm-up, so it starts
 	 * from there, and again before the dump's frame, so that frame has it exactly.
 	 */
