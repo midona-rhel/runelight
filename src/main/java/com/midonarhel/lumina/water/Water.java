@@ -60,7 +60,7 @@ public class Water
 	private Loaded uploaded;
 	// the water's own clock: System.nanoTime is monotonic and fine grained everywhere, where currentTimeMillis can
 	// tick in 15.6 ms steps on Windows (the waves stutter) and jumps when the system clock is adjusted
-	private final long startNanos = System.nanoTime();
+	private final long startNanos = com.midonarhel.lumina.common.Clock.nanos();
 	// The waves' drift, integrated each frame. Velocity times the time since start would move every wave a long way
 	// whenever the wind changes the least bit, which it does all the time: the water jumped about.
 	private long lastNanos;
@@ -324,7 +324,7 @@ public class Water
 	{
 		visible = false;
 		// the clock runs without water in the scene too: fake water (water.glsl waterFake) moves by it
-		long now = System.nanoTime();
+		long now = com.midonarhel.lumina.common.Clock.nanos();
 		frame.time = (float) (((now - startNanos) / 1e9) % TIME_WRAP);
 		if (!config.water() || !hasData)
 		{

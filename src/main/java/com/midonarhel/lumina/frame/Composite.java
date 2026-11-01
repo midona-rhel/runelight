@@ -395,8 +395,7 @@ public final class Composite
 		int width = plugin.lastStretchedCanvasWidth;
 		int height = plugin.lastStretchedCanvasHeight;
 
-		final GraphicsConfiguration graphicsConfiguration = plugin.clientUI.getGraphicsConfiguration();
-		final AffineTransform transform = graphicsConfiguration.getDefaultTransform();
+		final AffineTransform transform = plugin.dpiTransform();
 
 		width = plugin.getScaledValue(transform.getScaleX(), width);
 		height = plugin.getScaledValue(transform.getScaleY(), height);
@@ -510,7 +509,7 @@ public final class Composite
 		}
 
 		plugin.skyCache.easeComposite(skyCacheMode);
-		plugin.compositeTime = (System.currentTimeMillis() - plugin.startMillis) / 1000f;
+		plugin.compositeTime = (com.midonarhel.lumina.common.Clock.millis() - plugin.startMillis) / 1000f;
 		plugin.skyFrame.updateNightSky();
 		plugin.lampFrame.prepareLighting();
 		plugin.sceneTargets.bindAlphaLayer(ALPHA_LAYER_UNIT);
@@ -529,7 +528,7 @@ public final class Composite
 			plugin.volumetricFog.render(plugin.sceneTargets.fogFbo(denoiseFog), plugin.sceneTargets.getAoWidth(),
 				plugin.sceneTargets.getAoHeight(), plugin.sceneTargets.getHalfRatio(), FOG_NOISE_UNIT,
 				plugin.frameViewProj, plugin.frameInvViewProj, plugin.frameViewport, plugin.glCapabilities.OpenGL45,
-				plugin.frameCameraX, plugin.frameCameraY, plugin.frameCameraZ, (System.currentTimeMillis() - plugin.startMillis) / 1000f,
+				plugin.frameCameraX, plugin.frameCameraY, plugin.frameCameraZ, (com.midonarhel.lumina.common.Clock.millis() - plugin.startMillis) / 1000f,
 				fogSun, plugin.proceduralSky(), plugin.frameSkyColor, plugin.dayCycle, fogShadows,
 				plugin.config.pointLights() && plugin.lightClusters.isInitialized() && plugin.lightClusters.hasFogLights(),
 				plugin.lampWalls.header());
@@ -602,7 +601,7 @@ public final class Composite
 		// the interface texture is filled before the drawable's pass starts, so the composite, the weather and the
 		// interface all draw in one pass: an upload between them would end it and store and reload the drawable
 		plugin.uiBlit.finish();
-		final int target = upscale ? plugin.upscaler.getFbo() : plugin.awtContext.getFramebuffer(false);
+		final int target = upscale ? plugin.upscaler.getFbo() : plugin.windowFramebuffer();
 		glBindFramebuffer(GL_FRAMEBUFFER, target);
 		final boolean edges = plugin.shaderSamples > 0;
 		final boolean stencil = edges && (upscale || target == 0 && plugin.hasWindowStencil());
@@ -659,7 +658,7 @@ public final class Composite
 
 		if (upscale)
 		{
-			glBindFramebuffer(GL_FRAMEBUFFER, plugin.awtContext.getFramebuffer(false));
+			glBindFramebuffer(GL_FRAMEBUFFER, plugin.windowFramebuffer());
 			// the weather pass leaves its own vertex array bound (or none); the fullscreen triangle needs one bound
 			glBindVertexArray(plugin.vaoUiHandle);
 			plugin.upscaler.draw(width, height, plugin.config.upscaleSharpness() / 100f);

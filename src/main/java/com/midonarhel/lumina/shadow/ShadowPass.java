@@ -477,7 +477,7 @@ public final class ShadowPass
 			finally
 			{
 				endShadowPass();
-				glBindFramebuffer(GL_FRAMEBUFFER, plugin.awtContext.getFramebuffer(false));
+				glBindFramebuffer(GL_FRAMEBUFFER, plugin.windowFramebuffer());
 				glViewport(viewport[0], viewport[1], viewport[2], viewport[3]);
 			}
 			return finish(true);

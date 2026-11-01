@@ -58,7 +58,7 @@ public final class WadeSteps
 	 */
 	public void update(WorldView view, Player self, float cameraX, float cameraZ, boolean enabled)
 	{
-		long now = System.nanoTime();
+		long now = com.midonarhel.lumina.common.Clock.nanos();
 		frame++;
 		if (enabled && view != null && self != null)
 		{
@@ -141,7 +141,7 @@ public final class WadeSteps
 	/** The nearest MAX_STEPS live steps to the camera, as the shaders' vec4 array; the rest of it is zero. */
 	public float[] steps(float cameraX, float cameraZ)
 	{
-		long now = System.nanoTime();
+		long now = com.midonarhel.lumina.common.Clock.nanos();
 		Arrays.fill(uniform, 0);
 		int n = 0;
 		for (int i = 0; i < count; i++)

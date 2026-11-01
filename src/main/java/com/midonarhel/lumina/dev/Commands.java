@@ -198,8 +198,7 @@ public final class Commands
 			height = dim.height;
 		}
 
-		final GraphicsConfiguration graphicsConfiguration = plugin.clientUI.getGraphicsConfiguration();
-		final AffineTransform t = graphicsConfiguration.getDefaultTransform();
+		final AffineTransform t = plugin.dpiTransform();
 		width = plugin.getScaledValue(t.getScaleX(), width);
 		height = plugin.getScaledValue(t.getScaleY(), height);
 
@@ -287,6 +286,11 @@ public final class Commands
 			plugin.swapCaptureArmed = true;
 			log.info("Armed: {} frames from the end of the next scene load (spanning the swap) are captured as swap-k0..{}",
 				plugin.swapCaptureFrames, plugin.swapCaptureFrames - 1);
+		}
+		else if (args.length >= 2 && args[0].equals("scenedump"))
+		{
+			// the next frame and everything it is drawn from, for the offline renderer (docs/offline-render.md)
+			plugin.sceneDump.arm(args[1]);
 		}
 		else if (args.length >= 3 && args[0].equals("set"))
 		{

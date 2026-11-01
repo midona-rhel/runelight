@@ -43,6 +43,12 @@ public final class FrameCapture
 	/** Save the next frame as DIR/name.png, with name.txt holding the camera and location. Call on the client thread. */
 	public static void capture(Client client, DrawManager drawManager, String renderer, String name)
 	{
+		capture(client, drawManager, renderer, DIR, name);
+	}
+
+	/** Save the next frame as dir/name.png and dir/name.txt (the scene dump's reference). Call on the client thread. */
+	public static void capture(Client client, DrawManager drawManager, String renderer, Path dir, String name)
+	{
 		var player = client.getLocalPlayer();
 		String info = "renderer: " + renderer + "\n"
 			+ "camera: yaw " + client.getCameraYaw() + ", pitch " + client.getCameraPitch() + ", scale " + client.getScale() + "\n"
@@ -55,10 +61,10 @@ public final class FrameCapture
 			{
 				try
 				{
-					Files.createDirectories(DIR);
-					ImageIO.write(copy, "png", DIR.resolve(name + ".png").toFile());
-					Files.write(DIR.resolve(name + ".txt"), info.getBytes(StandardCharsets.UTF_8));
-					log.info("Captured {}", DIR.resolve(name + ".png"));
+					Files.createDirectories(dir);
+					ImageIO.write(copy, "png", dir.resolve(name + ".png").toFile());
+					Files.write(dir.resolve(name + ".txt"), info.getBytes(StandardCharsets.UTF_8));
+					log.info("Captured {}", dir.resolve(name + ".png"));
 				}
 				catch (IOException ex)
 				{

@@ -1,0 +1,648 @@
+package com.midonarhel.lumina.dev;
+
+import com.google.gson.Gson;
+import com.google.gson.GsonBuilder;
+import com.midonarhel.lumina.LuminaConfig;
+import com.midonarhel.lumina.LuminaPlugin;
+import com.midonarhel.lumina.common.Clock;
+import com.midonarhel.lumina.light.PointLight;
+import com.midonarhel.lumina.scene.Zone;
+import com.midonarhel.lumina.scene.ZoneSnapshot;
+import java.awt.Dimension;
+import java.awt.geom.AffineTransform;
+import java.io.BufferedInputStream;
+import java.io.BufferedOutputStream;
+import java.io.ByteArrayOutputStream;
+import java.io.DataInputStream;
+import java.io.DataOutputStream;
+import java.io.IOException;
+import java.io.InputStream;
+import java.io.OutputStream;
+import java.lang.reflect.Method;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.time.LocalDateTime;
+import java.util.ArrayList;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.TreeMap;
+import java.util.zip.GZIPInputStream;
+import java.util.zip.GZIPOutputStream;
+import net.runelite.api.BufferProvider;
+import net.runelite.api.Client;
+import net.runelite.api.Model;
+import net.runelite.api.Player;
+import net.runelite.api.Preferences;
+import net.runelite.api.Scene;
+import net.runelite.api.Texture;
+import net.runelite.api.TextureProvider;
+import net.runelite.api.WorldView;
+import net.runelite.api.coords.LocalPoint;
+import net.runelite.api.coords.WorldPoint;
+import net.runelite.client.RuneLite;
+import net.runelite.client.config.ConfigItem;
+
+/**
+ * The scene dump: one frame of the live client written out whole, so the offline renderer (docs/offline-render.md)
+ * draws it again through the real upload and shader code and the result can be checked against what the client showed.
+ * {@code ::runelight scenedump name} arms it; the next frame is recorded (the frame tape, FrameTape) and, after it is
+ * presented, written to ~/.runelite/lumina/dumps/name/:
+ * <ul>
+ * <li>manifest.json: the time, the camera and viewport, the player, every setting, what the client said this frame</li>
+ * <li>zones.bin.gz: every drawn zone of every world view, read back from its buffers (ZoneSnapshot)</li>
+ * <li>dynamic.bin.gz: the frame tape, the callbacks with the dynamic and temporary models</li>
+ * <li>derived.bin.gz: what the scene's loads and workers derived (voxels, water map, fog ground, walls, rooms, lamps)
+ * and the scene's own arrays, as plain data (PlainData)</li>
+ * <li>textures.bin.gz: the game's textures as the texture array is made from them; ui.bin.gz: the interface's pixels</li>
+ * <li>reference.png, reference.txt: the frame as presented (FrameCapture)</li>
+ * </ul>
+ */
+public final class SceneDump
+{
+	private static final org.slf4j.Logger log = org.slf4j.LoggerFactory.getLogger(SceneDump.class);
+
+	public static final int VERSION = 1;
+	public static final Path DIR = RuneLite.RUNELITE_DIR.toPath().resolve("lumina").resolve("dumps");
+
+	/** What the client said this frame, the settings and the time: manifest.json. */
+	public static final class Manifest
+	{
+		public int version = VERSION;
+		public String name;
+		public String takenAt;
+		public String renderer = "Lumina (perf-wip)";
+		// the renderer's clock at the frame (Clock), the plugin's start, the game clock's time
+		public long millis, nanos, startMillis, gameMillis;
+		public int cameraYaw, cameraPitch, scale;
+		public float focalX, focalY, focalZ;
+		// the camera the frame was drawn from (preSceneDraw)
+		public float cameraX, cameraY, cameraZ;
+		public int canvasWidth, canvasHeight;
+		public int viewportX, viewportY, viewportWidth, viewportHeight;
+		public boolean stretched;
+		public int stretchedWidth, stretchedHeight;
+		public double dpiScaleX = 1, dpiScaleY = 1;
+		public int skyboxColor, expandedMapLoading, gameCycle;
+		public String gameState;
+		public double textureBrightness;
+		public int soundEffectVolume = 127;
+		public int plane, baseX, baseY;
+		public boolean instance;
+		// x, y, world view (local) and x, y, plane (world); null without a player
+		public int[] playerLocal, playerWorld;
+		public float hour, sunAltitude;
+		public float[] sunDir, moonDir, casterDir;
+		public boolean sunIsCaster;
+		// the frame tape's index of the skybox model, -1 for none
+		public int skyboxModel = -1;
+		// every setting, key to value as the config gives it (an enum by name)
+		public Map<String, String> settings = new TreeMap<>();
+		// the world views with zones in zones.bin.gz, the top level first
+		public List<Integer> worldViews = new ArrayList<>();
+		// the frame state's few time-integrated scalars (the clouds' and the water's drift), restored by name
+		public Map<String, Double> state = new TreeMap<>();
+		public int uiWidth, uiHeight;
+		// what the plain data left out (PlainData.Writer.skipped)
+		public List<String> skipped = new ArrayList<>();
+		// the frame tape's largest projection error (FrameTape.Proj.error)
+		public float projectionError;
+	}
+
+	private final LuminaPlugin plugin;
+	private volatile String armed;
+	private String name;
+	private Manifest manifest;
+	private FrameTape tape;
+	private int[] uiPixels;
+
+	public SceneDump(LuminaPlugin plugin)
+	{
+		this.plugin = plugin;
+	}
+
+	/** Dump the next frame as name (client thread). */
+	public void arm(String name)
+	{
+		if (!name.matches("[A-Za-z0-9_.-]+"))
+		{
+			log.warn("Scene dump name {}: letters, digits, '.', '_' and '-' only", name);
+			return;
+		}
+		armed = name;
+		log.info("Scene dump armed: the next frame goes to {}", DIR.resolve(name));
+	}
+
+	/** The top level scene's draw begins (preSceneDraw): the armed dump's frame starts here. */
+	public void frameStarting(Scene scene)
+	{
+		String n = armed;
+		if (n == null || tape != null)
+		{
+			return;
+		}
+		armed = null;
+		name = n;
+		tape = new FrameTape();
+		Client client = plugin.client;
+		manifest = new Manifest();
+		manifest.name = n;
+		manifest.takenAt = LocalDateTime.now().toString();
+		manifest.millis = Clock.millis();
+		manifest.nanos = Clock.nanos();
+		manifest.startMillis = plugin.startMillis;
+		Model skybox = scene.getSkybox();
+		manifest.skyboxModel = skybox != null ? tape.model(skybox) : -1;
+		plugin.frameTape = tape;
+		try
+		{
+			Files.createDirectories(DIR.resolve(n));
+		}
+		catch (IOException ex)
+		{
+			log.warn("Scene dump {}: can't make its directory", n, ex);
+		}
+		FrameCapture.capture(client, plugin.drawManager, manifest.renderer, DIR.resolve(n), "reference");
+	}
+
+	/** The frame's interface (draw, before it is uploaded). */
+	public void ui(BufferProvider bp)
+	{
+		if (tape != null && bp != null)
+		{
+			uiPixels = bp.getPixels().clone();
+			manifest.uiWidth = bp.getWidth();
+			manifest.uiHeight = bp.getHeight();
+		}
+	}
+
+	/** The frame is presented (end of draw): collect what it drew from and write it out. */
+	public void frameDone()
+	{
+		if (tape == null)
+		{
+			return;
+		}
+		FrameTape t = tape;
+		Manifest m = manifest;
+		String n = name;
+		int[] ui = uiPixels;
+		tape = null;
+		manifest = null;
+		uiPixels = null;
+		plugin.frameTape = null;
+		try
+		{
+			long start = System.nanoTime();
+			describe(m);
+			byte[] zones = zones(m);
+			byte[] derived = derived(m);
+			byte[] textures = textures();
+			byte[] dynamic = bytes(t::write);
+			for (FrameTape.Proj p : t.projections)
+			{
+				m.projectionError = Math.max(m.projectionError, p.error);
+			}
+			byte[] uiBytes = bytes(out ->
+			{
+				out.writeInt(m.uiWidth);
+				out.writeInt(m.uiHeight);
+				writeInts(out, ui != null ? ui : new int[0]);
+			});
+			log.info("Scene dump {}: collected in {} ms ({} events, {} models), writing", n, (System.nanoTime() - start) / 1_000_000,
+				t.events.size(), t.models.size());
+			Gson gson = new GsonBuilder().setPrettyPrinting().serializeSpecialFloatingPointValues().create();
+			Path dir = DIR.resolve(n);
+			new Thread(() ->
+			{
+				try
+				{
+					Files.createDirectories(dir);
+					Files.write(dir.resolve("manifest.json"), gson.toJson(m).getBytes(StandardCharsets.UTF_8));
+					gzip(dir.resolve("zones.bin.gz"), zones);
+					gzip(dir.resolve("derived.bin.gz"), derived);
+					gzip(dir.resolve("textures.bin.gz"), textures);
+					gzip(dir.resolve("dynamic.bin.gz"), dynamic);
+					gzip(dir.resolve("ui.bin.gz"), uiBytes);
+					log.info("Scene dump written: {}", dir);
+				}
+				catch (IOException ex)
+				{
+					log.warn("Scene dump {} not written", n, ex);
+				}
+			}, "Scene dump").start();
+		}
+		catch (IOException | RuntimeException ex)
+		{
+			log.warn("Scene dump {} failed", n, ex);
+		}
+	}
+
+	private void describe(Manifest m)
+	{
+		Client client = plugin.client;
+		m.gameMillis = plugin.frameGameMillis;
+		m.cameraYaw = client.getCameraYaw();
+		m.cameraPitch = client.getCameraPitch();
+		m.scale = client.getScale();
+		m.focalX = client.getCameraFocalPointX();
+		m.focalY = client.getCameraFocalPointY();
+		m.focalZ = client.getCameraFocalPointZ();
+		m.cameraX = plugin.frameCameraX;
+		m.cameraY = plugin.frameCameraY;
+		m.cameraZ = plugin.frameCameraZ;
+		m.canvasWidth = client.getCanvasWidth();
+		m.canvasHeight = client.getCanvasHeight();
+		m.viewportX = client.getViewportXOffset();
+		m.viewportY = client.getViewportYOffset();
+		m.viewportWidth = client.getViewportWidth();
+		m.viewportHeight = client.getViewportHeight();
+		m.stretched = client.isStretchedEnabled();
+		Dimension stretched = client.getStretchedDimensions();
+		if (stretched != null)
+		{
+			m.stretchedWidth = stretched.width;
+			m.stretchedHeight = stretched.height;
+		}
+		AffineTransform t = plugin.dpiTransform();
+		m.dpiScaleX = t.getScaleX();
+		m.dpiScaleY = t.getScaleY();
+		m.skyboxColor = client.getSkyboxColor();
+		m.expandedMapLoading = client.getExpandedMapLoading();
+		m.gameCycle = client.getGameCycle();
+		m.gameState = client.getGameState().name();
+		TextureProvider tp = client.getTextureProvider();
+		m.textureBrightness = tp != null ? tp.getBrightness() : 0;
+		Preferences prefs = client.getPreferences();
+		if (prefs != null)
+		{
+			m.soundEffectVolume = prefs.getSoundEffectVolume();
+		}
+		WorldView wv = client.getTopLevelWorldView();
+		m.plane = wv.getPlane();
+		m.baseX = wv.getBaseX();
+		m.baseY = wv.getBaseY();
+		m.instance = wv.getScene().isInstance();
+		Player player = client.getLocalPlayer();
+		if (player != null)
+		{
+			LocalPoint lp = player.getLocalLocation();
+			WorldPoint wp = player.getWorldLocation();
+			m.playerLocal = new int[]{lp.getX(), lp.getY(), lp.getWorldView()};
+			m.playerWorld = new int[]{wp.getX(), wp.getY(), wp.getPlane()};
+		}
+		m.hour = (float) plugin.dayCycle.hour();
+		m.sunAltitude = plugin.dayCycle.sunAltitude;
+		m.sunDir = plugin.dayCycle.sunDir.clone();
+		m.moonDir = plugin.dayCycle.moonDir.clone();
+		m.casterDir = plugin.dayCycle.casterDir.clone();
+		m.sunIsCaster = plugin.dayCycle.sunIsCaster;
+		m.settings = settings(plugin.config);
+		for (String[] s : STATE)
+		{
+			Object owner = stateOwner(plugin, s[0]);
+			m.state.put(s[0] + "." + s[1], ((Number) PlainData.get(owner, s[1])).doubleValue());
+		}
+		// the water's clock as an age: its start is restored as now minus this
+		m.state.put("water.age", (double) (Clock.nanos() - (Long) PlainData.get(plugin.water, "startNanos")));
+	}
+
+	/** The frame state's time-integrated scalars, owner and field: restored by the offline renderer before its last frame. */
+	public static final String[][] STATE = {
+		{"clouds", "windX"}, {"clouds", "windZ"},
+		{"water", "driftX"}, {"water", "driftZ"}, {"water", "strength"},
+	};
+
+	public static Object stateOwner(LuminaPlugin plugin, String owner)
+	{
+		switch (owner)
+		{
+			case "clouds":
+				return plugin.clouds;
+			case "water":
+				return plugin.water;
+			default:
+				throw new IllegalArgumentException(owner);
+		}
+	}
+
+	/** Every setting by its key, as the config gives it now: enums by name. */
+	public static Map<String, String> settings(LuminaConfig config)
+	{
+		Map<String, String> out = new TreeMap<>();
+		for (Method method : LuminaConfig.class.getMethods())
+		{
+			ConfigItem item = method.getAnnotation(ConfigItem.class);
+			if (item == null || method.getParameterCount() != 0)
+			{
+				continue;
+			}
+			try
+			{
+				Object v = method.invoke(config);
+				out.put(item.keyName(), v instanceof Enum ? ((Enum<?>) v).name() : String.valueOf(v));
+			}
+			catch (ReflectiveOperationException | RuntimeException ex)
+			{
+				log.debug("setting {} not read", item.keyName(), ex);
+			}
+		}
+		return out;
+	}
+
+	private byte[] zones(Manifest m) throws IOException
+	{
+		List<Integer> views = new ArrayList<>();
+		List<LuminaPlugin.SceneContext> contexts = new ArrayList<>();
+		views.add(WorldView.TOPLEVEL);
+		contexts.add(plugin.root);
+		for (int i = 0; i < plugin.subs.length; ++i)
+		{
+			if (plugin.subs[i] != null)
+			{
+				views.add(i);
+				contexts.add(plugin.subs[i]);
+			}
+		}
+		m.worldViews = views;
+		return bytes(out ->
+		{
+			out.writeInt(views.size());
+			for (int v = 0; v < views.size(); ++v)
+			{
+				LuminaPlugin.SceneContext ctx = contexts.get(v);
+				out.writeInt(views.get(v));
+				out.writeInt(ctx.sizeX);
+				out.writeInt(ctx.sizeZ);
+				List<ZoneSnapshot> list = new ArrayList<>();
+				for (int x = 0; x < ctx.sizeX; ++x)
+				{
+					for (int z = 0; z < ctx.sizeZ; ++z)
+					{
+						Zone zone = ctx.zones[x][z];
+						ZoneSnapshot s = zone != null ? ZoneSnapshot.of(zone, x, z) : null;
+						if (s != null)
+						{
+							list.add(s);
+						}
+					}
+				}
+				out.writeInt(list.size());
+				for (ZoneSnapshot s : list)
+				{
+					s.write(out);
+				}
+			}
+		});
+	}
+
+	private byte[] derived(Manifest m) throws IOException
+	{
+		Map<String, Object> d = new LinkedHashMap<>();
+		WorldView wv = plugin.client.getTopLevelWorldView();
+		getters(d, "wv.", WorldView.class, wv);
+		getters(d, "scene.", Scene.class, wv.getScene());
+		for (net.runelite.api.WorldEntity we : wv.worldEntities())
+		{
+			WorldView sub = we.getWorldView();
+			getters(d, "wv" + sub.getId() + ".", WorldView.class, sub);
+			getters(d, "scene" + sub.getId() + ".", Scene.class, sub.getScene());
+		}
+		d.put("waterMap", plugin.clientUploader.water);
+		d.put("fogGround", PlainData.get(plugin.volumetricFog, "ground"));
+		d.put("voxels", plugin.voxelBuilder.getVoxels());
+		var buildings = plugin.getBuildingLights();
+		if (buildings != null)
+		{
+			d.put("buildings.result", buildings.getResult());
+			d.put("buildings.coarse", buildings.getCoarse());
+			d.put("buildings.rooms", buildings.getRooms());
+			d.put("buildings.walls", buildings.getWalls());
+			d.put("buildings.floors", buildings.getFloors());
+		}
+		d.put("lamps.collected", new ArrayList<>(plugin.frameLights));
+		List<PointLight> steady = new ArrayList<>();
+		if (plugin.sceneLights != null)
+		{
+			plugin.sceneLights.steadyLamps(steady);
+		}
+		d.put("lamps.steady", steady);
+		ByteArrayOutputStream bytes = new ByteArrayOutputStream();
+		try (DataOutputStream out = new DataOutputStream(bytes))
+		{
+			PlainData.Writer w = new PlainData.Writer(out);
+			w.write(d);
+			m.skipped = w.skipped;
+		}
+		return bytes.toByteArray();
+	}
+
+	/**
+	 * Every no-argument getter of the interface that gives a primitive or an array of them, by name: what the offline
+	 * renderer's fake scene and world view answer.
+	 */
+	static void getters(Map<String, Object> out, String prefix, Class<?> type, Object o)
+	{
+		if (o == null)
+		{
+			return;
+		}
+		for (Method method : type.getMethods())
+		{
+			if (method.getParameterCount() != 0 || !(method.getName().startsWith("get") || method.getName().startsWith("is")))
+			{
+				continue;
+			}
+			Class<?> r = method.getReturnType();
+			Class<?> base = r;
+			while (base.isArray())
+			{
+				base = base.getComponentType();
+			}
+			if (!base.isPrimitive() || base == void.class)
+			{
+				continue;
+			}
+			try
+			{
+				out.put(prefix + method.getName(), method.invoke(o));
+			}
+			catch (ReflectiveOperationException | RuntimeException ex)
+			{
+				log.debug("{}{} not read", prefix, method.getName(), ex);
+			}
+		}
+	}
+
+	private byte[] textures() throws IOException
+	{
+		TextureProvider tp = plugin.client.getTextureProvider();
+		if (tp == null)
+		{
+			return bytes(out -> out.writeBoolean(false));
+		}
+		Texture[] textures = tp.getTextures();
+		double brightness = tp.getBrightness();
+		// as the texture array is made (TextureManager.initTextureArray): at brightness 1, the shader applies it
+		tp.setBrightness(1.0d);
+		try
+		{
+			return bytes(out ->
+			{
+				out.writeBoolean(true);
+				out.writeDouble(brightness);
+				out.writeInt(textures.length);
+				for (int i = 0; i < textures.length; ++i)
+				{
+					Texture t = textures[i];
+					int[] pixels = t != null ? tp.load(i) : null;
+					out.writeBoolean(t != null);
+					if (t != null)
+					{
+						out.writeInt(t.getAnimationDirection());
+						out.writeInt(t.getAnimationSpeed());
+						writeInts(out, pixels != null ? pixels : new int[0]);
+					}
+				}
+			});
+		}
+		finally
+		{
+			tp.setBrightness(brightness);
+		}
+	}
+
+	// ---------------------------------------------------------------------------------------------------------------
+	// reading
+
+	/** A dump read back: every part as it was written. */
+	public static final class Loaded
+	{
+		public Path dir;
+		public Manifest manifest;
+		public FrameTape tape;
+		// per world view, the top level first: id, size in zones, the zones
+		public final List<int[]> views = new ArrayList<>();
+		public final List<List<ZoneSnapshot>> zones = new ArrayList<>();
+		public Map<String, Object> derived;
+		public double textureBrightness;
+		// per texture id: null for none; the pixels at brightness 1, the animation direction and speed
+		public int[][] texturePixels;
+		public int[] textureDirection, textureSpeed;
+		public int uiWidth, uiHeight;
+		public int[] uiPixels;
+	}
+
+	@SuppressWarnings("unchecked")
+	public static Loaded load(Path dir) throws IOException
+	{
+		Loaded l = new Loaded();
+		l.dir = dir;
+		l.manifest = new Gson().fromJson(new String(Files.readAllBytes(dir.resolve("manifest.json")), StandardCharsets.UTF_8),
+			Manifest.class);
+		if (l.manifest.version != VERSION)
+		{
+			throw new IOException("dump version " + l.manifest.version + ", this reads " + VERSION);
+		}
+		try (DataInputStream in = gunzip(dir.resolve("zones.bin.gz")))
+		{
+			int views = in.readInt();
+			for (int v = 0; v < views; ++v)
+			{
+				l.views.add(new int[]{in.readInt(), in.readInt(), in.readInt()});
+				int n = in.readInt();
+				List<ZoneSnapshot> list = new ArrayList<>(n);
+				for (int i = 0; i < n; ++i)
+				{
+					list.add(ZoneSnapshot.read(in));
+				}
+				l.zones.add(list);
+			}
+		}
+		try (DataInputStream in = gunzip(dir.resolve("dynamic.bin.gz")))
+		{
+			l.tape = FrameTape.read(in);
+		}
+		try (DataInputStream in = gunzip(dir.resolve("derived.bin.gz")))
+		{
+			l.derived = (Map<String, Object>) new PlainData.Reader(in).read();
+		}
+		try (DataInputStream in = gunzip(dir.resolve("textures.bin.gz")))
+		{
+			// none: the client had no texture provider
+			boolean present = in.readBoolean();
+			l.textureBrightness = present ? in.readDouble() : 0;
+			int n = present ? in.readInt() : 0;
+			l.texturePixels = new int[n][];
+			l.textureDirection = new int[n];
+			l.textureSpeed = new int[n];
+			for (int i = 0; i < n; ++i)
+			{
+				if (in.readBoolean())
+				{
+					l.textureDirection[i] = in.readInt();
+					l.textureSpeed[i] = in.readInt();
+					l.texturePixels[i] = readInts(in);
+				}
+			}
+		}
+		try (DataInputStream in = gunzip(dir.resolve("ui.bin.gz")))
+		{
+			l.uiWidth = in.readInt();
+			l.uiHeight = in.readInt();
+			l.uiPixels = readInts(in);
+		}
+		return l;
+	}
+
+	// ---------------------------------------------------------------------------------------------------------------
+
+	interface Body
+	{
+		void write(DataOutputStream out) throws IOException;
+	}
+
+	private static byte[] bytes(Body body) throws IOException
+	{
+		ByteArrayOutputStream bytes = new ByteArrayOutputStream();
+		try (DataOutputStream out = new DataOutputStream(bytes))
+		{
+			body.write(out);
+		}
+		return bytes.toByteArray();
+	}
+
+	private static void gzip(Path file, byte[] data) throws IOException
+	{
+		try (OutputStream out = new GZIPOutputStream(new BufferedOutputStream(Files.newOutputStream(file)), 1 << 16))
+		{
+			out.write(data);
+		}
+	}
+
+	private static DataInputStream gunzip(Path file) throws IOException
+	{
+		InputStream in = new GZIPInputStream(new BufferedInputStream(Files.newInputStream(file)), 1 << 16);
+		return new DataInputStream(new BufferedInputStream(in, 1 << 16));
+	}
+
+	static void writeInts(DataOutputStream out, int[] a) throws IOException
+	{
+		out.writeInt(a.length);
+		for (int v : a)
+		{
+			out.writeInt(v);
+		}
+	}
+
+	static int[] readInts(DataInputStream in) throws IOException
+	{
+		int[] a = new int[in.readInt()];
+		for (int i = 0; i < a.length; ++i)
+		{
+			a[i] = in.readInt();
+		}
+		return a;
+	}
+}
