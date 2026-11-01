@@ -492,6 +492,46 @@ public class SkyGridReplay
 		return String.format("mean %.3f, max %.3f, %d of %d over 0.1 (inside tiles: mean %.3f)", sum / n, max, over10, n, inside / m);
 	}
 
+	/**
+	 * Both faces of every straight wall on plane 0 within radius tiles: the shader's value for a face 4 units off the
+	 * edge, 120 above the ground, mid-edge, its normal toward the side it is on. A room side is a roof-flagged tile.
+	 */
+	static String wallFaces(Shader sh, Dump d, int cx, int cz, int radius)
+	{
+		StringBuilder out = new StringBuilder("wall faces (tile, edge: roofed side value [trace/surface/exterior/cover/field] | other side value [...]):\n");
+		int off = d.walls.offset;
+		for (int tz = cz - radius; tz <= cz + radius; ++tz)
+			for (int tx = cx - radius; tx <= cx + radius; ++tx)
+			{
+				int bits = d.walls.get(0, tx + off, tz + off);
+				for (int e = 0; e < 4; ++e)
+				{
+					int side = new int[]{WallMap.NORTH, WallMap.EAST, WallMap.SOUTH, WallMap.WEST}[e];
+					if ((bits & side) == 0) continue;
+					int dx = e == 1 ? 1 : e == 3 ? -1 : 0, dz = e == 0 ? 1 : e == 2 ? -1 : 0;
+					// the point on the edge
+					float ex = (tx + 0.5f + 0.5f * dx) * 128, ez = (tz + 0.5f + 0.5f * dz) * 128;
+					boolean here = d.rooms.roofed[d.rooms.index(0, tx + off, tz + off)];
+					boolean there = d.rooms.roofed[d.rooms.index(0, tx + dx + off, tz + dz + off)];
+					if (here == there) continue;
+					String[] faces = new String[2];
+					for (int k = 0; k < 2; ++k)
+					{
+						// k 0: the face toward this tile (normal -d), 1: toward the neighbour (normal +d)
+						float sgn = k == 0 ? -1 : 1;
+						float x = ex + sgn * dx * 4, z = ez + sgn * dz * 4;
+						float y = groundY(sh, Math.min(Math.max(x, 1), sh.size * 128 - 1), Math.min(Math.max(z, 1), sh.size * 128 - 1)) - 120;
+						float v = sh.skylight(new float[]{x, y, z}, new float[]{sgn * dx, 0, sgn * dz});
+						faces[k] = String.format("%2d [%2d/%2d/%2d/%2d/%2d]", pct(v), pct(sh.lastOriginal), pct(sh.lastSurface),
+							pct(sh.skyExterior), pct(sh.lastCover), pct(sh.lastField));
+					}
+					String room = here ? faces[0] : faces[1], outside = here ? faces[1] : faces[0];
+					out.append(String.format("  (%d,%d) %s: room %s | outside %s\n", tx, tz, "NESW".charAt(e), room, outside));
+				}
+			}
+		return out.toString();
+	}
+
 	static int[] tileRoofs(Dump d, int size)
 	{
 		int[] out = new int[size * size];
@@ -641,6 +681,7 @@ public class SkyGridReplay
 		System.out.println("tile-edge steps over tiles +-8 (open ground, no wall on the edge), before: " + edgeSteps(before, d.walls, cx, cz, 8)
 			+ "; retraced/now: " + edgeSteps(now, d.walls, cx, cz, 8));
 		System.out.println(tileTable(d, now, cx, cz, 8));
+		System.out.println(wallFaces(now, d, cx, cz, 8));
 		System.out.println("terms at tile centres (diagonal tiles: the half away from the SW corner), now: trace/surface/exterior/cover/field -> value\n"
 			+ terms(now, d.walls, cx - 5, cx + 4, cz - 5, cz + 3));
 		System.out.println("ground skylight retraced (0-9):\n" + groundMap(now, null, cx, cz, 8, 4));
