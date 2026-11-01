@@ -334,6 +334,11 @@ vec4 shadeScene(ivec2 px, SceneSample sm, vec4 transparent) {
   vec3 n = decodeNormal(sm.normal);
   vec3 p = reconstructPosition(vec2(px) + 0.5, d);
   vec4 material = sm.material;
+  // a fall's face holds its pools' bed colour (SceneUploader): lit as their bed is, as ground facing up (water.glsl
+  // waterFake)
+  if (materialFakeWater(material) && waterFakeFall(sm.faceNormal)) {
+    n = vec3(0.0, -1.0, 0.0);
+  }
   float emissive = material.r;
   float transmissive = material.g;
 

@@ -598,6 +598,11 @@ uniform int waterFakeOn;  // the water setting: off draws the faces as their typ
 // the pool's foam cells (Water.CELLS across CELL_SCALE_B world units, water_frag.glsl)
 #define POOL_CELL (520.0 / 6.0)
 
+// Whether a fake water face with this normal is drawn as a fall (waterFake's down; WaterMap.fallFace's FALL_FACE)
+bool waterFakeFall(vec3 faceN) {
+  return 1.0 - smoothstep(FALL_STEEP.x, FALL_STEEP.y, abs(faceN.y)) >= 0.5;
+}
+
 // The fake water face at pixel px (camera-relative p, facing camera normal faceN, color albedo (sRGB), the sun's
 // shadow), lit as lit (sRGB): its color as water, sRGB.
 vec3 waterFake(ivec2 px, vec3 p, vec3 faceN, vec3 albedo, float shadow, vec3 lit) {
@@ -617,7 +622,7 @@ vec3 waterFake(ivec2 px, vec3 p, vec3 faceN, vec3 albedo, float shadow, vec3 lit
 
   // the surface's normal: the real water's waves (ripples), still water's on level faces; on a fall laid out across it
   // and down it and carried down it at FALL_FLOW in the two phases running water's are
-  float down = step(0.5, fall);
+  float down = waterFakeFall(faceN) ? 1.0 : 0.0;
   vec2 q = mix(world.xz, vec2(dot(world.xz, tang), world.y), down);
   float footprint = max(length(dFdx(q)), length(dFdy(q)));
   vec2 slope;
@@ -659,10 +664,10 @@ vec3 waterFake(ivec2 px, vec3 p, vec3 faceN, vec3 albedo, float shadow, vec3 lit
   spec += waterSunGlint(waterGlitterNormal(nrm), v, 0.0, look.z, foam, shadow);
 
   // ---- what is under it: the face as the composite lit it, wet, FAKE_DEPTH down, as waterOver takes the bed; a fall's
-  // face holds its pools' bed colour (SceneUploader), lit as their bed is, from above, and as shallow as they are at a bank
-  vec3 bedLit = down > 0.0 ? linearToSrgb(srgbToLinear(albedo) * surfaceLight) : lit;
+  // face holds its pools' bed colour (SceneUploader), lit as their bed is (composite_frag.glsl), as shallow as they are at
+  // a bank
   float depth = down > 0.0 ? BED_MIN : FAKE_DEPTH;
-  vec3 under = srgbToLinear(bedLit * WET_SAND) * srgbToLinear(waterDepthTint(type, depth));
+  vec3 under = srgbToLinear(lit * WET_SAND) * srgbToLinear(waterDepthTint(type, depth));
   float alpha = max(look.x * smoothstep(0.0, SURFACE_DEPTH, depth), covered);
   return linearToSrgb(clamp(waterShoulder(mix(under, surface, alpha) + spec), 0.0, 1.0));
 }
