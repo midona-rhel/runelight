@@ -110,6 +110,9 @@ public final class RenderDump
 					o.mapProbe = new int[]{Integer.parseInt(xy[0].trim()), Integer.parseInt(xy[1].trim())};
 					break;
 				}
+				case "mapModels":
+					o.mapModels = v;
+					break;
 				case "lightMap":
 					o.lightMap = !v.equals("off") && !v.equals("false");
 					break;

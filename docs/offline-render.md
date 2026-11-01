@@ -50,7 +50,9 @@ those world tiles' edges), `lightMap=off` (the fixed lamps without the light map
 `mapProbe=x,y` (prints the light map's baked grids of the three lamps nearest that world tile), and any setting as
 `key=value`. The light map bakes on its own threads from the first warm-up frame; the warm-up waits for the bakes after
 that frame (the time is printed) and the lamps ease in over the frames left. Its models (`voxels.models`, ModelBlockers)
-are in dumps from 2026-11-01's light map on; with an older dump it bakes with the walls and solid tiles alone.
+are in dumps from 2026-11-01's light map on; with an older dump it bakes with the walls and solid tiles alone, or with
+`mapModels=zones` with models rasterized from the dump's zones as VoxelBuilder does (their objects unknown: a lamp's own
+fixture is kept from shading it by the bake's distance rule alone, as a world light's is).
 
 ### How it works (`src/test/java/com/midonarhel/lumina/harness/`)
 

@@ -74,6 +74,8 @@ public final class DumpRenderer implements AutoCloseable
 		// lightMap=off: the fixed lamps without the light map, stopped by the walls alone (to see what it changes)
 		public boolean lightMap = true;
 		// mapProbe=x,y: the light map's grids of the lamps nearest that world tile, printed after the render
+		// mapModels=zones: the light map's models rasterized from the dump's zones (for a dump without voxels.models)
+		public String mapModels = "dumped";
 		public int[] mapProbe;
 		// world tiles (x, y) whose walls are printed
 		public final List<int[]> probes = new ArrayList<>();
@@ -262,8 +264,22 @@ public final class DumpRenderer implements AutoCloseable
 				plugin.sceneLoader.restoreSub(view[0], zones);
 			}
 		}
-		VoxelsRestore.restore(plugin.voxelBuilder, d.get("voxels"), d.get("voxels.models"));
-		if (d.get("voxels.models") == null)
+		Object models = d.get("voxels.models");
+		if (options.mapModels.equals("zones"))
+		{
+			int v = 0;
+			while (v < dump.views.size() && dump.views.get(v)[0] != WorldView.TOPLEVEL)
+			{
+				++v;
+			}
+			long t0 = System.nanoTime();
+			models = v < dump.views.size() ? VoxelsRestore.modelsFromZones(dump.zones.get(v), top.getExtendedTileSettings(),
+				top.getTileHeights()) : null;
+			System.out.printf("light map: models rasterized from the dump's zones in %.0f ms (no objects known: the fixture rule by distance)%n",
+				(System.nanoTime() - t0) / 1e6);
+		}
+		VoxelsRestore.restore(plugin.voxelBuilder, d.get("voxels"), models);
+		if (models == null)
 		{
 			System.out.println("light map: the dump has no models (voxels.models): baked with the walls and solid tiles alone");
 		}
@@ -321,6 +337,7 @@ public final class DumpRenderer implements AutoCloseable
 	 */
 	private void awaitLightMap(long start)
 	{
+		long waitFrom = System.nanoTime();
 		long until = start + 300_000_000_000L;
 		while (plugin.lightMap.busy())
 		{
@@ -331,8 +348,9 @@ public final class DumpRenderer implements AutoCloseable
 			java.util.concurrent.locks.LockSupport.parkNanos(2_000_000);
 		}
 		long[] stats = plugin.lightMap.stats();
-		System.out.printf("light map: baked in %.0f ms from the first frame (%d bakes, %.0f ms of bake work, %d blocks put together in %.0f ms)%n",
-			(System.nanoTime() - start) / 1e6, stats[0], stats[1] / 1e6, stats[2], stats[3] / 1e6);
+		System.out.printf("light map: baked %.0f ms after the first frame began, %.0f ms after it ended (%d bakes, %.0f ms of bake work, "
+			+ "%d blocks put together in %.0f ms)%n", (System.nanoTime() - start) / 1e6, (System.nanoTime() - waitFrom) / 1e6, stats[0],
+			stats[1] / 1e6, stats[2], stats[3] / 1e6);
 	}
 
 	/** One more frame at the dump's time (after a setting changed, say) and the result. */
