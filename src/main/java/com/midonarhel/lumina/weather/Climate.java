@@ -49,9 +49,9 @@ public final class Climate
 	// snow depth per game hour per unit of snowfall, cm
 	static final float SNOW_CM_PER_HOUR = 5;
 	// melt per game hour: per degree above zero, per unit of rain (and more the warmer the rain), in full sun, cm
-	static final float MELT_CM_PER_DEGREE = 0.5f;
-	static final float RAIN_MELT_CM = 3;
-	static final float SUN_MELT_CM = 0.6f;
+	static final float MELT_CM_PER_DEGREE = 0.06f;
+	static final float RAIN_MELT_CM = 1f;
+	static final float SUN_MELT_CM = 0.15f;
 	// snow deeper than full cover settles by this share of the excess per game hour
 	static final float SETTLE = 0.01f;
 	static final float MAX_SNOW_CM = 60;
