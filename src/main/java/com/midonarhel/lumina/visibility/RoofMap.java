@@ -11,7 +11,7 @@ import net.runelite.api.Tile;
 
 /**
  * The roofs of a scene: per level and tile, the lowest point of the roof objects on it (the game's object types 12 to
- * 21: the roof pieces and their edges, which overhang the walls) and the roof id the client hides it by. A lamp's line
+ * 21: the roof pieces and their edges, which overhang the walls), no lower than the level they stand on and the roof id the client hides it by. A lamp's line
  * that passes through that height on a roofed tile goes through the roof (light/lamp.glsl), so the roof over a lamp
  * keeps its light from the roof's top, and the roof over a room keeps the room's lamps from the roof's outside. The
  * client hides the roofs over the player: those are not drawn and stop nothing ({@link #bottoms}).
@@ -111,7 +111,10 @@ public final class RoofMap
 		{
 			max = Math.max(max, vy[i]);
 		}
-		return go.getZ() + max;
+		// a roof starts at the level it stands on: what its model hangs below that (the hip and corner pieces carry the top
+		// of the storey's wall under them, 64 below the level, where the shop's lanterns hang) is wall, which the walls
+		// stop lamps at; counted as roof it cut the lanterns' light to that wall (stall5, shop-roofs-pair)
+		return go.getZ() + Math.min(max, 0);
 	}
 
 	/** Whether any level has a roof on the tile, drawn or not. */
