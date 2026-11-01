@@ -290,9 +290,10 @@ void waterLamps(ivec2 px, vec3 s, float viewZ, vec3 nrm, vec3 toCamera, vec3 tAl
 // The water's surface at camera-relative s, seen along v from pixel px, its normal nrm, of water type `type` with foam
 // over it, under the sun's shadow: its color (linear, foam in it), how much of what is under it the surface hides at
 // least (Fresnel, the slant, foam; waterOver adds the depth's share), the highlights on top (linear) and the light on
-// it. The real surface's (waterShadeHalf) and the faces models draw as water's (waterFake).
-void waterShadeSurface(ivec2 px, vec3 s, vec3 v, vec3 nrm, int type, float foam, float shadow, out vec3 surface,
-  out float covered, out vec3 spec, out vec3 surfaceLight) {
+// it. The real surface's (waterShadeHalf) and the faces models draw as water's (waterFake). world: the world is
+// reflected where the reflected ray finds it on the screen, not only the sky.
+void waterShadeSurface(ivec2 px, vec3 s, vec3 v, vec3 nrm, int type, float foam, float shadow, bool world,
+  out vec3 surface, out float covered, out vec3 spec, out vec3 surfaceLight) {
   vec4 look = WATER_LOOK[type];
   vec3 toCamera = -v;
   float viewZ = (viewProj * vec4(s, 1.0)).w;
@@ -331,7 +332,7 @@ void waterShadeSurface(ivec2 px, vec3 s, vec3 v, vec3 nrm, int type, float foam,
   r.y = min(r.y, -0.02);
   r = normalize(r);
   vec3 reflection = waterSkyReflection(r);
-  if (waterReflections == 1) {
+  if (waterReflections == 1 && world) {
     vec4 hit = waterTraceReflection(s, reflect(v, normalize(nrm * vec3(SSR_TILT, 1.0, SSR_TILT))), surfaceLight,
       vec2(px));
     reflection = mix(reflection, hit.rgb, hit.a);
@@ -417,7 +418,7 @@ void waterShadeHalf(ivec2 hpx) {
   }
   vec3 surface, spec, surfaceLight;
   float covered;
-  waterShadeSurface(px, s, v, nrm, type, foam, shadow, surface, covered, spec, surfaceLight);
+  waterShadeSurface(px, s, v, nrm, type, foam, shadow, true, surface, covered, spec, surfaceLight);
   WaterShadedOut = waterPackShaded(surface, covered, spec);
 }
 
@@ -637,10 +638,12 @@ vec3 waterFake(ivec2 px, vec3 p, vec3 faceN, vec3 albedo, float shadow, vec3 lit
   vec2 fallSlope = slope.x * tang + slope.y * out2;
   vec3 nrm = normalize(down > 0.0 ? vec3(-fallSlope.x, -1.0, -fallSlope.y) : faceN + vec3(-slope.x, 0.0, -slope.y));
 
-  // ---- the surface shaded as the real water's (waterShadeSurface)
+  // ---- the surface shaded as the real water's (waterShadeSurface); a fall reflects the sky only: the world a level
+  // surface would mirror is not where a sheet of water standing up shows it, and where the reflected ray stopped
+  // finding the wall above the fall a hard line ran across its face
   vec3 surface, spec, surfaceLight;
   float covered;
-  waterShadeSurface(px, p, v, nrm, type, 0.0, shadow, surface, covered, spec, surfaceLight);
+  waterShadeSurface(px, p, v, nrm, type, 0.0, shadow, down == 0.0, surface, covered, spec, surfaceLight);
   spec += waterSunGlint(waterGlitterNormal(nrm), v, 0.0, look.z, 0.0, shadow);
 
   // ---- what is under it: the face as the composite lit it, wet, FAKE_DEPTH down, as waterOver takes the bed
