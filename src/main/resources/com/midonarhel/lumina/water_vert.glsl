@@ -7,7 +7,7 @@
 
 #include "water_common.glsl"
 
-layout(location = 0) in uvec4 tile;  // extended tile x, y, water type, look slot (Water.java) | 128 on land
+layout(location = 0) in uvec4 tile;  // extended tile x, y, water type, look slot (Water.java) | 64 on a fall | 128 on land
 
 uniform mat4 waterViewProj;   // camera-relative world -> clip
 uniform vec3 waterCamera;     // camera position, world
@@ -32,6 +32,11 @@ void main() {
   // the flow slows toward the bank
   vec2 flow = p0.gb * (WATER_TILE * WATER_FLOW_SPEED[type])
     * mix(BANK_SLOW, 1.0, smoothstep(0.0, BANK_REACH, p1.r) * smoothstep(0.5, 1.0, p1.b));
+  if ((tile.w & 64u) != 0u) {
+    // a fall's own tile runs down it (its frame's direction); the water beside it, sharing its corners, does not
+    vec2 frame = waterPage2(waterData, c).ba;
+    flow = frame / max(length(frame), 1e-4) * (WATER_TILE * FALL_RUN);
+  }
 
   vRel = vec3(xz.x, p0.r, xz.y) - waterCamera;
   vXZ = xz;
@@ -42,7 +47,7 @@ void main() {
     // the tile's place in the wrapping map; whole tiles, so none straddles its edge
     vec2 t = mod(vec2(tile.xy) - waterGrid.x, WAVE_MAP_TILES) + cell;
     gl_Position = vec4(t / WAVE_MAP_TILES * 2.0 - 1.0, 0.0, 1.0);
-  } else if (tile.w >= 128u) {
+  } else if ((tile.w & 128u) != 0u) {
     // land: not on the screen (every corner at one point, no area)
     gl_Position = vec4(2.0, 2.0, 2.0, 1.0);
   } else {

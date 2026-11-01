@@ -134,10 +134,10 @@ public final class WaterMap
 
 	// Falls of the terrain itself: a water tile whose corners drop FALL_DROP world units or more across its run, with
 	// water above and below it, is a fall's (a bank's tile climbs too, but has land on one side). Its surface is the slope,
-	// not the level of the pool below; the water on it runs downhill FALL_FLOW tiles a second; its lip and foot are a
+	// not the level of the pool below; the water on it runs downhill (its own tiles only: WaterSurface.FALL, water_vert.glsl
+	// FALL_RUN; a corner it shares with the water beside it keeps that water's flow); its lip and foot are a
 	// fall's (lips, feet); and the foam is laid out along the slope (fallFrame).
 	private static final float FALL_DROP = 128f;
-	private static final float FALL_FLOW = 2.5f;
 	// extended tile steps of a fall's four directions
 	private static final int[] FALL_DX = {1, -1, 0, 0}, FALL_DZ = {0, 0, 1, -1};
 	// the frame reaches this many tiles above a fall's lip and below its foot, across the fall's own width only: the foam
@@ -834,9 +834,14 @@ public final class WaterMap
 		float[] surfaceY = surfaceLevels(heights);
 		boolean[] marked = new boolean[CONTACT_SIZE * CONTACT_SIZE];
 		boolean any = eachModel(tiles, (id, r, orient, x, height, z) -> crossings(id, r, orient, x, height, z, surfaceY, marked));
-		if (any)
+		boolean falls = false;
+		for (int i = 0; i < fall.length && !falls; ++i)
 		{
-			contact = contactFrom(marked, surfaceY);
+			falls = fall[i];
+		}
+		if (any || falls)
+		{
+			contact = contactFrom(marked);
 		}
 	}
 
@@ -860,49 +865,25 @@ public final class WaterMap
 	}
 
 	/**
-	 * The contact map from the cells where things cross the surface (marked). A fall's lip and foot are none: they foamed
-	 * the pools by every fall from bank to bank (the user: foam in the empty water); the water pours over and lands in
-	 * them as it runs (the lips' pull, the feet's push).
+	 * The contact map from the cells where things cross the surface (marked), and a fall's face: the whole of it, its foam
+	 * carried down it from its lip to its foot (water_frag.glsl fallFoamHeight). A fall's lip and foot are none: their bands
+	 * stood still at the top and bottom of every fall; the water pours over and lands as it runs (the lips' pull, the feet's
+	 * push).
 	 */
-	byte[] contactFrom(boolean[] marked, float[] surfaceY)
+	byte[] contactFrom(boolean[] marked)
 	{
-		// each crossing of something standing in the water raises the closeness of the cells within CONTACT_REACH of it
+		// each crossing raises the closeness of the cells within CONTACT_REACH of it (the foam is drawn on running water
+		// only: water_frag.glsl hardFoam)
 		byte[] c = new byte[marked.length];
-		spread(standingIn(marked, surfaceY), CONTACT_REACH, c);
-		return c;
-	}
-
-	/**
-	 * The crossings of things standing in the water: those with water (surfaceY, per tile) all round them, cell by cell. A
-	 * wall or kerb lining a bank crosses the surface along it too, and spread from there it covered the water a tile or two
-	 * wide (channels, ledges, small pools) in foam from bank to bank: the user's "foam in the empty water tiles". A bank
-	 * built up in stone is a bank, as one of earth is.
-	 */
-	static boolean[] standingIn(boolean[] marked, float[] surfaceY)
-	{
-		boolean[] in = new boolean[marked.length];
-		for (int cy = 0; cy < CONTACT_SIZE; ++cy)
+		spread(marked, CONTACT_REACH, c);
+		for (int i = 0; i < c.length; ++i)
 		{
-			for (int cx = 0; cx < CONTACT_SIZE; ++cx)
+			if (fall[(i / CONTACT_SIZE / CONTACT_RES) * SIZE + (i % CONTACT_SIZE) / CONTACT_RES])
 			{
-				if (!marked[cy * CONTACT_SIZE + cx])
-				{
-					continue;
-				}
-				boolean water = true;
-				for (int dy = -1; dy <= 1 && water; ++dy)
-				{
-					for (int dx = -1; dx <= 1 && water; ++dx)
-					{
-						int x = cx + dx, y = cy + dy;
-						water = x >= 0 && y >= 0 && x < CONTACT_SIZE && y < CONTACT_SIZE
-							&& !Float.isNaN(surfaceY[y / CONTACT_RES * SIZE + x / CONTACT_RES]);
-					}
-				}
-				in[cy * CONTACT_SIZE + cx] = water;
+				c[i] = (byte) 255;
 			}
 		}
-		return in;
+		return c;
 	}
 
 	/**
@@ -1613,13 +1594,6 @@ public final class WaterMap
 						fx *= 1 - CONTACT_SLOW * near;
 						fz *= 1 - CONTACT_SLOW * near;
 						turbulence = Math.max(turbulence, CONTACT_TURB * near);
-					}
-					if (onFall)
-					{
-						// the water runs down the slope
-						float length = (float) Math.hypot(frameX[c], frameZ[c]);
-						fx = frameX[c] / length * FALL_FLOW;
-						fz = frameZ[c] / length * FALL_FLOW;
 					}
 				}
 				else

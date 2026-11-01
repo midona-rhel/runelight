@@ -328,10 +328,20 @@ public class WaterMapTest
 		assertEquals((float) Math.sqrt(5), m.texture[(85 * w + p2 + 81) * 4 + 3], 1e-5f);
 		// a tile below the foot the frame ends: the foam it lays out is the foot's, which reaches less than a tile
 		assertEquals(0f, m.texture[(86 * w + p2 + 81) * 4 + 3], 0f);
-		// it runs down the fall, fast
-		assertTrue(m.texture[(83 * w + 81) * 4 + 2] > 2f);
-		// no foam on its face, nor in the pools at its lip and foot: nothing stands in this water
-		assertTrue(m.contact == null);
+		// it runs down the fall, its own tile only: the corners it shares with the water beside and below it keep theirs
+		assertTrue(m.texture[(83 * w + 81) * 4 + 2] < 1f);
+		WaterSurface.Mesh mesh = WaterSurface.build(m);
+		for (int i = 0; i < mesh.count; ++i)
+		{
+			int x = mesh.tiles[i * 4] & 0xFF, y = mesh.tiles[i * 4 + 1] & 0xFF;
+			assertEquals("tile " + x + ", " + y, y == 83 && x >= 80 && x < 83, (mesh.tiles[i * 4 + 3] & WaterSurface.FALL) != 0);
+		}
+		// foam over all its face, none in the pools at its lip and foot: nothing stands in this water
+		int cells = WaterMap.CONTACT_RES, size = WaterMap.CONTACT_SIZE;
+		assertEquals(255, m.contact[(83 * cells + 1) * size + 81 * cells + 1] & 255);
+		assertEquals(255, m.contact[(84 * cells - 1) * size + 81 * cells + 2] & 255);
+		assertEquals(0, m.contact[(83 * cells - 1) * size + 81 * cells + 1] & 255);
+		assertEquals(0, m.contact[(84 * cells) * size + 81 * cells + 1] & 255);
 	}
 
 	@Test
@@ -349,8 +359,17 @@ public class WaterMapTest
 			int cx = k < 2 ? 84 : 81, cy = k < 2 ? 81 : 84;
 			assertEquals("x " + k, dx[k] * (float) Math.sqrt(5), m.texture[(cy * w + p2 + cx) * 4 + 2], 1e-5f);
 			assertEquals("z " + k, dz[k] * (float) Math.sqrt(5), m.texture[(cy * w + p2 + cx) * 4 + 3], 1e-5f);
-			// the water on it runs the same way
-			assertTrue("flow " + k, m.texture[(cy * w + cx) * 4 + 1] * dx[k] + m.texture[(cy * w + cx) * 4 + 2] * dz[k] > 2f);
+			// its tile is a fall's, which runs that way (water_vert.glsl, by the frame)
+			WaterSurface.Mesh mesh = WaterSurface.build(m);
+			boolean found = false;
+			for (int i = 0; i < mesh.count; ++i)
+			{
+				if ((mesh.tiles[i * 4] & 0xFF) == tx && (mesh.tiles[i * 4 + 1] & 0xFF) == ty)
+				{
+					found = (mesh.tiles[i * 4 + 3] & WaterSurface.FALL) != 0;
+				}
+			}
+			assertTrue("fall tile " + k, found);
 		}
 	}
 
@@ -473,16 +492,20 @@ public class WaterMapTest
 	private static Scene lastScene;
 
 	@Test
-	public void foamGathersAroundWhatStandsInThePoolNotAlongItsRim()
+	public void aPoolsRimAndAPillarInItAreAsCloseOnEverySide()
 	{
 		int cells = WaterMap.CONTACT_RES, size = WaterMap.CONTACT_SIZE;
-		// a 4 x 4 pool (80-83) walled in: the walls cross the surface along its edges, and raise no foam
+		// a 4 x 4 pool (80-83) walled in: the walls cross the surface along its edges, as close on every side (whether the
+		// water foams there is the shader's: running water only)
 		float p0 = 80 * 128, p1 = 84 * 128;
 		WaterMap rim = walledPool(new float[][]{{p0, p0, p0, p1}, {p1, p0, p1, p1}, {p0, p0, p1, p0}, {p0, p1, p1, p1}});
-		for (int i = 0; rim.contact != null && i < rim.contact.length; ++i)
-		{
-			assertEquals("cell " + i, 0, rim.contact[i] & 255);
-		}
+		int mid = 82 * cells;
+		int rw = rim.contact[mid * size + 80 * cells] & 255, re = rim.contact[mid * size + 84 * cells - 1] & 255;
+		int rs = rim.contact[80 * cells * size + mid] & 255, rn = rim.contact[(84 * cells - 1) * size + mid] & 255;
+		assertTrue("west " + rw, rw > 128);
+		assertEquals(rw, re);
+		assertEquals(rw, rs);
+		assertEquals(rw, rn);
 		// a pillar standing in the middle, its faces on the tile lines 81 and 83: as much foam on every side of it, whichever
 		// way a line rounds
 		float a = 81 * 128, b = 83 * 128;

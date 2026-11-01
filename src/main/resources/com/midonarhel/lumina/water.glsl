@@ -583,7 +583,7 @@ vec3 waterOver(ivec2 px, inout vec3 p, vec3 albedo, float shadow, vec3 lit, floa
 // them, the scene pass writes them as water 3 in the material target with their distance from the nearer end of
 // the model's water). The composite replaces their lit color with water shaded by the real surface's own shading
 // (waterShadeSurface) and waves (ripples), from the face itself: its own normal and the world position, no texture.
-// Level faces get still water's ripples; steep ones are falls, the same water running down.
+// Level faces get still water's ripples; steep ones are falls, the same water running down, foaming all the way.
 // Everything here is ALU: the composite has no sampler to spare.
 uniform int waterFakeOn;  // the water setting: off draws the faces as their type's plain color
 
@@ -592,8 +592,11 @@ uniform int waterFakeOn;  // the water setting: off draws the faces as their typ
 // a face is a fall when its normal's vertical part is below the second and not a pool's at all below the first
 #define FALL_STEEP vec2(0.5, 0.85)
 // A fall is real water running straight down it at FALL_FLOW world units a second, its ripples carried with it as running
-// water's are; nothing on it (no foam: the user, "a waterfall gets only the flowing water, scrolling down")
+// water's are, and its foam over the whole face: the pool's foam cells (waterFoamCells, the contact foam's size), cut as
+// the contact foam's are where something stands in the water, carried down it as fast
 #define FALL_FLOW 320.0
+// the pool's foam cells (Water.CELLS across CELL_SCALE_B world units, water_frag.glsl)
+#define POOL_CELL (520.0 / 6.0)
 
 // The fake water face at pixel px (camera-relative p, facing camera normal faceN, color albedo (sRGB), the sun's
 // shadow), lit as lit (sRGB): its color as water, sRGB.
@@ -638,13 +641,22 @@ vec3 waterFake(ivec2 px, vec3 p, vec3 faceN, vec3 albedo, float shadow, vec3 lit
   vec2 fallSlope = slope.x * tang + slope.y * out2;
   vec3 nrm = normalize(down > 0.0 ? vec3(-fallSlope.x, -1.0, -fallSlope.y) : faceN + vec3(-slope.x, 0.0, -slope.y));
 
+  // its foam, down it: a whole repeat of the cells (64) every waterCycle, so the scroll never jumps
+  float foam = 0.0;
+  if (down > 0.0) {
+    vec2 cell = vec2(q.x, q.y) / POOL_CELL - vec2(0.0, 64.0 * waterCycle(64.0 * POOL_CELL / FALL_FLOW));
+    float h = waterFoamCells(cell);
+    float ha = max(fwidth(h), 1e-4);
+    foam = mix(FOAM_TINT * waterEdge(FOAM_CUT.y - h, ha), FOAM_CORE, waterEdge(FOAM_CUT.x - h, ha));
+  }
+
   // ---- the surface shaded as the real water's (waterShadeSurface); a fall reflects the sky only: the world a level
   // surface would mirror is not where a sheet of water standing up shows it, and where the reflected ray stopped
   // finding the wall above the fall a hard line ran across its face
   vec3 surface, spec, surfaceLight;
   float covered;
-  waterShadeSurface(px, p, v, nrm, type, 0.0, shadow, down == 0.0, surface, covered, spec, surfaceLight);
-  spec += waterSunGlint(waterGlitterNormal(nrm), v, 0.0, look.z, 0.0, shadow);
+  waterShadeSurface(px, p, v, nrm, type, foam, shadow, down == 0.0, surface, covered, spec, surfaceLight);
+  spec += waterSunGlint(waterGlitterNormal(nrm), v, 0.0, look.z, foam, shadow);
 
   // ---- what is under it: the face as the composite lit it, wet, FAKE_DEPTH down, as waterOver takes the bed
   vec3 under = srgbToLinear(lit * WET_SAND) * srgbToLinear(waterDepthTint(type, FAKE_DEPTH));

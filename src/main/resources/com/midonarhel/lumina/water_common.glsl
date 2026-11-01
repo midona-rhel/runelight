@@ -78,6 +78,8 @@ const float WATER_FLOW_SPEED[WATER_TYPES] = float[](0.0, 1.0, 1.0, 1.0, 1.0, 0.3
 // the flow phases are offset across the water by up to this many cycles over this many world units
 #define FLOW_JITTER 0.5
 #define FLOW_JITTER_SCALE 6144.0
+// tiles a second the water runs down a fall (WaterSurface.FALL's tiles, water_vert.glsl)
+#define FALL_RUN 2.5
 // the flow slows toward the bank to BANK_SLOW of it at the shore, over BANK_REACH tiles out
 #define BANK_SLOW 0.15
 #define BANK_REACH 2.5
@@ -205,6 +207,23 @@ float waterHash(vec3 p) {
 #define FOAM_CUT vec2(0.35, 0.55)
 float waterFoamRim(float h) {
   return 1.0 - smoothstep(FOAM_RIM.x, FOAM_RIM.y, h);
+}
+
+// The ripple cells' height at p, in cells, as Water.cells makes them for the water pass's texture: the domes of the
+// jittered points around p added up
+float waterFoamCells(vec2 p) {
+  vec2 id = floor(p);
+  float sum = 0.0;
+  for (int j = -1; j <= 1; ++j) {
+    for (int i = -1; i <= 1; ++i) {
+      vec2 c = id + vec2(float(i), float(j));
+      vec2 at = c + 0.2 + 0.6 * vec2(waterHash(vec3(mod(c, 64.0), 11.0)), waterHash(vec3(mod(c, 64.0), 12.0)));
+      vec2 d = (p - at) / 0.85;
+      float k = max(1.0 - dot(d, d), 0.0);
+      sum += k * k * k;
+    }
+  }
+  return min(sum, 1.0);
 }
 
 // Value noise, not tiling (hashed lattice): -1 to 1

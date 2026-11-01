@@ -256,7 +256,8 @@ vec2 hardFoam(vec2 xz, vec2 base, vec2 m0, vec2 m1, float w0, float flowing, flo
   float laidLod = waterLod(max(length(dFdx(laid)), length(dFdy(laid))), CELL_SCALE_B);
   float cells = frame != vec2(0.0) ? fallFoamHeight(laid, frame, laidLod)
     : waterFoamHeight(xz, base, m0, m1, w0, flowing, waterLod(footprint, CELL_SCALE_B));
-  return contactFoam(xz, cells);
+  // only running water foams: a still pool, lake or pond takes none, whatever stands in it (the user)
+  return contactFoam(xz, cells) * flowing;
 }
 
 void main() {
