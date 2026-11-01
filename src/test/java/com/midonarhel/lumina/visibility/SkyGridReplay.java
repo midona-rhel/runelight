@@ -431,6 +431,15 @@ public class SkyGridReplay
 			return out;
 		}
 
+		static final float SKY_FLOW_SOFT = 0.1f;
+
+		/** skylight_ao.glsl's skySmoothMin. */
+		static float smoothMin(float a, float b, float k)
+		{
+			float h = Math.max(0, Math.min(1, 0.5f + 0.5f * (b - a) / k));
+			return b + (a - b) * h - k * h * (1 - h);
+		}
+
 		/** skylight_ao.glsl's skyHermite: corners SW, SE, NW, NE. */
 		static float hermite(float fx, float fz, float[] v, float[] gx, float[] gz)
 		{
@@ -496,7 +505,9 @@ public class SkyGridReplay
 				v = v + (1 - (1 - v) * SKY_OUTDOOR_STRENGTH - v) * outdoors;
 				return v + (Math.max(v, fl[0]) - v) * cover;
 			}
-			float outside = 1 - (1 - v) * SKY_OUTDOOR_STRENGTH, inside = Math.max(v, fl[0]);
+			float outside = 1 - (1 - v) * SKY_OUTDOOR_STRENGTH;
+			// skylight_ao.glsl: the light flowing in is never brighter than the open sky lights the spot (a smooth min)
+			float inside = Math.max(v, before ? fl[0] : smoothMin(fl[0], outside, SKY_FLOW_SOFT));
 			return outside + (inside - outside) * cover;
 		}
 	}
@@ -1080,6 +1091,50 @@ public class SkyGridReplay
 		}
 		if (d.name.equals("market"))
 		{
+			// why each tile counts as covered for the field: r roof flag on plane 0, f a floor tile above, . open
+			StringBuilder cov = new StringBuilder("covered (world tiles; r roof flag, f floor above, b both, . open), x " + (d.voxels.baseX + 40) + ".." + (d.voxels.baseX + 56) + ":\n");
+			try (java.io.DataOutputStream o = new java.io.DataOutputStream(Files.newOutputStream(Paths.get("build", "replay", "covered.bin"))))
+			{
+				int size = d.walls.size, off = d.walls.offset;
+				o.writeInt(d.voxels.baseX);
+				o.writeInt(d.voxels.baseY);
+				o.writeInt(SkyGrid.SIZE);
+				for (int x = 0; x < SkyGrid.SIZE; ++x)
+					for (int z = 0; z < SkyGrid.SIZE; ++z)
+					{
+						int i = (x + off) * size + z + off;
+						boolean roof = d.rooms.roofed[d.rooms.index(0, x + off, z + off)];
+						boolean floor = d.floors != null && (d.floors[i] & 0xFE) != 0;
+						o.writeByte((roof ? 1 : 0) | (floor ? 2 : 0));
+					}
+			}
+			for (int z = 60; z >= 44; --z)
+			{
+				cov.append(String.format("%4d ", z + d.voxels.baseY));
+				for (int x = 40; x <= 56; ++x)
+				{
+					int i = (x + d.walls.offset) * d.walls.size + z + d.walls.offset;
+					boolean roof = d.rooms.roofed[d.rooms.index(0, x + d.walls.offset, z + d.walls.offset)];
+					boolean floor = d.floors != null && (d.floors[i] & 0xFE) != 0;
+					cov.append(roof && floor ? 'b' : roof ? 'r' : floor ? 'f' : '.');
+				}
+				cov.append('\n');
+			}
+			System.out.println(cov);
+			for (float z : new float[]{3301.5f, 3303.5f})
+			{
+				StringBuilder line = new StringBuilder("strip line z " + z + " (x from 2652 by 0.25), before | now:\n ");
+				StringBuilder now2 = new StringBuilder(" ");
+				for (int i = 0; i <= 24; ++i)
+				{
+					float x = (2652 + i * 0.25f - d.voxels.baseX) * 128, wz = (z - d.voxels.baseY) * 128;
+					line.append(String.format("%4d", Math.round(255 * before.skylight(new float[]{x, groundY(before, x, wz), wz}, new float[]{0, -1, 0}))));
+					now2.append(String.format("%4d", Math.round(255 * now.skylight(new float[]{x, groundY(now, x, wz), wz}, new float[]{0, -1, 0}))));
+				}
+				System.out.println(line + "\n" + now2);
+			}
+			System.out.println("street terms (local 44..52 by 49..55, world +2608,+3248): trace/surface/exterior/cover/field -> value\n" + terms(now, d.walls, 44, 52, 49, 55));
+
 			// the stall by the user at 2657,3305 (optA captures): tile 48,57, walled on all four sides by the collision map
 			for (Shader sh : new Shader[]{before, now})
 				regionImage(sh, d.walls, 44, 53, 53, 61, 0, "market-stall-" + (sh == before ? "before" : "now"), 48, 1);

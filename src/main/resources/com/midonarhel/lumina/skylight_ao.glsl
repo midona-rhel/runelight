@@ -37,6 +37,16 @@ uniform int skyFieldPlane;
 // near the street (its light near 1) stays out of doors. The roof flags, tile by tile, made the doorway's edge a fan of
 // tile shapes (2026-11-01).
 #define SKY_FIELD_OPEN_POWER 4.0
+// The light flowing in under cover is never brighter than the open sky lights the same spot (the outdoor look): under
+// an overhang by the street, where the trace is low, the field's light near 1 made the covered strip a ridge brighter
+// than the street beside it, and the street a dark valley along it (2026-11-01). A smooth minimum, this soft, so the
+// light keeps its slope where the two meet.
+#define SKY_FLOW_SOFT 0.1
+
+float skySmoothMin(float a, float b, float k) {
+  float h = clamp(0.5 + 0.5 * (b - a) / k, 0.0, 1.0);
+  return mix(b, a, h) - k * h * (1.0 - h);
+}
 
 // as SkyGrid.java
 #define SKY_GRID_TILES 104.0
@@ -392,6 +402,6 @@ float skylightVisibility(vec3 p, vec3 n) {
   // alone is the cover's complement (the field's own cover is the flags').
   float cover = skyFieldOn == 1 ? (skyExteriorByField ? 1.0 : field.g) * (1.0 - skyExterior) : 0.0;
   float outside = 1.0 - (1.0 - v) * SKY_OUTDOOR_STRENGTH;
-  float inside = skyFieldOn == 1 ? max(v, field.r) : v;
+  float inside = skyFieldOn == 1 ? max(v, skySmoothMin(field.r, outside, SKY_FLOW_SOFT)) : v;
   return mix(outside, inside, cover);
 }
