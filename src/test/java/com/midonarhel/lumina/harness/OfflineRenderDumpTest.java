@@ -87,11 +87,14 @@ public class OfflineRenderDumpTest
 		DumpRenderer.Options o = new DumpRenderer.Options();
 		o.settings.put("antiAliasingMode", "DISABLED");
 		o.settings.put("renderScale", "FULL");
+		// -Dlumina.buildings=rebuild: the buildings built again with the code under test (DumpRenderer.Options)
+		o.buildings = System.getProperty("lumina.buildings", "dumped");
 		List<PointLight> lamps;
-		WallMap walls = (WallMap) dump.derived.get("buildings.walls");
+		WallMap walls;
 		StringBuilder failures = new StringBuilder();
 		try (DumpRenderer r = new DumpRenderer(dump, o))
 		{
+			walls = r.plugin.buildingLights.getWalls();
 			BufferedImage on = r.render();
 			FrameProbe probe = new FrameProbe(r.plugin, r.width, r.height);
 			// the lamps the frame drew: the dump's and the frame's own (the test light)

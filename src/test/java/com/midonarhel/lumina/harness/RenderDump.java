@@ -88,6 +88,9 @@ public final class RenderDump
 				case "buildings":
 					o.buildings = v;
 					break;
+				case "lampRoofs":
+					o.lampRoofs = !v.equals("off") && !v.equals("false");
+					break;
 				case "probe":
 					for (String t : v.split(";"))
 					{

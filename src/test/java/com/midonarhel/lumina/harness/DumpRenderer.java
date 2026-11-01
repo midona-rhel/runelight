@@ -66,6 +66,8 @@ public final class DumpRenderer implements AutoCloseable
 		// the buildings (walls, rooms, floors, roofs, drawn walls): "dumped" as the client had them; "rebuild" built again
 		// by BuildingLights from the dump's scene objects (DumpWorld's faked tiles), as the client builds them
 		public String buildings = "dumped";
+		// false: no roofs stop the lamps (the buildings' roofs left out), to see what they stop
+		public boolean lampRoofs = true;
 		// world tiles (x, y) whose walls are printed
 		public final List<int[]> probes = new ArrayList<>();
 	}
@@ -203,6 +205,11 @@ public final class DumpRenderer implements AutoCloseable
 				(com.midonarhel.lumina.visibility.RoofMap) d.get("buildings.roofs"), (boolean[]) d.get("buildings.drawnWalls"));
 		}
 		WallMap walls = plugin.buildingLights.getWalls();
+		if (!options.lampRoofs)
+		{
+			BuildingLights b = plugin.buildingLights;
+			b.restore(top, b.getResult(), b.getCoarse(), b.getRooms(), walls, b.getFloors(), null, b.getDrawnWalls());
+		}
 		for (int[] t : options.probes)
 		{
 			int x = t[0] - dump.manifest.baseX + com.midonarhel.lumina.LuminaPlugin.SCENE_OFFSET;
