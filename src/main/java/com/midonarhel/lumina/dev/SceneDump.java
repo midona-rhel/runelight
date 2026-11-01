@@ -492,6 +492,9 @@ public final class SceneDump
 			getters(d, "scene" + sub.getId() + ".", Scene.class, sub.getScene());
 		}
 		d.put("waterMap", plugin.clientUploader.water);
+		// the models the water's contact map is made from (not in the zones: the bench replays the crossings)
+		d.put("water.contactModels", plugin.clientUploader.water != null
+			? plugin.clientUploader.water.contactModels(wv.getScene()) : null);
 		d.put("fogGround", PlainData.get(plugin.volumetricFog, "ground"));
 		d.put("voxels", plugin.voxelBuilder.getVoxels());
 		var buildings = plugin.getBuildingLights();

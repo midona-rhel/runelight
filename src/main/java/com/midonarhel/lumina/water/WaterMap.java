@@ -110,9 +110,9 @@ public final class WaterMap
 	private static final float CONTACT_TURB = 0.25f;
 	byte[] contact;
 
-	// Waterfalls: the water above a fall flows toward its lip, to pour over; its foam there is the lip's contact (one
-	// mechanism for the foam by a fall: no churn of its own, which laid the rapids' foam over two tiles of pool). Per corner, within LIP_REACH tiles of a lip: the unit direction to it times
-	// 1 at the lip and 0 at the reach (x, z), and the lip's height (y down). A corner's water counts only at the lip's
+	// Waterfalls: the water above a fall flows toward its lip, to pour over; nothing foams there (no churn, no contact:
+	// they laid foam over the pools by every fall). Per corner, within LIP_REACH tiles of a lip: the unit direction to it
+	// times 1 at the lip and 0 at the reach (x, z), and the lip's height (y down). A corner's water counts only at the lip's
 	// own level (LIP_LEVEL world units), not the pool the fall lands in.
 	private static final float LIP_REACH = 2.5f;
 	private static final float LIP_LEVEL = 48f;
@@ -124,8 +124,7 @@ public final class WaterMap
 	private final float[] lipPullZ = new float[CORNERS * CORNERS];
 	private final float[] lipLevel = new float[CORNERS * CORNERS];
 	private final float[] lipStrength = new float[CORNERS * CORNERS];
-	// where it lands: the foot of a fall is a contact source reaching as far as any (CONTACT_REACH), and the pool's water is
-	// pushed out from it, FOOT_FLOW tiles a second at the foot, as far as FOOT_PUSH tiles; the same fields as the lip's
+	// where it lands: the pool's water is pushed out from the foot of a fall, FOOT_FLOW tiles a second at the foot, as far as FOOT_PUSH tiles; the same fields as the lip's
 	private static final float FOOT_PUSH = 3f;
 	private static final float FOOT_FLOW = 0.8f;
 	private final float[] footPullX = new float[CORNERS * CORNERS];
@@ -141,9 +140,9 @@ public final class WaterMap
 	private static final float FALL_FLOW = 2.5f;
 	// extended tile steps of a fall's four directions
 	private static final int[] FALL_DX = {1, -1, 0, 0}, FALL_DZ = {0, 0, 1, -1};
-	// the frame reaches this many tiles above a fall's lip and below its foot, as far as the lip's and the foot's contact
-	// (CONTACT_REACH) spreads, across the fall's own width only: the foam it lays out runs down the fall, and out to its
-	// sides it ran a one tile fall's motion down the tiles beside it too
+	// the frame reaches this many tiles above a fall's lip and below its foot, across the fall's own width only: the foam
+	// it lays out (around something standing in a fall) runs down the fall, and out to its sides it ran a one tile fall's
+	// motion down the tiles beside it too
 	private static final int FRAME_UP = 1, FRAME_DOWN = 1;
 	// per tile: a fall's
 	final boolean[] fall = new boolean[SIZE * SIZE];
@@ -342,7 +341,7 @@ public final class WaterMap
 		terrainFalls(heights, lips, feet);
 		pullToLines(lips, LIP_REACH, lipPullX, lipPullZ, lipLevel, lipStrength);
 		pullToLines(feet, FOOT_PUSH, footPullX, footPullZ, footLevel, footStrength);
-		findContacts(tiles, heights, lips, feet);
+		findContacts(tiles, heights);
 		buildTexture(heights, landCorner);
 	}
 
@@ -776,19 +775,69 @@ public final class WaterMap
 		return depthLevel[cy * CORNERS + cx];
 	}
 
+	/** One model the contact map found crossing the water's surface, as crossings takes it: for the scene dump. */
+	public static final class ContactModel
+	{
+		public int id, orient, x, height, z, vertexCount, faceCount;
+		public float[] vx, vy, vz;
+		public int[] f1, f2, f3, colors;
+	}
+
+	/**
+	 * The models of the scene's objects that cross its water's surface (findContacts' crossings), copied: what the contact
+	 * map is made from, for the scene dump (the offline bench replays them). Scene loaded, client thread.
+	 */
+	public java.util.List<ContactModel> contactModels(Scene scene)
+	{
+		java.util.List<ContactModel> out = new java.util.ArrayList<>();
+		if (!hasWater || tileHeights == null)
+		{
+			return out;
+		}
+		float[] surfaceY = surfaceLevels(tileHeights);
+		boolean[] scratch = new boolean[CONTACT_SIZE * CONTACT_SIZE];
+		eachModel(scene.getExtendedTiles(), (id, r, orient, x, height, z) ->
+		{
+			Model m = standingModel(id, r);
+			if (m == null || !crossings(m.getVerticesX(), m.getVerticesY(), m.getVerticesZ(), m.getVerticesCount(),
+				m.getFaceIndices1(), m.getFaceIndices2(), m.getFaceIndices3(), m.getFaceColors3(), m.getFaceCount(), orient, x,
+				height, z, surfaceY, scratch))
+			{
+				return false;
+			}
+			ContactModel c = new ContactModel();
+			c.id = id;
+			c.orient = orient;
+			c.x = x;
+			c.height = height;
+			c.z = z;
+			c.vertexCount = m.getVerticesCount();
+			c.faceCount = m.getFaceCount();
+			c.vx = java.util.Arrays.copyOf(m.getVerticesX(), c.vertexCount);
+			c.vy = java.util.Arrays.copyOf(m.getVerticesY(), c.vertexCount);
+			c.vz = java.util.Arrays.copyOf(m.getVerticesZ(), c.vertexCount);
+			c.f1 = java.util.Arrays.copyOf(m.getFaceIndices1(), c.faceCount);
+			c.f2 = java.util.Arrays.copyOf(m.getFaceIndices2(), c.faceCount);
+			c.f3 = java.util.Arrays.copyOf(m.getFaceIndices3(), c.faceCount);
+			c.colors = java.util.Arrays.copyOf(m.getFaceColors3(), c.faceCount);
+			out.add(c);
+			return true;
+		});
+		return out;
+	}
+
 	/**
 	 * Find where the scene's objects cross the water's surface into {@link #contact}.
 	 */
-	private void findContacts(Tile[][][] tiles, int[][][] heights, java.util.List<float[]> lips, java.util.List<float[]> feet)
+	private void findContacts(Tile[][][] tiles, int[][][] heights)
 	{
 		float[] surfaceY = surfaceLevels(heights);
 		boolean[] marked = new boolean[CONTACT_SIZE * CONTACT_SIZE];
 		boolean any = eachModel(tiles, (id, r, orient, x, height, z) -> crossings(id, r, orient, x, height, z, surfaceY, marked));
-		if (!any && lips.isEmpty() && feet.isEmpty())
+		if (any)
 		{
-			return;
+			contact = contactFrom(marked, surfaceY);
 		}
-		contact = contactFrom(marked, surfaceY, lips, feet);
 	}
 
 	/**
@@ -811,32 +860,15 @@ public final class WaterMap
 	}
 
 	/**
-	 * The contact map from the cells where things cross the surface (marked) and the falls' lips and feet.
+	 * The contact map from the cells where things cross the surface (marked). A fall's lip and foot are none: they foamed
+	 * the pools by every fall from bank to bank (the user: foam in the empty water); the water pours over and lands in
+	 * them as it runs (the lips' pull, the feet's push).
 	 */
-	byte[] contactFrom(boolean[] marked, float[] surfaceY, java.util.List<float[]> lips, java.util.List<float[]> feet)
+	byte[] contactFrom(boolean[] marked, float[] surfaceY)
 	{
 		// each crossing of something standing in the water raises the closeness of the cells within CONTACT_REACH of it
 		byte[] c = new byte[marked.length];
 		spread(standingIn(marked, surfaceY), CONTACT_REACH, c);
-		// the lips and feet of the waterfalls count only on the water at their own level: the upper pool by the lip, the
-		// lower one by the foot; never on a fall's own face, which is water running down and nothing else (its level is its
-		// foot's, so the foot's foam climbed it)
-		float[] pools = surfaceY.clone();
-		for (int i = 0; i < pools.length; ++i)
-		{
-			if (fall[i])
-			{
-				pools[i] = Float.NaN;
-			}
-		}
-		for (float[] l : lips)
-		{
-			spreadLine(l, CONTACT_REACH, pools, c);
-		}
-		for (float[] f : feet)
-		{
-			spreadLine(f, CONTACT_REACH, pools, c);
-		}
 		return c;
 	}
 
@@ -884,17 +916,16 @@ public final class WaterMap
 			{
 				if (marked[cy * CONTACT_SIZE + cx])
 				{
-					spreadCell(cx, cy, reach, c, null, 0);
+					spreadCell(cx, cy, reach, c);
 				}
 			}
 		}
 	}
 
 	/**
-	 * Raise the closeness in c around cell (cx, cy), within reach cells; with a surfaceY (per tile, NaN where none) only
-	 * the cells over water within LIP_LEVEL of {@code level} of it.
+	 * Raise the closeness in c around cell (cx, cy), within reach cells.
 	 */
-	private static void spreadCell(int cx, int cy, int reach, byte[] c, float[] surfaceY, float level)
+	private static void spreadCell(int cx, int cy, int reach, byte[] c)
 	{
 		for (int dy = -reach; dy <= reach; ++dy)
 		{
@@ -906,36 +937,8 @@ public final class WaterMap
 				{
 					continue;
 				}
-				if (surfaceY != null)
-				{
-					float s = surfaceY[y / CONTACT_RES * SIZE + x / CONTACT_RES];
-					if (!(Math.abs(s - level) <= LIP_LEVEL))
-					{
-						continue;
-					}
-				}
 				int j = y * CONTACT_SIZE + x;
 				c[j] = (byte) Math.max(c[j] & 255, Math.round(near * 255));
-			}
-		}
-	}
-
-	/**
-	 * Raise the closeness in c around a segment {x0, z0, x1, z1, y} (world units) of a waterfall's lip or foot, on the
-	 * water at its level (surfaceY, per tile) only.
-	 */
-	static void spreadLine(float[] l, int reach, float[] surfaceY, byte[] c)
-	{
-		float cell = 128f / CONTACT_RES;
-		int steps = 1 + (int) (Math.hypot(l[2] - l[0], l[3] - l[1]) / (cell * 0.5f));
-		for (int i = 0; i <= steps; ++i)
-		{
-			float t = (float) i / steps;
-			int gx = (int) ((l[0] + (l[2] - l[0]) * t) / cell);
-			int gz = (int) ((l[1] + (l[3] - l[1]) * t) / cell);
-			if (gx >= 0 && gz >= 0 && gx < CONTACT_SIZE && gz < CONTACT_SIZE)
-			{
-				spreadCell(gx, gz, reach, c, surfaceY, l[4]);
 			}
 		}
 	}
@@ -1369,27 +1372,41 @@ public final class WaterMap
 	private static boolean crossings(int id, Renderable r, int orient, int x, int height, int z, float[] surfaceY,
 		boolean[] marked)
 	{
+		Model m = standingModel(id, r);
+		return m != null && crossings(m.getVerticesX(), m.getVerticesY(), m.getVerticesZ(), m.getVerticesCount(),
+			m.getFaceIndices1(), m.getFaceIndices2(), m.getFaceIndices3(), m.getFaceColors3(), m.getFaceCount(), orient, x, height,
+			z, surfaceY, marked);
+	}
+
+	/**
+	 * The model an object's renderable draws, unless it is one that sways in the wind (reeds): those are left out of the
+	 * contact.
+	 */
+	private static Model standingModel(int id, Renderable r)
+	{
 		Model m = r instanceof Model ? (Model) r
 			: r instanceof DynamicObject ? ((DynamicObject) r).getModelZbuf() : null;
-		if (m == null || WindSway.sways(WindSway.forObject(id, r)))
-		{
-			return false;
-		}
-		float[] vx = m.getVerticesX(), vy = m.getVerticesY(), vz = m.getVerticesZ();
-		int[] f1 = m.getFaceIndices1(), f2 = m.getFaceIndices2(), f3 = m.getFaceIndices3();
-		int[] colors = m.getFaceColors3();
+		return m == null || WindSway.sways(WindSway.forObject(id, r)) ? null : m;
+	}
+
+	/**
+	 * crossings on a model's arrays (vertices x, y, z and their count; faces' vertices, third colours and their count).
+	 */
+	static boolean crossings(float[] vx, float[] vy, float[] vz, int vertexCount, int[] f1, int[] f2, int[] f3, int[] colors,
+		int faceCount, int orient, int x, int height, int z, float[] surfaceY, boolean[] marked)
+	{
 		float sin = orient != 0 ? Perspective.SINE[orient] / 65536f : 0;
 		float cos = orient != 0 ? Perspective.COSINE[orient] / 65536f : 1;
 		float ox = x + (LuminaPlugin.SCENE_OFFSET << 7), oz = z + (LuminaPlugin.SCENE_OFFSET << 7);
 		float foot = Float.NEGATIVE_INFINITY;
-		for (int v = 0; v < m.getVerticesCount(); ++v)
+		for (int v = 0; v < vertexCount; ++v)
 		{
 			foot = Math.max(foot, vy[v] + height);
 		}
 		float[] px = new float[3], py = new float[3], pz = new float[3];
 		float[] cx = new float[2], cz = new float[2];
 		boolean any = false;
-		for (int f = 0; f < m.getFaceCount(); ++f)
+		for (int f = 0; f < faceCount; ++f)
 		{
 			if (colors[f] == -2)
 			{

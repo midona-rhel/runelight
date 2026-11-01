@@ -262,31 +262,6 @@ public class WaterMapTest
 		assertTrue(pz[12 * n + 6] < 0f);
 	}
 
-	@Test
-	public void aFallsContactMarksOnlyTheWaterAtItsLevel()
-	{
-		// a lip at height 100 along z = 5 tiles, the pool above it (z < 5) at 100 and the one below it at 400
-		float[] surface = new float[N * N];
-		for (int y = 0; y < N; ++y)
-		{
-			for (int x = 0; x < N; ++x)
-			{
-				surface[y * N + x] = y < 5 ? 100f : y < 10 ? 400f : Float.NaN;
-			}
-		}
-		byte[] c = new byte[WaterMap.CONTACT_SIZE * WaterMap.CONTACT_SIZE];
-		WaterMap.spreadLine(new float[]{4 * 128f, 5 * 128f, 6 * 128f, 5 * 128f, 100f}, 8, surface, c);
-		int cells = WaterMap.CONTACT_RES;
-		// the cell just above the lip is marked, the one just below it, over the lower pool, is not
-		assertTrue((c[(5 * cells - 1) * WaterMap.CONTACT_SIZE + 5 * cells] & 255) > 0);
-		assertEquals(0, c[(5 * cells + 1) * WaterMap.CONTACT_SIZE + 5 * cells] & 255);
-		// a foot at 400 marks the lower pool and leaves the upper one
-		java.util.Arrays.fill(c, (byte) 0);
-		WaterMap.spreadLine(new float[]{4 * 128f, 5 * 128f, 6 * 128f, 5 * 128f, 400f}, 8, surface, c);
-		assertEquals(0, c[(5 * cells - 1) * WaterMap.CONTACT_SIZE + 5 * cells] & 255);
-		assertTrue((c[(5 * cells + 1) * WaterMap.CONTACT_SIZE + 5 * cells] & 255) > 0);
-	}
-
 	/**
 	 * A strip of water 3 tiles wide running in direction k (0 +x, 1 -x, 2 +z, 3 -z, WaterMap's FALL_DX): level to 83 along it, a
 	 * fall's tile at 83 dropping `drop` over its run, level again from 84 to 87; land beside it, at the strip's heights. With
@@ -355,17 +330,8 @@ public class WaterMapTest
 		assertEquals(0f, m.texture[(86 * w + p2 + 81) * 4 + 3], 0f);
 		// it runs down the fall, fast
 		assertTrue(m.texture[(83 * w + 81) * 4 + 2] > 2f);
-		// nothing on its face: no foam over the fall's own tile; its lip's and foot's in the pools by it
-		int cells = WaterMap.CONTACT_RES, size = WaterMap.CONTACT_SIZE;
-		for (int cy = 83 * cells; cy < 84 * cells; ++cy)
-		{
-			for (int cx = 80 * cells; cx < 83 * cells; ++cx)
-			{
-				assertEquals("cell " + cx + ", " + cy, 0, m.contact[cy * size + cx] & 255);
-			}
-		}
-		assertTrue((m.contact[(83 * cells - 1) * size + 81 * cells + 1] & 255) > 128);
-		assertTrue((m.contact[(84 * cells) * size + 81 * cells + 1] & 255) > 128);
+		// no foam on its face, nor in the pools at its lip and foot: nothing stands in this water
+		assertTrue(m.contact == null);
 	}
 
 	@Test
@@ -500,8 +466,11 @@ public class WaterMapTest
 					return null;
 			}
 		});
+		lastScene = scene;
 		return WaterMap.build(scene, null, null);
 	}
+
+	private static Scene lastScene;
 
 	@Test
 	public void foamGathersAroundWhatStandsInThePoolNotAlongItsRim()
@@ -525,6 +494,10 @@ public class WaterMapTest
 		assertEquals("east as west", west, east);
 		assertEquals("north as south", south, north);
 		assertEquals("south as west", west, south);
+		// the scene dump gets the model it was made from
+		java.util.List<WaterMap.ContactModel> models = post.contactModels(lastScene);
+		assertEquals(1, models.size());
+		assertEquals(16, models.get(0).vertexCount);
 	}
 
 	@Test
