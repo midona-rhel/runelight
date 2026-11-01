@@ -91,7 +91,7 @@ public class RoofTest
 	static float val(SkyGrid s, int tx, int tz, int i, int j, int level, int lobe)
 	{
 		int x = (lobe == 4 ? 2 * SkyGrid.SIZE : 0) + 2 * tx + i, y = 2 * tz + j;
-		int t = (((1 + level) * SkyGrid.TEX_H + y) * SkyGrid.TEX_W + x) * 4 + (lobe == 4 ? 0 : lobe);
+		int t = (((SkyGrid.VISIBILITY + level) * SkyGrid.TEX_H + y) * SkyGrid.TEX_W + x) * 4 + (lobe == 4 ? 0 : lobe);
 		return Half.fromHalf(s.texels.get(t));
 	}
 
