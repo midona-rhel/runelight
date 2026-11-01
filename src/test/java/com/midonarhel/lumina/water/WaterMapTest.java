@@ -350,17 +350,22 @@ public class WaterMapTest
 		assertEquals(1f, m.texture[(83 * w + p2 + 81) * 4 + 3], 1e-5f);
 		assertEquals(0f, m.texture[(83 * w + p2 + 81) * 4 + 2], 0f);
 		assertEquals((float) Math.sqrt(5), m.texture[(84 * w + p2 + 81) * 4 + 3], 1e-5f);
-		assertEquals((float) Math.sqrt(5), m.texture[(86 * w + p2 + 81) * 4 + 3], 1e-5f);
+		assertEquals((float) Math.sqrt(5), m.texture[(85 * w + p2 + 81) * 4 + 3], 1e-5f);
+		// a tile below the foot the frame ends: the foam it lays out is the foot's, which reaches less than a tile
+		assertEquals(0f, m.texture[(86 * w + p2 + 81) * 4 + 3], 0f);
 		// it runs down the fall, fast
 		assertTrue(m.texture[(83 * w + 81) * 4 + 2] > 2f);
-		// its water is covered in foam, thickest at the lip and the foot
-		int cells = WaterMap.CONTACT_RES;
-		int first = m.contact[(83 * cells) * WaterMap.CONTACT_SIZE + 81 * cells + 1] & 255;
-		int middle = m.contact[(83 * cells + 1) * WaterMap.CONTACT_SIZE + 81 * cells + 1] & 255;
-		int last = m.contact[(83 * cells + cells - 1) * WaterMap.CONTACT_SIZE + 81 * cells + 1] & 255;
-		assertTrue(middle > 128);
-		assertTrue(first > middle);
-		assertTrue(last > middle);
+		// nothing on its face: no foam over the fall's own tile; its lip's and foot's in the pools by it
+		int cells = WaterMap.CONTACT_RES, size = WaterMap.CONTACT_SIZE;
+		for (int cy = 83 * cells; cy < 84 * cells; ++cy)
+		{
+			for (int cx = 80 * cells; cx < 83 * cells; ++cx)
+			{
+				assertEquals("cell " + cx + ", " + cy, 0, m.contact[cy * size + cx] & 255);
+			}
+		}
+		assertTrue((m.contact[(83 * cells - 1) * size + 81 * cells + 1] & 255) > 128);
+		assertTrue((m.contact[(84 * cells) * size + 81 * cells + 1] & 255) > 128);
 	}
 
 	@Test
@@ -401,15 +406,15 @@ public class WaterMapTest
 	 * A walled pool, 2 tiles by 4 (extended x 80-81, y 80-83) on flat ground, its rim one model standing in the water along
 	 * all four of its edges: vertical faces on the edges' lines from below the surface to above it.
 	 */
-	private static WaterMap walledPool()
+	private static WaterMap walledPool(float[][] edges)
 	{
-		int x0 = 80 * 128, x1 = 82 * 128, z0 = 80 * 128, z1 = 84 * 128;
+		int x0 = 80 * 128, z0 = 80 * 128;
 		// the model's origin: the middle of the pool's sw tile, scene local
 		int ox = x0 + 64, oz = z0 + 64;
-		float[][] edges = {{x0, z0, x0, z1}, {x1, z0, x1, z1}, {x0, z0, x1, z0}, {x0, z1, x1, z1}};
-		float[] vx = new float[16], vy = new float[16], vz = new float[16];
-		int[] f1 = new int[8], f2 = new int[8], f3 = new int[8];
-		for (int e = 0; e < 4; ++e)
+		int n = edges.length;
+		float[] vx = new float[4 * n], vy = new float[4 * n], vz = new float[4 * n];
+		int[] f1 = new int[2 * n], f2 = new int[2 * n], f3 = new int[2 * n];
+		for (int e = 0; e < n; ++e)
 		{
 			float[] l = edges[e];
 			for (int k = 0; k < 4; ++k)
@@ -425,7 +430,7 @@ public class WaterMapTest
 			f2[e * 2 + 1] = e * 4 + 3;
 			f3[e * 2 + 1] = e * 4 + 2;
 		}
-		int[] colors = new int[8];
+		int[] colors = new int[2 * n];
 		Model rim = proxy(Model.class, m ->
 		{
 			switch (m)
@@ -446,9 +451,9 @@ public class WaterMapTest
 				case "getFaceColors3":
 					return colors;
 				case "getVerticesCount":
-					return 16;
+					return 4 * n;
 				case "getFaceCount":
-					return 8;
+					return 2 * n;
 				default:
 					return null;
 			}
@@ -475,7 +480,7 @@ public class WaterMapTest
 		{
 			for (int y = 0; y < N; ++y)
 			{
-				boolean water = x >= 80 && x < 82 && y >= 80 && y < 84;
+				boolean water = x >= 80 && x < 84 && y >= 80 && y < 84;
 				tiles[0][x][y] = tile(x, y, water ? 1 : -1, x == 80 && y == 80 ? ground : null);
 			}
 		}
@@ -499,16 +504,24 @@ public class WaterMapTest
 	}
 
 	@Test
-	public void aRimFoamsAlongAllFourEdgesOfAPool()
+	public void foamGathersAroundWhatStandsInThePoolNotAlongItsRim()
 	{
-		WaterMap m = walledPool();
 		int cells = WaterMap.CONTACT_RES, size = WaterMap.CONTACT_SIZE;
-		// the cells just inside each edge, halfway along it
-		int west = m.contact[82 * cells * size + 80 * cells] & 255;
-		int east = m.contact[82 * cells * size + 82 * cells - 1] & 255;
-		int south = m.contact[80 * cells * size + 81 * cells] & 255;
-		int north = m.contact[(84 * cells - 1) * size + 81 * cells] & 255;
-		assertTrue("west " + west, west > 128);
+		// a 4 x 4 pool (80-83) walled in: the walls cross the surface along its edges, and raise no foam
+		float p0 = 80 * 128, p1 = 84 * 128;
+		WaterMap rim = walledPool(new float[][]{{p0, p0, p0, p1}, {p1, p0, p1, p1}, {p0, p0, p1, p0}, {p0, p1, p1, p1}});
+		for (int i = 0; rim.contact != null && i < rim.contact.length; ++i)
+		{
+			assertEquals("cell " + i, 0, rim.contact[i] & 255);
+		}
+		// a pillar standing in the middle, its faces on the tile lines 81 and 83: as much foam on every side of it, whichever
+		// way a line rounds
+		float a = 81 * 128, b = 83 * 128;
+		WaterMap post = walledPool(new float[][]{{a, a, a, b}, {b, a, b, b}, {a, a, b, a}, {a, b, b, b}});
+		int c = 82 * cells, lo = 81 * cells - 2, hi = 83 * cells + 1;
+		int west = post.contact[c * size + lo] & 255, east = post.contact[c * size + hi] & 255;
+		int south = post.contact[lo * size + c] & 255, north = post.contact[hi * size + c] & 255;
+		assertTrue("west " + west, west > 0);
 		assertEquals("east as west", west, east);
 		assertEquals("north as south", south, north);
 		assertEquals("south as west", west, south);
