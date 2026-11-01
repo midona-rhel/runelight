@@ -29,27 +29,36 @@ public final class WeatherField
 	public static final int CELL = CELL_TILES * 128;
 	// the fog channel holds fog / FOG_RANGE (FogClimate caps fog at 3.2)
 	public static final float FOG_RANGE = 4;
-	// cells of blur on each side, on top of the bilinear filter: region borders blend over about 80 tiles
+	// the ground's (wet, snow cover) cells of blur on each side, on top of the bilinear filter: a snowy region keeps its
+	// own cover up to about 40 tiles from its border
 	static final int BLUR = 2;
 	private static final float[] KERNEL = {1, 2, 3, 2, 1};
-	// seconds a biome's change of weather takes to blend its targets over, before the cells' own easing
-	static final float TRANSITION_SECONDS = 40;
-	// share of the way to their target cover at which the clouds let all the rain or snow fall (from PRECIP_GATE)
-	static final float PRECIP_FULL = 0.97f;
+	// the weather's (clouds, rain, snow, fog, the look): a Gaussian of WEATHER_SIGMA cells, so crossing a region's
+	// border is a walk through a gradient of about 90 tiles, not a change in a few dozen
+	static final int WEATHER_BLUR = 5;
+	private static final float WEATHER_SIGMA = 2;
+	private static final float[] WEATHER_KERNEL = gaussian(WEATHER_BLUR, WEATHER_SIGMA);
 	// the sky's cells of blur on each side (a Gaussian of SKY_SIGMA cells): the clouds are blobs of about four cells,
 	// and a cover that changes within one makes their outlines follow the bilinear grid, straight edges that kink at
 	// every cell line; over about a dozen cells the cover changes across several clouds instead
 	static final int SKY_BLUR = 6;
 	private static final float SKY_SIGMA = 3;
-	private static final float[] SKY_KERNEL = new float[2 * SKY_BLUR + 1];
+	private static final float[] SKY_KERNEL = gaussian(SKY_BLUR, SKY_SIGMA);
 
-	static
+	private static float[] gaussian(int radius, float sigma)
 	{
-		for (int k = -SKY_BLUR; k <= SKY_BLUR; ++k)
+		float[] k = new float[2 * radius + 1];
+		for (int i = -radius; i <= radius; ++i)
 		{
-			SKY_KERNEL[k + SKY_BLUR] = (float) Math.exp(-k * k / (2.0 * SKY_SIGMA * SKY_SIGMA));
+			k[i + radius] = (float) Math.exp(-i * i / (2.0 * sigma * sigma));
 		}
+		return k;
 	}
+
+	// seconds a biome's change of weather takes to blend its targets over, before the cells' own easing
+	static final float TRANSITION_SECONDS = 40;
+	// share of the way to their target cover at which the clouds let all the rain or snow fall (from PRECIP_GATE)
+	static final float PRECIP_FULL = 0.97f;
 
 	// channels of the eased state; the first six are uploaded as textures (8 bits)
 	public static final int COVER = 0, RAIN = 1, SNOW = 2, FOG = 3, WET = 4, SNOW_COVER = 5, GPU_CHANNELS = 6;
@@ -432,45 +441,29 @@ public final class WeatherField
 		float[] tmp = blurTmp;
 		for (int c = 0; c < CHANNELS; ++c)
 		{
-			float[] src = state[c];
-			for (int z = 0; z < sizeZ; ++z)
+			boolean ground = c == WET || c == SNOW_COVER;
+			if (!fillIfEven(state[c], smooth[c]))
 			{
-				for (int x = 0; x < sizeX; ++x)
-				{
-					float sum = 0, w = 0;
-					for (int k = -BLUR; k <= BLUR; ++k)
-					{
-						int xx = Math.max(0, Math.min(sizeX - 1, x + k));
-						sum += KERNEL[k + BLUR] * src[z * sizeX + xx];
-						w += KERNEL[k + BLUR];
-					}
-					tmp[z * sizeX + x] = sum / w;
-				}
+				blur(state[c], smooth[c], tmp, ground ? KERNEL : WEATHER_KERNEL);
 			}
-			float range = c == FOG ? FOG_RANGE : 1;
-			for (int z = 0; z < sizeZ; ++z)
+			if (c < GPU_CHANNELS)
 			{
-				for (int x = 0; x < sizeX; ++x)
+				float range = c == FOG ? FOG_RANGE : 1;
+				float[] v = smooth[c];
+				for (int i = 0; i < n; ++i)
 				{
-					float sum = 0, w = 0;
-					for (int k = -BLUR; k <= BLUR; ++k)
-					{
-						int zz = Math.max(0, Math.min(sizeZ - 1, z + k));
-						sum += KERNEL[k + BLUR] * tmp[zz * sizeX + x];
-						w += KERNEL[k + BLUR];
-					}
-					float v = sum / w;
-					if (c < GPU_CHANNELS)
-					{
-						v = Math.round(Math.max(0, Math.min(1, v / range)) * 255) / 255f * range;
-					}
-					smooth[c][z * sizeX + x] = v;
+					v[i] = Math.round(Math.max(0, Math.min(1, v[i] / range)) * 255) / 255f * range;
 				}
 			}
 		}
-		blurSky(state[COVER], skySmooth[0], tmp);
-		blurSky(state[CLOUD_WISP], skySmooth[1], tmp);
-		blurSky(state[CLOUD_DARK], skySmooth[2], tmp);
+		int[] sky = {COVER, CLOUD_WISP, CLOUD_DARK};
+		for (int k = 0; k < sky.length; ++k)
+		{
+			if (!fillIfEven(state[sky[k]], skySmooth[k]))
+			{
+				blur(state[sky[k]], skySmooth[k], tmp, SKY_KERNEL);
+			}
+		}
 		boolean changed = false;
 		for (int i = 0; i < n; ++i)
 		{
@@ -491,19 +484,35 @@ public final class WeatherField
 		}
 	}
 
-	/** Separable blur with the sky's kernel, edges clamped. */
-	private void blurSky(float[] src, float[] dst, float[] tmp)
+	/** A channel with one value everywhere blurs to itself: fills dst with it and says so, else leaves dst. */
+	private static boolean fillIfEven(float[] src, float[] dst)
 	{
+		float v = src.length > 0 ? src[0] : 0;
+		for (float x : src)
+		{
+			if (x != v)
+			{
+				return false;
+			}
+		}
+		java.util.Arrays.fill(dst, v);
+		return true;
+	}
+
+	/** Separable blur with a kernel of odd length, edges clamped. */
+	private void blur(float[] src, float[] dst, float[] tmp, float[] kernel)
+	{
+		int r = kernel.length / 2;
 		for (int z = 0; z < sizeZ; ++z)
 		{
 			for (int x = 0; x < sizeX; ++x)
 			{
 				float sum = 0, w = 0;
-				for (int k = -SKY_BLUR; k <= SKY_BLUR; ++k)
+				for (int k = -r; k <= r; ++k)
 				{
 					int xx = Math.max(0, Math.min(sizeX - 1, x + k));
-					sum += SKY_KERNEL[k + SKY_BLUR] * src[z * sizeX + xx];
-					w += SKY_KERNEL[k + SKY_BLUR];
+					sum += kernel[k + r] * src[z * sizeX + xx];
+					w += kernel[k + r];
 				}
 				tmp[z * sizeX + x] = sum / w;
 			}
@@ -513,11 +522,11 @@ public final class WeatherField
 			for (int x = 0; x < sizeX; ++x)
 			{
 				float sum = 0, w = 0;
-				for (int k = -SKY_BLUR; k <= SKY_BLUR; ++k)
+				for (int k = -r; k <= r; ++k)
 				{
 					int zz = Math.max(0, Math.min(sizeZ - 1, z + k));
-					sum += SKY_KERNEL[k + SKY_BLUR] * tmp[zz * sizeX + x];
-					w += SKY_KERNEL[k + SKY_BLUR];
+					sum += kernel[k + r] * tmp[zz * sizeX + x];
+					w += kernel[k + r];
 				}
 				dst[z * sizeX + x] = sum / w;
 			}
