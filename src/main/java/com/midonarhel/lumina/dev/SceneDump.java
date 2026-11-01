@@ -200,7 +200,10 @@ public final class SceneDump
 		{
 			long start = System.nanoTime();
 			describe(m);
-			byte[] zones = zones(m);
+			Path dir = root.resolve(n);
+			Files.createDirectories(dir);
+			// the zones go straight to their file, read back one at a time: all of them at once are hundreds of MB
+			writeZones(dir.resolve("zones.bin.gz"), m);
 			byte[] derived = derived(m);
 			byte[] textures = textures();
 			byte[] dynamic = bytes(t::write);
@@ -211,12 +214,11 @@ public final class SceneDump
 			byte[] uiBytes = uiBytes(m.uiWidth, m.uiHeight, ui != null ? ui : new int[0]);
 			log.info("Scene dump {}: collected in {} ms ({} events, {} models), writing", n, (System.nanoTime() - start) / 1_000_000,
 				t.events.size(), t.models.size());
-			Path dir = root.resolve(n);
 			Thread w = new Thread(() ->
 			{
 				try
 				{
-					write(dir, m, zones, derived, textures, dynamic, uiBytes);
+					write(dir, m, null, derived, textures, dynamic, uiBytes);
 					log.info("Scene dump written: {}", dir);
 				}
 				catch (IOException ex)
@@ -395,7 +397,7 @@ public final class SceneDump
 		return out;
 	}
 
-	private byte[] zones(Manifest m) throws IOException
+	private void writeZones(Path file, Manifest m) throws IOException
 	{
 		List<Integer> views = new ArrayList<>();
 		List<LuminaPlugin.SceneContext> contexts = new ArrayList<>();
@@ -410,28 +412,47 @@ public final class SceneDump
 			}
 		}
 		m.worldViews = views;
-		List<int[]> sizes = new ArrayList<>();
-		List<List<ZoneSnapshot>> zones = new ArrayList<>();
-		for (int v = 0; v < views.size(); ++v)
+		try (DataOutputStream out = new DataOutputStream(new BufferedOutputStream(fastGzip(file), 1 << 16)))
 		{
-			LuminaPlugin.SceneContext ctx = contexts.get(v);
-			sizes.add(new int[]{views.get(v), ctx.sizeX, ctx.sizeZ});
-			List<ZoneSnapshot> list = new ArrayList<>();
-			for (int x = 0; x < ctx.sizeX; ++x)
+			out.writeInt(views.size());
+			for (int v = 0; v < views.size(); ++v)
 			{
-				for (int z = 0; z < ctx.sizeZ; ++z)
+				LuminaPlugin.SceneContext ctx = contexts.get(v);
+				out.writeInt(views.get(v));
+				out.writeInt(ctx.sizeX);
+				out.writeInt(ctx.sizeZ);
+				int count = 0;
+				for (int x = 0; x < ctx.sizeX; ++x)
 				{
-					Zone zone = ctx.zones[x][z];
-					ZoneSnapshot s = zone != null ? ZoneSnapshot.of(zone, x, z) : null;
-					if (s != null)
+					for (int z = 0; z < ctx.sizeZ; ++z)
 					{
-						list.add(s);
+						count += ZoneSnapshot.dumpable(ctx.zones[x][z]) ? 1 : 0;
+					}
+				}
+				out.writeInt(count);
+				for (int x = 0; x < ctx.sizeX; ++x)
+				{
+					for (int z = 0; z < ctx.sizeZ; ++z)
+					{
+						ZoneSnapshot s = ZoneSnapshot.of(ctx.zones[x][z], x, z);
+						if (s != null)
+						{
+							s.write(out);
+						}
 					}
 				}
 			}
-			zones.add(list);
 		}
-		return zonesBytes(sizes, zones);
+	}
+
+	private static OutputStream fastGzip(Path file) throws IOException
+	{
+		return new GZIPOutputStream(Files.newOutputStream(file), 1 << 16)
+		{
+			{
+				def.setLevel(java.util.zip.Deflater.BEST_SPEED);
+			}
+		};
 	}
 
 	/** zones.bin.gz's content: per world view its id, size in zones and drawn zones. */
@@ -615,14 +636,17 @@ public final class SceneDump
 		});
 	}
 
-	/** The dump's files into dir (the reference capture is FrameCapture's). */
+	/** The dump's files into dir (the reference capture is FrameCapture's; zones null: written already). */
 	static void write(Path dir, Manifest m, byte[] zones, byte[] derived, byte[] textures, byte[] dynamic, byte[] ui)
 		throws IOException
 	{
 		Gson gson = new GsonBuilder().setPrettyPrinting().serializeSpecialFloatingPointValues().create();
 		Files.createDirectories(dir);
 		Files.write(dir.resolve("manifest.json"), gson.toJson(m).getBytes(StandardCharsets.UTF_8));
-		gzip(dir.resolve("zones.bin.gz"), zones);
+		if (zones != null)
+		{
+			gzip(dir.resolve("zones.bin.gz"), zones);
+		}
 		gzip(dir.resolve("derived.bin.gz"), derived);
 		gzip(dir.resolve("textures.bin.gz"), textures);
 		gzip(dir.resolve("dynamic.bin.gz"), dynamic);
@@ -757,20 +781,11 @@ public final class SceneDump
 
 	static void writeInts(DataOutputStream out, int[] a) throws IOException
 	{
-		out.writeInt(a.length);
-		for (int v : a)
-		{
-			out.writeInt(v);
-		}
+		ZoneSnapshot.writeInts(out, a);
 	}
 
 	static int[] readInts(DataInputStream in) throws IOException
 	{
-		int[] a = new int[in.readInt()];
-		for (int i = 0; i < a.length; ++i)
-		{
-			a[i] = in.readInt();
-		}
-		return a;
+		return ZoneSnapshot.readInts(in);
 	}
 }

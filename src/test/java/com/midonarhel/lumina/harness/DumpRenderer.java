@@ -130,6 +130,8 @@ public final class DumpRenderer implements AutoCloseable
 		plugin.lastCanvasWidth = plugin.lastCanvasHeight = -1;
 		plugin.lastStretchedCanvasWidth = plugin.lastStretchedCanvasHeight = -1;
 		plugin.tempModels.setThreads(plugin.renderThreads());
+		// a storm strikes at random: the same strikes every time
+		PlainData.set(plugin.weather.getLightning(), "random", new java.util.Random(1));
 		restore();
 	}
 

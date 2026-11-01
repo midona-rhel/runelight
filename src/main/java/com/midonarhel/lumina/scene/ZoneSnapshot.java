@@ -24,10 +24,17 @@ public final class ZoneSnapshot
 	public final List<int[]> alphaModels = new ArrayList<>();
 	public final List<int[]> alphaFaces = new ArrayList<>();
 
-	/** The drawn zone's data; GL, with the buffers unmapped (null for a zone not drawable). */
+	/** Whether the zone is drawn and its buffers can be read back (unmapped). */
+	public static boolean dumpable(Zone zone)
+	{
+		return zone != null && zone.initialized && (zone.vboO == null || !zone.vboO.mapped)
+			&& (zone.vboA == null || !zone.vboA.mapped);
+	}
+
+	/** The drawn zone's data; GL, with the buffers unmapped (null for a zone not dumpable). */
 	public static ZoneSnapshot of(Zone zone, int x, int z)
 	{
-		if (!zone.initialized || zone.vboO != null && zone.vboO.mapped || zone.vboA != null && zone.vboA.mapped)
+		if (!dumpable(zone))
 		{
 			return null;
 		}
@@ -184,7 +191,8 @@ public final class ZoneSnapshot
 		return s;
 	}
 
-	private static void writeInts(DataOutputStream out, int[] a) throws IOException
+	/** The array's length (-1 for null) and its ints big-endian, as DataOutputStream would, in one write. */
+	public static void writeInts(DataOutputStream out, int[] a) throws IOException
 	{
 		if (a == null)
 		{
@@ -192,24 +200,22 @@ public final class ZoneSnapshot
 			return;
 		}
 		out.writeInt(a.length);
-		for (int v : a)
-		{
-			out.writeInt(v);
-		}
+		java.nio.ByteBuffer b = java.nio.ByteBuffer.allocate(a.length * Integer.BYTES);
+		b.asIntBuffer().put(a);
+		out.write(b.array());
 	}
 
-	private static int[] readInts(DataInputStream in) throws IOException
+	public static int[] readInts(DataInputStream in) throws IOException
 	{
 		int n = in.readInt();
 		if (n < 0)
 		{
 			return null;
 		}
+		byte[] bytes = new byte[n * Integer.BYTES];
+		in.readFully(bytes);
 		int[] a = new int[n];
-		for (int i = 0; i < n; ++i)
-		{
-			a[i] = in.readInt();
-		}
+		java.nio.ByteBuffer.wrap(bytes).asIntBuffer().get(a);
 		return a;
 	}
 

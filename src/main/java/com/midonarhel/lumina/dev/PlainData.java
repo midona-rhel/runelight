@@ -250,17 +250,15 @@ public final class PlainData
 			out.writeInt(n);
 			if (ct == int.class)
 			{
-				for (int x : (int[]) v)
-				{
-					out.writeInt(x);
-				}
+				ByteBuffer b = ByteBuffer.allocate(n * 4);
+				b.asIntBuffer().put((int[]) v);
+				out.write(b.array());
 			}
 			else if (ct == float.class)
 			{
-				for (float x : (float[]) v)
-				{
-					out.writeFloat(x);
-				}
+				ByteBuffer b = ByteBuffer.allocate(n * 4);
+				b.asFloatBuffer().put((float[]) v);
+				out.write(b.array());
 			}
 			else if (ct == byte.class)
 			{
@@ -507,20 +505,18 @@ public final class PlainData
 			{
 				case "int":
 				{
+					byte[] bytes = new byte[n * 4];
+					in.readFully(bytes);
 					int[] a = new int[n];
-					for (int i = 0; i < n; ++i)
-					{
-						a[i] = in.readInt();
-					}
+					ByteBuffer.wrap(bytes).asIntBuffer().get(a);
 					return a;
 				}
 				case "float":
 				{
+					byte[] bytes = new byte[n * 4];
+					in.readFully(bytes);
 					float[] a = new float[n];
-					for (int i = 0; i < n; ++i)
-					{
-						a[i] = in.readFloat();
-					}
+					ByteBuffer.wrap(bytes).asFloatBuffer().get(a);
 					return a;
 				}
 				case "byte":
