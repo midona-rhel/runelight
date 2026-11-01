@@ -11,4 +11,10 @@ public final class VoxelsRestore
 	{
 		builder.restore((SceneVoxels) voxels);
 	}
+
+	/** With the models that stop the light map's lamps (null: a dump from before they were dumped). */
+	public static void restore(VoxelBuilder builder, Object voxels, Object models)
+	{
+		builder.restore((SceneVoxels) voxels, (ModelBlockers) models);
+	}
 }

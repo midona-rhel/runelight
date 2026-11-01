@@ -499,6 +499,8 @@ public final class SceneDump
 			? plugin.clientUploader.water.contactModels(wv.getScene()) : null);
 		d.put("fogGround", PlainData.get(plugin.volumetricFog, "ground"));
 		d.put("voxels", plugin.voxelBuilder.getVoxels());
+		// the models that stop the light map's lamps, from the zones' triangles (the zones' captures are gone by now)
+		d.put("voxels.models", plugin.voxelBuilder.getModelBlockers());
 		var buildings = plugin.getBuildingLights();
 		if (buildings != null)
 		{
