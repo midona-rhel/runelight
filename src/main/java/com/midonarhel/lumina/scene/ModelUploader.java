@@ -24,6 +24,9 @@
  */
 package com.midonarhel.lumina.scene;
 
+import com.midonarhel.lumina.LuminaPlugin;
+import com.midonarhel.lumina.water.WaterMap;
+
 import com.midonarhel.lumina.*;
 
 import java.nio.IntBuffer;
@@ -761,6 +764,14 @@ public class ModelUploader
 				sv0 = SurfaceMaterials.fakeHeight(verticesY[triangleA], span[1]);
 				sv1 = SurfaceMaterials.fakeHeight(verticesY[triangleB], span[1]);
 				sv2 = SurfaceMaterials.fakeHeight(verticesY[triangleC], span[1]);
+				WaterMap w = water;
+				if (w != null && WaterMap.fallFace(vx1, vy1, vz1, vx2, vy2, vz2, vx3, vy3, vz3))
+				{
+					// a fall shows the beds of the pools it pours from and lands in, as they show under their water
+					color1 = fallColor(w, vx1, vy1, vz1, color1);
+					color2 = fallColor(w, vx2, vy2, vz2, color2);
+					color3 = fallColor(w, vx3, vy3, vz3, color3);
+				}
 			}
 			texture |= bits;
 
@@ -777,6 +788,23 @@ public class ModelUploader
 		}
 
 		return len;
+	}
+
+	/**
+	 * The scene's water, for the falls' colours: set with each scene swap (SceneLoader), read by every thread's uploader.
+	 */
+	public static volatile WaterMap water;
+
+	/**
+	 * A fall's vertex at scene local (x, y, z): the colour of the bed of the water corner it belongs to (WaterMap.fallCorner,
+	 * as the scene uploader drew it), or its own without one.
+	 */
+	private static int fallColor(WaterMap w, float x, float y, float z, int own)
+	{
+		int off = LuminaPlugin.SCENE_OFFSET << 7;
+		int[] c = w.fallCorner((int) x + off, (int) y, (int) z + off);
+		int hsl = c == null ? -1 : w.bedCorner(c[0], c[1]);
+		return hsl < 0 ? own : hsl;
 	}
 
 	static void put2222(IntBuffer vb, int x, int y, int z, int w)

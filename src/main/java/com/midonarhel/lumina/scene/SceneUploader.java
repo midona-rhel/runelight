@@ -1010,19 +1010,13 @@ public class SceneUploader
 	 * corner is on it, else the bed's own blended toward the color of the bank corners within BANK_REACH corners
 	 * (the nearer the more, darkened with depth as the bed's own is), the more the nearer the closest of them is.
 	 */
-	// a fake water face is a fall's when its normal's vertical part is below this (water.glsl FALL_STEEP)
-	private static final float FALL_FACE = 0.5f;
-
 	/**
-	 * Whether the face over model vertices a, b, c (modelLocal*I) stands steep enough to be a fall's.
+	 * Whether the face over model vertices a, b, c (modelLocal*I) stands steep enough to be a fall's (WaterMap.fallFace).
 	 */
 	private boolean fallFace(int a, int b, int c)
 	{
-		float ax = modelLocalXI[b] - modelLocalXI[a], ay = modelLocalYI[b] - modelLocalYI[a], az = modelLocalZI[b] - modelLocalZI[a];
-		float bx = modelLocalXI[c] - modelLocalXI[a], by = modelLocalYI[c] - modelLocalYI[a], bz = modelLocalZI[c] - modelLocalZI[a];
-		float nx = ay * bz - az * by, ny = az * bx - ax * bz, nz = ax * by - ay * bx;
-		float len = (float) Math.sqrt(nx * nx + ny * ny + nz * nz);
-		return len > 1e-3f && Math.abs(ny) / len < FALL_FACE;
+		return WaterMap.fallFace(modelLocalXI[a], modelLocalYI[a], modelLocalZI[a], modelLocalXI[b], modelLocalYI[b],
+			modelLocalZI[b], modelLocalXI[c], modelLocalYI[c], modelLocalZI[c]);
 	}
 
 	/**
@@ -1036,6 +1030,14 @@ public class SceneUploader
 	}
 
 	private int bedCornerColor(int cx, int cy, int[][] heights)
+	{
+		int c = bedCornerColorOf(cx, cy, heights);
+		// noted for the falls the dynamic models draw (ModelUploader)
+		water.setBedCorner(cx, cy, c);
+		return c;
+	}
+
+	private int bedCornerColorOf(int cx, int cy, int[][] heights)
 	{
 		int own = water.bedColor(cx, cy, water.depthLevel(cx, cy));
 		int hue = 0, sat = 0, light = 0, count = 0, nearest = BANK_REACH + 1;

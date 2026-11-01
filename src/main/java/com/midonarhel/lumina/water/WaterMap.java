@@ -846,6 +846,54 @@ public final class WaterMap
 		}
 	}
 
+	// per corner: the bed's colour there as the scene uploader drew it (SceneUploader.bedCornerColor), -1 where none; for
+	// the falls the dynamic models draw (ModelUploader). Made when first set: a map read back from a scene dump has none.
+	private volatile int[] bedCorner;
+
+	/** Note the bed's colour at corner (cx, cy) as the scene uploader drew it. */
+	public void setBedCorner(int cx, int cy, int hsl)
+	{
+		int[] b = bedCorner;
+		if (b == null)
+		{
+			synchronized (this)
+			{
+				b = bedCorner;
+				if (b == null)
+				{
+					b = new int[CORNERS * CORNERS];
+					java.util.Arrays.fill(b, -1);
+					bedCorner = b;
+				}
+			}
+		}
+		if (cx >= 0 && cy >= 0 && cx < CORNERS && cy < CORNERS)
+		{
+			b[cy * CORNERS + cx] = hsl;
+		}
+	}
+
+	/** The bed's colour at corner (cx, cy) as the scene uploader drew it, or -1. */
+	public int bedCorner(int cx, int cy)
+	{
+		int[] b = bedCorner;
+		return b == null || cx < 0 || cy < 0 || cx >= CORNERS || cy >= CORNERS ? -1 : b[cy * CORNERS + cx];
+	}
+
+	/**
+	 * Whether a fake water face (vertices x, y, z) stands steep enough to be a fall's: its normal's vertical part below
+	 * FALL_FACE (water.glsl FALL_STEEP).
+	 */
+	public static boolean fallFace(float ax, float ay, float az, float bx, float by, float bz, float cx, float cy, float cz)
+	{
+		float ux = bx - ax, uy = by - ay, uz = bz - az, vx = cx - ax, vy = cy - ay, vz = cz - az;
+		float nx = uy * vz - uz * vy, ny = uz * vx - ux * vz, nz = ux * vy - uy * vx;
+		float len = (float) Math.sqrt(nx * nx + ny * ny + nz * nz);
+		return len > 1e-3f && Math.abs(ny) / len < FALL_FACE;
+	}
+
+	private static final float FALL_FACE = 0.5f;
+
 	/**
 	 * The water corner a waterfall's vertex at extended world (x, height, z) takes its colour from, {cx, cy, level}: of the
 	 * water tiles within a tile of it, the one whose surface (its lowest corner) is nearest its height, and that tile's
