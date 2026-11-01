@@ -130,6 +130,30 @@ public final class SyntheticDump
 		return l;
 	}
 
+	/**
+	 * The synthetic scene with a wall and a lamp: a north-south wall between local tiles 54 and 55 from z 46 to 58,
+	 * and east of it a warm lamp of six tiles' reach a little above the ground; the box's east face and the ground west
+	 * of the wall are behind it.
+	 */
+	public static SceneDump.Loaded withWallAndLamp()
+	{
+		SceneDump.Loaded l = make();
+		int[][][] flags = new int[4][104][104];
+		for (int z = 46; z < 58; ++z)
+		{
+			flags[0][55][z] |= com.midonarhel.lumina.visibility.WallMap.LOS_WEST;
+			flags[0][54][z] |= com.midonarhel.lumina.visibility.WallMap.LOS_EAST;
+		}
+		l.derived.put("buildings.walls", com.midonarhel.lumina.visibility.WallMap.build(flags, null, 184, 40, 1));
+		List<com.midonarhel.lumina.light.PointLight> lamps = new ArrayList<>();
+		lamps.add(new com.midonarhel.lumina.light.PointLight().set(LAMP_X, -120, MID, 6 * 128, 1f, 0.75f, 0.45f, 6f).onPlane(0));
+		l.derived.put("lamps.collected", lamps);
+		l.derived.put("lamps.steady", lamps);
+		return l;
+	}
+
+	public static final int LAMP_X = (int) (57.5 * 128);
+
 	private static FrameTape.Event event(int type, int[] ints)
 	{
 		FrameTape.Event e = new FrameTape.Event();

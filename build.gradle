@@ -68,3 +68,8 @@ tasks.register('renderDump', JavaExec) {
 		args = [project.property('dump')] + (project.hasProperty('args') ? project.property('args').toString().split(' ').findAll { it } : [])
 	}
 }
+
+// -Dlumina.dump=name (and the other lumina.* properties) reach the tests: OfflineRenderDumpTest draws and checks that dump
+test {
+	systemProperties System.getProperties().findAll { it.key.toString().startsWith('lumina.') }
+}
