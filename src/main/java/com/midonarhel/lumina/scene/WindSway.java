@@ -24,6 +24,7 @@ import static org.lwjgl.opengl.GL33C.glUniform2f;
  *   bit  6     jiggle: a small rustle up and down instead of a bend (ivy on walls)
  *   bits 7-14  bend weight: world units the vertex moves per unit of bend, square-root coded. It follows a bend
  *              curve of the vertex's height within its object: 0 at the base, growing faster toward the top
+ * Every scenery vertex carries its object's anchor, swaying or not, for the snow (vert.glsl's fSnowAnchor).
  * The code stays positive (the short is read as a float) and below 128 means still, so the 1 that dynamic models
  * read as w (their position has 3 floats) is still too. Animated objects, drawn in that dynamic format, don't
  * sway: they already move on their own.
@@ -164,7 +165,8 @@ public final class WindSway
 		int mode = model & MODE_MASK;
 		if (mode == 0 || height <= 0)
 		{
-			return 0;
+			// still, with its anchor: the snow takes the object as one body by it (vert.glsl's fSnowAnchor)
+			return anchor & 63;
 		}
 		float frac = clamp(-y / height, 0, 1);
 		if ((model & INVERT) != 0)
@@ -193,7 +195,7 @@ public final class WindSway
 		int bend = Math.round((float) Math.sqrt(Math.min(units, MAX_HEIGHT) / MAX_HEIGHT) * BEND_MAX);
 		if (bend == 0)
 		{
-			return 0;
+			return anchor & 63;
 		}
 		return bend << BEND_SHIFT | jiggle | anchor & 63;
 	}

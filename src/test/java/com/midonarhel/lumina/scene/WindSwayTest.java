@@ -29,14 +29,25 @@ public class WindSwayTest
 	{
 		int m = material(WindSway.OBJECT, 0, false);
 		int anchor = WindSway.anchor(5 * 128 + 40, 3 * 128);
-		assertEquals(0, WindSway.vertexCode(m, 10, 0, 10, 300, anchor));
-		assertEquals(0, WindSway.vertexCode(m, 10, 20, 10, 300, anchor)); // below the origin
+		// still (under 128), keeping the anchor for the snow
+		assertEquals(anchor, WindSway.vertexCode(m, 10, 0, 10, 300, anchor));
+		assertEquals(anchor, WindSway.vertexCode(m, 10, 20, 10, 300, anchor)); // below the origin
 		int top = WindSway.vertexCode(m, 10, -300, 10, 300, anchor);
 		assertTrue(top >= 128 && top < 32768);
 		assertEquals(300, WindSway.bendUnits(top), 6);
 		assertEquals(anchor, top & 63);
 		// a bend curve, not a shear: half way up bends a third as far (0.5^1.5)
 		assertEquals(300 * Math.pow(0.5, 1.5), WindSway.bendUnits(WindSway.vertexCode(m, 0, -150, 0, 300, anchor)), 4);
+	}
+
+	@Test
+	public void stillObjectsKeepTheirAnchor()
+	{
+		// an object that doesn't sway still carries its anchor tile, read as still, for the snow (vert.glsl)
+		int anchor = WindSway.anchor(13 * 128 + 5, 22 * 128 + 90);
+		int code = WindSway.vertexCode(0, 10, -300, 10, 300, anchor);
+		assertEquals(anchor, code);
+		assertTrue(code < 128);
 	}
 
 	@Test

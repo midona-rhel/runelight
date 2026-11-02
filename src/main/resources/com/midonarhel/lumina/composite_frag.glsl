@@ -282,12 +282,13 @@ struct SceneSample {
   vec4 material;  // materialUnpack
   vec3 faceNormal;
   float end;      // fake water: its distance from the nearer end of the model's water, its foot or its top, world units
+  float anchor;   // anything else: the snow's noise at its object's anchor tile (materialSnowAnchor)
 };
 
 SceneSample sceneSample(ivec2 px, int s) {
   vec4 target = texelFetch(sceneMaterial, px, s);
   return SceneSample(texelFetch(sceneColor, px, s), texelFetch(sceneDepth, px, s).r, texelFetch(sceneNormal, px, s).rgb,
-    materialUnpack(target), materialFaceNormal(target), materialEnd(target));
+    materialUnpack(target), materialFaceNormal(target), materialEnd(target), materialSnowAnchor(target));
 }
 
 // Lights one scene sample of the pixel px: sky or surface, then the transparent layer over it, then the fog.
@@ -355,7 +356,8 @@ vec4 shadeScene(ivec2 px, SceneSample sm, vec4 transparent) {
   }
   // snow and puddles change the surface itself, before it is lit
   vec2 wet = compositePart != 5 && inside && weatherGroundOn == 1
-    ? weatherGroundSurface(color.rgb, n, p, p + cameraPos, vec2(px) + 0.5, material, transparent.a, ground) : vec2(0.0);
+    ? weatherGroundSurface(color.rgb, n, p, p + cameraPos, vec2(px) + 0.5, material, sm.anchor, transparent.a, ground)
+    : vec2(0.0);
 
   float shadow = 1.0;
   vec3 light = vec3(ao);

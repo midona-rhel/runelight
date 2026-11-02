@@ -1254,18 +1254,17 @@ public class SceneUploader
 		}
 
 		final boolean sway = WindSway.sways(material);
-		if (sway)
+		// every object's vertices carry its anchor tile (WindSway.vertexCode), swaying or still: the snow takes the
+		// object as one body by it
+		float height = 0;
+		for (int v = 0; sway && v < vertexCount; ++v)
 		{
-			float height = 0;
-			for (int v = 0; v < vertexCount; ++v)
-			{
-				height = Math.max(height, -vertexY[v]);
-			}
-			int anchor = WindSway.anchor(x + basex, z + basez);
-			for (int v = 0; v < vertexCount; ++v)
-			{
-				swayCodes[v] = WindSway.vertexCode(material, vertexX[v], vertexY[v], vertexZ[v], height, anchor);
-			}
+			height = Math.max(height, -vertexY[v]);
+		}
+		int anchor = WindSway.anchor(x + basex, z + basez);
+		for (int v = 0; v < vertexCount; ++v)
+		{
+			swayCodes[v] = WindSway.vertexCode(material, vertexX[v], vertexY[v], vertexZ[v], height, anchor);
 		}
 
 		// the game's ripples on it, which the water draws itself (WaterMap.contact): 117 HD's list
@@ -1410,13 +1409,13 @@ public class SceneUploader
 			texture |= bits;
 			GpuIntBuffer buf = alpha && !fake ? ab : vb;
 
-			buf.put22224(vx1, vy1, vz1, sway ? swayCodes[triangleA] : 0, alphaBias | color1);
+			buf.put22224(vx1, vy1, vz1, swayCodes[triangleA], alphaBias | color1);
 			buf.put2222(texture, su0, sv0, n1);
 
-			buf.put22224(vx2, vy2, vz2, sway ? swayCodes[triangleB] : 0, alphaBias | color2);
+			buf.put22224(vx2, vy2, vz2, swayCodes[triangleB], alphaBias | color2);
 			buf.put2222(texture, su1, sv1, n2);
 
-			buf.put22224(vx3, vy3, vz3, sway ? swayCodes[triangleC] : 0, alphaBias | color3);
+			buf.put22224(vx3, vy3, vz3, swayCodes[triangleC], alphaBias | color3);
 			buf.put2222(texture, su2, sv2, n3);
 
 			len += 3;
