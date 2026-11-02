@@ -216,10 +216,12 @@ float waterFoamRim(float h) {
 }
 
 // The ripple cells' height at p, in cells, as Water.cells makes them for the water pass's texture: the domes of the
-// jittered points around p added up
-float waterFoamCells(vec2 p) {
+// jittered points around p added up; and its gradient (yz, per cell), for the width of an edge cut from it without
+// derivatives
+vec3 waterFoamCellsD(vec2 p) {
   vec2 id = floor(p);
   float sum = 0.0;
+  vec2 grad = vec2(0.0);
   for (int j = -1; j <= 1; ++j) {
     for (int i = -1; i <= 1; ++i) {
       vec2 c = id + vec2(float(i), float(j));
@@ -227,9 +229,10 @@ float waterFoamCells(vec2 p) {
       vec2 d = (p - at) / 0.85;
       float k = max(1.0 - dot(d, d), 0.0);
       sum += k * k * k;
+      grad += k * k * (-6.0 / 0.85) * d;
     }
   }
-  return min(sum, 1.0);
+  return sum < 1.0 ? vec3(sum, grad) : vec3(1.0, 0.0, 0.0);
 }
 
 // Value noise, not tiling (hashed lattice): -1 to 1

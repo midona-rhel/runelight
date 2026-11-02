@@ -618,11 +618,20 @@ uniform int waterFakeOn;  // the water setting: off draws the faces as their typ
 // a face is a fall when its normal's vertical part is below the second and not a pool's at all below the first
 #define FALL_STEEP vec2(0.5, 0.85)
 // A fall is real water running straight down it at FALL_FLOW world units a second, its ripples and its foam carried with
-// it as running water's are (two phases): the foam over the whole face, the pool's foam cells (waterFoamCells, the contact
-// foam's size), cut as the contact foam's are where something stands in the water
+// it as running water's are (two phases): the foam over the whole face, the pool's foam cells (waterFoamCellsD, the
+// contact foam's size), cut as the contact foam's are where something stands in the water
 #define FALL_FLOW 320.0
 // the pool's foam cells (Water.CELLS across CELL_SCALE_B world units, water_frag.glsl)
 #define POOL_CELL (520.0 / 6.0)
+
+// Where the scene one pixel right of px and one below it lies on the plane through p (camera-relative) facing n, less p:
+// what dFdx and dFdy of the position give in uniform control flow, worked out from those pixels' camera rays
+void waterPixelSteps(ivec2 px, vec3 p, vec3 n, out vec3 stepX, out vec3 stepY) {
+  vec3 rx = reconstructPosition(vec2(px) + vec2(1.5, 0.5), 1.0), ry = reconstructPosition(vec2(px) + vec2(0.5, 1.5), 1.0);
+  float pn = dot(p, n), dx = dot(rx, n), dy = dot(ry, n);
+  stepX = rx * (pn / (abs(dx) > 1e-6 ? dx : 1e-6)) - p;
+  stepY = ry * (pn / (abs(dy) > 1e-6 ? dy : 1e-6)) - p;
+}
 
 // Whether a fake water face with this normal is drawn as a fall (waterFake's down; WaterMap.fallFace's FALL_FACE)
 bool waterFakeFall(vec3 faceN) {
@@ -650,7 +659,13 @@ vec3 waterFake(ivec2 px, vec3 p, vec3 faceN, vec3 albedo, float shadow, float co
   // and down it and carried down it at FALL_FLOW in the two phases running water's are
   float down = waterFakeFall(faceN) ? 1.0 : 0.0;
   vec2 q = mix(world.xz, vec2(dot(world.xz, tang), world.y), down);
-  float footprint = max(length(dFdx(q)), length(dFdy(q)));
+  // how far q moves to the next pixel right and down, on the face's plane: the composite calls this for fake water's
+  // pixels only, where derivatives are undefined (they moved its foam's edges with any change to the composite)
+  vec3 stepX, stepY;
+  waterPixelSteps(px, p, faceN, stepX, stepY);
+  vec2 qx = mix(stepX.xz, vec2(dot(stepX.xz, tang), stepX.y), down);
+  vec2 qy = mix(stepY.xz, vec2(dot(stepY.xz, tang), stepY.y), down);
+  float footprint = max(length(qx), length(qy));
   vec2 slope;
   // the flow's two phases down a fall: its waves and its foam are each two copies dragged down it half a cycle apart,
   // each fading out before it has gone too far, as running water's are: they churn as they go, not slide down whole
@@ -678,8 +693,11 @@ vec3 waterFake(ivec2 px, vec3 p, vec3 faceN, vec3 albedo, float shadow, float co
   // the hard edged foam is (x the tint, y the core)
   vec2 hard = vec2(0.0);
   if (down > 0.0) {
-    float h = waterFoamCells((q - m0) / POOL_CELL) * w0 + waterFoamCells((q + vec2(173.0, 91.0) - m1) / POOL_CELL) * (1.0 - w0);
-    float ha = max(fwidth(h), 1e-4);
+    vec3 h0 = waterFoamCellsD((q - m0) / POOL_CELL), h1 = waterFoamCellsD((q + vec2(173.0, 91.0) - m1) / POOL_CELL);
+    float h = h0.x * w0 + h1.x * (1.0 - w0);
+    // its change over the pixel (fwidth's), from the cells' gradient and the pixel's steps
+    vec2 grad = (h0.yz * w0 + h1.yz * (1.0 - w0)) / POOL_CELL;
+    float ha = max(abs(dot(grad, qx)) + abs(dot(grad, qy)), 1e-4);
     hard = vec2(waterEdge(FOAM_CUT.y - h, ha), waterEdge(FOAM_CUT.x - h, ha));
   }
 
