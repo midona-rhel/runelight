@@ -36,7 +36,7 @@ public class WindTest
 			double t = i * DT;
 			WeatherType type = WeatherTestData.type(seq[(int) (t / 180) % seq.length]);
 			float px = (float) (Math.sin(t / 200) * 6000), pz = (float) (Math.cos(t / 170) * 6000);
-			w.update(t, DT, type.wind, type.gustiness, true, true, px, pz);
+			w.update(t, DT, type.windIn("GRASSLAND"), WeatherType.gustiness(type.windIn("GRASSLAND")), true, true, px, pz);
 			float angle = (float) Math.atan2(w.getDirZ(), w.getDirX());
 			assertEquals(1, Math.hypot(w.getDirX(), w.getDirZ()), 1e-5);
 			if (!Float.isNaN(prevAngle))
@@ -68,8 +68,8 @@ public class WindTest
 		assertTrue("strength step " + maxStrengthStep, maxStrengthStep < 0.01f);
 		assertTrue("gust step " + maxGustStep, maxGustStep < 0.06f);
 		assertTrue("time step " + maxTimeStep, maxTimeStep < 0.1f);
-		// light air and a storm both happen, and gusts come and go
-		assertTrue(minStrength < 0.3f && maxStrength > 0.8f);
+		// the region's wind lulls and swells, a storm nudges it up, and gusts come and go
+		assertTrue("strength " + minStrength + " to " + maxStrength, minStrength < 0.35f && maxStrength > 0.8f);
 		float share = gusting / (float) frames;
 		assertTrue("gusting " + share, share > 0.05f && share < 0.6f);
 	}
@@ -148,7 +148,8 @@ public class WindTest
 		WeatherTestData.drive(calm, WeatherMode.CLEAR, true);
 		Weather gale = new Weather();
 		WeatherTestData.drive(gale, WeatherMode.STORM, true);
-		assertTrue(gale.getWind().getStrength() > 3 * calm.getWind().getStrength());
+		// the region decides the wind, the weather nudges it: a storm blows harder than a clear day there
+		assertTrue(gale.getWind().getStrength() > 1.5f * calm.getWind().getStrength());
 		assertTrue(gale.getWind().getGustiness() > calm.getWind().getGustiness());
 		// the water follows it
 		float[] a = new float[3], b = new float[3];

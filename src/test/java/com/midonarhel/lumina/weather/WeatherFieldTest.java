@@ -305,8 +305,8 @@ public class WeatherFieldTest
 			++eased;
 		}
 		assertTrue("only " + eased + " channels eased", eased >= 8);
-		// the wind is eased by Wind and gets the new value at once
-		assertEquals(storm.wind, f.getFocus(WeatherField.WIND), 0.01f);
+		// the wind is eased by Wind and gets the new value at once: the swamp's, nudged by the storm
+		assertEquals(t[WeatherField.WIND], f.getFocus(WeatherField.WIND), 0.01f);
 	}
 
 	@Test

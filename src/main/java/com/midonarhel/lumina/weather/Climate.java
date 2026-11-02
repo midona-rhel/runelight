@@ -29,7 +29,7 @@ import java.util.Map;
 public final class Climate
 {
 	// share of a city's clear forecast slots that are hazy
-	static final float CITY_HAZE = 0.4f;
+	static final float CITY_HAZE = 0.1f;
 	// game days each season lasts
 	public static final int SEASON_DAYS = 7;
 	// degrees per unit of rain or snow falling (forecast amounts, which are about 0.25 to 1.3)

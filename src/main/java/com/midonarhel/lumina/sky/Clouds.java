@@ -21,7 +21,7 @@ public class Clouds
 	private static final int NOISE_SIZE = 128;
 	// share of ragged value noise in the cloud shape, the rest is round Worley puffs
 	private static final float SHAPE_VALUE = 0.65f;
-	// world units per repeat of the noise; must match CLOUD_TILE in clouds.glsl
+	// world units per repeat of the noise; must match CLOUD_SIZE in clouds.glsl
 	private static final double TILE = 32768;
 	// the shader samples at 1/4, 1 and 3 times the tile frequency, so the offset can wrap every 4 tiles
 	private static final double WRAP = TILE * 4;
