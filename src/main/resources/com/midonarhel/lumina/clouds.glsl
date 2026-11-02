@@ -160,26 +160,34 @@ vec3 cloudSkyDir(vec3 dir) {
   return vec3(h.x * sqrt(max(1.0 - s * s, 0.0)), -s, h.y * sqrt(max(1.0 - s * s, 0.0)));
 }
 
-// The weather field's sky at uv as a cubic B-spline over its cells, in four bilinear fetches. Bilinear alone is
-// continuous but its slope jumps at every cell's edge, and the clouds' threshold turns those jumps into hard straight
-// creases: seen from low, a fan of flat panels toward the horizon along the grid's lines. The B-spline's slope runs
-// on across the edges, so the cover only ever changes as a smooth swell.
+// The weather field's sky at uv as a cubic B-spline over its cells. Bilinear alone is continuous but its slope jumps
+// at every cell's edge, and the clouds' threshold turns those jumps into hard straight creases: seen from low, a fan
+// of flat panels toward the horizon along the grid's lines. The B-spline's slope runs on across the edges, so the
+// cover only ever changes as a smooth swell. Sixteen exact texel fetches rather than the usual four bilinear ones: the
+// hardware filters with weights of a few bits, and the four fetches' positions jump by a cell at every cell edge,
+// which left a thin bright line down each edge.
 vec3 cloudSkyField(vec2 uv) {
-  vec2 size = vec2(textureSize(weatherSkyTex, 0));
-  vec2 t = uv * size - 0.5;
+  ivec2 size = textureSize(weatherSkyTex, 0);
+  vec2 t = uv * vec2(size) - 0.5;
   vec2 i = floor(t);
   vec2 f = t - i;
   vec2 f2 = f * f, f3 = f2 * f;
-  vec2 w0 = (1.0 - 3.0 * f + 3.0 * f2 - f3) / 6.0;
-  vec2 w1 = (4.0 - 6.0 * f2 + 3.0 * f3) / 6.0;
-  vec2 w3 = f3 / 6.0;
-  vec2 w2 = 1.0 - w0 - w1 - w3;
-  vec2 g0 = w0 + w1, g1 = w2 + w3;
-  vec2 p0 = (i - 0.5 + w1 / g0) / size, p1 = (i + 1.5 + w3 / g1) / size;
-  return g0.y * (g0.x * textureLod(weatherSkyTex, vec2(p0.x, p0.y), 0.0).rgb
-      + g1.x * textureLod(weatherSkyTex, vec2(p1.x, p0.y), 0.0).rgb)
-    + g1.y * (g0.x * textureLod(weatherSkyTex, vec2(p0.x, p1.y), 0.0).rgb
-      + g1.x * textureLod(weatherSkyTex, vec2(p1.x, p1.y), 0.0).rgb);
+  vec2 w[4] = vec2[](
+    (1.0 - 3.0 * f + 3.0 * f2 - f3) / 6.0,
+    (4.0 - 6.0 * f2 + 3.0 * f3) / 6.0,
+    (1.0 + 3.0 * f + 3.0 * f2 - 3.0 * f3) / 6.0,
+    f3 / 6.0);
+  ivec2 base = ivec2(i) - 1;
+  vec3 sum = vec3(0.0);
+  for (int y = 0; y < 4; ++y) {
+    int ty = clamp(base.y + y, 0, size.y - 1);
+    vec3 row = vec3(0.0);
+    for (int x = 0; x < 4; ++x) {
+      row += w[x].x * texelFetch(weatherSkyTex, ivec2(clamp(base.x + x, 0, size.x - 1), ty), 0).rgb;
+    }
+    sum += w[y].y * row;
+  }
+  return sum;
 }
 
 // The weather of the sky over a world xz (scene coordinates): x cloud cover, y how wispy and high, z darkness offset
