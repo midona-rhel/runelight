@@ -107,7 +107,8 @@ float upsampleAoFog(ivec2 px, float z, vec3 n, out vec4 fog, out float shadow, o
   vec2 hp = fullToHalf(px);
   ivec2 base = ivec2(floor(hp));
   ivec2 maxAo = textureSize(sceneAo, 0) - 1;
-  bool withFog = volumetricFog == 1;
+  // the fog in the same taps when it is at the half targets' size; else on its own (upsampleFog)
+  bool withFog = volumetricFog == 1 && fogRatio == halfRatio;
   vec4 shSum = vec4(0.0);
   float wsum = 0.0;
   vec4 fogSum = vec4(0.0);
@@ -140,7 +141,7 @@ float upsampleAoFog(ivec2 px, float z, vec3 n, out vec4 fog, out float shadow, o
       wsum += w;
     }
   }
-  fog = !withFog ? vec4(0.0, 0.0, 0.0, 1.0)
+  fog = volumetricFog != 1 ? vec4(0.0, 0.0, 0.0, 1.0) : !withFog ? upsampleFog(px, z)
     : fogWsum > 1e-6 ? fogSum / fogWsum : texelFetch(sceneFog, clamp(ivec2(hp + 0.5), ivec2(0), maxAo), 0);
   vec4 sh = wsum > 1e-4 ? shSum / wsum : texelFetch(sceneShadow, clamp(ivec2(hp + 0.5), ivec2(0), maxAo), 0);
   shadow = sh.r;

@@ -591,8 +591,8 @@ public final class Composite
 				&& plugin.lightClusters.hasFogLights();
 			denoiseFog = denoise && plugin.volumetricFog.hasGrain(fogSun, fogShadows, fogLamps);
 			com.midonarhel.lumina.dev.GpuSections.section("fog");
-			plugin.volumetricFog.render(plugin.sceneTargets.fogFbo(denoiseFog), plugin.sceneTargets.getAoWidth(),
-				plugin.sceneTargets.getAoHeight(), plugin.sceneTargets.getHalfRatio(), FOG_NOISE_UNIT,
+			plugin.volumetricFog.render(plugin.sceneTargets.fogFbo(denoiseFog), plugin.sceneTargets.getFogWidth(),
+				plugin.sceneTargets.getFogHeight(), plugin.sceneTargets.getFogRatio(), FOG_NOISE_UNIT,
 				plugin.frameViewProj, plugin.frameInvViewProj, plugin.frameViewport, plugin.glCapabilities.OpenGL45,
 				plugin.frameCameraX, plugin.frameCameraY, plugin.frameCameraZ, (com.midonarhel.lumina.common.Clock.millis() - plugin.startMillis) / 1000f,
 				fogSun, plugin.proceduralSky(), plugin.frameSkyColor, plugin.dayCycle, fogShadows, fogLamps,
@@ -604,6 +604,7 @@ public final class Composite
 		{
 			com.midonarhel.lumina.dev.GpuSections.section("denoise");
 			glUseProgram(plugin.glDenoiseProgram);
+			plugin.frameState.setFrameUniforms(plugin.denoiseFrame);
 			plugin.sceneTargets.denoise(plugin.uniDenoiseFog, AO_TEXTURE_UNIT, SCENE_SHADOW_UNIT, FOG_TEXTURE_UNIT, denoiseFog);
 			plugin.sceneTargets.bindShadow(SCENE_SHADOW_UNIT);
 		}

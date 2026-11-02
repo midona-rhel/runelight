@@ -126,6 +126,19 @@ tasks.register('zoneMemory', JavaExec) {
 	doFirst { args = project.property('args').toString().split(' ').findAll { it } }
 }
 
+// the CPU of a dump frame's dynamic and temporary model uploads alone (scene UploadBench): ./gradlew uploadBench -Pargs="nightref 400"
+tasks.register('uploadBench', JavaExec) {
+	dependsOn testClasses
+	classpath = sourceSets.test.runtimeClasspath
+	mainClass = 'com.midonarhel.lumina.scene.UploadBench'
+	workingDir = projectDir
+	jvmArgs '-Xmx8g'
+	if (project.hasProperty('jvm')) {
+		jvmArgs project.property('jvm').toString().split(' ').findAll { it }
+	}
+	doFirst { args = project.property('args').toString().split(' ').findAll { it } }
+}
+
 // -Dlumina.dump=name (and the other lumina.* properties) reach the tests: OfflineRenderDumpTest draws and checks that dump
 test {
 	systemProperties System.getProperties().findAll { it.key.toString().startsWith('lumina.') }

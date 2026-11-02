@@ -310,5 +310,6 @@ public final class FrameState
 		glUniform4i(u.viewport, plugin.frameViewport[0], plugin.frameViewport[1], plugin.frameViewport[2], plugin.frameViewport[3]);
 		glUniform1i(u.depthZeroToOne, plugin.glCapabilities.OpenGL45 ? 1 : 0);
 		glUniform1f(u.halfRatio, plugin.sceneTargets.getHalfRatio());
+		glUniform1f(u.fogRatio, plugin.sceneTargets.getFogRatio());
 	}
 }
