@@ -333,6 +333,7 @@ public final class SceneLoader
 
 		// size the zones which require upload
 		Stopwatch sw = Stopwatch.createStarted();
+		sizeZones(scene, newZones, NUM_ZONES, NUM_ZONES);
 		int len = 0, lena = 0;
 		int reused = 0, newzones = 0;
 		for (int x = 0; x < NUM_ZONES; ++x)
@@ -344,7 +345,6 @@ public final class SceneLoader
 				{
 					assert zone.glVao == 0;
 					assert zone.glVaoA == 0;
-					plugin.mapUploader.zoneSize(scene, zone, x, z);
 					len += zone.sizeO;
 					lena += zone.sizeA;
 					newzones++;
@@ -623,6 +623,62 @@ public final class SceneLoader
 				threads.append("; where the writers were: ").append(sampler.text());
 			}
 			report.uploadThreads(threads.toString());
+		}
+	}
+
+	/**
+	 * Size the zones that are not initialized: independent of each other, so the loader and the upload threads take
+	 * them in turn (one SceneUploader each), as the upload does. Off the loader's thread only when there are enough.
+	 */
+	private void sizeZones(Scene scene, Zone[][] zones, int sizeX, int sizeZ)
+	{
+		java.util.List<int[]> list = new java.util.ArrayList<>();
+		for (int x = 0; x < sizeX; ++x)
+		{
+			for (int z = 0; z < sizeZ; ++z)
+			{
+				if (!zones[x][z].initialized)
+				{
+					list.add(new int[]{x, z});
+				}
+			}
+		}
+		java.util.concurrent.atomic.AtomicInteger next = new java.util.concurrent.atomic.AtomicInteger();
+		int helpers = client.isClientThread() || list.size() < 16 ? 0 : uploaders.length;
+		@SuppressWarnings("unchecked")
+		java.util.concurrent.Future<?>[] running = new java.util.concurrent.Future[helpers];
+		for (int h = 0; h < helpers; ++h)
+		{
+			SceneUploader up = uploaders[h];
+			up.water = plugin.mapUploader.water;
+			running[h] = uploadThreads.submit(() -> sizeZones(scene, zones, list, next, up));
+		}
+		sizeZones(scene, zones, list, next, plugin.mapUploader);
+		for (java.util.concurrent.Future<?> f : running)
+		{
+			try
+			{
+				f.get();
+			}
+			catch (InterruptedException ex)
+			{
+				Thread.currentThread().interrupt();
+				throw new RuntimeException(ex);
+			}
+			catch (java.util.concurrent.ExecutionException ex)
+			{
+				throw ex.getCause() instanceof RuntimeException ? (RuntimeException) ex.getCause() : new RuntimeException(ex.getCause());
+			}
+		}
+	}
+
+	private static void sizeZones(Scene scene, Zone[][] zones, java.util.List<int[]> list,
+		java.util.concurrent.atomic.AtomicInteger next, SceneUploader uploader)
+	{
+		for (int i; (i = next.getAndIncrement()) < list.size(); )
+		{
+			int[] xz = list.get(i);
+			uploader.zoneSize(scene, zones[xz[0]][xz[1]], xz[0], xz[1]);
 		}
 	}
 
