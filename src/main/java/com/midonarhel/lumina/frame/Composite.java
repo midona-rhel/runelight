@@ -281,6 +281,7 @@ public final class Composite
 		glUniform1i(glGetUniformLocation(p, "shadowCompare"), SHADOW_COMPARE_UNIT);
 		glUniform1i(glGetUniformLocation(p, "lightData"), LIGHT_DATA_UNIT);
 		glUniform1i(glGetUniformLocation(p, "clusterData"), CLUSTER_DATA_UNIT);
+		glUniform1i(glGetUniformLocation(p, "lampCubeAtlas"), LAMP_CUBE_UNIT);
 		glUniform1i(glGetUniformLocation(p, "roomTexels"), ROOM_TEXELS_UNIT);
 		glUniform1i(glGetUniformLocation(p, "cloudHalf"), CLOUD_HALF_UNIT);
 		glUniform1i(glGetUniformLocation(p, "sceneAlpha"), ALPHA_LAYER_UNIT);

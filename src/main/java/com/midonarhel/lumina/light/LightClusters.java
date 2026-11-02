@@ -50,7 +50,13 @@ public class LightClusters
 	public static final int MAP_LAMPS_BASE = LIGHT_TEXELS;
 	static final int MAP_LAMPS_TEXELS = LightMap.TABLE_IDS / 4;
 	public static final int LAMP_REACH_BASE = MAP_LAMPS_BASE + MAP_LAMPS_TEXELS;
-	public static final int LIGHT_MAP_BASE = LAMP_REACH_BASE + LampReach.REGION_TEXELS;
+	// From CLUSTER_BASE the light masks (light_clusters.glsl): a texel whose x is the texels an entry has, then the
+	// CLUSTER_ENTRIES entries, up to MAX_LIGHTS / LIGHTS_PER_TEXEL texels each, their words' bits sent as the texels'
+	// floats and read back with floatBitsToUint. In this buffer rather than their own, the composite's fragment shader
+	// keeps a sampler for the lamps' shadow cubes (macOS takes 16).
+	public static final int CLUSTER_BASE = LAMP_REACH_BASE + LampReach.REGION_TEXELS;
+	static final int CLUSTER_TEXELS = 1 + (CLUSTERS_X * CLUSTERS_Y * CLUSTERS_Z + CLUSTERS_X * CLUSTERS_Y) * (MAX_LIGHTS / LIGHTS_PER_TEXEL);
+	public static final int LIGHT_MAP_BASE = CLUSTER_BASE + CLUSTER_TEXELS;
 
 	private static final int CLUSTER_COUNT = CLUSTERS_X * CLUSTERS_Y * CLUSTERS_Z;
 	// Fog columns, stored after the clusters: per screen tile, the lights that glow in the fog anywhere along its
@@ -62,11 +68,10 @@ public class LightClusters
 	// then the fog columns
 	public static final int CLUSTER_ENTRIES = CLUSTER_COUNT + COLUMN_COUNT;
 
-	// Both buffers rotate through SETS copies, one written a frame: writing a buffer an earlier frame's draws still
+	// The buffer rotates through SETS copies, one written a frame: writing a buffer an earlier frame's draws still
 	// read stalls or copies it on Apple's GL. Each copy is brought up to date when it comes round again.
 	private static final int SETS = 3;
 	private final int[] lightBuffers = new int[SETS], lightTextures = new int[SETS];
-	private final int[] clusterBuffers = new int[SETS], clusterTextures = new int[SETS];
 	private int set;
 	// the walls that stop the lamps, for each lamp's walls code (null: none), and each lamp's map of them
 	private LampWalls walls;
@@ -90,6 +95,9 @@ public class LightClusters
 	private final FloatBuffer lightData = BufferUtils.createFloatBuffer(MAX_LIGHTS * LAMP_TEXELS * 4);
 	// the lamp each index stands for this frame
 	private final PointLight[] keptLights = new PointLight[MAX_LIGHTS];
+	// the lamps' shadow cubes (null: none), and the indices whose cubes are drawn this frame
+	private LampCubes cubes;
+	private final int[] chosen = new int[LampCubes.LAMPS_PER_FRAME];
 	// the frame's lights by importance, most first: packed for sorting, then their indices in the list
 	private final long[] byImportance = new long[MAX_LIGHTS];
 	private final float[] origin = new float[2];
@@ -135,8 +143,6 @@ public class LightClusters
 	{
 		glGenBuffers(lightBuffers);
 		glGenTextures(lightTextures);
-		glGenBuffers(clusterBuffers);
-		glGenTextures(clusterTextures);
 		for (int i = 0; i < SETS; ++i)
 		{
 			glBindBuffer(GL_TEXTURE_BUFFER, lightBuffers[i]);
@@ -152,14 +158,10 @@ public class LightClusters
 				lightMap.invalidate(i);
 			}
 
-			glBindBuffer(GL_TEXTURE_BUFFER, clusterBuffers[i]);
-			bufferTexels[i] = texels;
-			glBufferData(GL_TEXTURE_BUFFER, (long) CLUSTER_ENTRIES * texels * 4 * Integer.BYTES, GL_DYNAMIC_DRAW);
-			// the masks as they are, whether built yet or not, have not been sent
+			// the masks as they are, whether built yet or not, have not been sent, nor their size
+			bufferTexels[i] = -1;
 			clustersSent[i] = clustersBuilt - 1;
 			columnsSent[i] = columnsBuilt - 1;
-			glBindTexture(GL_TEXTURE_BUFFER, clusterTextures[i]);
-			glTexBuffer(GL_TEXTURE_BUFFER, GL_RGBA32UI, clusterBuffers[i]);
 		}
 
 		glBindTexture(GL_TEXTURE_BUFFER, 0);
@@ -172,13 +174,9 @@ public class LightClusters
 		if (lightBuffers[0] != 0)
 		{
 			glDeleteTextures(lightTextures);
-			glDeleteTextures(clusterTextures);
 			glDeleteBuffers(lightBuffers);
-			glDeleteBuffers(clusterBuffers);
 			Arrays.fill(lightBuffers, 0);
 			Arrays.fill(lightTextures, 0);
-			Arrays.fill(clusterBuffers, 0);
-			Arrays.fill(clusterTextures, 0);
 		}
 		boundsValid = false;
 		reach.free();
@@ -198,6 +196,12 @@ public class LightClusters
 	public int getLightCount()
 	{
 		return lightCount;
+	}
+
+	/** The lamps' shadow cubes, whose slots the lamps' texels carry (null: none). */
+	public void setCubes(LampCubes cubes)
+	{
+		this.cubes = cubes;
 	}
 
 	/** The frame's lamps in the shaders' order (lamp index i), getLightCount() of them (LampCubes). */
@@ -350,7 +354,9 @@ public class LightClusters
 			}
 			lightData.put(x).put(y).put(z).put(settled ? -l.radius : l.radius);
 			float shown = l.intensity * l.mapFade;
-			lightData.put(l.r * shown).put(l.g * shown).put(l.b * shown).put(wallsCode);
+			// with its walls code, its shadow cube's slot + 1 (LampCubes; 0: none, or not drawn yet) times 16 (lampWith)
+			int cubeSlot = cubes != null ? cubes.slotFor(l, index) : -1;
+			lightData.put(l.r * shown).put(l.g * shown).put(l.b * shown).put(wallsCode + 16 * (cubeSlot + 1));
 			// its storey's floor and ceiling; none known, far off
 			lightData.put(origin[0] - camX).put(origin[1] - camZ).put(clampY(l.floorY - camY)).put(clampY(l.ceilY - camY));
 			// its id in the light map (0: not on it, lit by the walls alone) and the map's share as it eases in
@@ -377,6 +383,15 @@ public class LightClusters
 		changed |= kept != lightCount;
 		lightCount = kept;
 		lightData.flip();
+		if (cubes != null)
+		{
+			// the waiting lamps whose cubes are drawn this frame, before the composite reads them
+			for (int drawn = cubes.choose(chosen, kept), k = 0; k < drawn; ++k)
+			{
+				int at = chosen[k] * LAMP_TEXELS * 4 + 7;
+				lightData.put(at, lightData.get(at) + 16 * (cubes.slotOfIndex(chosen[k]) + 1));
+			}
+		}
 		if (changed)
 		{
 			texels = Math.max(1, (kept + LIGHTS_PER_TEXEL - 1) / LIGHTS_PER_TEXEL);
@@ -527,6 +542,7 @@ public class LightClusters
 			glBindTexture(GL_TEXTURE_BUFFER, 0);
 			uploadedFill[set] = -1;
 			uploadedWalls[set] = -1;
+			bufferTexels[set] = -1;
 			reach.invalidate(set);
 			if (map != null)
 			{
@@ -559,12 +575,14 @@ public class LightClusters
 		mapLampsData.clear();
 		mapLampsData.put(mapLamps).flip();
 		glBufferSubData(GL_TEXTURE_BUFFER, (long) MAP_LAMPS_BASE * 4 * Float.BYTES, mapLampsData);
-		glBindBuffer(GL_TEXTURE_BUFFER, clusterBuffers[set]);
 		int words = texels * 4;
 		boolean clusters = clustersSent[set] != clustersBuilt, columns = columnsSent[set] != columnsBuilt;
 		if (texels != bufferTexels[set])
 		{
-			glBufferData(GL_TEXTURE_BUFFER, (long) CLUSTER_ENTRIES * words * Integer.BYTES, GL_DYNAMIC_DRAW);
+			// the entries' size, and every entry at it
+			mapLampsData.clear();
+			mapLampsData.put(texels).put(0).put(0).put(0).flip();
+			glBufferSubData(GL_TEXTURE_BUFFER, (long) CLUSTER_BASE * 4 * Float.BYTES, mapLampsData);
 			bufferTexels[set] = texels;
 			clusters = columns = true;
 		}
@@ -584,7 +602,7 @@ public class LightClusters
 		maskData.clear();
 		maskData.put(masks, from, words);
 		maskData.flip();
-		glBufferSubData(GL_TEXTURE_BUFFER, (long) from * Integer.BYTES, maskData);
+		glBufferSubData(GL_TEXTURE_BUFFER, (long) (CLUSTER_BASE + 1) * 4 * Float.BYTES + (long) from * Integer.BYTES, maskData);
 	}
 
 	private static FloatBuffer staging(FloatBuffer b, int floats)
@@ -597,12 +615,11 @@ public class LightClusters
 		return b;
 	}
 
+	/** The light buffer on lightUnit; clusterUnit is no longer used (the masks are in the light buffer). */
 	public void bind(int lightUnit, int clusterUnit)
 	{
 		glActiveTexture(GL_TEXTURE0 + lightUnit);
 		glBindTexture(GL_TEXTURE_BUFFER, lightTextures[set]);
-		glActiveTexture(GL_TEXTURE0 + clusterUnit);
-		glBindTexture(GL_TEXTURE_BUFFER, clusterTextures[set]);
 		glActiveTexture(GL_TEXTURE0);
 	}
 

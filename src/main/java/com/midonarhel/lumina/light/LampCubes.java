@@ -2,14 +2,12 @@ package com.midonarhel.lumina.light;
 
 import com.midonarhel.lumina.LuminaPlugin;
 import com.midonarhel.lumina.scene.Zone;
-import java.nio.FloatBuffer;
 import java.util.Arrays;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
-import org.lwjgl.BufferUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import static org.lwjgl.opengl.GL33C.*;
@@ -17,9 +15,11 @@ import static org.lwjgl.opengl.GL33C.*;
 /**
  * The lamps' shadow cubes: each lamp's depth seen from it on the six faces of a cube, drawn from what the frame draws
  * (its levels and the roofs the client shows: a roof it hides stops nothing), into one depth atlas the fog's glow reads
- * (fog_frag.glsl, lampCubeOpen). A lamp's faces are drawn when it first takes a slot, moves, or what is drawn changes
- * (the levels, the hidden roofs, the scene); the slot a frame's lamp index has is in a table beside the atlas, -1 for a
- * lamp without one (more lamps than SLOTS: the walls stop those). Static scenery only: no players or NPCs.
+ * and the surfaces (light/lamp_cube.glsl). A lamp's faces are drawn when it first takes a slot, moves, or what is
+ * drawn changes (the levels, the hidden roofs, the scene). Each frame: beginFrame before the lamps are culled,
+ * slotFor for each lamp kept (its slot, which LightClusters puts in its texels, or -1 while its cube waits or it has
+ * none: more lamps than SLOTS), choose after the cull (the nearest waiting ones get their slots now), and draw after
+ * the scene, before the composite and the fog read the cubes. Static scenery only: no players or NPCs.
  */
 public final class LampCubes
 {
@@ -45,14 +45,22 @@ public final class LampCubes
 		{0, 0, 1, 1, 0, 0, 0, 1, 0}, {0, 0, -1, 1, 0, 0, 0, 1, 0},
 	};
 
-	private int fbo, depth, table;
+	private int fbo, depth;
+	// this frame: whether the cubes are on, the scene they are drawn from, the camera, the lamps waiting (distance, index)
+	// and each index's slot, the slots to draw
+	private boolean active;
+	private LuminaPlugin.SceneContext frameCtx;
+	private float camX, camY, camZ;
+	private int pending;
+	private final int[] slotOfIndex = new int[LightClusters.MAX_LIGHTS];
+	private final int[] toDraw = new int[LAMPS_PER_FRAME];
+	private int draws;
 	// per slot: the lamp's place and reach it was drawn for (x, y, z, radius), the frame it was last used, drawn yet
 	private final float[] drawnFor = new float[SLOTS * 4];
 	private final long[] used = new long[SLOTS];
 	private final boolean[] valid = new boolean[SLOTS];
 	private final Map<Long, Integer> slotOf = new HashMap<>();
 	private final long[] keyOf = new long[SLOTS];
-	private final FloatBuffer slots = BufferUtils.createFloatBuffer(LightClusters.MAX_LIGHTS);
 	private final long[] waiting = new long[LightClusters.MAX_LIGHTS];
 	private final float[] lightProj = new float[16];
 	private long frame;
@@ -82,11 +90,6 @@ public final class LampCubes
 		return depth;
 	}
 
-	public int table()
-	{
-		return table;
-	}
-
 	/** Faces drawn last frame (bench). */
 	public int drawnLast()
 	{
@@ -113,12 +116,6 @@ public final class LampCubes
 		glClearDepth(1.0);
 		glClear(GL_DEPTH_BUFFER_BIT);
 		glBindFramebuffer(GL_FRAMEBUFFER, 0);
-		table = glGenTextures();
-		glBindTexture(GL_TEXTURE_2D, table);
-		glTexImage2D(GL_TEXTURE_2D, 0, GL_R32F, LightClusters.MAX_LIGHTS, 1, 0, GL_RED, GL_FLOAT, (FloatBuffer) null);
-		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
-		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
-		glBindTexture(GL_TEXTURE_2D, 0);
 	}
 
 	public void free()
@@ -127,8 +124,7 @@ public final class LampCubes
 		{
 			glDeleteFramebuffers(fbo);
 			glDeleteTextures(depth);
-			glDeleteTextures(table);
-			fbo = depth = table = 0;
+			fbo = depth = 0;
 		}
 		slotOf.clear();
 		Arrays.fill(valid, false);
@@ -144,13 +140,109 @@ public final class LampCubes
 	}
 
 	/**
-	 * Give the frame's lamps (LightClusters' order) their slots, draw the faces of the ones that need it, and send the
-	 * table. After the frame's scene draw (its zones up to date); the shadow program and its uniforms are the sun's.
+	 * Before the frame's lamps are culled (LampFrame): whether the cubes are on, and which of them what the frame draws
+	 * (its levels and hidden roofs, set by now) leaves out of date.
 	 */
-	public void update(LuminaPlugin plugin, PointLight[] lamps, int count)
+	public void beginFrame(LuminaPlugin plugin)
 	{
 		LuminaPlugin.SceneContext ctx = plugin.root;
-		if (OFF || ctx == null || ctx.hideRoofIds == null || plugin.glShadowProgram == 0)
+		active = !OFF && plugin.config.pointLights() && ctx != null && ctx.hideRoofIds != null && plugin.glShadowProgram != 0;
+		pending = 0;
+		draws = 0;
+		if (!active)
+		{
+			return;
+		}
+		++frame;
+		frameCtx = ctx;
+		camX = plugin.frameCameraX;
+		camY = plugin.frameCameraY;
+		camZ = plugin.frameCameraZ;
+		lastInvalidated = 0;
+		lastZones = renew(ctx, sceneRoofs(plugin, ctx));
+		if (REDRAW)
+		{
+			Arrays.fill(valid, false);
+		}
+	}
+
+	/** During the cull, lamp index i kept: its slot if its cube is drawn, else -1 (it waits, or there is no slot). */
+	int slotFor(PointLight l, int i)
+	{
+		slotOfIndex[i] = -1;
+		if (!active)
+		{
+			return -1;
+		}
+		long k = key(l);
+		Integer s = slotOf.get(k);
+		if (s == null)
+		{
+			s = freeSlot();
+			if (s < 0)
+			{
+				return -1;
+			}
+			if (keyOf[s] != 0)
+			{
+				slotOf.remove(keyOf[s]);
+			}
+			keyOf[s] = k;
+			slotOf.put(k, s);
+			valid[s] = false;
+		}
+		used[s] = frame;
+		slotOfIndex[i] = s;
+		if (valid[s])
+		{
+			return s;
+		}
+		drawnFor[s * 4] = l.x;
+		drawnFor[s * 4 + 1] = l.y;
+		drawnFor[s * 4 + 2] = l.z;
+		drawnFor[s * 4 + 3] = Math.abs(l.radius);
+		// its distance from the camera and its index, to draw the nearest first
+		float dx = l.x - camX, dy = l.y - camY, dz = l.z - camZ;
+		waiting[pending++] = (long) Float.floatToIntBits(dx * dx + dy * dy + dz * dz) << 32 | i;
+		return -1;
+	}
+
+	/**
+	 * After the cull: the nearest waiting lamps, at most LAMPS_PER_FRAME, drawn this frame (draw); their indices into
+	 * indices and how many, so LightClusters gives them their slots (slotOf(index)).
+	 */
+	int choose(int[] indices, int count)
+	{
+		Arrays.sort(waiting, 0, pending);
+		draws = Math.min(pending, LAMPS_PER_FRAME);
+		for (int d = 0; d < draws; ++d)
+		{
+			int i = (int) waiting[d];
+			int s = slotOfIndex[i];
+			toDraw[d] = s;
+			valid[s] = true;
+			indices[d] = i;
+		}
+		drawnLast = draws * 6;
+		// a change to what is drawn, not a lamp that moves
+		if (lastZones > 0 || REDRAW && frame % 100 == 1)
+		{
+			log.info("Lamp cubes: {} changed zones, {} lamps to draw, {} a frame, nearest first; {} of the frame's {} lamps"
+				+ " with a cube", lastZones, pending, LAMPS_PER_FRAME, Math.min(count, SLOTS), count);
+		}
+		lastPending = pending - draws;
+		return draws;
+	}
+
+	int slotOfIndex(int i)
+	{
+		return slotOfIndex[i];
+	}
+
+	/** After the scene: the faces of the lamps chosen this frame. The shadow program and its uniforms are the sun's. */
+	public void draw(LuminaPlugin plugin)
+	{
+		if (!active || draws == 0)
 		{
 			return;
 		}
@@ -158,81 +250,7 @@ public final class LampCubes
 		{
 			init();
 		}
-		++frame;
-		// what is drawn changed: every slot drawn again
-		lastInvalidated = 0;
-		int renewed = renew(ctx, sceneRoofs(plugin, ctx));
-		lastZones = renewed;
-		if (REDRAW)
-		{
-			Arrays.fill(valid, false);
-		}
-
-		slots.clear();
-		int pending = 0;
-		for (int i = 0; i < count; ++i)
-		{
-			PointLight l = lamps[i];
-			long k = key(l);
-			Integer s = slotOf.get(k);
-			if (s == null)
-			{
-				s = freeSlot();
-				if (s < 0)
-				{
-					slots.put(-1);
-					continue;
-				}
-				if (keyOf[s] != 0)
-				{
-					slotOf.remove(keyOf[s]);
-				}
-				keyOf[s] = k;
-				slotOf.put(k, s);
-				valid[s] = false;
-			}
-			used[s] = frame;
-			if (!valid[s])
-			{
-				drawnFor[s * 4] = l.x;
-				drawnFor[s * 4 + 1] = l.y;
-				drawnFor[s * 4 + 2] = l.z;
-				drawnFor[s * 4 + 3] = Math.abs(l.radius);
-				// its distance from the camera and its index, to draw the nearest first
-				float dx = l.x - plugin.frameCameraX, dy = l.y - plugin.frameCameraY, dz = l.z - plugin.frameCameraZ;
-				waiting[pending++] = (long) Float.floatToIntBits(dx * dx + dy * dy + dz * dz) << 32 | i;
-				slots.put(-1);
-				continue;
-			}
-			slots.put(s);
-		}
-		slots.flip();
-		Arrays.sort(waiting, 0, pending);
-		int draws = Math.min(pending, LAMPS_PER_FRAME);
-		int[] toDraw = new int[draws];
-		for (int d = 0; d < draws; ++d)
-		{
-			int i = (int) waiting[d];
-			int s = slotOf.get(key(lamps[i]));
-			toDraw[d] = s;
-			valid[s] = true;
-			slots.put(i, s);
-		}
-		glBindTexture(GL_TEXTURE_2D, table);
-		glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, Math.max(1, slots.limit()), 1, GL_RED, GL_FLOAT, slots);
-		glBindTexture(GL_TEXTURE_2D, 0);
-		drawnLast = draws * 6;
-		// a full redraw (a scene, a roof hidden or shown), not a lamp that moves
-		if (renewed > 0 || REDRAW && frame % 100 == 1)
-		{
-			log.info("Lamp cubes: {} changed zones, {} lamps to draw, {} a frame, nearest first; {} of the frame's {} lamps"
-				+ " with a cube", renewed, pending, LAMPS_PER_FRAME, Math.min(count, SLOTS), count);
-		}
-		lastPending = pending;
-		if (draws > 0)
-		{
-			draw(plugin, ctx, toDraw, draws);
-		}
+		draw(plugin, frameCtx, toDraw, draws);
 	}
 
 	/**

@@ -384,9 +384,8 @@ public class LuminaPlugin extends Plugin implements DrawCallbacks
 	public static final int SHADOW_MAX_UNIT = LuminaPlugin.COMPOSITE_TEXTURE_UNIT + 22;
 	public static final int LIGHT_DATA_UNIT = LuminaPlugin.COMPOSITE_TEXTURE_UNIT + 6;
 	public static final int CLUSTER_DATA_UNIT = LuminaPlugin.COMPOSITE_TEXTURE_UNIT + 7;
-	// the lamps' shadow cubes and the slot of each lamp index (LampCubes), for the fog's glow
+	// the lamps' shadow cubes (LampCubes), for the fog's glow and the surfaces
 	public static final int LAMP_CUBE_UNIT = LuminaPlugin.COMPOSITE_TEXTURE_UNIT + 21;
-	public static final int LAMP_CUBE_TABLE_UNIT = LuminaPlugin.COMPOSITE_TEXTURE_UNIT + 31;
 	// the rooms (RoomTexture)
 	public static final int ROOM_TEXELS_UNIT = LuminaPlugin.COMPOSITE_TEXTURE_UNIT + 20;
 	// the fog as marched at quarter resolution, read by its upsample
@@ -1625,16 +1624,13 @@ public class LuminaPlugin extends Plugin implements DrawCallbacks
 				cpuTimer.end(CpuTimer.SHADOW_SUBMIT);
 			}
 			shadowPass.report();
-			volumetricFog.lampCubes = false;
 			if (config.pointLights() && lightClusters.isInitialized())
 			{
+				// the cubes of the lamps chosen this frame (LampCubes), before the composite and the fog read them
 				com.midonarhel.lumina.dev.GpuSections.section("lamp cubes");
-				lampCubes.update(this, lightClusters.keptLights(), lightClusters.getLightCount());
-				volumetricFog.lampCubes = lampCubes.isInitialized();
+				lampCubes.draw(this);
 				glActiveTexture(GL_TEXTURE0 + LAMP_CUBE_UNIT);
 				glBindTexture(GL_TEXTURE_2D, lampCubes.atlas());
-				glActiveTexture(GL_TEXTURE0 + LAMP_CUBE_TABLE_UNIT);
-				glBindTexture(GL_TEXTURE_2D, lampCubes.table());
 				glActiveTexture(GL_TEXTURE0);
 			}
 			cpuTimer.begin(CpuTimer.OCCLUSION);

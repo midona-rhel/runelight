@@ -204,6 +204,7 @@ public final class Programs
 						+ "#define LAMP_WALLS_BASE " + LightClusters.LAMP_WALLS_BASE + "\n"
 						+ "#define LAMP_WALL_LAYER_TEXELS " + LampWalls.LAYER_TEXELS + "\n"
 						+ "#define MAP_LAMPS_BASE " + LightClusters.MAP_LAMPS_BASE + "\n"
+						+ "#define CLUSTER_BASE " + LightClusters.CLUSTER_BASE + "\n"
 						+ com.midonarhel.lumina.light.LampReach.defines()
 						+ com.midonarhel.lumina.light.LightMapBuffer.defines();
 				case "composite_mode":
