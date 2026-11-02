@@ -134,6 +134,32 @@ public class LightMapTimingTest
 	}
 
 	@Test
+	public void aChangeOfBlockersCostsTheCallingThreadLittle()
+	{
+		// two towns of the same size: the diff between them (which lights a change touches) is left to a light map thread,
+		// the calling thread (the client's) only puts the new blockers in place
+		LightBlockers a = town(new Random(1)), b = town(new Random(2));
+		LightMap map = new LightMap(0);
+		map.setBlockers(a);
+		map.runTasks();
+		double call = Double.MAX_VALUE, diff = Double.MAX_VALUE;
+		for (int i = 0; i < 6; ++i)
+		{
+			LightBlockers from = i % 2 == 0 ? a : b, to = i % 2 == 0 ? b : a;
+			long t = System.nanoTime();
+			map.setBlockers(to);
+			call = Math.min(call, (System.nanoTime() - t) / 1e6);
+			map.runTasks();
+			t = System.nanoTime();
+			LightMap.BlockerChanges.of(from, to);
+			diff = Math.min(diff, (System.nanoTime() - t) / 1e6);
+		}
+		System.out.printf("Light map: a change of blockers costs the calling thread %.3f ms; the diff left to a light map thread %.2f ms%n",
+			call, diff);
+		assertTrue("calling thread " + call + " ms, diff " + diff + " ms", call < diff / 10);
+	}
+
+	@Test
 	public void blockersOfAZoneAreQuickToMake()
 	{
 		// a zone of about twenty thousand triangles, a third of them near the band

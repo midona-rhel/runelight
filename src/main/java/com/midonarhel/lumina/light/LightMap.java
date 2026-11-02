@@ -226,6 +226,8 @@ public final class LightMap
 
 	// guarded by lock
 	private LightBlockers blockers;
+	// the blockers' diffs queued for a light map thread (bakeChanged)
+	private int diffsPending;
 	private int blocksPerSide;
 	private int[] seq = new int[0];
 	private boolean[] combinePending = new boolean[0];
@@ -327,6 +329,11 @@ public final class LightMap
 			t.interrupt();
 		}
 		tasks.clear();
+		synchronized (lock)
+		{
+			// the diffs that were queued are gone with the tasks
+			diffsPending = 0;
+		}
 	}
 
 	private void submit(float priority, Runnable run)
@@ -474,6 +481,72 @@ public final class LightMap
 		}
 	}
 
+	/**
+	 * On a light map thread: the walls' and models' diff between two blockers of the same scene (12-14 ms on the client
+	 * thread at times, the user's client, 2026-11-02), worked out off the lock from blockers no thread changes once made,
+	 * then the lights it touches baked again. The new blockers are in place already (applyBlockers), so a light baked
+	 * meanwhile is baked with them; this only adds the lights near what changed.
+	 */
+	private void bakeChanged(LightBlockers old, LightBlockers next)
+	{
+		BlockerChanges changes = BlockerChanges.of(old, next);
+		synchronized (lock)
+		{
+			--diffsPending;
+			if (changes != null && blockers != null && blockers.cells == next.cells)
+			{
+				rebakeChanged(next, changes);
+			}
+		}
+	}
+
+	/** What changed between two blockers of a scene of the same size and place (null: not comparable, all of it). */
+	static final class BlockerChanges
+	{
+		final CellChanges walls, models;
+
+		private BlockerChanges(CellChanges walls, CellChanges models)
+		{
+			this.walls = walls;
+			this.models = models;
+		}
+
+		/** Off the lock: reads only the two blockers, which no thread changes once made. */
+		static BlockerChanges of(LightBlockers old, LightBlockers next)
+		{
+			if (old == null || next == null || old.cells != next.cells || old.size != next.size || old.offset != next.offset)
+			{
+				return null;
+			}
+			CellChanges walls = new CellChanges(next.cells), models = new CellChanges(next.cells);
+			if (old.walls != next.walls)
+			{
+				next.walls.diff(old.walls, walls, LightBlockers.CELLS_PER_TILE);
+			}
+			if (old.models != next.models)
+			{
+				if (next.models != null && old.models == null)
+				{
+					// the models come to a scene without: only where they stand, and the solid objects that stop being
+					// whole tiles at the light's height (LightBlockers.solid)
+					next.models.markCells(models);
+					markSolid(next.walls, models);
+				}
+				else if (next.models != null)
+				{
+					next.models.diff(old.models, models);
+				}
+				else
+				{
+					models.markAll();
+				}
+			}
+			return new BlockerChanges(walls, models);
+		}
+	}
+
+	// on the client thread: next in place at once; what changed since the last, which lights it touches, on a light map
+	// thread (bakeChanged)
 	private void applyBlockers(LightBlockers next)
 	{
 		synchronized (lock)
@@ -509,29 +582,16 @@ public final class LightMap
 				}
 				return;
 			}
-			CellChanges walls = new CellChanges(next.cells), models = new CellChanges(next.cells);
-			if (old.walls != next.walls)
-			{
-				next.walls.diff(old.walls, walls, LightBlockers.CELLS_PER_TILE);
-			}
-			if (old.models != next.models)
-			{
-				if (next.models != null && old.models == null)
-				{
-					// the models come to a scene without: only where they stand, and the solid objects that stop being
-					// whole tiles at the light's height (LightBlockers.solid)
-					next.models.markCells(models);
-					markSolid(next.walls, models);
-				}
-				else if (next.models != null)
-				{
-					next.models.diff(old.models, models);
-				}
-				else
-				{
-					models.markAll();
-				}
-			}
+			++diffsPending;
+			submit(-Float.MAX_VALUE, () -> bakeChanged(old, next));
+		}
+	}
+
+	// under the lock: the lights whose reach takes in a cell that changed, baked again
+	private void rebakeChanged(LightBlockers next, BlockerChanges changes)
+	{
+		{
+			CellChanges walls = changes.walls, models = changes.models;
 			if (walls.isEmpty() && models.isEmpty())
 			{
 				return;
@@ -843,7 +903,7 @@ public final class LightMap
 	{
 		synchronized (lock)
 		{
-			if (bakesPending > 0 || combinesQueued > 0 || holding)
+			if (bakesPending > 0 || combinesQueued > 0 || holding || diffsPending > 0)
 			{
 				return true;
 			}
@@ -911,7 +971,7 @@ public final class LightMap
 	{
 		synchronized (lock)
 		{
-			if (bakesPending > 0 || combinesQueued > 0 || !ready.isEmpty() || holding)
+			if (bakesPending > 0 || combinesQueued > 0 || !ready.isEmpty() || holding || diffsPending > 0)
 			{
 				return false;
 			}

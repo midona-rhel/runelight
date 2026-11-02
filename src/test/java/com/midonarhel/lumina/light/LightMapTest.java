@@ -417,6 +417,30 @@ public class LightMapTest
 	}
 
 	@Test
+	public void theDiffOfTheBlockersIsLeftToTheLightMapsThreads()
+	{
+		// the client thread puts the new blockers in place and goes on; which lights a change touches is worked out on a
+		// light map thread (the walls' and models' diffs took 12-14 ms of the client thread at times)
+		BakeScene before = new BakeScene().verticalWall(0, 8, 6, 10).verticalWall(0, 40, 38, 42);
+		BakeScene after = new BakeScene().verticalWall(0, 8, 6, 10, 8).verticalWall(0, 40, 38, 42, 40);
+		LightMap map = new LightMap(0);
+		map.setBlockers(before.blockers(1));
+		LightMap.Source middle = source(0, 24.5f, 24.5f, 40, 6, 2), byDoor = source(0, 5.5f, 8.5f, 40, 6, 2);
+		map.add(middle);
+		map.add(byDoor);
+		Mirror m = new Mirror();
+		settle(map, m);
+		int middleBakes = middle.generation, doorBakes = byDoor.generation;
+		map.setBlockers(after.blockers(2));
+		assertEquals("nothing baked again on the calling thread", doorBakes, byDoor.generation);
+		assertTrue("the diff waits for a light map thread", map.busy());
+		settle(map, m);
+		assertEquals("the middle light is out of reach of both", middleBakes, middle.generation);
+		assertEquals("the one by the door is baked again", doorBakes + 1, byDoor.generation);
+		assertFalse(map.busy());
+	}
+
+	@Test
 	public void aSnapshotThatIsTheSameBakesNothing()
 	{
 		BakeScene scene = new BakeScene().verticalWall(0, 20, 14, 26);
