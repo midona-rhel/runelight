@@ -209,10 +209,12 @@ void lampOnSurface(Lamp lamp, float open, vec3 p, vec3 n, vec3 viewDir, float tr
 // cluster entry (light/lamp.glsl): on its front, and through thin foliage from behind into through. Surfaces turned
 // away receive neither. The face normal faceN only moves the point off its surface for the wall check.
 //
-// The lamps the light map carries in full (lampOnMap) come from the map's read instead, once: a cell holds the at most
-// four lamps that light it, with how much of each gets there, so the point takes those and no other. The cluster's
-// list (up to 127 lamps a cluster in a crowded square, most of them held off this cell by the map) only says whether
-// any reaches the point; its lamps the map doesn't carry yet are lit from it as they come, walls and all (lampOpen).
+// At most LAMP_BUDGET lamps light a point, those that give it the most (LampBudget: their light before walls, the
+// colour's luminance times the falloff, times what the light map lets through for the lamps it carries). The lamps the
+// map carries in full (lampOnMap) come from its read, once: a cell holds the at most four that light it, with how much
+// of each gets there, so those are the candidates and no other. The cluster's list (up to 127 lamps a cluster in a
+// crowded square) says whether any of them reaches the point, and gives the lamps the map doesn't carry yet, whose
+// walls (lampOpen) are looked for only if they are kept.
 vec3 lampsOnSurface(int entry, vec3 p, vec3 n, vec3 faceN, float transmissive, out vec3 through) {
   vec3 viewDir = transmissive > 0.0 ? normalize(-p) : vec3(0.0);
   // off the surface along its face's own normal: a smooth normal tilts toward a wall's top and ends
@@ -220,6 +222,7 @@ vec3 lampsOnSurface(int entry, vec3 p, vec3 n, vec3 faceN, float transmissive, o
   bool backToo = transmissive > 0.0;
   vec3 sum = vec3(0.0);
   through = vec3(0.0);
+  LampBudget budget = lampBudgetEmpty();
   bool mapped = false;
   LightMask lamps = clusterLights(entry);
   int li;
@@ -232,8 +235,8 @@ vec3 lampsOnSurface(int entry, vec3 p, vec3 n, vec3 faceN, float transmissive, o
       mapped = true;
       continue;
     }
-    Lamp lamp = lampWith(li, sphere);
-    lampOnSurface(lamp, lampOpen(lamp, p, wallFrom, false), p, n, viewDir, transmissive, sum, through);
+    vec3 l = sphere.xyz - p;
+    lampBudgetAdd(budget, lampLuminance(lampColorOf(li)) * lampFalloff(dot(l, l), sphere.w * sphere.w), li, -1.0);
   }
   if (mapped) {
     vec4 vis;
@@ -246,9 +249,20 @@ vec3 lampsOnSurface(int entry, vec3 p, vec3 n, vec3 faceN, float transmissive, o
       }
       vec4 sphere = lampSphere(ml);
       if (lampSphereReaches(sphere, p, n, backToo)) {
-        lampOnSurface(lampWith(ml, sphere), vis[k], p, n, viewDir, transmissive, sum, through);
+        vec3 l = sphere.xyz - p;
+        lampBudgetAdd(budget, lampLuminance(lampColorOf(ml)) * lampFalloff(dot(l, l), sphere.w * sphere.w) * vis[k], ml,
+          vis[k]);
       }
     }
+  }
+  for (int k = 0; k < LAMP_BUDGET; ++k) {
+    int kl = budget.who[k];
+    if (kl < 0) {
+      break;
+    }
+    Lamp lamp = lampAt(kl);
+    float open = budget.open[k] >= 0.0 ? budget.open[k] : lampOpen(lamp, p, wallFrom, false);
+    lampOnSurface(lamp, open * lampBudgetFade(budget, k), p, n, viewDir, transmissive, sum, through);
   }
   return sum;
 }

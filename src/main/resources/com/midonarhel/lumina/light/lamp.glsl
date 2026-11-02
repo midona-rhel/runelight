@@ -97,6 +97,64 @@ Lamp lampWith(int li, vec4 a) {
   return Lamp(a.xyz, abs(a.w), b.rgb, int(b.w), c.xy, c.z, c.w, int(d.x + 0.5), d.y, int(d.z + 0.5), d.w);
 }
 
+// The colour times strength of lamp li (its second texel), for choosing the lamps that give a point the most light
+vec3 lampColorOf(int li) {
+  return texelFetch(lightData, li * 4 + 1).rgb;
+}
+
+float lampLuminance(vec3 c) {
+  return dot(c, vec3(0.2126, 0.7152, 0.0722));
+}
+
+// The lamps that give a point the most light, at most LAMP_BUDGET (the light map holds four a cell): while the
+// candidates come, the brightest four by their estimate (est: the light they would give, before walls) in e, brightest
+// first, with what goes with each (who), and the most any left out would have given (left). The fourth fades out as the
+// best left out nears it (lampBudgetFade), so where two swap places the light is the same either way: no seam.
+#define LAMP_BUDGET 4
+
+struct LampBudget {
+  vec4 e;
+  ivec4 who;
+  vec4 open; // per kept lamp: how much of it the light map lets through, -1 where the walls must say (lampOpen)
+  float left; // the most any lamp left out would have given
+};
+
+LampBudget lampBudgetEmpty() {
+  return LampBudget(vec4(0.0), ivec4(-1), vec4(-1.0), 0.0);
+}
+
+void lampBudgetAdd(inout LampBudget b, float est, int who, float open) {
+  if (est <= b.e.w) {
+    b.left = max(b.left, est);
+    return;
+  }
+  b.left = max(b.left, b.e.w);
+  b.e.w = est;
+  b.who.w = who;
+  b.open.w = open;
+  if (b.e.w > b.e.z) {
+    b.e.zw = b.e.wz;
+    b.who.zw = b.who.wz;
+    b.open.zw = b.open.wz;
+  }
+  if (b.e.z > b.e.y) {
+    b.e.yz = b.e.zy;
+    b.who.yz = b.who.zy;
+    b.open.yz = b.open.zy;
+  }
+  if (b.e.y > b.e.x) {
+    b.e.xy = b.e.yx;
+    b.who.xy = b.who.yx;
+    b.open.xy = b.open.yx;
+  }
+}
+
+// how much of kept lamp k (0 to 3) the budget lets through: all of the first three; the fourth less as the best left
+// out comes near it, none where they are equal
+float lampBudgetFade(LampBudget b, int k) {
+  return k < 3 || b.left <= 0.0 ? 1.0 : clamp(1.0 - b.left / max(b.e.w, 1e-9), 0.0, 1.0);
+}
+
 // The lamp in this frame's list the light map's table id stands for, -1 when none (out of view, or not in full on it)
 int lampOfMapId(int id) {
   return int(texelFetch(lightData, MAP_LAMPS_BASE + (id >> 2))[id & 3] + 0.5) - 1;

@@ -207,9 +207,10 @@ float lampFalloffAlong(float h2, float r, float s0, float s1) {
 // Light from the lamps scattered toward the camera along the ray dir, up to tEnd (what the ray ends at), as a glow
 // round each lamp: its falloff along the part of the ray in its reach, in closed form (lampFalloffAlong), times the fog
 // where the lamp is (its density, height layer, room and weather there; none inside rooms), and only where the lamp's
-// light gets to: that part of the ray in FOG_LAMP_PIECES stretches, each taking it as a point of it in the air takes it
-// (at a point jittered along the stretch, the fog's own jitter, which the denoise smooths): the light map's in the cell
-// the point is in (lampMapVisibilityNearest; the map's filter across cells is for surfaces), which a lamp once its map
+// light gets to: of the ray's lamps the LAMP_BUDGET brightest by their glow before walls (the same cap as a surface's,
+// light/lamp.glsl), each its part of the ray in FOG_LAMP_PIECES stretches, each taking it as a point of it in the air
+// takes it (at a point jittered along the stretch, the fog's own jitter, which the denoise smooths): the light map's in
+// the cell the point is in (lampMapVisibilityNearest; the map's filter across cells is for surfaces), which a lamp once its map
 // has eased in takes alone, as the map stops it at walls; a lamp the map doesn't carry, or not yet in full, by the walls'
 // share too (lampWallsOpen: walls up to their tops, no floor or ceiling; above a wall the glow spreads on into the air).
 // So a wall cuts the glow where it stands, the lamp on screen or off, and the glow fades across the cut rather than
@@ -218,7 +219,8 @@ float lampFalloffAlong(float h2, float r, float s0, float s1) {
 vec3 lampGlow(ivec2 px, vec3 dir, float tEnd, float density, float jitter) {
   LightMask lamps = clusterLights(columnEntry((vec2(px) + 0.5 - vec2(sceneViewport.xy)) / vec2(sceneViewport.zw)));
   float below = -fogHeight * FOG_BELOW;
-  vec3 sum = vec3(0.0);
+  // the ray's brightest LAMP_BUDGET lamps by their glow before walls (each one's fog kept in the budget's open)
+  LampBudget budget = lampBudgetEmpty();
   int li;
   while (nextLight(lamps, li)) {
     vec4 sphere = lampSphere(li);
@@ -234,20 +236,34 @@ vec3 lampGlow(ivec2 px, vec3 dir, float tEnd, float density, float jitter) {
     if (b <= a) {
       continue;
     }
-    Lamp lamp = lampWith(li, sphere);
     // the fog where the lamp is
-    vec3 w = lamp.pos + cameraPos;
+    vec3 w = sphere.xyz + cameraPos;
     vec4 ground = fogGroundAt(w.xz);
     float sigma = density * exp(-max(ground.r - w.y, below) / fogHeight) * fogRoomFactor(ground, w.y)
       * weatherFogFactor(w.xz);
     if (sigma <= 0.0) {
       continue;
     }
+    float whole = lampFalloffAlong(h2, abs(sphere.w), a - tc, b - tc);
+    lampBudgetAdd(budget, lampLuminance(lampColorOf(li)) * whole * sigma, li, sigma);
+  }
+  vec3 sum = vec3(0.0);
+  for (int k = 0; k < LAMP_BUDGET; ++k) {
+    int kl = budget.who[k];
+    if (kl < 0) {
+      break;
+    }
+    Lamp lamp = lampAt(kl);
+    float tc = dot(lamp.pos, dir);
+    float h2 = max(dot(lamp.pos, lamp.pos) - tc * tc, 0.0);
+    float hc = sqrt(max(lamp.radius * lamp.radius - h2, 0.0));
+    float a = max(tc - hc, 0.0);
+    float b = min(tc + hc, tEnd);
     float part = (b - a) / float(FOG_LAMP_PIECES);
     bool mapAlone = lamp.mapId > 0 && lamp.mapEase >= 1.0;
     float glow = 0.0;
-    for (int k = 0; k < FOG_LAMP_PIECES; ++k) {
-      float s0 = a + float(k) * part;
+    for (int j = 0; j < FOG_LAMP_PIECES; ++j) {
+      float s0 = a + float(j) * part;
       vec3 q = dir * (FOG_LAMP_PIECES == 1 ? clamp(tc, a, b) : s0 + jitter * part);
       float open = mapAlone ? 1.0 : lampWallsOpen(lamp, q, q, true);
       if (lamp.mapId > 0 && open > 0.0) {
@@ -257,7 +273,7 @@ vec3 lampGlow(ivec2 px, vec3 dir, float tEnd, float density, float jitter) {
         glow += lampFalloffAlong(h2, lamp.radius, s0 - tc, s0 + part - tc) * open;
       }
     }
-    sum += lamp.color * (glow * sigma);
+    sum += lamp.color * (glow * budget.open[k] * lampBudgetFade(budget, k));
   }
   return sum * FOG_LAMP_SCATTER;
 }
