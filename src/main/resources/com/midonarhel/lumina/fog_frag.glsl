@@ -189,15 +189,20 @@ float phase(float cosTheta) {
 // samples along the part of a ray in a lamp's reach where the lamp's light is looked for: walls and floors stop it
 // there as they stop its light on surfaces
 #define FOG_LAMP_SAMPLES 4
+// of them, the points where the walls and the floors are looked for (each a walk over the tiles): the walls' share at one
+// holds over its stretch of the ray (perf-audit: the walk at every sample was up to two thirds of the fog pass)
+#define FOG_LAMP_WALL_POINTS 2
 
 // Light from the lamps scattered toward the camera along the ray dir, up to tEnd (what the ray ends at), as a glow
 // round each lamp: its falloff along the part of the ray in its reach, times the fog where the lamp is (its density,
 // height layer, room and weather there; none inside rooms), and only where the lamp's light gets to: FOG_LAMP_SAMPLES
 // points spread over that part of the ray (jitter, the fog's own, which the denoise smooths) each take the lamp's
-// light as a point in the air takes it (lampOpen: walls up to their tops, no floor or ceiling; above a wall the glow
-// spreads on into the air). So a wall cuts the glow where it stands, the lamp on screen or off, and the glow fades across the cut rather
-// than switching. No other edge: the falloff is 0 at
-// the reach, and the ray's end clips the glow as it clips everything behind it.
+// light as a point in the air takes it: the walls' share (lampWallsOpen: walls up to their tops, no floor or ceiling;
+// above a wall the glow spreads on into the air) as the wall point of its stretch of the ray found it, and no more than
+// the light map's in the cell the sample is in (lampMapVisibilityNearest: the map's filter across cells is for
+// surfaces). So a wall cuts the glow where it stands, the lamp on screen or off, and the glow fades across the cut
+// rather than switching. No other edge: the falloff is 0 at the reach, and the ray's end clips the glow as it clips
+// everything behind it.
 vec3 lampGlow(ivec2 px, vec3 dir, float tEnd, float density, float jitter) {
   LightMask lamps = clusterLights(columnEntry((vec2(px) + 0.5 - vec2(sceneViewport.xy)) / vec2(sceneViewport.zw)));
   float below = -fogHeight * FOG_BELOW;
@@ -225,6 +230,13 @@ vec3 lampGlow(ivec2 px, vec3 dir, float tEnd, float density, float jitter) {
     if (sigma <= 0.0) {
       continue;
     }
+    // the walls' share along [a, b] at FOG_LAMP_WALL_POINTS points, each standing for its part of it
+    float open[FOG_LAMP_WALL_POINTS];
+    float part = (b - a) / float(FOG_LAMP_WALL_POINTS);
+    for (int k = 0; k < FOG_LAMP_WALL_POINTS; ++k) {
+      vec3 q = dir * (a + (float(k) + jitter) * part);
+      open[k] = lampWallsOpen(lamp, q, q, true);
+    }
     // its falloff along [a, b], each sample standing for its share of it where the lamp's light reaches
     float step = (b - a) / float(FOG_LAMP_SAMPLES);
     float glow = 0.0;
@@ -233,7 +245,11 @@ vec3 lampGlow(ivec2 px, vec3 dir, float tEnd, float density, float jitter) {
       vec3 l = lamp.pos - q;
       float d2 = dot(l, l);
       if (d2 < r2) {
-        glow += lampFalloff(d2, r2) * lampOpen(lamp, q, q, true);
+        float o = open[i * FOG_LAMP_WALL_POINTS / FOG_LAMP_SAMPLES];
+        if (lamp.mapId > 0 && o > 0.0) {
+          o = min(o, mix(1.0, lampMapVisibilityNearest(lamp.mapId, q), lamp.mapEase));
+        }
+        glow += lampFalloff(d2, r2) * o;
       }
     }
     sum += lamp.color * (glow * step * sigma);
