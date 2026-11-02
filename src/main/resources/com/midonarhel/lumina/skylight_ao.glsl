@@ -250,10 +250,12 @@ float skyGridVisibility(sampler3D grid, float scale, vec3 w, vec3 n) {
     exterior = mix(exterior, 1.0, (1.0 - smoothstep(top + SKY_TOP_SLACK, top + SKY_TOP_SLACK + SKY_TOP_FADE, w.y))
       * smoothstep(0.3, 0.7, -n.y));
   }
+  // a point below the lowest height of its storey (the ground, a floor) reads that one height alone: lo == hi, blend 0,
+  // and the second reads below (of the same height) are left out, which changes nothing
   float lower = skyGridLevel(grid, scale, tile, f, lo, loDiagonal, n, w);
   float original;
   {
-    float upper = skyGridLevel(grid, scale, tile, f, hi, hiDiagonal, n, w);
+    float upper = lo == hi ? lower : skyGridLevel(grid, scale, tile, f, hi, hiDiagonal, n, w);
     original = lower < 0.0 ? upper : upper < 0.0 ? lower : mix(lower, upper, blend);
     if (original < 0.0) {
       float bestDistance = 1e30;
@@ -269,8 +271,7 @@ float skyGridVisibility(sampler3D grid, float scale, vec3 w, vec3 n) {
   skyExterior = exterior;
   if (exterior > 0.0) {
     vec2 a = skySurfaceLevel(grid, scale, tile, f, lo, loDiagonal, w, n);
-    vec2 b = skySurfaceLevel(grid, scale, tile, f, hi, hiDiagonal, w, n);
-    vec2 total = mix(a, b, blend);
+    vec2 total = lo == hi ? a : mix(a, skySurfaceLevel(grid, scale, tile, f, hi, hiDiagonal, w, n), blend);
     float surfaceWeight = (1.0 - total.y);
     total += skySurfaceLevel(grid, scale, tile, f, 9, 0, w, n) * surfaceWeight;
     if (total.y > 0.0001) return mix(original, total.x / total.y, smoothstep(0.0, 0.5, -n.y) * exterior);
