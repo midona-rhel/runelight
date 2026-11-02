@@ -140,6 +140,13 @@ vec3 rainRings(vec2 xz) {
   return vec3(sum.xy * RAIN_SLOPE, min(sum.z, 1.0));
 }
 
+// The camera-relative position of the scene at pixel px, its depth sceneZ
+vec3 waterScenePosition(ivec2 px, float sceneZ) {
+  vec2 ndc = (vec2(px) + 0.5 - vec2(waterViewport.xy)) / vec2(waterViewport.zw) * 2.0 - 1.0;
+  vec4 h = waterInvViewProj * vec4(ndc, waterZeroToOne == 1 ? sceneZ : sceneZ * 2.0 - 1.0, 1.0);
+  return h.xyz / h.w;
+}
+
 uint pack01(float v, float bits) {
   return uint(clamp(v, 0.0, 1.0) * bits + 0.5);
 }
@@ -167,28 +174,6 @@ vec2 contactFoam(vec2 xz, float h) {
   float hn = h + CONTACT_SHRINK * (1.0 - near);
   float aa = max(fwidth(hn), 1e-4);
   return step(0.001, near) * vec2(waterEdge(FOAM_CUT.y - hn, aa), waterEdge(FOAM_CUT.x - hn, aa));
-}
-
-// The terrain falls' frame at xz (WaterMap.frameX): the fall's direction times 1 plus how much longer its slope has made the
-// run so far, in tiles; zero away from falls. Where there is one the foam is laid out along the water's surface, not the
-// ground (fallLaid), so it is as large on the slope as on the flat, and its cells carried straight down the fall, a repeat of
-// them every FLOW_CYCLE seconds, over the whole of it, the pool above and below included: one pattern, not one a tile.
-vec2 fallFrame(vec2 xz) {
-  vec2 frame = waterPage2(waterData, xz / WATER_TILE + waterGrid.x).ba;
-  // the frame is 1 or more on the fall's corners and 0 beside it: filtered between them, only where nearly all of it
-  // is left, so it ends at the fall's sides rather than half a tile past them
-  return dot(frame, frame) > 0.9 ? frame : vec2(0.0);
-}
-
-// xz laid out along a fall's surface
-vec2 fallLaid(vec2 xz, vec2 frame) {
-  float stretch = length(frame);
-  return stretch > 0.0 ? xz + frame / stretch * (WATER_TILE * (stretch - 1.0)) : xz;
-}
-
-// The foam cells' height on and around a fall, at its laid out xz (fallLaid)
-float fallFoamHeight(vec2 laid, vec2 frame, float lod) {
-  return waterFoamStill(laid, normalize(frame) * (CELL_SCALE_B * waterCycle(FLOW_CYCLE)), lod);
 }
 
 // How much the water at xz runs (WaterMap.runs, filtered between corners): only that foams. A still pool, lake or pond,
@@ -248,8 +233,7 @@ void waterWaveField(vec2 xz, int type, vec2 flow, out vec2 slope, out float foam
     * (1.0 - smoothstep(BANK_FOAM_REACH.x, BANK_FOAM_REACH.y, data.r));
   // only running water foams (waterRuns)
   float churn = max(smoothstep(TURB_FOAM.x, TURB_FOAM.y, turb), bankFoam * BANK_FOAM) * waterRuns(xz);
-  // a fall's foam is the hard edged one of its frame, in every pixel
-  if (churn > 0.0 && fallFrame(xz) == vec2(0.0)) {
+  if (churn > 0.0) {
     float h = waterFoamHeight(xz, base, m0, m1, w0, flowing, lodFoam);
     foam = waterFoamRim(h) * churn * FOAM;
   }
@@ -257,13 +241,9 @@ void waterWaveField(vec2 xz, int type, vec2 flow, out vec2 slope, out float foam
 
 // The hard edged foam at xz: around things standing in the water, and on terrain falls and at their lip and foot (the
 // composite lays them in the same two tones): x the tint, y the core. The foam cells are the water's own, carried with
-// its flow (m0, m1, w0, flowing), or on a fall laid out along its slope.
+// its flow (m0, m1, w0, flowing): in to a lip, down the fall and out from its foot, one pattern all the way.
 vec2 hardFoam(vec2 xz, vec2 base, vec2 m0, vec2 m1, float w0, float flowing, float footprint) {
-  vec2 frame = fallFrame(xz);
-  vec2 laid = fallLaid(xz, frame);
-  float laidLod = waterLod(max(length(dFdx(laid)), length(dFdy(laid))), CELL_SCALE_B);
-  float cells = frame != vec2(0.0) ? fallFoamHeight(laid, frame, laidLod)
-    : waterFoamHeight(xz, base, m0, m1, w0, flowing, waterLod(footprint, CELL_SCALE_B));
+  float cells = waterFoamHeight(xz, base, m0, m1, w0, flowing, waterLod(footprint, CELL_SCALE_B));
   return contactFoam(xz, cells) * waterRuns(xz);
 }
 
@@ -279,7 +259,8 @@ void main() {
   // composite only shades water over what is under it
   ivec2 px = ivec2(gl_FragCoord.xy) + waterOrigin;
   float sceneZ = texelFetch(sceneDepth, px, 0).r;
-  if (gl_FragCoord.z < sceneZ || sceneZ <= waterSkyDepth)
+  if (sceneZ <= waterSkyDepth || gl_FragCoord.z < sceneZ && (length(waterScenePosition(px, sceneZ)) < length(vRel) - WATER_SLACK
+    || waterPage2(waterData, vXZ / WATER_TILE + waterGrid.x).r < FALL_SLACK_NEAR))
     discard;
 
   int type = vType;
@@ -326,9 +307,7 @@ void main() {
   // ---- the caustics on the bed below, carried by the flow
   float caustic = 0.0;
   if (waterCausticsOn == 1 && look.x < 0.7) {
-    vec2 ndc = (vec2(px) + 0.5 - vec2(waterViewport.xy)) / vec2(waterViewport.zw) * 2.0 - 1.0;
-    vec4 h = waterInvViewProj * vec4(ndc, waterZeroToOne == 1 ? sceneZ : sceneZ * 2.0 - 1.0, 1.0);
-    vec3 bed = h.xyz / h.w;
+    vec3 bed = waterScenePosition(px, sceneZ);
     float depth = max(bed.y - vRel.y, 0.0);
     // the light reaching the bed entered the water toward the light, bent steeper by refraction
     vec2 sunXZ = waterCasterDir.xz;
@@ -368,10 +347,13 @@ void main() {
     bits.x = pack01(nrm.x * 0.5 + 0.5, 511.0) | pack01(nrm.z * 0.5 + 0.5, 511.0) << 9 | uint(vSlot & 31) << 18
       | pack01(foam, 7.0) << 23 | pack01(sqrt(nominalDepth(data.r) / 512.0), 63.0) << 26;
   }
-  // distance (16 bits), caustics: -1 to 3 (8 bits), the hard edged foam's rim and core coverage (4 bits each)
+  // distance (16 bits), caustics: -1 to 3 (6 bits), how close a fall is (4 bits, dithered: water.glsl waterOver keeps
+  // the water whole by one, no waterline), the hard edged foam's rim and core coverage (3 bits each)
   vec2 hard = hardFoam(xz, base, m0, m1, w0, flowing, footprint);
-  bits.y = pack01(length(vRel) / WATER_REACH, 65535.0) | pack01((caustic + 1.0) / 4.0, 255.0) << 16
-    | pack01(hard.x, 15.0) << 24 | pack01(hard.y, 15.0) << 28;
+  float fallNear = waterPage2(waterData, xz / WATER_TILE + waterGrid.x).r
+    + (fract(52.9829189 * fract(dot(vec2(px), vec2(0.06711056, 0.00583715)))) - 0.5) / 15.0;
+  bits.y = pack01(length(vRel) / WATER_REACH, 65535.0) | pack01((caustic + 1.0) / 4.0, 63.0) << 16
+    | pack01(fallNear, 15.0) << 22 | pack01(hard.x, 7.0) << 26 | pack01(hard.y, 7.0) << 29;
   // never 0, which is no water
   bits.y = max(bits.y & 0xFFFFu, 1u) | (bits.y & 0xFFFF0000u);
   WaterOut = uvec4(bits.x & 0xFFFFu, bits.x >> 16, bits.y & 0xFFFFu, bits.y >> 16);

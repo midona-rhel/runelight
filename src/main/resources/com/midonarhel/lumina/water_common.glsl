@@ -78,8 +78,12 @@ const float WATER_FLOW_SPEED[WATER_TYPES] = float[](0.0, 1.0, 1.0, 1.0, 1.0, 0.3
 // the flow phases are offset across the water by up to this many cycles over this many world units
 #define FLOW_JITTER 0.5
 #define FLOW_JITTER_SCALE 6144.0
-// tiles a second the water runs down a fall (WaterSurface.FALL's tiles, water_vert.glsl)
-#define FALL_RUN 2.5
+// world units a face a model lays on a terrain fall as water may stand in front of the fall's surface and still be under
+// it: it lies a unit over the slope the surface takes (WaterMap.fall), and it is the surface's bed (water.glsl
+// waterOver). The water pass lets anything so close by a fall (FALL_SLACK_NEAR of WaterMap's closeness) through, the
+// composite only those faces.
+#define WATER_SLACK 4.0
+#define FALL_SLACK_NEAR 0.9
 // the flow slows toward the bank to BANK_SLOW of it at the shore, over BANK_REACH tiles out
 #define BANK_SLOW 0.15
 #define BANK_REACH 2.5
@@ -98,8 +102,10 @@ vec4 waterPage1(sampler2D data, vec2 c) {
   return textureLod(data, (c + vec2(waterGrid.y, 0.0) + 0.5) / vec2(3.0 * waterGrid.y, waterGrid.y), 0.0);
 }
 
-// page 2: the straight line distance to the nearest land corner in tiles, the share of the corner's water that runs
-// (WaterMap.runs: a fall's, or moved by the world flow map; only that foams), the terrain falls' frame x, z
+// page 2: how close a fall is, 0-1 (1 on its corners, its lip's and foot's strength round them), the share of the corner's
+// water that runs
+// (WaterMap.runs: a fall's, or moved by the world flow map; only that foams), the falls' own flow x, z in tiles a second
+// (to a lip, down a fall, out from a foot; the banks don't slow it)
 vec4 waterPage2(sampler2D data, vec2 c) {
   return textureLod(data, (c + vec2(2.0 * waterGrid.y, 0.0) + 0.5) / vec2(3.0 * waterGrid.y, waterGrid.y), 0.0);
 }

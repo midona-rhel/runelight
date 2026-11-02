@@ -144,49 +144,6 @@ public class WaterMapTest
 	}
 
 	@Test
-	public void distanceToLandIsStraightLine()
-	{
-		int n = 16;
-		boolean[] land = new boolean[n * n];
-		land[3 * n + 4] = true;
-		land[12 * n + 13] = true;
-		float[] d = new float[n * n];
-		WaterMap.distanceToLand(land, n, 100, d);
-		assertEquals(0, d[3 * n + 4], 0);
-		assertEquals(5, d[7 * n + 7], 1e-5f);                // 3 across, 4 down: the 3-4-5 triangle, not a walk of 7
-		assertEquals(Math.hypot(1, 1), d[4 * n + 5], 1e-5f);  // the diagonal
-		assertEquals(Math.hypot(2, 1), d[11 * n + 11], 1e-5f); // nearer to the second
-		// reaches no further than max
-		WaterMap.distanceToLand(land, n, 3, d);
-		assertEquals(3, d[10 * n + 0], 0);
-	}
-
-	@Test
-	public void distanceToLandWithoutLandIsMax()
-	{
-		int n = 8;
-		float[] d = new float[n * n];
-		WaterMap.distanceToLand(new boolean[n * n], n, 32, d);
-		for (float v : d)
-		{
-			assertEquals(32, v, 0);
-		}
-	}
-
-	@Test
-	public void shorePageHoldsTheDistanceToLand()
-	{
-		WaterMap m = lake(1);
-		int w = WaterMap.CORNERS * WaterMap.PAGES;
-		int page2 = WaterMap.CORNERS * 2;
-		// the middle of the lake is further from land than its edge
-		float edge = m.texture[(90 * w + page2 + 80) * 4];
-		float middle = m.texture[(90 * w + page2 + 90) * 4];
-		assertTrue(edge < middle);
-		assertTrue(middle <= WaterMap.SHORE_FIELD_REACH);
-	}
-
-	@Test
 	public void landCornersTakeTheWaterLevel()
 	{
 		int w = WaterMap.CORNERS * WaterMap.PAGES;
@@ -322,27 +279,31 @@ public class WaterMapTest
 		int w = WaterMap.CORNERS * WaterMap.PAGES;
 		assertEquals(0f, m.texture[(83 * w + 81) * 4], 0f);
 		assertEquals(256f, m.texture[(84 * w + 81) * 4], 0f);
-		// the frame points down the fall (+y), 1 above it and 1 plus the slope's extra length from the foot on: sqrt(1 + 2 ^ 2)
+		// the falls' own flow (page 2) runs down it (+y) at FALL_FLOW on its corners, its lip's and foot's too; the pool above
+		// runs to the lip and the one below out from the foot, less and less further off, none beyond their reach
 		int p2 = 2 * WaterMap.CORNERS;
-		assertEquals(1f, m.texture[(83 * w + p2 + 81) * 4 + 3], 1e-5f);
-		assertEquals(0f, m.texture[(83 * w + p2 + 81) * 4 + 2], 0f);
-		assertEquals((float) Math.sqrt(5), m.texture[(84 * w + p2 + 81) * 4 + 3], 1e-5f);
-		// the frame is the fall's own corners only: below its foot the pool's own flow carries the foam out
-		assertEquals(0f, m.texture[(85 * w + p2 + 81) * 4 + 3], 0f);
-		// a tile below the foot the frame ends: the foam it lays out is the foot's, which reaches less than a tile
-		assertEquals(0f, m.texture[(86 * w + p2 + 81) * 4 + 3], 0f);
-		// it runs down the fall, its own tile only: the corners it shares with the water beside and below it keep theirs
-		assertTrue(m.texture[(83 * w + 81) * 4 + 2] < 1f);
-		WaterSurface.Mesh mesh = WaterSurface.build(m);
-		for (int i = 0; i < mesh.count; ++i)
+		for (int y : new int[]{83, 84})
 		{
-			int x = mesh.tiles[i * 4] & 0xFF, y = mesh.tiles[i * 4 + 1] & 0xFF;
-			assertEquals("tile " + x + ", " + y, y == 83 && x >= 80 && x < 83, (mesh.tiles[i * 4 + 3] & WaterSurface.FALL) != 0);
+			assertEquals("corner " + y, WaterMap.FALL_FLOW, m.texture[(y * w + p2 + 81) * 4 + 3], 1e-5f);
+			assertEquals("corner " + y, 0f, m.texture[(y * w + p2 + 81) * 4 + 2], 0f);
+			assertEquals("corner " + y, 1f, m.texture[(y * w + p2 + 81) * 4], 0f);
 		}
-		// foam over all its face; in the pools at its lip and foot, thinning out with the pull and push, none beyond them
+		float lip1 = m.texture[(82 * w + p2 + 81) * 4 + 3], lip2 = m.texture[(81 * w + p2 + 81) * 4 + 3];
+		float foot1 = m.texture[(85 * w + p2 + 81) * 4 + 3], foot2 = m.texture[(86 * w + p2 + 81) * 4 + 3];
+		assertTrue(WaterMap.FALL_FLOW > lip1 && lip1 > lip2 && lip2 > 0);
+		assertTrue(WaterMap.FALL_FLOW > foot1 && foot1 > foot2 && foot2 > 0);
+		assertEquals(0f, m.texture[(77 * w + p2 + 81) * 4 + 3], 0f);
+		// and how close the fall is: 1 on its corners, less and less off its lip and foot
+		float near1 = m.texture[(85 * w + p2 + 81) * 4], near2 = m.texture[(86 * w + p2 + 81) * 4];
+		assertTrue(1 > near1 && near1 > near2 && near2 > 0);
+		// the banks slow the water's flow, not the fall's: it isn't in page 0
+		assertTrue(m.texture[(83 * w + 81) * 4 + 2] < 1f);
+		// foam over all its face as a fall's (FALL_FOAM); in the pools at its lip and foot, thinning out with the pull and
+		// push, none beyond them
 		int cells = WaterMap.CONTACT_RES, size = WaterMap.CONTACT_SIZE;
-		assertEquals(255, m.contact[(83 * cells + 1) * size + 81 * cells + 1] & 255);
-		assertEquals(255, m.contact[(84 * cells - 1) * size + 81 * cells + 2] & 255);
+		int fallFoam = Math.round(WaterMap.FALL_FOAM * 255);
+		assertEquals(fallFoam, m.contact[(83 * cells + 1) * size + 81 * cells + 1] & 255);
+		assertEquals(fallFoam, m.contact[(84 * cells - 1) * size + 81 * cells + 2] & 255);
 		int lipNear = m.contact[(83 * cells - 1) * size + 81 * cells + 1] & 255, lipFar = m.contact[(81 * cells) * size + 81 * cells + 1] & 255;
 		int footNear = m.contact[(84 * cells) * size + 81 * cells + 1] & 255, footFar = m.contact[(86 * cells) * size + 81 * cells + 1] & 255;
 		assertTrue(lipNear > lipFar && lipFar > 0);
@@ -363,19 +324,8 @@ public class WaterMapTest
 			int tx = k < 2 ? (k == 0 ? 83 : 84) : 81, ty = k < 2 ? 81 : (k == 2 ? 83 : 84);
 			assertTrue("tile " + k, m.fall[ty * N + tx]);
 			int cx = k < 2 ? 84 : 81, cy = k < 2 ? 81 : 84;
-			assertEquals("x " + k, dx[k] * (float) Math.sqrt(5), m.texture[(cy * w + p2 + cx) * 4 + 2], 1e-5f);
-			assertEquals("z " + k, dz[k] * (float) Math.sqrt(5), m.texture[(cy * w + p2 + cx) * 4 + 3], 1e-5f);
-			// its tile is a fall's, which runs that way (water_vert.glsl, by the frame)
-			WaterSurface.Mesh mesh = WaterSurface.build(m);
-			boolean found = false;
-			for (int i = 0; i < mesh.count; ++i)
-			{
-				if ((mesh.tiles[i * 4] & 0xFF) == tx && (mesh.tiles[i * 4 + 1] & 0xFF) == ty)
-				{
-					found = (mesh.tiles[i * 4 + 3] & WaterSurface.FALL) != 0;
-				}
-			}
-			assertTrue("fall tile " + k, found);
+			assertEquals("x " + k, dx[k] * WaterMap.FALL_FLOW, m.texture[(cy * w + p2 + cx) * 4 + 2], 1e-5f);
+			assertEquals("z " + k, dz[k] * WaterMap.FALL_FLOW, m.texture[(cy * w + p2 + cx) * 4 + 3], 1e-5f);
 		}
 	}
 

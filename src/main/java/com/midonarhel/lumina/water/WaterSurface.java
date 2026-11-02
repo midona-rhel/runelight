@@ -38,8 +38,6 @@ public class WaterSurface
 	static final int CHUNK = 8;
 	// the look slot's flag for a land tile around the water (water_vert.glsl)
 	static final int LAND = 0x80;
-	// and for a fall's tile (WaterMap.fall): only these run down it (water_vert.glsl)
-	static final int FALL = 0x40;
 	// how far the waves and the surface's offsets can move it off the water level, world units, and more
 	static final int WAVE_MARGIN = 256;
 
@@ -196,7 +194,7 @@ public class WaterSurface
 						m.tiles[o + 1] = (byte) y;
 						m.tiles[o + 2] = (byte) Water.slotType(k);
 						int i = y * size + x;
-						m.tiles[o + 3] = (byte) (m.slot(k) | (map.level[i] >= 0 ? 0 : LAND) | (map.fall[i] ? FALL : 0));
+						m.tiles[o + 3] = (byte) (m.slot(k) | (map.level[i] >= 0 ? 0 : LAND));
 					}
 				}
 				if (m.count > start)

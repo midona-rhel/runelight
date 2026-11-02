@@ -128,13 +128,18 @@ void waterUnpack(uvec4 w, out float t, out vec3 nrm, out int slot, out float foa
   float d = float(a >> 26 & 63u) / 63.0;
   shoreDepth = d * d * 512.0;
   t = float(b & 65535u) / 65535.0 * WATER_REACH;
-  caustic = float(b >> 16 & 255u) / 255.0 * 4.0 - 1.0;
+  caustic = float(b >> 16 & 63u) / 63.0 * 4.0 - 1.0;
 }
 
 // The hard edged foam at the pixel (around things standing in the water), in water_frag.glsl's full resolution
 // coverage: x the tint, y the core
 vec2 waterHardFoamOf(uvec4 w) {
-  return vec2(float(w.a >> 8 & 15u), float(w.a >> 12 & 15u)) / 15.0;
+  return vec2(float(w.a >> 10 & 7u), float(w.a >> 13 & 7u)) / 7.0;
+}
+
+// How close a fall is at the pixel, 0-1 (WaterMap's page 2)
+float waterFallNearOf(uvec4 w) {
+  return float(w.a >> 6 & 15u) / 15.0;
 }
 
 // The shaded target's 16 bit values (GL 4.1 has no packHalf2x16): light 0 to 63 on a log scale, fine near black;
@@ -517,9 +522,12 @@ vec3 waterFinish(vec3 lit, vec3 caustics, int type, float colorDepth, float dept
 
 // p: camera-relative position of this pixel's scene surface (the bed, or something else under the water)
 // albedo (sRGB), shadow: its color and sun shadow from the composite; lit: its lit color (sRGB); mask: the material
-// target's water channel (frag.glsl)
-// Returns the color with the water over it, or lit unchanged; moves p to the water surface for the fog.
-vec3 waterOver(ivec2 px, inout vec3 p, vec3 albedo, float shadow, vec3 lit, float mask) {
+// target's water channel (frag.glsl); fall: whether it is a face a model lays on a terrain fall as water, which is under the
+// fall's surface though WATER_SLACK in front of it.
+// Returns the color with the water over it, or lit unchanged; moves p to the water surface for the fog. over: whether it
+// had water over it.
+vec3 waterOver(ivec2 px, inout vec3 p, vec3 albedo, float shadow, vec3 lit, float mask, bool fall, out bool over) {
+  over = false;
   if (!waterUnder(px, mask))
     return lit;
   uvec4 ws = texelFetch(waterSurface, px - waterRect.xy, 0);
@@ -530,7 +538,7 @@ vec3 waterOver(ivec2 px, inout vec3 p, vec3 albedo, float shadow, vec3 lit, floa
   int slot;
   waterUnpack(ws, t, nrm, slot, foam, shoreDepth, caustic);
   float dist = length(p);
-  if (t >= dist)
+  if (t >= dist + (fall ? WATER_SLACK : 0.0))
     return lit;
   vec3 s = p / dist * t;
   // vertical depth of this pixel below the surface (y down)
@@ -581,8 +589,12 @@ vec3 waterOver(ivec2 px, inout vec3 p, vec3 albedo, float shadow, vec3 lit, floa
     caustics = srgbToLinear(albedo) * caster * (k * clamp(caustic, dark, CAUSTIC_RANGE.y));
   }
   spec += waterGlitter(px, nrm, p / dist, WATER_LOOK[type].z, foam, shadow);
-  vec3 result = waterFinish(lit, caustics, type, colorDepth, depth, nrm, p / dist, surface, spec, waterHardFoamOf(ws), shadow);
+  // by a fall the water is whole however shallow, the fall itself (a sheet over the face a model lays on it, its bed) and
+  // the water running to its lip and from its foot: no waterline there, its surface runs on
+  vec3 result = waterFinish(lit, caustics, type, colorDepth, max(depth, waterFallNearOf(ws) * SOFT_EDGE), nrm, p / dist,
+    surface, spec, waterHardFoamOf(ws), shadow);
   p = s;
+  over = true;
   return result;
 }
 
