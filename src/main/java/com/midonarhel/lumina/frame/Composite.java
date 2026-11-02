@@ -745,8 +745,7 @@ public final class Composite
 		ShadowMap.unbind(SHADOW_RAW_UNIT, SHADOW_COMPARE_UNIT);
 		LightClusters.unbind(LIGHT_DATA_UNIT, CLUSTER_DATA_UNIT);
 		RoomTexture.unbind(ROOM_TEXELS_UNIT);
-		glActiveTexture(GL_TEXTURE0 + ALPHA_LAYER_UNIT);
-		glBindTexture(GL_TEXTURE_2D, 0);
+		plugin.sceneTargets.unbindAlphaLayer(ALPHA_LAYER_UNIT);
 		plugin.sceneTargets.unbindMaterial(MATERIAL_UNIT);
 		VolumetricFog.unbind(FOG_TEXTURE_UNIT);
 		Clouds.unbind(CLOUD_NOISE_UNIT);

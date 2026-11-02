@@ -1595,8 +1595,8 @@ public class LuminaPlugin extends Plugin implements DrawCallbacks
 		glDisable(GL_DEPTH_TEST);
 		cpuTimer.end(CpuTimer.CLIENT_SCENE);
 
-		com.midonarhel.lumina.dev.GpuSections.section("alpha resolve");
-		sceneTargets.resolveAlpha();
+		com.midonarhel.lumina.dev.GpuSections.section("scene end");
+		sceneTargets.endScene();
 		try
 		{
 			if (frameShadows)
