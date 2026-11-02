@@ -31,7 +31,7 @@ public final class ImageDiff
 				}
 				BufferedImage x = ImageIO.read(f.toFile()), y = ImageIO.read(other);
 				Checks.Diff d = Checks.diff(x, y);
-				int differ = 0;
+				int differ = 0, worst = 0, wx = 0, wy = 0;
 				BufferedImage amp = new BufferedImage(x.getWidth(), x.getHeight(), BufferedImage.TYPE_INT_RGB);
 				for (int py = 0; py < x.getHeight(); ++py)
 				{
@@ -46,14 +46,20 @@ public final class ImageDiff
 							{
 								m = Math.max(m, Math.abs((p >> s & 0xff) - (q >> s & 0xff)));
 							}
+							if (m > worst)
+							{
+								worst = m;
+								wx = px;
+								wy = py;
+							}
 							int v = Math.min(255, 64 + m * 16);
 							amp.setRGB(px, py, v << 16 | v << 8 | v);
 						}
 					}
 				}
 				total += differ;
-				System.out.printf("%-24s %8d pixels differ (%.4f %%); %s%n", f.getFileName(), differ,
-					100.0 * differ / (x.getWidth() * x.getHeight()), d);
+				System.out.printf("%-24s %8d pixels differ (%.4f %%); %s%s%n", f.getFileName(), differ,
+					100.0 * differ / (x.getWidth() * x.getHeight()), d, differ > 0 ? String.format("; the most at %d,%d", wx, wy) : "");
 				if (out != null && differ > 0)
 				{
 					Files.createDirectories(out);
