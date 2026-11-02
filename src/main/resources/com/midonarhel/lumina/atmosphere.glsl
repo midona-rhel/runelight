@@ -68,8 +68,9 @@ vec3 skyFill(vec3 n, float alt, float up) {
   return mix(analytic, max(cached, 0.0), skyCacheWeight * clamp(irr.a, 0.0, 1.0));
 }
 
-// Sun and moon discs and the night sky (night_sky.glsl), linear, seen through the clouds' transmittance T
-vec3 celestial(vec3 dir, vec3 sunDir, vec3 moonDir, float alt, float time, float pixelAngle, float T) {
+// Sun and moon discs and the night sky (night_sky.glsl), linear, seen through the clouds' transmittance T; skyY: the
+// luminance of the sky behind them (linear)
+vec3 celestial(vec3 dir, vec3 sunDir, vec3 moonDir, float alt, float time, float pixelAngle, float T, float skyY) {
   float clear = overcastClear();
   float through = pow(T, DISC_CLOUD_POWER);
   float sunVis = smoothstep(-6.0, 2.0, alt) * clear;
@@ -89,7 +90,7 @@ vec3 celestial(vec3 dir, vec3 sunDir, vec3 moonDir, float alt, float time, float
 
   // the stars, nebula and the rest wait for the sky to darken, and thin out in hazy, damp air
   float visible = clear * (1.0 - STAR_HAZE * clamp(max(skyHaze, envHaze), 0.0, 1.0));
-  c += nightSky(dir, moonDir, alt, time, pixelAngle, visible, T);
+  c += nightSky(dir, moonDir, alt, time, pixelAngle, visible, T, skyY);
   return c;
 }
 
@@ -127,8 +128,9 @@ vec3 atmosphereSky(vec2 px, vec3 dir, vec3 camPos, vec3 sunDir, vec3 moonDir, fl
   float T;
   vec4 c = cloudsEnabled == 1 ? cloudsFiltered(px) : vec4(0.0, 0.0, 0.0, 1.0);
   T = c.a;
-  lin = srgbToLinear(max(glowed, 0.0)) * T + cloudShoulder(c.rgb);
-  lin += celestial(dir, sunDir, moonDir, alt, time, pixelAngle, T);
+  vec3 skyLin = srgbToLinear(max(glowed, 0.0));
+  lin = skyLin * T + cloudShoulder(c.rgb);
+  lin += celestial(dir, sunDir, moonDir, alt, time, pixelAngle, T, overcastLuma(skyLin));
   return linearToSrgb(clamp(lin, 0.0, 1.0));
 }
 #endif

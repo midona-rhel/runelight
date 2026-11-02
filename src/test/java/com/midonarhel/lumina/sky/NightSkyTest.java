@@ -199,4 +199,24 @@ public class NightSkyTest
 		jump.update(60, 0, null, 0.001f, "ARCTIC", t, true);
 		assertTrue(jump.aurora <= 0.1f / NightSky.AURORA_FADE_SECONDS + 1e-6);
 	}
+
+	@Test
+	public void auroraHeldAnywhereAtOnce()
+	{
+		NightSky sky = new NightSky();
+		try
+		{
+			NightSky.auroraHold = 0.8f;
+			sky.update(0, 0, null, 0.001f, "GRASSLAND", 0, false);
+			assertEquals(0.8f, sky.aurora, 0);
+			// let go: back to the place's, fading from where it was
+			NightSky.auroraHold = Float.NaN;
+			sky.update(0.1f, 0, null, 0.001f, "GRASSLAND", 0, true);
+			assertEquals(0.8f - 0.1f / NightSky.AURORA_FADE_SECONDS, sky.aurora, 1e-6);
+		}
+		finally
+		{
+			NightSky.auroraHold = Float.NaN;
+		}
+	}
 }

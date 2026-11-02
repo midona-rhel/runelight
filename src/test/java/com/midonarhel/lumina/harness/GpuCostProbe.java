@@ -17,6 +17,9 @@ import static org.lwjgl.opengl.GL33C.*;
  * with GL_TIME_ELAPSED queries (Composite.passTimers), alternately with the skylight on and switched off
  * (Commands.skylightOff: the AO pass's open-sky fallback), -Dlumina.frames of each (default 240). Prints and appends to
  * -Dlumina.out the medians and the skylight's share of the AO pass (on less off).
+ *
+ * -Dlumina.ab=aurora toggles the aurora instead (NightSky.auroraHold 1 and 0, the skylight left on): its cost is the
+ * composite's, on less off ("skylight" in the line then reads "aurora", and the AO pass is unchanged).
  */
 public class GpuCostProbe
 {
@@ -51,6 +54,7 @@ public class GpuCostProbe
 			}
 		}
 		int n = Integer.parseInt(System.getProperty("lumina.frames", "240"));
+		boolean aurora = "aurora".equals(System.getProperty("lumina.ab"));
 		try (DumpRenderer r = new DumpRenderer(dump, o))
 		{
 			r.render();
@@ -63,7 +67,14 @@ public class GpuCostProbe
 			for (int i = 0; i < 2 * n + 20; ++i)
 			{
 				boolean skyOff = (i & 1) == 1;
-				Commands.skylightOff = skyOff;
+				if (aurora)
+				{
+					com.midonarhel.lumina.sky.NightSky.auroraHold = skyOff ? 0 : 1;
+				}
+				else
+				{
+					Commands.skylightOff = skyOff;
+				}
 				r.frame();
 				double ao = glGetQueryObjecti64(q[0], GL_QUERY_RESULT) / 1e6, comp = glGetQueryObjecti64(q[1], GL_QUERY_RESULT) / 1e6;
 				if (i >= 20)
@@ -71,14 +82,28 @@ public class GpuCostProbe
 					int k = (i - 20) / 2;
 					(skyOff ? aoOff : aoOn)[k] = ao;
 					(skyOff ? compOff : compOn)[k] = comp;
-					if (skyOff) pair[k] = aoOn[k] - ao;
+					if (skyOff) pair[k] = aurora ? compOn[k] - comp : aoOn[k] - ao;
 				}
 			}
 			com.midonarhel.lumina.frame.Composite.passTimers = null;
 			Commands.skylightOff = false;
+			com.midonarhel.lumina.sky.NightSky.auroraHold = Float.NaN;
 			glDeleteQueries(q[0]);
 			glDeleteQueries(q[1]);
 			for (double[] a : new double[][]{aoOn, aoOff, compOn, compOff, pair}) Arrays.sort(a);
+			if (aurora)
+			{
+				String line = String.format("%s camera=%s renderScale=%s frames=%d: composite %.3f ms (p10 %.3f p90 %.3f) with the aurora, %.3f (p10 %.3f p90 %.3f) without: aurora %.3f ms (by pairs %.3f, p25 %.3f p75 %.3f)%n",
+					name, camera == null ? "dump" : camera, scale == null ? "dump" : scale, n,
+					compOn[n / 2], compOn[n / 10], compOn[n * 9 / 10], compOff[n / 2], compOff[n / 10], compOff[n * 9 / 10], compOn[n / 2] - compOff[n / 2], pair[n / 2], pair[n / 4], pair[n * 3 / 4]);
+				System.out.print(line);
+				String out = System.getProperty("lumina.out");
+				if (out != null)
+				{
+					Files.writeString(Path.of(out), line, StandardOpenOption.CREATE, StandardOpenOption.APPEND);
+				}
+				return;
+			}
 			String line = String.format("%s camera=%s renderScale=%s frames=%d: AO pass %.3f ms (p10 %.3f p90 %.3f), with the skylight off %.3f (p10 %.3f p90 %.3f), skylight %.3f ms (by pairs %.3f, p25 %.3f p75 %.3f); composite %.3f ms (off %.3f)%n",
 				name, camera == null ? "dump" : camera, scale == null ? "dump" : scale, n,
 				aoOn[n / 2], aoOn[n / 10], aoOn[n * 9 / 10], aoOff[n / 2], aoOff[n / 10], aoOff[n * 9 / 10], aoOn[n / 2] - aoOff[n / 2], pair[n / 2], pair[n / 4], pair[n * 3 / 4],
