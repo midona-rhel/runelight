@@ -149,6 +149,16 @@ tasks.register('fogGroundUpload', JavaExec) {
 	doFirst { args = project.property('args').toString().split(' ').findAll { it } }
 }
 
+// the dynamic model buffers' map on the client thread, the GPU busy (harness BufferMapProbe): ./gradlew bufferMap -Pargs="fps1 300"
+tasks.register('bufferMap', JavaExec) {
+	dependsOn testClasses
+	classpath = sourceSets.test.runtimeClasspath
+	mainClass = 'com.midonarhel.lumina.harness.BufferMapProbe'
+	workingDir = projectDir
+	jvmArgs '-Xmx8g'
+	doFirst { args = project.property('args').toString().split(' ').findAll { it } }
+}
+
 // the weather field's upload on the client thread, the GPU busy (harness WeatherFieldUploadProbe): ./gradlew weatherFieldUpload -Pargs="tree1 200"
 tasks.register('weatherFieldUpload', JavaExec) {
 	dependsOn testClasses
