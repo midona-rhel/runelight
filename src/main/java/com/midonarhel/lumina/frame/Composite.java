@@ -542,7 +542,7 @@ public final class Composite
 			}
 			plugin.frameSkylight = plugin.skyGrid.bindAo(SKY_GRID_UNIT, aoScene, plugin.frameCameraX, plugin.frameCameraY, plugin.frameCameraZ)
 				&& !com.midonarhel.lumina.dev.Commands.skylightOff;
-			plugin.skyField.bindAo(SKY_FIELD_UNIT, plugin.frameCameraX, plugin.frameCameraZ);
+			plugin.skyField.bindAo(SKY_FIELD_UNIT, SKY_FIELD_PREV_UNIT, plugin.frameCameraX, plugin.frameCameraZ);
 			if (passTimers != null)
 			{
 				// timed with the skylight switched off: the AO program's skylight too, so its cost shows
@@ -552,7 +552,7 @@ public final class Composite
 			glDrawArrays(GL_TRIANGLES, 0, 3);
 			if (passTimers != null) glEndQuery(org.lwjgl.opengl.GL33C.GL_TIME_ELAPSED);
 			SkyGridMap.unbind(SKY_GRID_UNIT);
-			SkyFieldMap.unbind(SKY_FIELD_UNIT);
+			SkyFieldMap.unbind(SKY_FIELD_UNIT, SKY_FIELD_PREV_UNIT);
 			// the sky cache takes the occlusion map's unit next, without its sampler objects
 			ShadowMap.unbind(WEATHER_OCCLUSION_UNIT, WEATHER_OCCLUSION_UNIT + 1);
 			plugin.sceneTargets.bindAo(AO_TEXTURE_UNIT);

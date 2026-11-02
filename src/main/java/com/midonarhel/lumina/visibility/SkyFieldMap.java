@@ -1,6 +1,7 @@
 package com.midonarhel.lumina.visibility;
 
 import com.midonarhel.lumina.*;
+import com.midonarhel.lumina.common.LayerEase;
 
 import java.nio.FloatBuffer;
 import java.util.concurrent.ExecutorService;
@@ -11,7 +12,9 @@ import static org.lwjgl.opengl.GL33C.*;
 /**
  * The sky's light under cover as a texture for the skylight (SkyField, skylight_ao.glsl): worked out on a worker
  * thread for the player's plane whenever the walls (a door opens), the rooms, the plane or the reach change, then
- * uploaded. Until the first result the skylight keeps to the traced sky visibility alone (SkyGrid).
+ * uploaded. Until the first result the skylight keeps to the traced sky visibility alone (SkyGrid). A field of the
+ * same scene and plane (a door opened or shut) goes to a second texture and eases in over the one shown (LayerEase):
+ * the light through a door fades from the old to the new instead of changing in one frame.
  */
 public final class SkyFieldMap
 {
@@ -45,7 +48,10 @@ public final class SkyFieldMap
 	private volatile Job done;
 	private Job uploaded;
 	private int texture;
-	private int uniOn, uniMap, uniPlane;
+	// the field shown before the newest, easing out since the newest was uploaded (0: none)
+	private int prevTexture;
+	private long since;
+	private int uniOn, uniMap, uniPlane, uniWeight;
 
 	/**
 	 * Once a frame: follow the scene's walls, rooms and floors for the plane. Passing nothing (the skylight is off, or
@@ -94,9 +100,28 @@ public final class SkyFieldMap
 		int w = job.walls.size * SkyField.TEXELS_PER_TILE;
 		FloatBuffer buf = BufferUtils.createFloatBuffer(job.texels.length);
 		buf.put(job.texels).flip();
-		if (texture == 0)
+		Job shown = uploaded;
+		if (texture != 0 && shown != null && shown.walls.size == job.walls.size && shown.walls.offset == job.walls.offset
+			&& shown.plane == job.plane)
 		{
-			texture = glGenTextures();
+			// the same scene's field again (a door): the shown one eases out, into the other texture (the one easing
+			// out before, if any, is cut short)
+			int t = prevTexture != 0 ? prevTexture : glGenTextures();
+			prevTexture = texture;
+			texture = t;
+			since = com.midonarhel.lumina.common.Clock.nanos();
+		}
+		else
+		{
+			if (prevTexture != 0)
+			{
+				glDeleteTextures(prevTexture);
+				prevTexture = 0;
+			}
+			if (texture == 0)
+			{
+				texture = glGenTextures();
+			}
 		}
 		glBindTexture(GL_TEXTURE_2D, texture);
 		glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
@@ -123,19 +148,26 @@ public final class SkyFieldMap
 			glDeleteTextures(texture);
 			texture = 0;
 		}
+		if (prevTexture != 0)
+		{
+			glDeleteTextures(prevTexture);
+			prevTexture = 0;
+		}
 		requested = null;
 		done = null;
 		uploaded = null;
 	}
 
-	/** Look up the AO program's uniforms; the texture is sampled on {@code unit}. */
-	public void locateAo(int program, int unit)
+	/** Look up the AO program's uniforms; the texture is sampled on {@code unit}, the one easing out on {@code prevUnit}. */
+	public void locateAo(int program, int unit, int prevUnit)
 	{
 		uniOn = glGetUniformLocation(program, "skyFieldOn");
 		uniMap = glGetUniformLocation(program, "skyFieldMap");
 		uniPlane = glGetUniformLocation(program, "skyFieldPlane");
+		uniWeight = glGetUniformLocation(program, "skyFieldWeight");
 		glUseProgram(program);
 		glUniform1i(glGetUniformLocation(program, "skyField"), unit);
+		glUniform1i(glGetUniformLocation(program, "skyFieldPrev"), prevUnit);
 		glUseProgram(0);
 	}
 
@@ -143,7 +175,7 @@ public final class SkyFieldMap
 	 * With the AO program in use: bind the newest uploaded texture on unit (the last one stands in while the next is
 	 * worked out), and say where it lies. {@link #unbind} after the pass.
 	 */
-	public void bindAo(int unit, float cameraX, float cameraZ)
+	public void bindAo(int unit, int prevUnit, float cameraX, float cameraZ)
 	{
 		boolean on = texture != 0 && uploaded != null;
 		glUniform1i(uniOn, on ? 1 : 0);
@@ -155,15 +187,22 @@ public final class SkyFieldMap
 			glUniform4f(uniMap, scale, scale, (cameraX / 128 + uploaded.walls.offset) / size,
 				(cameraZ / 128 + uploaded.walls.offset) / size);
 			glUniform1i(uniPlane, uploaded.plane);
+			// LayerEase: the newest field's share since it was uploaded, the one before it the rest
+			float w = prevTexture != 0 ? LayerEase.weight(since, com.midonarhel.lumina.common.Clock.nanos()) : 1;
+			glUniform1f(uniWeight, w);
 			glActiveTexture(GL_TEXTURE0 + unit);
 			glBindTexture(GL_TEXTURE_2D, texture);
+			glActiveTexture(GL_TEXTURE0 + prevUnit);
+			glBindTexture(GL_TEXTURE_2D, w < 1 ? prevTexture : 0);
 			glActiveTexture(GL_TEXTURE0);
 		}
 	}
 
-	public static void unbind(int unit)
+	public static void unbind(int unit, int prevUnit)
 	{
 		glActiveTexture(GL_TEXTURE0 + unit);
+		glBindTexture(GL_TEXTURE_2D, 0);
+		glActiveTexture(GL_TEXTURE0 + prevUnit);
 		glBindTexture(GL_TEXTURE_2D, 0);
 		glActiveTexture(GL_TEXTURE0);
 	}

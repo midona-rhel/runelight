@@ -355,7 +355,7 @@ public final class Programs
 		bindSceneSamplers(plugin.glAoProgram);
 		plugin.weatherGround.locate(plugin.glAoProgram, WEATHER_OCCLUSION_UNIT, WEATHER_FIELD_UNIT);
 		plugin.skyGrid.locateAo(plugin.glAoProgram, SKY_GRID_UNIT);
-		plugin.skyField.locateAo(plugin.glAoProgram, SKY_FIELD_UNIT);
+		plugin.skyField.locateAo(plugin.glAoProgram, SKY_FIELD_UNIT, SKY_FIELD_PREV_UNIT);
 		plugin.water.locateAo(plugin.glAoProgram, WATER_DATA_UNIT);
 		// the shadow samplers' units hold an empty depth map until their maps are bound
 		ShadowMap.unbind(SHADOW_RAW_UNIT, SHADOW_COMPARE_UNIT);

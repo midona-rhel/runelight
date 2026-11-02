@@ -28,6 +28,9 @@ uniform vec3 skyGridPrevCamera;
 // camera-relative world xz * skyFieldMap.xy + skyFieldMap.zw
 uniform sampler2D skyField;
 uniform int skyFieldOn;
+// the field shown before a door opened or shut, and the newest one's share of the two (SkyFieldMap, LayerEase)
+uniform sampler2D skyFieldPrev;
+uniform float skyFieldWeight;
 uniform vec4 skyFieldMap;
 // the plane the field is worked out for (the player's)
 uniform int skyFieldPlane;
@@ -312,24 +315,24 @@ float skyHermite(vec2 f, vec4 v, vec4 gx, vec4 gz) {
 // (skyHermite), so it keeps its slope across tile edges (bilinear, it bent at each: a stepped falloff from a doorway);
 // on a tile a diagonal splits, each half from its own corners, the one its triangle lacks carried on from the
 // triangle's plane. Diagonal halves use separate channels; their cover blends linearly over the triangle.
-vec2 skyFieldVisibility(vec3 p) {
-  ivec2 dims = textureSize(skyField, 0);
+vec2 skyFieldSample(sampler2D map, vec3 p) {
+  ivec2 dims = textureSize(map, 0);
   float tiles = float(dims.x) * 0.5;
   vec2 t = clamp((p.xz * skyFieldMap.xy + skyFieldMap.zw) * tiles, vec2(0.0), vec2(tiles - 0.0001));
   ivec2 base = ivec2(floor(t)) * 2;
   vec2 f = fract(t);
-  vec4 sw = texelFetch(skyField, base, 0);
-  vec4 se = texelFetch(skyField, base + ivec2(1, 0), 0);
-  vec4 nw = texelFetch(skyField, base + ivec2(0, 1), 0);
-  vec4 ne = texelFetch(skyField, base + ivec2(1, 1), 0);
+  vec4 sw = texelFetch(map, base, 0);
+  vec4 se = texelFetch(map, base + ivec2(1, 0), 0);
+  vec4 nw = texelFetch(map, base + ivec2(0, 1), 0);
+  vec4 ne = texelFetch(map, base + ivec2(1, 1), 0);
   int diagonal = int(floor(sw.g * 0.5));
   float code = 2.0 * float(diagonal);
   sw.g -= code; se.g -= code; nw.g -= code; ne.g -= code;
   ivec2 below = base + ivec2(0, dims.x);
-  vec4 gsw = texelFetch(skyField, below, 0);
-  vec4 gse = texelFetch(skyField, below + ivec2(1, 0), 0);
-  vec4 gnw = texelFetch(skyField, below + ivec2(0, 1), 0);
-  vec4 gne = texelFetch(skyField, below + ivec2(1, 1), 0);
+  vec4 gsw = texelFetch(map, below, 0);
+  vec4 gse = texelFetch(map, below + ivec2(1, 0), 0);
+  vec4 gnw = texelFetch(map, below + ivec2(0, 1), 0);
+  vec4 gne = texelFetch(map, below + ivec2(1, 1), 0);
   vec2 field = vec2(0.0);
   if (diagonal == 0) {
     field = vec2(skyHermite(f, vec4(sw.r, se.r, nw.r, ne.r), vec4(gsw.x, gse.x, gnw.x, gne.x), vec4(gsw.y, gse.y, gnw.y, gne.y)),
@@ -354,6 +357,12 @@ vec2 skyFieldVisibility(vec3 p) {
     field = vec2(skyHermite(f, light, gx, gz), dot(tri, cover));
   }
   return clamp(field, 0.0, 1.0);
+}
+
+// The field, eased from the one before while a door's new field comes in (skyFieldWeight under 1).
+vec2 skyFieldVisibility(vec3 p) {
+  vec2 now = skyFieldSample(skyField, p);
+  return skyFieldWeight < 1.0 ? mix(skyFieldSample(skyFieldPrev, p), now, skyFieldWeight) : now;
 }
 
 // 1 under the open sky. Under cover (the reconstructed field's green channel) the light flowing in through
