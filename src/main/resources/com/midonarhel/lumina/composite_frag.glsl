@@ -199,10 +199,11 @@ vec3 lampsOnSurface(int entry, vec3 p, vec3 n, vec3 faceN, float transmissive, o
   LightMask lamps = clusterLights(entry);
   int li;
   while (nextLight(lamps, li)) {
-    Lamp lamp = lampAt(li);
-    if (!lampReaches(lamp, p, n, transmissive > 0.0)) {
+    vec4 sphere = lampSphere(li);
+    if (!lampSphereReaches(sphere, p, n, transmissive > 0.0)) {
       continue;
     }
+    Lamp lamp = lampWith(li, sphere);
     vec3 ld;
     float d;
     vec3 c = lampLight(lamp, p, wallFrom, false, ld, d);

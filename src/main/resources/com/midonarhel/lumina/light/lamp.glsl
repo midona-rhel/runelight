@@ -78,12 +78,21 @@ struct Lamp {
   float roofLow; // the lowest drawn roof in its reach, world y plus LAMP_ROOF_BIAS; 0: none
 };
 
-Lamp lampAt(int li) {
-  vec4 a = texelFetch(lightData, li * 4);
+// A lamp's first texel: its camera-relative position and radius, all that says whether it reaches a point; the other
+// three are read (lampWith) only for a lamp that does, so the lamps of a cluster that miss a pixel cost one read each
+vec4 lampSphere(int li) {
+  return texelFetch(lightData, li * 4);
+}
+
+Lamp lampWith(int li, vec4 a) {
   vec4 b = texelFetch(lightData, li * 4 + 1);
   vec4 c = texelFetch(lightData, li * 4 + 2);
   vec4 d = texelFetch(lightData, li * 4 + 3);
   return Lamp(a.xyz, a.w, b.rgb, int(b.w), c.xy, c.z, c.w, int(d.x + 0.5), d.y, int(d.z + 0.5), d.w);
+}
+
+Lamp lampAt(int li) {
+  return lampWith(li, lampSphere(li));
 }
 
 // 117 HD's falloff, from the squared distance and the squared radius (below 1 inside it)
@@ -380,9 +389,20 @@ float lampWallsOpen(Lamp lamp, vec3 p, vec3 wallFrom, bool inAir) {
   return mix(before, now, lampWallsEase);
 }
 
-// How much of the lamp reaches camera-relative point p: what the walls let through (lampWallsOpen), and for a lamp the
-// light map carries, no more than the map lets through (lampMapVisibility, as it eases in): the stricter of the two.
+// A lamp the light map carries, once its map has eased in, is stopped by the map alone: the map is baked through the
+// walls, floors and models, and its read never takes light across a wall (lamp_map.glsl), so walking the walls again
+// (lampWallsOpen) only cost a second test per lamp per pixel (perf-audit, fps1: the walls 0.3-0.4 ms on top of the map).
+#define LAMP_MAP_ALONE 1
+
+// How much of the lamp reaches camera-relative point p: for a lamp the map carries in full, the map's (lampMapVisibility);
+// else what the walls let through (lampWallsOpen), and for a lamp the light map is easing in on, no more than the map
+// lets through: the stricter of the two.
 float lampOpen(Lamp lamp, vec3 p, vec3 wallFrom, bool inAir) {
+#if LAMP_MAP_ALONE
+  if (lamp.mapId > 0 && lamp.mapEase >= 1.0) {
+    return lampMapVisibility(lamp.mapId, p, wallFrom);
+  }
+#endif
   float open = lampWallsOpen(lamp, p, wallFrom, inAir);
   if (lamp.mapId > 0 && open > 0.0) {
     open = min(open, mix(1.0, lampMapVisibility(lamp.mapId, p, wallFrom), lamp.mapEase));
@@ -407,11 +427,14 @@ vec3 lampLight(Lamp lamp, vec3 p, vec3 wallFrom, bool inAir, out vec3 ld, out fl
   return open > 0.0 ? lamp.color * (lampFalloff(d2, r2) * open) : vec3(0.0);
 }
 
+bool lampSphereReaches(vec4 sphere, vec3 p, vec3 n, bool backToo) {
+  vec3 l = sphere.xyz - p;
+  return dot(l, l) < sphere.w * sphere.w && (backToo || dot(n, l) > 0.0);
+}
+
 // Whether the lamp is within reach of a surface at p and in front of it by its smooth normal n, as the sun's light is
 // by its normal (a face's own normal cut the light triangle by triangle across a round mesh); a surface turned away is
 // lit only through, with backToo. No wrap past the horizon: it lit a roof's slope from the lanterns under its eave.
 bool lampReaches(Lamp lamp, vec3 p, vec3 n, bool backToo) {
-  vec3 l = lamp.pos - p;
-  float d2 = dot(l, l);
-  return d2 < lamp.radius * lamp.radius && (backToo || dot(n, l) > 0.0);
+  return lampSphereReaches(vec4(lamp.pos, lamp.radius), p, n, backToo);
 }

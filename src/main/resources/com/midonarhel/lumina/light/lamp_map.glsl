@@ -72,35 +72,47 @@ bool lampMapOpen(ivec2 a, int wallsA, ivec2 b) {
   return (uint(wallsA) & side) == 0u;
 }
 
-// A cell's two texels (LightMapBuffer: eight numbers of 24 bits); false where no block of the storey holds it.
-bool lampMapCell(ivec2 cell, int plane, vec4 h, out uvec4 a, out uvec4 b) {
-  a = uvec4(0u);
-  b = uvec4(0u);
+// The place of the block that holds a cell on a storey, -1 where none does.
+int lampMapPlace(ivec2 cell, int plane, vec4 h) {
   int perSide = int(h.x);
   ivec2 blk = cell >> 5;
   if (any(lessThan(cell, ivec2(0))) || any(greaterThanEqual(blk, ivec2(perSide)))) {
-    return false;
+    return -1;
   }
   int entry = (plane * perSide + blk.y) * perSide + blk.x;
-  int place = int(texelFetch(lightData, LIGHT_MAP_INDEX + (entry >> 2))[entry & 3] + 0.5) - 1;
+  return int(texelFetch(lightData, LIGHT_MAP_INDEX + (entry >> 2))[entry & 3] + 0.5) - 1;
+}
+
+// A cell's two texels (LightMapBuffer: eight numbers of 24 bits) in the block at a place; zeros for none (place < 0).
+void lampMapCellIn(ivec2 cell, int place, out uvec4 a, out uvec4 b) {
+  a = uvec4(0u);
+  b = uvec4(0u);
   if (place < 0) {
-    return false;
+    return;
   }
   int i = LIGHT_MAP_BLOCKS + place * LIGHT_MAP_BLOCK_TEXELS + (((cell.y & 31) << 5) + (cell.x & 31)) * 2;
   a = uvec4(texelFetch(lightData, i) + 0.5);
   b = uvec4(texelFetch(lightData, i + 1) + 0.5);
-  return true;
 }
 
+// A cell's two texels; false where no block of the storey holds it.
+bool lampMapCell(ivec2 cell, int plane, vec4 h, out uvec4 a, out uvec4 b) {
+  int place = lampMapPlace(cell, plane, h);
+  lampMapCellIn(cell, place, a, b);
+  return place >= 0;
+}
+
+#if LIGHT_MAP_LAYERS != 4
+#error lampMapLayer picks the bytes of four layers
+#endif
 // a layer's visibility of the four slots in a cell's numbers: bytes layer * 4 to layer * 4 + 3, three to a number
+// (layer 0: bytes 0-3, the first number's three and the second's first; and so on), picked without indexing an array
 vec4 lampMapLayer(uvec4 a, uvec4 b, int layer) {
-  uint w[6] = uint[6](a.x, a.y, a.z, a.w, b.x, b.y);
-  vec4 v;
-  for (int s = 0; s < 4; ++s) {
-    int k = layer * 4 + s;
-    v[s] = float((w[k / 3] >> uint((k - k / 3 * 3) * 8)) & 255u);
-  }
-  return v * (1.0 / 255.0);
+  uvec4 w = layer == 0 ? uvec4(a.x, a.x, a.x, a.y) : layer == 1 ? uvec4(a.y, a.y, a.z, a.z)
+    : layer == 2 ? uvec4(a.z, a.w, a.w, a.w) : uvec4(b.x, b.x, b.x, b.y);
+  uvec4 shift = layer == 0 ? uvec4(0u, 8u, 16u, 0u) : layer == 1 ? uvec4(8u, 16u, 0u, 8u)
+    : layer == 2 ? uvec4(16u, 0u, 8u, 16u) : uvec4(0u, 8u, 16u, 0u);
+  return vec4((w >> shift) & 255u) * (1.0 / 255.0);
 }
 
 // the table ids of the cell's slots (0: none)
@@ -194,9 +206,11 @@ bool lampMapSlots(vec3 w, vec3 at, int plane, vec4 h, out vec4 vis, out ivec4 id
   ivec2 cell = ivec2(floor(c));
   uvec4 a, b;
   // the lamps of the cell the point is in; a cell next to a lamp's has it too, empty, so that filtering takes from it
-  if (!lampMapCell(cell, plane, h, a, b)) {
+  int place = lampMapPlace(cell, plane, h);
+  if (place < 0) {
     return false;
   }
+  lampMapCellIn(cell, place, a, b);
   ids = lampMapIds(b);
   if (all(equal(ids, ivec4(0)))) {
     return false;
@@ -216,7 +230,8 @@ bool lampMapSlots(vec3 w, vec3 at, int plane, vec4 h, out vec4 vis, out ivec4 id
     if (share[k] > 0.0) {
       uvec4 ta = a, tb = b;
       if (taps[k] != cell) {
-        lampMapCell(taps[k], plane, h, ta, tb);
+        // a cell of the same block (the most of them) has its place
+        lampMapCellIn(taps[k], all(equal(taps[k] >> 5, cell >> 5)) ? place : lampMapPlace(taps[k], plane, h), ta, tb);
       }
       vis += share[k] * mix(lampMapLayer(ta, tb, below), lampMapLayer(ta, tb, above), up);
     }
