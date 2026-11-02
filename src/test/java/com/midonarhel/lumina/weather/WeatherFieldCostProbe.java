@@ -20,7 +20,7 @@ public class WeatherFieldCostProbe
 		WeatherTestData.load();
 		int n = 33;
 		WeatherType[] types = {WeatherTestData.type("CLEAR"), WeatherTestData.type("RAIN"),
-			WeatherTestData.type("THUNDERSTORM"), WeatherTestData.type("CLEAR")};
+			WeatherTestData.type("STORM"), WeatherTestData.type("CLEAR")};
 		String[] names = {"FOREST", "GRASSLAND", "MOUNTAIN", "WETLAND"};
 		long[] keys = new long[n * n];
 		String[] biomes = new String[n * n];

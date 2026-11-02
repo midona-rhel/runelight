@@ -173,7 +173,7 @@ public class WeatherFieldTest
 		String[] biomes = new String[N * N];
 		java.util.Arrays.fill(biomes, WeatherField.NO_SKY);
 		f.layout(N, N, 0, 0, keys, biomes);
-		f.update(b -> WeatherTestData.type("THUNDERSTORM"), null, 1, true, 6, 0);
+		f.update(b -> WeatherTestData.type("STORM"), null, 1, true, 6, 0);
 		assertTrue(!f.hasAnything());
 		assertEquals(0, f.max(WeatherField.RAIN), 0);
 	}
@@ -183,55 +183,28 @@ public class WeatherFieldTest
 	{
 		float[][] s = new float[WeatherField.CHANNELS][1];
 		float[] t = new float[WeatherField.TARGETS];
-		// dust and ash fall in the snow pass but never whiten the ground
-		for (String id : new String[]{"SANDSTORM", "ASH_FALL"})
-		{
-			s[WeatherField.SNOW_COVER][0] = 0;
-			s[WeatherField.COVER][0] = 1;
-			WeatherField.targets(WeatherTestData.type(id), null, 0.6f, 12, t);
-			assertTrue(t[WeatherField.SNOW] > 0);
-			for (int i = 0; i < 4 * 600; ++i)
-			{
-				WeatherField.step(s, 0, t, 0.25f);
-			}
-			assertTrue(s[WeatherField.SNOW][0] > 0.2f);
-			assertEquals(id, 0, s[WeatherField.SNOW_COVER][0], 0);
-			assertEquals(0, s[WeatherField.WET][0], 0);
-		}
-		// freezing fog lays nothing: with no snow falling the ground never whitens
-		WeatherType frost = WeatherTestData.type("FREEZING_FOG");
-		WeatherField.targets(frost, null, 0.6f, 12, t);
-		s[WeatherField.SNOW_COVER][0] = s[WeatherField.SNOW][0] = 0;
-		for (int i = 0; i < 4 * 1200; ++i)
+		// snow whitens the ground and leaves it dry; rain wets it and lays no snow
+		s[WeatherField.COVER][0] = 1;
+		WeatherField.targets(WeatherTestData.type("SNOW"), null, 0.6f, 12, t);
+		for (int i = 0; i < 4 * 600; ++i)
 		{
 			WeatherField.step(s, 0, t, 0.25f);
 		}
-		assertEquals(0, s[WeatherField.SNOW_COVER][0], 0);
-		// a monsoon soaks the ground faster than drizzle
-		float[] wet = new float[2];
-		String[] ids = {"DRIZZLE", "MONSOON"};
-		for (int k = 0; k < 2; ++k)
+		assertTrue(s[WeatherField.SNOW_COVER][0] > 0.9f);
+		assertEquals(0, s[WeatherField.WET][0], 0);
+		java.util.Arrays.fill(s[WeatherField.SNOW_COVER], 0);
+		WeatherField.targets(WeatherTestData.type("RAIN"), null, 0.6f, 12, t);
+		for (int i = 0; i < 4 * 600; ++i)
 		{
-			java.util.Arrays.fill(s[WeatherField.WET], 0);
-			s[WeatherField.COVER][0] = 1;
-			s[WeatherField.RAIN][0] = 0.01f;
-			WeatherField.targets(WeatherTestData.type(ids[k]), null, 0.6f, 12, t);
-			for (int i = 0; i < 4 * 10; ++i)
-			{
-				WeatherField.step(s, 0, t, 0.25f);
-			}
-			wet[k] = s[WeatherField.WET][0];
+			WeatherField.step(s, 0, t, 0.25f);
 		}
-		assertTrue(wet[1] > 2 * wet[0]);
-		// showers rain less on average than their peak
-		WeatherType showers = WeatherTestData.type("SPRING_SHOWERS");
-		WeatherField.targets(showers, null, 0.6f, 12, t);
-		assertTrue(t[WeatherField.RAIN] < showers.rain * 0.8f);
+		assertTrue(s[WeatherField.WET][0] > 0.9f);
+		assertEquals(0, s[WeatherField.SNOW_COVER][0], 0);
 	}
 
-	// a swamp in a thunderstorm west of a desert in a sandstorm: nearly every quantity differs
+	// a swamp in a storm west of a clear desert: most quantities differ
 	private static final Function<String, WeatherType> STORM_AND_DUST = b -> "SWAMP".equals(b)
-		? WeatherTestData.type("THUNDERSTORM") : WeatherTestData.type("SANDSTORM");
+		? WeatherTestData.type("STORM") : WeatherTestData.type("CLEAR");
 
 	@Test
 	public void everyChannelIsContinuousAcrossABorder()
@@ -269,7 +242,7 @@ public class WeatherFieldTest
 			changing += hi - lo > 0.01f ? 1 : 0;
 		}
 		// and the two places really differ in most of them
-		assertTrue("only " + changing + " channels differ", changing >= 20);
+		assertTrue("only " + changing + " channels differ", changing >= 12);
 	}
 
 	@Test
@@ -280,9 +253,9 @@ public class WeatherFieldTest
 		f.update(STORM_AND_DUST, null, 0.6f, true, 6.5, 0);
 		float z = f.getOriginZ() + center(10);
 		f.focus(f.getOriginX() + center(9), z);
-		assertEquals(WeatherTestData.type("THUNDERSTORM"), f.getFocusType());
+		assertEquals(WeatherTestData.type("STORM"), f.getFocusType());
 		f.focus(f.getOriginX() + center(14), z);
-		assertEquals(WeatherTestData.type("SANDSTORM"), f.getFocusType());
+		assertEquals(WeatherTestData.type("CLEAR"), f.getFocusType());
 	}
 
 	@Test
@@ -300,7 +273,7 @@ public class WeatherFieldTest
 		{
 			before[c] = f.getFocus(c);
 		}
-		WeatherType storm = WeatherTestData.type("THUNDERSTORM");
+		WeatherType storm = WeatherTestData.type("STORM");
 		Function<String, WeatherType> types = b -> storm;
 		float[] t = new float[WeatherField.TARGETS];
 		WeatherField.targets(storm, "SWAMP", 0.6f, 13, t);

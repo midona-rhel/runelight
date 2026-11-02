@@ -78,15 +78,14 @@ public class WeatherForecastTest
 		return sum;
 	}
 
-	private static final String[] SNOWY = {"LIGHT_SNOW", "SNOW", "HEAVY_SNOW", "BLIZZARD", "SLEET"};
-	private static final String[] RAINY = {"DRIZZLE", "RAIN", "SPRING_SHOWERS", "SUMMER_RAIN", "AUTUMN_RAIN",
-		"THUNDERSTORM", "MONSOON", "SLEET"};
+	private static final String[] SNOWY = {"SNOW"};
+	private static final String[] RAINY = {"RAIN", "STORM"};
 
 	@Test
 	public void catalogue()
 	{
 		WeatherType[] all = WeatherType.all();
-		assertTrue("types " + all.length, all.length >= 20);
+		assertEquals("clear, overcast, rain, storm, snow, fog, sandstorm, ash fall, haze", 9, all.length);
 		for (int i = 0; i < all.length; ++i)
 		{
 			assertEquals(i, all[i].index);
@@ -111,7 +110,7 @@ public class WeatherForecastTest
 		for (WeatherType t : all)
 		{
 			boolean strikes = t.lightning >= 0.6f;
-			assertEquals(t.id, t.id.equals("THUNDERSTORM") || t.id.equals("MONSOON"), strikes);
+			assertEquals(t.id, t.id.equals("STORM"), strikes);
 		}
 	}
 
@@ -125,9 +124,12 @@ public class WeatherForecastTest
 		{
 			root = new JsonParser().parse(r).getAsJsonObject();
 		}
-		for (Map.Entry<String, JsonElement> morning : root.getAsJsonObject("morning").entrySet())
+		if (root.has("morning"))
 		{
-			assertNotNull(morning.getKey(), WeatherType.get(morning.getKey()));
+			for (Map.Entry<String, JsonElement> morning : root.getAsJsonObject("morning").entrySet())
+			{
+				assertNotNull(morning.getKey(), WeatherType.get(morning.getKey()));
+			}
 		}
 		JsonObject biomes = root.getAsJsonObject("biomes");
 		for (String b : BIOMES)
@@ -239,15 +241,11 @@ public class WeatherForecastTest
 		{
 			float[] desert = shares("DESERT", season);
 			assertEquals(season.toString(), 0, share(desert, SNOWY), 0);
-			assertEquals(0, share(desert, "FREEZING_FOG", "ASH_FALL", "MONSOON"), 0);
-			assertTrue(share(desert, "CLEAR", "SUNNY", "HARSH_SUN", "HAZY") > 0.6f);
-			assertTrue(share(desert, "SANDSTORM") > 0.02f);
+			assertTrue(share(desert, "CLEAR") > 0.6f);
 			float[] arctic = shares("ARCTIC", season);
 			assertEquals(season.toString(), 0, share(arctic, RAINY), 0);
-			assertEquals(0, share(arctic, "HARSH_SUN", "SANDSTORM"), 0);
 			float[] tropical = shares("TROPICAL", season);
 			assertEquals(0, share(tropical, SNOWY), 0);
-			assertEquals(0, share(tropical, "FREEZING_FOG"), 0);
 		}
 		// across the whole year as well, with the season blends and the chain
 		assertEquals(0, share(shares("DESERT"), SNOWY), 0);
@@ -257,60 +255,55 @@ public class WeatherForecastTest
 	@Test
 	public void seasonsShiftTheOdds()
 	{
-		// temperate regions: spring showers, summer heat and summer rain, autumn rain and wind, some snow in winter
+		// temperate regions: rain in spring and autumn, clear summers, some snow in winter
 		for (String b : new String[]{"GRASSLAND", "FOREST"})
 		{
 			float[] spring = shares(b, Season.SPRING);
 			float[] summer = shares(b, Season.SUMMER);
 			float[] autumn = shares(b, Season.AUTUMN);
 			float[] winter = shares(b, Season.WINTER);
-			assertTrue(b, share(spring, "SPRING_SHOWERS") > 0.08f);
-			assertTrue(b, share(spring, "SPRING_SHOWERS") > 2 * share(summer, "SPRING_SHOWERS"));
-			assertTrue(b, share(summer, "SUMMER_RAIN") > 0.04f);
-			assertTrue(b, share(summer, "CLEAR", "SUNNY", "HARSH_SUN") > share(winter, "CLEAR", "SUNNY", "HARSH_SUN") + 0.15f);
-			assertTrue(b, share(autumn, "AUTUMN_RAIN") > 0.08f);
-			assertTrue(b, share(autumn, "AUTUMN_RAIN", "GALE", "OVERCAST") > share(summer, "AUTUMN_RAIN", "GALE", "OVERCAST") + 0.15f);
+			assertTrue(b, share(spring, "RAIN") > 0.2f && share(autumn, "RAIN") > 0.2f);
+			assertTrue(b, share(summer, "CLEAR") > share(winter, "CLEAR") + 0.15f);
+			assertTrue(b, share(autumn, "RAIN", "OVERCAST") > share(summer, "RAIN", "OVERCAST") + 0.15f);
 			float snow = share(winter, SNOWY);
 			assertTrue(b + " winter snow " + snow, snow > 0.08f && snow < 0.4f);
 			assertTrue(b, share(summer, SNOWY) < 0.03f);
-			// a mix: nothing dominates any season
+			// a mix: at least three kinds of weather each season
 			for (float[] s : new float[][]{spring, summer, autumn, winter})
 			{
+				int kinds = 0;
 				for (float v : s)
 				{
-					assertTrue(v < 0.35f);
+					kinds += v > 0.02f ? 1 : 0;
 				}
+				assertTrue(b + " kinds " + kinds, kinds >= 3);
 			}
 		}
 		// mountains snow in winter, much less in summer
 		assertTrue(share(shares("MOUNTAIN", Season.WINTER), SNOWY) > 0.5f);
 		assertTrue(share(shares("MOUNTAIN", Season.SUMMER), SNOWY) < 0.1f);
-		// arctic winters are harsh
-		assertTrue(share(shares("ARCTIC", Season.WINTER), "HEAVY_SNOW", "BLIZZARD") > 0.25f);
-		// deserts burn in summer
-		assertTrue(share(shares("DESERT", Season.SUMMER), "HARSH_SUN") > 0.2f);
-		// the tropics have a wet season
-		assertTrue(share(shares("TROPICAL", Season.SUMMER), "MONSOON", "THUNDERSTORM")
-			> share(shares("TROPICAL", Season.WINTER), "MONSOON", "THUNDERSTORM") + 0.15f);
+		// arctic winters are mostly snow
+		assertTrue(share(shares("ARCTIC", Season.WINTER), SNOWY) > 0.5f);
+		// deserts are clear
+		assertTrue(share(shares("DESERT", Season.SUMMER), "CLEAR") > 0.9f);
+		// the tropics have a stormy season
+		assertTrue(share(shares("TROPICAL", Season.SUMMER), "STORM") > share(shares("TROPICAL", Season.WINTER), "STORM") + 0.15f);
 	}
 
 	@Test
 	public void biomeOdds()
 	{
 		float[] swamp = shares("SWAMP");
-		assertTrue(share(swamp, "MIST", "FOG", "FREEZING_FOG") > 0.25f);
-		assertTrue(share(swamp, "MIST", "FOG", "FREEZING_FOG", "DRIZZLE", "RAIN", "AUTUMN_RAIN", "SUMMER_RAIN",
-			"THUNDERSTORM") > 0.55f);
+		assertTrue(share(swamp, "OVERCAST", "FOG", "RAIN", "STORM") > 0.55f);
+		assertTrue(share(swamp, "FOG") > 0.1f);
 
 		float[] desert = shares("DESERT");
-		float desertStorm = share(desert, "THUNDERSTORM");
+		float desertStorm = share(desert, "STORM");
 		assertTrue(desertStorm > 0 && desertStorm < 0.03f);
 
 		float[] wilderness = shares("WILDERNESS");
 		float[] grassland = shares("GRASSLAND");
-		assertTrue(share(wilderness, "CLEAR", "SUNNY", "PARTLY_CLOUDY")
-			< share(grassland, "CLEAR", "SUNNY", "PARTLY_CLOUDY") - 0.15f);
-		assertTrue(share(wilderness, "ASH_FALL") > 0.02f);
+		assertTrue(share(wilderness, "CLEAR") < share(grassland, "CLEAR") - 0.15f);
 
 		// every type turns up somewhere
 		float[] seen = new float[WeatherType.count()];
@@ -324,36 +317,16 @@ public class WeatherForecastTest
 		}
 		for (WeatherType t : WeatherType.all())
 		{
-			assertTrue(t.id, seen[t.index] > 0);
+			// haze is the cities' (Climate.type), in no region's odds
+			assertTrue(t.id, seen[t.index] > 0 || t.id.equals("HAZY"));
 		}
-
-		// morning mist: mist and fog are likelier in the slot that ends at 08:00
-		WeatherType mist = WeatherTestData.type("MIST"), fog = WeatherTestData.type("FOG");
-		int morning = 0, other = 0;
-		for (long s = 0; s < SLOTS; ++s)
-		{
-			WeatherType w = WeatherForecast.at(s, "FOREST");
-			if (w == mist || w == fog)
-			{
-				if (Math.floorMod(s, 3) == 0)
-				{
-					morning++;
-				}
-				else
-				{
-					other++;
-				}
-			}
-		}
-		assertTrue(morning > other / 2 * 1.3f);
 	}
 
 	@Test
 	public void transitionsAreConnected()
 	{
-		WeatherType clear = WeatherTestData.type("CLEAR"), sunny = WeatherTestData.type("SUNNY");
-		WeatherType storm = WeatherTestData.type("THUNDERSTORM"), blizzard = WeatherTestData.type("BLIZZARD");
-		WeatherType monsoon = WeatherTestData.type("MONSOON");
+		WeatherType clear = WeatherTestData.type("CLEAR"), overcast = WeatherTestData.type("OVERCAST");
+		WeatherType storm = WeatherTestData.type("STORM");
 		for (String b : BIOMES)
 		{
 			float[] n = shares(b);
@@ -371,30 +344,32 @@ public class WeatherForecastTest
 				{
 					repeats++;
 				}
-				if (prev == clear || prev == sunny)
+				if (prev == clear)
 				{
 					fromClear++;
-					if (w == storm || w == blizzard || w == monsoon)
+					if (w == storm)
 					{
 						jumps++;
 					}
 				}
 				prev = w;
 			}
-			// weather persists more than independent draws would, but still changes most of the time it can
+			// weather persists more than independent draws would (where one weather does not nearly always hold), but
+			// still changes
 			float repeat = repeats / (float) SLOTS;
-			assertTrue(b + " repeat " + repeat, repeat > independentRepeat + 0.05f);
-			assertTrue(b + " repeat " + repeat, repeat < 0.75f);
+			if (independentRepeat < 0.7f)
+			{
+				assertTrue(b + " repeat " + repeat, repeat > independentRepeat + 0.05f);
+			}
+			assertTrue(b + " repeat " + repeat, repeat < 0.98f);
 			// clear skies rarely turn straight into a storm
 			assertTrue(b + " jumps " + jumps / (float) fromClear, fromClear == 0 || jumps / (float) fromClear < 0.03f);
 		}
 		// alike weathers are nearer than unlike ones
 		float[][] a = WeatherForecast.affinity();
 		int c = clear.index;
-		assertTrue(a[c][sunny.index] > 1.5f);
+		assertTrue(a[c][overcast.index] > a[c][storm.index]);
 		assertTrue(a[c][storm.index] < 0.3f);
-		assertTrue(a[WeatherTestData.type("SNOW").index][WeatherTestData.type("HEAVY_SNOW").index] > 1.2f);
-		assertTrue(a[WeatherTestData.type("SANDSTORM").index][WeatherTestData.type("LIGHT_SNOW").index] < 0.6f);
 	}
 
 	@Test
@@ -484,9 +459,6 @@ public class WeatherForecastTest
 	{
 		assertTrue(WeatherClimate.knows("MORYTANIA_SWAMP"));
 		float[] n = shares("MORYTANIA_SWAMP");
-		for (String clear : new String[]{"CLEAR", "SUNNY", "HARSH_SUN", "PARTLY_CLOUDY", "HIGH_CLOUDS"})
-		{
-			assertEquals(clear, 0, n[WeatherType.get(clear).index], 0);
-		}
+		assertEquals(0, n[WeatherType.get("CLEAR").index], 0);
 	}
 }

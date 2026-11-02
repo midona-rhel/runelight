@@ -28,6 +28,8 @@ import java.util.Map;
  */
 public final class Climate
 {
+	// share of a city's clear forecast slots that are hazy
+	static final float CITY_HAZE = 0.4f;
 	// game days each season lasts
 	public static final int SEASON_DAYS = 7;
 	// degrees per unit of rain or snow falling (forecast amounts, which are about 0.25 to 1.3)
@@ -49,7 +51,7 @@ public final class Climate
 	// snow depth per game hour per unit of snowfall, cm
 	static final float SNOW_CM_PER_HOUR = 5;
 	// melt per game hour: per degree above zero, per unit of rain (and more the warmer the rain), in full sun, cm
-	static final float MELT_CM_PER_DEGREE = 0.06f;
+	static final float MELT_CM_PER_DEGREE = 0.1f;
 	static final float RAIN_MELT_CM = 1f;
 	static final float SUN_MELT_CM = 0.15f;
 	// snow deeper than full cover settles by this share of the excess per game hour
@@ -150,52 +152,24 @@ public final class Climate
 		return 1 - smoothstep(SNOW_BELOW, RAIN_ABOVE, celsius);
 	}
 
-	private static final int SHARE_STEPS = 10;
-	private static final Map<WeatherType, WeatherType[]> variants = new HashMap<>();
-	private static int variantsVersion = -1;
-
 	/**
-	 * The weather with its rain and snow split by the temperature. Weathers that don't rain or snow (and dust and
-	 * ash) are returned as they are, and so is a weather whose own split is already about right.
+	 * The weather as it falls at this temperature: in a frost rain and storms come down as SNOW, in a thaw snow comes
+	 * down as RAIN; where it never snows ({@code snows} false: deserts, the tropics) everything falls as rain.
+	 * Weathers that don't rain or snow are returned as they are.
 	 */
-	static synchronized WeatherType withTemperature(WeatherType type, float celsius)
+	static WeatherType withTemperature(WeatherType type, float celsius, boolean snows)
 	{
 		if (!type.precipitates())
 		{
 			return type;
 		}
-		float total = type.rain + type.snow;
-		int q = Math.round(snowShare(celsius) * SHARE_STEPS);
-		float share = q / (float) SHARE_STEPS;
-		if (Math.abs(share - type.snow / total) < 0.5f / SHARE_STEPS + 1e-4f)
+		boolean frost = snows && snowShare(celsius) >= 0.5f;
+		WeatherType as = WeatherType.get(frost ? "SNOW" : "RAIN");
+		if (as == null || frost == type.whitens() && (frost || type.rain > 0))
 		{
 			return type;
 		}
-		if (variantsVersion != WeatherType.version())
-		{
-			variants.clear();
-			variantsVersion = WeatherType.version();
-		}
-		WeatherType[] v = variants.computeIfAbsent(type, k -> new WeatherType[SHARE_STEPS + 1]);
-		if (v[q] == null)
-		{
-			WeatherType c = type.copy();
-			c.rain = total * (1 - share);
-			c.snow = total * share;
-			if (share >= 0.9f)
-			{
-				// it all comes down as snow, so it all piles up
-				c.snowRate = Math.max(c.snowRate, 1);
-			}
-			if (c.skyWhite >= 0 && type.frost <= 0)
-			{
-				// a fixed whiteness belonged to the original mix
-				c.skyWhite = -1;
-			}
-			c.name = type.name + (share >= 0.9f ? " as snow" : share <= 0.1f ? " as rain" : " as sleet");
-			v[q] = c;
-		}
-		return v[q];
+		return as;
 	}
 
 	// ---------------------------------------------------------------------------------------------------------
@@ -215,6 +189,8 @@ public final class Climate
 	{
 		final String biome;
 		private final boolean frozen;
+		// whether anything falls as snow here (WeatherClimate.snows), for the catalogue it was read with
+		private boolean snows;
 		// the simulation: (snowA, wetA) at the start of game hour `hour`, (snowB, wetB) at its end
 		private long hour = Long.MIN_VALUE;
 		private float snowA, wetA, snowB, wetB;
@@ -257,6 +233,7 @@ public final class Climate
 				// start over from clean ground far enough back that it no longer matters
 				this.seasonDays = seasonDays;
 				catalogue = WeatherType.version();
+				snows = WeatherClimate.snows(biome);
 				slot = Long.MIN_VALUE;
 				hour = h - history;
 				snowA = frozen ? FROZEN_SNOW_CM : 0;
@@ -277,7 +254,7 @@ public final class Climate
 			slotTypes(WeatherForecast.slot(gameMillis));
 			forecast = slotCurrent;
 			temperature = Climate.temperature(biome, gameMillis, seasonDays, slotPrevious, slotCurrent);
-			type = withTemperature(slotCurrent, temperature);
+			type = withTemperature(slotCurrent, temperature, snows);
 		}
 
 		/** (snowB, wetB) from (snowA, wetA) over game hour `hour`, in the weather of its middle. */
@@ -287,7 +264,7 @@ public final class Climate
 			long mid = hour * GameClock.HOUR + GameClock.HOUR / 2;
 			slotTypes(WeatherForecast.slot(mid));
 			float t = Climate.temperature(biome, mid, seasonDays, slotPrevious, slotCurrent);
-			WeatherType w = withTemperature(slotCurrent, t);
+			WeatherType w = withTemperature(slotCurrent, t, snows);
 			float shower = showerShare(w);
 			float rain = w.rain * shower;
 			float snowfall = w.whitens() ? w.snow * shower * w.snowRate : 0;
@@ -356,6 +333,7 @@ public final class Climate
 	/** A region (null: the default biome) at the current moment. */
 	Region region(String biome)
 	{
+		biome = WeatherRegions.climate(biome);
 		String key = WeatherClimate.knows(biome) ? biome : WeatherClimate.defaultBiome();
 		Region r = regions.get(key);
 		if (r == null || r.frozen != WeatherClimate.temperature(key).frozen)
@@ -367,10 +345,29 @@ public final class Climate
 		return r;
 	}
 
-	/** The weather of a region as it falls now (WeatherField). */
+	/**
+	 * The weather of a region as it falls now (WeatherField). A city has its land's weather, with haze on
+	 * {@link #CITY_HAZE} of its clear forecast slots (smoke and dust over the streets).
+	 */
 	WeatherType type(String biome)
 	{
-		return region(biome).type;
+		WeatherType t = region(biome).type;
+		if (WeatherRegions.isCity(biome) && t == WeatherType.clear() && cityHaze(WeatherForecast.slot(gameMillis), biome))
+		{
+			WeatherType haze = WeatherType.get("HAZY");
+			return haze != null ? haze : t;
+		}
+		return t;
+	}
+
+	/** Whether a city's clear slot is hazy: the same for every client, a share CITY_HAZE of them. */
+	static boolean cityHaze(long slot, String city)
+	{
+		long h = slot * 0x9E3779B97F4A7C15L + city.hashCode() * 0xC2B2AE3D27D4EB4FL;
+		h ^= h >>> 31;
+		h *= 0xBF58476D1CE4E5B9L;
+		h ^= h >>> 29;
+		return (h >>> 40) / (float) (1 << 24) < CITY_HAZE;
 	}
 
 	/** wet and snow cover of a region now, 0 to 1 (WeatherField). */

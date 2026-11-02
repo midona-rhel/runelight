@@ -26,7 +26,7 @@ public class SnowTimelineProbe
 		WeatherTestData.load();
 		long year = 4L * Climate.SEASON_DAYS * GameClock.DAY;
 		long t0 = 37 * year;
-		for (String biome : new String[]{"FOREST", "GRASSLAND", "MOORLAND", "WETLAND", "MEDITERRANEAN"})
+		for (String biome : new String[]{"FOREST", "GRASSLAND", "BARRENS", "MOORLAND", "WILDERNESS", "SWAMP", "MORYTANIA_SWAMP", "DESERT", "TROPICAL", "JUNGLE", "SAVANNA", "TEMPERATE_SEA", "WARM_SEA", "TROPICAL_SEA", "ARCTIC_SEA", "MEDITERRANEAN", "WETLAND", "VOLCANIC", "TUNDRA", "MOUNTAIN", "ARCTIC"})
 		{
 			Climate climate = new Climate();
 			int hours = 0, covered = 0, falling = 0, fallingCovered = 0, spells = 0;

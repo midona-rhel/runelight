@@ -27,6 +27,7 @@ public final class WeatherData
 	static final String TYPES = "weather_types.json";
 	static final String CLIMATE = "weather_climate.json";
 	static final String REGIONS = "weather_regions.json";
+	static final String RASTER = "weather_biomes.bin.gz";
 	// how often the dev client looks at the files' modification times
 	private static final long POLL_MILLIS = 1000;
 	private static final Type TYPES_TYPE = new TypeToken<LinkedHashMap<String, WeatherType>>()
@@ -68,7 +69,16 @@ public final class WeatherData
 		WeatherRegions.Data map = gson.fromJson(regions, WeatherRegions.Data.class);
 		WeatherType.install(rows);
 		WeatherClimate.install(data);
-		WeatherRegions.install(map);
+		WeatherRegions.Raster raster = null;
+		try (InputStream in = WeatherData.class.getResourceAsStream(RASTER))
+		{
+			raster = in != null ? new WeatherRegions.Raster(in) : null;
+		}
+		catch (Exception ex)
+		{
+			log.warn("Unable to read {}: the regions' layers alone", RASTER, ex);
+		}
+		WeatherRegions.install(map, raster);
 		log.debug("Loaded {} weather types, climate for {} biomes", WeatherType.count(), WeatherClimate.allOdds().size());
 	}
 
