@@ -71,7 +71,7 @@ final class ZoneUploads implements SceneJobs.Job
 		// unmap what the loader finished first (the swap waits on it), then map ahead
 		for (Zone z; System.nanoTime() < deadline && (z = toUnmap.poll()) != null; )
 		{
-			z.unmap();
+			z.unmap(pool);
 			unmappedCount++;
 		}
 		while (mappedCount < zones.length && System.nanoTime() < deadline)

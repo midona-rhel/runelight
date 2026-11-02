@@ -49,6 +49,7 @@ import static com.midonarhel.lumina.scene.ModelUploader.MAX_DIAMETER;
 import static com.midonarhel.lumina.scene.ModelUploader.MAX_VERTEX_COUNT;
 import static com.midonarhel.lumina.LuminaPlugin.uniBase;
 import org.lwjgl.BufferUtils;
+import org.lwjgl.PointerBuffer;
 import static org.lwjgl.opengl.GL33C.*;
 
 public class Zone
@@ -70,6 +71,9 @@ public class Zone
 
 	public int sizeO, sizeA;
 	VBO vboO, vboA;
+	// how the opaque buffer holds its triangles (ZoneIndexer): distinct vertices and indices, or the stream as it was;
+	// null before the upload
+	ZoneIndexer.Result indexed;
 
 	public boolean initialized; // whether the zone vao and vbos are ready
 	boolean cull; // whether the zone is queued for deletion
@@ -146,11 +150,16 @@ public class Zone
 		alphaModels.clear();
 	}
 
-	void unmap()
+	/** Unmap the buffers the upload wrote; an indexed opaque buffer then gets storage of its size (ZonePool.shrink). */
+	void unmap(ZonePool pool)
 	{
 		if (vboO != null)
 		{
 			vboO.unmap();
+			if (indexed != null && indexed.indexType != 0)
+			{
+				pool.shrink(vboO, vboO.len * Integer.BYTES);
+			}
 		}
 		if (vboA != null)
 		{
@@ -159,7 +168,8 @@ public class Zone
 
 		if (vboO != null)
 		{
-			this.bufLen = vboO.len / (VERT_SIZE / 4);
+			// the stream's vertices, whichever way the buffer holds them
+			this.bufLen = indexed != null ? indexed.streamVertices : vboO.len / (VERT_SIZE / 4);
 		}
 
 		if (vboA != null)
@@ -209,6 +219,8 @@ public class Zone
 	private static final int NUM_DRAW_RANGES = 1024;
 	static final IntBuffer drawOff = BufferUtils.createIntBuffer(NUM_DRAW_RANGES);
 	static final IntBuffer drawEnd = BufferUtils.createIntBuffer(NUM_DRAW_RANGES);
+	// the ranges' byte offsets into the indices, for an indexed opaque buffer
+	private static final PointerBuffer drawIndices = BufferUtils.createPointerBuffer(NUM_DRAW_RANGES);
 
 	private void convertForDraw(int vertSize)
 	{
@@ -280,7 +292,24 @@ public class Zone
 		{
 			glUniform3i(uniBase, zx << 10, 0, zz << 10);
 			glBindVertexArray(glVao);
-			glMultiDrawArrays(GL_TRIANGLES, drawOff, drawEnd);
+			ZoneIndexer.Result ix = indexed;
+			if (ix != null && ix.indexType != 0)
+			{
+				// the same ranges of the indices, which are the stream's in its order (ZoneIndexer); the element buffer
+				// is the vertex buffer itself, bound with the vertex array each time (it is the vertex array's state)
+				glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, vboO.bufId);
+				drawIndices.clear();
+				for (int i = 0; i < drawOff.limit(); ++i)
+				{
+					drawIndices.put(i, ix.indexOffset + (long) drawOff.get(i) * ix.indexSize());
+				}
+				drawIndices.limit(drawOff.limit());
+				glMultiDrawElements(GL_TRIANGLES, drawEnd, ix.indexType, drawIndices);
+			}
+			else
+			{
+				glMultiDrawArrays(GL_TRIANGLES, drawOff, drawEnd);
+			}
 		}
 	}
 

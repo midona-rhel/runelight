@@ -35,7 +35,7 @@ public final class ZonePool
 	private int keptCount;
 	private boolean trimQueued;
 	// for the load report: buffers taken as they were, given new storage, made new, deleted by the trim
-	int hits, respecified, created, trimmed;
+	int hits, respecified, created, trimmed, shrunk;
 
 	/** A buffer of at least bytes for a zone, with its vertex array, not mapped. */
 	VBO acquire(int bytes)
@@ -66,6 +66,41 @@ public final class ZonePool
 		}
 		liveBytes += vbo.capacity;
 		return vbo;
+	}
+
+	// an indexed zone's buffer (ZoneIndexer) is moved into storage of its size when that frees at least this much,
+	// and a tenth of it
+	private static final int SHRINK_MIN = 64 << 10;
+
+	/**
+	 * The zone's buffer, unmapped, holds only the first bytes of what it was given (an indexed zone, sized for its
+	 * stream): its data is copied, on the GPU, into new storage of its size, which its vertex array reads from now on,
+	 * and the old storage is deleted. GL, the client thread.
+	 */
+	void shrink(VBO vbo, int bytes)
+	{
+		assert !vbo.mapped;
+		int capacity = roundUp(Math.max(bytes, 1));
+		if (vbo.capacity - capacity < SHRINK_MIN || capacity > vbo.capacity * 0.9)
+		{
+			return;
+		}
+		int buffer = glGenBuffers();
+		SceneLoadReport.buffersCreated++;
+		glBindBuffer(GL_COPY_WRITE_BUFFER, buffer);
+		glBufferData(GL_COPY_WRITE_BUFFER, capacity, GL_STATIC_DRAW);
+		glBindBuffer(GL_COPY_READ_BUFFER, vbo.bufId);
+		glCopyBufferSubData(GL_COPY_READ_BUFFER, GL_COPY_WRITE_BUFFER, 0, 0, bytes);
+		glBindBuffer(GL_COPY_READ_BUFFER, 0);
+		glBindBuffer(GL_COPY_WRITE_BUFFER, 0);
+		glDeleteBuffers(vbo.bufId);
+		SceneLoadReport.buffersDeleted++;
+		liveBytes -= vbo.capacity - capacity;
+		vbo.bufId = buffer;
+		vbo.capacity = capacity;
+		vbo.size = bytes;
+		Zone.setupVao(vbo.vao, buffer);
+		shrunk++;
 	}
 
 	/** A zone is done with this buffer: keep it (no GL call unless it is still mapped). */
@@ -151,9 +186,9 @@ public final class ZonePool
 	/** The counters as text, and reset them (the load report). */
 	String takeCounts()
 	{
-		String t = String.format("pool hits %d, respecified %d, created %d, trimmed %d; kept %d buffers %d MB, live %d MB",
-			hits, respecified, created, trimmed, keptCount, keptBytes >> 20, liveBytes >> 20);
-		hits = respecified = created = trimmed = 0;
+		String t = String.format("pool hits %d, respecified %d, created %d, trimmed %d, shrunk %d; kept %d buffers %d MB, live %d MB",
+			hits, respecified, created, trimmed, shrunk, keptCount, keptBytes >> 20, liveBytes >> 20);
+		hits = respecified = created = trimmed = shrunk = 0;
 		return t;
 	}
 

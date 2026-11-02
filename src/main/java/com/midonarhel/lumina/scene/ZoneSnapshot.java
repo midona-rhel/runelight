@@ -3,6 +3,7 @@ package com.midonarhel.lumina.scene;
 import java.io.DataInputStream;
 import java.io.DataOutputStream;
 import java.io.IOException;
+import java.nio.IntBuffer;
 import java.util.ArrayList;
 import java.util.List;
 import static org.lwjgl.opengl.GL33C.*;
@@ -45,7 +46,9 @@ public final class ZoneSnapshot
 		s.sizeA = zone.sizeA;
 		s.bufLen = zone.bufLen;
 		s.bufLenA = zone.bufLenA;
-		s.vertsO = readBack(zone.vboO);
+		// the stream, as the format has it, whether the buffer holds it indexed (ZoneIndexer) or not
+		int[] opaque = readBack(zone.vboO);
+		s.vertsO = opaque != null && zone.indexed != null ? ZoneIndexer.expand(opaque, zone.indexed) : opaque;
 		s.vertsA = readBack(zone.vboA);
 		s.levelOffsets = zone.levelOffsets.clone();
 		s.rids = zone.rids;
@@ -86,7 +89,21 @@ public final class ZoneSnapshot
 	 */
 	public void restore(Zone zone, SceneLoader loader)
 	{
-		zone.init(upload(vertsO, sizeO, loader), upload(vertsA, sizeA, loader));
+		// the opaque stream indexed as the upload indexes it (any dump: they all hold the stream)
+		VBO opaque = null;
+		if (vertsO != null)
+		{
+			int bytes = Math.max(sizeO * Zone.VERT_SIZE * 3, vertsO.length * Integer.BYTES);
+			IntBuffer staging = IntBuffer.allocate(bytes / Integer.BYTES);
+			zone.indexed = INDEXER.write(vertsO, vertsO.length, staging);
+			int[] written = java.util.Arrays.copyOf(staging.array(), staging.position());
+			opaque = upload(written, sizeO, loader);
+			if (zone.indexed.indexType != 0)
+			{
+				loader.pool.shrink(opaque, written.length * Integer.BYTES);
+			}
+		}
+		zone.init(opaque, upload(vertsA, sizeA, loader));
 		zone.sizeO = sizeO;
 		zone.sizeA = sizeA;
 		zone.bufLen = bufLen;
@@ -122,6 +139,8 @@ public final class ZoneSnapshot
 			zone.alphaModels.add(m);
 		}
 	}
+
+	private static final ZoneIndexer INDEXER = new ZoneIndexer();
 
 	private static VBO upload(int[] verts, int faces, SceneLoader loader)
 	{
