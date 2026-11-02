@@ -117,6 +117,74 @@ public class WeatherAccumulationTest
 		assertEquals("the player saw the ground wet with no rain", 0, focusWet);
 	}
 
+	/**
+	 * Snow on the ground and wet ground ease: no cell's cover jumps from one update to the next, and its rate of
+	 * change never jumps either, so growth and melt start and stop gently. The same automatic winter as above; a
+	 * step's change and its change of rate in levels of the 8-bit texture a second. Prints a timeline of one cell for a
+	 * chart with -Dlumina.accumulation.curve=true.
+	 */
+	@Test
+	public void groundEasesSmoothly()
+	{
+		WeatherTestData.load();
+		String[] bands = {"MOUNTAIN", "FOREST", "GRASSLAND", "TUNDRA", "MOORLAND", "DESERT", "WILDERNESS"};
+		long[] keys = new long[N * N];
+		String[] biomes = new String[N * N];
+		for (int i = 0; i < N * N; ++i)
+		{
+			keys[i] = WeatherField.chunkKey(i % N * WeatherField.CELL_TILES, i / N * WeatherField.CELL_TILES);
+			biomes[i] = bands[i % N * bands.length / N];
+		}
+		WeatherField f = new WeatherField();
+		f.layout(N, N, 0, 0, keys, biomes);
+		Climate climate = new Climate();
+		long year = 4L * Climate.SEASON_DAYS * GameClock.DAY;
+		long start = 37 * year + 3L * Climate.SEASON_DAYS * GameClock.DAY;
+		long realStep = (long) (DT * 1000);
+		long speed = 1440 / 9;
+		int steps = (int) (48L * 3600 / speed / DT);
+		int[] channels = {WeatherField.SNOW_COVER, WeatherField.WET};
+		float[][] prev = new float[2][N * N], rate = new float[2][N * N];
+		float[] worstStep = new float[2], worstJerk = new float[2];
+		boolean curve = Boolean.getBoolean("lumina.accumulation.curve");
+		for (int s = 0; s < steps; ++s)
+		{
+			long game = start + s * realStep * speed;
+			climate.update(game, Climate.SEASON_DAYS);
+			f.update(climate::type, climate::ground, 0.6f, true, GameClock.hourOfDay(game), s == 0 ? 0 : DT);
+			for (int k = 0; k < 2; ++k)
+			{
+				for (int i = 0; i < N * N; ++i)
+				{
+					float v = f.cell(channels[k], i % N, i / N);
+					// levels a second
+					float r = (v - prev[k][i]) * 255 / DT;
+					if (s > 1)
+					{
+						worstStep[k] = Math.max(worstStep[k], Math.abs(r));
+						worstJerk[k] = Math.max(worstJerk[k], Math.abs(r - rate[k][i]));
+					}
+					prev[k][i] = v;
+					rate[k][i] = r;
+				}
+			}
+			if (curve && s % 10 == 0)
+			{
+				// a cell of the middle row (by default tundra)
+				int x = Integer.getInteger("lumina.accumulation.cell", 10), i = N / 2 * N + x;
+				System.out.printf("curve %.1f %.4f %.4f %.4f%n", s * DT, f.cell(WeatherField.SNOW, x, N / 2),
+					prev[0][i], climate.region(biomes[i]).snowCover());
+			}
+		}
+		System.out.printf("over %d steps of %.1f s: snow cover's fastest change %.1f levels/s, largest jump of its rate"
+				+ " %.1f levels/s; wet ground's %.1f and %.1f%n", steps, DT, worstStep[0], worstJerk[0], worstStep[1],
+			worstJerk[1]);
+		// the rate of change moving by at most half a level a second from one update to the next: before the ground
+		// eased, growth set off at its full 4.3 levels a second in one update, and wet ground's by 5.1
+		assertTrue("snow cover's rate jumped by " + worstJerk[0], worstJerk[0] <= 0.5f);
+		assertTrue("wet ground's rate jumped by " + worstJerk[1], worstJerk[1] <= 0.5f);
+	}
+
 	@Test
 	public void clearSkiesOnlyMeltAndDry()
 	{

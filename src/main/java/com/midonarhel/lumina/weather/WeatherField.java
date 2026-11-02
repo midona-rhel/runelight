@@ -57,9 +57,11 @@ public final class WeatherField
 
 	// seconds a biome's change of weather takes to blend its targets over, before the cells' own easing
 	static final float TRANSITION_SECONDS = 40;
-	// rain or snow below this is not falling; the ground's catch-up to the climate, cover per second while it falls
+	// rain or snow below this is not falling, and from the second on the ground grows at its full pace
 	static final float FALLING = 0.003f;
-	static final float GROUND_CATCH_UP = 1 / 60f;
+	static final float FALLING_FULL = 0.25f;
+	// seconds the ground takes to come about two thirds of the way to the climate's (an exponential approach)
+	static final float GROUND_SECONDS = 20;
 	// share of the way to their target cover at which the clouds let all the rain or snow fall (from PRECIP_GATE)
 	static final float PRECIP_FULL = 0.97f;
 
@@ -285,19 +287,28 @@ public final class WeatherField
 	}
 
 	/**
-	 * A cell's wet ground or snow cover following the climate's: down at once (drying, melting), up only while rain
-	 * or snow is falling on the cell ({@code falling}, the cell's own eased amount) and at most at {@link
-	 * #GROUND_CATCH_UP} a second. The climate books a game hour's snow by the weather of its middle and lays it from
-	 * the start of the forecast's change, while the clouds build before anything falls; held back here, nothing on the
-	 * ground grows under a dry sky. A cell seen for the first time takes the climate's ground as it is.
+	 * A cell's wet ground or snow cover following the climate's, as an exponential approach over {@link
+	 * #GROUND_SECONDS}: down whenever the climate's is lower (drying, melting), up only while rain or snow is falling
+	 * on the cell ({@code falling}, the cell's own eased amount), at a pace that eases in from nothing at {@link
+	 * #FALLING} to full at {@link #FALLING_FULL}. So the ground starts and stops growing or melting gently, never at
+	 * once. The climate books a game hour's snow by the weather of its middle and lays it from the start of the
+	 * forecast's change, while the clouds build before anything falls; held back here, nothing on the ground grows
+	 * under a dry sky. A cell seen for the first time takes the climate's ground as it is.
 	 */
 	private static float ground(float now, float climate, float falling, boolean fresh, float dt)
 	{
-		if (fresh || climate <= now)
+		if (fresh)
 		{
 			return climate;
 		}
-		return falling > FALLING ? Math.min(climate, now + dt * GROUND_CATCH_UP) : now;
+		float pace = climate <= now ? 1 : smoothstep(FALLING, FALLING_FULL, falling);
+		return now + (climate - now) * (1 - (float) Math.exp(-dt * pace / GROUND_SECONDS));
+	}
+
+	private static float smoothstep(float e0, float e1, float x)
+	{
+		float t = Math.max(0, Math.min(1, (x - e0) / (e1 - e0)));
+		return t * t * (3 - 2 * t);
 	}
 
 	/**
