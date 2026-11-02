@@ -19,6 +19,9 @@ import org.junit.Test;
 public class WaterMapTest
 {
 	private static final int N = WaterMap.SIZE;
+	// how fast across x, z the water runs down the test falls, which drop 256 over a run of 128 (WaterMap.FALL_SPEED along
+	// their slope)
+	private static final float STRIP_FALL = WaterMap.FALL_SPEED / (float) Math.sqrt(5);
 	private static final int OFF = LuminaPlugin.SCENE_OFFSET;
 
 	@SuppressWarnings("unchecked")
@@ -279,19 +282,20 @@ public class WaterMapTest
 		int w = WaterMap.CORNERS * WaterMap.PAGES;
 		assertEquals(0f, m.texture[(83 * w + 81) * 4], 0f);
 		assertEquals(256f, m.texture[(84 * w + 81) * 4], 0f);
-		// the falls' own flow (page 2) runs down it (+y) at FALL_FLOW on its corners, its lip's and foot's too; the pool above
+		// the falls' own flow (page 2) runs down it (+y) at FALL_SPEED along its slope on its corners, its lip's and foot's
+		// too, across x, z that over the slope's length (it drops 2 tiles a tile: sqrt(5)); the pool above
 		// runs to the lip and the one below out from the foot, less and less further off, none beyond their reach
 		int p2 = 2 * WaterMap.CORNERS;
 		for (int y : new int[]{83, 84})
 		{
-			assertEquals("corner " + y, WaterMap.FALL_FLOW, m.texture[(y * w + p2 + 81) * 4 + 3], 1e-5f);
+			assertEquals("corner " + y, STRIP_FALL, m.texture[(y * w + p2 + 81) * 4 + 3], 1e-5f);
 			assertEquals("corner " + y, 0f, m.texture[(y * w + p2 + 81) * 4 + 2], 0f);
 			assertEquals("corner " + y, 1f, m.texture[(y * w + p2 + 81) * 4], 0f);
 		}
 		float lip1 = m.texture[(82 * w + p2 + 81) * 4 + 3], lip2 = m.texture[(81 * w + p2 + 81) * 4 + 3];
 		float foot1 = m.texture[(85 * w + p2 + 81) * 4 + 3], foot2 = m.texture[(86 * w + p2 + 81) * 4 + 3];
-		assertTrue(WaterMap.FALL_FLOW > lip1 && lip1 > lip2 && lip2 > 0);
-		assertTrue(WaterMap.FALL_FLOW > foot1 && foot1 > foot2 && foot2 > 0);
+		assertTrue(STRIP_FALL > lip1 && lip1 > lip2 && lip2 > 0);
+		assertTrue(STRIP_FALL > foot1 && foot1 > foot2 && foot2 > 0);
 		assertEquals(0f, m.texture[(77 * w + p2 + 81) * 4 + 3], 0f);
 		// and how close the fall is: 1 on its corners, less and less off its lip and foot
 		float near1 = m.texture[(85 * w + p2 + 81) * 4], near2 = m.texture[(86 * w + p2 + 81) * 4];
@@ -324,8 +328,133 @@ public class WaterMapTest
 			int tx = k < 2 ? (k == 0 ? 83 : 84) : 81, ty = k < 2 ? 81 : (k == 2 ? 83 : 84);
 			assertTrue("tile " + k, m.fall[ty * N + tx]);
 			int cx = k < 2 ? 84 : 81, cy = k < 2 ? 81 : 84;
-			assertEquals("x " + k, dx[k] * WaterMap.FALL_FLOW, m.texture[(cy * w + p2 + cx) * 4 + 2], 1e-5f);
-			assertEquals("z " + k, dz[k] * WaterMap.FALL_FLOW, m.texture[(cy * w + p2 + cx) * 4 + 3], 1e-5f);
+			assertEquals("x " + k, dx[k] * STRIP_FALL, m.texture[(cy * w + p2 + cx) * 4 + 2], 1e-5f);
+			assertEquals("z " + k, dz[k] * STRIP_FALL, m.texture[(cy * w + p2 + cx) * 4 + 3], 1e-5f);
+		}
+	}
+
+	/**
+	 * Water 3 tiles wide along +z (extended x 80-82): level at 0 to 83, a land tile at 83 sloping down 256 over its run, level
+	 * at 256 from 84 to 87. With `sheet`, a model lays a sheet of water on the slope a unit over it (faces with a water
+	 * texture, its fake water), as the game's waterfalls are drawn.
+	 */
+	private static WaterMap landFall(boolean sheet)
+	{
+		int x0 = 80 * 128, x1 = 83 * 128, z0 = 83 * 128, z1 = 84 * 128;
+		int ox = x0 + 64, oz = z0 + 64;
+		float[] vx = {x0 - ox, x1 - ox, x0 - ox, x1 - ox}, vy = {-1, -1, 255, 255}, vz = {z0 - oz, z0 - oz, z1 - oz, z1 - oz};
+		int[] f1 = {0, 1}, f2 = {1, 3}, f3 = {2, 2}, colors = {0, 0};
+		short[] textures = {1, 1};
+		Model model = proxy(Model.class, m ->
+		{
+			switch (m)
+			{
+				case "getVerticesX":
+					return vx;
+				case "getVerticesY":
+					return vy;
+				case "getVerticesZ":
+					return vz;
+				case "getFaceIndices1":
+					return f1;
+				case "getFaceIndices2":
+					return f2;
+				case "getFaceIndices3":
+					return f3;
+				case "getFaceColors1":
+				case "getFaceColors3":
+					return colors;
+				case "getFaceTextures":
+					return textures;
+				case "getVerticesCount":
+					return 4;
+				case "getFaceCount":
+					return 2;
+				default:
+					return null;
+			}
+		});
+		GroundObject ground = proxy(GroundObject.class, m ->
+		{
+			switch (m)
+			{
+				case "getRenderable":
+					return model;
+				case "getX":
+					return ox - (OFF << 7);
+				case "getY":
+					return oz - (OFF << 7);
+				case "getId":
+				case "getZ":
+					return 0;
+				default:
+					return null;
+			}
+		});
+		Tile[][][] tiles = new Tile[4][N][N];
+		for (int x = 0; x < N; ++x)
+		{
+			for (int y = 0; y < N; ++y)
+			{
+				boolean water = x >= 80 && x < 83 && y >= 80 && y < 88 && y != 83;
+				tiles[0][x][y] = tile(x, y, water ? 1 : -1, sheet && x == 80 && y == 83 ? ground : null);
+			}
+		}
+		int[][][] heights = new int[4][N + 1][N + 1];
+		for (int x = 0; x <= N; ++x)
+		{
+			for (int y = 0; y <= N; ++y)
+			{
+				heights[0][x][y] = y <= 83 ? 0 : 256;
+			}
+		}
+		Scene scene = proxy(Scene.class, m ->
+		{
+			switch (m)
+			{
+				case "getExtendedTiles":
+					return tiles;
+				case "getTileHeights":
+					return heights;
+				case "getBaseX":
+				case "getBaseY":
+					return 3200;
+				default:
+					return null;
+			}
+		});
+		return WaterMap.build(scene, null, null);
+	}
+
+	@Test
+	public void aLandSlopeAModelLaysAFallOnIsAFall()
+	{
+		int w = WaterMap.CORNERS * WaterMap.PAGES, p2 = 2 * WaterMap.CORNERS;
+		// the sheet's tiles are the fall's, water of the pool above, running down at the fall's speed from its lip to its
+		// foot, as close to a fall as can be
+		WaterMap m = landFall(true);
+		for (int x = 80; x < 83; ++x)
+		{
+			assertTrue("tile " + x, m.fall[83 * N + x]);
+			assertTrue("tile " + x, m.bodies.water[83 * N + x]);
+			assertEquals("tile " + x, 0, m.level[83 * N + x]);
+		}
+		for (int y : new int[]{83, 84})
+		{
+			assertEquals("corner " + y, STRIP_FALL, m.texture[(y * w + p2 + 81) * 4 + 3], 1e-5f);
+			assertEquals("corner " + y, 1f, m.texture[(y * w + p2 + 81) * 4], 0f);
+		}
+		// its sheet is the water, not something standing in it: no crossing (full closeness), only the fall's own foam
+		for (byte c : m.contact)
+		{
+			assertTrue((c & 255) <= Math.round(WaterMap.FALL_FOAM * 255));
+		}
+		// a slope of land alone between the two is no fall
+		WaterMap bare = landFall(false);
+		for (int x = 80; x < 83; ++x)
+		{
+			assertFalse("tile " + x, bare.fall[83 * N + x]);
+			assertFalse("tile " + x, bare.bodies.water[83 * N + x]);
 		}
 	}
 

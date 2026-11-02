@@ -499,6 +499,9 @@ public final class SceneDump
 		// the models the water's contact map is made from (not in the zones: the bench replays the crossings)
 		d.put("water.contactModels", plugin.clientUploader.water != null
 			? plugin.clientUploader.water.contactModels(wv.getScene()) : null);
+		// the tiles by the water, so the bench can draw the beds again with its own code (SceneTiles)
+		d.put("scene.tiles", plugin.clientUploader.water != null
+			? SceneTiles.record(wv.getScene(), plugin.clientUploader.water) : null);
 		d.put("fogGround", PlainData.get(plugin.volumetricFog, "ground"));
 		d.put("voxels", plugin.voxelBuilder.getVoxels());
 		// the models that stop the light map's lamps, from the zones' triangles (the zones' captures are gone by now)
