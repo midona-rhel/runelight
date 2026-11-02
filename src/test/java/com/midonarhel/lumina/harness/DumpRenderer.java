@@ -89,6 +89,15 @@ public final class DumpRenderer implements AutoCloseable
 	{
 		this.dump = dump;
 		this.options = options;
+		// later=s (passed with the settings): the dump's moment s seconds on, for what moves with the real time (the
+		// clouds' drift, their shadows, the wind's gusts, the weather's slots)
+		String later = options.settings.remove("later");
+		if (later != null)
+		{
+			long shift = Math.round(Double.parseDouble(later) * 1000);
+			dump.manifest.millis += shift;
+			dump.manifest.nanos += shift * 1_000_000;
+		}
 		world = new DumpWorld(dump);
 		world.settings.putAll(options.settings);
 		// a dump from before the day length options, on a free day length: the hour it was taken at, held

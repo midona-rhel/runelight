@@ -27,7 +27,7 @@ public class Clouds
 	private static final double WRAP = TILE * 4;
 	// world units per second at 100% speed, along the wind's slow wander (Wind.drift): one speed, so where the
 	// clouds are is a function of the time alone and the same for every player at the same moment
-	private static final double DRIFT_SPEED = 290;
+	private static final double DRIFT_SPEED = 80;
 	// sine of the elevation along clouds.glsl's cloudSkyDir at and below which the clouds are clear sky: the first
 	// of CLOUD_HORIZON
 	private static final double HORIZON = -0.02;
