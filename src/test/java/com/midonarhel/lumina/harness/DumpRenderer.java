@@ -75,7 +75,8 @@ public final class DumpRenderer implements AutoCloseable
 		// lightMap=off: the fixed lamps without the light map, stopped by the walls alone (to see what it changes)
 		public boolean lightMap = true;
 		// mapProbe=x,y: the light map's grids of the lamps nearest that world tile, printed after the render
-		// mapModels=zones: the light map's models rasterized from the dump's zones (for a dump without voxels.models)
+		// mapModels=zones: the light map's models rasterized from the dump's zones (for a dump without voxels.models);
+		// none: the walls and solid tiles alone (to see what the models change)
 		public String mapModels = "dumped";
 		public int[] mapProbe;
 		// world tiles (x, y) whose walls are printed
@@ -309,6 +310,10 @@ public final class DumpRenderer implements AutoCloseable
 				top.getTileHeights()) : null;
 			System.out.printf("light map: models rasterized from the dump's zones in %.0f ms (no objects known: the fixture rule by distance)%n",
 				(System.nanoTime() - t0) / 1e6);
+		}
+		if (options.mapModels.equals("none"))
+		{
+			models = null;
 		}
 		VoxelsRestore.restore(plugin.voxelBuilder, d.get("voxels"), models);
 		if (models == null)
