@@ -33,6 +33,10 @@ public final class LampCubes
 	public static final float TAN_HALF = FACE / (float) (FACE - 2 * GUARD);
 	// nothing nearer the lamp than this casts (its own bracket, the flame's model if it isn't emissive)
 	public static final float NEAR = 24;
+	// the most lamps drawn a frame (each about 0.1 ms of the GPU's and of the CPU's, fps1): after a roof is hidden or
+	// shown, or a scene loads, the cubes come back over a few frames, the nearest first; until its cube is drawn a
+	// lamp's glow is stopped by its walls and the drawn roofs (fog_frag.glsl), which already know the change
+	public static final int LAMPS_PER_FRAME = 12;
 
 	// each face's forward, right and up (fog_frag.glsl picks the face and its axes the same way)
 	private static final float[][] FACES = {
@@ -49,6 +53,7 @@ public final class LampCubes
 	private final Map<Long, Integer> slotOf = new HashMap<>();
 	private final long[] keyOf = new long[SLOTS];
 	private final FloatBuffer slots = BufferUtils.createFloatBuffer(LightClusters.MAX_LIGHTS);
+	private final long[] waiting = new long[LightClusters.MAX_LIGHTS];
 	private final float[] lightProj = new float[16];
 	private long frame;
 	// what was drawn: the scene, its levels and hidden roofs
@@ -148,9 +153,11 @@ public final class LampCubes
 		}
 		++frame;
 		// what is drawn changed: every slot drawn again
+		boolean renewed = false;
 		if (drawnScene != ctx || drawnMin != ctx.minLevel || drawnLevel != ctx.level || drawnMax != ctx.maxLevel
 			|| !Objects.equals(drawnRoofs, ctx.hideRoofIds))
 		{
+			renewed = true;
 			drawnScene = ctx;
 			drawnMin = ctx.minLevel;
 			drawnLevel = ctx.level;
@@ -164,8 +171,7 @@ public final class LampCubes
 		}
 
 		slots.clear();
-		int[] toDraw = new int[SLOTS];
-		int draws = 0;
+		int pending = 0;
 		for (int i = 0; i < count; ++i)
 		{
 			PointLight l = lamps[i];
@@ -194,21 +200,35 @@ public final class LampCubes
 				drawnFor[s * 4 + 1] = l.y;
 				drawnFor[s * 4 + 2] = l.z;
 				drawnFor[s * 4 + 3] = Math.abs(l.radius);
-				toDraw[draws++] = s;
-				valid[s] = true;
+				// its distance from the camera and its index, to draw the nearest first
+				float dx = l.x - plugin.frameCameraX, dy = l.y - plugin.frameCameraY, dz = l.z - plugin.frameCameraZ;
+				waiting[pending++] = (long) Float.floatToIntBits(dx * dx + dy * dy + dz * dz) << 32 | i;
+				slots.put(-1);
+				continue;
 			}
 			slots.put(s);
 		}
 		slots.flip();
+		Arrays.sort(waiting, 0, pending);
+		int draws = Math.min(pending, LAMPS_PER_FRAME);
+		int[] toDraw = new int[draws];
+		for (int d = 0; d < draws; ++d)
+		{
+			int i = (int) waiting[d];
+			int s = slotOf.get(key(lamps[i]));
+			toDraw[d] = s;
+			valid[s] = true;
+			slots.put(i, s);
+		}
 		glBindTexture(GL_TEXTURE_2D, table);
 		glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, Math.max(1, slots.limit()), 1, GL_RED, GL_FLOAT, slots);
 		glBindTexture(GL_TEXTURE_2D, 0);
 		drawnLast = draws * 6;
 		// a full redraw (a scene, a roof hidden or shown), not a lamp that moves
-		if (draws > SLOTS / 4 && (!REDRAW || frame % 100 == 1))
+		if (renewed || REDRAW && frame % 100 == 1)
 		{
-			log.info("Lamp cubes: {} lamps drawn ({} faces), {} of the frame's {} lamps with a cube", draws, draws * 6,
-				Math.min(count, SLOTS), count);
+			log.info("Lamp cubes: {} lamps to draw, {} a frame, nearest first; {} of the frame's {} lamps with a cube",
+				pending, LAMPS_PER_FRAME, Math.min(count, SLOTS), count);
 		}
 		if (draws > 0)
 		{
