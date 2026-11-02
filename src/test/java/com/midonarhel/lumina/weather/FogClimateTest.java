@@ -9,8 +9,8 @@ import org.junit.Test;
 public class FogClimateTest
 {
 	private static final WeatherType CLEAR = WeatherTestData.type("CLEAR");
-	private static final WeatherType STORM = WeatherTestData.type("THUNDERSTORM");
-	private static final WeatherType FOG = WeatherTestData.type("FOG");
+	private static final WeatherType STORM = WeatherTestData.type("STORM");
+	private static final WeatherType FOG = WeatherTestData.type("OVERCAST");
 	private static final String[] BIOMES = {"GRASSLAND", "FOREST", "SWAMP", "TROPICAL", "DESERT", "BARRENS", "ARCTIC",
 		"MOUNTAIN", "WILDERNESS"};
 

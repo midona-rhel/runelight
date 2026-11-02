@@ -58,6 +58,9 @@ uniform float cloudGround;     // world y of the focal point: the cloud shadows 
 // infinitely far, which also caps how long a ray at the horizon spends in the slab
 #define CLOUD_CURVE 0.12
 #define CLOUD_FADE 120000.0
+// the weather field's sky gives way to the player's weather between these distances from its middle, in shares of
+// its size (0.5 is the middle of an edge)
+#define CLOUD_SKY_FADE vec2(0.3, 0.48)
 // A ray crossing the slab at a slant passes about 1 + CLOUD_SLANT * (distance across) / CLOUD_BLOB clouds' worth of
 // sky, so a share c of the sky covered overhead piles up toward the horizon, where most of what OSRS's camera sees of
 // the sky is. The cover along a ray is lowered to make up for it, so the share of the visible sky that is cloud
@@ -157,13 +160,47 @@ vec3 cloudSkyDir(vec3 dir) {
   return vec3(h.x * sqrt(max(1.0 - s * s, 0.0)), -s, h.y * sqrt(max(1.0 - s * s, 0.0)));
 }
 
+// The weather field's sky at uv as a cubic B-spline over its cells. Bilinear alone is continuous but its slope jumps
+// at every cell's edge, and the clouds' threshold turns those jumps into hard straight creases: seen from low, a fan
+// of flat panels toward the horizon along the grid's lines. The B-spline's slope runs on across the edges, so the
+// cover only ever changes as a smooth swell. Sixteen exact texel fetches rather than the usual four bilinear ones: the
+// hardware filters with weights of a few bits, and the four fetches' positions jump by a cell at every cell edge,
+// which left a thin bright line down each edge.
+vec3 cloudSkyField(vec2 uv) {
+  ivec2 size = textureSize(weatherSkyTex, 0);
+  vec2 t = uv * vec2(size) - 0.5;
+  vec2 i = floor(t);
+  vec2 f = t - i;
+  vec2 f2 = f * f, f3 = f2 * f;
+  vec2 w[4] = vec2[](
+    (1.0 - 3.0 * f + 3.0 * f2 - f3) / 6.0,
+    (4.0 - 6.0 * f2 + 3.0 * f3) / 6.0,
+    (1.0 + 3.0 * f + 3.0 * f2 - 3.0 * f3) / 6.0,
+    f3 / 6.0);
+  ivec2 base = ivec2(i) - 1;
+  vec3 sum = vec3(0.0);
+  for (int y = 0; y < 4; ++y) {
+    int ty = clamp(base.y + y, 0, size.y - 1);
+    vec3 row = vec3(0.0);
+    for (int x = 0; x < 4; ++x) {
+      row += w[x].x * texelFetch(weatherSkyTex, ivec2(clamp(base.x + x, 0, size.x - 1), ty), 0).rgb;
+    }
+    sum += w[y].y * row;
+  }
+  return sum;
+}
+
 // The weather of the sky over a world xz (scene coordinates): x cloud cover, y how wispy and high, z darkness offset
 vec3 cloudSkyWeather(vec2 world) {
   if (cloudSkyRect.z == 0.0) {
     return vec3(cloudWeather, cloudType);
   }
-  vec3 w = textureLod(weatherSkyTex, (world - cloudSkyRect.xy) * cloudSkyRect.zw, 0.0).rgb;
-  return vec3(w.xy, w.z * 2.0 - 1.0);
+  vec2 uv = (world - cloudSkyRect.xy) * cloudSkyRect.zw;
+  vec3 w = cloudSkyField(uv);
+  // past the field the texture's edge would stretch out to the horizon in straight streaks: toward its edge the
+  // field gives way to the player's weather, round, so no line of the grid shows
+  float far = smoothstep(CLOUD_SKY_FADE.x, CLOUD_SKY_FADE.y, length(uv - 0.5));
+  return mix(vec3(w.xy, w.z * 2.0 - 1.0), vec3(cloudWeather, cloudType), far);
 }
 
 // The sky under a stretch of the slab: x coverage, y how wispy, z how rainy (the weather's cover). xz: noise

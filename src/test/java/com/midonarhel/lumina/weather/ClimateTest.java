@@ -53,9 +53,9 @@ public class ClimateTest
 		assertTrue(range("DESERT", Season.SUMMER)[0] > 15);
 		assertTrue(range("DESERT", Season.SUMMER)[1] > 35);
 		assertTrue(range("GRASSLAND", Season.SUMMER)[0] > 0);
-		// a temperate winter swings either side of zero
+		// a temperate winter is mild, with frosts
 		float[] w = range("GRASSLAND", Season.WINTER);
-		assertTrue(w[0] < -3 && w[1] > 3);
+		assertTrue(w[0] < 0 && w[1] > 5);
 		// and summer is warmer than winter
 		assertTrue(range("FOREST", Season.SUMMER)[0] > range("FOREST", Season.WINTER)[0]);
 	}
@@ -91,24 +91,42 @@ public class ClimateTest
 	{
 		WeatherType rain = WeatherTestData.type("RAIN");
 		WeatherType snow = WeatherTestData.type("SNOW");
-		WeatherType asSnow = Climate.withTemperature(rain, -5);
-		assertEquals(0, asSnow.rain, 0);
-		assertEquals(rain.rain, asSnow.snow, 1e-6f);
-		assertTrue(asSnow.whitens());
-		assertSame(asSnow, Climate.withTemperature(rain, -6));
-		WeatherType asRain = Climate.withTemperature(snow, 8);
-		assertEquals(0, asRain.snow, 0);
-		assertEquals(snow.snow, asRain.rain, 1e-6f);
-		WeatherType sleet = Climate.withTemperature(rain, 1);
-		assertTrue(sleet.rain > 0 && sleet.snow > 0);
-		// as it is where it fits, and dust never turns to rain
-		assertSame(rain, Climate.withTemperature(rain, 10));
-		assertSame(snow, Climate.withTemperature(snow, -10));
-		WeatherType sand = WeatherTestData.type("SANDSTORM");
-		assertSame(sand, Climate.withTemperature(sand, -20));
-		assertSame(sand, Climate.withTemperature(sand, 30));
-		// the original is untouched
-		assertEquals(0, rain.snow, 0);
+		WeatherType storm = WeatherTestData.type("STORM");
+		WeatherType clear = WeatherTestData.type("CLEAR");
+		// in a frost rain and storms come down as snow, in a thaw snow as rain
+		assertSame(snow, Climate.withTemperature(rain, -5, true));
+		assertSame(snow, Climate.withTemperature(storm, -5, true));
+		assertSame(rain, Climate.withTemperature(snow, 8, true));
+		// as they are where they fit
+		assertSame(rain, Climate.withTemperature(rain, 10, true));
+		assertSame(storm, Climate.withTemperature(storm, 10, true));
+		assertSame(snow, Climate.withTemperature(snow, -10, true));
+		assertSame(clear, Climate.withTemperature(clear, -20, true));
+		// where it never snows, never snow
+		assertSame(rain, Climate.withTemperature(rain, -20, false));
+		assertSame(rain, Climate.withTemperature(snow, -20, false));
+	}
+
+	@Test
+	public void desertsAndTheTropicsNeverSnow()
+	{
+		for (String b : new String[]{"DESERT", "TROPICAL", "MEDITERRANEAN", "VOLCANIC", "WETLAND"})
+		{
+			assertTrue(b, !WeatherClimate.snows(b));
+		}
+		for (String b : new String[]{"ARCTIC", "MOUNTAIN", "TUNDRA", "GRASSLAND", "FOREST"})
+		{
+			assertTrue(b, WeatherClimate.snows(b));
+		}
+		// a whole year in the desert: nothing white falls, nothing white lies
+		Climate climate = new Climate();
+		for (long t = T0; t < T0 + YEAR; t += H)
+		{
+			climate.update(t, SEASON_DAYS);
+			Climate.Region r = climate.region("DESERT");
+			assertTrue(!r.type.whitens());
+			assertEquals(0, r.snowCm, 0);
+		}
 	}
 
 	@Test
@@ -139,7 +157,7 @@ public class ClimateTest
 			long mid = hour * H + H / 2;
 			float c = Climate.temperature("GRASSLAND", mid, SEASON_DAYS);
 			WeatherType w = Climate.withTemperature(WeatherForecast.at(WeatherForecast.slot(mid), "GRASSLAND",
-				SEASON_DAYS), c);
+				SEASON_DAYS), c, WeatherClimate.snows("GRASSLAND"));
 			boolean falling = w.whitens() && w.snow > 0;
 			if (!falling && c <= 0)
 			{

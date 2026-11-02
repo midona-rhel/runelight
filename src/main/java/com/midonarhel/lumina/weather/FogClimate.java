@@ -54,7 +54,7 @@ final class FogClimate
 	/** The biome's profile; unknown and missing biomes behave like the default biome. */
 	static Profile profile(String biome)
 	{
-		return WeatherClimate.fog(biome);
+		return WeatherClimate.fog(WeatherRegions.climate(biome));
 	}
 
 	/**

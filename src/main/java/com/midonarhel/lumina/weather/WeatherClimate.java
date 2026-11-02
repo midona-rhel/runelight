@@ -261,12 +261,14 @@ final class WeatherClimate
 	/** Whether the climate knows this biome; unknown ones get the default biome's odds. */
 	static boolean knows(String biome)
 	{
+		biome = WeatherRegions.climate(biome);
 		return biome != null && tables().odds.containsKey(biome);
 	}
 
 	/** The biome's odds in a season, in catalogue order; unknown and missing biomes get the default's. */
 	static float[] odds(String biome, Season season)
 	{
+		biome = WeatherRegions.climate(biome);
 		Tables t = tables();
 		float[][] o = biome != null ? t.odds.get(biome) : null;
 		if (o == null)
@@ -279,6 +281,7 @@ final class WeatherClimate
 	/** The biome's temperatures; unknown biomes get the default biome's, and without any, mild ones. */
 	static Temperature temperature(String biome)
 	{
+		biome = WeatherRegions.climate(biome);
 		Tables t = tables();
 		Temperature r = biome != null ? t.temperature.get(biome) : null;
 		if (r == null)
@@ -291,6 +294,7 @@ final class WeatherClimate
 	/** The biome's fog profile; unknown biomes get the default biome's, and without any, a plain one. */
 	static FogClimate.Profile fog(String biome)
 	{
+		biome = WeatherRegions.climate(biome);
 		Tables t = tables();
 		FogClimate.Profile p = biome != null ? t.fog.get(biome) : null;
 		if (p == null)
@@ -298,6 +302,29 @@ final class WeatherClimate
 			p = t.fog.get(t.defaultBiome);
 		}
 		return p != null ? p : FogClimate.PLAIN;
+	}
+
+	/**
+	 * Whether rain can fall as snow in the biome: its odds give snow a chance in some season. Deserts and the tropics
+	 * have none, so a cold night there brings rain, never snow.
+	 */
+	static boolean snows(String biome)
+	{
+		WeatherType snow = WeatherType.get("SNOW");
+		if (snow == null)
+		{
+			return false;
+		}
+		biome = WeatherRegions.climate(biome);
+		for (Season s : SEASONS)
+		{
+			float[] o = odds(biome, s);
+			if (snow.index < o.length && o[snow.index] > 0)
+			{
+				return true;
+			}
+		}
+		return false;
 	}
 
 	/** Multiplier on a type's odds in the morning slot. */

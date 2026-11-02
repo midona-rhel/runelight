@@ -9,30 +9,14 @@ public enum WeatherMode
 	AUTOMATIC("Automatic"),
 	OFF("Off"),
 	CLEAR("Clear"),
-	SUNNY("Sunny"),
-	HARSH_SUN("Harsh sun"),
-	HAZY("Hazy"),
-	HIGH_CLOUDS("High thin clouds"),
-	PARTLY_CLOUDY("Partly cloudy"),
 	OVERCAST("Overcast"),
-	DRIZZLE("Drizzle"),
 	RAIN("Rain"),
-	SPRING_SHOWERS("Spring showers"),
-	SUMMER_RAIN("Summer rain"),
-	AUTUMN_RAIN("Autumn rain"),
-	THUNDERSTORM("Thunderstorm"),
-	MONSOON("Tropical downpour"),
-	MIST("Mist"),
+	STORM("Storm"),
+	SNOW("Snow"),
 	FOG("Fog"),
-	FREEZING_FOG("Freezing fog"),
-	SLEET("Sleet"),
-	LIGHT_SNOW("Light snow"),
-	SNOW("Snowfall"),
-	HEAVY_SNOW("Heavy snow"),
-	BLIZZARD("Blizzard"),
 	SANDSTORM("Sandstorm"),
 	ASH_FALL("Ash fall"),
-	GALE("Gale");
+	HAZY("Haze");
 
 	private final String name;
 

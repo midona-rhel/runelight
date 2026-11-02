@@ -70,6 +70,12 @@ public final class DumpRenderer implements AutoCloseable
 		public boolean lampRoofs = true;
 		// world tiles (x, y) whose walls are printed
 		public final List<int[]> probes = new ArrayList<>();
+		// snow cover on the ground everywhere (the weather field's cells), null for the dump's; give it a weather that
+		// neither snows nor works the ground out from the climate (weatherMode=OVERCAST), or it moves on from there
+		public Float snowCover;
+		// false: the weather's state (Weather's and the field's) is not put back from the dump, so a weather given by
+		// weatherMode draws as itself, from the warm-up
+		public boolean restoreWeather = true;
 	}
 
 	public final SceneDump.Loaded dump;
@@ -292,6 +298,34 @@ public final class DumpRenderer implements AutoCloseable
 	}
 
 	/**
+	 * GPU and CPU time of the dump's frame, drawn {@code frames} more times at the dump's time: per frame the GPU's
+	 * elapsed time (GL_TIME_ELAPSED around the whole frame) and the CPU time of the draw calls. Gives
+	 * {gpu median, gpu min, cpu median, cpu min} in ms.
+	 */
+	public double[] time(int frames)
+	{
+		SceneDump.Manifest m = dump.manifest;
+		int query = glGenQueries();
+		double[] gpu = new double[frames], cpu = new double[frames];
+		for (int i = 0; i < frames; ++i)
+		{
+			Clock.set(m.millis, dumpNanos);
+			restoreState();
+			glFinish();
+			glBeginQuery(GL_TIME_ELAPSED, query);
+			long t0 = System.nanoTime();
+			frame();
+			cpu[i] = (System.nanoTime() - t0) / 1e6;
+			glEndQuery(GL_TIME_ELAPSED);
+			gpu[i] = glGetQueryObjecti64(query, GL_QUERY_RESULT) / 1e6;
+		}
+		glDeleteQueries(query);
+		java.util.Arrays.sort(gpu);
+		java.util.Arrays.sort(cpu);
+		return new double[]{gpu[frames / 2], gpu[0], cpu[frames / 2], cpu[0]};
+	}
+
+	/**
 	 * The frame state a warm-up doesn't settle as the dump had it (SceneDump.STATE): before the warm-up, so it starts
 	 * from there, and again before the dump's frame, so that frame has it exactly.
 	 */
@@ -299,6 +333,10 @@ public final class DumpRenderer implements AutoCloseable
 	{
 		for (String[] f : SceneDump.stateFields(plugin))
 		{
+			if (!options.restoreWeather && (f[0].equals("weather") || f[0].equals("weatherField")))
+			{
+				continue;
+			}
 			String key = "state." + f[0] + "." + f[1];
 			if (!dump.derived.containsKey(key))
 			{
@@ -314,6 +352,13 @@ public final class DumpRenderer implements AutoCloseable
 		}
 		// the weather field's textures take the state again
 		PlainData.set(plugin.weather.getField(), "uploaded", false);
+		if (options.snowCover != null)
+		{
+			float[][] state = (float[][]) PlainData.get(plugin.weather.getField(), "state");
+			java.util.Arrays.fill(state[com.midonarhel.lumina.weather.WeatherField.SNOW_COVER], options.snowCover);
+			// the field is blurred and uploaded on its next update, which is this frame's
+			PlainData.set(plugin.weather, "fieldDt", 1f);
+		}
 		Double age = dump.manifest.state.get("water.age");
 		if (age != null)
 		{

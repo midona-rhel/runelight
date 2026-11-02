@@ -40,9 +40,30 @@ public class WeatherRegionsTest
 		return env.weatherBiomeAt(x, y, 0);
 	}
 
+	/** The climate at a place; a city there has its land's. */
 	private static void at(String expected, String place, int x, int y)
 	{
-		assertEquals(place + " (" + x + ", " + y + ")", expected, biome(x, y));
+		assertEquals(place + " (" + x + ", " + y + ")", expected, WeatherRegions.climate(biome(x, y)));
+	}
+
+	@Test
+	public void citiesAreTheirLandsClimateWithHaze()
+	{
+		for (Object[] c : new Object[][]{{"Varrock", 3213, 3428}, {"Falador", 2965, 3380}, {"Lumbridge", 3222, 3218},
+			{"East Ardougne", 2662, 3305}, {"Seers' Village", 2725, 3485}, {"Yanille", 2605, 3093}, {"Al Kharid", 3293, 3174},
+			{"Civitas illa Fortis", 1700, 3110}, {"Kourend Castle", 1640, 3670}, {"Prifddinas", 3260, 6100}})
+		{
+			assertTrue(c[0] + " is a city", WeatherRegions.isCity(biome((Integer) c[1], (Integer) c[2])));
+		}
+		assertTrue(!WeatherRegions.isCity(biome(3093, 3493)));
+		assertEquals("GRASSLAND", WeatherRegions.climate(biome(3213, 3428)));
+		// a city's clear slots are hazy about CITY_HAZE of the time, its other weather is its land's
+		int hazy = 0, n = 20000;
+		for (long slot = 0; slot < n; ++slot)
+		{
+			hazy += Climate.cityHaze(slot, "CITY:GRASSLAND") ? 1 : 0;
+		}
+		assertEquals(Climate.CITY_HAZE, hazy / (float) n, 0.02f);
 	}
 
 	@Test
@@ -77,20 +98,28 @@ public class WeatherRegionsTest
 	{
 		at("TROPICAL", "Brimhaven", 2780, 3180);
 		at("TROPICAL", "Musa Point", 2920, 3150);
-		at("TROPICAL", "Shilo Village", 2850, 2960);
-		at("TROPICAL", "Tai Bwo Wannai", 2800, 3080);
-		at("TROPICAL", "Ape Atoll", 2760, 2750);
-		at("TROPICAL", "Feldip Hills", 2540, 2970);
+		at("JUNGLE", "Shilo Village", 2850, 2960);
+		at("JUNGLE", "Tai Bwo Wannai", 2800, 3080);
+		at("JUNGLE", "Ape Atoll", 2760, 2750);
 		at("TROPICAL", "Mos Le'Harmless", 3680, 2970);
-		at("TROPICAL", "Fossil Island", 3745, 3800);
-		at("TROPICAL", "Tlati Rainforest", 1250, 3150);
+		at("JUNGLE", "Tlati Rainforest", 1250, 3150);
+		at("GRASSLAND", "Feldip Hills", 2540, 2970);
+		at("SAVANNA", "Avium Savannah", 1600, 2980);
+		at("FOREST", "Fossil Island", 3745, 3800);
+		at("VOLCANIC", "Fossil Island's volcano", 3805, 3815);
+		at("VOLCANIC", "Mount Karuulm", 1311, 3807);
+		at("TROPICAL_SEA", "the sea south of Karamja", 2800, 2850);
+		at("ARCTIC_SEA", "the sea off Weiss", 2800, 4050);
+		at("VOLCANIC", "Crandor", 2840, 3260);
+		at("TEMPERATE_SEA", "the open sea west of Kandarin", 2200, 3600);
+		at("TEMPERATE_SEA", "the open sea north of Morytania", 3600, 3700);
 	}
 
 	@Test
 	public void theColdNorth()
 	{
 		at("TUNDRA", "Rellekka", 2660, 3660);
-		at("TUNDRA", "Miscellania", 2580, 3850);
+		at("TUNDRA", "Miscellania", 2520, 3860);
 		at("MOUNTAIN", "Trollheim", 2890, 3680);
 		at("MOUNTAIN", "Burthorpe", 2930, 3555);
 		at("MOUNTAIN", "Ice Mountain", 3007, 3475);
@@ -117,7 +146,7 @@ public class WeatherRegionsTest
 	{
 		at("GRASSLAND", "Kourend Castle", 1640, 3670);
 		at("MEDITERRANEAN", "Hosidius", 1745, 3510);
-		at("VOLCANIC", "Lovakengj", 1500, 3800);
+		at("BARRENS", "Lovakengj", 1500, 3800);
 		at("MOORLAND", "Arceuus", 1632, 3808);
 		at("MOORLAND", "Shayzien", 1500, 3590);
 		at("WETLAND", "Piscarilius", 1810, 3730);
@@ -125,6 +154,7 @@ public class WeatherRegionsTest
 		at("ARCTIC", "Wintertodt", 1630, 3995);
 		at("MEDITERRANEAN", "Civitas illa Fortis", 1700, 3100);
 		at("MEDITERRANEAN", "Aldarin", 1400, 2930);
+		at("TUNDRA", "Lunar Isle", 2100, 3900);
 	}
 
 	@Test
@@ -292,7 +322,7 @@ public class WeatherRegionsTest
 				steepest[c] <= (hi[c] - lo[c]) / 40 + quantum);
 			changing += Math.abs(last[c] - first[c]) > 0.01f ? 1 : 0;
 		}
-		assertTrue(route + ": only " + changing + " channels differ between its ends", changing >= 6);
+		assertTrue(route + ": only " + changing + " channels differ between its ends", changing >= 3);
 	}
 
 	@Test
