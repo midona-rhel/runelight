@@ -48,9 +48,23 @@ public final class SnowTiles
 		String name;
 		int index;
 		boolean snowy;
+		int[] ids;
 		int[][] boxes;
 		int[] targets;
 		Condition[] conditions;
+	}
+
+	/** An override as it bears on one region: its boxes that touch the region. */
+	private static final class Local
+	{
+		final Override o;
+		final int[][] boxes;
+
+		Local(Override o, int[][] boxes)
+		{
+			this.o = o;
+			this.boxes = boxes;
+		}
 
 		boolean contains(int x, int y, int z)
 		{
@@ -65,11 +79,18 @@ public final class SnowTiles
 		}
 	}
 
+	/** The overrides that touch one 64 tile region, by id and for any id, each in the file's order. */
+	private static final class Region
+	{
+		final Map<Integer, List<Local>> byId = new HashMap<>();
+		final List<Local> anyId = new ArrayList<>();
+	}
+
 	private static volatile SnowTiles instance;
+	// built as regions are first asked about: a scene's few dozen, each a pass over the overrides
+	private final Map<Integer, Region> regions = new java.util.concurrent.ConcurrentHashMap<>();
 
 	private final Override[] all;
-	private final Map<Integer, List<Override>> byId = new HashMap<>();
-	private final List<Override> anyId = new ArrayList<>();
 
 	private SnowTiles(Data d)
 	{
@@ -82,6 +103,7 @@ public final class SnowTiles
 			o.index = i;
 			o.snowy = Boolean.TRUE.equals(r.snowy);
 			o.boxes = r.boxes;
+			o.ids = r.ids;
 			int n = r.replacements == null ? 0 : r.replacements.size();
 			o.targets = new int[n];
 			o.conditions = new Condition[n];
@@ -93,21 +115,6 @@ public final class SnowTiles
 				o.conditions[k] = Condition.any(conds);
 			}
 			all[i] = o;
-			if (o.boxes == null)
-			{
-				continue;
-			}
-			if (r.ids != null)
-			{
-				for (int id : r.ids)
-				{
-					byId.computeIfAbsent(id, k -> new ArrayList<>()).add(o);
-				}
-			}
-			else
-			{
-				anyId.add(o);
-			}
 		}
 	}
 
@@ -139,8 +146,7 @@ public final class SnowTiles
 				if (d != null && d.overrides != null)
 				{
 					SnowTiles s = new SnowTiles(d);
-					log.debug("Loaded {} tile overrides for the snow, {} by id, {} for any", s.all.length, s.byId.size(),
-						s.anyId.size());
+					log.debug("Loaded {} tile overrides for the snow", s.all.length);
 					return s;
 				}
 			}
@@ -157,6 +163,46 @@ public final class SnowTiles
 		Data d = new Data();
 		d.overrides = new ArrayList<>();
 		return d;
+	}
+
+	/** The overrides whose areas touch region key (x >> 6 << 8 | y >> 6), with just their boxes there. */
+	private Region region(int key)
+	{
+		int rx = key >> 8, ry = key & 0xff;
+		int x0 = rx << 6, y0 = ry << 6, x1 = x0 + 63, y1 = y0 + 63;
+		Region r = new Region();
+		for (Override o : all)
+		{
+			if (o.boxes == null)
+			{
+				continue;
+			}
+			List<int[]> touching = new ArrayList<>();
+			for (int[] b : o.boxes)
+			{
+				if (b[0] <= x1 && b[3] >= x0 && b[1] <= y1 && b[4] >= y0)
+				{
+					touching.add(b);
+				}
+			}
+			if (touching.isEmpty())
+			{
+				continue;
+			}
+			Local l = new Local(o, touching.toArray(new int[0][]));
+			if (o.ids != null)
+			{
+				for (int id : o.ids)
+				{
+					r.byId.computeIfAbsent(id, k -> new ArrayList<>()).add(l);
+				}
+			}
+			else
+			{
+				r.anyId.add(l);
+			}
+		}
+		return r;
 	}
 
 	/**
@@ -178,36 +224,36 @@ public final class SnowTiles
 		{
 			return false;
 		}
+		Region region = regions.computeIfAbsent((x >> 6) << 8 | (y >> 6) & 0xff, this::region);
 		Override match = null;
 		int index = Integer.MAX_VALUE;
-		int[] ids = {OVERLAY | overlay, underlay};
 		outer:
-		for (int id : ids)
+		for (int k = 0; k < 2; ++k)
 		{
-			List<Override> list = byId.get(id);
+			List<Local> list = region.byId.get(k == 0 ? OVERLAY | overlay : underlay);
 			if (list == null)
 			{
 				continue;
 			}
-			for (Override o : list)
+			for (Local l : list)
 			{
-				if (o.contains(x, y, z))
+				if (l.contains(x, y, z))
 				{
-					match = o;
-					index = o.index;
+					match = l.o;
+					index = l.o.index;
 					break outer;
 				}
 			}
 		}
-		for (Override o : anyId)
+		for (Local l : region.anyId)
 		{
-			if (o.index > index)
+			if (l.o.index > index)
 			{
 				break;
 			}
-			if (o.contains(x, y, z))
+			if (l.contains(x, y, z))
 			{
-				match = o;
+				match = l.o;
 				break;
 			}
 		}
