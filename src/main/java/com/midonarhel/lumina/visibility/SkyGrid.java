@@ -164,6 +164,8 @@ public final class SkyGrid
 	private final byte[] roofs;
 	// the same per tile half (2 * tile + half; halfRoof): a diagonal wall's halves apart
 	private final byte[] halfRoofs;
+	// the planes any half has a roof flag on, a bit each (setRooms)
+	private int roofPlanes;
 	// units to trace, [(level * corners + z) * corners + x]
 	public final boolean[] active;
 	int nearbyUnits, supportUnits;
@@ -520,6 +522,8 @@ public final class SkyGrid
 			for (int x = 0; x < size; ++x)
 				for (int h = 0; h < 2; ++h)
 					halfRoofs[2 * (z * size + x) + h] = (byte) halfRoof(x, z, h);
+		roofPlanes = 0;
+		for (byte b : halfRoofs) roofPlanes |= b;
 		for (int cz = 0; cz < corners; ++cz)
 			for (int cx = 0; cx < corners; ++cx)
 				roofShares(cx, cz);
@@ -574,6 +578,14 @@ public final class SkyGrid
 		java.util.Arrays.fill(shares, 0);
 		for (int f = 0; f < RoomMap.PLANES; ++f)
 		{
+			// no roofs on the plane, or the corner's tiles alike: the share is their flag, no grouping needed
+			if ((roofPlanes >> f & 1) == 0) continue;
+			int alike = alike(cx - 1, cz - 1, cx, cz, f);
+			if (alike >= 0)
+			{
+				for (int k = 0; k < 8; ++k) shares[k * RoomMap.PLANES + f] = alike;
+				continue;
+			}
 			int present = groupCorner(cx, cz, f);
 			java.util.Arrays.fill(shareSum, 0);
 			java.util.Arrays.fill(shareCount, 0);
@@ -621,6 +633,8 @@ public final class SkyGrid
 		java.util.Arrays.fill(gradients, 0);
 		for (int f = 0; f < RoomMap.PLANES; ++f)
 		{
+			// no roofs on the plane, or the tiles whose corners the slopes here read all alike: no gradient
+			if ((roofPlanes >> f & 1) == 0 || alike(cx - 2, cz - 2, cx + 1, cz + 1, f) >= 0) continue;
 			int present = groupCorner(cx, cz, f);
 			java.util.Arrays.fill(shareSum, 0);
 			java.util.Arrays.fill(gradientNorth, 0);
@@ -688,6 +702,23 @@ public final class SkyGrid
 				for (int c = 0; c < 4; ++c) texels.put(t + c, Half.toHalf(gradients[(q * RoomMap.PLANES + 2 * part) * 2 + c]));
 			}
 		}
+	}
+
+	/**
+	 * The roof flag on plane f the tiles x0..x1 by z0..z1 (those in the grid) all have, both halves, none split by a
+	 * diagonal on f: 0 or 1; -1 where they differ or one is split.
+	 */
+	private int alike(int x0, int z0, int x1, int z1, int f)
+	{
+		int flag = -1;
+		for (int z = Math.max(0, z0); z <= Math.min(size - 1, z1); ++z)
+			for (int x = Math.max(0, x0); x <= Math.min(size - 1, x1); ++x)
+			{
+				int t = 2 * (z * size + x), a = halfRoofs[t] >> f & 1;
+				if (a != (halfRoofs[t + 1] >> f & 1) || WallMap.split(wallBits(f, x, z)) || flag >= 0 && a != flag) return -1;
+				flag = a;
+			}
+		return flag;
 	}
 
 	private float share(int x, int y, int slice, int plane)

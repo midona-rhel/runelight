@@ -153,7 +153,11 @@ public class SkyGridReplay
 		// the tile roof bits the shader read before roofShares, [z * size + x], from the dump's rooms
 		int[] tileRoofs;
 		// the last skylight()'s terms, for the breakdown
-		float lastOriginal, lastSurface, lastCover, lastField;
+		float lastOriginal, lastSurface, lastCover, lastField, lastFieldCover;
+		// skylight_ao.glsl's skyFieldOpen and skyExteriorByField; the field's plane
+		float fieldOpen = -1;
+		boolean exteriorByField;
+		int fieldPlane;
 		float skyExterior;
 
 		Shader(short[] tex, int resolution, float[] field, WallMap walls)
@@ -323,8 +327,9 @@ public class SkyGridReplay
 			float[] roomFloors = {meta(tx, tz, fx, fz, 4 * size, 0), meta(tx, tz, fx, fz, 4 * size, 1), meta(tx, tz, fx, fz, 4 * size, 2), meta(tx, tz, fx, fz, 4 * size, 3)};
 			int roomPlane = 0;
 			for (int k = 1; k < 4; ++k) if (w[1] <= roomFloors[k]) roomPlane = k;
+			exteriorByField = !before && roomPlane == fieldPlane && fieldOpen >= 0;
 			float exterior = before ? ((tileRoofs[tz * size + tx] & (1 << roomPlane)) == 0 ? 1 : 0)
-				: 1 - roofShare(tx, tz, fx, fz, loD, roomPlane);
+				: exteriorByField ? fieldOpen : 1 - roofShare(tx, tz, fx, fz, loD, roomPlane);
 			if (exterior < 1 && n[1] < -0.3f)
 			{
 				float top = meta(tx, tz, fx, fz, 2 * size, 1);
@@ -384,25 +389,70 @@ public class SkyGridReplay
 			nw[1] -= code;
 			ne[1] -= code;
 			float[] out = new float[2];
-			// skylight_ao.glsl's Hermite blend: value and gradient weights per axis
-			float vx1 = fx * fx * (3 - 2 * fx), vx0 = 1 - vx1, vz1 = fz * fz * (3 - 2 * fz), vz0 = 1 - vz1;
-			float dx0 = fx * (1 - fx) * (1 - fx), dx1 = -fx * fx * (1 - fx), dz0 = fz * (1 - fz) * (1 - fz), dz1 = -fz * fz * (1 - fz);
 			float[] gsw = texel(bx, bz + fieldWidth), gse = texel(bx + 1, bz + fieldWidth), gnw = texel(bx, bz + 1 + fieldWidth), gne = texel(bx + 1, bz + 1 + fieldWidth);
-			for (int c = 0; c < 2; ++c)
+			if (before)
 			{
-				float v = before ? (sw[c] * (1 - fx) + se[c] * fx) * (1 - fz) + (nw[c] * (1 - fx) + ne[c] * fx) * fz
-					: Math.max(0, Math.min(1, sw[c] * vx0 * vz0 + se[c] * vx1 * vz0 + nw[c] * vx0 * vz1 + ne[c] * vx1 * vz1
-					+ gsw[2 * c] * dx0 * vz0 + gse[2 * c] * dx1 * vz0 + gnw[2 * c] * dx0 * vz1 + gne[2 * c] * dx1 * vz1
-					+ gsw[2 * c + 1] * vx0 * dz0 + gse[2 * c + 1] * vx1 * dz0 + gnw[2 * c + 1] * vx0 * dz1 + gne[2 * c + 1] * vx1 * dz1));
-				if (diagonal == 1)
-					v = fz > fx ? sw[c] * (1 - fz) + nw[c] * (fz - fx) + ne[c] * fx
-						: sw[c + 2] * (1 - fx) + se[c + 2] * (fx - fz) + ne[c + 2] * fz;
-				else if (diagonal == 2)
-					v = fx + fz > 1 ? nw[c] * (1 - fx) + ne[c] * (fx + fz - 1) + se[c] * (1 - fz)
-						: sw[c + 2] * (1 - fx - fz) + se[c + 2] * fx + nw[c + 2] * fz;
-				out[c] = v;
+				// bilinear, triangles on split tiles (before the cubic rebuild)
+				for (int c = 0; c < 2; ++c)
+				{
+					float v = (sw[c] * (1 - fx) + se[c] * fx) * (1 - fz) + (nw[c] * (1 - fx) + ne[c] * fx) * fz;
+					if (diagonal == 1)
+						v = fz > fx ? sw[c] * (1 - fz) + nw[c] * (fz - fx) + ne[c] * fx
+							: sw[c + 2] * (1 - fx) + se[c + 2] * (fx - fz) + ne[c + 2] * fz;
+					else if (diagonal == 2)
+						v = fx + fz > 1 ? nw[c] * (1 - fx) + ne[c] * (fx + fz - 1) + se[c] * (1 - fz)
+							: sw[c + 2] * (1 - fx - fz) + se[c + 2] * fx + nw[c + 2] * fz;
+					out[c] = v;
+				}
+				return out;
 			}
+			// skylight_ao.glsl's skyFieldVisibility
+			if (diagonal == 0)
+			{
+				out[0] = hermite(fx, fz, new float[]{sw[0], se[0], nw[0], ne[0]}, new float[]{gsw[0], gse[0], gnw[0], gne[0]}, new float[]{gsw[1], gse[1], gnw[1], gne[1]});
+				out[1] = hermite(fx, fz, new float[]{sw[1], se[1], nw[1], ne[1]}, new float[]{gsw[2], gse[2], gnw[2], gne[2]}, new float[]{gsw[3], gse[3], gnw[3], gne[3]});
+			}
+			else
+			{
+				boolean north = diagonal == 1 ? fz > fx : fx + fz > 1;
+				int c = north ? 0 : 2;
+				float[] light = {sw[c], se[c], nw[c], ne[c]}, gx = {gsw[c], gse[c], gnw[c], gne[c]}, gz = {gsw[c + 1], gse[c + 1], gnw[c + 1], gne[c + 1]};
+				int k = diagonal == 1 ? (north ? 1 : 2) : (north ? 0 : 3);
+				light[k] = light[k ^ 1] + light[k ^ 2] - light[3 - k];
+				gx[k] = ((k & 1) == 1 ? 1 : -1) * (light[k] - light[k ^ 1]);
+				gz[k] = ((k >> 1) == 1 ? 1 : -1) * (light[k] - light[k ^ 2]);
+				float[] tri = diagonal == 1 ? (north ? new float[]{1 - fz, 0, fz - fx, fx} : new float[]{1 - fx, fx - fz, 0, fz})
+					: (north ? new float[]{0, 1 - fz, 1 - fx, fx + fz - 1} : new float[]{1 - fx - fz, fx, fz, 0});
+				out[0] = hermite(fx, fz, light, gx, gz);
+				out[1] = tri[0] * sw[c + 1] + tri[1] * se[c + 1] + tri[2] * nw[c + 1] + tri[3] * ne[c + 1];
+			}
+			out[0] = Math.max(0, Math.min(1, out[0]));
+			out[1] = Math.max(0, Math.min(1, out[1]));
 			return out;
+		}
+
+		static final float SKY_FLOW_SOFT = 0.1f;
+
+		/** skylight_ao.glsl's skySmoothMin. */
+		static float smoothMin(float a, float b, float k)
+		{
+			float h = Math.max(0, Math.min(1, 0.5f + 0.5f * (b - a) / k));
+			return b + (a - b) * h - k * h * (1 - h);
+		}
+
+		/** skylight_ao.glsl's skyHermite: corners SW, SE, NW, NE. */
+		static float hermite(float fx, float fz, float[] v, float[] gx, float[] gz)
+		{
+			float vx1 = fx * fx * (3 - 2 * fx), vz1 = fz * fz * (3 - 2 * fz);
+			float[] vx = {1 - vx1, vx1}, vz = {1 - vz1, vz1};
+			float[] dx = {fx * (1 - fx) * (1 - fx), -fx * fx * (1 - fx)}, dz = {fz * (1 - fz) * (1 - fz), -fz * fz * (1 - fz)};
+			float r = 0;
+			for (int k = 0; k < 4; ++k)
+			{
+				int i = k & 1, j = k >> 1;
+				r += v[k] * vx[i] * vz[j] + gx[k] * dx[i] * vz[j] + gz[k] * vx[i] * dz[j];
+			}
+			return r;
 		}
 
 		private float[] texel(int x, int y)
@@ -443,26 +493,38 @@ public class SkyGridReplay
 				}
 			}
 			float[] fl = field(o[0], o[2]);
+			fieldOpen = before ? -1 : (float) Math.pow(fl[0], 4);
 			float v = grid(o, n);
-			float cover = fl[1] * (1 - skyExterior);
+			float cover = (exteriorByField ? 1 : fl[1]) * (1 - skyExterior);
 			lastCover = cover;
 			lastField = fl[0];
+			lastFieldCover = fl[1];
 			float outdoors = 1 - cover;
 			if (before)
 			{
 				v = v + (1 - (1 - v) * SKY_OUTDOOR_STRENGTH - v) * outdoors;
 				return v + (Math.max(v, fl[0]) - v) * cover;
 			}
-			float outside = 1 - (1 - v) * SKY_OUTDOOR_STRENGTH, inside = Math.max(v, fl[0]);
+			float outside = 1 - (1 - v) * SKY_OUTDOOR_STRENGTH;
+			// skylight_ao.glsl: the light flowing in is never brighter than the open sky lights the spot (a smooth min)
+			float inside = Math.max(v, before ? fl[0] : smoothMin(fl[0], outside, SKY_FLOW_SOFT));
 			return outside + (inside - outside) * cover;
 		}
 	}
 
+	/** The field as the skylight packs it: each corner's light by its straight-line distance from the open sky. */
 	static float[] field(Dump d, int plane)
+	{
+		return field(d, plane, true);
+	}
+
+	/** The field; distance false: the corners' light the mean of their tiles' flood (before cornerLight). */
+	static float[] field(Dump d, int plane, boolean distance)
 	{
 		boolean[] covered = SkyField.covered(d.rooms, d.floors, plane);
 		float[] light = SkyField.propagate(d.walls, covered, plane, SkyField.falloffOf(com.midonarhel.lumina.LuminaPlugin.SKYLIGHT_REACH));
-		return SkyField.pack(d.walls, plane, light, covered);
+		return SkyField.pack(d.walls, plane, light, covered, !distance ? null
+			: SkyField.cornerLight(d.walls, plane, covered, SkyField.falloffOf(com.midonarhel.lumina.LuminaPlugin.SKYLIGHT_REACH)));
 	}
 
 	/** The ground's skylight over tiles around (cx, cz), sub samples per tile side, as rows of 0-9 (north up). */
@@ -737,12 +799,16 @@ public class SkyGridReplay
 				float wx = (x0 + (x + 0.5f) / px) * 128, wz = (z1 + 1 - (y + 0.5f) / px) * 128;
 				float v = sh.skylight(new float[]{wx, groundY(sh, wx, wz), wz}, up);
 				float t = term == 0 ? v : term == 1 ? sh.lastOriginal : term == 2 ? sh.lastField : sh.lastCover;
-				if (term == 4)
+				if (term >= 4)
 				{
-					// the value's gradient, per tile: kinks show as edges
+					// a term's gradient, per tile: kinks show as edges. 4 the value, 5 the field's light, 6 the
+					// exterior (1 - roof share), 7 the trace
 					float e2 = 128f / px;
-					float vx = sh.skylight(new float[]{wx + e2, groundY(sh, wx + e2, wz), wz}, up), vz = sh.skylight(new float[]{wx, groundY(sh, wx, wz + e2), wz + e2}, up);
-					t = (float) Math.hypot(vx - v, vz - v) * px;
+					float t0 = term(sh, term, v), vx = sh.skylight(new float[]{wx + e2, groundY(sh, wx + e2, wz), wz}, up);
+					float tx1 = term(sh, term, vx);
+					float vz = sh.skylight(new float[]{wx, groundY(sh, wx, wz + e2), wz + e2}, up);
+					float tz1 = term(sh, term, vz);
+					t = (float) Math.hypot(tx1 - t0, tz1 - t0) * px;
 				}
 				int g = Math.max(0, Math.min(255, Math.round(255 * t * gain)));
 				int tx = (int) Math.floor(wx / 128), tz = (int) Math.floor(wz / 128);
@@ -756,6 +822,11 @@ public class SkyGridReplay
 		java.nio.file.Path dir = Paths.get("build", "replay");
 		Files.createDirectories(dir);
 		javax.imageio.ImageIO.write(im, "png", dir.resolve(name + ".png").toFile());
+	}
+
+	private static float term(Shader sh, int term, float value)
+	{
+		return term == 4 ? value : term == 5 ? sh.lastField : term == 6 ? sh.skyExterior : term == 7 ? sh.lastOriginal : sh.lastFieldCover;
 	}
 
 	static int[] tileRoofs(Dump d, int size)
@@ -947,7 +1018,7 @@ public class SkyGridReplay
 		System.out.println("retraced texels differing from the dump: " + differ + " of " + again.length
 			+ " (and " + part3 + " in slice 0's room flags)");
 		Shader now = new Shader(again, d.resolution, field, d.walls);
-		Shader before = new Shader(again, d.resolution, field, d.walls);
+		Shader before = new Shader(again, d.resolution, field(d, 0, false), d.walls);
 		before.before = true;
 		before.tileRoofs = tileRoofs(d, s.size);
 		System.out.println("ground skylight as the shader read the grid before roofShares (x100):\n"
@@ -968,8 +1039,102 @@ public class SkyGridReplay
 			regionImage(sh, d.walls, cx - 5, cx + 2, cz - 5, cz + 1, 4, d.name + "-close-slope-" + which, 48, 2);
 			regionImage(sh, d.walls, cx - 5, cx + 2, cz - 5, cz + 1, 0, d.name + "-close-shown-" + which, 48, 1);
 		}
+		{
+			// the old corner light (the tiles' flood averaged) as a distance, against the new distance: their offset
+			float fall = SkyField.falloffOf(com.midonarhel.lumina.LuminaPlugin.SKYLIGHT_REACH);
+			float[] old = field(d, 0, false), fresh = field(d, 0, true);
+			double sum = 0, sq = 0;
+			int n = 0;
+			for (int i = 0; i < old.length / 2; i += 4)
+			{
+				float a = old[i], b = fresh[i];
+				// covered corners where both are measurable (channel 1 cover, minus the diagonal code)
+				float cov = old[i + 1] % 2;
+				if (cov < 0.99f || a < 0.03f || a > 0.9f || b < 0.03f || b > 0.9f) continue;
+				double k = Math.log(a) / Math.log(fall) - Math.log(b) / Math.log(fall);
+				sum += k;
+				sq += k * k;
+				n++;
+			}
+			double mean = sum / n;
+			System.out.printf("old corner light is the new one %.2f tiles further on (sd %.2f, %d corners)%n", mean, Math.sqrt(sq / n - mean * mean), n);
+		}
+		if (d.name.equals("doorway"))
+		{
+			// the tiles at the diagonal door: per tile (world x,y) and half, the field's light at its corners as the old
+			// flood gave it (lumina, option A) and as cornerLight gives it (now), and its plane-0 roof share
+			float[] old = field(d, 0, false), fresh = field(d, 0, true);
+			StringBuilder tb = new StringBuilder("corner table (SW SE NW NE; '-' a corner the half lacks), light old -> now, roof share:\n");
+			int width = d.walls.size * SkyField.TEXELS_PER_TILE, off = d.walls.offset;
+			for (int tz = 49; tz >= 46; --tz)
+				for (int tx = 44; tx <= 47; ++tx)
+				{
+					int bits = d.walls.get(0, tx + off, tz + off);
+					boolean split = WallMap.split(bits);
+					String kind = (bits & WallMap.DIAG_SW_NE) != 0 ? "/" : (bits & WallMap.DIAG_NW_SE) != 0 ? "\\" : " ";
+					for (int h = 0; h < (split ? 2 : 1); ++h)
+					{
+						StringBuilder row = new StringBuilder(String.format("  %d,%d %s %s:", tx + d.voxels.baseX, tz + d.voxels.baseY, kind,
+							!split ? "whole" : (bits & WallMap.DIAG_SW_NE) != 0 ? (h == 0 ? "NW half" : "SE half") : (h == 0 ? "NE half" : "SW half")));
+						for (int k = 0; k < 4; ++k)
+						{
+							int i = k & 1, j = k >> 1;
+							boolean lacks = split && ((bits & WallMap.DIAG_SW_NE) != 0 ? (h == 0 ? k == 1 : k == 2) : (h == 0 ? k == 0 : k == 3));
+							int o = (((2 * (tz + off) + j) * width) + 2 * (tx + off) + i) * 4 + 2 * h;
+							float share = now.t(2 * tx + i + 6 * now.size, 2 * tz + j, h == 0 ? 0 : SkyGrid.HALF_ROOFS, 0);
+							row.append(lacks ? "      -      " : String.format(" %.2f->%.2f r%.2f", old[o], fresh[o], share));
+						}
+						tb.append(row).append('\n');
+					}
+				}
+			System.out.println(tb);
+		}
 		if (d.name.equals("market"))
 		{
+			// why each tile counts as covered for the field: r roof flag on plane 0, f a floor tile above, . open
+			StringBuilder cov = new StringBuilder("covered (world tiles; r roof flag, f floor above, b both, . open), x " + (d.voxels.baseX + 40) + ".." + (d.voxels.baseX + 56) + ":\n");
+			try (java.io.DataOutputStream o = new java.io.DataOutputStream(Files.newOutputStream(Paths.get("build", "replay", "covered.bin"))))
+			{
+				int size = d.walls.size, off = d.walls.offset;
+				o.writeInt(d.voxels.baseX);
+				o.writeInt(d.voxels.baseY);
+				o.writeInt(SkyGrid.SIZE);
+				for (int x = 0; x < SkyGrid.SIZE; ++x)
+					for (int z = 0; z < SkyGrid.SIZE; ++z)
+					{
+						int i = (x + off) * size + z + off;
+						boolean roof = d.rooms.roofed[d.rooms.index(0, x + off, z + off)];
+						boolean floor = d.floors != null && (d.floors[i] & 0xFE) != 0;
+						o.writeByte((roof ? 1 : 0) | (floor ? 2 : 0));
+					}
+			}
+			for (int z = 60; z >= 44; --z)
+			{
+				cov.append(String.format("%4d ", z + d.voxels.baseY));
+				for (int x = 40; x <= 56; ++x)
+				{
+					int i = (x + d.walls.offset) * d.walls.size + z + d.walls.offset;
+					boolean roof = d.rooms.roofed[d.rooms.index(0, x + d.walls.offset, z + d.walls.offset)];
+					boolean floor = d.floors != null && (d.floors[i] & 0xFE) != 0;
+					cov.append(roof && floor ? 'b' : roof ? 'r' : floor ? 'f' : '.');
+				}
+				cov.append('\n');
+			}
+			System.out.println(cov);
+			for (float z : new float[]{3301.5f, 3303.5f})
+			{
+				StringBuilder line = new StringBuilder("strip line z " + z + " (x from 2652 by 0.25), before | now:\n ");
+				StringBuilder now2 = new StringBuilder(" ");
+				for (int i = 0; i <= 24; ++i)
+				{
+					float x = (2652 + i * 0.25f - d.voxels.baseX) * 128, wz = (z - d.voxels.baseY) * 128;
+					line.append(String.format("%4d", Math.round(255 * before.skylight(new float[]{x, groundY(before, x, wz), wz}, new float[]{0, -1, 0}))));
+					now2.append(String.format("%4d", Math.round(255 * now.skylight(new float[]{x, groundY(now, x, wz), wz}, new float[]{0, -1, 0}))));
+				}
+				System.out.println(line + "\n" + now2);
+			}
+			System.out.println("street terms (local 44..52 by 49..55, world +2608,+3248): trace/surface/exterior/cover/field -> value\n" + terms(now, d.walls, 44, 52, 49, 55));
+
 			// the stall by the user at 2657,3305 (optA captures): tile 48,57, walled on all four sides by the collision map
 			for (Shader sh : new Shader[]{before, now})
 				regionImage(sh, d.walls, 44, 53, 53, 61, 0, "market-stall-" + (sh == before ? "before" : "now"), 48, 1);
@@ -979,6 +1144,31 @@ public class SkyGridReplay
 		}
 		if (d.name.equals("doorway"))
 		{
+			// where the light at a few corners deep in the room comes from: the path back to its source
+			float[][] paths = new float[4][];
+			boolean[] covered = SkyField.covered(d.rooms, d.floors, 0);
+			SkyField.cornerLight(d.walls, 0, covered, SkyField.falloffOf(com.midonarhel.lumina.LuminaPlugin.SKYLIGHT_REACH), SkyField.cornerRoots(d.walls, 0), paths);
+			int corners = d.walls.size + 1, off = d.walls.offset;
+			for (int[] c : new int[][]{{46, 44}, {44, 45}, {46, 46}})
+			{
+				StringBuilder path = new StringBuilder("path from corner " + c[0] + "," + c[1] + ":");
+				int base = ((c[0] + off) * corners + c[1] + off) * 8, id = -1;
+				for (int r = 0; r < 8; ++r) if (paths[0][base + r] < Float.POSITIVE_INFINITY && (id < 0 || paths[0][base + r] < paths[0][id])) id = base + r;
+				for (int k = 0; id >= 0 && k < 12; ++k)
+				{
+					path.append(String.format(" (%.2f,%.2f d %.2f)", paths[2][id] - off, paths[3][id] - off, paths[0][id]));
+					int p = (int) paths[1][id];
+					if (p == id) break;
+					id = p;
+				}
+				System.out.println(path);
+			}
+			for (int term = 4; term < 9; ++term)
+				regionImage(now, d.walls, cx - 6, cx + 3, cz - 6, cz + 1, term, "doorway-terms-" + new String[]{"value", "field", "exterior", "trace", "fieldcover"}[term - 4], 48, term == 6 || term == 8 ? 1 : 4);
+			for (int term : new int[]{0, 3})
+				regionImage(now, d.walls, cx - 6, cx + 3, cz - 6, cz + 1, term, "doorway-plain-" + (term == 0 ? "value" : "cover"), 48, 1);
+			// the whole room, its value's slope amplified: any straight break shows
+			regionImage(now, d.walls, cx - 6, cx + 4, cz - 7, cz + 2, 4, "doorway-room-slope", 40, 10);
 			// from the doorway (tile 46,48) south into the room, and across it at a tile in
 			StringBuilder p = new StringBuilder("doorway profile, x 46.5, z from 49 down (value / trace / field / cover):\n");
 			for (float z = 49.0f; z >= 43.9f; z -= 1 / 8f)
