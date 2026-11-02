@@ -35,6 +35,7 @@ import com.midonarhel.lumina.sky.EnvironmentManager;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import java.nio.IntBuffer;
 import java.util.HashSet;
 import java.util.Set;
 import net.runelite.api.Constants;
@@ -132,7 +133,40 @@ public class SceneUploader
 		}
 	}
 
+	// the zone's opaque stream is written here, then indexed into its mapped buffer (ZoneIndexer): a write-only mapping
+	// can't be read back; one each per upload thread, kept from zone to zone
+	private IntBuffer staging = IntBuffer.allocate(0);
+	private final ZoneIndexer indexer = new ZoneIndexer();
+
 	void uploadZone(Scene scene, Zone zone, int mzx, int mzz)
+	{
+		IntBuffer mapped = zone.vboO != null ? zone.vboO.vb : null;
+		zone.indexed = null;
+		if (mapped != null)
+		{
+			if (staging.capacity() < mapped.capacity())
+			{
+				staging = IntBuffer.allocate(mapped.capacity());
+			}
+			staging.clear();
+			// the stream's positions (levels, roofs, sway ranges) are read off this buffer as it is written
+			zone.vboO.vb = staging;
+		}
+		try
+		{
+			uploadZoneStream(scene, zone, mzx, mzz);
+		}
+		finally
+		{
+			if (mapped != null)
+			{
+				zone.vboO.vb = mapped;
+				zone.indexed = indexer.write(staging.array(), staging.position(), mapped);
+			}
+		}
+	}
+
+	private void uploadZoneStream(Scene scene, Zone zone, int mzx, int mzz)
 	{
 		int[][][] roofs = scene.getRoofs();
 		Set<Integer> roofIds = new HashSet<>();
