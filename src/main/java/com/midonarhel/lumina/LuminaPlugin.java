@@ -193,6 +193,7 @@ import net.runelite.client.plugins.PluginDescriptor;
 import net.runelite.client.plugins.PluginInstantiationException;
 import net.runelite.client.plugins.PluginManager;
 import com.midonarhel.lumina.config.AntiAliasingMode;
+import com.midonarhel.lumina.config.DayLength;
 import com.midonarhel.lumina.config.DebugView;
 import com.midonarhel.lumina.config.UIScalingMode;
 import com.midonarhel.lumina.config.WeatherMode;
@@ -482,8 +483,8 @@ public class LuminaPlugin extends Plugin implements DrawCallbacks
 	public final WeatherGround weatherGround = new WeatherGround();
 	// where players and small NPCs have just walked through rain
 	public final WadeSteps wadeSteps = new WadeSteps();
-	// GameClock's time this frame
-	public long frameGameMillis;
+	// GameClock's time this frame: the time of day's (the day length's), and the weather's (GameClock.weatherMillis)
+	public long frameGameMillis, frameWeatherMillis;
 	// two units: the occlusion map's raw and compare views; their own, since the AO program's compare sampler must
 	// never find another program's color texture left on its unit (the sky cache and the water contact were there)
 	public static final int WEATHER_OCCLUSION_UNIT = LuminaPlugin.COMPOSITE_TEXTURE_UNIT + 26;
@@ -722,6 +723,7 @@ public class LuminaPlugin extends Plugin implements DrawCallbacks
 			});
 			return;
 		}
+		migrateDayLength();
 
 		if (developerMode)
 		{
@@ -1023,6 +1025,27 @@ public class LuminaPlugin extends Plugin implements DrawCallbacks
 	LuminaConfig provideConfig(ConfigManager configManager)
 	{
 		return configManager.getConfig(LuminaConfig.class);
+	}
+
+	/** The old free day length (dayCycleMinutes) becomes the nearest of the day length options, once. */
+	private void migrateDayLength()
+	{
+		String old = configManager.getConfiguration(LuminaConfig.GROUP, "dayCycleMinutes");
+		if (old == null)
+		{
+			return;
+		}
+		try
+		{
+			DayLength d = DayLength.nearest(Integer.parseInt(old.trim()));
+			configManager.setConfiguration(LuminaConfig.GROUP, "dayLength", d);
+			log.info("Day length {} minutes is now {}", old, d);
+		}
+		catch (NumberFormatException e)
+		{
+			log.warn("Day length {} not a number; left at the default", old);
+		}
+		configManager.unsetConfiguration(LuminaConfig.GROUP, "dayCycleMinutes");
 	}
 
 	@Subscribe

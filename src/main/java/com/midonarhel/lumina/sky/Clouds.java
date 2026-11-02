@@ -25,10 +25,9 @@ public class Clouds
 	private static final double TILE = 32768;
 	// the shader samples at 1/4, 1 and 3 times the tile frequency, so the offset can wrap every 4 tiles
 	private static final double WRAP = TILE * 4;
-	// world units per second at 100% speed: in calm air, and added per unit of the wind's (eased, gustless) mean,
-	// so a gale drives them about three times as fast as a calm day; the wind's direction (Wind.java)
-	private static final float WIND_SPEED_CALM = 160;
-	private static final float WIND_SPEED = 320;
+	// world units per second at 100% speed, along the wind's slow wander (Wind.drift): one speed, so where the
+	// clouds are is a function of the time alone and the same for every player at the same moment
+	private static final double DRIFT_SPEED = 290;
 	// sine of the elevation along clouds.glsl's cloudSkyDir at and below which the clouds are clear sky: the first
 	// of CLOUD_HORIZON
 	private static final double HORIZON = -0.02;
@@ -45,7 +44,7 @@ public class Clouds
 
 	private int texNoise;
 	private double windX, windZ;
-	private long lastNanos;
+	private final double[] drift = new double[2];
 
 	// this frame's values, from update()
 	private boolean enabled, shadows;
@@ -53,25 +52,23 @@ public class Clouds
 	private WeatherField field;
 	private float offsetX, offsetZ;
 	private double originX, originZ;
-	// the weather's cloud look (wispy, dark) and the wind that carries them
+	// the weather's cloud look (wispy, dark)
 	private float wisp, dark;
-	private Wind wind;
 	// where the clouds are seen from (clouds.glsl's cloudEye): the focal point relative to the camera, the drawn
 	// world's radius and the camera's height above the focal point, 0 for a level horizon; the focal point's y
 	private float eyeX, eyeZ, eyeRadius, eyeHeight, ground;
 	private double focalX, focalZ;
 
 	/**
-	 * The weather's look of the clouds and its wind; call before {@link #update}.
+	 * The weather's look of the clouds; call before {@link #update}.
 	 *
 	 * @param wisp how wispy and high, 0..1
 	 * @param dark darkness offset, -1 bright .. 1 storm dark
 	 */
-	public void setWeather(float wisp, float dark, Wind wind)
+	public void setWeather(float wisp, float dark)
 	{
 		this.wisp = wisp;
 		this.dark = dark;
-		this.wind = wind;
 	}
 
 	/**
@@ -239,17 +236,13 @@ public class Clouds
 		float cloudCover, long baseX, long baseZ, WeatherField field)
 	{
 		this.field = field;
-		long now = com.midonarhel.lumina.common.Clock.nanos();
-		float dt = lastNanos == 0 ? 0 : Math.min((now - lastNanos) / 1e9f, 0.25f);
-		lastNanos = now;
 
 		this.enabled = enabled;
 		this.shadows = shadows;
-		float mean = wind != null ? wind.getMean() : 0.25f;
-		float dx = wind != null ? wind.getDirX() : 0.87f, dz = wind != null ? wind.getDirZ() : 0.49f;
-		float speed = (WIND_SPEED_CALM + WIND_SPEED * mean) * speedPercent / 100f;
-		windX = (windX + dx * speed * dt) % WRAP;
-		windZ = (windZ + dz * speed * dt) % WRAP;
+		Wind.drift(GameClock.realSeconds(com.midonarhel.lumina.common.Clock.millis()), drift);
+		double speed = DRIFT_SPEED * speedPercent / 100.0;
+		windX = drift[0] * speed % WRAP;
+		windZ = drift[1] * speed % WRAP;
 
 		base = coveragePercent / 100f;
 		coverage = base + (1 - base) * cloudCover;

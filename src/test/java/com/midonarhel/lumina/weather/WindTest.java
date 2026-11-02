@@ -24,7 +24,7 @@ public class WindTest
 		// two hours at 60 fps, the weather changing every three minutes between calm, gale and storm; the player
 		// walking around
 		String[] seq = {"CLEAR", "STORM", "OVERCAST", "SNOW", "RAIN", "CLEAR", "STORM", "OVERCAST"};
-		Wind w = new Wind(12345);
+		Wind w = new Wind();
 		int frames = 2 * 3600 * 60;
 		float prevAngle = Float.NaN, prevStrength = 0, prevGust = 0;
 		double prevTime = 0;
@@ -77,7 +77,7 @@ public class WindTest
 	@Test
 	public void directionWanders()
 	{
-		Wind w = new Wind(7);
+		Wind w = new Wind();
 		float minX = 1, maxX = -1;
 		for (int i = 0; i < 3600 * 10; ++i)
 		{
@@ -88,7 +88,7 @@ public class WindTest
 		// over an hour the direction swings well away from where it started
 		assertTrue(maxX - minX > 0.5f);
 		// steady: no wander, no gusts
-		Wind s = new Wind(7);
+		Wind s = new Wind();
 		s.update(0, 0, 0.5f, 0.8f, false, true, 0, 0);
 		float x = s.getDirX();
 		for (int i = 1; i < 6000; ++i)

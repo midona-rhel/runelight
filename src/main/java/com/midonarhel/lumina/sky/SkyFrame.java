@@ -252,7 +252,7 @@ public final class SkyFrame
 		WorldView wv = plugin.client.getTopLevelWorldView();
 		long baseX = wv != null ? (long) wv.getBaseX() * Perspective.LOCAL_TILE_SIZE : 0;
 		long baseZ = wv != null ? (long) wv.getBaseY() * Perspective.LOCAL_TILE_SIZE : 0;
-		plugin.clouds.setWeather(plugin.weather.cloudWisp(), plugin.weather.cloudDark(), plugin.weather.getWind());
+		plugin.clouds.setWeather(plugin.weather.cloudWisp(), plugin.weather.cloudDark());
 		plugin.clouds.setEye(plugin.frameCameraX, plugin.frameCameraY, plugin.frameCameraZ, plugin.client.getCameraFocalPointX(),
 			plugin.client.getCameraFocalPointY(), plugin.client.getCameraFocalPointZ(), plugin.edgeFade.radius, plugin.config.skyHorizonAtEdge());
 		plugin.clouds.update(plugin.config.clouds(), plugin.config.cloudShadows(), plugin.config.cloudCoverage(), plugin.config.cloudSpeed(),
@@ -272,8 +272,8 @@ public final class SkyFrame
 			plugin.skyCache.bind(SKY_CACHE_UNIT);
 			return 0;
 		}
-		int cycle = plugin.config.dayCycleMinutes();
-		double gameMinutes = cycle > 0 ? plugin.frameGameMillis / 60_000.0 : Double.NaN;
+		com.midonarhel.lumina.config.DayLength cycle = plugin.config.dayLength();
+		double gameMinutes = !cycle.isFixed() ? plugin.frameGameMillis / 60_000.0 : Double.NaN;
 		plugin.weather.getOvercast(plugin.skyCacheOvercast);
 		int settings = java.util.Objects.hash(plugin.config.clouds(), plugin.config.cloudCoverage(), cycle,
 			plugin.config.fixedHour(), Math.round(plugin.skyCacheOvercast[3] * 20),

@@ -46,6 +46,12 @@ public final class DumpWorld
 		this.dump = dump;
 		this.m = dump.manifest;
 		settings.putAll(m.settings);
+		// a dump from before the day length options: the nearest option, as the plugin carries a profile over
+		String oldDay = settings.remove("dayCycleMinutes");
+		if (oldDay != null && !settings.containsKey("dayLength"))
+		{
+			settings.put("dayLength", com.midonarhel.lumina.config.DayLength.nearest(Integer.parseInt(oldDay.trim())).name());
+		}
 		cameraYaw = m.cameraYaw;
 		cameraPitch = m.cameraPitch;
 		scale = m.scale;

@@ -293,7 +293,7 @@ public class Weather
 	private final Lightning lightning = new Lightning();
 	private long lastMillis;
 	// the prevailing wind is the same for everyone; it wanders with the clock (GameClock), not the session
-	private final Wind windSim = new Wind(1);
+	private final Wind windSim = new Wind();
 	private float focusX, focusY, focusZ;
 	private int focusPlane;
 
@@ -627,7 +627,7 @@ public class Weather
 		windSim.update(t, dt, windMean, gustiness, varying, gradual, fx, fz);
 		gust = windSim.getGust();
 		updateWind(dt, now);
-		lightning.update(dt, outdoors ? storm : 0, lightningEnabled, fx, fz);
+		lightning.update(t, dt, outdoors ? storm : 0, lightningEnabled, fx, fz);
 
 		boolean anything = rainAmount > 0 || snowAmount > 0 || wetness > 0 || snowCover > 0 || field.hasAnything();
 		active = anything && outdoors;

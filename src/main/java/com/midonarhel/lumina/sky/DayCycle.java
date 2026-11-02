@@ -26,6 +26,10 @@ public final class DayCycle
 	// below this sun altitude the moon takes over as the shadow caster; both lights are near zero there
 	static final double CASTER_SWITCH_ALTITUDE = -3;
 
+	// developer: hold the time of day at this exact hour whatever the settings, NaN for none (the bench, for dumps taken
+	// on a free day length the options no longer have, so they keep the hour they were taken at)
+	public static volatile double heldHour = Double.NaN;
+
 	// phase at which the visual sun crosses the horizon going up
 	private static final double SUNRISE_PHASE = -Math.asin(LIFT / PEAK_ALTITUDE) / (2 * Math.PI);
 
@@ -76,12 +80,12 @@ public final class DayCycle
 
 	/**
 	 * @param gameMillis the game clock (GameClock)
-	 * @param cycleMinutes length of a full day in real minutes; 0 holds the time at fixedHour
+	 * @param fixed whether the time is held at fixedHour
 	 * @param fixedHour 0-24, 6 is sunrise and 12 is roughly noon
 	 */
-	public void update(long gameMillis, int cycleMinutes, double fixedHour)
+	public void update(long gameMillis, boolean fixed, double fixedHour)
 	{
-		phase = phaseForHour(cycleMinutes > 0 ? GameClock.hourOfDay(gameMillis) : fixedHour);
+		phase = phaseForHour(!Double.isNaN(heldHour) ? heldHour : !fixed ? GameClock.hourOfDay(gameMillis) : fixedHour);
 		phase -= Math.floor(phase);
 
 		double alt = PEAK_ALTITUDE * Math.sin(2 * Math.PI * phase) + LIFT;

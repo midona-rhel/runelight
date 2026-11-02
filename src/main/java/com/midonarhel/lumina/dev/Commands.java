@@ -231,7 +231,7 @@ public final class Commands
 
 	/**
 	 * The comparison commands shared with Lumina and the 117 HD reference build: cam yaw pitch zoom, capture [name]
-	 * (to ~/.runelite/lumina/captures), set key value (a Lumina setting, e.g. fixedHour / dayCycleMinutes).
+	 * (to ~/.runelite/lumina/captures), set key value (a Lumina setting, e.g. fixedHour / dayLength).
 	 */
 	public void run(String[] args)
 	{

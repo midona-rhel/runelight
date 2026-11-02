@@ -36,6 +36,15 @@ public final class GameClock
 		return Math.floorDiv(real * MINUTES_PER_DAY, dayMinutes(dayMinutes));
 	}
 
+	/**
+	 * Game milliseconds of the weather's clock: the default day's rate from the epoch whatever the player's day length,
+	 * so the weather, the seasons and the snow are the same for every player at the same moment.
+	 */
+	public static long weatherMillis(long unixMillis)
+	{
+		return gameMillis(unixMillis, DEFAULT_DAY_MINUTES);
+	}
+
 	/** The day length the clock actually runs at. */
 	static int dayMinutes(int dayMinutes)
 	{

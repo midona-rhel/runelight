@@ -33,9 +33,12 @@ public class Lightning
 {
 	private static final Logger log = LoggerFactory.getLogger(Lightning.class);
 
-	// seconds between strikes in a full storm; longer while the storm builds or eases
-	private static final float MIN_INTERVAL = 5;
-	private static final float MAX_INTERVAL = 25;
+	// Strikes are drawn per WINDOW seconds of the real time (GameClock.realSeconds) from a hash of the window, so
+	// every player sees the same strikes at the same moment: a window draws one with this chance in a full storm,
+	// a third of it at the storm's threshold, and strikes when the window before it drew none, so strikes are more
+	// than WINDOW apart (one every 20 s on average in a full storm)
+	private static final float WINDOW = 5;
+	private static final float CHANCE = 0.5f;
 	// storm strength (Weather) below which nothing strikes
 	private static final float STORM_THRESHOLD = 0.6f;
 	// the bolt's light at the top of a pulse, linear: the one brightness knob (sky.glsl's strikeLight.y). The noon
@@ -73,8 +76,8 @@ public class Lightning
 
 	private enum Phase { OFF, PREPARE, PULSES }
 
-	private final Random random = new Random();
-	private float untilNext = -1;
+	// the real time of the last update, and the clock of the update without one (tests)
+	private double lastT = Double.NaN, clock;
 	private Phase phase = Phase.OFF;
 	// seconds into the phase
 	private float age;
@@ -105,12 +108,22 @@ public class Lightning
 	private float flash;
 	private boolean takeover;
 
+	/** {@link #update(double, float, float, boolean, float, float)} on a clock of its own, from 0. */
+	public void update(float dt, float storm, boolean enabled, float focusX, float focusZ)
+	{
+		clock += dt;
+		update(clock, dt, storm, enabled, focusX, focusZ);
+	}
+
 	/**
+	 * @param t real seconds since the clock's epoch (GameClock.realSeconds): when strikes happen
 	 * @param storm Weather's storm strength, 0 to 1
 	 * @param focusX player position, world units; bolts come down around it
 	 */
-	public void update(float dt, float storm, boolean enabled, float focusX, float focusZ)
+	public void update(double t, float dt, float storm, boolean enabled, float focusX, float focusZ)
 	{
+		double since = lastT;
+		lastT = t;
 		if (rumble != null)
 		{
 			rumbleAge += dt;
@@ -128,26 +141,20 @@ public class Lightning
 		{
 			if (requested)
 			{
-				strike(focusX, focusZ);
+				strike(focusX, focusZ, new Random(Double.doubleToLongBits(t)));
 			}
 			else if (!enabled || storm < STORM_THRESHOLD)
 			{
-				untilNext = -1;
 				return;
 			}
 			else
 			{
-				if (untilNext < 0)
-				{
-					untilNext = interval(storm);
-				}
-				untilNext -= dt;
-				if (untilNext > 0)
+				long window = due(since, t, storm);
+				if (window == Long.MIN_VALUE)
 				{
 					return;
 				}
-				untilNext = interval(storm);
-				strike(focusX, focusZ);
+				strike(focusX, focusZ, new Random(mix(window, 2)));
 			}
 		}
 		requested = false;
@@ -205,13 +212,44 @@ public class Lightning
 		requested = true;
 	}
 
-	private float interval(float storm)
+	/**
+	 * The window whose strike falls after {@code since} and by {@code t}, Long.MIN_VALUE for none: a window that
+	 * draws a strike (CHANCE) when the one before it drew none, at a hashed moment within it.
+	 */
+	static long due(double since, double t, float storm)
 	{
+		if (Double.isNaN(since) || t <= since)
+		{
+			return Long.MIN_VALUE;
+		}
 		float k = (storm - STORM_THRESHOLD) / (1 - STORM_THRESHOLD);
-		return (MIN_INTERVAL + (MAX_INTERVAL - MIN_INTERVAL) * random.nextFloat()) * (1 + 2 * (1 - k));
+		float chance = CHANCE / (1 + 2 * (1 - k));
+		for (long w = (long) Math.floor(since / WINDOW); w <= (long) Math.floor(t / WINDOW); ++w)
+		{
+			double at = (w + unit(mix(w, 1))) * WINDOW;
+			if (at > since && at <= t && unit(mix(w, 0)) < chance && unit(mix(w - 1, 0)) >= chance)
+			{
+				return w;
+			}
+		}
+		return Long.MIN_VALUE;
 	}
 
-	private void strike(float focusX, float focusZ)
+	// splitmix64 of a window and a stream
+	private static long mix(long w, int stream)
+	{
+		long z = w * 0x9E3779B97F4A7C15L + stream * 0xBF58476D1CE4E5B9L + 0x2545F4914F6CDD1DL;
+		z = (z ^ (z >>> 30)) * 0xBF58476D1CE4E5B9L;
+		z = (z ^ (z >>> 27)) * 0x94D049BB133111EBL;
+		return z ^ (z >>> 31);
+	}
+
+	private static double unit(long h)
+	{
+		return (h >>> 11) / (double) (1L << 53);
+	}
+
+	private void strike(float focusX, float focusZ, Random random)
 	{
 		startedAt = System.nanoTime();
 		phase = Phase.PREPARE;
@@ -358,7 +396,6 @@ public class Lightning
 			log("OFF after " + frame + " frames");
 		}
 		phase = Phase.OFF;
-		untilNext = -1;
 		takeover = false;
 		thunderPending = false;
 		flash = 0;

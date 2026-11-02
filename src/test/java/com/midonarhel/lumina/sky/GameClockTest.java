@@ -54,16 +54,16 @@ public class GameClockTest
 		for (double hour : new double[]{0.5, 6, 9.25, 12, 18.75, 23.5})
 		{
 			long unix = GameClock.EPOCH_MILLIS + 1000L * 24 * MINUTE + (long) (hour * MINUTE);
-			d.update(GameClock.gameMillis(unix, 24), 24, 0);
+			d.update(GameClock.gameMillis(unix, 24), false, 0);
 			assertEquals(hour, d.hour(), 1e-6);
 		}
 		// noon is day, midnight is night
-		d.update(12 * GameClock.HOUR, 24, 0);
+		d.update(12 * GameClock.HOUR, false, 0);
 		assertTrue(d.sunAltitude > 40);
-		d.update(0, 24, 0);
+		d.update(0, false, 0);
 		assertTrue(d.sunAltitude < -40);
 		// a fixed hour holds whatever the clock says
-		d.update(5 * GameClock.HOUR, 0, 15);
+		d.update(5 * GameClock.HOUR, true, 15);
 		assertEquals(15, d.hour(), 1e-6);
 	}
 }

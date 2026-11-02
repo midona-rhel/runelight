@@ -40,6 +40,7 @@ import net.runelite.client.config.Units;
 import static com.midonarhel.lumina.LuminaPlugin.MAX_DISTANCE;
 import com.midonarhel.lumina.config.AntiAliasingMode;
 import com.midonarhel.lumina.config.ColorBlindMode;
+import com.midonarhel.lumina.config.DayLength;
 import com.midonarhel.lumina.config.DebugView;
 import com.midonarhel.lumina.config.Quality;
 import com.midonarhel.lumina.config.RenderScale;
@@ -397,25 +398,24 @@ public interface LuminaConfig extends Config
 		return true;
 	}
 
-	@Range(max = 120)
-	@Units(Units.MINUTES)
 	@ConfigItem(
-		keyName = "dayCycleMinutes",
+		keyName = "dayLength",
 		name = "Day length",
-		description = "Real minutes per game day. 0 holds the time at the fixed hour.",
+		description = "How the time of day runs: held at the fixed hour, a day in 24 minutes or an hour, or the real"
+			+ " time. The weather is the same for every player whichever you pick.",
 		section = skySection,
 		position = 42
 	)
-	default int dayCycleMinutes()
+	default DayLength dayLength()
 	{
-		return 24;
+		return DayLength.MINUTES_24;
 	}
 
 	@Range(max = 23)
 	@ConfigItem(
 		keyName = "fixedHour",
 		name = "Fixed hour",
-		description = "Time of day to hold when day length is 0. 6 is sunrise, 12 midday.",
+		description = "Time of day to hold when the day length is Fixed. 6 is sunrise, 12 midday.",
 		section = skySection,
 		position = 43
 	)
