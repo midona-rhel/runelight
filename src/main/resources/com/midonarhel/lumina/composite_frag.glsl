@@ -46,6 +46,9 @@ uniform sampler2D cloudHalf;
 
 // how much AO also darkens direct sun and point light; physically 0, but contact shading reads better with some
 #define AO_DIRECT 1.0
+// share of the sun put back inside shadows where the sky is open (the user's choice; 117 HD has none). 0.7 left open
+// ground in shadow at 1.5-1.7:1 to the lit ground beside it (snowtree1, 12h and 16h): shadows barely read.
+#define DAYLIGHT_FILL 0.45
 
 
 #define TILE_SIZE 128.0
@@ -386,7 +389,7 @@ vec4 shadeScene(ivec2 px, SceneSample sm, vec4 transparent) {
     indirect = skylightAmbient(plain) * envAmbient * ao;
     // the daylight fill: sun put back inside shadows where the sky is open (open question 1 of
     // docs/117hd-world-shading.md: 117 HD has none)
-    float daylightFill = skylightOn == 1 ? 0.7 * clamp(skyUpsampled, 0.0, 1.0) : 0.0;
+    float daylightFill = skylightOn == 1 ? DAYLIGHT_FILL * clamp(skyUpsampled, 0.0, 1.0) : 0.0;
     indirect += caster * envSun * max(ndl, 0.0) * (1.0 - shadow) * daylightFill * ao;
     }
     light = indirect
