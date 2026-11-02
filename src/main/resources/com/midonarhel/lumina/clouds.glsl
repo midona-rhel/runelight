@@ -160,13 +160,35 @@ vec3 cloudSkyDir(vec3 dir) {
   return vec3(h.x * sqrt(max(1.0 - s * s, 0.0)), -s, h.y * sqrt(max(1.0 - s * s, 0.0)));
 }
 
+// The weather field's sky at uv as a cubic B-spline over its cells, in four bilinear fetches. Bilinear alone is
+// continuous but its slope jumps at every cell's edge, and the clouds' threshold turns those jumps into hard straight
+// creases: seen from low, a fan of flat panels toward the horizon along the grid's lines. The B-spline's slope runs
+// on across the edges, so the cover only ever changes as a smooth swell.
+vec3 cloudSkyField(vec2 uv) {
+  vec2 size = vec2(textureSize(weatherSkyTex, 0));
+  vec2 t = uv * size - 0.5;
+  vec2 i = floor(t);
+  vec2 f = t - i;
+  vec2 f2 = f * f, f3 = f2 * f;
+  vec2 w0 = (1.0 - 3.0 * f + 3.0 * f2 - f3) / 6.0;
+  vec2 w1 = (4.0 - 6.0 * f2 + 3.0 * f3) / 6.0;
+  vec2 w3 = f3 / 6.0;
+  vec2 w2 = 1.0 - w0 - w1 - w3;
+  vec2 g0 = w0 + w1, g1 = w2 + w3;
+  vec2 p0 = (i - 0.5 + w1 / g0) / size, p1 = (i + 1.5 + w3 / g1) / size;
+  return g0.y * (g0.x * textureLod(weatherSkyTex, vec2(p0.x, p0.y), 0.0).rgb
+      + g1.x * textureLod(weatherSkyTex, vec2(p1.x, p0.y), 0.0).rgb)
+    + g1.y * (g0.x * textureLod(weatherSkyTex, vec2(p0.x, p1.y), 0.0).rgb
+      + g1.x * textureLod(weatherSkyTex, vec2(p1.x, p1.y), 0.0).rgb);
+}
+
 // The weather of the sky over a world xz (scene coordinates): x cloud cover, y how wispy and high, z darkness offset
 vec3 cloudSkyWeather(vec2 world) {
   if (cloudSkyRect.z == 0.0) {
     return vec3(cloudWeather, cloudType);
   }
   vec2 uv = (world - cloudSkyRect.xy) * cloudSkyRect.zw;
-  vec3 w = textureLod(weatherSkyTex, uv, 0.0).rgb;
+  vec3 w = cloudSkyField(uv);
   // past the field the texture's edge would stretch out to the horizon in straight streaks: toward its edge the
   // field gives way to the player's weather, round, so no line of the grid shows
   float far = smoothstep(CLOUD_SKY_FADE.x, CLOUD_SKY_FADE.y, length(uv - 0.5));
