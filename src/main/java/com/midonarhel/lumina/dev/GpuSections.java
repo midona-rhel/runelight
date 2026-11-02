@@ -14,6 +14,8 @@ public final class GpuSections
 	// each section begun on an idle GPU (glFinish at each boundary): the passes don't overlap, so each one's time is its
 	// own (a tiler runs passes side by side and splits a query's time oddly otherwise)
 	public static boolean serial;
+	// what the sections' queries count: GL_TIME_ELAPSED (ns), or GL_PRIMITIVES_GENERATED (read() gives the count)
+	public static int target = GL_TIME_ELAPSED;
 
 	private static final int MAX = 48;
 	private static int[] queries;
@@ -47,7 +49,7 @@ public final class GpuSections
 		}
 		if (open)
 		{
-			glEndQuery(GL_TIME_ELAPSED);
+			glEndQuery(target);
 			open = false;
 		}
 		if (serial)
@@ -59,7 +61,7 @@ public final class GpuSections
 			return;
 		}
 		names[count] = name;
-		glBeginQuery(GL_TIME_ELAPSED, queries[count++]);
+		glBeginQuery(target, queries[count++]);
 		open = true;
 	}
 
@@ -68,7 +70,7 @@ public final class GpuSections
 	{
 		if (on && open)
 		{
-			glEndQuery(GL_TIME_ELAPSED);
+			glEndQuery(target);
 			open = false;
 		}
 	}
@@ -81,7 +83,7 @@ public final class GpuSections
 		for (int i = 0; i < n; ++i)
 		{
 			namesOut[i] = names[i];
-			msOut[i] = glGetQueryObjecti64(queries[i], GL_QUERY_RESULT) / 1e6;
+			msOut[i] = glGetQueryObjecti64(queries[i], GL_QUERY_RESULT) / (target == GL_TIME_ELAPSED ? 1e6 : 1.0);
 		}
 		count = 0;
 		return n;

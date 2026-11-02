@@ -96,6 +96,16 @@ tasks.register('imageDiff', JavaExec) {
 	}
 }
 
+// the triangles each section of a frame draws (harness PrimCount): ./gradlew primCount -Pargs="nightref tree1"
+tasks.register('primCount', JavaExec) {
+	dependsOn testClasses
+	classpath = sourceSets.test.runtimeClasspath
+	mainClass = 'com.midonarhel.lumina.harness.PrimCount'
+	workingDir = projectDir
+	jvmArgs '-Xmx8g'
+	doFirst { args = project.property('args').toString().split(' ').findAll { it } }
+}
+
 // -Dlumina.dump=name (and the other lumina.* properties) reach the tests: OfflineRenderDumpTest draws and checks that dump
 test {
 	systemProperties System.getProperties().findAll { it.key.toString().startsWith('lumina.') }
