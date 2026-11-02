@@ -27,20 +27,22 @@ public final class LampCubes
 
 	// a face's texels, the atlas's slots (COLS x ROWS, each three faces wide and two high); of them at most IN_VIEW for
 	// the lamps in view, the rest spare: a lamp's new cube is drawn into one while its old one still shows
-	public static final int FACE = 128, COLS = 10, ROWS = 10, SLOTS = COLS * ROWS, IN_VIEW = 88;
+	public static final int FACE = 128, COLS = 12, ROWS = 10, SLOTS = COLS * ROWS, IN_VIEW = 88;
 	public static final int WIDTH = FACE * 3 * COLS, HEIGHT = FACE * 2 * ROWS;
 	// texels round each face past its 90 degrees, so a filtered read near a face's edge stays on the face
 	public static final int GUARD = 4;
 	public static final float TAN_HALF = FACE / (float) (FACE - 2 * GUARD);
 	// nothing nearer the lamp's origin than this casts (the origin is 24 off the wall it hangs on: LampWalls)
 	public static final float NEAR = 8;
-	// The most lamps drawn a frame, the nearest first (each about 0.07-0.15 ms of the GPU's, fps1). A lamp whose cube a
+	// The most lamps drawn a frame, the nearest first (fps1: 4 a frame 0.05 ms at the least, 0.34 at the median). The
+	// spare slots (SLOTS - IN_VIEW) are each held through a crossing over: 32 of them over FADE_NANOS keep up with it.
+	// A lamp whose cube a
 	// change left out of date (a roof hidden or shown, a door) keeps showing it while its new one is drawn into a spare
 	// slot, then crosses over to it in FADE_NANOS: no frame pays for many, and nothing falls back. A lamp new in view has
 	// no cube until its first is drawn: its walls and the drawn roofs (fog), the light map and walls (surfaces) till then.
 	public static final int LAMPS_PER_FRAME = 4;
 	// (bench: -Dlumina.cubeFadeNanos, 0 for none)
-	static final long FADE_NANOS = Long.getLong("lumina.cubeFadeNanos", 250_000_000L);
+	static final long FADE_NANOS = Long.getLong("lumina.cubeFadeNanos", 150_000_000L);
 
 	// each face's forward, right and up (fog_frag.glsl picks the face and its axes the same way)
 	private static final float[][] FACES = {

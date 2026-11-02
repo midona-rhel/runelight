@@ -4,8 +4,8 @@
 
 uniform sampler2DShadow lampCubeAtlas;
 #define LAMP_CUBE_FACE 128
-#define LAMP_CUBE_COLS 10
-#define LAMP_CUBE_SIZE vec2(3840.0, 2560.0)
+#define LAMP_CUBE_COLS 12
+#define LAMP_CUBE_SIZE vec2(4608.0, 2560.0)
 #define LAMP_CUBE_TAN_HALF (128.0 / 120.0)
 #define LAMP_CUBE_NEAR 8.0
 // the taps' circle, in texels: the shadow's edge soft over about twice it; the fog's (its denoise smooths the rest)
