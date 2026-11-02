@@ -8,6 +8,7 @@
 #include "halfres.glsl"
 #include "ign.glsl"
 #include "shadow_pcss.glsl"
+#include "shadow_reach.glsl"
 #include "weather_ground_ao.glsl"
 #include "skylight_ao.glsl"
 #include "water_common.glsl"
@@ -23,8 +24,9 @@ uniform int waterAoOn;
 uniform ivec4 waterAoRect;  // the pixels the surface can cover (water.glsl's waterRect)
 
 layout(location = 0) out vec2 FragAo;  // the geometry, see halfres.glsl
-layout(location = 1) out vec4 FragShadow;  // r: lit share, 1 unshadowed; g AO, 1 unoccluded; b snow and
-                                           // puddles (weather_ground_ao.glsl); a sky visibility (skylight_ao.glsl)
+layout(location = 1) out vec4 FragShadow;  // r: lit share, 1 unshadowed, and the denoise's reach (shadow_reach.glsl);
+                                           // g AO, 1 unoccluded; b snow and puddles (weather_ground_ao.glsl); a sky
+                                           // visibility (skylight_ao.glsl)
 // sine of the minimum angle above the surface for an occluder to count; higher ignores more of the shallow folds
 #define AO_ANGLE_BIAS 0.10
 // how far behind an occluder's front (share of the radius) a sample still counts as inside it, fading out at twice that
@@ -61,7 +63,13 @@ void main() {
     vec2 m = materialUnpack(texelFetch(sceneMaterial, px, 0)).rg;
     // emissive surfaces show no shading; a leaf lit from behind looks up its shadow on the lit side
     if (m.r < 0.999) {
-      FragShadow.r = shadowFactor(p, dot(n, casterDir) < 0.0 && m.g > 0.0 ? -n : n, noise);
+      float penumbraWorld;
+      float lit = shadowFactor(p, dot(n, casterDir) < 0.0 && m.g > 0.0 ? -n : n, noise, penumbraWorld);
+      // half texels a world unit spans here: the projection's vertical scale over the view depth
+      vec4 clip = viewProj * vec4(p, 1.0);
+      float texelsPerWorld = length(vec3(viewProj[0][1], viewProj[1][1], viewProj[2][1])) * 0.5
+        * float(sceneViewport.w) / (clip.w * halfRatio);
+      FragShadow.r = shadowReachPack(lit, penumbraWorld * texelsPerWorld);
     }
   }
   if (aoSamples <= 0) {

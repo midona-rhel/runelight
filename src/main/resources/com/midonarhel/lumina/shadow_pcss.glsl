@@ -1,7 +1,8 @@
-// Sun and moon shadows: PCSS. Blocker search for the average occluder depth, then a PCF kernel sized by the
-// distance between occluder and receiver, so contact shadows are sharp and long ones soften. Drawn at half
-// resolution in the AO pass (ao_frag.glsl), rotated by interleaved gradient noise (ign.glsl), which the denoise
-// (denoise_frag.glsl) averages away: soft edges without grain. Needs frame.glsl.
+// Sun and moon shadows: PCSS. Blocker search for the average depth of the occluders whose penumbra reaches the
+// point, then a PCF kernel sized by the distance between occluder and receiver, so contact shadows are sharp and long
+// ones soften. Drawn at half resolution in the AO pass (ao_frag.glsl); a wide kernel is rotated by interleaved
+// gradient noise (ign.glsl), which the denoise (denoise_frag.glsl) averages away over the penumbra's reach
+// (shadow_reach.glsl): soft edges without grain, sharp ones left sharp. Needs frame.glsl.
 
 uniform sampler2D shadowRaw;
 uniform sampler2DShadow shadowCompare;
@@ -35,11 +36,13 @@ const vec2 POISSON[16] = vec2[](
 #define BLOCKER_SEARCH_WORLD 160.0
 // with the POISSON points, the filter's reach ShadowMap.FILTER_REACH_WORLD bounds the shadow under
 #define MAX_PENUMBRA_WORLD 112.0
-#define SHADOW_SEARCH_TAPS 12
+#define SHADOW_SEARCH_TAPS 16
 #define SHADOW_FILTER_TAPS 16
 
-// rotation: 0..1, turns the tap pattern
-float shadowFactor(vec3 p, vec3 n, float rotation) {
+// rotation: 0..1, turns the tap pattern; penumbraWorld: the radius the filter's taps were dithered over, world units,
+// 0 where they were not
+float shadowFactor(vec3 p, vec3 n, float rotation, out float penumbraWorld) {
+  penumbraWorld = 0.0;
   float texelWorld = 2.0 * shadowRadius / shadowMapSize;
   // normal offset keeps surfaces from shadowing themselves
   vec4 lc = lightProjRel * vec4(p + n * texelWorld * 1.5, 1.0);
@@ -64,26 +67,43 @@ float shadowFactor(vec3 p, vec3 n, float rotation) {
   float a = rotation * SHADOW_TAU;
   mat2 rot = mat2(cos(a), sin(a), -sin(a), cos(a));
   float worldToUv = 1.0 / (2.0 * shadowRadius);
+  float softness = strikeLight.x > 0.0 ? STRIKE_SOFTNESS : sunIsCaster == 1 ? SUN_SOFTNESS : MOON_SOFTNESS;
 
+  // A blocker counts only where the light, seen from this point, is behind it: within its gap's penumbra of the
+  // point. A crown far beside a trunk's foot would otherwise widen the foot's contact shadow by its own height; with
+  // none in reach, the penumbra is the least. The point's own texel is read too, the contact's nearest blocker, and the
+  // taps are drawn in toward it (each point's radius squared), where a short gap's small penumbra can be found.
   float blockerSum = 0.0;
   float blockers = 0.0;
-  for (int i = 0; i < SHADOW_SEARCH_TAPS; ++i) {
-    float d = texture(shadowRaw, uv + rot * POISSON[i] * (BLOCKER_SEARCH_WORLD * worldToUv)).r;
+  bool found = false;
+  for (int i = 0; i <= SHADOW_SEARCH_TAPS; ++i) {
+    vec2 offsetWorld = i == SHADOW_SEARCH_TAPS ? vec2(0.0)
+      : rot * POISSON[i] * (length(POISSON[i]) * BLOCKER_SEARCH_WORLD);
+    float d = texture(shadowRaw, uv + offsetWorld * worldToUv).r;
     if (d < z - bias) {
-      blockerSum += d;
-      blockers += 1.0;
+      found = true;
+      if (length(offsetWorld) <= (z - d) * 2.0 * shadowDepthRange * softness + texelWorld) {
+        blockerSum += d;
+        blockers += 1.0;
+      }
     }
   }
-  if (blockers == 0.0) {
+  if (!found) {
     return 1.0;
   }
 
-  float gapWorld = (z - blockerSum / blockers) * 2.0 * shadowDepthRange;
-  float softness = strikeLight.x > 0.0 ? STRIKE_SOFTNESS : sunIsCaster == 1 ? SUN_SOFTNESS : MOON_SOFTNESS;
-  float penumbraWorld = clamp(gapWorld * softness, texelWorld, MAX_PENUMBRA_WORLD);
-  float penumbra = penumbraWorld * worldToUv;
-  // a kernel within a texel or two of hardware filtered compares needs no more than half the taps
-  int filterTaps = penumbraWorld < texelWorld * 2.0 ? SHADOW_FILTER_TAPS / 2 : SHADOW_FILTER_TAPS;
+  float gapWorld = blockers > 0.0 ? (z - blockerSum / blockers) * 2.0 * shadowDepthRange : 0.0;
+  float filterWorld = clamp(gapWorld * softness, texelWorld, MAX_PENUMBRA_WORLD);
+  float penumbra = filterWorld * worldToUv;
+  // A kernel within a texel or two of hardware filtered compares needs no more than half the taps, and no dither:
+  // unturned, its taps give a smooth edge that the denoise leaves as it is. A wider one is turned, and smoothed.
+  bool small = filterWorld < texelWorld * 2.0;
+  int filterTaps = small ? SHADOW_FILTER_TAPS / 2 : SHADOW_FILTER_TAPS;
+  if (small) {
+    rot = mat2(1.0);
+  } else {
+    penumbraWorld = filterWorld;
+  }
 
   float lit = 0.0;
   for (int i = 0; i < filterTaps; ++i) {

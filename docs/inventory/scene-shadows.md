@@ -427,12 +427,16 @@ sized by the distance between occluder and receiver … Drawn at half resolution
 `bindForSampling` :488 (two samplers on one texture), `unbind` :504 (1×1 empty depth for NVIDIA).
 
 **How it works:** per half-res pixel with shadows on and a non-emissive material: normal-offset the position, test
-the per-tile static maximum (skip when fully inside shadow), 12 raw-depth taps for blockers, then 8 or 16 compare
-taps rotated by IGN; result goes into `FragShadow.r`, denoised and upsampled with the AO.
+the per-tile static maximum (skip when fully inside shadow), 17 raw-depth taps for blockers (the point's own texel and
+16 rotated by IGN, packed toward the centre), of which only those whose penumbra cone reaches the point are averaged,
+then 8 compare taps unrotated (a kernel under two texels: no dither) or 16 rotated by IGN; result goes into
+`FragShadow.r` with the dithered kernel's reach on screen (`shadow_reach.glsl`), which the denoise uses to smooth the
+lit share only as far as each texel's penumbra reaches (2026-11-02, pcss-sharpen: contact hardening; before, every
+shadow edge took the full 5×5 denoise and the blocker average took in occluders whose penumbra never reached).
 
 **Settings:** `shadows` (and the AO chain's `aoQuality`/`ambientOcclusion`, out of area, share the pass).
 
-**Cost shape:** GPU per frame per half-res pixel: up to 28 texture taps; HANDOVER B1 "AO+skylight 1.04 / 0.91" and
+**Cost shape:** GPU per frame per half-res pixel: up to 33 texture taps; HANDOVER B1 "AO+skylight 1.04 / 0.91" and
 "AO/fog filtering 0.59 / 0.52" include it; at 4K the chain is B4's critical path.
 
 **Duplicates / overlaps:** the receiver lives in the AO pass so shadows cost a denoise and an upsample even with AO
