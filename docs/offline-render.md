@@ -53,7 +53,13 @@ frustum; dynamic models are the client's), `warmup=s` and `step=s` (seconds of f
 and 0.05), `buildings=rebuild` (the buildings — walls, rooms, floors, roofs,
 the drawn walls — built again by BuildingLights from the dump's scene objects, faked as the scene's tiles, instead of
 restored as the client had them; dumps from 2026-11-01 on hold `sceneObjects`), `probe=x,y;x,y` (prints the walls on
-those world tiles' edges), and any setting as `key=value`.
+those world tiles' edges), `aurora=s` (the aurora held at strength s, anywhere: `NightSky.auroraHold`), `later=5,10`
+(also `final-<s>s.png`, frames that many seconds after the dump's: what moves with time), and any setting as
+`key=value`.
+
+`SkyPanorama` (`./gradlew test --tests '*SkyPanorama*' -Dlumina.panorama=dir -Dlumina.times=100,104`) draws the clear
+night sky with no scene from `night_sky.glsl` itself, all of it (azimuth -180..180, elevation 0..90): the part OSRS's
+camera never looks up into. It also writes 117 HD's aurora over 117 HD's night sky beside it.
 
 ### How it works (`src/test/java/com/midonarhel/lumina/harness/`)
 

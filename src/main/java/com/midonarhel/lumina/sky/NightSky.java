@@ -36,6 +36,9 @@ public final class NightSky
 	// share of nights without one
 	public static final float AURORA_NO_NIGHT = 0.3f;
 	public static final float AURORA_FADE_SECONDS = 6;
+	// how much of it shows at full strength: 117 HD's auroraVisibility for FREMENNIK_PROVINCE (environments.json), the
+	// mainland's far north (Rellekka's hunter area 0.302, the mountain camp and Weiss's snow 0.396, Jatizso 0.736)
+	static final float AURORA_VISIBILITY = 0.396f;
 	/** Developer: the aurora's strength held here, anywhere and at once (`::runelight aurora 0.5`); NaN: off. */
 	public static volatile float auroraHold = Float.NaN;
 
@@ -245,7 +248,7 @@ public final class NightSky
 	{
 		glUniformMatrix3fv(u.frame, false, frame);
 		glUniform1f(u.nebula, nebula);
-		glUniform1f(u.aurora, aurora);
+		glUniform1f(u.aurora, aurora * AURORA_VISIBILITY);
 		glUniform4fv(u.head, meteorHead);
 		glUniform3fv(u.tail, meteorTail);
 		glUniform1f(u.pixel, pixel);

@@ -1,5 +1,6 @@
 // The night sky, added to the sky as the composite draws it (atmosphere.glsl's celestial): layered stars of different
-// sizes and colors that twinkle, a painted nebula and Milky Way band, shooting stars and, in the far north, an aurora.
+// sizes and colors that twinkle, a painted nebula and Milky Way band, shooting stars and, in the far north, an aurora
+// (117 HD's).
 // Everything is a function of the view direction (and the time, for the twinkle), so nothing shimmers when the camera
 // moves, and the stars and nebula turn slowly with the night (NightSky.java). Linear colors. Needs sky.glsl.
 // None of it goes through the sky cache: that only feeds the light, and these move.
@@ -131,45 +132,193 @@ vec3 nebulaColor(vec3 d, float amount) {
 }
 
 // ---------------------------------------------------------------------------------------------------------------
-// Aurora: two rippling curtains standing on the northern horizon (+z), green at the foot and violet at the tips, with
-// rays that sway. A function of azimuth and elevation, so it costs a few sines a pixel.
+// Aurora: 117 HD's (utils/aurora.glsl), ported as it is. Volumetric curtains raymarched through an elevated slab of
+// sky. Each curtain is a thin vertical sheet: a folded ribbon in the horizontal plane, extruded upward and sheared as
+// it rises. Marching the view ray through the slab, rather than intersecting a handful of flat planes, is what gives
+// the curtains height: near parts of a sheet sweep past faster than far parts as the camera turns, the rays stay
+// standing in the volume, and the colour ramps from green along the base to magenta at the tips. A function of the
+// view direction and the time only: the slab's altitudes are above the camera, wherever it is.
 
-#define AURORA_BRIGHTNESS 0.12
+// The slab the curtains live in: altitudes above the camera, in world units
+#define AURORA_BASE 900.0
+#define AURORA_TOP 4500.0
+// samples taken per ray between base and top: the main quality/cost knob
+#define AURORA_STEPS 20
+// world units per unit of curtain coordinate: one fold spans roughly 7000
+#define AURORA_SCALE 0.0005
+// horizontal distance at which curtains are lost to haze, in world units
+#define AURORA_VIEW_DISTANCE 24000.0
+#define AURORA_INTENSITY 0.7
+// Lumina's, for speed, with the same result: where along the curtain's cross coordinate (v, north) a sheet can be at
+// all. auroraCurtain lies in -0.83..1.23 and the lean with height (auroraSheet) adds -0.11..0.21, and a sheet adds
+// nothing (density below 1e-3, at most 0.861 exp(-d^2 / 2 sigma^2)) further than 3.68 sigma from its centre, so a step
+// further than that from the band is skipped without working out either sheet: most steps of most rays, all of those
+// looking north low down (the curtains hang overhead, and come down to the horizon toward the east and west).
+#define AURORA_BAND vec2(-0.94, 1.44)
+#define AURORA_BAND_SIGMAS 3.7
 
-vec3 auroraCurtain(float az, float elev, float time, float seed) {
-  float t = time * 0.06;
-  // the foot of the curtain ripples along the horizon
-  float foot = 0.10 + 0.05 * seed + 0.035 * sin(az * 2.3 + t * 1.3 + seed * 5.0) + 0.02 * sin(az * 6.1 - t * 2.1 + seed)
-    + 0.012 * sin(az * 13.0 + t * 3.0);
-  float h = (elev - foot) / 0.26;
-  if (h < -0.15) {
-    return vec3(0.0);
-  }
-  float edge = smoothstep(-0.15, 0.04, h);
-  // rays stand up from the foot and thin out as they climb; the foot itself is an even glow
-  float r1 = 0.5 + 0.5 * sin(az * 30.0 + 2.0 * sin(az * 3.7 + t * 3.0 + seed) + t * 4.0 + seed * 9.0);
-  float r2 = 0.5 + 0.5 * sin(az * 67.0 + 3.0 * sin(az * 5.3 - t * 2.0) + seed * 4.0);
-  float rays = r1 * r1 * (0.55 + 0.45 * r2) * 1.7;
-  float body = edge * exp(-max(h, 0.0) * 1.8) * mix(0.9, rays, smoothstep(0.0, 0.7, h));
-  float swell = 0.7 + 0.3 * sin(az * 3.1 - t * 4.0 + seed * 3.0);
-  vec3 col = mix(vec3(0.12, 1.0, 0.45), vec3(0.10, 0.75, 0.95), smoothstep(0.0, 0.5, h));
-  col = mix(col, vec3(0.70, 0.25, 0.95), smoothstep(0.4, 1.2, h));
-  return col * (body * swell);
+// 117 HD's hash12 (utils/hash.glsl), for its noise
+float auHash12(vec2 p) {
+  vec3 p3 = fract(vec3(p.xyx) * 0.1031);
+  p3 += dot(p3, p3.yzx + 33.33);
+  return fract((p3.x + p3.y) * p3.z);
 }
 
-vec3 aurora(vec3 d, float time) {
-  float elev = -d.y;
-  if (elev > 0.7) {
-    return vec3(0.0);
-  }
-  float az = atan(d.x, d.z);
-  float north = smoothstep(2.4, 0.9, abs(az));
-  if (north <= 0.0) {
-    return vec3(0.0);
-  }
-  vec3 col = auroraCurtain(az, elev, time, 0.0) + 0.6 * auroraCurtain(az + 1.7, elev, time, 1.0);
-  return col * (north * smoothstep(0.0, 0.08, elev) * AURORA_BRIGHTNESS);
+float auNoise(vec2 p) {
+  vec2 i = floor(p);
+  vec2 f = fract(p);
+  f = f * f * (3.0 - 2.0 * f);
+  return mix(
+    mix(auHash12(i), auHash12(i + vec2(1.0, 0.0)), f.x),
+    mix(auHash12(i + vec2(0.0, 1.0)), auHash12(i + vec2(1.0, 1.0)), f.x),
+    f.y);
 }
+
+// the curtain's ridge at a horizontal position
+float auroraCurtain(float x, float time) {
+  float wave = sin(x * 1.8 - time * 0.4) * 0.5;
+  wave += sin(x * 3.1 + time * 0.25) * 0.25;
+  wave += sin(x * 7.0 - time * 0.6) * 0.08;
+  wave += auNoise(vec2(x * 0.8 + time * 0.05, time * 0.03)) * 0.4;
+  return wave;
+}
+
+// Emissive colour of one curtain sheet at a point in the slab.
+//   h          height fraction through the slab, 0 at the base
+//   sigmaFloor minimum sheet half-width, set from the march footprint so that distant curtains prefilter instead of
+//              sparkling
+//   detail     how much fine ray structure survives at that footprint
+vec3 auroraSheet(vec3 p, float h, float sigmaFloor, float detail, float time, float seed) {
+  float u = p.x * AURORA_SCALE + seed * 3.7;
+  float v = p.z * AURORA_SCALE;
+
+  // Lumina's, for speed, with the same result: the sheet's centre is the curtain plus a lean of -0.11..0.21 (below), so
+  // a point further than AURORA_BAND_SIGMAS of the widest sheet from that has no sheet, whatever its reach
+  float curtain = auroraCurtain(u, time + seed * 5.0);
+  float dc = v - curtain;
+  float reject = AURORA_BAND_SIGMAS * max(0.075, sigmaFloor);
+  if (dc < -0.11 - reject || dc > 0.21 + reject) {
+    return vec3(0.0);
+  }
+
+  // Curtains do not all reach the same height. Varying the reach along the ribbon is most of what sells them as
+  // separate sheets hanging in the sky.
+  float reach = mix(0.45, 1.3, auNoise(vec2(u * 1.1 + seed * 7.0, time * 0.03 + seed)));
+  float hn = h / reach; // 0 at the base, 1 at this curtain's tip
+  if (hn >= 1.0) {
+    return vec3(0.0);
+  }
+
+  // sharp lower border, long fade toward the tips
+  float vProfile = smoothstep(0.0, 0.10, hn) * exp(-hn * 1.5) * (1.0 - smoothstep(0.7, 1.0, hn));
+
+  // Sheets thicken and diffuse as they rise. The peak scales with 1/sigma so a widened (prefiltered) sheet emits as
+  // much light as a crisp one rather than getting brighter.
+  float sigma = max(mix(0.030, 0.075, hn), sigmaFloor);
+  // the distance from the centre of the sheet (117 HD's auroraRibbon, with the curtain worked out above). The shear
+  // with height keeps the sheet from being a straight vertical extrusion, so it still reads as a surface in depth when
+  // seen close to edge-on.
+  float lean = 0.05 + 0.16 * sin(u * 2.3 - time * 0.18 + seed);
+  float d = dc - lean * hn;
+  float sheet = exp(-d * d / (2.0 * sigma * sigma)) * (0.030 / sigma);
+
+  float density = sheet * vProfile;
+  if (density < 1e-3) {
+    return vec3(0.0);
+  }
+
+  // Vertical rays. Constant along a curtain's height, so they read as structure standing in the volume instead of
+  // texture on a plane.
+  float rays = auNoise(vec2(u * 9.0 + seed * 10.0, time * 0.1));
+  rays = mix(0.45, 1.0, smoothstep(0.15, 0.85, rays));
+  float fine = auNoise(vec2(u * 30.0 - time * 0.25, seed * 3.0 + hn * 0.35));
+  rays *= mix(1.0, mix(0.6, 1.2, fine), detail);
+
+  float brightness = 0.4 + 0.6 * auNoise(vec2(u * 1.7 - time * 0.02, seed));
+
+  // Slowly vary the emissive green base between teal and yellow-green, and ramp to magenta at the tips the way oxygen
+  // gives way to nitrogen.
+  float hueNoise = auNoise(vec2(u * 1.3 + seed * 4.0, time * 0.04 + seed));
+  vec3 tealGreen = vec3(0.0, 1.5, 0.9);   // cool cyan-green
+  vec3 warmGreen = vec3(0.35, 1.7, 0.25); // warm yellow-green
+  vec3 green = mix(tealGreen, warmGreen, smoothstep(0.25, 0.75, hueNoise));
+  vec3 magenta = vec3(1.0, 0.15, 1.25);
+  vec3 col = mix(green, magenta, smoothstep(0.3, 0.95, hn));
+
+  return col * density * rays * brightness;
+}
+
+// Additive aurora colour along viewDir (y down, z north), linear.
+vec3 proceduralAurora(vec3 viewDir, float time) {
+  float upAmount = -viewDir.y;
+  if (upAmount < 0.01) {
+    return vec3(0.0);
+  }
+
+  // north-facing gate: aurora in the northern sky (+z)
+  float northFacing = viewDir.z;
+  if (northFacing < -0.2) {
+    return vec3(0.0);
+  }
+  float northBlend = smoothstep(-0.2, 0.3, northFacing);
+
+  float horizonFade = smoothstep(0.01, 0.06, upAmount);
+
+  vec3 rd = normalize(viewDir);
+  float up = max(-rd.y, 1e-3);
+
+  // enter the slab at its base and step up through it in equal heights
+  float tBase = AURORA_BASE / up;
+  float dt = (AURORA_TOP - AURORA_BASE) / (up * float(AURORA_STEPS));
+
+  // Horizontal footprint of one step, along the curtain coordinate. Sheets and ray detail are filtered against it, so
+  // the long steps a grazing ray takes blur the curtains rather than aliasing them into sparkle.
+  float stepU = dt * length(rd.xz) * AURORA_SCALE;
+  float sigmaFloor = stepU * 0.5;
+  float detail = 1.0 - smoothstep(0.03, 0.10, stepU);
+
+  // offset the march per pixel so a short march does not band
+  float jitter = auHash12(gl_FragCoord.xy + time);
+
+  // the band the sheets can be in, widened by the widest a sheet gets
+  vec2 band = AURORA_BAND + vec2(-1.0, 1.0) * (AURORA_BAND_SIGMAS * max(0.075, sigmaFloor));
+
+  vec3 aurora = vec3(0.0);
+  for (int i = 0; i < AURORA_STEPS; i++) {
+    vec3 p = rd * (tBase + (float(i) + jitter) * dt);
+    float v = p.z * AURORA_SCALE;
+    if (v < band.x || v > band.y) {
+      // v only moves one way along the ray: past the band it never comes back
+      if (v > band.y == rd.z > 0.0) {
+        break;
+      }
+      continue;
+    }
+    float h = (-p.y - AURORA_BASE) / (AURORA_TOP - AURORA_BASE);
+
+    // Haze swallows the far ends of the curtains, leaving the bright lower border arcing across the northern sky.
+    float r = length(p.xz) / AURORA_VIEW_DISTANCE;
+    float haze = exp(-r * r);
+    if (haze < 0.01) {
+      break; // only ever gets further away
+    }
+
+    aurora += auroraSheet(p, h, sigmaFloor, detail, time, 1.0) * haze;
+    aurora += auroraSheet(p, h, sigmaFloor, detail, time, 2.6) * haze * 0.7;
+  }
+
+  // Weight by the path length each step covers, capped so curtains brighten toward the horizon without running away
+  // as the ray goes flat.
+  aurora *= min(1.0 / up, 6.0) / float(AURORA_STEPS);
+
+  return aurora * northBlend * horizonFade * AURORA_INTENSITY;
+}
+
+// 117 HD dims the aurora against a bright sky, 1 / (1 + 1200 Y) of the sky behind it (sky_sampling.glsl): auroras
+// lose contrast much sooner than the moon. Lumina's clear night sky is about 16 times brighter (zenith Y 0.004 against
+// 117 HD's 0.00024), so the constant is 16 times smaller: Lumina's clear night dims it as 117 HD's does (by about a
+// quarter), and dusk, moonlight and haze take it away as they do there.
+#define AURORA_CONTRAST 72.0
 
 // ---------------------------------------------------------------------------------------------------------------
 // Shooting star: the streak between the tail and the head, brightest at the head
@@ -187,8 +336,9 @@ vec3 shootingStar(vec3 d, float pixelAngle) {
 // ---------------------------------------------------------------------------------------------------------------
 
 // The night sky along dir (a view ray, y down), linear. alt: sun altitude, degrees; visible: how much of the sky shows
-// (overcast, haze); T: the clouds' transmittance; moonDir: toward the moon.
-vec3 nightSky(vec3 dir, vec3 moonDir, float alt, float time, float pixelAngle, float visible, float T) {
+// (overcast, haze); T: the clouds' transmittance; moonDir: toward the moon; skyY: the luminance of the sky behind
+// (linear, without the night sky).
+vec3 nightSky(vec3 dir, vec3 moonDir, float alt, float time, float pixelAngle, float visible, float T, float skyY) {
   float elev = -dir.y;
   float dark = smoothstep(-8.0, -18.0, alt) * visible * T;
   vec3 c = vec3(0.0);
@@ -218,9 +368,11 @@ vec3 nightSky(vec3 dir, vec3 moonDir, float alt, float time, float pixelAngle, f
   if (nebula > 0.001) {
     c += nebulaColor(d, nebula);
   }
-  float aur = auroraStrength * smoothstep(-6.0, -16.0, alt) * visible * T;
-  if (aur > 0.0) {
-    c += aurora(dir, time) * aur;
+  // 117 HD's: its darkness (sun 6 to 18 degrees down), the contrast against the sky, and in front of the moon but
+  // behind the haze (sky fog there) and clouds
+  float aur = auroraStrength * smoothstep(-6.0, -18.0, alt) * visible * T / (1.0 + skyY * AURORA_CONTRAST);
+  if (aur > 0.001) {
+    c += proceduralAurora(dir, time) * aur;
   }
   return c;
 }
