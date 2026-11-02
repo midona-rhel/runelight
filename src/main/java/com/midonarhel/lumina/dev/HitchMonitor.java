@@ -20,6 +20,9 @@ import org.slf4j.LoggerFactory;
  * Where the client thread was stuck: a watchdog thread looks every couple of milliseconds, and once a frame has run
  * past the hitch threshold takes the client thread's stack a few times; the hitch line names the frames. Started on
  * the first frame, stopped by {@link #stop}.
+ *
+ * What bounds the ordinary frames: every {@link #SUMMARY_NANOS} a line with the frame time's median and the CPU steps
+ * averaged over the frames since the last, those that are not hitches.
  */
 public final class HitchMonitor
 {
@@ -54,6 +57,9 @@ public final class HitchMonitor
 	private static final int SAMPLES = 3;
 	private static final long SAMPLE_GAP_NANOS = 4_000_000;
 	private static final int STACK_FRAMES = 8;
+	// the ordinary frames' summary: how often, and the steps it names (at least this long on average)
+	private static final long SUMMARY_NANOS = 30_000_000_000L;
+	private static final double SUMMARY_STEP_MS = 0.1;
 
 	private final LogLimiter limiter = new LogLimiter(1000);
 	private final List<GarbageCollectorMXBean> collectors = ManagementFactory.getGarbageCollectorMXBeans();
@@ -67,6 +73,13 @@ public final class HitchMonitor
 	private long gcMillis;
 
 	private long frames;
+
+	// since the last summary: the frames that were not hitches, their steps' times summed, and the frame times
+	private long summaryStartNanos;
+	private int summaryFrames;
+	private double summaryFrameMs;
+	private final double[] summarySteps = new double[CpuTimer.STAGES];
+	private double[] summaryTimes = new double[1024];
 
 	// shared with the watchdog: the client thread, when its frame began, the hitch threshold, and the stacks taken
 	// in the current frame
@@ -115,6 +128,10 @@ public final class HitchMonitor
 				log.info("{}{}", text(frame, frameMs, cpu, collections - gcCount, collectionMillis - gcMillis, held), stuckText());
 			}
 		}
+		else if (count >= WARMUP)
+		{
+			summarize(frameMs, cpu);
+		}
 
 		gcCount = collections;
 		gcMillis = collectionMillis;
@@ -135,6 +152,68 @@ public final class HitchMonitor
 			thresholdNanos = count >= WARMUP ? (long) (Math.max(MIN_MS, median * FACTOR) * 1e6) : Long.MAX_VALUE;
 			frameStartNanos = System.nanoTime();
 		}
+	}
+
+	/** Adds an ordinary frame to the summary, and logs the summary when it is due. */
+	private void summarize(double frameMs, CpuTimer cpu)
+	{
+		long now = System.nanoTime();
+		if (summaryStartNanos == 0)
+		{
+			summaryStartNanos = now;
+		}
+		if (summaryFrames == summaryTimes.length)
+		{
+			summaryTimes = Arrays.copyOf(summaryTimes, summaryFrames * 2);
+		}
+		summaryTimes[summaryFrames++] = frameMs;
+		summaryFrameMs += frameMs;
+		for (int s = 0; s < CpuTimer.STAGES; ++s)
+		{
+			summarySteps[s] += cpu.getLastMs(s);
+		}
+		if (now - summaryStartNanos < SUMMARY_NANOS)
+		{
+			return;
+		}
+		int n = summaryFrames;
+		Arrays.sort(summaryTimes, 0, n);
+		StringBuilder b = new StringBuilder(384);
+		b.append(String.format("Frames: %d in %.0f s, median %.2f ms (p10 %.2f, p90 %.2f), mean %.2f; CPU steps, mean ms:",
+			n, (now - summaryStartNanos) / 1e9, summaryTimes[n / 2], summaryTimes[n / 10], summaryTimes[n * 9 / 10],
+			summaryFrameMs / n));
+		// the steps by their mean, longest first
+		boolean[] named = new boolean[CpuTimer.STAGES];
+		double sum = 0;
+		for (int s = 0; s < CpuTimer.STAGES; ++s)
+		{
+			sum += summarySteps[s];
+		}
+		for (int shown = 0; ; ++shown)
+		{
+			int best = -1;
+			for (int s = 0; s < CpuTimer.STAGES; ++s)
+			{
+				if (!named[s] && summarySteps[s] / n >= SUMMARY_STEP_MS && (best < 0 || summarySteps[s] > summarySteps[best]))
+				{
+					best = s;
+				}
+			}
+			if (best < 0)
+			{
+				break;
+			}
+			named[best] = true;
+			b.append(shown > 0 ? ", " : " ").append(CpuTimer.NAMES[best]).append(' ')
+				.append(String.format("%.2f", summarySteps[best] / n));
+		}
+		// the part of the frame no step covers: the plugin's untimed work, mostly the composite's submit
+		b.append(String.format(", untimed %.2f", Math.max(summaryFrameMs - sum, 0) / n));
+		log.info("{}", b);
+		summaryStartNanos = now;
+		summaryFrames = 0;
+		summaryFrameMs = 0;
+		Arrays.fill(summarySteps, 0);
 	}
 
 	/** Stop the watchdog. */
