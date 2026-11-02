@@ -62,6 +62,7 @@ uniform int expandedMapLoadingChunks;
 uniform ivec3 base;
 uniform int tick;
 uniform vec2 textureAnimations[TEXTURE_COUNT];
+uniform vec2 weatherNoiseOrigin;  // world x and z of local (scene) 0, world units (weather_ground.glsl's)
 
 out vec4 fColor;
 noperspective centroid out float fHsl;
@@ -71,12 +72,16 @@ out vec3 fWorldPos;
 out vec3 fNormal;       // vertex normal, world space; zero where the vertex has none
 out vec4 fClip;         // clip position, for the lamps' cluster (light/lamp.glsl)
 flat out int fMaterial;  // SurfaceMaterials bits: emissive level in 0-1, transmissive in 2; water bed 3, land 4, snow 5-6
+// the snow's noise at the object's anchor tile (WindSway's code in the position's w): one value for the whole object,
+// so it takes its snow as one body when the snow's blobs reach it (weather_ground.glsl)
+flat out float fSnowAnchor;
 #ifdef ZBUF_DEBUG
 out float fDepth;
 #endif
 
 #include "hsl_to_rgb.glsl"
 #include "sway.glsl"
+#include "weather_noise.glsl"
 #include "edge_fade.glsl"
 
 void main() {
@@ -103,6 +108,12 @@ void main() {
   } else {
     fNormal = vec3(0.0);
   }
+  // the object's anchor tile, as sway.glsl finds it: the one congruent to the code's residue nearest this vertex
+  int anchorCode = int(vertf.w) & 63;
+  vec2 residue = vec2(float(anchorCode & 7), float(anchorCode >> 3 & 7));
+  vec2 k = worldPos.xz / 128.0 - 0.5;
+  vec2 anchor = residue + 8.0 * floor((k - residue) / 8.0 + 0.5);
+  fSnowAnchor = groundBlobs((anchor + 0.5) * 128.0 + weatherNoiseOrigin, SNOW_SCALE).x;
   worldPos.xyz += windDisplacement(vertf.w, worldPos.xyz);
   vec4 screenPos = worldProj * worldPos;
   fWorldPos = worldPos.xyz;

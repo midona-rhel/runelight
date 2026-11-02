@@ -419,6 +419,8 @@ public class LuminaPlugin extends Plugin implements DrawCallbacks
 	public int uniSceneSunIsCaster, uniSceneStrikeLight;
 	public int uniSceneSunAltitude;
 	public int uniSceneOvercast;
+	// vert.glsl's weatherNoiseOrigin: world x and z of local (scene) 0, as the composite's snow has it
+	public int uniSceneNoiseOrigin;
 	public int uniSceneWeatherLight;
 	// the wind for foliage sway, on the scene and shadow programs
 	public Wind.Locations sceneWind, shadowWind;
@@ -1498,6 +1500,9 @@ public class LuminaPlugin extends Plugin implements DrawCallbacks
 		glUniform1f(uniSceneSunAltitude, dayCycle.sunAltitude);
 		weather.setOvercastUniform(uniSceneOvercast);
 		weather.setLightUniform(uniSceneWeatherLight);
+		Scene noiseScene = client.getTopLevelWorldView() != null ? client.getTopLevelWorldView().getScene() : null;
+		glUniform2f(uniSceneNoiseOrigin, noiseScene != null ? noiseScene.getBaseX() * (float) Perspective.LOCAL_TILE_SIZE : 0,
+			noiseScene != null ? noiseScene.getBaseY() * (float) Perspective.LOCAL_TILE_SIZE : 0);
 		// plants can be held to a low animation rate like the game's own animations: the wind uniforms then only
 		// change on those ticks (the scene and shadow programs keep the last values in between)
 		long swayNow = com.midonarhel.lumina.common.Clock.nanos();

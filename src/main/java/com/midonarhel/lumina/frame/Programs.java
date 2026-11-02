@@ -316,6 +316,7 @@ public final class Programs
 		plugin.uniSceneStrikeLight = glGetUniformLocation(plugin.glProgram, "strikeLight");
 		plugin.uniSceneSunAltitude = glGetUniformLocation(plugin.glProgram, "sunAltitude");
 		plugin.uniSceneOvercast = glGetUniformLocation(plugin.glProgram, "weatherOvercast");
+		plugin.uniSceneNoiseOrigin = glGetUniformLocation(plugin.glProgram, "weatherNoiseOrigin");
 		plugin.uniSceneWeatherLight = glGetUniformLocation(plugin.glProgram, "weatherLight");
 		plugin.sceneWind = Wind.locate(plugin.glProgram);
 		plugin.shadowWind = Wind.locate(plugin.glShadowProgram);

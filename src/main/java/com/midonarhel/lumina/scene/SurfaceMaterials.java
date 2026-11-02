@@ -62,6 +62,8 @@ public final class SurfaceMaterials
 	static final int SNOW_REDUCED = 1 << SNOW_MODEL_SHIFT;
 	static final int SNOW_NONE = 2 << SNOW_MODEL_SHIFT;
 	private static final int SNOW_MASK = 3 << SNOW_MODEL_SHIFT;
+	// a ground face's bits for a tile snow keeps off (weather/SnowTiles: 117 HD's tiles that stay clear in winter)
+	static final int GROUND_SNOW_NONE = SNOW_NONE >> SNOW_MODEL_SHIFT << SNOW_SHIFT;
 	// model-level emissive group in bits 6-13: 1 + its index in groups, 0 for none
 	private static final int GROUP_SHIFT = 6;
 	private static final int GROUP_MASK = 0xff;

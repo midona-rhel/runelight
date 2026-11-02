@@ -70,11 +70,15 @@ uniform float cloudGround;     // world y of the focal point: the cloud shadows 
 #define CLOUD_TILE CLOUD_SIZE
 #define CLOUD_NOISE_SIZE 128.0
 // Steps of about CLOUD_STEP_LENGTH world units across the slab, at least CLOUD_MIN_STEPS and at most CLOUD_STEPS:
-// few looking up, more toward the horizon, where a ray crosses far more of the slab and too few steps show as
-// grain. The noise is also blurred to CLOUD_STEP_BLUR of a step, which the steps could not resolve anyway.
-#define CLOUD_STEPS 16
+// few looking up, more toward the horizon, where a ray crosses far more of the slab and too few steps comb the
+// clouds into vertical stripes. The look (how blurred the noise is, how soft the edges) follows steps of
+// CLOUD_LOOK_STEP_LENGTH, at most CLOUD_LOOK_STEPS: the steps sample the same clouds more finely, they don't sharpen
+// them. The noise is blurred to CLOUD_STEP_BLUR of such a step, which the steps could not resolve anyway.
+#define CLOUD_STEPS 48
 #define CLOUD_MIN_STEPS 10
-#define CLOUD_STEP_LENGTH 900.0
+#define CLOUD_STEP_LENGTH 450.0
+#define CLOUD_LOOK_STEPS 16
+#define CLOUD_LOOK_STEP_LENGTH 900.0
 #define CLOUD_STEP_BLUR 0.5
 // sine of the elevation (along cloudSkyDir) over which the clouds fade in above the horizon: clear sky at and below
 // the first, which the cloud pass is scissored by (Clouds.HORIZON must match it)
@@ -161,6 +165,11 @@ uniform float cloudGround;     // world y of the focal point: the cloud shadows 
 // sunlight taken away under a cloud; shadows fade as the sky closes over, where it is all overcast light
 #define CLOUD_SHADOW_STRENGTH CLOUD_SHADOWS
 #define CLOUD_SHADOW_ALTITUDE (CLOUD_EYE_HEIGHT + CLOUD_BOTTOM + (CLOUD_TOP - CLOUD_BOTTOM) * 0.3)
+// the shadows' shape: the clouds' own at that height (with the detail's warp and erosion), at this level of detail,
+// and the noise's excess over the threshold from no shadow to full: a penumbra of a few tiles, not of a dozen
+#define CLOUD_SHADOW_HEIGHT 0.3
+#define CLOUD_SHADOW_LOD 0.5
+#define CLOUD_SHADOW_SOFT 0.04
 
 // The direction the sky and clouds are looked up in for a view ray: its elevation measured from the edge of the
 // drawn world rather than from the level, so the horizon lies where the land ends. The edge is lower the higher the
@@ -322,9 +331,12 @@ vec4 cloudLayer(vec3 dir, vec3 camPos, vec3 sunDir, vec3 moonDir, float alt, flo
   }
 
   int n = int(clamp(ceil(across / CLOUD_STEP_LENGTH), float(CLOUD_MIN_STEPS), float(steps)));
+  // the step the look is worked out for (CLOUD_LOOK_STEP_LENGTH), whatever the steps actually taken
+  float lookStep = across / clamp(ceil(across / CLOUD_LOOK_STEP_LENGTH), float(CLOUD_MIN_STEPS),
+    float(min(steps, CLOUD_LOOK_STEPS)));
   // mip level from a pixel's footprint on the slab, stretched toward the horizon (geometric mean of both axes), or
   // from the step length; below 0 when a texel covers several pixels, so the detail fetches stay sharp
-  float footprint = max((t0 + t1) * 0.5 * pixelAngle / sqrt(k), across / float(n) * CLOUD_STEP_BLUR);
+  float footprint = max((t0 + t1) * 0.5 * pixelAngle / sqrt(k), lookStep * CLOUD_STEP_BLUR);
   float lod = log2(max(footprint * CLOUD_NOISE_SIZE / CLOUD_TILE, 1e-3));
 
   // high thin clouds are thinner too
@@ -344,7 +356,7 @@ vec4 cloudLayer(vec3 dir, vec3 camPos, vec3 sunDir, vec3 moonDir, float alt, flo
   float low = sunLit ? smoothstep(10.0, 0.0, alt) * smoothstep(-8.0, -2.0, alt) : 0.0;
 
   float ds = (t1 - t0) / float(n);
-  float soft = CLOUD_SOFT * max(1.0, across / float(n) / CLOUD_SOFT_STEP);
+  float soft = CLOUD_SOFT * max(1.0, lookStep / CLOUD_SOFT_STEP);
   vec3 scattered = vec3(0.0);
   float transmittance = 1.0;
   for (int i = 0; i < n; ++i) {
@@ -414,13 +426,12 @@ float cloudShadow(vec3 p, vec3 lightDir) {
     return 1.0;
   }
   float t = max(CLOUD_SHADOW_ALTITUDE - cloudGround + p.y, 0.0) / max(-lightDir.y, 0.15);
-  vec2 world = p.xz + lightDir.xz * t;
-  vec2 xz = world + cloudOffset;
-  // the same warp as the clouds overhead, so the shadows have their shapes
-  vec4 dn = textureLod(cloudNoise, xz * (CLOUD_DETAIL_SCALE / CLOUD_TILE), 1.5 + log2(CLOUD_DETAIL_SCALE));
-  xz += (dn.rb - 0.5) * CLOUD_WARP;
+  vec2 xz = p.xz + lightDir.xz * t + cloudOffset;
+  // the clouds overhead as the sky shows them, shapes and edges and all
   vec3 cw = cloudLocalCover(xz, vec3(cloudWeather, cloudType));
-  float d = cloudDensity(xz, 0.3, cw, 1.5);
-  // thin high cloud casts faint shadows
-  return 1.0 - d * CLOUD_SHADOW_STRENGTH * (1.0 - cw.z) * (1.0 - 0.6 * cloudType.x);
+  vec2 warp;
+  float crevice;
+  float d = smoothstep(0.0, CLOUD_SHADOW_SOFT, cloudSample(xz, CLOUD_SHADOW_HEIGHT, cw, CLOUD_SHADOW_LOD, warp, crevice));
+  // thin high cloud casts faint shadows; under a closing sky overcastShadow softens them with the rest
+  return 1.0 - d * CLOUD_SHADOW_STRENGTH * (1.0 - 0.6 * cloudType.x);
 }

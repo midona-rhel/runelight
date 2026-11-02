@@ -44,6 +44,7 @@ in vec3 fWorldPos;
 in vec3 fNormal;
 in vec4 fClip;
 flat in int fMaterial;
+flat in float fSnowAnchor;
 #ifdef ZBUF_DEBUG
 in float fDepth;
 #endif
@@ -228,6 +229,10 @@ void main() {
   FragNormal = vec4(n * 0.5 + 0.5, c.a);
   // alpha 1 marks the sample as covered by geometry (SceneTargets.clear); the opaque pass writes without blending
   FragMaterial = materialPack(fMaterial, faceNormal, fUv * 256.0);
+  // all but fake water: the snow's noise at the object's anchor in a (materialSnowAnchor)
+  if ((fMaterial & 24) != 24) {
+    FragMaterial.a = clamp(fSnowAnchor * 0.5 + 0.5, 0.0, 1.0);
+  }
 
   if (alphaPass == 1) {
     vec3 light;

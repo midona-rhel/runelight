@@ -120,7 +120,7 @@ public final class WeatherField
 	private final Map<String, float[]> groundByBiome = new HashMap<>();
 	// per biome, the change of weather in progress (Transition)
 	private final Map<String, Transition> transitions = new HashMap<>();
-	private float[] blurTmp = new float[0];
+	private float[] blurTmp = new float[0], erodeTmp = new float[0];
 	// cells with weather of their own; new cells start in their weather as it is on the next update
 	private boolean[] hasState = new boolean[0];
 	// blurred and quantized to 0..255 like the textures, so CPU samples match the GPU's
@@ -468,6 +468,7 @@ public final class WeatherField
 		if (blurTmp.length != n)
 		{
 			blurTmp = new float[n];
+			erodeTmp = new float[n];
 		}
 		float[] tmp = blurTmp;
 		for (int c = 0; c < CHANNELS; ++c)
@@ -475,7 +476,23 @@ public final class WeatherField
 			boolean ground = c == WET || c == SNOW_COVER;
 			if (!fillIfEven(state[c], smooth[c]))
 			{
-				blur(state[c], smooth[c], tmp, ground ? KERNEL : WEATHER_KERNEL);
+				if (ground)
+				{
+					// snow and puddles lie only where they settled: drawn back a cell from where they end before the
+					// blur, and a cell shows no more than it holds, so a snowy region's ground fades out over a few
+					// cells on its own side of a border, never across a neighbour where none fell
+					erode(state[c], erodeTmp);
+					blur(erodeTmp, smooth[c], tmp, KERNEL);
+					float[] v = smooth[c], own = state[c];
+					for (int i = 0; i < n; ++i)
+					{
+						v[i] = Math.min(v[i], own[i]);
+					}
+				}
+				else
+				{
+					blur(state[c], smooth[c], tmp, WEATHER_KERNEL);
+				}
 			}
 			if (c < GPU_CHANNELS)
 			{
@@ -528,6 +545,27 @@ public final class WeatherField
 		}
 		java.util.Arrays.fill(dst, v);
 		return true;
+	}
+
+	/** Each cell the least of itself and its eight neighbours, edges clamped. */
+	private void erode(float[] src, float[] dst)
+	{
+		for (int z = 0; z < sizeZ; ++z)
+		{
+			for (int x = 0; x < sizeX; ++x)
+			{
+				float m = src[z * sizeX + x];
+				for (int dz = -1; dz <= 1; ++dz)
+				{
+					int zz = Math.max(0, Math.min(sizeZ - 1, z + dz));
+					for (int dx = -1; dx <= 1; ++dx)
+					{
+						m = Math.min(m, src[zz * sizeX + Math.max(0, Math.min(sizeX - 1, x + dx))]);
+					}
+				}
+				dst[z * sizeX + x] = m;
+			}
+		}
 	}
 
 	/** Separable blur with a kernel of odd length, edges clamped. */

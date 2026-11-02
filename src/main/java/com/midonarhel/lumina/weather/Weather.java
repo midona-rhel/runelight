@@ -1067,12 +1067,12 @@ public class Weather
 				// the impacts, only seen up close: around the player, where the camera looks
 				glUniform4f(rain.layerBox, focusX, focusY, focusZ, SPLASH_HALF);
 				glUniform1i(rain.dropCount, 0);
-				glDrawArraysInstanced(GL_TRIANGLES, 0, 6, Math.round(MAX_RAIN_IMPACTS * impacts));
+				glDrawArraysInstanced(GL_TRIANGLE_STRIP, 0, 4, Math.round(MAX_RAIN_IMPACTS * impacts));
 				// and the droplets thrown up by steps, one range of instances for every step
 				glUniform1i(rain.dropCount, 0);
 				glUniform4fv(rain.wadeSteps, wadeSteps);
 				glUniform1i(rain.wadeDroplets, 1);
-				glDrawArraysInstanced(GL_TRIANGLES, 0, 6, WadeSteps.MAX_STEPS * WADE_DROPLETS);
+				glDrawArraysInstanced(GL_TRIANGLE_STRIP, 0, 4, WadeSteps.MAX_STEPS * WADE_DROPLETS);
 				glUniform1i(rain.wadeDroplets, 0);
 			}
 		}
@@ -1123,7 +1123,7 @@ public class Weather
 			// the nearest layer drawn takes everything closer too: the layers before it had nothing there
 			glUniform2f(u.layerBand, first ? 0 : layerReach(k - 1), band);
 			glUniform1i(u.dropCount, count);
-			glDrawArraysInstanced(GL_TRIANGLES, 0, 6, count);
+			glDrawArraysInstanced(GL_TRIANGLE_STRIP, 0, 4, count);
 			first = false;
 		}
 	}

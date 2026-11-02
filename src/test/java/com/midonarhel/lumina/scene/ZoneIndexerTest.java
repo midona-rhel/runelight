@@ -74,6 +74,32 @@ public class ZoneIndexerTest
 	}
 
 	@Test
+	public void objectsWithOtherAnchorsKeepTheirOwnCorners()
+	{
+		// two objects' triangles meeting at the same corners, alike in everything but the code in the position's w
+		// (SceneUploader's swayCodes: the snow's anchor tile in its low six bits): each keeps its own vertices, so
+		// each keeps its own snow
+		int[][] corners = {{0, 0}, {128, 0}, {0, 128}, {128, 128}};
+		int[][] triangles = {{0, 1, 2, 5}, {1, 3, 2, 12}};
+		int[] s = new int[6 * INTS];
+		int i = 0;
+		for (int[] t : triangles)
+		{
+			for (int c = 0; c < 3; ++c, ++i)
+			{
+				int[] p = corners[t[c]];
+				// put22224(x, y, z, code, color); the second half (texture, uv, normal) alike
+				s[i * INTS] = p[1] << 16 | p[0];
+				s[i * INTS + 1] = t[3] << 16 | 64;
+				s[i * INTS + 2] = 0x1234;
+			}
+		}
+		ZoneIndexer.Result r = roundTrip(s, s.length * 2);
+		assertEquals(GL_UNSIGNED_SHORT, r.indexType);
+		assertEquals("no corner of one object shared with the other", 6, r.vertices);
+	}
+
+	@Test
 	public void anEmptyStream()
 	{
 		ZoneIndexer.Result r = roundTrip(new int[0], 0);

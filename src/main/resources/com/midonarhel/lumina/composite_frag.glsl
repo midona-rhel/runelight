@@ -239,7 +239,11 @@ bool skyShowsAt(ivec2 q) {
 }
 
 // The half resolution clouds (into cloudHalf). The pass is scissored to the rows that can hold cloud
-// (Clouds.skyRows), over a target cleared to clear sky.
+// (Clouds.skyRows), over a target cleared to clear sky. cloudsAllSky: every texel over the horizon, whatever the
+// scene shows, for a result the next frame keeps (Composite's half rate), so sky that geometry uncovers there finds
+// its clouds.
+uniform int cloudsAllSky;
+
 vec4 cloudsHalf() {
   // the ray through the middle of the scene pixels this texel covers
   vec2 c = gl_FragCoord.xy * halfRatio;
@@ -254,7 +258,7 @@ vec4 cloudsHalf() {
   // filtering of the clouds reaches (atmosphere.glsl's cloudsFiltered, a texel and a half out), or behind
   // geometry's edges or its fade at the edge of the world. Elsewhere clear sky. The corners of that square and its
   // middle are tested.
-  bool needed = false;
+  bool needed = cloudsAllSky == 1;
   ivec2 last = sceneTextureSize() - 1;
   float reach = halfRatio * 1.5 + 1.0;
   for (int i = 0; i < 5 && !needed; ++i) {
@@ -279,12 +283,13 @@ struct SceneSample {
   vec4 material;  // materialUnpack
   vec3 faceNormal;
   float end;      // fake water: the depth its colour goes by, world units (the uploaders')
+  float anchor;   // anything else: the snow's noise at its object's anchor tile (materialSnowAnchor)
 };
 
 SceneSample sceneSample(ivec2 px, int s) {
   vec4 target = texelFetch(sceneMaterial, px, s);
   return SceneSample(texelFetch(sceneColor, px, s), texelFetch(sceneDepth, px, s).r, texelFetch(sceneNormal, px, s).rgb,
-    materialUnpack(target), materialFaceNormal(target), materialEnd(target));
+    materialUnpack(target), materialFaceNormal(target), materialEnd(target), materialSnowAnchor(target));
 }
 
 // Lights one scene sample of the pixel px: sky or surface, then the transparent layer over it, then the fog.
@@ -357,7 +362,8 @@ vec4 shadeScene(ivec2 px, SceneSample sm, vec4 transparent) {
   }
   // snow and puddles change the surface itself, before it is lit
   vec2 wet = compositePart != 5 && inside && weatherGroundOn == 1
-    ? weatherGroundSurface(color.rgb, n, p, p + cameraPos, vec2(px) + 0.5, material, transparent.a, ground) : vec2(0.0);
+    ? weatherGroundSurface(color.rgb, n, p, p + cameraPos, vec2(px) + 0.5, material, sm.anchor, transparent.a, ground)
+    : vec2(0.0);
 
   float shadow = 1.0;
   vec3 light = vec3(ao);

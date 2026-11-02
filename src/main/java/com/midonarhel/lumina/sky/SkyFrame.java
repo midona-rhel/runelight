@@ -255,7 +255,7 @@ public final class SkyFrame
 		plugin.clouds.setWeather(plugin.weather.cloudWisp(), plugin.weather.cloudDark());
 		plugin.clouds.setEye(plugin.frameCameraX, plugin.frameCameraY, plugin.frameCameraZ, plugin.client.getCameraFocalPointX(),
 			plugin.client.getCameraFocalPointY(), plugin.client.getCameraFocalPointZ(), plugin.edgeFade.radius, plugin.config.skyHorizonAtEdge());
-		plugin.clouds.update(plugin.config.clouds(), plugin.config.cloudShadows(), plugin.config.cloudCoverage(), plugin.config.cloudSpeed(),
+		plugin.clouds.update(plugin.config.clouds(), plugin.config.cloudShadows(), plugin.config.cloudCoverage(),
 			plugin.weather.cloudCover(), baseX, baseZ, plugin.weather.getField());
 	}
 

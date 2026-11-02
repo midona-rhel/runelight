@@ -111,10 +111,10 @@ vec4 rainField(vec2 anchor, float age) {
   return vec4(windDir * speed.x + across * speed.y, windDir * shift.x + across * shift.y);
 }
 
-// corners of the two triangles: (side, end)
-const vec2 CORNERS[6] = vec2[](
-  vec2(-1.0, 0.0), vec2(1.0, 0.0), vec2(1.0, 1.0),
-  vec2(-1.0, 0.0), vec2(1.0, 1.0), vec2(-1.0, 1.0));
+// corners of the quad as a strip of two triangles split along (-1, 0) to (1, 1): (side, end). Four vertices, so the
+// drop's work is done four times rather than six
+const vec2 CORNERS[4] = vec2[](
+  vec2(1.0, 0.0), vec2(1.0, 1.0), vec2(-1.0, 0.0), vec2(-1.0, 1.0));
 
 // framebuffer pixels per world unit at view depth 1. Clip x is a scaled rotation of the view, so the length of
 // its row is the scale whatever the camera angle.

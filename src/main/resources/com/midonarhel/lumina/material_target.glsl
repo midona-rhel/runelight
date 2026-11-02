@@ -5,7 +5,8 @@
 //     did not cover is cleared to 0: a land surface with none of them.
 //   fake water has no emissive, transmissive or snow, so its other five bits are 0 and a holds the depth its colour goes
 //     by (the uploaders': a fall's, the water's at its top and foot, blended down it; others SurfaceMaterials.FAKE_DEPTH):
-//     0-510 world units in steps of END_STEP
+//     0-510 world units in steps of END_STEP; anything else holds in a the snow's noise at its object's anchor tile
+//     (materialSnowAnchor)
 //   g, b the triangle's own normal, octahedral, facing the camera: the geometric normal of the face, which the smooth
 //     one of the normal target is not. That one tilts across a face where the models' vertices are shared with the
 //     faces next to it; the face itself does not.
@@ -17,7 +18,7 @@
 // the world units a step of the depth a fake water's colour goes by (8 bits)
 #define END_STEP 2.0
 
-// scenery with an action: below 1, it takes snow on its tops only (weather_ground.glsl)
+// scenery with an action: below 1 (weather_ground.glsl takes any snow above 0 as all of it, on every upward face)
 #define SNOW_REDUCED 0.4
 
 // The target's value for a surface: its SurfaceMaterials bits (as the vertex shader passes them), its face's normal and
@@ -49,6 +50,11 @@ vec4 materialUnpack(vec4 target) {
 // Whether the unpacked material is fake water (a face drawn as water by the composite, water.glsl).
 bool materialFakeWater(vec4 material) {
   return material.b > 1.25;
+}
+
+// The snow's noise at the object's anchor tile, for all but fake water (frag.glsl's fSnowAnchor), -1 to 1.
+float materialSnowAnchor(vec4 target) {
+  return target.a * 2.0 - 1.0;
 }
 
 // The depth a fake water pixel's colour goes by, world units.

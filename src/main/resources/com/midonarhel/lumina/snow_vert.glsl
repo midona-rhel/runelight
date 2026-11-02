@@ -31,9 +31,9 @@ out float fViewZ;
 out float fAlpha;
 flat out vec3 fColor;
 
-const vec2 CORNERS[6] = vec2[](
-  vec2(-1.0, -1.0), vec2(1.0, -1.0), vec2(1.0, 1.0),
-  vec2(-1.0, -1.0), vec2(1.0, 1.0), vec2(-1.0, 1.0));
+// the quad as a strip of two triangles split along (-1, -1) to (1, 1)
+const vec2 CORNERS[4] = vec2[](
+  vec2(1.0, -1.0), vec2(1.0, 1.0), vec2(-1.0, -1.0), vec2(-1.0, 1.0));
 
 float pixelScale() {
   return length(vec3(viewProj[0][0], viewProj[1][0], viewProj[2][0])) * float(sceneViewport.z) * 0.5;

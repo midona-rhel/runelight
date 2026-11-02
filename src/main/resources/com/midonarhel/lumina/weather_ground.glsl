@@ -9,12 +9,12 @@
 // wide at any angle. Needs frame.glsl, rooms.glsl and water.glsl.
 
 #include "weather_wade.glsl"
+#include "weather_noise.glsl"
 
 uniform int weatherGroundOn;
 uniform vec2 weatherNoiseOrigin;  // world x and z of local (scene) 0, world units
 
-// snow: noise wavelength in world units, and the noise level its blobs start at (peaks) and end at (all covered)
-#define SNOW_SCALE 640.0
+// snow: the noise level its blobs start at (peaks) and end at (all covered); the wavelength is weather_noise.glsl's
 #define SNOW_FIRST 0.45
 #define SNOW_ALL -0.6
 // how far ahead of the cover the level runs: the 16 steps' rounding up on average, kept when they went
@@ -31,13 +31,14 @@ uniform vec2 weatherNoiseOrigin;  // world x and z of local (scene) 0, world uni
 #define SNOW_STEEP 0.55
 #define SNOW_FLAT 0.8
 #define SNOW_SLOPE 2.0
-// scenery: the faces that take snow, none at the first up component and all at the second, and how many noise levels
-// ahead of the ground's its blobs are. Scenery with an action (material a under 1) takes it on its tops only, from
-// SNOW_SCENERY_TOPS, so its sides stay readable
-#define SNOW_SCENERY_STEEP 0.25
-#define SNOW_SCENERY_TOPS 0.65
-#define SNOW_SCENERY_FLAT 0.9
+// scenery and vegetation, as the first snow had it (f204e8e2): every upward face, none at the first up component and
+// all at the second, blended in between; each object as one body, by the noise at its anchor tile, so no blob's edge
+// crosses a tree. It settles once the level is SNOW_SCENERY_LEAD noise levels short of the anchor's noise and is
+// whole SNOW_SCENERY_GROW levels on, the object whitening evenly as the snow builds
+#define SNOW_SCENERY_STEEP 0.45
+#define SNOW_SCENERY_FLAT 0.85
 #define SNOW_SCENERY_LEAD 0.08
+#define SNOW_SCENERY_GROW 0.15
 
 // puddles: they grow from where water collects (RoomMap.pool: hollows and the feet of walls), the edge pushed around
 // by noise of this wavelength (world units) and strength so they are gloopy rather than round; the pool level at
@@ -63,46 +64,6 @@ uniform vec2 weatherNoiseOrigin;  // world x and z of local (scene) 0, world uni
 // how bright the crest of a ripple is, added to the water (linear)
 #define PUDDLE_CREST 0.25
 
-uvec2 groundHash(vec2 cell) {
-  uvec2 v = uvec2(ivec2(cell)) * 1664525u + 1013904223u;
-  v.x += v.y * 1664525u;
-  v.y += v.x * 1664525u;
-  v ^= v >> 16u;
-  v.x += v.y * 1664525u;
-  v.y += v.x * 1664525u;
-  v ^= v >> 16u;
-  return v;
-}
-
-vec2 groundGradient(vec2 cell) {
-  float a = float(groundHash(cell).x >> 8u) * (6.28318530718 / 16777216.0);
-  return vec2(cos(a), sin(a));
-}
-
-// Perlin noise, about -0.7 to 0.7, and its gradient: x the noise, yz its change per unit of p
-vec3 groundPerlin(vec2 p) {
-  vec2 i = floor(p);
-  vec2 f = p - i;
-  vec2 u = f * f * f * (f * (f * 6.0 - 15.0) + 10.0);
-  vec2 du = 30.0 * f * f * (f * (f - 2.0) + 1.0);
-  vec2 ga = groundGradient(i), gb = groundGradient(i + vec2(1.0, 0.0));
-  vec2 gc = groundGradient(i + vec2(0.0, 1.0)), gd = groundGradient(i + vec2(1.0, 1.0));
-  float va = dot(ga, f), vb = dot(gb, f - vec2(1.0, 0.0));
-  float vc = dot(gc, f - vec2(0.0, 1.0)), vd = dot(gd, f - vec2(1.0, 1.0));
-  float k = va - vb - vc + vd;
-  return vec3(va + u.x * (vb - va) + u.y * (vc - va) + u.x * u.y * k,
-    ga + u.x * (gb - ga) + u.y * (gc - ga) + u.x * u.y * (ga - gb - gc + gd) + du * (u.yx * k + vec2(vb, vc) - va));
-}
-
-// the snow's noise: a wavelength of `scale` world units and a rougher octave on it; x the noise, yz its change per
-// world unit
-vec3 groundBlobs(vec2 world, float scale) {
-  vec2 q = world / scale;
-  vec3 a = groundPerlin(q);
-  vec3 b = groundPerlin(q * 2.3 + 17.0);
-  return vec3(0.7 * a.x + 0.3 * b.x, (0.7 * a.yz + 0.69 * b.yz) / scale);
-}
-
 // How far the surface's world position (xz) moves across one pixel on screen, right and down: the ground plane
 // through p with normal n cut by the neighbouring pixels' rays. pc this pixel's center.
 void groundFootprint(vec2 pc, vec3 p, vec3 n, out vec2 dx, out vec2 dy) {
@@ -125,11 +86,12 @@ float groundEdge(float f, vec2 df) {
 
 // Snow and puddles on a surface before lighting: changes the albedo (sRGB) and the normal. p camera-relative, world
 // the same in world space, pc the pixel's center; material: r emissive, b water (0 land terrain, 1 bed), a how much
-// snow settles (materials.glsl); alpha: the transparency layer over it; cover: the AO pass's, upsampled (snow above
+// snow settles (materials.glsl); anchor: the snow's noise at the object's anchor tile (materialSnowAnchor); alpha:
+// the transparency layer over it; cover: the AO pass's, upsampled (snow above
 // 0, standing water below). Returns the puddle: x its coverage, y how much of that is water, not rim, for
 // weatherPuddleWater.
-vec2 weatherGroundSurface(inout vec3 color, inout vec3 n, vec3 p, vec3 world, vec2 pc, vec4 material, float alpha,
-  float cover) {
+vec2 weatherGroundSurface(inout vec3 color, inout vec3 n, vec3 p, vec3 world, vec2 pc, vec4 material, float anchor,
+  float alpha, float cover) {
   // nothing settles on glowing surfaces (lava, fire) or the water's bed
   float eligible = (1.0 - step(0.01, material.r)) * (1.0 - step(0.75, material.b)) * (1.0 - alpha);
   if (weatherGroundOn == 0 || abs(cover) < 0.01 || eligible <= 0.0) {
@@ -152,13 +114,13 @@ vec2 weatherGroundSurface(inout vec3 color, inout vec3 n, vec3 p, vec3 world, ve
     float snow, inner;
     if (land) {
       float f = noise.x - level - SNOW_SLOPE * (1.0 - smoothstep(SNOW_STEEP, SNOW_FLAT, up));
-      snow = groundEdge(f, df);
+      // none on the tiles that stay clear (SnowTiles: 117 HD's floors, bridges, paths)
+      snow = groundEdge(f, df) * step(0.01, material.a);
       float rim = max(SNOW_RIM * length(noise.yz), SNOW_RIM_MIN);
       inner = groundEdge(f - rim, df);
     } else {
-      float steep = material.a < 0.99 ? SNOW_SCENERY_TOPS : SNOW_SCENERY_STEEP;
-      snow = smoothstep(steep, SNOW_SCENERY_FLAT, up) * groundEdge(noise.x - level + SNOW_SCENERY_LEAD, df)
-        * step(0.01, material.a);
+      float body = smoothstep(0.0, SNOW_SCENERY_GROW, anchor - level + SNOW_SCENERY_LEAD);
+      snow = smoothstep(SNOW_SCENERY_STEEP, SNOW_SCENERY_FLAT, up) * body * step(0.01, material.a);
       inner = 1.0;
     }
     snow *= eligible;

@@ -6,6 +6,7 @@ import com.midonarhel.lumina.common.Clock;
 import com.midonarhel.lumina.dev.FrameTape;
 import com.midonarhel.lumina.dev.PlainData;
 import com.midonarhel.lumina.dev.SceneDump;
+import com.midonarhel.lumina.frame.Composite;
 import com.midonarhel.lumina.fog.FogGround;
 import com.midonarhel.lumina.light.LampsAccess;
 import com.midonarhel.lumina.light.PointLight;
@@ -105,6 +106,15 @@ public final class DumpRenderer implements AutoCloseable
 	{
 		this.dump = dump;
 		this.options = options;
+		// later=s (passed with the settings): the dump's moment s seconds on, for what moves with the real time (the
+		// clouds' drift, their shadows, the wind's gusts, the weather's slots)
+		String later = options.settings.remove("later");
+		if (later != null)
+		{
+			long shift = Math.round(Double.parseDouble(later) * 1000);
+			dump.manifest.millis += shift;
+			dump.manifest.nanos += shift * 1_000_000;
+		}
 		world = new DumpWorld(dump);
 		world.settings.putAll(options.settings);
 		// a dump from before the day length options, on a free day length: the hour it was taken at, held
@@ -319,6 +329,8 @@ public final class DumpRenderer implements AutoCloseable
 					float px = (options.mapProbe[0] - m.baseX + 0.5f) * 128, pz = (options.mapProbe[1] - m.baseY + 0.5f) * 128;
 					System.out.print(LampsAccess.mapProbe(plugin.lightMap, px, pz, 3, off * 4));
 				}
+				// the restored weather can differ from the warm-up's: the clouds drawn for this frame, not kept
+				Composite.cloudsEveryFrame = true;
 			}
 			long frameStart = System.nanoTime();
 			frame();
@@ -327,6 +339,7 @@ public final class DumpRenderer implements AutoCloseable
 				awaitLightMap(frameStart);
 			}
 		}
+		Composite.cloudsEveryFrame = false;
 		return readBack();
 	}
 
@@ -359,7 +372,10 @@ public final class DumpRenderer implements AutoCloseable
 		SceneDump.Manifest m = dump.manifest;
 		Clock.set(m.millis, dumpNanos);
 		restoreState();
+		// the restored weather can differ from the warm-up's: the clouds drawn for this frame, not kept from the last
+		Composite.cloudsEveryFrame = true;
 		frame();
+		Composite.cloudsEveryFrame = false;
 		return readBack();
 	}
 
