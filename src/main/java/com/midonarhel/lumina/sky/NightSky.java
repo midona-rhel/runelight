@@ -36,6 +36,8 @@ public final class NightSky
 	// share of nights without one
 	public static final float AURORA_NO_NIGHT = 0.3f;
 	public static final float AURORA_FADE_SECONDS = 6;
+	/** Developer: the aurora's strength held here, anywhere and at once (`::runelight aurora 0.5`); NaN: off. */
+	public static volatile float auroraHold = Float.NaN;
 
 	/** night_sky.glsl's starFrame, column-major. */
 	final float[] frame = new float[9];
@@ -117,6 +119,12 @@ public final class NightSky
 		lastSeconds = seconds;
 		starFrame(phase, frame);
 		updateMeteor(seconds, forward);
+		float hold = auroraHold;
+		if (!Float.isNaN(hold))
+		{
+			aurora = hold;
+			return;
+		}
 		float target = auroraOn && isAuroraBiome(biome) ? auroraNight(gameMillis) : 0;
 		float step = dt / AURORA_FADE_SECONDS;
 		aurora = aurora < target ? Math.min(target, aurora + step) : Math.max(target, aurora - step);

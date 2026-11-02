@@ -292,6 +292,24 @@ public final class DumpRenderer implements AutoCloseable
 	}
 
 	/**
+	 * A frame this many seconds after the dump's time, after a short warm-up up to it, and the result: what moves with
+	 * time (the sky, the water) moved on. The scene and the tape stay the dump's.
+	 */
+	public BufferedImage renderLater(double seconds)
+	{
+		SceneDump.Manifest m = dump.manifest;
+		long after = (long) (seconds * 1e9);
+		long step = (long) (options.frameSeconds * 1e9);
+		for (int i = 10; i >= 0; --i)
+		{
+			long t = after - i * step;
+			Clock.set(m.millis + t / 1_000_000, dumpNanos + t);
+			frame();
+		}
+		return readBack();
+	}
+
+	/**
 	 * The frame state a warm-up doesn't settle as the dump had it (SceneDump.STATE): before the warm-up, so it starts
 	 * from there, and again before the dump's frame, so that frame has it exactly.
 	 */

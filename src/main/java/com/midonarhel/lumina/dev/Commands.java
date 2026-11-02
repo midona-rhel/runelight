@@ -282,6 +282,12 @@ public final class Commands
 			skylightOff = args[1].equals("off");
 			log.info("Skylight {}", skylightOff ? "off" : "on");
 		}
+		else if (args.length >= 2 && args[0].equals("aurora"))
+		{
+			// `aurora 0.5`: the aurora held at that strength anywhere, on any night; `aurora off`: as the place has it
+			com.midonarhel.lumina.sky.NightSky.auroraHold = args[1].equals("off") ? Float.NaN : Float.parseFloat(args[1]);
+			log.info("Aurora {}", args[1]);
+		}
 		else if (args.length >= 2 && args[0].equals("strike"))
 		{
 			// `strike hold`: a strike whose flash stays at its top until `strike off`; `strike` alone: one strike
