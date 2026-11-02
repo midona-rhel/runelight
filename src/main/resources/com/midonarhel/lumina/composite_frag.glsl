@@ -212,8 +212,11 @@ void lampOnSurface(Lamp lamp, float open, vec3 p, vec3 n, vec3 viewDir, float tr
 //
 // The lamps with a shadow cube (light/lamp_cube.glsl), drawn from what the frame draws, take it: of those that reach
 // the point, the LAMP_BUDGET brightest before anything stops them (the user's four a pixel, the fourth fading as the
-// fifth nears it), each stopped by its cube read a texel off the surface and by its walls (the exact line at a wall:
-// a jamb's shadow keeps its clean edge), whichever lets less through. Not the light map: baked from the whole
+// fifth nears it), each stopped by its cube alone, read a texel and a half off the surface with tight taps (a wall's
+// foot and a jamb's edge sharp). No wall walk: the cube holds the walls as drawn, and the walk, walls as tall as the
+// world, cost 0.4-0.8 ms on fps1 and darkened the caps' tops a lamp sees (the user preferred the cube's look). A lamp
+// on a storey the client hides (lampHiddenCode) lights no surface: its light gets anywhere drawn only through floors
+// and walls that are not drawn. Not the light map: baked from the whole
 // building, the storeys and furniture the client hides too, it laid their shadows on the floors (the corridor's
 // blotches). A lamp without a cube (more in view than LampCubes' slots, or one whose cube waits) as before: the
 // lamps the light map carries in full from its read, once (a cell holds the at most four that light it, each no
@@ -235,6 +238,10 @@ vec3 lampsOnSurface(int entry, vec3 p, vec3 n, vec3 faceN, float transmissive, o
       continue;
     }
     vec4 b = texelFetch(lightData, li * 4 + 1);
+    // a lamp on a storey the client hides: through floors and walls that are not drawn
+    if (lampHiddenCode(b.w)) {
+      continue;
+    }
     if (lampCubeCode(b.w) >= 0) {
       vec3 l = sphere.xyz - p;
       lampBudgetAdd(cubed, lampLuminance(b.rgb) * lampFalloff(dot(l, l), sphere.w * sphere.w), li, 0.0);
@@ -254,10 +261,7 @@ vec3 lampsOnSurface(int entry, vec3 p, vec3 n, vec3 faceN, float transmissive, o
     }
     Lamp lamp = lampWith(kl, lampSphere(kl));
     vec3 q = p + faceN * (1.0 + 1.5 * lampCubeTexel(length(lamp.pos - p)));
-    float open = lampCubeOpen(lamp, q, 0.125);
-    if (open > 0.0) {
-      open = min(open, lampWallsOpen(lamp, p, wallFrom, false));
-    }
+    float open = lampCubeOpen(lamp, q, 0.125, LAMP_CUBE_SOFT_SURFACE);
     lampOnSurface(lamp, open * lampBudgetFade(cubed, k), p, n, viewDir, transmissive, sum, through);
   }
   if (mapped) {
@@ -267,7 +271,8 @@ vec3 lampsOnSurface(int entry, vec3 p, vec3 n, vec3 faceN, float transmissive, o
     for (int k = 0; k < 4; ++k) {
       int ml = ids[k] > 0 && vis[k] > 0.0 ? lampOfMapId(ids[k]) : -1;
       // a lamp with a cube was taken above
-      if (ml < 0 || lampCubeCode(texelFetch(lightData, ml * 4 + 1).w) >= 0) {
+      float mw = ml >= 0 ? texelFetch(lightData, ml * 4 + 1).w : 0.0;
+      if (ml < 0 || lampCubeCode(mw) >= 0 || lampHiddenCode(mw)) {
         continue;
       }
       vec4 sphere = lampSphere(ml);

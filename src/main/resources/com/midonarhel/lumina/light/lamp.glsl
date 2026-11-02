@@ -76,15 +76,31 @@ struct Lamp {
   int reach;     // its reach map's first texel in lightData, 0: none (its lines are walked)
   float roofLow; // the lowest drawn roof in its reach, world y plus LAMP_ROOF_BIAS; 0: none
   int cube;      // its shadow cube's slot (LampCubes, light/lamp_cube.glsl), -1: none, or not drawn yet
+  int cubeFrom;  // the slot of the cube it crosses over from (a change redrew it), -1: none
+  float cubeFade; // how far it has crossed over, 0 to 1
 };
 
-// the second texel's w: the walls code plus 16 times the cube's slot + 1 (LightClusters)
+// the second texel's w: the walls code, plus 16 times the cube's slot + 1, plus 2048 for a lamp on a storey the
+// client hides, plus 4096 times the slot + 1 of the cube it crosses over from and 524288 times how far, of 15
+// (LightClusters, LampCubes.cubeCode)
 int lampWallsCode(float w) {
   return ((int(w) + 1) & 15) - 1;
 }
 
 int lampCubeCode(float w) {
-  return ((int(w) + 1) >> 4) - 1;
+  return (((int(w) + 1) >> 4) & 127) - 1;
+}
+
+bool lampHiddenCode(float w) {
+  return ((int(w) + 1) & 2048) != 0;
+}
+
+int lampCubeFromCode(float w) {
+  return (((int(w) + 1) >> 12) & 127) - 1;
+}
+
+float lampCubeFadeCode(float w) {
+  return float(((int(w) + 1) >> 19) & 15) * (1.0 / 15.0);
 }
 
 // A lamp's first texel: its camera-relative position and radius, all that says whether it reaches a point; the other
@@ -104,7 +120,7 @@ Lamp lampWith(int li, vec4 a) {
   vec4 c = texelFetch(lightData, li * 4 + 2);
   vec4 d = texelFetch(lightData, li * 4 + 3);
   return Lamp(a.xyz, abs(a.w), b.rgb, lampWallsCode(b.w), c.xy, c.z, c.w, int(d.x + 0.5), d.y, int(d.z + 0.5), d.w,
-    lampCubeCode(b.w));
+    lampCubeCode(b.w), lampCubeFromCode(b.w), lampCubeFadeCode(b.w));
 }
 
 // The colour times strength of lamp li (its second texel), for choosing the lamps that give a point the most light

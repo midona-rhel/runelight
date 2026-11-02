@@ -97,6 +97,10 @@ public class LightClusters
 	private final PointLight[] keptLights = new PointLight[MAX_LIGHTS];
 	// the lamps' shadow cubes (null: none), and the indices whose cubes are drawn this frame
 	private LampCubes cubes;
+	// what the client hides (setHidden)
+	private int[][][] hideRoofs;
+	private java.util.Set<Integer> hideIds;
+	private int hideLevel;
 	private final int[] chosen = new int[LampCubes.LAMPS_PER_FRAME];
 	// the frame's lights by importance, most first: packed for sorting, then their indices in the list
 	private final long[] byImportance = new long[MAX_LIGHTS];
@@ -196,6 +200,39 @@ public class LightClusters
 	public int getLightCount()
 	{
 		return lightCount;
+	}
+
+	/**
+	 * What the client hides this frame: the scene's roof ids by level and tile (extended), the ids it hides and the
+	 * player's level. A storey above the level is hidden where the roof id of the level under it is one it hides (the
+	 * scene's geometry takes that id: SceneUploader, Zone.pushLevels).
+	 */
+	public void setHidden(int[][][] roofs, java.util.Set<Integer> ids, int level)
+	{
+		hideRoofs = roofs;
+		hideIds = ids;
+		hideLevel = level;
+	}
+
+	// whether the lamp stands on a storey the client hides: its light reaches nothing drawn but through floors and walls
+	// that are not drawn, so a surface takes none of it (composite_frag.glsl); the fog's glow over the open rooms keeps it
+	private boolean onHiddenStorey(PointLight l)
+	{
+		int[][][] roofs = hideRoofs;
+		java.util.Set<Integer> ids = hideIds;
+		if (roofs == null || ids == null || ids.isEmpty() || l.plane <= hideLevel || l.plane < 1 || l.plane >= roofs.length)
+		{
+			return false;
+		}
+		int tx = (int) Math.floor(l.x / 128) + com.midonarhel.lumina.LuminaPlugin.SCENE_OFFSET;
+		int tz = (int) Math.floor(l.z / 128) + com.midonarhel.lumina.LuminaPlugin.SCENE_OFFSET;
+		int[][] below = roofs[l.plane - 1];
+		if (tx < 0 || tz < 0 || tx >= below.length || tz >= below[tx].length)
+		{
+			return false;
+		}
+		int rid = below[tx][tz];
+		return rid > 0 && ids.contains(rid);
 	}
 
 	/** The lamps' shadow cubes, whose slots the lamps' texels carry (null: none). */
@@ -354,9 +391,11 @@ public class LightClusters
 			}
 			lightData.put(x).put(y).put(z).put(settled ? -l.radius : l.radius);
 			float shown = l.intensity * l.mapFade;
-			// with its walls code, its shadow cube's slot + 1 (LampCubes; 0: none, or not drawn yet) times 16 (lampWith)
-			int cubeSlot = cubes != null ? cubes.slotFor(l, index) : -1;
-			lightData.put(l.r * shown).put(l.g * shown).put(l.b * shown).put(wallsCode + 16 * (cubeSlot + 1));
+			// with its walls code, its shadow cube's (LampCubes.cubeCode: the slot, and the one it crosses over from), and
+			// 2048 if its storey is hidden (lampWith)
+			int cubeCode = cubes != null ? cubes.cubeCode(l, index, origin[0], origin[1]) : 0;
+			lightData.put(l.r * shown).put(l.g * shown).put(l.b * shown)
+				.put(wallsCode + cubeCode + (onHiddenStorey(l) ? 2048 : 0));
 			// its storey's floor and ceiling; none known, far off
 			lightData.put(origin[0] - camX).put(origin[1] - camZ).put(clampY(l.floorY - camY)).put(clampY(l.ceilY - camY));
 			// its id in the light map (0: not on it, lit by the walls alone) and the map's share as it eases in
@@ -389,7 +428,7 @@ public class LightClusters
 			for (int drawn = cubes.choose(chosen, kept), k = 0; k < drawn; ++k)
 			{
 				int at = chosen[k] * LAMP_TEXELS * 4 + 7;
-				lightData.put(at, lightData.get(at) + 16 * (cubes.slotOfIndex(chosen[k]) + 1));
+				lightData.put(at, lightData.get(at) + cubes.codeChange(chosen[k]));
 			}
 		}
 		if (changed)

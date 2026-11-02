@@ -273,6 +273,9 @@ public final class LampFrame
 			// the lamps' shadow cubes: which are out of date, before each lamp kept is given its slot
 			plugin.lampCubes.beginFrame(plugin);
 			plugin.lightClusters.setCubes(plugin.lampCubes);
+			net.runelite.api.WorldView topView = plugin.client.getTopLevelWorldView();
+			plugin.lightClusters.setHidden(topView != null && topView.getScene() != null ? topView.getScene().getRoofs() : null,
+				drawn != null ? drawn.hideRoofIds : null, drawn != null ? drawn.level : 0);
 			plugin.lightClusters.cull(plugin.frameLights, plugin.frameViewProj, plugin.frameCameraX, plugin.frameCameraY, plugin.frameCameraZ);
 			if (plugin.lightClusters.getOverflows() > 0 && plugin.logLimiter.check("lightClusterOverflow") >= 0)
 			{
