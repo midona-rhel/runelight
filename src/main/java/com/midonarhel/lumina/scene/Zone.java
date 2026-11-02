@@ -313,6 +313,27 @@ public class Zone
 		}
 	}
 
+	/**
+	 * A hash of what renderOpaque draws of the zone for these levels and hidden roofs (the ranges pushLevels takes): the
+	 * same hash, the same triangles. LampCubes draws again only the lamps whose zones' hashes change.
+	 */
+	public int drawnHash(int minLevel, int currentLevel, int maxLevel, Set<Integer> hiddenRoofIds)
+	{
+		if (!drawable() || sizeO <= 0)
+		{
+			return 0;
+		}
+		pushLevels(minLevel, currentLevel, maxLevel, hiddenRoofIds);
+		int h = 1;
+		for (int i = 0; i < drawOff.position(); ++i)
+		{
+			h = (h * 31 + drawOff.get(i)) * 31 + drawEnd.get(i);
+		}
+		drawOff.clear();
+		drawEnd.clear();
+		return h;
+	}
+
 	/** Fill the draw ranges (in ints) with what the levels show: whole levels, and above the current one the roofs not hidden. */
 	private void pushLevels(int minLevel, int currentLevel, int maxLevel, Set<Integer> hiddenRoofIds)
 	{

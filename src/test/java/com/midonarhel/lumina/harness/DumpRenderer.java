@@ -74,6 +74,8 @@ public final class DumpRenderer implements AutoCloseable
 		public boolean lampRoofs = true;
 		// true: every roof drawn, none hidden (roofs=shown), whatever the client hid
 		public boolean showRoofs;
+		// roof ids drawn although the client hid them (LampCubesProbe)
+		public final Set<Integer> showRoofIds = new HashSet<>();
 		// lightMap=off: the fixed lamps without the light map, stopped by the walls alone (to see what it changes)
 		public boolean lightMap = true;
 		// mapProbe=x,y: the light map's grids of the lamps nearest that world tile, printed after the render
@@ -520,6 +522,7 @@ public final class DumpRenderer implements AutoCloseable
 						{
 							roofs.add(a[8 + i]);
 						}
+						roofs.removeAll(options.showRoofIds);
 					}
 					float[] f = cameraFor(e);
 					plugin.preSceneDraw(scene, projection(e.projection), f[0], f[1], f[2], f[3], f[4], a[0], a[1], a[2], roofs);

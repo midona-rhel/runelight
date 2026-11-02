@@ -60,7 +60,14 @@ public final class LampCubes
 	private Object drawnScene;
 	private int drawnMin = -1, drawnLevel = -1, drawnMax = -1;
 	private Set<Integer> drawnRoofs = new HashSet<>();
-	private int drawnLast;
+	private int drawnLast, lastPending, lastZones, lastInvalidated;
+	// the tiles of the roofs whose hiding changed this frame, extended scene, roofSize a side
+	private boolean[] roofTiles;
+	private int roofSize;
+	// per zone: the one the cubes were drawn from, what it drew (Zone.drawnHash), and whether that changed this frame
+	private Zone[][] seen;
+	private int[][] hashes;
+	private boolean[][] changed;
 	// bench: off (the walls and drawn roofs alone, as before the cubes), or every cube drawn again each frame (its cost)
 	private static final boolean OFF = Boolean.getBoolean("lumina.noLampCubes");
 	private static final boolean REDRAW = Boolean.getBoolean("lumina.lampCubesRedraw");
@@ -153,18 +160,9 @@ public final class LampCubes
 		}
 		++frame;
 		// what is drawn changed: every slot drawn again
-		boolean renewed = false;
-		if (drawnScene != ctx || drawnMin != ctx.minLevel || drawnLevel != ctx.level || drawnMax != ctx.maxLevel
-			|| !Objects.equals(drawnRoofs, ctx.hideRoofIds))
-		{
-			renewed = true;
-			drawnScene = ctx;
-			drawnMin = ctx.minLevel;
-			drawnLevel = ctx.level;
-			drawnMax = ctx.maxLevel;
-			drawnRoofs = new HashSet<>(ctx.hideRoofIds);
-			Arrays.fill(valid, false);
-		}
+		lastInvalidated = 0;
+		int renewed = renew(ctx, sceneRoofs(plugin, ctx));
+		lastZones = renewed;
 		if (REDRAW)
 		{
 			Arrays.fill(valid, false);
@@ -225,15 +223,220 @@ public final class LampCubes
 		glBindTexture(GL_TEXTURE_2D, 0);
 		drawnLast = draws * 6;
 		// a full redraw (a scene, a roof hidden or shown), not a lamp that moves
-		if (renewed || REDRAW && frame % 100 == 1)
+		if (renewed > 0 || REDRAW && frame % 100 == 1)
 		{
-			log.info("Lamp cubes: {} lamps to draw, {} a frame, nearest first; {} of the frame's {} lamps with a cube",
-				pending, LAMPS_PER_FRAME, Math.min(count, SLOTS), count);
+			log.info("Lamp cubes: {} changed zones, {} lamps to draw, {} a frame, nearest first; {} of the frame's {} lamps"
+				+ " with a cube", renewed, pending, LAMPS_PER_FRAME, Math.min(count, SLOTS), count);
 		}
+		lastPending = pending;
 		if (draws > 0)
 		{
 			draw(plugin, ctx, toDraw, draws);
 		}
+	}
+
+	/**
+	 * What the frame draws, against what the cubes were drawn from: a new scene, every cube again; else the zones that
+	 * draw something else (a zone uploaded again, as for a door; a roof hidden or shown, or the levels, changing what
+	 * the zone draws: Zone.drawnHash), and only the cubes whose reach takes in one of them. The number of zones that
+	 * changed (all of them for a new scene).
+	 */
+	private int renew(LuminaPlugin.SceneContext ctx, int[][][] sceneRoofs)
+	{
+		boolean levels = drawnMin != ctx.minLevel || drawnLevel != ctx.level || drawnMax != ctx.maxLevel;
+		boolean roofs = !Objects.equals(drawnRoofs, ctx.hideRoofIds);
+		// a roof hidden or shown, the levels the same: the lamps that reach its tiles, not every lamp in its zones
+		Set<Integer> toggled = null;
+		if (roofs && !levels && drawnScene == ctx && sceneRoofs != null)
+		{
+			toggled = new HashSet<>(drawnRoofs);
+			toggled.addAll(ctx.hideRoofIds);
+			Set<Integer> both = new HashSet<>(drawnRoofs);
+			both.retainAll(ctx.hideRoofIds);
+			toggled.removeAll(both);
+		}
+		levels |= roofs && toggled == null;
+		if (levels || roofs)
+		{
+			drawnMin = ctx.minLevel;
+			drawnLevel = ctx.level;
+			drawnMax = ctx.maxLevel;
+			drawnRoofs = new HashSet<>(ctx.hideRoofIds);
+		}
+		if (drawnScene != ctx || seen == null || seen.length != ctx.sizeX || seen[0].length != ctx.sizeZ)
+		{
+			drawnScene = ctx;
+			seen = new Zone[ctx.sizeX][ctx.sizeZ];
+			hashes = new int[ctx.sizeX][ctx.sizeZ];
+			changed = new boolean[ctx.sizeX][ctx.sizeZ];
+			for (int x = 0; x < ctx.sizeX; ++x)
+			{
+				for (int z = 0; z < ctx.sizeZ; ++z)
+				{
+					seen[x][z] = ctx.zones[x][z];
+					hashes[x][z] = ctx.zones[x][z].drawnHash(ctx.minLevel, ctx.level, ctx.maxLevel, ctx.hideRoofIds);
+				}
+			}
+			Arrays.fill(valid, false);
+			return ctx.sizeX * ctx.sizeZ;
+		}
+		int zones = 0;
+		for (int x = 0; x < ctx.sizeX; ++x)
+		{
+			for (int z = 0; z < ctx.sizeZ; ++z)
+			{
+				Zone zone = ctx.zones[x][z];
+				boolean again = zone != seen[x][z];
+				changed[x][z] = false;
+				if (!again && !levels && !roofs)
+				{
+					continue;
+				}
+				// a zone not uploaded yet draws nothing: it counts once it is
+				int h = zone.drawnHash(ctx.minLevel, ctx.level, ctx.maxLevel, ctx.hideRoofIds);
+				if (again && !zone.drawable())
+				{
+					continue;
+				}
+				seen[x][z] = zone;
+				// a roof toggled alone: the hash kept up to date, the lamps found by the roof's tiles below
+				if (again || levels && h != hashes[x][z])
+				{
+					changed[x][z] = true;
+					++zones;
+				}
+				hashes[x][z] = h;
+			}
+		}
+		int tiles = toggled != null ? markRoofTiles(sceneRoofs, toggled) : 0;
+		if (zones == 0 && tiles == 0)
+		{
+			return 0;
+		}
+		int offset = LuminaPlugin.SCENE_OFFSET >> 3;
+		for (int s = 0; s < SLOTS; ++s)
+		{
+			if (!valid[s])
+			{
+				continue;
+			}
+			float x = drawnFor[s * 4], z = drawnFor[s * 4 + 2], r = drawnFor[s * 4 + 3];
+			if (tiles > 0 && reachesTile(x, z, r))
+			{
+				valid[s] = false;
+				++lastInvalidated;
+				continue;
+			}
+			search:
+			for (int zx = Math.max(0, (int) Math.floor((x - r) / 1024) + offset); zx <= Math.min(ctx.sizeX - 1, (int) Math.floor((x + r) / 1024) + offset); ++zx)
+			{
+				for (int zz = Math.max(0, (int) Math.floor((z - r) / 1024) + offset); zz <= Math.min(ctx.sizeZ - 1, (int) Math.floor((z + r) / 1024) + offset); ++zz)
+				{
+					if (changed[zx][zz])
+					{
+						valid[s] = false;
+						++lastInvalidated;
+						break search;
+					}
+				}
+			}
+		}
+		return zones + tiles;
+	}
+
+	/**
+	 * The tiles (extended scene) where a roof whose hiding changed stands, on any level (the scene's roof ids can sit a
+	 * level under the storeys they hide: glow1's roof 26), into roofTiles; how many.
+	 */
+	private int markRoofTiles(int[][][] sceneRoofs, Set<Integer> toggled)
+	{
+		int size = sceneRoofs[0].length;
+		if (roofTiles == null || roofTiles.length != size * size)
+		{
+			roofTiles = new boolean[size * size];
+		}
+		Arrays.fill(roofTiles, false);
+		roofSize = size;
+		int n = 0;
+		for (int lv = 0; lv < sceneRoofs.length; ++lv)
+		{
+			for (int x = 0; x < size; ++x)
+			{
+				for (int y = 0; y < size; ++y)
+				{
+					if (sceneRoofs[lv][x][y] != 0 && toggled.contains(sceneRoofs[lv][x][y]) && !roofTiles[x * size + y])
+					{
+						roofTiles[x * size + y] = true;
+						++n;
+					}
+				}
+			}
+		}
+		return n;
+	}
+
+	// whether a lamp at x, z (local units) with reach r comes within half a tile of a marked roof tile (a roof's models
+	// overhang their tiles a little)
+	private boolean reachesTile(float x, float z, float r)
+	{
+		int off = LuminaPlugin.SCENE_OFFSET;
+		float reach = r + 64;
+		int x0 = Math.max(0, (int) Math.floor((x - reach) / 128) + off), x1 = Math.min(roofSize - 1, (int) Math.floor((x + reach) / 128) + off);
+		int y0 = Math.max(0, (int) Math.floor((z - reach) / 128) + off), y1 = Math.min(roofSize - 1, (int) Math.floor((z + reach) / 128) + off);
+		for (int tx = x0; tx <= x1; ++tx)
+		{
+			for (int ty = y0; ty <= y1; ++ty)
+			{
+				if (!roofTiles[tx * roofSize + ty])
+				{
+					continue;
+				}
+				float lx = (tx - off) * 128, lz = (ty - off) * 128;
+				float cx = Math.max(lx, Math.min(x, lx + 128)) - x, cz = Math.max(lz, Math.min(z, lz + 128)) - z;
+				if (cx * cx + cz * cz < reach * reach)
+				{
+					return true;
+				}
+			}
+		}
+		return false;
+	}
+
+	// the top level scene's roof ids by level and tile (extended), the client's (client thread)
+	private static int[][][] sceneRoofs(LuminaPlugin plugin, LuminaPlugin.SceneContext ctx)
+	{
+		net.runelite.api.WorldView wv = plugin.client.getTopLevelWorldView();
+		net.runelite.api.Scene scene = wv != null ? wv.getScene() : null;
+		return scene != null ? scene.getRoofs() : null;
+	}
+
+	/** Lamps whose cubes the last update drew, and zones and roof tiles it found changed (bench). */
+	public int lastDrawnLamps()
+	{
+		return drawnLast / 6;
+	}
+
+	/** Every cube drawn again (bench: what a selective redraw should equal). */
+	public void invalidateAll()
+	{
+		Arrays.fill(valid, false);
+	}
+
+	/** Cubes the last update found out of date (bench). */
+	public int lastInvalidated()
+	{
+		return lastInvalidated;
+	}
+
+	public int lastChangedZones()
+	{
+		return lastZones;
+	}
+
+	/** Lamps waiting for their cube after the last update (bench). */
+	public int lastPending()
+	{
+		return lastPending;
 	}
 
 	// a slot not used this frame: never used first, else the longest unused
