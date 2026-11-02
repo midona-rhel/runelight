@@ -127,7 +127,8 @@ public class Weather
 	static final float SHOWER_SHARE = 0.6f;
 	static final float WET_BUILD_SECONDS = 25;
 	static final float SNOW_BUILD_SECONDS = 240;
-	// seconds for snow cover to melt (rain melts it three times as fast); puddles go with the rain (WeatherField)
+	// seconds for wet ground to dry, and for snow cover to melt (rain melts it three times as fast)
+	static final float DRY_SECONDS = 120;
 	static final float MELT_SECONDS = 900;
 	// fog multiplier underground, where there is no weather
 	private static final float FOG_CAVE = 0.6f;

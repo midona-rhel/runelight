@@ -277,10 +277,7 @@ public final class WeatherField
 				// something falls here
 				String gb = biomes[i];
 				float[] g = sky[i] ? groundByBiome.computeIfAbsent(gb == null ? "" : gb, k -> groundFor.apply(gb)) : null;
-				// puddles only while it rains here: the climate's wet ground as far as rain is falling now, so they
-				// ease in as it starts and out as it stops, not lingering for the hours the ground takes to dry
-				float raining = smoothstep(FALLING, FALLING_FULL, state[RAIN][i]);
-				state[WET][i] = ground(wet, g != null ? g[0] * raining : 0, state[RAIN][i], fresh, dt);
+				state[WET][i] = ground(wet, g != null ? g[0] : 0, state[RAIN][i], fresh, dt);
 				state[SNOW_COVER][i] = ground(cover, g != null ? g[1] : 0, state[SNOW][i], fresh, dt);
 			}
 			anything |= state[RAIN][i] > 0 || state[SNOW][i] > 0 || state[WET][i] > 0 || state[SNOW_COVER][i] > 0;
@@ -444,11 +441,9 @@ public final class WeatherField
 				dt, Weather.PRECIP_SECONDS);
 		}
 		float wetRate = t[WET_RATE], snowRate = t[SNOW_RATE], frost = t[FROST];
-		// puddles only while it rains: toward how hard it rains, building over WET_BUILD_SECONDS and gone over
-		// GROUND_SECONDS once it stops
-		float puddles = smoothstep(FALLING, FALLING_FULL, rain) * Math.min(1, wetRate);
-		s[WET][i] += (puddles - s[WET][i])
-			* (1 - (float) Math.exp(-dt / (puddles > s[WET][i] ? Weather.WET_BUILD_SECONDS : GROUND_SECONDS)));
+		s[WET][i] = rain > 0.02f
+			? Math.min(1, s[WET][i] + dt / Weather.WET_BUILD_SECONDS * Math.min(1, rain * 2) * wetRate)
+			: Math.max(0, s[WET][i] - dt / Weather.DRY_SECONDS);
 		float c = s[SNOW_COVER][i];
 		if (snow > 0.02f && snowRate > 0.01f)
 		{

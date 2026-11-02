@@ -321,8 +321,7 @@ public class WeatherFieldTest
 		f.update(b -> CLEAR, ground, 0.6f, true, 12, 0);
 		float x = f.getOriginX() + center(3), z = f.getOriginZ() + center(10);
 		assertEquals(0.8f, f.sample(WeatherField.SNOW_COVER, x, z), EPS);
-		// puddles only while it rains: the climate's wet ground shows none under a clear sky
-		assertEquals(0, f.sample(WeatherField.WET, x, z), EPS);
+		assertEquals(0.3f, f.sample(WeatherField.WET, x, z), EPS);
 		assertEquals(0, f.sample(WeatherField.SNOW_COVER, f.getOriginX() + center(20), z), EPS);
 		for (int i = 0; i < 400; ++i)
 		{

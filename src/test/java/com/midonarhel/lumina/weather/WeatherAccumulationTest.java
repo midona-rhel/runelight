@@ -147,10 +147,6 @@ public class WeatherAccumulationTest
 		int[] channels = {WeatherField.SNOW_COVER, WeatherField.WET};
 		float[][] prev = new float[2][N * N], rate = new float[2][N * N];
 		float[] worstStep = new float[2], worstJerk = new float[2];
-		// seconds since rain last fell on each cell, and the most puddle left that long after
-		float[] dry = new float[N * N];
-		float worstPuddle = 0, puddleSeconds = 0;
-		int rainy = 0;
 		boolean curve = Boolean.getBoolean("lumina.accumulation.curve");
 		for (int s = 0; s < steps; ++s)
 		{
@@ -173,21 +169,6 @@ public class WeatherAccumulationTest
 					rate[k][i] = r;
 				}
 			}
-			for (int i = 0; i < N * N; ++i)
-			{
-				boolean raining = f.cell(WeatherField.RAIN, i % N, i / N) > FALLING;
-				float wet = f.cell(WeatherField.WET, i % N, i / N);
-				dry[i] = raining ? 0 : dry[i] + DT;
-				rainy += raining ? 1 : 0;
-				if (dry[i] >= PUDDLES_GONE)
-				{
-					worstPuddle = Math.max(worstPuddle, wet);
-				}
-				if (!raining && wet > 0.02f)
-				{
-					puddleSeconds = Math.max(puddleSeconds, dry[i]);
-				}
-			}
 			if (curve && s % 10 == 0)
 			{
 				// a cell of the middle row (by default tundra)
@@ -203,14 +184,7 @@ public class WeatherAccumulationTest
 		// eased, growth set off at its full 4.3 levels a second in one update, and wet ground's by 5.1
 		assertTrue("snow cover's rate jumped by " + worstJerk[0], worstJerk[0] <= 0.5f);
 		assertTrue("wet ground's rate jumped by " + worstJerk[1], worstJerk[1] <= 0.5f);
-		// puddles only while it rains: gone (under 2 %) at most PUDDLES_GONE seconds after the rain stopped
-		System.out.printf("puddles: %d cell-steps of rain; puddles above 2 %% at most %.1f s after the rain stopped, the"
-			+ " most left %.0f s after %.4f%n", rainy, puddleSeconds, PUDDLES_GONE, worstPuddle);
-		assertTrue("puddles still " + worstPuddle + " after the rain", worstPuddle < 0.02f);
 	}
-
-	// seconds after the rain stops by which the puddles must be gone
-	private static final float PUDDLES_GONE = 90;
 
 	@Test
 	public void clearSkiesOnlyMeltAndDry()
