@@ -1192,6 +1192,14 @@ public class LuminaPlugin extends Plugin implements DrawCallbacks
 			Math.min(glGetInteger(GL_MAX_COLOR_TEXTURE_SAMPLES), glGetInteger(GL_MAX_DEPTH_TEXTURE_SAMPLES)));
 		final int samples = Math.min(forced != 0 ? forced : config.antiAliasingMode().getSamples(), max);
 		log.debug("AA samples: {}, max samples: {}, forced samples: {}", samples, max, forced);
+		// the setting shows what is drawn: a level the driver doesn't have (x16 where 8 is the most) becomes the
+		// highest it has
+		AntiAliasingMode chosen = config.antiAliasingMode(), drawn = chosen.supported(max);
+		if (drawn != chosen && configManager != null)
+		{
+			log.info("Anti-aliasing {} is more than this GPU's {} samples: set to {}", chosen, max, drawn);
+			configManager.setConfiguration(LuminaConfig.GROUP, "antiAliasingMode", drawn);
+		}
 		return samples > 1 ? samples : 0;
 	}
 
@@ -1332,6 +1340,7 @@ public class LuminaPlugin extends Plugin implements DrawCallbacks
 		if (scene.getWorldViewId() == WorldView.TOPLEVEL)
 		{
 			cpuTimer.end(CpuTimer.OUTSIDE);
+			com.midonarhel.lumina.dev.GpuSections.section("scene setup, skybox");
 			// mapping makes the client thread wait for the driver: timed apart from the client's own work
 			cpuTimer.begin(CpuTimer.BUFFER_MAP);
 			for (int i = 0; i < rts.length; ++i) // NOPMD: ForLoopCanBeForeach
@@ -1558,6 +1567,7 @@ public class LuminaPlugin extends Plugin implements DrawCallbacks
 		skyFrame.drawSkybox(scene, sky, cameraX, cameraY, cameraZ);
 
 		checkGLErrors();
+		com.midonarhel.lumina.dev.GpuSections.section("geometry");
 		cpuTimer.begin(CpuTimer.CLIENT_SCENE);
 	}
 
@@ -1591,17 +1601,20 @@ public class LuminaPlugin extends Plugin implements DrawCallbacks
 		glDisable(GL_DEPTH_TEST);
 		cpuTimer.end(CpuTimer.CLIENT_SCENE);
 
-		sceneTargets.resolveAlpha();
+		com.midonarhel.lumina.dev.GpuSections.section("scene end");
+		sceneTargets.endScene();
 		try
 		{
 			if (frameShadows)
 			{
 				cpuTimer.begin(CpuTimer.SHADOW_SUBMIT);
+				com.midonarhel.lumina.dev.GpuSections.section("shadows");
 				shadowPass.render();
 				cpuTimer.end(CpuTimer.SHADOW_SUBMIT);
 			}
 			shadowPass.report();
 			cpuTimer.begin(CpuTimer.OCCLUSION);
+			com.midonarhel.lumina.dev.GpuSections.section("weather occlusion");
 			if (weather.isActive())
 			{
 				// usually nothing: the map is only redrawn after the player moves far or the scenery changes
@@ -1899,6 +1912,7 @@ public class LuminaPlugin extends Plugin implements DrawCallbacks
 		final int canvasHeight = client.getCanvasHeight();
 		final int canvasWidth = client.getCanvasWidth();
 
+		com.midonarhel.lumina.dev.GpuSections.section("UI upload");
 		cpuTimer.begin(CpuTimer.UI_UPLOAD);
 		uiBlit.prepare(canvasWidth, canvasHeight);
 		cpuTimer.end(CpuTimer.UI_UPLOAD);
@@ -1932,7 +1946,9 @@ public class LuminaPlugin extends Plugin implements DrawCallbacks
 		}
 
 		// Texture on UI
+		com.midonarhel.lumina.dev.GpuSections.section("UI draw");
 		uiBlit.draw(overlayColor, canvasHeight, canvasWidth);
+		com.midonarhel.lumina.dev.GpuSections.end();
 
 		cpuTimer.begin(CpuTimer.SWAP);
 		try

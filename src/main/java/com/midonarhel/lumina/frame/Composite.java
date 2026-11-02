@@ -408,6 +408,7 @@ public final class Composite
 
 		final boolean ao = plugin.config.ambientOcclusion();
 
+		com.midonarhel.lumina.dev.GpuSections.section("water surface");
 		plugin.sceneTargets.bindTextures(COMPOSITE_TEXTURE_UNIT);
 		// the water surface into its own target, against the scene's depth, before the composite reads it
 		plugin.weather.getWaterWind(plugin.waterWind);
@@ -458,6 +459,7 @@ public final class Composite
 		}
 		if (halfPass)
 		{
+			com.midonarhel.lumina.dev.GpuSections.section("AO, skylight, shadow mask");
 			glBindFramebuffer(GL_FRAMEBUFFER, plugin.sceneTargets.getAoFbo());
 			glViewport(0, 0, plugin.sceneTargets.getAoWidth(), plugin.sceneTargets.getAoHeight());
 			// the AO pass writes every texel: clearing first lets the GPU start the pass without loading the old
@@ -510,6 +512,7 @@ public final class Composite
 			plugin.sceneTargets.bindShadow(SCENE_SHADOW_UNIT);
 		}
 
+		com.midonarhel.lumina.dev.GpuSections.section("sky cache, night sky, lighting prep");
 		plugin.skyFrame.updateClouds();
 		plugin.cpuTimer.begin(CpuTimer.SKY_CACHE);
 		int captured = plugin.skyCache.getCaptures();
@@ -540,6 +543,7 @@ public final class Composite
 			final boolean fogLamps = plugin.config.pointLights() && plugin.lightClusters.isInitialized()
 				&& plugin.lightClusters.hasFogLights();
 			denoiseFog = denoise && plugin.volumetricFog.hasGrain(fogSun, fogShadows, fogLamps);
+			com.midonarhel.lumina.dev.GpuSections.section("fog");
 			plugin.volumetricFog.render(plugin.sceneTargets.fogFbo(denoiseFog), plugin.sceneTargets.getAoWidth(),
 				plugin.sceneTargets.getAoHeight(), plugin.sceneTargets.getHalfRatio(), FOG_NOISE_UNIT,
 				plugin.frameViewProj, plugin.frameInvViewProj, plugin.frameViewport, plugin.glCapabilities.OpenGL45,
@@ -551,6 +555,7 @@ public final class Composite
 		// the composite upsamples them
 		if (denoise)
 		{
+			com.midonarhel.lumina.dev.GpuSections.section("denoise");
 			glUseProgram(plugin.glDenoiseProgram);
 			plugin.sceneTargets.denoise(plugin.uniDenoiseFog, AO_TEXTURE_UNIT, SCENE_SHADOW_UNIT, FOG_TEXTURE_UNIT, denoiseFog);
 			plugin.sceneTargets.bindShadow(SCENE_SHADOW_UNIT);
@@ -571,6 +576,7 @@ public final class Composite
 		final boolean halfWater = plugin.water.enabled(plugin.config);
 		if (halfClouds || halfWater)
 		{
+			com.midonarhel.lumina.dev.GpuSections.section("clouds, water shading (half)");
 			// their targets are not bound while drawn into
 			glActiveTexture(GL_TEXTURE0 + CLOUD_HALF_UNIT);
 			glBindTexture(GL_TEXTURE_2D, 0);
@@ -595,6 +601,7 @@ public final class Composite
 			glActiveTexture(GL_TEXTURE0);
 		}
 
+		com.midonarhel.lumina.dev.GpuSections.section("composite");
 		use(compositeFull);
 		if (log.isDebugEnabled())
 		{
@@ -624,9 +631,22 @@ public final class Composite
 		final int target = upscale ? plugin.upscaler.getFbo() : plugin.windowFramebuffer();
 		glBindFramebuffer(GL_FRAMEBUFFER, target);
 		final boolean edges = plugin.shaderSamples > 0;
-		final boolean stencil = edges && (upscale || target == 0 && plugin.hasWindowStencil());
+		// The pixels with a second surface, which the edge pass shades: in the upscaler's target the full pass marks
+		// them in its depth as it tells its samples apart (composite_frag.glsl: 1 there, 0 elsewhere), and the edge
+		// pass is depth tested against that, so its full shading never starts on the others. In the window, which may
+		// have a stencil but no depth, a small pass marks them in the stencil first; without either the edge pass
+		// discards them itself.
+		final boolean depthMarked = edges && upscale;
+		final boolean stencil = edges && !upscale && target == 0 && plugin.hasWindowStencil();
 		glViewport(0, 0, sceneWidth, sceneHeight);
-		glClear(stencil ? GL_COLOR_BUFFER_BIT | GL_STENCIL_BUFFER_BIT : GL_COLOR_BUFFER_BIT);
+		// depth and stencil are one attachment, cleared together so neither is loaded
+		glClear(depthMarked ? GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT | GL_STENCIL_BUFFER_BIT
+			: stencil ? GL_COLOR_BUFFER_BIT | GL_STENCIL_BUFFER_BIT : GL_COLOR_BUFFER_BIT);
+		if (depthMarked)
+		{
+			glEnable(GL_DEPTH_TEST);
+			glDepthFunc(GL_ALWAYS);
+		}
 		if (passTimers != null)
 		{
 			glBeginQuery(GL_TIME_ELAPSED, passTimers[1]);
@@ -637,6 +657,13 @@ public final class Composite
 		glUniform1i(compositeFull.part, 0);
 		if (edges)
 		{
+			com.midonarhel.lumina.dev.GpuSections.section("composite mark (MSAA)");
+			if (depthMarked)
+			{
+				// the edge pass's triangle lies at depth 0.5 (or 0 with a zero-to-one clip): less than the marks' 1 only
+				glDepthFunc(GL_LESS);
+				glDepthMask(false);
+			}
 			if (stencil)
 			{
 				// the pixels with a second surface, by a small program, so the edge pass's full shading never starts
@@ -653,12 +680,20 @@ public final class Composite
 				glStencilOp(GL_KEEP, GL_KEEP, GL_KEEP);
 			}
 			// the second surfaces, over the first by their share of the samples; the target's alpha stays
+			com.midonarhel.lumina.dev.GpuSections.section("composite edges (MSAA)");
 			use(compositeEdges);
 			glEnable(GL_BLEND);
 			glBlendFuncSeparate(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA, GL_ZERO, GL_ONE);
 			glDrawArrays(GL_TRIANGLES, 0, 3);
 			glDisable(GL_BLEND);
 			glDisable(GL_STENCIL_TEST);
+		}
+		if (depthMarked)
+		{
+			// as the scene leaves it
+			glDepthMask(true);
+			glDepthFunc(GL_GREATER);
+			glDisable(GL_DEPTH_TEST);
 		}
 		glActiveTexture(GL_TEXTURE0 + COMPOSITE_PARTS_UNIT);
 		glBindTexture(GL_TEXTURE_2D_ARRAY, 0);
@@ -671,6 +706,7 @@ public final class Composite
 
 		if (plugin.weather.isActive() && plugin.config.debugView() == DebugView.FINAL)
 		{
+			com.midonarhel.lumina.dev.GpuSections.section("weather");
 			if (passTimers != null)
 			{
 				glBeginQuery(GL_TIME_ELAPSED, passTimers[2]);
@@ -690,6 +726,7 @@ public final class Composite
 
 		if (upscale)
 		{
+			com.midonarhel.lumina.dev.GpuSections.section("upscale");
 			glBindFramebuffer(GL_FRAMEBUFFER, plugin.windowFramebuffer());
 			// the weather pass leaves its own vertex array bound (or none); the fullscreen triangle needs one bound
 			glBindVertexArray(plugin.vaoUiHandle);
@@ -708,8 +745,7 @@ public final class Composite
 		ShadowMap.unbind(SHADOW_RAW_UNIT, SHADOW_COMPARE_UNIT);
 		LightClusters.unbind(LIGHT_DATA_UNIT, CLUSTER_DATA_UNIT);
 		RoomTexture.unbind(ROOM_TEXELS_UNIT);
-		glActiveTexture(GL_TEXTURE0 + ALPHA_LAYER_UNIT);
-		glBindTexture(GL_TEXTURE_2D, 0);
+		plugin.sceneTargets.unbindAlphaLayer(ALPHA_LAYER_UNIT);
 		plugin.sceneTargets.unbindMaterial(MATERIAL_UNIT);
 		VolumetricFog.unbind(FOG_TEXTURE_UNIT);
 		Clouds.unbind(CLOUD_NOISE_UNIT);

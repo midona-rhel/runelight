@@ -28,6 +28,7 @@
 //#define ZBUF_DEBUG
 
 #include colorblind_mode
+#include msaa_config
 
 uniform sampler2DArray textures;
 uniform float brightness;
@@ -156,6 +157,8 @@ float linear_depth(float depth) {
 
 void main() {
   vec4 c;
+  // the share of the pixel's samples a cut-out texture's edge covers (alpha to coverage), 1 elsewhere
+  float coverage = 1.0;
 
   if (fTextureId > 0) {
     int textureIdx = fTextureId - 1;
@@ -163,8 +166,33 @@ void main() {
     vec4 textureColor = texture(textures, vec3(fUv, float(textureIdx)));
     vec4 textureColor0 = textureLod(textures, vec3(fUv, float(textureIdx)), 0.f);
 
+#if MSAA_SAMPLES > 0
+    if (alphaPass == 0) {
+      // Alpha to coverage (SceneTargets: on in the opaque pass): the samples a cut-out's edge covers, so its edge is
+      // antialiased like a triangle's. The textures are drawn nearest, so the edge is where the texels change: the
+      // texels' alpha blended bilinearly at the top level crosses 0.5 there, and the coverage ramps over a pixel
+      // across that line. Inside the texels the alpha test kept, it is whole; where it dropped them, nothing.
+      ivec2 size = textureSize(textures, 0).xy;
+      vec2 st = fUv * vec2(size) - 0.5;
+      ivec2 t0 = ivec2(floor(st));
+      vec2 f = st - vec2(t0);
+      // as the array is sampled (TextureManager): u clamped to the edge, v repeating
+      int x0 = clamp(t0.x, 0, size.x - 1), x1 = clamp(t0.x + 1, 0, size.x - 1);
+      int y0 = t0.y & (size.y - 1), y1 = (t0.y + 1) & (size.y - 1);
+      float a00 = texelFetch(textures, ivec3(x0, y0, textureIdx), 0).a;
+      float a10 = texelFetch(textures, ivec3(x1, y0, textureIdx), 0).a;
+      float a01 = texelFetch(textures, ivec3(x0, y1, textureIdx), 0).a;
+      float a11 = texelFetch(textures, ivec3(x1, y1, textureIdx), 0).a;
+      float edge = mix(mix(a00, a10, f.x), mix(a01, a11, f.x), f.y) - 0.5;
+      coverage = clamp(edge / max(fwidth(edge), 1e-4) + 0.5, 0.0, 1.0);
+      if (coverage <= 0.0)
+        discard;
+    } else if (textureColor0.a < 1.f)
+      discard;
+#else
     if (textureColor0.a < 1.f)
       discard;
+#endif
 
     textureColor = vec4(textureColor.rgb, 1.f);
 
@@ -185,8 +213,9 @@ void main() {
   c.rgb = colorblind(c.rgb);
 #endif
 
-  // opaque surfaces are lit and fogged later by the composite pass
-  FragColor = c;
+  // opaque surfaces are lit and fogged later by the composite pass; under MSAA the opaque pass's alpha is the
+  // coverage alpha to coverage takes (geometry's samples keep more than 0, the clear's 0)
+  FragColor = vec4(c.rgb, c.a * coverage);
 
   // The triangle's own normal from screen-space derivatives, facing the camera: the normal where the vertices
   // carry none (0, see VertexShading.java), as 117 HD's legacy geometry shader substitutes the triangle's normal.

@@ -82,8 +82,12 @@ float skySmoothMin(float a, float b, float k) {
 // Read one height without crossing a tile's wall. Diagonal halves have their own three actual corners. A corner counts
 // by how far its traced point lies in front of the surface (w, grid coordinates, along n): one behind the surface or
 // pressed into it (the far side of a post, the foot of a wall) sees what the surface can't, and drops out while any
-// other corner is in front.
-float skyGridLevel(sampler3D grid, float scale, vec2 tile, vec2 f, int level, int diagonal, vec3 n, vec3 w) {
+// other corner is in front. With withSurface, the same corners' reads also give skySurfaceLevel's sum at this level
+// (surface), which reads exactly these texels.
+float skyGridLevel(sampler3D grid, float scale, vec2 tile, vec2 f, int level, int diagonal, vec3 n, vec3 w,
+  bool withSurface, out vec2 surface) {
+  surface = vec2(0.0);
+  vec3 nn = n * n;
   bool north = diagonal == 1 ? f.y > f.x : f.x + f.y > 1.0;
   float halfOffset = diagonal != 0 && !north ? 0.5 : 0.0;
   vec2 c = 2.0 * tile + 0.5;
@@ -104,16 +108,24 @@ float skyGridLevel(sampler3D grid, float scale, vec2 tile, vec2 f, int level, in
       vec4 b = textureLod(grid, vec3(uv + vec2(0.25, 0.0), z), 0.0);
       vec3 samplePosition = vec3((tile.x + float(k & 1)) * (128.0 / scale) + b.g, b.b,
         (tile.y + float(k >> 1)) * (128.0 / scale) + b.a);
-      float weight = weights[k] * (SKY_BEHIND + smoothstep(-16.0, 32.0, dot(samplePosition - w, n)));
+      float front = smoothstep(-16.0, 32.0, dot(samplePosition - w, n));
+      float weight = weights[k] * (SKY_BEHIND + front);
       validWeight += weight;
       a += sampleValue * weight;
       minusZ += b.r * weight;
+      if (withSurface) {
+        // as skySurfaceLevel
+        float surfaceWeight = weights[k] * front;
+        surfaceWeight *= 1.0 - smoothstep(48.0, 128.0, samplePosition.y - w.y);
+        float value = nn.y * (n.y < 0.0 ? sampleValue.x : (sampleValue.y + sampleValue.z + sampleValue.w + b.r) * 0.25)
+          + nn.x * (n.x > 0.0 ? sampleValue.y : sampleValue.z) + nn.z * (n.z > 0.0 ? sampleValue.w : b.r);
+        surface += vec2(value, 1.0) * surfaceWeight;
+      }
     }
   }
   if (validWeight <= 0.00001) return -1.0;
   a /= validWeight;
   minusZ /= validWeight;
-  vec3 nn = n * n;
   float down = (a.y + a.z + a.w + minusZ) * 0.25;
   return nn.y * (n.y < 0.0 ? a.x : down) + nn.x * (n.x > 0.0 ? a.y : a.z) + nn.z * (n.z > 0.0 ? a.w : minusZ);
 }
@@ -250,27 +262,34 @@ float skyGridVisibility(sampler3D grid, float scale, vec3 w, vec3 n) {
     exterior = mix(exterior, 1.0, (1.0 - smoothstep(top + SKY_TOP_SLACK, top + SKY_TOP_SLACK + SKY_TOP_FADE, w.y))
       * smoothstep(0.3, 0.7, -n.y));
   }
-  float lower = skyGridLevel(grid, scale, tile, f, lo, loDiagonal, n, w);
+  // a point below the lowest height of its storey (the ground, a floor) reads that one height alone: lo == hi, blend 0,
+  // and the second reads below (of the same height) are left out, which changes nothing
+  // the surface's reads at lo and hi (skySurfaceLevel) come with the levels', when the face is out of doors at all
+  bool outdoors = exterior > 0.0;
+  vec2 surfaceLo, surfaceHi, unused;
+  float lower = skyGridLevel(grid, scale, tile, f, lo, loDiagonal, n, w, outdoors, surfaceLo);
   float original;
   {
-    float upper = skyGridLevel(grid, scale, tile, f, hi, hiDiagonal, n, w);
+    float upper = lower;
+    surfaceHi = surfaceLo;
+    if (lo != hi) {
+      upper = skyGridLevel(grid, scale, tile, f, hi, hiDiagonal, n, w, outdoors, surfaceHi);
+    }
     original = lower < 0.0 ? upper : upper < 0.0 ? lower : mix(lower, upper, blend);
     if (original < 0.0) {
       float bestDistance = 1e30;
       for (int k = first; k <= last; ++k) {
         int diagonal = code / (k/3 == 0 ? 1 : k/3 == 1 ? 3 : 9) % 3;
-        float value = skyGridLevel(grid, scale, tile, f, k, diagonal, n, w);
+        float value = skyGridLevel(grid, scale, tile, f, k, diagonal, n, w, false, unused);
         float distance = abs(w.y-(meta[k/3]-SKY_GRID_LOW-float(k%3)*SKY_GRID_STEP));
         if (value >= 0.0 && distance < bestDistance) { original=value; bestDistance=distance; }
       }
-      if (original < 0.0) original = max(0.0, skyGridLevel(grid, scale, tile, f, 9, 0, n, w));
+      if (original < 0.0) original = max(0.0, skyGridLevel(grid, scale, tile, f, 9, 0, n, w, false, unused));
     }
   }
   skyExterior = exterior;
-  if (exterior > 0.0) {
-    vec2 a = skySurfaceLevel(grid, scale, tile, f, lo, loDiagonal, w, n);
-    vec2 b = skySurfaceLevel(grid, scale, tile, f, hi, hiDiagonal, w, n);
-    vec2 total = mix(a, b, blend);
+  if (outdoors) {
+    vec2 total = lo == hi ? surfaceLo : mix(surfaceLo, surfaceHi, blend);
     float surfaceWeight = (1.0 - total.y);
     total += skySurfaceLevel(grid, scale, tile, f, 9, 0, w, n) * surfaceWeight;
     if (total.y > 0.0001) return mix(original, total.x / total.y, smoothstep(0.0, 0.5, -n.y) * exterior);

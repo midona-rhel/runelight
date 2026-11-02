@@ -55,9 +55,9 @@ public class SceneTargets
 	private int target = GL_TEXTURE_2D;
 	private int texColor, texNormal, texDepth, texMaterial;
 	// transparent geometry, lit as it is drawn, premultiplied; blended over the lit opaque scene by the composite.
-	// With MSAA it is drawn into texAlphaMs and resolved into texAlpha by resolveAlpha.
+	// With MSAA multisampled like the other targets: the composite lays each surface of a pixel under the average of
+	// its own samples' (composite_frag.glsl), so a transparent face behind an edge doesn't tint what stands in front.
 	private int texAlpha;
-	private int texAlphaMs, fboAlpha;
 
 	private static final int[] OPAQUE_BUFFERS = {GL_COLOR_ATTACHMENT0, GL_COLOR_ATTACHMENT1, GL_NONE, GL_COLOR_ATTACHMENT3};
 	private static final int[] ALPHA_BUFFERS = {GL_NONE, GL_NONE, GL_COLOR_ATTACHMENT2, GL_NONE};
@@ -107,8 +107,7 @@ public class SceneTargets
 		texNormal = texture(target, NORMAL_FORMAT, GL_RGBA, GL_UNSIGNED_INT_2_10_10_10_REV);
 		texDepth = texture(target, DEPTH_FORMAT, GL_DEPTH_COMPONENT, GL_FLOAT);
 		texMaterial = texture(target, MATERIAL_FORMAT, GL_RGBA, GL_UNSIGNED_BYTE);
-		texAlpha = texture(GL_TEXTURE_2D, COLOR_FORMAT, GL_RGBA, GL_UNSIGNED_BYTE);
-		texAlphaMs = samples > 0 ? texture(target, COLOR_FORMAT, GL_RGBA, GL_UNSIGNED_BYTE) : 0;
+		texAlpha = texture(target, COLOR_FORMAT, GL_RGBA, GL_UNSIGNED_BYTE);
 
 		fboScene = glGenFramebuffers();
 		glBindFramebuffer(GL_FRAMEBUFFER, fboScene);
@@ -116,17 +115,9 @@ public class SceneTargets
 		glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT1, target, texNormal, 0);
 		glFramebufferTexture2D(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, target, texDepth, 0);
 		glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT3, target, texMaterial, 0);
-		glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT2, target, samples > 0 ? texAlphaMs : texAlpha, 0);
+		glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT2, target, texAlpha, 0);
 		glDrawBuffers(OPAQUE_BUFFERS);
 		check("scene");
-		if (samples > 0)
-		{
-			fboAlpha = glGenFramebuffers();
-			glBindFramebuffer(GL_FRAMEBUFFER, fboAlpha);
-			glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, texAlpha, 0);
-			glDrawBuffers(GL_COLOR_ATTACHMENT0);
-			check("alpha");
-		}
 
 		aoWidth = (int) Math.ceil(width / (double) halfRatio);
 		aoHeight = (int) Math.ceil(height / (double) halfRatio);
@@ -177,12 +168,6 @@ public class SceneTargets
 			glDeleteFramebuffers(fboScene);
 			glDeleteTextures(new int[]{texColor, texNormal, texDepth, texAlpha, texMaterial});
 			fboScene = texColor = texNormal = texDepth = texAlpha = texMaterial = 0;
-		}
-		if (fboAlpha != 0)
-		{
-			glDeleteFramebuffers(fboAlpha);
-			glDeleteTextures(texAlphaMs);
-			fboAlpha = texAlphaMs = 0;
 		}
 	}
 
@@ -411,21 +396,10 @@ public class SceneTargets
 		glActiveTexture(GL_TEXTURE0);
 	}
 
-	/**
-	 * Resolve the transparency layer, the one target a pass reads averaged: it is lit already, so its samples average
-	 * to the pixel's. No-op without MSAA.
-	 */
-	public void resolveAlpha()
+	/** The scene is drawn: what was on for it goes off. */
+	public void endScene()
 	{
-		if (samples == 0)
-		{
-			return;
-		}
-		glBindFramebuffer(GL_READ_FRAMEBUFFER, fboScene);
-		glBindFramebuffer(GL_DRAW_FRAMEBUFFER, fboAlpha);
-		glReadBuffer(GL_COLOR_ATTACHMENT2);
-		glBlitFramebuffer(0, 0, width, height, 0, 0, width, height, GL_COLOR_BUFFER_BIT, GL_NEAREST);
-		glReadBuffer(GL_COLOR_ATTACHMENT0);
+		alphaToCoverage(false);
 	}
 
 	/**
@@ -445,6 +419,28 @@ public class SceneTargets
 		glClearBufferfv(GL_COLOR, 3, TRANSPARENT);
 		glClearBufferfv(GL_DEPTH, 0, FAR_DEPTH);
 		glDrawBuffers(OPAQUE_BUFFERS);
+		alphaToCoverage(true);
+	}
+
+	/**
+	 * Alpha to coverage, under MSAA in the opaque pass: frag.glsl gives a cut-out texture's edge the share of the
+	 * samples it covers in the color's alpha; every other opaque face writes 1, all its samples. Off in the
+	 * transparency pass, whose alpha is its blend, and after the scene.
+	 */
+	private void alphaToCoverage(boolean on)
+	{
+		if (samples == 0)
+		{
+			return;
+		}
+		if (on)
+		{
+			glEnable(GL_SAMPLE_ALPHA_TO_COVERAGE);
+		}
+		else
+		{
+			glDisable(GL_SAMPLE_ALPHA_TO_COVERAGE);
+		}
 	}
 
 	/**
@@ -453,6 +449,7 @@ public class SceneTargets
 	public void setAlphaPass(boolean alpha)
 	{
 		glDrawBuffers(alpha ? ALPHA_BUFFERS : OPAQUE_BUFFERS);
+		alphaToCoverage(!alpha);
 	}
 
 	public void bindMaterial(int unit)
@@ -472,7 +469,14 @@ public class SceneTargets
 	public void bindAlphaLayer(int unit)
 	{
 		glActiveTexture(GL_TEXTURE0 + unit);
-		glBindTexture(GL_TEXTURE_2D, texAlpha);
+		glBindTexture(target, texAlpha);
+		glActiveTexture(GL_TEXTURE0);
+	}
+
+	public void unbindAlphaLayer(int unit)
+	{
+		glActiveTexture(GL_TEXTURE0 + unit);
+		glBindTexture(target, 0);
 		glActiveTexture(GL_TEXTURE0);
 	}
 

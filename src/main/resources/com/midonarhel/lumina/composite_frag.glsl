@@ -50,7 +50,7 @@ uniform sampler2D cloudHalf;
 
 #define TILE_SIZE 128.0
 
-uniform sampler2D sceneAlpha;  // transparent geometry, already lit, premultiplied
+uniform SCENE_SAMPLER sceneAlpha;  // transparent geometry, already lit, premultiplied; with MSAA per sample
 uniform SCENE_SAMPLER sceneMaterial;  // the material and the face's normal (material_target.glsl)
 #include debug_view
 uniform int aoEnabled;
@@ -533,16 +533,19 @@ bool twoSurfaces(ivec2 px) {
   return false;
 }
 #elif COMPOSITE_PASS == COMPOSITE_EDGES
-// the second surface, its share of the samples in alpha; none: discarded
-vec4 shadeSamples(ivec2 px, vec4 transparent) {
+// the second surface, its share of the samples in alpha; none: discarded. It lies under the transparent geometry of
+// its own samples, averaged.
+vec4 shadeSamples(ivec2 px) {
   SceneSample first = sceneSample(px, 0);
   float vz = viewDepth(first.depth);
   vec4 colors = vec4(0.0);
+  vec4 transparent = vec4(0.0);
   int count = 0;
   int other = -1;
   for (int t = 1; t < MSAA_SAMPLES; ++t) {
     if (!sameSurface(first, vz, px, t)) {
       colors += texelFetch(sceneColor, px, t);
+      transparent += texelFetch(sceneAlpha, px, t);
       ++count;
       other = other < 0 ? t : other;
     }
@@ -552,23 +555,27 @@ vec4 shadeSamples(ivec2 px, vec4 transparent) {
   }
   SceneSample second = sceneSample(px, other);
   second.color = colors / float(count);
-  return vec4(shadeScene(px, second, transparent).rgb, float(count) / float(MSAA_SAMPLES));
+  return vec4(shadeScene(px, second, transparent / float(count)).rgb, float(count) / float(MSAA_SAMPLES));
 }
-#else
-// the first surface
-vec4 shadeSamples(ivec2 px, vec4 transparent) {
+#elif COMPOSITE_PASS == COMPOSITE_FULL
+// the first surface; whether the pixel has a second, the edge pass's own test, marked in the depth (Composite.draw)
+// It lies under the transparent geometry of its own samples, averaged.
+vec4 shadeSamples(ivec2 px) {
   SceneSample first = sceneSample(px, 0);
   float vz = viewDepth(first.depth);
   vec4 colors = first.color;
+  vec4 transparent = texelFetch(sceneAlpha, px, 0);
   int count = 1;
   for (int t = 1; t < MSAA_SAMPLES; ++t) {
     if (sameSurface(first, vz, px, t)) {
       colors += texelFetch(sceneColor, px, t);
+      transparent += texelFetch(sceneAlpha, px, t);
       ++count;
     }
   }
+  gl_FragDepth = count < MSAA_SAMPLES ? 1.0 : 0.0;
   first.color = colors / float(count);
-  return shadeScene(px, first, transparent);
+  return shadeScene(px, first, transparent / float(count));
 }
 #endif
 #endif
@@ -592,12 +599,12 @@ void main() {
 #endif
 #else
   ivec2 px = ivec2(gl_FragCoord.xy);
-  // transparent geometry over this pixel (drawn as MSAA samples, resolved: it is lit as it is drawn)
-  vec4 transparent = texelFetch(sceneAlpha, px, 0);
 #if MSAA_SAMPLES > 0
-  FragColor = shadeSamples(px, transparent);
+  // each surface under its own samples' transparent geometry
+  FragColor = shadeSamples(px);
 #else
-  FragColor = shadeScene(px, sceneSample(px, 0), transparent);
+  // transparent geometry over this pixel (lit as it is drawn)
+  FragColor = shadeScene(px, sceneSample(px, 0), texelFetch(sceneAlpha, px, 0));
 #endif
 #endif
 }
