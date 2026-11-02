@@ -185,6 +185,20 @@ public class WeatherRegionsRaster
 					fallback.merge(b.toLowerCase() + (island ? " island" : " mainland") + " near " + nearest(x, y), 1,
 						Integer::sum);
 				}
+				biome[cy][cx] = b;
+			}
+		}
+		snap(biome, sea, ImageIO.read(new File(System.getProperty("lumina.raster.world"))), terrain, cw, ch);
+		for (int cy = 0; cy < ch; ++cy)
+		{
+			for (int cx = 0; cx < cw; ++cx)
+			{
+				if (sea[cy][cx])
+				{
+					continue;
+				}
+				int x = X0 + cx * CHUNK + CHUNK / 2, y = Y0 + cy * CHUNK + CHUNK / 2;
+				String b = biome[cy][cx];
 				// snowy terrain is snowy weather
 				float sn = 0, ln = 0;
 				for (int dy = -1; dy <= 1; ++dy)
@@ -278,6 +292,243 @@ public class WeatherRegionsRaster
 		{
 			draw(ImageIO.read(new File(System.getProperty("lumina.raster.world"))), biome, fallback, mapPath);
 		}
+	}
+
+	// how far (chunks) a land border drawn as a rectangle may move to meet the terrain's own edge
+	static final int SNAP = 14;
+	// where borders snap (world x0, y0, x1, y1): the rectangles that showed on the approved map, around the Gnome
+	// Stronghold, Tirannwn (Lletya, Port Tyras, Castle Wars), Hosidius and Corsair Cove; borders elsewhere stay as drawn
+	static final int[][] SNAP_AREAS = {{2300, 3330, 2640, 3600}, {2100, 3000, 2460, 3520}, {1640, 3360, 1900, 3640},
+		{2280, 2700, 2720, 2940}};
+	// the borders that stay where the regions file puts them: the Wilderness ditch, the River Salve
+	static final List<String> FIXED = List.of("WILDERNESS", "MORYTANIA_SWAMP");
+	// what crossing from one chunk to the next costs on top of the step: a change of ground colour (0..1, the largest
+	// channel's, over 3 x 3 chunks, above what a ground's own texture leaves), and water
+	static final float COLOUR_COST = 60, COLOUR_NOISE = 0.02f, WATER_COST = 8;
+
+	/**
+	 * The regions file draws its regions as rectangles, so their borders run straight across the land. Within SNAP
+	 * chunks of a border, every land chunk is given again to whichever region reaches it most cheaply from that
+	 * region's chunks further in, where a step costs more across a change of ground colour or water: the border
+	 * settles on the strongest edge between them (the forest's end, the river), and the regions keep their extent
+	 * elsewhere. Only within SNAP_AREAS. A region narrower than twice SNAP keeps its innermost chunks, so none vanish.
+	 */
+	private static void snap(String[][] biome, boolean[][] sea, BufferedImage world, BufferedImage terrain, int cw, int ch)
+	{
+		float[][][] rgb = new float[ch][cw][3];
+		float[][] water = new float[ch][cw];
+		for (int cy = 0; cy < ch; ++cy)
+		{
+			for (int cx = 0; cx < cw; ++cx)
+			{
+				int w = 0;
+				for (int ty = 0; ty < CHUNK; ++ty)
+				{
+					for (int tx = 0; tx < CHUNK; ++tx)
+					{
+						int px = cx * CHUNK + tx, py = Y1 - Y0 - 1 - (cy * CHUNK + ty);
+						int c = world.getRGB(px, py);
+						rgb[cy][cx][0] += (c >> 16 & 255) / 255f / (CHUNK * CHUNK);
+						rgb[cy][cx][1] += (c >> 8 & 255) / 255f / (CHUNK * CHUNK);
+						rgb[cy][cx][2] += (c & 255) / 255f / (CHUNK * CHUNK);
+						w += (terrain.getRGB(px, py) & 0xFFFFFF) == WATER ? 1 : 0;
+					}
+				}
+				water[cy][cx] = w / (float) (CHUNK * CHUNK);
+			}
+		}
+		// each chunk's distance in chunks (8 ways) from a border it may move across
+		int[][] dist = new int[ch][cw];
+		java.util.ArrayDeque<int[]> q = new java.util.ArrayDeque<>();
+		for (int cy = 0; cy < ch; ++cy)
+		{
+			for (int cx = 0; cx < cw; ++cx)
+			{
+				dist[cy][cx] = Integer.MAX_VALUE;
+				if (movable(biome, sea, cx, cy))
+				{
+					for (int dy = -1; dy <= 1 && dist[cy][cx] != 0; ++dy)
+					{
+						for (int dx = -1; dx <= 1; ++dx)
+						{
+							int yy = cy + dy, xx = cx + dx;
+							if (yy >= 0 && xx >= 0 && yy < ch && xx < cw && movable(biome, sea, xx, yy)
+								&& !biome[yy][xx].equals(biome[cy][cx]))
+							{
+								dist[cy][cx] = 0;
+								q.add(new int[]{cx, cy});
+								break;
+							}
+						}
+					}
+				}
+			}
+		}
+		while (!q.isEmpty())
+		{
+			int[] p = q.poll();
+			for (int dy = -1; dy <= 1; ++dy)
+			{
+				for (int dx = -1; dx <= 1; ++dx)
+				{
+					int nx = p[0] + dx, ny = p[1] + dy;
+					if (nx >= 0 && ny >= 0 && nx < cw && ny < ch && movable(biome, sea, nx, ny)
+						&& dist[ny][nx] == Integer.MAX_VALUE)
+					{
+						dist[ny][nx] = dist[p[1]][p[0]] + 1;
+						q.add(new int[]{nx, ny});
+					}
+				}
+			}
+		}
+		// each region's (connected, same biome) innermost distance, so a narrow one keeps a core
+		int[][] part = new int[ch][cw];
+		List<Integer> deepest = new ArrayList<>();
+		deepest.add(0);
+		for (int cy = 0; cy < ch; ++cy)
+		{
+			for (int cx = 0; cx < cw; ++cx)
+			{
+				if (!movable(biome, sea, cx, cy) || part[cy][cx] != 0)
+				{
+					continue;
+				}
+				int id = deepest.size(), m = 0;
+				part[cy][cx] = id;
+				q.add(new int[]{cx, cy});
+				while (!q.isEmpty())
+				{
+					int[] p = q.poll();
+					m = Math.max(m, dist[p[1]][p[0]]);
+					for (int[] d : new int[][]{{1, 0}, {-1, 0}, {0, 1}, {0, -1}})
+					{
+						int nx = p[0] + d[0], ny = p[1] + d[1];
+						if (nx >= 0 && ny >= 0 && nx < cw && ny < ch && movable(biome, sea, nx, ny) && part[ny][nx] == 0
+							&& biome[ny][nx].equals(biome[cy][cx]))
+						{
+							part[ny][nx] = id;
+							q.add(new int[]{nx, ny});
+						}
+					}
+				}
+				deepest.add(m);
+			}
+		}
+		// the ground's colour over 3 x 3 chunks, so a forest's texture is not an edge but the forest's end is
+		float[][][] smooth = new float[ch][cw][3];
+		for (int cy = 0; cy < ch; ++cy)
+		{
+			for (int cx = 0; cx < cw; ++cx)
+			{
+				int n = 0;
+				for (int dy = -1; dy <= 1; ++dy)
+				{
+					for (int dx = -1; dx <= 1; ++dx)
+					{
+						int yy = cy + dy, xx = cx + dx;
+						if (yy >= 0 && xx >= 0 && yy < ch && xx < cw && !sea[yy][xx])
+						{
+							for (int k = 0; k < 3; ++k)
+							{
+								smooth[cy][cx][k] += rgb[yy][xx][k];
+							}
+							n++;
+						}
+					}
+				}
+				for (int k = 0; k < 3; ++k)
+				{
+					smooth[cy][cx][k] /= Math.max(n, 1);
+				}
+			}
+		}
+		// every region spreads from its core at a cost of a step plus the edges it crosses, so regions meet on the
+		// strongest edge between their cores, or halfway where the ground shows none
+		String[][] label = new String[ch][cw];
+		java.util.PriorityQueue<float[]> open = new java.util.PriorityQueue<>((a, b) -> Float.compare(a[0], b[0]));
+		for (int cy = 0; cy < ch; ++cy)
+		{
+			for (int cx = 0; cx < cw; ++cx)
+			{
+				if (movable(biome, sea, cx, cy)
+					&& (dist[cy][cx] >= Math.min(SNAP, deepest.get(part[cy][cx])) || !snaps(cx, cy)))
+				{
+					label[cy][cx] = biome[cy][cx];
+				}
+			}
+		}
+		for (int cy = 0; cy < ch; ++cy)
+		{
+			for (int cx = 0; cx < cw; ++cx)
+			{
+				if (label[cy][cx] != null)
+				{
+					edges(open, smooth, water, biome, sea, label, 0, cx, cy, cw, ch);
+				}
+			}
+		}
+		while (!open.isEmpty())
+		{
+			float[] p = open.poll();
+			int fx = (int) p[1], fy = (int) p[2], nx = (int) p[3], ny = (int) p[4];
+			if (label[ny][nx] != null)
+			{
+				continue;
+			}
+			label[ny][nx] = label[fy][fx];
+			edges(open, smooth, water, biome, sea, label, p[0], nx, ny, cw, ch);
+		}
+		int moved = 0;
+		for (int cy = 0; cy < ch; ++cy)
+		{
+			for (int cx = 0; cx < cw; ++cx)
+			{
+				if (snaps(cx, cy) && label[cy][cx] != null && !label[cy][cx].equals(biome[cy][cx]))
+				{
+					biome[cy][cx] = label[cy][cx];
+					moved++;
+				}
+			}
+		}
+		System.out.println("borders snapped to the terrain: " + moved + " chunks moved");
+	}
+
+	private static void edges(java.util.PriorityQueue<float[]> open, float[][][] colour, float[][] water,
+		String[][] biome, boolean[][] sea, String[][] label, float cost, int cx, int cy, int cw, int ch)
+	{
+		for (int[] d : new int[][]{{1, 0}, {-1, 0}, {0, 1}, {0, -1}})
+		{
+			int nx = cx + d[0], ny = cy + d[1];
+			if (nx < 0 || ny < 0 || nx >= cw || ny >= ch || !movable(biome, sea, nx, ny) || label[ny][nx] != null)
+			{
+				continue;
+			}
+			float e = 0;
+			for (int k = 0; k < 3; ++k)
+			{
+				e = Math.max(e, Math.abs(colour[ny][nx][k] - colour[cy][cx][k]));
+			}
+			open.add(new float[]{cost + 1 + COLOUR_COST * Math.max(0, e - COLOUR_NOISE) + WATER_COST * water[ny][nx],
+				cx, cy, nx, ny});
+		}
+	}
+
+	private static boolean snaps(int cx, int cy)
+	{
+		int x = X0 + cx * CHUNK + CHUNK / 2, y = Y0 + cy * CHUNK + CHUNK / 2;
+		for (int[] a : SNAP_AREAS)
+		{
+			if (x >= a[0] && y >= a[1] && x < a[2] && y < a[3])
+			{
+				return true;
+			}
+		}
+		return false;
+	}
+
+	private static boolean movable(String[][] biome, boolean[][] sea, int cx, int cy)
+	{
+		return !sea[cy][cx] && !FIXED.contains(biome[cy][cx]);
 	}
 
 	// how far (chunks) the seas' borders are smoothed each way
