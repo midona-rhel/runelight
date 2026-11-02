@@ -52,6 +52,7 @@ public final class IndexStats
 				}
 			}
 			double[] ms = new double[15];
+			IntBuffer direct = null;
 			for (int run = -3; run < ms.length; ++run)
 			{
 				long t0 = System.nanoTime();
@@ -61,7 +62,15 @@ public final class IndexStats
 					{
 						if (s.vertsO != null)
 						{
-							ix.write(s.vertsO, s.vertsO.length, IntBuffer.allocate(Math.max(s.sizeO * 3 * 6, s.vertsO.length)));
+							int cap = Math.max(s.sizeO * 3 * 6, s.vertsO.length);
+							if (direct == null || direct.capacity() < cap)
+							{
+								// as the upload writes it: into a mapping, native order, direct
+								direct = java.nio.ByteBuffer.allocateDirect(cap * 4).order(java.nio.ByteOrder.nativeOrder()).asIntBuffer();
+							}
+							IntBuffer out = direct.duplicate();
+							out.limit(cap);
+							ix.write(s.vertsO, s.vertsO.length, out.slice());
 						}
 					}
 				}

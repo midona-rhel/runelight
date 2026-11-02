@@ -40,6 +40,9 @@ public final class ZoneIndexer
 	private int[] table = new int[0];
 	private int[] first = new int[0];
 	private int[] indices = new int[0];
+	// what is written, assembled here and put in one copy: put vertex by vertex into a mapped (direct) buffer cost as
+	// much as the indexing
+	private int[] written = new int[0];
 
 	/**
 	 * Write the stream (ints [0, length) of stream, whole vertices) into out from position 0, indexed if that fits
@@ -97,22 +100,29 @@ public final class ZoneIndexer
 			r.ints = n * INTS;
 			return r;
 		}
+		int total = u * INTS + indexInts;
+		if (written.length < total)
+		{
+			written = new int[total];
+		}
 		for (int j = 0; j < u; ++j)
 		{
-			out.put(stream, first[j] * INTS, INTS);
+			System.arraycopy(stream, first[j] * INTS, written, j * INTS, INTS);
 		}
+		int w = u * INTS;
 		if (shorts)
 		{
 			for (int i = 0; i < n; i += 2)
 			{
 				int a = indices[i], b = i + 1 < n ? indices[i + 1] : 0;
-				out.put(LITTLE ? (a & 0xffff) | b << 16 : a << 16 | (b & 0xffff));
+				written[w++] = LITTLE ? (a & 0xffff) | b << 16 : a << 16 | (b & 0xffff);
 			}
 		}
 		else
 		{
-			out.put(indices, 0, n);
+			System.arraycopy(indices, 0, written, w, n);
 		}
+		out.put(written, 0, total);
 		r.indexType = shorts ? GL_UNSIGNED_SHORT : GL_UNSIGNED_INT;
 		r.vertices = u;
 		r.indexOffset = u * Zone.VERT_SIZE;
