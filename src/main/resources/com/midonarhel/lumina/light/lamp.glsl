@@ -78,13 +78,18 @@ struct Lamp {
   int cube;      // its shadow cube's slot (LampCubes, light/lamp_cube.glsl), -1: none, or not drawn yet
 };
 
-// the second texel's w: the walls code plus 16 times the cube's slot + 1 (LightClusters)
+// the second texel's w: the walls code, plus 16 times the cube's slot + 1, plus 2048 for a lamp on a storey the
+// client hides (LightClusters)
 int lampWallsCode(float w) {
   return ((int(w) + 1) & 15) - 1;
 }
 
 int lampCubeCode(float w) {
-  return ((int(w) + 1) >> 4) - 1;
+  return (((int(w) + 1) >> 4) & 127) - 1;
+}
+
+bool lampHiddenCode(float w) {
+  return ((int(w) + 1) & 2048) != 0;
 }
 
 // A lamp's first texel: its camera-relative position and radius, all that says whether it reaches a point; the other

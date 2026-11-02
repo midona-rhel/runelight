@@ -271,7 +271,7 @@ vec3 lampGlow(ivec2 px, vec3 dir, float tEnd, float density, float jitter) {
       float s0 = a + float(j) * part;
       vec3 q = dir * (FOG_LAMP_PIECES == 1 ? clamp(tc, a, b) : s0 + jitter * part);
       // its shadow cube; a lamp without one, its walls and the drawn roofs
-      float open = lampCubeOpen(lamp, q, jitter);
+      float open = lampCubeOpen(lamp, q, jitter, LAMP_CUBE_SOFT);
       if (open < 0.0) {
         open = lampWallsOpen(lamp, q, q, true) * (lampRoofsOpen(q, lamp) ? 1.0 : 0.0);
       }

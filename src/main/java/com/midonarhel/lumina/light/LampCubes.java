@@ -32,7 +32,7 @@ public final class LampCubes
 	public static final int GUARD = 4;
 	public static final float TAN_HALF = FACE / (float) (FACE - 2 * GUARD);
 	// nothing nearer the lamp than this casts (its own bracket, the flame's model if it isn't emissive)
-	public static final float NEAR = 24;
+	public static final float NEAR = 4;
 	// the most lamps drawn a frame (each about 0.1 ms of the GPU's and of the CPU's, fps1): after a roof is hidden or
 	// shown, or a scene loads, the cubes come back over a few frames, the nearest first; until its cube is drawn a
 	// lamp's glow is stopped by its walls and the drawn roofs (fog_frag.glsl), which already know the change
@@ -100,7 +100,7 @@ public final class LampCubes
 	{
 		depth = glGenTextures();
 		glBindTexture(GL_TEXTURE_2D, depth);
-		glTexImage2D(GL_TEXTURE_2D, 0, GL_DEPTH_COMPONENT16, WIDTH, HEIGHT, 0, GL_DEPTH_COMPONENT, GL_UNSIGNED_SHORT,
+		glTexImage2D(GL_TEXTURE_2D, 0, GL_DEPTH_COMPONENT24, WIDTH, HEIGHT, 0, GL_DEPTH_COMPONENT, GL_UNSIGNED_INT,
 			(java.nio.ByteBuffer) null);
 		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
 		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
@@ -167,7 +167,7 @@ public final class LampCubes
 	}
 
 	/** During the cull, lamp index i kept: its slot if its cube is drawn, else -1 (it waits, or there is no slot). */
-	int slotFor(PointLight l, int i)
+	int slotFor(PointLight l, int i, float originX, float originZ)
 	{
 		slotOfIndex[i] = -1;
 		if (!active)
@@ -197,9 +197,11 @@ public final class LampCubes
 		{
 			return s;
 		}
-		drawnFor[s * 4] = l.x;
+		// seen from its origin (LampWalls.origin: off the walls it hangs on, as its lines start), at its height: a wall
+		// lamp at its own wall's face would have that wall nearer than NEAR and cut away, and light through it
+		drawnFor[s * 4] = originX;
 		drawnFor[s * 4 + 1] = l.y;
-		drawnFor[s * 4 + 2] = l.z;
+		drawnFor[s * 4 + 2] = originZ;
 		drawnFor[s * 4 + 3] = Math.abs(l.radius);
 		// its distance from the camera and its index, to draw the nearest first
 		float dx = l.x - camX, dy = l.y - camY, dz = l.z - camZ;

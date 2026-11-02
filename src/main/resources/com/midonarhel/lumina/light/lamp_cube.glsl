@@ -7,18 +7,21 @@ uniform sampler2DShadow lampCubeAtlas;
 #define LAMP_CUBE_COLS 10
 #define LAMP_CUBE_SIZE vec2(3840.0, 2048.0)
 #define LAMP_CUBE_TAN_HALF (128.0 / 120.0)
-#define LAMP_CUBE_NEAR 24.0
-// the taps' circle, in texels: the shadow's edge soft over about twice it
+#define LAMP_CUBE_NEAR 4.0
+// the taps' circle, in texels: the shadow's edge soft over about twice it; the fog's (its denoise smooths the rest)
+// and the surfaces' (tight: a wall's foot and a jamb's edge as sharp as the wall's line)
 #define LAMP_CUBE_SOFT 2.0
+#define LAMP_CUBE_SOFT_SURFACE 0.75
 
-// How much of the lamp its shadow cube lets reach camera-relative point q: four filtered taps on a circle turned by
-// turn (0 to 1: the fog's jitter, which its denoise smooths; a fixed turn on a surface), so the edge is soft. -1 where
-// the lamp has no cube.
-float lampCubeOpen(Lamp lamp, vec3 q, float turn) {
+// How much of the lamp its shadow cube lets reach camera-relative point q: four filtered taps on a circle of soft
+// texels turned by turn (0 to 1: the fog's jitter, which its denoise smooths; a fixed turn on a surface). -1 where the
+// lamp has no cube.
+float lampCubeOpen(Lamp lamp, vec3 q, float turn, float soft) {
   if (lamp.cube < 0) {
     return -1.0;
   }
-  vec3 v = q - lamp.pos;
+  // from its origin, at its height (LampCubes draws it from there)
+  vec3 v = q - vec3(lamp.origin.x, lamp.pos.y, lamp.origin.y);
   vec3 a = abs(v);
   int face;
   vec2 xy;
@@ -49,7 +52,7 @@ float lampCubeOpen(Lamp lamp, vec3 q, float turn) {
   float d = depthZeroToOne == 1 ? far / (far - n) - far * n / ((far - n) * zr)
     : 0.5 * ((far + n) / (far - n) - 2.0 * far * n / ((far - n) * zr)) + 0.5;
   float t = turn * 6.28318531;
-  vec2 o = LAMP_CUBE_SOFT * vec2(cos(t), sin(t));
+  vec2 o = soft * vec2(cos(t), sin(t));
   float sum = 0.0;
   for (int k = 0; k < 4; ++k) {
     vec2 p = clamp(texel + o, vec2(1.0), vec2(float(LAMP_CUBE_FACE) - 1.0));
