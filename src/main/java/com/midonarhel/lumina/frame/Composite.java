@@ -631,9 +631,22 @@ public final class Composite
 		final int target = upscale ? plugin.upscaler.getFbo() : plugin.windowFramebuffer();
 		glBindFramebuffer(GL_FRAMEBUFFER, target);
 		final boolean edges = plugin.shaderSamples > 0;
-		final boolean stencil = edges && (upscale || target == 0 && plugin.hasWindowStencil());
+		// The pixels with a second surface, which the edge pass shades: in the upscaler's target the full pass marks
+		// them in its depth as it tells its samples apart (composite_frag.glsl: 1 there, 0 elsewhere), and the edge
+		// pass is depth tested against that, so its full shading never starts on the others. In the window, which may
+		// have a stencil but no depth, a small pass marks them in the stencil first; without either the edge pass
+		// discards them itself.
+		final boolean depthMarked = edges && upscale;
+		final boolean stencil = edges && !upscale && target == 0 && plugin.hasWindowStencil();
 		glViewport(0, 0, sceneWidth, sceneHeight);
-		glClear(stencil ? GL_COLOR_BUFFER_BIT | GL_STENCIL_BUFFER_BIT : GL_COLOR_BUFFER_BIT);
+		// depth and stencil are one attachment, cleared together so neither is loaded
+		glClear(depthMarked ? GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT | GL_STENCIL_BUFFER_BIT
+			: stencil ? GL_COLOR_BUFFER_BIT | GL_STENCIL_BUFFER_BIT : GL_COLOR_BUFFER_BIT);
+		if (depthMarked)
+		{
+			glEnable(GL_DEPTH_TEST);
+			glDepthFunc(GL_ALWAYS);
+		}
 		if (passTimers != null)
 		{
 			glBeginQuery(GL_TIME_ELAPSED, passTimers[1]);
@@ -645,6 +658,12 @@ public final class Composite
 		if (edges)
 		{
 			com.midonarhel.lumina.dev.GpuSections.section("composite mark (MSAA)");
+			if (depthMarked)
+			{
+				// the edge pass's triangle lies at depth 0.5 (or 0 with a zero-to-one clip): less than the marks' 1 only
+				glDepthFunc(GL_LESS);
+				glDepthMask(false);
+			}
 			if (stencil)
 			{
 				// the pixels with a second surface, by a small program, so the edge pass's full shading never starts
@@ -668,6 +687,13 @@ public final class Composite
 			glDrawArrays(GL_TRIANGLES, 0, 3);
 			glDisable(GL_BLEND);
 			glDisable(GL_STENCIL_TEST);
+		}
+		if (depthMarked)
+		{
+			// as the scene leaves it
+			glDepthMask(true);
+			glDepthFunc(GL_GREATER);
+			glDisable(GL_DEPTH_TEST);
 		}
 		glActiveTexture(GL_TEXTURE0 + COMPOSITE_PARTS_UNIT);
 		glBindTexture(GL_TEXTURE_2D_ARRAY, 0);

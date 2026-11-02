@@ -554,8 +554,8 @@ vec4 shadeSamples(ivec2 px, vec4 transparent) {
   second.color = colors / float(count);
   return vec4(shadeScene(px, second, transparent).rgb, float(count) / float(MSAA_SAMPLES));
 }
-#else
-// the first surface
+#elif COMPOSITE_PASS == COMPOSITE_FULL
+// the first surface; whether the pixel has a second, the edge pass's own test, marked in the depth (Composite.draw)
 vec4 shadeSamples(ivec2 px, vec4 transparent) {
   SceneSample first = sceneSample(px, 0);
   float vz = viewDepth(first.depth);
@@ -567,6 +567,7 @@ vec4 shadeSamples(ivec2 px, vec4 transparent) {
       ++count;
     }
   }
+  gl_FragDepth = count < MSAA_SAMPLES ? 1.0 : 0.0;
   first.color = colors / float(count);
   return shadeScene(px, first, transparent);
 }
