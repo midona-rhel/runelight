@@ -239,6 +239,28 @@ public final class DumpRenderer implements AutoCloseable
 					zones[x][z] = new Zone();
 				}
 			}
+			// the water's beds drawn again by this tree's SceneUploader from the tiles the dump keeps (-Dbench.beds): a change
+			// to their colours shows here before the client
+			if (Boolean.getBoolean("bench.beds") && view[0] == WorldView.TOPLEVEL && d.get("waterMap") != null)
+			{
+				Object kept = d.get("scene.tiles");
+				if (kept == null)
+				{
+					System.out.println("BEDREDRAW: the dump keeps no tiles (taken before SceneTiles): its beds as drawn");
+				}
+				else
+				{
+					try
+					{
+						System.out.println(com.midonarhel.lumina.scene.BedRedraw.apply(dump.zones.get(v), d,
+							(com.midonarhel.lumina.dev.SceneTiles) kept, (WaterMap) d.get("waterMap")));
+					}
+					catch (ReflectiveOperationException e)
+					{
+						throw new IllegalStateException(e);
+					}
+				}
+			}
 			for (ZoneSnapshot s : dump.zones.get(v))
 			{
 				s.restore(zones[s.x][s.z], plugin.sceneLoader);
