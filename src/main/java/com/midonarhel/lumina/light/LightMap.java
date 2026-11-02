@@ -117,6 +117,11 @@ public final class LightMap
 		boolean[][] holds;
 		// the slot its cells are in
 		int slot;
+		// a bake done and waiting to be held (holdBaked), the generation it was baked for, and whether the light is in
+		// the list of those waiting
+		LightMapBake.Grid[] baked;
+		int bakedGeneration;
+		boolean waiting;
 		int[] needKeys = new int[0], needSeqs = new int[0];
 		// whether the map carries the light: its blocks have been sent; and since when (LayerEase: the map's share of
 		// the light eases in from then, the clusters keep the rest)
@@ -262,6 +267,8 @@ public final class LightMap
 	private boolean sceneLoad;
 	private long sceneLoadNanos;
 	private int bakesPending, combinesQueued;
+	// the lights whose bakes are done and wait for the others' to be held (holdBaked)
+	private final List<Source> toHold = new ArrayList<>();
 	// whether the first bakes of a scene wait for its models, since when, and when the work they held began
 	private float maxRadius;
 	private boolean holding;
@@ -731,9 +738,12 @@ public final class LightMap
 			s.generation++;
 			s.grids = null;
 			s.holds = null;
+			s.baked = null;
+			s.waiting = false;
 			s.id = 0;
 		}
 		sources.clear();
+		toHold.clear();
 		for (short[] cells : holder)
 		{
 			Arrays.fill(cells, (short) 0);
@@ -990,15 +1000,12 @@ public final class LightMap
 						}
 						return;
 					}
-					dirty(s.grids, r.grids);
-					unhold(s);
-					hold(s, r.grids);
-					s.grids = r.grids;
-					s.needKeys = keysOf(r.grids);
-					s.needSeqs = new int[s.needKeys.length];
-					for (int i = 0; i < s.needKeys.length; ++i)
+					s.baked = r.grids;
+					s.bakedGeneration = gen;
+					if (!s.waiting)
 					{
-						s.needSeqs[i] = seq[s.needKeys[i]];
+						s.waiting = true;
+						toHold.add(s);
 					}
 				}
 			}
@@ -1007,10 +1014,102 @@ public final class LightMap
 		{
 			synchronized (lock)
 			{
-				bakesPending--;
+				if (--bakesPending == 0)
+				{
+					holdBaked();
+				}
 			}
 		}
 	}
+
+	/**
+	 * Give the lights baked since the map was last idle their cells (the lock is held), once every bake asked for is
+	 * done: every light on the map lets go of its cells and takes them again, brightest first (its luminance times its
+	 * reach, then its place), the new bakes with theirs. Which light keeps a contested cell, and in which slot, then
+	 * depends on the lights and their bakes alone, not on the order the threads finished them in or on how a scene's
+	 * lights came in over its frames (taking each bake's cells as it was done made a lamp cluster light differently from
+	 * one scene load to the next). The blocks whose lights' cells changed are put together again.
+	 */
+	private void holdBaked()
+	{
+		if (toHold.isEmpty())
+		{
+			return;
+		}
+		Set<Source> fresh = new HashSet<>();
+		for (Source s : toHold)
+		{
+			s.waiting = false;
+			if (s.retired || s.generation != s.bakedGeneration || s.baked == null)
+			{
+				// baked for a scene or a place it is no longer in
+				s.baked = null;
+				continue;
+			}
+			fresh.add(s);
+		}
+		toHold.clear();
+		if (fresh.isEmpty())
+		{
+			return;
+		}
+		List<Source> all = new ArrayList<>();
+		for (Source s : sources)
+		{
+			if (fresh.contains(s) || s.grids != null && s.holds != null)
+			{
+				all.add(s);
+			}
+		}
+		all.sort(HOLD_ORDER);
+		int n = all.size();
+		int[] oldSlot = new int[n];
+		boolean[][][] oldHolds = new boolean[n][][];
+		for (int i = 0; i < n; ++i)
+		{
+			Source s = all.get(i);
+			oldSlot[i] = s.slot;
+			oldHolds[i] = s.holds;
+			unhold(s);
+		}
+		for (Source s : all)
+		{
+			if (fresh.contains(s))
+			{
+				LightMapBake.Grid[] grids = s.baked;
+				s.baked = null;
+				dirty(s.grids, grids);
+				s.grids = grids;
+			}
+			hold(s, s.grids);
+		}
+		for (int i = 0; i < n; ++i)
+		{
+			Source s = all.get(i);
+			if (fresh.contains(s))
+			{
+				s.needKeys = keysOf(s.grids);
+				s.needSeqs = new int[s.needKeys.length];
+				for (int k = 0; k < s.needKeys.length; ++k)
+				{
+					s.needSeqs[k] = seq[s.needKeys[k]];
+				}
+			}
+			else if (s.slot != oldSlot[i] || !Arrays.deepEquals(s.holds, oldHolds[i]))
+			{
+				dirty(s.grids, null);
+			}
+		}
+	}
+
+	/** The order lights take their cells in: the brightest (luminance times reach) first, then by place. */
+	private static final java.util.Comparator<Source> HOLD_ORDER = java.util.Comparator
+		.comparingDouble((Source s) -> -luminance(s) * s.radius)
+		.thenComparingInt(s -> s.plane)
+		.thenComparingDouble(s -> s.x)
+		.thenComparingDouble(s -> s.z)
+		.thenComparingDouble(s -> s.y)
+		.thenComparingDouble(s -> s.radius);
 
 	/**
 	 * Give the light its cells in a slot (the lock is held): the slot where the least light is lost, to the lights that hold

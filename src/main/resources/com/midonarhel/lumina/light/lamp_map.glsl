@@ -254,3 +254,30 @@ float lampMapVisibility(int id, vec3 p, vec3 wallFrom) {
   }
   return 0.0;
 }
+
+// How much of the lamp with table id id the map lets reach camera-relative point p in the air, cheaply: the cell p is
+// in, its layers filtered, no filter across the cells (the fog's glow: jittered along the ray and denoised, and the walls
+// looked for besides, lampWallsOpen). 0 where the map does not hold the lamp.
+float lampMapVisibilityNearest(int id, vec3 p) {
+  vec4 h = lampMapHeader();
+  if (h.x < 0.5) {
+    return 0.0;
+  }
+  vec3 w = p + cameraPos;
+  int plane = lampMapPlane(w, h);
+  ivec2 cell = ivec2(floor(w.xz * (1.0 / LAMP_MAP_CELL) + h.y));
+  uvec4 a, b;
+  if (!lampMapCell(cell, plane, h, a, b)) {
+    return 0.0;
+  }
+  ivec4 ids = lampMapIds(b);
+  int s = ids.x == id ? 0 : ids.y == id ? 1 : ids.z == id ? 2 : ids.w == id ? 3 : -1;
+  if (s < 0) {
+    return 0.0;
+  }
+  float height = lampMapFloors(cell >> 2, h)[plane] - w.y;
+  float layer = clamp(height * (1.0 / LIGHT_MAP_LAYER_HEIGHT) - 0.5, 0.0, float(LIGHT_MAP_LAYERS - 1));
+  int below = int(floor(layer));
+  int above = min(below + 1, LIGHT_MAP_LAYERS - 1);
+  return mix(lampMapLayer(a, b, below)[s], lampMapLayer(a, b, above)[s], layer - float(below));
+}

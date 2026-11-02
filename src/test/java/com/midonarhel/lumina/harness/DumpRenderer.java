@@ -355,6 +355,7 @@ public final class DumpRenderer implements AutoCloseable
 				Composite.cloudsEveryFrame = true;
 			}
 			long frameStart = System.nanoTime();
+			awaitReach();
 			frame();
 			if (i == frames)
 			{
@@ -386,6 +387,24 @@ public final class DumpRenderer implements AutoCloseable
 		System.out.printf("light map: baked %.0f ms after the first frame began, %.0f ms after it ended (%d bakes, %.0f ms of bake work, "
 			+ "%d blocks put together in %.0f ms)%n", (System.nanoTime() - start) / 1e6, (System.nanoTime() - waitFrom) / 1e6, stats[0],
 			stats[1] / 1e6, stats[2], stats[3] / 1e6);
+	}
+
+	/**
+	 * The lamps' reach maps (LampReach) asked for by a frame are baked on their thread while the client's frames go on,
+	 * the lamps walking their lines meanwhile: each frame waits for those the last asked for, so a render doesn't depend
+	 * on how fast they were.
+	 */
+	private void awaitReach()
+	{
+		long until = System.nanoTime() + 60_000_000_000L;
+		while (plugin.lightClusters.reachBusy())
+		{
+			if (System.nanoTime() > until)
+			{
+				throw new IllegalStateException("lamp reach: still baking after 60 s");
+			}
+			java.util.concurrent.locks.LockSupport.parkNanos(200_000);
+		}
 	}
 
 	/** One more frame at the dump's time (after a setting changed, say) and the result. */

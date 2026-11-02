@@ -39,13 +39,15 @@ public class LightClusters
 	public static final float FAR = 25600;
 	// the light buffer: four texels a lamp (lamp.glsl), then the rooms' fill (RoomLight.table, rooms.glsl), a texel per
 	// room id, x the fill's luminance, then the walls and ceilings that stop the lamps, now and before (LampWalls):
-	// 50511 texels, within the 65536 GL 3.3 promises a buffer texture. Then from LIGHT_MAP_BASE the light map
-	// (LightMapBuffer), as large as its blocks need: past 65536, as the cluster masks are, which macOS's GL takes.
+	// 50511 texels, within the 65536 GL 3.3 promises a buffer texture. Then from LAMP_REACH_BASE the lamps' reach maps
+	// (LampReach), and from LIGHT_MAP_BASE the light map (LightMapBuffer), as large as its blocks need: past 65536, as
+	// the cluster masks are, which macOS's GL takes.
 	static final int LAMP_TEXELS = 4;
 	public static final int ROOM_FILL_BASE = MAX_LIGHTS * LAMP_TEXELS;
 	public static final int LAMP_WALLS_BASE = ROOM_FILL_BASE + RoomMap.ANY;
 	public static final int LIGHT_TEXELS = LAMP_WALLS_BASE + LampWalls.LAYERS * LampWalls.LAYER_TEXELS;
-	public static final int LIGHT_MAP_BASE = LIGHT_TEXELS;
+	public static final int LAMP_REACH_BASE = LIGHT_TEXELS;
+	public static final int LIGHT_MAP_BASE = LAMP_REACH_BASE + LampReach.REGION_TEXELS;
 
 	private static final int CLUSTER_COUNT = CLUSTERS_X * CLUSTERS_Y * CLUSTERS_Z;
 	// Fog columns, stored after the clusters: per screen tile, the lights that glow in the fog anywhere along its
@@ -63,8 +65,10 @@ public class LightClusters
 	private final int[] lightBuffers = new int[SETS], lightTextures = new int[SETS];
 	private final int[] clusterBuffers = new int[SETS], clusterTextures = new int[SETS];
 	private int set;
-	// the walls that stop the lamps, for each lamp's walls code (null: none)
+	// the walls that stop the lamps, for each lamp's walls code (null: none), and each lamp's map of them
 	private LampWalls walls;
+	private final LampReach reach = new LampReach();
+	private final float[] reachOf = new float[2];
 	// the rooms' fill, and the version each copy of the buffer has
 	private RoomLight roomFill;
 	private final int[] uploadedFill = new int[SETS];
@@ -134,6 +138,7 @@ public class LightClusters
 			glTexBuffer(GL_TEXTURE_BUFFER, GL_RGBA32F, lightBuffers[i]);
 			uploadedFill[i] = -1;
 			uploadedWalls[i] = -1;
+			reach.invalidate(i);
 			if (lightMap != null)
 			{
 				lightMap.invalidate(i);
@@ -168,6 +173,13 @@ public class LightClusters
 			Arrays.fill(clusterTextures, 0);
 		}
 		boundsValid = false;
+		reach.free();
+	}
+
+	/** Whether lamps' maps of the walls are being baked (the offline renderer waits for them). */
+	public boolean reachBusy()
+	{
+		return reach.busy();
 	}
 
 	public boolean isInitialized()
@@ -261,6 +273,7 @@ public class LightClusters
 			boundsValid = true;
 		}
 		LampWalls lampWalls = walls;
+		reach.frame(lampWalls);
 
 		int n = Math.min(lights.size(), MAX_LIGHTS);
 		for (int i = 0; i < n; ++i)
@@ -311,14 +324,21 @@ public class LightClusters
 			{
 				lampWalls.origin(l.plane, l.ox, l.oz, origin);
 			}
+			int wallsCode = lampWalls != null ? lampWalls.wallsFor(l.plane, origin[0], origin[1], l.radius) : -1;
 			lightData.put(x).put(y).put(z).put(l.radius);
-			lightData.put(l.r * l.intensity).put(l.g * l.intensity).put(l.b * l.intensity)
-				.put(lampWalls != null ? lampWalls.wallsFor(l.plane, origin[0], origin[1], l.radius) : -1);
+			lightData.put(l.r * l.intensity).put(l.g * l.intensity).put(l.b * l.intensity).put(wallsCode);
 			// its storey's floor and ceiling; none known, far off
 			lightData.put(origin[0] - camX).put(origin[1] - camZ).put(clampY(l.floorY - camY)).put(clampY(l.ceilY - camY));
 			// its id in the light map (0: not on it, lit by the walls alone) and the map's share as it eases in
 			boolean mapped = l.mapId > 0 && lightMap != null;
-			lightData.put(mapped ? l.mapId : 0).put(mapped ? l.mapEase : 0).put(0).put(0);
+			// and its map of the walls (its first texel, 0: the shader walks) and the lowest roof in its reach
+			reachOf[0] = 0;
+			reachOf[1] = 0;
+			if (wallsCode >= 0)
+			{
+				reach.lookup(lampWalls, l.plane, origin[0], origin[1], l.radius, LAMP_REACH_BASE, reachOf);
+			}
+			lightData.put(mapped ? l.mapId : 0).put(mapped ? l.mapEase : 0).put(reachOf[0]).put(reachOf[1]);
 
 			if (fogColumns)
 			{
@@ -484,11 +504,13 @@ public class LightClusters
 			glBindTexture(GL_TEXTURE_BUFFER, 0);
 			uploadedFill[set] = -1;
 			uploadedWalls[set] = -1;
+			reach.invalidate(set);
 			if (map != null)
 			{
 				map.invalidate(set);
 			}
 		}
+		reach.upload(set, LAMP_REACH_BASE);
 		if (map != null)
 		{
 			map.upload(set, LIGHT_MAP_BASE);

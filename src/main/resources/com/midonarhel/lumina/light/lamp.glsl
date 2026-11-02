@@ -15,6 +15,10 @@
 // When the walls change (a door) the new ones ease in over 0.3 s (LayerEase): the layers of the walls before are kept,
 // and both are walked.
 //
+// A lamp that stands still doesn't walk: its walls are baked on the CPU into its reach map (light/LampReach.java), the
+// walls the rays round it meet, which a point reads instead (lampReachShare); the walk is for a lamp whose map isn't
+// baked yet and while walls ease in. Roofs are walked only for a line that could pass through one.
+//
 // The fixed lamps are baked into the light map besides (light/lamp_map.glsl): how much of the lamp the line of sight
 // from its disc, the light wrapping round corners, the blur, the models and the other storeys' openings let reach the
 // point. A lamp the map carries lights a point by the stricter of the map and the walls (lampOpen: the least of the two);
@@ -23,9 +27,11 @@
 // Needs cluster_config and cameraPos (world position of the camera); positions are camera-relative.
 
 // per lamp four texels: (position, radius), (colour times strength, the storey whose walls stop it or -1), (the
-// point its lines start from: x, z, its storey's floor y, ceiling y), (its id in the light map, 0: none, and the map's
-// share as it eases in); then the rooms' fill; then from LAMP_WALLS_BASE five layers of LAMP_WALL_LAYER_TEXELS: the walls
-// now and before, the ceilings now and before, the drawn roofs (LampWalls.java); then the light map (LightMapBuffer.java)
+// point its lines start from: x, z, its storey's floor y, ceiling y), (its id in the light map, 0: none, the map's
+// share as it eases in, its reach map's first texel, 0: none, the lowest drawn roof in its reach, as the roofs' layer
+// holds it); then the rooms' fill; then from LAMP_WALLS_BASE five layers of LAMP_WALL_LAYER_TEXELS: the walls now and
+// before, the ceilings now and before, the drawn roofs (LampWalls.java); then the lamps' reach maps (LampReach.java);
+// then the light map (LightMapBuffer.java)
 uniform samplerBuffer lightData;
 uniform usamplerBuffer clusterData;  // per cluster: a bit per lamp in view (light_clusters.glsl)
 uniform vec4 lampWallsHeader;        // now and before: tiles a side (0: no walls), extended tiles before local tile 0
@@ -68,6 +74,8 @@ struct Lamp {
   float ceilY;
   int mapId;     // its table id in the light map, 0 for a lamp the map doesn't carry
   float mapEase; // the map's share of its visibility, 0 to 1 as it eases in (the walls' alone the rest)
+  int reach;     // its reach map's first texel in lightData, 0: none (its lines are walked)
+  float roofLow; // the lowest drawn roof in its reach, world y plus LAMP_ROOF_BIAS; 0: none
 };
 
 Lamp lampAt(int li) {
@@ -75,7 +83,7 @@ Lamp lampAt(int li) {
   vec4 b = texelFetch(lightData, li * 4 + 1);
   vec4 c = texelFetch(lightData, li * 4 + 2);
   vec4 d = texelFetch(lightData, li * 4 + 3);
-  return Lamp(a.xyz, a.w, b.rgb, int(b.w), c.xy, c.z, c.w, int(d.x + 0.5), d.y);
+  return Lamp(a.xyz, a.w, b.rgb, int(b.w), c.xy, c.z, c.w, int(d.x + 0.5), d.y, int(d.z + 0.5), d.w);
 }
 
 // 117 HD's falloff, from the squared distance and the squared radius (below 1 inside it)
@@ -137,6 +145,115 @@ float lampWallTop(Lamp lamp) {
   return lamp.floorY - lamp.ceilY > 120.0 && lamp.ceilY > -1e8 ? lamp.ceilY : lamp.floorY - LAMP_WALL_HEIGHT;
 }
 
+// Whether no drawn roof stops the line between camera-relative point from and the lamp: where it passes through a
+// roofed tile's roof height it stops, walked tile by tile as lampWallsShareIn walks it, and only where it could (an end
+// of it above the lowest roof in the lamp's reach)
+bool lampRoofsOpen(vec3 from, Lamp lamp) {
+  int tiles = int(lampWallsHeader.x);
+  if (tiles == 0 || lamp.roofLow <= 0.0) {
+    return true;
+  }
+  float low = lamp.roofLow - LAMP_ROOF_BIAS - cameraPos.y;
+  if (from.y > low && lamp.pos.y > low) {
+    return true;
+  }
+  float offset = lampWallsHeader.y;
+  vec2 a = (from.xz + cameraPos.xz) / 128.0 + offset;
+  vec2 b = (lamp.origin + cameraPos.xz) / 128.0 + offset;
+  vec2 d = b - a;
+  ivec2 t = ivec2(floor(a));
+  ivec2 e = ivec2(floor(b));
+  ivec2 s = ivec2(sign(d));
+  vec2 delta = vec2(s.x != 0 ? 1.0 / abs(d.x) : 1e30, s.y != 0 ? 1.0 / abs(d.y) : 1e30);
+  vec2 tMax = vec2(s.x > 0 ? (float(t.x + 1) - a.x) * delta.x : s.x < 0 ? (a.x - float(t.x)) * delta.x : 1e30,
+    s.y > 0 ? (float(t.y + 1) - a.y) * delta.y : s.y < 0 ? (a.y - float(t.y)) * delta.y : 1e30);
+  int steps = min(abs(e.x - t.x) + abs(e.y - t.y), LAMP_WALL_STEPS);
+  float tEnter = 0.0;
+  for (int i = 0; i <= LAMP_WALL_STEPS; ++i) {
+    float tExit = min(min(tMax.x, tMax.y), 1.0);
+    float roof = lampRoofBottom(t, tiles);
+    if (roof < 1e8 && (mix(from.y, lamp.pos.y, tEnter) - roof) * (mix(from.y, lamp.pos.y, tExit) - roof) < 0.0) {
+      return false;
+    }
+    if (i >= steps) {
+      return true;
+    }
+    if (tMax.x < tMax.y) {
+      t.x += s.x;
+      tEnter = tMax.x;
+      tMax.x += delta.x;
+    } else {
+      t.y += s.y;
+      tEnter = tMax.y;
+      tMax.y += delta.y;
+    }
+  }
+  return true;
+}
+
+// a ray's lines in a lamp's reach map (LampReach): its first and second wall's
+vec2 lampReachLines(int base, int ray) {
+  vec4 t = texelFetch(lightData, base + (ray >> 1));
+  return (ray & 1) == 0 ? t.xy : t.zw;
+}
+
+// Where along o + v * t (extended tiles) the line with id crosses it, as t; 2 where it doesn't, ahead of o
+float lampReachCross(float id, vec2 o, vec2 v) {
+  if (id < 0.5) {
+    return 2.0;
+  }
+  int k = int(id + 0.5) - 1;
+  int kind = k & 3;
+  float c = float((k >> 2) - LAMP_REACH_C_OFF);
+  float num = kind == 0 ? c - o.x : kind == 1 ? c - o.y : kind == 2 ? c - (o.x - o.y) : c - (o.x + o.y);
+  float den = kind == 0 ? v.x : kind == 1 ? v.y : kind == 2 ? v.x - v.y : v.x + v.y;
+  if (abs(den) < 1e-6) {
+    return 2.0;
+  }
+  float t = num / den;
+  return t > 0.0 ? t : 2.0;
+}
+
+// lampWallsShareIn for the walls now, read from the lamp's reach map: the walls of the two rays either side of the
+// line from the lamp's origin to camera-relative point from, as lines. On a surface (toTop false) 0 where the first of
+// either stands between them, else the roofs' say (lampRoofsOpen); in the air each wall of both rays the line crosses
+// stops it below the walls' top, softly over the lamp's size, as the walk has it.
+float lampReachShare(vec3 from, Lamp lamp, bool toTop) {
+  vec2 o = (lamp.origin + cameraPos.xz) / 128.0 + lampWallsHeader.y;
+  vec2 v = (from.xz - lamp.origin) / 128.0;
+  if (dot(v, v) < 1e-8) {
+    return 1.0;
+  }
+  float f = atan(v.y, v.x) * (float(LAMP_REACH_BINS) / 6.28318531) - 0.5;
+  int r0 = int(floor(f));
+  r0 = r0 < 0 ? r0 + LAMP_REACH_BINS : r0;
+  int r1 = r0 + 1 < LAMP_REACH_BINS ? r0 + 1 : 0;
+  vec2 a = lampReachLines(lamp.reach, r0), b = lampReachLines(lamp.reach, r1);
+  if (!toTop) {
+    if (min(lampReachCross(a.x, o, v), lampReachCross(b.x, o, v)) < 1.0) {
+      return 0.0;
+    }
+    return lampRoofsOpen(from, lamp) ? 1.0 : 0.0;
+  }
+  float top = lampWallTop(lamp);
+  float size = lampSize(lamp);
+  float share = 1.0;
+  vec4 ids = vec4(a, b);
+  for (int k = 0; k < 4; ++k) {
+    float id = ids[k];
+    // each line once
+    if (id < 0.5 || (k > 0 && id == ids[0]) || (k > 1 && id == ids[1]) || (k > 2 && id == ids[2])) {
+      continue;
+    }
+    float t = lampReachCross(id, o, v);
+    if (t < 1.0) {
+      // the line's height there is between the lamp's and the point's; the wall stops it below its top
+      share *= 1.0 - smoothstep(top - size, top + size, mix(lamp.pos.y, from.y, t));
+    }
+  }
+  return share <= 0.004 ? 0.0 : share;
+}
+
 // How much of the lamp the walls of the lamp's storey, in a layer of the walls, let through to camera-relative point
 // from: the line on the ground between them and the lamp's origin, walked tile by tile as WallMap.blocked does on the
 // CPU; the ends' own tiles' edges don't count past the line's ends. For a surface (toTop false) a wall is as tall as
@@ -148,6 +265,9 @@ float lampWallsShareIn(vec3 from, Lamp lamp, int layer, bool toTop) {
   int tiles = int(layer == 0 ? lampWallsHeader.x : lampWallsHeader.z);
   if (tiles == 0) {
     return 1.0;
+  }
+  if (layer == 0 && lamp.reach > 0) {
+    return lampReachShare(from, lamp, toTop);
   }
   float top = lampWallTop(lamp);
   float size = lampSize(lamp);
