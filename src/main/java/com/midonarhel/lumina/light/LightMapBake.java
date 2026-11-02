@@ -525,8 +525,6 @@ final class LightMapBake
 			}
 		}
 
-		hideBehindWalls(b, light, x0, z0, w, h, off, value);
-
 		Grid[] grids = new Grid[WallMap.PLANES];
 		int count = 0;
 		Grid ownGrid = crop(light.plane, x0, z0, w, h, value);
@@ -546,36 +544,6 @@ final class LightMapBake
 			}
 		}
 		return new Result(Arrays.copyOf(grids, count), s.visits);
-	}
-
-	/**
-	 * What the walls of the light's storey hide from its origin (where its lines start, as the shaders walk them:
-	 * LampWalls.offWalls) gets none of it, the light wrapped round and blurred in included: a cell is dark when the line
-	 * from the origin to its middle crosses a wall (WallMap.blocked). So the map stops the light at walls as the walls
-	 * do, the shadow of a wall's end a cell's edge that the map's filter softens.
-	 */
-	private static void hideBehindWalls(LightBlockers b, Light light, int x0, int z0, int w, int h, float off, float[] value)
-	{
-		float[] origin = new float[2];
-		LampWalls.offWalls(b.walls, light.plane, light.x, light.z, origin);
-		for (int k = 0; k < w * h; ++k)
-		{
-			int i = k * HEIGHT_LAYERS;
-			boolean lit = false;
-			for (int layer = 0; layer < HEIGHT_LAYERS && !lit; ++layer)
-			{
-				lit = value[i + layer] > 0;
-			}
-			if (!lit)
-			{
-				continue;
-			}
-			float cx = (x0 + k % w + 0.5f - off) * CELL, cz = (z0 + k / w + 0.5f - off) * CELL;
-			if (b.blocked(light.plane, origin[0], origin[1], cx, cz))
-			{
-				Arrays.fill(value, i, i + HEIGHT_LAYERS, 0);
-			}
-		}
 	}
 
 	/** Math.hypot as a float, without its cost: the squares of floats are exact in a double. */
