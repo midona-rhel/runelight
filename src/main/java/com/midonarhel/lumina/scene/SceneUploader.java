@@ -32,6 +32,7 @@ import com.midonarhel.lumina.water.WaterOverrides;
 import com.midonarhel.lumina.*;
 
 import com.midonarhel.lumina.sky.EnvironmentManager;
+import com.midonarhel.lumina.weather.SnowTiles;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -624,8 +625,26 @@ public class SceneUploader
 		}
 	}
 
+	/**
+	 * The ground face bits for a tile snow keeps off (SurfaceMaterials.GROUND_SNOW_NONE), else 0: 117 HD's tiles that
+	 * stay clear in its winter (SnowTiles). sceneX, sceneY the scene's tile, ex, ey the same in the extended arrays.
+	 */
+	private static int snowBits(Scene scene, int sceneX, int sceneY, int z, int ex, int ey, int swHsl)
+	{
+		int[] world = new int[3];
+		if (!EnvironmentManager.toWorld(scene, sceneX, sceneY, z, world))
+		{
+			return 0;
+		}
+		return SnowTiles.get(GSON).clear(world[0], world[1], world[2], scene.getOverlayIds()[z][ex][ey],
+			scene.getUnderlayIds()[z][ex][ey], swHsl) ? SurfaceMaterials.GROUND_SNOW_NONE : 0;
+	}
+
+	private static final com.google.gson.Gson GSON = new com.google.gson.Gson();
+
 	private int upload(Scene scene, SceneTilePaint tile, int tileZ, int tileX, int tileY, GpuIntBuffer vertexBuffer, int lx, int lz)
 	{
+		final int sceneX = tileX, sceneY = tileY;
 		tileX += scene.getWorldViewId() == WorldView.TOPLEVEL ? LuminaPlugin.SCENE_OFFSET : 0;
 		tileY += scene.getWorldViewId() == WorldView.TOPLEVEL ? LuminaPlugin.SCENE_OFFSET : 0;
 
@@ -698,7 +717,8 @@ public class SceneUploader
 		final int hsl3 = nwColor;
 
 		int tex = tile.getTexture() + 1;
-		tex |= SurfaceMaterials.texture(tex - 1) | WaterMap.LAND_FLAG;
+		tex |= SurfaceMaterials.texture(tex - 1) | WaterMap.LAND_FLAG
+			| snowBits(scene, sceneX, sceneY, tileZ, tileX, tileY, tile.getSwColor());
 
 		final int[][] surface = surfaceHeights(scene, tileZ);
 		final int n0 = terrainNormal(surface, tileX, tileY);
@@ -797,6 +817,8 @@ public class SceneUploader
 		final int[] triangleColorA = sceneTileModel.getTriangleColorA();
 		final int[] triangleColorB = sceneTileModel.getTriangleColorB();
 		final int[] triangleColorC = sceneTileModel.getTriangleColorC();
+		// snow keeps off 117 HD's tiles that stay clear in winter (the tile's colour as 117 HD reads it: its first face's)
+		final int snow = triangleColorA.length > 0 ? snowBits(scene, tileX, tileY, tileZ, ex, ey, triangleColorA[0]) : 0;
 
 		final int[] triangleTextures = sceneTileModel.getTriangleTextureId();
 
@@ -867,7 +889,7 @@ public class SceneUploader
 			int lz2 = vertexZ[vertex2] - basez;
 
 			int tex = triangleTextures != null ? triangleTextures[i] + 1 : 0;
-			final int texMaterial = SurfaceMaterials.texture(tex - 1) | WaterMap.LAND_FLAG;
+			final int texMaterial = SurfaceMaterials.texture(tex - 1) | WaterMap.LAND_FLAG | snow;
 
 			int n0 = modelNormal(vertexX[vertex0] - lx, vertexZ[vertex0] - lz);
 			float s0x = slope[0], s0z = slope[1];

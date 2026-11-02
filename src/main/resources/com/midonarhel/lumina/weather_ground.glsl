@@ -114,7 +114,8 @@ vec2 weatherGroundSurface(inout vec3 color, inout vec3 n, vec3 p, vec3 world, ve
     float snow, inner;
     if (land) {
       float f = noise.x - level - SNOW_SLOPE * (1.0 - smoothstep(SNOW_STEEP, SNOW_FLAT, up));
-      snow = groundEdge(f, df);
+      // none on the tiles that stay clear (SnowTiles: 117 HD's floors, bridges, paths)
+      snow = groundEdge(f, df) * step(0.01, material.a);
       float rim = max(SNOW_RIM * length(noise.yz), SNOW_RIM_MIN);
       inner = groundEdge(f - rim, df);
     } else {
