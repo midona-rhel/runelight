@@ -384,6 +384,9 @@ public class LuminaPlugin extends Plugin implements DrawCallbacks
 	public static final int SHADOW_MAX_UNIT = LuminaPlugin.COMPOSITE_TEXTURE_UNIT + 22;
 	public static final int LIGHT_DATA_UNIT = LuminaPlugin.COMPOSITE_TEXTURE_UNIT + 6;
 	public static final int CLUSTER_DATA_UNIT = LuminaPlugin.COMPOSITE_TEXTURE_UNIT + 7;
+	// the lamps' shadow cubes and the slot of each lamp index (LampCubes), for the fog's glow
+	public static final int LAMP_CUBE_UNIT = LuminaPlugin.COMPOSITE_TEXTURE_UNIT + 21;
+	public static final int LAMP_CUBE_TABLE_UNIT = LuminaPlugin.COMPOSITE_TEXTURE_UNIT + 31;
 	// the rooms (RoomTexture)
 	public static final int ROOM_TEXELS_UNIT = LuminaPlugin.COMPOSITE_TEXTURE_UNIT + 20;
 	// the fog as marched at quarter resolution, read by its upsample
@@ -391,6 +394,7 @@ public class LuminaPlugin extends Plugin implements DrawCallbacks
 	public static final int CLOUD_HALF_UNIT = LuminaPlugin.COMPOSITE_TEXTURE_UNIT + 23;
 
 	public final LightClusters lightClusters = new LightClusters();
+	public final com.midonarhel.lumina.light.LampCubes lampCubes = new com.midonarhel.lumina.light.LampCubes();
 	// the walls that stop the lamps, and the rooms (for their fill and the puddles), on the GPU
 	public final LampWalls lampWalls = new LampWalls();
 	// the fixed lamps' visibility, baked on its own threads (LightMap), and as the light buffer holds it
@@ -989,6 +993,7 @@ public class LuminaPlugin extends Plugin implements DrawCallbacks
 				skyField.free();
 				roomLight.free();
 				lightClusters.free();
+				lampCubes.free();
 				lampWalls.free();
 				roomTexture.free();
 				volumetricFog.free();
@@ -1620,6 +1625,18 @@ public class LuminaPlugin extends Plugin implements DrawCallbacks
 				cpuTimer.end(CpuTimer.SHADOW_SUBMIT);
 			}
 			shadowPass.report();
+			volumetricFog.lampCubes = false;
+			if (config.pointLights() && lightClusters.isInitialized())
+			{
+				com.midonarhel.lumina.dev.GpuSections.section("lamp cubes");
+				lampCubes.update(this, lightClusters.keptLights(), lightClusters.getLightCount());
+				volumetricFog.lampCubes = lampCubes.isInitialized();
+				glActiveTexture(GL_TEXTURE0 + LAMP_CUBE_UNIT);
+				glBindTexture(GL_TEXTURE_2D, lampCubes.atlas());
+				glActiveTexture(GL_TEXTURE0 + LAMP_CUBE_TABLE_UNIT);
+				glBindTexture(GL_TEXTURE_2D, lampCubes.table());
+				glActiveTexture(GL_TEXTURE0);
+			}
 			cpuTimer.begin(CpuTimer.OCCLUSION);
 			com.midonarhel.lumina.dev.GpuSections.section("weather occlusion");
 			if (weather.isActive())

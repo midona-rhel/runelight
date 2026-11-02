@@ -89,6 +89,8 @@ public class VolumetricFog
 	// thicker than the other rooms. Both go into the ground texture (FogGround.texels), sent again when they change.
 	public RoomMap rooms;
 	public OpenRooms openRooms;
+	// the lamps' shadow cubes are drawn and bound (LampCubes): the glow reads them
+	public boolean lampCubes;
 	// the scene's water to stop the rays at
 	public int waterTexture;
 	private static final int[] NONE_OPEN = new int[OpenRooms.WORDS];
@@ -133,7 +135,7 @@ public class VolumetricFog
 		int uniCameraPos, uniCasterDir, uniCenter, uniClientSkyColor, uniDensity, uniDepthZeroToOne,
 			uniFade, uniFieldFog, uniFieldRect, uniGroundGrid, uniHalfRatio, uniHeight, uniHighestY, uniIndoor,
 			uniIndoorOpen, uniInvViewProj, uniLight, uniLightProjRel, uniNear,
-			uniOutdoors, uniOvercast, uniPointLights, uniProceduralSky,
+			uniOutdoors, uniOvercast, uniPointLights, uniLampCubes, uniProceduralSky,
 			uniShadowDepthRange, uniShadowsEnabled, uniSteps, uniStrikeLight, uniSunAltitude, uniSunIsCaster,
 			uniTime, uniTint, uniViewProj, uniViewport, uniWaterEnabled, uniWaterGrid;
 
@@ -188,6 +190,7 @@ public class VolumetricFog
 		u.uniLightProjRel = glGetUniformLocation(u.program, "lightProjRel");
 		u.uniShadowDepthRange = glGetUniformLocation(u.program, "shadowDepthRange");
 		u.uniPointLights = glGetUniformLocation(u.program, "pointLightsEnabled");
+		u.uniLampCubes = glGetUniformLocation(u.program, "lampCubesOn");
 		u.uniDensity = glGetUniformLocation(u.program, "fogDensity");
 		u.uniHeight = glGetUniformLocation(u.program, "fogHeight");
 		u.uniHighestY = glGetUniformLocation(u.program, "fogHighestY");
@@ -219,6 +222,8 @@ public class VolumetricFog
 		u.uniWaterGrid = glGetUniformLocation(u.program, "waterGrid");
 		glUniform1i(glGetUniformLocation(u.program, "waterData"), waterUnit);
 		glUniform1i(glGetUniformLocation(u.program, "fogGround"), groundUnit);
+		glUniform1i(glGetUniformLocation(u.program, "lampCubeAtlas"), LuminaPlugin.LAMP_CUBE_UNIT);
+		glUniform1i(glGetUniformLocation(u.program, "lampCubeTable"), LuminaPlugin.LAMP_CUBE_TABLE_UNIT);
 		glUseProgram(0);
 		return u;
 	}
@@ -521,6 +526,7 @@ public class VolumetricFog
 			glUniform1f(u.uniShadowDepthRange, shadows.getDepthRange());
 		}
 		glUniform1i(u.uniPointLights, pointLights ? 1 : 0);
+		glUniform1i(u.uniLampCubes, lampCubes ? 1 : 0);
 		u.lampWalls.apply(lampWallsHeader);
 
 		glUniform1f(u.uniDensity, density);

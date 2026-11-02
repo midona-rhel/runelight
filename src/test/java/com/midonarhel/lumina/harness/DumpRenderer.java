@@ -72,6 +72,8 @@ public final class DumpRenderer implements AutoCloseable
 		public String buildings = "dumped";
 		// false: no roofs stop the lamps (the buildings' roofs left out), to see what they stop
 		public boolean lampRoofs = true;
+		// true: every roof drawn, none hidden (roofs=shown), whatever the client hid
+		public boolean showRoofs;
 		// lightMap=off: the fixed lamps without the light map, stopped by the walls alone (to see what it changes)
 		public boolean lightMap = true;
 		// mapProbe=x,y: the light map's grids of the lamps nearest that world tile, printed after the render
@@ -507,7 +509,11 @@ public final class DumpRenderer implements AutoCloseable
 				case FrameTape.PRE:
 				{
 					Set<Integer> roofs = null;
-					if (a[7] >= 0)
+					if (options.showRoofs)
+					{
+						roofs = new HashSet<>();
+					}
+					else if (a[7] >= 0)
 					{
 						roofs = new HashSet<>();
 						for (int i = 0; i < a[7]; ++i)

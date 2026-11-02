@@ -204,14 +204,80 @@ float lampFalloffAlong(float h2, float r, float s0, float s1) {
   return max(f.y - f.x, 0.0) * r;
 }
 
+// The lamps' shadow cubes (LampCubes.java): each lamp's depth on the six faces of a cube round it, drawn from what the
+// frame draws (its levels, the roofs the client shows), in one atlas; the slot of each lamp index in the table, -1 none
+uniform sampler2DShadow lampCubeAtlas;
+uniform sampler2D lampCubeTable;
+uniform int lampCubesOn;
+#define LAMP_CUBE_FACE 128
+#define LAMP_CUBE_COLS 10
+#define LAMP_CUBE_SIZE vec2(3840.0, 2048.0)
+#define LAMP_CUBE_TAN_HALF (128.0 / 120.0)
+#define LAMP_CUBE_NEAR 24.0
+// the taps' circle, in texels: the shadow's edge soft over about twice it
+#define LAMP_CUBE_SOFT 2.0
+
+// How much of lamp li (at camera-relative lampPos, its reach radius) its shadow cube lets reach camera-relative point
+// q: four filtered taps on a circle turned by the pixel's jitter, so the edge is soft and the denoise smooths the
+// rest. -1 where the lamp has no cube.
+float lampCubeOpen(int li, vec3 lampPos, float radius, vec3 q, float jitter) {
+  if (lampCubesOn == 0) {
+    return -1.0;
+  }
+  float slot = texelFetch(lampCubeTable, ivec2(li, 0), 0).r;
+  if (slot < 0.0) {
+    return -1.0;
+  }
+  vec3 v = q - lampPos;
+  vec3 a = abs(v);
+  int face;
+  vec2 xy;
+  float z;
+  if (a.x >= a.y && a.x >= a.z) {
+    face = v.x > 0.0 ? 0 : 1;
+    xy = v.zy;
+    z = a.x;
+  } else if (a.y >= a.z) {
+    face = v.y > 0.0 ? 2 : 3;
+    xy = v.xz;
+    z = a.y;
+  } else {
+    face = v.z > 0.0 ? 4 : 5;
+    xy = v.xy;
+    z = a.z;
+  }
+  float far = max(radius, LAMP_CUBE_NEAR * 2.0);
+  float zr = z - (4.0 + 0.02 * z);
+  if (zr <= LAMP_CUBE_NEAR) {
+    return 1.0;
+  }
+  int s = int(slot + 0.5);
+  vec2 origin = vec2(float((s % LAMP_CUBE_COLS) * 3 + face % 3), float((s / LAMP_CUBE_COLS) * 2 + face / 3))
+    * float(LAMP_CUBE_FACE);
+  vec2 texel = (0.5 + 0.5 * xy / (z * LAMP_CUBE_TAN_HALF)) * float(LAMP_CUBE_FACE);
+  float n = LAMP_CUBE_NEAR;
+  float d = depthZeroToOne == 1 ? far / (far - n) - far * n / ((far - n) * zr)
+    : 0.5 * ((far + n) / (far - n) - 2.0 * far * n / ((far - n) * zr)) + 0.5;
+  float turn = jitter * 6.28318531;
+  vec2 o = LAMP_CUBE_SOFT * vec2(cos(turn), sin(turn));
+  float sum = 0.0;
+  for (int k = 0; k < 4; ++k) {
+    vec2 p = clamp(texel + o, vec2(1.0), vec2(float(LAMP_CUBE_FACE) - 1.0));
+    sum += texture(lampCubeAtlas, vec3((origin + p) / LAMP_CUBE_SIZE, d));
+    o = vec2(-o.y, o.x);
+  }
+  return sum * 0.25;
+}
+
 // Light from the lamps scattered toward the camera along the ray dir, up to tEnd (what the ray ends at), as a glow
 // round each lamp: its falloff along the part of the ray in its reach, in closed form (lampFalloffAlong), times the fog
 // where the lamp is (its density, height layer, room and weather there; none inside rooms), and only where the lamp's
 // light gets to: of the ray's lamps the LAMP_BUDGET brightest by their glow before walls (the same cap as a surface's,
 // light/lamp.glsl), each its part of the ray in FOG_LAMP_PIECES stretches, each taking it as a point of it in the air
-// takes it (at a point jittered along the stretch, the fog's own jitter, which the denoise smooths): the walls' share
-// (lampWallsOpen: walls up to their tops, no floor or ceiling; above a wall the glow spreads on into the air) and the
-// roofs as drawn (lampRoofsOpen: an indoor lamp lights no fog over a roof that is drawn). Only what is drawn: not the
+// takes it (at a point jittered along the stretch, the fog's own jitter, which the denoise smooths): its shadow cube
+// (lampCubeOpen), drawn from what the frame draws, so a roof the client hides stops nothing and one it shows stops the
+// glow over it; a lamp without a cube, the walls' share (lampWallsOpen: walls up to their tops, no floor or ceiling;
+// above a wall the glow spreads on into the air) and the roofs as drawn (lampRoofsOpen). Only what is drawn: not the
 // light map, baked from the whole building, its upper storeys and ceilings whether the client draws them or not, and
 // holding four lamps a cell (a fifth read as dark). With the roofs hidden it cut the glow over Lumbridge castle's
 // open-topped rooms into the shapes of storeys not drawn (the user's "strangely shaped obstructions", glow1; the
@@ -267,8 +333,12 @@ vec3 lampGlow(ivec2 px, vec3 dir, float tEnd, float density, float jitter) {
     for (int j = 0; j < FOG_LAMP_PIECES; ++j) {
       float s0 = a + float(j) * part;
       vec3 q = dir * (FOG_LAMP_PIECES == 1 ? clamp(tc, a, b) : s0 + jitter * part);
-      float open = lampWallsOpen(lamp, q, q, true);
-      if (open > 0.0 && lampRoofsOpen(q, lamp)) {
+      // its shadow cube; a lamp without one, its walls and the drawn roofs
+      float open = lampCubeOpen(kl, lamp.pos, lamp.radius, q, jitter);
+      if (open < 0.0) {
+        open = lampWallsOpen(lamp, q, q, true) * (lampRoofsOpen(q, lamp) ? 1.0 : 0.0);
+      }
+      if (open > 0.0) {
         glow += lampFalloffAlong(h2, lamp.radius, s0 - tc, s0 + part - tc) * open;
       }
     }
