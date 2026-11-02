@@ -391,11 +391,11 @@ public class LightClusters
 			}
 			lightData.put(x).put(y).put(z).put(settled ? -l.radius : l.radius);
 			float shown = l.intensity * l.mapFade;
-			// with its walls code, its shadow cube's slot + 1 (LampCubes; 0: none, or not drawn yet) times 16, and 2048
-			// if its storey is hidden (lampWith)
-			int cubeSlot = cubes != null ? cubes.slotFor(l, index, origin[0], origin[1]) : -1;
+			// with its walls code, its shadow cube's (LampCubes.cubeCode: the slot, and the one it crosses over from), and
+			// 2048 if its storey is hidden (lampWith)
+			int cubeCode = cubes != null ? cubes.cubeCode(l, index, origin[0], origin[1]) : 0;
 			lightData.put(l.r * shown).put(l.g * shown).put(l.b * shown)
-				.put(wallsCode + 16 * (cubeSlot + 1) + (onHiddenStorey(l) ? 2048 : 0));
+				.put(wallsCode + cubeCode + (onHiddenStorey(l) ? 2048 : 0));
 			// its storey's floor and ceiling; none known, far off
 			lightData.put(origin[0] - camX).put(origin[1] - camZ).put(clampY(l.floorY - camY)).put(clampY(l.ceilY - camY));
 			// its id in the light map (0: not on it, lit by the walls alone) and the map's share as it eases in
@@ -428,7 +428,7 @@ public class LightClusters
 			for (int drawn = cubes.choose(chosen, kept), k = 0; k < drawn; ++k)
 			{
 				int at = chosen[k] * LAMP_TEXELS * 4 + 7;
-				lightData.put(at, lightData.get(at) + 16 * (cubes.slotOfIndex(chosen[k]) + 1));
+				lightData.put(at, lightData.get(at) + cubes.codeChange(chosen[k]));
 			}
 		}
 		if (changed)

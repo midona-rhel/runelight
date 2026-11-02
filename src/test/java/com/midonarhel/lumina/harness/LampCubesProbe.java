@@ -30,7 +30,7 @@ public class LampCubesProbe
 			r.render();
 			LampCubes cubes = r.plugin.lampCubes;
 			LuminaPlugin.SceneContext ctx = r.plugin.root;
-			int withCube = Math.min(r.plugin.lightClusters.getLightCount(), LampCubes.SLOTS);
+			int withCube = Math.min(r.plugin.lightClusters.getLightCount(), LampCubes.IN_VIEW);
 			System.out.printf("LAMP CUBES %s: %d lamps with a cube, %d roof ids hidden, %d zones%n", name, withCube,
 				ctx.hideRoofIds.size(), ctx.sizeX * ctx.sizeZ);
 			List<Integer> ids = new ArrayList<>(ctx.hideRoofIds);
@@ -128,16 +128,24 @@ public class LampCubesProbe
 		}
 	}
 
-	private static void report(DumpRenderer r, LampCubes cubes, String what)
+	// a frame at the same moment (the clock still: run with -Dlumina.cubeFadeNanos=0, so a cube's new one takes over at
+	// once and the frames compare)
+	private static void step(DumpRenderer r)
 	{
 		r.frame();
+	}
+
+	private static void report(DumpRenderer r, LampCubes cubes, String what)
+	{
+		step(r);
 		int zones = cubes.lastChangedZones(), lamps = cubes.lastInvalidated();
 		int frames = 1;
-		while (cubes.lastPending() > 0 && frames < 60)
+		while (cubes.lastPending() > 0 && frames < 120)
 		{
-			r.frame();
+			step(r);
 			++frames;
 		}
+		step(r);
 		System.out.printf("  %s: %d zones or roof tiles changed, %d cubes drawn again over %d frames%n", what, zones, lamps, frames);
 	}
 }

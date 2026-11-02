@@ -25,18 +25,22 @@ public final class LampCubes
 {
 	private static final Logger log = LoggerFactory.getLogger(LampCubes.class);
 
-	// a face's texels, the atlas's slots (COLS x ROWS, each three faces wide and two high)
-	public static final int FACE = 128, COLS = 10, ROWS = 8, SLOTS = COLS * ROWS;
+	// a face's texels, the atlas's slots (COLS x ROWS, each three faces wide and two high); of them at most IN_VIEW for
+	// the lamps in view, the rest spare: a lamp's new cube is drawn into one while its old one still shows
+	public static final int FACE = 128, COLS = 10, ROWS = 10, SLOTS = COLS * ROWS, IN_VIEW = 88;
 	public static final int WIDTH = FACE * 3 * COLS, HEIGHT = FACE * 2 * ROWS;
 	// texels round each face past its 90 degrees, so a filtered read near a face's edge stays on the face
 	public static final int GUARD = 4;
 	public static final float TAN_HALF = FACE / (float) (FACE - 2 * GUARD);
-	// nothing nearer the lamp than this casts (its own bracket, the flame's model if it isn't emissive)
-	public static final float NEAR = 4;
-	// the most lamps drawn a frame (each about 0.1 ms of the GPU's and of the CPU's, fps1): after a roof is hidden or
-	// shown, or a scene loads, the cubes come back over a few frames, the nearest first; until its cube is drawn a
-	// lamp's glow is stopped by its walls and the drawn roofs (fog_frag.glsl), which already know the change
-	public static final int LAMPS_PER_FRAME = 12;
+	// nothing nearer the lamp's origin than this casts (the origin is 24 off the wall it hangs on: LampWalls)
+	public static final float NEAR = 8;
+	// The most lamps drawn a frame, the nearest first (each about 0.07-0.15 ms of the GPU's, fps1). A lamp whose cube a
+	// change left out of date (a roof hidden or shown, a door) keeps showing it while its new one is drawn into a spare
+	// slot, then crosses over to it in FADE_NANOS: no frame pays for many, and nothing falls back. A lamp new in view has
+	// no cube until its first is drawn: its walls and the drawn roofs (fog), the light map and walls (surfaces) till then.
+	public static final int LAMPS_PER_FRAME = 4;
+	// (bench: -Dlumina.cubeFadeNanos, 0 for none)
+	static final long FADE_NANOS = Long.getLong("lumina.cubeFadeNanos", 250_000_000L);
 
 	// each face's forward, right and up (fog_frag.glsl picks the face and its axes the same way)
 	private static final float[][] FACES = {
@@ -53,12 +57,20 @@ public final class LampCubes
 	private float camX, camY, camZ;
 	private int pending;
 	private final int[] slotOfIndex = new int[LightClusters.MAX_LIGHTS];
+	// per lamp index this frame: the code its texels got at the cull (cubeCode), and what choose changes it by
+	private final int[] codeOfIndex = new int[LightClusters.MAX_LIGHTS], codeChange = new int[LightClusters.MAX_LIGHTS];
+	private int inView;
 	private final int[] toDraw = new int[LAMPS_PER_FRAME];
 	private int draws;
-	// per slot: the lamp's place and reach it was drawn for (x, y, z, radius), the frame it was last used, drawn yet
+	// per slot: the lamp's place and reach it was drawn for (x, y, z, radius), the frame it was last used; whether it
+	// holds the lamp's cube, whether a change left that out of date; the slot it is crossing over from (-1: none) and
+	// since when; and, for a slot being crossed over from, until when it must stay
 	private final float[] drawnFor = new float[SLOTS * 4];
 	private final long[] used = new long[SLOTS];
-	private final boolean[] valid = new boolean[SLOTS];
+	private final boolean[] drawn = new boolean[SLOTS], stale = new boolean[SLOTS];
+	private final int[] fadeFrom = new int[SLOTS];
+	private final long[] fadeSince = new long[SLOTS], retiredUntil = new long[SLOTS];
+	private long now;
 	private final Map<Long, Integer> slotOf = new HashMap<>();
 	private final long[] keyOf = new long[SLOTS];
 	private final long[] waiting = new long[LightClusters.MAX_LIGHTS];
@@ -100,7 +112,7 @@ public final class LampCubes
 	{
 		depth = glGenTextures();
 		glBindTexture(GL_TEXTURE_2D, depth);
-		glTexImage2D(GL_TEXTURE_2D, 0, GL_DEPTH_COMPONENT24, WIDTH, HEIGHT, 0, GL_DEPTH_COMPONENT, GL_UNSIGNED_INT,
+		glTexImage2D(GL_TEXTURE_2D, 0, GL_DEPTH_COMPONENT16, WIDTH, HEIGHT, 0, GL_DEPTH_COMPONENT, GL_UNSIGNED_SHORT,
 			(java.nio.ByteBuffer) null);
 		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
 		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
@@ -127,7 +139,9 @@ public final class LampCubes
 			fbo = depth = 0;
 		}
 		slotOf.clear();
-		Arrays.fill(valid, false);
+		Arrays.fill(drawn, false);
+		Arrays.fill(keyOf, 0);
+		Arrays.fill(fadeFrom, -1);
 		drawnScene = null;
 	}
 
@@ -149,11 +163,13 @@ public final class LampCubes
 		active = !OFF && plugin.config.pointLights() && ctx != null && ctx.hideRoofIds != null && plugin.glShadowProgram != 0;
 		pending = 0;
 		draws = 0;
+		inView = 0;
 		if (!active)
 		{
 			return;
 		}
 		++frame;
+		now = com.midonarhel.lumina.common.Clock.nanos();
 		frameCtx = ctx;
 		camX = plugin.frameCameraX;
 		camY = plugin.frameCameraY;
@@ -162,83 +178,141 @@ public final class LampCubes
 		lastZones = renew(ctx, sceneRoofs(plugin, ctx));
 		if (REDRAW)
 		{
-			Arrays.fill(valid, false);
+			invalidateAll();
 		}
 	}
 
-	/** During the cull, lamp index i kept: its slot if its cube is drawn, else -1 (it waits, or there is no slot). */
-	int slotFor(PointLight l, int i, float originX, float originZ)
+	/**
+	 * During the cull, lamp index i kept: the code for its texels (16 x (its cube's slot + 1), + 4096 x (the slot it is
+	 * crossing over from + 1) + 524288 x how far, 0 to 15; 0: no cube yet), and whether it waits for a cube drawn.
+	 */
+	int cubeCode(PointLight l, int i, float originX, float originZ)
 	{
 		slotOfIndex[i] = -1;
+		codeOfIndex[i] = 0;
+		codeChange[i] = 0;
 		if (!active)
 		{
-			return -1;
+			return 0;
 		}
 		long k = key(l);
 		Integer s = slotOf.get(k);
 		if (s == null)
 		{
-			s = freeSlot();
-			if (s < 0)
+			if (inView >= IN_VIEW || (s = freeSlot()) < 0)
 			{
-				return -1;
+				return 0;
 			}
-			if (keyOf[s] != 0)
-			{
-				slotOf.remove(keyOf[s]);
-			}
-			keyOf[s] = k;
-			slotOf.put(k, s);
-			valid[s] = false;
+			take(s, k);
+			// seen from its origin (LampWalls.origin: off the walls it hangs on, as its lines start), at its height: a
+			// wall lamp at its own wall's face would have that wall nearer than NEAR and cut away, and light through it
+			drawnFor[s * 4] = originX;
+			drawnFor[s * 4 + 1] = l.y;
+			drawnFor[s * 4 + 2] = originZ;
+			drawnFor[s * 4 + 3] = Math.abs(l.radius);
 		}
+		++inView;
 		used[s] = frame;
 		slotOfIndex[i] = s;
-		if (valid[s])
+		int code = drawn[s] ? code(s) : 0;
+		codeOfIndex[i] = code;
+		if (!drawn[s] || stale[s])
 		{
-			return s;
+			// its distance from the camera and its index, to draw the nearest first; a lamp with no cube yet before any
+			// whose old one still shows
+			float dx = l.x - camX, dy = l.y - camY, dz = l.z - camZ;
+			waiting[pending++] = (drawn[s] ? 1L << 62 : 0) | (long) Float.floatToIntBits(dx * dx + dy * dy + dz * dz) << 10 | i;
 		}
-		// seen from its origin (LampWalls.origin: off the walls it hangs on, as its lines start), at its height: a wall
-		// lamp at its own wall's face would have that wall nearer than NEAR and cut away, and light through it
-		drawnFor[s * 4] = originX;
-		drawnFor[s * 4 + 1] = l.y;
-		drawnFor[s * 4 + 2] = originZ;
-		drawnFor[s * 4 + 3] = Math.abs(l.radius);
-		// its distance from the camera and its index, to draw the nearest first
-		float dx = l.x - camX, dy = l.y - camY, dz = l.z - camZ;
-		waiting[pending++] = (long) Float.floatToIntBits(dx * dx + dy * dy + dz * dz) << 32 | i;
-		return -1;
+		return code;
+	}
+
+	// whether slot s is its lamp's cube now (not one it crosses over from, or a lamp's long gone)
+	private boolean holds(int s)
+	{
+		Integer cur = slotOf.get(keyOf[s]);
+		return cur != null && cur == s;
+	}
+
+	// slot s to lamp key k, from whatever it held
+	private void take(int s, long k)
+	{
+		if (keyOf[s] != 0 && holds(s))
+		{
+			slotOf.remove(keyOf[s]);
+		}
+		keyOf[s] = k;
+		slotOf.put(k, s);
+		drawn[s] = stale[s] = false;
+		fadeFrom[s] = -1;
+	}
+
+	// the texels' code of the lamp whose cube is slot s: and the one it crosses over from, while it does
+	private int code(int s)
+	{
+		int code = 16 * (s + 1);
+		int from = fadeFrom[s];
+		if (from >= 0)
+		{
+			long t = now - fadeSince[s];
+			if (t >= FADE_NANOS)
+			{
+				fadeFrom[s] = -1;
+				return code;
+			}
+			used[from] = frame;
+			code += 4096 * (from + 1) + 524288 * (int) (15 * t / FADE_NANOS);
+		}
+		return code;
 	}
 
 	/**
 	 * After the cull: the nearest waiting lamps, at most LAMPS_PER_FRAME, drawn this frame (draw); their indices into
-	 * indices and how many, so LightClusters gives them their slots (slotOf(index)).
+	 * indices and how many, so LightClusters changes their codes (codeChange).
 	 */
 	int choose(int[] indices, int count)
 	{
 		Arrays.sort(waiting, 0, pending);
-		draws = Math.min(pending, LAMPS_PER_FRAME);
-		for (int d = 0; d < draws; ++d)
+		draws = 0;
+		for (int w = 0; w < pending && draws < LAMPS_PER_FRAME; ++w)
 		{
-			int i = (int) waiting[d];
+			int i = (int) (waiting[w] & (LightClusters.MAX_LIGHTS - 1));
 			int s = slotOfIndex[i];
-			toDraw[d] = s;
-			valid[s] = true;
-			indices[d] = i;
+			int target = s;
+			if (drawn[s])
+			{
+				// out of date: the new cube into a spare slot, the old one shown until then and crossed over from
+				target = freeSlot();
+				if (target < 0)
+				{
+					continue;
+				}
+				long k = keyOf[s];
+				take(target, k);
+				System.arraycopy(drawnFor, s * 4, drawnFor, target * 4, 4);
+				fadeFrom[target] = s;
+				fadeSince[target] = now;
+				retiredUntil[s] = now + FADE_NANOS;
+				used[target] = frame;
+			}
+			drawn[target] = true;
+			toDraw[draws] = target;
+			indices[draws++] = i;
+			codeChange[i] = code(target) - codeOfIndex[i];
 		}
 		drawnLast = draws * 6;
 		// a change to what is drawn, not a lamp that moves
 		if (lastZones > 0 || REDRAW && frame % 100 == 1)
 		{
 			log.info("Lamp cubes: {} changed zones, {} lamps to draw, {} a frame, nearest first; {} of the frame's {} lamps"
-				+ " with a cube", lastZones, pending, LAMPS_PER_FRAME, Math.min(count, SLOTS), count);
+				+ " with a cube", lastZones, pending, LAMPS_PER_FRAME, Math.min(count, IN_VIEW), count);
 		}
 		lastPending = pending - draws;
 		return draws;
 	}
 
-	int slotOfIndex(int i)
+	int codeChange(int i)
 	{
-		return slotOfIndex[i];
+		return codeChange[i];
 	}
 
 	/** After the scene: the faces of the lamps chosen this frame. The shadow program and its uniforms are the sun's. */
@@ -297,7 +371,9 @@ public final class LampCubes
 					hashes[x][z] = ctx.zones[x][z].drawnHash(ctx.minLevel, ctx.level, ctx.maxLevel, ctx.hideRoofIds);
 				}
 			}
-			Arrays.fill(valid, false);
+			// a new scene: no cube holds anything of it
+			Arrays.fill(drawn, false);
+			Arrays.fill(fadeFrom, -1);
 			return ctx.sizeX * ctx.sizeZ;
 		}
 		int zones = 0;
@@ -336,14 +412,14 @@ public final class LampCubes
 		int offset = LuminaPlugin.SCENE_OFFSET >> 3;
 		for (int s = 0; s < SLOTS; ++s)
 		{
-			if (!valid[s])
+			if (!drawn[s] || stale[s] || keyOf[s] == 0 || !holds(s))
 			{
 				continue;
 			}
 			float x = drawnFor[s * 4], z = drawnFor[s * 4 + 2], r = drawnFor[s * 4 + 3];
 			if (tiles > 0 && reachesTile(x, z, r))
 			{
-				valid[s] = false;
+				stale[s] = true;
 				++lastInvalidated;
 				continue;
 			}
@@ -354,7 +430,7 @@ public final class LampCubes
 				{
 					if (changed[zx][zz])
 					{
-						valid[s] = false;
+						stale[s] = true;
 						++lastInvalidated;
 						break search;
 					}
@@ -439,7 +515,10 @@ public final class LampCubes
 	/** Every cube drawn again (bench: what a selective redraw should equal). */
 	public void invalidateAll()
 	{
-		Arrays.fill(valid, false);
+		for (int s = 0; s < SLOTS; ++s)
+		{
+			stale[s] = drawn[s];
+		}
 	}
 
 	/** Cubes the last update found out of date (bench). */
@@ -466,7 +545,8 @@ public final class LampCubes
 		long oldest = Long.MAX_VALUE;
 		for (int s = 0; s < SLOTS; ++s)
 		{
-			if (used[s] == frame)
+			// one in use this frame, or still crossed over from
+			if (used[s] == frame || retiredUntil[s] > now)
 			{
 				continue;
 			}
