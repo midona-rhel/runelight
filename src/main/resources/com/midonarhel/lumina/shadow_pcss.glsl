@@ -28,8 +28,9 @@ const vec2 POISSON[16] = vec2[](
   vec2(0.19984126, 0.78641367), vec2(0.14383161, -0.14100790));
 
 #define SHADOW_TAU 6.28318530718
-// world units of penumbra per world unit between occluder and receiver: the light's apparent size
-#define SUN_SOFTNESS 0.08
+// world units of penumbra (radius) per world unit between occluder and receiver: the light's apparent size. The sun:
+// 5.7 degrees across, 11x the real one (whose penumbra is under a texel): a modest penumbra growing with distance
+#define SUN_SOFTNESS 0.05
 #define MOON_SOFTNESS 0.14
 // and a bolt's: a point of light, so only the filter's minimum is left
 #define STRIKE_SOFTNESS 0.0
