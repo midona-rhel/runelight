@@ -139,6 +139,16 @@ tasks.register('uploadBench', JavaExec) {
 	doFirst { args = project.property('args').toString().split(' ').findAll { it } }
 }
 
+// the fog ground's upload on the client thread, the GPU busy (harness FogGroundUploadProbe): ./gradlew fogGroundUpload -Pargs="fps1 100"
+tasks.register('fogGroundUpload', JavaExec) {
+	dependsOn testClasses
+	classpath = sourceSets.test.runtimeClasspath
+	mainClass = 'com.midonarhel.lumina.harness.FogGroundUploadProbe'
+	workingDir = projectDir
+	jvmArgs '-Xmx8g'
+	doFirst { args = project.property('args').toString().split(' ').findAll { it } }
+}
+
 // the weather field's upload on the client thread, the GPU busy (harness WeatherFieldUploadProbe): ./gradlew weatherFieldUpload -Pargs="tree1 200"
 tasks.register('weatherFieldUpload', JavaExec) {
 	dependsOn testClasses

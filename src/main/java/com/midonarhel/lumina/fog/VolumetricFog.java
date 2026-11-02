@@ -81,6 +81,12 @@ public class VolumetricFog
 	// (prepareNext) and taken at the swap; the rooms, which come after, go into the other too and ease in over the one
 	// drawn (LayerEase), sampled beside it meanwhile
 	private int texGround, texGroundBack;
+	// Uploads without waiting for the GPU: written into while frames still in flight read it, and straight from client
+	// memory, a texture made the client thread wait (FogGroundUploadProbe, fps1, two frames in flight: 7.4 ms, 0.11
+	// with the GPU idle; 13-15 ms hitches in the client as doors and roofs change the rooms). So the texels go through
+	// a pixel buffer given new storage each time, into a third texture, the one neither drawn nor eased from.
+	private int texGroundSpare;
+	private int groundUnpack;
 	private FogGround nextGround;
 	private long groundSince;
 	private boolean easeFromBack;
@@ -291,7 +297,9 @@ public class VolumetricFog
 	public void prepareNext(FogGround g, float[] texels)
 	{
 		easeFromBack = false;
-		texGroundBack = upload(texGroundBack, texels);
+		int fresh = uploadSpare(texels);
+		texGroundSpare = texGroundBack;
+		texGroundBack = fresh;
 		nextGround = g;
 		if (g == ground)
 		{
@@ -345,17 +353,18 @@ public class VolumetricFog
 		sentGround = g;
 		sentRooms = r;
 		System.arraycopy(bits, 0, sentOpen, 0, sentOpen.length);
-		texGroundBack = upload(texGroundBack, ready);
-		int t = texGround;
-		texGround = texGroundBack;
-		texGroundBack = t;
+		int fresh = uploadSpare(ready);
+		texGroundSpare = texGroundBack;
+		texGroundBack = texGround;
+		texGround = fresh;
 		easeFromBack = sameGround && texGroundBack != 0;
 		groundSince = com.midonarhel.lumina.common.Clock.nanos();
 	}
 
-	/** Texels into tex (made when 0), returned; the active unit and its binding as they were. */
-	private int upload(int tex, float[] texels)
+	/** Texels into the spare texture (made when 0), returned; the active unit and its binding as they were. */
+	private int uploadSpare(float[] texels)
 	{
+		int tex = texGroundSpare;
 		if (groundBuffer == null || groundBuffer.capacity() < texels.length)
 		{
 			groundBuffer = BufferUtils.createFloatBuffer(texels.length);
@@ -374,13 +383,22 @@ public class VolumetricFog
 			glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
 			glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
 			glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+			// full floats: heights reach thousands of units, where half floats step by 2 to 4
+			glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA32F, FogGround.WIDTH, FogGround.CORNERS, 0, GL_RGBA, GL_FLOAT,
+				(java.nio.FloatBuffer) null);
 		}
 		else
 		{
 			glBindTexture(GL_TEXTURE_2D, tex);
 		}
-		// full floats: heights reach thousands of units, where half floats step by 2 to 4
-		glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA32F, FogGround.WIDTH, FogGround.CORNERS, 0, GL_RGBA, GL_FLOAT, groundBuffer);
+		if (groundUnpack == 0)
+		{
+			groundUnpack = glGenBuffers();
+		}
+		glBindBuffer(GL_PIXEL_UNPACK_BUFFER, groundUnpack);
+		glBufferData(GL_PIXEL_UNPACK_BUFFER, groundBuffer, GL_STREAM_DRAW);
+		glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, FogGround.WIDTH, FogGround.CORNERS, GL_RGBA, GL_FLOAT, 0L);
+		glBindBuffer(GL_PIXEL_UNPACK_BUFFER, 0);
 		glActiveTexture(activeUnit);
 		glBindTexture(GL_TEXTURE_2D, bound);
 		return tex;
@@ -604,6 +622,16 @@ public class VolumetricFog
 		{
 			glDeleteTextures(texGroundBack);
 			texGroundBack = 0;
+		}
+		if (texGroundSpare != 0)
+		{
+			glDeleteTextures(texGroundSpare);
+			texGroundSpare = 0;
+		}
+		if (groundUnpack != 0)
+		{
+			glDeleteBuffers(groundUnpack);
+			groundUnpack = 0;
 		}
 		nextGround = null;
 		easeFromBack = false;
