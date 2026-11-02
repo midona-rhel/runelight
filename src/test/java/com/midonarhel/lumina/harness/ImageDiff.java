@@ -10,7 +10,8 @@ import javax.imageio.ImageIO;
 /**
  * The pixel differences between the PNGs of the same name in two directories (PassCost render=DIR, before and after
  * a change): per image Checks.diff's numbers and the count of pixels that differ at all, and DIFF/<name> where any
- * do (the difference, amplified). ./gradlew imageDiff -Pargs="BEFORE AFTER DIFF"
+ * do (the difference, amplified; or with THRESHOLD a black and white mask, white where a channel differs by more than
+ * that). ./gradlew imageDiff -Pargs="BEFORE AFTER DIFF [THRESHOLD]"
  */
 public final class ImageDiff
 {
@@ -18,6 +19,8 @@ public final class ImageDiff
 	{
 		Path a = Path.of(args[0]), b = Path.of(args[1]);
 		Path out = args.length > 2 ? Path.of(args[2]) : null;
+		// a 4th argument: DIFF/<name> is a mask instead, white where a channel differs by more than that many levels
+		int threshold = args.length > 3 ? Integer.parseInt(args[3]) : -1;
 		int total = 0;
 		try (Stream<Path> files = Files.list(a))
 		{
@@ -31,7 +34,7 @@ public final class ImageDiff
 				}
 				BufferedImage x = ImageIO.read(f.toFile()), y = ImageIO.read(other);
 				Checks.Diff d = Checks.diff(x, y);
-				int differ = 0, worst = 0, wx = 0, wy = 0;
+				int differ = 0, worst = 0, wx = 0, wy = 0, over = 0;
 				BufferedImage amp = new BufferedImage(x.getWidth(), x.getHeight(), BufferedImage.TYPE_INT_RGB);
 				for (int py = 0; py < x.getHeight(); ++py)
 				{
@@ -52,14 +55,16 @@ public final class ImageDiff
 								wx = px;
 								wy = py;
 							}
-							int v = Math.min(255, 64 + m * 16);
+							over += m > threshold ? 1 : 0;
+							int v = threshold >= 0 ? (m > threshold ? 255 : 0) : Math.min(255, 64 + m * 16);
 							amp.setRGB(px, py, v << 16 | v << 8 | v);
 						}
 					}
 				}
 				total += differ;
 				System.out.printf("%-24s %8d pixels differ (%.4f %%); %s%s%n", f.getFileName(), differ,
-					100.0 * differ / (x.getWidth() * x.getHeight()), d, differ > 0 ? String.format("; the most at %d,%d", wx, wy) : "");
+					100.0 * differ / (x.getWidth() * x.getHeight()), d, (differ > 0 ? String.format("; the most at %d,%d", wx, wy) : "")
+						+ (threshold >= 0 ? String.format("; %d pixels (%.3f %%) by more than %d", over, 100.0 * over / (x.getWidth() * x.getHeight()), threshold) : ""));
 				if (out != null && differ > 0)
 				{
 					Files.createDirectories(out);
