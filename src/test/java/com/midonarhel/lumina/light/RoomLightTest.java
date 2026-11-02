@@ -77,4 +77,26 @@ public class RoomLightTest
 		l.update(0.1f, day);
 		assertEquals("no change, no new version", version, l.version());
 	}
+	@Test
+	public void aDoorKeepsTheRoomsFillsInsteadOfStartingThemOver()
+	{
+		// the level is moving (dusk): the rooms built again for a door keep the fill they had and ease on from it, where
+		// a new scene's rooms start at the level at once
+		float night = RoomLight.target(NIGHT, 1), day = RoomLight.target(DAY, 1);
+		RoomLight door = light();
+		door.update(0, day);
+		door.update(0.1f, night);
+		float before = door.fillOf(1);
+		assertTrue("easing " + before, before > night && before < day);
+		door.setRooms(RoomMapTest.house(new int[4][LOCAL][LOCAL]), true);
+		assertEquals(before, door.fillOf(1), 1e-6);
+		door.update(1 / 60f, night);
+		assertTrue("eases on, no restart: " + door.fillOf(1), door.fillOf(1) <= before && door.fillOf(1) > night);
+		RoomLight scene = light();
+		scene.update(0, day);
+		scene.update(0.1f, night);
+		scene.setRooms(RoomMapTest.house(new int[4][LOCAL][LOCAL]), false);
+		scene.update(1 / 60f, night);
+		assertEquals(night, scene.fillOf(1), 1e-6);
+	}
 }

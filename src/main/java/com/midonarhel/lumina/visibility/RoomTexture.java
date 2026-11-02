@@ -65,6 +65,15 @@ public final class RoomTexture
 		header[2] = rooms.offset;
 	}
 
+	/**
+	 * The rooms the texture holds (null: none): those just handed to update are packed on a worker first, so for a frame
+	 * or two after the rooms change it holds the ones before. What is read by room id (RoomLight's fill) follows these.
+	 */
+	public RoomMap shown()
+	{
+		return header[0] > 0 ? sent : null;
+	}
+
 	/** rooms.glsl's roomHeader: 1 when there is a map, its size, its offset. */
 	public float[] header()
 	{

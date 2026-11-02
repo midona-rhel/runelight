@@ -523,6 +523,8 @@ public class LuminaPlugin extends Plugin implements DrawCallbacks
 	public static final float WEATHER_HEAD = 120;
 	// the sky's light flowing in under cover
 	public static final int SKY_FIELD_UNIT = LuminaPlugin.COMPOSITE_TEXTURE_UNIT + 25;
+	// the field shown before a door opened or shut, easing out (SkyFieldMap)
+	public static final int SKY_FIELD_PREV_UNIT = LuminaPlugin.COMPOSITE_TEXTURE_UNIT + 17;
 	public final SkyFieldMap skyField = new SkyFieldMap();
 	// whether the AO pass worked the sky visibility out this frame; whether it is wanted (under the open sky, logged
 	// in), and where the player is for the sky grid's tracing (world tiles)

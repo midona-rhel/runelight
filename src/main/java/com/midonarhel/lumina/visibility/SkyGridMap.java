@@ -20,7 +20,9 @@ import static org.lwjgl.opengl.GL33C.*;
  * thread traces in time-bounded chunks through the base scene's voxels (VoxelBuilder.getVoxels),
  * nearest the player first; what changed is uploaded every UPLOAD_FRAMES frames. A new place is shown once the
  * corners within READY_RINGS of the player are traced; until then, and after a move into the next region until its
- * voxels are built, the last texture stays, moved to where it belongs, as the probes do.
+ * voxels are built, the last texture stays, moved to where it belongs, as the probes do. A door (new walls or voxels
+ * of the same place) goes to the second texture too, once its corners are traced, over the shown grid that texture is
+ * kept a copy of, and eases in over the shown one: the skylight fades from the grid before the door to the one after.
  */
 public final class SkyGridMap
 {
@@ -64,6 +66,13 @@ public final class SkyGridMap
 	private int backTexture;
 	private boolean freshInFlight;
 	private boolean swapWhenUploaded;
+	// the job handed out is a door's (new walls or voxels of the place shown); its changes are traced, and go to the
+	// back texture when they are all traced (doorInFlight)
+	private boolean doorJob, doorInFlight;
+	// whether the back texture holds the shown grid, for a door's changes to go over: it is brought in line a slice a
+	// frame (syncSlice the next) once nothing is traced, uploaded or easing (a copy on the GPU stalled 5 to 50 ms)
+	private boolean backInSync;
+	private int syncSlice;
 	// the texture holds a place traced around the player, and where that place is
 	private boolean ready;
 	private int shownBaseX, shownBaseY;
@@ -108,10 +117,16 @@ public final class SkyGridMap
 			job = null;
 			collect();
 		}
-		if (pending != null && (pendingMove || framesSinceUpload >= UPLOAD_FRAMES))
+		if (doorInFlight && (pendingMove || freshInFlight))
+		{
+			// a move or a new place overtook the door: its changes go the usual way
+			doorInFlight = false;
+		}
+		if (pending != null && (doorInFlight ? sky.dirtyCount() == 0 : pendingMove || framesSinceUpload >= UPLOAD_FRAMES))
 		{
 			upload();
 		}
+		syncBack();
 		if (dumpTo != null && sky != null && handedVoxels != null)
 		{
 			try
@@ -141,6 +156,7 @@ public final class SkyGridMap
 				return t;
 			});
 		}
+		doorJob = (newVoxels || newWalls) && texture != 0 && ready && !freshInFlight && handedVoxels != null;
 		handedVoxels = voxels;
 		handedWalls = walls;
 		handedFloors = floors;
@@ -220,6 +236,7 @@ public final class SkyGridMap
 		if (jobFresh)
 		{
 			jobFresh = false;
+			doorInFlight = false;
 			if (texture != 0 && ready)
 			{
 				// keep showing the old grid; the new one goes to the back texture until its rings are traced
@@ -230,6 +247,11 @@ public final class SkyGridMap
 				ready = false;
 			}
 		}
+		else if (doorJob && ready && !freshInFlight)
+		{
+			doorInFlight = true;
+		}
+		doorJob = false;
 		int[] c = sky.takeChanges();
 		if (c != null)
 		{
@@ -252,20 +274,14 @@ public final class SkyGridMap
 		pending = null;
 		framesSinceUpload = 0;
 		glBindBuffer(GL_PIXEL_UNPACK_BUFFER, 0);
-		// the fresh place goes to the back texture; the shown one is untouched until the swap
-		int target = freshInFlight ? backTexture : texture;
+		// the fresh place and a door go to the back texture; the shown one is untouched until the swap
+		boolean door = doorInFlight && !freshInFlight;
+		boolean back = freshInFlight || door;
+		int target = back ? backTexture : texture;
 		if (target == 0)
 		{
-			target = glGenTextures();
-			glBindTexture(GL_TEXTURE_3D, target);
-			glTexImage3D(GL_TEXTURE_3D, 0, GL_RGBA16F, sky.textureWidth, sky.textureHeight, SkyGrid.TEX_D, 0, GL_RGBA, GL_HALF_FLOAT,
-				(ByteBuffer) null);
-			glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-			glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-			glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
-			glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-			glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_WRAP_R, GL_CLAMP_TO_EDGE);
-			if (freshInFlight)
+			target = newTexture();
+			if (back)
 			{
 				backTexture = target;
 			}
@@ -278,23 +294,30 @@ public final class SkyGridMap
 		{
 			glBindTexture(GL_TEXTURE_3D, target);
 		}
-		glPixelStorei(GL_UNPACK_ROW_LENGTH, sky.textureWidth);
-		glPixelStorei(GL_UNPACK_IMAGE_HEIGHT, sky.textureHeight);
-		int w = 2 * (c[2] - c[0] + 1), h = 2 * (c[3] - c[1] + 1), d = c[5] - c[4] + 1;
-		for (int part = 0; part < 4; ++part)
-		{
-			int x = part * 2 * sky.size + 2 * c[0];
-			glPixelStorei(GL_UNPACK_SKIP_PIXELS, x);
-			glPixelStorei(GL_UNPACK_SKIP_ROWS, 2 * c[1]);
-			glPixelStorei(GL_UNPACK_SKIP_IMAGES, c[4]);
-			glTexSubImage3D(GL_TEXTURE_3D, 0, x, 2 * c[1], c[4], w, h, d, GL_RGBA, GL_HALF_FLOAT, sky.texels);
-		}
-		glPixelStorei(GL_UNPACK_ROW_LENGTH, 0);
-		glPixelStorei(GL_UNPACK_IMAGE_HEIGHT, 0);
-		glPixelStorei(GL_UNPACK_SKIP_PIXELS, 0);
-		glPixelStorei(GL_UNPACK_SKIP_ROWS, 0);
-		glPixelStorei(GL_UNPACK_SKIP_IMAGES, 0);
+		long uploadStart = System.nanoTime();
+		// a door's changes go over the copy of the shown grid the back texture holds; without one, all of the grid
+		boolean whole = door && !backInSync;
+		subImage(whole ? new int[]{0, 0, sky.size - 1, sky.size - 1, 0, SkyGrid.TEX_D - 1} : c);
 		glBindTexture(GL_TEXTURE_3D, 0);
+		// the two textures differ now: the back one is brought in line again once things settle (syncBack)
+		backInSync = false;
+		syncSlice = 0;
+		if (door)
+		{
+			// the door's grid is all traced and in the back texture: show it, easing in over the grid before it
+			int t = texture;
+			texture = backTexture;
+			backTexture = t;
+			prevTexture = t;
+			prevBaseX = shownBaseX;
+			prevBaseY = shownBaseY;
+			prevInstance = shownInstance;
+			shownSince = com.midonarhel.lumina.common.Clock.nanos();
+			doorInFlight = false;
+			log.info("Skylight grid: a door's grid eases in (upload of {}: {} ms)", whole ? "the whole grid"
+				: String.format("tiles %d..%d by %d..%d, slices %d..%d", c[0], c[2], c[1], c[3], c[4], c[5]), (System.nanoTime() - uploadStart) / 1e6);
+			return;
+		}
 		if (freshInFlight)
 		{
 			if (swapWhenUploaded)
@@ -330,6 +353,67 @@ public final class SkyGridMap
 			shownBaseY = sky.baseY();
 			shownInstance = sky.instance();
 		}
+	}
+
+	/**
+	 * One more slice of the shown grid into the back texture, when nothing is traced, waiting to upload or easing (the
+	 * back texture eases out after a swap): a door's changes then go over it alone.
+	 */
+	private void syncBack()
+	{
+		if (backInSync || doorInFlight || freshInFlight || pending != null || !ready || texture == 0 || sky.dirtyCount() > 0
+			|| LayerEase.weight(shownSince, com.midonarhel.lumina.common.Clock.nanos()) < 1)
+		{
+			return;
+		}
+		if (backTexture == 0)
+		{
+			backTexture = newTexture();
+		}
+		else
+		{
+			glBindTexture(GL_TEXTURE_3D, backTexture);
+		}
+		glBindBuffer(GL_PIXEL_UNPACK_BUFFER, 0);
+		subImage(new int[]{0, 0, sky.size - 1, sky.size - 1, syncSlice, syncSlice});
+		glBindTexture(GL_TEXTURE_3D, 0);
+		backInSync = ++syncSlice == SkyGrid.TEX_D;
+	}
+
+	/** A texture for a grid, bound, its texels undefined. */
+	private int newTexture()
+	{
+		int t = glGenTextures();
+		glBindTexture(GL_TEXTURE_3D, t);
+		glTexImage3D(GL_TEXTURE_3D, 0, GL_RGBA16F, sky.textureWidth, sky.textureHeight, SkyGrid.TEX_D, 0, GL_RGBA, GL_HALF_FLOAT,
+			(ByteBuffer) null);
+		glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+		glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+		glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+		glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+		glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_WRAP_R, GL_CLAMP_TO_EDGE);
+		return t;
+	}
+
+	/** Upload the texels of tiles c[0]..c[2] by c[1]..c[3], slices c[4]..c[5] (SkyGrid.takeChanges) to the bound texture. */
+	private void subImage(int[] c)
+	{
+		glPixelStorei(GL_UNPACK_ROW_LENGTH, sky.textureWidth);
+		glPixelStorei(GL_UNPACK_IMAGE_HEIGHT, sky.textureHeight);
+		int w = 2 * (c[2] - c[0] + 1), h = 2 * (c[3] - c[1] + 1), d = c[5] - c[4] + 1;
+		for (int part = 0; part < 4; ++part)
+		{
+			int x = part * 2 * sky.size + 2 * c[0];
+			glPixelStorei(GL_UNPACK_SKIP_PIXELS, x);
+			glPixelStorei(GL_UNPACK_SKIP_ROWS, 2 * c[1]);
+			glPixelStorei(GL_UNPACK_SKIP_IMAGES, c[4]);
+			glTexSubImage3D(GL_TEXTURE_3D, 0, x, 2 * c[1], c[4], w, h, d, GL_RGBA, GL_HALF_FLOAT, sky.texels);
+		}
+		glPixelStorei(GL_UNPACK_ROW_LENGTH, 0);
+		glPixelStorei(GL_UNPACK_IMAGE_HEIGHT, 0);
+		glPixelStorei(GL_UNPACK_SKIP_PIXELS, 0);
+		glPixelStorei(GL_UNPACK_SKIP_ROWS, 0);
+		glPixelStorei(GL_UNPACK_SKIP_IMAGES, 0);
 	}
 
 	/** Whether the AO pass can look the sky visibility up this frame, in the given scene. */
@@ -375,6 +459,10 @@ public final class SkyGridMap
 		}
 		freshInFlight = false;
 		swapWhenUploaded = false;
+		doorJob = false;
+		doorInFlight = false;
+		backInSync = false;
+		syncSlice = 0;
 		prevTexture = 0;
 		shownSince = 0;
 		sky = null;
