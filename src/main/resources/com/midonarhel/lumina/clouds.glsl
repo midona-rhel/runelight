@@ -70,11 +70,15 @@ uniform float cloudGround;     // world y of the focal point: the cloud shadows 
 #define CLOUD_TILE CLOUD_SIZE
 #define CLOUD_NOISE_SIZE 128.0
 // Steps of about CLOUD_STEP_LENGTH world units across the slab, at least CLOUD_MIN_STEPS and at most CLOUD_STEPS:
-// few looking up, more toward the horizon, where a ray crosses far more of the slab and too few steps show as
-// grain. The noise is also blurred to CLOUD_STEP_BLUR of a step, which the steps could not resolve anyway.
-#define CLOUD_STEPS 16
+// few looking up, more toward the horizon, where a ray crosses far more of the slab and too few steps comb the
+// clouds into vertical stripes. The look (how blurred the noise is, how soft the edges) follows steps of
+// CLOUD_LOOK_STEP_LENGTH, at most CLOUD_LOOK_STEPS: the steps sample the same clouds more finely, they don't sharpen
+// them. The noise is blurred to CLOUD_STEP_BLUR of such a step, which the steps could not resolve anyway.
+#define CLOUD_STEPS 48
 #define CLOUD_MIN_STEPS 10
-#define CLOUD_STEP_LENGTH 900.0
+#define CLOUD_STEP_LENGTH 450.0
+#define CLOUD_LOOK_STEPS 16
+#define CLOUD_LOOK_STEP_LENGTH 900.0
 #define CLOUD_STEP_BLUR 0.5
 // sine of the elevation (along cloudSkyDir) over which the clouds fade in above the horizon: clear sky at and below
 // the first, which the cloud pass is scissored by (Clouds.HORIZON must match it)
@@ -327,9 +331,12 @@ vec4 cloudLayer(vec3 dir, vec3 camPos, vec3 sunDir, vec3 moonDir, float alt, flo
   }
 
   int n = int(clamp(ceil(across / CLOUD_STEP_LENGTH), float(CLOUD_MIN_STEPS), float(steps)));
+  // the step the look is worked out for (CLOUD_LOOK_STEP_LENGTH), whatever the steps actually taken
+  float lookStep = across / clamp(ceil(across / CLOUD_LOOK_STEP_LENGTH), float(CLOUD_MIN_STEPS),
+    float(min(steps, CLOUD_LOOK_STEPS)));
   // mip level from a pixel's footprint on the slab, stretched toward the horizon (geometric mean of both axes), or
   // from the step length; below 0 when a texel covers several pixels, so the detail fetches stay sharp
-  float footprint = max((t0 + t1) * 0.5 * pixelAngle / sqrt(k), across / float(n) * CLOUD_STEP_BLUR);
+  float footprint = max((t0 + t1) * 0.5 * pixelAngle / sqrt(k), lookStep * CLOUD_STEP_BLUR);
   float lod = log2(max(footprint * CLOUD_NOISE_SIZE / CLOUD_TILE, 1e-3));
 
   // high thin clouds are thinner too
@@ -349,7 +356,7 @@ vec4 cloudLayer(vec3 dir, vec3 camPos, vec3 sunDir, vec3 moonDir, float alt, flo
   float low = sunLit ? smoothstep(10.0, 0.0, alt) * smoothstep(-8.0, -2.0, alt) : 0.0;
 
   float ds = (t1 - t0) / float(n);
-  float soft = CLOUD_SOFT * max(1.0, across / float(n) / CLOUD_SOFT_STEP);
+  float soft = CLOUD_SOFT * max(1.0, lookStep / CLOUD_SOFT_STEP);
   vec3 scattered = vec3(0.0);
   float transmittance = 1.0;
   for (int i = 0; i < n; ++i) {
