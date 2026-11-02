@@ -89,7 +89,7 @@ public final class LampWalls
 	private RoofMap wantedRoofs;
 	// the roofs' layer as sent: for which packed walls, hidden roofs and player level
 	private Packed roofsFor;
-	private int roofsHidden, roofsLevel;
+	private int roofsHidden, roofsLevel, roofsVersion;
 	private float[] roofBottoms;
 	private Packed shown, before;
 	private long since;
@@ -166,6 +166,7 @@ public final class LampWalls
 			}
 			System.arraycopy(roofBottoms, 0, texels, ROOF_LAYER * LAYER_TEXELS * 4, n);
 			++version;
+			++roofsVersion;
 		}
 		float weight = shown != null ? LayerEase.weight(since, com.midonarhel.lumina.common.Clock.nanos()) : 1;
 		if (weight >= 1)
@@ -201,6 +202,43 @@ public final class LampWalls
 	public int version()
 	{
 		return version;
+	}
+
+	/** The shown walls' tiles (pack's: six bits a storey), a new array whenever they change; null: none. LampReach. */
+	float[] shownTiles()
+	{
+		Packed s = shown;
+		return s != null ? s.tiles : null;
+	}
+
+	/** The shown walls' tiles a side, and extended tiles before local tile 0. */
+	int shownSize()
+	{
+		Packed s = shown;
+		return s != null ? s.walls.size : 0;
+	}
+
+	int shownOffset()
+	{
+		Packed s = shown;
+		return s != null ? s.walls.offset : 0;
+	}
+
+	/** Whether the walls before the shown ones are still easing out (a door): the shader walks both meanwhile. */
+	boolean easing()
+	{
+		return before != null;
+	}
+
+	/** The drawn roofs' layer as sent (per shown tile, world y plus RoofMap.BIAS, 0 none), and its version. */
+	float[] roofBottoms()
+	{
+		return roofBottoms;
+	}
+
+	int roofsVersion()
+	{
+		return roofsVersion;
 	}
 
 	/**

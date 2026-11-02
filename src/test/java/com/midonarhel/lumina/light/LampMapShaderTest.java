@@ -127,7 +127,7 @@ public class LampMapShaderTest
 			+ "#define ROOM_FILL_BASE " + LightClusters.ROOM_FILL_BASE + "\n"
 			+ "#define LAMP_WALLS_BASE " + LightClusters.LAMP_WALLS_BASE + "\n"
 			+ "#define LAMP_WALL_LAYER_TEXELS " + LampWalls.LAYER_TEXELS + "\n"
-			+ LightMapBuffer.defines() : null);
+			+ LampReach.defines() + LightMapBuffer.defines() : null);
 		template.addInclude(LuminaPlugin.class);
 		int program = new Shader().add(GL_VERTEX_SHADER, "test_vert.glsl").add(GL_FRAGMENT_SHADER, "test_frag.glsl")
 			.compile(template);

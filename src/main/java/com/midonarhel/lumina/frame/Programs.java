@@ -203,6 +203,7 @@ public final class Programs
 						+ "#define ROOM_FILL_BASE " + LightClusters.ROOM_FILL_BASE + "\n"
 						+ "#define LAMP_WALLS_BASE " + LightClusters.LAMP_WALLS_BASE + "\n"
 						+ "#define LAMP_WALL_LAYER_TEXELS " + LampWalls.LAYER_TEXELS + "\n"
+						+ com.midonarhel.lumina.light.LampReach.defines()
 						+ com.midonarhel.lumina.light.LightMapBuffer.defines();
 				case "composite_mode":
 					// Compile out the diagnostic branches and intermediate samplers in normal rendering.
