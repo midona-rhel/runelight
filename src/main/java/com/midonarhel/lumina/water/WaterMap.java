@@ -124,12 +124,14 @@ public final class WaterMap
 	private final float[] lipPullZ = new float[CORNERS * CORNERS];
 	private final float[] lipLevel = new float[CORNERS * CORNERS];
 	private final float[] lipStrength = new float[CORNERS * CORNERS];
-	// where it lands: the pool's water is pushed out from the foot of a fall, FOOT_FLOW tiles a second at the foot, as far as FOOT_PUSH tiles; the same fields as the lip's
-	private static final float FOOT_PUSH = 3f;
-	private static final float FOOT_FLOW = 0.8f;
 	// tiles a second (along x, z) the water runs down a fall: its own corners', the lip's and foot's included, so the
 	// water on it runs on from the pool above and into the one below with no edge
 	static final float FALL_FLOW = 1.6f;
+	// where it lands: the pool's water is pushed out from the foot of a fall, FOOT_FLOW tiles a second at the foot, as far as
+	// FOOT_PUSH tiles; the same fields as the lip's. It leaves the foot as fast as it fell and slows as it spreads: where
+	// running water slows sharply its foam's two phases (water_common.glsl) pile up into a line across the flow
+	private static final float FOOT_PUSH = 3f;
+	private static final float FOOT_FLOW = FALL_FLOW;
 	// the closeness (contact) a fall's water foams by, on the fall and right at its lip and foot: a fall is white water in
 	// part, its foam's cells shrunk a little (water_frag.glsl contactFoam), not all over
 	static final float FALL_FOAM = 0.4f;
@@ -800,8 +802,9 @@ public final class WaterMap
 		eachModel(scene.getExtendedTiles(), (id, r, orient, x, height, z) ->
 		{
 			Model m = standingModel(id, r);
+			int[] colors = m == null ? null : standingColors(id, r, m);
 			if (m == null || !crossings(m.getVerticesX(), m.getVerticesY(), m.getVerticesZ(), m.getVerticesCount(),
-				m.getFaceIndices1(), m.getFaceIndices2(), m.getFaceIndices3(), m.getFaceColors3(), m.getFaceCount(), orient, x,
+				m.getFaceIndices1(), m.getFaceIndices2(), m.getFaceIndices3(), colors, m.getFaceCount(), orient, x,
 				height, z, surfaceY, scratch))
 			{
 				return false;
@@ -820,7 +823,7 @@ public final class WaterMap
 			c.f1 = java.util.Arrays.copyOf(m.getFaceIndices1(), c.faceCount);
 			c.f2 = java.util.Arrays.copyOf(m.getFaceIndices2(), c.faceCount);
 			c.f3 = java.util.Arrays.copyOf(m.getFaceIndices3(), c.faceCount);
-			c.colors = java.util.Arrays.copyOf(m.getFaceColors3(), c.faceCount);
+			c.colors = java.util.Arrays.copyOf(colors, c.faceCount);
 			out.add(c);
 			return true;
 		});
@@ -1164,33 +1167,39 @@ public final class WaterMap
 
 	/**
 	 * Find the falls of the terrain (fall, downX, downZ) and add their lips and feet. Fall tiles one after another count as one
-	 * fall, lipped at the top of the first and footed at the bottom of the last.
+	 * fall, lipped at the top of the first and footed at the bottom of the last. A land tile counts as one where a model's
+	 * fall lies on its slope, its lip and foot (the model lines already in lips and feet, fallEdgesOf) on the tile's edges:
+	 * the model's water stands in for the fall's there, and the tile becomes water, of the pool above, for its surface to
+	 * run on from the pool above to the one below as a terrain fall's does (the model's face its bed).
 	 */
 	private void terrainFalls(int[][][] heights, java.util.List<float[]> lips, java.util.List<float[]> feet)
 	{
 		byte[] dir = new byte[SIZE * SIZE];
 		java.util.Arrays.fill(dir, (byte) -1);
-		// the slope runs along one axis and is level across it
-		float across = FALL_DROP / 4;
+		// the plane a land tile under a model's fall slopes on: its pools'
+		byte[] landPlane = new byte[SIZE * SIZE];
+		java.util.Arrays.fill(landPlane, (byte) -1);
+		int modelLips = lips.size(), modelFeet = feet.size();
 		for (int y = 0; y < SIZE; ++y)
 		{
 			for (int x = 0; x < SIZE; ++x)
 			{
-				if (!bodies.water[y * SIZE + x])
+				int i = y * SIZE + x;
+				int plane = bodies.water[i] ? level[i] : modelLips > 0 ? poolPlane(x, y) : -1;
+				if (plane < 0)
 				{
 					continue;
 				}
-				int[][] h = heights[level[y * SIZE + x]];
-				float a = h[x][y], b = h[x + 1][y], c = h[x][y + 1], d = h[x + 1][y + 1];
-				float dropX = (b + d - a - c) / 2, dropZ = (c + d - a - b) / 2;
-				if (Math.abs(dropX) >= FALL_DROP && Math.abs(a - c) <= across && Math.abs(b - d) <= across)
+				int k = slopeDirection(heights[plane], x, y);
+				if (k >= 0 && !bodies.water[i])
 				{
-					dir[y * SIZE + x] = (byte) (dropX > 0 ? 0 : 1);
+					if (!onEdge(lips, modelLips, edge(x, y, k)) || !onEdge(feet, modelFeet, edge(x, y, k ^ 1)))
+					{
+						continue;
+					}
+					landPlane[i] = (byte) plane;
 				}
-				else if (Math.abs(dropZ) >= FALL_DROP && Math.abs(a - b) <= across && Math.abs(c - d) <= across)
-				{
-					dir[y * SIZE + x] = (byte) (dropZ > 0 ? 2 : 3);
-				}
+				dir[i] = (byte) k;
 			}
 		}
 		for (int y = 0; y < SIZE; ++y)
@@ -1209,13 +1218,115 @@ public final class WaterMap
 					++n;
 				}
 				int lastX = x + (n - 1) * FALL_DX[k], lastY = y + (n - 1) * FALL_DZ[k];
+				int upper = (y - FALL_DZ[k]) * SIZE + x - FALL_DX[k];
+				// a land tile under a model's fall takes its plane for the heights its edges are read at
+				for (int j = 0; j < n; ++j)
+				{
+					int t = (y + j * FALL_DZ[k]) * SIZE + x + j * FALL_DX[k];
+					if (landPlane[t] >= 0)
+					{
+						level[t] = landPlane[t];
+					}
+				}
 				if (waterAt(heights, x - FALL_DX[k], y - FALL_DZ[k], edgeHeight(heights, x, y, k))
 					&& waterAt(heights, lastX + FALL_DX[k], lastY + FALL_DZ[k], edgeHeight(heights, lastX, lastY, k ^ 1)))
 				{
+					for (int j = 0; j < n; ++j)
+					{
+						int t = (y + j * FALL_DZ[k]) * SIZE + x + j * FALL_DX[k];
+						if (landPlane[t] >= 0)
+						{
+							landToFall(heights, t, upper);
+						}
+					}
 					markFall(heights, x, y, k, n, lips, feet);
+				}
+				else
+				{
+					for (int j = 0; j < n; ++j)
+					{
+						int t = (y + j * FALL_DZ[k]) * SIZE + x + j * FALL_DX[k];
+						if (landPlane[t] >= 0)
+						{
+							level[t] = -1;
+						}
+					}
 				}
 			}
 		}
+	}
+
+	/**
+	 * The direction (FALL_DX, FALL_DZ) tile (x, y) of the heights h falls in, or -1: its slope runs along one axis by FALL_DROP
+	 * or more and is level across it.
+	 */
+	private static int slopeDirection(int[][] h, int x, int y)
+	{
+		float across = FALL_DROP / 4;
+		float a = h[x][y], b = h[x + 1][y], c = h[x][y + 1], d = h[x + 1][y + 1];
+		float dropX = (b + d - a - c) / 2, dropZ = (c + d - a - b) / 2;
+		if (Math.abs(dropX) >= FALL_DROP && Math.abs(a - c) <= across && Math.abs(b - d) <= across)
+		{
+			return dropX > 0 ? 0 : 1;
+		}
+		if (Math.abs(dropZ) >= FALL_DROP && Math.abs(a - b) <= across && Math.abs(c - d) <= across)
+		{
+			return dropZ > 0 ? 2 : 3;
+		}
+		return -1;
+	}
+
+	/**
+	 * The plane of a water tile beside land tile (x, y), or -1 with none.
+	 */
+	private int poolPlane(int x, int y)
+	{
+		for (int k = 0; k < 4; ++k)
+		{
+			int ex = x + FALL_DX[k], ey = y + FALL_DZ[k];
+			if (ex >= 0 && ey >= 0 && ex < SIZE && ey < SIZE && bodies.water[ey * SIZE + ex])
+			{
+				return level[ey * SIZE + ex];
+			}
+		}
+		return -1;
+	}
+
+	/**
+	 * Whether one of the first n lines lies along edge e (corners {x0, y0, x1, y1}, as edge gives them) and overlaps it.
+	 */
+	private static boolean onEdge(java.util.List<float[]> lines, int n, int[] e)
+	{
+		float x0 = e[0] * 128f, z0 = e[1] * 128f, x1 = e[2] * 128f, z1 = e[3] * 128f;
+		for (int i = 0; i < n; ++i)
+		{
+			float[] l = lines.get(i);
+			boolean along = x0 == x1
+				? Math.abs(l[0] - x0) <= EDGE_SLACK && Math.abs(l[2] - x0) <= EDGE_SLACK
+					&& Math.max(l[1], l[3]) > Math.min(z0, z1) + EDGE_SLACK && Math.min(l[1], l[3]) < Math.max(z0, z1) - EDGE_SLACK
+				: Math.abs(l[1] - z0) <= EDGE_SLACK && Math.abs(l[3] - z0) <= EDGE_SLACK
+					&& Math.max(l[0], l[2]) > Math.min(x0, x1) + EDGE_SLACK && Math.min(l[0], l[2]) < Math.max(x0, x1) - EDGE_SLACK;
+			if (along)
+			{
+				return true;
+			}
+		}
+		return false;
+	}
+
+	/**
+	 * Land tile t under a model's fall made water, of the pool above it (upper): its type and texture, its surface the
+	 * slope's mean (its level is set).
+	 */
+	private void landToFall(int[][][] heights, int t, int upper)
+	{
+		int x = t % SIZE, y = t / SIZE;
+		bodies.water[t] = true;
+		type[t] = type[upper];
+		waterTexture[t] = waterTexture[upper];
+		bedHsl[t] = bedHsl[upper];
+		int[][] h = heights[level[t]];
+		bodies.surface[t] = (h[x][y] + h[x + 1][y] + h[x][y + 1] + h[x + 1][y + 1]) * 0.25f;
 	}
 
 	private static int dirAt(byte[] dir, int x, int y)
@@ -1503,8 +1614,37 @@ public final class WaterMap
 	{
 		Model m = standingModel(id, r);
 		return m != null && crossings(m.getVerticesX(), m.getVerticesY(), m.getVerticesZ(), m.getVerticesCount(),
-			m.getFaceIndices1(), m.getFaceIndices2(), m.getFaceIndices3(), m.getFaceColors3(), m.getFaceCount(), orient, x, height,
-			z, surfaceY, marked);
+			m.getFaceIndices1(), m.getFaceIndices2(), m.getFaceIndices3(), standingColors(id, r, m), m.getFaceCount(), orient, x,
+			height, z, surfaceY, marked);
+	}
+
+	/**
+	 * A model's faces' third colours as crossings takes them: the faces it draws as water (fake water: a fall's sheet, a
+	 * fountain's) hidden (-2), as they are the water and stand in none (a fall's sheet lies a unit over the fall it is
+	 * drawn on, and it crossed that fall's level along its foot).
+	 */
+	private static int[] standingColors(int id, Renderable r, Model m)
+	{
+		int[] colors3 = m.getFaceColors3();
+		int[] colors1 = m.getFaceColors1();
+		short[] textures = m.getFaceTextures();
+		byte[] transparencies = m.getFaceTransparencies();
+		int material = SurfaceMaterials.forObject(id, r);
+		int[] out = colors3;
+		for (int f = 0; f < m.getFaceCount(); ++f)
+		{
+			int texture = textures != null ? textures[f] : -1;
+			if (colors3[f] != -2 && SurfaceMaterials.isFake(SurfaceMaterials.face(material, texture, colors1[f] & 0xffff,
+				SurfaceMaterials.opacity(transparencies, f))))
+			{
+				if (out == colors3)
+				{
+					out = colors3.clone();
+				}
+				out[f] = -2;
+			}
+		}
+		return out;
 	}
 
 	/**

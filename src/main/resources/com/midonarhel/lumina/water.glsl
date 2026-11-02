@@ -531,6 +531,14 @@ vec3 waterOver(ivec2 px, inout vec3 p, vec3 albedo, float shadow, vec3 lit, floa
   if (!waterUnder(px, mask))
     return lit;
   uvec4 ws = texelFetch(waterSurface, px - waterRect.xy, 0);
+  // a face on a fall that the fall's surface just misses at its sides (the face is a unit over it, so its edges fall on
+  // other pixels): the fall's surface of a pixel beside it, two at most
+  for (int i = 0; i < 8 && fall && ws.b == 0u; ++i) {
+    ivec2 o = ivec2(i & 1, 1 - (i & 1)) * ((i & 2) != 0 ? -1 : 1) * (1 + (i >> 2));
+    uvec4 w = waterSurfaceAt(waterSurface, waterRect, px + o);
+    if (w.b != 0u && waterFallNearOf(w) >= FALL_SLACK_NEAR)
+      ws = w;
+  }
   if (ws.b == 0u)
     return lit;
   float t, foam, shoreDepth, caustic;
