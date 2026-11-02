@@ -972,7 +972,7 @@ public final class SceneLoader
 					log.error("Zone upload failed at zone {},{}: {}", x, z, ex.toString());
 				}
 
-				zone.unmap();
+				zone.unmap(pool);
 				zone.initialized = true;
 				zone.dirty = true;
 				if (ctx == plugin.root)

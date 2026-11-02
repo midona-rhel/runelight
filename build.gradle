@@ -116,6 +116,16 @@ tasks.register('indexStats', JavaExec) {
 	doFirst { args = project.property('args').toString().split(' ').findAll { it } }
 }
 
+// the zones' buffers' GPU memory once a dump is restored (harness ZoneMemory): ./gradlew zoneMemory -Pargs="nightref"
+tasks.register('zoneMemory', JavaExec) {
+	dependsOn testClasses
+	classpath = sourceSets.test.runtimeClasspath
+	mainClass = 'com.midonarhel.lumina.harness.ZoneMemory'
+	workingDir = projectDir
+	jvmArgs '-Xmx8g'
+	doFirst { args = project.property('args').toString().split(' ').findAll { it } }
+}
+
 // -Dlumina.dump=name (and the other lumina.* properties) reach the tests: OfflineRenderDumpTest draws and checks that dump
 test {
 	systemProperties System.getProperties().findAll { it.key.toString().startsWith('lumina.') }

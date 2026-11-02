@@ -150,11 +150,16 @@ public class Zone
 		alphaModels.clear();
 	}
 
-	void unmap()
+	/** Unmap the buffers the upload wrote; an indexed opaque buffer then gets storage of its size (ZonePool.shrink). */
+	void unmap(ZonePool pool)
 	{
 		if (vboO != null)
 		{
 			vboO.unmap();
+			if (indexed != null && indexed.indexType != 0)
+			{
+				pool.shrink(vboO, vboO.len * Integer.BYTES);
+			}
 		}
 		if (vboA != null)
 		{

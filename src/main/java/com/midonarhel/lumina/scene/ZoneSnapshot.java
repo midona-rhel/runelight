@@ -98,6 +98,10 @@ public final class ZoneSnapshot
 			zone.indexed = INDEXER.write(vertsO, vertsO.length, staging);
 			int[] written = java.util.Arrays.copyOf(staging.array(), staging.position());
 			opaque = upload(written, sizeO, loader);
+			if (zone.indexed.indexType != 0)
+			{
+				loader.pool.shrink(opaque, written.length * Integer.BYTES);
+			}
 		}
 		zone.init(opaque, upload(vertsA, sizeA, loader));
 		zone.sizeO = sizeO;
