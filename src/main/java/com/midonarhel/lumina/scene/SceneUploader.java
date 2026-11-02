@@ -1136,7 +1136,33 @@ public class SceneUploader
 	 * corner is on it, else the bed's own blended toward the color of the bank corners within BANK_REACH corners
 	 * (the nearer the more, darkened with depth as the bed's own is), the more the nearer the closest of them is.
 	 */
+	/**
+	 * Whether the face over model vertices a, b, c (modelLocal*I) stands steep enough to be a fall's (WaterMap.fallFace).
+	 */
+	private boolean fallFace(int a, int b, int c)
+	{
+		return WaterMap.fallFace(modelLocalXI[a], modelLocalYI[a], modelLocalZI[a], modelLocalXI[b], modelLocalYI[b],
+			modelLocalZI[b], modelLocalXI[c], modelLocalYI[c], modelLocalZI[c]);
+	}
+
+	/**
+	 * The water corner fall vertex v (modelLocal*I) belongs to (WaterMap.fallCorner), or null.
+	 */
+	private int[] fallCorner(int v)
+	{
+		int off = LuminaPlugin.SCENE_OFFSET << 7;
+		return water.fallCorner(modelLocalXI[v] + basex + off, modelLocalYI[v], modelLocalZI[v] + basez + off);
+	}
+
 	private int bedCornerColor(int cx, int cy, int[][] heights)
+	{
+		int c = bedCornerColorOf(cx, cy, heights);
+		// noted for the falls the dynamic models draw (ModelUploader)
+		water.setBedCorner(cx, cy, c);
+		return c;
+	}
+
+	private int bedCornerColorOf(int cx, int cy, int[][] heights)
 	{
 		int own = water.bedColor(cx, cy, water.depthLevel(cx, cy));
 		int hue = 0, sat = 0, light = 0, count = 0, nearest = BANK_REACH + 1;
@@ -1430,9 +1456,6 @@ public class SceneUploader
 			modelLocalZI[v] = vz;
 		}
 
-		// fake water: faces drawn as real water, with their height above the foot of the model's water in u and below the top of it in v
-		final float[] span = SurfaceMaterials.fakeSpan(material, faceTextures, triangleCount, color1s, transparencies,
-			indices1, indices2, indices3, vertexY);
 		int len = 0;
 		for (int face = 0; face < triangleCount; ++face)
 		{
@@ -1539,12 +1562,20 @@ public class SceneUploader
 			{
 				texture = 0;
 				alphaBias &= 0xffffff;
-				su0 = SurfaceMaterials.fakeHeight(span[0], vertexY[triangleA]);
-				su1 = SurfaceMaterials.fakeHeight(span[0], vertexY[triangleB]);
-				su2 = SurfaceMaterials.fakeHeight(span[0], vertexY[triangleC]);
-				sv0 = SurfaceMaterials.fakeHeight(vertexY[triangleA], span[1]);
-				sv1 = SurfaceMaterials.fakeHeight(vertexY[triangleB], span[1]);
-				sv2 = SurfaceMaterials.fakeHeight(vertexY[triangleC], span[1]);
+				// the depth its colour goes by in u and v (material_target.glsl)
+				su0 = sv0 = su1 = sv1 = su2 = sv2 = SurfaceMaterials.FAKE_DEPTH;
+				if (sinkWater && fallFace(triangleA, triangleB, triangleC))
+				{
+					// a fall shows the water it runs between, at its top and its foot: their beds, as they show under
+					// their water, and the depth their colour goes by
+					int[] c1 = fallCorner(triangleA), c2 = fallCorner(triangleB), c3 = fallCorner(triangleC);
+					color1 = c1 == null ? color1 : bedCornerColor(c1[0], c1[1], scene.getTileHeights()[c1[2]]);
+					color2 = c2 == null ? color2 : bedCornerColor(c2[0], c2[1], scene.getTileHeights()[c2[2]]);
+					color3 = c3 == null ? color3 : bedCornerColor(c3[0], c3[1], scene.getTileHeights()[c3[2]]);
+					su0 = sv0 = c1 == null ? su0 : water.colorDepth(c1[0], c1[1]);
+					su1 = sv1 = c2 == null ? su1 : water.colorDepth(c2[0], c2[1]);
+					su2 = sv2 = c3 == null ? su2 : water.colorDepth(c3[0], c3[1]);
+				}
 			}
 			if (texture > 0)
 			{

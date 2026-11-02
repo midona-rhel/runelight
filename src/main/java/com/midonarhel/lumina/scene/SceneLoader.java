@@ -830,6 +830,7 @@ public final class SceneLoader
 		}
 		ctx.zones = d.zones;
 		plugin.clientUploader.water = plugin.mapUploader.water;
+		ModelUploader.water = plugin.clientUploader.water;
 		long tZones = System.nanoTime();
 		plugin.sceneSwapped(d);
 

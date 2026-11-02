@@ -29,9 +29,11 @@ void main() {
 
   vec4 p0 = waterPage0(waterData, c);
   vec4 p1 = waterPage1(waterData, c);
-  // the flow slows toward the bank
+  // the flow slows toward the bank; the falls' own (to a lip, down a fall, out from a foot) doesn't, a fall's channel is
+  // all bank
   vec2 flow = p0.gb * (WATER_TILE * WATER_FLOW_SPEED[type])
-    * mix(BANK_SLOW, 1.0, smoothstep(0.0, BANK_REACH, p1.r) * smoothstep(0.5, 1.0, p1.b));
+    * mix(BANK_SLOW, 1.0, smoothstep(0.0, BANK_REACH, p1.r) * smoothstep(0.5, 1.0, p1.b))
+    + waterPage2(waterData, c).ba * WATER_TILE;
 
   vRel = vec3(xz.x, p0.r, xz.y) - waterCamera;
   vXZ = xz;
@@ -42,7 +44,7 @@ void main() {
     // the tile's place in the wrapping map; whole tiles, so none straddles its edge
     vec2 t = mod(vec2(tile.xy) - waterGrid.x, WAVE_MAP_TILES) + cell;
     gl_Position = vec4(t / WAVE_MAP_TILES * 2.0 - 1.0, 0.0, 1.0);
-  } else if (tile.w >= 128u) {
+  } else if ((tile.w & 128u) != 0u) {
     // land: not on the screen (every corner at one point, no area)
     gl_Position = vec4(2.0, 2.0, 2.0, 1.0);
   } else {

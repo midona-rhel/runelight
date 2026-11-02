@@ -278,7 +278,7 @@ struct SceneSample {
   vec3 normal;    // as stored, n * 0.5 + 0.5
   vec4 material;  // materialUnpack
   vec3 faceNormal;
-  float end;      // fake water: its distance from the nearer end of the model's water, its foot or its top, world units
+  float end;      // fake water: the depth its colour goes by, world units (the uploaders')
 };
 
 SceneSample sceneSample(ivec2 px, int s) {
@@ -335,6 +335,11 @@ vec4 shadeScene(ivec2 px, SceneSample sm, vec4 transparent) {
   vec3 n = decodeNormal(sm.normal);
   vec3 p = reconstructPosition(vec2(px) + 0.5, d);
   vec4 material = sm.material;
+  // a fall's face holds its pools' bed colour (SceneUploader): lit as their bed is, as ground facing up (water.glsl
+  // waterFake)
+  if (materialFakeWater(material) && waterFakeFall(sm.faceNormal)) {
+    n = vec3(0.0, -1.0, 0.0);
+  }
   float emissive = material.r;
   float transmissive = material.g;
 
@@ -459,8 +464,12 @@ vec4 shadeScene(ivec2 px, SceneSample sm, vec4 transparent) {
       if (wet.x > 0.0) {
         lit = weatherPuddleWater(lit, p, light, wet, vec2(px) + 0.5);
       }
-      lit = waterOver(px, p, color.rgb, shadow, lit, material.b);
-      if (materialFakeWater(material)) {
+      // a face a model lays on a terrain fall as water is the bed of the fall's real surface over it (water_vert.glsl):
+      // the pools above and below it and the fall are one surface
+      bool fakeFall = materialFakeWater(material) && waterFakeFall(sm.faceNormal);
+      bool over;
+      lit = waterOver(px, p, color.rgb, shadow, lit, material.b, fakeFall, over);
+      if (materialFakeWater(material) && !(fakeFall && over)) {
         lit = waterFake(px, p, sm.faceNormal, color.rgb, shadow, sm.end, lit);
       }
       if (compositePart == 4) { return vec4(lit, 1.0); }

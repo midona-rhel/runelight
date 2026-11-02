@@ -193,7 +193,8 @@ public class WaterSurface
 						m.tiles[o] = (byte) x;
 						m.tiles[o + 1] = (byte) y;
 						m.tiles[o + 2] = (byte) Water.slotType(k);
-						m.tiles[o + 3] = (byte) (m.slot(k) | (map.level[y * size + x] >= 0 ? 0 : LAND));
+						int i = y * size + x;
+						m.tiles[o + 3] = (byte) (m.slot(k) | (map.level[i] >= 0 ? 0 : LAND));
 					}
 				}
 				if (m.count > start)
