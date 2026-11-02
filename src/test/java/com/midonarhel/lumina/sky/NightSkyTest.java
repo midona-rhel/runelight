@@ -219,4 +219,37 @@ public class NightSkyTest
 			NightSky.auroraHold = Float.NaN;
 		}
 	}
+
+	@Test
+	public void nebulaClustersAre117HdsStarClusters() throws Exception
+	{
+		// 117 HD's StarField: Random(SEED); 350 bright and 2200 dim stars (a point on the sphere, brightness, size and
+		// colour each); then CLUSTER_COUNT 12 points on the sphere (HDUtils.randomPointOnSphere), the clusters
+		java.util.Random random = new java.util.Random(0x313137204844L);
+		for (int i = 0; i < 350 + 2200; ++i)
+		{
+			random.nextFloat();
+			random.nextFloat();
+			random.nextFloat();
+			random.nextFloat();
+			random.nextInt(6);
+		}
+		String glsl;
+		try (java.io.InputStream in = LuminaPlugin.class.getResourceAsStream("night_sky.glsl"))
+		{
+			glsl = new String(in.readAllBytes(), java.nio.charset.StandardCharsets.UTF_8);
+		}
+		java.util.regex.Matcher m = java.util.regex.Pattern.compile("vec3\\((-?[0-9.]+), (-?[0-9.]+), (-?[0-9.]+)\\)")
+			.matcher(glsl.substring(glsl.indexOf("NEBULA_CLUSTERS[12]")));
+		for (int c = 0; c < 12; ++c)
+		{
+			float z = random.nextFloat() * 2 - 1;
+			float t = random.nextFloat() * 2 * (float) Math.PI;
+			float r = (float) Math.sqrt(Math.max(0, 1 - z * z));
+			assertTrue(m.find());
+			assertEquals(r * Math.cos(t), Float.parseFloat(m.group(1)), 1e-5);
+			assertEquals(z, Float.parseFloat(m.group(2)), 1e-5);
+			assertEquals(r * Math.sin(t), Float.parseFloat(m.group(3)), 1e-5);
+		}
+	}
 }

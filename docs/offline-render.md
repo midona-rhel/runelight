@@ -57,7 +57,8 @@ fixture is kept from shading it by the bake's distance rule alone, as a world li
 
 `SkyPanorama` (`./gradlew test --tests '*SkyPanorama*' -Dlumina.panorama=dir -Dlumina.times=100,104`) draws the clear
 night sky with no scene from `night_sky.glsl` itself, all of it (azimuth -180..180, elevation 0..90): the part OSRS's
-camera never looks up into. It also writes 117 HD's aurora over 117 HD's night sky beside it.
+camera never looks up into. It also writes 117 HD's nebula and aurora over 117 HD's night sky beside it.
+`-Dlumina.aurora`, `-Dlumina.nebula`, `-Dlumina.stars` set the aurora's strength and the nebula and star settings.
 
 ### How it works (`src/test/java/com/midonarhel/lumina/harness/`)
 

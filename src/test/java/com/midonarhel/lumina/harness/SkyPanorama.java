@@ -18,7 +18,7 @@ import static org.lwjgl.opengl.GL33C.*;
  * never looks up into, drawn by the composite's own night_sky.glsl. -Dlumina.panorama=dir writes sky-&lt;t&gt;s.png for the
  * seconds in -Dlumina.times (default 100), and reference-&lt;t&gt;s.png, 117 HD's aurora over 117 HD's night sky.
  * -Dlumina.aurora is the auroraStrength uniform (default NightSky's at full strength), -Dlumina.alt the sun's
- * altitude (default -35, midnight).
+ * altitude (default -35, midnight), -Dlumina.nebula and -Dlumina.stars the nebulaStrength and starBrightness settings (default 1).
  */
 public class SkyPanorama
 {
@@ -31,6 +31,8 @@ public class SkyPanorama
 		int w = 1440, h = 360;
 		float aurora = Float.parseFloat(System.getProperty("lumina.aurora", "0.396"));
 		float alt = Float.parseFloat(System.getProperty("lumina.alt", "-35"));
+		float nebula = Float.parseFloat(System.getProperty("lumina.nebula", "1"));
+		float stars = Float.parseFloat(System.getProperty("lumina.stars", "1"));
 		new File(dir).mkdirs();
 		try (HeadlessGl gl = new HeadlessGl())
 		{
@@ -50,8 +52,8 @@ public class SkyPanorama
 			glUniform2f(glGetUniformLocation(program, "size"), w, h);
 			glUniform1f(glGetUniformLocation(program, "alt"), alt);
 			glUniformMatrix3fv(glGetUniformLocation(program, "starFrame"), false, new float[]{1, 0, 0, 0, 1, 0, 0, 0, 1});
-			glUniform1f(glGetUniformLocation(program, "starBrightness"), 1);
-			glUniform1f(glGetUniformLocation(program, "nebulaStrength"), 1);
+			glUniform1f(glGetUniformLocation(program, "starBrightness"), stars);
+			glUniform1f(glGetUniformLocation(program, "nebulaStrength"), nebula);
 			glUniform1f(glGetUniformLocation(program, "auroraStrength"), aurora);
 			glUniform1f(glGetUniformLocation(program, "starPixel"), (float) (Math.PI / 2 / h));
 			for (String t : System.getProperty("lumina.times", "100").split(","))

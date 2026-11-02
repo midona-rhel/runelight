@@ -1,13 +1,13 @@
 // The night sky, added to the sky as the composite draws it (atmosphere.glsl's celestial): layered stars of different
-// sizes and colors that twinkle, a painted nebula and Milky Way band, shooting stars and, in the far north, an aurora
-// (117 HD's).
+// sizes and colors that twinkle, a nebula (117 HD's) brightest around clusters of stars, shooting stars and, in the far
+// north, an aurora (117 HD's).
 // Everything is a function of the view direction (and the time, for the twinkle), so nothing shimmers when the camera
 // moves, and the stars and nebula turn slowly with the night (NightSky.java). Linear colors. Needs sky.glsl.
 // None of it goes through the sky cache: that only feeds the light, and these move.
 
 uniform mat3 starFrame;       // view direction -> the fixed stars' frame, which turns with the night
 uniform float starBrightness; // the setting, 0..2
-uniform float nebulaStrength; // the setting, 0..2: the nebula and the Milky Way
+uniform float nebulaStrength; // the setting, 0..2: the nebula and its star clusters
 uniform float auroraStrength; // 0..1: how strong tonight's aurora is where the player is (0 almost everywhere)
 uniform vec4 meteorHead;      // the shooting star in flight: direction of its head, and how bright (0: none)
 uniform vec3 meteorTail;      // direction of its tail
@@ -25,20 +25,135 @@ uniform float starPixel;      // the angle one pixel covers, radians, in the mid
 #define STAR_CELL_PIXELS 6.0
 #define STAR_FAINT 2.0
 #define STAR_HORIZON 0.2
-// stars are this much more common (times 1 + this) in the Milky Way's core
-#define STAR_BAND_DENSITY 5.0
 #define STAR_MOON_WASH 0.6
-
-// the Milky Way: a band around this pole (in the stars' frame), its width (sine) and the nebula's brightness
-#define MILKY_POLE normalize(vec3(0.35, -0.55, 0.62))
-#define MILKY_WIDTH 0.2
-#define NEBULA_BRIGHTNESS 0.065
-#define MILKY_BRIGHTNESS 0.05
+// the faint layers' stars are this much more common (times 1 + this) in the middle of a nebula's star clusters
+#define STAR_CLUSTER_DENSITY 12.0
+#define STAR_CLUSTER_FILL 0.25
 #define NEBULA_MOON_WASH 0.65
+// 117 HD's nebula, this much brighter: Lumina's clear night sky is about 16 times brighter than 117 HD's, so at 117 HD's
+// radiance the nebula stood out of it by about half as much (13 sRGB levels at the most, against 24). At 2.2 it adds what
+// 117 HD's adds over its own (SkyPanorama without the stars: at the most 24 levels against 23, p99 16 against 16, and
+// over 2 levels across 24.6% of the sky against 24.4%)
+#define NEBULA_BRIGHTNESS 2.2
 
-float milkyDensity(vec3 d) {
-  float b = dot(d, MILKY_POLE) / MILKY_WIDTH;
-  return exp(-b * b);
+// ---------------------------------------------------------------------------------------------------------------
+// Nebula: 117 HD's (utils/starfield.glsl, proceduralNebula), ported as it is. Domain-warped fBm of value noise: a few
+// broad cloud regions across the sky with filaments and grain inside, teal with a little purple, brightest around its
+// star clusters. 117 HD bakes it into a cubemap once; Lumina's composite has no sampler left for one (the per-stage
+// limit of 16), so it is worked out per pixel, early-out first as 117 HD's own procedural path does. In the stars'
+// frame: it turns with them. Linear emission, 117 HD's.
+
+// 117 HD's star clusters (StarField: CLUSTER_COUNT 12 directions, the sphere points its Random(SEED) gives after the
+// bright and dim layers; the same in every client), in the stars' frame (y down)
+const vec3 NEBULA_CLUSTERS[12] = vec3[](
+  vec3(-0.53115, 0.31286, 0.78740),
+  vec3(-0.64642, 0.59172, 0.48168),
+  vec3(-0.09284, -0.73977, -0.66642),
+  vec3(0.78201, 0.31513, 0.53772),
+  vec3(0.80511, 0.12666, 0.57945),
+  vec3(0.80385, 0.41846, -0.42275),
+  vec3(0.56705, 0.71188, -0.41435),
+  vec3(-0.80296, -0.42988, 0.41288),
+  vec3(-0.55410, 0.04022, -0.83148),
+  vec3(0.05518, -0.97704, 0.20578),
+  vec3(0.67022, 0.38602, -0.63387),
+  vec3(0.12818, -0.69497, 0.70752)
+);
+// the clusters' angular spread, radians (CLUSTER_ANGULAR_SPREAD): the stars in them; half of it, times 6, is the
+// nebula's glow around them
+#define NEBULA_CLUSTER_SPREAD 0.09
+#define NEBULA_CLUSTER_SIGMA (NEBULA_CLUSTER_SPREAD * 0.5 * 6.0)
+// below this much of the clusters' glow there is no nebula (proceduralNebula): 1 less the most its regions' fBm reaches
+#define NEBULA_REGION_SKIP 0.05
+
+// the clusters' gaussian at d, of the nearest one (all have the same width, so the nearest gives 117 HD's maximum)
+float nebulaClusterGauss(vec3 d, float sigma) {
+  float near = -1.0;
+  for (int i = 0; i < 12; i++) {
+    near = max(near, dot(d, NEBULA_CLUSTERS[i]));
+  }
+  float angleSq = max(0.0, (1.0 - near) * 2.0);
+  return exp(-angleSq / (2.0 * sigma * sigma));
+}
+
+// 117 HD's hash13 (utils/hash.glsl), for its noise: not sky.glsl's, whose constant differs
+float sfHash13(vec3 p3) {
+  p3 = fract(p3 * 0.1031);
+  p3 += dot(p3, p3.zyx + 33.33);
+  return fract((p3.x + p3.y) * p3.z);
+}
+
+// value noise with the quintic interpolant, whose 1st and 2nd derivatives vanish at the cells' faces (no creases)
+float sfNoise(vec3 p) {
+  vec3 i = floor(p);
+  vec3 f = fract(p);
+  f = f * f * f * (f * (f * 6.0 - 15.0) + 10.0);
+  return mix(
+    mix(
+      mix(sfHash13(i + vec3(0, 0, 0)), sfHash13(i + vec3(1, 0, 0)), f.x),
+      mix(sfHash13(i + vec3(0, 1, 0)), sfHash13(i + vec3(1, 1, 0)), f.x),
+      f.y),
+    mix(
+      mix(sfHash13(i + vec3(0, 0, 1)), sfHash13(i + vec3(1, 0, 1)), f.x),
+      mix(sfHash13(i + vec3(0, 1, 1)), sfHash13(i + vec3(1, 1, 1)), f.x),
+      f.y),
+    f.z);
+}
+
+// octaves of noise at rising frequency (2.02, off the lattice) and halving amplitude, normalized to about 0..1
+float sfFbm(vec3 p, int octaves) {
+  float sum = 0.0;
+  float amp = 0.5;
+  float norm = 0.0;
+  for (int o = 0; o < octaves; o++) {
+    sum += amp * sfNoise(p);
+    norm += amp;
+    p *= 2.02;
+    amp *= 0.5;
+  }
+  return sum / norm;
+}
+
+// The nebula's emission along d (the stars' frame), linear.
+vec3 proceduralNebula(vec3 dir) {
+  float clusterBias = nebulaClusterGauss(dir, NEBULA_CLUSTER_SIGMA);
+  // Lumina's, for speed, with the same result: there is nebula only where the regions' fBm and the clusters' glow add
+  // up to more than 1 (below), and that fBm stays under 0.92 over the sphere (0.914 the most of 4 million directions,
+  // in Java), so far from every cluster there is none and the noise needn't be worked out
+  if (clusterBias < NEBULA_REGION_SKIP) {
+    return vec3(0.0);
+  }
+
+  // a low-frequency warp of the coordinate, so the large structure doesn't line up with the noise's lattice
+  vec3 warp = vec3(
+    sfFbm(dir * 2.0 + vec3(11.3), 1),
+    sfFbm(dir * 2.0 + vec3(47.1), 1),
+    sfFbm(dir * 2.0 + vec3(83.7), 1));
+  vec3 wdir = dir + (warp - 0.5) * 0.9;
+
+  // broad cloud regions, a few across the sky, soft at the edges
+  float region = sfFbm(wdir * 2.5 + vec3(50.0), 3);
+  region = smoothstep(0.45, 0.78, (region + clusterBias) * 0.45);
+  // most of the sky has none
+  if (region <= 0.0) {
+    return vec3(0.0);
+  }
+
+  // filaments inside the regions, and grain near the bright cores
+  float wisps = sfFbm(wdir * 9.0 + vec3(100.0), 3);
+  wisps = smoothstep(0.35, 0.75, wisps);
+  float detail = sfFbm(wdir * 28.0 + vec3(200.0), 2);
+
+  float nebulaIntensity = region * (0.55 + 0.45 * wisps) * (0.6 + 0.4 * detail) * 1.9;
+  nebulaIntensity *= (1.0 + clusterBias * 1.2);
+
+  // teal, with a little purple here and there
+  vec3 tealColor = vec3(0.000619195, 0.00193498, 0.00270898);
+  float colorVariation = sfFbm(wdir * 4.0 + vec3(77.0), 2);
+  vec3 purpleColor = vec3(0.00154799, 0.000773994, 0.00270898);
+  vec3 nebulaColor = mix(tealColor, purpleColor, colorVariation * 0.5);
+
+  return nebulaColor * nebulaIntensity;
 }
 
 vec3 starTint(vec3 cell, float color) {
@@ -49,16 +164,20 @@ vec3 starTint(vec3 cell, float color) {
 }
 
 vec3 starLayer(vec3 d, float cells, float chance, float size, float peak, float color, float glint, float swell,
-  float pixelAngle, float time, float wash) {
+  float cluster, float pixelAngle, float time, float wash) {
   float grid = min(cells, exp2(floor(log2(1.0 / (starPixel * STAR_CELL_PIXELS)))));
   chance = min(chance * (cells * cells) / (grid * grid), 1.0);
   cells = grid;
   vec3 q = d * cells;
   vec3 cell = floor(q);
   float h = hash13(cell);
-  // thicker in the Milky Way's core, by the density at the cell's middle so the stars of a cell never come and go
-  float band = milkyDensity(normalize(cell + 0.5));
-  chance *= 1.0 + STAR_BAND_DENSITY * band * min(nebulaStrength, 1.0);
+  // thicker in the nebula's star clusters (117 HD's clustered layer: small, faint stars), by the density at the cell's
+  // middle so the stars of a cell never come and go; at most STAR_CLUSTER_FILL of the cells, so a coarse grid (a low
+  // render scale) never shows as a lattice of stars
+  if (cluster > 0.0) {
+    float boost = 1.0 + cluster * nebulaClusterGauss(normalize(cell + 0.5), NEBULA_CLUSTER_SPREAD) * min(nebulaStrength, 1.0);
+    chance = min(chance * boost, max(chance, STAR_CLUSTER_FILL));
+  }
   if (h < 1.0 - chance) {
     return vec3(0.0);
   }
@@ -87,48 +206,6 @@ vec3 starLayer(vec3 d, float cells, float chance, float size, float peak, float 
     shape += (0.12 * exp(-r2 * 0.08) + 0.35 * cross4 * glint * smoothstep(0.5, 1.0, u)) * smoothstep(0.0, 0.4, u);
   }
   return starTint(cell, color) * (bright * twinkle * shape * inside * peak * (1.0 - wash * (1.0 - bright)));
-}
-
-// ---------------------------------------------------------------------------------------------------------------
-// Nebula and Milky Way: smooth fields from a few sines folded into each other, which reads as paint and costs a
-// handful of sines rather than a lattice of hashes
-
-float swirl(vec3 p) {
-  p += 0.9 * sin(p.zxy * 1.37 + vec3(1.7, 4.1, 2.3));
-  return 0.5 + 0.5 * sin(p.x * 1.6 + 1.3 * sin(p.y * 1.9 + 0.7 * sin(p.z * 2.3)));
-}
-
-// The nebula and the Milky Way. The parts that most of the sky has none of come after cheap tests for them.
-vec3 nebulaColor(vec3 d, float amount) {
-  vec3 col = vec3(0.0);
-  // broad clouds of it, soft at the edges
-  float region = swirl(d * 1.9 + vec3(3.0));
-  // the finer swirl moves the edge by at most 0.15: past that there is none
-  if (region > 0.22) {
-    region = smoothstep(0.38, 0.95, region + 0.3 * (swirl(d * 4.1 + vec3(9.0)) - 0.5));
-  } else {
-    region = 0.0;
-  }
-  if (region > 0.0) {
-    // filaments: the ridges of a field, where it crosses its middle
-    float ridge = 1.0 - abs(2.0 * swirl(d * 6.7 + vec3(60.0)) - 1.0);
-    float wisps = ridge * ridge * ridge;
-    float tone = swirl(d * 3.1 + vec3(80.0));
-    vec3 teal = vec3(0.10, 0.62, 0.70);
-    vec3 violet = vec3(0.45, 0.20, 0.85);
-    vec3 rose = vec3(0.90, 0.22, 0.55);
-    vec3 hue = mix(mix(teal, violet, smoothstep(0.25, 0.55, tone)), rose, smoothstep(0.55, 0.85, tone));
-    col += hue * (region * (0.3 + 0.9 * wisps) * NEBULA_BRIGHTNESS);
-  }
-  // the Milky Way: a band of mottled light with a dark lane through it
-  float band = milkyDensity(d);
-  if (band > 0.02) {
-    float mottle = swirl(d * 5.3 + vec3(20.0));
-    float lane = smoothstep(0.55, 0.85, swirl(d * 8.7 + vec3(40.0))) * band;
-    float milky = band * (0.3 + 0.9 * mottle) * (1.0 - 0.7 * lane);
-    col += mix(vec3(0.38, 0.50, 1.0), vec3(1.0, 0.72, 0.85), band * band) * (milky * MILKY_BRIGHTNESS);
-  }
-  return col * amount;
 }
 
 // ---------------------------------------------------------------------------------------------------------------
@@ -355,9 +432,9 @@ vec3 nightSky(vec3 dir, vec3 moonDir, float alt, float time, float pixelAngle, f
   float stars = starBrightness * dark * horizon * moonNear;
   if (stars > 0.0) {
     float wash = STAR_MOON_WASH * moonUp;
-    c += starLayer(d, 320.0, 0.0011, 0.0004, 0.9, 0.0, 0.0, 0.25, pixelAngle, time, wash) * stars;
-    c += starLayer(d, 110.0, 0.0045, 0.0009, 1.1, 0.5, 0.0, 0.30, pixelAngle, time, wash) * stars;
-    c += starLayer(d, 36.0, 0.012, 0.0016, 1.8, 0.75, 1.0, 0.35, pixelAngle, time, wash) * stars;
+    c += starLayer(d, 320.0, 0.0011, 0.0004, 0.9, 0.0, 0.0, 0.25, STAR_CLUSTER_DENSITY, pixelAngle, time, wash) * stars;
+    c += starLayer(d, 110.0, 0.0045, 0.0009, 1.1, 0.5, 0.0, 0.30, STAR_CLUSTER_DENSITY, pixelAngle, time, wash) * stars;
+    c += starLayer(d, 36.0, 0.012, 0.0016, 1.8, 0.75, 1.0, 0.35, 0.0, pixelAngle, time, wash) * stars;
     if (meteorHead.w > 0.0) {
       c += shootingStar(dir, pixelAngle) * (min(starBrightness, 1.0) * dark * horizon);
     }
@@ -366,7 +443,7 @@ vec3 nightSky(vec3 dir, vec3 moonDir, float alt, float time, float pixelAngle, f
   float nebula = nebulaStrength * smoothstep(-11.0, -22.0, alt) * visible * T * horizon * moonNear
     * (1.0 - NEBULA_MOON_WASH * moonUp);
   if (nebula > 0.001) {
-    c += nebulaColor(d, nebula);
+    c += proceduralNebula(d) * (nebula * NEBULA_BRIGHTNESS);
   }
   // 117 HD's: its darkness (sun 6 to 18 degrees down), the contrast against the sky, and in front of the moon but
   // behind the haze (sky fog there) and clouds

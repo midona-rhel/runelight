@@ -20,6 +20,7 @@ import static org.lwjgl.opengl.GL33C.*;
  *
  * -Dlumina.ab=aurora toggles the aurora instead (NightSky.auroraHold 1 and 0, the skylight left on): its cost is the
  * composite's, on less off ("skylight" in the line then reads "aurora", and the AO pass is unchanged).
+ * -Dlumina.ab=nebula toggles the nebula the same way (the nebulaStrength setting -Dlumina.nebula, default 100, and 0).
  */
 public class GpuCostProbe
 {
@@ -54,7 +55,9 @@ public class GpuCostProbe
 			}
 		}
 		int n = Integer.parseInt(System.getProperty("lumina.frames", "240"));
-		boolean aurora = "aurora".equals(System.getProperty("lumina.ab"));
+		String ab = System.getProperty("lumina.ab", "");
+		boolean nebula = ab.equals("nebula"), aurora = ab.equals("aurora") || nebula;
+		String nebulaOn = System.getProperty("lumina.nebula", "100");
 		try (DumpRenderer r = new DumpRenderer(dump, o))
 		{
 			r.render();
@@ -93,9 +96,9 @@ public class GpuCostProbe
 			for (double[] a : new double[][]{aoOn, aoOff, compOn, compOff, pair}) Arrays.sort(a);
 			if (aurora)
 			{
-				String line = String.format("%s camera=%s renderScale=%s frames=%d: composite %.3f ms (p10 %.3f p90 %.3f) with the aurora, %.3f (p10 %.3f p90 %.3f) without: aurora %.3f ms (by pairs %.3f, p25 %.3f p75 %.3f)%n",
+				String line = String.format("%s camera=%s renderScale=%s frames=%d: composite %.3f ms (p10 %.3f p90 %.3f) with the %s, %.3f (p10 %.3f p90 %.3f) without: %s %.3f ms (by pairs %.3f, p25 %.3f p75 %.3f)%n",
 					name, camera == null ? "dump" : camera, scale == null ? "dump" : scale, n,
-					compOn[n / 2], compOn[n / 10], compOn[n * 9 / 10], compOff[n / 2], compOff[n / 10], compOff[n * 9 / 10], compOn[n / 2] - compOff[n / 2], pair[n / 2], pair[n / 4], pair[n * 3 / 4]);
+					compOn[n / 2], compOn[n / 10], compOn[n * 9 / 10], ab, compOff[n / 2], compOff[n / 10], compOff[n * 9 / 10], ab, compOn[n / 2] - compOff[n / 2], pair[n / 2], pair[n / 4], pair[n * 3 / 4]);
 				System.out.print(line);
 				String out = System.getProperty("lumina.out");
 				if (out != null)
