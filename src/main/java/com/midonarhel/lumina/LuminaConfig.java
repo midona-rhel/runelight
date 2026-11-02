@@ -450,20 +450,6 @@ public interface LuminaConfig extends Config
 		return 8;
 	}
 
-	@Range(max = 400)
-	@Units(Units.PERCENT)
-	@ConfigItem(
-		keyName = "cloudSpeed",
-		name = "Cloud speed",
-		description = "How fast the clouds drift, in percent.",
-		section = skySection,
-		position = 46
-	)
-	default int cloudSpeed()
-	{
-		return 100;
-	}
-
 	@Range(max = 200)
 	@Units(Units.PERCENT)
 	@ConfigItem(

@@ -25,8 +25,8 @@ public class Clouds
 	private static final double TILE = 32768;
 	// the shader samples at 1/4, 1 and 3 times the tile frequency, so the offset can wrap every 4 tiles
 	private static final double WRAP = TILE * 4;
-	// world units per second at 100% speed, along the wind's slow wander (Wind.drift): one speed, so where the
-	// clouds are is a function of the time alone and the same for every player at the same moment
+	// world units per second along the wind's slow wander (Wind.drift): one speed for everyone, no setting, so where
+	// the clouds are is a function of the time alone and the same for every player at the same moment
 	private static final double DRIFT_SPEED = 80;
 	// sine of the elevation along clouds.glsl's cloudSkyDir at and below which the clouds are clear sky: the first
 	// of CLOUD_HORIZON
@@ -232,7 +232,7 @@ public class Clouds
 	 * @param baseX world x of the scene's origin, in world units, so clouds stay put when the scene reloads
 	 * @param field the weather around the player: rain clouds over rainy regions, clear sky over clear ones
 	 */
-	public void update(boolean enabled, boolean shadows, int coveragePercent, int speedPercent,
+	public void update(boolean enabled, boolean shadows, int coveragePercent,
 		float cloudCover, long baseX, long baseZ, WeatherField field)
 	{
 		this.field = field;
@@ -240,9 +240,8 @@ public class Clouds
 		this.enabled = enabled;
 		this.shadows = shadows;
 		Wind.drift(GameClock.realSeconds(com.midonarhel.lumina.common.Clock.millis()), drift);
-		double speed = DRIFT_SPEED * speedPercent / 100.0;
-		windX = drift[0] * speed % WRAP;
-		windZ = drift[1] * speed % WRAP;
+		windX = drift[0] * DRIFT_SPEED % WRAP;
+		windZ = drift[1] * DRIFT_SPEED % WRAP;
 
 		base = coveragePercent / 100f;
 		coverage = base + (1 - base) * cloudCover;
