@@ -105,6 +105,17 @@ public final class NightSky
 	}
 
 	/**
+	 * The aurora's schedule: how strong it is at this place and time, 0 to 1, before the fade and the setting. A pure
+	 * function of the game clock (itself a function of the real UTC time, GameClock) and the place, so every player
+	 * sees the same aurora at the same time and place; swap the schedule here (117 HD's areas and events, say). Now:
+	 * the far north's biomes, on some nights.
+	 */
+	public static float auroraSchedule(String biome, long gameMillis)
+	{
+		return isAuroraBiome(biome) ? auroraNight(gameMillis) : 0;
+	}
+
+	/**
 	 * Once a frame.
 	 *
 	 * @param seconds real seconds, steadily increasing
@@ -128,7 +139,7 @@ public final class NightSky
 			aurora = hold;
 			return;
 		}
-		float target = auroraOn && isAuroraBiome(biome) ? auroraNight(gameMillis) : 0;
+		float target = auroraOn ? auroraSchedule(biome, gameMillis) : 0;
 		float step = dt / AURORA_FADE_SECONDS;
 		aurora = aurora < target ? Math.min(target, aurora + step) : Math.max(target, aurora - step);
 	}
