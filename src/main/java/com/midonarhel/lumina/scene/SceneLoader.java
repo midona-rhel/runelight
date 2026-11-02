@@ -324,9 +324,20 @@ public final class SceneLoader
 
 		t = stage("reuse", t);
 
-		// the water's bed depths and flow, needed to size and upload the zones; its surface mesh beside the upload
+		// the water's bed depths and flow, needed to size and upload the zones; its surface mesh beside the upload. The
+		// map shares its work with the upload threads, which wait for the sizes (one may still be building the fog ground:
+		// the others and this thread take its share)
 		WaterMap waterMap = config.water()
-			? WaterMap.build(scene, WaterOverrides.get()) : null;
+			? WaterMap.buildShared(scene, WaterOverrides.get(), uploadThreads) : null;
+		if (waterMap != null && log.isDebugEnabled())
+		{
+			StringBuilder parts = new StringBuilder();
+			for (int k = 0; k < WaterMap.PARTS.length; ++k)
+			{
+				parts.append(String.format(" %s %.1f", WaterMap.PARTS[k], waterMap.partMs[k]));
+			}
+			log.debug("Water map parts (ms):{}", parts);
+		}
 		plugin.mapUploader.water = waterMap;
 		java.util.concurrent.Future<Water.Loaded> waterBuild = beside(() -> Water.prepare(waterMap));
 		t = stage("water map", t);
