@@ -232,11 +232,11 @@ public final class Programs
 		return template;
 	}
 
-	/** One of the composite's programs (composite_frag.glsl's COMPOSITE_PASS). */
-	private int compileComposite(int pass) throws ShaderException
+	/** One of the composite's programs (composite_frag.glsl's COMPOSITE_PASS), with the aurora or without. */
+	private int compileComposite(Composite.CompositeProgram c) throws ShaderException
 	{
-		return COMPOSITE_PROGRAM.compile(createTemplate()
-			.add(key -> key.equals("composite_pass") ? "#define COMPOSITE_PASS " + pass + "\n" : null));
+		String defines = "#define COMPOSITE_PASS " + c.pass + "\n" + (c.aurora ? "" : "#define NO_AURORA\n");
+		return COMPOSITE_PROGRAM.compile(createTemplate().add(key -> key.equals("composite_pass") ? defines : null));
 	}
 
 	public void initProgram() throws ShaderException
@@ -250,7 +250,7 @@ public final class Programs
 		plugin.glUiProgram = UI_PROGRAM.compile(template);
 		for (Composite.CompositeProgram c : plugin.composite.composites)
 		{
-			c.program = compileComposite(c.pass);
+			c.program = compileComposite(c);
 		}
 		plugin.glAoProgram = AO_PROGRAM.compile(template);
 		plugin.glDenoiseProgram = DENOISE_PROGRAM.compile(template);
@@ -434,7 +434,7 @@ public final class Programs
 			ui = UI_PROGRAM.compile(template);
 			for (int i = 0; i < plugin.composite.composites.length; ++i)
 			{
-				programs[i] = compileComposite(plugin.composite.composites[i].pass);
+				programs[i] = compileComposite(plugin.composite.composites[i]);
 			}
 			ao = AO_PROGRAM.compile(template);
 			denoise = DENOISE_PROGRAM.compile(template);

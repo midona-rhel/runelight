@@ -254,6 +254,15 @@ public final class NightSky
 		}
 	}
 
+	/**
+	 * Whether the aurora may show this frame: night_sky.glsl adds it only where its strength there exceeds 0.001, and
+	 * that is at most the auroraStrength uniform. Where it can't, the composite draws with programs compiled without it.
+	 */
+	public boolean auroraShows()
+	{
+		return aurora * AURORA_VISIBILITY > 0.001f;
+	}
+
 	/** With a composite program in use: this frame's night sky. nebula: the setting, 1 as authored. */
 	public void set(Uniforms u, float nebula)
 	{

@@ -447,9 +447,13 @@ vec3 nightSky(vec3 dir, vec3 moonDir, float alt, float time, float pixelAngle, f
   }
   // 117 HD's: its darkness (sun 6 to 18 degrees down), the contrast against the sky, and in front of the moon but
   // behind the haze (sky fog there) and clouds
+  // A composite program compiled without it (NO_AURORA) is drawn where auroraStrength is 0, almost everywhere
+  // (Composite.draw): the march, compiled in and never run, held every pixel of the full pass to its registers.
+#ifndef NO_AURORA
   float aur = auroraStrength * smoothstep(-6.0, -18.0, alt) * visible * T / (1.0 + skyY * AURORA_CONTRAST);
   if (aur > 0.001) {
     c += proceduralAurora(dir, time) * aur;
   }
+#endif
   return c;
 }

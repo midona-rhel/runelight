@@ -192,6 +192,8 @@ public final class Composite
 	public static final class CompositeProgram
 	{
 		public final int pass;
+		// compiled with the aurora (night_sky.glsl NO_AURORA)
+		public final boolean aurora;
 		public int program;
 		public int part, aoEnabled, aoStrength;
 		public int cameraPos, time, outdoors, proceduralSky, lightingEnabled, sunDir, moonDir, casterDir, sunIsCaster,
@@ -213,20 +215,30 @@ public final class Composite
 
 		public CompositeProgram(int pass)
 		{
+			this(pass, true);
+		}
+
+		public CompositeProgram(int pass, boolean aurora)
+		{
 			this.pass = pass;
+			this.aurora = aurora;
 		}
 	}
 
-	public final CompositeProgram compositeFull = new CompositeProgram(COMPOSITE_FULL);
+	// The full and edge passes twice: without the aurora, drawn wherever it can't show (almost everywhere), and with it.
+	// Its march, compiled in but not run, held every pixel to its registers: fps1's composite 3.41 -> 2.83 ms.
+	public final CompositeProgram compositeFull = new CompositeProgram(COMPOSITE_FULL, false);
+	public final CompositeProgram compositeFullAurora = new CompositeProgram(COMPOSITE_FULL, true);
 	public final CompositeProgram compositeClouds = new CompositeProgram(COMPOSITE_CLOUDS);
 	public final CompositeProgram compositeWater = new CompositeProgram(COMPOSITE_WATER);
 	public final CompositeProgram compositeCloudsWater = new CompositeProgram(COMPOSITE_CLOUDS_WATER);
 	// with MSAA, the second surface of the pixels that have two, blended over the full pass
-	public final CompositeProgram compositeEdges = new CompositeProgram(COMPOSITE_EDGES);
+	public final CompositeProgram compositeEdges = new CompositeProgram(COMPOSITE_EDGES, false);
+	public final CompositeProgram compositeEdgesAurora = new CompositeProgram(COMPOSITE_EDGES, true);
 	// with MSAA, marks the pixels that have a second surface in the stencil, so the edge pass runs on those alone
 	public final CompositeProgram compositeMark = new CompositeProgram(COMPOSITE_MARK);
 	public final CompositeProgram[] composites = {compositeFull, compositeClouds, compositeWater, compositeCloudsWater,
-		compositeEdges, compositeMark};
+		compositeEdges, compositeMark, compositeFullAurora, compositeEdgesAurora};
 
 	public void locate(CompositeProgram c)
 	{
@@ -662,10 +674,12 @@ public final class Composite
 		}
 
 		com.midonarhel.lumina.dev.GpuSections.section("composite");
-		use(compositeFull);
+		final boolean aurora = plugin.nightSky.auroraShows();
+		final CompositeProgram full = aurora ? compositeFullAurora : compositeFull;
+		use(full);
 		if (log.isDebugEnabled())
 		{
-			plugin.lookMonitor.frame(compositeFull.env, plugin.weather, plugin.frameLights.size(),
+			plugin.lookMonitor.frame(full.env, plugin.weather, plugin.frameLights.size(),
 				plugin.environmentManager.getWorldPoint(), plugin.environmentManager.getBiome());
 		}
 
@@ -674,11 +688,11 @@ public final class Composite
 			for (int part = 1; part <= 4; part++)
 			{
 				plugin.sceneTargets.drawPart(part, COMPOSITE_PARTS_UNIT);
-				glUniform1i(compositeFull.part, part);
+				glUniform1i(full.part, part);
 				glDrawArrays(GL_TRIANGLES, 0, 3);
 			}
 			plugin.sceneTargets.drawPart(5, COMPOSITE_PARTS_UNIT);
-			glUniform1i(compositeFull.part, 5);
+			glUniform1i(full.part, 5);
 		}
 
 		// below 100% render scale the composite and the weather draw at the scene's size into the upscaler's target
@@ -714,7 +728,7 @@ public final class Composite
 		}
 		glDrawArrays(GL_TRIANGLES, 0, 3);
 		if (passTimers != null) glEndQuery(GL_TIME_ELAPSED);
-		glUniform1i(compositeFull.part, 0);
+		glUniform1i(full.part, 0);
 		if (edges)
 		{
 			com.midonarhel.lumina.dev.GpuSections.section("composite mark (MSAA)");
@@ -741,7 +755,7 @@ public final class Composite
 			}
 			// the second surfaces, over the first by their share of the samples; the target's alpha stays
 			com.midonarhel.lumina.dev.GpuSections.section("composite edges (MSAA)");
-			use(compositeEdges);
+			use(aurora ? compositeEdgesAurora : compositeEdges);
 			glEnable(GL_BLEND);
 			glBlendFuncSeparate(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA, GL_ZERO, GL_ONE);
 			glDrawArrays(GL_TRIANGLES, 0, 3);
