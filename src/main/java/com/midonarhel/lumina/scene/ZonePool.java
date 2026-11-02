@@ -103,6 +103,54 @@ public final class ZonePool
 		shrunk++;
 	}
 
+	// indexed zones whose opaque buffers wait for shrink, in unmap order (shrinkLater)
+	private final ArrayDeque<Zone> toShrink = new ArrayDeque<>();
+	private boolean shrinkQueued;
+
+	/**
+	 * Shrink the zone's opaque buffer to its indexed size (shrink) once the zone is swapped in, as upkeep after the
+	 * frame at most a job budget a frame: a load's 300-odd shrinks (a new buffer, a copy and a delete each) on the
+	 * client thread before its swap made the swap wait for them. Client thread.
+	 */
+	void shrinkLater(Zone zone, SceneJobs jobs)
+	{
+		toShrink.add(zone);
+		if (!shrinkQueued)
+		{
+			shrinkQueued = true;
+			jobs.add("zone buffer shrink", SceneJobs.UPKEEP, this::shrinkStep);
+		}
+	}
+
+	private boolean shrinkStep(long deadline)
+	{
+		for (Zone z; (z = toShrink.peek()) != null; )
+		{
+			if (!z.initialized && z.vboO != null)
+			{
+				// its scene is not swapped in yet
+				return false;
+			}
+			toShrink.poll();
+			VBO v = z.vboO;
+			// freed or rebuilt since (its buffer back in the pool, or another upload's) leaves nothing to do
+			if (v != null && !v.mapped && z.indexed != null && z.indexed.indexType != 0)
+			{
+				shrink(v, v.len * Integer.BYTES);
+			}
+			if (System.nanoTime() >= deadline)
+			{
+				break;
+			}
+		}
+		if (toShrink.isEmpty())
+		{
+			shrinkQueued = false;
+			return true;
+		}
+		return false;
+	}
+
 	/** A zone is done with this buffer: keep it (no GL call unless it is still mapped). */
 	void release(VBO vbo, SceneJobs jobs)
 	{

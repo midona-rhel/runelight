@@ -150,15 +150,18 @@ public class Zone
 		alphaModels.clear();
 	}
 
-	/** Unmap the buffers the upload wrote; an indexed opaque buffer then gets storage of its size (ZonePool.shrink). */
-	void unmap(ZonePool pool)
+	/**
+	 * Unmap the buffers the upload wrote; an indexed opaque buffer then gets storage of its size, once the zone is
+	 * swapped in (ZonePool.shrinkLater): not while the load's swap waits.
+	 */
+	void unmap(ZonePool pool, SceneJobs jobs)
 	{
 		if (vboO != null)
 		{
 			vboO.unmap();
 			if (indexed != null && indexed.indexType != 0)
 			{
-				pool.shrink(vboO, vboO.len * Integer.BYTES);
+				pool.shrinkLater(this, jobs);
 			}
 		}
 		if (vboA != null)
