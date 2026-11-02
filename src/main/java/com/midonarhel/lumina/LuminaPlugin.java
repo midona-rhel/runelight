@@ -1326,6 +1326,7 @@ public class LuminaPlugin extends Plugin implements DrawCallbacks
 		if (scene.getWorldViewId() == WorldView.TOPLEVEL)
 		{
 			cpuTimer.end(CpuTimer.OUTSIDE);
+			com.midonarhel.lumina.dev.GpuSections.section("scene setup, skybox");
 			// mapping makes the client thread wait for the driver: timed apart from the client's own work
 			cpuTimer.begin(CpuTimer.BUFFER_MAP);
 			for (int i = 0; i < rts.length; ++i) // NOPMD: ForLoopCanBeForeach
@@ -1552,6 +1553,7 @@ public class LuminaPlugin extends Plugin implements DrawCallbacks
 		skyFrame.drawSkybox(scene, sky, cameraX, cameraY, cameraZ);
 
 		checkGLErrors();
+		com.midonarhel.lumina.dev.GpuSections.section("geometry");
 		cpuTimer.begin(CpuTimer.CLIENT_SCENE);
 	}
 
@@ -1585,17 +1587,20 @@ public class LuminaPlugin extends Plugin implements DrawCallbacks
 		glDisable(GL_DEPTH_TEST);
 		cpuTimer.end(CpuTimer.CLIENT_SCENE);
 
+		com.midonarhel.lumina.dev.GpuSections.section("alpha resolve");
 		sceneTargets.resolveAlpha();
 		try
 		{
 			if (frameShadows)
 			{
 				cpuTimer.begin(CpuTimer.SHADOW_SUBMIT);
+				com.midonarhel.lumina.dev.GpuSections.section("shadows");
 				shadowPass.render();
 				cpuTimer.end(CpuTimer.SHADOW_SUBMIT);
 			}
 			shadowPass.report();
 			cpuTimer.begin(CpuTimer.OCCLUSION);
+			com.midonarhel.lumina.dev.GpuSections.section("weather occlusion");
 			if (weather.isActive())
 			{
 				// usually nothing: the map is only redrawn after the player moves far or the scenery changes
@@ -1893,6 +1898,7 @@ public class LuminaPlugin extends Plugin implements DrawCallbacks
 		final int canvasHeight = client.getCanvasHeight();
 		final int canvasWidth = client.getCanvasWidth();
 
+		com.midonarhel.lumina.dev.GpuSections.section("UI upload");
 		cpuTimer.begin(CpuTimer.UI_UPLOAD);
 		uiBlit.prepare(canvasWidth, canvasHeight);
 		cpuTimer.end(CpuTimer.UI_UPLOAD);
@@ -1926,7 +1932,9 @@ public class LuminaPlugin extends Plugin implements DrawCallbacks
 		}
 
 		// Texture on UI
+		com.midonarhel.lumina.dev.GpuSections.section("UI draw");
 		uiBlit.draw(overlayColor, canvasHeight, canvasWidth);
+		com.midonarhel.lumina.dev.GpuSections.end();
 
 		cpuTimer.begin(CpuTimer.SWAP);
 		try

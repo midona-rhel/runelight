@@ -69,6 +69,33 @@ tasks.register('renderDump', JavaExec) {
 	}
 }
 
+// the frame's cost by pass on the bench (harness PassCost): ./gradlew passCost -Pargs="dumps=first hours=12,21 frames=60 out=FILE"
+tasks.register('passCost', JavaExec) {
+	dependsOn testClasses
+	classpath = sourceSets.test.runtimeClasspath
+	mainClass = 'com.midonarhel.lumina.harness.PassCost'
+	workingDir = projectDir
+	jvmArgs '-Xmx8g'
+	// -Pjvm="..." more JVM arguments (a flight recording, say)
+	if (project.hasProperty('jvm')) {
+		jvmArgs project.property('jvm').toString().split(' ').findAll { it }
+	}
+	doFirst {
+		args = project.hasProperty('args') ? project.property('args').toString().split(' ').findAll { it } : []
+	}
+}
+
+// two directories of PNGs compared pixel by pixel (harness ImageDiff): ./gradlew imageDiff -Pargs="BEFORE AFTER DIFF"
+tasks.register('imageDiff', JavaExec) {
+	dependsOn testClasses
+	classpath = sourceSets.test.runtimeClasspath
+	mainClass = 'com.midonarhel.lumina.harness.ImageDiff'
+	workingDir = projectDir
+	doFirst {
+		args = project.property('args').toString().split(' ').findAll { it }
+	}
+}
+
 // -Dlumina.dump=name (and the other lumina.* properties) reach the tests: OfflineRenderDumpTest draws and checks that dump
 test {
 	systemProperties System.getProperties().findAll { it.key.toString().startsWith('lumina.') }

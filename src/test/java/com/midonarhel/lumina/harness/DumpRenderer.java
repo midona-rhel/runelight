@@ -507,12 +507,28 @@ public final class DumpRenderer implements AutoCloseable
 		{
 			FrameTape.Proj p = dump.tape.projections.get(i);
 			float[] matrix = p.matrix != null ? p.matrix : new float[]{1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1};
-			Fakes.Answer project = args ->
+			// a class of its own, not a fake: the model uploads project every vertex through it, and a proxy's boxing and
+			// reflection took most of the frame's CPU time (PassCost's profile)
+			return new FloatProjection()
 			{
-				float[] out = args.length > 3 ? (float[]) args[3] : new float[3];
-				return FrameTape.project(p.affine, (Float) args[0], (Float) args[1], (Float) args[2], out);
+				@Override
+				public float[] getProjection()
+				{
+					return matrix;
+				}
+
+				@Override
+				public float[] project(float x, float y, float z)
+				{
+					return FrameTape.project(p.affine, x, y, z, new float[3]);
+				}
+
+				@Override
+				public float[] project(float x, float y, float z, float[] out)
+				{
+					return FrameTape.project(p.affine, x, y, z, out);
+				}
 			};
-			return Fakes.of(FloatProjection.class, Map.of("getProjection", matrix, "project", project));
 		});
 	}
 

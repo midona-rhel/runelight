@@ -408,6 +408,7 @@ public final class Composite
 
 		final boolean ao = plugin.config.ambientOcclusion();
 
+		com.midonarhel.lumina.dev.GpuSections.section("water surface");
 		plugin.sceneTargets.bindTextures(COMPOSITE_TEXTURE_UNIT);
 		// the water surface into its own target, against the scene's depth, before the composite reads it
 		plugin.weather.getWaterWind(plugin.waterWind);
@@ -458,6 +459,7 @@ public final class Composite
 		}
 		if (halfPass)
 		{
+			com.midonarhel.lumina.dev.GpuSections.section("AO, skylight, shadow mask");
 			glBindFramebuffer(GL_FRAMEBUFFER, plugin.sceneTargets.getAoFbo());
 			glViewport(0, 0, plugin.sceneTargets.getAoWidth(), plugin.sceneTargets.getAoHeight());
 			// the AO pass writes every texel: clearing first lets the GPU start the pass without loading the old
@@ -510,6 +512,7 @@ public final class Composite
 			plugin.sceneTargets.bindShadow(SCENE_SHADOW_UNIT);
 		}
 
+		com.midonarhel.lumina.dev.GpuSections.section("sky cache, night sky, lighting prep");
 		plugin.skyFrame.updateClouds();
 		plugin.cpuTimer.begin(CpuTimer.SKY_CACHE);
 		int captured = plugin.skyCache.getCaptures();
@@ -540,6 +543,7 @@ public final class Composite
 			final boolean fogLamps = plugin.config.pointLights() && plugin.lightClusters.isInitialized()
 				&& plugin.lightClusters.hasFogLights();
 			denoiseFog = denoise && plugin.volumetricFog.hasGrain(fogSun, fogShadows, fogLamps);
+			com.midonarhel.lumina.dev.GpuSections.section("fog");
 			plugin.volumetricFog.render(plugin.sceneTargets.fogFbo(denoiseFog), plugin.sceneTargets.getAoWidth(),
 				plugin.sceneTargets.getAoHeight(), plugin.sceneTargets.getHalfRatio(), FOG_NOISE_UNIT,
 				plugin.frameViewProj, plugin.frameInvViewProj, plugin.frameViewport, plugin.glCapabilities.OpenGL45,
@@ -551,6 +555,7 @@ public final class Composite
 		// the composite upsamples them
 		if (denoise)
 		{
+			com.midonarhel.lumina.dev.GpuSections.section("denoise");
 			glUseProgram(plugin.glDenoiseProgram);
 			plugin.sceneTargets.denoise(plugin.uniDenoiseFog, AO_TEXTURE_UNIT, SCENE_SHADOW_UNIT, FOG_TEXTURE_UNIT, denoiseFog);
 			plugin.sceneTargets.bindShadow(SCENE_SHADOW_UNIT);
@@ -571,6 +576,7 @@ public final class Composite
 		final boolean halfWater = plugin.water.enabled(plugin.config);
 		if (halfClouds || halfWater)
 		{
+			com.midonarhel.lumina.dev.GpuSections.section("clouds, water shading (half)");
 			// their targets are not bound while drawn into
 			glActiveTexture(GL_TEXTURE0 + CLOUD_HALF_UNIT);
 			glBindTexture(GL_TEXTURE_2D, 0);
@@ -595,6 +601,7 @@ public final class Composite
 			glActiveTexture(GL_TEXTURE0);
 		}
 
+		com.midonarhel.lumina.dev.GpuSections.section("composite");
 		use(compositeFull);
 		if (log.isDebugEnabled())
 		{
@@ -637,6 +644,7 @@ public final class Composite
 		glUniform1i(compositeFull.part, 0);
 		if (edges)
 		{
+			com.midonarhel.lumina.dev.GpuSections.section("composite mark (MSAA)");
 			if (stencil)
 			{
 				// the pixels with a second surface, by a small program, so the edge pass's full shading never starts
@@ -653,6 +661,7 @@ public final class Composite
 				glStencilOp(GL_KEEP, GL_KEEP, GL_KEEP);
 			}
 			// the second surfaces, over the first by their share of the samples; the target's alpha stays
+			com.midonarhel.lumina.dev.GpuSections.section("composite edges (MSAA)");
 			use(compositeEdges);
 			glEnable(GL_BLEND);
 			glBlendFuncSeparate(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA, GL_ZERO, GL_ONE);
@@ -671,6 +680,7 @@ public final class Composite
 
 		if (plugin.weather.isActive() && plugin.config.debugView() == DebugView.FINAL)
 		{
+			com.midonarhel.lumina.dev.GpuSections.section("weather");
 			if (passTimers != null)
 			{
 				glBeginQuery(GL_TIME_ELAPSED, passTimers[2]);
@@ -690,6 +700,7 @@ public final class Composite
 
 		if (upscale)
 		{
+			com.midonarhel.lumina.dev.GpuSections.section("upscale");
 			glBindFramebuffer(GL_FRAMEBUFFER, plugin.windowFramebuffer());
 			// the weather pass leaves its own vertex array bound (or none); the fullscreen triangle needs one bound
 			glBindVertexArray(plugin.vaoUiHandle);
