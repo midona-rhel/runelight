@@ -36,6 +36,11 @@ public final class NightSky
 	// share of nights without one
 	public static final float AURORA_NO_NIGHT = 0.3f;
 	public static final float AURORA_FADE_SECONDS = 6;
+	// how much of it shows at full strength: 117 HD's auroraVisibility for FREMENNIK_PROVINCE (environments.json), the
+	// mainland's far north (Rellekka's hunter area 0.302, the mountain camp and Weiss's snow 0.396, Jatizso 0.736)
+	static final float AURORA_VISIBILITY = 0.396f;
+	/** Developer: the aurora's strength held here, anywhere and at once (`::runelight aurora 0.5`); NaN: off. */
+	public static volatile float auroraHold = Float.NaN;
 
 	/** night_sky.glsl's starFrame, column-major. */
 	final float[] frame = new float[9];
@@ -100,6 +105,17 @@ public final class NightSky
 	}
 
 	/**
+	 * The aurora's schedule: how strong it is at this place and time, 0 to 1, before the fade and the setting. A pure
+	 * function of the game clock (itself a function of the real UTC time, GameClock) and the place, so every player
+	 * sees the same aurora at the same time and place; swap the schedule here (117 HD's areas and events, say). Now:
+	 * the far north's biomes, on some nights.
+	 */
+	public static float auroraSchedule(String biome, long gameMillis)
+	{
+		return isAuroraBiome(biome) ? auroraNight(gameMillis) : 0;
+	}
+
+	/**
 	 * Once a frame.
 	 *
 	 * @param seconds real seconds, steadily increasing
@@ -117,7 +133,13 @@ public final class NightSky
 		lastSeconds = seconds;
 		starFrame(phase, frame);
 		updateMeteor(seconds, forward);
-		float target = auroraOn && isAuroraBiome(biome) ? auroraNight(gameMillis) : 0;
+		float hold = auroraHold;
+		if (!Float.isNaN(hold))
+		{
+			aurora = hold;
+			return;
+		}
+		float target = auroraOn ? auroraSchedule(biome, gameMillis) : 0;
 		float step = dt / AURORA_FADE_SECONDS;
 		aurora = aurora < target ? Math.min(target, aurora + step) : Math.max(target, aurora - step);
 	}
@@ -237,7 +259,7 @@ public final class NightSky
 	{
 		glUniformMatrix3fv(u.frame, false, frame);
 		glUniform1f(u.nebula, nebula);
-		glUniform1f(u.aurora, aurora);
+		glUniform1f(u.aurora, aurora * AURORA_VISIBILITY);
 		glUniform4fv(u.head, meteorHead);
 		glUniform3fv(u.tail, meteorTail);
 		glUniform1f(u.pixel, pixel);

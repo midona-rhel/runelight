@@ -37,6 +37,7 @@ public final class RenderDump
 		Path out = dump.dir != null ? dump.dir.resolve("offline") : Paths.get("build", "offline", "synthetic");
 		DumpRenderer.Options o = new DumpRenderer.Options();
 		int timeFrames = 0;
+		List<Double> later = new ArrayList<>();
 		List<DebugView> views = new ArrayList<>(List.of(DebugView.NORMALS, DebugView.SKYLIGHT, DebugView.LIGHTING,
 			DebugView.SHADOWS, DebugView.AMBIENT_OCCLUSION, DebugView.DEPTH));
 		for (int i = 1; i < args.length; ++i)
@@ -119,6 +120,17 @@ public final class RenderDump
 				case "lampRoofs":
 					o.lampRoofs = !v.equals("off") && !v.equals("false");
 					break;
+				case "aurora":
+					// the aurora held at this strength (NightSky.auroraHold), wherever the dump is
+					com.midonarhel.lumina.sky.NightSky.auroraHold = Float.parseFloat(v);
+					break;
+				case "later":
+					// also frames this many seconds after the dump's, final-<s>s.png: what moves with time
+					for (String t : v.split(","))
+					{
+						later.add(Double.parseDouble(t.trim()));
+					}
+					break;
 				case "probe":
 					for (String t : v.split(";"))
 					{
@@ -151,6 +163,10 @@ public final class RenderDump
 				double[] t = r.time(timeFrames);
 				System.out.printf("frame time over %d frames: GPU median %.3f ms (min %.3f), CPU median %.3f ms (min %.3f)%n",
 					timeFrames, t[0], t[1], t[2], t[3]);
+			}
+			for (double t : later)
+			{
+				ImageIO.write(r.renderLater(t), "png", out.resolve(String.format("final-%ss.png", t)).toFile());
 			}
 			for (DebugView view : views)
 			{

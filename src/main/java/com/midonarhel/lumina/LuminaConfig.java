@@ -445,7 +445,7 @@ public interface LuminaConfig extends Config
 	@ConfigItem(
 		keyName = "nebulaStrength",
 		name = "Nebula strength",
-		description = "Brightness of the night sky's nebulae and Milky Way, in percent. 0 hides them.",
+		description = "Brightness of the night sky's nebulae, in percent. 0 hides them.",
 		section = skySection,
 		position = 50
 	)

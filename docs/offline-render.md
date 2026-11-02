@@ -47,12 +47,18 @@ and 0.05), `buildings=rebuild` (the buildings — walls, rooms, floors, roofs,
 the drawn walls — built again by BuildingLights from the dump's scene objects, faked as the scene's tiles, instead of
 restored as the client had them; dumps from 2026-11-01 on hold `sceneObjects`), `probe=x,y;x,y` (prints the walls on
 those world tiles' edges), `lightMap=off` (the fixed lamps without the light map, stopped by the walls alone),
-`mapProbe=x,y` (prints the light map's baked grids of the three lamps nearest that world tile), and any setting as
-`key=value`. The light map bakes on its own threads from the first warm-up frame; the warm-up waits for the bakes after
+`aurora=s` (the aurora held at strength s, anywhere: `NightSky.auroraHold`), `later=5,10` (also `final-<s>s.png`,
+frames that many seconds after the dump's: what moves with time), `mapProbe=x,y` (prints the light
+map's baked grids of the three lamps nearest that world tile), and any setting as `key=value`. The light map bakes on its own threads from the first warm-up frame; the warm-up waits for the bakes after
 that frame (the time is printed) and the lamps ease in over the frames left. Its models (`voxels.models`, ModelBlockers)
 are in dumps from 2026-11-01's light map on; with an older dump it bakes with the walls and solid tiles alone, or with
 `mapModels=zones` with models rasterized from the dump's zones as VoxelBuilder does (their objects unknown: a lamp's own
 fixture is kept from shading it by the bake's distance rule alone, as a world light's is).
+
+`SkyPanorama` (`./gradlew test --tests '*SkyPanorama*' -Dlumina.panorama=dir -Dlumina.times=100,104`) draws the clear
+night sky with no scene from `night_sky.glsl` itself, all of it (azimuth -180..180, elevation 0..90): the part OSRS's
+camera never looks up into. It also writes 117 HD's nebula and aurora over 117 HD's night sky beside it.
+`-Dlumina.aurora`, `-Dlumina.nebula`, `-Dlumina.stars` set the aurora's strength and the nebula and star settings.
 
 ### How it works (`src/test/java/com/midonarhel/lumina/harness/`)
 
