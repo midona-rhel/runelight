@@ -258,8 +258,19 @@ void main() {
   // behind the opaque scene: not seen (reverse-z, larger is nearer); in front of the sky past the drawn scene: the
   // composite only shades water over what is under it
   ivec2 px = ivec2(gl_FragCoord.xy) + waterOrigin;
-  float sceneZ = texelFetch(sceneDepth, px, 0).r;
-  if (sceneZ <= waterSkyDepth || gl_FragCoord.z < sceneZ && (length(waterScenePosition(px, sceneZ)) < length(vRel) - WATER_SLACK
+  // the farthest of the pixel's samples that is not sky: the water is there if any of them lies behind it. By sample 0
+  // alone, a pixel whose sample 0 was something in front of the water (a reed, a post's edge) had none, and with
+  // multisampling its samples behind that thing showed the bare bed, a fringe round its edges
+  float sceneZ = 0.0;
+  bool scene = false;
+  for (int s = 0; s < SCENE_SAMPLES; ++s) {
+    float z = texelFetch(sceneDepth, px, s).r;
+    if (z > waterSkyDepth) {
+      sceneZ = scene ? min(sceneZ, z) : z;
+      scene = true;
+    }
+  }
+  if (!scene || gl_FragCoord.z < sceneZ && (length(waterScenePosition(px, sceneZ)) < length(vRel) - WATER_SLACK
     || waterPage2(waterData, vXZ / WATER_TILE + waterGrid.x).r < FALL_SLACK_NEAR))
     discard;
 
