@@ -46,6 +46,20 @@ public enum AntiAliasingMode
 		return samples;
 	}
 
+	/** This mode, or the highest one a driver allowing at most maxSamples samples draws (the one drawn instead). */
+	public AntiAliasingMode supported(int maxSamples)
+	{
+		AntiAliasingMode best = DISABLED;
+		for (AntiAliasingMode m : values())
+		{
+			if (m.samples <= maxSamples && m.samples <= samples && m.samples >= best.samples)
+			{
+				best = m;
+			}
+		}
+		return best;
+	}
+
 	@Override
 	public String toString()
 	{

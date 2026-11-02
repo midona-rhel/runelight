@@ -1186,6 +1186,14 @@ public class LuminaPlugin extends Plugin implements DrawCallbacks
 			Math.min(glGetInteger(GL_MAX_COLOR_TEXTURE_SAMPLES), glGetInteger(GL_MAX_DEPTH_TEXTURE_SAMPLES)));
 		final int samples = Math.min(forced != 0 ? forced : config.antiAliasingMode().getSamples(), max);
 		log.debug("AA samples: {}, max samples: {}, forced samples: {}", samples, max, forced);
+		// the setting shows what is drawn: a level the driver doesn't have (x16 where 8 is the most) becomes the
+		// highest it has
+		AntiAliasingMode chosen = config.antiAliasingMode(), drawn = chosen.supported(max);
+		if (drawn != chosen && configManager != null)
+		{
+			log.info("Anti-aliasing {} is more than this GPU's {} samples: set to {}", chosen, max, drawn);
+			configManager.setConfiguration(LuminaConfig.GROUP, "antiAliasingMode", drawn);
+		}
 		return samples > 1 ? samples : 0;
 	}
 
