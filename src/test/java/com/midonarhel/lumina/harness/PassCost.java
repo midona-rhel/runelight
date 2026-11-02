@@ -25,8 +25,10 @@ import static org.lwjgl.opengl.GL11C.glFinish;
  * the base settings put back after; the key shaders=DIR draws it with the shader sources of DIR (as hot reload does).
  *
  * <pre>
- * ./gradlew passCost -Pargs="dumps=nightref,snow1 hours=12,21 frames=60 rounds=4 out=FILE [variants=...] [key=value settings]"
+ * ./gradlew passCost -Pargs="dumps=nightref,snow1 hours=12,21 frames=60 rounds=4 out=FILE [variants=...] [yaw=Y pitch=P]
+ *   [key=value settings]"
  * </pre>
+ * yaw and pitch turn the camera about the dump's focal point (pitch 128: toward the horizon, the sky in view).
  */
 public final class PassCost
 {
@@ -34,6 +36,8 @@ public final class PassCost
 	static boolean sections = true;
 	// a directory: each dump's frame at each hour, as drawn after the warm-up, into DIR/<dump>-<hour>.png
 	static String render;
+	// the camera turned about the dump's focal point, null for the dump's own
+	static Integer yaw, pitch;
 
 	public static void main(String[] args) throws Exception
 	{
@@ -66,6 +70,12 @@ public final class PassCost
 					break;
 				case "render":
 					render = v;
+					break;
+				case "yaw":
+					yaw = Integer.parseInt(v);
+					break;
+				case "pitch":
+					pitch = Integer.parseInt(v);
 					break;
 				case "sections":
 					sections = Boolean.parseBoolean(v);
@@ -152,6 +162,8 @@ public final class PassCost
 	{
 		DumpRenderer.Options o = new DumpRenderer.Options();
 		o.hour = hour;
+		o.cameraYaw = yaw;
+		o.cameraPitch = pitch;
 		o.settings.putAll(settings);
 		Map<String, Samples> samples = new LinkedHashMap<>();
 		String[] names = new String[64];
