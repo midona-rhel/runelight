@@ -15,7 +15,8 @@ float fogDepthWeight(float qz, float z) {
   return 1.0 / (1.0 + abs(qz - z) / (z * FOG_UPSAMPLE_DEPTH + 1.0));
 }
 
-vec4 upsampleFog(ivec2 px, float z) {
+// at the half targets' size, as their own upsample takes it
+vec4 upsampleFogHalf(ivec2 px, float z) {
   vec2 hp = fullToHalf(px);
   ivec2 base = ivec2(floor(hp));
   ivec2 maxFog = textureSize(sceneFog, 0) - 1;
@@ -31,6 +32,31 @@ vec4 upsampleFog(ivec2 px, float z) {
     }
   }
   return wsum > 1e-6 ? sum / wsum : texelFetch(sceneFog, clamp(ivec2(hp + 0.5), ivec2(0), maxFog), 0);
+}
+
+// at its own size, coarser than the half targets
+vec4 upsampleFogOwn(ivec2 px, float z) {
+  // the fog's own texels (fogRatio scene pixels each), weighed by the depth of the half texel under each
+  vec2 hp = (vec2(px) + 0.5) / fogRatio - 0.5;
+  ivec2 base = ivec2(floor(hp));
+  ivec2 maxFog = textureSize(sceneFog, 0) - 1;
+  ivec2 maxHalf = textureSize(sceneAo, 0) - 1;
+  vec4 sum = vec4(0.0);
+  float wsum = 0.0;
+  for (int y = 0; y < 2; ++y) {
+    for (int x = 0; x < 2; ++x) {
+      ivec2 q = clamp(base + ivec2(x, y), ivec2(0), maxFog);
+      vec2 bl = max(1.0 - abs(vec2(q) - hp), 0.0);
+      float w = (bl.x * bl.y + 1e-3) * fogDepthWeight(halfViewDepth(texelFetch(sceneAo, clamp(fogToHalf(q), ivec2(0), maxHalf), 0).rg), z);
+      sum += texelFetch(sceneFog, q, 0) * w;
+      wsum += w;
+    }
+  }
+  return wsum > 1e-6 ? sum / wsum : texelFetch(sceneFog, clamp(ivec2(hp + 0.5), ivec2(0), maxFog), 0);
+}
+
+vec4 upsampleFog(ivec2 px, float z) {
+  return fogRatio == halfRatio ? upsampleFogHalf(px, z) : upsampleFogOwn(px, z);
 }
 
 // lin: the final color of this pixel, including distance fog and transparent surfaces, in linear space; fog:

@@ -348,6 +348,7 @@ public final class Programs
 		glUniform1i(glGetUniformLocation(plugin.glAoProgram, "sceneMaterial"), MATERIAL_UNIT);
 		glUseProgram(0);
 		plugin.aoFrame.locate(plugin.glAoProgram);
+		plugin.denoiseFrame.locate(plugin.glDenoiseProgram);
 		bindSceneSamplers(plugin.glAoProgram);
 		plugin.weatherGround.locate(plugin.glAoProgram, WEATHER_OCCLUSION_UNIT, WEATHER_FIELD_UNIT);
 		plugin.skyGrid.locateAo(plugin.glAoProgram, SKY_GRID_UNIT);

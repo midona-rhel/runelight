@@ -374,6 +374,8 @@ public class LuminaPlugin extends Plugin implements DrawCallbacks
 	// the game shows a black void around the scene (instances, player houses, dungeons): it stays dark
 	public boolean frameSkyVoid;
 	public final FrameUniforms aoFrame = new FrameUniforms();
+	// the denoise's: its fog mode maps fog texels to half texels (halfmap.glsl)
+	public final FrameUniforms denoiseFrame = new FrameUniforms();
 
 	public static final int AO_TEXTURE_UNIT = LuminaPlugin.COMPOSITE_TEXTURE_UNIT + 3;
 	public static final int SHADOW_RAW_UNIT = LuminaPlugin.COMPOSITE_TEXTURE_UNIT + 4;
@@ -538,7 +540,7 @@ public class LuminaPlugin extends Plugin implements DrawCallbacks
 	 */
 	public static final class FrameUniforms
 	{
-		public int viewProj, invViewProj, viewport, depthZeroToOne, halfRatio;
+		public int viewProj, invViewProj, viewport, depthZeroToOne, halfRatio, fogRatio;
 
 		public void locate(int program)
 		{
@@ -547,6 +549,7 @@ public class LuminaPlugin extends Plugin implements DrawCallbacks
 			viewport = glGetUniformLocation(program, "sceneViewport");
 			depthZeroToOne = glGetUniformLocation(program, "depthZeroToOne");
 			halfRatio = glGetUniformLocation(program, "halfRatio");
+			fogRatio = glGetUniformLocation(program, "fogRatio");
 		}
 	}
 

@@ -83,9 +83,14 @@ public class SceneTargets
 	// whether the denoise's framebuffer draws into the fog target too: draw buffers are framebuffer state, so they are
 	// only set again when the fog's denoising is turned on or off
 	private boolean denoiseFog;
-	// the volumetric fog at the same size, made when the fog first runs (fogFbo): drawn into texFogRaw for the denoise
-	// to smooth into texFog along with the AO and shadows, or straight into texFog when it has no grain
-	private int fboFog, fboFogRaw, texFog, texFogRaw;
+	// the volumetric fog, made when the fog first runs (fogFbo): drawn into texFogRaw for the denoise to smooth into
+	// texFog, or straight into texFog when it has no grain. Its own size: never finer than half the scene's (scene
+	// pixels per texel fogRatio, at least 2), so below full render scale it is coarser than the AO targets, and
+	// smoothed in a pass of its own (fboFogDenoise) and upsampled on its own (fog_apply.glsl); at the AO targets' size
+	// it is smoothed and upsampled with them, as before. The fog is soft, and its march (fog_frag.glsl) costs per texel.
+	private int fboFog, fboFogRaw, texFog, texFogRaw, fboFogDenoise;
+	private float fogRatio = 2;
+	private int fogWidth, fogHeight;
 	// the composite's half resolution passes at the AO targets' size, each target made when first drawn: the clouds in
 	// front of the sky, filtered by the composite's sky (composite_frag.glsl), on attachment 0, and the water's shaded
 	// surface (water.glsl's waterShadeHalf), the program's output 1, on attachment 1
@@ -121,6 +126,9 @@ public class SceneTargets
 
 		aoWidth = (int) Math.ceil(width / (double) halfRatio);
 		aoHeight = (int) Math.ceil(height / (double) halfRatio);
+		fogRatio = Math.max(halfRatio, 2);
+		fogWidth = (int) Math.ceil(width / (double) fogRatio);
+		fogHeight = (int) Math.ceil(height / (double) fogRatio);
 		texAo = glGenTextures();
 		glBindTexture(GL_TEXTURE_2D, texAo);
 		// the half resolution depth and normal the composite's upsamples read; 32 bit floats, which halfres.glsl packs
@@ -213,9 +221,14 @@ public class SceneTargets
 
 	private int halfTexture(int format, int type)
 	{
+		return texture2D(format, type, aoWidth, aoHeight);
+	}
+
+	private static int texture2D(int format, int type, int width, int height)
+	{
 		int t = glGenTextures();
 		glBindTexture(GL_TEXTURE_2D, t);
-		glTexImage2D(GL_TEXTURE_2D, 0, format, aoWidth, aoHeight, 0, GL_RGBA, type, 0);
+		glTexImage2D(GL_TEXTURE_2D, 0, format, width, height, 0, GL_RGBA, type, 0);
 		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
 		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
 		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
@@ -314,8 +327,8 @@ public class SceneTargets
 		if (fboFog == 0)
 		{
 			// half float: the scattered light is linear and dim at night, 8 bits would band
-			texFogRaw = halfTexture(GL_RGBA16F, GL_HALF_FLOAT);
-			texFog = halfTexture(GL_RGBA16F, GL_HALF_FLOAT);
+			texFogRaw = texture2D(GL_RGBA16F, GL_HALF_FLOAT, fogWidth, fogHeight);
+			texFog = texture2D(GL_RGBA16F, GL_HALF_FLOAT, fogWidth, fogHeight);
 			fboFogRaw = glGenFramebuffers();
 			glBindFramebuffer(GL_FRAMEBUFFER, fboFogRaw);
 			glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, texFogRaw, 0);
@@ -326,10 +339,44 @@ public class SceneTargets
 			glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, texFog, 0);
 			glDrawBuffers(GL_COLOR_ATTACHMENT0);
 			check("fog");
-			glBindFramebuffer(GL_FRAMEBUFFER, fboDenoise);
-			glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT1, GL_TEXTURE_2D, texFog, 0);
+			if (fogJoint())
+			{
+				glBindFramebuffer(GL_FRAMEBUFFER, fboDenoise);
+				glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT1, GL_TEXTURE_2D, texFog, 0);
+			}
+			else
+			{
+				// the denoise program's fog output alone
+				fboFogDenoise = glGenFramebuffers();
+				glBindFramebuffer(GL_FRAMEBUFFER, fboFogDenoise);
+				glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT1, GL_TEXTURE_2D, texFog, 0);
+				glDrawBuffers(new int[]{GL_NONE, GL_COLOR_ATTACHMENT1});
+				check("fog denoise");
+			}
 		}
 		return denoised ? fboFogRaw : fboFog;
+	}
+
+	/** Whether the fog is at the AO targets' size, smoothed and upsampled with them. */
+	public boolean fogJoint()
+	{
+		return fogRatio == halfRatio;
+	}
+
+	/** Scene pixels per fog texel. */
+	public float getFogRatio()
+	{
+		return fogRatio;
+	}
+
+	public int getFogWidth()
+	{
+		return fogWidth;
+	}
+
+	public int getFogHeight()
+	{
+		return fogHeight;
 	}
 
 	private void freeFog()
@@ -338,7 +385,11 @@ public class SceneTargets
 		{
 			glDeleteFramebuffers(new int[]{fboFogRaw, fboFog});
 			glDeleteTextures(new int[]{texFogRaw, texFog});
-			fboFogRaw = fboFog = texFogRaw = texFog = 0;
+			if (fboFogDenoise != 0)
+			{
+				glDeleteFramebuffers(fboFogDenoise);
+			}
+			fboFogRaw = fboFog = texFogRaw = texFog = fboFogDenoise = 0;
 		}
 	}
 
@@ -351,6 +402,18 @@ public class SceneTargets
 	 */
 	public void denoise(int fogUniform, int aoUnit, int shadowUnit, int fogUnit, boolean fog)
 	{
+		if (fog && !fogJoint())
+		{
+			// the AO and shadows at their size, then the fog at its own (denoise_frag.glsl's mode 2)
+			denoise(fogUniform, aoUnit, shadowUnit, fogUnit, false);
+			glViewport(0, 0, fogWidth, fogHeight);
+			glUniform1i(fogUniform, 2);
+			glBindFramebuffer(GL_FRAMEBUFFER, fboFogDenoise);
+			glClear(GL_COLOR_BUFFER_BIT);
+			bind(fogUnit, texFogRaw);
+			glDrawArrays(GL_TRIANGLES, 0, 3);
+			return;
+		}
 		glViewport(0, 0, aoWidth, aoHeight);
 		glUniform1i(fogUniform, fog ? 1 : 0);
 		glBindFramebuffer(GL_FRAMEBUFFER, fboDenoise);

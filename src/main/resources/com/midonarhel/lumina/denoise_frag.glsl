@@ -14,13 +14,48 @@
 
 uniform sampler2D sceneShadow;  // half resolution: r lit share, g AO, b snow and puddles, a sky visibility
 uniform sampler2D sceneFog;     // half resolution (fog_frag.glsl): premultiplied scatter rgb, transmittance a
-uniform int denoiseFog;         // 1: the fog is smoothed too
+uniform int denoiseFog;         // 1: the fog is smoothed too; 2: the fog alone, at its own size (SceneTargets)
 
 layout(location = 0) out vec4 FragShadow;
 layout(location = 1) out vec4 FragFog;
 
+// The fog at its own size, coarser than the AO targets (SceneTargets.fogRatio): the same taps and depth weights as
+// the fog gets with the AO, over its own texels, each by the depth of the half texel under it.
+vec4 denoiseFogAlone(ivec2 px) {
+  ivec2 last = textureSize(sceneFog, 0) - 1;
+  ivec2 lastHalf = textureSize(sceneAo, 0) - 1;
+  vec2 g = texelFetch(sceneAo, clamp(fogToHalf(px), ivec2(0), lastHalf), 0).rg;
+  bool sky = g.x <= 0.0;
+  float z = halfViewDepth(g);
+  vec4 sum = vec4(0.0);
+  float wsum = 0.0;
+  for (int y = -2; y <= 2; ++y) {
+    for (int x = -2; x <= 2; ++x) {
+      ivec2 a = abs(ivec2(x, y));
+      if (a.x == 2 && a.y == 2) {
+        continue;
+      }
+      float k = a.x + a.y == 0 ? 1.0 : a.x + a.y == 1 ? 1.08 : a.x == a.y ? 0.71 : a.x + a.y == 2 ? 0.79 : 0.78;
+      ivec2 q = clamp(px + ivec2(x, y), ivec2(0), last);
+      vec2 gq = texelFetch(sceneAo, clamp(fogToHalf(q), ivec2(0), lastHalf), 0).rg;
+      if ((gq.x <= 0.0) != sky) {
+        continue;
+      }
+      float w = k / (1.0 + abs(halfViewDepth(gq) - z) / (z * 0.02 + 1.0));
+      sum += texelFetch(sceneFog, q, 0) * w;
+      wsum += w;
+    }
+  }
+  return sum / wsum;
+}
+
 void main() {
   ivec2 px = ivec2(gl_FragCoord.xy);
+  if (denoiseFog == 2) {
+    FragShadow = vec4(0.0);
+    FragFog = denoiseFogAlone(px);
+    return;
+  }
   vec2 g = texelFetch(sceneAo, px, 0).rg;
   bool sky = g.x <= 0.0;
   // the sky has no AO or shadow to smooth, only fog
