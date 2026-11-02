@@ -101,3 +101,48 @@ Together: the AO pass −0.2 to −0.4 ms, the MSAA edges −0.6 ms: **≈ −0.
   fetches per edge pixel, small.
 - Geometry at nightref (2.4–2.6 ms) is the largest pass there; the bench cannot separate the vertex from the fragment
   share without a render-scale sweep.
+
+## Temporal techniques (the user: nothing temporal)
+
+Nothing accumulates or averages over frames: no TAA, no reprojection, no history buffers. The interleaved gradient noise
+(ign.glsl) is static in screen space and the denoise is spatial. What does depend on time, none of it averaging
+noise: transparent faces shadowed with the frame before's shadow map (frag.glsl; moving casters lag a frame on them),
+the static shadow cache rebuilt over 3 frames while the old map stands, the sky cache's captures blended over game
+minutes, the skylight grid traced over frames and eased in (SkyGridMap, LayerEase; the fog ground and the lamps' walls
+ease the same way after a load or a door), the room light easing, the weather occlusion map redrawn only after a move,
+voxel rebuilds after 2 s.
+
+## MSAA (the only anti-aliasing)
+
+Correct as built: the transparency layer is the only resolve (one blit, needed: it is lit as drawn); depth is never
+resolved; the half-resolution passes (AO, shadow mask, skylight, fog) read sample 0 and the composite upsamples them
+by each surface's own depth and normal; the composite splits a pixel into two surfaces by depth, normal and material
+and blends them by their share of the samples.
+
+Problems (each a visual change, none done):
+- No alpha-to-coverage: alpha-tested texture edges (frag.glsl's discard) get no MSAA.
+- The transparency layer is resolved per pixel and laid over both surfaces: a transparent face between a foreground
+  edge and what is behind it tints the foreground share of the edge pixel by its coverage.
+- The water surface pass and the rain read sample 0 only (water_frag.glsl, water.glsl, rain_frag/rain_vert,
+  weather_common.glsl): at silhouettes over water the second surface takes the water worked out for sample 0's.
+- MSAA x16 draws x8 on this Mac (the driver's maximum).
+- A pixel of more than two surfaces is shaded as two.
+
+Cost at the user's resolution (scene 783×603), tree1, nightref, water1 at 21h, switched in one renderer in 10
+interleaved rounds (load average 9.5–12.6: whole-frame deltas are rough, the per-pass ones less so):
+
+| from x4 to | whole GPU frame (paired) | geometry | composite | edge pass |
+|---|---|---|---|---|
+| off | −1.4 to −2.5 ms | −0.3 to −0.9 | −0.35 to −0.75 | gone (0.37–0.52 min) |
+| x2 | −0.9 to −2 ms (water1: noise) | ≈ −0.3 to −1.0 | ≈ −0.3 | ≈ −0.1 to −0.4 |
+| x8 (and x16) | +2 to +2.6 ms | +0.6 to +1.0 | +0.65 to +1.5 | +0.15 to +0.46 |
+
+The AO pass also pays for the multisampled depth it reads (−0.1 to −0.3 off). Already cut: the mark pass (≈ −0.6 ms
+at x4, 32d84830).
+
+## Geometry
+
+The part of the geometry pass that stays at 25 % render scale is the triangles (PrimCount): nightref 1.32 M (zoomed
+out over the market, every zone in view), water1 0.95 M, tree1 0.26 M, drawn unindexed at 28 bytes a vertex: ~110 MB
+of vertex fetch a frame in nightref. Stubbing the vertex shader's colour conversion and sway changed nothing beyond the
+noise. Cutting it is the zone format's (indexed vertices), a project of its own.
