@@ -458,10 +458,10 @@ float lampWallsOpen(Lamp lamp, vec3 p, vec3 wallFrom, bool inAir) {
   return mix(before, now, lampWallsEase);
 }
 
-// A lamp the light map carries, once its map has eased in, is stopped by the map alone: the map is baked through the
-// walls, floors and models, and its read never takes light across a wall (lamp_map.glsl), so walking the walls again
-// (lampWallsOpen) only cost a second test per lamp per pixel (perf-audit, fps1: the walls 0.3-0.4 ms on top of the map).
-#define LAMP_MAP_ALONE 1
+// A lamp the light map carries, once its map has eased in, stopped by the map alone, without the walls (lampWallsOpen):
+// off. The map's soft bake lets a little light over a wall's line: fps1's gold rail on the floor behind a castle wall
+// lit orange by the torch on the wall's other face (perf-audit, 2026-11-02). The walls stay, as the stricter of the two.
+#define LAMP_MAP_ALONE 0
 
 // How much of the lamp reaches camera-relative point p: for a lamp the map carries in full, the map's (lampMapVisibility);
 // else what the walls let through (lampWallsOpen), and for a lamp the light map is easing in on, no more than the map

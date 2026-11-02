@@ -213,8 +213,9 @@ void lampOnSurface(Lamp lamp, float open, vec3 p, vec3 n, vec3 viewDir, float tr
 // colour's luminance times the falloff, times what the light map lets through for the lamps it carries). The lamps the
 // map carries in full (lampOnMap) come from its read, once: a cell holds the at most four that light it, with how much
 // of each gets there, so those are the candidates and no other. The cluster's list (up to 127 lamps a cluster in a
-// crowded square) says whether any of them reaches the point, and gives the lamps the map doesn't carry yet, whose
-// walls (lampOpen) are looked for only if they are kept.
+// crowded square) says whether any of them reaches the point, and gives the lamps the map doesn't carry yet. The walls
+// (lampWallsOpen: the reach map, the floors, the roofs) are looked for only for the kept four, each the stricter of
+// them and the map.
 vec3 lampsOnSurface(int entry, vec3 p, vec3 n, vec3 faceN, float transmissive, out vec3 through) {
   vec3 viewDir = transmissive > 0.0 ? normalize(-p) : vec3(0.0);
   // off the surface along its face's own normal: a smooth normal tilts toward a wall's top and ends
@@ -261,7 +262,10 @@ vec3 lampsOnSurface(int entry, vec3 p, vec3 n, vec3 faceN, float transmissive, o
       break;
     }
     Lamp lamp = lampAt(kl);
-    float open = budget.open[k] >= 0.0 ? budget.open[k] : lampOpen(lamp, p, wallFrom, false);
+    // a lamp the map carries: the stricter of the map and the walls (the map's soft bake lets a little over a wall's
+    // line); the others as lampOpen has them. Only the kept four look for their walls.
+    float open = budget.open[k] >= 0.0 ? min(budget.open[k], lampWallsOpen(lamp, p, wallFrom, false))
+      : lampOpen(lamp, p, wallFrom, false);
     lampOnSurface(lamp, open * lampBudgetFade(budget, k), p, n, viewDir, transmissive, sum, through);
   }
   return sum;
