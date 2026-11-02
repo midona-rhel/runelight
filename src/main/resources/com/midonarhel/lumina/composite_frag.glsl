@@ -187,30 +187,68 @@ int clusterLightCount(int entry) {
   return count;
 }
 
+// One lamp's light on a surface at camera-relative p with normal n, where open of it gets there: on its front into sum,
+// and through thin foliage from behind into through.
+void lampOnSurface(Lamp lamp, float open, vec3 p, vec3 n, vec3 viewDir, float transmissive, inout vec3 sum,
+    inout vec3 through) {
+  vec3 l = lamp.pos - p;
+  float d2 = dot(l, l);
+  float r2 = lamp.radius * lamp.radius;
+  if (d2 >= r2 || open <= 0.0) {
+    return;
+  }
+  vec3 ld = l * inversesqrt(max(d2, 1.0));
+  vec3 c = lamp.color * (lampFalloff(d2, r2) * open);
+  float ndl = dot(n, ld);
+  sum += c * max(ndl, 0.0);
+  // thin foliage is also lit from behind: magic tree canopies glow around the lamps inside them
+  through += c * transmission(ndl, dot(-ld, viewDir), transmissive);
+}
+
 // The lamps' light on a surface at camera-relative p with normal n, the smooth normal the sun uses, from the lamps of
 // cluster entry (light/lamp.glsl): on its front, and through thin foliage from behind into through. Surfaces turned
 // away receive neither. The face normal faceN only moves the point off its surface for the wall check.
+//
+// The lamps the light map carries in full (lampOnMap) come from the map's read instead, once: a cell holds the at most
+// four lamps that light it, with how much of each gets there, so the point takes those and no other. The cluster's
+// list (up to 127 lamps a cluster in a crowded square, most of them held off this cell by the map) only says whether
+// any reaches the point; its lamps the map doesn't carry yet are lit from it as they come, walls and all (lampOpen).
 vec3 lampsOnSurface(int entry, vec3 p, vec3 n, vec3 faceN, float transmissive, out vec3 through) {
   vec3 viewDir = transmissive > 0.0 ? normalize(-p) : vec3(0.0);
   // off the surface along its face's own normal: a smooth normal tilts toward a wall's top and ends
   vec3 wallFrom = p + faceN * LAMP_WALL_BIAS;
+  bool backToo = transmissive > 0.0;
   vec3 sum = vec3(0.0);
   through = vec3(0.0);
+  bool mapped = false;
   LightMask lamps = clusterLights(entry);
   int li;
   while (nextLight(lamps, li)) {
     vec4 sphere = lampSphere(li);
-    if (!lampSphereReaches(sphere, p, n, transmissive > 0.0)) {
+    if (!lampSphereReaches(sphere, p, n, backToo)) {
+      continue;
+    }
+    if (lampOnMap(sphere)) {
+      mapped = true;
       continue;
     }
     Lamp lamp = lampWith(li, sphere);
-    vec3 ld;
-    float d;
-    vec3 c = lampLight(lamp, p, wallFrom, false, ld, d);
-    float ndl = dot(n, ld);
-    sum += c * max(ndl, 0.0);
-    // thin foliage is also lit from behind: magic tree canopies glow around the lamps inside them
-    through += c * transmission(ndl, dot(-ld, viewDir), transmissive);
+    lampOnSurface(lamp, lampOpen(lamp, p, wallFrom, false), p, n, viewDir, transmissive, sum, through);
+  }
+  if (mapped) {
+    vec4 vis;
+    ivec4 ids;
+    lampMapRead(p, wallFrom, vis, ids);
+    for (int k = 0; k < 4; ++k) {
+      int ml = ids[k] > 0 && vis[k] > 0.0 ? lampOfMapId(ids[k]) : -1;
+      if (ml < 0) {
+        continue;
+      }
+      vec4 sphere = lampSphere(ml);
+      if (lampSphereReaches(sphere, p, n, backToo)) {
+        lampOnSurface(lampWith(ml, sphere), vis[k], p, n, viewDir, transmissive, sum, through);
+      }
+    }
   }
   return sum;
 }

@@ -245,10 +245,10 @@ vec3 lampMapReadFrom = vec3(1e30);
 vec4 lampMapReadVis = vec4(0.0);
 ivec4 lampMapReadIds = ivec4(0);
 
-// How much of the lamp with table id id the map lets reach camera-relative point p: off a surface, wallFrom is p moved
-// off it by LAMP_WALL_BIAS along its normal (the map is read LAMP_MAP_NORMAL_BIAS off it, its storey found
-// LAMP_MAP_PLANE_BIAS off it); in the air, p. 0 where the map does not hold the lamp.
-float lampMapVisibility(int id, vec3 p, vec3 wallFrom) {
+// The lamps the map holds at camera-relative point p, read as lampMapVisibility reads it (wallFrom: p off its surface,
+// or p): their visibility in vis and their table ids in ids (0: none), per slot; the last point's read is kept, so the
+// lamps at one point read the map once.
+void lampMapRead(vec3 p, vec3 wallFrom, out vec4 vis, out ivec4 ids) {
   if (p != lampMapReadP || wallFrom != lampMapReadFrom) {
     lampMapReadP = p;
     lampMapReadFrom = wallFrom;
@@ -262,9 +262,20 @@ float lampMapVisibility(int id, vec3 p, vec3 wallFrom) {
       lampMapSlots(w, w + off * LAMP_MAP_NORMAL_BIAS, plane, h, lampMapReadVis, lampMapReadIds);
     }
   }
+  vis = lampMapReadVis;
+  ids = lampMapReadIds;
+}
+
+// How much of the lamp with table id id the map lets reach camera-relative point p: off a surface, wallFrom is p moved
+// off it by LAMP_WALL_BIAS along its normal (the map is read LAMP_MAP_NORMAL_BIAS off it, its storey found
+// LAMP_MAP_PLANE_BIAS off it); in the air, p. 0 where the map does not hold the lamp.
+float lampMapVisibility(int id, vec3 p, vec3 wallFrom) {
+  vec4 vis;
+  ivec4 ids;
+  lampMapRead(p, wallFrom, vis, ids);
   for (int k = 0; k < 4; ++k) {
-    if (lampMapReadIds[k] == id) {
-      return lampMapReadVis[k];
+    if (ids[k] == id) {
+      return vis[k];
     }
   }
   return 0.0;

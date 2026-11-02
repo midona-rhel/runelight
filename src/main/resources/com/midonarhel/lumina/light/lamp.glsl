@@ -79,16 +79,27 @@ struct Lamp {
 };
 
 // A lamp's first texel: its camera-relative position and radius, all that says whether it reaches a point; the other
-// three are read (lampWith) only for a lamp that does, so the lamps of a cluster that miss a pixel cost one read each
+// three are read (lampWith) only for a lamp that does, so the lamps of a cluster that miss a pixel cost one read each.
+// The radius is negative for a lamp the light map carries in full (lampOnMap): a surface takes such a lamp's light
+// through the map's read, which holds the at most four lamps that reach its cell (lampOfMapId), not from the cluster.
 vec4 lampSphere(int li) {
   return texelFetch(lightData, li * 4);
+}
+
+bool lampOnMap(vec4 sphere) {
+  return sphere.w < 0.0;
 }
 
 Lamp lampWith(int li, vec4 a) {
   vec4 b = texelFetch(lightData, li * 4 + 1);
   vec4 c = texelFetch(lightData, li * 4 + 2);
   vec4 d = texelFetch(lightData, li * 4 + 3);
-  return Lamp(a.xyz, a.w, b.rgb, int(b.w), c.xy, c.z, c.w, int(d.x + 0.5), d.y, int(d.z + 0.5), d.w);
+  return Lamp(a.xyz, abs(a.w), b.rgb, int(b.w), c.xy, c.z, c.w, int(d.x + 0.5), d.y, int(d.z + 0.5), d.w);
+}
+
+// The lamp in this frame's list the light map's table id stands for, -1 when none (out of view, or not in full on it)
+int lampOfMapId(int id) {
+  return int(texelFetch(lightData, MAP_LAMPS_BASE + (id >> 2))[id & 3] + 0.5) - 1;
 }
 
 Lamp lampAt(int li) {

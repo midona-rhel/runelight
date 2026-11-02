@@ -39,14 +39,17 @@ public class LightClusters
 	public static final float FAR = 25600;
 	// the light buffer: four texels a lamp (lamp.glsl), then the rooms' fill (RoomLight.table, rooms.glsl), a texel per
 	// room id, x the fill's luminance, then the walls and ceilings that stop the lamps, now and before (LampWalls):
-	// 50511 texels, within the 65536 GL 3.3 promises a buffer texture. Then from LAMP_REACH_BASE the lamps' reach maps
-	// (LampReach), and from LIGHT_MAP_BASE the light map (LightMapBuffer), as large as its blocks need: past 65536, as
+	// 50511 texels, within the 65536 GL 3.3 promises a buffer texture. Then from MAP_LAMPS_BASE, per light map id, the
+	// lamp it is in this frame's list + 1 (0: none), four to a texel: the lamps the map carries in full light a pixel
+	// from its read (composite_frag.glsl); from LAMP_REACH_BASE the lamps' reach maps (LampReach), and from LIGHT_MAP_BASE the light map (LightMapBuffer), as large as its blocks need: past 65536, as
 	// the cluster masks are, which macOS's GL takes.
 	static final int LAMP_TEXELS = 4;
 	public static final int ROOM_FILL_BASE = MAX_LIGHTS * LAMP_TEXELS;
 	public static final int LAMP_WALLS_BASE = ROOM_FILL_BASE + RoomMap.ANY;
 	public static final int LIGHT_TEXELS = LAMP_WALLS_BASE + LampWalls.LAYERS * LampWalls.LAYER_TEXELS;
-	public static final int LAMP_REACH_BASE = LIGHT_TEXELS;
+	public static final int MAP_LAMPS_BASE = LIGHT_TEXELS;
+	static final int MAP_LAMPS_TEXELS = LightMap.TABLE_IDS / 4;
+	public static final int LAMP_REACH_BASE = MAP_LAMPS_BASE + MAP_LAMPS_TEXELS;
 	public static final int LIGHT_MAP_BASE = LAMP_REACH_BASE + LampReach.REGION_TEXELS;
 
 	private static final int CLUSTER_COUNT = CLUSTERS_X * CLUSTERS_Y * CLUSTERS_Z;
@@ -69,6 +72,9 @@ public class LightClusters
 	private LampWalls walls;
 	private final LampReach reach = new LampReach();
 	private final float[] reachOf = new float[2];
+	// per light map id, the lamp it is in the frame's list + 1 (0: none), as sent
+	private final float[] mapLamps = new float[LightMap.TABLE_IDS];
+	private final FloatBuffer mapLampsData = BufferUtils.createFloatBuffer(LightMap.TABLE_IDS);
 	// the rooms' fill, and the version each copy of the buffer has
 	private RoomLight roomFill;
 	private final int[] uploadedFill = new int[SETS];
@@ -274,6 +280,7 @@ public class LightClusters
 		}
 		LampWalls lampWalls = walls;
 		reach.frame(lampWalls);
+		Arrays.fill(mapLamps, 0);
 
 		int n = Math.min(lights.size(), MAX_LIGHTS);
 		for (int i = 0; i < n; ++i)
@@ -325,13 +332,19 @@ public class LightClusters
 				lampWalls.origin(l.plane, l.ox, l.oz, origin);
 			}
 			int wallsCode = lampWalls != null ? lampWalls.wallsFor(l.plane, origin[0], origin[1], l.radius) : -1;
-			lightData.put(x).put(y).put(z).put(l.radius);
+			// a lamp the map carries in full: its radius negative, its light read through the map (mapLamps)
+			boolean mapped = l.mapId > 0 && lightMap != null;
+			boolean settled = mapped && l.mapEase >= 1 && l.mapId < mapLamps.length;
+			if (settled)
+			{
+				mapLamps[l.mapId] = index + 1;
+			}
+			lightData.put(x).put(y).put(z).put(settled ? -l.radius : l.radius);
 			float shown = l.intensity * l.mapFade;
 			lightData.put(l.r * shown).put(l.g * shown).put(l.b * shown).put(wallsCode);
 			// its storey's floor and ceiling; none known, far off
 			lightData.put(origin[0] - camX).put(origin[1] - camZ).put(clampY(l.floorY - camY)).put(clampY(l.ceilY - camY));
 			// its id in the light map (0: not on it, lit by the walls alone) and the map's share as it eases in
-			boolean mapped = l.mapId > 0 && lightMap != null;
 			// and its map of the walls (its first texel, 0: the shader walks) and the lowest roof in its reach
 			reachOf[0] = 0;
 			reachOf[1] = 0;
@@ -534,6 +547,9 @@ public class LightClusters
 		{
 			glBufferSubData(GL_TEXTURE_BUFFER, 0, lightData);
 		}
+		mapLampsData.clear();
+		mapLampsData.put(mapLamps).flip();
+		glBufferSubData(GL_TEXTURE_BUFFER, (long) MAP_LAMPS_BASE * 4 * Float.BYTES, mapLampsData);
 		glBindBuffer(GL_TEXTURE_BUFFER, clusterBuffers[set]);
 		int words = texels * 4;
 		boolean clusters = clustersSent[set] != clustersBuilt, columns = columnsSent[set] != columnsBuilt;
