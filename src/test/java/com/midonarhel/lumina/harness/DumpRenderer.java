@@ -61,7 +61,7 @@ public final class DumpRenderer implements AutoCloseable
 		// the camera, null for the dump's; the zones of the whole scene are drawn when it moves (the tape's are those the
 		// client's frustum kept)
 		public Integer cameraYaw, cameraPitch, scale;
-		// the hour to hold (dayCycleMinutes 0, fixedHour), null for the dump's clock
+		// the hour to hold (day length Fixed, fixedHour), null for the dump's clock
 		public Integer hour;
 		// the buildings (walls, rooms, floors, roofs, drawn walls): "dumped" as the client had them; "rebuild" built again
 		// by BuildingLights from the dump's scene objects (DumpWorld's faked tiles), as the client builds them
@@ -98,9 +98,12 @@ public final class DumpRenderer implements AutoCloseable
 		this.options = options;
 		world = new DumpWorld(dump);
 		world.settings.putAll(options.settings);
+		// a dump from before the day length options, on a free day length: the hour it was taken at, held
+		com.midonarhel.lumina.sky.DayCycle.heldHour = options.hour == null && dump.manifest.settings.containsKey("dayCycleMinutes")
+			&& !dump.manifest.settings.get("dayCycleMinutes").trim().equals("0") ? dump.manifest.hour : Double.NaN;
 		if (options.hour != null)
 		{
-			world.settings.put("dayCycleMinutes", "0");
+			world.settings.put("dayLength", "FIXED");
 			world.settings.put("fixedHour", String.valueOf(options.hour));
 		}
 		SceneDump.Manifest m = dump.manifest;
@@ -143,8 +146,6 @@ public final class DumpRenderer implements AutoCloseable
 		plugin.lastCanvasWidth = plugin.lastCanvasHeight = -1;
 		plugin.lastStretchedCanvasWidth = plugin.lastStretchedCanvasHeight = -1;
 		plugin.tempModels.setThreads(plugin.renderThreads());
-		// a storm strikes at random: the same strikes every time
-		PlainData.set(plugin.weather.getLightning(), "random", new java.util.Random(1));
 		restore();
 	}
 
@@ -562,5 +563,6 @@ public final class DumpRenderer implements AutoCloseable
 		glDeleteRenderbuffers(colorRb);
 		gl.close();
 		Clock.release();
+		com.midonarhel.lumina.sky.DayCycle.heldHour = Double.NaN;
 	}
 }

@@ -204,9 +204,10 @@ public final class WeatherFrame
 		{
 			WeatherData.reloadIfChanged(watcher.getDirectory(), plugin.gson);
 		}
-		plugin.climate.update(plugin.frameGameMillis, Climate.SEASON_DAYS);
+		// the weather's own clock, the same for every player whatever their day length; its hour too (morning mist)
+		plugin.climate.update(plugin.frameWeatherMillis, Climate.SEASON_DAYS);
 		plugin.weather.updateField(sky ? wv.getScene() : null, plane, plugin.environmentManager, plugin.config.areaEnvironments(), biomeName,
-			plugin.config.weatherMode(), plugin.climate, plugin.config.weatherIntensity(), plugin.config.weatherBuildup(), plugin.dayCycle.hour(), fx, fz);
+			plugin.config.weatherMode(), plugin.climate, plugin.config.weatherIntensity(), plugin.config.weatherBuildup(), GameClock.hourOfDay(plugin.frameWeatherMillis), fx, fz);
 		plugin.weather.update(plugin.config.weatherBuildup(), true, plugin.config.weatherLightning(), sky, fx, fy, fz, plane);
 		plugin.weather.getOvercast(plugin.volumetricFog.overcast);
 		updateAudio(fx, fy, fz);

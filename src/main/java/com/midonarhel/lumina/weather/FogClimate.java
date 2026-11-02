@@ -38,6 +38,14 @@ final class FogClimate
 	// no mist, no haze: for a climate without fog profiles
 	static final Profile PLAIN = new Profile(1, 0, 0, 0, 0, 1);
 
+	// weather_climate.json's humidity is 0 to 1; as a multiplier on the weather's fog, 1 is about grassland's
+	static final float HUMIDITY_SCALE = 1.4f;
+	// From the humidity (as the multiplier): the dawn mist, a multiple of the weather's fog, grows from nothing at
+	// MIST_FROM with this power to DAWN_MIST at the wettest; dusk's and the night's are shares of it. Dry places get
+	// midday heat haze instead, and their mist lies higher.
+	private static final float MIST_FROM = 0.4f, MIST_POWER = 1.3f, DAWN_MIST = 5, DUSK_SHARE = 0.45f,
+		NIGHT_SHARE = 0.27f, DRY_HAZE = 0.5f, MIST_LOW = 0.45f, DRY_MIST_RISE = 0.4f;
+
 	// the fog multiplier rises freely up to here and then only approaches FOG_CAP, so mist on top of foggy
 	// weather thickens it without turning it into a wall
 	static final float FOG_KNEE = 2.2f;
@@ -49,6 +57,15 @@ final class FogClimate
 
 	private FogClimate()
 	{
+	}
+
+	/** A region's fog behaviour from its humidity alone (weather_climate.json's, 0 to 1). */
+	static Profile fromHumidity(float humidity)
+	{
+		float h = humidity * HUMIDITY_SCALE;
+		float dawn = DAWN_MIST * (float) Math.pow(Math.max(0, Math.min(1, h - MIST_FROM)), MIST_POWER);
+		float dry = Math.max(0, 1 - h);
+		return new Profile(h, dawn, DUSK_SHARE * dawn, NIGHT_SHARE * dawn, DRY_HAZE * dry, MIST_LOW + DRY_MIST_RISE * dry);
 	}
 
 	/** The biome's profile; unknown and missing biomes behave like the default biome. */

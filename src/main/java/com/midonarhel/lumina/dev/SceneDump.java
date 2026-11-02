@@ -76,7 +76,7 @@ public final class SceneDump
 		public String takenAt;
 		public String renderer = "Lumina (perf-wip)";
 		// the renderer's clock at the frame (Clock), the plugin's start, the game clock's time
-		public long millis, nanos, startMillis, gameMillis;
+		public long millis, nanos, startMillis, gameMillis, weatherMillis;
 		public int cameraYaw, cameraPitch, scale;
 		public float focalX, focalY, focalZ;
 		// the camera the frame was drawn from (preSceneDraw)
@@ -244,6 +244,7 @@ public final class SceneDump
 	{
 		Client client = plugin.client;
 		m.gameMillis = plugin.frameGameMillis;
+		m.weatherMillis = plugin.frameWeatherMillis;
 		m.cameraYaw = client.getCameraYaw();
 		m.cameraPitch = client.getCameraPitch();
 		m.scale = client.getScale();

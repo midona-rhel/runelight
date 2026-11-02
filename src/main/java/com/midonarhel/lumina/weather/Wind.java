@@ -22,13 +22,24 @@ public final class Wind
 	static final float GUST_PERIOD = 256;
 	// share of the noise that is a gust: from GUST_LOW it rises to full at GUST_HIGH. Must match wind.glsl.
 	static final float GUST_LOW = 0.5f, GUST_HIGH = 0.85f;
-	// world units per second the fronts travel: in calm air, and added per unit of strength
-	private static final float FRONT_SPEED_CALM = 300;
-	private static final float FRONT_SPEED = 900;
+	// world units per second the fronts travel: one speed, so where they are is a function of the time alone and the
+	// same for every player
+	private static final float FRONT_SPEED = 660;
 	// the direction wanders this far either way (radians) over minutes, and wobbles a little over seconds, more in
-	// gusty weather
+	// gusty weather; the wander repeats every DIR_CELLS of its noise (68 hours), so the clouds' drift, its integral,
+	// is a sum over one period worked out once (drift)
 	private static final float DIR_WANDER = 1.2f;
 	private static final double DIR_PERIOD = 240;
+	private static final int DIR_CELLS = 1024;
+	// the prevailing direction, the same for everyone
+	private static final float BASE_ANGLE = (float) (WeatherVariation.noise(1 + 0.5, 7) * 2 * Math.PI);
+	// Gauss-Legendre nodes and weights on 0..1, for the drift within a cell
+	private static final double[] GAUSS_X = {0.0198550717512319, 0.1016667612931866, 0.2372337950418355,
+		0.4082826787521751, 0.5917173212478249, 0.7627662049581645, 0.8983332387068134, 0.9801449282487681};
+	private static final double[] GAUSS_W = {0.0506142681451881, 0.1111905172266872, 0.1568533229389436,
+		0.1813418916891810, 0.1813418916891810, 0.1568533229389436, 0.1111905172266872, 0.0506142681451881};
+	// the drift over each whole cell of a period, summed up to its start; [DIR_CELLS] is a whole period's
+	private static double[] driftX, driftZ;
 	private static final float WOBBLE = 0.1f;
 	private static final double WOBBLE_PERIOD = 18;
 	// strength lulls and swells around the weather's mean
@@ -46,7 +57,6 @@ public final class Wind
 		int dir = -1, strength = -1, gust = -1, time = -1, front = -1, gustiness = -1;
 	}
 
-	private final float baseAngle;
 	private boolean initialized;
 	private float mean, gustiness;
 
@@ -57,10 +67,52 @@ public final class Wind
 	private double time;
 	private double front;
 
-	/** @param seed picks the prevailing direction, so each session's wind blows its own way */
-	Wind(long seed)
+	/** The direction's slow wander at real time t (GameClock.realSeconds), radians, wobble left out. */
+	static double wander(double t)
 	{
-		baseAngle = (float) (WeatherVariation.noise(seed % 10007 + 0.5, 7) * 2 * Math.PI);
+		return BASE_ANGLE + DIR_WANDER * (WeatherVariation.noise(t / DIR_PERIOD, 11, DIR_CELLS) * 2 - 1);
+	}
+
+	/**
+	 * How far something carried along the wander's direction at one world unit a second has gone at real time t:
+	 * the integral of the direction from the epoch, x and z into out. A function of the time alone, so the clouds
+	 * are in the same place for every player; exact to the quadrature, and smooth.
+	 */
+	public static void drift(double t, double[] out)
+	{
+		if (driftX == null)
+		{
+			double[] x = new double[DIR_CELLS + 1], z = new double[DIR_CELLS + 1];
+			for (int k = 0; k < DIR_CELLS; ++k)
+			{
+				double[] d = cellDrift(k, 1);
+				x[k + 1] = x[k] + d[0];
+				z[k + 1] = z[k] + d[1];
+			}
+			driftX = x;
+			driftZ = z;
+		}
+		double cells = t / DIR_PERIOD;
+		double fl = Math.floor(cells);
+		long cell = (long) fl;
+		long periods = Math.floorDiv(cell, DIR_CELLS);
+		int k = (int) Math.floorMod(cell, DIR_CELLS);
+		double[] d = cellDrift(cell, cells - fl);
+		out[0] = periods * driftX[DIR_CELLS] + driftX[k] + d[0];
+		out[1] = periods * driftZ[DIR_CELLS] + driftZ[k] + d[1];
+	}
+
+	// the drift over the first share f of a cell, seconds times the direction
+	private static double[] cellDrift(long cell, double f)
+	{
+		double x = 0, z = 0;
+		for (int i = 0; i < GAUSS_X.length; ++i)
+		{
+			double a = wander((cell + f * GAUSS_X[i]) * DIR_PERIOD);
+			x += GAUSS_W[i] * Math.cos(a);
+			z += GAUSS_W[i] * Math.sin(a);
+		}
+		return new double[]{x * f * DIR_PERIOD, z * f * DIR_PERIOD};
 	}
 
 	/**
@@ -87,12 +139,11 @@ public final class Wind
 			this.mean = Weather.ease(this.mean, mean, dt, EASE_SECONDS);
 			this.gustiness = Weather.ease(this.gustiness, gusty, dt, EASE_SECONDS);
 		}
-		float angle = baseAngle;
+		double angle = BASE_ANGLE;
 		float lull = 1;
 		if (varying)
 		{
-			angle += DIR_WANDER * (WeatherVariation.noise(t / DIR_PERIOD, 11) * 2 - 1)
-				+ WOBBLE * (1 + gustiness) * (WeatherVariation.noise(t / WOBBLE_PERIOD, 12) * 2 - 1);
+			angle = wander(t) + WOBBLE * (1 + gustiness) * (WeatherVariation.noise(t / WOBBLE_PERIOD, 12) * 2 - 1);
 			lull = LULL + (SWELL - LULL) * WeatherVariation.noise(t / LULL_PERIOD, 5);
 		}
 		dirX = (float) Math.cos(angle);
@@ -100,7 +151,7 @@ public final class Wind
 		strength = this.mean * lull;
 
 		double period = (double) GUST_LENGTH * GUST_PERIOD;
-		front = (front + dt * (FRONT_SPEED_CALM + FRONT_SPEED * strength)) % period;
+		front = Math.floorMod((long) (t * FRONT_SPEED * 1000), (long) (period * 1000)) / 1000.0;
 		gust = varying ? gustAt(px, pz) : 0;
 		time += dt * (TIME_CALM + TIME_RATE * (strength + 0.5f * gust));
 	}

@@ -50,7 +50,7 @@ public final class SyntheticDump
 		m.baseY = 3200;
 		m.playerLocal = new int[]{MID, MID, WorldView.TOPLEVEL};
 		m.playerWorld = new int[]{3200 + 52, 3200 + 52, 0};
-		m.settings.put("dayCycleMinutes", "0");
+		m.settings.put("dayLength", "FIXED");
 		m.settings.put("fixedHour", "12");
 		m.settings.put("weatherMode", "OFF");
 		m.settings.put("areaEnvironments", "false");

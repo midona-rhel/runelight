@@ -45,11 +45,27 @@ final class WeatherClimate
 		Map<String, Float> morning;
 		// biome -> season name (lower case) -> type id -> weight
 		Map<String, Map<String, Map<String, Float>>> biomes;
-		// biome -> its temperatures (Climate)
-		Map<String, Temperature> temperature;
-		// biome -> how it mists over (FogClimate)
-		Map<String, FogClimate.Profile> fog;
+		// biome -> its climate: temperatures, humidity, wind
+		Map<String, Region> regions;
 	}
+
+	/**
+	 * A biome's climate, as weather_climate.json gives it: what the region decides, whatever the weather. The
+	 * temperature's mean per season (spring, summer, autumn, winter) and its half swing between night and afternoon,
+	 * degrees C; how damp it is, 0 dry to 1 the wettest (FogClimate works its mists out from it); its typical wind, 0
+	 * calm to 1 gale (the weather nudges it); and whether it never thaws.
+	 */
+	static final class Region
+	{
+		float[] temperature;
+		float swing = 4;
+		float humidity = 0.7f;
+		float wind = 0.4f;
+		boolean frozen;
+	}
+
+	// the slow wander of every region's temperature over a couple of days, half range, degrees C
+	static final float TEMPERATURE_NOISE = 2.5f;
 
 	/** A biome's temperatures: per season the mean and the half swing between night and afternoon, degrees C. */
 	static final class Temperature
@@ -96,12 +112,33 @@ final class WeatherClimate
 		final int catalogueVersion;
 		final Map<String, Temperature> temperature = new HashMap<>();
 		final Map<String, FogClimate.Profile> fog = new HashMap<>();
+		final Map<String, Float> wind = new HashMap<>();
 
 		Tables(Data d)
 		{
-			if (d.fog != null)
+			if (d.regions != null)
 			{
-				fog.putAll(d.fog);
+				for (Map.Entry<String, Region> e : d.regions.entrySet())
+				{
+					Region r = e.getValue();
+					if (r == null)
+					{
+						continue;
+					}
+					if (r.temperature != null && r.temperature.length == 4)
+					{
+						Temperature t = new Temperature();
+						t.spring = new float[]{r.temperature[0], r.swing};
+						t.summer = new float[]{r.temperature[1], r.swing};
+						t.autumn = new float[]{r.temperature[2], r.swing};
+						t.winter = new float[]{r.temperature[3], r.swing};
+						t.noise = TEMPERATURE_NOISE;
+						t.frozen = r.frozen;
+						temperature.put(e.getKey(), t);
+					}
+					fog.put(e.getKey(), FogClimate.fromHumidity(r.humidity));
+					wind.put(e.getKey(), r.wind);
+				}
 			}
 			catalogueVersion = WeatherType.version();
 			int n = WeatherType.count();
@@ -150,40 +187,6 @@ final class WeatherClimate
 						}
 					}
 					odds.put(b.getKey(), bySeason);
-				}
-			}
-			if (d.temperature != null)
-			{
-				for (Map.Entry<String, Temperature> e : d.temperature.entrySet())
-				{
-					Temperature t = e.getValue();
-					if (t != null)
-					{
-						for (Season s : SEASONS)
-						{
-							float[] v = t.season(s);
-							if (v == null || v.length < 2)
-							{
-								// a season left out takes the mild default's
-								v = MILD.season(s);
-							}
-							switch (s)
-							{
-								case SPRING:
-									t.spring = v;
-									break;
-								case SUMMER:
-									t.summer = v;
-									break;
-								case AUTUMN:
-									t.autumn = v;
-									break;
-								default:
-									t.winter = v;
-							}
-						}
-						temperature.put(e.getKey(), t);
-					}
 				}
 			}
 			String def = d.defaultBiome != null ? d.defaultBiome : "GRASSLAND";
@@ -302,6 +305,19 @@ final class WeatherClimate
 			p = t.fog.get(t.defaultBiome);
 		}
 		return p != null ? p : FogClimate.PLAIN;
+	}
+
+	/** The biome's typical wind, 0 calm to 1 gale; unknown biomes get the default biome's. */
+	static float wind(String biome)
+	{
+		biome = WeatherRegions.climate(biome);
+		Tables t = tables();
+		Float w = biome != null ? t.wind.get(biome) : null;
+		if (w == null)
+		{
+			w = t.wind.get(t.defaultBiome);
+		}
+		return w != null ? w : 0.4f;
 	}
 
 	/**

@@ -36,13 +36,38 @@ uniform vec4 cloudSkyRect;
 uniform vec4 cloudEye;
 uniform float cloudGround;     // world y of the focal point: the cloud shadows hang at a fixed height above it
 
+// The clouds' look: these twelve. What the weather decides comes from the type (cover, wisp, darkness: cloudWeather,
+// cloudType and the field's sky) and the wind (drift); every constant below them is fixed or follows from them.
+// 1, 2: the slab's base, world units above the eye (cloudEye), and its thickness
+#define CLOUD_BASE_ALTITUDE 3500.0
+#define CLOUD_THICKNESS 2500.0
+// 3: world units covered by one repeat of the noise; a cloud is about a quarter of it. Clouds.TILE must match.
+#define CLOUD_SIZE 32768.0
+// 4: how soft their edges are: the noise's excess over the threshold from nothing to full density
+#define CLOUD_SOFTNESS 0.12
+// 5: how much the detail noise erodes their edges (at 100% roughness)
+#define CLOUD_DETAIL 0.18
+// 6: how tall heaped clouds grow, a multiple of the room the noise leaves above the base
+#define CLOUD_DOME 1.0
+// 7: extinction per world unit at full density
+#define CLOUD_DENSITY 0.0015
+// 8: silver linings, the bright thin edges toward the sun (and the powder that darkens them away from it)
+#define CLOUD_SILVER 1.0
+// 9: sky light inside them
+#define CLOUD_AMBIENT 0.9
+// 10: how dark their bases and thick cores are, 0 none to 1 the full shade
+#define CLOUD_SHADE 1.0
+// 11: how far away they fade into the horizon, world units
+#define CLOUD_HORIZON_DISTANCE 120000.0
+// 12: the sunlight their shadows take away on the ground
+#define CLOUD_SHADOWS 0.55
+
 // slab altitudes in world units above the eye (cloudEye)
-#define CLOUD_BOTTOM 3500.0
-#define CLOUD_TOP 6000.0
+#define CLOUD_BOTTOM CLOUD_BASE_ALTITUDE
+#define CLOUD_TOP (CLOUD_BASE_ALTITUDE + CLOUD_THICKNESS)
 // the eye's height above the focal point, for the cloud shadows only
 #define CLOUD_EYE_HEIGHT 1000.0
-// world units covered by one repeat of the noise; blobs are about a quarter of it. Clouds.TILE must match.
-#define CLOUD_TILE 32768.0
+#define CLOUD_TILE CLOUD_SIZE
 #define CLOUD_NOISE_SIZE 128.0
 // Steps of about CLOUD_STEP_LENGTH world units across the slab, at least CLOUD_MIN_STEPS and at most CLOUD_STEPS:
 // few looking up, more toward the horizon, where a ray crosses far more of the slab and too few steps show as
@@ -57,7 +82,7 @@ uniform float cloudGround;     // world y of the focal point: the cloud shadows 
 // fakes the planet's curvature: clouds at the horizon are this far away (in slab heights over this) instead of
 // infinitely far, which also caps how long a ray at the horizon spends in the slab
 #define CLOUD_CURVE 0.12
-#define CLOUD_FADE 120000.0
+#define CLOUD_FADE CLOUD_HORIZON_DISTANCE
 // the weather field's sky gives way to the player's weather between these distances from its middle, in shares of
 // its size (0.5 is the middle of an edge)
 #define CLOUD_SKY_FADE vec2(0.3, 0.48)
@@ -65,7 +90,7 @@ uniform float cloudGround;     // world y of the focal point: the cloud shadows 
 // sky, so a share c of the sky covered overhead piles up toward the horizon, where most of what OSRS's camera sees of
 // the sky is. The cover along a ray is lowered to make up for it, so the share of the visible sky that is cloud
 // matches the cover at every angle; overcast skies close up at the horizon as they should (above CLOUD_SLANT_KEEP).
-#define CLOUD_BLOB 9000.0
+#define CLOUD_BLOB (CLOUD_SIZE * 9000.0 / 32768.0)
 #define CLOUD_SLANT 1.25
 #define CLOUD_SLANT_KEEP vec2(0.55, 0.9)
 // cover varies by up to +-CLOUD_VARY / 2 over a few noise repeats, the full amount from a cover of CLOUD_VARY_FULL
@@ -78,14 +103,12 @@ uniform float cloudGround;     // world y of the focal point: the cloud shadows 
 #define CLOUD_EROSION_BIAS 0.08
 // excess over the threshold from nothing to full density: soft edges; softer where steps are longer than
 // CLOUD_SOFT_STEP (near the horizon), so the steps don't comb the edges into streaks
-#define CLOUD_SOFT 0.12
+#define CLOUD_SOFT CLOUD_SOFTNESS
 #define CLOUD_SOFT_STEP 600.0
 // detail noise frequency, a whole number so the wrapped wind offset stays seamless
 #define CLOUD_DETAIL_SCALE 3.0
 // how far the detail noise pushes the shapes around, world units: outlines a little less round
-#define CLOUD_WARP 1800.0
-// erosion by the detail noise at 100% roughness
-#define CLOUD_DETAIL 0.18
+#define CLOUD_WARP (CLOUD_SIZE * 1800.0 / 32768.0)
 // erosion is full at the edge and fades to CLOUD_INNER of it by an excess of CLOUD_EDGE: cores stay smooth
 #define CLOUD_EDGE 0.35
 #define CLOUD_INNER 0.25
@@ -101,7 +124,6 @@ uniform float cloudGround;     // world y of the focal point: the cloud shadows 
 // noise varies the domes by +-CLOUD_DOME_VARY; wispy clouds are flatter.
 #define CLOUD_BASE 0.1
 #define CLOUD_BASE_RISE 0.06
-#define CLOUD_DOME 1.0
 #define CLOUD_DOME_VARY 0.35
 #define CLOUD_DOME_MIN_RANGE 0.1
 #define CLOUD_WISP_DOME 1.5
@@ -109,8 +131,6 @@ uniform float cloudGround;     // world y of the focal point: the cloud shadows 
 #define CLOUD_RISE_SHIFT vec2(0.07, 0.05)
 // erosion near the base, of what it is above half the height: flat, even bases under lumpy tops
 #define CLOUD_BASE_EROSION 0.4
-// extinction per world unit at full density
-#define CLOUD_DENSITY 0.0015
 #define CLOUD_RAIN_DENSITY 2.0
 // the light sample toward the sun or moon
 #define CLOUD_LIGHT_STEP 1500.0
@@ -120,19 +140,18 @@ uniform float cloudGround;     // world y of the focal point: the cloud shadows 
 #define CLOUD_BROAD 0.6
 #define CLOUD_DIRECT 0.85
 #define CLOUD_G_FORWARD 0.85
-#define CLOUD_FORWARD 0.15
-#define CLOUD_POWDER 0.6
+#define CLOUD_FORWARD (0.15 * CLOUD_SILVER)
+#define CLOUD_POWDER (0.6 * CLOUD_SILVER)
 // light on puffs and in crevices from the detail noise: soft shading inside the clouds
 #define CLOUD_CREVICE 0.85
 #define CLOUD_PUFF 1.12
 // light left at the cloud base (the slab above shades it), rising to full at the top with height to the power
 // CLOUD_BASE_SHADE_POWER, and deep inside thick cores; rain clouds have deeper cores, which keeps an overcast sky
 // mottled instead of flat gray
-#define CLOUD_BASE_SHADE 0.45
+#define CLOUD_BASE_SHADE (1.0 - 0.55 * CLOUD_SHADE)
 #define CLOUD_BASE_SHADE_POWER 0.7
-#define CLOUD_CORE_SHADE 0.45
+#define CLOUD_CORE_SHADE (1.0 - 0.55 * CLOUD_SHADE)
 #define CLOUD_CORE 0.4
-#define CLOUD_AMBIENT 0.9
 // light left for rain clouds, and how much of their ambient color turns gray
 #define CLOUD_RAIN_LIGHT 0.30
 #define CLOUD_RAIN_GRAY 0.7
@@ -140,7 +159,7 @@ uniform float cloudGround;     // world y of the focal point: the cloud shadows 
 #define CLOUD_UNDERSIDE 0.35
 #define CLOUD_UNDERSIDE_TINT vec3(1.0, 0.85, 0.75)
 // sunlight taken away under a cloud; shadows fade as the sky closes over, where it is all overcast light
-#define CLOUD_SHADOW_STRENGTH 0.55
+#define CLOUD_SHADOW_STRENGTH CLOUD_SHADOWS
 #define CLOUD_SHADOW_ALTITUDE (CLOUD_EYE_HEIGHT + CLOUD_BOTTOM + (CLOUD_TOP - CLOUD_BOTTOM) * 0.3)
 
 // The direction the sky and clouds are looked up in for a view ray: its elevation measured from the edge of the

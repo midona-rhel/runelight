@@ -4,62 +4,36 @@
 	},
 	"OVERCAST": {
 		"name": "Overcast",
-		"cover": 0.8, "wind": 0.45,
-		"fog": 0.35, "areaFog": 0.7, "distanceFog": 0.85, "morningMist": 0.6,
-		"haze": 0.1, "skySaturation": -0.1
+		"cover": 0.8, "fog": 0.35, "haze": 0.1
 	},
 	"RAIN": {
 		"name": "Rain",
-		"cover": 0.85, "rain": 0.55,
-		"wind": 0.55, "gustiness": 0.5,
-		"fog": 0.9, "areaFog": 0.8, "distanceFog": 1.1, "morningMist": 0.2
+		"cover": 0.85, "fall": "rain", "amount": 0.55, "fog": 0.9, "wind": 0.1
 	},
 	"STORM": {
 		"name": "Storm",
-		"cover": 1.0, "cloudDark": 0.4, "rain": 1.0,
-		"dropLength": 1.2, "dropWidth": 1.2, "slant": 1.3,
-		"wind": 1.0, "gustiness": 0.9,
-		"fog": 1.1, "areaFog": 0.9, "distanceFog": 1.25, "morningMist": 0.0,
+		"cover": 1.0, "darkness": 0.4, "fall": "rain", "amount": 1.0, "fog": 1.1, "wind": 0.35,
 		"lightning": 1.0, "persistence": 1.2
 	},
 	"SNOW": {
 		"name": "Snow",
-		"cover": 0.8, "snow": 0.5,
-		"wind": 0.4, "gustiness": 0.4,
-		"fog": 0.8, "areaFog": 0.8, "distanceFog": 1.1, "morningMist": 0.2,
-		"warmth": -0.2
+		"cover": 0.8, "fall": "snow", "amount": 0.5, "fog": 0.8
 	},
 	"FOG": {
 		"name": "Fog",
-		"cover": 0.45, "wind": 0.05, "gustiness": 0.1,
-		"fog": 2.2, "areaFog": 1.0, "distanceFog": 1.5, "morningMist": 0.5,
-		"sun": 0.75, "haze": 0.5, "skySaturation": -0.3
+		"cover": 0.45, "fog": 2.2, "haze": 0.5, "wind": -0.2
 	},
 	"SANDSTORM": {
 		"name": "Sandstorm",
-		"temperature": 2,
-		"cover": 0.25, "cloudDark": -0.5, "snow": 0.45, "coverSwell": 0.0, "skyWhite": 0.0,
-		"flakeSize": 0.45, "flakeSpeed": 0.5, "flakeSway": 0.3, "flakeWind": 4.0, "flakeColor": [0.80, 0.66, 0.45],
-		"wind": 1.0, "gustiness": 0.9,
-		"fog": 1.6, "areaFog": 1.0, "distanceFog": 1.6, "morningMist": 0.0,
-		"fogTint": [1.3, 1.0, 0.65],
-		"sun": 0.65, "haze": 0.8, "warmth": 0.8, "skySaturation": -0.5,
-		"snowRate": 0.0, "persistence": 1.6
+		"cover": 0.25, "darkness": -0.5, "fall": "sand", "amount": 0.45, "fog": 1.6, "haze": 0.8, "wind": 0.4,
+		"persistence": 1.6
 	},
 	"ASH_FALL": {
 		"name": "Ash fall",
-		"cover": 0.75, "cloudDark": 0.6, "snow": 0.35, "coverSwell": 0.0, "skyWhite": 0.0,
-		"flakeSize": 0.8, "flakeSpeed": 0.55, "flakeColor": [0.33, 0.31, 0.30],
-		"wind": 0.2, "gustiness": 0.3,
-		"fog": 1.0, "areaFog": 0.9, "distanceFog": 1.3, "morningMist": 0.1,
-		"fogTint": [0.9, 0.82, 0.75],
-		"sun": 0.7, "haze": 0.4, "warmth": 0.45, "skySaturation": -0.4,
-		"snowRate": 0.0, "persistence": 1.6
+		"cover": 0.75, "darkness": 0.6, "fall": "ash", "amount": 0.35, "fog": 1.0, "haze": 0.65, "persistence": 1.6
 	},
 	"HAZY": {
 		"name": "Haze",
-		"cover": 0.15, "cloudWisp": 0.6, "cloudDark": -0.4, "wind": 0.15, "gustiness": 0.2,
-		"fog": 0.35, "areaFog": 0.6, "distanceFog": 1.0, "morningMist": 0.5,
-		"sun": 0.9, "haze": 0.55, "warmth": 0.25, "skySaturation": -0.3
+		"cover": 0.15, "wisp": 0.6, "darkness": -0.4, "fog": 0.35, "haze": 0.4, "wind": -0.1
 	}
 }

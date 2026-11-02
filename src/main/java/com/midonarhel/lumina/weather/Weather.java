@@ -293,7 +293,7 @@ public class Weather
 	private final Lightning lightning = new Lightning();
 	private long lastMillis;
 	// the prevailing wind is the same for everyone; it wanders with the clock (GameClock), not the session
-	private final Wind windSim = new Wind(1);
+	private final Wind windSim = new Wind();
 	private float focusX, focusY, focusZ;
 	private int focusPlane;
 
@@ -507,6 +507,22 @@ public class Weather
 	}
 
 	/**
+	 * The fog the weather asks for, 0 to 1: the region's humidity times the weather's fog with the mist of the hour
+	 * (FogClimate), as a share of the most it ever asks. What the light's limits take (the hand-off agreed with the
+	 * lights session: the weather asks, the light decides how much shows).
+	 */
+	public float fogRequest()
+	{
+		return openSky ? Math.min(fog / FogClimate.FOG_MAX, 1) : 0;
+	}
+
+	/** How hazy the light is, 0 to 1 (sky.glsl's weatherLight.y): for the light's limits, with the cover and darkness. */
+	public float hazeAmount()
+	{
+		return openSky ? light[1] : 0;
+	}
+
+	/**
 	 * How much the weather thickens the volumetric fog, as a multiplier: light in clear weather, thick in fog,
 	 * and with FogClimate, misty or dry by region and time of day.
 	 */
@@ -613,7 +629,7 @@ public class Weather
 		// client started
 		double t = GameClock.realSeconds(now);
 
-		float windMean = type.wind, gustiness = type.gustiness;
+		float windMean = type.windIn(null), gustiness = WeatherType.gustiness(windMean);
 		if (field.isEnabled())
 		{
 			takeField(t, varying);
@@ -627,7 +643,7 @@ public class Weather
 		windSim.update(t, dt, windMean, gustiness, varying, gradual, fx, fz);
 		gust = windSim.getGust();
 		updateWind(dt, now);
-		lightning.update(dt, outdoors ? storm : 0, lightningEnabled, fx, fz);
+		lightning.update(t, dt, outdoors ? storm : 0, lightningEnabled, fx, fz);
 
 		boolean anything = rainAmount > 0 || snowAmount > 0 || wetness > 0 || snowCover > 0 || field.hasAnything();
 		active = anything && outdoors;

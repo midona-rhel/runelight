@@ -388,8 +388,9 @@ public final class WeatherField
 		out[AREA_FOG] = type.areaFog;
 		out[DISTANCE_FOG] = type.distanceFog;
 		out[STORM] = type.lightning;
-		out[WIND] = type.wind;
-		out[GUSTINESS] = type.gustiness;
+		// the wind is the region's, nudged by the weather; gusts come with strength
+		out[WIND] = type.windIn(biome);
+		out[GUSTINESS] = WeatherType.gustiness(out[WIND]);
 		out[SHOWERS] = type.showers;
 		out[CLOUD_WISP] = type.cloudWisp;
 		out[CLOUD_DARK] = type.cloudDark;

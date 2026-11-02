@@ -24,7 +24,7 @@ public class WindTest
 		// two hours at 60 fps, the weather changing every three minutes between calm, gale and storm; the player
 		// walking around
 		String[] seq = {"CLEAR", "STORM", "OVERCAST", "SNOW", "RAIN", "CLEAR", "STORM", "OVERCAST"};
-		Wind w = new Wind(12345);
+		Wind w = new Wind();
 		int frames = 2 * 3600 * 60;
 		float prevAngle = Float.NaN, prevStrength = 0, prevGust = 0;
 		double prevTime = 0;
@@ -36,7 +36,7 @@ public class WindTest
 			double t = i * DT;
 			WeatherType type = WeatherTestData.type(seq[(int) (t / 180) % seq.length]);
 			float px = (float) (Math.sin(t / 200) * 6000), pz = (float) (Math.cos(t / 170) * 6000);
-			w.update(t, DT, type.wind, type.gustiness, true, true, px, pz);
+			w.update(t, DT, type.windIn("GRASSLAND"), WeatherType.gustiness(type.windIn("GRASSLAND")), true, true, px, pz);
 			float angle = (float) Math.atan2(w.getDirZ(), w.getDirX());
 			assertEquals(1, Math.hypot(w.getDirX(), w.getDirZ()), 1e-5);
 			if (!Float.isNaN(prevAngle))
@@ -68,8 +68,8 @@ public class WindTest
 		assertTrue("strength step " + maxStrengthStep, maxStrengthStep < 0.01f);
 		assertTrue("gust step " + maxGustStep, maxGustStep < 0.06f);
 		assertTrue("time step " + maxTimeStep, maxTimeStep < 0.1f);
-		// light air and a storm both happen, and gusts come and go
-		assertTrue(minStrength < 0.3f && maxStrength > 0.8f);
+		// the region's wind lulls and swells, a storm nudges it up, and gusts come and go
+		assertTrue("strength " + minStrength + " to " + maxStrength, minStrength < 0.35f && maxStrength > 0.8f);
 		float share = gusting / (float) frames;
 		assertTrue("gusting " + share, share > 0.05f && share < 0.6f);
 	}
@@ -77,7 +77,7 @@ public class WindTest
 	@Test
 	public void directionWanders()
 	{
-		Wind w = new Wind(7);
+		Wind w = new Wind();
 		float minX = 1, maxX = -1;
 		for (int i = 0; i < 3600 * 10; ++i)
 		{
@@ -88,7 +88,7 @@ public class WindTest
 		// over an hour the direction swings well away from where it started
 		assertTrue(maxX - minX > 0.5f);
 		// steady: no wander, no gusts
-		Wind s = new Wind(7);
+		Wind s = new Wind();
 		s.update(0, 0, 0.5f, 0.8f, false, true, 0, 0);
 		float x = s.getDirX();
 		for (int i = 1; i < 6000; ++i)
@@ -148,7 +148,8 @@ public class WindTest
 		WeatherTestData.drive(calm, WeatherMode.CLEAR, true);
 		Weather gale = new Weather();
 		WeatherTestData.drive(gale, WeatherMode.STORM, true);
-		assertTrue(gale.getWind().getStrength() > 3 * calm.getWind().getStrength());
+		// the region decides the wind, the weather nudges it: a storm blows harder than a clear day there
+		assertTrue(gale.getWind().getStrength() > 1.5f * calm.getWind().getStrength());
 		assertTrue(gale.getWind().getGustiness() > calm.getWind().getGustiness());
 		// the water follows it
 		float[] a = new float[3], b = new float[3];

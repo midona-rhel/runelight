@@ -390,9 +390,11 @@ public final class Composite
 		glScissor(r[0], r[1], Math.max(r[2] - r[0], 0), Math.max(r[3] - r[1], 0));
 	}
 
-	// developer: GL_TIME_ELAPSED queries, when set, around the AO pass's draw (the skylight's) and the full composite's
-	// (harness GpuCostProbe); null otherwise
+	// developer: GL_TIME_ELAPSED queries, when set, around the half resolution clouds' (and water's) draw, the full
+	// composite's and the rain and snow's (harness WeatherCostProbe); null otherwise. passTimersUsed: a bit for each
+	// query begun this frame, for the probe to clear before a frame and read after it
 	public static int[] passTimers;
+	public static int passTimersUsed;
 
 	public void draw()
 	{
@@ -578,7 +580,13 @@ public final class Composite
 			glDisable(GL_BLEND);
 			use(!halfWater ? compositeClouds : halfClouds ? compositeCloudsWater : compositeWater);
 			scissorHalf(halfClouds, halfWater);
+			if (passTimers != null)
+			{
+				glBeginQuery(GL_TIME_ELAPSED, passTimers[0]);
+				passTimersUsed |= 1;
+			}
 			glDrawArrays(GL_TRIANGLES, 0, 3);
+			if (passTimers != null) glEndQuery(GL_TIME_ELAPSED);
 			glDisable(GL_SCISSOR_TEST);
 			glActiveTexture(GL_TEXTURE0 + CLOUD_HALF_UNIT);
 			glBindTexture(GL_TEXTURE_2D, halfClouds ? plugin.sceneTargets.cloudTexture() : 0);
@@ -619,9 +627,13 @@ public final class Composite
 		final boolean stencil = edges && (upscale || target == 0 && plugin.hasWindowStencil());
 		glViewport(0, 0, sceneWidth, sceneHeight);
 		glClear(stencil ? GL_COLOR_BUFFER_BIT | GL_STENCIL_BUFFER_BIT : GL_COLOR_BUFFER_BIT);
-		if (passTimers != null) glBeginQuery(org.lwjgl.opengl.GL33C.GL_TIME_ELAPSED, passTimers[1]);
+		if (passTimers != null)
+		{
+			glBeginQuery(GL_TIME_ELAPSED, passTimers[1]);
+			passTimersUsed |= 2;
+		}
 		glDrawArrays(GL_TRIANGLES, 0, 3);
-		if (passTimers != null) glEndQuery(org.lwjgl.opengl.GL33C.GL_TIME_ELAPSED);
+		if (passTimers != null) glEndQuery(GL_TIME_ELAPSED);
 		glUniform1i(compositeFull.part, 0);
 		if (edges)
 		{
@@ -659,12 +671,18 @@ public final class Composite
 
 		if (plugin.weather.isActive() && plugin.config.debugView() == DebugView.FINAL)
 		{
+			if (passTimers != null)
+			{
+				glBeginQuery(GL_TIME_ELAPSED, passTimers[2]);
+				passTimersUsed |= 4;
+			}
 			plugin.weather.draw(plugin.frameViewProj, plugin.frameInvViewProj, plugin.frameViewport, plugin.glCapabilities.OpenGL45,
 				plugin.frameCameraX, plugin.frameCameraY, plugin.frameCameraZ, plugin.dayCycle, plugin.water, plugin.config,
 				WEATHER_OCCLUSION_UNIT,
 				plugin.config.pointLights() && plugin.lightClusters.isInitialized(),
 				plugin.lampWalls.header(), plugin.frameDrawDistance,
 				plugin.wadeSteps.steps(plugin.frameCameraX, plugin.frameCameraZ));
+			if (passTimers != null) glEndQuery(GL_TIME_ELAPSED);
 			glViewport(0, 0, sceneWidth, sceneHeight);
 		}
 		// the weather draws splashes by the water pass's pixels

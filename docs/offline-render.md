@@ -47,7 +47,7 @@ change to the static upload: its zones are the vertices its own build uploaded.
 
 Writes to `<dump>/offline/` (or `out=dir`): `final.png`, `view-<name>.png` for the debug views (default NORMALS,
 SKYLIGHT, LIGHTING, SHADOWS, AMBIENT_OCCLUSION, DEPTH; `views=all`, `views=none`, or a list), and `diff.png` with the
-numbers against `reference.png`. Options: `hour=h` (holds the hour: dayCycleMinutes 0, fixedHour h), `yaw=`, `pitch=`,
+numbers against `reference.png`. Options: `hour=h` (holds the hour: dayLength FIXED, fixedHour h), `yaw=`, `pitch=`,
 `scale=` (the camera; with yaw or pitch changed the whole scene's zones are drawn, as the client only drew those in its
 frustum; dynamic models are the client's), `warmup=s` and `step=s` (seconds of frames before the dump's time, default 6
 and 0.05), `buildings=rebuild` (the buildings — walls, rooms, floors, roofs,
@@ -86,7 +86,7 @@ climate's ground, so it stays), `weatherState=off` (the dump's weather state is 
 
 - Lamps placed after the dump's frame, flicker beyond the frame (the lamps are the frame's).
 - Ripples of walking actors in the wet (`WadeSteps`: no actors in the dump).
-- A lightning strike in progress at the dump (strikes are seeded, not restored).
+- A lightning strike in progress at the dump (strikes follow the real time, Lightning.due, and are not restored).
 - Partial eases: a layer still easing in at the dump's frame is drawn eased in fully.
 - Zone voxels for rebuilds (the scene's `SceneVoxels` is restored; zones carry no voxel capture).
 - The interface is the dump's: with the camera overridden, the client's overlays (tile markers, names) stay where they

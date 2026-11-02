@@ -66,6 +66,18 @@ final class WeatherVariation
 		return a + (b - a) * u;
 	}
 
+	/** {@link #noise(double, int)} repeating every {@code period} cells, so whole periods can be summed up once. */
+	static float noise(double x, int seed, long period)
+	{
+		double fl = Math.floor(x);
+		long i = (long) fl;
+		float f = (float) (x - fl);
+		float u = f * f * f * (f * (f * 6 - 15) + 10);
+		float a = hash(Math.floorMod(i, period), seed);
+		float b = hash(Math.floorMod(i + 1, period), seed);
+		return a + (b - a) * u;
+	}
+
 	private static float hash(long i, int seed)
 	{
 		// splitmix64 finalizer
