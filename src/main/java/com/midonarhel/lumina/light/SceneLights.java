@@ -144,6 +144,9 @@ public class SceneLights
 		final boolean auto;
 		// where its lines to what it lights start
 		final float ox, oz;
+		// the scene object it is on (VoxelCapture.ownerOf, 0: none), for the scene dump: whose models the light map's
+		// bake leaves out for it (its own fixture)
+		final int owner;
 
 		Placed(LightDefinition def, float[] at, int plane, float seed, boolean fadesIn, TileObject object, boolean auto,
 			long easeSince)
@@ -157,6 +160,8 @@ public class SceneLights
 			this.life = new LightLife(def, fadesIn, easeSince);
 			this.object = object;
 			this.auto = auto;
+			// on the client thread, where objects are placed: ownerOf reads the object's place only
+			this.owner = object == null ? 0 : com.midonarhel.lumina.visibility.VoxelCapture.ownerOf(object);
 			// its lines start where it is; LampWalls moves them off the walls it hangs on
 			ox = x;
 			oz = z;
@@ -1342,7 +1347,13 @@ public class SceneLights
 			}
 			return;
 		}
-		emit(p.auto ? autoLights : out, p.def, p.life, p.x, p.y, p.z, p.ox, p.oz, p.plane, p.seed, false);
+		List<PointLight> to = p.auto ? autoLights : out;
+		int before = to.size();
+		emit(to, p.def, p.life, p.x, p.y, p.z, p.ox, p.oz, p.plane, p.seed, false);
+		if (to.size() > before)
+		{
+			to.get(to.size() - 1).owner = p.owner;
+		}
 	}
 
 	/**

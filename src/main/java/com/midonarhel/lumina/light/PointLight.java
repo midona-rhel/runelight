@@ -17,6 +17,8 @@ public class PointLight
 	float ox, oz, floorY = Float.POSITIVE_INFINITY, ceilY = Float.NEGATIVE_INFINITY;
 	// what decides which lights a full cluster keeps (LightClusters): steady, its definition's strength times reach
 	float importance;
+	// the scene object it is on (VoxelCapture.ownerOf, 0: none): written to scene dumps for the light map's bake
+	int owner;
 
 	public PointLight set(float x, float y, float z, float radius, float r, float g, float b, float intensity)
 	{
@@ -34,6 +36,7 @@ public class PointLight
 		floorY = Float.POSITIVE_INFINITY;
 		ceilY = Float.NEGATIVE_INFINITY;
 		importance = intensity * radius;
+		owner = 0;
 		return this;
 	}
 
