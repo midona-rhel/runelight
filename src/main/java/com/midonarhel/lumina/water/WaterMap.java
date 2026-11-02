@@ -205,49 +205,107 @@ public final class WaterMap
 
 	public static WaterMap build(Scene scene, WaterOverrides overrides)
 	{
-		return build(scene, overrides, WaterFlow.world());
+		return build(scene, overrides, WaterFlow.world(), null);
 	}
 
 	public static WaterMap build(Scene scene, WaterOverrides overrides, WaterFlow flowMap)
 	{
+		return build(scene, overrides, flowMap, null);
+	}
+
+	/**
+	 * The water map of a scene. pool: threads to share the work with (the loader's upload threads, which read the scene's
+	 * models as the uploads do), the calling thread working too; null for this thread alone. The map is the same either way.
+	 */
+	public static WaterMap buildShared(Scene scene, WaterOverrides overrides, java.util.concurrent.ExecutorService pool)
+	{
+		return build(scene, overrides, WaterFlow.world(), pool);
+	}
+
+	/** buildShared, with the world flow map given. */
+	static WaterMap build(Scene scene, WaterOverrides overrides, WaterFlow flowMap,
+		java.util.concurrent.ExecutorService pool)
+	{
 		WaterMap m = new WaterMap();
+		m.pool = pool;
 		m.load(scene, overrides, flowMap);
+		m.pool = null;
 		return m;
 	}
 
-	private void load(Scene scene, WaterOverrides overrides, WaterFlow flowMap)
-	{
-		Tile[][][] tiles = scene.getExtendedTiles();
-		int[][][] heights = scene.getTileHeights();
-		tileHeights = heights;
-		baseX = scene.getBaseX() - LuminaPlugin.SCENE_OFFSET;
-		baseY = scene.getBaseY() - LuminaPlugin.SCENE_OFFSET;
+	// the threads build shares its work with while it runs (null: none), and how many of them it asks for
+	private java.util.concurrent.ExecutorService pool;
+	private static final int HELPERS = 3;
+	// bands shared work is cut in: a fixed number, so their results merge in the same order whoever runs them
+	private static final int BANDS = 8;
+	// what each part of the build took, ms (in the order of PARTS), for the load's report
+	public static final String[] PARTS = {"tiles", "bodies", "beds", "fall edges", "falls", "contact", "texture"};
+	public final double[] partMs = new double[PARTS.length];
 
-		java.util.Arrays.fill(level, (byte) -1);
-		boolean[] landCorner = new boolean[CORNERS * CORNERS];
+	/** Note part k as taking from since to now; now. */
+	private long part(int k, long since)
+	{
+		long now = System.nanoTime();
+		partMs[k] = (now - since) / 1e6;
+		return now;
+	}
+
+	/**
+	 * Run part over bands [from, to) of [0, n), BANDS of them, on the pool's threads and this one, and wait for them all;
+	 * each band's result, in the bands' order. Without a pool, one band on this thread.
+	 */
+	private <T> java.util.List<T> inBands(int n, java.util.function.BiFunction<Integer, Integer, T> part)
+	{
+		int bands = pool == null ? 1 : BANDS;
+		@SuppressWarnings("unchecked")
+		T[] out = (T[]) new Object[bands];
+		java.util.concurrent.atomic.AtomicInteger next = new java.util.concurrent.atomic.AtomicInteger();
+		Runnable runner = () ->
+		{
+			for (int k; (k = next.getAndIncrement()) < bands; )
+			{
+				out[k] = part.apply(n * k / bands, n * (k + 1) / bands);
+			}
+		};
+		java.util.List<java.util.concurrent.Future<?>> helpers = new java.util.ArrayList<>();
+		for (int h = 0; pool != null && h < HELPERS; ++h)
+		{
+			helpers.add(pool.submit(runner));
+		}
+		// this thread works too: a helper still queued behind other work finds the bands done
+		runner.run();
+		for (java.util.concurrent.Future<?> f : helpers)
+		{
+			try
+			{
+				f.get();
+			}
+			catch (InterruptedException e)
+			{
+				Thread.currentThread().interrupt();
+				throw new IllegalStateException(e);
+			}
+			catch (java.util.concurrent.ExecutionException e)
+			{
+				throw e.getCause() instanceof RuntimeException ? (RuntimeException) e.getCause()
+					: new IllegalStateException(e.getCause());
+			}
+		}
+		return java.util.Arrays.asList(out);
+	}
+
+	/**
+	 * The water tiles of columns [x0, x1): their type, texture, level and what the bodies start from, the land corners;
+	 * whether there is any water.
+	 */
+	private boolean scanTiles(Scene scene, Tile[][][] tiles, int[][][] heights, WaterOverrides overrides, WaterFlow flowMap,
+		boolean[] landCorner, int x0, int x1)
+	{
 		WaterBodies b = bodies;
 		float[] flow = new float[2];
 		int[] world = new int[3];
-		b.mapShaped = flowMap != null && flowMap.shaped();
-		java.util.Arrays.fill(cornerFlowX, Float.NaN);
-		java.util.Arrays.fill(cornerFlowZ, Float.NaN);
-		// instances are built from rotated chunks: their corners keep the tiles' average
-		if (flowMap != null && !scene.isInstance())
-		{
-			for (int cy = 0; cy < CORNERS; ++cy)
-			{
-				for (int cx = 0; cx < CORNERS; ++cx)
-				{
-					if (flowMap.corner(baseX + cx, baseY + cy, flow))
-					{
-						cornerFlowX[cy * CORNERS + cx] = flow[0];
-						cornerFlowZ[cy * CORNERS + cx] = flow[1];
-					}
-				}
-			}
-		}
-
-		for (int x = 0; x < SIZE; ++x)
+		boolean any = false;
+		for (int x = x0; x < x1; ++x)
 		{
 			for (int y = 0; y < SIZE; ++y)
 			{
@@ -306,7 +364,7 @@ public final class WaterMap
 					b.mapFlowX[i] = flow[0];
 					b.mapFlowZ[i] = flow[1];
 				}
-				hasWater = true;
+				any = true;
 
 				SceneTileModel model = water.getSceneTileModel();
 				painted[i] = model == null;
@@ -317,13 +375,59 @@ public final class WaterMap
 				}
 			}
 		}
+		return any;
+	}
+
+	private void load(Scene scene, WaterOverrides overrides, WaterFlow flowMap)
+	{
+		Tile[][][] tiles = scene.getExtendedTiles();
+		int[][][] heights = scene.getTileHeights();
+		tileHeights = heights;
+		baseX = scene.getBaseX() - LuminaPlugin.SCENE_OFFSET;
+		baseY = scene.getBaseY() - LuminaPlugin.SCENE_OFFSET;
+
+		java.util.Arrays.fill(level, (byte) -1);
+		boolean[] landCorner = new boolean[CORNERS * CORNERS];
+		WaterBodies b = bodies;
+		long t0 = System.nanoTime();
+		b.mapShaped = flowMap != null && flowMap.shaped();
+		java.util.Arrays.fill(cornerFlowX, Float.NaN);
+		java.util.Arrays.fill(cornerFlowZ, Float.NaN);
+		// instances are built from rotated chunks: their corners keep the tiles' average
+		if (flowMap != null && !scene.isInstance())
+		{
+			inBands(CORNERS, (cy0, cy1) ->
+			{
+				float[] flow = new float[2];
+				for (int cy = cy0; cy < cy1; ++cy)
+				{
+					for (int cx = 0; cx < CORNERS; ++cx)
+					{
+						if (flowMap.corner(baseX + cx, baseY + cy, flow))
+						{
+							cornerFlowX[cy * CORNERS + cx] = flow[0];
+							cornerFlowZ[cy * CORNERS + cx] = flow[1];
+						}
+					}
+				}
+				return null;
+			});
+		}
+
+		// the tiles, in bands of columns: each writes its own tiles, and the land corners only ever turn true
+		for (boolean any : inBands(SIZE, (x0, x1) -> scanTiles(scene, tiles, heights, overrides, flowMap, landCorner, x0, x1)))
+		{
+			hasWater |= any;
+		}
 		if (!hasWater)
 		{
 			return;
 		}
+		t0 = part(0, t0);
 
 		depthLevels(landCorner, CORNERS, MAX_LEVEL, depthLevel);
 		b.solve();
+		t0 = part(1, t0);
 
 		for (int z = 0; z < bedHeights.length; ++z)
 		{
@@ -339,14 +443,30 @@ public final class WaterMap
 			bedHeights[z] = bed;
 		}
 
-		// the lips and feet of the waterfalls, segments {x0, z0, x1, z1, y}
+		t0 = part(2, t0);
+
+		// the lips and feet of the waterfalls, segments {x0, z0, x1, z1, y}: each band's in turn, so in the order a single
+		// pass finds them (the pulls keep the first of equal ones)
 		java.util.List<float[]> lips = new java.util.ArrayList<>(), feet = new java.util.ArrayList<>();
-		eachModel(tiles, (id, r, orient, x, height, z) -> fallEdgesOf(id, r, orient, x, height, z, lips, feet));
+		for (java.util.List<float[]>[] found : eachModel(tiles, () ->
+		{
+			@SuppressWarnings("unchecked")
+			java.util.List<float[]>[] lf = new java.util.List[]{new java.util.ArrayList<>(), new java.util.ArrayList<>()};
+			return lf;
+		}, (lf, id, r, orient, x, height, z) -> fallEdgesOf(id, r, orient, x, height, z, lf[0], lf[1])))
+		{
+			lips.addAll(found[0]);
+			feet.addAll(found[1]);
+		}
+		t0 = part(3, t0);
 		terrainFalls(heights, lips, feet);
 		pullToLines(lips, LIP_REACH, lipPullX, lipPullZ, lipLevel, lipStrength);
 		pullToLines(feet, FOOT_PUSH, footPullX, footPullZ, footLevel, footStrength);
+		t0 = part(4, t0);
 		findContacts(tiles, heights);
+		t0 = part(5, t0);
 		buildTexture(heights);
+		part(6, t0);
 	}
 
 	/**
@@ -838,7 +958,13 @@ public final class WaterMap
 	{
 		float[] surfaceY = surfaceLevels(heights);
 		boolean[] marked = new boolean[CONTACT_SIZE * CONTACT_SIZE];
-		boolean any = eachModel(tiles, (id, r, orient, x, height, z) -> crossings(id, r, orient, x, height, z, surfaceY, marked));
+		// the bands mark the one grid: a cell only ever turns true
+		boolean any = false;
+		for (boolean[] found : eachModel(tiles, () -> new boolean[1],
+			(f, id, r, orient, x, height, z) -> f[0] |= crossings(id, r, orient, x, height, z, surfaceY, marked)))
+		{
+			any |= found[0];
+		}
 		// falls foam on their faces, lips and feet in the water by them
 		boolean falls = false;
 		for (int i = 0; i < fall.length && !falls; ++i)
@@ -1002,8 +1128,20 @@ public final class WaterMap
 		// each crossing raises the closeness of the cells within CONTACT_REACH of it (the foam is drawn on running water
 		// only: water_frag.glsl hardFoam)
 		byte[] c = new byte[marked.length];
-		spread(marked, CONTACT_REACH, c);
-		for (int i = 0; i < c.length; ++i)
+		// in bands of rows, each its own rows only
+		inBands(CONTACT_SIZE, (y0, y1) ->
+		{
+			contactRows(marked, surfaceY, c, y0, y1);
+			return null;
+		});
+		return c;
+	}
+
+	/** The contact map c's rows [y0, y1) (contactFrom). */
+	private void contactRows(boolean[] marked, float[] surfaceY, byte[] c, int y0, int y1)
+	{
+		spreadRows(marked, CONTACT_REACH, c, y0, y1);
+		for (int i = y0 * CONTACT_SIZE; i < y1 * CONTACT_SIZE; ++i)
 		{
 			int gx = i % CONTACT_SIZE, gz = i / CONTACT_SIZE, t = (gz / CONTACT_RES) * SIZE + gx / CONTACT_RES;
 			if (fall[t])
@@ -1021,7 +1159,6 @@ public final class WaterMap
 				c[i] = (byte) Math.max(c[i] & 255, Math.round(near * 255));
 			}
 		}
-		return c;
 	}
 
 	/**
@@ -1053,13 +1190,19 @@ public final class WaterMap
 	 */
 	private static void spread(boolean[] marked, int reach, byte[] c)
 	{
-		for (int cy = 0; cy < CONTACT_SIZE; ++cy)
+		spreadRows(marked, reach, c, 0, CONTACT_SIZE);
+	}
+
+	/** spread, into rows [y0, y1) of c only (from the marked cells within reach of them). */
+	private static void spreadRows(boolean[] marked, int reach, byte[] c, int y0, int y1)
+	{
+		for (int cy = Math.max(y0 - reach, 0); cy < Math.min(y1 + reach, CONTACT_SIZE); ++cy)
 		{
 			for (int cx = 0; cx < CONTACT_SIZE; ++cx)
 			{
 				if (marked[cy * CONTACT_SIZE + cx])
 				{
-					spreadCell(cx, cy, reach, c);
+					spreadCell(cx, cy, reach, c, y0, y1);
 				}
 			}
 		}
@@ -1068,7 +1211,7 @@ public final class WaterMap
 	/**
 	 * Raise the closeness in c around cell (cx, cy), within reach cells.
 	 */
-	private static void spreadCell(int cx, int cy, int reach, byte[] c)
+	private static void spreadCell(int cx, int cy, int reach, byte[] c, int y0, int y1)
 	{
 		for (int dy = -reach; dy <= reach; ++dy)
 		{
@@ -1076,7 +1219,7 @@ public final class WaterMap
 			{
 				int x = cx + dx, y = cy + dy;
 				float near = 1 - (float) Math.sqrt(dx * dx + dy * dy) / reach;
-				if (near <= 0 || x < 0 || y < 0 || x >= CONTACT_SIZE || y >= CONTACT_SIZE)
+				if (near <= 0 || x < 0 || y < y0 || x >= CONTACT_SIZE || y >= y1)
 				{
 					continue;
 				}
@@ -1467,28 +1610,62 @@ public final class WaterMap
 		boolean visit(int id, Renderable r, int orient, int x, int height, int z);
 	}
 
+	/** A ModelVisit with what its band has found so far. */
+	private interface BandVisit<T>
+	{
+		boolean visit(T found, int id, Renderable r, int orient, int x, int height, int z);
+	}
+
 	/**
 	 * Visit the models of the objects on the tiles at or by water; whether any visit found something.
 	 */
 	private boolean eachModel(Tile[][][] tiles, ModelVisit visit)
 	{
 		boolean any = false;
-		for (Tile[][] plane : tiles)
+		for (int z = 0; z < tiles.length; ++z)
 		{
-			for (int x = 0; x < SIZE; ++x)
+			any |= eachModel(tiles[z], 0, SIZE, visit);
+		}
+		return any;
+	}
+
+	/**
+	 * Visit the models of the objects on the tiles at or by water in bands (inBands), plane by plane and in bands of columns
+	 * within each, a band's in a single pass's order: what each band found (a fresh state of its own), in the bands' order,
+	 * which is a single pass's.
+	 */
+	private <T> java.util.List<T> eachModel(Tile[][][] tiles, java.util.function.Supplier<T> state, BandVisit<T> visit)
+	{
+		int planes = tiles.length;
+		return inBands(planes * SIZE, (from, to) ->
+		{
+			T found = state.get();
+			for (int z = from / SIZE; z < planes && z * SIZE < to; ++z)
 			{
-				for (int y = 0; y < SIZE; ++y)
+				eachModel(tiles[z], Math.max(from - z * SIZE, 0), Math.min(to - z * SIZE, SIZE),
+					(id, r, orient, x, height, zz) -> visit.visit(found, id, r, orient, x, height, zz));
+			}
+			return found;
+		});
+	}
+
+	/** Visit the models of the objects on the tiles at or by water of one plane, columns [x0, x1). */
+	private boolean eachModel(Tile[][] plane, int x0, int x1, ModelVisit visit)
+	{
+		boolean any = false;
+		for (int x = x0; x < x1; ++x)
+		{
+			for (int y = 0; y < SIZE; ++y)
+			{
+				Tile t = plane[x][y];
+				if (t == null || !nearWater(x, y))
 				{
-					Tile t = plane[x][y];
-					if (t == null || !nearWater(x, y))
-					{
-						continue;
-					}
-					// the bridge tile under a deck holds what stands in the water below it (piers)
-					for (Tile u = t; u != null; u = u.getBridge())
-					{
-						any |= visitTile(u, visit);
-					}
+					continue;
+				}
+				// the bridge tile under a deck holds what stands in the water below it (piers)
+				for (Tile u = t; u != null; u = u.getBridge())
+				{
+					any |= visitTile(u, visit);
 				}
 			}
 		}
@@ -1812,10 +1989,23 @@ public final class WaterMap
 
 	private void buildTexture(int[][][] heights)
 	{
-		WaterBodies b = bodies;
 		int w = CORNERS * PAGES;
 		float[] t = new float[w * CORNERS * 4];
-		for (int cy = 0; cy < CORNERS; ++cy)
+		// in bands of corner rows: each corner writes its own texels
+		inBands(CORNERS, (cy0, cy1) ->
+		{
+			textureRows(heights, t, w, cy0, cy1);
+			return null;
+		});
+		spreadLevel(t, w);
+		texture = t;
+	}
+
+	/** The data texture t's texels of corner rows [cy0, cy1) (buildTexture). */
+	private void textureRows(int[][][] heights, float[] t, int w, int cy0, int cy1)
+	{
+		WaterBodies b = bodies;
+		for (int cy = cy0; cy < cy1; ++cy)
 		{
 			for (int cx = 0; cx < CORNERS; ++cx)
 			{
@@ -1948,8 +2138,6 @@ public final class WaterMap
 				t[p2 + 3] = ffz;
 			}
 		}
-		spreadLevel(t, w);
-		texture = t;
 	}
 
 	/**
