@@ -364,6 +364,29 @@ public class LightMapLoadTest
 		}
 	}
 
+	/**
+	 * Where more lights overlap than a cell has slots, which light keeps a cell and in which slot must not depend on the
+	 * order the threads finish their bakes in: every load of a crowded town on four threads gives the blocks one bake on
+	 * no thread gives (taking each bake's cells as it was done made them differ from load to load).
+	 */
+	@Test
+	public void crowdedLightsTakeTheSameCellsHoweverTheThreadsFinish() throws Exception
+	{
+		Town t = town(11, 160);
+		Map<Integer, long[]> expected = reference(t);
+		for (int run = 0; run < 3; ++run)
+		{
+			Load l = load(t, 4, 6, false, true, 0);
+			assertEquals("blocks, run " + run, expected.keySet(), l.rec.blocks.keySet());
+			int bad = 0;
+			for (Map.Entry<Integer, long[]> e : expected.entrySet())
+			{
+				bad += Arrays.equals(e.getValue(), l.rec.blocks.get(e.getKey())) ? 0 : 1;
+			}
+			assertEquals("blocks that differ from one bake on no thread, run " + run, 0, bad);
+		}
+	}
+
 	@Test
 	public void sceneLoad() throws Exception
 	{
