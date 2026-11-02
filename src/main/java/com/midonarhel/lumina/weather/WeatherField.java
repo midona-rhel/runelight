@@ -134,6 +134,15 @@ public final class WeatherField
 	private boolean anything;
 	private boolean uploaded;
 	private int texField, texGround, texSky;
+	// Uploads without waiting for the GPU. Written into while frames still in flight read them, and straight from client
+	// memory, the textures made the client thread wait (8-11 ms for the 33 x 33 texels on the bench with two frames in
+	// flight; 34-50 ms hitches under the sky capture in the client). So the texels go through a pixel buffer given new
+	// storage each time, into SETS sets of textures written in turn, the newest bound: the set written was last read
+	// SETS - 1 uploads ago (0.03 ms on the bench).
+	private static final int SETS = 3;
+	private final int[] fieldSets = new int[SETS], groundSets = new int[SETS], skySets = new int[SETS];
+	private int set;
+	private int unpackBuffer;
 	private int texSizeX, texSizeZ;
 	// the field at the player, and the player's own weather values the deltas are added to
 	private final float[] focus = new float[CHANNELS];
@@ -844,15 +853,22 @@ public final class WeatherField
 		if (texField == 0 || texSizeX != sizeX || texSizeZ != sizeZ)
 		{
 			freeTextures();
-			texField = createTexture(GL_RGBA8, sizeX, sizeZ);
-			texGround = createTexture(GL_RG8, sizeX, sizeZ);
-			texSky = createTexture(GL_RGB8, sizeX, sizeZ);
+			for (int i = 0; i < SETS; ++i)
+			{
+				fieldSets[i] = createTexture(GL_RGBA8, sizeX, sizeZ);
+				groundSets[i] = createTexture(GL_RG8, sizeX, sizeZ);
+				skySets[i] = createTexture(GL_RGB8, sizeX, sizeZ);
+			}
 			texSizeX = sizeX;
 			texSizeZ = sizeZ;
 			uploaded = false;
 		}
 		if (!uploaded)
 		{
+			set = (set + 1) % SETS;
+			texField = fieldSets[set];
+			texGround = groundSets[set];
+			texSky = skySets[set];
 			upload(texField, GL_RGBA, fieldBytes);
 			upload(texGround, GL_RG, groundBytes);
 			upload(texSky, GL_RGB, skyBytes);
@@ -888,21 +904,36 @@ public final class WeatherField
 	{
 		ByteBuffer buf = BufferUtils.createByteBuffer(data.length);
 		buf.put(data).flip();
+		if (unpackBuffer == 0)
+		{
+			unpackBuffer = glGenBuffers();
+		}
+		glBindBuffer(GL_PIXEL_UNPACK_BUFFER, unpackBuffer);
+		glBufferData(GL_PIXEL_UNPACK_BUFFER, buf, GL_STREAM_DRAW);
 		glBindTexture(GL_TEXTURE_2D, tex);
 		glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
-		glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, sizeX, sizeZ, format, GL_UNSIGNED_BYTE, buf);
+		glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, sizeX, sizeZ, format, GL_UNSIGNED_BYTE, 0L);
 		glPixelStorei(GL_UNPACK_ALIGNMENT, 4);
 		glBindTexture(GL_TEXTURE_2D, 0);
+		glBindBuffer(GL_PIXEL_UNPACK_BUFFER, 0);
 	}
 
 	private void freeTextures()
 	{
-		if (texField != 0)
+		if (fieldSets[0] != 0)
 		{
-			glDeleteTextures(texField);
-			glDeleteTextures(texGround);
-			glDeleteTextures(texSky);
+			glDeleteTextures(fieldSets);
+			glDeleteTextures(groundSets);
+			glDeleteTextures(skySets);
+			java.util.Arrays.fill(fieldSets, 0);
+			java.util.Arrays.fill(groundSets, 0);
+			java.util.Arrays.fill(skySets, 0);
 			texField = texGround = texSky = 0;
+		}
+		if (unpackBuffer != 0)
+		{
+			glDeleteBuffers(unpackBuffer);
+			unpackBuffer = 0;
 		}
 	}
 
