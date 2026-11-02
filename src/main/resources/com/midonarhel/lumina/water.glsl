@@ -609,9 +609,9 @@ uniform int waterFakeOn;  // the water setting: off draws the faces as their typ
 
 // a face is a fall when its normal's vertical part is below the second and not a pool's at all below the first
 #define FALL_STEEP vec2(0.5, 0.85)
-// A fall is real water running straight down it at FALL_FLOW world units a second, its ripples carried with it as running
-// water's are, and its foam over the whole face: the pool's foam cells (waterFoamCells, the contact foam's size), cut as
-// the contact foam's are where something stands in the water, carried down it as fast
+// A fall is real water running straight down it at FALL_FLOW world units a second, its ripples and its foam carried with
+// it as running water's are (two phases): the foam over the whole face, the pool's foam cells (waterFoamCells, the contact
+// foam's size), cut as the contact foam's are where something stands in the water
 #define FALL_FLOW 320.0
 // the pool's foam cells (Water.CELLS across CELL_SCALE_B world units, water_frag.glsl)
 #define POOL_CELL (520.0 / 6.0)
@@ -644,9 +644,11 @@ vec3 waterFake(ivec2 px, vec3 p, vec3 faceN, vec3 albedo, float shadow, float co
   vec2 q = mix(world.xz, vec2(dot(world.xz, tang), world.y), down);
   float footprint = max(length(dFdx(q)), length(dFdy(q)));
   vec2 slope;
+  // the flow's two phases down a fall: its waves and its foam are each two copies dragged down it half a cycle apart,
+  // each fading out before it has gone too far, as running water's are: they churn as they go, not slide down whole
+  vec2 m0 = vec2(0.0), m1 = vec2(0.0);
+  float w0 = 1.0;
   if (down > 0.0) {
-    vec2 m0, m1;
-    float w0;
     waterFlowPhasesAt(vec2(0.0, FALL_FLOW), vec2(0.0), (waveNoise(q / FLOW_JITTER_SCALE) * 0.5 + 0.5) * FLOW_JITTER, m0,
       m1, w0);
     // blending two copies averages their slopes down: give some back (as waterWaveField does)
@@ -664,12 +666,11 @@ vec3 waterFake(ivec2 px, vec3 p, vec3 faceN, vec3 albedo, float shadow, float co
   vec2 fallSlope = slope.x * tang + slope.y * out2;
   vec3 nrm = normalize(down > 0.0 ? vec3(-fallSlope.x, -1.0, -fallSlope.y) : faceN + vec3(-slope.x, 0.0, -slope.y));
 
-  // its foam, down it, cut as the hard edged foam is (x the tint, y the core): a whole repeat of the cells (64) every
-  // waterCycle, so the scroll never jumps
+  // its foam, carried down it in the flow's two phases as running water's is (water_frag.glsl waterFoamHeight), cut as
+  // the hard edged foam is (x the tint, y the core)
   vec2 hard = vec2(0.0);
   if (down > 0.0) {
-    vec2 cell = vec2(q.x, q.y) / POOL_CELL - vec2(0.0, 64.0 * waterCycle(64.0 * POOL_CELL / FALL_FLOW));
-    float h = waterFoamCells(cell);
+    float h = waterFoamCells((q - m0) / POOL_CELL) * w0 + waterFoamCells((q + vec2(173.0, 91.0) - m1) / POOL_CELL) * (1.0 - w0);
     float ha = max(fwidth(h), 1e-4);
     hard = vec2(waterEdge(FOAM_CUT.y - h, ha), waterEdge(FOAM_CUT.x - h, ha));
   }
