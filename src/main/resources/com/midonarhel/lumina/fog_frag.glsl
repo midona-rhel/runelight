@@ -209,10 +209,13 @@ float lampFalloffAlong(float h2, float r, float s0, float s1) {
 // where the lamp is (its density, height layer, room and weather there; none inside rooms), and only where the lamp's
 // light gets to: of the ray's lamps the LAMP_BUDGET brightest by their glow before walls (the same cap as a surface's,
 // light/lamp.glsl), each its part of the ray in FOG_LAMP_PIECES stretches, each taking it as a point of it in the air
-// takes it (at a point jittered along the stretch, the fog's own jitter, which the denoise smooths): the light map's in
-// the cell the point is in (lampMapVisibilityNearest; the map's filter across cells is for surfaces), which a lamp once its map
-// has eased in takes alone, as the map stops it at walls; a lamp the map doesn't carry, or not yet in full, by the walls'
-// share too (lampWallsOpen: walls up to their tops, no floor or ceiling; above a wall the glow spreads on into the air).
+// takes it (at a point jittered along the stretch, the fog's own jitter, which the denoise smooths): the walls' share
+// (lampWallsOpen: walls up to their tops, no floor or ceiling; above a wall the glow spreads on into the air) and the
+// roofs as drawn (lampRoofsOpen: an indoor lamp lights no fog over a roof that is drawn). Only what is drawn: not the
+// light map, baked from the whole building, its upper storeys and ceilings whether the client draws them or not, and
+// holding four lamps a cell (a fifth read as dark). With the roofs hidden it cut the glow over Lumbridge castle's
+// open-topped rooms into the shapes of storeys not drawn (the user's "strangely shaped obstructions", glow1; the
+// "phantom roof" again, which took the ceilings out of the air before).
 // So a wall cuts the glow where it stands, the lamp on screen or off, and the glow fades across the cut rather than
 // switching. No other edge: the falloff is 0 at the reach, and the ray's end clips the glow as it clips everything
 // behind it.
@@ -260,16 +263,12 @@ vec3 lampGlow(ivec2 px, vec3 dir, float tEnd, float density, float jitter) {
     float a = max(tc - hc, 0.0);
     float b = min(tc + hc, tEnd);
     float part = (b - a) / float(FOG_LAMP_PIECES);
-    bool mapAlone = lamp.mapId > 0 && lamp.mapEase >= 1.0;
     float glow = 0.0;
     for (int j = 0; j < FOG_LAMP_PIECES; ++j) {
       float s0 = a + float(j) * part;
       vec3 q = dir * (FOG_LAMP_PIECES == 1 ? clamp(tc, a, b) : s0 + jitter * part);
-      float open = mapAlone ? 1.0 : lampWallsOpen(lamp, q, q, true);
-      if (lamp.mapId > 0 && open > 0.0) {
-        open = min(open, mix(1.0, lampMapVisibilityNearest(lamp.mapId, q), lamp.mapEase));
-      }
-      if (open > 0.0) {
+      float open = lampWallsOpen(lamp, q, q, true);
+      if (open > 0.0 && lampRoofsOpen(q, lamp)) {
         glow += lampFalloffAlong(h2, lamp.radius, s0 - tc, s0 + part - tc) * open;
       }
     }
