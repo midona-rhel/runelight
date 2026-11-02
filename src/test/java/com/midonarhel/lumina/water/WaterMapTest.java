@@ -19,6 +19,9 @@ import org.junit.Test;
 public class WaterMapTest
 {
 	private static final int N = WaterMap.SIZE;
+	// how fast across x, z the water runs down the test falls, which drop 256 over a run of 128 (WaterMap.FALL_SPEED along
+	// their slope)
+	private static final float STRIP_FALL = WaterMap.FALL_SPEED / (float) Math.sqrt(5);
 	private static final int OFF = LuminaPlugin.SCENE_OFFSET;
 
 	@SuppressWarnings("unchecked")
@@ -279,19 +282,20 @@ public class WaterMapTest
 		int w = WaterMap.CORNERS * WaterMap.PAGES;
 		assertEquals(0f, m.texture[(83 * w + 81) * 4], 0f);
 		assertEquals(256f, m.texture[(84 * w + 81) * 4], 0f);
-		// the falls' own flow (page 2) runs down it (+y) at FALL_FLOW on its corners, its lip's and foot's too; the pool above
+		// the falls' own flow (page 2) runs down it (+y) at FALL_SPEED along its slope on its corners, its lip's and foot's
+		// too, across x, z that over the slope's length (it drops 2 tiles a tile: sqrt(5)); the pool above
 		// runs to the lip and the one below out from the foot, less and less further off, none beyond their reach
 		int p2 = 2 * WaterMap.CORNERS;
 		for (int y : new int[]{83, 84})
 		{
-			assertEquals("corner " + y, WaterMap.FALL_FLOW, m.texture[(y * w + p2 + 81) * 4 + 3], 1e-5f);
+			assertEquals("corner " + y, STRIP_FALL, m.texture[(y * w + p2 + 81) * 4 + 3], 1e-5f);
 			assertEquals("corner " + y, 0f, m.texture[(y * w + p2 + 81) * 4 + 2], 0f);
 			assertEquals("corner " + y, 1f, m.texture[(y * w + p2 + 81) * 4], 0f);
 		}
 		float lip1 = m.texture[(82 * w + p2 + 81) * 4 + 3], lip2 = m.texture[(81 * w + p2 + 81) * 4 + 3];
 		float foot1 = m.texture[(85 * w + p2 + 81) * 4 + 3], foot2 = m.texture[(86 * w + p2 + 81) * 4 + 3];
-		assertTrue(WaterMap.FALL_FLOW > lip1 && lip1 > lip2 && lip2 > 0);
-		assertTrue(WaterMap.FALL_FLOW > foot1 && foot1 > foot2 && foot2 > 0);
+		assertTrue(STRIP_FALL > lip1 && lip1 > lip2 && lip2 > 0);
+		assertTrue(STRIP_FALL > foot1 && foot1 > foot2 && foot2 > 0);
 		assertEquals(0f, m.texture[(77 * w + p2 + 81) * 4 + 3], 0f);
 		// and how close the fall is: 1 on its corners, less and less off its lip and foot
 		float near1 = m.texture[(85 * w + p2 + 81) * 4], near2 = m.texture[(86 * w + p2 + 81) * 4];
@@ -324,8 +328,8 @@ public class WaterMapTest
 			int tx = k < 2 ? (k == 0 ? 83 : 84) : 81, ty = k < 2 ? 81 : (k == 2 ? 83 : 84);
 			assertTrue("tile " + k, m.fall[ty * N + tx]);
 			int cx = k < 2 ? 84 : 81, cy = k < 2 ? 81 : 84;
-			assertEquals("x " + k, dx[k] * WaterMap.FALL_FLOW, m.texture[(cy * w + p2 + cx) * 4 + 2], 1e-5f);
-			assertEquals("z " + k, dz[k] * WaterMap.FALL_FLOW, m.texture[(cy * w + p2 + cx) * 4 + 3], 1e-5f);
+			assertEquals("x " + k, dx[k] * STRIP_FALL, m.texture[(cy * w + p2 + cx) * 4 + 2], 1e-5f);
+			assertEquals("z " + k, dz[k] * STRIP_FALL, m.texture[(cy * w + p2 + cx) * 4 + 3], 1e-5f);
 		}
 	}
 
@@ -437,7 +441,7 @@ public class WaterMapTest
 		}
 		for (int y : new int[]{83, 84})
 		{
-			assertEquals("corner " + y, WaterMap.FALL_FLOW, m.texture[(y * w + p2 + 81) * 4 + 3], 1e-5f);
+			assertEquals("corner " + y, STRIP_FALL, m.texture[(y * w + p2 + 81) * 4 + 3], 1e-5f);
 			assertEquals("corner " + y, 1f, m.texture[(y * w + p2 + 81) * 4], 0f);
 		}
 		// its sheet is the water, not something standing in it: no crossing (full closeness), only the fall's own foam
