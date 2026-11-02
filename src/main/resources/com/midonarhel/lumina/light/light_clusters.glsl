@@ -1,7 +1,8 @@
 // The light masks (light/LightClusters.java): for every cluster (a screen column's depth slices next to each other), then
-// every fog column, a bit per light in view, in RGBA32UI texels of 128 lights: light i is bit i & 31 of word i >> 5,
-// word w component w & 3 of texel w >> 2. An entry has as many texels as the lights in view need, and the buffer
-// holds exactly CLUSTER_ENTRIES entries, so its size tells how many. Needs cluster_config and clusterData.
+// every fog column, a bit per light in view, in texels of 128 lights: light i is bit i & 31 of word i >> 5, word w
+// component w & 3 of texel w >> 2. They are in the light buffer from CLUSTER_BASE, the words' bits as its floats
+// (floatBitsToUint gives them back); the first texel's x is how many texels an entry has, as many as the lights in
+// view need. Needs cluster_config and lightData.
 
 // the entry of the cluster at rel, the point's position across the scene viewport (0 to 1), and view depth z
 int clusterEntry(vec2 rel, float z) {
@@ -29,8 +30,8 @@ struct LightMask {
 };
 
 LightMask clusterLights(int entry) {
-  int texels = textureSize(clusterData) / CLUSTER_ENTRIES;
-  return LightMask(entry * texels, texels * 4, -1, uvec4(0u), 0u);
+  int texels = int(texelFetch(lightData, CLUSTER_BASE).x);
+  return LightMask(CLUSTER_BASE + 1 + entry * texels, texels * 4, -1, uvec4(0u), 0u);
 }
 
 bool nextLight(inout LightMask m, out int light) {
@@ -40,7 +41,7 @@ bool nextLight(inout LightMask m, out int light) {
       return false;
     }
     if ((m.word & 3) == 0) {
-      m.mask = texelFetch(clusterData, m.base + (m.word >> 2));
+      m.mask = floatBitsToUint(texelFetch(lightData, m.base + (m.word >> 2)));
     }
     m.bits = m.mask[m.word & 3];
   }

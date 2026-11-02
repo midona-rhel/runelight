@@ -33,7 +33,6 @@
 // before, the ceilings now and before, the drawn roofs (LampWalls.java); then the lamps' reach maps (LampReach.java);
 // then the light map (LightMapBuffer.java)
 uniform samplerBuffer lightData;
-uniform usamplerBuffer clusterData;  // per cluster: a bit per lamp in view (light_clusters.glsl)
 uniform vec4 lampWallsHeader;        // now and before: tiles a side (0: no walls), extended tiles before local tile 0
 uniform float lampWallsEase;         // the weight of the walls now against those before, 0 to 1
 
