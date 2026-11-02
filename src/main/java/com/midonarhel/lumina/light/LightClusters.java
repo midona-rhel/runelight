@@ -95,6 +95,9 @@ public class LightClusters
 	private final FloatBuffer lightData = BufferUtils.createFloatBuffer(MAX_LIGHTS * LAMP_TEXELS * 4);
 	// the lamp each index stands for this frame
 	private final PointLight[] keptLights = new PointLight[MAX_LIGHTS];
+	// the lamps' shadow cubes (null: none), and the indices whose cubes are drawn this frame
+	private LampCubes cubes;
+	private final int[] chosen = new int[LampCubes.LAMPS_PER_FRAME];
 	// the frame's lights by importance, most first: packed for sorting, then their indices in the list
 	private final long[] byImportance = new long[MAX_LIGHTS];
 	private final float[] origin = new float[2];
@@ -193,6 +196,12 @@ public class LightClusters
 	public int getLightCount()
 	{
 		return lightCount;
+	}
+
+	/** The lamps' shadow cubes, whose slots the lamps' texels carry (null: none). */
+	public void setCubes(LampCubes cubes)
+	{
+		this.cubes = cubes;
 	}
 
 	/** The frame's lamps in the shaders' order (lamp index i), getLightCount() of them (LampCubes). */
@@ -345,7 +354,9 @@ public class LightClusters
 			}
 			lightData.put(x).put(y).put(z).put(settled ? -l.radius : l.radius);
 			float shown = l.intensity * l.mapFade;
-			lightData.put(l.r * shown).put(l.g * shown).put(l.b * shown).put(wallsCode);
+			// with its walls code, its shadow cube's slot + 1 (LampCubes; 0: none, or not drawn yet) times 16 (lampWith)
+			int cubeSlot = cubes != null ? cubes.slotFor(l, index) : -1;
+			lightData.put(l.r * shown).put(l.g * shown).put(l.b * shown).put(wallsCode + 16 * (cubeSlot + 1));
 			// its storey's floor and ceiling; none known, far off
 			lightData.put(origin[0] - camX).put(origin[1] - camZ).put(clampY(l.floorY - camY)).put(clampY(l.ceilY - camY));
 			// its id in the light map (0: not on it, lit by the walls alone) and the map's share as it eases in
@@ -372,6 +383,15 @@ public class LightClusters
 		changed |= kept != lightCount;
 		lightCount = kept;
 		lightData.flip();
+		if (cubes != null)
+		{
+			// the waiting lamps whose cubes are drawn this frame, before the composite reads them
+			for (int drawn = cubes.choose(chosen, kept), k = 0; k < drawn; ++k)
+			{
+				int at = chosen[k] * LAMP_TEXELS * 4 + 7;
+				lightData.put(at, lightData.get(at) + 16 * (cubes.slotOfIndex(chosen[k]) + 1));
+			}
+		}
 		if (changed)
 		{
 			texels = Math.max(1, (kept + LIGHTS_PER_TEXEL - 1) / LIGHTS_PER_TEXEL);

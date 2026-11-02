@@ -270,6 +270,9 @@ public final class LampFrame
 			plugin.lightClusters.setFog(plugin.frameFog, plugin.volumetricFog.getCenterX() - plugin.frameCameraX,
 				plugin.volumetricFog.getCenterZ() - plugin.frameCameraZ, plugin.volumetricFog.getRadius(),
 				plugin.volumetricFog.getTop() - plugin.frameCameraY, plugin.volumetricFog.getMinGlow());
+			// the lamps' shadow cubes: which are out of date, before each lamp kept is given its slot
+			plugin.lampCubes.beginFrame(plugin);
+			plugin.lightClusters.setCubes(plugin.lampCubes);
 			plugin.lightClusters.cull(plugin.frameLights, plugin.frameViewProj, plugin.frameCameraX, plugin.frameCameraY, plugin.frameCameraZ);
 			if (plugin.lightClusters.getOverflows() > 0 && plugin.logLimiter.check("lightClusterOverflow") >= 0)
 			{

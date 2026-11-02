@@ -93,6 +93,7 @@ uniform int skyVoid;
 uniform int pointLightsEnabled;
 
 #include "light/lamp.glsl"
+#include "light/lamp_cube.glsl"
 #include "rooms.glsl"
 #include "skylight_ambient.glsl"
 
@@ -209,10 +210,14 @@ void lampOnSurface(Lamp lamp, float open, vec3 p, vec3 n, vec3 viewDir, float tr
 // cluster entry (light/lamp.glsl): on its front, and through thin foliage from behind into through. Surfaces turned
 // away receive neither. The face normal faceN only moves the point off its surface for the wall check.
 //
-// The lamps the light map carries in full (lampOnMap) come from its read, once: a cell holds the at most four that
-// light it, with how much of each gets there (four a cell, the user's cap), so the point takes those and no other,
-// each no more than its walls let through (lampMapLampOpen). The cluster's list says whether any of them reaches the
-// point, and gives the lamps the map doesn't carry yet, each stopped by its walls (lampOpen).
+// The lamps with a shadow cube (light/lamp_cube.glsl), drawn from what the frame draws, take it: of those that reach
+// the point, the LAMP_BUDGET brightest before anything stops them (the user's four a pixel, the fourth fading as the
+// fifth nears it), each stopped by its cube read a texel off the surface and by its walls (the exact line at a wall:
+// a jamb's shadow keeps its clean edge), whichever lets less through. Not the light map: baked from the whole
+// building, the storeys and furniture the client hides too, it laid their shadows on the floors (the corridor's
+// blotches). A lamp without a cube (more in view than LampCubes' slots, or one whose cube waits) as before: the
+// lamps the light map carries in full from its read, once (a cell holds the at most four that light it, each no
+// more than its walls let through, lampMapLampOpen), the others stopped by their walls (lampOpen).
 vec3 lampsOnSurface(int entry, vec3 p, vec3 n, vec3 faceN, float transmissive, out vec3 through) {
   vec3 viewDir = transmissive > 0.0 ? normalize(-p) : vec3(0.0);
   // off the surface along its face's own normal: a smooth normal tilts toward a wall's top and ends
@@ -221,11 +226,18 @@ vec3 lampsOnSurface(int entry, vec3 p, vec3 n, vec3 faceN, float transmissive, o
   vec3 sum = vec3(0.0);
   through = vec3(0.0);
   bool mapped = false;
+  LampBudget cubed = lampBudgetEmpty();
   LightMask lamps = clusterLights(entry);
   int li;
   while (nextLight(lamps, li)) {
     vec4 sphere = lampSphere(li);
     if (!lampSphereReaches(sphere, p, n, backToo)) {
+      continue;
+    }
+    vec4 b = texelFetch(lightData, li * 4 + 1);
+    if (lampCubeCode(b.w) >= 0) {
+      vec3 l = sphere.xyz - p;
+      lampBudgetAdd(cubed, lampLuminance(b.rgb) * lampFalloff(dot(l, l), sphere.w * sphere.w), li, 0.0);
       continue;
     }
     if (lampOnMap(sphere)) {
@@ -235,13 +247,27 @@ vec3 lampsOnSurface(int entry, vec3 p, vec3 n, vec3 faceN, float transmissive, o
     Lamp lamp = lampWith(li, sphere);
     lampOnSurface(lamp, lampOpen(lamp, p, wallFrom, false), p, n, viewDir, transmissive, sum, through);
   }
+  for (int k = 0; k < LAMP_BUDGET; ++k) {
+    int kl = cubed.who[k];
+    if (kl < 0) {
+      break;
+    }
+    Lamp lamp = lampWith(kl, lampSphere(kl));
+    vec3 q = p + faceN * (1.0 + 1.5 * lampCubeTexel(length(lamp.pos - p)));
+    float open = lampCubeOpen(lamp, q, 0.125);
+    if (open > 0.0) {
+      open = min(open, lampWallsOpen(lamp, p, wallFrom, false));
+    }
+    lampOnSurface(lamp, open * lampBudgetFade(cubed, k), p, n, viewDir, transmissive, sum, through);
+  }
   if (mapped) {
     vec4 vis;
     ivec4 ids;
     lampMapRead(p, wallFrom, vis, ids);
     for (int k = 0; k < 4; ++k) {
       int ml = ids[k] > 0 && vis[k] > 0.0 ? lampOfMapId(ids[k]) : -1;
-      if (ml < 0) {
+      // a lamp with a cube was taken above
+      if (ml < 0 || lampCubeCode(texelFetch(lightData, ml * 4 + 1).w) >= 0) {
         continue;
       }
       vec4 sphere = lampSphere(ml);

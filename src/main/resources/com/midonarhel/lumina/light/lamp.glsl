@@ -75,7 +75,17 @@ struct Lamp {
   float mapEase; // the map's share of its visibility, 0 to 1 as it eases in (the walls' alone the rest)
   int reach;     // its reach map's first texel in lightData, 0: none (its lines are walked)
   float roofLow; // the lowest drawn roof in its reach, world y plus LAMP_ROOF_BIAS; 0: none
+  int cube;      // its shadow cube's slot (LampCubes, light/lamp_cube.glsl), -1: none, or not drawn yet
 };
+
+// the second texel's w: the walls code plus 16 times the cube's slot + 1 (LightClusters)
+int lampWallsCode(float w) {
+  return ((int(w) + 1) & 15) - 1;
+}
+
+int lampCubeCode(float w) {
+  return ((int(w) + 1) >> 4) - 1;
+}
 
 // A lamp's first texel: its camera-relative position and radius, all that says whether it reaches a point; the other
 // three are read (lampWith) only for a lamp that does, so the lamps of a cluster that miss a pixel cost one read each.
@@ -93,7 +103,8 @@ Lamp lampWith(int li, vec4 a) {
   vec4 b = texelFetch(lightData, li * 4 + 1);
   vec4 c = texelFetch(lightData, li * 4 + 2);
   vec4 d = texelFetch(lightData, li * 4 + 3);
-  return Lamp(a.xyz, abs(a.w), b.rgb, int(b.w), c.xy, c.z, c.w, int(d.x + 0.5), d.y, int(d.z + 0.5), d.w);
+  return Lamp(a.xyz, abs(a.w), b.rgb, lampWallsCode(b.w), c.xy, c.z, c.w, int(d.x + 0.5), d.y, int(d.z + 0.5), d.w,
+    lampCubeCode(b.w));
 }
 
 // The colour times strength of lamp li (its second texel), for choosing the lamps that give a point the most light
