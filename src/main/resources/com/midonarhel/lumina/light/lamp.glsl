@@ -464,17 +464,11 @@ float lampWallsOpen(Lamp lamp, vec3 p, vec3 wallFrom, bool inAir) {
 #define LAMP_MAP_ALONE 0
 
 // How much of a lamp the light map carries in full reaches surface point p (wallFrom: p off its surface), given what
-// the map lets through (vis): the map is baked dark behind the walls of the lamp's storey as its origin sees them
-// (LightMapBake.hideBehindWalls), which holds in the open; on a tile with a wall of that storey, where the map's cells
-// can still let a little over the wall's line (a rail at the foot of Lumbridge Castle's wall), the walls are walked
-// too (lampWallsOpen). Walls lie on tile edges, and a tile holds its neighbours' edges as well as its own.
+// the map lets through (vis): no more than its walls let through (lampWallsOpen: the line from its origin in its reach
+// map, exact at the walls' lines, so a jamb's shadow on the floor has a clean edge, where the map's cells alone gave it
+// steps; the floors; the roofs as drawn). Only the at most four lamps a point takes from the map look for their walls.
 float lampMapLampOpen(Lamp lamp, float vis, vec3 p, vec3 wallFrom) {
-  if (vis <= 0.0 || lamp.walls < 0) {
-    return vis;
-  }
-  int tiles = int(lampWallsHeader.x);
-  ivec2 t = ivec2(floor((wallFrom.xz + cameraPos.xz) / 128.0 + lampWallsHeader.y));
-  return tiles > 0 && lampWallBits(t, lamp.walls, 0, tiles) != 0u ? min(vis, lampWallsOpen(lamp, p, wallFrom, false)) : vis;
+  return vis <= 0.0 ? 0.0 : min(vis, lampWallsOpen(lamp, p, wallFrom, false));
 }
 
 // How much of the lamp reaches camera-relative point p: for a lamp the map carries in full, the map's (lampMapVisibility);

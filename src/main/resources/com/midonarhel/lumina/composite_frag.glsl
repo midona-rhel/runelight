@@ -210,9 +210,9 @@ void lampOnSurface(Lamp lamp, float open, vec3 p, vec3 n, vec3 viewDir, float tr
 // away receive neither. The face normal faceN only moves the point off its surface for the wall check.
 //
 // The lamps the light map carries in full (lampOnMap) come from its read, once: a cell holds the at most four that
-// light it, with how much of each gets there (four a cell, the user's cap), so the point takes those and no other, the
-// walls walked for them only on a tile with a wall (lampMapLampOpen). The cluster's list says whether any of them
-// reaches the point, and gives the lamps the map doesn't carry yet, each stopped by its walls (lampOpen).
+// light it, with how much of each gets there (four a cell, the user's cap), so the point takes those and no other,
+// each no more than its walls let through (lampMapLampOpen). The cluster's list says whether any of them reaches the
+// point, and gives the lamps the map doesn't carry yet, each stopped by its walls (lampOpen).
 vec3 lampsOnSurface(int entry, vec3 p, vec3 n, vec3 faceN, float transmissive, out vec3 through) {
   vec3 viewDir = transmissive > 0.0 ? normalize(-p) : vec3(0.0);
   // off the surface along its face's own normal: a smooth normal tilts toward a wall's top and ends

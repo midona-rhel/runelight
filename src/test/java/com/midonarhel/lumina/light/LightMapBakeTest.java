@@ -64,7 +64,7 @@ public class LightMapBakeTest
 	}
 
 	@Test
-	public void doorwayPassesLightOnlyWhereItsOriginSeesThrough()
+	public void doorwayPassesASoftFan()
 	{
 		BakeScene s = new BakeScene().verticalWall(0, 20, 12, 28, 20);
 		LightMapBake.Result r = bake(s, BakeScene.light(0, 16.5f, 20.5f, 40, 12));
@@ -72,10 +72,8 @@ public class LightMapBakeTest
 		float aside = BakeScene.atTile(r, 0, 24.5f, 23.5f);
 		float far = BakeScene.atTile(r, 0, 24.5f, 26.5f);
 		assertTrue("axis " + axis, axis > 0.05f);
-		// beside the door the wall stands between the light's origin and the floor: nothing gets there, the light that
-		// wraps round the jamb included (LightMapBake.hideBehindWalls)
-		assertEquals("aside", 0, aside, 0);
-		assertEquals("far", 0, far, 0);
+		assertTrue("axis " + axis + " aside " + aside, aside < axis * 0.7f && aside > 0);
+		assertTrue("aside " + aside + " far " + far, far < aside);
 		// behind the wall beside the door the light has only come through it, nothing like the light before the wall
 		float wallAside = BakeScene.atTile(r, 0, 20.6f, 24.5f);
 		assertTrue("wallAside " + wallAside, wallAside < BakeScene.atTile(r, 0, 20.6f, 20.5f) * 0.5f);
@@ -223,7 +221,7 @@ public class LightMapBakeTest
 	}
 
 	@Test
-	public void aStraightEdgeOfShadowIsOneCellAndTheLightNoSteps()
+	public void aStraightEdgeOfShadowIsAGradientNotSteps()
 	{
 		// a wall on the line x = 24 from y 24 to 34, a light 7.5 tiles west of it, 1.5 south of its end: the edge of the
 		// shadow runs slantwise over the floor east of the wall, where cells could show as steps
@@ -235,22 +233,18 @@ public class LightMapBakeTest
 		{
 			col[i] = BakeScene.at(r, 0, 30 * 4, 22 * 4 + i);
 		}
-		// the shadow is what the light's origin can't see past the wall: dark, its edge one cell (the shaders' filter
-		// makes it a gradient a cell wide); the light before it has no steps
 		float top = col[0], bottom = col[col.length - 1];
-		assertTrue("lit " + top, top > 0);
-		assertEquals("shadow", 0, bottom, 0);
-		int lit = 0;
-		while (lit < col.length && col[lit] > 0)
+		assertTrue("lit " + top + " shadow " + bottom, top > bottom * 5);
+		assertTrue("no step of more than a sixth of it: " + biggestStep(col), biggestStep(col) < 1 / 6f);
+		int between = 0;
+		for (float v : col)
 		{
-			++lit;
+			between += v > 0.1f * top && v < 0.7f * top ? 1 : 0;
 		}
-		for (int i = lit; i < col.length; ++i)
-		{
-			assertEquals("past the edge, cell " + i, 0, col[i], 0);
-		}
-		float[] light = java.util.Arrays.copyOf(col, lit);
-		assertTrue("no step of more than a sixth of it in the light: " + biggestStep(light), biggestStep(light) < 1 / 6f);
+		assertTrue("cells in the edge: " + between, between >= 6);
+		// along a row, from the lit side past the edge
+		float[] row = row(r, 0, 25 * 4, 31 * 4, 25 * 4 + 1);
+		assertTrue("row step " + biggestStep(row), biggestStep(row) < 1 / 6f);
 	}
 
 	@Test
