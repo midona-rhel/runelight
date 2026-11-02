@@ -74,8 +74,8 @@ ivec2 roomPlaneAt(vec3 w) {
   return ivec2(room, plane);
 }
 
-// The fill a room is given (RoomLight.java), in luminance: what its lamps and the sky leave short of the least light a
-// room should have. In lightData from ROOM_FILL_BASE, a texel a room id.
+// The fill a room is given (RoomLight.java), in luminance: the interior brightness, the same for every room. In lightData
+// from ROOM_FILL_BASE, a texel a room id.
 float roomFillLevel(int room) {
   return texelFetch(lightData, ROOM_FILL_BASE + room).x;
 }

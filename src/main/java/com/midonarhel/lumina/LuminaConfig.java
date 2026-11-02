@@ -219,7 +219,7 @@ public interface LuminaConfig extends Config
 	@ConfigItem(
 		keyName = "buildingLightBrightness",
 		name = "Interior brightness",
-		description = "How much light dim rooms get, in percent.",
+		description = "How bright building interiors are, the same in every room, in percent.",
 		section = lightingSection,
 		position = 32
 	)

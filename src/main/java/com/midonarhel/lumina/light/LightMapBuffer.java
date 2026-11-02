@@ -261,7 +261,7 @@ public final class LightMapBuffer implements LightMap.Sink
 	@Override
 	public void floor(int plane, int bx, int bz, float[] floor)
 	{
-		// the rooms' light comes from the lamps on the CPU (RoomLight.followLamps), not from the map
+		// the rooms' light is one level from the Interior brightness setting (RoomLight), nothing from the lamps
 	}
 
 	/** The layout's numbers for the shaders (cluster_config; light/lamp_map.glsl). */

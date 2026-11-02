@@ -360,24 +360,10 @@ public final class LampFrame
 		long now = com.midonarhel.lumina.common.Clock.nanos();
 		float dt = plugin.roomLightNanos == 0 ? 0 : Math.min((now - plugin.roomLightNanos) / 1e9f, 0.5f);
 		plugin.roomLightNanos = now;
-		BuildingLights buildings = plugin.buildingLights;
-		SceneLights lights = plugin.sceneLights;
 		plugin.roomLight.setRooms(rooms);
-		if (rooms != null && buildings != null)
-		{
-			plugin.roomLight.followWalls(buildings.getWalls(), buildings.getFloors(), SKYLIGHT_REACH);
-			// the rooms' lamps are the fixed ones, as they are now; with no lamps on, none
-			plugin.roomLight.followLamps(out ->
-			{
-				if (plugin.framePointLights && lights != null)
-				{
-					lights.steadyLamps(out);
-					PointLight.dropDoubles(out);
-				}
-			}, buildings.getWalls(), dt);
-		}
+		// one level for every room, from the setting and the time of day: not from its lamps or its sky
 		float target = plugin.frameOutdoors ? RoomLight.target(plugin.dayCycle.sunAltitude, plugin.config.interiorBrightness() / 100f) : 0;
-		plugin.roomLight.update(dt, target, plugin.dayCycle.sunAltitude);
+		plugin.roomLight.update(dt, target);
 		plugin.lightClusters.setRoomFill(rooms != null ? plugin.roomLight : null);
 	}
 

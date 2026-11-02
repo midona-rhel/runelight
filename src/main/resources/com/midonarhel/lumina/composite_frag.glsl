@@ -394,8 +394,8 @@ vec4 shadeScene(ivec2 px, SceneSample sm, vec4 transparent) {
     }
     light = indirect
       + caster * envSun * max(ndl, 0.0) * shadow * mix(1.0, ao, AO_DIRECT);
-    // A room's fill: what the room lacks of the least light a room should have, from its lamps and its sky
-    // (RoomLight), spread flat and directionless over the whole room like ambient, darkened by AO as the ambient is.
+    // A room's fill: the interior brightness, one level for every room (RoomLight: the setting and the time of day,
+    // not its lamps), spread flat and directionless over the whole room like ambient, darkened by AO as the ambient is.
     int roomId = roomOfSurface(p + cameraPos, n);
     if (roomId > 0) {
       // how closed in the spot is: a room with its roof hidden still counts, a covered gateway open at both ends
