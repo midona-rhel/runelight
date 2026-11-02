@@ -21,6 +21,9 @@ public class PointLight
 	// and its share as it eases in (LayerEase). Set after the frame's lamps are gathered (SceneLights.mapLamps).
 	int mapId;
 	float mapEase;
+	// how much of it shows while the map takes it on: 0 while it waits, dark, for its map, then up to 1 as it fades in
+	// with it (LightMap.waitsDark); its intensity times this is what it gives
+	float mapFade = 1;
 	// the frame's bake of the lamp (SceneLights' list of them), -1 for a lamp the map doesn't bake: one that moves, comes
 	// and goes, or fades; and the scene object it is on (VoxelCapture.ownerOf, 0: none), whose geometry never shades it
 	int bakeSlot = -1;
@@ -44,6 +47,7 @@ public class PointLight
 		importance = intensity * radius;
 		mapId = 0;
 		mapEase = 0;
+		mapFade = 1;
 		bakeSlot = -1;
 		owner = 0;
 		return this;

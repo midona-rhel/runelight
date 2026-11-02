@@ -127,6 +127,10 @@ public final class LightMap
 		// the light eases in from then, the clusters keep the rest)
 		volatile boolean live;
 		volatile long liveSince;
+		// when it was put on the map (Clock), and whether it went live within MAP_WAIT_NANOS of that: it was dark until
+		// then, and fades in with its map (SceneLights.mapLamps)
+		volatile long addedAt;
+		volatile boolean fadesIn;
 
 		Source(int plane, float x, float y, float z, float radius, float red, float green, float blue, float strength,
 			boolean nightOnly, float nightMultiplier, int owner)
@@ -659,6 +663,7 @@ public final class LightMap
 				return false;
 			}
 			s.registered = true;
+			s.addedAt = com.midonarhel.lumina.common.Clock.nanos();
 			maxRadius = Math.max(maxRadius, s.radius);
 			s.id = freeIds.poll();
 			tableUsed = Math.max(tableUsed, s.id + 1);
@@ -797,6 +802,19 @@ public final class LightMap
 	static float liveWeight(Source s, long now)
 	{
 		return s.live ? LayerEase.weight(s.liveSince, now) : 0;
+	}
+
+	/**
+	 * A light put on the map is dark until its map is sent, then fades in with it (lit by the walls alone meanwhile it
+	 * was brighter than the map has it: no models' shadows, then a dimming as the map eased in, after every scene load):
+	 * at most this long (Clock nanos), after which it is lit by the walls alone until its map comes.
+	 */
+	static final long MAP_WAIT_NANOS = 10_000_000_000L;
+
+	/** Whether a light on the map is still waiting, dark, for its map. */
+	static boolean waitsDark(Source s, long now)
+	{
+		return !s.live && now - s.addedAt < MAP_WAIT_NANOS;
 	}
 
 	/** The table, for the shaders: per id, TABLE_STRIDE texels (place and radius, colour and 0). */
@@ -1690,6 +1708,7 @@ public final class LightMap
 				if (!s.live && s.grids != null && sent(s.needKeys, s.needSeqs))
 				{
 					s.liveSince = com.midonarhel.lumina.common.Clock.nanos();
+					s.fadesIn = s.liveSince - s.addedAt < MAP_WAIT_NANOS;
 					s.live = true;
 				}
 			}

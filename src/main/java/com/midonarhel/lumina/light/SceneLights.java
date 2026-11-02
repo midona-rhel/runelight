@@ -320,7 +320,7 @@ public class SceneLights
 	/**
 	 * After the frame's lamps are gathered and their doubles dropped (PointLight.dropDoubles): the map is given the fixed
 	 * lamps in reach to bake (LightMap.add, safe to repeat), and each lamp it carries is told its id in it and the map's
-	 * share as it eases in.
+	 * share as it eases in. A lamp waiting for its map is dark, and fades in with it (LightMap.waitsDark).
 	 */
 	public void mapLamps(List<PointLight> lamps)
 	{
@@ -330,17 +330,36 @@ public class SceneLights
 		{
 			l.mapId = 0;
 			l.mapEase = 0;
+			l.mapFade = 1;
 			if (map == null || l.bakeSlot < 0 || l.bakeSlot >= frameBakes.size())
 			{
 				continue;
 			}
 			LightMap.Source s = frameBakes.get(l.bakeSlot);
-			if (!map.add(s) || !LightMap.isLive(s))
+			if (!map.add(s))
 			{
 				continue;
 			}
+			if (!LightMap.isLive(s))
+			{
+				if (LightMap.waitsDark(s, now))
+				{
+					l.mapFade = 0;
+				}
+				continue;
+			}
 			l.mapId = s.id;
-			l.mapEase = LightMap.liveWeight(s, now);
+			float ease = LightMap.liveWeight(s, now);
+			if (s.fadesIn)
+			{
+				// it was dark: the lamp itself fades in, its map whole from the start
+				l.mapFade = ease;
+				l.mapEase = 1;
+			}
+			else
+			{
+				l.mapEase = ease;
+			}
 		}
 	}
 

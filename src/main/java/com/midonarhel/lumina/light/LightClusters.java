@@ -326,7 +326,8 @@ public class LightClusters
 			}
 			int wallsCode = lampWalls != null ? lampWalls.wallsFor(l.plane, origin[0], origin[1], l.radius) : -1;
 			lightData.put(x).put(y).put(z).put(l.radius);
-			lightData.put(l.r * l.intensity).put(l.g * l.intensity).put(l.b * l.intensity).put(wallsCode);
+			float shown = l.intensity * l.mapFade;
+			lightData.put(l.r * shown).put(l.g * shown).put(l.b * shown).put(wallsCode);
 			// its storey's floor and ceiling; none known, far off
 			lightData.put(origin[0] - camX).put(origin[1] - camZ).put(clampY(l.floorY - camY)).put(clampY(l.ceilY - camY));
 			// its id in the light map (0: not on it, lit by the walls alone) and the map's share as it eases in
@@ -345,9 +346,9 @@ public class LightClusters
 				// the fog's rays are clipped to its cylinder and layer: a sphere outside either has no glow in them
 				float fx = x - fogX, fz = z - fogZ, reach = fogRadius + l.radius;
 				if (fx * fx + fz * fz < reach * reach && y + l.radius > fogTop
-					&& Math.max(l.r, Math.max(l.g, l.b)) * l.intensity * l.radius >= fogMinGlow)
+					&& Math.max(l.r, Math.max(l.g, l.b)) * shown * l.radius >= fogMinGlow)
 				{
-					addFogCandidate(index, (l.r + l.g + l.b) * l.intensity * l.radius);
+					addFogCandidate(index, (l.r + l.g + l.b) * shown * l.radius);
 				}
 			}
 		}
