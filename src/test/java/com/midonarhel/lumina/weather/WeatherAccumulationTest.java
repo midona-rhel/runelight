@@ -1,6 +1,7 @@
 package com.midonarhel.lumina.weather;
 
 import com.midonarhel.lumina.sky.GameClock;
+import java.util.function.Function;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertTrue;
 import org.junit.Test;
@@ -244,5 +245,66 @@ public class WeatherAccumulationTest
 			wet = w;
 		}
 		assertTrue(cover < 0.99f && wet < 0.5f);
+	}
+
+	@Test
+	public void snowStaysOnItsSideOfABorder()
+	{
+		// snowtree1: a mountain, snowing over 60 cm of snow, beside a forest where it rains. Through the login, ten
+		// minutes of the mountain's snow, the window re-laid as the player walks and a switch to clear weather, the
+		// forest's ground takes none of the mountain's snow and the mountain none of the forest's puddles, past half a
+		// cell from the border
+		WeatherTestData.load();
+		WeatherType snow = WeatherTestData.type("SNOW"), rain = WeatherTestData.type("RAIN");
+		WeatherType clear = WeatherTestData.type("CLEAR");
+		Function<String, WeatherType> types = b -> "MOUNTAIN".equals(b) ? snow : rain;
+		Function<String, float[]> ground = b -> "MOUNTAIN".equals(b) ? new float[]{0, 1} : new float[]{1, 0};
+		WeatherField f = new WeatherField();
+		int border = N / 2;
+		lay(f, 0, border);
+		f.update(types, ground, 0.6f, true, 12, 0);
+		for (int s = 0; s <= 6000; ++s)
+		{
+			if (s == 3000)
+			{
+				// the window moves three cells east; the cells it still covers keep their ground
+				lay(f, 3, border);
+			}
+			boolean automatic = s < 4500;
+			f.update(automatic ? types : b -> clear, automatic ? ground : null, 0.6f, true, 12, DT);
+			// the border in the window's tiles, half way between the last mountain cell's middle and the first forest's
+			float edge = (border - (s >= 3000 ? 3 : 0)) * WeatherField.CELL_TILES;
+			for (int t = 0; t < N * WeatherField.CELL_TILES; ++t)
+			{
+				float tile = t + 0.5f;
+				f.focus(tile * 128, N / 2f * WeatherField.CELL);
+				if (tile > edge + WeatherField.CELL_TILES / 2f)
+				{
+					assertEquals("snow in the forest at tile " + t + ", step " + s, 0,
+						f.getFocus(WeatherField.SNOW_COVER), 0);
+				}
+				else if (tile < edge - WeatherField.CELL_TILES / 2f)
+				{
+					assertEquals("puddles on the mountain at tile " + t + ", step " + s, 0,
+						f.getFocus(WeatherField.WET), 0);
+				}
+			}
+		}
+		f.focus(2.5f * WeatherField.CELL, N / 2f * WeatherField.CELL);
+		assertTrue("the mountain keeps its snow", f.getFocus(WeatherField.SNOW_COVER) > 0.75f);
+	}
+
+	/** The field's cells from {@code first} cell east: mountain west of cell {@code border}, forest from it. */
+	private static void lay(WeatherField f, int first, int border)
+	{
+		long[] keys = new long[N * N];
+		String[] biomes = new String[N * N];
+		for (int i = 0; i < N * N; ++i)
+		{
+			int x = i % N + first;
+			keys[i] = WeatherField.chunkKey(x * WeatherField.CELL_TILES, i / N * WeatherField.CELL_TILES);
+			biomes[i] = x < border ? "MOUNTAIN" : "FOREST";
+		}
+		f.layout(N, N, 0, 0, keys, biomes);
 	}
 }
