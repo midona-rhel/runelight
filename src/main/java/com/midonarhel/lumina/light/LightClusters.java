@@ -88,6 +88,8 @@ public class LightClusters
 	private boolean boundsValid;
 
 	private final FloatBuffer lightData = BufferUtils.createFloatBuffer(MAX_LIGHTS * LAMP_TEXELS * 4);
+	// the lamp each index stands for this frame
+	private final PointLight[] keptLights = new PointLight[MAX_LIGHTS];
 	// the frame's lights by importance, most first: packed for sorting, then their indices in the list
 	private final long[] byImportance = new long[MAX_LIGHTS];
 	private final float[] origin = new float[2];
@@ -196,6 +198,12 @@ public class LightClusters
 	public int getLightCount()
 	{
 		return lightCount;
+	}
+
+	/** The frame's lamps in the shaders' order (lamp index i), getLightCount() of them (LampCubes). */
+	public PointLight[] keptLights()
+	{
+		return keptLights;
 	}
 
 	/**
@@ -307,6 +315,7 @@ public class LightClusters
 			}
 
 			int index = kept++;
+			keptLights[index] = l;
 			int s = index * 4;
 			if (spheres[s] != x || spheres[s + 1] != y || spheres[s + 2] != z || spheres[s + 3] != l.radius)
 			{

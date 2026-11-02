@@ -117,6 +117,12 @@ public final class RenderDump
 				case "lightMap":
 					o.lightMap = !v.equals("off") && !v.equals("false");
 					break;
+				case "roofs":
+					o.showRoofs = v.equals("shown");
+					break;
+				case "showRoof":
+					o.showRoofIds.add(Integer.parseInt(v));
+					break;
 				case "lampRoofs":
 					o.lampRoofs = !v.equals("off") && !v.equals("false");
 					break;
