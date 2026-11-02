@@ -315,4 +315,26 @@ public class RoomLightTest
 		float[] inside = RoomLight.lampScores(room(), walled(), List.of(lamp(25.5f, 23, 9, 4)));
 		assertTrue("inside " + inside[1], inside[1] > 0.1f);
 	}
+	@Test
+	public void aDoorKeepsTheRoomsFillsInsteadOfStartingThemOver()
+	{
+		// a torch-lit room needs no fill; the rooms built again for a door keep that until their scores are worked
+		// out again, where a new scene's rooms start at their shortfall at once
+		RoomLight door = lit(1.5f);
+		assertEquals(0, night(door), 0);
+		door.setRooms(RoomMapTest.house(new int[4][LOCAL][LOCAL]), true);
+		door.update(1 / 60f, RoomLight.target(NIGHT, 1), NIGHT);
+		assertEquals(0, door.fillOf(1), 1e-6);
+		RoomLight scene = lit(1.5f);
+		night(scene);
+		scene.setRooms(RoomMapTest.house(new int[4][LOCAL][LOCAL]), false);
+		scene.update(1 / 60f, RoomLight.target(NIGHT, 1), NIGHT);
+		assertEquals(RoomLight.TARGET_NIGHT, scene.fillOf(1), 1e-5);
+		// a dark room's full fill is kept too, not taken down and eased back up
+		RoomLight dark = light();
+		night(dark);
+		dark.setRooms(RoomMapTest.house(new int[4][LOCAL][LOCAL]), true);
+		dark.update(1 / 60f, RoomLight.target(NIGHT, 1), NIGHT);
+		assertEquals(RoomLight.TARGET_NIGHT, dark.fillOf(1), 1e-5);
+	}
 }

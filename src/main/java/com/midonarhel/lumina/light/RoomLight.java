@@ -113,10 +113,26 @@ public final class RoomLight
 	/** The rooms of a new scene (or none, null): their tiles are counted; their lamps are worked out again. */
 	public void setRooms(RoomMap map)
 	{
+		setRooms(map, false);
+	}
+
+	/**
+	 * The rooms (or none, null): their tiles are counted; their lamps and sky are worked out again.
+	 *
+	 * @param sameScene whether they are the scene's rooms built again for new walls (a door opened or shut): each room
+	 * then keeps the fill and the scores of the room that held most of its tiles until its own are worked out, and
+	 * eases from there. Otherwise every fill starts at the room's shortfall at once. Before, a door reset every room of
+	 * the scene: each jumped to the full fill and faded back over half a second (the user, 2026-11-02: "it resets
+	 * fading in again").
+	 */
+	public void setRooms(RoomMap map, boolean sameScene)
+	{
 		if (map == rooms)
 		{
 			return;
 		}
+		RoomMap before = rooms;
+		float[] nowBefore = now, goalBefore = goal, lampBefore = lamp, skyBefore = sky;
 		rooms = map;
 		fresh = true;
 		summarized = false;
@@ -158,6 +174,49 @@ public final class RoomLight
 				++tiles[room];
 			}
 		}
+		if (sameScene && before != null && before.rooms.length == map.rooms.length)
+		{
+			carry(before, nowBefore, goalBefore, lampBefore, skyBefore);
+		}
+	}
+
+	/** Each room takes the fill and scores of the room before that held most of its tiles (setRooms, sameScene). */
+	private void carry(RoomMap before, float[] nowBefore, float[] goalBefore, float[] lampBefore, float[] skyBefore)
+	{
+		// tiles per (room now, room before)
+		java.util.Map<Integer, Integer> shared = new java.util.HashMap<>();
+		short[] a = rooms.rooms, b = before.rooms;
+		for (int i = 0; i < a.length; ++i)
+		{
+			if (a[i] > 0 && b[i] > 0 && b[i] < nowBefore.length)
+			{
+				shared.merge(a[i] << 16 | b[i], 1, Integer::sum);
+			}
+		}
+		int[] best = new int[used], most = new int[used];
+		for (java.util.Map.Entry<Integer, Integer> e : shared.entrySet())
+		{
+			int room = e.getKey() >>> 16;
+			if (e.getValue() > most[room])
+			{
+				most[room] = e.getValue();
+				best[room] = e.getKey() & 0xFFFF;
+			}
+		}
+		for (int room = 1; room < used; ++room)
+		{
+			int was = best[room];
+			if (was > 0)
+			{
+				now[room] = nowBefore[was];
+				goal[room] = goalBefore[was];
+				lamp[room] = lampBefore[was];
+				sky[room] = skyBefore[was];
+				table[room * 4] = now[room];
+			}
+		}
+		// a room no room was on before (none, unless the walls made one of open ground) eases in from no fill
+		fresh = false;
 	}
 
 	/** The lamps' mean score over a room's floor. */

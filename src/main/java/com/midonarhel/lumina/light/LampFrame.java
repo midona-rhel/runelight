@@ -200,6 +200,10 @@ public final class LampFrame
 	private long lightMapJobNanos;
 	// the offline renderer's lightMap=off: no light map, the walls alone stop the lamps (no setting of the plugin's)
 	public boolean lightMapOff;
+	// the walls' scene (WallMap.scene, the same as a door opens or shuts) of the newest rooms BuildingLights gave, and of
+	// those the room light has: rooms of the same scene as the ones before them are a door's (RoomLight.setRooms)
+	private RoomMap newestRooms, roomLightRooms;
+	private int newestScene = Integer.MIN_VALUE, roomLightScene = Integer.MIN_VALUE;
 
 	public LampFrame(LuminaPlugin plugin)
 	{
@@ -252,7 +256,8 @@ public final class LampFrame
 				drawn != null ? drawn.hideRoofIds : null, drawn != null ? drawn.level : 0);
 			plugin.lightClusters.setWalls(plugin.lampWalls);
 			plugin.roomTexture.update(rooms);
-			updateRoomLight(plugin.config.interiorBrightness() > 0 ? rooms : null);
+			// the fill by room id, for the rooms whose ids the shader reads now (a door's are packed a frame later)
+			updateRoomLight(plugin.config.interiorBrightness() > 0 ? plugin.roomTexture.shown() : null);
 			// the fog comes back into the rooms whose roof the client hides
 			SceneContext roofCtx = drawn;
 			if (plugin.frameFog && rooms != null && roofCtx != null)
@@ -362,7 +367,19 @@ public final class LampFrame
 		plugin.roomLightNanos = now;
 		BuildingLights buildings = plugin.buildingLights;
 		SceneLights lights = plugin.sceneLights;
-		plugin.roomLight.setRooms(rooms);
+		// BuildingLights hands rooms and walls over together; the rooms here may be a frame behind (RoomTexture.shown)
+		RoomMap newest = buildings != null ? buildings.getRooms() : null;
+		if (newest != newestRooms)
+		{
+			WallMap walls = buildings.getWalls();
+			newestRooms = newest;
+			newestScene = walls != null ? walls.scene : Integer.MIN_VALUE;
+		}
+		int scene = rooms == null ? Integer.MIN_VALUE : rooms == newestRooms ? newestScene
+			: rooms == roomLightRooms ? roomLightScene : Integer.MIN_VALUE;
+		plugin.roomLight.setRooms(rooms, rooms != roomLightRooms && scene != Integer.MIN_VALUE && scene == roomLightScene);
+		roomLightRooms = rooms;
+		roomLightScene = scene;
 		if (rooms != null && buildings != null)
 		{
 			plugin.roomLight.followWalls(buildings.getWalls(), buildings.getFloors(), SKYLIGHT_REACH);
