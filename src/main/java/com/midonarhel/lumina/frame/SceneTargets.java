@@ -417,6 +417,8 @@ public class SceneTargets
 	 */
 	public void resolveAlpha()
 	{
+		// the scene is drawn
+		alphaToCoverage(false);
 		if (samples == 0)
 		{
 			return;
@@ -445,6 +447,28 @@ public class SceneTargets
 		glClearBufferfv(GL_COLOR, 3, TRANSPARENT);
 		glClearBufferfv(GL_DEPTH, 0, FAR_DEPTH);
 		glDrawBuffers(OPAQUE_BUFFERS);
+		alphaToCoverage(true);
+	}
+
+	/**
+	 * Alpha to coverage, under MSAA in the opaque pass: frag.glsl gives a cut-out texture's edge the share of the
+	 * samples it covers in the color's alpha; every other opaque face writes 1, all its samples. Off in the
+	 * transparency pass, whose alpha is its blend, and after the scene.
+	 */
+	private void alphaToCoverage(boolean on)
+	{
+		if (samples == 0)
+		{
+			return;
+		}
+		if (on)
+		{
+			glEnable(GL_SAMPLE_ALPHA_TO_COVERAGE);
+		}
+		else
+		{
+			glDisable(GL_SAMPLE_ALPHA_TO_COVERAGE);
+		}
 	}
 
 	/**
@@ -453,6 +477,7 @@ public class SceneTargets
 	public void setAlphaPass(boolean alpha)
 	{
 		glDrawBuffers(alpha ? ALPHA_BUFFERS : OPAQUE_BUFFERS);
+		alphaToCoverage(!alpha);
 	}
 
 	public void bindMaterial(int unit)
