@@ -6,6 +6,7 @@ import com.midonarhel.lumina.common.Clock;
 import com.midonarhel.lumina.dev.FrameTape;
 import com.midonarhel.lumina.dev.PlainData;
 import com.midonarhel.lumina.dev.SceneDump;
+import com.midonarhel.lumina.frame.Composite;
 import com.midonarhel.lumina.fog.FogGround;
 import com.midonarhel.lumina.light.PointLight;
 import com.midonarhel.lumina.light.SceneLights;
@@ -245,9 +246,12 @@ public final class DumpRenderer implements AutoCloseable
 			if (i == 0)
 			{
 				restoreState();
+				// the restored weather can differ from the warm-up's: the clouds drawn for this frame, not kept
+				Composite.cloudsEveryFrame = true;
 			}
 			frame();
 		}
+		Composite.cloudsEveryFrame = false;
 		return readBack();
 	}
 
@@ -257,7 +261,10 @@ public final class DumpRenderer implements AutoCloseable
 		SceneDump.Manifest m = dump.manifest;
 		Clock.set(m.millis, dumpNanos);
 		restoreState();
+		// the restored weather can differ from the warm-up's: the clouds drawn for this frame, not kept from the last
+		Composite.cloudsEveryFrame = true;
 		frame();
+		Composite.cloudsEveryFrame = false;
 		return readBack();
 	}
 

@@ -289,6 +289,15 @@ public class Clouds
 		return enabled;
 	}
 
+	/** What the clouds show this frame besides where they are: coverage, the weather's cover, wisp and dark. */
+	public void getLook(float[] out, int at)
+	{
+		out[at] = coverage;
+		out[at + 1] = weather;
+		out[at + 2] = wisp;
+		out[at + 3] = dark;
+	}
+
 	float getCoverage()
 	{
 		return coverage;

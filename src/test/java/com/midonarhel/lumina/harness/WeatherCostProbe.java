@@ -22,17 +22,93 @@ import static org.lwjgl.opengl.GL33C.*;
  * <li>CPU: the weather's update for a frame (WeatherFrame.update: the climate, the field, the wind, the lightning) and
  * the clouds' (SkyFrame.updateClouds), each timed alone between frames.</li>
  * </ul>
- * Prints medians and appends them to -Dlumina.out.
+ * Prints medians and appends them to -Dlumina.out. With -Dlumina.halfRate=true instead: the clouds at half rate
+ * against every frame (Composite.cloudsEveryFrame), the clouds always on and the camera still, -Dlumina.frames of
+ * two frames of each in turn, the saving per frame as each window of four's difference in the whole frame's GPU time.
  */
 public class WeatherCostProbe
 {
 	@Test
-	public void probe() throws Exception
+	public void halfRate() throws Exception
 	{
 		String name = System.getProperty("lumina.dump");
 		Assume.assumeTrue("no -Dlumina.dump", name != null && !name.isEmpty());
+		Assume.assumeTrue("-Dlumina.halfRate", Boolean.getBoolean("lumina.halfRate"));
 		Assume.assumeTrue("CGL: macOS only", Platform.get() == Platform.MACOSX);
-		SceneDump.Loaded dump = RenderDump.load(name);
+		int n = Integer.parseInt(System.getProperty("lumina.frames", "240"));
+		try (DumpRenderer r = new DumpRenderer(RenderDump.load(name), options()))
+		{
+			r.render();
+			// the whole frame's GPU time: the per pass queries read nothing on this GL when the pass holds the clouds alone
+			int q = glGenQueries();
+			// what a kept frame shows against a frame that draws its clouds, the same moment: written out with -Dlumina.out
+			Composite.cloudsEveryFrame = true;
+			r.frame();
+			java.awt.image.BufferedImage drawn = r.readBack();
+			Composite.cloudsEveryFrame = false;
+			r.frame();
+			r.frame();
+			java.awt.image.BufferedImage kept = r.readBack();
+			int off = 0, most = 0;
+			for (int y = 0; y < drawn.getHeight(); ++y)
+			{
+				for (int x = 0; x < drawn.getWidth(); ++x)
+				{
+					int a = drawn.getRGB(x, y), b = kept.getRGB(x, y), m = 0;
+					for (int sh = 0; sh < 24; sh += 8)
+					{
+						m = Math.max(m, Math.abs((a >> sh & 255) - (b >> sh & 255)));
+					}
+					most = Math.max(most, m);
+					off += m > 8 ? 1 : 0;
+				}
+			}
+			String image = String.format("kept frame against drawn: max %d, %.3f %% of pixels off by more than 8", most,
+				100.0 * off / (drawn.getWidth() * drawn.getHeight()));
+			System.out.println(image);
+			// Two frames drawing the clouds every frame, then two at half rate (one drawing all the sky, one keeping it:
+			// the steady state), in turn; the saving is each window of four's difference, so the GPU's clock, which swings
+			// a frame's time by more than the clouds cost, cancels.
+			double[] saved = new double[n];
+			double[] pair = new double[2];
+			for (int w = -5; w < n; ++w)
+			{
+				for (int mode = 0; mode < 2; ++mode)
+				{
+					Composite.cloudsEveryFrame = mode == 0;
+					pair[mode] = 0;
+					for (int f = 0; f < 2; ++f)
+					{
+						glBeginQuery(GL_TIME_ELAPSED, q);
+						r.frame();
+						glEndQuery(GL_TIME_ELAPSED);
+						pair[mode] += glGetQueryObjecti64(q, GL_QUERY_RESULT) / 1e6;
+					}
+				}
+				if (w >= 0)
+				{
+					saved[w] = (pair[0] - pair[1]) / 2;
+				}
+			}
+			Composite.cloudsEveryFrame = false;
+			glDeleteQueries(q);
+			double[] sorted = saved.clone();
+			Arrays.sort(sorted);
+			String line = String.format("%s%s, GPU ms a frame saved at half rate, %d windows of four frames: median %.3f,"
+					+ " quartiles %.3f to %.3f; %s", name,
+				System.getProperty("lumina.camera") != null ? " camera " + System.getProperty("lumina.camera") : "", n,
+				sorted[n / 2], sorted[n / 4], sorted[3 * n / 4], image);
+			System.out.println(line);
+			String out = System.getProperty("lumina.out");
+			if (out != null)
+			{
+				Files.writeString(Path.of(out), line + "\n", StandardOpenOption.CREATE, StandardOpenOption.APPEND);
+			}
+		}
+	}
+
+	private static DumpRenderer.Options options()
+	{
 		DumpRenderer.Options o = new DumpRenderer.Options();
 		String camera = System.getProperty("lumina.camera");
 		if (camera != null)
@@ -50,8 +126,19 @@ public class WeatherCostProbe
 			}
 		}
 		o.restoreWeather = !"off".equals(System.getProperty("lumina.weatherState"));
+		return o;
+	}
+
+	@Test
+	public void probe() throws Exception
+	{
+		String name = System.getProperty("lumina.dump");
+		Assume.assumeTrue("no -Dlumina.dump", name != null && !name.isEmpty());
+		Assume.assumeFalse("-Dlumina.halfRate", Boolean.getBoolean("lumina.halfRate"));
+		Assume.assumeTrue("CGL: macOS only", Platform.get() == Platform.MACOSX);
+		String camera = System.getProperty("lumina.camera");
 		int n = Integer.parseInt(System.getProperty("lumina.frames", "240"));
-		try (DumpRenderer r = new DumpRenderer(dump, o))
+		try (DumpRenderer r = new DumpRenderer(RenderDump.load(name), options()))
 		{
 			r.render();
 			int[] q = {glGenQueries(), glGenQueries(), glGenQueries()};

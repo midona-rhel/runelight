@@ -200,7 +200,7 @@ public final class Composite
 		public int pointLights, roomHeader, interiorTint, skylightOn;
 		public final LampWalls.Uniforms lampWalls = new LampWalls.Uniforms();
 		public int skyVoid, drawDistance, expandedChunks, clientSkyColor;
-		public int lightningBolt, volumetricFog;
+		public int lightningBolt, volumetricFog, cloudsAllSky;
 		public final FrameUniforms frame = new FrameUniforms();
 		public final EnvironmentUniforms env = new EnvironmentUniforms();
 		public final EdgeFade.Uniforms edge = new EdgeFade.Uniforms();
@@ -246,6 +246,7 @@ public final class Composite
 		c.strikeLight = glGetUniformLocation(p, "strikeLight");
 		c.sunAltitude = glGetUniformLocation(p, "sunAltitude");
 		c.overcast = glGetUniformLocation(p, "weatherOvercast");
+		c.cloudsAllSky = glGetUniformLocation(p, "cloudsAllSky");
 		c.weatherLight = glGetUniformLocation(p, "weatherLight");
 		c.shadowsEnabled = glGetUniformLocation(p, "shadowsEnabled");
 		c.lightProjRel = glGetUniformLocation(p, "lightProjRel");
@@ -395,6 +396,52 @@ public final class Composite
 	// query begun this frame, for the probe to clear before a frame and read after it
 	public static int[] passTimers;
 	public static int passTimersUsed;
+	// developer: the clouds drawn every frame, not at half rate (harness WeatherCostProbe compares the two)
+	public static boolean cloudsEveryFrame;
+
+	// The clouds at half rate: with the camera still, a frame draws them for every texel over the horizon and the
+	// next keeps that result as it is, for the identical view (nothing reprojected, nothing blended across frames).
+	// A moved camera, a lightning flash or a changed target draws them that frame, only where the sky shows.
+	private final float[] cloudsView = new float[29];
+	private boolean cloudsKeepable, cloudsKept;
+
+	/** Whether this frame keeps the clouds the last one drew; else whether to draw them for all the sky (out). */
+	private boolean keepClouds(boolean halfClouds, boolean[] allSky)
+	{
+		float[] v = plugin.frameViewProj;
+		boolean same = halfClouds && v != null && !cloudsEveryFrame
+			&& plugin.weather.getLightning().getFlash() <= 0 && plugin.sceneTargets.cloudTexture() != 0;
+		for (int i = 0; same && i < 16; ++i)
+		{
+			same = v[i] == cloudsView[i];
+		}
+		// the view: its rotation and projection, where the camera is, the targets and the viewport; and what the
+		// clouds show (a change of weather draws them)
+		float[] now = {plugin.sceneTargets.getAoWidth(), plugin.sceneTargets.getAoHeight(), plugin.frameCameraX,
+			plugin.frameCameraY, plugin.frameCameraZ, plugin.frameViewport[0], plugin.frameViewport[1],
+			plugin.frameViewport[2], plugin.frameViewport[3], 0, 0, 0, 0};
+		plugin.clouds.getLook(now, 9);
+		for (int i = 0; same && i < now.length; ++i)
+		{
+			same = cloudsView[16 + i] == now[i];
+		}
+		if (v != null)
+		{
+			System.arraycopy(v, 0, cloudsView, 0, 16);
+		}
+		System.arraycopy(now, 0, cloudsView, 16, now.length);
+		boolean keep = same && cloudsKeepable && !cloudsKept;
+		cloudsKept = keep;
+		if (!keep)
+		{
+			// a still camera: draw for all the sky, so the next frame can keep it
+			allSky[0] = same;
+			cloudsKeepable = same;
+		}
+		return keep;
+	}
+
+	private final boolean[] cloudsAllSky = new boolean[1];
 
 	public void draw()
 	{
@@ -561,17 +608,21 @@ public final class Composite
 		// everything bound for the composite: in one pass when both are drawn, timed as the clouds'
 		final boolean halfClouds = plugin.clouds.isEnabled() && plugin.frameOutdoors && plugin.proceduralSky();
 		final boolean halfWater = plugin.water.enabled(plugin.config);
-		if (halfClouds || halfWater)
+		cloudsAllSky[0] = false;
+		final boolean drawClouds = halfClouds && !keepClouds(halfClouds, cloudsAllSky);
+		if (drawClouds || halfWater)
 		{
 			// their targets are not bound while drawn into
 			glActiveTexture(GL_TEXTURE0 + CLOUD_HALF_UNIT);
 			glBindTexture(GL_TEXTURE_2D, 0);
 			glActiveTexture(GL_TEXTURE0 + WATER_NOISE_UNIT);
 			glBindTexture(GL_TEXTURE_2D, 0);
-			plugin.sceneTargets.bindHalf(halfClouds, halfWater);
+			plugin.sceneTargets.bindHalf(drawClouds, halfWater);
 			glDisable(GL_BLEND);
-			use(!halfWater ? compositeClouds : halfClouds ? compositeCloudsWater : compositeWater);
-			scissorHalf(halfClouds, halfWater);
+			CompositeProgram half = !halfWater ? compositeClouds : drawClouds ? compositeCloudsWater : compositeWater;
+			use(half);
+			glUniform1i(half.cloudsAllSky, cloudsAllSky[0] ? 1 : 0);
+			scissorHalf(drawClouds, halfWater);
 			if (passTimers != null)
 			{
 				glBeginQuery(GL_TIME_ELAPSED, passTimers[0]);
@@ -584,6 +635,13 @@ public final class Composite
 			glBindTexture(GL_TEXTURE_2D, halfClouds ? plugin.sceneTargets.cloudTexture() : 0);
 			glActiveTexture(GL_TEXTURE0 + WATER_NOISE_UNIT);
 			glBindTexture(GL_TEXTURE_2D, halfWater ? plugin.sceneTargets.waterShadedTexture() : 0);
+			glActiveTexture(GL_TEXTURE0);
+		}
+		else if (halfClouds)
+		{
+			// the clouds kept from the last frame
+			glActiveTexture(GL_TEXTURE0 + CLOUD_HALF_UNIT);
+			glBindTexture(GL_TEXTURE_2D, plugin.sceneTargets.cloudTexture());
 			glActiveTexture(GL_TEXTURE0);
 		}
 

@@ -238,7 +238,11 @@ bool skyShowsAt(ivec2 q) {
 }
 
 // The half resolution clouds (into cloudHalf). The pass is scissored to the rows that can hold cloud
-// (Clouds.skyRows), over a target cleared to clear sky.
+// (Clouds.skyRows), over a target cleared to clear sky. cloudsAllSky: every texel over the horizon, whatever the
+// scene shows, for a result the next frame keeps (Composite's half rate), so sky that geometry uncovers there finds
+// its clouds.
+uniform int cloudsAllSky;
+
 vec4 cloudsHalf() {
   // the ray through the middle of the scene pixels this texel covers
   vec2 c = gl_FragCoord.xy * halfRatio;
@@ -253,7 +257,7 @@ vec4 cloudsHalf() {
   // filtering of the clouds reaches (atmosphere.glsl's cloudsFiltered, a texel and a half out), or behind
   // geometry's edges or its fade at the edge of the world. Elsewhere clear sky. The corners of that square and its
   // middle are tested.
-  bool needed = false;
+  bool needed = cloudsAllSky == 1;
   ivec2 last = sceneTextureSize() - 1;
   float reach = halfRatio * 1.5 + 1.0;
   for (int i = 0; i < 5 && !needed; ++i) {
