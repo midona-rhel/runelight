@@ -12,7 +12,7 @@ public class CardEdgesTest
 {
 	private static final int W = 400, H = 300;
 
-	private static float median(float[] v)
+	private static float p90(float[] v)
 	{
 		int[] plane = new int[W * H];
 		Arrays.fill(plane, 1);
@@ -25,7 +25,7 @@ public class CardEdgesTest
 			a[i] = out.get(i);
 		}
 		Arrays.sort(a);
-		return a[a.length / 2];
+		return a[a.length * 9 / 10];
 	}
 
 	@Test
@@ -40,7 +40,7 @@ public class CardEdgesTest
 				v[y * W + x] = Math.max(0, Math.min(1, 0.5f + (x - 100 - 0.37f * y) / 6));
 			}
 		}
-		assertEquals(0, median(v), 0.02);
+		assertEquals(0, p90(v), 0.02);
 	}
 
 	@Test
@@ -57,7 +57,7 @@ public class CardEdgesTest
 				v[y * W + x] = tx - 100 - 0.37f * ty > 0 ? 1 : 0;
 			}
 		}
-		float r = median(v);
+		float r = p90(v);
 		assertTrue("read " + r, r > 0.1 * s && r < 0.4 * s);
 	}
 

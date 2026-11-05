@@ -47,6 +47,7 @@ for d in ${(s:,:)DUMPS}; do
     ( cd $CARDTREE && $OCC/gpu-lock.sh ./gradlew --offline -q scorecard -Pargs="phase=probe dump=$d cache=$CACHE" 2>&1 | quiet
       ./gradlew --offline -q scorecard -Pargs="phase=oracle dump=$d cache=$CACHE" 2>&1 | quiet )
   fi
+  [[ $PARTS == none ]] && continue
   echo "== $d: render"
   ( cd $TREE && $OCC/gpu-lock.sh ./gradlew --offline -q scorecard -Pargs="phase=render dump=$d cache=$CACHE out=$OUT parts=$PARTS" 2>&1 | quiet )
 done

@@ -31,6 +31,7 @@ final class CardCost
 		o.hour = 21;
 		o.settings.put("antiAliasingMode", "DISABLED");
 		o.settings.put("renderScale", "FULL");
+		o.settings.put("testLight", "false");
 		if (fog)
 		{
 			o.settings.put("weatherMode", "FOG");

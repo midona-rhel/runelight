@@ -227,13 +227,14 @@ final class CardLeak
 		}
 		res.put("litPixelsCutByBudgetPct", Card.round(100.0 * cut / Math.max(1, lit), 2));
 
-		// with every lamp on: a pixel all of whose lamps the oracle blocks, risen
+		// with every lamp on: a pixel all of whose lamps walls, roofs, terrain or floors block, risen
 		boolean[] mayBeLit = new boolean[n], blocked = new boolean[n];
 		for (int k = 0; k < p.lamps.length; ++k)
 		{
 			for (int s = 0; s < o.px[k].length; ++s)
 			{
-				if (CardOracle.classOf(o.cls[k][s]) == CardOracle.BLOCKED)
+				short c = o.cls[k][s];
+				if (CardOracle.classOf(c) == CardOracle.BLOCKED && (CardOracle.blockersOf(c) & CardMesh.RULE) != 0 && (c & CardOracle.OTHER) == 0)
 				{
 					blocked[o.px[k][s]] = true;
 				}

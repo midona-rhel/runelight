@@ -76,6 +76,8 @@ final class Card
 		o.settings.put("volumetricFog", String.valueOf(fog));
 		o.settings.put("weatherMode", weather);
 		o.settings.put("weatherLightning", "false");
+		// a lamp of the plugin's own, set anew each frame: it can't be isolated, and it isn't a lamp of the scene
+		o.settings.put("testLight", "false");
 		o.restoreWeather = false;
 		return o;
 	}
