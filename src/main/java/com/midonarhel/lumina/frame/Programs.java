@@ -206,7 +206,8 @@ public final class Programs
 						+ "#define MAP_LAMPS_BASE " + LightClusters.MAP_LAMPS_BASE + "\n"
 						+ "#define CLUSTER_BASE " + LightClusters.CLUSTER_BASE + "\n"
 						+ com.midonarhel.lumina.light.LampReach.defines()
-						+ com.midonarhel.lumina.light.LightMapBuffer.defines();
+						+ com.midonarhel.lumina.light.LightMapBuffer.defines()
+						+ com.midonarhel.lumina.light.LampVolume.defines();
 				case "composite_mode":
 					// Compile out the diagnostic branches and intermediate samplers in normal rendering.
 					// Changing this diagnostic property requires a shader reload.

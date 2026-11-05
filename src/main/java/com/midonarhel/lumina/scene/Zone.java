@@ -96,6 +96,8 @@ public class Zone
 	// the skylight's copy of the opaque triangles (SceneUploader), until the voxel worker turns it into voxels
 	public VoxelCapture voxelCapture;
 	public Voxelizer.Zone voxels;
+	// the zone's triangles as plain data, for the lamps' volume (LampVolume): a restored zone's, or read back
+	public ZoneSnapshot source;
 	// the models that stop light at lamp height, rasterized with the voxels (ModelBlockers, for the light map)
 	public com.midonarhel.lumina.visibility.ModelBlockers.Zone modelBlockers;
 

@@ -104,6 +104,7 @@ public final class ZoneSnapshot
 			}
 		}
 		zone.init(opaque, upload(vertsA, sizeA, loader));
+		zone.source = this;
 		zone.sizeO = sizeO;
 		zone.sizeA = sizeA;
 		zone.bufLen = bufLen;

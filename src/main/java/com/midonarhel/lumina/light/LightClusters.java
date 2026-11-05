@@ -189,7 +189,7 @@ public class LightClusters
 	/** Whether lamps' maps of the walls are being baked (the offline renderer waits for them). */
 	public boolean reachBusy()
 	{
-		return reach.busy();
+		return reach.busy() || LampVolume.current() != null && LampVolume.current().busy();
 	}
 
 	public boolean isInitialized()
@@ -216,7 +216,7 @@ public class LightClusters
 
 	// whether the lamp stands on a storey the client hides: its light reaches nothing drawn but through floors and walls
 	// that are not drawn, so a surface takes none of it (composite_frag.glsl); the fog's glow over the open rooms keeps it
-	private boolean onHiddenStorey(PointLight l)
+	boolean onHiddenStorey(PointLight l)
 	{
 		int[][][] roofs = hideRoofs;
 		java.util.Set<Integer> ids = hideIds;

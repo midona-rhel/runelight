@@ -394,6 +394,7 @@ public class LuminaPlugin extends Plugin implements DrawCallbacks
 
 	public final LightClusters lightClusters = new LightClusters();
 	public final com.midonarhel.lumina.light.LampCubes lampCubes = new com.midonarhel.lumina.light.LampCubes();
+	public final com.midonarhel.lumina.light.LampVolume lampVolume = new com.midonarhel.lumina.light.LampVolume();
 	// the walls that stop the lamps, and the rooms (for their fill and the puddles), on the GPU
 	public final LampWalls lampWalls = new LampWalls();
 	// the fixed lamps' visibility, baked on its own threads (LightMap), and as the light buffer holds it
@@ -993,6 +994,7 @@ public class LuminaPlugin extends Plugin implements DrawCallbacks
 				roomLight.free();
 				lightClusters.free();
 				lampCubes.free();
+				lampVolume.free();
 				lampWalls.free();
 				roomTexture.free();
 				volumetricFog.free();
@@ -1629,9 +1631,6 @@ public class LuminaPlugin extends Plugin implements DrawCallbacks
 				// the cubes of the lamps chosen this frame (LampCubes), before the composite and the fog read them
 				com.midonarhel.lumina.dev.GpuSections.section("lamp cubes");
 				lampCubes.draw(this);
-				glActiveTexture(GL_TEXTURE0 + LAMP_CUBE_UNIT);
-				glBindTexture(GL_TEXTURE_2D, lampCubes.atlas());
-				glActiveTexture(GL_TEXTURE0);
 			}
 			cpuTimer.begin(CpuTimer.OCCLUSION);
 			com.midonarhel.lumina.dev.GpuSections.section("weather occlusion");

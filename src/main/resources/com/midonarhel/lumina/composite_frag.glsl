@@ -93,7 +93,6 @@ uniform int skyVoid;
 uniform int pointLightsEnabled;
 
 #include "light/lamp.glsl"
-#include "light/lamp_cube.glsl"
 #include "rooms.glsl"
 #include "skylight_ambient.glsl"
 
@@ -222,67 +221,16 @@ void lampOnSurface(Lamp lamp, float open, vec3 p, vec3 n, vec3 viewDir, float tr
 // lamps the light map carries in full from its read, once (a cell holds the at most four that light it, each no
 // more than its walls let through, lampMapLampOpen), the others stopped by their walls (lampOpen).
 vec3 lampsOnSurface(int entry, vec3 p, vec3 n, vec3 faceN, float transmissive, out vec3 through) {
-  vec3 viewDir = transmissive > 0.0 ? normalize(-p) : vec3(0.0);
-  // off the surface along its face's own normal: a smooth normal tilts toward a wall's top and ends
-  vec3 wallFrom = p + faceN * LAMP_WALL_BIAS;
-  bool backToo = transmissive > 0.0;
-  vec3 sum = vec3(0.0);
   through = vec3(0.0);
-  bool mapped = false;
-  LampBudget cubed = lampBudgetEmpty();
-  LightMask lamps = clusterLights(entry);
-  int li;
-  while (nextLight(lamps, li)) {
-    vec4 sphere = lampSphere(li);
-    if (!lampSphereReaches(sphere, p, n, backToo)) {
-      continue;
-    }
-    vec4 b = texelFetch(lightData, li * 4 + 1);
-    // a lamp on a storey the client hides: through floors and walls that are not drawn
-    if (lampHiddenCode(b.w)) {
-      continue;
-    }
-    if (lampCubeCode(b.w) >= 0) {
-      vec3 l = sphere.xyz - p;
-      lampBudgetAdd(cubed, lampLuminance(b.rgb) * lampFalloff(dot(l, l), sphere.w * sphere.w), li, 0.0);
-      continue;
-    }
-    if (lampOnMap(sphere)) {
-      mapped = true;
-      continue;
-    }
-    Lamp lamp = lampWith(li, sphere);
-    lampOnSurface(lamp, lampOpen(lamp, p, wallFrom, false), p, n, viewDir, transmissive, sum, through);
+  vec3 w = p + cameraPos;
+  LampVolumeRead r = lampVolumeRead(w, faceN);
+  float ndl;
+  vec3 ld;
+  float k = lampVolumeOnSurface(r, w, n, ndl, ld);
+  if (transmissive > 0.0) {
+    through = r.light * transmission(ndl, dot(-ld, normalize(-p)), transmissive);
   }
-  for (int k = 0; k < LAMP_BUDGET; ++k) {
-    int kl = cubed.who[k];
-    if (kl < 0) {
-      break;
-    }
-    Lamp lamp = lampWith(kl, lampSphere(kl));
-    vec3 q = p + faceN * (1.0 + 1.5 * lampCubeTexel(length(lamp.pos - p)));
-    float open = lampCubeOpen(lamp, q, 0.125, LAMP_CUBE_SOFT_SURFACE);
-    lampOnSurface(lamp, open * lampBudgetFade(cubed, k), p, n, viewDir, transmissive, sum, through);
-  }
-  if (mapped) {
-    vec4 vis;
-    ivec4 ids;
-    lampMapRead(p, wallFrom, vis, ids);
-    for (int k = 0; k < 4; ++k) {
-      int ml = ids[k] > 0 && vis[k] > 0.0 ? lampOfMapId(ids[k]) : -1;
-      // a lamp with a cube was taken above
-      float mw = ml >= 0 ? texelFetch(lightData, ml * 4 + 1).w : 0.0;
-      if (ml < 0 || lampCubeCode(mw) >= 0 || lampHiddenCode(mw)) {
-        continue;
-      }
-      vec4 sphere = lampSphere(ml);
-      if (lampSphereReaches(sphere, p, n, backToo)) {
-        Lamp lamp = lampWith(ml, sphere);
-        lampOnSurface(lamp, lampMapLampOpen(lamp, vis[k], p, wallFrom), p, n, viewDir, transmissive, sum, through);
-      }
-    }
-  }
-  return sum;
+  return r.light * k;
 }
 
 // ---------------------------------------------------------------------------------------------------------------

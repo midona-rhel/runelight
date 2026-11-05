@@ -191,6 +191,9 @@ float phase(float cosTheta) {
 // the glow is brightest) was off a 32-sample reference by up to 27 levels in the forests, where trees shade the glow
 // along the ray (tree1 53k pixels over 8); two by at most 10, for 0.13 ms more on fps1
 #define FOG_LAMP_PIECES 2
+// steps through the far level of the lamps' volume, and how far along a ray
+#define FOG_LAMP_STEPS 12
+#define FOG_LAMP_REACH 6000.0
 
 // The lamp's falloff (lampFalloff: (1 - d / r)^2) along a line passing sqrt(h2) from it, from s0 to s1 along the line
 // from its point nearest the lamp, in closed form: r times, in units of r (u = s / r, e = h / r),
@@ -204,7 +207,6 @@ float lampFalloffAlong(float h2, float r, float s0, float s1) {
   return max(f.y - f.x, 0.0) * r;
 }
 
-#include "light/lamp_cube.glsl"
 
 // Light from the lamps scattered toward the camera along the ray dir, up to tEnd (what the ray ends at), as a glow
 // round each lamp: its falloff along the part of the ray in its reach, in closed form (lampFalloffAlong), times the fog
@@ -223,65 +225,27 @@ float lampFalloffAlong(float h2, float r, float s0, float s1) {
 // switching. No other edge: the falloff is 0 at the reach, and the ray's end clips the glow as it clips everything
 // behind it.
 vec3 lampGlow(ivec2 px, vec3 dir, float tEnd, float density, float jitter) {
-  LightMask lamps = clusterLights(columnEntry((vec2(px) + 0.5 - vec2(sceneViewport.xy)) / vec2(sceneViewport.zw)));
-  float below = -fogHeight * FOG_BELOW;
-  // the ray's brightest LAMP_BUDGET lamps by their glow before walls (each one's fog kept in the budget's open)
-  LampBudget budget = lampBudgetEmpty();
-  int li;
-  while (nextLight(lamps, li)) {
-    vec4 sphere = lampSphere(li);
-    float tc = dot(sphere.xyz, dir);
-    float h2 = max(dot(sphere.xyz, sphere.xyz) - tc * tc, 0.0);
-    float r2 = sphere.w * sphere.w;
-    if (h2 >= r2) {
-      continue;
-    }
-    float hc = sqrt(r2 - h2);
-    float a = max(tc - hc, 0.0);
-    float b = min(tc + hc, tEnd);
-    if (b <= a) {
-      continue;
-    }
-    // the fog where the lamp is
-    vec3 w = sphere.xyz + cameraPos;
-    vec4 ground = fogGroundAt(w.xz);
-    float sigma = density * exp(-max(ground.r - w.y, below) / fogHeight) * fogRoomFactor(ground, w.y)
-      * weatherFogFactor(w.xz);
-    if (sigma <= 0.0) {
-      continue;
-    }
-    float whole = lampFalloffAlong(h2, abs(sphere.w), a - tc, b - tc);
-    lampBudgetAdd(budget, lampLuminance(lampColorOf(li)) * whole * sigma, li, sigma);
-  }
+  float t1 = min(tEnd, FOG_LAMP_REACH);
+  float dt = t1 / float(FOG_LAMP_STEPS);
   vec3 sum = vec3(0.0);
-  for (int k = 0; k < LAMP_BUDGET; ++k) {
-    int kl = budget.who[k];
-    if (kl < 0) {
-      break;
-    }
-    Lamp lamp = lampAt(kl);
-    float tc = dot(lamp.pos, dir);
-    float h2 = max(dot(lamp.pos, lamp.pos) - tc * tc, 0.0);
-    float hc = sqrt(max(lamp.radius * lamp.radius - h2, 0.0));
-    float a = max(tc - hc, 0.0);
-    float b = min(tc + hc, tEnd);
-    float part = (b - a) / float(FOG_LAMP_PIECES);
-    float glow = 0.0;
-    for (int j = 0; j < FOG_LAMP_PIECES; ++j) {
-      float s0 = a + float(j) * part;
-      vec3 q = dir * (FOG_LAMP_PIECES == 1 ? clamp(tc, a, b) : s0 + jitter * part);
-      // its shadow cube; a lamp without one, its walls and the drawn roofs
-      float open = lampCubeOpen(lamp, q, jitter, LAMP_CUBE_SOFT);
-      if (open < 0.0) {
-        open = lampWallsOpen(lamp, q, q, true) * (lampRoofsOpen(q, lamp) ? 1.0 : 0.0);
-      }
-      if (open > 0.0) {
-        glow += lampFalloffAlong(h2, lamp.radius, s0 - tc, s0 + part - tc) * open;
-      }
-    }
-    sum += lamp.color * (glow * budget.open[k] * lampBudgetFade(budget, k));
+  float at = 0.0, weight = 0.0;
+  for (int i = 0; i < FOG_LAMP_STEPS; ++i) {
+    float t = (float(i) + jitter) * dt;
+    vec3 c = textureLod(lampVolumeA, lampVolumeFarAt(cameraPos + dir * t), 0.0).rgb;
+    float l = c.r + c.g + c.b;
+    sum += c;
+    at += l * t;
+    weight += l;
   }
-  return sum * FOG_LAMP_SCATTER;
+  if (weight <= 0.0) {
+    return vec3(0.0);
+  }
+  // the fog where the light is: one point of the ray, as it was one point per lamp
+  vec3 w = cameraPos + dir * (at / weight);
+  vec4 ground = fogGroundAt(w.xz);
+  float below = -fogHeight * FOG_BELOW;
+  float sigma = density * exp(-max(ground.r - w.y, below) / fogHeight) * fogRoomFactor(ground, w.y) * weatherFogFactor(w.xz);
+  return sum * (dt * sigma * FOG_LAMP_SCATTER);
 }
 
 void main() {

@@ -91,7 +91,7 @@ public final class LampCubes
 	private int[][] hashes;
 	private boolean[][] changed;
 	// bench: off (the walls and drawn roofs alone, as before the cubes), or every cube drawn again each frame (its cost)
-	private static final boolean OFF = Boolean.getBoolean("lumina.noLampCubes");
+	private static final boolean OFF = !Boolean.getBoolean("lumina.lampCubes");
 	private static final boolean REDRAW = Boolean.getBoolean("lumina.lampCubesRedraw");
 
 	public boolean isInitialized()

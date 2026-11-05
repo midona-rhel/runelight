@@ -149,7 +149,7 @@ public final class Voxelizer
 	 * Triangle against an axis aligned cube, separating axis test (Akenine-Moller): the 3 box axes, the
 	 * triangle's normal and the 9 cross products of edges and axes.
 	 */
-	static boolean triBoxOverlap(float cx, float cy, float cz, float h, float[] t)
+	public static boolean triBoxOverlap(float cx, float cy, float cz, float h, float[] t)
 	{
 		float v0x = t[0] - cx, v0y = t[1] - cy, v0z = t[2] - cz;
 		float v1x = t[3] - cx, v1y = t[4] - cy, v1z = t[5] - cz;

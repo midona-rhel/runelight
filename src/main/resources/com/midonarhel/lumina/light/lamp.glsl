@@ -541,3 +541,5 @@ bool lampSphereReaches(vec4 sphere, vec3 p, vec3 n, bool backToo) {
 bool lampReaches(Lamp lamp, vec3 p, vec3 n, bool backToo) {
   return lampSphereReaches(vec4(lamp.pos, lamp.radius), p, n, backToo);
 }
+
+#include "light/lamp_volume.glsl"

@@ -143,20 +143,17 @@ vec3 weatherPointLights(vec3 p, vec4 clip, vec3 n) {
     return vec3(0.0);
   }
   vec3 view = normalize(p);
-  vec3 sum = vec3(0.0);
-  LightMask lamps = clusterLights(clusterEntry(rel, z));
-  int li;
-  while (nextLight(lamps, li)) {
-    Lamp lamp = lampAt(li);
-    vec3 ld;
-    float d;
-    vec3 color = lampLight(lamp, p, p, particle, ld, d);
-    // drops between the camera and a light glow against it
-    float k = particle ? 1.0 + WEATHER_FORWARD_SCATTER * pow(max(dot(ld, view), 0.0), WEATHER_FORWARD_POWER)
-      : max(dot(n, ld), 0.0);
-    sum += color * k;
+  vec3 w = p + cameraPos;
+  LampVolumeRead r = lampVolumeRead(w, particle ? vec3(0.0) : n);
+  if (dot(r.light, vec3(1.0)) <= 0.0) {
+    return vec3(0.0);
   }
-  return sum * reach;
+  float ndl;
+  vec3 ld;
+  float k = lampVolumeOnSurface(r, w, particle ? vec3(0.0) : n, ndl, ld);
+  // drops between the camera and a light glow against it
+  k = particle ? 1.0 + WEATHER_FORWARD_SCATTER * pow(max(dot(ld, view), 0.0), WEATHER_FORWARD_POWER) : k;
+  return r.light * (k * reach);
 }
 
 

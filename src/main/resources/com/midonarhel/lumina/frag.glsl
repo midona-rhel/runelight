@@ -115,29 +115,17 @@ uniform int pointLightsEnabled;
 // through a thin leaf from behind. The face normal faceN only moves the point off its surface for the wall check;
 // whether and how much a lamp lights the face goes by n, the normal the sun uses
 vec3 alphaLamps(vec3 p, vec3 n, vec3 faceN, float transmissive) {
-  if (pointLightsEnabled == 0 || fClip.w <= 0.0) {
+  if (pointLightsEnabled == 0) {
     return vec3(0.0);
   }
-  vec2 rel = fClip.xy / fClip.w * 0.5 + 0.5;
-  vec3 viewDir = normalize(-p);
-  // off the surface along its face's own normal: a smooth normal tilts toward a wall's top and ends
-  vec3 wallFrom = p + faceN * LAMP_WALL_BIAS;
-  vec3 sum = vec3(0.0);
-  LightMask lamps = clusterLights(clusterEntry(rel, fClip.w));
-  int li;
-  while (nextLight(lamps, li)) {
-    Lamp lamp = lampAt(li);
-    if (!lampReaches(lamp, p, n, transmissive > 0.0)) {
-      continue;
-    }
-    vec3 ld;
-    float d;
-    vec3 c = lampLight(lamp, p, wallFrom, false, ld, d);
-    float ndl = dot(n, ld);
-    sum += c * (max(ndl, 0.0) + transmission(ndl, dot(-ld, viewDir), transmissive));
-  }
-  return sum;
+  vec3 w = p + cameraPos;
+  LampVolumeRead r = lampVolumeRead(w, faceN);
+  float ndl;
+  vec3 ld;
+  float k = lampVolumeOnSurface(r, w, n, ndl, ld);
+  return r.light * (k + (transmissive > 0.0 ? transmission(ndl, dot(-ld, normalize(-p)), transmissive) : 0.0));
 }
+
 #include "material_target.glsl"
 #include "environment.glsl"
 #include "edge_fade.glsl"

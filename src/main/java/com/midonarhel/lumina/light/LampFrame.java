@@ -199,7 +199,7 @@ public final class LampFrame
 	// when the job last ran or was queued: a job the queue dropped (a shutdown) is queued again after a while
 	private long lightMapJobNanos;
 	// the offline renderer's lightMap=off: no light map, the walls alone stop the lamps (no setting of the plugin's)
-	public boolean lightMapOff;
+	public boolean lightMapOff = true;
 	// the walls' scene (WallMap.scene, the same as a door opens or shuts) of the newest rooms BuildingLights gave, and of
 	// those the room light has: rooms of the same scene as the ones before them are a door's (RoomLight.setRooms)
 	private RoomMap newestRooms, roomLightRooms;
@@ -267,7 +267,7 @@ public final class LampFrame
 			}
 			plugin.cpuTimer.begin(CpuTimer.CLUSTERS);
 			// the fog integrates the lights along each pixel's ray from per-column lists
-			plugin.lightClusters.setFog(plugin.frameFog, plugin.volumetricFog.getCenterX() - plugin.frameCameraX,
+			plugin.lightClusters.setFog(false, plugin.volumetricFog.getCenterX() - plugin.frameCameraX,
 				plugin.volumetricFog.getCenterZ() - plugin.frameCameraZ, plugin.volumetricFog.getRadius(),
 				plugin.volumetricFog.getTop() - plugin.frameCameraY, plugin.volumetricFog.getMinGlow());
 			// the lamps' shadow cubes: which are out of date, before each lamp kept is given its slot
@@ -288,6 +288,11 @@ public final class LampFrame
 			plugin.lightClusters.upload();
 			plugin.cpuTimer.end(CpuTimer.LIGHT_UPLOAD);
 			plugin.lightClusters.bind(LIGHT_DATA_UNIT, CLUSTER_DATA_UNIT);
+			if (points)
+			{
+				plugin.lampVolume.update(plugin, plugin.frameLights, plugin.lampWalls, plugin.lightClusters);
+				plugin.lampVolume.bind(LuminaPlugin.LAMP_CUBE_UNIT);
+			}
 			plugin.roomTexture.bind(ROOM_TEXELS_UNIT);
 		}
 	}

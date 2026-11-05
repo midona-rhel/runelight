@@ -236,7 +236,8 @@ public final class DumpRenderer implements AutoCloseable
 				(com.midonarhel.lumina.visibility.RoofMap) d.get("buildings.roofs"), (boolean[]) d.get("buildings.drawnWalls"));
 		}
 		WallMap walls = plugin.buildingLights.getWalls();
-		plugin.lampFrame.lightMapOff = !options.lightMap;
+		plugin.lampFrame.lightMapOff = true;
+		com.midonarhel.lumina.light.LampVolume.benchSync = true;
 		if (!options.lampRoofs)
 		{
 			BuildingLights b = plugin.buildingLights;
