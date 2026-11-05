@@ -175,3 +175,14 @@ test {
 }
 
 apply from: 'gradle/scorecard.gradle'
+
+// the flood volume against the oracle on the CPU (harness/FloodCpu): ./gradlew floodCpu -Pargs="fps1 CACHE"
+tasks.register('floodCpu', JavaExec) {
+	dependsOn testClasses
+	classpath = sourceSets.test.runtimeClasspath
+	mainClass = 'com.midonarhel.lumina.harness.FloodCpu'
+	jvmArgs '-Xmx6g'
+	doFirst {
+		args = project.property('args').toString().split(' ').findAll { it }
+	}
+}

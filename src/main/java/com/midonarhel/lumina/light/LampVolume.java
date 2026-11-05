@@ -64,6 +64,8 @@ public final class LampVolume
 	// a change of more lamps than this pops rather than eases: their boxes would be sent every frame
 	private static final int EASE_LAMPS = 8;
 	private static final int THREADS = 4;
+	// 1: a read cell in y, too, is centred on a multiple of CELL
+	private static final int Y_SHIFT = (int) prop("volYShift", 1);
 	// how far the window goes before the lamps' places in H are held relative to a nearer point (half floats)
 	private static final float ORIGIN_REACH = 4000;
 	// the flicker's map: its cells, and how far a lamp's strength may stray from what the volume holds before it is summed again
@@ -935,7 +937,11 @@ public final class LampVolume
 	// as the shadow pass leaves them out, and swaying foliage.
 	private ZoneCells voxelize(Zone zone, int zx, int zz, float[] allPoints)
 	{
-		ZoneSnapshot s = zone.source;
+		return voxelize(zone, zone.source, zx, zz, allPoints);
+	}
+
+	private ZoneCells voxelize(Zone zone, ZoneSnapshot s, int zx, int zz, float[] allPoints)
+	{
 		ZoneCells out = new ZoneCells();
 		out.zone = zone;
 		if (s == null || s.vertsO == null)
@@ -1152,11 +1158,22 @@ public final class LampVolume
 		if (f == null)
 		{
 			f = fine[c] = new long[FINE_CHUNK_LONGS];
-			coarse[c] = new long[COARSE_CHUNK_LONGS];
 		}
 		f[(((z & 63) << 6 | (x & 63)) * COLUMN_LONGS) + (y >> 6)] |= 1L << (y & 63);
-		int cx = (x & 63) >> 1, cz = (z & 63) >> 1, cy = y >> 1;
-		coarse[c][((cz << 5 | cx) * (COLUMN_LONGS / 2)) + (cy >> 6)] |= 1L << (cy & 63);
+		// a read cell is two fine cells either side of a multiple of CELL, so a wall on a tile's edge makes one layer of them solid,
+		// not two
+		int cx = x + 1 >> 1, cz = z + 1 >> 1, cy = y + Y_SHIFT >> 1;
+		int cc = (cz >> 5) * CHUNKS + (cx >> 5);
+		if (cc >= coarse.length || cy >= FINE_LAYERS / 2)
+		{
+			return;
+		}
+		long[] g = coarse[cc];
+		if (g == null)
+		{
+			g = coarse[cc] = new long[COARSE_CHUNK_LONGS];
+		}
+		g[(((cz & 31) << 5 | (cx & 31)) * (COLUMN_LONGS / 2)) + (cy >> 6)] |= 1L << (cy & 63);
 	}
 
 	private boolean solidFine(int x, int y, int z)
@@ -1207,7 +1224,9 @@ public final class LampVolume
 		float[] v = sc.v;
 		boolean[] solid = sc.solid;
 		Arrays.fill(v, 0, cells, 0);
-		float gx = (l.ox - GRID_X) / s, gy = (l.y - GRID_Y) / s, gz = (l.oz - GRID_X) / s;
+		// on the coarse grid, a read cell is centred on a multiple of CELL
+		float half = fineFlood ? 0 : 0.5f, halfY = fineFlood ? 0 : 0.5f * Y_SHIFT;
+		float gx = (l.ox - GRID_X) / s + half, gy = (l.y - GRID_Y) / s + halfY, gz = (l.oz - GRID_X) / s + half;
 		int lx = (int) Math.floor(gx), ly = (int) Math.floor(gy), lz = (int) Math.floor(gz);
 		float ox = gx - lx - 0.5f, oy = gy - ly - 0.5f, oz = gz - lz - 0.5f;
 		float reach = (l.r + s) / s, reach2 = reach * reach;
@@ -1284,10 +1303,10 @@ public final class LampVolume
 			}
 		}
 		// per read cell
-		int shift = fineFlood ? 1 : 0;
+		int shift = fineFlood ? 1 : 0, add = fineFlood ? 1 : 0, addY = fineFlood ? Y_SHIFT : 0;
 		int fx0 = lx - n, fy0 = ly - n, fz0 = lz - n;
-		int bx = fx0 >> shift, by = fy0 >> shift, bz = fz0 >> shift;
-		int bw = ((fx0 + w - 1) >> shift) - bx + 1, bh = ((fy0 + w - 1) >> shift) - by + 1, bd = ((fz0 + w - 1) >> shift) - bz + 1;
+		int bx = fx0 + add >> shift, by = fy0 + addY >> shift, bz = fz0 + add >> shift;
+		int bw = (fx0 + w - 1 + add >> shift) - bx + 1, bh = (fy0 + w - 1 + addY >> shift) - by + 1, bd = (fz0 + w - 1 + add >> shift) - bz + 1;
 		int total = bw * bh * bd;
 		if (sc.sum.length < total)
 		{
@@ -1301,15 +1320,15 @@ public final class LampVolume
 		i = 0;
 		for (int y = 0; y < w; ++y)
 		{
-			int cy = ((fy0 + y) >> shift) - by;
+			int cy = (fy0 + y + addY >> shift) - by;
 			for (int z = 0; z < w; ++z)
 			{
-				int cz = ((fz0 + z) >> shift) - bz;
+				int cz = (fz0 + z + add >> shift) - bz;
 				for (int x = 0; x < w; ++x, ++i)
 				{
 					if (!solid[i])
 					{
-						int c = (cy * bd + cz) * bw + ((fx0 + x) >> shift) - bx;
+						int c = (cy * bd + cz) * bw + (fx0 + x + add >> shift) - bx;
 						sum[c] += v[i];
 						++count[c];
 					}
@@ -1470,11 +1489,11 @@ public final class LampVolume
 		ease = ease * ease * (3 - 2 * ease);
 		for (int y = y0; y < y1; ++y)
 		{
-			float wy = (y + 0.5f) * CELL + GRID_Y - l.y;
+			float wy = (y + 0.5f - 0.5f * Y_SHIFT) * CELL + GRID_Y - l.y;
 			int ty = (y - cy) / r;
 			for (int z = z0; z < z1; ++z)
 			{
-				float wz = (z + 0.5f) * CELL + GRID_X - l.z;
+				float wz = z * CELL + GRID_X - l.z;
 				int tz = (z - cz) / r;
 				int at = ((y - l.by) * l.bd + (z - l.bz)) * l.bw + (x0 - l.bx);
 				int row = (ty * d + tz) * w;
@@ -1490,7 +1509,7 @@ public final class LampVolume
 					{
 						continue;
 					}
-					float wx = (x + 0.5f) * CELL + GRID_X - l.x;
+					float wx = x * CELL + GRID_X - l.x;
 					float d2 = wx * wx + wy * wy + wz * wz;
 					if (d2 >= r2)
 					{
@@ -1534,10 +1553,92 @@ public final class LampVolume
 		return (short) (sign | ((b & 0x7fffff | 0x800000) + (0x800000 >>> v - 102)) >>> 126 - v);
 	}
 
+	// ---------------------------------------------------------------------------------------------------------------
+	// the bench, without GL: the same voxels and floods, read on the CPU (harness/FloodCpu)
+
+	/** lamps: x, y, z, reach, origin x, origin z. */
+	public void offline(List<ZoneSnapshot> list, int offset, int minLevel, int level, int maxLevel, Set<Integer> hide, float[][] in, float focalX, float focalZ, float ground)
+	{
+		lamps.clear();
+		float[] points = new float[in.length * 5];
+		for (int i = 0; i < in.length; ++i)
+		{
+			Lamp l = new Lamp();
+			l.x = in[i][0];
+			l.y = in[i][1];
+			l.z = in[i][2];
+			l.r = in[i][3];
+			l.ox = in[i][4];
+			l.oz = in[i][5];
+			lamps.put((long) i, l);
+			System.arraycopy(new float[]{l.x, l.y, l.z, l.ox, l.oz}, 0, points, i * 5, 5);
+		}
+		windowX = Math.floorDiv((int) focalX - SIZE * CELL / 2, CELL * STEP_CELLS) * STEP_CELLS * CELL;
+		windowZ = Math.floorDiv((int) focalZ - SIZE * CELL / 2, CELL * STEP_CELLS) * STEP_CELLS * CELL;
+		windowY = Math.floorDiv(Math.round(ground) - 1100, CELL) * CELL;
+		List<Runnable> tasks = new ArrayList<>();
+		final Map<Long, ZoneCells> built = new java.util.concurrent.ConcurrentHashMap<>();
+		for (ZoneSnapshot z : list)
+		{
+			if (z.vertsO != null)
+			{
+				tasks.add(() -> built.put(zoneKey(z.x, z.z), voxelize(null, z, z.x, z.z, points)));
+			}
+		}
+		parallel(tasks);
+		zones.putAll(built);
+		for (ZoneCells c : zones.values())
+		{
+			for (Segment seg : c.segments)
+			{
+				seg.shown = seg.level >= minLevel && seg.level <= maxLevel && (hide.isEmpty() || seg.level <= level || seg.tail || seg.rid > 0 && !hide.contains(seg.rid));
+			}
+		}
+		rebuildBits();
+		tasks.clear();
+		final ThreadLocal<Scratch> scratch = ThreadLocal.withInitial(Scratch::new);
+		for (Lamp l : lamps.values())
+		{
+			tasks.add(() -> flood(l, scratch.get()));
+		}
+		parallel(tasks);
+	}
+
+	/** Lamp i's visibility as a read at world point x, y, z has it; -1 with no free cell in it, -2 outside the near window. */
+	public float offlineRead(int i, float x, float y, float z)
+	{
+		Lamp l = lamps.get((long) i);
+		float gx = (x - GRID_X) / CELL, gy = (y - GRID_Y) / CELL - 0.5f + 0.5f * Y_SHIFT, gz = (z - GRID_X) / CELL;
+		float e = Math.min(Math.min(x - windowX, windowX + SIZE * CELL - x), Math.min(z - windowZ, windowZ + SIZE * CELL - z));
+		if (e < 0 || y < windowY || y > windowY + NEAR_Y * CELL)
+		{
+			return -2;
+		}
+		int ix = (int) Math.floor(gx), iy = (int) Math.floor(gy), iz = (int) Math.floor(gz);
+		float fx = gx - ix, fy = gy - iy, fz = gz - iz;
+		float air = 0, sum = 0;
+		for (int k = 0; k < 8; ++k)
+		{
+			int cx = ix + (k & 1), cy = iy + (k >> 1 & 1), cz = iz + (k >> 2);
+			float w = ((k & 1) != 0 ? fx : 1 - fx) * ((k >> 1 & 1) != 0 ? fy : 1 - fy) * ((k >> 2) != 0 ? fz : 1 - fz);
+			if (w <= 0 || solidCoarse(cx, cy, cz))
+			{
+				continue;
+			}
+			air += w;
+			int a = cx - l.bx, b = cy - l.by, c = cz - l.bz;
+			if (a >= 0 && b >= 0 && c >= 0 && a < l.bw && b < l.bh && c < l.bd)
+			{
+				sum += w * (l.vis[(b * l.bd + c) * l.bw + a] & 255) / 255f;
+			}
+		}
+		return air < 0.02f ? -1 : sum / air;
+	}
+
 	public static String defines()
 	{
 		return "#define LAMP_VOLUME_SIZE " + SIZE + ".0\n#define LAMP_VOLUME_NEAR_Y " + NEAR_Y + ".0\n#define LAMP_VOLUME_FAR_Y " + FAR_Y + ".0\n"
 			+ "#define LAMP_VOLUME_GUTTER " + GUTTER + ".0\n#define LAMP_VOLUME_LAYERS " + LAYERS + ".0\n#define LAMP_VOLUME_CELL " + CELL + ".0\n"
-			+ "#define LAMP_VOLUME_FAR_CELL " + FAR_CELL + ".0\n#define LAMP_VOLUME_GAIN_SIZE " + GAIN_SIZE + ".0\n#define LAMP_VOLUME_GAIN_CELL " + GAIN_CELL + ".0\n";
+			+ "#define LAMP_VOLUME_Y_SHIFT " + (0.5f * Y_SHIFT) + "\n#define LAMP_VOLUME_FAR_CELL " + FAR_CELL + ".0\n#define LAMP_VOLUME_GAIN_SIZE " + GAIN_SIZE + ".0\n#define LAMP_VOLUME_GAIN_CELL " + GAIN_CELL + ".0\n";
 	}
 }

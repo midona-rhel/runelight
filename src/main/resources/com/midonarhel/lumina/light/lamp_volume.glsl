@@ -20,13 +20,14 @@ uniform vec4 lampVolumeOrigin; // the world place H's lamps are relative to
 
 vec3 lampVolumeNearAt(vec3 w) {
   // toroidal in x and z: a world cell's place modulo the size; the far level's place is relative to its window
-  vec3 c = vec3(w.x, w.z, w.y - lampVolumeNear.z) / LAMP_VOLUME_CELL;
+  // a cell is centred on a multiple of LAMP_VOLUME_CELL in x and z: a tile's edge, a wall, runs down the middle of one layer of them
+  vec3 c = vec3(w.x, w.z, w.y - lampVolumeNear.z) / LAMP_VOLUME_CELL + vec3(0.5, 0.5, LAMP_VOLUME_Y_SHIFT);
   c.z = clamp(c.z, 0.5, LAMP_VOLUME_NEAR_Y - 0.5);
   return c / vec3(LAMP_VOLUME_SIZE, LAMP_VOLUME_SIZE, 2.0 * LAMP_VOLUME_LAYERS);
 }
 
 vec3 lampVolumeFarAt(vec3 w) {
-  vec3 c = (w.xzy - lampVolumeFar.xyz) / LAMP_VOLUME_FAR_CELL;
+  vec3 c = (w.xzy - lampVolumeFar.xyz + vec3(0.5, 0.5, LAMP_VOLUME_Y_SHIFT) * LAMP_VOLUME_CELL) / LAMP_VOLUME_FAR_CELL;
   c.xy = clamp(c.xy, vec2(0.5), vec2(LAMP_VOLUME_SIZE - 0.5));
   c.z = clamp(c.z, 0.5, LAMP_VOLUME_FAR_Y - 0.5) + LAMP_VOLUME_NEAR_Y + LAMP_VOLUME_GUTTER;
   return c / vec3(LAMP_VOLUME_SIZE, LAMP_VOLUME_SIZE, 2.0 * LAMP_VOLUME_LAYERS);
@@ -71,7 +72,10 @@ LampVolumeRead lampVolumeRead(vec3 w, vec3 faceN) {
       q = w + faceN * (2.0 * LAMP_VOLUME_CELL);
       a = textureLod(lampVolumeA, lampVolumeNearAt(q), 0.0);
     }
-    if (a.a >= 0.02 && dot(a.rgb, vec3(1.0)) > 0.0) {
+    // nothing free near it: a nook. The far level has no air to lack
+    if (a.a < 0.02) {
+      share = 0.0;
+    } else if (dot(a.rgb, vec3(1.0)) > 0.0) {
       vec4 b = textureLod(lampVolumeA, lampVolumeNearAt(q) + LAMP_VOLUME_B, 0.0);
       float air = 1.0 / a.a;
       r = LampVolumeRead(a.rgb * air, b.rgb * air, b.a * air, q);
