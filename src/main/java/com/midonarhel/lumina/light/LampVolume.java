@@ -55,8 +55,8 @@ public final class LampVolume
 	// a triangle wholly within this of a lamp is its fixture (a real build knows: PointLight.owner, VoxelCapture.owner)
 	private static final float FIXTURE = prop("volFixture", 72f);
 	// visibility as read: 0 to 1 between these of the flood's. Below lo is the geometric edge's dark side (math.md 6)
-	private static final float SHARP_LO = prop("volLo", 0.5f);
-	private static final float SHARP_HI = prop("volHi", 0.95f);
+	private static final float SHARP_LO = prop("volLo", 0.3f);
+	private static final float SHARP_HI = prop("volHi", 0.8f);
 	// the near window follows the player in steps of this many cells
 	private static final int STEP_CELLS = 16;
 	// what the render thread sends a frame
