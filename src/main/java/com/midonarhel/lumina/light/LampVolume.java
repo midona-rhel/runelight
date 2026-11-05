@@ -744,7 +744,10 @@ public final class LampVolume
 			long t3 = System.nanoTime();
 			if (System.getenv("LUMINA_VOL_PROBE") != null)
 			{
-				probe(System.getenv("LUMINA_VOL_PROBE"));
+				for (String at : System.getenv("LUMINA_VOL_PROBE").split(";"))
+				{
+					probe(at);
+				}
 			}
 			// the boxes to sum: everything, or each lamp changed
 			List<int[]> nearBoxes = new ArrayList<>(), farBoxes = new ArrayList<>();
