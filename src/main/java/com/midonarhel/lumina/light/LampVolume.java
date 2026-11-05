@@ -58,8 +58,14 @@ public final class LampVolume
 	private static final float SHARP_LO = prop("volLo", 0.5f);
 	private static final float SHARP_HI = prop("volHi", 0.95f);
 	// the near window follows the player in steps of this many cells
-	private static final int STEP_CELLS = 32;
+	private static final int STEP_CELLS = 16;
+	// what the render thread sends a frame
+	private static final int UPLOAD_BYTES = 1500 * 1024;
+	// a change of more lamps than this pops rather than eases: their boxes would be sent every frame
+	private static final int EASE_LAMPS = 8;
 	private static final int THREADS = 4;
+	// how far the window goes before the lamps' places in H are held relative to a nearer point (half floats)
+	private static final float ORIGIN_REACH = 4000;
 	// the flicker's map: its cells, and how far a lamp's strength may stray from what the volume holds before it is summed again
 	private static final int GAIN_SIZE = 64, GAIN_CELL = 256;
 	private static final float GAIN_LO = 0.5f, GAIN_HI = 1.6f;
@@ -142,6 +148,9 @@ public final class LampVolume
 	private boolean sentAll;
 	private Future<?> job;
 	private volatile List<Upload> done;
+	private volatile boolean doneEverything;
+	private final java.util.ArrayDeque<Upload> queue = new java.util.ArrayDeque<>();
+	private float windowGround;
 	private ShortBuffer stage;
 	private boolean anyLit;
 	private boolean gainSent;
@@ -169,8 +178,9 @@ public final class LampVolume
 		glTexImage3D(GL_TEXTURE_3D, 0, GL_RGBA16F, SIZE, SIZE, LAYERS * 2, 0, GL_RGBA, GL_HALF_FLOAT, (ShortBuffer) null);
 		glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
 		glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-		glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
-		glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+		// the near level is toroidal: a world cell is at its place modulo SIZE, so the window moves by sending what comes into it
+		glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_WRAP_S, GL_REPEAT);
+		glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_WRAP_T, GL_REPEAT);
 		glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_WRAP_R, GL_CLAMP_TO_EDGE);
 		glBindTexture(GL_TEXTURE_3D, 0);
 		stage = BufferUtils.createShortBuffer(4 * SIZE * SIZE * 32);
@@ -224,6 +234,7 @@ public final class LampVolume
 		{
 			init();
 		}
+		drain(UPLOAD_BYTES);
 		if (job != null && !job.isDone())
 		{
 			return;
@@ -231,6 +242,10 @@ public final class LampVolume
 		if (job != null)
 		{
 			finish();
+			if (benchSync && doneEverything)
+			{
+				drain(Integer.MAX_VALUE);
+			}
 		}
 		LuminaPlugin.SceneContext ctx = plugin.root;
 		if (ctx == null || ctx.zones == null || ctx.hideRoofIds == null)
@@ -314,7 +329,15 @@ public final class LampVolume
 		// the window
 		int wx = Math.floorDiv((int) plugin.edgeFade.focalX - SIZE * CELL / 2, CELL * STEP_CELLS) * STEP_CELLS * CELL;
 		int wz = Math.floorDiv((int) plugin.edgeFade.focalZ - SIZE * CELL / 2, CELL * STEP_CELLS) * STEP_CELLS * CELL;
-		boolean windowMoved = wx != windowX || wz != windowZ;
+		int wy = windowY, fy = farY;
+		float ground = playerY(plugin);
+		if (windowX == Integer.MIN_VALUE || Math.abs(ground - windowGround) > 256)
+		{
+			windowGround = ground;
+			wy = Math.floorDiv(Math.round(ground) - 1100, CELL) * CELL;
+			fy = Math.floorDiv(Math.round(ground) - 1900, FAR_CELL) * FAR_CELL;
+		}
+		boolean windowMoved = wx != windowX || wz != windowZ || wy != windowY;
 		// the zones
 		int zx = ctx.zones.length, zz = ctx.zones[0].length;
 		if (seen == null || seen.length != zx || seen[0].length != zz)
@@ -352,17 +375,12 @@ public final class LampVolume
 		j.windowMoved = windowMoved;
 		j.wx = wx;
 		j.wz = wz;
-		j.wy = windowY;
+		j.wy = wy;
+		j.fy = fy;
+		j.ox = wx + SIZE * CELL / 2f;
+		j.oz = wz + SIZE * CELL / 2f;
+		j.oy = wy + NEAR_Y * CELL / 2f;
 		j.now = Clock.nanos();
-		if (windowMoved)
-		{
-			// the window's height follows the player's ground over a jump, not a step
-			j.wy = Math.floorDiv(Math.round(playerY(plugin)) - 1100, CELL) * CELL;
-			j.fy = Math.floorDiv(Math.round(playerY(plugin)) - 1900, FAR_CELL) * FAR_CELL;
-			j.ox = wx + SIZE * CELL / 2f;
-			j.oz = wz + SIZE * CELL / 2f;
-			j.oy = j.wy + NEAR_Y * CELL / 2f;
-		}
 		minLevel = ctx.minLevel;
 		level = ctx.level;
 		maxLevel = ctx.maxLevel;
@@ -375,6 +393,7 @@ public final class LampVolume
 		if (benchSync && !shownChanged && changedZones.isEmpty())
 		{
 			finish();
+			drain(Integer.MAX_VALUE);
 		}
 	}
 
@@ -477,12 +496,7 @@ public final class LampVolume
 		done = null;
 		if (list != null)
 		{
-			for (Upload u : list)
-			{
-				send(u, u.a, 0);
-				send(u, u.b, LAYERS);
-			}
-			glBindTexture(GL_TEXTURE_3D, 0);
+			queue.addAll(list);
 		}
 		near[0] = windowX;
 		near[1] = windowZ;
@@ -497,6 +511,30 @@ public final class LampVolume
 		origin[2] = originZ;
 	}
 
+	// what the worker finished, oldest first, up to this many bytes
+	private void drain(int bytes)
+	{
+		if (queue.isEmpty())
+		{
+			return;
+		}
+		glBindTexture(GL_TEXTURE_3D, texA);
+		glPixelStorei(GL_UNPACK_ALIGNMENT, 2);
+		while (bytes > 0 && !queue.isEmpty())
+		{
+			Upload u = queue.poll();
+			send(u, u.a, 0);
+			send(u, u.b, LAYERS);
+			bytes -= (u.a.length + u.b.length) * 2;
+		}
+		glPixelStorei(GL_UNPACK_ROW_LENGTH, 0);
+		glPixelStorei(GL_UNPACK_IMAGE_HEIGHT, 0);
+		glPixelStorei(GL_UNPACK_SKIP_PIXELS, 0);
+		glPixelStorei(GL_UNPACK_SKIP_ROWS, 0);
+		glBindTexture(GL_TEXTURE_3D, 0);
+	}
+
+	// A box, split where it wraps round the texture
 	private void send(Upload u, short[] data, int layer)
 	{
 		if (stage.capacity() < data.length)
@@ -506,9 +544,29 @@ public final class LampVolume
 		stage.clear();
 		stage.put(data);
 		stage.flip();
-		glBindTexture(GL_TEXTURE_3D, texA);
-		glPixelStorei(GL_UNPACK_ALIGNMENT, 2);
-		glTexSubImage3D(GL_TEXTURE_3D, 0, u.x, u.z, u.y + layer, u.w, u.d, u.h, GL_RGBA, GL_HALF_FLOAT, stage);
+		glPixelStorei(GL_UNPACK_ROW_LENGTH, u.w);
+		glPixelStorei(GL_UNPACK_IMAGE_HEIGHT, u.d);
+		int w0 = Math.min(u.w, SIZE - u.x), d0 = Math.min(u.d, SIZE - u.z);
+		piece(u, 0, 0, u.x, u.z, w0, d0, layer);
+		if (w0 < u.w)
+		{
+			piece(u, w0, 0, 0, u.z, u.w - w0, d0, layer);
+		}
+		if (d0 < u.d)
+		{
+			piece(u, 0, d0, u.x, 0, w0, u.d - d0, layer);
+		}
+		if (w0 < u.w && d0 < u.d)
+		{
+			piece(u, w0, d0, 0, 0, u.w - w0, u.d - d0, layer);
+		}
+	}
+
+	private void piece(Upload u, int skipX, int skipZ, int x, int z, int w, int d, int layer)
+	{
+		glPixelStorei(GL_UNPACK_SKIP_PIXELS, skipX);
+		glPixelStorei(GL_UNPACK_SKIP_ROWS, skipZ);
+		glTexSubImage3D(GL_TEXTURE_3D, 0, x, z, u.y + layer, w, d, u.h, GL_RGBA, GL_HALF_FLOAT, stage);
 	}
 
 	// ---------------------------------------------------------------------------------------------------------------
@@ -545,13 +603,18 @@ public final class LampVolume
 		private void work()
 		{
 			long t0 = System.nanoTime();
-			boolean everything = !sentAll || windowMoved;
+			int stepX = (wx - windowX) / CELL, stepZ = (wz - windowZ) / CELL;
+			boolean everything = !sentAll || wy != windowY || Math.abs(stepX) >= SIZE || Math.abs(stepZ) >= SIZE
+				|| Math.abs(ox - originX) > ORIGIN_REACH || Math.abs(oz - originZ) > ORIGIN_REACH;
 			if (windowMoved)
 			{
 				windowX = wx;
 				windowZ = wz;
 				windowY = wy;
 				farY = fy;
+			}
+			if (everything)
+			{
 				originX = ox;
 				originY = oy;
 				originZ = oz;
@@ -656,12 +719,15 @@ public final class LampVolume
 					&& (l.z + l.r + 32 - GRID_X) / FINE >= dirty[1] && (l.z - l.r - 32 - GRID_X) / FINE <= dirty[3];
 				if (l.flood || touched)
 				{
-					if (!l.flood && sentAll)
-					{
-						l.before = l.vis;
-						l.easeFrom = now;
-					}
 					floods.add(l);
+				}
+			}
+			for (Lamp l : floods)
+			{
+				if (!l.flood && sentAll && floods.size() <= EASE_LAMPS)
+				{
+					l.before = l.vis;
+					l.easeFrom = now;
 				}
 			}
 			tasks.clear();
@@ -676,15 +742,27 @@ public final class LampVolume
 			}
 			parallel(tasks);
 			long t3 = System.nanoTime();
+			if (System.getenv("LUMINA_VOL_PROBE") != null)
+			{
+				probe(System.getenv("LUMINA_VOL_PROBE"));
+			}
 			// the boxes to sum: everything, or each lamp changed
 			List<int[]> nearBoxes = new ArrayList<>(), farBoxes = new ArrayList<>();
 			if (everything)
 			{
-				nearBoxes.add(new int[]{0, 0, 0, SIZE, NEAR_Y, SIZE});
-				farBoxes.add(new int[]{0, 0, 0, SIZE, FAR_Y, SIZE});
+				layers(nearBoxes, 0, 0, SIZE, SIZE, NEAR_Y);
+				layers(farBoxes, 0, 0, SIZE, SIZE, FAR_Y);
 			}
 			else
 			{
+				if (stepX != 0)
+				{
+					layers(nearBoxes, stepX > 0 ? SIZE - stepX : 0, 0, Math.abs(stepX), SIZE, NEAR_Y);
+				}
+				if (stepZ != 0)
+				{
+					layers(nearBoxes, 0, stepZ > 0 ? SIZE - stepZ : 0, SIZE, Math.abs(stepZ), NEAR_Y);
+				}
 				List<Lamp> changed = new ArrayList<>(gone);
 				changed.addAll(floods);
 				for (Lamp l : lamps.values())
@@ -698,10 +776,11 @@ public final class LampVolume
 						}
 					}
 				}
-				if (changed.size() > 24)
+				if (changed.size() > 64)
 				{
-					nearBoxes.add(new int[]{0, 0, 0, SIZE, NEAR_Y, SIZE});
-					farBoxes.add(new int[]{0, 0, 0, SIZE, FAR_Y, SIZE});
+					nearBoxes.clear();
+					layers(nearBoxes, 0, 0, SIZE, SIZE, NEAR_Y);
+					layers(farBoxes, 0, 0, SIZE, SIZE, FAR_Y);
 				}
 				else
 				{
@@ -745,6 +824,7 @@ public final class LampVolume
 			parallel(tasks);
 			long t4 = System.nanoTime();
 			sentAll = true;
+			doneEverything = everything;
 			done = new ArrayList<>(Arrays.asList(uploads));
 			lastJob = String.format("window " + windowX + "," + windowY + "," + windowZ + " zones %d voxelize %.1f bits %.1f flood %d lamps %.1f sum %d boxes %.1f ms", built.size(), (t1 - t0) / 1e6, (t2 - t1) / 1e6,
 				floods.size(), (t3 - t2) / 1e6, uploads.length, (t4 - t3) / 1e6);
@@ -765,6 +845,40 @@ public final class LampVolume
 				return true;
 			}
 			return s.rid > 0 && !hidden.contains(s.rid);
+		}
+	}
+
+	private void probe(String at)
+	{
+		String[] a = at.split(",");
+		int x = Math.floorDiv(Integer.parseInt(a[0]) - GRID_X, CELL), y = Math.floorDiv(Integer.parseInt(a[1]) - GRID_Y, CELL), z = Math.floorDiv(Integer.parseInt(a[2]) - GRID_X, CELL);
+		StringBuilder o = new StringBuilder("probe cell " + x + "," + y + "," + z + " solid column:");
+		for (int k = -4; k <= 4; ++k)
+		{
+			o.append(solidCoarse(x, y + k, z) ? " #" : " .");
+		}
+		for (Lamp l : lamps.values())
+		{
+			int i = x - l.bx, j = y - l.by, k = z - l.bz;
+			if (l.vis != null && i >= 0 && j >= 0 && k >= 0 && i < l.bw && j < l.bh && k < l.bd)
+			{
+				o.append("\n lamp ").append(l.x).append(' ').append(l.y).append(' ').append(l.z).append(" hidden ").append(l.hidden).append(" vis");
+				for (int m = -2; m <= 2; ++m)
+				{
+					int jj = j + m;
+					o.append(' ').append(jj >= 0 && jj < l.bh ? l.vis[(jj * l.bd + k) * l.bw + i] & 255 : -1);
+				}
+			}
+		}
+		System.out.println(o);
+	}
+
+	// a box of a level, as boxes of a few layers each: what a frame can send
+	private static void layers(List<int[]> boxes, int x, int z, int w, int d, int layers)
+	{
+		for (int y = 0; y < layers; y += 8)
+		{
+			boxes.add(new int[]{x, y, z, w, Math.min(8, layers - y), d});
 		}
 	}
 
@@ -1264,16 +1378,16 @@ public final class LampVolume
 			addLamp(l, f, box, ox + box[0], oy + box[1], oz + box[2], 1, now);
 		}
 		Upload u = new Upload();
-		u.x = box[0];
+		// where the world cell is in the toroidal level
+		u.x = Math.floorMod(Math.floorDiv(windowX, CELL) + box[0], SIZE);
 		u.y = box[1];
-		u.z = box[2];
+		u.z = Math.floorMod(Math.floorDiv(windowZ, CELL) + box[2], SIZE);
 		u.w = w;
 		u.h = h;
 		u.d = d;
 		u.a = new short[cells * 4];
 		u.b = new short[cells * 4];
-		float o1 = 1;
-		short one = half(o1);
+		short one = half(1);
 		int i = 0;
 		for (int y = 0; y < h; ++y)
 		{

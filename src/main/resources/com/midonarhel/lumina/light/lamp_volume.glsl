@@ -19,13 +19,15 @@ uniform vec4 lampVolumeOrigin; // the world place H's lamps are relative to
 #define LAMP_VOLUME_FADE 512.0
 
 vec3 lampVolumeNearAt(vec3 w) {
-  vec3 c = (w.xzy - lampVolumeNear.xyz) / LAMP_VOLUME_CELL;
+  // toroidal in x and z: a world cell's place modulo the size; the far level's place is relative to its window
+  vec3 c = vec3(w.x, w.z, w.y - lampVolumeNear.z) / LAMP_VOLUME_CELL;
   c.z = clamp(c.z, 0.5, LAMP_VOLUME_NEAR_Y - 0.5);
   return c / vec3(LAMP_VOLUME_SIZE, LAMP_VOLUME_SIZE, 2.0 * LAMP_VOLUME_LAYERS);
 }
 
 vec3 lampVolumeFarAt(vec3 w) {
   vec3 c = (w.xzy - lampVolumeFar.xyz) / LAMP_VOLUME_FAR_CELL;
+  c.xy = clamp(c.xy, vec2(0.5), vec2(LAMP_VOLUME_SIZE - 0.5));
   c.z = clamp(c.z, 0.5, LAMP_VOLUME_FAR_Y - 0.5) + LAMP_VOLUME_NEAR_Y + LAMP_VOLUME_GUTTER;
   return c / vec3(LAMP_VOLUME_SIZE, LAMP_VOLUME_SIZE, 2.0 * LAMP_VOLUME_LAYERS);
 }
