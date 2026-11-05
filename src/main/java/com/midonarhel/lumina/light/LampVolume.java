@@ -282,8 +282,8 @@ public final class LampVolume
 			}
 		}
 		// the window
-		int wx = Math.floorDiv((int) plugin.edgeFade.focalX - SIZE * CELL / 2, CELL * STEP_CELLS) * STEP_CELLS;
-		int wz = Math.floorDiv((int) plugin.edgeFade.focalZ - SIZE * CELL / 2, CELL * STEP_CELLS) * STEP_CELLS;
+		int wx = Math.floorDiv((int) plugin.edgeFade.focalX - SIZE * CELL / 2, CELL * STEP_CELLS) * STEP_CELLS * CELL;
+		int wz = Math.floorDiv((int) plugin.edgeFade.focalZ - SIZE * CELL / 2, CELL * STEP_CELLS) * STEP_CELLS * CELL;
 		boolean windowMoved = wx != windowX || wz != windowZ;
 		// the zones
 		int zx = ctx.zones.length, zz = ctx.zones[0].length;
@@ -654,7 +654,7 @@ public final class LampVolume
 			long t4 = System.nanoTime();
 			sentAll = true;
 			done = new ArrayList<>(Arrays.asList(uploads));
-			lastJob = String.format("zones %d voxelize %.1f bits %.1f flood %d lamps %.1f sum %d boxes %.1f ms", built.size(), (t1 - t0) / 1e6, (t2 - t1) / 1e6,
+			lastJob = String.format("window " + windowX + "," + windowY + "," + windowZ + " zones %d voxelize %.1f bits %.1f flood %d lamps %.1f sum %d boxes %.1f ms", built.size(), (t1 - t0) / 1e6, (t2 - t1) / 1e6,
 				floods.size(), (t3 - t2) / 1e6, uploads.length, (t4 - t3) / 1e6);
 			if (Boolean.getBoolean("lumina.volLog") || System.getenv("LUMINA_VOL_LOG") != null)
 			{
