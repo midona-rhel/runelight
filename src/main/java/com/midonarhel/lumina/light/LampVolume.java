@@ -1532,6 +1532,11 @@ public final class LampVolume
 		}
 	}
 
+	static short halfForTest(float f)
+	{
+		return half(f);
+	}
+
 	private static short half(float f)
 	{
 		int b = Float.floatToRawIntBits(f);
@@ -1602,6 +1607,17 @@ public final class LampVolume
 			tasks.add(() -> flood(l, scratch.get()));
 		}
 		parallel(tasks);
+	}
+
+	String line(float x0, float y0, float z0, float x1, float y1, float z1)
+	{
+		StringBuilder o = new StringBuilder();
+		for (int i = 0; i <= 64; ++i)
+		{
+			float t = i / 64f, x = x0 + (x1 - x0) * t, y = y0 + (y1 - y0) * t, z = z0 + (z1 - z0) * t;
+			o.append(solidFine(Math.floorDiv((int) x - GRID_X, FINE), Math.floorDiv((int) y - GRID_Y, FINE), Math.floorDiv((int) z - GRID_X, FINE)) ? '#' : '.');
+		}
+		return o + " zones " + zones.size() + " segments " + zones.values().iterator().next().segments.length;
 	}
 
 	/** Lamp i's visibility as a read at world point x, y, z has it; -1 with no free cell in it, -2 outside the near window. */
