@@ -173,3 +173,5 @@ tasks.register('weatherFieldUpload', JavaExec) {
 test {
 	systemProperties System.getProperties().findAll { it.key.toString().startsWith('lumina.') }
 }
+
+apply from: 'gradle/scorecard.gradle'

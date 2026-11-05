@@ -1,0 +1,11 @@
+// The occlusion scorecard (harness/Scorecard, tools/scorecard.sh): ./gradlew scorecard -Pargs="phase=render dump=fps1 cache=DIR out=DIR"
+tasks.register('scorecard', JavaExec) {
+	dependsOn testClasses
+	classpath = sourceSets.test.runtimeClasspath
+	mainClass = 'com.midonarhel.lumina.harness.Scorecard'
+	workingDir = projectDir
+	jvmArgs '-Xmx10g'
+	doFirst {
+		args = project.property('args').toString().split(' ').findAll { it }
+	}
+}
