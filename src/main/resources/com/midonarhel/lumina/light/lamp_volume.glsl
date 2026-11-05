@@ -38,6 +38,14 @@ float lampVolumeNearShare(vec3 w) {
   return clamp(min(e.x, min(e.y, e.z)), 0.0, 1.0);
 }
 
+// The flicker at world point w: a factor on what the volume holds, from the map in a gutter layer of A (LampVolume.updateGain)
+float lampVolumeGain(vec3 w) {
+  vec2 c = (w.xz - lampVolumeNear.xy) / LAMP_VOLUME_GAIN_CELL
+    + 0.5 * (LAMP_VOLUME_GAIN_SIZE - LAMP_VOLUME_SIZE * LAMP_VOLUME_CELL / LAMP_VOLUME_GAIN_CELL);
+  c = clamp(c, vec2(0.5), vec2(LAMP_VOLUME_GAIN_SIZE - 0.5)) / LAMP_VOLUME_SIZE;
+  return 1.0 + textureLod(lampVolumeA, vec3(c, (LAMP_VOLUME_NEAR_Y + 0.5) / (2.0 * LAMP_VOLUME_LAYERS)), 0.0).r;
+}
+
 struct LampVolumeRead {
   vec3 light;  // the sum of the lamps' light where it was read, W
   vec3 h;      // H
@@ -79,6 +87,12 @@ LampVolumeRead lampVolumeRead(vec3 w, vec3 faceN) {
       r.h *= share;
       r.g *= share;
     }
+  }
+  if (r.g > 0.0) {
+    float gain = lampVolumeGain(w);
+    r.light *= gain;
+    r.h *= gain;
+    r.g *= gain;
   }
   return r;
 }

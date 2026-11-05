@@ -246,12 +246,16 @@ vec3 lampGlow(ivec2 px, vec3 dir, float tEnd, float density, float jitter) {
   if (weight <= 0.0) {
     return vec3(0.0);
   }
-  // the fog where the light is: one point of the ray, as it was one point per lamp
+  // the fog where the lamps are, as it was per lamp: H over G is their place (one lamp's exactly)
   vec3 w = cameraPos + dir * (at / weight);
+  vec4 b = textureLod(lampVolumeA, lampVolumeFarAt(w) + LAMP_VOLUME_B, 0.0);
+  if (b.a > 0.0) {
+    w = b.rgb / b.a + lampVolumeOrigin.xyz;
+  }
   vec4 ground = fogGroundAt(w.xz);
   float below = -fogHeight * FOG_BELOW;
   float sigma = density * exp(-max(ground.r - w.y, below) / fogHeight) * fogRoomFactor(ground, w.y) * weatherFogFactor(w.xz);
-  return sum * (dt * sigma * FOG_LAMP_SCATTER);
+  return sum * (dt * sigma * FOG_LAMP_SCATTER * lampVolumeGain(w));
 }
 
 void main() {

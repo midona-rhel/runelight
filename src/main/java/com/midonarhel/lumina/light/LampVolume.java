@@ -49,17 +49,20 @@ public final class LampVolume
 	// the far level's window: the scene and its surroundings, fixed
 	private static final int FAR_X = -6144 + 1024;
 	// a lamp under this reach floods at FINE, above it at CELL
-	private static final float FINE_REACH = Float.parseFloat(System.getProperty("lumina.volFineReach", "500"));
+	private static final float FINE_REACH = prop("volFineReach", 1300f);
 	// the seed: a lamp's own fixture doesn't stop it within this of its origin
-	private static final float SEED = Float.parseFloat(System.getProperty("lumina.volSeed", "20"));
+	private static final float SEED = prop("volSeed", 20f);
 	// a triangle wholly within this of a lamp is its fixture (a real build knows: PointLight.owner, VoxelCapture.owner)
-	private static final float FIXTURE = Float.parseFloat(System.getProperty("lumina.volFixture", "72"));
+	private static final float FIXTURE = prop("volFixture", 72f);
 	// visibility as read: 0 to 1 between these of the flood's. Below lo is the geometric edge's dark side (math.md 6)
-	private static final float SHARP_LO = Float.parseFloat(System.getProperty("lumina.volLo", "0.5"));
-	private static final float SHARP_HI = Float.parseFloat(System.getProperty("lumina.volHi", "0.95"));
+	private static final float SHARP_LO = prop("volLo", 0.5f);
+	private static final float SHARP_HI = prop("volHi", 0.95f);
 	// the near window follows the player in steps of this many cells
 	private static final int STEP_CELLS = 32;
 	private static final int THREADS = 4;
+	// the flicker's map: its cells, and how far a lamp's strength may stray from what the volume holds before it is summed again
+	private static final int GAIN_SIZE = 64, GAIN_CELL = 256;
+	private static final float GAIN_LO = 0.5f, GAIN_HI = 1.6f;
 	private static final long EASE_NANOS = 250_000_000L;
 	// the offline renderer: a change of strength lands in its own frame (the client's lamps don't jump)
 	public static boolean benchSync;
@@ -77,6 +80,14 @@ public final class LampVolume
 		return t;
 	});
 
+	// a bench's setting, from a property or LUMINA_<NAME>
+	private static float prop(String name, float value)
+	{
+		String v = System.getProperty("lumina." + name);
+		v = v != null ? v : System.getenv("LUMINA_" + name.toUpperCase());
+		return v != null ? Float.parseFloat(v) : value;
+	}
+
 	/** One lamp as the volume holds it. */
 	private static final class Lamp
 	{
@@ -84,6 +95,7 @@ public final class LampVolume
 		// colour times strength as summed; as the frame's list has it
 		float cr, cg, cb;
 		float nr, ng, nb;
+		float gain = 1;
 		boolean hidden;
 		boolean seen;
 		// its visibility per read cell in its box, and the same before a change while it eases
@@ -132,6 +144,9 @@ public final class LampVolume
 	private volatile List<Upload> done;
 	private ShortBuffer stage;
 	private boolean anyLit;
+	private boolean gainSent;
+	private final float[] gainW = new float[GAIN_SIZE * GAIN_SIZE], gainG = new float[GAIN_SIZE * GAIN_SIZE];
+	private final ShortBuffer gainStage = BufferUtils.createShortBuffer(GAIN_SIZE * GAIN_SIZE * 4);
 	// the bench's tally
 	private volatile long lastJobNanos;
 	public static volatile String lastJob = "";
@@ -259,9 +274,21 @@ public final class LampVolume
 			}
 			l.seen = true;
 			float s = p.intensity * p.mapFade;
-			l.nr = p.r * s;
-			l.ng = p.g * s;
-			l.nb = p.b * s;
+			float nr = p.r * s, ng = p.g * s, nb = p.b * s;
+			// a flicker doesn't touch the volume: it goes on its gain map (updateGain). A real change of strength does.
+			float was = l.cr + l.cg + l.cb, is = nr + ng + nb;
+			float ratio = was > 0 ? is / was : 0;
+			if (ratio > GAIN_LO && ratio < GAIN_HI && !l.flood)
+			{
+				l.gain = ratio;
+			}
+			else
+			{
+				l.gain = 1;
+				l.nr = nr;
+				l.ng = ng;
+				l.nb = nb;
+			}
 			lit |= s > 0;
 			boolean h = clusters.onHiddenStorey(p);
 			if (h != l.hidden)
@@ -273,6 +300,7 @@ public final class LampVolume
 			strengths |= l.nr != l.cr || l.ng != l.cg || l.nb != l.cb;
 		}
 		anyLit = lit;
+		updateGain();
 		List<Lamp> gone = new ArrayList<>();
 		for (java.util.Iterator<Lamp> it = lamps.values().iterator(); it.hasNext(); )
 		{
@@ -370,6 +398,56 @@ public final class LampVolume
 	}
 
 	// the ground under the player's focus (world y, down)
+	// The lamps' flicker: per GAIN_CELL of the ground, what the lamps there are at now over what the volume holds them at, weighted by
+	// their light there, less 1. A slice of the texture no read filters into (a gutter layer of A), a read of it per lit pixel. Cheap
+	// enough for every frame: a lamp touches a few cells.
+	private void updateGain()
+	{
+		boolean any = false;
+		for (Lamp l : lamps.values())
+		{
+			any |= l.gain != 1;
+		}
+		if (!any && !gainSent)
+		{
+			return;
+		}
+		gainSent = any;
+		Arrays.fill(gainW, 0);
+		Arrays.fill(gainG, 0);
+		float x0 = windowX + SIZE * CELL / 2f - GAIN_SIZE * GAIN_CELL / 2f, z0 = windowZ + SIZE * CELL / 2f - GAIN_SIZE * GAIN_CELL / 2f;
+		for (Lamp l : lamps.values())
+		{
+			float lum = l.nr + l.ng + l.nb;
+			int cx0 = Math.max(0, (int) Math.floor((l.x - l.r - x0) / GAIN_CELL - 0.5f)), cx1 = Math.min(GAIN_SIZE - 1, (int) Math.ceil((l.x + l.r - x0) / GAIN_CELL - 0.5f));
+			int cz0 = Math.max(0, (int) Math.floor((l.z - l.r - z0) / GAIN_CELL - 0.5f)), cz1 = Math.min(GAIN_SIZE - 1, (int) Math.ceil((l.z + l.r - z0) / GAIN_CELL - 0.5f));
+			for (int z = cz0; z <= cz1; ++z)
+			{
+				for (int x = cx0; x <= cx1; ++x)
+				{
+					float dx = (x + 0.5f) * GAIN_CELL + x0 - l.x, dz = (z + 0.5f) * GAIN_CELL + z0 - l.z;
+					float d = 1 - (float) Math.sqrt(dx * dx + dz * dz) / (l.r + GAIN_CELL);
+					if (d > 0)
+					{
+						float w = lum * d * d;
+						gainW[z * GAIN_SIZE + x] += w;
+						gainG[z * GAIN_SIZE + x] += w * (l.gain - 1);
+					}
+				}
+			}
+		}
+		gainStage.clear();
+		for (int i = 0; i < GAIN_SIZE * GAIN_SIZE; ++i)
+		{
+			gainStage.put(half(gainW[i] > 0 ? gainG[i] / gainW[i] : 0)).put((short) 0).put((short) 0).put((short) 0);
+		}
+		gainStage.flip();
+		glBindTexture(GL_TEXTURE_3D, texA);
+		glPixelStorei(GL_UNPACK_ALIGNMENT, 2);
+		glTexSubImage3D(GL_TEXTURE_3D, 0, 0, 0, NEAR_Y, GAIN_SIZE, GAIN_SIZE, 1, GL_RGBA, GL_HALF_FLOAT, gainStage);
+		glBindTexture(GL_TEXTURE_3D, 0);
+	}
+
 	private static float playerY(LuminaPlugin plugin)
 	{
 		net.runelite.api.WorldView view = plugin.client.getTopLevelWorldView();
@@ -1343,6 +1421,6 @@ public final class LampVolume
 	{
 		return "#define LAMP_VOLUME_SIZE " + SIZE + ".0\n#define LAMP_VOLUME_NEAR_Y " + NEAR_Y + ".0\n#define LAMP_VOLUME_FAR_Y " + FAR_Y + ".0\n"
 			+ "#define LAMP_VOLUME_GUTTER " + GUTTER + ".0\n#define LAMP_VOLUME_LAYERS " + LAYERS + ".0\n#define LAMP_VOLUME_CELL " + CELL + ".0\n"
-			+ "#define LAMP_VOLUME_FAR_CELL " + FAR_CELL + ".0\n";
+			+ "#define LAMP_VOLUME_FAR_CELL " + FAR_CELL + ".0\n#define LAMP_VOLUME_GAIN_SIZE " + GAIN_SIZE + ".0\n#define LAMP_VOLUME_GAIN_CELL " + GAIN_CELL + ".0\n";
 	}
 }
