@@ -52,6 +52,8 @@ public final class LampVolume
 	private static final float FINE_REACH = Float.parseFloat(System.getProperty("lumina.volFineReach", "500"));
 	// the seed: a lamp's own fixture doesn't stop it within this of its origin
 	private static final float SEED = Float.parseFloat(System.getProperty("lumina.volSeed", "20"));
+	// a triangle wholly within this of a lamp is its fixture (a real build knows: PointLight.owner, VoxelCapture.owner)
+	private static final float FIXTURE = Float.parseFloat(System.getProperty("lumina.volFixture", "72"));
 	// visibility as read: 0 to 1 between these of the flood's. Below lo is the geometric edge's dark side (math.md 6)
 	private static final float SHARP_LO = Float.parseFloat(System.getProperty("lumina.volLo", "0.5"));
 	private static final float SHARP_HI = Float.parseFloat(System.getProperty("lumina.volHi", "0.95"));
@@ -500,6 +502,18 @@ public final class LampVolume
 				}
 			}
 			final Map<Long, ZoneCells> built = new java.util.concurrent.ConcurrentHashMap<>();
+			final float[] points = new float[lamps.size() * 5];
+			{
+				int k = 0;
+				for (Lamp l : lamps.values())
+				{
+					points[k++] = l.x;
+					points[k++] = l.y;
+					points[k++] = l.z;
+					points[k++] = l.ox;
+					points[k++] = l.oz;
+				}
+			}
 			for (int x = 0; x < ctx.zones.length; ++x)
 			{
 				for (int z = 0; z < ctx.zones[0].length; ++z)
@@ -516,7 +530,7 @@ public final class LampVolume
 						}
 						tasks.add(() ->
 						{
-							ZoneCells c = voxelize(now, fx, fz);
+							ZoneCells c = voxelize(now, fx, fz, points);
 							if (c != null)
 							{
 								built.put(zoneKey(fx, fz), c);
@@ -724,7 +738,7 @@ public final class LampVolume
 
 	// A zone's opaque triangles, as what stops light: by Zone.pushLevels's ranges, each run of them its own cells. Emissive faces out,
 	// as the shadow pass leaves them out, and swaying foliage.
-	private ZoneCells voxelize(Zone zone, int zx, int zz)
+	private ZoneCells voxelize(Zone zone, int zx, int zz, float[] allPoints)
 	{
 		ZoneSnapshot s = zone.source;
 		ZoneCells out = new ZoneCells();
@@ -737,6 +751,19 @@ public final class LampVolume
 		int offset = LuminaPlugin.SCENE_OFFSET >> 3;
 		int baseX = (zx - offset) << 10, baseZ = (zz - offset) << 10;
 		int count = s.vertsO.length / TRI_INTS;
+		// the lamps near the zone
+		float[] points = new float[allPoints.length];
+		int np = 0;
+		for (int i = 0; i < allPoints.length; i += 5)
+		{
+			float x = allPoints[i], z = allPoints[i + 2];
+			if (x > baseX - 512 && x < baseX + 1536 && z > baseZ - 512 && z < baseZ + 1536)
+			{
+				System.arraycopy(allPoints, i, points, np, 5);
+				np += 5;
+			}
+		}
+		points = Arrays.copyOf(points, np);
 		List<Segment> segs = new ArrayList<>();
 		float[] v = new float[9];
 		for (int l = 0; l < 4; ++l)
@@ -761,7 +788,7 @@ public final class LampVolume
 					Segment seg = new Segment();
 					seg.level = l;
 					seg.rid = rids[i];
-					cells(s, roofStart[i], roofEnd[i], baseX, baseZ, seg, v, taken);
+					cells(s, roofStart[i], roofEnd[i], baseX, baseZ, seg, v, taken, points);
 					if (seg.cells != null)
 					{
 						segs.add(seg);
@@ -770,7 +797,7 @@ public final class LampVolume
 			}
 			Segment before = new Segment();
 			before.level = l;
-			cells(s, start, tail, baseX, baseZ, before, v, taken);
+			cells(s, start, tail, baseX, baseZ, before, v, taken, points);
 			if (before.cells != null)
 			{
 				segs.add(before);
@@ -778,7 +805,7 @@ public final class LampVolume
 			Segment after = new Segment();
 			after.level = l;
 			after.tail = true;
-			cells(s, tail, end, baseX, baseZ, after, v, taken);
+			cells(s, tail, end, baseX, baseZ, after, v, taken, points);
 			if (after.cells != null)
 			{
 				segs.add(after);
@@ -788,7 +815,28 @@ public final class LampVolume
 		return out;
 	}
 
-	private static void cells(ZoneSnapshot s, int from, int to, int baseX, int baseZ, Segment seg, float[] v, boolean[] taken)
+	// whether the triangle lies within FIXTURE of a lamp's place or origin: its own fixture, which stops nothing of it
+	private static boolean onLamp(float[] v, float[] points)
+	{
+		float f2 = FIXTURE * FIXTURE;
+		for (int i = 0; i < points.length; i += 5)
+		{
+			boolean all = true;
+			for (int k = 0; k < 9 && all; k += 3)
+			{
+				float dx = v[k] - points[i], dy = v[k + 1] - points[i + 1], dz = v[k + 2] - points[i + 2];
+				float ox = v[k] - points[i + 3], oz = v[k + 2] - points[i + 4];
+				all = dx * dx + dy * dy + dz * dz < f2 || ox * ox + dy * dy + oz * oz < f2;
+			}
+			if (all)
+			{
+				return true;
+			}
+		}
+		return false;
+	}
+
+	private static void cells(ZoneSnapshot s, int from, int to, int baseX, int baseZ, Segment seg, float[] v, boolean[] taken, float[] points)
 	{
 		int[] o = s.vertsO;
 		int[] buf = new int[1024];
@@ -826,7 +874,7 @@ public final class LampVolume
 			}
 			float ax = v[3] - v[0], ay = v[4] - v[1], az = v[5] - v[2], bx = v[6] - v[0], by = v[7] - v[1], bz = v[8] - v[2];
 			float nx = ay * bz - az * by, ny = az * bx - ax * bz, nz = ax * by - ay * bx;
-			if (nx * nx + ny * ny + nz * nz < 1e-4f)
+			if (nx * nx + ny * ny + nz * nz < 1e-4f || onLamp(v, points))
 			{
 				continue;
 			}

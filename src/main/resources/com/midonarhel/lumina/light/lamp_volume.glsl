@@ -15,8 +15,6 @@ uniform vec4 lampVolumeNear;   // world x, z, y of the near window's corner; w 0
 uniform vec4 lampVolumeFar;    // the same of the far window's
 uniform vec4 lampVolumeOrigin; // the world place H's lamps are relative to
 
-// a lit point is held up this much by the lamps that cancel in F (math.md 8)
-#define LAMP_VOLUME_BACK 0.25
 // the share of the window, at its edge, that hands over to the far level
 #define LAMP_VOLUME_FADE 512.0
 
@@ -103,5 +101,5 @@ float lampVolumeOnSurface(LampVolumeRead r, vec3 w, vec3 n, out float ndl, out v
   ndl = dot(n, ld);
   // the vector's length where it was read: the luminance itself for one lamp, less where lamps pull apart
   float strength = min(length(r.h - (r.at - lampVolumeOrigin.xyz) * r.g), lum);
-  return max(strength * max(ndl, 0.0), LAMP_VOLUME_BACK * (lum - strength)) / lum;
+  return strength * max(ndl, 0.0) / lum;
 }

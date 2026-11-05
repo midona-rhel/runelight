@@ -192,8 +192,8 @@ float phase(float cosTheta) {
 // along the ray (tree1 53k pixels over 8); two by at most 10, for 0.13 ms more on fps1
 #define FOG_LAMP_PIECES 2
 // steps through the far level of the lamps' volume, and how far along a ray
-#define FOG_LAMP_STEPS 12
-#define FOG_LAMP_REACH 6000.0
+#define FOG_LAMP_STEPS 16
+#define FOG_LAMP_STRIDE 128.0
 
 // The lamp's falloff (lampFalloff: (1 - d / r)^2) along a line passing sqrt(h2) from it, from s0 to s1 along the line
 // from its point nearest the lamp, in closed form: r times, in units of r (u = s / r, e = h / r),
@@ -225,12 +225,18 @@ float lampFalloffAlong(float h2, float r, float s0, float s1) {
 // switching. No other edge: the falloff is 0 at the reach, and the ray's end clips the glow as it clips everything
 // behind it.
 vec3 lampGlow(ivec2 px, vec3 dir, float tEnd, float density, float jitter) {
-  float t1 = min(tEnd, FOG_LAMP_REACH);
-  float dt = t1 / float(FOG_LAMP_STEPS);
+  // the stretch of the ray any lamp of its column glows in (LightClusters.fillFogColumns)
+  vec2 span = texelFetch(lightData, clusterLights(columnEntry((vec2(px) + 0.5 - vec2(sceneViewport.xy)) / vec2(sceneViewport.zw))).base).xy;
+  float t0 = span.x, t1 = min(tEnd, span.y);
+  if (t1 <= t0) {
+    return vec3(0.0);
+  }
+  int steps = clamp(int(ceil((t1 - t0) / FOG_LAMP_STRIDE)), 2, FOG_LAMP_STEPS);
+  float dt = (t1 - t0) / float(steps);
   vec3 sum = vec3(0.0);
   float at = 0.0, weight = 0.0;
-  for (int i = 0; i < FOG_LAMP_STEPS; ++i) {
-    float t = (float(i) + jitter) * dt;
+  for (int i = 0; i < steps; ++i) {
+    float t = t0 + (float(i) + jitter) * dt;
     vec3 c = textureLod(lampVolumeA, lampVolumeFarAt(cameraPos + dir * t), 0.0).rgb;
     float l = c.r + c.g + c.b;
     sum += c;

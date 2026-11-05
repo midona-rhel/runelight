@@ -128,6 +128,7 @@ public class LightClusters
 	private int[] fogLight = new int[64];
 	// the candidates' lights brightest first, as the columns were last filled with them
 	private int[] fogFilled = new int[64];
+	private final float[] spanNear = new float[COLUMN_COUNT], spanFar = new float[COLUMN_COUNT];
 	private int fogFilledCount;
 	private final float[] tile = new float[4];
 
@@ -273,7 +274,7 @@ public class LightClusters
 	/** Whether any light can glow in the fog this frame, as of {@link #cull}. */
 	public boolean hasFogLights()
 	{
-		return lightCount > 0;
+		return fogCandidates > 0;
 	}
 
 	/** The walls that stop the lamps (null: none): each lamp says whether any is in its reach. */
@@ -415,7 +416,11 @@ public class LightClusters
 				if (fx * fx + fz * fz < reach * reach && y + l.radius > fogTop
 					&& Math.max(l.r, Math.max(l.g, l.b)) * shown * l.radius >= fogMinGlow)
 				{
-					addFogCandidate(index, (l.r + l.g + l.b) * shown * l.radius);
+					if (fogCandidates == fogLight.length)
+					{
+						fogLight = Arrays.copyOf(fogLight, fogCandidates * 2);
+					}
+					fogLight[fogCandidates++] = index;
 				}
 			}
 		}
@@ -507,48 +512,44 @@ public class LightClusters
 	/**
 	 * Fill the fog columns, unless the lights' spheres and the candidates, brightest first, are as they were.
 	 */
+	// Per fog column, in its entry's first texel, the stretch of distance from the camera that any lamp glowing in it covers: the
+	// fog marches the lamps' volume only there (fog_frag.glsl). Bounds of a sphere's distance hold for every ray through it.
 	private void fillFogColumns(boolean changed)
 	{
-		Arrays.sort(fogOrder, 0, fogCandidates);
-		if (fogFilled.length < fogCandidates)
-		{
-			fogFilled = Arrays.copyOf(fogFilled, fogOrder.length);
-		}
-		boolean same = !changed && fogCandidates == fogFilledCount;
-		for (int k = 0; k < fogCandidates; ++k)
-		{
-			int c = (int) (0xFFFFFFFFL - (fogOrder[fogCandidates - 1 - k] & 0xFFFFFFFFL));
-			int index = fogLight[c];
-			same &= fogFilled[k] == index;
-			fogFilled[k] = index;
-		}
-		fogFilledCount = fogCandidates;
-		if (same)
+		if (!fogColumns)
 		{
 			return;
 		}
 		int words = texels * 4;
 		Arrays.fill(masks, CLUSTER_COUNT * words, CLUSTER_ENTRIES * words, 0);
-		Arrays.fill(counts, CLUSTER_COUNT, CLUSTER_ENTRIES, (byte) 0);
+		Arrays.fill(spanNear, Float.POSITIVE_INFINITY);
+		Arrays.fill(spanFar, 0);
 		for (int k = 0; k < fogCandidates; ++k)
 		{
-			int index = fogFilled[k];
+			int index = fogLight[k];
 			int s = index * 4, r = index * 6;
-			float x = spheres[s], y = spheres[s + 1], z = spheres[s + 2], r2 = spheres[s + 3] * spheres[s + 3];
-			int word = index >> 5, bit = 1 << (index & 31);
+			float x = spheres[s], y = spheres[s + 1], z = spheres[s + 2], radius = spheres[s + 3], r2 = radius * radius;
+			float d = (float) Math.sqrt(x * x + y * y + z * z);
 			for (int cy = ranges[r + 1]; cy <= ranges[r + 3]; ++cy)
 			{
 				for (int cx = ranges[r]; cx <= ranges[r + 2]; ++cx)
 				{
 					int column = cy * CLUSTERS_X + cx;
-					if (!columnTouches(column, x, y, z, r2)) continue;
-					int entry = CLUSTER_COUNT + column;
-					if (counts[entry] < MAX_LIGHTS_PER_CLUSTER)
+					if (columnTouches(column, x, y, z, r2))
 					{
-						++counts[entry];
-						masks[entry * words + word] |= bit;
+						spanNear[column] = Math.min(spanNear[column], d - radius);
+						spanFar[column] = Math.max(spanFar[column], d + radius);
 					}
 				}
+			}
+		}
+		for (int column = 0; column < COLUMN_COUNT; ++column)
+		{
+			if (spanFar[column] > 0)
+			{
+				int at = (CLUSTER_COUNT + column) * words;
+				masks[at] = Float.floatToRawIntBits(Math.max(spanNear[column], 0));
+				masks[at + 1] = Float.floatToRawIntBits(spanFar[column]);
 			}
 		}
 		++columnsBuilt;

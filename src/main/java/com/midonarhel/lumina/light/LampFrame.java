@@ -267,7 +267,7 @@ public final class LampFrame
 			}
 			plugin.cpuTimer.begin(CpuTimer.CLUSTERS);
 			// the fog integrates the lights along each pixel's ray from per-column lists
-			plugin.lightClusters.setFog(false, plugin.volumetricFog.getCenterX() - plugin.frameCameraX,
+			plugin.lightClusters.setFog(plugin.frameFog, plugin.volumetricFog.getCenterX() - plugin.frameCameraX,
 				plugin.volumetricFog.getCenterZ() - plugin.frameCameraZ, plugin.volumetricFog.getRadius(),
 				plugin.volumetricFog.getTop() - plugin.frameCameraY, plugin.volumetricFog.getMinGlow());
 			// the lamps' shadow cubes: which are out of date, before each lamp kept is given its slot
