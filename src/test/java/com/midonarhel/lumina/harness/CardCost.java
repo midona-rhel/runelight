@@ -47,7 +47,11 @@ final class CardCost
 		for (boolean fog : new boolean[]{false, true})
 		{
 			Map<String, Object> config = Card.map();
-			try (DumpRenderer r = new DumpRenderer(dump, options(fog)))
+			DumpRenderer.Options options = options(fog);
+			// glow1's restored weather state leaves a model buffer mapped on the bench, plain passCost too (it stops at the
+			// frame after the warm-up: "unable to map GL buffer"): its held FOG, from the warm-up, is the same weather
+			options.restoreWeather &= !"FOG".equals(dump.manifest.settings.get("weatherMode"));
+			try (DumpRenderer r = new DumpRenderer(dump, options))
 			{
 				r.render();
 				GpuSections.reset();

@@ -265,8 +265,14 @@ final class CardBvh
 		return d == 0 ? 1e30f : 1 / d;
 	}
 
-	/** Whether anything stops the segment; with mask 0 any triangle, else only one whose category is in it. */
+	/** Whether anything stops the segment. */
 	boolean occluded(float ox, float oy, float oz, float dx, float dy, float dz, float tMin, float tMax, Scratch s)
+	{
+		return occluded(ox, oy, oz, dx, dy, dz, tMin, tMax, -1, s);
+	}
+
+	/** Whether a triangle of a category in mask stops the segment. */
+	boolean occluded(float ox, float oy, float oz, float dx, float dy, float dz, float tMin, float tMax, int mask, Scratch s)
 	{
 		float ix = inv(dx), iy = inv(dy), iz = inv(dz);
 		int[] stack = s.stack;
@@ -288,7 +294,7 @@ final class CardBvh
 			}
 			for (int i = first[node], e = i + c; i < e; ++i)
 			{
-				if (!Float.isNaN(hit(order[i], ox, oy, oz, dx, dy, dz, tMin, tMax, s)))
+				if ((mesh.cat[order[i]] & mask) != 0 && !Float.isNaN(hit(order[i], ox, oy, oz, dx, dy, dz, tMin, tMax, s)))
 				{
 					return true;
 				}

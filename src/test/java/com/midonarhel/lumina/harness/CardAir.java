@@ -17,11 +17,13 @@ import static org.lwjgl.opengl.GL33C.*;
  * <p>Glow: the fog target (SceneTargets' texFog: scattered light, linear, half float) is read with each lamp alone and
  * with none; the difference is that lamp's glow alone, no surface in it. The oracle gives each ray the lamp's falloff
  * along it as let through by what is drawn; a scale per lamp (the fog's density there) is fitted over rays nothing stops.
- * A HOLE is a stretch of cells with well under what the oracle has, even by the least of its 3 x 3 neighbours, a shape
- * cut out of open air. A LEAK is a stretch of cells with well over the most of its neighbours has: glow through a wall.
+ * A HOLE is a stretch of cells with well under what all of the lamp's ball gets there, even by the least of its 3 x 3
+ * neighbours: a shape cut out of open air. A LEAK is a stretch of cells with well over what any of the ball gets past
+ * walls, roofs, terrain and floors, by the most of its neighbours: glow through what must stop it. Between the two
+ * (behind a tree, in a penumbra) anything goes.
  *
  * <p>Rain and snow: FINAL frames with each lamp alone, the fog off, against none. A particle lit by a lamp shows as a
- * rise; where the oracle lets none of the lamp into any of the air along the ray, none may show (its air rays are blocked
+ * rise; where walls, roofs, terrain and floors let none of the lamp into any of the air along the ray, none may show (its air rays are blocked
  * all the way to the surface, so that surface is dark too: nothing else rises there).
  */
 final class CardAir
@@ -93,10 +95,10 @@ final class CardAir
 		r.frame();
 		r.frame();
 		float[] off = readFog(plugin);
-		float[] sumGot = new float[cells], sumWant = new float[cells];
+		float[] sumGot = new float[cells], sumWant = new float[cells], sumLeast = new float[cells], sumMost = new float[cells];
 		boolean[] holes = new boolean[cells], leaks = new boolean[cells];
 		boolean[] hole = new boolean[cells], leak = new boolean[cells];
-		float[] got = new float[cells], want = new float[cells], whole = new float[cells];
+		float[] got = new float[cells], want = new float[cells], whole = new float[cells], least = new float[cells], most = new float[cells];
 		long holePx = 0, leakPx = 0, lit = 0;
 		int biggestHole = 0, biggestLeak = 0, holeGroups = 0, leakGroups = 0;
 		double logSum = 0;
@@ -120,6 +122,8 @@ final class CardAir
 			java.util.Arrays.fill(got, 0);
 			java.util.Arrays.fill(want, 0);
 			java.util.Arrays.fill(whole, 0);
+			java.util.Arrays.fill(least, 0);
+			java.util.Arrays.fill(most, 0);
 			double fitTop = 0, fitBottom = 0;
 			int[] idx = o.airIdx[q];
 			for (int s = 0; s < idx.length; ++s)
@@ -130,6 +134,8 @@ final class CardAir
 				got[c] = g;
 				want[c] = w;
 				whole[c] = o.airWhole[q][s] * cl;
+				least[c] = o.airFull[q][s] * cl;
+				most[c] = o.airRule[q][s] * cl;
 				if (o.airOpen[q][s] >= 0.95f * o.airWhole[q][s])
 				{
 					fitTop += g * w;
@@ -163,14 +169,15 @@ final class CardAir
 					{
 						for (int x = Math.max(0, gx - 1); x <= Math.min(aw - 1, gx + 1); ++x)
 						{
-							float v = want[y * aw + x] * scale;
-							lo = Math.min(lo, v);
-							hi = Math.max(hi, v);
+							lo = Math.min(lo, least[y * aw + x] * scale);
+							hi = Math.max(hi, most[y * aw + x] * scale);
 						}
 					}
 					float g = got[c], w = want[c] * scale;
 					sumGot[c] += g;
 					sumWant[c] += w;
+					sumLeast[c] += least[c] * scale;
+					sumMost[c] += most[c] * scale;
 					if (lo > SHOWS && g < HOLE * lo)
 					{
 						hole[c] = true;
@@ -227,8 +234,8 @@ final class CardAir
 		{
 			int t = texel[c] * 4;
 			float g = lum(on[t] - off[t], on[t + 1] - off[t + 1], on[t + 2] - off[t + 2]);
-			hole[c] = sumWant[c] > SHOWS && g < HOLE * sumWant[c];
-			leak[c] = g > SHOWS && g > LEAK * sumWant[c] + SHOWS;
+			hole[c] = sumLeast[c] > SHOWS && g < HOLE * sumLeast[c];
+			leak[c] = g > SHOWS && g > LEAK * sumMost[c] + SHOWS;
 		}
 		for (int[] g : Card.groups(hole, aw, ah))
 		{
@@ -311,7 +318,7 @@ final class CardAir
 			int[] idx = o.airIdx[q];
 			for (int s = 0; s < idx.length; ++s)
 			{
-				open[idx[s]] = o.airOpen[q][s] > 0;
+				open[idx[s]] = o.airRule[q][s] > 0;
 			}
 			// the pixels whose surface the lamp may light (dilated: the samples are every second pixel)
 			java.util.Arrays.fill(surface, false);

@@ -37,7 +37,7 @@ import net.runelite.api.WorldView;
 final class CardOracle
 {
 	static final int OPEN = 0, PENUMBRA = 1, BLOCKED = 2;
-	static final int VERSION = 1;
+	static final int VERSION = 2;
 	static final int STRIDE = 2;       // surface samples: every second pixel each way
 	static final int AIR_STRIDE = 6;   // air rays: every sixth
 	static final float SURFACE_OFF = 1.5f, NEAR = 12, LAMP_BALL_SHARE = 0.08f;
@@ -51,10 +51,15 @@ final class CardOracle
 	/** Per lamp, its surface samples: pixel index, and class | blockers << 2 (CardMesh mask, only for BLOCKED). */
 	int[][] px;
 	short[][] cls;
-	/** Per lamp, its air samples: index into the air grid; the falloff along the ray within its reach, whole and as let through. */
+	/**
+	 * Per lamp, its air samples: index into the air grid; the falloff along the ray within its reach: whole; as much as the
+	 * lamp's ball gets there (airOpen, the mean of its rays); where all of it gets there (airFull: to fall short of this
+	 * is a hole); where any of it gets past walls, roofs, terrain and floors, models and foliage not counted (airRule: to
+	 * go over this is light through what must stop it). Between airFull and airRule anything goes, as in a penumbra.
+	 */
 	int airW, airH;
 	int[][] airIdx;
-	float[][] airWhole, airOpen;
+	float[][] airWhole, airOpen, airFull, airRule;
 	long meshTris, otherPixels, matchedPixels;
 	int[] meshByCategory;
 	long millis;
@@ -275,6 +280,18 @@ final class CardOracle
 		return !bvh.occluded(sx, sy, sz, dx, dy, dz, 0, 1 - NEAR / len, s);
 	}
 
+	// whether the ray from s to b gets past what rule 4 names: only walls, roofs, terrain and floors stop it
+	private static boolean segRule(CardBvh bvh, float sx, float sy, float sz, float[] b, CardBvh.Scratch s)
+	{
+		float dx = b[0] - sx, dy = b[1] - sy, dz = b[2] - sz;
+		float len = (float) Math.sqrt(dx * dx + dy * dy + dz * dz);
+		if (len <= NEAR)
+		{
+			return true;
+		}
+		return !bvh.occluded(sx, sy, sz, dx, dy, dz, 0, 1 - NEAR / len, CardMesh.RULE, s);
+	}
+
 	/**
 	 * Each air ray (AIR_STRIDE) up to what it ends at, for each lamp whose reach it enters: the lamp's falloff along it,
 	 * whole and let through. Points along it taken every AIR_STEP world units (at least 6, at most 32), each a share of
@@ -288,6 +305,8 @@ final class CardOracle
 		airIdx = new int[lamps][];
 		airWhole = new float[lamps][];
 		airOpen = new float[lamps][];
+		airFull = new float[lamps][];
+		airRule = new float[lamps][];
 		float[] dirs = p.air;
 		IntStream.range(0, lamps).parallel().forEach(k ->
 		{
@@ -302,7 +321,7 @@ final class CardOracle
 			CardBvh.Scratch s = new CardBvh.Scratch();
 			int cap = 1 << 10, count = 0;
 			int[] idx = new int[cap];
-			float[] whole = new float[cap], open = new float[cap];
+			float[] whole = new float[cap], open = new float[cap], full = new float[cap], rule = new float[cap];
 			for (int g = 0; g < airW * airH; ++g)
 			{
 				float tEnd = dirs[g * 4 + 3];
@@ -320,7 +339,7 @@ final class CardOracle
 					continue;
 				}
 				int n = Math.max(6, Math.min(32, (int) ((b - a) / AIR_STEP)));
-				float dt = (b - a) / n, w = 0, o = 0;
+				float dt = (b - a) / n, w = 0, o = 0, f = 0, u = 0;
 				for (int j = 0; j < n; ++j)
 				{
 					float t = a + (j + 0.5f) * dt;
@@ -339,6 +358,13 @@ final class CardOracle
 						seen += seg(bvh, qx + p.camX, qy + p.camY, qz + p.camZ, ball[q], s) ? 1 : 0;
 					}
 					o += att * seen / step.length;
+					f += seen == step.length ? att : 0;
+					boolean some = seen > 0;
+					for (int q = 0; q < step.length && !some; ++q)
+					{
+						some = segRule(bvh, qx + p.camX, qy + p.camY, qz + p.camZ, ball[step[q]], s);
+					}
+					u += some ? att : 0;
 				}
 				if (count == cap)
 				{
@@ -346,14 +372,20 @@ final class CardOracle
 					idx = Arrays.copyOf(idx, cap);
 					whole = Arrays.copyOf(whole, cap);
 					open = Arrays.copyOf(open, cap);
+					full = Arrays.copyOf(full, cap);
+					rule = Arrays.copyOf(rule, cap);
 				}
 				idx[count] = g;
 				whole[count] = w;
+				full[count] = f;
+				rule[count] = u;
 				open[count++] = o;
 			}
 			airIdx[k] = Arrays.copyOf(idx, count);
 			airWhole[k] = Arrays.copyOf(whole, count);
 			airOpen[k] = Arrays.copyOf(open, count);
+			airFull[k] = Arrays.copyOf(full, count);
+			airRule[k] = Arrays.copyOf(rule, count);
 		});
 	}
 
@@ -464,6 +496,8 @@ final class CardOracle
 				ints(o, airIdx[k]);
 				floats(o, airWhole[k]);
 				floats(o, airOpen[k]);
+				floats(o, airFull[k]);
+				floats(o, airRule[k]);
 			}
 		}
 	}
@@ -495,6 +529,8 @@ final class CardOracle
 			c.airIdx = new int[n][];
 			c.airWhole = new float[n][];
 			c.airOpen = new float[n][];
+			c.airFull = new float[n][];
+			c.airRule = new float[n][];
 			for (int k = 0; k < n; ++k)
 			{
 				c.px[k] = ints(in);
@@ -502,6 +538,8 @@ final class CardOracle
 				c.airIdx[k] = ints(in);
 				c.airWhole[k] = floats(in);
 				c.airOpen[k] = floats(in);
+				c.airFull[k] = floats(in);
+				c.airRule[k] = floats(in);
 			}
 		}
 		return c;
