@@ -36,8 +36,8 @@ vec3 lampVolumeFarAt(vec3 w) {
 float lampVolumeNearShare(vec3 w) {
   vec3 span = vec3(LAMP_VOLUME_SIZE, LAMP_VOLUME_SIZE, LAMP_VOLUME_NEAR_Y) * LAMP_VOLUME_CELL;
   vec3 c = w.xzy - lampVolumeNear.xyz;
-  vec3 e = min(c, span - c);
-  return clamp(min(e.x, min(e.y, e.z)) / LAMP_VOLUME_FADE, 0.0, 1.0);
+  vec3 e = min(c, span - c) / vec3(LAMP_VOLUME_FADE, LAMP_VOLUME_FADE, LAMP_VOLUME_FADE * 0.25);
+  return clamp(min(e.x, min(e.y, e.z)), 0.0, 1.0);
 }
 
 struct LampVolumeRead {

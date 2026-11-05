@@ -327,8 +327,8 @@ public final class LampVolume
 		if (windowMoved)
 		{
 			// the window's height follows the player's ground over a jump, not a step
-			j.wy = Math.floorDiv(Math.round(playerY(plugin)) - 1024, CELL) * CELL;
-			j.fy = Math.floorDiv(Math.round(playerY(plugin)) - 2048, FAR_CELL) * FAR_CELL;
+			j.wy = Math.floorDiv(Math.round(playerY(plugin)) - 1100, CELL) * CELL;
+			j.fy = Math.floorDiv(Math.round(playerY(plugin)) - 1900, FAR_CELL) * FAR_CELL;
 			j.ox = wx + SIZE * CELL / 2f;
 			j.oz = wz + SIZE * CELL / 2f;
 			j.oy = j.wy + NEAR_Y * CELL / 2f;
@@ -367,9 +367,18 @@ public final class LampVolume
 		}
 	}
 
+	// the ground under the player's focus (world y, down)
 	private static float playerY(LuminaPlugin plugin)
 	{
-		return plugin.frameCameraY + 1000;
+		net.runelite.api.WorldView view = plugin.client.getTopLevelWorldView();
+		net.runelite.api.Scene scene = view != null ? view.getScene() : null;
+		int[][][] heights = scene != null ? scene.getTileHeights() : null;
+		int tx = ((int) plugin.edgeFade.focalX >> 7) + LuminaPlugin.SCENE_OFFSET, tz = ((int) plugin.edgeFade.focalZ >> 7) + LuminaPlugin.SCENE_OFFSET;
+		if (heights == null || tx < 0 || tz < 0 || tx >= heights[0].length || tz >= heights[0][0].length)
+		{
+			return plugin.frameCameraY + 1000;
+		}
+		return heights[0][tx][tz];
 	}
 
 	// what the worker finished: the window's new place and the boxes
@@ -647,7 +656,7 @@ public final class LampVolume
 			done = new ArrayList<>(Arrays.asList(uploads));
 			lastJob = String.format("zones %d voxelize %.1f bits %.1f flood %d lamps %.1f sum %d boxes %.1f ms", built.size(), (t1 - t0) / 1e6, (t2 - t1) / 1e6,
 				floods.size(), (t3 - t2) / 1e6, uploads.length, (t4 - t3) / 1e6);
-			if (Boolean.getBoolean("lumina.volLog"))
+			if (Boolean.getBoolean("lumina.volLog") || System.getenv("LUMINA_VOL_LOG") != null)
 			{
 				System.out.println("lamp volume: " + lastJob);
 			}

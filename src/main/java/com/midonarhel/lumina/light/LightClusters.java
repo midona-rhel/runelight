@@ -273,7 +273,7 @@ public class LightClusters
 	/** Whether any light can glow in the fog this frame, as of {@link #cull}. */
 	public boolean hasFogLights()
 	{
-		return fogCandidates > 0;
+		return lightCount > 0;
 	}
 
 	/** The walls that stop the lamps (null: none): each lamp says whether any is in its reach. */
