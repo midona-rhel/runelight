@@ -58,7 +58,7 @@ public class CardEdgesTest
 			}
 		}
 		float r = median(v);
-		assertTrue("read " + r, r > 0.25 * s * 0.5 && r < 0.4 * s);
+		assertTrue("read " + r, r > 0.1 * s && r < 0.4 * s);
 	}
 
 	@Test

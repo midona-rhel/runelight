@@ -16,6 +16,7 @@ import java.util.List;
 final class CardEdges
 {
 	static final int WINDOW = 16;
+	private static final float LINK = 8;
 
 	private CardEdges()
 	{
@@ -52,15 +53,22 @@ final class CardEdges
 					continue;
 				}
 				float pos = a + (0.5f - va) / (vb - va);
-				int chain = -1;
+				// the nearest of the line before: a step of a staircase is as far as LINK
+				int chain = -1, from = -1;
+				float nearest = LINK;
 				for (int k = 0; k < lastCount; ++k)
 				{
-					if (lastChain[k] >= 0 && Math.abs(lastPos[k] - pos) <= 1.5f)
+					float gap = Math.abs(lastPos[k] - pos);
+					if (lastChain[k] >= 0 && gap <= nearest)
 					{
-						chain = lastChain[k];
-						lastChain[k] = -1;
-						break;
+						nearest = gap;
+						from = k;
 					}
+				}
+				if (from >= 0)
+				{
+					chain = lastChain[from];
+					lastChain[from] = -1;
 				}
 				if (chain < 0)
 				{
