@@ -65,6 +65,10 @@ final class CardCost
 					for (int i = -5; i < frames; ++i)
 					{
 						glFinish();
+						// what a frame leaves in the error queue is taken for the next buffer map's own (VBO.map)
+						while (glGetError() != GL_NO_ERROR)
+						{
+						}
 						long t0 = System.nanoTime();
 						r.frame();
 						long t1 = System.nanoTime();
