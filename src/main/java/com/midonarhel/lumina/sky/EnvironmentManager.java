@@ -202,6 +202,7 @@ public final class EnvironmentManager
 
 		environments = data.environments;
 		boxes = data.boxes;
+		blendX = Integer.MIN_VALUE;
 		regionBoxes.clear();
 		regionBiome.clear();
 		looks.clear();
@@ -281,6 +282,9 @@ public final class EnvironmentManager
 			return;
 		}
 
+		// the blend follows the focal point itself, not only its tile
+		focalX = (localX & (BLEND_TILE - 1)) / (float) BLEND_TILE;
+		focalY = (localY & (BLEND_TILE - 1)) / (float) BLEND_TILE;
 		// the lookup only changes when the focal tile, plane or scene does
 		if (scene != lastScene || tileX != lastLocalTileX || tileY != lastLocalTileY || plane != lastPlane
 			|| skyBlack != lastSkyBlack)
@@ -309,6 +313,13 @@ public final class EnvironmentManager
 				select(null, skyBlack ? Classification.CAVE : Classification.OVERWORLD, null, true, time);
 			}
 		}
+		else if (targetBlended && hasTarget && (localX != lastLocalX || localY != lastLocalY))
+		{
+			blendAround(worldPoint[0], worldPoint[1], worldPoint[2], skyBlack, target);
+			to.copyFrom(blendSum);
+		}
+		lastLocalX = localX;
+		lastLocalY = localY;
 
 		advance(time, classification == Classification.CAVE || underRoof);
 	}
@@ -328,57 +339,111 @@ public final class EnvironmentManager
 		select(env, c, weatherBiomeAt(x, y, p), jumped, time, blended);
 	}
 
-	// the area blend: samples BLEND_STEP tiles apart out to BLEND_REACH tiles each way, weighed by closeness
+	// the area blend: samples BLEND_STEP tiles apart, fixed to the world, weighed by a tent of BLEND_REACH tiles either
+	// side of the focal point. A sample comes in at weight 0 and the weights always add up to the same, so the blend is
+	// continuous: samples that moved with the focal point crossed an area's edge a row at a time, the look stepping by
+	// up to 12 % every BLEND_STEP tiles (the client's log, 2026-11-06)
 	private static final int BLEND_STEP = 6;
-	private static final int BLEND_REACH = 24;
+	private static final int BLEND_REACH = 30;
+	private static final int BLEND_CELLS = 2 * BLEND_REACH / BLEND_STEP;
+	private static final int BLEND_TILE = 128;
 	private final Ambience blendSum = new Ambience();
-	private final Ambience sample = new Ambience();
+	private final Ambience[] blendLooks = new Ambience[BLEND_CELLS * BLEND_CELLS];
+	// null where a sample doesn't count: underground, or in an area that switches instantly
+	private final Environment[] blendCells = new Environment[BLEND_CELLS * BLEND_CELLS];
+	private int blendX = Integer.MIN_VALUE, blendY, blendPlane;
+	private boolean blendBlack;
+	// the samples changed in place rather than by walking past them (a plane, the sky): faded into, not cut to
+	private boolean blendCut;
+	private float focalX, focalY;
+	private int lastLocalX, lastLocalY;
+	private final float[] blendColor = new float[3];
 
 	/**
-	 * Fills {@link #blendSum} with the open-air environments around world (x, y, p), weighed by how close they are;
-	 * samples underground, or in an area that switches instantly, count as the one at the middle.
+	 * Fills {@link #blendSum} with the open-air environments around the focal point in world tile (x, y) plane p,
+	 * weighed by how close they are; samples underground, or in an area that switches instantly, don't count. Their
+	 * looks are read once per BLEND_STEP tiles walked, the weights whenever the focal point moves.
 	 */
 	private void blendAround(int x, int y, int p, boolean skyBlack, Environment middle)
 	{
+		int cellX = Math.floorDiv(x, BLEND_STEP) * BLEND_STEP - BLEND_REACH + BLEND_STEP;
+		int cellY = Math.floorDiv(y, BLEND_STEP) * BLEND_STEP - BLEND_REACH + BLEND_STEP;
+		if (cellX != blendX || cellY != blendY || p != blendPlane || skyBlack != blendBlack)
+		{
+			blendCut = blendX != Integer.MIN_VALUE && (p != blendPlane || skyBlack != blendBlack)
+				&& Math.abs(cellX - blendX) <= BLEND_REACH && Math.abs(cellY - blendY) <= BLEND_REACH;
+			blendX = cellX;
+			blendY = cellY;
+			blendPlane = p;
+			blendBlack = skyBlack;
+			for (int j = 0, i = 0; j < BLEND_CELLS; ++j)
+			{
+				int sy = cellY + j * BLEND_STEP;
+				for (int k = 0; k < BLEND_CELLS; ++k, ++i)
+				{
+					Environment e = environmentAt(cellX + k * BLEND_STEP, sy, p);
+					boolean open = classOf(e, sy, skyBlack) == Classification.OVERWORLD && (e == null || !e.instant);
+					e = e == null ? NEUTRAL : e;
+					blendCells[i] = open ? e : null;
+					if (open)
+					{
+						if (blendLooks[i] == null)
+						{
+							blendLooks[i] = new Ambience();
+						}
+						blendLooks[i].set(e);
+					}
+				}
+			}
+		}
 		Ambience sum = blendSum;
 		java.util.Arrays.fill(sum.ambient, 0);
 		java.util.Arrays.fill(sum.sun, 0);
-		java.util.Arrays.fill(sum.fogColor, 0);
 		java.util.Arrays.fill(sum.skyTint, 0);
+		java.util.Arrays.fill(blendColor, 0);
 		sum.fogColorWeight = sum.fogDepth = sum.haze = 0;
 		float total = 0, colored = 0;
-		for (int dy = -BLEND_REACH; dy <= BLEND_REACH; dy += BLEND_STEP)
+		float fx = x + focalX, fy = y + focalY;
+		for (int j = 0, i = 0; j < BLEND_CELLS; ++j)
 		{
-			for (int dx = -BLEND_REACH; dx <= BLEND_REACH; dx += BLEND_STEP)
+			float wy = 1 - Math.abs(cellY + j * BLEND_STEP - fy) / BLEND_REACH;
+			for (int k = 0; k < BLEND_CELLS; ++k, ++i)
 			{
-				float w = (1 - Math.abs(dx) / (BLEND_REACH + (float) BLEND_STEP))
-					* (1 - Math.abs(dy) / (BLEND_REACH + (float) BLEND_STEP));
-				Environment e = environmentAt(x + dx, y + dy, p);
-				if (classOf(e, y + dy, skyBlack) != Classification.OVERWORLD || e != null && e.instant)
+				if (blendCells[i] == null)
 				{
-					e = middle;
+					continue;
 				}
-				sample.set(e == null ? NEUTRAL : e);
-				for (int k = 0; k < 3; ++k)
+				float w = wy * (1 - Math.abs(cellX + k * BLEND_STEP - fx) / BLEND_REACH);
+				Ambience a = blendLooks[i];
+				for (int c = 0; c < 3; ++c)
 				{
-					sum.ambient[k] += sample.ambient[k] * w;
-					sum.sun[k] += sample.sun[k] * w;
-					sum.skyTint[k] += sample.skyTint[k] * w;
+					sum.ambient[c] += a.ambient[c] * w;
+					sum.sun[c] += a.sun[c] * w;
+					sum.skyTint[c] += a.skyTint[c] * w;
 					// only the areas with a fog color of their own make up its color
-					sum.fogColor[k] += sample.fogColor[k] * w * sample.fogColorWeight;
+					blendColor[c] += a.fogColor[c] * w * a.fogColorWeight;
 				}
-				colored += w * sample.fogColorWeight;
-				sum.fogDepth += sample.fogDepth * w;
-				sum.haze += sample.haze * w;
+				colored += w * a.fogColorWeight;
+				sum.fogDepth += a.fogDepth * w;
+				sum.haze += a.haze * w;
 				total += w;
 			}
 		}
-		for (int k = 0; k < 3; ++k)
+		if (total <= 0)
 		{
-			sum.ambient[k] /= total;
-			sum.sun[k] /= total;
-			sum.skyTint[k] /= total;
-			sum.fogColor[k] = colored > 0 ? sum.fogColor[k] / colored : 0;
+			sum.set(middle);
+			return;
+		}
+		for (int c = 0; c < 3; ++c)
+		{
+			sum.ambient[c] /= total;
+			sum.sun[c] /= total;
+			sum.skyTint[c] /= total;
+			// with no fog color around it stays the last one, unused at weight 0: nothing to come in from black
+			if (colored > 0)
+			{
+				sum.fogColor[c] = blendColor[c] / colored;
+			}
 		}
 		sum.fogColorWeight = colored / total;
 		sum.fogDepth /= total;
@@ -490,7 +555,9 @@ public final class EnvironmentManager
 			env = c == Classification.CAVE ? NEUTRAL_CAVE : NEUTRAL;
 		}
 		this.biome = biome;
-		boolean same = hasTarget && c == classification && blended == targetBlended && (blended || env == target);
+		boolean same = hasTarget && c == classification && blended == targetBlended && (blended || env == target)
+			&& !(blended && blendCut);
+		blendCut = false;
 		if (same)
 		{
 			if (blended)

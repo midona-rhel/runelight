@@ -32,6 +32,8 @@ public final class LookMonitor
 	};
 	// a jump bigger than this in one frame is logged; most values are 0..1
 	private static final float DEFAULT_THRESHOLD = 0.03f;
+	// where fogColorR is in the values; the weight follows the color
+	private static final int FOG_COLOR = 9;
 	private static final float FOG_DEPTH_THRESHOLD = 3;
 	private static final float LIGHTS_THRESHOLD = 6;
 	// one line per value per interval; a jump that goes on for a while is one jump
@@ -71,6 +73,11 @@ public final class LookMonitor
 	{
 		float[] v = now;
 		System.arraycopy(env.values, 0, v, 0, EnvironmentUniforms.VALUES);
+		// the fog color as it reaches the picture: at weight 0 it is not used, and may well be another area's
+		for (int c = FOG_COLOR; c < FOG_COLOR + 3; ++c)
+		{
+			v[c] *= v[FOG_COLOR + 3];
+		}
 		int i = EnvironmentUniforms.VALUES;
 		v[i++] = weather.fogMultiplier();
 		v[i++] = weather.fogHeightMultiplier();
