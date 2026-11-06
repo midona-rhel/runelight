@@ -148,6 +148,11 @@ public final class LampVolume
 	public volatile int atkJobs;
 	// the bench: faults kept from the game so far; a number of jobs to fail on purpose
 	public volatile int atkFailures, atkFailNext;
+	public long atkGainNanos;
+	private static final boolean GAIN_PBO = prop("volGainPbo", 1) > 0, SEND_PBO = prop("volSendPbo", 1) > 0;
+	public long atkSendMax, atkSendSum;
+	private long sendNanos;
+	private int gainPbo;
 	public long atkUpdateNanos, atkSentBytes;
 
 	public void update(LuminaPlugin plugin, List<PointLight> lights, LampWalls walls, LightClusters clusters)
@@ -385,6 +390,11 @@ public final class LampVolume
 			glDeleteProgram(programBlend);
 			glDeleteVertexArrays(vaoBlend);
 			glDeleteFramebuffers(fboBlend);
+			if (gainPbo != 0)
+			{
+				glDeleteBuffers(gainPbo);
+				gainPbo = 0;
+			}
 			texA = 0;
 		}
 		lamps.clear();
@@ -1166,7 +1176,24 @@ public final class LampVolume
 		gainStage.flip();
 		glBindTexture(GL_TEXTURE_3D, texA);
 		glPixelStorei(GL_UNPACK_ALIGNMENT, 2);
-		glTexSubImage3D(GL_TEXTURE_3D, 0, 0, 0, GAIN_AT, GAIN_SIZE, GAIN_SIZE, 1, GL_RGBA, GL_HALF_FLOAT, gainStage);
+		long gt = System.nanoTime();
+		if (GAIN_PBO)
+		{
+			// through a buffer: the driver takes it from there; a direct write to a texture this size is 5 ms of the client thread, every frame a lamp flickers
+			if (gainPbo == 0)
+			{
+				gainPbo = glGenBuffers();
+			}
+			glBindBuffer(GL_PIXEL_UNPACK_BUFFER, gainPbo);
+			glBufferData(GL_PIXEL_UNPACK_BUFFER, gainStage, GL_STREAM_DRAW);
+			glTexSubImage3D(GL_TEXTURE_3D, 0, 0, 0, GAIN_AT, GAIN_SIZE, GAIN_SIZE, 1, GL_RGBA, GL_HALF_FLOAT, 0L);
+			glBindBuffer(GL_PIXEL_UNPACK_BUFFER, 0);
+		}
+		else
+		{
+			glTexSubImage3D(GL_TEXTURE_3D, 0, 0, 0, GAIN_AT, GAIN_SIZE, GAIN_SIZE, 1, GL_RGBA, GL_HALF_FLOAT, gainStage);
+		}
+		atkGainNanos = System.nanoTime() - gt;
 		glBindTexture(GL_TEXTURE_3D, 0);
 	}
 
@@ -1406,6 +1433,14 @@ public final class LampVolume
 			++sceneFrames;
 			glBindTexture(GL_TEXTURE_3D, texA);
 			glPixelStorei(GL_UNPACK_ALIGNMENT, 2);
+			if (SEND_PBO)
+			{
+				if (gainPbo == 0)
+				{
+					gainPbo = glGenBuffers();
+				}
+				glBindBuffer(GL_PIXEL_UNPACK_BUFFER, gainPbo);
+			}
 			boolean joined = false;
 			while ((bytes > 0 || joined) && !queue.isEmpty())
 			{
@@ -1426,6 +1461,10 @@ public final class LampVolume
 					land(flips.poll());
 				}
 			}
+			glBindBuffer(GL_PIXEL_UNPACK_BUFFER, 0);
+			sendNanos = System.nanoTime() - t0;
+			atkSendMax = Math.max(atkSendMax, sendNanos);
+			atkSendSum += sendNanos;
 			glPixelStorei(GL_UNPACK_ROW_LENGTH, 0);
 			glPixelStorei(GL_UNPACK_IMAGE_HEIGHT, 0);
 			glPixelStorei(GL_UNPACK_SKIP_PIXELS, 0);
@@ -1511,6 +1550,10 @@ public final class LampVolume
 		stage.clear();
 		stage.put(data);
 		stage.flip();
+		if (SEND_PBO)
+		{
+			glBufferData(GL_PIXEL_UNPACK_BUFFER, stage, GL_STREAM_DRAW);
+		}
 		glPixelStorei(GL_UNPACK_ROW_LENGTH, u.w);
 		glPixelStorei(GL_UNPACK_IMAGE_HEIGHT, u.d);
 		int depth = DEPTH[u.level];
@@ -1555,7 +1598,14 @@ public final class LampVolume
 	{
 		glPixelStorei(GL_UNPACK_SKIP_PIXELS, skipX);
 		glPixelStorei(GL_UNPACK_SKIP_ROWS, skipZ);
-		glTexSubImage3D(GL_TEXTURE_3D, 0, x, z, layer, w, d, layers, GL_RGBA, GL_HALF_FLOAT, stage);
+		if (SEND_PBO)
+		{
+			glTexSubImage3D(GL_TEXTURE_3D, 0, x, z, layer, w, d, layers, GL_RGBA, GL_HALF_FLOAT, 0L);
+		}
+		else
+		{
+			glTexSubImage3D(GL_TEXTURE_3D, 0, x, z, layer, w, d, layers, GL_RGBA, GL_HALF_FLOAT, stage);
+		}
 	}
 
 	// ---------------------------------------------------------------------------------------------------------------
