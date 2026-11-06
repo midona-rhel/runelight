@@ -412,7 +412,6 @@ public final class LampVolume
 		jobHanded = new ArrayList<>();
 		tries = frameFaults = 0;
 		holding = false;
-		heldTo = 0;
 		retryAt = 0;
 		retryAll = stopped = false;
 		gaveUpOn = null;
@@ -609,7 +608,8 @@ public final class LampVolume
 			{
 				fixed += p.bakeSlot >= 0 && !moved.containsKey(p) && !movedHere(p, gone) ? 1 : 0;
 			}
-			newScene = fixed >= SCENE_LAMPS && frame - heldTo > HOLD_AFTER;
+			// in the client a scene is known by its zones (hold): lamps by the dozen coming on at once, night-only ones the first time indoors, aren't one
+			newScene = benchSync && fixed >= SCENE_LAMPS;
 		}
 		if (idle && newScene)
 		{
@@ -1321,13 +1321,12 @@ public final class LampVolume
 
 	// How many frames a new scene's list has to stand still before its lamps go in, the most a scene can make them wait, and how long after it
 	// stragglers still aren't a new scene of their own
-	private static final int HOLD_STILL = 6, HOLD_AFTER = 240;
+	private static final int HOLD_STILL = 6;
 	private static final long HOLD_NANOS = 5_000_000_000L;
 	// a change of this many zones is a scene load: a door is a few
 	private static final int SCENE_ZONES = 64;
 	private boolean holding;
 	private int heldFrames, stillFrames, heldLamps;
-	private long heldTo;
 	// for the log: when a scene's lamps began to be waited for, and when they stopped; when its job ended, and the frames its send took
 	private long sceneFrom, sceneHeld, sceneJob;
 	private int sceneFrames;
@@ -1377,7 +1376,6 @@ public final class LampVolume
 		if (n > 0 && stillFrames >= HOLD_STILL && !placing || System.nanoTime() - sceneFrom > HOLD_NANOS)
 		{
 			holding = false;
-			heldTo = frame;
 			sceneHeld = System.nanoTime();
 			return false;
 		}
