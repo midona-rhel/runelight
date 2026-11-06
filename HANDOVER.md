@@ -1,3 +1,61 @@
+# Lumina handover
+
+## Current state (2026-11-07, branch occ/lumina-live)
+
+This section is the latest. The older notes below are from 2026-10-30.
+
+### Where things are
+- All tonight's work is one branch, `occ/lumina-live`, built on `a1de294f`. It is not merged into `lumina`.
+- `origin/lumina` has 17 commits this branch lacks (handover notes, "Two looks" colours and more). Reconcile them before
+  merging. The 13 `occ/*` competition branches are local only.
+- Lamp occlusion is now the light volume method (`light/LampVolume.java`, `light/lamp_volume.glsl`): a 3D volume that sums
+  lamps ahead of time, so a pixel does about one read however many lamps are in view. `src/main` still holds bench hooks
+  (`atk*`, `offline*`) and old lamp code (LampCubes, LightMap) to clear out before a merge.
+- Evidence is outside the repo, in `~/Code/lumen/occlusion/`: `RESULTS.md`, `final-timing/`, `flood-volume/{pop-fix,soft,live}/`,
+  `weather-flash/results.md`, `combined/interior/`, and `client-evidence/` (client logs per build, the door and run
+  recordings, and the frame tools `ex` and `df`).
+
+### What works in the client
+`c807f1e3` played 16 minutes with no crash and no failed lamp job, median frame 5.82 ms (`d7114a1c` 5.00 ms, today's
+`a1de294f` 7.32 ms). Those sessions took different routes, so this isn't a like-for-like test.
+
+### Open, in order
+1. **Lamps rebuild at every scene load and roof toggle.** `SceneLights` clears all lamps on LOADING and places them again,
+   every 40 tiles or so (log: pointLights 279 -> 6). The frozen swap only hides this, and the user can still see it. Wanted:
+   track lamps by world position, keep every lamp in both scenes untouched, and on a roof toggle leave lamps it doesn't
+   affect alone. Started, nothing committed. Then remove the frozen swap and its 78 MB if it isn't needed.
+2. **Parts of the world going invisible while running.** Not found. Leads: fog and haze jump within 55 ms of a walking swap
+   and `EdgeFade` follows fog; lamps going out at night can read as the world going out. Record it if it recurs.
+3. **Banding on lit walls** in the lantern room (Varrock, about 3199,3390, dump `lantern1`). Not diagnosed. The volume is
+   16-bit, so it isn't that format's precision.
+4. **Possibly two lamps on one spot** at that lantern. Unproven. `lights.json` lists 260 object ids more than once, and
+   `PointLight.dropDoubles` only catches the same place, radius and colour.
+5. **Lantern wedge** is fixed where lamp order caused it. fps1 and lantern1 still read high in the shuffled-order sweep.
+6. **Interior brightness** still follows time of day (0.40 at night, about 1.13 with the sun at 45 degrees). The user wants
+   one value and hasn't picked it. The sky-openness fade is gone (`7b407a66`, not seen in the client yet); watch for a hard
+   edge at doors.
+7. Light volume costs: teleports about 250 ms and first loads about 350 ms slower than today; the walking pop still shows
+   in the lighting view; doors and roofs miss the 1 ms client rule, as every method does. Fog with moving lamps is untested.
+   Only one Apple GPU has run any of this.
+
+### Lessons from tonight
+- **The bench lies about motion.** Its lamps never flicker, its list doesn't grow a few a frame, and its zones can't move.
+  Most "fixed on the bench" claims failed in game. Test on a dump from the client, compare against that dump's
+  `reference.png`, and don't call anything fixed until it has run in the client.
+- Weather and light bugs that last a few frames need a recording: `screencapture -v -V 45 -x -R 520,30,1120,970 file.mov`,
+  then `df` for per-frame change and `ex` for frames. This is how the door's 16-frame snow flash was caught.
+- A watcher must run for the whole client session. A crash came two minutes after a 20-second check passed.
+- Sending a message to a running workflow agent starts a second copy on the same worktree. Stop the workflow first.
+
+### Rules that hold
+- The user's scoring order: performance (GPU and CPU alike), no visible artifacts, fog and particle compliance, then no
+  light across walls, terrain or roofs. Soft is preferred over sharp. Leak isn't the primary score.
+- A client restart needs the user's yes for that build. Never move the camera or leave the clock frozen. One client at a
+  time, run from the detached worktree `~/Code/runelight-perfwip-run`.
+- Bench before client, shown as full-screen before, after and diff. Nothing temporal; MSAA is the only anti-aliasing.
+  Windows and Linux count; don't rewrite saved settings from one GPU's limits. No new settings without asking.
+- Change only what was asked, relay the user's exact words, and answer a question with evidence, not a change.
+
 # Lumen — the old RuneLight renderer as the base (branch `lumen`, from `perf-wip` + the reference tools)
 
 Decided 2026-10-30, evening. The look of `perf-wip` (its shading, sky, fog, tuning) is the base and is kept; the
