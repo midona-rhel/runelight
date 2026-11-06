@@ -16,6 +16,8 @@ uniform sampler3D lampVolumeA;
 uniform vec4 lampVolumeShown[8];
 // per level the world place its H is relative to
 uniform vec4 lampVolumeOrigin[4];
+// what a point of this scene is in the scene the volume shows, while a walking swap's new volume is made: the old one stays up, moved with the world
+uniform vec3 lampVolumeShift;
 uniform vec4 lampVolumeFar;    // world x, z of the far window's corner, w: any lamp on a hidden storey
 uniform vec2 lampVolumeGainAt; // the flicker map's world corner
 // the lamps that move: 2 vec4 each, x y z reach (under 0: lights no surface), r g b
@@ -66,7 +68,7 @@ float lampVolumeShare(vec3 w, int level, float fade) {
 
 // The flicker at world point w: a factor on what the volume holds, from the map in a layer of A (LampVolume.updateGain)
 float lampVolumeGain(vec3 w) {
-  vec2 c = clamp((w.xz - lampVolumeGainAt) / LAMP_VOLUME_GAIN_CELL, vec2(0.5), vec2(LAMP_VOLUME_GAIN_SIZE - 0.5)) / LAMP_VOLUME_SIZE;
+  vec2 c = clamp((w.xz + lampVolumeShift.xz - lampVolumeGainAt) / LAMP_VOLUME_GAIN_CELL, vec2(0.5), vec2(LAMP_VOLUME_GAIN_SIZE - 0.5)) / LAMP_VOLUME_SIZE;
   return 1.0 + textureLod(lampVolumeA, vec3(c, (LAMP_VOLUME_GAIN_AT + 0.5) / LAMP_VOLUME_DEPTH), 0.0).r;
 }
 
@@ -125,8 +127,9 @@ LampVolumeRead lampVolumeFarRead(vec3 w, vec3 faceN) {
 }
 
 // The volume at world point w, off a surface along faceN (zero in the air): the finest level there is, hands over between them.
-LampVolumeRead lampVolumeRead(vec3 w, vec3 faceN) {
+LampVolumeRead lampVolumeRead(vec3 world, vec3 faceN) {
   LampVolumeRead r;
+  vec3 w = world + lampVolumeShift;
   float fine = lampVolumeShare(w, 0, LAMP_VOLUME_FADE_FINE);
   if (fine >= 1.0) {
     r = lampVolumeWalled(w, faceN, 0, LAMP_VOLUME_FINE);
@@ -152,8 +155,10 @@ LampVolumeRead lampVolumeRead(vec3 w, vec3 faceN) {
       r = lampVolumeMix(r, lampVolumeWalled(w, faceN, 0, LAMP_VOLUME_FINE), fine);
     }
   }
+  r.h -= r.g * lampVolumeShift;
+  r.at -= lampVolumeShift;
   if (r.g > 0.0) {
-    float gain = lampVolumeGain(w);
+    float gain = lampVolumeGain(world);
     r.light *= gain;
     r.h *= gain;
     r.g *= gain;
@@ -164,7 +169,8 @@ LampVolumeRead lampVolumeRead(vec3 w, vec3 faceN) {
 // The lamps' light in the air at world point w, for the fog: its own field, on the mid level's cells, each lamp times what the fog is at that lamp
 // (LampVolume.addLamp), lamps on storeys the client hides too. Divided by the air, so a filtered read takes only free cells, and fades out in cells
 // that are nearly all solid.
-vec3 lampVolumeAir(vec3 w) {
+vec3 lampVolumeAir(vec3 world) {
+  vec3 w = world + lampVolumeShift;
   float share = lampVolumeShare(w, 2, LAMP_VOLUME_FADE_MID);
   if (share <= 0.0) {
     return vec3(0.0);
@@ -196,7 +202,8 @@ float lampVolumeOnSurface(LampVolumeRead r, vec3 w, vec3 n, out float ndl, out v
 
 // How open the line from a to b is, through the volume's air: 0 past anything solid. Steps of a cell of the finest level that fits it into
 // twelve (LampVolume.java, math.md 12): a flat solid layer has a step within half a cell of it.
-float lampVolumeLine(vec3 a, vec3 b) {
+float lampVolumeLine(vec3 from, vec3 to) {
+  vec3 a = from + lampVolumeShift, b = to + lampVolumeShift;
   vec3 d = b - a;
   float len = length(d);
   int level = len <= 12.0 * LAMP_VOLUME_FINE && lampVolumeShare(a, 0, 1.0) >= 1.0 ? 0

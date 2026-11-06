@@ -274,6 +274,15 @@ public final class LampVolume
 		boolean joined, handEnd;
 	}
 
+	// a walking swap: what's shown stays in texA, moved by shift in the shaders, frozen as it was, while the new scene's volume is made in texBack; they
+	// change places when all of it is there, so a lamp in both scenes neither goes out nor changes (results2.md)
+	private int texBack;
+	private boolean frozen;
+	private int builtBaseX, builtBaseY, frontBaseX, frontBaseY;
+	private boolean baseKnown;
+	private final float[] shift = new float[3], frontShown = new float[LEVELS * 8], frontOrigin = new float[LEVELS * 4], frontFar = new float[4], frontGainAt = new float[2];
+	public volatile int atkFlips;
+	public static volatile float atkShiftX;
 	private int texA, fboBlend, programBlend, vaoBlend, uniBlendShift;
 	// per level, world x, y, z: the window the worker sums for, and what the texture holds (null: nothing)
 	private final int[][] window = new int[LEVELS][3];
@@ -389,6 +398,14 @@ public final class LampVolume
 		if (texA != 0)
 		{
 			glDeleteTextures(texA);
+			if (texBack != 0)
+			{
+				glDeleteTextures(texBack);
+				texBack = 0;
+			}
+			frozen = false;
+			baseKnown = false;
+			Arrays.fill(shift, 0);
 			glDeleteProgram(programBlend);
 			glDeleteVertexArrays(vaoBlend);
 			glDeleteFramebuffers(fboBlend);
@@ -431,22 +448,62 @@ public final class LampVolume
 	/** Per level, its shown rectangle: min then max, vec4s. */
 	public float[] shown()
 	{
-		return shown;
+		return frozen ? frontShown : shown;
 	}
 
 	public float[] origins()
 	{
-		return origin;
+		return frozen ? frontOrigin : origin;
 	}
 
 	public float[] farInfo()
 	{
-		return farInfo;
+		return frozen ? frontFar : farInfo;
 	}
 
 	public float[] gainAt()
 	{
-		return gainAt;
+		return frozen ? frontGainAt : gainAt;
+	}
+
+	public float[] shift()
+	{
+		return shift;
+	}
+
+	// the back texture, made the first time it's needed
+	private void allocateBack()
+	{
+		if (texBack != 0)
+		{
+			return;
+		}
+		texBack = glGenTextures();
+		glBindTexture(GL_TEXTURE_3D, texBack);
+		glTexImage3D(GL_TEXTURE_3D, 0, GL_RGBA16F, SIZE, SIZE, DEPTH_ALL, 0, GL_RGBA, GL_HALF_FLOAT, (ShortBuffer) null);
+		glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+		glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+		glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_WRAP_S, GL_REPEAT);
+		glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_WRAP_T, GL_REPEAT);
+		glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_WRAP_R, GL_CLAMP_TO_EDGE);
+		glBindTexture(GL_TEXTURE_3D, 0);
+	}
+
+	private void readBase(LuminaPlugin plugin)
+	{
+		try
+		{
+			net.runelite.api.WorldView wv = plugin.client.getTopLevelWorldView();
+			builtBaseX = wv.getBaseX();
+			builtBaseY = wv.getBaseY();
+			baseKnown = true;
+		}
+		catch (RuntimeException e)
+		{
+			// the bench's fakes
+			builtBaseX = builtBaseY = 0;
+			baseKnown = true;
+		}
 	}
 
 	public float[] movers()
@@ -764,7 +821,7 @@ public final class LampVolume
 			windowMoved = false;
 		}
 		// a level's origin when nothing is on its way: boxes sent after this are summed from the new one
-		if (windowSet && !pending && queue.isEmpty())
+		if (windowSet && !pending && queue.isEmpty() && !frozen)
 		{
 			rebase(focusX, ground, focusZ);
 		}
@@ -1086,7 +1143,7 @@ public final class LampVolume
 	// stops them for those few frames: the line test has no air to read.
 	private void nearestWhileDark(LuminaPlugin plugin, List<PointLight> lights, LightClusters clusters)
 	{
-		if (benchSync || data[L_FAR] != null || lights.isEmpty())
+		if (benchSync || data[L_FAR] != null || lights.isEmpty() || frozen)
 		{
 			return;
 		}
@@ -1199,6 +1256,10 @@ public final class LampVolume
 	// enough for every frame: a lamp touches a few cells.
 	private void updateGain()
 	{
+		if (frozen)
+		{
+			return;
+		}
 		boolean any = false;
 		for (Lamp l : lamps.values())
 		{
@@ -1323,6 +1384,8 @@ public final class LampVolume
 	// stragglers still aren't a new scene of their own
 	private static final int HOLD_STILL = 6;
 	private static final long HOLD_NANOS = 5_000_000_000L;
+	// how far a scene's base can go and still be a walk: a scene is 104 tiles, a region's edge moves it about 40
+	private static final int WALK_TILES = 64;
 	// a change of this many zones is a scene load: a door is a few
 	private static final int SCENE_ZONES = 64;
 	private boolean holding;
@@ -1350,6 +1413,22 @@ public final class LampVolume
 			sceneFrom = System.nanoTime();
 			fixtures.clear();
 			fixtureKeys.clear();
+			// a walk over a region's edge: the world is where it was, by what the scene's base moved. Far away, a teleport: nothing of it is any use
+			boolean shownNow = frozen || sentAll && data[L_FAR] != null;
+			readBase(plugin);
+			int dx = builtBaseX - frontBaseX, dz = builtBaseY - frontBaseY;
+			boolean walking = !first && shownNow && Math.abs(dx) <= WALK_TILES && Math.abs(dz) <= WALK_TILES;
+			if (walking && !frozen)
+			{
+				allocateBack();
+				System.arraycopy(shown, 0, frontShown, 0, shown.length);
+				System.arraycopy(origin, 0, frontOrigin, 0, origin.length);
+				System.arraycopy(farInfo, 0, frontFar, 0, farInfo.length);
+				System.arraycopy(gainAt, 0, frontGainAt, 0, gainAt.length);
+			}
+			frozen = walking;
+			shift[0] = walking ? dx * 128f + atkShiftX : 0;
+			shift[2] = walking ? dz * 128f : 0;
 			// what was on its way to the old scene stays out
 			queue.clear();
 			while (!flips.isEmpty())
@@ -1376,6 +1455,7 @@ public final class LampVolume
 		if (n > 0 && stillFrames >= HOLD_STILL && !placing || System.nanoTime() - sceneFrom > HOLD_NANOS)
 		{
 			holding = false;
+			readBase(plugin);
 			sceneHeld = System.nanoTime();
 			return false;
 		}
@@ -1500,7 +1580,7 @@ public final class LampVolume
 			long t0 = System.nanoTime();
 			int sent = 0;
 			++sceneFrames;
-			glBindTexture(GL_TEXTURE_3D, texA);
+			glBindTexture(GL_TEXTURE_3D, frozen ? texBack : texA);
 			glPixelStorei(GL_UNPACK_ALIGNMENT, 2);
 			if (SEND_PBO)
 			{
@@ -1554,6 +1634,20 @@ public final class LampVolume
 			{
 				data[i] = nextWindow[i].clone();
 				glide(i, rectOf(data[i], i), units);
+			}
+			if (frozen)
+			{
+				int t = texA;
+				texA = texBack;
+				texBack = t;
+				frozen = false;
+				Arrays.fill(shift, 0);
+				++atkFlips;
+			}
+			if (baseKnown)
+			{
+				frontBaseX = builtBaseX;
+				frontBaseY = builtBaseY;
 			}
 			for (Lamp l : arriving)
 			{

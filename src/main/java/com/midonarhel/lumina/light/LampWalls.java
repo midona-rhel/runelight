@@ -449,7 +449,7 @@ public final class LampWalls
 	/** What a program that reads the lamps needs besides the light buffers: the walls' header and ease. */
 	public static final class Uniforms
 	{
-		private int header = -1, ease = -1, shown = -1, origin = -1, far = -1, gainAt = -1, volumeA = -1, moverCount = -1, movers = -1;
+		private int header = -1, ease = -1, shown = -1, origin = -1, shift = -1, far = -1, gainAt = -1, volumeA = -1, moverCount = -1, movers = -1;
 
 		public void locate(int program)
 		{
@@ -457,6 +457,7 @@ public final class LampWalls
 			ease = glGetUniformLocation(program, "lampWallsEase");
 			shown = glGetUniformLocation(program, "lampVolumeShown");
 			origin = glGetUniformLocation(program, "lampVolumeOrigin");
+			shift = glGetUniformLocation(program, "lampVolumeShift");
 			far = glGetUniformLocation(program, "lampVolumeFar");
 			gainAt = glGetUniformLocation(program, "lampVolumeGainAt");
 			volumeA = glGetUniformLocation(program, "lampVolumeA");
@@ -489,6 +490,10 @@ public final class LampWalls
 				if (origin >= 0)
 				{
 					glUniform4fv(origin, v.origins());
+				}
+				if (shift >= 0)
+				{
+					glUniform3fv(shift, v.shift());
 				}
 				if (far >= 0)
 				{
