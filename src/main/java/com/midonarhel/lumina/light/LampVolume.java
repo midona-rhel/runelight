@@ -277,10 +277,11 @@ public final class LampVolume
 			showWindows();
 		}
 		LuminaPlugin.SceneContext ctx = plugin.root;
-		if (ctx == null || ctx.zones == null || ctx.hideRoofIds == null)
+		if (ctx == null || ctx.zones == null)
 		{
 			return;
 		}
+		Set<Integer> hide = ctx.hideRoofIds != null ? ctx.hideRoofIds : Set.of();
 		// the lamps
 		boolean strengths = false;
 		boolean moved = false;
@@ -393,7 +394,7 @@ public final class LampVolume
 			}
 		}
 		boolean shownChanged = ctx.minLevel != minLevel || ctx.level != level || ctx.maxLevel != maxLevel
-			|| !ctx.hideRoofIds.equals(hidden);
+			|| !hide.equals(hidden);
 		boolean easing = false;
 		for (Lamp l : lamps.values())
 		{
@@ -424,7 +425,7 @@ public final class LampVolume
 		minLevel = ctx.minLevel;
 		level = ctx.level;
 		maxLevel = ctx.maxLevel;
-		hidden = new HashSet<>(ctx.hideRoofIds);
+		hidden = new HashSet<>(hide);
 		j.minLevel = minLevel;
 		j.level = level;
 		j.maxLevel = maxLevel;
