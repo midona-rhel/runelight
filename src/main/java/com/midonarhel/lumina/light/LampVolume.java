@@ -66,12 +66,10 @@ public final class LampVolume
 	private static final float NOOK = prop("volNook", 1 / 32f);
 	// how far short of a lamp's reach its light ends in the far level
 	private static final float FAR_RIM = prop("volFarRim", 64f);
-	// how much lower the ground stops light than it is drawn
-	private static final float LOWER = prop("volLower", 32f);
 	// how far above the ground under the player the finest level starts (y is down)
 	private static final int FINE_ABOVE = 640;
 	// how many steps of a ray that leaves a surface pass the cells that only touch it
-	private static final int CRUST = (int) prop("volCrust", 2);
+	private static final int CRUST = (int) prop("volCrust", 3);
 	// the near window follows the player in steps of this many cells
 	private static final int STEP_CELLS = 16;
 	// what the render thread sends a frame
@@ -1211,18 +1209,6 @@ public final class LampVolume
 		return false;
 	}
 
-	private static boolean onTileCorners(float[] v)
-	{
-		for (int k = 0; k < 9; k += 3)
-		{
-			if (Math.floorMod((int) v[k], 128) != 0 || Math.floorMod((int) v[k + 2], 128) != 0)
-			{
-				return false;
-			}
-		}
-		return true;
-	}
-
 	// from and to are places in the stream, as a zone's ranges have them
 	private static void cells(int[] t, int from, int to, int baseX, int baseZ, Segment seg, float[] v, boolean[] taken, float[] points)
 	{
@@ -1264,16 +1250,6 @@ public final class LampVolume
 			if (nx * nx + ny * ny + nz * nz < 1e-4f || onLamp(v, points))
 			{
 				continue;
-			}
-			// The ground lies a little lower than it is drawn. Its stairs of cells rise above it, and light grazing a slope would stop on them.
-			// A straight line between two points above the ground doesn't go under a wall that stands on it.
-			if (seg.level == 0 && LOWER > 0 && onTileCorners(v))
-			{
-				v[1] += LOWER;
-				v[4] += LOWER;
-				v[7] += LOWER;
-				minY += LOWER;
-				maxY += LOWER;
 			}
 			int x0 = Math.max(0, Math.floorDiv((int) Math.floor(minX) - GRID_X, FINE)), x1 = Math.min(CHUNK * CHUNKS - 1, Math.floorDiv((int) Math.floor(maxX) - GRID_X, FINE));
 			int z0 = Math.max(0, Math.floorDiv((int) Math.floor(minZ) - GRID_X, FINE)), z1 = Math.min(CHUNK * CHUNKS - 1, Math.floorDiv((int) Math.floor(maxZ) - GRID_X, FINE));
