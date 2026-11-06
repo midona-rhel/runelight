@@ -155,9 +155,6 @@ float upsampleAoFog(ivec2 px, float z, vec3 n, out vec4 fog, out float shadow, o
 
 // the color of a room's fill, linear, of luminance 1 (BuildingLights.FILL_TINT)
 uniform vec3 interiorTint;
-// sky visibility at which a spot counts as fully indoors, and as not indoors at all
-#define INTERIOR_SKY_CLOSED 0.1
-#define INTERIOR_SKY_OPEN 0.4
 
 // The sky this pixel would show if nothing stood in front of it, in sRGB: what the world melts into at its edge.
 vec3 skyBehind(vec2 px, vec3 dir, vec3 fogColor, bool sunAndSky) {
@@ -417,10 +414,7 @@ vec4 shadeScene(ivec2 px, SceneSample sm, vec4 transparent) {
     // not its lamps), spread flat and directionless over the whole room like ambient, darkened by AO as the ambient is.
     int roomId = roomOfSurface(p + cameraPos, n);
     if (roomId > 0) {
-      // how closed in the spot is: a room with its roof hidden still counts, a covered gateway open at both ends
-      // doesn't, and the fill fades out toward a room's doorways and open sides instead of ending at its tiles' edge
-      float enclosed = skylightOn == 1 ? 1.0 - smoothstep(INTERIOR_SKY_CLOSED, INTERIOR_SKY_OPEN, skyUpsampled) : 1.0;
-      light += interiorTint * roomFillLevel(roomId) * enclosed * ao;
+      light += interiorTint * roomFillLevel(roomId) * ao;
     }
     if (transmissive > 0.0) {
       // light through the leaf isn't occluded by the creases SSAO sees on its front
