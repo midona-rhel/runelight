@@ -545,6 +545,13 @@ public final class LampVolume
 		{
 			endHandOvers();
 		}
+		// the list holds a lamp and what it takes off at the place it left; past that it shows what the volume doesn't hold
+		int leavingPlaces = 0;
+		for (Lamp l : lamps.values())
+		{
+			leavingPlaces += l.out && l.shownSteps > 0 ? 1 : 0;
+		}
+		boolean subtract = moverList.size() + newcomers.size() + leavingPlaces <= MOVERS;
 		List<Lamp> handed = new ArrayList<>();
 		float handBytes = 0;
 		for (PointLight p : newcomers)
@@ -608,7 +615,7 @@ public final class LampVolume
 			}
 			else if (!newScene)
 			{
-				mover(p, clusters, 1, left != null);
+				mover(p, clusters, left != null && !subtract ? rest(left) : 1, left != null);
 			}
 		}
 		if (idle && !newScene)
@@ -617,7 +624,7 @@ public final class LampVolume
 		}
 		for (Lamp l : lamps.values())
 		{
-			if (l.out && l.shownSteps > 0)
+			if (subtract && l.out && l.shownSteps > 0)
 			{
 				float r = l.hidden ? -l.r : l.r, share = -l.shownSteps / (float) HAND_STEPS;
 				moverList.add(new float[]{l.x, l.y, l.z, r, l.fr * share, l.fg * share, l.fb * share, (l.fr + l.fg + l.fb) * l.r});
