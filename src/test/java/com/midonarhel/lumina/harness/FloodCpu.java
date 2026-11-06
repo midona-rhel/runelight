@@ -62,8 +62,12 @@ public final class FloodCpu
 		LampVolume v = new LampVolume();
 		long t0 = System.nanoTime();
 		v.offline(zones, LuminaPlugin.SCENE_OFFSET >> 3, p.minLevel, p.level, p.maxLevel, p.hiddenRoofs, lamps, m.focalX, m.focalZ, ground);
-		System.out.printf("%s: voxels and floods %.0f ms%n", name, (System.nanoTime() - t0) / 1e6);
+		System.out.printf("%s: voxels and floods %.0f ms: %s%n", name, (System.nanoTime() - t0) / 1e6, LampVolume.lastJob);
 		float cell = LampVolume.CELL, fineCell = LampVolume.FINE;
+		if (System.getenv("LUMINA_FAR") != null)
+		{
+			System.out.println(v.offlineFar(Integer.parseInt(System.getenv("LUMINA_FAR"))));
+		}
 		if (System.getenv("LUMINA_SLICE") != null)
 		{
 			for (String at : System.getenv("LUMINA_SLICE").split(";"))

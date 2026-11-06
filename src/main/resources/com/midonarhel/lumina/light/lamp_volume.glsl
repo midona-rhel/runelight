@@ -7,7 +7,7 @@
 // cells, and two free cells that share a corner are on the same side of every surface. A solid cell's trace of air and light is
 // for a read with no free cell in reach: a surface in a nook.
 //
-// A: rgb the light (colour times falloff times visibility, summed); a the air. B: rgb H, the sum of g P, a G, the sum of g, for
+// A: rgb the light (colour times falloff times visibility, summed); a the air (far level: the luminance that may fall on surfaces). B: rgb H, the sum of g P, a G, the sum of g, for
 // g the luminance over the distance. F(p) = H - G p is the irradiance vector at any point p: N.L is taken at the shading point.
 
 // one texture, the composite's sixteen samplers being spent: A in the first half of its depth, B in the second
@@ -116,9 +116,12 @@ LampVolumeRead lampVolumeRead(vec3 w, vec3 faceN) {
       vec3 q = w + faceN * (0.5 * LAMP_VOLUME_FAR_CELL);
       vec3 c = lampVolumeFarAt(q);
       vec4 a = textureLod(lampVolumeA, c, 0.0);
-      if (dot(a.rgb, vec3(1.0)) > 0.0) {
+      // alpha is the share of its luminance that may fall on a surface
+      float lum = dot(a.rgb, vec3(0.2126, 0.7152, 0.0722));
+      if (a.a > 0.0 && lum > 0.0) {
         vec4 b = textureLod(lampVolumeA, c + LAMP_VOLUME_B, 0.0);
-        r = LampVolumeRead(a.rgb, b.rgb, b.a, q);
+        float share = min(a.a / lum, 1.0);
+        r = LampVolumeRead(a.rgb * share, b.rgb * share, b.a * share, q);
       }
       if (near > 0.0) {
         r = lampVolumeMix(r, lampVolumeWalled(w, faceN, false), near);

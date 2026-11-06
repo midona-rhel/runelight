@@ -64,10 +64,14 @@ public final class LampVolume
 	// A solid read cell with free fine cells holds what those see, at this share of a free cell's air: nothing to a read that has a free
 	// cell, all there is to one that hasn't, a surface in a nook no free cell reaches
 	private static final float NOOK = prop("volNook", 1 / 32f);
+	// how far short of a lamp's reach its light ends in the far level
+	private static final float FAR_RIM = prop("volFarRim", 64f);
 	// how much lower the ground stops light than it is drawn
 	private static final float LOWER = prop("volLower", 32f);
 	// how far above the ground under the player the finest level starts (y is down)
 	private static final int FINE_ABOVE = 640;
+	// how many steps of a ray that leaves a surface pass the cells that only touch it
+	private static final int CRUST = (int) prop("volCrust", 2);
 	// the near window follows the player in steps of this many cells
 	private static final int STEP_CELLS = 16;
 	// what the render thread sends a frame
@@ -154,6 +158,8 @@ public final class LampVolume
 
 	private int texA;
 	private final float[] fine0 = new float[4], near = new float[4], far = new float[4], origin = new float[4];
+	private final float[] shownFine = new float[4], shownNear = new float[4], shownFar = new float[4], shownOrigin = new float[4];
+	private boolean windowsWait;
 	private static LampVolume current;
 
 	private final Map<Long, Lamp> lamps = new HashMap<>();
@@ -230,22 +236,22 @@ public final class LampVolume
 
 	public float[] fineWindow()
 	{
-		return fine0;
+		return shownFine;
 	}
 
 	public float[] nearWindow()
 	{
-		return near;
+		return shownNear;
 	}
 
 	public float[] farWindow()
 	{
-		return far;
+		return shownFar;
 	}
 
 	public float[] origin()
 	{
-		return origin;
+		return shownOrigin;
 	}
 
 	/**
@@ -270,6 +276,7 @@ public final class LampVolume
 			{
 				drain(Integer.MAX_VALUE);
 			}
+			showWindows();
 		}
 		LuminaPlugin.SceneContext ctx = plugin.root;
 		if (ctx == null || ctx.zones == null || ctx.hideRoofIds == null)
@@ -357,7 +364,7 @@ public final class LampVolume
 		int ffz = Math.floorDiv((int) plugin.edgeFade.focalZ - SIZE * FINE / 2, stepUnits) * stepUnits;
 		int wy = windowY, fy = farY, ffy = fineY;
 		float ground = playerY(plugin);
-		if (windowX == Integer.MIN_VALUE || Math.abs(ground - windowGround) > 128)
+		if (windowX == Integer.MIN_VALUE || Math.abs(ground - windowGround) > 256)
 		{
 			windowGround = ground;
 			wy = Math.floorDiv(Math.round(ground) - 1100, CELL) * CELL;
@@ -524,6 +531,20 @@ public final class LampVolume
 		origin[0] = originX;
 		origin[1] = originY;
 		origin[2] = originZ;
+		windowsWait = true;
+	}
+
+	// The shaders see a window's new place when all that comes into it is sent: until then they read what they read
+	private void showWindows()
+	{
+		if (windowsWait && queue.isEmpty())
+		{
+			windowsWait = false;
+			System.arraycopy(fine0, 0, shownFine, 0, 4);
+			System.arraycopy(near, 0, shownNear, 0, 4);
+			System.arraycopy(far, 0, shownFar, 0, 4);
+			System.arraycopy(origin, 0, shownOrigin, 0, 4);
+		}
 	}
 
 	// what the worker finished, oldest first, up to this many bytes
@@ -531,8 +552,11 @@ public final class LampVolume
 	{
 		if (queue.isEmpty())
 		{
+			showWindows();
 			return;
 		}
+		long t0 = System.nanoTime();
+		int sent = 0;
 		glBindTexture(GL_TEXTURE_3D, texA);
 		glPixelStorei(GL_UNPACK_ALIGNMENT, 2);
 		while (bytes > 0 && !queue.isEmpty())
@@ -541,12 +565,18 @@ public final class LampVolume
 			send(u, u.a, 0);
 			send(u, u.b, LAYERS);
 			bytes -= (u.a.length + u.b.length) * 2;
+			sent += (u.a.length + u.b.length) * 2;
 		}
 		glPixelStorei(GL_UNPACK_ROW_LENGTH, 0);
 		glPixelStorei(GL_UNPACK_IMAGE_HEIGHT, 0);
 		glPixelStorei(GL_UNPACK_SKIP_PIXELS, 0);
 		glPixelStorei(GL_UNPACK_SKIP_ROWS, 0);
 		glBindTexture(GL_TEXTURE_3D, 0);
+		showWindows();
+		if (System.getenv("LUMINA_VOL_LOG") != null)
+		{
+			System.out.printf("lamp volume: sent %d kB in %.2f ms%n", sent / 1024, (System.nanoTime() - t0) / 1e6);
+		}
 	}
 
 	// A box, split where it wraps round the texture
@@ -1377,7 +1407,7 @@ public final class LampVolume
 	{
 		float[] v = new float[1 << 16];
 		boolean[] solid = new boolean[1 << 16];
-		float[] sum = new float[1 << 14];
+		float[] sum = new float[1 << 14], rayed = new float[1 << 14];
 		short[] count = new short[1 << 14], trace = new short[1 << 14];
 	}
 
@@ -1665,6 +1695,13 @@ public final class LampVolume
 			pts[k * 3 + 1] = cy + dy * far;
 			pts[k * 3 + 2] = cz + dz * far;
 		}
+		float[] rayed = sc.rayed;
+		if (rayed.length < cells)
+		{
+			rayed = sc.rayed = new float[cells];
+		}
+		Arrays.fill(rayed, 0, cells, -1);
+		int stepZ = w, stepY = w * w;
 		int i = 0;
 		for (int y = 0; y < w; ++y)
 		{
@@ -1673,22 +1710,64 @@ public final class LampVolume
 				for (int x = 0; x < w; ++x, ++i)
 				{
 					float o = v[i];
-					if (o > 0 && o < 1 && !solid[i])
+					if (solid[i] || o >= 1 || x == 0 || y == 0 || z == 0 || x == w - 1 || y == w - 1 || z == w - 1)
 					{
-						int seen = 0;
-						for (int k = 0; k < RAYS; ++k)
+						continue;
+					}
+					// the way out of the crust of cells a surface here has: from what is solid round it to what is free
+					float ax = 0, ay = 0, az = 0;
+					boolean crust = false, lit = o > 0;
+					for (int dy = -1, at = i - stepY - stepZ - 1; dy <= 1; ++dy, at += stepY - 3 * stepZ)
+					{
+						for (int dz = -1; dz <= 1; ++dz, at += stepZ - 3)
 						{
-							if (free(solid, w, x + 0.5f, y + 0.5f, z + 0.5f, pts[k * 3], pts[k * 3 + 1], pts[k * 3 + 2], cx, cy, cz, seed))
+							for (int dx = -1; dx <= 1; ++dx, ++at)
 							{
-								++seen;
+								if (solid[at])
+								{
+									crust = true;
+									ax -= dx;
+									ay -= dy;
+									az -= dz;
+								}
+								else if (v0(v, at, i))
+								{
+									lit = true;
+								}
 							}
 						}
-						// a value never written back as a fraction of a shell's front: the flood is done
-						v[i] = seen / (float) RAYS;
 					}
+					if (!lit)
+					{
+						continue;
+					}
+					int seen = 0;
+					for (int k = 0; k < RAYS; ++k)
+					{
+						float dx = pts[k * 3] - x - 0.5f, dy = pts[k * 3 + 1] - y - 0.5f, dz = pts[k * 3 + 2] - z - 0.5f;
+						// a ray that leaves a surface passes the cells that only touch it
+						int skip = crust && dx * ax + dy * ay + dz * az > 0 ? CRUST : 0;
+						if (free(solid, w, x + 0.5f, y + 0.5f, z + 0.5f, pts[k * 3], pts[k * 3 + 1], pts[k * 3 + 2], cx, cy, cz, seed, skip))
+						{
+							++seen;
+						}
+					}
+					rayed[i] = seen / (float) RAYS;
 				}
 			}
 		}
+		for (i = 0; i < cells; ++i)
+		{
+			if (rayed[i] >= 0)
+			{
+				v[i] = rayed[i];
+			}
+		}
+	}
+
+	private static boolean v0(float[] v, int at, int centre)
+	{
+		return at != centre && v[at] > 0;
 	}
 
 	private static int cellAt(float x, float y, float z, int w)
@@ -1698,7 +1777,7 @@ public final class LampVolume
 	}
 
 	// whether a cell's centre sees a point of the ball; within the seed of the lamp's centre nothing stops it
-	private static boolean free(boolean[] solid, int w, float x0, float y0, float z0, float x1, float y1, float z1, float cx, float cy, float cz, float seed)
+	private static boolean free(boolean[] solid, int w, float x0, float y0, float z0, float x1, float y1, float z1, float cx, float cy, float cz, float seed, int skip)
 	{
 		float dx = x1 - x0, dy = y1 - y0, dz = z1 - z0;
 		float big = Math.max(Math.abs(dx), Math.max(Math.abs(dy), Math.abs(dz)));
@@ -1716,7 +1795,7 @@ public final class LampVolume
 			y += sy;
 			z += sz;
 			int ix = (int) x, iy = (int) y, iz = (int) z;
-			if (ix >= 0 && iy >= 0 && iz >= 0 && ix < w && iy < w && iz < w && solid[(iy * w + iz) * w + ix])
+			if (i > skip && ix >= 0 && iy >= 0 && iz >= 0 && ix < w && iy < w && iz < w && solid[(iy * w + iz) * w + ix])
 			{
 				float ax = x - cx, ay = y - cy, az = z - cz;
 				if (ax * ax + ay * ay + az * az > s2)
@@ -1782,7 +1861,7 @@ public final class LampVolume
 			{
 				continue;
 			}
-			addLamp(l, f, box, l.fineVis, l.fineBefore, l.fx, l.fy, l.fz, l.fw, l.fw, l.fw, ox + box[0], oy + box[1], oz + box[2], 1, now, FINE, 0.5f, 0.5f, false);
+			addLamp(l, f, box, l.fineVis, l.fineBefore, l.fx, l.fy, l.fz, l.fw, l.fw, l.fw, ox + box[0], oy + box[1], oz + box[2], 1, now, FINE, 0.5f, 0.5f, false, 0);
 		}
 		Upload u = upload(box, Math.floorMod(Math.floorDiv(fineX, FINE) + box[0], SIZE), box[1], Math.floorMod(Math.floorDiv(fineZ, FINE) + box[2], SIZE));
 		short one = half(1), nook = half(NOOK);
@@ -1844,7 +1923,7 @@ public final class LampVolume
 			{
 				continue;
 			}
-			addLamp(l, f, box, l.vis, l.before, l.bx, l.by, l.bz, l.bw, l.bh, l.bd, ox + box[0], oy + box[1], oz + box[2], 1, now, CELL, 0, 0.5f - 0.5f * Y_SHIFT, false);
+			addLamp(l, f, box, l.vis, l.before, l.bx, l.by, l.bz, l.bw, l.bh, l.bd, ox + box[0], oy + box[1], oz + box[2], 1, now, CELL, 0, 0.5f - 0.5f * Y_SHIFT, false, 0);
 		}
 		// where the world cell is in the toroidal level
 		Upload u = upload(box, Math.floorMod(Math.floorDiv(windowX, CELL) + box[0], SIZE), box[1] + NEAR_AT, Math.floorMod(Math.floorDiv(windowZ, CELL) + box[2], SIZE));
@@ -1879,16 +1958,15 @@ public final class LampVolume
 		{
 			if (l.vis != null && l.nr + l.ng + l.nb > 0)
 			{
-				// a lamp on a storey the client hides has no vector: it glows in the air and falls on no surface
-				addLamp(l, f, box, l.vis, l.before, l.bx, l.by, l.bz, l.bw, l.bh, l.bd, (ox + box[0]) * r, (oy + box[1]) * r, (ox + box[2]) * r, r, now, CELL, 0, 0.5f - 0.5f * Y_SHIFT, l.hidden);
+				// a lamp on a storey the client hides glows in the air and falls on no surface: alpha is what may
+				addLamp(l, f, box, l.vis, l.before, l.bx, l.by, l.bz, l.bw, l.bh, l.bd, (ox + box[0]) * r, (oy + box[1]) * r, (ox + box[2]) * r, r, now, CELL, 0, 0.5f - 0.5f * Y_SHIFT, l.hidden, FAR_RIM);
 			}
 		}
 		Upload u = upload(box, box[0], box[1] + FAR_AT, box[2]);
-		short one = half(1);
 		float scale = 1f / (r * r * r);
 		for (int i = 0; i < cells; ++i)
 		{
-			write(u, i, f, scale, one);
+			write(u, i, f, scale, half(f[i * 8 + 7] * scale));
 		}
 		return u;
 	}
@@ -1896,17 +1974,19 @@ public final class LampVolume
 	// Adds a lamp into a box of 8 floats a cell, from a grid of its visibility at gx, gy, gz of gw x gh x gd cells: from grid cell (cx, cy, cz) on,
 	// r grid cells to a box cell. A grid cell's centre is at (i + shift) * size from the grid's corner.
 	private void addLamp(Lamp l, float[] f, int[] box, byte[] vis, byte[] before, int gx, int gy, int gz, int gw, int gh, int gd, int cx, int cy, int cz, int r, long now,
-		float size, float shift, float shiftY, boolean noVector)
+		float size, float shift, float shiftY, boolean noSurface, float rim)
 	{
 		int w = box[3], h = box[4], d = box[5];
 		int x0 = Math.max(cx, gx), y0 = Math.max(cy, gy), z0 = Math.max(cz, gz);
 		int x1 = Math.min(cx + w * r, gx + gw), y1 = Math.min(cy + h * r, gy + gh), z1 = Math.min(cz + d * r, gz + gd);
-		float r2 = l.r * l.r, ir = 1 / l.r;
+		// a level's cells blur a lamp's edge past its reach: a coarse one's falloff ends this much short of it
+		float reach = l.r - rim;
+		float r2 = reach * reach, ir = 1 / reach;
 		float lum = 0.2126f * l.nr + 0.7152f * l.ng + 0.0722f * l.nb;
 		float px = l.x - originX, py = l.y - originY, pz = l.z - originZ;
 		float ease = before == null || before.length != vis.length ? 1 : Math.min(1, (now - l.easeFrom) / (float) EASE_NANOS);
 		ease = ease * ease * (3 - 2 * ease);
-		float vector = noVector ? 0 : 1;
+		float onSurface = noSurface ? 0 : 1;
 		for (int y = y0; y < y1; ++y)
 		{
 			float wy = (y + shiftY) * size + GRID_Y - l.y;
@@ -1942,11 +2022,12 @@ public final class LampVolume
 					f[c] += l.nr * v;
 					f[c + 1] += l.ng * v;
 					f[c + 2] += l.nb * v;
-					float g = vector * lum * v / Math.max(dist, 16);
+					float g = lum * v / Math.max(dist, 16);
 					f[c + 3] += g * px;
 					f[c + 4] += g * py;
 					f[c + 5] += g * pz;
 					f[c + 6] += g;
+					f[c + 7] += onSurface * lum * v;
 				}
 			}
 		}
@@ -2014,7 +2095,9 @@ public final class LampVolume
 				tasks.add(() -> built.put(zoneKey(z.x, z.z), voxelize(triangles(z.vertsO, z.vertsO.length), z.levelOffsets, z.rids, z.roofStart, z.roofEnd, z.x, z.z, points)));
 			}
 		}
+		long t0 = System.nanoTime();
 		parallel(tasks);
+		long t1 = System.nanoTime();
 		zones.putAll(built);
 		for (ZoneCells c : zones.values())
 		{
@@ -2024,13 +2107,27 @@ public final class LampVolume
 			}
 		}
 		rebuildBits();
+		long t2 = System.nanoTime();
 		tasks.clear();
 		final ThreadLocal<Scratch> scratch = ThreadLocal.withInitial(Scratch::new);
+		final java.util.concurrent.atomic.AtomicLong each = new java.util.concurrent.atomic.AtomicLong();
 		for (Lamp l : lamps.values())
 		{
-			tasks.add(() -> flood(l, scratch.get()));
+			tasks.add(() ->
+			{
+				long s = System.nanoTime();
+				flood(l, scratch.get());
+				each.addAndGet(System.nanoTime() - s);
+			});
 		}
 		parallel(tasks);
+		long t3 = System.nanoTime();
+		long heap = 0;
+		for (Lamp l : lamps.values())
+		{
+			heap += l.vis.length + l.fineVis.length;
+		}
+		lastJob = String.format("voxelize wall %.0f ms, bits %.0f ms, flood wall %.0f ms, cpu %.0f ms, lamp grids %.1f MB", (t1 - t0) / 1e6, (t2 - t1) / 1e6, (t3 - t2) / 1e6, each.get() / 1e6, heap / 1e6);
 	}
 
 	String line(float x0, float y0, float z0, float x1, float y1, float z1)
@@ -2157,6 +2254,33 @@ public final class LampVolume
 		}
 		AIR.get()[0] = air;
 		return sum / air;
+	}
+
+	/** The far level's light along a line through lamp i, against its falloff. */
+	public String offlineFar(int i)
+	{
+		Lamp l = lamps.get((long) i);
+		l.nr = l.ng = l.nb = 1;
+		farY = Math.floorDiv(Math.round(l.y) - 1500, FAR_CELL) * FAR_CELL;
+		int r = FAR_CELL / CELL, ox = Math.floorDiv(FAR_X - GRID_X, FAR_CELL), oy = Math.floorDiv(farY - GRID_Y, FAR_CELL);
+		int[] box = {0, 0, 0, SIZE, FAR_Y, SIZE};
+		float[] f = new float[SIZE * FAR_Y * SIZE * 8];
+		addLamp(l, f, box, l.vis, null, l.bx, l.by, l.bz, l.bw, l.bh, l.bd, ox * r, oy * r, ox * r, r, 0, CELL, 0, 0.5f - 0.5f * Y_SHIFT, false, FAR_RIM);
+		StringBuilder o = new StringBuilder("far lamp " + i + " r " + l.r + "\n");
+		int cy = Math.floorDiv((int) l.y - GRID_Y, FAR_CELL) - oy, cz = Math.floorDiv((int) l.z - GRID_X, FAR_CELL) - ox;
+		for (int y = cy - 3; y <= cy + 3; ++y)
+		{
+			o.append("y ").append(y - cy).append(':');
+			for (int x = Math.floorDiv((int) l.x - GRID_X, FAR_CELL) - ox - 12; x <= Math.floorDiv((int) l.x - GRID_X, FAR_CELL) - ox + 12; ++x)
+			{
+				if (y >= 0 && y < FAR_Y && x >= 0 && x < SIZE)
+				{
+					o.append(String.format(" %.2f", f[((y * SIZE + cz) * SIZE + x) * 8] / (r * r * r)));
+				}
+			}
+			o.append('\n');
+		}
+		return o.toString();
 	}
 
 	/** The same from the finest level. */
