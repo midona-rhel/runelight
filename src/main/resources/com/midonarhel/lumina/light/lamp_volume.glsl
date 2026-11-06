@@ -140,6 +140,26 @@ LampVolumeRead lampVolumeRead(vec3 w, vec3 faceN) {
   return r;
 }
 
+// The lamps' light in the air at world point w, for the fog: the near level, with its walls, in its window, the far level past it. The near
+// level has no lamp on a storey the client hides, and the air is lit by those too: the far level's share of them, a step in four, for four steps.
+vec3 lampVolumeAir(vec3 w, int step) {
+  float near = lampVolumeShare(w, lampVolumeNear, LAMP_VOLUME_CELL, LAMP_VOLUME_NEAR_Y, LAMP_VOLUME_FADE);
+  vec3 c = vec3(0.0);
+  if (near > 0.0) {
+    c = textureLod(lampVolumeA, lampVolumeNearAt(w), 0.0).rgb * near;
+  }
+  if (near < 1.0) {
+    c += textureLod(lampVolumeA, lampVolumeFarAt(w), 0.0).rgb * (1.0 - near);
+  } else if (lampVolumeFar.w > 0.0 && (step & 3) == 0) {
+    vec4 f = textureLod(lampVolumeA, lampVolumeFarAt(w), 0.0);
+    float lum = dot(f.rgb, vec3(0.2126, 0.7152, 0.0722));
+    if (lum > 0.0) {
+      c += f.rgb * (4.0 * max(1.0 - f.a / lum, 0.0));
+    }
+  }
+  return c;
+}
+
 // What a surface at world point w, with smooth normal n, takes from a read: light, the lamps' sum, times how much of it falls on
 // the surface (out: the cosine for any transmission, and the direction the light comes from).
 float lampVolumeOnSurface(LampVolumeRead r, vec3 w, vec3 n, out float ndl, out vec3 ld) {

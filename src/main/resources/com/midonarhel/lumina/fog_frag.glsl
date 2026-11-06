@@ -237,7 +237,7 @@ vec3 lampGlow(ivec2 px, vec3 dir, float tEnd, float density, float jitter) {
   float at = 0.0, weight = 0.0;
   for (int i = 0; i < steps; ++i) {
     float t = t0 + (float(i) + jitter) * dt;
-    vec3 c = textureLod(lampVolumeA, lampVolumeFarAt(cameraPos + dir * t), 0.0).rgb;
+    vec3 c = lampVolumeAir(cameraPos + dir * t, i);
     float l = c.r + c.g + c.b;
     sum += c;
     at += l * t;

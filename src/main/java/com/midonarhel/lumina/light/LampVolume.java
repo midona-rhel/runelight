@@ -159,7 +159,7 @@ public final class LampVolume
 	private int texA;
 	private final float[] fine0 = new float[4], near = new float[4], far = new float[4], origin = new float[4];
 	private final float[] shownFine = new float[4], shownNear = new float[4], shownFar = new float[4], shownOrigin = new float[4];
-	private boolean windowsWait;
+	private boolean windowsWait, anyHidden;
 	private static LampVolume current;
 
 	private final Map<Long, Lamp> lamps = new HashMap<>();
@@ -345,6 +345,11 @@ public final class LampVolume
 			strengths |= l.nr != l.cr || l.ng != l.cg || l.nb != l.cb;
 		}
 		anyLit = lit;
+		anyHidden = false;
+		for (Lamp l : lamps.values())
+		{
+			anyHidden |= l.hidden && l.seen;
+		}
 		updateGain();
 		List<Lamp> gone = new ArrayList<>();
 		for (Iterator<Lamp> it = lamps.values().iterator(); it.hasNext(); )
@@ -527,7 +532,7 @@ public final class LampVolume
 		far[0] = FAR_X;
 		far[1] = FAR_X;
 		far[2] = farY;
-		far[3] = 1;
+		far[3] = anyHidden ? 1 : 0;
 		origin[0] = originX;
 		origin[1] = originY;
 		origin[2] = originZ;
@@ -537,6 +542,7 @@ public final class LampVolume
 	// The shaders see a window's new place when all that comes into it is sent: until then they read what they read
 	private void showWindows()
 	{
+		shownFar[3] = anyHidden ? 1 : 0;
 		if (windowsWait && queue.isEmpty())
 		{
 			windowsWait = false;
