@@ -363,6 +363,36 @@ public class SceneLights
 		}
 	}
 
+	/** Whether the scene's objects are still being found and placed: the list of lamps isn't all there yet. */
+	public boolean placing()
+	{
+		return jobQueued || scanPlane >= 0 || !pending.isEmpty();
+	}
+
+	/**
+	 * Where every light placed in the scene is, in reach or not, on at this hour or not: x y z ox oz each. What the lamps' volume leaves out of what
+	 * stops them, near a lamp, is its fixture, and that mustn't depend on which lamps are listed when a zone is looked at.
+	 */
+	public float[] fixtures()
+	{
+		List<Placed> all = new ArrayList<>(worldLights);
+		for (TrackedObject o : objects.values())
+		{
+			all.addAll(o.lights);
+		}
+		float[] f = new float[all.size() * 5];
+		int k = 0;
+		for (Placed p : all)
+		{
+			f[k++] = p.x;
+			f[k++] = p.y;
+			f[k++] = p.z;
+			f[k++] = p.ox;
+			f[k++] = p.oz;
+		}
+		return f;
+	}
+
 	/** The queue the lights are placed from (null: at once, in the event, as for tests). */
 	public void setJobs(SceneJobs jobs)
 	{

@@ -262,6 +262,8 @@ public final class LampVolume
 	{
 		int[] triangles;
 		Segment[] segments;
+		// how much of the fixtures' list this was made with
+		int points;
 	}
 
 	private static final class Upload
@@ -487,7 +489,7 @@ public final class LampVolume
 		// a new scene's lamps come over many frames, its scene job's: one job takes them all (hold)
 		if (idle && !benchSync)
 		{
-			idle = !hold(ctx, lights);
+			idle = !hold(plugin, ctx, lights);
 		}
 		// the lamps
 		boolean strengths = false;
@@ -783,6 +785,7 @@ public final class LampVolume
 		}
 		Job j = new Job();
 		j.ctx = ctx;
+		j.points = fixturePoints(plugin);
 		jobContext = ctx;
 		j.added = added;
 		j.gone = gone;
@@ -837,6 +840,38 @@ public final class LampVolume
 
 	private final int[][] nextWindow = new int[LEVELS][3];
 	private LuminaPlugin.SceneContext jobContext;
+	// Every lamp's place this scene has had, x y z ox oz, from the scene's placed lights and the lamps listed: a triangle wholly near one is that lamp's
+	// fixture, whenever its zone is looked at and whichever lamps are listed then. They only grow within a scene, so a lamp that leaves and comes back
+	// finds its fixture as it left it.
+	private final java.util.ArrayList<float[]> fixtures = new java.util.ArrayList<>();
+	private final Set<Long> fixtureKeys = new HashSet<>();
+
+	private void fixture(float x, float y, float z, float ox, float oz)
+	{
+		if (fixtureKeys.add((long) Float.floatToIntBits(x) * 31 + (long) Float.floatToIntBits(y) * 17 << 20 ^ Float.floatToIntBits(z) ^ (long) Float.floatToIntBits(ox) << 9 ^ (long) Float.floatToIntBits(oz) << 3))
+		{
+			fixtures.add(new float[]{x, y, z, ox, oz});
+		}
+	}
+
+	private float[] fixturePoints(LuminaPlugin plugin)
+	{
+		float[] placed = plugin.sceneLights != null ? plugin.sceneLights.fixtures() : new float[0];
+		for (int i = 0; i + 4 < placed.length; i += 5)
+		{
+			fixture(placed[i], placed[i + 1], placed[i + 2], placed[i + 3], placed[i + 4]);
+		}
+		for (Lamp l : lamps.values())
+		{
+			fixture(l.x, l.y, l.z, l.ox, l.oz);
+		}
+		float[] f = new float[fixtures.size() * 5];
+		for (int i = 0; i < fixtures.size(); ++i)
+		{
+			System.arraycopy(fixtures.get(i), 0, f, i * 5, 5);
+		}
+		return f;
+	}
 
 	private static long key(PointLight p)
 	{
@@ -1255,7 +1290,8 @@ public final class LampVolume
 
 	// How many frames a new scene's list has to stand still before its lamps go in, the most a scene can make them wait, and how long after it
 	// stragglers still aren't a new scene of their own
-	private static final int HOLD_STILL = 6, HOLD_MOST = 120, HOLD_AFTER = 240;
+	private static final int HOLD_STILL = 6, HOLD_AFTER = 240;
+	private static final long HOLD_NANOS = 5_000_000_000L;
 	// a change of this many zones is a scene load: a door is a few
 	private static final int SCENE_ZONES = 64;
 	private boolean holding;
@@ -1269,7 +1305,7 @@ public final class LampVolume
 	// frame). A job per few lamps sums a box for each lamp, each more than a tile's worth of megabytes at a walking pace's send: seconds, 3.3 to 3.9 on fps1,
 	// and any twelve of them count as a new scene and put out what is lit. So what's shown goes out now, the lamps wait until the list stands, and
 	// they all go in one job with a load's send, as if they had come in a frame.
-	private boolean hold(LuminaPlugin.SceneContext ctx, List<PointLight> lights)
+	private boolean hold(LuminaPlugin plugin, LuminaPlugin.SceneContext ctx, List<PointLight> lights)
 	{
 		if (!holding)
 		{
@@ -1282,6 +1318,8 @@ public final class LampVolume
 			heldFrames = stillFrames = 0;
 			heldLamps = -1;
 			sceneFrom = System.nanoTime();
+			fixtures.clear();
+			fixtureKeys.clear();
 			// what was on its way to the old scene stays out
 			queue.clear();
 			while (!flips.isEmpty())
@@ -1303,7 +1341,9 @@ public final class LampVolume
 		int n = lights.size();
 		stillFrames = n == heldLamps ? stillFrames + 1 : 0;
 		heldLamps = n;
-		if (n > 0 && stillFrames >= HOLD_STILL || heldFrames >= HOLD_MOST)
+		// the world lights come first and the list can stand for frames before the objects': the client's log has 5 of 449 lamps taken for all of them
+		boolean placing = plugin.sceneLights != null && plugin.sceneLights.placing();
+		if (n > 0 && stillFrames >= HOLD_STILL && !placing || System.nanoTime() - sceneFrom > HOLD_NANOS)
 		{
 			holding = false;
 			heldTo = frame;
@@ -1621,6 +1661,7 @@ public final class LampVolume
 		int minLevel, level, maxLevel;
 		Set<Integer> hidden;
 		long now;
+		float[] points;
 
 		@Override
 		public void run()
@@ -1679,18 +1720,6 @@ public final class LampVolume
 				}
 			}
 			final Map<Long, ZoneCells> built = new java.util.concurrent.ConcurrentHashMap<>();
-			final float[] points = new float[lamps.size() * 5];
-			{
-				int k = 0;
-				for (Lamp l : lamps.values())
-				{
-					points[k++] = l.x;
-					points[k++] = l.y;
-					points[k++] = l.z;
-					points[k++] = l.ox;
-					points[k++] = l.oz;
-				}
-			}
 			for (int x = 0; x < ctx.zones.length; ++x)
 			{
 				for (int z = 0; z < ctx.zones[0].length; ++z)
@@ -1703,7 +1732,7 @@ public final class LampVolume
 					{
 						continue;
 					}
-					if (needed.contains(key) && (old == null || old.triangles != now.lampTriangles))
+					if (needed.contains(key) && (old == null || old.triangles != now.lampTriangles || fixtureCame(old, x, z, points)))
 					{
 						tasks.add(() ->
 						{
@@ -2276,6 +2305,22 @@ public final class LampVolume
 
 	// A zone's opaque triangles, as what stops light: by Zone.pushLevels's ranges, each run of them its own cells. Emissive faces out,
 	// as the shadow pass leaves them out, and swaying foliage.
+	// whether a place in the list came after this zone was looked at, near enough for a fixture of it to be in the zone
+	private static boolean fixtureCame(ZoneCells c, int zx, int zz, float[] points)
+	{
+		int offset = LuminaPlugin.SCENE_OFFSET >> 3;
+		float x0 = ((zx - offset) << 10) - FIXTURE, z0 = ((zz - offset) << 10) - FIXTURE, x1 = x0 + 1024 + 2 * FIXTURE, z1 = z0 + 1024 + 2 * FIXTURE;
+		for (int i = c.points; i + 4 < points.length; i += 5)
+		{
+			float x = points[i], z = points[i + 2], ox = points[i + 3], oz = points[i + 4];
+			if (x > x0 && x < x1 && z > z0 && z < z1 || ox > x0 && ox < x1 && oz > z0 && oz < z1)
+			{
+				return true;
+			}
+		}
+		return false;
+	}
+
 	private ZoneCells voxelize(Zone zone, int zx, int zz, float[] allPoints)
 	{
 		return voxelize(zone.lampTriangles, zone.levelOffsets, zone.rids, zone.roofStart, zone.roofEnd, zx, zz, allPoints);
@@ -2285,6 +2330,7 @@ public final class LampVolume
 	{
 		ZoneCells out = new ZoneCells();
 		out.triangles = t;
+		out.points = allPoints.length;
 		if (t == null)
 		{
 			out.segments = new Segment[0];
