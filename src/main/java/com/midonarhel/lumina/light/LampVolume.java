@@ -18,6 +18,8 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import org.lwjgl.BufferUtils;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import static org.lwjgl.opengl.GL33C.*;
 
 /**
@@ -49,6 +51,7 @@ import static org.lwjgl.opengl.GL33C.*;
  */
 public final class LampVolume
 {
+	private static final Logger log = LoggerFactory.getLogger(LampVolume.class);
 	public static final int FINE = 16, CELL = 32, MID_CELL = 64, FAR_CELL = 128;
 	public static final int SIZE = 160, FINE_Y = 48, NEAR_Y = 48, MID_Y = 40, FAR_Y = 24;
 	private static final int L_FINE = 0, L_NEAR = 1, L_MID = 2, L_FAR = 3, LEVELS = 4, WALLED = 3;
@@ -143,12 +146,28 @@ public final class LampVolume
 	}
 
 	public volatile int atkJobs;
+	// the bench: faults kept from the game so far; a number of jobs to fail on purpose
+	public volatile int atkFailures, atkFailNext;
 	public long atkUpdateNanos, atkSentBytes;
 
 	public void update(LuminaPlugin plugin, List<PointLight> lights, LampWalls walls, LightClusters clusters)
 	{
+		if (stopped)
+		{
+			return;
+		}
 		long t0 = System.nanoTime();
-		update0(plugin, lights, walls, clusters);
+		try
+		{
+			update0(plugin, lights, walls, clusters);
+		}
+		catch (RuntimeException e)
+		{
+			// the frame goes on with what the volume holds: lights are not worth a game
+			++atkFailures;
+			stopped = ++frameFaults >= MAX_TRIES;
+			log.error("Lamp volume: the frame's update failed ({} of {}), the lamps stay as they are", frameFaults, MAX_TRIES, e);
+		}
 		atkUpdateNanos = System.nanoTime() - t0;
 	}
 
@@ -183,6 +202,8 @@ public final class LampVolume
 	{
 		byte[] vis, before, old;
 		int x, y, z, w, h, d;
+		// where old lay
+		int oldX, oldY, oldZ, oldW, oldH, oldD;
 		// the box, in this grid, x0 y0 z0 x1 y1 z1, that a flood changed: null for all of it
 		int[] change;
 	}
@@ -285,6 +306,14 @@ public final class LampVolume
 	private float windowGround;
 	private ShortBuffer stage;
 	private boolean anyLit;
+	// A job that fails leaves what it was doing half done, on a worker: the volume keeps showing what it holds, every lamp floods again and everything is
+	// summed again, at once, then after a wait, and past MAX_TRIES not until the next scene. Lamps the job brought show what the moving list can show.
+	private static final int MAX_TRIES = 3;
+	private static final long[] TRY_AFTER = {0, 1_000_000_000L, 4_000_000_000L};
+	private int tries, frameFaults;
+	private long retryAt;
+	private boolean retryAll, stopped;
+	private LuminaPlugin.SceneContext gaveUpOn;
 	private boolean gainSent;
 	private final float[] gainW = new float[GAIN_SIZE * GAIN_SIZE], gainG = new float[GAIN_SIZE * GAIN_SIZE];
 	private final ShortBuffer gainStage = BufferUtils.createShortBuffer(GAIN_SIZE * GAIN_SIZE * 4);
@@ -369,6 +398,12 @@ public final class LampVolume
 		arriving.clear();
 		flips.clear();
 		jobHanded = new ArrayList<>();
+		tries = frameFaults = 0;
+		holding = false;
+		heldTo = 0;
+		retryAt = 0;
+		retryAll = stopped = false;
+		gaveUpOn = null;
 		Arrays.fill(data, null);
 		Arrays.fill(fine, null);
 		Arrays.fill(coarse, null);
@@ -438,7 +473,12 @@ public final class LampVolume
 			}
 		}
 		LuminaPlugin.SceneContext ctx = plugin.root;
-		idle &= ctx != null && ctx.zones != null;
+		idle &= ctx != null && ctx.zones != null && ctx.zones.length > 0 && nanos - retryAt >= 0 && ctx != gaveUpOn;
+		// a new scene's lamps come over many frames, its scene job's: one job takes them all (hold)
+		if (idle && !benchSync)
+		{
+			idle = !hold(ctx, lights);
+		}
 		// the lamps
 		boolean strengths = false;
 		List<Lamp> added = new ArrayList<>();
@@ -544,7 +584,7 @@ public final class LampVolume
 			{
 				fixed += p.bakeSlot >= 0 && !moved.containsKey(p) && !movedHere(p, gone) ? 1 : 0;
 			}
-			newScene = fixed >= SCENE_LAMPS;
+			newScene = fixed >= SCENE_LAMPS && frame - heldTo > HOLD_AFTER;
 		}
 		if (idle && newScene)
 		{
@@ -714,7 +754,7 @@ public final class LampVolume
 		{
 			for (int z = 0; z < zz; ++z)
 			{
-				if (seen[x][z] != ctx.zones[x][z].lampTriangles)
+				if (ctx.zones[x][z] != null && seen[x][z] != ctx.zones[x][z].lampTriangles)
 				{
 					changedZones.add(new int[]{x, z});
 				}
@@ -727,12 +767,13 @@ public final class LampVolume
 		{
 			easing |= l.grid[L_NEAR].before != null;
 		}
-		if (added.isEmpty() && gone.isEmpty() && !strengths && !windowMoved && changedZones.isEmpty() && !shownChanged && !easing)
+		if (added.isEmpty() && gone.isEmpty() && !strengths && !windowMoved && changedZones.isEmpty() && !shownChanged && !easing && !retryAll)
 		{
 			return;
 		}
 		Job j = new Job();
 		j.ctx = ctx;
+		jobContext = ctx;
 		j.added = added;
 		j.gone = gone;
 		j.changedZones = changedZones;
@@ -785,6 +826,7 @@ public final class LampVolume
 	}
 
 	private final int[][] nextWindow = new int[LEVELS][3];
+	private LuminaPlugin.SceneContext jobContext;
 
 	private static long key(PointLight p)
 	{
@@ -1148,12 +1190,19 @@ public final class LampVolume
 		try
 		{
 			job.get();
+			tries = 0;
+			retryAll = false;
 		}
 		catch (Exception e)
 		{
-			throw new IllegalStateException(e);
+			jobFailed(e);
 		}
 		job = null;
+		if (sceneHeld != 0 && sceneJob == 0)
+		{
+			sceneJob = System.nanoTime();
+			sceneFrames = 0;
+		}
 		List<Upload> list = done;
 		done = null;
 		if (list != null)
@@ -1175,6 +1224,123 @@ public final class LampVolume
 		arriving.addAll(jobArriving);
 		jobArriving.clear();
 		pending = true;
+	}
+
+	// How many frames a new scene's list has to stand still before its lamps go in, the most a scene can make them wait, and how long after it
+	// stragglers still aren't a new scene of their own
+	private static final int HOLD_STILL = 6, HOLD_MOST = 120, HOLD_AFTER = 240;
+	// a change of this many zones is a scene load: a door is a few
+	private static final int SCENE_ZONES = 64;
+	private boolean holding;
+	private int heldFrames, stillFrames, heldLamps;
+	private long heldTo;
+	// for the log: when a scene's lamps began to be waited for, and when they stopped; when its job ended, and the frames its send took
+	private long sceneFrom, sceneHeld, sceneJob;
+	private int sceneFrames;
+
+	// True while a new scene's lamps are still coming. The list is a few lamps longer each frame of the scene job (a client's load, not the bench's one
+	// frame). A job per few lamps sums a box for each lamp, each more than a tile's worth of megabytes at a walking pace's send: seconds, 3.3 to 3.9 on fps1,
+	// and any twelve of them count as a new scene and put out what is lit. So what's shown goes out now, the lamps wait until the list stands, and
+	// they all go in one job with a load's send, as if they had come in a frame.
+	private boolean hold(LuminaPlugin.SceneContext ctx, List<PointLight> lights)
+	{
+		if (!holding)
+		{
+			boolean first = !sentAll && lamps.isEmpty();
+			if (!first && !newZones(ctx))
+			{
+				return false;
+			}
+			holding = true;
+			heldFrames = stillFrames = 0;
+			heldLamps = -1;
+			sceneFrom = System.nanoTime();
+			// what was on its way to the old scene stays out
+			queue.clear();
+			while (!flips.isEmpty())
+			{
+				land(flips.poll());
+			}
+			pending = false;
+			arriving.clear();
+			leaving.clear();
+			endHandOvers();
+			sentAll = false;
+			Arrays.fill(data, null);
+			for (int i = 0; i < LEVELS; ++i)
+			{
+				emptyShown(i);
+			}
+		}
+		++heldFrames;
+		int n = lights.size();
+		stillFrames = n == heldLamps ? stillFrames + 1 : 0;
+		heldLamps = n;
+		if (n > 0 && stillFrames >= HOLD_STILL || heldFrames >= HOLD_MOST)
+		{
+			holding = false;
+			heldTo = frame;
+			sceneHeld = System.nanoTime();
+			return false;
+		}
+		return true;
+	}
+
+	private boolean newZones(LuminaPlugin.SceneContext ctx)
+	{
+		if (seen == null || seen.length != ctx.zones.length || seen[0].length != ctx.zones[0].length)
+		{
+			return seen != null;
+		}
+		int n = 0;
+		for (int x = 0; x < ctx.zones.length; ++x)
+		{
+			for (int z = 0; z < ctx.zones[0].length; ++z)
+			{
+				n += ctx.zones[x][z] != null && seen[x][z] != ctx.zones[x][z].lampTriangles ? 1 : 0;
+			}
+		}
+		return n >= SCENE_ZONES;
+	}
+
+	// nothing of the job lands; next, everything from the start, the worker's half-done state with it
+	private void jobFailed(Exception e)
+	{
+		++atkFailures;
+		done = null;
+		queue.clear();
+		boolean last = ++tries >= MAX_TRIES;
+		log.error(last ? "Lamp volume: a job failed for the last time ({} of {}): the lamps stay as they are until the next scene"
+			: "Lamp volume: a job failed ({} of {}): the lamps stay as they are and it goes again", tries, MAX_TRIES, e);
+		if (last)
+		{
+			gaveUpOn = jobContext;
+			tries = 0;
+		}
+		else
+		{
+			retryAt = System.nanoTime() + TRY_AFTER[tries - 1];
+		}
+		retryAll = true;
+		seen = null;
+		// the windows stay where the texture has them: a move the job didn't send isn't shown
+		for (int i = 0; i < LEVELS; ++i)
+		{
+			if (data[i] != null)
+			{
+				System.arraycopy(data[i], 0, nextWindow[i], 0, 3);
+				System.arraycopy(data[i], 0, window[i], 0, 3);
+			}
+		}
+		for (Lamp l : lamps.values())
+		{
+			l.flood = true;
+			for (Grid g : l.grid)
+			{
+				g.old = g.before = null;
+				g.change = null;
+			}
+		}
 	}
 
 	private void emptyShown(int i)
@@ -1237,6 +1403,7 @@ public final class LampVolume
 		{
 			long t0 = System.nanoTime();
 			int sent = 0;
+			++sceneFrames;
 			glBindTexture(GL_TEXTURE_3D, texA);
 			glPixelStorei(GL_UNPACK_ALIGNMENT, 2);
 			boolean joined = false;
@@ -1254,7 +1421,7 @@ public final class LampVolume
 					bytes -= u.fog.length * 2;
 					sent += u.fog.length * 2;
 				}
-				if (u.handEnd)
+				if (u.handEnd && !flips.isEmpty())
 				{
 					land(flips.poll());
 				}
@@ -1287,6 +1454,13 @@ public final class LampVolume
 			}
 			arriving.clear();
 			leaving.clear();
+			if (sceneJob != 0)
+			{
+				long at = System.nanoTime();
+				log.info("Lamp volume: {} lamps lit {} ms after the scene began: the list {} ms, the job {} ms ({}), the send {} ms over {} frames", lamps.size(), (at - sceneFrom) / 1_000_000,
+					(sceneHeld - sceneFrom) / 1_000_000, (sceneJob - sceneHeld) / 1_000_000, lastJob, (at - sceneJob) / 1_000_000, sceneFrames);
+				sceneFrom = sceneHeld = sceneJob = 0;
+			}
 		}
 	}
 
@@ -1417,7 +1591,12 @@ public final class LampVolume
 		private void work()
 		{
 			long t0 = System.nanoTime();
-			boolean everything = !sentAll;
+			if (atkFailNext > 0)
+			{
+				--atkFailNext;
+				throw new IllegalStateException("the bench failed this job");
+			}
+			boolean everything = !sentAll || retryAll;
 			int[][] from = new int[LEVELS][];
 			for (int i = 0; i < LEVELS; ++i)
 			{
@@ -1470,6 +1649,10 @@ public final class LampVolume
 					long key = zoneKey(x, z);
 					ZoneCells old = zones.get(key);
 					Zone now = ctx.zones[x][z];
+					if (now == null)
+					{
+						continue;
+					}
 					if (needed.contains(key) && (old == null || old.triangles != now.lampTriangles))
 					{
 						tasks.add(() ->
@@ -1534,6 +1717,7 @@ public final class LampVolume
 				else if (l.grid[L_FINE].vis != null && !nearFine(l, 2 * FINE_MARGIN))
 				{
 					l.grid[L_FINE].vis = null;
+					l.grid[L_FINE].before = null;
 					l.grid[L_FINE].w = l.grid[L_FINE].h = l.grid[L_FINE].d = 0;
 				}
 				if (l.flood || touched && lightsAny(l, altered))
@@ -1550,11 +1734,17 @@ public final class LampVolume
 					for (Grid g : l.grid)
 					{
 						g.old = g.vis;
+						g.oldX = g.x;
+						g.oldY = g.y;
+						g.oldZ = g.z;
+						g.oldW = g.w;
+						g.oldH = g.h;
+						g.oldD = g.d;
 					}
 					flood(l, scratch.get());
 					for (Grid g : l.grid)
 					{
-						g.change = g.old == null ? null : changedBox(g.vis, g.old, g.w, g.h, g.d);
+						g.change = change(g);
 					}
 				});
 			}
@@ -1574,7 +1764,7 @@ public final class LampVolume
 				{
 					it.remove();
 				}
-				else if (!fresh && sentAll && easing <= EASE_LAMPS)
+				else if (!fresh && sentAll && easing <= EASE_LAMPS && sameCells(l))
 				{
 					for (Grid g : l.grid)
 					{
@@ -1642,6 +1832,20 @@ public final class LampVolume
 						for (int i = 0; i < LEVELS; ++i)
 						{
 							slices(to.get(i), box(l, i));
+						}
+					}
+					// lamps' boxes overlap: past a level's size it's less to send it whole
+					for (int i = 0; i < LEVELS; ++i)
+					{
+						long cells = 0;
+						for (int[] b : boxes.get(i))
+						{
+							cells += (long) b[3] * b[4] * b[5];
+						}
+						if (cells > (long) SIZE * SIZE * DEPTH[i])
+						{
+							boxes.get(i).clear();
+							whole(boxes.get(i), i);
 						}
 					}
 				}
@@ -1912,6 +2116,35 @@ public final class LampVolume
 			}
 		}
 		return Arrays.copyOf(all, m);
+	}
+
+	// What a flood changed in a grid. A lamp the fine window has left floods at the near level's size, so its fine grid can be gone, and its grids
+	// can lie differently from the last flood's: then there's no comparing them, and all of it counts as changed.
+	private static int[] change(Grid g)
+	{
+		if (g.old == null || g.vis == null)
+		{
+			return null;
+		}
+		return sameCells(g) ? changedBox(g.vis, g.old, g.w, g.h, g.d) : new int[]{0, 0, 0, g.w, g.h, g.d};
+	}
+
+	private static boolean sameCells(Grid g)
+	{
+		return g.old != null && g.vis != null && g.x == g.oldX && g.y == g.oldY && g.z == g.oldZ && g.w == g.oldW && g.h == g.oldH && g.d == g.oldD;
+	}
+
+	// an ease goes cell by cell from the old grid: all of them there in the same place, or none
+	private static boolean sameCells(Lamp l)
+	{
+		for (Grid g : l.grid)
+		{
+			if ((g.old != null || g.vis != null) && !sameCells(g))
+			{
+				return false;
+			}
+		}
+		return true;
 	}
 
 	// where two grids of the same size differ, x0 y0 z0 x1 y1 z1; null if nowhere
