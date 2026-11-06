@@ -1,9 +1,11 @@
 // The lamps' volume (light/LampVolume.java, occlusion/flood-volume/math.md): the sum of every lamp's light, which went round
 // everything solid before it was summed. Everything lit by lamps reads this: one or two filtered fetches, however many lamps.
 //
-// Near level: cells of LAMP_VOLUME_CELL. A cell a surface passes through holds nothing and has air 0 (a), and every field is
-// held times the air, so dividing a filtered read by its air takes only free cells, and two free cells that share a corner
-// are on the same side of every surface. Far level: LAMP_VOLUME_FAR_CELL, all air, past the near window and for the fog.
+// Three levels, toroidal but the last: fine cells of LAMP_VOLUME_FINE round the player, near of LAMP_VOLUME_CELL further out, far of
+// LAMP_VOLUME_FAR_CELL over the scene, with no walls in it, for the fog and past the near window. In the first two a cell a surface
+// passes through holds next to no air (a) and every field is held times the air, so dividing a filtered read by its air takes only free
+// cells, and two free cells that share a corner are on the same side of every surface. A solid cell's trace of air and light is
+// for a read with no free cell in reach: a surface in a nook.
 //
 // A: rgb the light (colour times falloff times visibility, summed); a the air. B: rgb H, the sum of g P, a G, the sum of g, for
 // g the luminance over the distance. F(p) = H - G p is the irradiance vector at any point p: N.L is taken at the shading point.
@@ -11,33 +13,44 @@
 // one texture, the composite's sixteen samplers being spent: A in the first half of its depth, B in the second
 uniform sampler3D lampVolumeA;
 #define LAMP_VOLUME_B vec3(0.0, 0.0, 0.5)
-uniform vec4 lampVolumeNear;   // world x, z, y of the near window's corner; w 0 for no volume yet
+uniform vec4 lampVolumeFine;   // world x, z, y of the fine window's corner
+uniform vec4 lampVolumeNear;   // the same of the near window's; w 0 for no volume yet
 uniform vec4 lampVolumeFar;    // the same of the far window's
 uniform vec4 lampVolumeOrigin; // the world place H's lamps are relative to
 
-// the share of the window, at its edge, that hands over to the far level
+// the share of a window, at its edge, that hands over to the next level
 #define LAMP_VOLUME_FADE 512.0
+#define LAMP_VOLUME_FADE_FINE 192.0
+// less air than this in a read and a surface looks further off for more
+#define LAMP_VOLUME_FEW 0.06
+
+vec3 lampVolumeFineAt(vec3 w) {
+  // a fine cell's edges are on multiples of its size, so a wall on a tile's edge takes the layers either side of it
+  vec3 c = vec3(w.x, w.z, w.y - lampVolumeFine.z) / LAMP_VOLUME_FINE;
+  c.z = clamp(c.z, 0.5, LAMP_VOLUME_FINE_Y - 0.5);
+  return c / vec3(LAMP_VOLUME_SIZE, LAMP_VOLUME_SIZE, 2.0 * LAMP_VOLUME_LAYERS);
+}
 
 vec3 lampVolumeNearAt(vec3 w) {
   // toroidal in x and z: a world cell's place modulo the size; the far level's place is relative to its window
   // a cell is centred on a multiple of LAMP_VOLUME_CELL in x and z: a tile's edge, a wall, runs down the middle of one layer of them
   vec3 c = vec3(w.x, w.z, w.y - lampVolumeNear.z) / LAMP_VOLUME_CELL + vec3(0.5, 0.5, LAMP_VOLUME_Y_SHIFT);
-  c.z = clamp(c.z, 0.5, LAMP_VOLUME_NEAR_Y - 0.5);
+  c.z = clamp(c.z, 0.5, LAMP_VOLUME_NEAR_Y - 0.5) + LAMP_VOLUME_NEAR_AT;
   return c / vec3(LAMP_VOLUME_SIZE, LAMP_VOLUME_SIZE, 2.0 * LAMP_VOLUME_LAYERS);
 }
 
 vec3 lampVolumeFarAt(vec3 w) {
   vec3 c = (w.xzy - lampVolumeFar.xyz + vec3(0.5, 0.5, LAMP_VOLUME_Y_SHIFT) * LAMP_VOLUME_CELL) / LAMP_VOLUME_FAR_CELL;
   c.xy = clamp(c.xy, vec2(0.5), vec2(LAMP_VOLUME_SIZE - 0.5));
-  c.z = clamp(c.z, 0.5, LAMP_VOLUME_FAR_Y - 0.5) + LAMP_VOLUME_NEAR_Y + LAMP_VOLUME_GUTTER;
+  c.z = clamp(c.z, 0.5, LAMP_VOLUME_FAR_Y - 0.5) + LAMP_VOLUME_FAR_AT;
   return c / vec3(LAMP_VOLUME_SIZE, LAMP_VOLUME_SIZE, 2.0 * LAMP_VOLUME_LAYERS);
 }
 
-// 1 well inside the near window, 0 at and past its edge
-float lampVolumeNearShare(vec3 w) {
-  vec3 span = vec3(LAMP_VOLUME_SIZE, LAMP_VOLUME_SIZE, LAMP_VOLUME_NEAR_Y) * LAMP_VOLUME_CELL;
-  vec3 c = w.xzy - lampVolumeNear.xyz;
-  vec3 e = min(c, span - c) / vec3(LAMP_VOLUME_FADE, LAMP_VOLUME_FADE, LAMP_VOLUME_FADE * 0.25);
+// 1 well inside a window of a cell count and size, 0 at and past its edge
+float lampVolumeShare(vec3 w, vec4 window, float size, float layers, float fade) {
+  vec3 span = vec3(LAMP_VOLUME_SIZE, LAMP_VOLUME_SIZE, layers) * size;
+  vec3 c = w.xzy - window.xyz;
+  vec3 e = min(c, span - c) / vec3(fade, fade, fade * 0.25);
   return clamp(min(e.x, min(e.y, e.z)), 0.0, 1.0);
 }
 
@@ -46,7 +59,7 @@ float lampVolumeGain(vec3 w) {
   vec2 c = (w.xz - lampVolumeNear.xy) / LAMP_VOLUME_GAIN_CELL
     + 0.5 * (LAMP_VOLUME_GAIN_SIZE - LAMP_VOLUME_SIZE * LAMP_VOLUME_CELL / LAMP_VOLUME_GAIN_CELL);
   c = clamp(c, vec2(0.5), vec2(LAMP_VOLUME_GAIN_SIZE - 0.5)) / LAMP_VOLUME_SIZE;
-  return 1.0 + textureLod(lampVolumeA, vec3(c, (LAMP_VOLUME_NEAR_Y + 0.5) / (2.0 * LAMP_VOLUME_LAYERS)), 0.0).r;
+  return 1.0 + textureLod(lampVolumeA, vec3(c, (LAMP_VOLUME_GAIN_AT + 0.5) / (2.0 * LAMP_VOLUME_LAYERS)), 0.0).r;
 }
 
 struct LampVolumeRead {
@@ -60,38 +73,59 @@ LampVolumeRead lampVolumeNone(vec3 w) {
   return LampVolumeRead(vec3(0.0), vec3(0.0), 0.0, w);
 }
 
-// The volume at world point w, off a surface along faceN (zero in the air): the near level one cell off it, two where all
-// of that is solid, the far level past the window.
-LampVolumeRead lampVolumeRead(vec3 w, vec3 faceN) {
-  LampVolumeRead r = lampVolumeNone(w);
-  float share = lampVolumeNearShare(w);
-  if (share > 0.0) {
-    vec3 q = w + faceN * LAMP_VOLUME_CELL;
-    vec4 a = textureLod(lampVolumeA, lampVolumeNearAt(q), 0.0);
-    if (a.a < 0.02) {
-      q = w + faceN * (2.0 * LAMP_VOLUME_CELL);
-      a = textureLod(lampVolumeA, lampVolumeNearAt(q), 0.0);
+// A walled level at world point w, off a surface along faceN: a cell off it, two where next to nothing of that is free.
+LampVolumeRead lampVolumeWalled(vec3 w, vec3 faceN, bool fine) {
+  float size = fine ? LAMP_VOLUME_FINE : LAMP_VOLUME_CELL;
+  vec3 q = w + faceN * size;
+  vec3 c = fine ? lampVolumeFineAt(q) : lampVolumeNearAt(q);
+  vec4 a = textureLod(lampVolumeA, c, 0.0);
+  if (a.a < LAMP_VOLUME_FEW && faceN != vec3(0.0)) {
+    vec3 q2 = w + faceN * (2.0 * size);
+    vec3 c2 = fine ? lampVolumeFineAt(q2) : lampVolumeNearAt(q2);
+    vec4 a2 = textureLod(lampVolumeA, c2, 0.0);
+    if (a2.a > a.a) {
+      q = q2;
+      c = c2;
+      a = a2;
     }
-    // nothing free near it: a nook. The far level has no air to lack
-    if (a.a < 0.02) {
-      share = 0.0;
-    } else if (dot(a.rgb, vec3(1.0)) > 0.0) {
-      vec4 b = textureLod(lampVolumeA, lampVolumeNearAt(q) + LAMP_VOLUME_B, 0.0);
-      float air = 1.0 / a.a;
-      r = LampVolumeRead(a.rgb * air, b.rgb * air, b.a * air, q);
-    }
-    r.at = q;
   }
-  if (share < 1.0) {
-    vec3 q = w + faceN * (0.5 * LAMP_VOLUME_FAR_CELL);
-    vec4 a = textureLod(lampVolumeA, lampVolumeFarAt(q), 0.0);
-    if (dot(a.rgb, vec3(1.0)) > 0.0) {
-      vec4 b = textureLod(lampVolumeA, lampVolumeFarAt(q) + LAMP_VOLUME_B, 0.0);
-      r = LampVolumeRead(mix(a.rgb, r.light, share), mix(b.rgb, r.h, share), mix(b.a, r.g, share), mix(q, r.at, share));
+  if (a.a <= 0.0 || dot(a.rgb, vec3(1.0)) <= 0.0) {
+    return lampVolumeNone(q);
+  }
+  vec4 b = textureLod(lampVolumeA, c + LAMP_VOLUME_B, 0.0);
+  float air = 1.0 / a.a;
+  return LampVolumeRead(a.rgb * air, b.rgb * air, b.a * air, q);
+}
+
+LampVolumeRead lampVolumeMix(LampVolumeRead a, LampVolumeRead b, float t) {
+  return LampVolumeRead(mix(a.light, b.light, t), mix(a.h, b.h, t), mix(a.g, b.g, t), mix(a.at, b.at, t));
+}
+
+// The volume at world point w, off a surface along faceN (zero in the air): the finest level there is, hands over between them.
+LampVolumeRead lampVolumeRead(vec3 w, vec3 faceN) {
+  LampVolumeRead r;
+  float fine = lampVolumeShare(w, lampVolumeFine, LAMP_VOLUME_FINE, LAMP_VOLUME_FINE_Y, LAMP_VOLUME_FADE_FINE);
+  if (fine >= 1.0) {
+    r = lampVolumeWalled(w, faceN, true);
+  } else {
+    float near = lampVolumeShare(w, lampVolumeNear, LAMP_VOLUME_CELL, LAMP_VOLUME_NEAR_Y, LAMP_VOLUME_FADE);
+    if (near >= 1.0) {
+      r = lampVolumeWalled(w, faceN, false);
     } else {
-      r.light *= share;
-      r.h *= share;
-      r.g *= share;
+      r = lampVolumeNone(w);
+      vec3 q = w + faceN * (0.5 * LAMP_VOLUME_FAR_CELL);
+      vec3 c = lampVolumeFarAt(q);
+      vec4 a = textureLod(lampVolumeA, c, 0.0);
+      if (dot(a.rgb, vec3(1.0)) > 0.0) {
+        vec4 b = textureLod(lampVolumeA, c + LAMP_VOLUME_B, 0.0);
+        r = LampVolumeRead(a.rgb, b.rgb, b.a, q);
+      }
+      if (near > 0.0) {
+        r = lampVolumeMix(r, lampVolumeWalled(w, faceN, false), near);
+      }
+    }
+    if (fine > 0.0) {
+      r = lampVolumeMix(r, lampVolumeWalled(w, faceN, true), fine);
     }
   }
   if (r.g > 0.0) {
