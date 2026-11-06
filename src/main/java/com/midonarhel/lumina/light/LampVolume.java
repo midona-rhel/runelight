@@ -91,8 +91,8 @@ public final class LampVolume
 	private static final float INSET = 3.5f;
 	// how fast a shown rectangle's edges go, units a second
 	private static final float GLIDE = prop("volGlide", 1024f);
-	// what the render thread sends a frame
-	private static final int UPLOAD_BYTES = 1500 * 1024;
+	// what the render thread sends a frame, and with nothing shown yet: a scene's load, which waits on all of it
+	private static final int UPLOAD_BYTES = 512 * 1024, UPLOAD_BYTES_LOAD = 4096 * 1024;
 	// a change of more lamps than this pops rather than eases: their boxes would be sent every frame
 	private static final int EASE_LAMPS = 8;
 	private static final int THREADS = 4;
@@ -110,7 +110,7 @@ public final class LampVolume
 	// the offline renderer: a change of strength lands in its own frame (the client's lamps don't jump)
 	public static boolean benchSync;
 	// the bench: the player's focus moved by this for the windows alone; nothing else in the frame
-	public static volatile float atkDX = prop("volAtkDx", 0), atkDZ = prop("volAtkDz", 0);
+	public static volatile float atkDX = prop("volAtkDx", 0), atkDZ = prop("volAtkDz", 0), atkDY;
 
 	public int atkQueued()
 	{
@@ -397,7 +397,7 @@ public final class LampVolume
 		long nanos = System.nanoTime();
 		float units = lastNanos == 0 || benchSync ? 1e9f : Math.min(0.1f, (nanos - lastNanos) / 1e9f) * GLIDE;
 		lastNanos = nanos;
-		drain(UPLOAD_BYTES, units);
+		drain(data[L_FAR] != null ? UPLOAD_BYTES : UPLOAD_BYTES_LOAD, units);
 		boolean idle = job == null || job.isDone();
 		if (job != null && idle)
 		{
@@ -575,7 +575,7 @@ public final class LampVolume
 		}
 		// the windows
 		int focusX = (int) (plugin.edgeFade.focalX + atkDX), focusZ = (int) (plugin.edgeFade.focalZ + atkDZ);
-		float ground = playerY(plugin);
+		float ground = playerY(plugin) + atkDY;
 		int[][] to = new int[LEVELS][3];
 		for (int i = 0; i < WALLED; ++i)
 		{
@@ -2084,18 +2084,8 @@ public final class LampVolume
 		float[] v = new float[1 << 16];
 		boolean[] solid = new boolean[1 << 16];
 		float[] sum = new float[1 << 14], rayed = new float[1 << 14];
-		boolean[] nearLit = new boolean[1 << 14], spare = new boolean[1 << 14];
 		long[][] column = new long[1 << 10][];
 		int[] columnAt = new int[1 << 10];
-
-		boolean[] solidSpare(int cells)
-		{
-			if (spare.length < cells)
-			{
-				spare = new boolean[cells];
-			}
-			return spare;
-		}
 		short[] count = new short[1 << 14], trace = new short[1 << 14];
 	}
 
@@ -2454,19 +2444,6 @@ public final class LampVolume
 		}
 		Arrays.fill(rayed, 0, cells, -1);
 		int stepZ = w, stepY = w * w;
-		// the cells next to one with any light, in three passes of a row, not 27 loads a cell
-		if (sc.nearLit.length < cells)
-		{
-			sc.nearLit = new boolean[cells];
-		}
-		boolean[] nearLit = sc.nearLit, spare = sc.solidSpare(cells);
-		for (int c = 0; c < cells; ++c)
-		{
-			spare[c] = v[c] > 0;
-		}
-		dilate(spare, nearLit, cells, 1);
-		dilate(nearLit, spare, cells, stepZ);
-		dilate(spare, nearLit, cells, stepY);
 		int i = 0;
 		for (int y = 0; y < w; ++y)
 		{
@@ -2475,7 +2452,12 @@ public final class LampVolume
 				for (int x = 0; x < w; ++x, ++i)
 				{
 					float o = v[i];
-					if (solid[i] || o >= 1 || !nearLit[i] || x == 0 || y == 0 || z == 0 || x == w - 1 || y == w - 1 || z == w - 1)
+					if (solid[i] || o >= 1 || x == 0 || y == 0 || z == 0 || x == w - 1 || y == w - 1 || z == w - 1)
+					{
+						continue;
+					}
+					// the dark side of a front is a cell off the light
+					if (o <= 0 && v[i - 1] <= 0 && v[i + 1] <= 0 && v[i - stepZ] <= 0 && v[i + stepZ] <= 0 && v[i - stepY] <= 0 && v[i + stepY] <= 0)
 					{
 						continue;
 					}
@@ -2519,14 +2501,6 @@ public final class LampVolume
 			{
 				v[i] = rayed[i];
 			}
-		}
-	}
-
-	private static void dilate(boolean[] from, boolean[] to, int cells, int step)
-	{
-		for (int i = 0; i < cells; ++i)
-		{
-			to[i] = from[i] || i >= step && from[i - step] || i + step < cells && from[i + step];
 		}
 	}
 
