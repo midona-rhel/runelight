@@ -39,7 +39,11 @@ import static org.lwjgl.opengl.GL33C.*;
  *
  * A lamp that moves is not in the volume: moving it there is a box of megabytes a frame. The frame's list says which lamps move
  * (PointLight.bakeSlot), and those go per pixel from a short list of uniforms, stopped along a line through the volume's air
- * (lampVolumeLine).
+ * (lampVolumeLine). A lamp that has moved crosses between that list and the volume by hand-over: its share of the volume goes up or down
+ * in HAND_STEPS steps, and a step's boxes all land in one frame, the frame the list changes, so no read sees the lamp twice or not at all.
+ * Coming in, the list shows the rest of it. Going out, the list shows it whole where it is now, and takes off, at the place it left, as much
+ * of it as the volume still holds there: the same formula, so the two cancel on the frame it starts and the lamp moves at once, with what's left
+ * of a step only the difference of the two looks. Its strength is what changes, as any lamp's; the shaders know nothing of it.
  *
  * Everything but GL runs on a worker; the render thread only finds what changed and sends finished boxes.
  */
@@ -102,11 +106,17 @@ public final class LampVolume
 	private static final int GAIN_SIZE = 64, GAIN_CELL = 256;
 	private static final float GAIN_LO = 0.5f, GAIN_HI = 1.6f;
 	private static final long EASE_NANOS = 250_000_000L;
-	// the most moving lamps, each 2 vec4; how long a lamp stands before it joins the volume; how many new lamps at once are a new scene
-	public static final int MOVERS = 12;
+	// the most in the moving list, each 2 vec4, a lamp on its way out of the volume takes two; how long a lamp stands before it joins the volume; how many new lamps at once are a new scene
+	public static final int MOVERS = 16;
 	private static final int STILL_FRAMES = 30, SCENE_LAMPS = 12;
 	// how far a lamp may go in a frame and be the same lamp
 	private static final float MOVE_REACH = 64;
+	// a lamp that has moved crosses to or from the volume in this many steps of its share, one each this long: the door's ease, in the steps a
+	// send can afford. The two looks differ on relief, so one step would be a pop of that difference: occlusion/flood-volume/pop-fix/results.md
+	private static final int HAND_STEPS = (int) prop("volHandSteps", 4);
+	private static final long HAND_NANOS = EASE_NANOS / HAND_STEPS;
+	// what one job's steps may send, reckoned from the lamps' reach, and the most that goes in one frame past the frame's send
+	private static final int HAND_BYTES = (int) prop("volHandBytes", 2048 * 1024);
 	// the offline renderer: a change of strength lands in its own frame (the client's lamps don't jump)
 	public static boolean benchSync;
 	// the bench: the player's focus moved by this for the windows alone; nothing else in the frame
@@ -186,6 +196,14 @@ public final class LampVolume
 		boolean seen;
 		// sent: the shaders see it in the volume
 		boolean inField;
+		// a hand-over: steps of HAND_STEPS it is summed at, and as the shaders see it; its whole colour; a step on its way; when the last began
+		int steps = HAND_STEPS, shownSteps = HAND_STEPS;
+		float fr, fg, fb;
+		boolean stepping;
+		long stepAt;
+		// it left this place: the lamp's now at atX, atY, atZ, and its share stays here until it is handed over
+		boolean out;
+		float atX, atY, atZ;
 		final Grid[] grid = {new Grid(), new Grid(), new Grid()};
 		long easeFrom;
 		boolean flood;
@@ -219,6 +237,8 @@ public final class LampVolume
 	{
 		int level, x, y, z, w, h, d;
 		short[] a, b, fog;
+		// goes in the same frame as the next; the last of a job's hand-over
+		boolean joined, handEnd;
 	}
 
 	private int texA, fboBlend, programBlend, vaoBlend, uniBlendShift;
@@ -253,6 +273,9 @@ public final class LampVolume
 	// the lamps that are in the volume when the queue is empty, those that have left it; where those were
 	private final List<Lamp> arriving = new ArrayList<>(), jobArriving = new ArrayList<>();
 	private final List<float[]> leaving = new ArrayList<>();
+	// the steps of the job at work, and of the jobs whose boxes wait, in order
+	private List<Lamp> jobHanded = new ArrayList<>();
+	private final java.util.ArrayDeque<List<Lamp>> flips = new java.util.ArrayDeque<>();
 	private long frame, lastNanos;
 	private float windowGround;
 	private ShortBuffer stage;
@@ -339,6 +362,8 @@ public final class LampVolume
 		pending = false;
 		queue.clear();
 		arriving.clear();
+		flips.clear();
+		jobHanded = new ArrayList<>();
 		Arrays.fill(data, null);
 		Arrays.fill(fine, null);
 		Arrays.fill(coarse, null);
@@ -432,11 +457,19 @@ public final class LampVolume
 				continue;
 			}
 			l.seen = true;
+			l.out = false;
 			float s = p.intensity * p.mapFade;
 			float nr = p.r * s, ng = p.g * s, nb = p.b * s;
+			boolean hand = handing(l);
+			if (hand)
+			{
+				l.fr = nr;
+				l.fg = ng;
+				l.fb = nb;
+			}
 			if (!l.inField && data[L_FAR] != null)
 			{
-				mover(p, clusters);
+				mover(p, clusters, hand ? rest(l) : 1, hand);
 			}
 			if (!idle)
 			{
@@ -445,7 +478,12 @@ public final class LampVolume
 			// a flicker doesn't touch the volume: it goes on its gain map (updateGain). A real change of strength does.
 			float was = l.cr + l.cg + l.cb, is = nr + ng + nb;
 			float ratio = was > 0 ? is / was : 0;
-			if (ratio > GAIN_LO && ratio < GAIN_HI && !l.flood)
+			if (hand)
+			{
+				// summed as its steps say: step() changes it
+				l.gain = 1;
+			}
+			else if (ratio > GAIN_LO && ratio < GAIN_HI && !l.flood)
 			{
 				l.gain = ratio;
 			}
@@ -468,6 +506,8 @@ public final class LampVolume
 			}
 			strengths |= l.nr != l.cr || l.ng != l.cg || l.nb != l.cb;
 		}
+		// a lamp gone from its place with one new next to it has moved: it stays there until it's handed over
+		Map<PointLight, Lamp> moved = newcomers.isEmpty() || data[L_FAR] == null ? Map.of() : moved(newcomers);
 		// lamps not in the volume: those that stand join it, those that move stay out
 		List<Lamp> gone = new ArrayList<>();
 		if (idle)
@@ -475,7 +515,12 @@ public final class LampVolume
 			for (Iterator<Lamp> it = lamps.values().iterator(); it.hasNext(); )
 			{
 				Lamp l = it.next();
-				if (!l.seen)
+				if (l.out && l.steps == 0 && !l.stepping)
+				{
+					// handed over: the volume holds none of it
+					it.remove();
+				}
+				else if (!l.seen && !l.out)
 				{
 					gone.add(l);
 					it.remove();
@@ -492,19 +537,27 @@ public final class LampVolume
 			int fixed = 0;
 			for (PointLight p : newcomers)
 			{
-				fixed += p.bakeSlot >= 0 && !movedHere(p, gone) ? 1 : 0;
+				fixed += p.bakeSlot >= 0 && !moved.containsKey(p) && !movedHere(p, gone) ? 1 : 0;
 			}
 			newScene = fixed >= SCENE_LAMPS;
 		}
+		if (idle && newScene)
+		{
+			endHandOvers();
+		}
+		List<Lamp> handed = new ArrayList<>();
+		float handBytes = 0;
 		for (PointLight p : newcomers)
 		{
 			long key = key(p);
 			Standing st = standing.computeIfAbsent(key, k -> new Standing());
 			st.lastFrame = frame;
 			++st.frames;
-			st.moved |= movedHere(p, gone);
+			Lamp left = moved.get(p);
+			st.moved |= left != null || movedHere(p, gone);
 			int need = p.bakeSlot >= 0 && !st.moved ? 0 : benchSync && !st.moved ? 1 : STILL_FRAMES;
-			if (idle && (newScene || st.frames > need))
+			boolean hand = st.moved && !newScene && data[L_FAR] != null;
+			if (idle && (newScene || st.frames > need) && (!hand || handed.isEmpty() || handBytes + handCost(p.radius) <= HAND_BYTES))
 			{
 				Lamp l = new Lamp();
 				l.x = p.x;
@@ -532,15 +585,42 @@ public final class LampVolume
 				strengths = true;
 				lamps.put(key, l);
 				added.add(l);
+				if (hand)
+				{
+					l.fr = l.nr;
+					l.fg = l.ng;
+					l.fb = l.nb;
+					l.steps = 0;
+					l.shownSteps = 0;
+					step(l, 1, nanos);
+					handed.add(l);
+					handBytes += handCost(l.r);
+				}
+				else if (!newScene)
+				{
+					l.shownSteps = 0;
+				}
 				if (!newScene)
 				{
 					// lit by the list until it shows
-					mover(p, clusters);
+					mover(p, clusters, hand ? rest(l) : 1, hand);
 				}
 			}
 			else if (!newScene)
 			{
-				mover(p, clusters);
+				mover(p, clusters, 1, left != null);
+			}
+		}
+		if (idle && !newScene)
+		{
+			strengths |= steps(nanos, handed, handBytes);
+		}
+		for (Lamp l : lamps.values())
+		{
+			if (l.out && l.shownSteps > 0)
+			{
+				float r = l.hidden ? -l.r : l.r, share = -l.shownSteps / (float) HAND_STEPS;
+				moverList.add(new float[]{l.x, l.y, l.z, r, l.fr * share, l.fg * share, l.fb * share, (l.fr + l.fg + l.fb) * l.r});
 			}
 		}
 		for (Iterator<Standing> it = standing.values().iterator(); it.hasNext(); )
@@ -667,7 +747,15 @@ public final class LampVolume
 		j.level = level;
 		j.maxLevel = maxLevel;
 		j.hidden = hidden;
-		jobArriving.addAll(added);
+		for (Lamp l : added)
+		{
+			if (!l.stepping)
+			{
+				jobArriving.add(l);
+			}
+		}
+		j.handed = handed;
+		jobHanded = handed;
 		if (windowMoved)
 		{
 			// the render thread's own: what the rectangles go by. The worker reads it.
@@ -719,18 +807,20 @@ public final class LampVolume
 		return false;
 	}
 
-	// a lamp for the moving list; until the volume has let go of it where it was, it stays there and doesn't show twice
-	private void mover(PointLight p, LightClusters clusters)
+	// a lamp for the moving list, at this share of it, what the volume doesn't show: a hand-over; else until the volume has let go of it where
+	// it was, it stays there and doesn't show twice
+	private void mover(PointLight p, LightClusters clusters, float share, boolean hand)
 	{
 		float s = p.intensity * p.mapFade;
 		float lum = (p.r + p.g + p.b) * s;
 		moverPlaces.add(new float[]{p.x, p.y, p.z});
-		if (lum <= 0)
+		if (lum <= 0 || share <= 0)
 		{
 			return;
 		}
-		for (float[] w : leaving)
+		for (int i = 0; i < leaving.size() && !hand; ++i)
 		{
+			float[] w = leaving.get(i);
 			float dx = w[0] - p.x, dy = w[1] - p.y, dz = w[2] - p.z;
 			if (dx * dx + dy * dy + dz * dz < 4 * MOVE_REACH * MOVE_REACH)
 			{
@@ -738,7 +828,144 @@ public final class LampVolume
 			}
 		}
 		float r = Math.abs(p.radius);
+		s *= share;
 		moverList.add(new float[]{p.x, p.y, p.z, clusters.onHiddenStorey(p) ? -r : r, p.r * s, p.g * s, p.b * s, lum * r});
+	}
+
+	private static boolean handing(Lamp l)
+	{
+		return l.steps < HAND_STEPS || l.stepping;
+	}
+
+	// the share of a lamp the volume doesn't show
+	private static float rest(Lamp l)
+	{
+		return (HAND_STEPS - l.shownSteps) / (float) HAND_STEPS;
+	}
+
+	// which of the frame's new lamps are ones that left a place in the volume, each with the nearest place it could have left
+	private Map<PointLight, Lamp> moved(List<PointLight> newcomers)
+	{
+		Map<PointLight, Lamp> moved = new java.util.IdentityHashMap<>();
+		for (Lamp l : lamps.values())
+		{
+			if (l.seen)
+			{
+				continue;
+			}
+			float x = l.out ? l.atX : l.x, y = l.out ? l.atY : l.y, z = l.out ? l.atZ : l.z, best = MOVE_REACH * MOVE_REACH;
+			PointLight to = null;
+			for (PointLight p : newcomers)
+			{
+				float dx = x - p.x, dy = y - p.y, dz = z - p.z, d2 = dx * dx + dy * dy + dz * dz;
+				if (d2 < best && !moved.containsKey(p))
+				{
+					best = d2;
+					to = p;
+				}
+			}
+			if (to != null)
+			{
+				float s = to.intensity * to.mapFade;
+				l.out = true;
+				l.gain = 1;
+				l.atX = to.x;
+				l.atY = to.y;
+				l.atZ = to.z;
+				l.fr = to.r * s;
+				l.fg = to.g * s;
+				l.fb = to.b * s;
+				moved.put(to, l);
+			}
+		}
+		return moved;
+	}
+
+	// what a lamp's boxes come to, about
+	private static float handCost(float radius)
+	{
+		float cells = 2 * Math.abs(radius) / FINE + 2;
+		return 16 * cells * cells * cells;
+	}
+
+	// a step of a lamp's share of the volume
+	private static void step(Lamp l, int by, long nanos)
+	{
+		l.steps += by;
+		float share = l.steps / (float) HAND_STEPS;
+		l.nr = l.fr * share;
+		l.ng = l.fg * share;
+		l.nb = l.fb * share;
+		l.stepping = true;
+		l.stepAt = nanos;
+	}
+
+	// The next steps due, those that waited longest first, as many as a job may send. True if any.
+	private boolean steps(long nanos, List<Lamp> handed, float bytes)
+	{
+		List<Lamp> due = null;
+		for (Lamp l : lamps.values())
+		{
+			if ((l.out ? l.steps > 0 : l.steps < HAND_STEPS) && !l.stepping && (benchSync || nanos - l.stepAt >= HAND_NANOS))
+			{
+				due = due != null ? due : new ArrayList<>();
+				due.add(l);
+			}
+		}
+		if (due == null)
+		{
+			return false;
+		}
+		due.sort((a, b) -> Long.compare(a.stepAt, b.stepAt));
+		boolean any = false;
+		for (Lamp l : due)
+		{
+			if (!handed.isEmpty() && bytes + handCost(l.r) > HAND_BYTES)
+			{
+				break;
+			}
+			bytes += handCost(l.r);
+			step(l, l.out ? -1 : 1, nanos);
+			handed.add(l);
+			any = true;
+		}
+		return any;
+	}
+
+	// a new scene is sent whole: nothing is on its way between places
+	private void endHandOvers()
+	{
+		for (Iterator<Lamp> it = lamps.values().iterator(); it.hasNext(); )
+		{
+			Lamp l = it.next();
+			if (l.out)
+			{
+				it.remove();
+			}
+			else if (handing(l))
+			{
+				l.steps = l.shownSteps = HAND_STEPS;
+				l.stepping = false;
+				l.inField = true;
+				l.nr = l.fr;
+				l.ng = l.fg;
+				l.nb = l.fb;
+			}
+		}
+	}
+
+	// a step shows: the moving list takes the rest of the lamp in the frame its boxes land
+	private static void land(List<Lamp> list)
+	{
+		for (Lamp l : list)
+		{
+			l.shownSteps = l.steps;
+			l.stepping = false;
+			if (l.steps >= HAND_STEPS)
+			{
+				l.inField = true;
+			}
+		}
 	}
 
 	// The brightest fit, and the last of those fades on the one left out, so one coming in over another eases
@@ -921,6 +1148,18 @@ public final class LampVolume
 		{
 			queue.addAll(list);
 		}
+		if (!jobHanded.isEmpty())
+		{
+			if (list != null && !list.isEmpty())
+			{
+				flips.add(jobHanded);
+			}
+			else
+			{
+				land(jobHanded);
+			}
+			jobHanded = new ArrayList<>();
+		}
 		arriving.addAll(jobArriving);
 		jobArriving.clear();
 		pending = true;
@@ -988,9 +1227,11 @@ public final class LampVolume
 			int sent = 0;
 			glBindTexture(GL_TEXTURE_3D, texA);
 			glPixelStorei(GL_UNPACK_ALIGNMENT, 2);
-			while (bytes > 0 && !queue.isEmpty())
+			boolean joined = false;
+			while ((bytes > 0 || joined) && !queue.isEmpty())
 			{
 				Upload u = queue.poll();
+				joined = u.joined;
 				send(u, u.a, BASE[u.level]);
 				send(u, u.b, BASE[u.level] + LAYERS);
 				bytes -= (u.a.length + u.b.length) * 2;
@@ -1000,6 +1241,10 @@ public final class LampVolume
 					send(u, u.fog, FOG_AT);
 					bytes -= u.fog.length * 2;
 					sent += u.fog.length * 2;
+				}
+				if (u.handEnd)
+				{
+					land(flips.poll());
 				}
 			}
 			glPixelStorei(GL_UNPACK_ROW_LENGTH, 0);
@@ -1026,6 +1271,7 @@ public final class LampVolume
 			for (Lamp l : arriving)
 			{
 				l.inField = true;
+				l.shownSteps = HAND_STEPS;
 			}
 			arriving.clear();
 			leaving.clear();
@@ -1132,7 +1378,7 @@ public final class LampVolume
 	private final class Job implements Runnable
 	{
 		LuminaPlugin.SceneContext ctx;
-		List<Lamp> added, gone;
+		List<Lamp> added, gone, handed;
 		List<int[]> changedZones;
 		boolean shownChanged, windowMoved;
 		int[][] to;
@@ -1331,10 +1577,11 @@ public final class LampVolume
 			}
 			long t3 = System.nanoTime();
 			// the boxes to sum: everything, what came into a window, each lamp changed
-			List<List<int[]>> boxes = new ArrayList<>();
+			List<List<int[]>> boxes = new ArrayList<>(), steps = new ArrayList<>();
 			for (int i = 0; i < LEVELS; ++i)
 			{
 				boxes.add(new ArrayList<>());
+				steps.add(new ArrayList<>());
 				if (everything)
 				{
 					whole(boxes.get(i), i);
@@ -1378,9 +1625,11 @@ public final class LampVolume
 				{
 					for (Lamp l : changed)
 					{
+						// a hand-over's boxes go first, or a box after them would show its step early
+						List<List<int[]>> to = handed.contains(l) ? steps : boxes;
 						for (int i = 0; i < LEVELS; ++i)
 						{
-							slices(boxes.get(i), box(l, i));
+							slices(to.get(i), box(l, i));
 						}
 					}
 				}
@@ -1407,22 +1656,43 @@ public final class LampVolume
 			}
 			final List<Lamp> list = new ArrayList<>(lamps.values());
 			int count = 0;
-			for (List<int[]> b : boxes)
+			for (int i = 0; i < LEVELS; ++i)
 			{
-				count += b.size();
+				count += steps.get(i).size() + boxes.get(i).size();
 			}
 			final Upload[] uploads = new Upload[count];
 			tasks.clear();
 			int k = 0;
-			for (int i = 0; i < LEVELS; ++i)
+			for (List<List<int[]>> group : List.of(steps, boxes))
 			{
-				for (int[] b : boxes.get(i))
+				for (int i = 0; i < LEVELS; ++i)
 				{
-					final int at = k++, lv = i;
-					tasks.add(() -> uploads[at] = lv == L_FAR ? sumFar(b, list, now) : sumWalled(lv, b, list, now));
+					for (int[] b : group.get(i))
+					{
+						final int at = k++, lv = i;
+						tasks.add(() -> uploads[at] = lv == L_FAR ? sumFar(b, list, now) : sumWalled(lv, b, list, now));
+					}
 				}
 			}
 			parallel(tasks);
+			if (!handed.isEmpty() && count > 0)
+			{
+				int first = 0, bytes = 0;
+				for (int i = 0; i < LEVELS; ++i)
+				{
+					first += steps.get(i).size();
+				}
+				for (int i = 0; i < first; ++i)
+				{
+					bytes += (uploads[i].a.length + uploads[i].b.length) * 2;
+				}
+				for (int i = 0; i + 1 < first && bytes <= HAND_BYTES; ++i)
+				{
+					uploads[i].joined = true;
+				}
+				// none of its own, when all was summed: the job's last
+				uploads[first > 0 ? first - 1 : count - 1].handEnd = true;
+			}
 			long t4 = System.nanoTime();
 			sentAll = true;
 			++atkJobs;
