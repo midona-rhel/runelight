@@ -33,6 +33,16 @@ public final class FloodCpu
 		}
 	}
 
+	private static final float TOWARD_A = env("LUMINA_TA", 0), TOWARD_B = env("LUMINA_TB", 0), TRUST_LO = env("LUMINA_TL", 0.3f), TRUST_HI = env("LUMINA_TH", 0.6f);
+
+	private static final java.util.concurrent.atomic.AtomicIntegerArray WAYS = new java.util.concurrent.atomic.AtomicIntegerArray(6);
+
+	private static float env(String name, float value)
+	{
+		String v = System.getenv(name);
+		return v != null ? Float.parseFloat(v) : value;
+	}
+
 	public static void main(String[] a) throws Exception
 	{
 		String name = a[0];
@@ -64,18 +74,16 @@ public final class FloodCpu
 		v.offline(zones, LuminaPlugin.SCENE_OFFSET >> 3, p.minLevel, p.level, p.maxLevel, p.hiddenRoofs, lamps, m.focalX, m.focalZ, ground);
 		System.out.printf("%s: voxels and floods %.0f ms: %s%n", name, (System.nanoTime() - t0) / 1e6, LampVolume.lastJob);
 		float cell = LampVolume.CELL, fineCell = LampVolume.FINE;
-		if (System.getenv("LUMINA_FAR") != null)
 		{
-			System.out.println(v.offlineFar(Integer.parseInt(System.getenv("LUMINA_FAR"))));
-		}
-		if (System.getenv("LUMINA_SLICE") != null)
-		{
-			for (String at : System.getenv("LUMINA_SLICE").split(";"))
+			double all = 0, far = 0;
+			for (float[] l : lamps)
 			{
-				String[] c = at.split(",");
-				System.out.println("slice:" + at + "\n" + v.offlineSlice(Integer.parseInt(c[0]), Integer.parseInt(c[1]), Integer.parseInt(c[2])));
+				double w = 2 * Math.ceil(l[3] / 16) + 3, c = w * w * w;
+				all += c;
+				float e = Math.max(Math.abs(l[0] - m.focalX), Math.abs(l[2] - m.focalZ));
+				far += e > 1280 + l[3] + 256 ? c : 0;
 			}
-			return;
+			System.out.printf("%s: flood cells %.1f M, of lamps clear of the fine window %.1f M%n", name, all / 1e6, far / 1e6);
 		}
 		final byte[] mask = new byte[p.pos.length / 3];
 		long[] leak = new long[o.px.length], over = new long[o.px.length], dim = new long[o.px.length], noAir = new long[o.px.length], outside = new long[o.px.length];
@@ -132,6 +140,32 @@ public final class FloodCpu
 					++outside[k];
 					continue;
 				}
+				if (TOWARD_B > 0 && rv > 0)
+				{
+					// read again toward the lamp, what lamp_volume.glsl does with F (math.md 13)
+					float lx = dx / d, ly = dy / d, lz = dz / d;
+					float size = fineCell;
+					float qx = x + (nx * TOWARD_A + lx * TOWARD_B) * size, qy = y + (ny * TOWARD_A + ly * TOWARD_B) * size, qz = z + (nz * TOWARD_A + lz * TOWARD_B) * size;
+					float r = v.offlineReadFine(k, qx, qy, qz);
+					if (r == -2)
+					{
+						size = cell;
+						qx = x + (nx * TOWARD_A + lx * TOWARD_B) * size;
+						qy = y + (ny * TOWARD_A + ly * TOWARD_B) * size;
+						qz = z + (nz * TOWARD_A + lz * TOWARD_B) * size;
+						r = v.offlineRead(k, qx, qy, qz);
+					}
+					float air = r >= 0 ? LampVolume.AIR.get()[0] : 0;
+					if (air >= 0.06f)
+					{
+						rv = r;
+					}
+					else
+					{
+						float u = Math.max(0, Math.min(1, (cos - TRUST_LO) / (TRUST_HI - TRUST_LO)));
+						rv *= 1 - u * u * (3 - 2 * u);
+					}
+				}
 				if (rv == -1 && c == CardOracle.BLOCKED && light > 0.003f)
 				{
 					if (nookBlocked.incrementAndGet() % 211 == 1)
@@ -152,10 +186,6 @@ public final class FloodCpu
 				else if (c == CardOracle.OPEN && light > 0.01f && rv == 0 && over[k] % 197 == 1)
 				{
 					System.out.printf("  dark lamp %d px %d,%d at %.0f %.0f %.0f n %.2f %.2f %.2f d %.0f%n", k, o.px[k][s] % p.width, o.px[k][s] / p.width, x, y, z, nx, ny, nz, d);
-					if (System.getenv("LUMINA_WAY") != null)
-					{
-						System.out.println(v.offlineWay(k, x, y, z));
-					}
 				}
 				else if (c == CardOracle.BLOCKED && light * rv > 0.003f && (CardOracle.blockersOf(o.cls[k][s]) & CardMesh.RULE) != 0 && leak[k] % 197 == 1)
 				{
@@ -166,6 +196,13 @@ public final class FloodCpu
 					++leak[k];
 					mask[o.px[k][s]] |= 2;
 					(v.offlineStepCrosses(x + nx * 2, y + ny * 2, z + nz * 2, nx, ny, nz, fineCell) ? stepLeak : frontLeak).incrementAndGet();
+					float[] way = v.offlineLine(x + nx * 2, y + ny * 2, z + nz * 2, l[CardLamps.OX], l[CardLamps.Y], l[CardLamps.OZ]);
+					int bin = way[1] < 0 ? 0 : way[2] < 72 && way[1] > 0 && way[2] > 0 && d - way[1] < 72 ? 1 : way[1] < 32 ? 2 : way[1] < 64 ? 3 : way[1] < 128 ? 4 : 5;
+					WAYS.incrementAndGet(bin);
+					if (bin == 0 && WAYS.get(0) % 53 == 1 || bin == 5 && WAYS.get(5) % 53 == 1)
+					{
+						System.out.printf("  way %d lamp %d px %d,%d at %.0f %.0f %.0f n %.2f %.2f %.2f d %.0f v %.2f line %.0f %.0f %.0f%n", bin, k, o.px[k][s] % p.width, o.px[k][s] / p.width, x, y, z, nx, ny, nz, d, rv, way[0], way[1], way[2]);
+					}
 				}
 				if (c == CardOracle.OPEN && light > 0.01f)
 				{
@@ -217,6 +254,7 @@ public final class FloodCpu
 			byOver.put(-over[k] * 1000 - k, k);
 		}
 		System.out.printf("%s: leak %d px, overblock %d px, dimmed %d px, no air %d px, outside %d px%n", name, sl * 4, so * 4, sd * 4, sn * 4, st * 4);
+		System.out.printf("%s: leak by way: no solid %d, only near the lamp %d, solid under 32 %d, under 64 %d, under 128 %d, further %d%n", name, WAYS.get(0) * 4, WAYS.get(1) * 4, WAYS.get(2) * 4, WAYS.get(3) * 4, WAYS.get(4) * 4, WAYS.get(5) * 4);
 		System.out.printf("%s: nook samples that must be dark %d px; leak where the step crosses solid %d, where not %d%n", name, nookBlocked.get() * 4, stepLeak.get() * 4, frontLeak.get() * 4);
 		int shown = 0;
 		for (int k : byLeak.values())

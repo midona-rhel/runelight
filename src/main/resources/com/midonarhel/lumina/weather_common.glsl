@@ -145,15 +145,16 @@ vec3 weatherPointLights(vec3 p, vec4 clip, vec3 n) {
   vec3 view = normalize(p);
   vec3 w = p + cameraPos;
   LampVolumeRead r = lampVolumeRead(w, particle ? vec3(0.0) : n);
+  vec3 moving = lampMoverCount > 0 ? (particle ? lampMoversInAir(w) : lampMoversOnSurface(w, n, n)) : vec3(0.0);
   if (dot(r.light, vec3(1.0)) <= 0.0) {
-    return vec3(0.0);
+    return moving * reach;
   }
   float ndl;
   vec3 ld;
   float k = lampVolumeOnSurface(r, w, particle ? vec3(0.0) : n, ndl, ld);
   // drops between the camera and a light glow against it
   k = particle ? 1.0 + WEATHER_FORWARD_SCATTER * pow(max(dot(ld, view), 0.0), WEATHER_FORWARD_POWER) : k;
-  return r.light * (k * reach);
+  return (r.light * k + moving) * reach;
 }
 
 

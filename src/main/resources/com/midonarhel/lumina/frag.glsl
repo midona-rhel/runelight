@@ -123,7 +123,8 @@ vec3 alphaLamps(vec3 p, vec3 n, vec3 faceN, float transmissive) {
   float ndl;
   vec3 ld;
   float k = lampVolumeOnSurface(r, w, n, ndl, ld);
-  return r.light * (k + (transmissive > 0.0 ? transmission(ndl, dot(-ld, normalize(-p)), transmissive) : 0.0));
+  return r.light * (k + (transmissive > 0.0 ? transmission(ndl, dot(-ld, normalize(-p)), transmissive) : 0.0))
+    + (lampMoverCount > 0 ? lampMoversOnSurface(w, n, faceN) : vec3(0.0));
 }
 
 #include "material_target.glsl"

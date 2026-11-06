@@ -50,7 +50,11 @@ public class LampVolumeTest
 						double px = x - cx, py = y - cy, pz = z - cz;
 						double bx = m[0][0] * px + m[1][0] * py + m[2][0] * pz, by = m[0][1] * px + m[1][1] * py + m[2][1] * pz, bz = m[0][2] * px + m[1][2] * py + m[2][2] * pz;
 						double e = Math.max(Math.abs(bx), Math.max(Math.abs(by), Math.abs(bz)));
-						float read = v.offlineRead(0, x, y, z), fine = v.offlineReadFine(0, x, y, z);
+						float read = v.offlineRead(0, x, y, z), fine = v.offlineReadFine(0, x, y, z), mid = v.offlineReadMid(0, x, y, z);
+						if (e > half + 2 * LampVolume.MID_CELL)
+						{
+							assertTrue("run " + run + " mid light outside at " + x + " " + y + " " + z + ": " + mid, mid <= 0);
+						}
 						if (e > half + LampVolume.CELL)
 						{
 							++outside;

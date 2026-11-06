@@ -191,9 +191,12 @@ float phase(float cosTheta) {
 // the glow is brightest) was off a 32-sample reference by up to 27 levels in the forests, where trees shade the glow
 // along the ray (tree1 53k pixels over 8); two by at most 10, for 0.13 ms more on fps1
 #define FOG_LAMP_PIECES 2
-// steps through the far level of the lamps' volume, and how far along a ray
-#define FOG_LAMP_STEPS 16
+// The lamps' march along a ray: each band of distance has its stride, 128 units to 2048, twice that to 4096 and on, and a step's place is a
+// function of its distance alone, not of the stretch the column marches: there can be no seam at a column's edge
 #define FOG_LAMP_STRIDE 128.0
+#define FOG_LAMP_BANDS 3
+#define FOG_LAMP_BAND 2048.0
+#define FOG_LAMP_MAX_STEPS 32
 
 // The lamp's falloff (lampFalloff: (1 - d / r)^2) along a line passing sqrt(h2) from it, from s0 to s1 along the line
 // from its point nearest the lamp, in closed form: r times, in units of r (u = s / r, e = h / r),
@@ -208,54 +211,80 @@ float lampFalloffAlong(float h2, float r, float s0, float s1) {
 }
 
 
-// Light from the lamps scattered toward the camera along the ray dir, up to tEnd (what the ray ends at), as a glow
-// round each lamp: its falloff along the part of the ray in its reach, in closed form (lampFalloffAlong), times the fog
-// where the lamp is (its density, height layer, room and weather there; none inside rooms), and only where the lamp's
-// light gets to: of the ray's lamps the LAMP_BUDGET brightest by their glow before walls (the same cap as a surface's,
-// light/lamp.glsl), each its part of the ray in FOG_LAMP_PIECES stretches, each taking it as a point of it in the air
-// takes it (at a point jittered along the stretch, the fog's own jitter, which the denoise smooths): its shadow cube
-// (lampCubeOpen), drawn from what the frame draws, so a roof the client hides stops nothing and one it shows stops the
-// glow over it; a lamp without a cube, the walls' share (lampWallsOpen: walls up to their tops, no floor or ceiling;
-// above a wall the glow spreads on into the air) and the roofs as drawn (lampRoofsOpen). Only what is drawn: not the
-// light map, baked from the whole building, its upper storeys and ceilings whether the client draws them or not, and
-// holding four lamps a cell (a fifth read as dark). With the roofs hidden it cut the glow over Lumbridge castle's
-// open-topped rooms into the shapes of storeys not drawn (the user's "strangely shaped obstructions", glow1; the
-// "phantom roof" again, which took the ceilings out of the air before).
-// So a wall cuts the glow where it stands, the lamp on screen or off, and the glow fades across the cut rather than
-// switching. No other edge: the falloff is 0 at the reach, and the ray's end clips the glow as it clips everything
-// behind it.
-vec3 lampGlow(ivec2 px, vec3 dir, float tEnd, float density, float jitter) {
+// The fog of each of the main march's segments that isn't in the lamps' field: its density and the weather. fogLampSigma(t) is that at a distance along the ray.
+float fogLampSegment[FOG_MAX_STEPS];
+float fogLampT0, fogLampDt;
+int fogLampSegments;
+
+float fogLampSigma(float t) {
+  float u = clamp((t - fogLampT0) / fogLampDt - 0.5, 0.0, float(fogLampSegments - 1));
+  int i = int(u);
+  return i + 1 < fogLampSegments ? mix(fogLampSegment[i], fogLampSegment[i + 1], u - float(i)) : fogLampSegment[i];
+}
+
+// Light from the lamps scattered toward the camera along the ray dir, up to tEnd (what the ray ends at), as a glow: what the lamps' volume holds in
+// the air along the ray, which went round what stops light before it was summed, times the fog there (math.md 11). The lamps that move each by
+// their falloff in closed form, stopped by a line through the volume's air from two pieces of the ray.
+vec3 lampGlow(ivec2 px, vec3 dir, float tEnd, float jitter) {
+  vec3 sum = vec3(0.0);
   // the stretch of the ray any lamp of its column glows in (LightClusters.fillFogColumns)
   vec2 span = texelFetch(lightData, clusterLights(columnEntry((vec2(px) + 0.5 - vec2(sceneViewport.xy)) / vec2(sceneViewport.zw))).base).xy;
-  float t0 = span.x, t1 = min(tEnd, span.y);
-  if (t1 <= t0) {
-    return vec3(0.0);
-  }
-  int steps = clamp(int(ceil((t1 - t0) / FOG_LAMP_STRIDE)), 2, FOG_LAMP_STEPS);
-  float dt = (t1 - t0) / float(steps);
-  vec3 sum = vec3(0.0);
+  float a = span.x, b = min(tEnd, span.y);
   float at = 0.0, weight = 0.0;
-  for (int i = 0; i < steps; ++i) {
-    float t = t0 + (float(i) + jitter) * dt;
-    vec3 c = lampVolumeAir(cameraPos + dir * t, i);
-    float l = c.r + c.g + c.b;
-    sum += c;
-    at += l * t;
-    weight += l;
+  int left = FOG_LAMP_MAX_STEPS;
+  for (int band = 0; band < FOG_LAMP_BANDS && a < b && left > 0; ++band) {
+    float stride = FOG_LAMP_STRIDE * float(1 << band);
+    float end = band == FOG_LAMP_BANDS - 1 ? 1e9 : FOG_LAMP_BAND * float(1 << band);
+    float to = min(b, end);
+    if (to <= a) {
+      continue;
+    }
+    int k0 = int(floor(a / stride)), k1 = int(ceil(to / stride));
+    for (int k = k0; k < k1 && left > 0; ++k, --left) {
+      float s0 = max(float(k) * stride, a), s1 = min(float(k + 1) * stride, to);
+      float t = clamp((float(k) + jitter) * stride, s0, s1);
+      vec3 c = lampVolumeAir(cameraPos + dir * t) * ((s1 - s0) * fogLampSigma(t));
+      float l = c.r + c.g + c.b;
+      sum += c;
+      at += l * t;
+      weight += l;
+    }
+    a = to;
   }
-  if (weight <= 0.0) {
-    return vec3(0.0);
+  if (weight > 0.0) {
+    sum *= lampVolumeGain(cameraPos + dir * (at / weight));
   }
-  // the fog where the lamps are, as it was per lamp: H over G is their place (one lamp's exactly)
-  vec3 w = cameraPos + dir * (at / weight);
-  vec4 b = textureLod(lampVolumeA, lampVolumeFarAt(w) + LAMP_VOLUME_B, 0.0);
-  if (b.a > 0.0) {
-    w = b.rgb / b.a + lampVolumeOrigin.xyz;
+  for (int i = 0; i < lampMoverCount; ++i) {
+    vec4 m = lampMovers[i * 2];
+    vec3 rel = m.xyz - cameraPos;
+    float r = abs(m.w);
+    float tc = dot(rel, dir);
+    float h2 = max(dot(rel, rel) - tc * tc, 0.0);
+    if (h2 >= r * r) {
+      continue;
+    }
+    float hc = sqrt(r * r - h2);
+    float t0 = max(tc - hc, 0.0), t1 = min(tc + hc, tEnd);
+    if (t1 <= t0) {
+      continue;
+    }
+    float part = (t1 - t0) / float(FOG_LAMP_PIECES);
+    float glow = 0.0;
+    for (int j = 0; j < FOG_LAMP_PIECES; ++j) {
+      float s0 = t0 + float(j) * part;
+      vec3 q = cameraPos + dir * (s0 + jitter * part);
+      float open = lampVolumeLine(q, m.xyz);
+      if (open > 0.0) {
+        glow += lampFalloffAlong(h2, r, s0 - tc, s0 + part - tc) * open;
+      }
+    }
+    // the fog where the lamp is, as the field's lamps are summed
+    vec4 ground = fogGroundAt(m.xz);
+    float below = -fogHeight * FOG_BELOW;
+    float sigma = fogLampSigma(clamp(tc, t0, t1)) * exp(-max(ground.r - m.y, below) / fogHeight) * fogRoomFactor(ground, m.y);
+    sum += lampMovers[i * 2 + 1].rgb * (glow * sigma);
   }
-  vec4 ground = fogGroundAt(w.xz);
-  float below = -fogHeight * FOG_BELOW;
-  float sigma = density * exp(-max(ground.r - w.y, below) / fogHeight) * fogRoomFactor(ground, w.y) * weatherFogFactor(w.xz);
-  return sum * (dt * sigma * FOG_LAMP_SCATTER * lampVolumeGain(w));
+  return sum * FOG_LAMP_SCATTER;
 }
 
 void main() {
@@ -367,6 +396,9 @@ void main() {
   // shadow map, for the shafts, is sampled at a jittered point, and that grain the denoise (denoise_frag.glsl) smooths
   // away. Each end's ground and exponential serve both segments it ends and starts.
   float jitter = ign(gl_FragCoord.xy);
+  fogLampT0 = t0;
+  fogLampDt = dt;
+  fogLampSegments = steps;
   float below = -fogHeight * FOG_BELOW;
   float invHeight = 1.0 / fogHeight;
   vec3 wStart = dir * t0 + cameraPos;
@@ -406,7 +438,9 @@ void main() {
     sigma *= 1.0 - smoothstep(fogFade.x, fogFade.y, centerDist);
     sigma *= mix(FOG_NEAR_FLOOR, 1.0, smoothstep(0.0, fogNear, centerDist));
     sigma *= smoothstep(0.0, fogNear, t);
-    sigma *= weatherFogFactor(wp.xz);
+    float weatherHere = weatherFogFactor(wp.xz);
+    fogLampSegment[i] = density * weatherHere;
+    sigma *= weatherHere;
     vec2 n = texture(fogNoise, noiseStart + noiseDir * t).rg;
     // both average about 1, so they move fog around without changing how much there is
     sigma *= max(mix(1.0, n.r * 2.0, FOG_NOISE_AMOUNT), 0.0);
@@ -438,7 +472,7 @@ void main() {
     scatterSun += direct * ((1.0 - far) * scattered);
     trans *= stepTrans;
   }
-  vec3 lamps = glow ? lampGlow(px, dir, t1, density, jitter) : vec3(0.0);
+  vec3 lamps = glow ? lampGlow(px, dir, t1, jitter) : vec3(0.0);
 
   // Limit how much of the view the fog hides where the ray ends. The flat glow shrinks with the cover; the light
   // from the sun and the lamps mostly stays, so thick fog still shows where it is lit.

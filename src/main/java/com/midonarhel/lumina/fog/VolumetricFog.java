@@ -123,6 +123,8 @@ public class VolumetricFog
 	private int plane;
 	private float centerX, centerZ;
 	private float fadeStart, fadeEnd;
+	// what the ground texture holds, for lampShare
+	private volatile float[] lampTexels;
 	private float near;
 	private int steps = 12;
 
@@ -361,9 +363,38 @@ public class VolumetricFog
 		groundSince = com.midonarhel.lumina.common.Clock.nanos();
 	}
 
+	/**
+	 * What the fog at a lamp is of its density at the ground, the rooms and the height: fog_frag.glsl's sigma at world point x, y, z, but for
+	 * the density and the weather. Any thread.
+	 */
+	public float lampShare(float x, float y, float z)
+	{
+		float[] t = lampTexels;
+		if (t == null || height <= 0)
+		{
+			return 1;
+		}
+		float cx = Math.max(0, Math.min(FogGround.CORNERS - 1, x / 128 + LuminaPlugin.SCENE_OFFSET));
+		float cz = Math.max(0, Math.min(FogGround.CORNERS - 1, z / 128 + LuminaPlugin.SCENE_OFFSET));
+		int ix = Math.min((int) cx, FogGround.CORNERS - 2), iz = Math.min((int) cz, FogGround.CORNERS - 2);
+		float fx = cx - ix, fz = cz - iz;
+		int page = plane * FogGround.CORNERS;
+		float[] g = new float[4];
+		for (int k = 0; k < 4; ++k)
+		{
+			int o = (iz * FogGround.WIDTH + page + ix) * FogGround.CHANNELS + k, up = FogGround.WIDTH * FogGround.CHANNELS;
+			float a = t[o] + (t[o + FogGround.CHANNELS] - t[o]) * fx, b = t[o + up] + (t[o + up + FogGround.CHANNELS] - t[o + up]) * fx;
+			g[k] = a + (b - a) * fz;
+		}
+		float inside = y >= g[3] ? 1 : 0;
+		float room = Math.max(0, Math.min(1, g[1] * 2 - 1)) * inside, open = Math.max(0, Math.min(1, g[2] * 2 - 1)) * inside;
+		return (float) Math.exp(-Math.max(g[0] - y, -height * BELOW) / height) * (1 + room * (INDOOR_DENSITY - 1) + open * (OPEN_INDOOR_DENSITY - INDOOR_DENSITY));
+	}
+
 	/** Texels into the spare texture (made when 0), returned; the active unit and its binding as they were. */
 	private int uploadSpare(float[] texels)
 	{
+		lampTexels = texels;
 		int tex = texGroundSpare;
 		if (groundBuffer == null || groundBuffer.capacity() < texels.length)
 		{

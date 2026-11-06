@@ -449,17 +449,19 @@ public final class LampWalls
 	/** What a program that reads the lamps needs besides the light buffers: the walls' header and ease. */
 	public static final class Uniforms
 	{
-		private int header = -1, ease = -1, fine = -1, near = -1, far = -1, origin = -1, volumeA = -1;
+		private int header = -1, ease = -1, shown = -1, origin = -1, far = -1, gainAt = -1, volumeA = -1, moverCount = -1, movers = -1;
 
 		public void locate(int program)
 		{
 			header = glGetUniformLocation(program, "lampWallsHeader");
 			ease = glGetUniformLocation(program, "lampWallsEase");
-			fine = glGetUniformLocation(program, "lampVolumeFine");
-			near = glGetUniformLocation(program, "lampVolumeNear");
-			far = glGetUniformLocation(program, "lampVolumeFar");
+			shown = glGetUniformLocation(program, "lampVolumeShown");
 			origin = glGetUniformLocation(program, "lampVolumeOrigin");
+			far = glGetUniformLocation(program, "lampVolumeFar");
+			gainAt = glGetUniformLocation(program, "lampVolumeGainAt");
 			volumeA = glGetUniformLocation(program, "lampVolumeA");
+			moverCount = glGetUniformLocation(program, "lampMoverCount");
+			movers = glGetUniformLocation(program, "lampMovers");
 		}
 
 		/** @param walls LampWalls.header */
@@ -480,21 +482,29 @@ public final class LampWalls
 			LampVolume v = LampVolume.current();
 			if (v != null)
 			{
-				if (fine >= 0)
+				if (shown >= 0)
 				{
-					glUniform4fv(fine, v.fineWindow());
-				}
-				if (near >= 0)
-				{
-					glUniform4fv(near, v.nearWindow());
-				}
-				if (far >= 0)
-				{
-					glUniform4fv(far, v.farWindow());
+					glUniform4fv(shown, v.shown());
 				}
 				if (origin >= 0)
 				{
-					glUniform4fv(origin, v.origin());
+					glUniform4fv(origin, v.origins());
+				}
+				if (far >= 0)
+				{
+					glUniform4fv(far, v.farInfo());
+				}
+				if (gainAt >= 0)
+				{
+					glUniform2fv(gainAt, v.gainAt());
+				}
+				if (moverCount >= 0)
+				{
+					glUniform1i(moverCount, v.moverCount());
+				}
+				if (movers >= 0)
+				{
+					glUniform4fv(movers, v.movers());
 				}
 			}
 		}

@@ -230,7 +230,7 @@ vec3 lampsOnSurface(int entry, vec3 p, vec3 n, vec3 faceN, float transmissive, o
   if (transmissive > 0.0) {
     through = r.light * transmission(ndl, dot(-ld, normalize(-p)), transmissive);
   }
-  return r.light * k;
+  return r.light * k + (lampMoverCount > 0 ? lampMoversOnSurface(w, n, faceN) : vec3(0.0));
 }
 
 // ---------------------------------------------------------------------------------------------------------------
