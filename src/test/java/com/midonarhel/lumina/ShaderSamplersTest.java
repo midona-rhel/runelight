@@ -80,4 +80,19 @@ public class ShaderSamplersTest
 		List<String> composite = samplers("composite_frag.glsl");
 		assertTrue("composite " + composite, composite.size() <= 19);
 	}
+
+	/** The AO program samples all of these in one draw: a unit two of them share reads one texture as both. */
+	@Test
+	public void aoProgramUnitsAreDistinct()
+	{
+		int[] units = {LuminaPlugin.WEATHER_OCCLUSION_UNIT, LuminaPlugin.WEATHER_OCCLUSION_UNIT + 1, LuminaPlugin.WEATHER_FIELD_UNIT + 1,
+			LuminaPlugin.SKY_GRID_UNIT, LuminaPlugin.SKY_GRID_UNIT + 1, LuminaPlugin.SKY_FIELD_UNIT, LuminaPlugin.SKY_FIELD_PREV_UNIT,
+			LuminaPlugin.MATERIAL_UNIT, LuminaPlugin.WATER_DATA_UNIT, LuminaPlugin.SHADOW_RAW_UNIT, LuminaPlugin.SHADOW_COMPARE_UNIT,
+			LuminaPlugin.SHADOW_MAX_UNIT};
+		Set<Integer> seen = new HashSet<>();
+		for (int u : units)
+		{
+			assertTrue("unit " + u + " twice", seen.add(u));
+		}
+	}
 }
