@@ -237,7 +237,7 @@ public final class LampVolume
 		float atX, atY, atZ;
 		final Grid[] grid = {new Grid(), new Grid(), new Grid()};
 		long easeFrom;
-		boolean flood;
+		boolean flood, fineOnly, asleep;
 	}
 
 	/** A lamp not in the volume yet: the frames it has stood here. */
@@ -474,7 +474,8 @@ public final class LampVolume
 		long nanos = System.nanoTime();
 		float units = lastNanos == 0 || benchSync ? 1e9f : Math.min(0.1f, (nanos - lastNanos) / 1e9f) * GLIDE;
 		lastNanos = nanos;
-		drain(data[L_FAR] != null ? UPLOAD_BYTES : UPLOAD_BYTES_LOAD, units);
+		// a big job, lamps by the hundred going on or off, goes at a load's pace or it's seconds of a wave across the world
+		drain(data[L_FAR] != null && atkQueuedBytes() < 8 * UPLOAD_BYTES_LOAD / 4 ? UPLOAD_BYTES : UPLOAD_BYTES_LOAD, units);
 		boolean idle = job == null || job.isDone();
 		if (job != null && idle)
 		{
@@ -515,7 +516,8 @@ public final class LampVolume
 			}
 			l.seen = true;
 			l.out = false;
-			float s = p.intensity * p.mapFade;
+			l.asleep = false;
+			float s = p.intensity;
 			float nr = p.r * s, ng = p.g * s, nb = p.b * s;
 			boolean hand = handing(l);
 			if (hand)
@@ -579,8 +581,19 @@ public final class LampVolume
 				}
 				else if (!l.seen && !l.out)
 				{
-					gone.add(l);
-					it.remove();
+					if (sentAll && l.inField && !holding)
+					{
+						// Off, not gone: the client's night-only lamps, a couple of hundred, go off and on together as the player goes out of doors and in.
+						// It stays with its floods, strength nothing, and comes back without flooding or waiting (flood-volume/live/results2.md)
+						l.asleep = true;
+						l.nr = l.ng = l.nb = 0;
+						strengths |= l.cr + l.cg + l.cb > 0;
+					}
+					else
+					{
+						gone.add(l);
+						it.remove();
+					}
 				}
 			}
 		}
@@ -638,7 +651,7 @@ public final class LampVolume
 				l.oz = o[1];
 				l.flood = true;
 				l.seen = true;
-				float s = p.intensity * p.mapFade;
+				float s = p.intensity;
 				l.nr = p.r * s;
 				l.ng = p.g * s;
 				l.nb = p.b * s;
@@ -694,6 +707,7 @@ public final class LampVolume
 				it.remove();
 			}
 		}
+		nearestWhileDark(plugin, lights, clusters);
 		sendMovers();
 		if (!idle)
 		{
@@ -910,7 +924,7 @@ public final class LampVolume
 	// it was, it stays there and doesn't show twice
 	private void mover(PointLight p, LightClusters clusters, float share, boolean hand)
 	{
-		float s = p.intensity * p.mapFade;
+		float s = p.intensity;
 		float lum = (p.r + p.g + p.b) * s;
 		moverPlaces.add(new float[]{p.x, p.y, p.z});
 		if (lum <= 0 || share <= 0)
@@ -948,7 +962,7 @@ public final class LampVolume
 		Map<PointLight, Lamp> moved = new java.util.IdentityHashMap<>();
 		for (Lamp l : lamps.values())
 		{
-			if (l.seen)
+			if (l.seen || l.asleep)
 			{
 				continue;
 			}
@@ -965,7 +979,7 @@ public final class LampVolume
 			}
 			if (to != null)
 			{
-				float s = to.intensity * to.mapFade;
+				float s = to.intensity;
 				l.out = true;
 				l.gain = 1;
 				l.atX = to.x;
@@ -1068,6 +1082,23 @@ public final class LampVolume
 	}
 
 	// The brightest fit, and the last of those fades on the one left out, so one coming in over another eases
+	// While a scene's volume isn't there yet, the lamps nearest the player go per pixel, so what's beside you doesn't go dark at a region's edge. Nothing
+	// stops them for those few frames: the line test has no air to read.
+	private void nearestWhileDark(LuminaPlugin plugin, List<PointLight> lights, LightClusters clusters)
+	{
+		if (benchSync || data[L_FAR] != null || lights.isEmpty())
+		{
+			return;
+		}
+		float fx = plugin.edgeFade.focalX, fz = plugin.edgeFade.focalZ;
+		List<PointLight> near = new ArrayList<>(lights);
+		near.sort((a, b) -> Float.compare((a.x - fx) * (a.x - fx) + (a.z - fz) * (a.z - fz), (b.x - fx) * (b.x - fx) + (b.z - fz) * (b.z - fz)));
+		for (int i = 0; i < Math.min(MOVERS, near.size()); ++i)
+		{
+			mover(near.get(i), clusters, 1, true);
+		}
+	}
+
 	private void sendMovers()
 	{
 		moverList.sort((a, b) -> Float.compare(b[7], a[7]));
@@ -1790,8 +1821,9 @@ public final class LampVolume
 					&& (l.z + l.r + 32 - GRID_X) / FINE >= dirty[1] && (l.z - l.r - 32 - GRID_X) / FINE <= dirty[3];
 				if (!l.flood && !touched && l.grid[L_FINE].vis == null && l.grid[L_NEAR].vis != null && nearFine(l, 0))
 				{
-					// the fine window has come near it
+					// the fine window has come near it: what the coarser levels show of it stays, or the lamp changes on screen as the player runs
 					l.flood = true;
+					l.fineOnly = true;
 				}
 				else if (l.grid[L_FINE].vis != null && !nearFine(l, 2 * FINE_MARGIN))
 				{
@@ -1824,6 +1856,25 @@ public final class LampVolume
 					for (Grid g : l.grid)
 					{
 						g.change = change(g);
+					}
+					if (l.fineOnly)
+					{
+						l.fineOnly = false;
+						for (int i = L_NEAR; i <= L_MID; ++i)
+						{
+							Grid g = l.grid[i];
+							if (g.old != null)
+							{
+								g.vis = g.old;
+								g.x = g.oldX;
+								g.y = g.oldY;
+								g.z = g.oldZ;
+								g.w = g.oldW;
+								g.h = g.oldH;
+								g.d = g.oldD;
+								g.change = new int[]{0, 0, 0, 0, 0, 0};
+							}
+						}
 					}
 				});
 			}
