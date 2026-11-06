@@ -7,7 +7,7 @@ This section is the latest. The older notes below are from 2026-10-30.
 ### Where things are
 - All tonight's work is one branch, `occ/lumina-live`, built on `a1de294f`. It is not merged into `lumina`.
 - `origin/lumina` has 17 commits this branch lacks (handover notes, "Two looks" colours and more). Reconcile them before
-  merging. The 13 `occ/*` competition branches are local only.
+  merging. The other `occ/*` competition branches are local only.
 - Lamp occlusion is now the light volume method (`light/LampVolume.java`, `light/lamp_volume.glsl`): a 3D volume that sums
   lamps ahead of time, so a pixel does about one read however many lamps are in view. `src/main` still holds bench hooks
   (`atk*`, `offline*`) and old lamp code (LampCubes, LightMap) to clear out before a merge.
@@ -56,7 +56,7 @@ This section is the latest. The older notes below are from 2026-10-30.
   Windows and Linux count; don't rewrite saved settings from one GPU's limits. No new settings without asking.
 - Change only what was asked, relay the user's exact words, and answer a question with evidence, not a change.
 
-# Lumen — the old RuneLight renderer as the base (branch `lumen`, from `perf-wip` + the reference tools)
+## Older notes: Lumen — the old RuneLight renderer as the base (branch `lumen`, from `perf-wip` + the reference tools)
 
 Decided 2026-10-30, evening. The look of `perf-wip` (its shading, sky, fog, tuning) is the base and is kept; the
 work is to make it perform, not hitch, and run well on Windows, macOS and Linux, and to add what it lacks from the
