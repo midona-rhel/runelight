@@ -72,10 +72,14 @@ public final class LampVolume
 	private static final float FIXTURE = prop("volFixture", 72f);
 	// visibility as read: 0 to 1 between these of the flood's. Below lo is the geometric edge's dark side (math.md 6)
 	private static final float SHARP_LO = prop("volLo", 0.3f);
-	private static final float SHARP_HI = prop("volHi", 0.8f);
-	// rays to the lamp's ball from each free fine cell of a read cell the flood found on a shadow's front
-	private static final int RAYS = (int) prop("volRays", 5);
-	private static final float BALL = prop("volBall", 0.7f);
+	private static final float SHARP_HI = prop("volHi", 0.75f);
+	// the same for the mid level, which the fog reads: its cell's mean of a beam through a door falls short of the beam, and the fog would have a hole there
+	private static final float MID_LO = prop("volMidLo", 0.2f), MID_HI = prop("volMidHi", 0.6f);
+	// what a solid cell counts for in the bilinear read of the shell before, against a free one's 1: at 1 a surface dims the cells that graze it
+	private static final float SOLID = prop("volSolid", 0.85f);
+	// passes of the smoothing over the flood's cells, and a cell's own weight against each of its six neighbours'
+	private static final int SMOOTH = (int) prop("volSmooth", 2);
+	private static final float SMOOTH_SELF = prop("volSmoothSelf", 2);
 	// A solid read cell with free fine cells holds what those see, at this share of a free cell's air: nothing to a read that has a free
 	// cell, all there is to one that hasn't, a surface in a nook no free cell reaches
 	private static final float NOOK = prop("volNook", 1 / 32f);
@@ -85,8 +89,9 @@ public final class LampVolume
 	// how far above the ground under the player each level starts (y is down), and how far the ground goes before they move
 	private static final int[] ABOVE = {640, 1100, 1900};
 	private static final int FAR_ABOVE = 1900, GROUND_REACH = 256;
-	// how many steps of a ray that leaves a surface pass the cells that only touch it
-	private static final int CRUST = (int) prop("volCrust", 3);
+	// how many cells of its way to the lamp a cell touching a surface may pass, when that way leaves the surface at no more than this cosine
+	private static final int CRUST = (int) prop("volCrust", 1);
+	private static final float GRAZE = prop("volGraze", 0.5f);
 	// how far past a lamp's reach the fine window is for it to flood coarsely: a lamp nearer than this has its fine cells ready before it is walked to
 	private static final float FINE_MARGIN = 256;
 	// the walled windows follow the player in steps of this many units, rounded to the nearest
@@ -2360,14 +2365,15 @@ public final class LampVolume
 	{
 		float[] v = new float[1 << 16];
 		boolean[] solid = new boolean[1 << 16];
-		float[] sum = new float[1 << 14], rayed = new float[1 << 14];
+		float[] sum = new float[1 << 14], next = new float[1 << 14];
 		long[][] column = new long[1 << 10][];
 		int[] columnAt = new int[1 << 10];
 		short[] count = new short[1 << 14], trace = new short[1 << 14];
 	}
 
 	// A lamp's flood: shells of a cube round its origin, each cell the bilinear value of where its ray to the lamp crosses the
-	// shell's plane before it, on the axis the ray runs most along. Then per read cell the mean of its free cells, sharpened.
+	// shell's plane before it, on the axis the ray runs most along. Then the crust, the smoothing, and per read cell the mean of its free
+	// cells, sharpened.
 	private void flood(Lamp l, Scratch sc)
 	{
 		// a lamp clear of the fine window floods its cells at the near level's size: an eighth of the work, for a level it can't reach
@@ -2475,27 +2481,26 @@ public final class LampVolume
 						if (bx >= by && bx >= bz)
 						{
 							float t = 1 / bx;
-							value = plane(v, at - (ax > 0 ? 1 : -1), ay * t, az * t, stepY, stepZ);
+							value = plane(v, solid, at - (ax > 0 ? 1 : -1), ay * t, az * t, stepY, stepZ);
 						}
 						else if (by >= bz)
 						{
 							float t = 1 / by;
-							value = plane(v, at - (ay > 0 ? stepY : -stepY), ax * t, az * t, 1, stepZ);
+							value = plane(v, solid, at - (ay > 0 ? stepY : -stepY), ax * t, az * t, 1, stepZ);
 						}
 						else
 						{
 							float t = 1 / bz;
-							value = plane(v, at - (az > 0 ? stepZ : -stepZ), ax * t, ay * t, 1, stepY);
+							value = plane(v, solid, at - (az > 0 ? stepZ : -stepZ), ax * t, ay * t, 1, stepY);
 						}
 						v[at] = value;
 					}
 				}
 			}
 		}
-		if (RAYS > 0)
-		{
-			frontRays(l, sc, n, w, gx - (lx - n), gy - (ly - n), gz - (lz - n), cells, s);
-		}
+		crust(sc, n, w, ox, oy, oz, cells);
+		smooth(sc, w, cells);
+		v = sc.v;
 		// per fine cell. A solid one holds what its free neighbours see, for a read with nothing free near it
 		int fx0 = lx - n, fy0 = ly - n, fz0 = lz - n;
 		if (wide)
@@ -2548,7 +2553,7 @@ public final class LampVolume
 							continue;
 						}
 					}
-					fineVis[i] = (byte) (sharpen(o) * 255 + 0.5f);
+					fineVis[i] = (byte) (sharpen(o, SHARP_LO, SHARP_HI) * 255 + 0.5f);
 				}
 			}
 		}
@@ -2616,7 +2621,7 @@ public final class LampVolume
 		{
 			if (count[c] > 0 && sum[c] > 0)
 			{
-				vis[c] = (byte) (sharpen(sum[c] / count[c]) * 255 + 0.5f);
+				vis[c] = (byte) (sharpen(sum[c] / count[c], lv == L_MID ? MID_LO : SHARP_LO, lv == L_MID ? MID_HI : SHARP_HI) * 255 + 0.5f);
 			}
 		}
 		// a solid cell's trace, as a fine one's: no more than its least free neighbour
@@ -2668,79 +2673,56 @@ public final class LampVolume
 		g.d = bd;
 	}
 
-	private static float sharpen(float o)
+	private static float sharpen(float o, float lo, float hi)
 	{
 		if (o <= 0)
 		{
 			return 0;
 		}
-		float t = (o - SHARP_LO) / (SHARP_HI - SHARP_LO);
+		float t = (o - lo) / (hi - lo);
 		return t <= 0 ? 0 : t >= 1 ? 1 : t * t * (3 - 2 * t);
 	}
 
-	// The flood's front is wider than the shadow's: it spreads a little a shell. A cell at 0 or 1 is past its reach; a cell between gets the
-	// truth, by rays to the part of the lamp's ball its centre sees. Steps along a ray's longest axis are a 26-connected walk: it can't pass
-	// a closed surface's conservative voxels. So a cell lit here is on the lamp's side of everything closed, the flood or no flood.
-	private void frontRays(Lamp l, Scratch sc, int n, int w, float cx, float cy, float cz, int cells, int s)
+	// Conservative cells stand proud of a slope and stop light that grazes it. On a shadow's front, a free cell touching a surface, whose way to the
+	// lamp leaves that surface at a shallow angle, takes what the flood has CRUST + 1 cells along that way, past the cells that only touch the surface.
+	// That is a value of the flood's own smooth field: no ray's yes or no, which on a grid of these cells reads as steps (flood-volume/soft/results.md).
+	// A steep way off a surface doesn't pass: nothing proud of the surface stops it, so what stops it is a real blocker. Nothing here feeds the flood.
+	private static void crust(Scratch sc, int n, int w, float ox, float oy, float oz, int cells)
 	{
 		float[] v = sc.v;
 		boolean[] solid = sc.solid;
-		float ball = Math.min(96, Math.max(16, 0.08f * l.r)) * BALL / s;
-		float seed = SEED / s;
-		// the ball's points, each as far out as the centre sees
-		float[] pts = new float[Math.max(RAYS, 1) * 3];
-		float[] dirs = {0, 0, 0, 1, 1, 1, -1, -1, 1, -1, 1, -1, 1, -1, -1, 1, 0, 0, -1, 0, 0, 0, 0, 1, 0, 0, -1};
-		for (int k = 0; k < RAYS; ++k)
+		float[] out = sc.next;
+		if (out.length < cells)
 		{
-			float dx = dirs[k * 3], dy = dirs[k * 3 + 1], dz = dirs[k * 3 + 2];
-			float len = (float) Math.sqrt(dx * dx + dy * dy + dz * dz);
-			len = len > 0 ? ball / len : 0;
-			dx *= len;
-			dy *= len;
-			dz *= len;
-			float far = 1;
-			int steps = (int) Math.ceil(ball) * 2;
-			for (int i = 1; i <= steps; ++i)
-			{
-				float t = i / (float) steps;
-				int at = cellAt(cx + dx * t, cy + dy * t, cz + dz * t, w);
-				if (at < 0 || solid[at] && (dx * dx + dy * dy + dz * dz) * t * t > seed * seed)
-				{
-					far = (i - 1) / (float) steps;
-					break;
-				}
-			}
-			pts[k * 3] = cx + dx * far;
-			pts[k * 3 + 1] = cy + dy * far;
-			pts[k * 3 + 2] = cz + dz * far;
+			out = sc.next = new float[cells];
 		}
-		float[] rayed = sc.rayed;
-		if (rayed.length < cells)
+		System.arraycopy(v, 0, out, 0, cells);
+		int stepZ = w, stepY = w * w, k = CRUST + 1;
+		for (int y = 1, i0 = stepY; y < w - 1; ++y, i0 += stepY)
 		{
-			rayed = sc.rayed = new float[cells];
-		}
-		Arrays.fill(rayed, 0, cells, -1);
-		int stepZ = w, stepY = w * w;
-		int i = 0;
-		for (int y = 0; y < w; ++y)
-		{
-			for (int z = 0; z < w; ++z)
+			for (int z = 1; z < w - 1; ++z)
 			{
-				for (int x = 0; x < w; ++x, ++i)
+				int i = i0 + z * stepZ + 1;
+				for (int x = 1; x < w - 1; ++x, ++i)
 				{
-					float o = v[i];
-					if (solid[i] || o >= 1 || x == 0 || y == 0 || z == 0 || x == w - 1 || y == w - 1 || z == w - 1)
+					if (solid[i] || v[i] >= 1 || !(solid[i - 1] || solid[i + 1] || solid[i - stepZ] || solid[i + stepZ] || solid[i - stepY] || solid[i + stepY]))
 					{
 						continue;
 					}
 					// the dark side of a front is a cell off the light
-					if (o <= 0 && v[i - 1] <= 0 && v[i + 1] <= 0 && v[i - stepZ] <= 0 && v[i + stepZ] <= 0 && v[i - stepY] <= 0 && v[i + stepY] <= 0)
+					if (v[i] <= 0 && v[i - 1] <= 0 && v[i + 1] <= 0 && v[i - stepZ] <= 0 && v[i + stepZ] <= 0 && v[i - stepY] <= 0 && v[i + stepY] <= 0)
 					{
 						continue;
 					}
-					// the way out of the crust of cells a surface here has: from what is solid round it to what is free
-					float ax = 0, ay = 0, az = 0;
-					boolean crust = false;
+					float ax = x - n - ox, ay = y - n - oy, az = z - n - oz;
+					float bx = Math.abs(ax), by = Math.abs(ay), bz = Math.abs(az);
+					float big = Math.max(bx, Math.max(by, bz));
+					if (big <= k + 1)
+					{
+						continue;
+					}
+					// the way out of the crust, from what is solid round it to what is free
+					float ox2 = 0, oy2 = 0, oz2 = 0;
 					for (int dy = -1, at = i - stepY - stepZ - 1; dy <= 1; ++dy, at += stepY - 3 * stepZ)
 					{
 						for (int dz = -1; dz <= 1; ++dz, at += stepZ - 3)
@@ -2749,85 +2731,129 @@ public final class LampVolume
 							{
 								if (solid[at])
 								{
-									crust = true;
-									ax -= dx;
-									ay -= dy;
-									az -= dz;
+									ox2 -= dx;
+									oy2 -= dy;
+									oz2 -= dz;
 								}
 							}
 						}
 					}
-					int seen = 0;
-					for (int k = 0; k < RAYS; ++k)
+					// toward the lamp is minus a
+					float along = -(ax * ox2 + ay * oy2 + az * oz2);
+					if (along <= 0 || along * along > GRAZE * GRAZE * (ax * ax + ay * ay + az * az) * (ox2 * ox2 + oy2 * oy2 + oz2 * oz2))
 					{
-						float dx = pts[k * 3] - x - 0.5f, dy = pts[k * 3 + 1] - y - 0.5f, dz = pts[k * 3 + 2] - z - 0.5f;
-						// a ray that leaves a surface passes the cells that only touch it
-						int skip = crust && dx * ax + dy * ay + dz * az > 0 ? CRUST : 0;
-						if (free(solid, v, w, x + 0.5f, y + 0.5f, z + 0.5f, pts[k * 3], pts[k * 3 + 1], pts[k * 3 + 2], cx, cy, cz, seed, skip))
+						continue;
+					}
+					float t = k / big, value;
+					if (bx >= by && bx >= bz)
+					{
+						value = far(v, solid, i - (ax > 0 ? k : -k), ay * t, az * t, stepY, stepZ);
+					}
+					else if (by >= bz)
+					{
+						value = far(v, solid, i - (ay > 0 ? k : -k) * stepY, ax * t, az * t, 1, stepZ);
+					}
+					else
+					{
+						value = far(v, solid, i - (az > 0 ? k : -k) * stepZ, ax * t, ay * t, 1, stepY);
+					}
+					if (value > out[i])
+					{
+						out[i] = value;
+					}
+				}
+			}
+		}
+		System.arraycopy(out, 0, v, 0, cells);
+	}
+
+	// A read's cells are a straight edge's stairs unless the edge spans a few of them. So each pass, a free cell takes the mean of itself and its free
+	// face neighbours. A step goes only between free cells that share a face, and a closed surface's conservative cells separate those, so
+	// this can't carry light through anything closed, however many passes run: it only rounds a shadow's edge in the air the edge is in.
+	private static void smooth(Scratch sc, int w, int cells)
+	{
+		float[] v = sc.v;
+		boolean[] solid = sc.solid;
+		float[] out = sc.next;
+		if (out.length < cells)
+		{
+			out = sc.next = new float[cells];
+		}
+		int stepZ = w, stepY = w * w;
+		for (int pass = 0; pass < SMOOTH; ++pass)
+		{
+			System.arraycopy(v, 0, out, 0, cells);
+			for (int y = 1, i0 = stepY; y < w - 1; ++y, i0 += stepY)
+			{
+				for (int z = 1; z < w - 1; ++z)
+				{
+					int i = i0 + z * stepZ + 1;
+					for (int x = 1; x < w - 1; ++x, ++i)
+					{
+						float c = v[i];
+						// most cells: all open, all dark, or solid
+						if (solid[i] || c == v[i - 1] && c == v[i + 1] && c == v[i - stepZ] && c == v[i + stepZ] && c == v[i - stepY] && c == v[i + stepY])
 						{
-							++seen;
+							continue;
 						}
-					}
-					rayed[i] = seen / (float) RAYS;
-				}
-			}
-		}
-		for (i = 0; i < cells; ++i)
-		{
-			if (rayed[i] >= 0)
-			{
-				v[i] = rayed[i];
-			}
-		}
-	}
-
-	private static int cellAt(float x, float y, float z, int w)
-	{
-		int ix = (int) Math.floor(x), iy = (int) Math.floor(y), iz = (int) Math.floor(z);
-		return ix < 0 || iy < 0 || iz < 0 || ix >= w || iy >= w || iz >= w ? -1 : (iy * w + iz) * w + ix;
-	}
-
-	// Whether a cell's centre sees a point of the ball; within the seed of the lamp's centre nothing stops it. A flood's 1 is an open cone to
-	// the lamp: a ray that comes to one is there: most of a ray's length, on the rays of a front
-	private static boolean free(boolean[] solid, float[] v, int w, float x0, float y0, float z0, float x1, float y1, float z1, float cx, float cy, float cz, float seed, int skip)
-	{
-		float dx = x1 - x0, dy = y1 - y0, dz = z1 - z0;
-		float big = Math.max(Math.abs(dx), Math.max(Math.abs(dy), Math.abs(dz)));
-		int steps = (int) Math.ceil(big);
-		if (steps == 0)
-		{
-			return true;
-		}
-		float sx = dx / steps, sy = dy / steps, sz = dz / steps;
-		float x = x0, y = y0, z = z0;
-		float s2 = seed * seed;
-		for (int i = 1; i < steps; ++i)
-		{
-			x += sx;
-			y += sy;
-			z += sz;
-			int ix = (int) x, iy = (int) y, iz = (int) z;
-			if (i > skip && ix >= 0 && iy >= 0 && iz >= 0 && ix < w && iy < w && iz < w)
-			{
-				int at = (iy * w + iz) * w + ix;
-				if (solid[at])
-				{
-					float ax = x - cx, ay = y - cy, az = z - cz;
-					if (ax * ax + ay * ay + az * az > s2)
-					{
-						return false;
+						float sum = c * SMOOTH_SELF, weight = SMOOTH_SELF;
+						for (int k = 0; k < 6; ++k)
+						{
+							int at = i + (k == 0 ? -1 : k == 1 ? 1 : k == 2 ? -stepZ : k == 3 ? stepZ : k == 4 ? -stepY : stepY);
+							if (!solid[at])
+							{
+								sum += v[at];
+								++weight;
+							}
+						}
+						out[i] = sum / weight;
 					}
 				}
-				else if (v[at] >= 1)
-				{
-					return true;
-				}
 			}
+			float[] t = v;
+			v = out;
+			out = t;
 		}
-		return true;
+		sc.v = v;
+		sc.next = out;
 	}
 
-	private static float plane(float[] v, int at, float a, float b, int stepA, int stepB)
+	// plane's read of a plane further along the ray: a and b can be past a cell, and what's solid in it doesn't count
+	private static float far(float[] v, boolean[] solid, int at, float a, float b, int stepA, int stepB)
+	{
+		float fa = -a, fb = -b;
+		int ia = (int) Math.floor(fa), ib = (int) Math.floor(fb);
+		float ta = fa - ia, tb = fb - ib;
+		int p = at + ia * stepA + ib * stepB;
+		float sum = 0, weight = 0, w;
+		w = (1 - ta) * (1 - tb);
+		if (!solid[p])
+		{
+			sum += w * v[p];
+			weight += w;
+		}
+		w = ta * (1 - tb);
+		if (!solid[p + stepA])
+		{
+			sum += w * v[p + stepA];
+			weight += w;
+		}
+		w = (1 - ta) * tb;
+		if (!solid[p + stepB])
+		{
+			sum += w * v[p + stepB];
+			weight += w;
+		}
+		w = ta * tb;
+		if (!solid[p + stepA + stepB])
+		{
+			sum += w * v[p + stepA + stepB];
+			weight += w;
+		}
+		return weight > 0 ? sum / weight : 0;
+	}
+
+	private static float plane(float[] v, boolean[] solid, int at, float a, float b, int stepA, int stepB)
 	{
 		// the ray's crossing, relative to the cell behind this one: toward the lamp is minus the slope
 		float fa = -a, fb = -b;
@@ -2836,7 +2862,14 @@ public final class LampVolume
 		int p = at + ia * stepA + ib * stepB;
 		float v00 = v[p], v10 = v[p + stepA], v01 = v[p + stepB], v11 = v[p + stepA + stepB];
 		float l = v00 + (v10 - v00) * ta, h = v01 + (v11 - v01) * ta;
-		return l + (h - l) * tb;
+		float value = l + (h - l) * tb;
+		if (value > 0)
+		{
+			// the part of the read that fell on solid cells counts for less than free ones
+			float blocked = (solid[p] ? (1 - ta) * (1 - tb) : 0) + (solid[p + stepA] ? ta * (1 - tb) : 0) + (solid[p + stepB] ? (1 - ta) * tb : 0) + (solid[p + stepA + stepB] ? ta * tb : 0);
+			value /= 1 - blocked * (1 - SOLID);
+		}
+		return value;
 	}
 
 	// ---------------------------------------------------------------------------------------------------------------
