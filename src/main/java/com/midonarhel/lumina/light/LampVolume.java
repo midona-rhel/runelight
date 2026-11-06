@@ -1433,16 +1433,15 @@ public final class LampVolume
 		int i = 0;
 		for (int dy = -n; dy <= n; ++dy)
 		{
-			for (int dz = -n; dz <= n; ++dz)
+			for (int dz = -n; dz <= n; ++dz, i += w)
 			{
-				for (int dx = -n; dx <= n; ++dx, ++i)
+				// outside the ball nothing flows: a row's ends count as solid
+				float left = reach2 - dy * dy - dz * dz;
+				int end = left < 0 ? -1 : Math.min(n, (int) Math.sqrt(left));
+				Arrays.fill(solid, i, i + w, true);
+				for (int dx = -end; dx <= end; ++dx)
 				{
-					if (dx * dx + dy * dy + dz * dz > reach2)
-					{
-						solid[i] = true;
-						continue;
-					}
-					solid[i] = solidFine(lx + dx, ly + dy, lz + dz);
+					solid[i + n + dx] = solidFine(lx + dx, ly + dy, lz + dz);
 				}
 			}
 		}

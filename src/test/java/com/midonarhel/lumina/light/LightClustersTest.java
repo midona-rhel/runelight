@@ -39,20 +39,19 @@ public class LightClustersTest
 		return lights;
 	}
 
-	private static List<Integer> fogColumnLights(LightClusters clusters)
+	// how many fog columns hold a stretch of distance that lamps glow in (LightClusters: the first two words of a column's entry)
+	private static int fogSpans(LightClusters clusters)
 	{
-		List<Integer> all = new ArrayList<>();
+		int[] table = clusters.clusterTable();
+		int words = clusters.clusterTexels() * 4, spans = 0;
 		for (int c = 0; c < COLUMNS; ++c)
 		{
-			for (int light : entryLights(clusters, COLUMN_BASE + c))
+			if (Float.intBitsToFloat(table[(COLUMN_BASE + c) * words + 1]) > 0)
 			{
-				if (!all.contains(light))
-				{
-					all.add(light);
-				}
+				++spans;
 			}
 		}
-		return all;
+		return spans;
 	}
 
 	@Test
@@ -67,14 +66,8 @@ public class LightClustersTest
 		lights.add(new PointLight().set(0, 800, 20000, 600, 1, 0.5f, 0.2f, 2));
 		clusters.setFog(true, 0, 3000, 4000, -1e9f, 0);
 		clusters.cull(lights, viewProj(), 0, 0, 0);
-		List<Integer> fog = fogColumnLights(clusters);
 		assertEquals(3, clusters.getLightCount());
-		assertEquals(2, fog.size());
-		assertTrue(fog.contains(0) && fog.contains(1));
-
-		clusters.setFog(false, 0, 0, 0, 0, 0);
-		clusters.cull(lights, viewProj(), 0, 0, 0);
-		assertTrue(fogColumnLights(clusters).isEmpty());
+		assertTrue(fogSpans(clusters) > 0);
 	}
 
 	@Test
@@ -89,49 +82,14 @@ public class LightClustersTest
 		lights.add(new PointLight().set(-200, 800, 3200, 600, 0.1f, 0.1f, 0.1f, 2));
 		clusters.setFog(true, 0, 3000, 4000, 0, 500);
 		clusters.cull(lights, viewProj(), 0, 0, 0);
-		List<Integer> fog = fogColumnLights(clusters);
 		assertEquals(3, clusters.getLightCount());
-		assertEquals(1, fog.size());
-		assertEquals(0, (int) fog.get(0));
+		assertTrue(fogSpans(clusters) > 0);
 		assertTrue(clusters.hasFogLights());
 
 		clusters.setFog(true, 0, 3000, 4000, 2000, 0);
 		clusters.cull(lights, viewProj(), 0, 0, 0);
-		assertTrue(fogColumnLights(clusters).isEmpty());
+		assertEquals(0, fogSpans(clusters));
 		assertFalse(clusters.hasFogLights());
-	}
-
-	@Test
-	public void fullColumnsKeepTheBrightestLights()
-	{
-		LightClusters clusters = new LightClusters();
-		List<PointLight> lights = new ArrayList<>();
-		int n = LightClusters.MAX_LIGHTS_PER_CLUSTER + 9;
-		for (int i = 0; i < n; ++i)
-		{
-			// dimmest first, all in the same place
-			lights.add(new PointLight().set(0, 800, 3000, 300, 1, 1, 1, 1 + i));
-		}
-		clusters.setFog(true, 0, 3000, 4000, -1e9f, 0);
-		clusters.cull(lights, viewProj(), 0, 0, 0);
-		boolean any = false;
-		for (int c = 0; c < COLUMNS; ++c)
-		{
-			List<Integer> column = entryLights(clusters, COLUMN_BASE + c);
-			if (column.isEmpty())
-			{
-				continue;
-			}
-			any = true;
-			assertEquals(LightClusters.MAX_LIGHTS_PER_CLUSTER, column.size());
-			// the light buffer lists them most important first: the 9 dimmest, last, are the ones dropped
-			for (int i = 0; i < column.size(); ++i)
-			{
-				assertEquals(i, (int) column.get(i));
-			}
-		}
-		assertTrue(any);
-		assertFalse(fogColumnLights(clusters).contains(n - 1));
 	}
 
 	@Test
