@@ -80,11 +80,11 @@ public class Zone
 	boolean dirty; // whether the zone has temporary modifications
 	public boolean invalidate; // whether the zone needs rebuilding
 
-	int[] levelOffsets = new int[4]; // buffer pos in ints for the end of the level
+	public int[] levelOffsets = new int[4]; // buffer pos in ints for the end of the level
 
-	int[][] rids;
-	int[][] roofStart;
-	int[][] roofEnd;
+	public int[][] rids;
+	public int[][] roofStart;
+	public int[][] roofEnd;
 
 	final List<AlphaModel> alphaModels = new ArrayList<>(0);
 
@@ -96,8 +96,8 @@ public class Zone
 	// the skylight's copy of the opaque triangles (SceneUploader), until the voxel worker turns it into voxels
 	public VoxelCapture voxelCapture;
 	public Voxelizer.Zone voxels;
-	// the zone's triangles as plain data, for the lamps' volume (LampVolume): a restored zone's, or read back
-	public ZoneSnapshot source;
+	// the zone's opaque triangles as plain data, for the lamps' volume (LampVolume.triangles)
+	public int[] lampTriangles;
 	// the models that stop light at lamp height, rasterized with the voxels (ModelBlockers, for the light map)
 	public com.midonarhel.lumina.visibility.ModelBlockers.Zone modelBlockers;
 

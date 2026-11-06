@@ -148,6 +148,10 @@ public final class FloodCpu
 				else if (c == CardOracle.OPEN && light > 0.01f && rv == 0 && over[k] % 197 == 1)
 				{
 					System.out.printf("  dark lamp %d px %d,%d at %.0f %.0f %.0f n %.2f %.2f %.2f d %.0f%n", k, o.px[k][s] % p.width, o.px[k][s] / p.width, x, y, z, nx, ny, nz, d);
+					if (System.getenv("LUMINA_WAY") != null)
+					{
+						System.out.println(v.offlineWay(k, x, y, z));
+					}
 				}
 				else if (c == CardOracle.BLOCKED && light * rv > 0.003f && (CardOracle.blockersOf(o.cls[k][s]) & CardMesh.RULE) != 0 && leak[k] % 197 == 1)
 				{

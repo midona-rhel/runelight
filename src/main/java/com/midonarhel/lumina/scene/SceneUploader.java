@@ -163,6 +163,7 @@ public class SceneUploader
 			{
 				zone.vboO.vb = mapped;
 				zone.indexed = indexer.write(staging.array(), staging.position(), mapped);
+				zone.lampTriangles = com.midonarhel.lumina.light.LampVolume.triangles(staging.array(), staging.position());
 			}
 		}
 	}

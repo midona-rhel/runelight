@@ -104,7 +104,7 @@ public final class ZoneSnapshot
 			}
 		}
 		zone.init(opaque, upload(vertsA, sizeA, loader));
-		zone.source = this;
+		zone.lampTriangles = vertsO != null ? com.midonarhel.lumina.light.LampVolume.triangles(vertsO, vertsO.length) : null;
 		zone.sizeO = sizeO;
 		zone.sizeA = sizeA;
 		zone.bufLen = bufLen;

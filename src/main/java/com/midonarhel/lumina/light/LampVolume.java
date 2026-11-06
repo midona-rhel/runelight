@@ -10,6 +10,7 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -63,6 +64,8 @@ public final class LampVolume
 	// A solid read cell with free fine cells holds what those see, at this share of a free cell's air: nothing to a read that has a free
 	// cell, all there is to one that hasn't, a surface in a nook no free cell reaches
 	private static final float NOOK = prop("volNook", 1 / 32f);
+	// how much lower the ground stops light than it is drawn
+	private static final float LOWER = prop("volLower", 32f);
 	// how far above the ground under the player the finest level starts (y is down)
 	private static final int FINE_ABOVE = 640;
 	// the near window follows the player in steps of this many cells
@@ -120,6 +123,9 @@ public final class LampVolume
 		// the same per fine cell, a cube of fw cells from fx, fy, fz
 		byte[] fineVis, fineBefore;
 		int fx, fy, fz, fw;
+		// what a flood replaced, and the boxes (in its own grids, x0 y0 z0 x1 y1 z1) it changed: null for all of it
+		byte[] oldVis, oldFine;
+		int[] nearChange, fineChange;
 		long easeFrom;
 		boolean flood;
 	}
@@ -136,7 +142,7 @@ public final class LampVolume
 
 	private static final class ZoneCells
 	{
-		Zone zone;
+		int[] triangles;
 		Segment[] segments;
 	}
 
@@ -153,7 +159,7 @@ public final class LampVolume
 	private final Map<Long, Lamp> lamps = new HashMap<>();
 	private final Map<Long, ZoneCells> zones = new HashMap<>();
 	private final long[][] fine = new long[CHUNKS * CHUNKS][], coarse = new long[CHUNKS * CHUNKS][];
-	private Zone[][] seen;
+	private int[][][] seen;
 	private int minLevel = -1, level = -1, maxLevel = -1;
 	private Set<Integer> hidden = new HashSet<>();
 	private int windowX = Integer.MIN_VALUE, windowZ, windowY, farY, fineX, fineZ, fineY;
@@ -270,7 +276,6 @@ public final class LampVolume
 		{
 			return;
 		}
-		readBack(ctx);
 		// the lamps
 		boolean strengths = false;
 		boolean moved = false;
@@ -335,7 +340,7 @@ public final class LampVolume
 		anyLit = lit;
 		updateGain();
 		List<Lamp> gone = new ArrayList<>();
-		for (java.util.Iterator<Lamp> it = lamps.values().iterator(); it.hasNext(); )
+		for (Iterator<Lamp> it = lamps.values().iterator(); it.hasNext(); )
 		{
 			Lamp l = it.next();
 			if (!l.seen)
@@ -364,14 +369,14 @@ public final class LampVolume
 		int zx = ctx.zones.length, zz = ctx.zones[0].length;
 		if (seen == null || seen.length != zx || seen[0].length != zz)
 		{
-			seen = new Zone[zx][zz];
+			seen = new int[zx][zz][];
 		}
 		List<int[]> changedZones = new ArrayList<>();
 		for (int x = 0; x < zx; ++x)
 		{
 			for (int z = 0; z < zz; ++z)
 			{
-				if (seen[x][z] != ctx.zones[x][z])
+				if (seen[x][z] != ctx.zones[x][z].lampTriangles)
 				{
 					changedZones.add(new int[]{x, z});
 				}
@@ -419,25 +424,6 @@ public final class LampVolume
 		{
 			finish();
 			drain(Integer.MAX_VALUE);
-		}
-	}
-
-	// A zone of the client's has no copy of its vertices (the offline renderer's has its dump's): read back a few a frame. A real build
-	// would take them from the upload's VoxelCapture on the loader's thread.
-	private static void readBack(LuminaPlugin.SceneContext ctx)
-	{
-		int budget = 2;
-		for (int x = 0; x < ctx.zones.length && budget > 0; ++x)
-		{
-			for (int z = 0; z < ctx.zones[0].length && budget > 0; ++z)
-			{
-				Zone zone = ctx.zones[x][z];
-				if (zone.source == null && ZoneSnapshot.dumpable(zone))
-				{
-					zone.source = ZoneSnapshot.of(zone, x, z);
-					--budget;
-				}
-			}
 		}
 	}
 
@@ -697,12 +683,8 @@ public final class LampVolume
 					long key = zoneKey(x, z);
 					ZoneCells old = zones.get(key);
 					Zone now = ctx.zones[x][z];
-					if (needed.contains(key) && (old == null || old.zone != now))
+					if (needed.contains(key) && (old == null || old.triangles != now.lampTriangles))
 					{
-						if (old != null)
-						{
-							grow(dirty, old);
-						}
 						tasks.add(() ->
 						{
 							ZoneCells c = voxelize(now, fx, fz, points);
@@ -712,7 +694,7 @@ public final class LampVolume
 							}
 						});
 					}
-					seen[x][z] = now;
+					seen[x][z] = now.lampTriangles;
 				}
 			}
 			parallel(tasks);
@@ -720,8 +702,12 @@ public final class LampVolume
 			boolean bitsChanged = !built.isEmpty();
 			for (Map.Entry<Long, ZoneCells> e : built.entrySet())
 			{
-				zones.put(e.getKey(), e.getValue());
-				grow(dirty, e.getValue());
+				for (Segment seg : e.getValue().segments)
+				{
+					seg.shown = shown(seg);
+				}
+				// a door's new zone differs from the old by its door: only lamps that reach that see a change
+				difference(dirty, zones.put(e.getKey(), e.getValue()), e.getValue());
 			}
 			// what is shown now
 			for (ZoneCells c : zones.values())
@@ -756,34 +742,45 @@ public final class LampVolume
 					floods.add(l);
 				}
 			}
-			for (Lamp l : floods)
-			{
-				if (!l.flood && sentAll && floods.size() <= EASE_LAMPS)
-				{
-					l.before = l.vis;
-					l.fineBefore = l.fineVis;
-					l.easeFrom = now;
-				}
-			}
 			tasks.clear();
 			final ThreadLocal<Scratch> scratch = ThreadLocal.withInitial(Scratch::new);
 			for (Lamp l : floods)
 			{
 				tasks.add(() ->
 				{
+					l.oldVis = l.vis;
+					l.oldFine = l.fineVis;
 					flood(l, scratch.get());
-					l.flood = false;
+					l.fineChange = l.oldFine == null ? null : changedBox(l.fineVis, l.oldFine, l.fw, l.fw, l.fw);
+					l.nearChange = l.oldVis == null ? null : changedBox(l.vis, l.oldVis, l.bw, l.bh, l.bd);
 				});
 			}
 			parallel(tasks);
-			long t3 = System.nanoTime();
-			if (System.getenv("LUMINA_VOL_PROBE") != null)
+			// a lamp a change didn't touch is done with; a few that it did ease over to it
+			int altered = 0;
+			for (Lamp l : floods)
 			{
-				for (String at : System.getenv("LUMINA_VOL_PROBE").split(";"))
-				{
-					probe(at);
-				}
+				altered += l.oldVis != null && l.nearChange != null ? 1 : 0;
 			}
+			for (Iterator<Lamp> it = floods.iterator(); it.hasNext(); )
+			{
+				Lamp l = it.next();
+				boolean fresh = l.flood;
+				l.flood = false;
+				if (!fresh && l.oldVis != null && l.nearChange == null)
+				{
+					it.remove();
+				}
+				else if (!fresh && sentAll && altered <= EASE_LAMPS)
+				{
+					l.before = l.oldVis;
+					l.fineBefore = l.oldFine;
+					l.easeFrom = now;
+				}
+				l.oldVis = null;
+				l.oldFine = null;
+			}
+			long t3 = System.nanoTime();
 			// the boxes to sum: everything, or each lamp changed
 			List<int[]> fineBoxes = new ArrayList<>(), nearBoxes = new ArrayList<>(), farBoxes = new ArrayList<>();
 			if (everything)
@@ -819,6 +816,11 @@ public final class LampVolume
 					{
 						if (!floods.contains(l))
 						{
+							if (!ease)
+							{
+								l.nearChange = null;
+								l.fineChange = null;
+							}
 							changed.add(l);
 						}
 					}
@@ -850,6 +852,11 @@ public final class LampVolume
 				{
 					l.before = null;
 					l.fineBefore = null;
+				}
+				if (l.before == null)
+				{
+					l.nearChange = null;
+					l.fineChange = null;
 				}
 			}
 			final List<Lamp> list = new ArrayList<>(lamps.values());
@@ -898,31 +905,6 @@ public final class LampVolume
 		}
 	}
 
-	private void probe(String at)
-	{
-		String[] a = at.split(",");
-		int x = Math.floorDiv(Integer.parseInt(a[0]) - GRID_X, CELL), y = Math.floorDiv(Integer.parseInt(a[1]) - GRID_Y, CELL), z = Math.floorDiv(Integer.parseInt(a[2]) - GRID_X, CELL);
-		StringBuilder o = new StringBuilder("probe cell " + x + "," + y + "," + z + " solid column:");
-		for (int k = -4; k <= 4; ++k)
-		{
-			o.append(solidCoarse(x, y + k, z) ? " #" : " .");
-		}
-		for (Lamp l : lamps.values())
-		{
-			int i = x - l.bx, j = y - l.by, k = z - l.bz;
-			if (l.vis != null && i >= 0 && j >= 0 && k >= 0 && i < l.bw && j < l.bh && k < l.bd)
-			{
-				o.append("\n lamp ").append(l.x).append(' ').append(l.y).append(' ').append(l.z).append(" hidden ").append(l.hidden).append(" vis");
-				for (int m = -2; m <= 2; ++m)
-				{
-					int jj = j + m;
-					o.append(' ').append(jj >= 0 && jj < l.bh ? l.vis[(jj * l.bd + k) * l.bw + i] & 255 : -1);
-				}
-			}
-		}
-		System.out.println(o);
-	}
-
 	// a box of a level, as boxes of a few layers each: what a frame can send
 	private static void layers(List<int[]> boxes, int x, int z, int w, int d, int layers)
 	{
@@ -949,15 +931,97 @@ public final class LampVolume
 		return (long) x << 20 | z;
 	}
 
-	private static void grow(int[] box, ZoneCells c)
+	// the box, in fine x and z, of the cells shown in one of the two and not the other
+	private static void difference(int[] box, ZoneCells before, ZoneCells after)
 	{
+		int[] a = shownCells(before), b = shownCells(after);
+		int i = 0, j = 0;
+		while (i < a.length || j < b.length)
+		{
+			int cell;
+			if (j == b.length || i < a.length && a[i] < b[j])
+			{
+				cell = a[i++];
+			}
+			else if (i == a.length || b[j] < a[i])
+			{
+				cell = b[j++];
+			}
+			else
+			{
+				++i;
+				++j;
+				continue;
+			}
+			int x = cell & 2047, z = cell >> 11 & 2047;
+			box[0] = Math.min(box[0], x);
+			box[1] = Math.min(box[1], z);
+			box[2] = Math.max(box[2], x);
+			box[3] = Math.max(box[3], z);
+		}
+	}
+
+	private static int[] shownCells(ZoneCells c)
+	{
+		if (c == null)
+		{
+			return new int[0];
+		}
+		int n = 0;
 		for (Segment s : c.segments)
 		{
-			box[0] = Math.min(box[0], s.minX);
-			box[1] = Math.min(box[1], s.minZ);
-			box[2] = Math.max(box[2], s.maxX);
-			box[3] = Math.max(box[3], s.maxZ);
+			n += s.shown ? s.cells.length : 0;
 		}
+		int[] all = new int[n];
+		n = 0;
+		for (Segment s : c.segments)
+		{
+			if (s.shown)
+			{
+				System.arraycopy(s.cells, 0, all, n, s.cells.length);
+				n += s.cells.length;
+			}
+		}
+		Arrays.sort(all);
+		int m = 0;
+		for (int i = 0; i < n; ++i)
+		{
+			if (m == 0 || all[i] != all[m - 1])
+			{
+				all[m++] = all[i];
+			}
+		}
+		return Arrays.copyOf(all, m);
+	}
+
+	// where two grids of the same size differ, x0 y0 z0 x1 y1 z1; null if nowhere
+	private static int[] changedBox(byte[] a, byte[] b, int w, int h, int d)
+	{
+		if (a.length != b.length)
+		{
+			return null;
+		}
+		int x0 = w, y0 = h, z0 = d, x1 = 0, y1 = 0, z1 = 0;
+		int i = 0;
+		for (int y = 0; y < h; ++y)
+		{
+			for (int z = 0; z < d; ++z)
+			{
+				for (int x = 0; x < w; ++x, ++i)
+				{
+					if (a[i] != b[i])
+					{
+						x0 = Math.min(x0, x);
+						y0 = Math.min(y0, y);
+						z0 = Math.min(z0, z);
+						x1 = Math.max(x1, x + 1);
+						y1 = Math.max(y1, y + 1);
+						z1 = Math.max(z1, z + 1);
+					}
+				}
+			}
+		}
+		return x1 > 0 ? new int[]{x0, y0, z0, x1, y1, z1} : null;
 	}
 
 	private static void parallel(List<Runnable> tasks)
@@ -988,27 +1052,44 @@ public final class LampVolume
 	// ---------------------------------------------------------------------------------------------------------------
 	// solid cells
 
-	private static final int VERT_INTS = 6, TRI_INTS = VERT_INTS * 3;
+	private static final int VERT_INTS = 6, TRI_INTS = VERT_INTS * 3, STORED = 7;
+
+	/** A zone's stream as this class keeps it, as a zone's upload hands it over: per triangle its positions and its texture word. */
+	public static int[] triangles(int[] stream, int length)
+	{
+		int count = length / TRI_INTS;
+		int[] t = new int[count * STORED];
+		for (int i = 0, o = 0, at = 0; i < count; ++i, at += TRI_INTS)
+		{
+			for (int k = 0; k < 3; ++k)
+			{
+				t[o++] = stream[at + k * VERT_INTS];
+				t[o++] = stream[at + k * VERT_INTS + 1];
+			}
+			t[o++] = stream[at + 3];
+		}
+		return t;
+	}
 
 	// A zone's opaque triangles, as what stops light: by Zone.pushLevels's ranges, each run of them its own cells. Emissive faces out,
 	// as the shadow pass leaves them out, and swaying foliage.
 	private ZoneCells voxelize(Zone zone, int zx, int zz, float[] allPoints)
 	{
-		return voxelize(zone, zone.source, zx, zz, allPoints);
+		return voxelize(zone.lampTriangles, zone.levelOffsets, zone.rids, zone.roofStart, zone.roofEnd, zx, zz, allPoints);
 	}
 
-	private ZoneCells voxelize(Zone zone, ZoneSnapshot s, int zx, int zz, float[] allPoints)
+	private ZoneCells voxelize(int[] t, int[] levelOffsets, int[][] allRids, int[][] allStart, int[][] allEnd, int zx, int zz, float[] allPoints)
 	{
 		ZoneCells out = new ZoneCells();
-		out.zone = zone;
-		if (s == null || s.vertsO == null)
+		out.triangles = t;
+		if (t == null)
 		{
 			out.segments = new Segment[0];
 			return out;
 		}
 		int offset = LuminaPlugin.SCENE_OFFSET >> 3;
 		int baseX = (zx - offset) << 10, baseZ = (zz - offset) << 10;
-		int count = s.vertsO.length / TRI_INTS;
+		int count = t.length / STORED;
 		// the lamps near the zone
 		float[] points = new float[allPoints.length];
 		int np = 0;
@@ -1026,8 +1107,8 @@ public final class LampVolume
 		float[] v = new float[9];
 		for (int l = 0; l < 4; ++l)
 		{
-			int start = l == 0 ? 0 : s.levelOffsets[l - 1], end = s.levelOffsets[l];
-			int[] rids = s.rids[l], roofStart = s.roofStart[l], roofEnd = s.roofEnd[l];
+			int start = l == 0 ? 0 : levelOffsets[l - 1], end = levelOffsets[l];
+			int[] rids = allRids[l], roofStart = allStart[l], roofEnd = allEnd[l];
 			int tail = start;
 			for (int i = rids.length - 1; i >= 0; --i)
 			{
@@ -1046,7 +1127,7 @@ public final class LampVolume
 					Segment seg = new Segment();
 					seg.level = l;
 					seg.rid = rids[i];
-					cells(s, roofStart[i], roofEnd[i], baseX, baseZ, seg, v, taken, points);
+					cells(t, roofStart[i], roofEnd[i], baseX, baseZ, seg, v, taken, points);
 					if (seg.cells != null)
 					{
 						segs.add(seg);
@@ -1055,7 +1136,7 @@ public final class LampVolume
 			}
 			Segment before = new Segment();
 			before.level = l;
-			cells(s, start, tail, baseX, baseZ, before, v, taken, points);
+			cells(t, start, tail, baseX, baseZ, before, v, taken, points);
 			if (before.cells != null)
 			{
 				segs.add(before);
@@ -1063,7 +1144,7 @@ public final class LampVolume
 			Segment after = new Segment();
 			after.level = l;
 			after.tail = true;
-			cells(s, tail, end, baseX, baseZ, after, v, taken, points);
+			cells(t, tail, end, baseX, baseZ, after, v, taken, points);
 			if (after.cells != null)
 			{
 				segs.add(after);
@@ -1094,22 +1175,34 @@ public final class LampVolume
 		return false;
 	}
 
-	private static void cells(ZoneSnapshot s, int from, int to, int baseX, int baseZ, Segment seg, float[] v, boolean[] taken, float[] points)
+	private static boolean onTileCorners(float[] v)
 	{
-		int[] o = s.vertsO;
+		for (int k = 0; k < 9; k += 3)
+		{
+			if (Math.floorMod((int) v[k], 128) != 0 || Math.floorMod((int) v[k + 2], 128) != 0)
+			{
+				return false;
+			}
+		}
+		return true;
+	}
+
+	// from and to are places in the stream, as a zone's ranges have them
+	private static void cells(int[] t, int from, int to, int baseX, int baseZ, Segment seg, float[] v, boolean[] taken, float[] points)
+	{
 		int[] buf = new int[1024];
 		int n = 0;
-		to = Math.min(to, o.length);
+		int count = Math.min(to / TRI_INTS, t.length / STORED);
 		float half = FINE * 0.5f + 0.5f;
-		for (int i = from; i + TRI_INTS <= to; i += TRI_INTS)
+		for (int tri = from / TRI_INTS; tri < count; ++tri)
 		{
-			int tri = i / TRI_INTS;
 			if (taken[tri])
 			{
 				continue;
 			}
 			taken[tri] = true;
-			int texWord = (short) o[i + 3];
+			int i = tri * STORED;
+			int texWord = (short) t[i + 6];
 			// emissive; foliage
 			if ((texWord >> 9 & 3) != 0 || (texWord >> 11 & 1) != 0)
 			{
@@ -1118,7 +1211,7 @@ public final class LampVolume
 			float minX = 1e9f, maxX = -1e9f, minY = 1e9f, maxY = -1e9f, minZ = 1e9f, maxZ = -1e9f;
 			for (int k = 0; k < 3; ++k)
 			{
-				int w0 = o[i + k * VERT_INTS], w1 = o[i + k * VERT_INTS + 1];
+				int w0 = t[i + k * 2], w1 = t[i + k * 2 + 1];
 				float x = (short) w0 + baseX, y = (short) (w0 >> 16), z = (short) w1 + baseZ;
 				v[k * 3] = x;
 				v[k * 3 + 1] = y;
@@ -1135,6 +1228,16 @@ public final class LampVolume
 			if (nx * nx + ny * ny + nz * nz < 1e-4f || onLamp(v, points))
 			{
 				continue;
+			}
+			// The ground lies a little lower than it is drawn. Its stairs of cells rise above it, and light grazing a slope would stop on them.
+			// A straight line between two points above the ground doesn't go under a wall that stands on it.
+			if (seg.level == 0 && LOWER > 0 && onTileCorners(v))
+			{
+				v[1] += LOWER;
+				v[4] += LOWER;
+				v[7] += LOWER;
+				minY += LOWER;
+				maxY += LOWER;
 			}
 			int x0 = Math.max(0, Math.floorDiv((int) Math.floor(minX) - GRID_X, FINE)), x1 = Math.min(CHUNK * CHUNKS - 1, Math.floorDiv((int) Math.floor(maxX) - GRID_X, FINE));
 			int z0 = Math.max(0, Math.floorDiv((int) Math.floor(minZ) - GRID_X, FINE)), z1 = Math.min(CHUNK * CHUNKS - 1, Math.floorDiv((int) Math.floor(maxZ) - GRID_X, FINE));
@@ -1275,7 +1378,7 @@ public final class LampVolume
 		float[] v = new float[1 << 16];
 		boolean[] solid = new boolean[1 << 16];
 		float[] sum = new float[1 << 14];
-		short[] count = new short[1 << 14];
+		short[] count = new short[1 << 14], trace = new short[1 << 14];
 	}
 
 	// A lamp's flood: shells of a cube round its origin, each cell the bilinear value of where its ray to the lamp crosses the
@@ -1390,22 +1493,30 @@ public final class LampVolume
 						{
 							continue;
 						}
-						float sum = 0;
-						int free = 0;
-						for (int k = 0; k < 6; ++k)
-						{
-							int at = i + NEIGHBOUR[k] * (k < 2 ? 1 : k < 4 ? stepZ : stepY);
-							if (!solid[at])
-							{
-								sum += v[at];
-								++free;
-							}
-						}
-						if (free == 0)
+						if (v[i - 1] + v[i + 1] + v[i - stepZ] + v[i + stepZ] + v[i - stepY] + v[i + stepY] <= 0)
 						{
 							continue;
 						}
-						o = sum / free;
+						// the least any free neighbour has: a read that has a free cell can't take through a trace what that side doesn't see
+						o = 2;
+						for (int ay = -stepY; ay <= stepY; ay += stepY)
+						{
+							for (int az = -stepZ; az <= stepZ; az += stepZ)
+							{
+								for (int ax = -1; ax <= 1; ++ax)
+								{
+									int at = i + ay + az + ax;
+									if (!solid[at] && v[at] < o)
+									{
+										o = v[at];
+									}
+								}
+							}
+						}
+						if (o > 1)
+						{
+							continue;
+						}
 					}
 					fineVis[i] = (byte) (sharpen(o) * 255 + 0.5f);
 				}
@@ -1422,9 +1533,10 @@ public final class LampVolume
 		{
 			sc.sum = new float[total];
 			sc.count = new short[total];
+			sc.trace = new short[total];
 		}
 		float[] sum = sc.sum;
-		short[] count = sc.count;
+		short[] count = sc.count, trace = sc.trace;
 		Arrays.fill(sum, 0, total, 0);
 		Arrays.fill(count, 0, total, (short) 0);
 		i = 0;
@@ -1453,6 +1565,46 @@ public final class LampVolume
 				vis[c] = (byte) (sharpen(sum[c] / count[c]) * 255 + 0.5f);
 			}
 		}
+		// a solid cell's trace, as a fine one's: no more than its least free neighbour
+		for (int y = 0, c = 0; y < bh; ++y)
+		{
+			for (int z = 0; z < bd; ++z)
+			{
+				for (int x = 0; x < bw; ++x, ++c)
+				{
+					if (vis[c] != 0 && solidCoarse(bx + x, by + y, bz + z))
+					{
+						int least = 256;
+						for (int ay = Math.max(0, y - 1); ay <= Math.min(bh - 1, y + 1); ++ay)
+						{
+							for (int az = Math.max(0, z - 1); az <= Math.min(bd - 1, z + 1); ++az)
+							{
+								for (int ax = Math.max(0, x - 1); ax <= Math.min(bw - 1, x + 1); ++ax)
+								{
+									int b = vis[(ay * bd + az) * bw + ax] & 255;
+									if (b < least && !solidCoarse(bx + ax, by + ay, bz + az))
+									{
+										least = b;
+									}
+								}
+							}
+						}
+						trace[c] = (short) least;
+					}
+					else
+					{
+						trace[c] = -1;
+					}
+				}
+			}
+		}
+		for (int c = 0; c < total; ++c)
+		{
+			if (trace[c] >= 0 && trace[c] < 256)
+			{
+				vis[c] = (byte) trace[c];
+			}
+		}
 		l.vis = vis;
 		l.bx = bx;
 		l.by = by;
@@ -1466,8 +1618,6 @@ public final class LampVolume
 		l.fz = fz0;
 		l.fw = w;
 	}
-
-	private static final int[] NEIGHBOUR = {-1, 1, -1, 1, -1, 1};
 
 	private static float sharpen(float o)
 	{
@@ -1596,16 +1746,18 @@ public final class LampVolume
 	private int[] fineBox(Lamp l)
 	{
 		int ox = Math.floorDiv(fineX - GRID_X, FINE), oy = Math.floorDiv(fineY - GRID_Y, FINE), oz = Math.floorDiv(fineZ - GRID_X, FINE);
-		int x0 = Math.max(0, l.fx - ox), y0 = Math.max(0, l.fy - oy), z0 = Math.max(0, l.fz - oz);
-		int x1 = Math.min(SIZE, l.fx + l.fw - ox), y1 = Math.min(FINE_Y, l.fy + l.fw - oy), z1 = Math.min(SIZE, l.fz + l.fw - oz);
+		int[] t = l.fineChange != null ? l.fineChange : new int[]{0, 0, 0, l.fw, l.fw, l.fw};
+		int x0 = Math.max(0, l.fx + t[0] - ox), y0 = Math.max(0, l.fy + t[1] - oy), z0 = Math.max(0, l.fz + t[2] - oz);
+		int x1 = Math.min(SIZE, l.fx + t[3] - ox), y1 = Math.min(FINE_Y, l.fy + t[4] - oy), z1 = Math.min(SIZE, l.fz + t[5] - oz);
 		return x1 > x0 && y1 > y0 && z1 > z0 ? new int[]{x0, y0, z0, x1 - x0, y1 - y0, z1 - z0} : null;
 	}
 
 	private int[] nearBox(Lamp l)
 	{
 		int ox = Math.floorDiv(windowX - GRID_X, CELL), oy = Math.floorDiv(windowY - GRID_Y, CELL), oz = Math.floorDiv(windowZ - GRID_X, CELL);
-		int x0 = Math.max(0, l.bx - ox), y0 = Math.max(0, l.by - oy), z0 = Math.max(0, l.bz - oz);
-		int x1 = Math.min(SIZE, l.bx + l.bw - ox), y1 = Math.min(NEAR_Y, l.by + l.bh - oy), z1 = Math.min(SIZE, l.bz + l.bd - oz);
+		int[] t = l.nearChange != null ? l.nearChange : new int[]{0, 0, 0, l.bw, l.bh, l.bd};
+		int x0 = Math.max(0, l.bx + t[0] - ox), y0 = Math.max(0, l.by + t[1] - oy), z0 = Math.max(0, l.bz + t[2] - oz);
+		int x1 = Math.min(SIZE, l.bx + t[3] - ox), y1 = Math.min(NEAR_Y, l.by + t[4] - oy), z1 = Math.min(SIZE, l.bz + t[5] - oz);
 		return x1 > x0 && y1 > y0 && z1 > z0 ? new int[]{x0, y0, z0, x1 - x0, y1 - y0, z1 - z0} : null;
 	}
 
@@ -1613,8 +1765,9 @@ public final class LampVolume
 	{
 		int r = FAR_CELL / CELL;
 		int ox = Math.floorDiv(FAR_X - GRID_X, FAR_CELL), oy = Math.floorDiv(farY - GRID_Y, FAR_CELL);
-		int x0 = Math.max(0, Math.floorDiv(l.bx, r) - ox), y0 = Math.max(0, Math.floorDiv(l.by, r) - oy), z0 = Math.max(0, Math.floorDiv(l.bz, r) - ox);
-		int x1 = Math.min(SIZE, Math.floorDiv(l.bx + l.bw - 1, r) - ox + 1), y1 = Math.min(FAR_Y, Math.floorDiv(l.by + l.bh - 1, r) - oy + 1), z1 = Math.min(SIZE, Math.floorDiv(l.bz + l.bd - 1, r) - ox + 1);
+		int[] t = l.nearChange != null ? l.nearChange : new int[]{0, 0, 0, l.bw, l.bh, l.bd};
+		int x0 = Math.max(0, Math.floorDiv(l.bx + t[0], r) - ox), y0 = Math.max(0, Math.floorDiv(l.by + t[1], r) - oy), z0 = Math.max(0, Math.floorDiv(l.bz + t[2], r) - ox);
+		int x1 = Math.min(SIZE, Math.floorDiv(l.bx + t[3] - 1, r) - ox + 1), y1 = Math.min(FAR_Y, Math.floorDiv(l.by + t[4] - 1, r) - oy + 1), z1 = Math.min(SIZE, Math.floorDiv(l.bz + t[5] - 1, r) - ox + 1);
 		return x1 > x0 && y1 > y0 && z1 > z0 ? new int[]{x0, y0, z0, x1 - x0, y1 - y0, z1 - z0} : null;
 	}
 
@@ -1858,7 +2011,7 @@ public final class LampVolume
 		{
 			if (z.vertsO != null)
 			{
-				tasks.add(() -> built.put(zoneKey(z.x, z.z), voxelize(null, z, z.x, z.z, points)));
+				tasks.add(() -> built.put(zoneKey(z.x, z.z), voxelize(triangles(z.vertsO, z.vertsO.length), z.levelOffsets, z.rids, z.roofStart, z.roofEnd, z.x, z.z, points)));
 			}
 		}
 		parallel(tasks);
@@ -1889,6 +2042,28 @@ public final class LampVolume
 			o.append(solidFine(Math.floorDiv((int) x - GRID_X, FINE), Math.floorDiv((int) y - GRID_Y, FINE), Math.floorDiv((int) z - GRID_X, FINE)) ? '#' : '.');
 		}
 		return o + " zones " + zones.size() + " segments " + zones.values().iterator().next().segments.length;
+	}
+
+	/** The way from a point to lamp i over the fine solid cells, and its cells' visibility above the point. */
+	public String offlineWay(int i, float x, float y, float z)
+	{
+		Lamp l = lamps.get((long) i);
+		StringBuilder o = new StringBuilder("way lamp ").append(l.x).append(' ').append(l.y).append(' ').append(l.z).append(" r ").append(l.r).append(" origin ").append(l.ox).append(' ').append(l.oz).append('\n');
+		for (float up = 0; up <= 48; up += 16)
+		{
+			float t = 0;
+			float qy = y - up;
+			float d = (float) Math.sqrt((l.ox - x) * (l.ox - x) + (l.y - qy) * (l.y - qy) + (l.oz - z) * (l.oz - z));
+			o.append("up ").append(up).append(' ');
+			for (int k = 0; k <= 80; ++k)
+			{
+				t = k / 80f;
+				o.append(solidFine(Math.floorDiv((int) (x + (l.ox - x) * t) - GRID_X, FINE), Math.floorDiv((int) (qy + (l.y - qy) * t) - GRID_Y, FINE), Math.floorDiv((int) (z + (l.oz - z) * t) - GRID_X, FINE)) ? '#' : '.');
+			}
+			int a = Math.floorDiv((int) x - GRID_X, FINE) - l.fx, b = Math.floorDiv((int) qy - GRID_Y, FINE) - l.fy, c = Math.floorDiv((int) z - GRID_X, FINE) - l.fz;
+			o.append(" vis ").append(a >= 0 && b >= 0 && c >= 0 && a < l.fw && b < l.fw && c < l.fw ? l.fineVis[(b * l.fw + c) * l.fw + a] & 255 : -1).append(" len ").append(d).append('\n');
+		}
+		return o.toString();
 	}
 
 	/** Slices round a point, read cells then fine: x across, z down, for three layers of y. */
