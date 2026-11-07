@@ -60,11 +60,12 @@ void main() {
   float noise = ign(gl_FragCoord.xy);
   FragShadow.a = skylightVisibility(p, n);
   if (shadowsEnabled == 1) {
-    vec2 m = materialUnpack(texelFetch(sceneMaterial, px, 0)).rg;
+    vec4 target = texelFetch(sceneMaterial, px, 0);
+    vec2 m = materialUnpack(target).rg;
     // emissive surfaces show no shading; a leaf lit from behind looks up its shadow on the lit side
     if (m.r < 0.999) {
       float penumbraWorld;
-      float lit = shadowFactor(p, dot(n, casterDir) < 0.0 && m.g > 0.0 ? -n : n, noise, penumbraWorld);
+      float lit = shadowFactor(p, materialFaceNormal(target), noise, penumbraWorld);
       // half texels a world unit spans here: the projection's vertical scale over the view depth
       vec4 clip = viewProj * vec4(p, 1.0);
       float texelsPerWorld = length(vec3(viewProj[0][1], viewProj[1][1], viewProj[2][1])) * 0.5

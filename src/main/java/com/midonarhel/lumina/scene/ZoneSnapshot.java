@@ -18,6 +18,7 @@ public final class ZoneSnapshot
 	public int x, z;
 	public int sizeO, sizeA, bufLen, bufLenA;
 	public int[] vertsO, vertsA;
+	public float[] lampBlockers = new float[0];
 	public int[] levelOffsets;
 	public int[][] rids, roofStart, roofEnd;
 	public int[] swayRanges;
@@ -40,6 +41,7 @@ public final class ZoneSnapshot
 			return null;
 		}
 		ZoneSnapshot s = new ZoneSnapshot();
+		s.lampBlockers = zone.lampBlockers != null ? zone.lampBlockers.clone() : new float[0];
 		s.x = x;
 		s.z = z;
 		s.sizeO = zone.sizeO;
@@ -89,7 +91,8 @@ public final class ZoneSnapshot
 	 */
 	public void restore(Zone zone, SceneLoader loader)
 	{
-		// the opaque stream indexed as the upload indexes it (any dump: they all hold the stream)
+		if (lampBlockers == null) throw new IllegalStateException("This dump predates structural point-light blockers. Capture a new scene dump to render it.");
+		// the opaque stream indexed as the upload indexes it
 		VBO opaque = null;
 		if (vertsO != null)
 		{
@@ -104,7 +107,7 @@ public final class ZoneSnapshot
 			}
 		}
 		zone.init(opaque, upload(vertsA, sizeA, loader));
-		zone.lampTriangles = vertsO != null ? com.midonarhel.lumina.light.LampVolume.triangles(vertsO, vertsO.length) : null;
+		zone.lampBlockers = lampBlockers;
 		zone.sizeO = sizeO;
 		zone.sizeA = sizeA;
 		zone.bufLen = bufLen;
@@ -163,6 +166,7 @@ public final class ZoneSnapshot
 
 	public void write(DataOutputStream out) throws IOException
 	{
+		out.writeInt(-3); // structural point-light geometry added to zone format
 		out.writeInt(x);
 		out.writeInt(z);
 		out.writeInt(sizeO);
@@ -183,12 +187,16 @@ public final class ZoneSnapshot
 			writeInts(out, alphaModels.get(i));
 			writeInts(out, alphaFaces.get(i));
 		}
+		out.writeInt(lampBlockers.length);
+		for (float value : lampBlockers) out.writeFloat(value);
 	}
 
 	public static ZoneSnapshot read(DataInputStream in) throws IOException
 	{
 		ZoneSnapshot s = new ZoneSnapshot();
-		s.x = in.readInt();
+		int marker = in.readInt();
+		boolean structural = marker == -3;
+		s.x = structural ? in.readInt() : marker;
 		s.z = in.readInt();
 		s.sizeO = in.readInt();
 		s.sizeA = in.readInt();
@@ -208,6 +216,8 @@ public final class ZoneSnapshot
 			s.alphaModels.add(readInts(in));
 			s.alphaFaces.add(readInts(in));
 		}
+		s.lampBlockers = structural ? new float[in.readInt()] : null;
+		if (structural) for (int i = 0; i < s.lampBlockers.length; ++i) s.lampBlockers[i] = in.readFloat();
 		return s;
 	}
 

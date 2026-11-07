@@ -76,6 +76,7 @@ public class Water
 	private final Frame frame = new Frame();
 
 	private int uniAoOn, uniAoRect;
+	private int uniAlphaWaterEnabled = -1, uniAlphaWaterGrid = -1;
 
 	// A tile's look (WaterSurface.build): its water type and the game's water texture, as a key; up to SLOTS of them a
 	// scene (water.glsl's WATER_SLOTS), whose types the composite gets as uniforms
@@ -120,6 +121,26 @@ public class Water
 			glUniform1i(glGetUniformLocation(program, "waterShaded"), shadedUnit);
 			glUseProgram(0);
 		}
+	}
+
+	/** The scene alpha pass splits submerged fragments before compositing the water. */
+	public void locateAlpha(int program, int dataUnit)
+	{
+		uniAlphaWaterEnabled = glGetUniformLocation(program, "alphaWaterEnabled");
+		uniAlphaWaterGrid = glGetUniformLocation(program, "alphaWaterGrid");
+		glUseProgram(program);
+		glUniform1i(glGetUniformLocation(program, "alphaWaterData"), dataUnit);
+		glUseProgram(0);
+	}
+
+	public void bindAlpha(LuminaConfig config, int dataUnit)
+	{
+		int data = dataTexture(config);
+		glUniform1i(uniAlphaWaterEnabled, data != 0 ? 1 : 0);
+		glUniform2f(uniAlphaWaterGrid, LuminaPlugin.SCENE_OFFSET, WaterMap.CORNERS);
+		glActiveTexture(GL_TEXTURE0 + dataUnit);
+		glBindTexture(GL_TEXTURE_2D, data);
+		glActiveTexture(GL_TEXTURE0);
 	}
 
 	/**
@@ -368,7 +389,7 @@ public class Water
 	}
 
 	/**
-	 * Bind the surface for the composite, after {@link #drawSurface}, before its half resolution pass
+	 * Bind the surface for the composite, after {@link #drawSurface}, before its shading pass
 	 * ({@link #halfRect}).
 	 */
 	public void bind(LuminaConfig config, int surfaceUnit)
@@ -414,9 +435,9 @@ public class Water
 	}
 
 	/**
-	 * The texels of the composite's half resolution water pass (water.glsl's waterShadeHalf) with a pixel in the
+	 * The texels of the composite's water shading pass (water.glsl's waterShadePixel) with a pixel in the
 	 * surface's rect, which the pass is scissored to: x0, y0 to x1, y1 exclusive into r. Texel x reads pixels from
-	 * x * halfRatio (halfmap.glsl's halfToFull), 2 at full render scale and 1 at 50% and below.
+	 * x * halfRatio; water uses 1 to match the actual 3D render resolution.
 	 */
 	public void halfRect(int[] r, float halfRatio)
 	{

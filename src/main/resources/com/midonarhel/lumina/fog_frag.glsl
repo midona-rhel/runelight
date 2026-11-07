@@ -120,10 +120,7 @@ out vec4 FragFog;
 // banks: the band of the bank noise that goes from thin to thick; narrower is more contrast
 #define FOG_BANK_LOW 0.2
 #define FOG_BANK_HIGH 0.8
-// Lamps glowing in the fog: every lamp in the pixel's fog column (LightClusters), its light (light/lamp.glsl's
-// falloff and colour) integrated in closed form along the part of the ray inside its sphere instead of being sampled
-// at every step, and stopped by the walls as the lamp's light is, seen from where the ray passes closest to it. The
-// share of it the fog scatters toward the camera: as much as the glow it replaced gave a ray through a lamp's middle.
+// Fraction of incident lamp radiance scattered toward the camera by the fog.
 #define FOG_LAMP_SCATTER 0.44
 
 #include "halfmap.glsl"
@@ -186,11 +183,6 @@ float phase(float cosTheta) {
   return mix(1.0, hg, FOG_PHASE_FORWARD);
 }
 
-// stretches of the part of a ray in a lamp's reach: each takes the lamp's light where it gets to (the walls, the light
-// map) as at one point of it, and its falloff in full. One (the whole of it at the ray's point nearest the lamp, where
-// the glow is brightest) was off a 32-sample reference by up to 27 levels in the forests, where trees shade the glow
-// along the ray (tree1 53k pixels over 8); two by at most 10, for 0.13 ms more on fps1
-#define FOG_LAMP_PIECES 2
 // The lamps' march along a ray: each band of distance has its stride, 128 units to 2048, twice that to 4096 and on, and a step's place is a
 // function of its distance alone, not of the stretch the column marches: there can be no seam at a column's edge
 #define FOG_LAMP_STRIDE 128.0
@@ -198,39 +190,33 @@ float phase(float cosTheta) {
 #define FOG_LAMP_BAND 2048.0
 #define FOG_LAMP_MAX_STEPS 32
 
-// The lamp's falloff (lampFalloff: (1 - d / r)^2) along a line passing sqrt(h2) from it, from s0 to s1 along the line
-// from its point nearest the lamp, in closed form: r times, in units of r (u = s / r, e = h / r),
-// u - (u sqrt(e^2 + u^2) + e^2 asinh(u / e)) + e^2 u + u^3 / 3
-float lampFalloffAlong(float h2, float r, float s0, float s1) {
-  float e2 = h2 / (r * r), e = sqrt(e2);
-  vec2 u = vec2(s0, s1) / r;
-  vec2 d = sqrt(e2 + u * u);
-  vec2 ash = e > 1e-4 ? e2 * asinh(u / e) : vec2(0.0);
-  vec2 f = u - (u * d + ash) + e2 * u + u * u * u * (1.0 / 3.0);
-  return max(f.y - f.x, 0.0) * r;
-}
-
-
-// The fog of each of the main march's segments that isn't in the lamps' field: its density and the weather. fogLampSigma(t) is that at a distance along the ray.
-float fogLampSegment[FOG_MAX_STEPS];
+// Effective extinction and incoming camera transmittance from the main fog integration.
+// They already include height, room shelter, near/edge fades, weather and density noise.
+float fogLampExtinction[FOG_MAX_STEPS];
+float fogLampIncoming[FOG_MAX_STEPS];
 float fogLampT0, fogLampDt;
 int fogLampSegments;
 
-float fogLampSigma(float t) {
-  float u = clamp((t - fogLampT0) / fogLampDt - 0.5, 0.0, float(fogLampSegments - 1));
-  int i = int(u);
-  return i + 1 < fogLampSegments ? mix(fogLampSegment[i], fogLampSegment[i + 1], u - float(i)) : fogLampSegment[i];
+// Camera transmittance at any distance through the piecewise-constant fog segments.
+// T(a)-T(b) integrates scattering over [a,b], including every crossed segment boundary.
+float fogLampTransmittance(float t) {
+  float along = clamp(t - fogLampT0, 0.0, fogLampDt * float(fogLampSegments));
+  int i = min(int(along / fogLampDt), fogLampSegments - 1);
+  return fogLampIncoming[i] * exp(-fogLampExtinction[i] * (along - float(i) * fogLampDt));
+}
+
+float fogLampScattering(float a, float b) {
+  return max(fogLampTransmittance(a) - fogLampTransmittance(b), 0.0);
 }
 
 // Light from the lamps scattered toward the camera along the ray dir, up to tEnd (what the ray ends at), as a glow: what the lamps' volume holds in
-// the air along the ray, which went round what stops light before it was summed, times the fog there (math.md 11). The lamps that move each by
-// their falloff in closed form, stopped by a line through the volume's air from two pieces of the ray.
+// Integrate clustered lamps along the fog ray using the same wall/roof query as surfaces.
 vec3 lampGlow(ivec2 px, vec3 dir, float tEnd, float jitter) {
   vec3 sum = vec3(0.0);
   // the stretch of the ray any lamp of its column glows in (LightClusters.fillFogColumns)
   vec2 span = texelFetch(lightData, clusterLights(columnEntry((vec2(px) + 0.5 - vec2(sceneViewport.xy)) / vec2(sceneViewport.zw))).base).xy;
-  float a = span.x, b = min(tEnd, span.y);
-  float at = 0.0, weight = 0.0;
+  float a = max(span.x, fogLampT0), b = min(tEnd, span.y);
+  vec2 rel = (vec2(px) + 0.5 - vec2(sceneViewport.xy)) / vec2(sceneViewport.zw);
   int left = FOG_LAMP_MAX_STEPS;
   for (int band = 0; band < FOG_LAMP_BANDS && a < b && left > 0; ++band) {
     float stride = FOG_LAMP_STRIDE * float(1 << band);
@@ -242,47 +228,20 @@ vec3 lampGlow(ivec2 px, vec3 dir, float tEnd, float jitter) {
     int k0 = int(floor(a / stride)), k1 = int(ceil(to / stride));
     for (int k = k0; k < k1 && left > 0; ++k, --left) {
       float s0 = max(float(k) * stride, a), s1 = min(float(k + 1) * stride, to);
+      float scattered = fogLampScattering(s0, s1);
+      if (scattered <= 0.0) continue;
       float t = clamp((float(k) + jitter) * stride, s0, s1);
-      vec3 c = lampVolumeAir(cameraPos + dir * t) * ((s1 - s0) * fogLampSigma(t));
-      float l = c.r + c.g + c.b;
-      sum += c;
-      at += l * t;
-      weight += l;
+      vec3 p = dir * t;
+      LightMask mask = clusterLights(clusterEntry(rel, (viewProj * vec4(p, 1.0)).w));
+      int li;
+      vec3 c = vec3(0.0);
+      while (nextLight(mask, li)) {
+        vec3 ld; float distance;
+        c += lampLight(lampAt(li), p, p, true, ld, distance);
+      }
+      sum += c * scattered;
     }
     a = to;
-  }
-  if (weight > 0.0) {
-    sum *= lampVolumeGain(cameraPos + dir * (at / weight));
-  }
-  for (int i = 0; i < lampMoverCount; ++i) {
-    vec4 m = lampMovers[i * 2];
-    vec3 rel = m.xyz - cameraPos;
-    float r = abs(m.w);
-    float tc = dot(rel, dir);
-    float h2 = max(dot(rel, rel) - tc * tc, 0.0);
-    if (h2 >= r * r) {
-      continue;
-    }
-    float hc = sqrt(r * r - h2);
-    float t0 = max(tc - hc, 0.0), t1 = min(tc + hc, tEnd);
-    if (t1 <= t0) {
-      continue;
-    }
-    float part = (t1 - t0) / float(FOG_LAMP_PIECES);
-    float glow = 0.0;
-    for (int j = 0; j < FOG_LAMP_PIECES; ++j) {
-      float s0 = t0 + float(j) * part;
-      vec3 q = cameraPos + dir * (s0 + jitter * part);
-      float open = lampVolumeLine(q, m.xyz);
-      if (open > 0.0) {
-        glow += lampFalloffAlong(h2, r, s0 - tc, s0 + part - tc) * open;
-      }
-    }
-    // the fog where the lamp is, as the field's lamps are summed
-    vec4 ground = fogGroundAt(m.xz);
-    float below = -fogHeight * FOG_BELOW;
-    float sigma = fogLampSigma(clamp(tc, t0, t1)) * exp(-max(ground.r - m.y, below) / fogHeight) * fogRoomFactor(ground, m.y);
-    sum += lampMovers[i * 2 + 1].rgb * (glow * sigma);
   }
   return sum * FOG_LAMP_SCATTER;
 }
@@ -439,12 +398,13 @@ void main() {
     sigma *= mix(FOG_NEAR_FLOOR, 1.0, smoothstep(0.0, fogNear, centerDist));
     sigma *= smoothstep(0.0, fogNear, t);
     float weatherHere = weatherFogFactor(wp.xz);
-    fogLampSegment[i] = density * weatherHere;
     sigma *= weatherHere;
     vec2 n = texture(fogNoise, noiseStart + noiseDir * t).rg;
     // both average about 1, so they move fog around without changing how much there is
     sigma *= max(mix(1.0, n.r * 2.0, FOG_NOISE_AMOUNT), 0.0);
     sigma *= mix(1.0, smoothstep(FOG_BANK_LOW, FOG_BANK_HIGH, n.g) * 2.0, FOG_BANK_AMOUNT);
+    fogLampExtinction[i] = max(sigma, 0.0);
+    fogLampIncoming[i] = trans;
     if (sigma <= 0.0) {
       continue;
     }

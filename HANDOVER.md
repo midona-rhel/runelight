@@ -1,8 +1,68 @@
+# Latest checkpoint — 2026-11-07
+
+User requested commit and stop visual iteration. Current status and rejected lava feedback are at docs/active-bugs.md. Unfinished shader prototypes are preserved in experiments/rendering, not enabled as approved changes. RuneLite is running from build/play-night-rain-zones.log. Latest focused night/PCSS/rain/zone checks passed; full-suite status is not established after integration.
+
 # Lumina handover
+
+Current user reports, confirmed scope and acceptance status: [active bugs](docs/active-bugs.md).
+
+## Windows point-light direction (2026-11-07)
+
+Midona's latest requirement: only imported 117 HD definitions create static world lights.
+The optional player debug light and other authorized light sources remain supported. Only walls and roofs should occlude them; furniture, vegetation, actors, terrain and other objects
+are not point-light blockers. Sharp or soft shadows are not a requirement.
+
+The Windows branch removes automatic name/model-based light placement, its resources and helpers, The optional
+player test light was mistakenly removed and has now been restored. Existing imported light definitions and their attachment/lifecycle rules remain. Regression tests
+cover unlisted static and animated torches producing no light and the imported night lantern still appearing.
+
+Implemented on `codex/windows-lumina`: `LampBlockers` captures only wall objects and game-object types 9
+(diagonal walls) and 12–21 (roofs) from the zone uploader. `StructuralRectangles` merges adjacent coplanar
+triangle pairs (sloped surfaces included) without filling holes. Other geometry stays as exact triangles.
+A stackless bounds hierarchy and precomputed plane/barycentric rows replace the original slow tile-list
+triangle walk. Surfaces, transparent faces, water, fog and weather share the query. Hidden roofs remain
+blockers; camera cutaways do not invalidate the index. Changed structural geometry rebuilds it, but an
+unrelated object reload with identical structural data no longer does. No floor/ceiling gates, generic
+model voxels, soft-shadow filtering, per-light bake or stationary/moving handoffs participate.
+Wall-mounted origins still use LampWalls.origin.
+
+The old 3,789-line LampVolume Java implementation is now test-only for historical CPU experiments. LampFrame's
+disabled light-map job pipeline and copied imports were removed; lamp.glsl went from 545 to about 108 lines.
+Old LightMap/LampCubes/LampReach classes and some buffer reservations remain in production for now, but are not
+used for runtime visibility. Do not infer that all legacy code has been removed or all light reloads are fixed:
+SceneLights still clears/repopulates on scene loads. That lifecycle is the next correctness target.
+
+Validation: full Windows JUnit suite passed; new GPU tests execute the real visibility shader on a hidden GLFW
+context (Windows support added to HeadlessGl). Covered finite wall height, double-sided blocking, door gaps,
+sloped roofs, vertical rays, outside-grid origins, endpoint tolerance and removing blockers. Five affected shader
+stages also passed glslangValidator. Client restarted using `build/windows-structural-lights.log`, compiled on the
+RTX 4080 and entered the game. The live scene had all 55 imported lamps out of reach, so this is startup evidence,
+not a night/interior visual acceptance or dense-light performance benchmark. Existing shadow sampler warnings
+remain. Scene dump format is now v3 and retains structural triangles; v2 can be read for data analysis but rendering
+it fails with a recapture message because it lacks object classification.
+
+Performance fix implemented and measured: see `docs/point-light-occlusion-performance.md` and opt-in
+`LampBlockersPerfTest`. At the same 60 FPS submission cap, detailed roofs at 1440p now cost about 1.3 ms
+for four overlapping lights (initial tile-walk version: 66.79 ms) and 5.6–6.9 ms for sixteen. The final
+client-stopped run adds detailed sloped roofs. Clock/power-state variation was observed, so these are
+fixture timings rather than a locked-clock speedup or full-frame prediction. Thirty-two full-screen
+lights remain a stress case (~13 ms). GPU correctness also covers 256 random rays against an independent
+exact-geometry CPU oracle, roof holes, slopes, diagonal walls, and finite-height walls.
+
+Next simplification steps, in order:
+1. Measure this renderer in a dense lit interior and at an open/closed door. If expensive, cache geometry visibility
+   only; avoid reintroducing summed-light volumes or flicker-triggered rebakes. Structural classification currently
+   follows cache object types, so unusual game assets may need explicit classification overrides.
+2. Stabilize SceneLights identities across scene loads, then delete its obsolete map IDs/bake-slot bookkeeping.
+3. Remove the remaining LightMap/LampCubes/LampReach runtime types, unused light-buffer reservations and legacy
+   benchmark entry points together. Keep room ambient fill separate from point-light visibility.
+4. Reduce LampWalls to the wall-mounted-origin helper and move shared blocker uniforms to LampBlockers.
+5. Tackle weather/sky orchestration separately after point-light acceptance. Do not fold moon/directional shadows
+   into this change.
 
 ## Current state (2026-11-07, branch occ/lumina-live)
 
-This section is the latest. The older notes below are from 2026-10-30.
+Historical Mac baseline; the Windows point-light section above supersedes its lighting implementation.
 
 ### Where things are
 - All tonight's work is one branch, `occ/lumina-live`, built on `a1de294f`. It is not merged into `lumina`.
@@ -50,8 +110,9 @@ This section is the latest. The older notes below are from 2026-10-30.
 ### Rules that hold
 - The user's scoring order: performance (GPU and CPU alike), no visible artifacts, fog and particle compliance, then no
   light across walls, terrain or roofs. Soft is preferred over sharp. Leak isn't the primary score.
-- A client restart needs the user's yes for that build. Never move the camera or leave the clock frozen. One client at a
-  time, run from the detached worktree `~/Code/runelight-perfwip-run`.
+- Standing authorization, 2026-11-07: Midona said "yes restart whenever always". Client restarts for RuneLight/Lumina
+  development are authorized without asking again. Never move the camera or leave the clock frozen. One client at a
+  time; Windows development now runs from the runelight checkout on branch `codex/windows-lumina`.
 - Bench before client, shown as full-screen before, after and diff. Nothing temporal; MSAA is the only anti-aliasing.
   Windows and Linux count; don't rewrite saved settings from one GPU's limits. No new settings without asking.
 - Change only what was asked, relay the user's exact words, and answer a question with evidence, not a change.

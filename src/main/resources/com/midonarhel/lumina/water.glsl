@@ -9,7 +9,7 @@
 // reflections of the world. Sharp glints from the sun and moon, lamps' streaks, foam.
 //
 // Two passes of the composite. The first (COMPOSITE_WATER, or COMPOSITE_CLOUDS_WATER along with the clouds) runs at
-// half resolution over the water only and works out the surface (waterShadeHalf), into waterShaded. The second, the
+// full 3D render resolution over the water only and works out the surface (waterShadePixel), into waterShaded. The second, the
 // full resolution composite, lights the bed as any ground and only blends: the bed tinted by its depth under the
 // surface, then the surface over it (waterOver), using the full resolution surface for the edges.
 // Included by composite_frag.glsl after its lighting helpers (shadows, point light clusters).
@@ -21,7 +21,7 @@
 uniform int waterEnabled;
 uniform usampler2D waterSurface;  // RGBA16UI, 64 bits packed by water_frag.glsl (waterUnpack), of the rect's pixels
                                   // (waterSurfaceAt); 0 no water
-uniform usampler2D waterShaded;   // RGBA32UI, half resolution: the shaded surface (waterShadeHalf)
+uniform usampler2D waterShaded;   // RGBA32UI, full 3D resolution: the shaded surface (waterShadePixel)
 uniform int waterReflections;     // a few screen-space taps for the world in the reflection
 uniform int waterCaustics;
 uniform int waterDebug;
@@ -295,7 +295,7 @@ void waterLamps(ivec2 px, vec3 s, float viewZ, vec3 nrm, vec3 toCamera, vec3 tAl
 // The water's surface at camera-relative s, seen along v from pixel px, its normal nrm, of water type `type` with foam
 // over it, under the sun's shadow: its color (linear, foam in it), how much of what is under it the surface hides at
 // least (Fresnel, the slant, foam; waterOver adds the depth's share), the highlights on top (linear) and the light on
-// it. The real surface's (waterShadeHalf) and the faces models draw as water's (waterFake). world: the world is
+// it. The real surface's (waterShadePixel) and the faces models draw as water's (waterFake). world: the world is
 // reflected where the reflected ray finds it on the screen, not only the sky.
 void waterShadeSurface(ivec2 px, vec3 s, vec3 v, vec3 nrm, int type, float foam, float shadow, bool world,
   out vec3 surface, out float covered, out vec3 spec, out vec3 surfaceLight) {
@@ -365,39 +365,19 @@ void waterShadeSurface(ivec2 px, vec3 s, vec3 v, vec3 nrm, int type, float foam,
 }
 
 // ---------------------------------------------------------------------------------------------------------------
-// The half resolution pass: for the half resolution pixel hpx, the nearest water surface among the full resolution
-// pixels it covers (four at most), shaded: the surface's color (linear, foam in it), how much of what is under it the
-// surface hides at least (Fresnel, the slant, foam; waterOver adds the depth's share), and the highlights on top
-// (linear), packed by waterPackShaded. 0 where there is no water.
-void waterShadeHalf(ivec2 hpx) {
+// Shade the surface at this 3D render pixel and pack its color, coverage and highlights.
+// Zero denotes no water.
+void waterShadePixel(ivec2 hpx) {
   WaterShadedOut = uvec4(0u);
-  // only the texels with a pixel in the rect: texel x reads pixels 2x and 2x + 1 (halfToFull); the water's own pass
-  // is scissored to them as well, the one with the clouds covers every texel
-  // the texels with a pixel in the surface's rect: texel h reads pixels from h * halfRatio (halfToFull)
-  if (waterEnabled == 0 || any(lessThan(hpx, ivec2(floor(vec2(waterRect.xy) / halfRatio))))
-    || any(greaterThanEqual(hpx, ivec2(ceil(vec2(waterRect.zw) / halfRatio)))))
+  // One shading sample per pixel of the actual 3D render target.
+  if (waterEnabled == 0 || any(lessThan(hpx, waterRect.xy))
+    || any(greaterThanEqual(hpx, waterRect.zw)))
     return;
-  uvec4 ws = uvec4(0u);
-  ivec2 px = ivec2(0);
-  float t = 1e9;
-  ivec2 first = halfToFull(hpx);
-  for (int i = 0; i < 4; ++i) {
-    // a half texel that is one scene pixel has no others to choose from
-    if (i > 0 && halfRatio <= 1.0)
-      break;
-    ivec2 q = first + ivec2(i & 1, i >> 1);
-    uvec4 w = waterSurfaceAt(waterSurface, waterRect, q);
-    if (w.b == 0u)
-      continue;
-    float tq = float(w.b) / 65535.0 * WATER_REACH;
-    if (tq < t) {
-      t = tq;
-      ws = w;
-      px = q;
-    }
-  }
+  ivec2 px = hpx;
+  uvec4 ws = waterSurfaceAt(waterSurface, waterRect, px);
   if (ws.b == 0u)
     return;
+  float t;
 
   vec3 nrm;
   int slot;
@@ -418,7 +398,7 @@ void waterShadeHalf(ivec2 hpx) {
   float shadow = 1.0;
   if (outdoors == 1 && lightingEnabled == 1) {
     if (shadowsEnabled == 1)
-      shadow = texelFetch(sceneShadow, min(hpx, textureSize(sceneShadow, 0) - 1), 0).r;
+      shadow = texelFetch(sceneShadow, clamp(ivec2(floor(fullToHalf(px) + 0.5)), ivec2(0), textureSize(sceneShadow, 0) - 1), 0).r;
     shadow = overcastShadow(shadow * cloudShadow(s + cameraPos, casterDir));
   }
   vec3 surface, spec, surfaceLight;
@@ -552,30 +532,14 @@ vec3 waterOver(ivec2 px, inout vec3 p, vec3 albedo, float shadow, vec3 lit, floa
   // vertical depth of this pixel below the surface (y down)
   float depth = max(p.y - s.y, 0.0);
 
-  // the half resolution shading around this pixel, bilinear over the texels that have water
-  vec2 hp = fullToHalf(px);
-  ivec2 h0 = ivec2(floor(hp));
-  vec2 f = hp - vec2(h0);
-  ivec2 last = textureSize(waterShaded, 0) - 1;
-  vec4 surface = vec4(0.0);
-  vec3 spec = vec3(0.0);
-  float wsum = 0.0;
-  for (int i = 0; i < 4; ++i) {
-    ivec2 o = ivec2(i & 1, i >> 1);
-    uvec4 w = texelFetch(waterShaded, clamp(h0 + o, ivec2(0), last), 0);
-    if (w == uvec4(0u))
-      continue;
-    vec2 bw = mix(1.0 - f, f, vec2(o));
-    float k = bw.x * bw.y + 1e-4;
-    surface += vec4(waterDecLight(w.x & 65535u), waterDecLight(w.x >> 16), waterDecLight(w.y & 65535u),
-      float(w.y >> 16) / 65535.0) * k;
-    spec += vec3(waterDecLight(w.z & 65535u), waterDecLight(w.z >> 16), waterDecLight(w.w & 65535u)) * k;
-    wsum += k;
-  }
-  if (wsum <= 0.0)
+  // Shading and surface geometry use the same pixel; no upsampling across water edges.
+  uvec4 w = texelFetch(waterShaded, px, 0);
+  if (w == uvec4(0u))
     return lit;
-  surface /= wsum;
-  spec /= wsum;
+  vec4 surface = vec4(waterDecLight(w.x & 65535u), waterDecLight(w.x >> 16),
+    waterDecLight(w.y & 65535u), float(w.y >> 16) / 65535.0);
+  vec3 spec = vec3(waterDecLight(w.z & 65535u), waterDecLight(w.z >> 16),
+    waterDecLight(w.w & 65535u));
   if (waterDebug != 0) {
     p = s;
     return linearToSrgb(clamp(surface.rgb, 0.0, 1.0));

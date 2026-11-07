@@ -20,9 +20,9 @@ import org.lwjgl.system.Platform;
 public class OfflineRenderSyntheticTest
 {
 	@Before
-	public void mac()
+	public void supportedPlatform()
 	{
-		Assume.assumeTrue("CGL: macOS only", Platform.get() == Platform.MACOSX);
+		Assume.assumeTrue("Headless GL supports Windows and macOS", Platform.get() != Platform.LINUX);
 	}
 
 	static BufferedImage render(SceneDump.Loaded dump) throws Exception

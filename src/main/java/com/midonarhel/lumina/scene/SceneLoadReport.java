@@ -13,8 +13,8 @@ import org.slf4j.LoggerFactory;
  * the swap, and the frames over 25 ms in those two seconds with our client-thread time in each.
  *
  * The GL counts are kept here for every buffer and vertex array the renderer makes or deletes (client thread only).
- * "Ours" in a frame is the plugin's own CPU steps (CpuTimer, all but the client's scene, its interface, the swap
- * wait and the time outside the frame) plus the scene swap and the load's jobs that ran in it.
+ * "Measured renderer" is the selected CPU steps plus the scene swap and the load's jobs that ran in the frame.
+ * It is not a complete attribution: uninstrumented renderer work and client work can both lie outside that total.
  */
 public final class SceneLoadReport
 {
@@ -157,7 +157,7 @@ public final class SceneLoadReport
 				at = new int[4];
 			}
 			long loadEnd = loadEndNanos;
-			log.info(String.format("Scene load report: load→swap %.0f ms = our loadScene %.0f (%s) + the client's until its swap %.0f; pre-swap client work %.1f ms in %d steps; swap frame %.1f ms, ours %.1f (swapScene %.1f, %d freed, %d reused); "
+			log.info(String.format("Scene load report: load→swap %.0f ms = our loadScene %.0f (%s) + elapsed until swap %.0f; pre-swap client work %.1f ms in %d steps; swap frame %.1f ms, measured renderer %.1f (swapScene %.1f, %d freed, %d reused); "
 					+ "GL buffers +%d -%d, vertex arrays +%d -%d (%s); upload threads: %s; next 2 s: %d frames, %d over %.0f ms (frame:ms/ours:ms%s), max %.1f ms, our max %.1f, our mean %.2f",
 				loadStartNanos == 0 ? 0 : (swapNanos - loadStartNanos) / 1e6,
 				loadStartNanos == 0 || loadEnd == 0 ? 0 : (loadEnd - loadStartNanos) / 1e6, stagesText,

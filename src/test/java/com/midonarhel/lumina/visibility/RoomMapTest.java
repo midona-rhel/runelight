@@ -133,4 +133,42 @@ public class RoomMapTest
 		// the light buffer holds the lamps and the rooms' fill alone: within what GL 3.3 promises a buffer texture
 		assertTrue(LightClusters.LIGHT_TEXELS <= 65536);
 	}
+
+	@Test
+	public void openDiagonalCornersTrimRoomWithoutBlockingLight()
+	{
+		int[][][] flags = new int[4][LOCAL][LOCAL];
+		for (int[] corner : new int[][]{{8, 8, WallMap.DIAG_NW_SE}, {11, 8, WallMap.DIAG_SW_NE},
+			{8, 11, WallMap.DIAG_SW_NE}, {11, 11, WallMap.DIAG_NW_SE}})
+		{
+			RoomMap m = house(flags);
+			var diagonal = new WallMap.Diagonal(0, corner[0], corner[1], corner[2]);
+			WallMap w = WallMap.build(flags, java.util.List.of(diagonal), SIZE, OFFSET, 1);
+			m.setWalls(w);
+			m.setOpenBoundaries(java.util.List.of(diagonal));
+			float x = world(corner[0]), z = world(corner[1]);
+			float dx = corner[0] == 8 ? 32 : -32, dz = corner[1] == 8 ? 32 : -32;
+			assertEquals(1, m.roomAt(x + dx, -40, z + dz));
+			assertEquals(0, m.roomAt(x - dx, -40, z - dz));
+			assertFalse("open frame must not block a light ray", w.blocked(0, x + dx, z + dz, x - dx, z - dz));
+			FloatBuffer packed = FloatBuffer.allocate(m.floatCount());
+			m.texels(packed);
+			int bits = (int) packed.get(RoomMap.texelIndex(SIZE, 2, corner[0], corner[1]));
+			assertEquals("no diagonal sight-blocking bits", 0, bits & 48);
+			assertEquals("separate geometric boundary", corner[2], (bits >> 16) & 48);
+		}
+	}
+
+	@Test
+	public void openInteriorAndUnroofedDiagonalsDoNotCutRooms()
+	{
+		RoomMap m = house(new int[4][LOCAL][LOCAL]);
+		m.setOpenBoundaries(java.util.List.of(new WallMap.Diagonal(0, 9, 9, WallMap.DIAG_SW_NE),
+			new WallMap.Diagonal(0, 4, 4, WallMap.DIAG_SW_NE),
+			// This direction does not separate the corner's indoor edges from its outdoor edges.
+			new WallMap.Diagonal(0, 11, 11, WallMap.DIAG_SW_NE)));
+		assertEquals(0, m.half[m.index(0, 9, 9)]);
+		assertEquals(0, m.half[m.index(0, 4, 4)]);
+		assertEquals(0, m.half[m.index(0, 11, 11)]);
+	}
 }

@@ -21,7 +21,7 @@ public class SceneDumpRoundTripTest
 	@Test
 	public void aDumpOfARenderedFrameDrawsThatFrame() throws Exception
 	{
-		Assume.assumeTrue("CGL: macOS only", Platform.get() == Platform.MACOSX);
+		Assume.assumeTrue("Headless GL supports Windows and macOS", Platform.get() != Platform.LINUX);
 		Path root = Files.createTempDirectory("lumina-dumps");
 		DumpRenderer.Options o = new DumpRenderer.Options();
 		o.warmupSeconds = 1;

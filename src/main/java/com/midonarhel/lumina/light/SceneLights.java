@@ -3,12 +3,10 @@ package com.midonarhel.lumina.light;
 import com.midonarhel.lumina.visibility.VoxelCapture;
 import com.midonarhel.lumina.visibility.WallMap;
 
-import com.midonarhel.lumina.scene.ModelData;
 import com.midonarhel.lumina.LuminaPlugin;
 import com.midonarhel.lumina.scene.SceneJobs;
 import com.midonarhel.lumina.visibility.WallMap;
 
-import com.midonarhel.lumina.scene.ModelData;
 
 import com.midonarhel.lumina.sky.EnvironmentManager;
 
@@ -25,7 +23,6 @@ import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
-import java.util.TreeMap;
 import net.runelite.api.Actor;
 import net.runelite.api.ActorSpotAnim;
 import net.runelite.api.Animation;
@@ -35,7 +32,6 @@ import net.runelite.api.DynamicObject;
 import net.runelite.api.GameObject;
 import net.runelite.api.GameState;
 import net.runelite.api.GraphicsObject;
-import net.runelite.api.Model;
 import net.runelite.api.NPC;
 import net.runelite.api.NPCComposition;
 import net.runelite.api.ObjectComposition;
@@ -76,9 +72,7 @@ import org.slf4j.LoggerFactory;
  * Each light has a {@link LightLife}: when it spawns and goes, and how it fades. Where the definition has areas the
  * light is made only inside them, and where it has animations only while the parent plays one.
  *
- * Objects without a light in lights.json get one by their name when it is of something that burns or glows
- * (autolights.json, {@link AutoLightRules}). Those come after the others in the frame's lights, so a full budget
- * drops them first.
+ * Only imported 117 HD definitions create lights. Object names and model colours never create extra lamps.
  */
 public class SceneLights
 {
@@ -96,13 +90,6 @@ public class SceneLights
 	private final List<LightDefinition> worldDefinitions = new ArrayList<>();
 	private int definitionCount;
 
-	private AutoLightRules autoRules;
-	// this scan's automatic lights: objects named like a light, and why some got none
-	private int autoMatched, autoNoModel, autoNoSpot, autoNearWorld;
-	// the rules' light for an object id, null for none
-	private final Map<Integer, LightDefinition> autoById = new HashMap<>();
-	// for the log: what an automatic light was made for, while the scene is scanned
-	private Map<String, Integer> autoTally;
 
 	/**
 	 * What became of the scene's lights in one frame, logged a few seconds after the scene loaded: the lights that
@@ -126,9 +113,7 @@ public class SceneLights
 	private float funnelAt = Float.NaN;
 	private boolean funnelPending;
 	private Funnel funnel;
-	private final ModelData autoModel = new ModelData();
-	private final AutoLightPlacement.Spot autoSpot = new AutoLightPlacement.Spot();
-	private final float[] autoMove = new float[2];
+
 
 	/**
 	 * A light at a fixed position in the current scene.
@@ -142,7 +127,6 @@ public class SceneLights
 		final LightLife life;
 		// what it is attached to, null for a world light
 		final TileObject object;
-		final boolean auto;
 		// where its lines to what it lights start
 		final float ox, oz;
 		// the scene object it is on (VoxelCapture.ownerOf, 0: none), for the scene dump: whose models the light map's
@@ -152,7 +136,7 @@ public class SceneLights
 		// animation or for a time, or follows the sky
 		final LightMap.Source bake;
 
-		Placed(LightDefinition def, float[] at, int plane, float seed, boolean fadesIn, TileObject object, boolean auto,
+		Placed(LightDefinition def, float[] at, int plane, float seed, boolean fadesIn, TileObject object,
 			long easeSince)
 		{
 			this.def = def;
@@ -163,7 +147,6 @@ public class SceneLights
 			this.seed = seed;
 			this.life = new LightLife(def, fadesIn, easeSince);
 			this.object = object;
-			this.auto = auto;
 			// on the client thread, where objects are placed: ownerOf reads the object's place only
 			this.owner = object == null ? 0 : com.midonarhel.lumina.visibility.VoxelCapture.ownerOf(object);
 			// its lines start where it is; LampWalls moves them off the walls it hangs on
@@ -223,8 +206,6 @@ public class SceneLights
 	// the lights of what is there now, by what they follow; and of what is gone
 	private final Map<Object, List<Live>> attached = new IdentityHashMap<>();
 	private final List<Live> fading = new ArrayList<>();
-	// the tiles with a world light, where an automatic one would only double it
-	private final Set<Long> worldLightTiles = new HashSet<>();
 	// objects found but not looked at yet, whether their lights fade in, in the order found; the job that places them
 	private final java.util.ArrayDeque<Object> pending = new java.util.ArrayDeque<>();
 	private final Map<Object, Boolean> pendingFadesIn = new IdentityHashMap<>();
@@ -251,8 +232,6 @@ public class SceneLights
 	// per-frame pool so collecting lights does not allocate
 	private final List<PointLight> pool = new ArrayList<>();
 	private int poolUsed;
-	// the frame's automatic lights, which go after the others
-	private final List<PointLight> autoLights = new ArrayList<>();
 
 	// scratch
 	private final float[] at = new float[3];
@@ -406,7 +385,6 @@ public class SceneLights
 		byProjectile.clear();
 		byGraphics.clear();
 		worldDefinitions.clear();
-		autoById.clear();
 
 		LightDefinition[] defs;
 		try (InputStream is = SceneLights.class.getResourceAsStream("lights.json"))
@@ -439,15 +417,6 @@ public class SceneLights
 		definitionCount = defs.length;
 		log.debug("Loaded {} light definitions", definitionCount);
 
-		try (InputStream is = SceneLights.class.getResourceAsStream("autolights.json"))
-		{
-			autoRules = is != null ? new AutoLightRules(gson, is) : null;
-		}
-		catch (Exception ex)
-		{
-			log.error("Unable to load autolights.json", ex);
-			autoRules = null;
-		}
 	}
 
 	private static void index(Map<Integer, List<LightDefinition>> map, int[] ids, LightDefinition d)
@@ -480,7 +449,6 @@ public class SceneLights
 		scanPlane = -1;
 		objects.clear();
 		worldLights.clear();
-		worldLightTiles.clear();
 		orphans.clear();
 		attached.clear();
 		fading.clear();
@@ -508,15 +476,12 @@ public class SceneLights
 			}
 			float ground = Perspective.getTileHeight(client, lp, d.plane);
 			d.locate(at, lp.getX(), ground, lp.getY(), 0, 1, 1);
-			worldLights.add(new Placed(d, at, d.plane, (d.worldX * 31 + d.worldY) * 0.61803398875f % 1f, false, null, false,
+			worldLights.add(new Placed(d, at, d.plane, (d.worldX * 31 + d.worldY) * 0.61803398875f % 1f, false, null,
 				com.midonarhel.lumina.common.Clock.nanos()));
-			worldLightTiles.add(tileKey(d.plane, lp.getX() >> 7, lp.getY() >> 7));
 		}
 
-		autoTally = new TreeMap<>();
 		funnelPending = true;
 		funnelAt = Float.NaN;
-		autoMatched = autoNoModel = autoNoSpot = autoNearWorld = 0;
 		for (Player player : wv.players())
 		{
 			attachSpotAnims(player);
@@ -557,15 +522,24 @@ public class SceneLights
 			jobQueued = true;
 			jobs.add("scene lights", SceneJobs.SHOWN, deadline ->
 			{
-				boolean done = placePending(deadline);
-				jobQueued = !done;
-				return done;
+				try
+				{
+					boolean done = placePending(deadline);
+					jobQueued = !done;
+					return done;
+				}
+				catch (RuntimeException ex)
+				{
+					// SceneJobs removes failed jobs. Allow the next spawn or rebuild to queue work again.
+					jobQueued = false;
+					throw ex;
+				}
 			});
 		}
 	}
 
 	/**
-	 * Find the scene's objects column by column, then place the queued objects' lights, until the deadline
+	 * Find the scene's objects column by column, placing each column's queued lights before scanning further, until the deadline
 	 * (System.nanoTime); at least one column or object a call.
 	 *
 	 * @return whether nothing is left
@@ -574,8 +548,9 @@ public class SceneLights
 	{
 		do
 		{
-			if (scanPlane >= 0)
+			if (scanPlane >= 0 && pending.isEmpty())
 			{
+				// Do not hold already-found lamps behind the remaining scene scan after a load.
 				scanColumn();
 			}
 			else
@@ -656,17 +631,8 @@ public class SceneLights
 
 	private void logScan()
 	{
-		int autoCount = 0;
-		for (int n : autoTally.values())
-		{
-			autoCount += n;
-		}
-		log.info("Scene lights: {} lights.json objects with lights, {} world lights, placed in {} ms", countObjectLights() - autoCount,
-			worldLights.size(), (System.nanoTime() - scanStart) / 1_000_000);
-		log.info("Automatic lights: {} objects named like a light, {} placed, {} without a model, {} without a place, "
-				+ "{} next to a 117 HD world light; placed by name {}", autoMatched, autoCount, autoNoModel, autoNoSpot,
-			autoNearWorld, autoTally);
-		autoTally = null;
+		log.info("Scene lights: {} 117 HD object lights, {} world lights, placed in {} ms",
+			countObjectLights(), worldLights.size(), (System.nanoTime() - scanStart) / 1_000_000);
 	}
 
 	private int countObjectLights()
@@ -677,11 +643,6 @@ public class SceneLights
 			n += t.lights.size();
 		}
 		return n;
-	}
-
-	private static long tileKey(int plane, int tileX, int tileZ)
-	{
-		return (long) plane << 48 | (tileX & 0xFFFFFFL) << 24 | tileZ & 0xFFFFFFL;
 	}
 
 	private void add(TileObject object, boolean fadesIn)
@@ -699,7 +660,7 @@ public class SceneLights
 		t.hasImpostors = comp != null && comp.getImpostorIds() != null;
 		t.resolvedId = resolveId(object.getId(), comp);
 		// only remember objects that have, or could switch to having, lights
-		if (!t.hasImpostors && !byObject.containsKey(t.resolvedId) && autoLight(object, t.resolvedId) == null)
+		if (!t.hasImpostors && !byObject.containsKey(t.resolvedId))
 		{
 			return;
 		}
@@ -726,11 +687,8 @@ public class SceneLights
 		for (Placed p : t.lights)
 		{
 			unbake(p);
-			if (!p.auto)
-			{
-				p.life.update(true, 0);
-				orphans.add(p);
-			}
+			p.life.update(true, 0);
+			orphans.add(p);
 		}
 	}
 
@@ -766,8 +724,7 @@ public class SceneLights
 		List<LightDefinition> defs = byObject.get(id);
 		if (defs == null)
 		{
-			Placed auto = placeAuto(object, id, lp, fadesIn);
-			return auto != null ? Collections.singletonList(auto) : Collections.emptyList();
+			return Collections.emptyList();
 		}
 
 		int orientation = 0;
@@ -799,7 +756,7 @@ public class SceneLights
 			}
 			d.locate(at, x, ground, z, orientation, sizeX, sizeY);
 			out.add(new Placed(d, onTile(object, at, lp), plane, System.identityHashCode(object) * 0.61803398875f % 1f,
-				fadesIn, object, false, com.midonarhel.lumina.common.Clock.nanos()));
+				fadesIn, object, com.midonarhel.lumina.common.Clock.nanos()));
 		}
 		return out;
 	}
@@ -851,117 +808,6 @@ public class SceneLights
 		}
 		int[][] h = heights[plane];
 		return (h[tx][tz] + h[tx + 1][tz] + h[tx][tz + 1] + h[tx + 1][tz + 1]) * 0.25f;
-	}
-
-	// ---------------------------------------------------------------------------------------------------------
-	// Automatic lights
-
-	/**
-	 * The rules' light for this object, null for none: only game objects and wall decorations get one, and not the
-	 * ones with a light in lights.json.
-	 */
-	private LightDefinition autoLight(TileObject object, int id)
-	{
-		if (autoRules == null || !(object instanceof GameObject || object instanceof DecorativeObject)
-			|| byObject.containsKey(id))
-		{
-			return null;
-		}
-		if (!autoById.containsKey(id))
-		{
-			ObjectComposition comp = client.getObjectDefinition(id);
-			autoById.put(id, comp != null ? autoRules.match(comp.getName()) : null);
-		}
-		return autoById.get(id);
-	}
-
-	/**
-	 * The automatic light of an object, where its model puts it.
-	 */
-	private Placed placeAuto(TileObject object, int id, LocalPoint lp, boolean fadesIn)
-	{
-		LightDefinition d = autoLight(object, id);
-		if (d == null)
-		{
-			return null;
-		}
-		++autoMatched;
-		Renderable renderable;
-		if (object instanceof GameObject)
-		{
-			renderable = ((GameObject) object).getRenderable();
-		}
-		else
-		{
-			DecorativeObject deco = (DecorativeObject) object;
-			renderable = deco.getRenderable() != null ? deco.getRenderable() : deco.getRenderable2();
-		}
-		Model model = ModelData.modelOf(renderable);
-		if (model == null)
-		{
-			++autoNoModel;
-			return null;
-		}
-		if (!AutoLightPlacement.locate(autoModel.wrap(model), autoSpot))
-		{
-			++autoNoSpot;
-			return null;
-		}
-
-		// the model's place in the scene, as SceneUploader draws it
-		AutoLightPlacement.Spot s = autoSpot;
-		if (object instanceof GameObject)
-		{
-			GameObject go = (GameObject) object;
-			AutoLightPlacement.turn(s, go.getModelOrientation(), autoMove);
-			at[0] = go.getX() + autoMove[0];
-			at[1] = go.getZ() + s.y;
-			at[2] = go.getY() + autoMove[1];
-		}
-		else
-		{
-			DecorativeObject deco = (DecorativeObject) object;
-			at[0] = deco.getX() + deco.getXOffset() + s.x;
-			at[1] = deco.getZ() + s.y;
-			at[2] = deco.getY() + deco.getYOffset() + s.z;
-			if (!s.flame)
-			{
-				AutoLightPlacement.awayFromWall(deco.getConfig(), autoMove);
-				at[0] += autoMove[0];
-				at[2] += autoMove[1];
-			}
-			onTile(object, at, lp);
-		}
-
-		int plane = object.getPlane();
-		// 117 HD lights this place already
-		if (nearWorldLight(at[0], at[2], plane))
-		{
-			++autoNearWorld;
-			return null;
-		}
-		if (autoTally != null)
-		{
-			autoTally.merge(client.getObjectDefinition(id).getName(), 1, Integer::sum);
-		}
-		return new Placed(d, at, plane, System.identityHashCode(object) * 0.61803398875f % 1f, fadesIn, object, true,
-			com.midonarhel.lumina.common.Clock.nanos());
-	}
-
-	private boolean nearWorldLight(float x, float z, int plane)
-	{
-		int tx = (int) x >> 7, tz = (int) z >> 7;
-		for (int dx = -1; dx <= 1; ++dx)
-		{
-			for (int dz = -1; dz <= 1; ++dz)
-			{
-				if (worldLightTiles.contains(tileKey(plane, tx + dx, tz + dz)))
-				{
-					return true;
-				}
-			}
-		}
-		return false;
 	}
 
 	@Subscribe
@@ -1336,7 +1182,7 @@ public class SceneLights
 	// Per frame
 
 	/**
-	 * Add this frame's visible lights to {@code out}, the ones from lights.json first and the automatic ones after.
+	 * Add this frame's visible lights to {@code out}, from the imported 117 HD definitions only.
 	 *
 	 * @param time seconds, for flicker and pulse, and how long lights have lived
 	 * @param night 0 by day to 1 at night, for night-only lights and night multipliers
@@ -1354,7 +1200,6 @@ public class SceneLights
 			return;
 		}
 		poolUsed = 0;
-		autoLights.clear();
 		if (client.getGameState() != GameState.LOGGED_IN)
 		{
 			return;
@@ -1429,66 +1274,20 @@ public class SceneLights
 			}
 		}
 
-		int room = LightClusters.MAX_LIGHTS - out.size();
-		appendNearest(out, autoLights, room, camX, camZ);
 		if (funnel != null)
 		{
-			logFunnel(funnel, room, out.size());
+			logFunnel(funnel, out.size());
 			funnel = null;
 			funnelPending = false;
 		}
 	}
 
-	private void logFunnel(Funnel f, int room, int total)
+	private void logFunnel(Funnel f, int total)
 	{
-		int objectLights = countObjectLights() - countAuto();
-		log.info("Light pipeline: {} lights.json object lights + {} world lights + {} automatic; "
-				+ "{} hidden (fading or waiting for their animation), {} out of reach, "
-				+ "{} night-only and off now (night {}); {} on the clusters; "
-				+ "strengths of those showing: {} under 2, {} 2 to 6, {} 6 to 15, {} 15 and up; "
-				+ "clusters {}/{} used, {} automatic lights over budget",
-			objectLights, worldLights.size(), countAuto(), f.hidden, f.outOfReach, f.nightOff, frameNight,
-			f.clusters, f.strengths[0], f.strengths[1], f.strengths[2], f.strengths[3], total,
-			LightClusters.MAX_LIGHTS, Math.max(0, autoLights.size() - Math.max(0, room)));
-	}
-
-	private int countAuto()
-	{
-		int n = 0;
-		for (TrackedObject t : objects.values())
-		{
-			for (Placed p : t.lights)
-			{
-				if (p.auto)
-				{
-					++n;
-				}
-			}
-		}
-		return n;
-	}
-
-	/**
-	 * Add the nearest of the candidates to the lights, at most room of them, to leave the budget to the lights
-	 * already there.
-	 */
-	static void appendNearest(List<PointLight> out, List<PointLight> candidates, int room, float camX, float camZ)
-	{
-		if (room <= 0)
-		{
-			return;
-		}
-		if (candidates.size() > room)
-		{
-			candidates.sort((a, b) -> Float.compare(distanceSquared(a, camX, camZ), distanceSquared(b, camX, camZ)));
-		}
-		out.addAll(candidates.subList(0, Math.min(room, candidates.size())));
-	}
-
-	private static float distanceSquared(PointLight l, float camX, float camZ)
-	{
-		float dx = l.x - camX, dz = l.z - camZ;
-		return dx * dx + dz * dz;
+		log.info("Light pipeline (117 HD only): {} object lights + {} world lights; {} hidden, {} out of reach, "
+			+ "{} night-only and off (night {}); clusters {}/{} used",
+			countObjectLights(), worldLights.size(), f.hidden, f.outOfReach, f.nightOff, frameNight,
+			total, LightClusters.MAX_LIGHTS);
 	}
 
 	private void emitFixed(List<PointLight> out, Placed p, boolean parentExists)
@@ -1504,7 +1303,7 @@ public class SceneLights
 		}
 		// a light that has faded in and stays is the map's; fading or going, the walls alone stop it
 		LightMap.Source bake = lightMap != null && parentExists && p.life.brightness() >= 1 ? p.bake : null;
-		List<PointLight> to = p.auto ? autoLights : out;
+		List<PointLight> to = out;
 		int before = to.size();
 		emit(to, p.def, p.life, p.x, p.y, p.z, p.ox, p.oz, p.plane, p.seed, false, bake);
 		if (to.size() > before)

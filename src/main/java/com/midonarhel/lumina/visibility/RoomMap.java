@@ -19,8 +19,9 @@ public final class RoomMap
 	public static final int ANY = 4095;
 	public static final int MAX_ROOM = ANY - 1;
 	public static final float TILE = 128;
-	// the texture's layers (rooms.glsl): rooms, floor heights, walls, puddles; an RGBA texel per tile, a plane each
-	static final int LAYERS = 4;
+	// the texture's layers (rooms.glsl): rooms, floor heights, walls, puddles, wall distances;
+	// an RGBA texel per tile, a plane each
+	static final int LAYERS = 5;
 
 	public final int size;
 	// extended tiles before local tile 0
@@ -33,6 +34,8 @@ public final class RoomMap
 	// the tile's room has, plus 1 (0: the whole tile), and the room of the other half (0 outdoors)
 	final byte[] half;
 	final short[] across;
+	// Geometric room boundaries at open diagonal roof corners, independent of sight-blocking wall bits.
+	private byte[] openBoundary;
 	// a bit per plane: the tile has a floor there (setFloors); null until known
 	private byte[] filled;
 	private int version;
@@ -194,6 +197,40 @@ public final class RoomMap
 	}
 
 	/**
+	 * An open diagonal frame still bounds a roofed room. Only trim an unambiguous outer corner: the two edges
+	 * on one side join this room, and both edges on the other side are outdoors. Interior openings and unroofed
+	 * diagonal objects do not qualify. These cuts never enter WallMap, so the opening remains light-transmitting.
+	 */
+	void setOpenBoundaries(java.util.Collection<WallMap.Diagonal> diagonals)
+	{
+		for (WallMap.Diagonal d : diagonals)
+		{
+			if (d.plane < 0 || d.plane >= PLANES || d.x <= 0 || d.y <= 0 || d.x >= size - 1 || d.y >= size - 1)
+				continue;
+			int i = index(d.plane, d.x, d.y), room = rooms[i];
+			if (room == 0 || !roofed[i] || half[i] != 0 || !WallMap.split(d.kind)) continue;
+			int[] adjacent = {rooms[index(d.plane, d.x, d.y + 1)], rooms[index(d.plane, d.x + 1, d.y)],
+				rooms[index(d.plane, d.x, d.y - 1)], rooms[index(d.plane, d.x - 1, d.y)]};
+			for (int inside = 0; inside < 2; ++inside)
+			{
+				boolean corner = true;
+				for (int side = 0; side < 4; ++side)
+				{
+					int expected = WallMap.half(d.kind, 1 << side) == inside ? room : 0;
+					corner &= adjacent[side] == expected;
+				}
+				if (!corner) continue;
+				if (openBoundary == null) openBoundary = new byte[rooms.length];
+				openBoundary[i] = (byte) d.kind;
+				half[i] = (byte) (inside + 1);
+				across[i] = 0;
+				++version;
+				break;
+			}
+		}
+	}
+
+	/**
 	 * Remember which tiles have a floor, for the texels' floor bit.
 	 *
 	 * @param filled per extended tile (x * size + y), a bit per plane that has a floor tile there
@@ -269,7 +306,8 @@ public final class RoomMap
 		}
 		int i = index(plane, tx, ty);
 		int room = rooms[i];
-		if (half[i] != 0 && walls != null && WallMap.halfAt(walls.get(plane, tx, ty), x / TILE + offset - tx,
+		int boundary = openBoundary != null && openBoundary[i] != 0 ? openBoundary[i] : walls != null ? walls.get(plane, tx, ty) : 0;
+		if (half[i] != 0 && WallMap.split(boundary) && WallMap.halfAt(boundary, x / TILE + offset - tx,
 			z / TILE + offset - ty) != half[i] - 1)
 		{
 			// the far side of a diagonal wall
@@ -299,7 +337,8 @@ public final class RoomMap
 	 * of the four planes per tile: the rooms, the floor heights (world y), the walls: the tile's WallMap bits, its edges
 	 * set when either tile beside them holds the wall, plus 64 times the half (WallMap.half) the tile's room has, plus
 	 * 128 times the room of the other half of a tile a diagonal wall crosses (0 outdoors; the tile's own room when both
-	 * halves are in it), bit 19 a floor tile; and the puddle places ({@link #pool}). From the packed copy when it is
+	 * halves are in it), bit 19 a floor tile; the puddle places ({@link #pool}); and packed wall distances
+	 * ({@link RoomAmbient}). From the packed copy when it is
 	 * the current version's.
 	 */
 	void texels(FloatBuffer out)
@@ -336,8 +375,11 @@ public final class RoomMap
 							case 2:
 								out.put(wallTexel(p, x, y));
 								break;
-							default:
+							case 3:
 								out.put(pools[i]);
+								break;
+							default:
+								out.put(walls != null ? RoomAmbient.pack(walls, p, x, y) : 0xFFFFFF);
 						}
 					}
 				}
@@ -359,7 +401,9 @@ public final class RoomMap
 		}
 		// Bit 19 is floor presence; the lower 19 bits retain wall/room encoding.
 		int floor = filled != null && (filled[x * size + y] & (1 << p)) != 0 ? 1 << 19 : 0;
-		return floor + b + (half[i] == 0 ? 128 * rooms[i] : 64 * (half[i] - 1) + 128 * across[i]);
+		// Bits 20-21 carry a room-only diagonal. Low wall bits remain unchanged for skylight/LOS consumers.
+		int boundary = openBoundary != null ? (openBoundary[i] & 48) << 16 : 0;
+		return boundary + floor + b + (half[i] == 0 ? 128 * rooms[i] : 64 * (half[i] - 1) + 128 * across[i]);
 	}
 
 	// how much lower than its neighbours (world units) a tile must lie to collect a full puddle, and the slope

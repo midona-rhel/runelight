@@ -55,6 +55,8 @@ public final class DumpRenderer implements AutoCloseable
 	/** How the frame is drawn: the warm-up before the dump's time, and the overrides. */
 	public static final class Options
 	{
+		// Offline-only staged shader overrides; never starts a watcher or edits live resources.
+		public java.nio.file.Path shaderDirectory;
 		// simulated seconds of frames before the dump's frame, and the step between them
 		public double warmupSeconds = 6;
 		public double frameSeconds = 0.05;
@@ -165,6 +167,22 @@ public final class DumpRenderer implements AutoCloseable
 		plugin.startMillis = m.startMillis;
 		plugin.glCapabilities = gl.capabilities;
 		PlainData.set(plugin, "lwjglInitted", true);
+		if (options.shaderDirectory != null)
+		{
+			String previous = System.getProperty("runelight.shaderDir");
+			try
+			{
+				System.setProperty("runelight.shaderDir", options.shaderDirectory.toAbsolutePath().toString());
+				plugin.shaderWatcher = com.midonarhel.lumina.dev.ShaderWatcher.create();
+				if (plugin.shaderWatcher == null)
+					throw new IllegalArgumentException("Shader directory must contain frag.glsl: " + options.shaderDirectory);
+			}
+			finally
+			{
+				if (previous == null) System.clearProperty("runelight.shaderDir");
+				else System.setProperty("runelight.shaderDir", previous);
+			}
+		}
 		plugin.initGlObjects();
 		plugin.textureArrayId = -1;
 		plugin.lastCanvasWidth = plugin.lastCanvasHeight = -1;
@@ -484,6 +502,13 @@ public final class DumpRenderer implements AutoCloseable
 	{
 		for (String[] f : SceneDump.stateFields(plugin))
 		{
+			// Older dumps captured the live client's texture-ring and pixel-unpack buffer names.
+			// They belong to another GL context: restoring them can delete textures or overwrite a
+			// renderer VBO with the weather upload when the numeric names happen to coincide.
+			if (!replayableState(f[0], f[1]))
+			{
+				continue;
+			}
 			if (!options.restoreWeather && (f[0].equals("weather") || f[0].equals("weatherField")))
 			{
 				continue;
@@ -515,6 +540,11 @@ public final class DumpRenderer implements AutoCloseable
 		{
 			PlainData.set(plugin.water, "startNanos", Clock.nanos() - age.longValue());
 		}
+	}
+
+	static boolean replayableState(String owner, String field)
+	{
+		return !owner.equals("weatherField") || !Set.of("fieldSets", "groundSets", "skySets", "unpackBuffer", "set").contains(field);
 	}
 
 	/** One frame: the tape played through the plugin's callbacks. */

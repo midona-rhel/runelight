@@ -1,114 +1,109 @@
-// Sun and moon shadows: PCSS. Blocker search for the average depth of the occluders whose penumbra reaches the
-// point, then a PCF kernel sized by the distance between occluder and receiver, so contact shadows are sharp and long
-// ones soften. Drawn at half resolution in the AO pass (ao_frag.glsl); a wide kernel is rotated by interleaved
-// gradient noise (ign.glsl), which the denoise (denoise_frag.glsl) averages away over the penumbra's reach
-// (shadow_reach.glsl): soft edges without grain, sharp ones left sharp. Needs frame.glsl.
-
+// Directional PCSS: blocker search, mean blocker gap, percentage-closer filtering.
+// Algorithm: NVIDIA PCSS Integration (2008), with per-tap receiver-plane correction.
+// This map is orthographic and LINEAR: gapWorld = gapDepth * 2*shadowDepthRange.
+// No perspective zBlocker divisor belongs in the angular-radius conversion.
 uniform sampler2D shadowRaw;
 uniform sampler2DShadow shadowCompare;
-uniform mat4 lightProjRel;  // camera-relative world -> light clip
-uniform float shadowRadius;      // half extent of the shadow map, world units
+uniform mat4 lightProjRel;
+uniform float shadowRadius;
 uniform float shadowDepthRange;
 uniform float shadowMapSize;
 uniform int sunIsCaster;
-uniform vec2 strikeLight;  // sky.glsl: x is 1 while a bolt's light casts the shadows
-// The static map's greatest depth within the filter's reach of each tile of shadowMaxTile texels (ShadowMap.buildMax);
-// 0 tiles: none
+uniform vec2 strikeLight;
 uniform sampler2D shadowMax;
 uniform int shadowMaxTile;
+// Approximately 0.266 degrees angular radius for either celestial disc.
+#define SUN_SOFTNESS 0.00465
+#define MOON_SOFTNESS 0.00465
+#define MAX_PENUMBRA_WORLD 48.0
+#define SHADOW_DISK_TAPS 32
+// Equal-area golden-angle disk. Fixed in shadow space, with no screen-coordinate jitter.
+const vec2 SHADOW_DISK[SHADOW_DISK_TAPS] = vec2[](
+  vec2(0.125000000, 0.000000000),
+  vec2(-0.159645045, 0.146247939),
+  vec2(0.024436233, -0.278438271),
+  vec2(0.201222239, 0.262458779),
+  vec2(-0.369267557, -0.065318231),
+  vec2(0.349802466, -0.222515696),
+  vec2(-0.117002079, 0.435241902),
+  vec2(-0.223135654, -0.429634123),
+  vec2(0.484115115, 0.176798064),
+  vec2(-0.503641109, 0.207895728),
+  vec2(0.242788294, -0.518824483),
+  vec2(0.179414374, 0.572001296),
+  vec2(-0.540757006, -0.313379738),
+  vec2(0.634369523, -0.139464360),
+  vec2(-0.387145845, 0.550675126),
+  vec2(-0.089439655, -0.690199644),
+  vec2(0.549071757, 0.462758258),
+  vec2(-0.738878471, 0.030554945),
+  vec2(0.538955125, -0.536332334),
+  vec2(-0.036058186, 0.779791515),
+  vec2(-0.512817532, -0.614526793),
+  vec2(0.812359593, 0.109301834),
+  vec2(-0.688310641, 0.478908616),
+  vec2(0.188086057, -0.836061382),
+  vec2(0.435033266, 0.759191055),
+  vec2(-0.850448410, -0.271316239),
+  vec2(0.826102401, -0.381680263),
+  vec2(-0.357888202, 0.855155562),
+  vec2(-0.319407334, -0.888033758),
+  vec2(0.849908635, 0.446688159),
+  vec2(-0.944034646, 0.248844503),
+  vec2(0.536595808, -0.834529771));
 
-const vec2 POISSON[16] = vec2[](
-  vec2(-0.94201624, -0.39906216), vec2(0.94558609, -0.76890725),
-  vec2(-0.09418410, -0.92938870), vec2(0.34495938, 0.29387760),
-  vec2(-0.91588581, 0.45771432), vec2(-0.81544232, -0.87912464),
-  vec2(-0.38277543, 0.27676845), vec2(0.97484398, 0.75648379),
-  vec2(0.44323325, -0.97511554), vec2(0.53742981, -0.47373420),
-  vec2(-0.26496911, -0.41893023), vec2(0.79197514, 0.19090188),
-  vec2(-0.24188840, 0.99706507), vec2(-0.81409955, 0.91437590),
-  vec2(0.19984126, 0.78641367), vec2(0.14383161, -0.14100790));
-
-#define SHADOW_TAU 6.28318530718
-// world units of penumbra (radius) per world unit between occluder and receiver: the light's apparent size. The sun:
-// 5.7 degrees across, 11x the real one (whose penumbra is under a texel): a modest penumbra growing with distance
-#define SUN_SOFTNESS 0.05
-#define MOON_SOFTNESS 0.14
-// and a bolt's: a point of light, so only the filter's minimum is left
-#define STRIKE_SOFTNESS 0.0
-#define BLOCKER_SEARCH_WORLD 160.0
-// with the POISSON points, the filter's reach ShadowMap.FILTER_REACH_WORLD bounds the shadow under
-#define MAX_PENUMBRA_WORLD 112.0
-#define SHADOW_SEARCH_TAPS 16
-#define SHADOW_FILTER_TAPS 16
-
-// rotation: 0..1, turns the tap pattern; penumbraWorld: the radius the filter's taps were dithered over, world units,
-// 0 where they were not
-float shadowFactor(vec3 p, vec3 n, float rotation, out float penumbraWorld) {
+// dz/du,dz/dv of this receiver plane. Projection rows are scaled orthogonal axes.
+vec2 shadowReceiverGradient(vec3 n) {
+  vec3 x = normalize(vec3(lightProjRel[0][0], lightProjRel[1][0], lightProjRel[2][0]));
+  vec3 y = normalize(vec3(lightProjRel[0][1], lightProjRel[1][1], lightProjRel[2][1]));
+  vec3 z = normalize(vec3(lightProjRel[0][2], lightProjRel[1][2], lightProjRel[2][2]));
+  float nz = dot(n, z);
+  // Near edge-on planes have no well-conditioned depth function over the map.
+  if (abs(nz) < 0.05) return vec2(0.0);
+  return -vec2(dot(n, x), dot(n, y)) / nz * (shadowRadius / shadowDepthRange);
+}
+float shadowFactor(vec3 p, vec3 n, float rotationUnused, out float penumbraWorld) {
   penumbraWorld = 0.0;
-  float texelWorld = 2.0 * shadowRadius / shadowMapSize;
-  // normal offset keeps surfaces from shadowing themselves
-  vec4 lc = lightProjRel * vec4(p + n * texelWorld * 1.5, 1.0);
+  vec4 lc = lightProjRel * vec4(p, 1.0);
   vec2 uv = lc.xy * 0.5 + 0.5;
   float z = depthZeroToOne == 1 ? lc.z : lc.z * 0.5 + 0.5;
-  if (any(lessThan(uv, vec2(0.0))) || any(greaterThan(uv, vec2(1.0))) || z >= 1.0) {
+  if (any(lessThan(uv, vec2(0.0))) || any(greaterThan(uv, vec2(1.0))) || z >= 1.0 || z <= 0.0)
     return 1.0;
-  }
   float edgeFade = smoothstep(0.0, 0.08, min(min(uv.x, uv.y), min(1.0 - uv.x, 1.0 - uv.y)));
-  float bias = 2.0 * texelWorld / (2.0 * shadowDepthRange);
-
-  // In the middle of a shadow: all the filter can reach is nearer the light than this texel, so every compare fails
-  // whatever the penumbra (and the search's nearest taps, well within that, find blockers): the same as the full
-  // filter at a fraction of its taps. The moving models only bring the depth nearer than the static map's.
-  if (shadowMaxTile > 0) {
-    ivec2 tile = min(ivec2(uv * shadowMapSize) / shadowMaxTile, textureSize(shadowMax, 0) - 1);
-    if (texelFetch(shadowMax, tile, 0).r < z - bias) {
-      return 1.0 - edgeFade;
-    }
-  }
-
-  float a = rotation * SHADOW_TAU;
-  mat2 rot = mat2(cos(a), sin(a), -sin(a), cos(a));
   float worldToUv = 1.0 / (2.0 * shadowRadius);
-  float softness = strikeLight.x > 0.0 ? STRIKE_SOFTNESS : sunIsCaster == 1 ? SUN_SOFTNESS : MOON_SOFTNESS;
-
-  // A blocker counts only where the light, seen from this point, is behind it: within its gap's penumbra of the
-  // point. A crown far beside a trunk's foot would otherwise widen the foot's contact shadow by its own height; with
-  // none in reach, the penumbra is the least. The point's own texel is read too, the contact's nearest blocker, and the
-  // taps are drawn in toward it (each point's radius squared), where a short gap's small penumbra can be found.
-  float blockerSum = 0.0;
-  float blockers = 0.0;
-  bool found = false;
-  for (int i = 0; i <= SHADOW_SEARCH_TAPS; ++i) {
-    vec2 offsetWorld = i == SHADOW_SEARCH_TAPS ? vec2(0.0)
-      : rot * POISSON[i] * (length(POISSON[i]) * BLOCKER_SEARCH_WORLD);
-    float d = texture(shadowRaw, uv + offsetWorld * worldToUv).r;
-    if (d < z - bias) {
-      found = true;
-      if (length(offsetWorld) <= (z - d) * 2.0 * shadowDepthRange * softness + texelWorld) {
-        blockerSum += d;
-        blockers += 1.0;
-      }
+  float texelWorld = 2.0 * shadowRadius / shadowMapSize;
+  float depthSpan = 2.0 * shadowDepthRange;
+  vec2 gradient = shadowReceiverGradient(n);
+  // Constant quantization allowance; hardware PCF also needs the half-texel slope allowance.
+  float bias = max(0.25 * texelWorld / depthSpan, 1e-7);
+  float filterBias = bias + dot(abs(gradient), vec2(0.5 / shadowMapSize));
+  float angularRadius = strikeLight.x > 0.0 ? 0.0 : (sunIsCaster == 1 ? SUN_SOFTNESS : MOON_SOFTNESS);
+  float searchWorld = min(MAX_PENUMBRA_WORLD, z * depthSpan * angularRadius);
+  // Static max-tile shortcut disabled until its slope-dependent bound has a GPU regression.
+  float gapSum = 0.0;
+  int blockers = 0;
+  for (int i = 0; i <= SHADOW_DISK_TAPS; ++i) {
+    vec2 offset = i == SHADOW_DISK_TAPS ? vec2(0.0) : SHADOW_DISK[i] * searchWorld * worldToUv;
+    // Raw depth is nearest sampled: evaluate the plane at that actual texel center.
+    vec2 tap = (floor((uv + offset) * shadowMapSize) + 0.5) / shadowMapSize;
+    float receiver = z + dot(gradient, tap - uv);
+    float d = textureLod(shadowRaw, tap, 0.0).r;
+    if (d < receiver - bias) {
+      gapSum += receiver - d;
+      ++blockers;
     }
   }
-  if (!found) {
-    return 1.0;
-  }
-
-  float gapWorld = blockers > 0.0 ? (z - blockerSum / blockers) * 2.0 * shadowDepthRange : 0.0;
-  float filterWorld = clamp(gapWorld * softness, texelWorld, MAX_PENUMBRA_WORLD);
-  float penumbra = filterWorld * worldToUv;
-  // A kernel within a texel or two of hardware filtered compares needs no more than half the taps, and no dither:
-  // unturned, its taps give a smooth edge that the denoise leaves as it is. A wider one is turned, and smoothed.
-  bool small = filterWorld < texelWorld * 2.0;
-  int filterTaps = small ? SHADOW_FILTER_TAPS / 2 : SHADOW_FILTER_TAPS;
-  if (small) {
-    rot = mat2(1.0);
-  } else {
-    penumbraWorld = filterWorld;
-  }
-
+  if (blockers == 0) return 1.0;
+  float gapWorld = gapSum / float(blockers) * depthSpan;
+  float filterWorld = min(gapWorld * angularRadius, MAX_PENUMBRA_WORLD);
+  // Hardware bilinear PCF provides the minimum reconstruction footprint at contact.
   float lit = 0.0;
-  for (int i = 0; i < filterTaps; ++i) {
-    lit += texture(shadowCompare, vec3(uv + rot * POISSON[i] * penumbra, z - bias));
+  for (int i = 0; i < SHADOW_DISK_TAPS; ++i) {
+    vec2 offset = SHADOW_DISK[i] * filterWorld * worldToUv;
+    float receiver = z + dot(gradient, offset) - filterBias;
+    lit += texture(shadowCompare, vec3(uv + offset, receiver));
   }
-  return mix(1.0, lit / float(filterTaps), edgeFade);
+  // Sampling is deterministic; additional screen-space denoise is unnecessary and would
+  // broaden this reference filter. AO and fog continue through their existing denoiser.
+  return mix(1.0, lit / float(SHADOW_DISK_TAPS), edgeFade);
 }

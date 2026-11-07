@@ -23,9 +23,9 @@ public class OfflineChecksSyntheticTest
 	private static final Path OUT = Paths.get("build", "offline", "checks");
 
 	@Before
-	public void mac()
+	public void supportedPlatform()
 	{
-		Assume.assumeTrue("CGL: macOS only", Platform.get() == Platform.MACOSX);
+		Assume.assumeTrue("Headless GL supports Windows and macOS", Platform.get() != Platform.LINUX);
 	}
 
 	static DumpRenderer.Options options()

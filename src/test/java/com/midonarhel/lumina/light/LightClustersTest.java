@@ -120,6 +120,42 @@ public class LightClustersTest
 	}
 
 	@Test
+	public void cachedFogSpansFollowEligibilityAndChangesWhileDisabled() throws Exception
+	{
+		LightClusters clusters = new LightClusters();
+		PointLight lamp = new PointLight().set(0, 800, 3000, 600, 1, 1, 1, 1);
+		List<PointLight> lights = java.util.Collections.singletonList(lamp);
+		clusters.setFog(true, 0, 3000, 10000, 0, 100);
+		clusters.cull(lights, viewProj(), 0, 0, 0);
+		java.lang.reflect.Field generation = LightClusters.class.getDeclaredField("columnsBuilt");
+		generation.setAccessible(true);
+		int built = generation.getInt(clusters);
+		int[] first = clusters.clusterTable().clone();
+		clusters.cull(lights, viewProj(), 0, 0, 0);
+		assertEquals("unchanged fog does not regenerate or trigger uploads", built, generation.getInt(clusters));
+		assertArrayEquals(first, clusters.clusterTable());
+
+		// Flicker can cross the fog eligibility threshold without changing the light's sphere.
+		lamp.intensity = 0;
+		clusters.cull(lights, viewProj(), 0, 0, 0);
+		assertEquals(0, fogSpans(clusters));
+		assertEquals(built + 1, generation.getInt(clusters));
+		lamp.intensity = 1;
+		clusters.cull(lights, viewProj(), 0, 0, 0);
+		assertArrayEquals(first, clusters.clusterTable());
+
+		clusters.setFog(false, 0, 3000, 10000, 0, 100);
+		lamp.set(-2000, 800, 6000, 600, 1, 1, 1, 1);
+		clusters.cull(lights, viewProj(), 0, 0, 0);
+		clusters.setFog(true, 0, 3000, 10000, 0, 100);
+		clusters.cull(lights, viewProj(), 0, 0, 0);
+		LightClusters fresh = new LightClusters();
+		fresh.setFog(true, 0, 3000, 10000, 0, 100);
+		fresh.cull(lights, viewProj(), 0, 0, 0);
+		assertArrayEquals(fresh.clusterTable(), clusters.clusterTable());
+	}
+
+	@Test
 	public void unchangedFramesKeepTheTableAndMovesRebuildIt()
 	{
 		LightClusters clusters = new LightClusters();

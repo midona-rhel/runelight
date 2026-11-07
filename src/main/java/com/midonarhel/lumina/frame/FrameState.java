@@ -179,6 +179,21 @@ import static com.midonarhel.lumina.LuminaPlugin.*;
 public final class FrameState
 {
 	private final LuminaPlugin plugin;
+	private com.midonarhel.lumina.visibility.SkyGridMap.Uniforms alphaSkyGrid;
+	private com.midonarhel.lumina.visibility.SkyFieldMap.Uniforms alphaSkyField;
+	private int alphaRoomHeader = -1, alphaInteriorTint = -1;
+
+	/** Each shader owns its locations; the AO and alpha passes share only the uploaded sky data. */
+	public void locateAlphaIndoor(int program)
+	{
+		alphaSkyGrid = plugin.skyGrid.locate(program, SKY_GRID_UNIT);
+		alphaSkyField = plugin.skyField.locate(program, SKY_FIELD_UNIT, SKY_FIELD_PREV_UNIT);
+		alphaRoomHeader = glGetUniformLocation(program, "roomHeader");
+		alphaInteriorTint = glGetUniformLocation(program, "interiorTint");
+		glUseProgram(program);
+		glUniform1i(glGetUniformLocation(program, "roomTexels"), ROOM_TEXELS_UNIT);
+		glUseProgram(0);
+	}
 
 	public FrameState(LuminaPlugin plugin)
 	{
@@ -290,6 +305,19 @@ public final class FrameState
 			glDisable(GL_BLEND);
 		}
 		glUniform1i(plugin.uniAlphaPass, alpha ? 1 : 0);
+		if (alpha) plugin.water.bindAlpha(plugin.config, WATER_DATA_UNIT);
+		if (alpha)
+		{
+			if (plugin.frameLightClusters) glUniform3fv(alphaRoomHeader, plugin.roomTexture.header());
+			else glUniform3f(alphaRoomHeader, 0, 0, 0);
+			float[] tint = com.midonarhel.lumina.visibility.BuildingLights.FILL_TINT;
+			glUniform3f(alphaInteriorTint, tint[0], tint[1], tint[2]);
+			WorldView view = plugin.client.getTopLevelWorldView();
+			plugin.skyGrid.bind(alphaSkyGrid, SKY_GRID_UNIT, view != null ? view.getScene() : null,
+				plugin.frameCameraX, plugin.frameCameraY, plugin.frameCameraZ,
+				plugin.frameOutdoors && !com.midonarhel.lumina.dev.Commands.skylightOff);
+			plugin.skyField.bind(alphaSkyField, SKY_FIELD_UNIT, SKY_FIELD_PREV_UNIT, plugin.frameCameraX, plugin.frameCameraZ);
+		}
 		// the shadow map as the shadow pass left it last frame, with that frame's matrix (frag.glsl alphaShadow)
 		boolean shadows = alpha && plugin.frameShadows && plugin.shadowMap.isInitialized();
 		glUniform1i(plugin.uniAlphaShadows, shadows ? 1 : 0);

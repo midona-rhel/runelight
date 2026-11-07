@@ -59,6 +59,7 @@ layout(std140) uniform uniforms {
 
 layout(location = 0) out vec4 FragColor;
 layout(location = 1) out vec4 FragNormal;
+layout(location = 4) out vec4 FragUnderwaterAlpha;
 layout(location = 2) out vec4 FragAlpha;  // transparency layer, see SceneTargets
 layout(location = 3) out vec4 FragMaterial;  // the material and the face's normal, see material_target.glsl
 
@@ -118,17 +119,26 @@ vec3 alphaLamps(vec3 p, vec3 n, vec3 faceN, float transmissive) {
   if (pointLightsEnabled == 0) {
     return vec3(0.0);
   }
-  vec3 w = p + cameraPos;
-  LampVolumeRead r = lampVolumeRead(w, faceN);
-  float ndl;
-  vec3 ld;
-  float k = lampVolumeOnSurface(r, w, n, ndl, ld);
-  return r.light * (k + (transmissive > 0.0 ? transmission(ndl, dot(-ld, normalize(-p)), transmissive) : 0.0))
-    + (lampMoverCount > 0 ? lampMoversOnSurface(w, n, faceN) : vec3(0.0));
+  vec3 sum = vec3(0.0);
+  LightMask mask = clusterLights(clusterEntry(fClip.xy / fClip.w * 0.5 + 0.5, fClip.w));
+  int li;
+  while (nextLight(mask, li)) {
+    Lamp lamp = lampAt(li);
+    if (!lampReaches(lamp, p, n, transmissive > 0.0)) continue;
+    float side = dot(faceN, lamp.pos - p) >= 0.0 ? 1.0 : -1.0;
+    vec3 ld; float d;
+    vec3 c = lampLight(lamp, p, p + faceN * (LAMP_WALL_BIAS * side), false, ld, d);
+    float ndl = dot(n, ld);
+    sum += c * (max(ndl, 0.0) + transmission(ndl, dot(-ld, normalize(-p)), transmissive));
+  }
+  return sum;
 }
 
 #include "material_target.glsl"
 #include "environment.glsl"
+#include "rooms.glsl"
+#include "skylight_ao.glsl"
+#include "indoor_ambient.glsl"
 #include "edge_fade.glsl"
 
 #include "hsl_to_rgb.glsl"
@@ -144,6 +154,35 @@ float linear_depth(float depth) {
   return 1 - z / 10000;  // we don't have a far plane, but the client uses 10000
 }
 #endif
+
+
+uniform sampler2D alphaWaterData;
+uniform vec2 alphaWaterGrid; // extended tile offset, corners per side
+uniform int alphaWaterEnabled;
+
+vec2 alphaWaterCell(vec2 xz) { return xz / 128.0 + alphaWaterGrid.x; }
+float alphaWaterHeight(vec2 cell) {
+  return textureLod(alphaWaterData, (cell + 0.5) / vec2(3.0 * alphaWaterGrid.y, alphaWaterGrid.y), 0.0).r;
+}
+bool alphaBehindWater(vec3 world) {
+  if (alphaWaterEnabled == 0) return false;
+  vec3 camera = vec3(cameraX, cameraY, cameraZ);
+  vec3 ray = world - camera;
+  if (ray.y <= 0.001) return false;
+  vec2 cell = alphaWaterCell(world.xz);
+  if (any(lessThan(cell, vec2(0.0))) || any(greaterThanEqual(cell, vec2(alphaWaterGrid.y - 1.0)))) return false;
+  float t = (alphaWaterHeight(cell) - camera.y) / ray.y;
+  // Locate the crossing, not the object's footprint: shore geometry may stand behind a water tile.
+  for (int i = 0; i < 2; ++i) {
+    cell = alphaWaterCell(camera.xz + ray.xz * t);
+    if (any(lessThan(cell, vec2(0.0))) || any(greaterThanEqual(cell, vec2(alphaWaterGrid.y - 1.0)))) return false;
+    t = (alphaWaterHeight(cell) - camera.y) / ray.y;
+  }
+  cell = alphaWaterCell(camera.xz + ray.xz * t);
+  if (t <= 0.0 || t >= 1.0 || any(lessThan(cell, vec2(0.0)))
+      || any(greaterThanEqual(cell, vec2(alphaWaterGrid.y - 1.0)))) return false;
+  return texelFetch(alphaWaterData, ivec2(floor(cell)), 0).a >= 0.5;
+}
 
 void main() {
   vec4 c;
@@ -229,8 +268,12 @@ void main() {
       vec3 caster = strikeCaster(sunIsCaster == 1 ? sunLight(sunAltitude) : moonLight(sunAltitude));
       float ndl = dot(n, casterDir);
       vec3 viewDir = normalize(vec3(cameraX, cameraY, cameraZ) - fWorldPos);
-      light = (ambientLight(sunAltitude) + skyLight(sunAltitude) * max(-n.y, 0.0)) * envAmbient
-        + caster * envSun * (max(ndl, 0.0) + transmission(ndl, dot(-casterDir, viewDir), materialTransmissive(fMaterial)))
+      int room = roomOfSurface(fWorldPos, n);
+      float exposure = skylightOn == 1 ? skylightVisibility(fWorldPos - cameraPos, n)
+        : (room > 0 ? 0.0 : 1.0);
+      light = environmentSkylight(skyLight(sunAltitude) * max(-n.y, 0.0), exposure);
+      if (room > 0) light += roomWarmFill(room, fWorldPos, n);
+      light += caster * envSun * (max(ndl, 0.0) + transmission(ndl, dot(-casterDir, viewDir), materialTransmissive(fMaterial)))
         * alphaShadow(fWorldPos, n);
     } else {
       light = envCaveLight(n);
@@ -243,6 +286,11 @@ void main() {
     FragAlpha = vec4(mix(shade(c.rgb, light), fog, fogAmount), c.a);
     // transparent faces vanish toward the edge of the world, where the composite shows the sky behind them
     FragAlpha.a *= 1.0 - edgeFadeAmount(fWorldPos);
+    FragUnderwaterAlpha = vec4(0.0);
+    if (alphaBehindWater(fWorldPos)) {
+      FragUnderwaterAlpha = FragAlpha;
+      FragAlpha = vec4(0.0);
+    }
   }
 
 #ifdef FRAG_UVS

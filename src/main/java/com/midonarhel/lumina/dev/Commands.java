@@ -265,6 +265,23 @@ public final class Commands
 				log.info("Snapshot done: fpsTarget back to {}", target);
 			} : null);
 		}
+		else if (args.length >= 1 && args[0].equals("playerlighttrace"))
+		{
+			PlayerLightTrace trace = plugin.lampFrame.playerLightTrace;
+			String action = args.length >= 2 ? args[1] : "help";
+			if (action.equals("on"))
+			{
+				trace.start();
+				plugin.chat("Player light trace armed: last 600 frames. Cross doorway, then playerlighttrace dump.");
+			}
+			else if (action.equals("off")) trace.stop();
+			else if (action.equals("dump"))
+			{
+				try { plugin.chat("Player light trace saved: " + trace.dump()); }
+				catch (java.io.IOException ex) { log.warn("Player light trace write failed", ex); plugin.chat("Player light trace write failed: " + ex.getMessage()); }
+			}
+			else plugin.chat("Usage: ::runelight playerlighttrace on|off|dump");
+		}
 		else if (args.length >= 1 && args[0].equals("tiles"))
 		{
 			com.midonarhel.lumina.light.LampTiles.dump(plugin, args.length >= 2 ? args[1] : "tiles");
@@ -370,7 +387,8 @@ public final class Commands
 					{
 						if (o != null && o.getSceneMinLocation().equals(t.getSceneLocation()))
 						{
-							out.append("orientation ").append(o.getModelOrientation()).append(' ');
+							out.append("orientation ").append(o.getModelOrientation())
+								.append(" type ").append(o.getConfig() & 31).append(" config ").append(o.getConfig()).append(' ');
 							describe(out, "game", o.getId(), o.getRenderable(), detail);
 						}
 					}

@@ -145,6 +145,7 @@ public final class SyntheticDump
 			flags[0][54][z] |= com.midonarhel.lumina.visibility.WallMap.LOS_EAST;
 		}
 		l.derived.put("buildings.walls", com.midonarhel.lumina.visibility.WallMap.build(flags, null, 184, 40, 1));
+		structuralWall(l, 55 * 128, 46 * 128, 55 * 128, 58 * 128);
 		List<com.midonarhel.lumina.light.PointLight> lamps = new ArrayList<>();
 		lamps.add(new com.midonarhel.lumina.light.PointLight().set(LAMP_X, -120, MID, 6 * 128, 1f, 0.75f, 0.45f, 6f).onPlane(0));
 		l.derived.put("lamps.collected", lamps);
@@ -170,6 +171,8 @@ public final class SyntheticDump
 			flags[0][x][52] |= com.midonarhel.lumina.visibility.WallMap.LOS_FULL;
 			diagonals.add(new com.midonarhel.lumina.visibility.WallMap.Diagonal(0, x + 40, 52 + 40,
 				(x & 1) == 0 ? com.midonarhel.lumina.visibility.WallMap.DIAG_SW_NE : com.midonarhel.lumina.visibility.WallMap.DIAG_NW_SE));
+			structuralWall(l, x * 128, ((x & 1) == 0 ? 52 : 53) * 128,
+				(x + 1) * 128, ((x & 1) == 0 ? 53 : 52) * 128);
 		}
 		l.derived.put("buildings.walls", com.midonarhel.lumina.visibility.WallMap.build(flags, diagonals, 184, 40, 1));
 		List<com.midonarhel.lumina.light.PointLight> lamps = new ArrayList<>();
@@ -178,6 +181,34 @@ public final class SyntheticDump
 		l.derived.put("lamps.collected", lamps);
 		l.derived.put("lamps.steady", lamps);
 		return l;
+	}
+
+	/**
+	 * The wall oracle above is two-dimensional. Supply its matching finite vertical geometry to the current
+	 * point-light renderer too: WallMap alone now serves CPU topology/origin placement, not GPU visibility.
+	 * The panels span all fixture receivers and lamps vertically. Like the old topology-only walls they are
+	 * invisible to the camera, keeping the ground behind them available for the pixel leakage assertion.
+	 */
+	private static void structuralWall(SceneDump.Loaded dump, float x0, float z0, float x1, float z1)
+	{
+		int offset = com.midonarhel.lumina.LuminaPlugin.SCENE_OFFSET * 128;
+		int zx = (int) Math.floor(((x0 + x1) * 0.5f + offset) / 1024);
+		int zz = (int) Math.floor(((z0 + z1) * 0.5f + offset) / 1024);
+		for (com.midonarhel.lumina.scene.ZoneSnapshot zone : dump.zones.get(0))
+		{
+			if (zone.x != zx || zone.z != zz) continue;
+			x0 -= zx * 1024 - offset;
+			x1 -= zx * 1024 - offset;
+			z0 -= zz * 1024 - offset;
+			z1 -= zz * 1024 - offset;
+			float[] panel = {x0, -512, z0, x0, 0, z0, x1, 0, z1,
+				x0, -512, z0, x1, 0, z1, x1, -512, z1};
+			int start = zone.lampBlockers.length;
+			zone.lampBlockers = java.util.Arrays.copyOf(zone.lampBlockers, start + panel.length);
+			System.arraycopy(panel, 0, zone.lampBlockers, start, panel.length);
+			return;
+		}
+		throw new IllegalArgumentException("No fixture zone for structural wall " + zx + "," + zz);
 	}
 
 	private static FrameTape.Event event(int type, int[] ints)

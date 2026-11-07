@@ -31,6 +31,8 @@ import org.slf4j.LoggerFactory;
  */
 public class BuildingLights
 {
+	// Candidate room-footprint correction: enable with its matching staged rooms shader for validation.
+	private static final boolean OPEN_ROOM_BOUNDARIES = Boolean.getBoolean("runelight.openRoomBoundaries");
 	private static final Logger log = LoggerFactory.getLogger(BuildingLights.class);
 
 	// the color of a tile paint that isn't drawn
@@ -56,6 +58,7 @@ public class BuildingLights
 	// per extended tile, (plane * size + x) * size + y: a wall object with a model stands there (drawnWalls)
 	private volatile boolean[] drawnWalls;
 	private final Map<GameObject, WallMap.Diagonal> diagonals = new IdentityHashMap<>();
+	private int diagonalRevision, handedDiagonalRevision;
 	private BuildingDetector.Result coarse;
 	// which planes have a floor on every tile (RoomMap.setFloors), kept for the rooms rebuilt as doors open
 	private byte[] filledTiles;
@@ -127,6 +130,7 @@ public class BuildingLights
 		filledTiles = null;
 		diagonals.clear();
 		handedFlags = null;
+		diagonalRevision = handedDiagonalRevision = 0;
 		if (client.getGameState() != GameState.LOGGED_IN)
 		{
 			return;
@@ -164,6 +168,7 @@ public class BuildingLights
 			if (m != null)
 			{
 				m.setWalls(w);
+				if (OPEN_ROOM_BOUNDARIES) m.setOpenBoundaries(found.values());
 				filled = floorTiles(scene, m.size);
 				m.setFloors(filled);
 			}
@@ -464,14 +469,16 @@ public class BuildingLights
 	{
 		if (builtFor != null)
 		{
+			WallMap.Diagonal before = diagonals.get(e.getGameObject());
 			addDiagonal(e.getGameObject(), e.getTile(), diagonals);
+			if (!java.util.Objects.equals(before, diagonals.get(e.getGameObject()))) ++diagonalRevision;
 		}
 	}
 
 	@Subscribe
 	public void onGameObjectDespawned(GameObjectDespawned e)
 	{
-		diagonals.remove(e.getGameObject());
+		if (diagonals.remove(e.getGameObject()) != null) ++diagonalRevision;
 	}
 
 	private int[][][] collisionFlags()
@@ -511,12 +518,14 @@ public class BuildingLights
 			BuildingDetector.Result coarseNow = coarse;
 			byte[] filledNow = filledTiles;
 			int[][][] flagsNow = collisionFlags();
-			if (m == null || old == null || scene == null || same(flagsNow, handedFlags))
+			boolean diagonalsChanged = diagonalRevision != handedDiagonalRevision;
+			if (m == null || old == null || scene == null || (!diagonalsChanged && same(flagsNow, handedFlags)))
 			{
 				return;
 			}
 			int[][][] flags = copy(flagsNow);
 			handedFlags = flags;
+			handedDiagonalRevision = diagonalRevision;
 			java.util.List<WallMap.Diagonal> diagonalsNow = new java.util.ArrayList<>(diagonals.values());
 			boolean[] drawnNow = drawnWalls;
 			int request = newestRequest = ++requests;
@@ -524,7 +533,7 @@ public class BuildingLights
 			worker.execute(() ->
 			{
 				WallMap w = WallMap.build(flags, diagonalsNow, drawnNow, old.size, old.offset, old.scene);
-				if (w.sameWalls(old))
+				if (w.sameWalls(old) && !diagonalsChanged)
 				{
 					return;
 				}
@@ -537,6 +546,7 @@ public class BuildingLights
 					if (n != null)
 					{
 						n.setWalls(w);
+						if (OPEN_ROOM_BOUNDARIES) n.setOpenBoundaries(diagonalsNow);
 						n.setFloors(filledNow);
 					}
 				}

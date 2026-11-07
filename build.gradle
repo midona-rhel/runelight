@@ -20,6 +20,10 @@ dependencies {
 	compileOnly group: 'net.runelite', name: 'client', version: runeLiteVersion
 
 	testImplementation 'junit:junit:4.12'
+	testImplementation 'org.lwjgl:lwjgl-glfw:3.3.2'
+	if (System.getProperty('os.name').toLowerCase().contains('windows')) {
+		testRuntimeOnly 'org.lwjgl:lwjgl-glfw:3.3.2:natives-windows'
+	}
 	testImplementation group: 'net.runelite', name: 'client', version: runeLiteVersion
 	testImplementation group: 'net.runelite', name: 'jshell', version: runeLiteVersion
 }

@@ -196,7 +196,7 @@ as see-through walls: the light map lets 85% of a light through them.
 
 ### Light map
 
-The static lights (those in lights.json and the automatic ones, not the lights that move, follow an animation or the
+The static lights (those in the imported 117 HD lights.json, not the lights that move, follow an animation or the
 sky) are baked on background threads into one grid per storey of quarter-tile cells (`LightMap.java`, `LightMapBake.java`);
 the lights that move, and the static ones not baked yet, are the clusters' (`light_clusters.glsl`), which keep to their storey.
 What stops a light (`LightBlockers.java`): the walls and diagonal walls (`WallMap`), the see-through walls, which stop 15% of it

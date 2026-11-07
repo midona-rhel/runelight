@@ -368,6 +368,8 @@ public class Weather
 	 */
 	private void drawMist(float strength, int[] viewport)
 	{
+		// Allocation binds the new mist FBOs. Save the scene target before those binds.
+		int target = glGetInteger(GL_DRAW_FRAMEBUFFER_BINDING);
 		int w = (viewport[2] + MIST_DOWN - 1) / MIST_DOWN, h = (viewport[3] + MIST_DOWN - 1) / MIST_DOWN;
 		if (w != mistWidth || h != mistHeight)
 		{
@@ -389,7 +391,6 @@ public class Weather
 			mistWidth = w;
 			mistHeight = h;
 		}
-		int target = glGetInteger(GL_DRAW_FRAMEBUFFER_BINDING);
 		glDisable(GL_BLEND);
 		glViewport(0, 0, w, h);
 		glUniform1f(rain.mist, strength);
@@ -1059,15 +1060,18 @@ public class Weather
 			water.setRect(config, rain.waterRect);
 			drawLayers(rain, LAYER_RAIN_DROPS * rainShown, RAIN_ABOVE, RAIN_BELOW, out, height, cameraX, cameraZ,
 				aheadX, aheadZ);
-			float impacts = rainShown * Math.min(1, wetShown);
-			if (impacts > 0)
+			float wetImpacts = rainShown * Math.min(1, wetShown);
+			if (wetImpacts > 0)
 			{
 				// the mist the rain beats up over what it hits
-				drawMist(impacts, viewport);
-				// the impacts, only seen up close: around the player, where the camera looks
-				glUniform4f(rain.layerBox, focusX, focusY, focusZ, SPLASH_HALF);
-				glUniform1i(rain.dropCount, 0);
-				glDrawArraysInstanced(GL_TRIANGLE_STRIP, 0, 4, Math.round(MAX_RAIN_IMPACTS * impacts));
+				drawMist(wetImpacts, viewport);
+			}
+			// Drops hit dry ground too. Accumulated wetness gates mist and puddle steps, not rain impacts.
+			glUniform4f(rain.layerBox, focusX, focusY, focusZ, SPLASH_HALF);
+			glUniform1i(rain.dropCount, 0);
+			glDrawArraysInstanced(GL_TRIANGLE_STRIP, 0, 4, rainImpactCount(rainShown));
+			if (wetImpacts > 0)
+			{
 				// and the droplets thrown up by steps, one range of instances for every step
 				glUniform1i(rain.dropCount, 0);
 				glUniform4fv(rain.wadeSteps, wadeSteps);
@@ -1199,6 +1203,12 @@ public class Weather
 	{
 		field.bind(unit, unit + 1);
 		field.bindSky(skyUnit);
+	}
+
+	/** Ground impacts depend on falling rain, independently of accumulated surface wetness. */
+	static int rainImpactCount(float rainShown)
+	{
+		return Math.round(MAX_RAIN_IMPACTS * rainShown);
 	}
 
 	private void setParticles(Uniforms u, float kindAmount, float[] viewProj, float[] invViewProj, int[] viewport,

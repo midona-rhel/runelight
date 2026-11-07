@@ -57,11 +57,12 @@ public class SceneTargets
 	// transparent geometry, lit as it is drawn, premultiplied; blended over the lit opaque scene by the composite.
 	// With MSAA multisampled like the other targets: the composite lays each surface of a pixel under the average of
 	// its own samples' (composite_frag.glsl), so a transparent face behind an edge doesn't tint what stands in front.
-	private int texAlpha;
+	private int texAlpha, texUnderwaterAlpha;
+	public static final int UNDERWATER_ALPHA_UNIT = com.midonarhel.lumina.LuminaPlugin.COMPOSITE_TEXTURE_UNIT + 29;
 
 	private static final int[] OPAQUE_BUFFERS = {GL_COLOR_ATTACHMENT0, GL_COLOR_ATTACHMENT1, GL_NONE, GL_COLOR_ATTACHMENT3};
-	private static final int[] ALPHA_BUFFERS = {GL_NONE, GL_NONE, GL_COLOR_ATTACHMENT2, GL_NONE};
-	private static final int[] ALL_BUFFERS = {GL_COLOR_ATTACHMENT0, GL_COLOR_ATTACHMENT1, GL_COLOR_ATTACHMENT2, GL_COLOR_ATTACHMENT3};
+	private static final int[] ALPHA_BUFFERS = {GL_NONE, GL_NONE, GL_COLOR_ATTACHMENT2, GL_NONE, GL_COLOR_ATTACHMENT4};
+	private static final int[] ALL_BUFFERS = {GL_COLOR_ATTACHMENT0, GL_COLOR_ATTACHMENT1, GL_COLOR_ATTACHMENT2, GL_COLOR_ATTACHMENT3, GL_COLOR_ATTACHMENT4};
 	private static final int[] FIRST_BUFFER = {GL_COLOR_ATTACHMENT0};
 	private static final int[] FIRST_TWO_BUFFERS = {GL_COLOR_ATTACHMENT0, GL_COLOR_ATTACHMENT1};
 	private static final float[] TRANSPARENT = {0, 0, 0, 0};
@@ -93,8 +94,8 @@ public class SceneTargets
 	private int fogWidth, fogHeight;
 	// the composite's half resolution passes at the AO targets' size, each target made when first drawn: the clouds in
 	// front of the sky, filtered by the composite's sky (composite_frag.glsl), on attachment 0, and the water's shaded
-	// surface (water.glsl's waterShadeHalf), the program's output 1, on attachment 1
-	private int fboHalf, texClouds, texWaterShaded;
+	// surface (water.glsl's waterShadePixel), the program's output 1, on attachment 1
+	private int fboHalf, fboWaterShaded, texClouds, texWaterShaded;
 	private final int[] halfBuffers = new int[2];
 	private static final int[] NO_WATER = {0, 0, 0, 0};
 	// no cloud: nothing scattered, all the sky through
@@ -113,6 +114,7 @@ public class SceneTargets
 		texDepth = texture(target, DEPTH_FORMAT, GL_DEPTH_COMPONENT, GL_FLOAT);
 		texMaterial = texture(target, MATERIAL_FORMAT, GL_RGBA, GL_UNSIGNED_BYTE);
 		texAlpha = texture(target, COLOR_FORMAT, GL_RGBA, GL_UNSIGNED_BYTE);
+		texUnderwaterAlpha = texture(target, COLOR_FORMAT, GL_RGBA, GL_UNSIGNED_BYTE);
 
 		fboScene = glGenFramebuffers();
 		glBindFramebuffer(GL_FRAMEBUFFER, fboScene);
@@ -121,6 +123,7 @@ public class SceneTargets
 		glFramebufferTexture2D(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, target, texDepth, 0);
 		glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT3, target, texMaterial, 0);
 		glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT2, target, texAlpha, 0);
+		glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT4, target, texUnderwaterAlpha, 0);
 		glDrawBuffers(OPAQUE_BUFFERS);
 		check("scene");
 
@@ -174,8 +177,8 @@ public class SceneTargets
 		if (fboScene != 0)
 		{
 			glDeleteFramebuffers(fboScene);
-			glDeleteTextures(new int[]{texColor, texNormal, texDepth, texAlpha, texMaterial});
-			fboScene = texColor = texNormal = texDepth = texAlpha = texMaterial = 0;
+			glDeleteTextures(new int[]{texColor, texNormal, texDepth, texAlpha, texUnderwaterAlpha, texMaterial});
+			fboScene = texColor = texNormal = texDepth = texAlpha = texUnderwaterAlpha = texMaterial = 0;
 		}
 	}
 
@@ -238,16 +241,40 @@ public class SceneTargets
 	}
 
 	/**
-	 * Bind the framebuffer of the composite's half resolution pass, with its viewport, drawing the clouds, the water's
+	 * Bind the framebuffer and viewport for reduced-resolution clouds, full-resolution water shading,
 	 * shaded surface or both, cleared (the clouds to clear sky, the water to none).
 	 */
+	public boolean waterSharesHalfSize()
+	{
+		return halfRatio == 1;
+	}
+
+	public int getWaterShadedWidth()
+	{
+		return width;
+	}
+
+	public int getWaterShadedHeight()
+	{
+		return height;
+	}
+
 	public void bindHalf(boolean clouds, boolean water)
 	{
-		if (fboHalf == 0)
+		boolean separateWater = water && !waterSharesHalfSize();
+		if (separateWater && clouds)
+		{
+			throw new IllegalArgumentException("Water and clouds have different target sizes");
+		}
+		if (separateWater && fboWaterShaded == 0)
+		{
+			fboWaterShaded = glGenFramebuffers();
+		}
+		if (!separateWater && fboHalf == 0)
 		{
 			fboHalf = glGenFramebuffers();
 		}
-		glBindFramebuffer(GL_FRAMEBUFFER, fboHalf);
+		glBindFramebuffer(GL_FRAMEBUFFER, separateWater ? fboWaterShaded : fboHalf);
 		boolean made = false;
 		if (clouds && texClouds == 0)
 		{
@@ -268,7 +295,7 @@ public class SceneTargets
 			// 128 bits packed (water.glsl's waterPackShaded)
 			texWaterShaded = glGenTextures();
 			glBindTexture(GL_TEXTURE_2D, texWaterShaded);
-			glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA32UI, aoWidth, aoHeight, 0, GL_RGBA_INTEGER, GL_UNSIGNED_INT, 0);
+			glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA32UI, getWaterShadedWidth(), getWaterShadedHeight(), 0, GL_RGBA_INTEGER, GL_UNSIGNED_INT, 0);
 			glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
 			glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
 			glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
@@ -284,7 +311,7 @@ public class SceneTargets
 		{
 			check("half");
 		}
-		glViewport(0, 0, aoWidth, aoHeight);
+		glViewport(0, 0, separateWater ? getWaterShadedWidth() : aoWidth, separateWater ? getWaterShadedHeight() : aoHeight);
 		// cleared first so the GPU starts without loading the old contents: the clouds to clear sky, which the texels
 		// outside the rows their pass is scissored to keep (Clouds.skyRows); the water's texels are only read in its
 		// rect. The water target is integer: glClear would leave it undefined.
@@ -310,11 +337,11 @@ public class SceneTargets
 
 	private void freeHalf()
 	{
-		if (fboHalf != 0)
+		if (fboHalf != 0 || fboWaterShaded != 0)
 		{
-			glDeleteFramebuffers(fboHalf);
+			glDeleteFramebuffers(new int[]{fboHalf, fboWaterShaded});
 			glDeleteTextures(new int[]{texClouds, texWaterShaded});
-			fboHalf = texClouds = texWaterShaded = 0;
+			fboHalf = fboWaterShaded = texClouds = texWaterShaded = 0;
 		}
 	}
 
@@ -480,6 +507,7 @@ public class SceneTargets
 		glClearBufferfv(GL_COLOR, 1, TRANSPARENT);
 		glClearBufferfv(GL_COLOR, 2, TRANSPARENT);
 		glClearBufferfv(GL_COLOR, 3, TRANSPARENT);
+		glClearBufferfv(GL_COLOR, 4, TRANSPARENT);
 		glClearBufferfv(GL_DEPTH, 0, FAR_DEPTH);
 		glDrawBuffers(OPAQUE_BUFFERS);
 		alphaToCoverage(true);
@@ -533,6 +561,13 @@ public class SceneTargets
 	{
 		glActiveTexture(GL_TEXTURE0 + unit);
 		glBindTexture(target, texAlpha);
+		glActiveTexture(GL_TEXTURE0);
+	}
+
+	public void bindUnderwaterAlphaLayer()
+	{
+		glActiveTexture(GL_TEXTURE0 + UNDERWATER_ALPHA_UNIT);
+		glBindTexture(target, texUnderwaterAlpha);
 		glActiveTexture(GL_TEXTURE0);
 	}
 

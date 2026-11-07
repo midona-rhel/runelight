@@ -394,7 +394,7 @@ public class LuminaPlugin extends Plugin implements DrawCallbacks
 
 	public final LightClusters lightClusters = new LightClusters();
 	public final com.midonarhel.lumina.light.LampCubes lampCubes = new com.midonarhel.lumina.light.LampCubes();
-	public final com.midonarhel.lumina.light.LampVolume lampVolume = new com.midonarhel.lumina.light.LampVolume();
+	public final com.midonarhel.lumina.light.LampBlockers lampBlockers = new com.midonarhel.lumina.light.LampBlockers();
 	// the walls that stop the lamps, and the rooms (for their fill and the puddles), on the GPU
 	public final LampWalls lampWalls = new LampWalls();
 	// the fixed lamps' visibility, baked on its own threads (LightMap), and as the light buffer holds it
@@ -780,8 +780,11 @@ public class LuminaPlugin extends Plugin implements DrawCallbacks
 					}
 
 					awtContext = new AWTContext(canvas);
-					// a stencil for the composite's edge pass (windowStencil)
-					awtContext.configurePixelFormat(0, 0, 8);
+					// Windows keeps the canvas pixel format across renderer switches. Match RuneLite's
+					// GPU plugin there; Composite already supports windows without a stencil.
+					awtContext.configurePixelFormat(0, 0,
+						org.lwjgl.system.Platform.get() == org.lwjgl.system.Platform.WINDOWS ? 0 : 8);
+					windowStencil = 0;
 				}
 
 				awtContext.createGLContext();
@@ -852,6 +855,9 @@ public class LuminaPlugin extends Plugin implements DrawCallbacks
 				if (client.getGameState() == GameState.LOGGED_IN)
 				{
 					sceneLoader.startup();
+					// Enabling NORMALS clears the client's model caches, but the existing scene still holds
+					// models built before that flag. Rebuild them through the client's normal scene load.
+					client.setGameState(GameState.LOADING);
 				}
 
 				checkGLErrors();
@@ -873,7 +879,8 @@ public class LuminaPlugin extends Plugin implements DrawCallbacks
 					}
 				});
 
-				shutDown();
+				// stopPlugin above owns cleanup on the EDT. Calling shutDown here too races it
+				// and can clear buildingLights while the other call is still stopping it.
 			}
 			return true;
 		});
@@ -995,7 +1002,7 @@ public class LuminaPlugin extends Plugin implements DrawCallbacks
 				roomLight.free();
 				lightClusters.free();
 				lampCubes.free();
-				lampVolume.free();
+				lampBlockers.free();
 				lampWalls.free();
 				roomTexture.free();
 				volumetricFog.free();
@@ -1117,7 +1124,14 @@ public class LuminaPlugin extends Plugin implements DrawCallbacks
 				log.debug("Toggle {}", configChanged.getKey());
 				setupGpuFlags();
 			}
-			else if (configChanged.getKey().equals("uiScalingMode") || configChanged.getKey().equals("colorBlindMode")
+			else if (configChanged.getKey().equals("uiScalingMode"))
+			{
+				clientThread.invokeLater(() ->
+				{
+					programs.reloadUiShader();
+				});
+			}
+			else if (configChanged.getKey().equals("colorBlindMode")
 				|| configChanged.getKey().equals("debugView"))
 			{
 				clientThread.invokeLater(() ->
@@ -1627,12 +1641,6 @@ public class LuminaPlugin extends Plugin implements DrawCallbacks
 				cpuTimer.end(CpuTimer.SHADOW_SUBMIT);
 			}
 			shadowPass.report();
-			if (config.pointLights() && lightClusters.isInitialized())
-			{
-				// the cubes of the lamps chosen this frame (LampCubes), before the composite and the fog read them
-				com.midonarhel.lumina.dev.GpuSections.section("lamp cubes");
-				lampCubes.draw(this);
-			}
 			cpuTimer.begin(CpuTimer.OCCLUSION);
 			com.midonarhel.lumina.dev.GpuSections.section("weather occlusion");
 			if (weather.isActive())
@@ -1847,12 +1855,7 @@ public class LuminaPlugin extends Plugin implements DrawCallbacks
 		}
 
 		hideAreas(wv);
-		sceneLoader.rebuild(wv);
-		for (WorldEntity we : wv.worldEntities())
-		{
-			wv = we.getWorldView();
-			sceneLoader.rebuild(wv);
-		}
+		sceneLoader.rebuildTick(wv);
 	}
 
 	/** The scene is cut to the area the player was in as it loaded: load it again when they walk into another. */

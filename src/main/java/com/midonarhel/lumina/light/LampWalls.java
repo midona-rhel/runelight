@@ -446,72 +446,11 @@ public final class LampWalls
 		++version;
 	}
 
-	/** What a program that reads the lamps needs besides the light buffers: the walls' header and ease. */
+	/** Shared blocker sampler for every point-light consumer. */
 	public static final class Uniforms
 	{
-		private int header = -1, ease = -1, shown = -1, origin = -1, shift = -1, far = -1, gainAt = -1, volumeA = -1, moverCount = -1, movers = -1;
-
-		public void locate(int program)
-		{
-			header = glGetUniformLocation(program, "lampWallsHeader");
-			ease = glGetUniformLocation(program, "lampWallsEase");
-			shown = glGetUniformLocation(program, "lampVolumeShown");
-			origin = glGetUniformLocation(program, "lampVolumeOrigin");
-			shift = glGetUniformLocation(program, "lampVolumeShift");
-			far = glGetUniformLocation(program, "lampVolumeFar");
-			gainAt = glGetUniformLocation(program, "lampVolumeGainAt");
-			volumeA = glGetUniformLocation(program, "lampVolumeA");
-			moverCount = glGetUniformLocation(program, "lampMoverCount");
-			movers = glGetUniformLocation(program, "lampMovers");
-		}
-
-		/** @param walls LampWalls.header */
-		public void apply(float[] walls)
-		{
-			if (header >= 0)
-			{
-				glUniform4f(header, walls[0], walls[1], walls[2], walls[3]);
-			}
-			if (ease >= 0)
-			{
-				glUniform1f(ease, walls[4]);
-			}
-			if (volumeA >= 0)
-			{
-				glUniform1i(volumeA, com.midonarhel.lumina.LuminaPlugin.LAMP_CUBE_UNIT);
-			}
-			LampVolume v = LampVolume.current();
-			if (v != null)
-			{
-				if (shown >= 0)
-				{
-					glUniform4fv(shown, v.shown());
-				}
-				if (origin >= 0)
-				{
-					glUniform4fv(origin, v.origins());
-				}
-				if (shift >= 0)
-				{
-					glUniform3fv(shift, v.shift());
-				}
-				if (far >= 0)
-				{
-					glUniform4fv(far, v.farInfo());
-				}
-				if (gainAt >= 0)
-				{
-					glUniform2fv(gainAt, v.gainAt());
-				}
-				if (moverCount >= 0)
-				{
-					glUniform1i(moverCount, v.moverCount());
-				}
-				if (movers >= 0)
-				{
-					glUniform4fv(movers, v.movers());
-				}
-			}
-		}
+		private int blockers = -1;
+		public void locate(int program) { blockers = glGetUniformLocation(program, "lampBlockers"); }
+		public void apply(float[] ignored) { glUniform1i(blockers, com.midonarhel.lumina.LuminaPlugin.LAMP_CUBE_UNIT); }
 	}
 }

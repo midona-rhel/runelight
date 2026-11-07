@@ -95,12 +95,17 @@ public class SceneLightsTraceTest
 
 	private static SceneLights scene(Renderable torch, Renderable lantern) throws Exception
 	{
+		return scene(torch, lantern, false);
+	}
+
+	private static SceneLights scene(Renderable torch, Renderable lantern, boolean budgeted) throws Exception
+	{
 		Map<Integer, ObjectComposition> comps = new HashMap<>();
 		comps.put(TORCH, fake(ObjectComposition.class, map("getName", "Wall torch", "getId", TORCH)));
 		comps.put(NIGHT_LANTERN, fake(ObjectComposition.class, map("getName", "Lantern", "getId", NIGHT_LANTERN)));
 		Tile tile = fake(Tile.class, map("getGameObjects", new GameObject[]{object(TORCH, 3, 3, torch),
 			object(NIGHT_LANTERN, 5, 3, lantern)}));
-		Scene scene = fake(Scene.class, map("getExtendedTiles", new Tile[][][]{{{tile}}}, "isInstance", false));
+		Scene scene = fake(Scene.class, map("getExtendedTiles", new Tile[][][]{{{tile}, {null}, {null}, {null}}}, "isInstance", false));
 		net.runelite.api.Deque<?> noDeque = fake(net.runelite.api.Deque.class, map("iterator", java.util.Collections.emptyIterator()));
 		IndexedObjectSet<?> none = fake(IndexedObjectSet.class, map("iterator", java.util.Collections.emptyIterator()));
 		WorldView wv = fake(WorldView.class, map("getScene", scene, "players", none, "npcs", none, "getGraphicsObjects", noDeque));
@@ -114,6 +119,7 @@ public class SceneLightsTraceTest
 				.invoke(client, a));
 		SceneLights lights = new SceneLights(answering);
 		lights.load(new Gson());
+		if (budgeted) lights.setJobs(new com.midonarhel.lumina.scene.SceneJobs());
 		lights.rebuild();
 		return lights;
 	}
@@ -126,7 +132,23 @@ public class SceneLightsTraceTest
 	}
 
 	@Test
-	public void aTorchOfNoLightsJsonEntryIsLitFromItsModel()
+	public void budgetedReloadPlacesFoundLightsBeforeFinishingTheWholeScan() throws Exception
+	{
+		SceneLights lights = scene(model(), model(), true);
+		java.lang.reflect.Method step = SceneLights.class.getDeclaredMethod("placePending", long.class);
+		step.setAccessible(true);
+		java.lang.reflect.Field plane = SceneLights.class.getDeclaredField("scanPlane");
+		plane.setAccessible(true);
+		// One unit per call: scan the populated column, reject the unlisted torch, then place the known lantern.
+		for (int i = 0; i < 3; ++i) step.invoke(lights, Long.MIN_VALUE);
+		assertTrue("remaining columns are still pending", plane.getInt(lights) >= 0);
+		assertEquals("known lights no longer wait behind the complete scene scan", 1, frame(lights, 1).size());
+		step.invoke(lights, Long.MAX_VALUE);
+		assertEquals("finishing the scan does not duplicate the lamp", 1, frame(lights, 1).size());
+	}
+
+	@Test
+	public void anUnlistedTorchNeverCreatesALight()
 	{
 		SceneLights lights;
 		try
@@ -138,14 +160,14 @@ public class SceneLightsTraceTest
 			throw new AssertionError(e);
 		}
 		List<PointLight> day = frame(lights, 0);
-		assertEquals("the automatic torch, and not the night lantern", 1, day.size());
-		assertEquals(3 * 128 + 64, day.get(0).x, 40);
-		assertTrue(day.get(0).intensity > 0);
-		assertEquals("both at night", 2, frame(lights, 1).size());
+		assertEquals("an unlisted torch must not light the daytime scene", 0, day.size());
+		List<PointLight> night = frame(lights, 1);
+		assertEquals("only the imported 117 HD lantern at night", 1, night.size());
+		assertEquals(5 * 128 + 64, night.get(0).x, 64);
 		// the summary a few seconds on counts what the frames showed
 		List<PointLight> out = new ArrayList<>();
 		lights.collect(out, 30, 0, 45, 4 * 128, 3 * 128 + 64, 6000);
-		assertEquals(1, out.size());
+		assertEquals(0, out.size());
 	}
 
 	@Test
@@ -161,11 +183,10 @@ public class SceneLightsTraceTest
 	}
 
 	@Test
-	public void anAnimatedTorchGetsItsLight() throws Exception
+	public void anUnlistedAnimatedTorchDoesNotCreateALight() throws Exception
 	{
 		DynamicObject fire = fake(DynamicObject.class, map("getModelZbuf", model()));
 		List<PointLight> day = frame(scene(fire, model()), 0);
-		assertEquals(1, day.size());
-		assertNotNull(day.get(0));
+		assertEquals(0, day.size());
 	}
 }

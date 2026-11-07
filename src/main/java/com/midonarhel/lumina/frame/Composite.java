@@ -223,6 +223,12 @@ public final class Composite
 			this.pass = pass;
 			this.aurora = aurora;
 		}
+
+		/** Edge shading and stencil marking are used only with multisampled scene targets. */
+		public boolean needed(int samples)
+		{
+			return samples > 0 || pass != COMPOSITE_EDGES && pass != COMPOSITE_MARK;
+		}
 	}
 
 	// The full and edge passes twice: without the aurora, drawn wherever it can't show (almost everywhere), and with it.
@@ -242,6 +248,7 @@ public final class Composite
 
 	public void locate(CompositeProgram c)
 	{
+		if (c.program == 0) return;
 		int p = c.program;
 		c.part = glGetUniformLocation(p, "compositePart");
 		c.aoEnabled = glGetUniformLocation(p, "aoEnabled");
@@ -297,6 +304,7 @@ public final class Composite
 		glUniform1i(glGetUniformLocation(p, "roomTexels"), ROOM_TEXELS_UNIT);
 		glUniform1i(glGetUniformLocation(p, "cloudHalf"), CLOUD_HALF_UNIT);
 		glUniform1i(glGetUniformLocation(p, "sceneAlpha"), ALPHA_LAYER_UNIT);
+		glUniform1i(glGetUniformLocation(p, "sceneUnderwaterAlpha"), SceneTargets.UNDERWATER_ALPHA_UNIT);
 		glUniform1i(glGetUniformLocation(p, "sceneMaterial"), MATERIAL_UNIT);
 		glUseProgram(0);
 	}
@@ -382,7 +390,7 @@ public final class Composite
 		int[] r = plugin.halfScissor;
 		if (withWater)
 		{
-			plugin.water.halfRect(r, plugin.sceneTargets.getHalfRatio());
+			plugin.water.halfRect(r, 1);
 		}
 		if (withClouds)
 		{
@@ -402,6 +410,17 @@ public final class Composite
 		}
 		glEnable(GL_SCISSOR_TEST);
 		glScissor(r[0], r[1], Math.max(r[2] - r[0], 0), Math.max(r[3] - r[1], 0));
+	}
+
+	private void drawHalf(boolean clouds, boolean water)
+	{
+		plugin.sceneTargets.bindHalf(clouds, water);
+		CompositeProgram half = !water ? compositeClouds : clouds ? compositeCloudsWater : compositeWater;
+		use(half);
+		glUniform1i(half.cloudsAllSky, cloudsAllSky[0] ? 1 : 0);
+		scissorHalf(clouds, water);
+		glDrawArrays(GL_TRIANGLES, 0, 3);
+		glDisable(GL_SCISSOR_TEST);
 	}
 
 	// developer: GL_TIME_ELAPSED queries, when set, around the half resolution clouds' (and water's) draw, the full
@@ -589,6 +608,7 @@ public final class Composite
 		plugin.skyFrame.updateNightSky();
 		plugin.lampFrame.prepareLighting();
 		plugin.sceneTargets.bindAlphaLayer(ALPHA_LAYER_UNIT);
+		plugin.sceneTargets.bindUnderwaterAlphaLayer();
 
 		plugin.weather.bindField(WEATHER_FIELD_UNIT, WEATHER_SKY_UNIT);
 		final boolean denoise = halfPass && plugin.glDenoiseProgram != 0;
@@ -639,26 +659,28 @@ public final class Composite
 		final boolean drawClouds = halfClouds && !keepClouds(halfClouds, cloudsAllSky);
 		if (drawClouds || halfWater)
 		{
-			com.midonarhel.lumina.dev.GpuSections.section("clouds, water shading (half)");
+			com.midonarhel.lumina.dev.GpuSections.section("clouds, water shading");
 			// their targets are not bound while drawn into
 			glActiveTexture(GL_TEXTURE0 + CLOUD_HALF_UNIT);
 			glBindTexture(GL_TEXTURE_2D, 0);
 			glActiveTexture(GL_TEXTURE0 + WATER_NOISE_UNIT);
 			glBindTexture(GL_TEXTURE_2D, 0);
-			plugin.sceneTargets.bindHalf(drawClouds, halfWater);
 			glDisable(GL_BLEND);
-			CompositeProgram half = !halfWater ? compositeClouds : drawClouds ? compositeCloudsWater : compositeWater;
-			use(half);
-			glUniform1i(half.cloudsAllSky, cloudsAllSky[0] ? 1 : 0);
-			scissorHalf(drawClouds, halfWater);
 			if (passTimers != null)
 			{
 				glBeginQuery(GL_TIME_ELAPSED, passTimers[0]);
 				passTimersUsed |= 1;
 			}
-			glDrawArrays(GL_TRIANGLES, 0, 3);
+			if (drawClouds && halfWater && !plugin.sceneTargets.waterSharesHalfSize())
+			{
+				drawHalf(true, false);
+				drawHalf(false, true);
+			}
+			else
+			{
+				drawHalf(drawClouds, halfWater);
+			}
 			if (passTimers != null) glEndQuery(GL_TIME_ELAPSED);
-			glDisable(GL_SCISSOR_TEST);
 			glActiveTexture(GL_TEXTURE0 + CLOUD_HALF_UNIT);
 			glBindTexture(GL_TEXTURE_2D, halfClouds ? plugin.sceneTargets.cloudTexture() : 0);
 			glActiveTexture(GL_TEXTURE0 + WATER_NOISE_UNIT);
@@ -820,6 +842,7 @@ public final class Composite
 		LightClusters.unbind(LIGHT_DATA_UNIT, CLUSTER_DATA_UNIT);
 		RoomTexture.unbind(ROOM_TEXELS_UNIT);
 		plugin.sceneTargets.unbindAlphaLayer(ALPHA_LAYER_UNIT);
+		plugin.sceneTargets.unbindAlphaLayer(SceneTargets.UNDERWATER_ALPHA_UNIT);
 		plugin.sceneTargets.unbindMaterial(MATERIAL_UNIT);
 		VolumetricFog.unbind(FOG_TEXTURE_UNIT);
 		Clouds.unbind(CLOUD_NOISE_UNIT);

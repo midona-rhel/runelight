@@ -75,6 +75,7 @@ public final class SceneLoader
 	private final LuminaConfig config;
 	public final SceneJobs jobs = new SceneJobs();
 	final ZonePool pool = new ZonePool();
+	private final ZoneRebuilds rebuilds = new ZoneRebuilds();
 	private final SceneLoadReport report;
 
 	// built by the last load, not swapped in yet; map loader thread writes, client thread takes
@@ -464,6 +465,17 @@ public final class SceneLoader
 		plugin.subs[worldViewId] = ctx;
 	}
 
+	/** Client-thread metadata needed by zone upload workers. */
+	private void resolveObjectMetadata()
+	{
+		Interactables.resolve(plugin::hasAction);
+		BoatObjects.resolve(id ->
+		{
+			var definition = plugin.client.getObjectDefinition(id);
+			return definition != null ? definition.getName() : null;
+		});
+	}
+
 	private long stage(String name, long since)
 	{
 		long now = System.nanoTime();
@@ -507,7 +519,7 @@ public final class SceneLoader
 		}
 	}
 
-	private static boolean canReuse(Zone[][] zones, int zx, int zz)
+	static boolean canReuse(Zone[][] zones, int zx, int zz)
 	{
 		// For tile blending, sharelight, and shadows to work correctly, the zones surrounding
 		// the zone must be valid.
@@ -524,7 +536,8 @@ public final class SceneLoader
 					return false;
 				}
 				Zone zone = zones[x][z];
-				if (!zone.initialized)
+				// A deferred rebuild must not become stale geometry reused by a scene replacement.
+				if (!zone.initialized || zone.invalidate)
 				{
 					return false;
 				}
@@ -573,7 +586,7 @@ public final class SceneLoader
 		boolean onClientThread = client.isClientThread();
 		java.util.List<Thread> writers = new java.util.concurrent.CopyOnWriteArrayList<>();
 		ZoneUploads uploads = new ZoneUploads(list, pool, jobs, clientThread,
-			() -> Interactables.resolve(plugin::hasAction),
+			this::resolveObjectMetadata,
 			r ->
 			{
 				if (what.equals("load"))
@@ -942,55 +955,74 @@ public final class SceneLoader
 		return vbo;
 	}
 
-	/** The zones the client changed (invalidateZone) uploaded again, client thread, in the tick. */
+	/** Shared tick budget across current world views; each completed zone remains an indivisible upload. */
+	public void rebuildTick(WorldView root)
+	{
+		java.util.List<WorldView> views = new java.util.ArrayList<>();
+		java.util.List<Zone[][]> zones = new java.util.ArrayList<>();
+		addRebuildView(root, views, zones);
+		for (WorldEntity entity : root.worldEntities()) addRebuildView(entity.getWorldView(), views, zones);
+		ZoneRebuilds.Result result = rebuilds.run(zones, SceneJobs.BUDGET_NANOS, System::nanoTime,
+			(view, x, z) -> rebuildZone(views.get(view), plugin.context(views.get(view)), x, z));
+		if (result.completed > 0)
+		{
+			plugin.hitchMonitor.job(HitchMonitor.ZONE_REBUILD);
+			log.debug("Zone rebuild tick: completed={} backlog={} elapsedMs={} maxZoneMs={} overrunMs={}",
+				result.completed, result.backlog, result.elapsed / 1e6, result.maxZone / 1e6, result.overrun / 1e6);
+		}
+	}
+
+	private void addRebuildView(WorldView view, java.util.List<WorldView> views, java.util.List<Zone[][]> zones)
+	{
+		LuminaPlugin.SceneContext context = plugin.context(view);
+		if (context != null)
+		{
+			views.add(view);
+			zones.add(context.zones);
+		}
+	}
+
+	/** Explicit synchronous drain for offline probes; the live tick uses rebuildTick's shared budget. */
 	public void rebuild(WorldView wv)
 	{
 		LuminaPlugin.SceneContext ctx = plugin.context(wv);
-		if (ctx == null)
+		if (ctx == null) return;
+		for (int x = 0; x < ctx.sizeX; ++x)
+			for (int z = 0; z < ctx.sizeZ; ++z)
+				if (ctx.zones[x][z].invalidate) rebuildZone(wv, ctx, x, z);
+	}
+
+	private void rebuildZone(WorldView wv, LuminaPlugin.SceneContext ctx, int x, int z)
+	{
+		Zone zone = ctx.zones[x][z];
+		assert zone.initialized;
+		zone.free(pool, jobs);
+		zone = ctx.zones[x][z] = new Zone();
+
+		Scene scene = wv.getScene();
+		plugin.clientUploader.zoneSize(scene, zone, x, z);
+		resolveObjectMetadata();
+		// buffers from the pool, the ones just freed among them (ZonePool)
+		zone.init(mapZoneBuffer(zone.sizeO), mapZoneBuffer(zone.sizeA));
+
+		try
 		{
-			return;
+			plugin.clientUploader.uploadZone(scene, zone, x, z);
+		}
+		catch (RuntimeException ex)
+		{
+			// a zone whose upload outgrows its counted size (java.nio.BufferOverflowException, 2026-10-30, a teleport
+			// destination) took the client down in swapScene, then left it loading forever: the rest of that zone is
+			// lost, the scene loads, and the log names the zone
+			log.error("Zone upload failed at zone {},{}: {}", x, z, ex.toString());
 		}
 
-		for (int x = 0; x < ctx.sizeX; ++x)
+		zone.unmap(pool, jobs);
+		zone.initialized = true;
+		zone.dirty = true;
+		if (ctx == plugin.root)
 		{
-			for (int z = 0; z < ctx.sizeZ; ++z)
-			{
-				Zone zone = ctx.zones[x][z];
-				if (!zone.invalidate)
-				{
-					continue;
-				}
-
-				assert zone.initialized;
-				zone.free(pool, jobs);
-				zone = ctx.zones[x][z] = new Zone();
-
-				Scene scene = wv.getScene();
-				plugin.clientUploader.zoneSize(scene, zone, x, z);
-				Interactables.resolve(plugin::hasAction);
-				// buffers from the pool, the ones just freed among them (ZonePool)
-				zone.init(mapZoneBuffer(zone.sizeO), mapZoneBuffer(zone.sizeA));
-
-				try
-				{
-					plugin.clientUploader.uploadZone(scene, zone, x, z);
-				}
-				catch (RuntimeException ex)
-				{
-					// a zone whose upload outgrows its counted size (java.nio.BufferOverflowException, 2026-10-30, a teleport
-					// destination) took the client down in swapScene, then left it loading forever: the rest of that zone is
-					// lost, the scene loads, and the log names the zone
-					log.error("Zone upload failed at zone {},{}: {}", x, z, ex.toString());
-				}
-
-				zone.unmap(pool, jobs);
-				zone.initialized = true;
-				zone.dirty = true;
-				if (ctx == plugin.root)
-				{
-					plugin.zoneRebuilt();
-				}
-			}
+			plugin.zoneRebuilt();
 		}
 	}
 
@@ -1027,6 +1059,7 @@ public final class SceneLoader
 				}
 			}
 		}
+		rebuilds.clear();
 		jobs.clear();
 		pool.free();
 		next = null;

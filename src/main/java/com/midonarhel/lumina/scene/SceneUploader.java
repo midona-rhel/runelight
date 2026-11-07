@@ -138,11 +138,13 @@ public class SceneUploader
 	// can't be read back; one each per upload thread, kept from zone to zone
 	private IntBuffer staging = IntBuffer.allocate(0);
 	private final ZoneIndexer indexer = new ZoneIndexer();
+	private final java.util.List<Float> lampBlockers = new java.util.ArrayList<>();
 
 	void uploadZone(Scene scene, Zone zone, int mzx, int mzz)
 	{
 		IntBuffer mapped = zone.vboO != null ? zone.vboO.vb : null;
 		zone.indexed = null;
+		lampBlockers.clear();
 		if (mapped != null)
 		{
 			if (staging.capacity() < mapped.capacity())
@@ -163,7 +165,8 @@ public class SceneUploader
 			{
 				zone.vboO.vb = mapped;
 				zone.indexed = indexer.write(staging.array(), staging.position(), mapped);
-				zone.lampTriangles = com.midonarhel.lumina.light.LampVolume.triangles(staging.array(), staging.position());
+				zone.lampBlockers = new float[lampBlockers.size()];
+				for (int i = 0; i < lampBlockers.size(); ++i) zone.lampBlockers[i] = lampBlockers.get(i);
 			}
 		}
 	}
@@ -451,12 +454,14 @@ public class SceneUploader
 		WallObject wallObject = t.getWallObject();
 		if (wallObject != null && renderCallbackManager.drawObject(scene, wallObject))
 		{
+			int blockerStart = vertexBuffer != null ? vertexBuffer.getBuffer().position() : 0;
 			owner = VoxelCapture.ownerOf(wallObject);
 			Renderable renderable1 = wallObject.getRenderable1();
 			uploadZoneRenderable(renderable1, zone, 0, wallObject.getX(), wallObject.getZ(), wallObject.getY(), -1, -1, -1, -1, wallObject.getId(), vertexBuffer, ab);
 
 			Renderable renderable2 = wallObject.getRenderable2();
 			uploadZoneRenderable(renderable2, zone, 0, wallObject.getX(), wallObject.getZ(), wallObject.getY(), -1, -1, -1, -1, wallObject.getId(), vertexBuffer, ab);
+			if (vertexBuffer != null) com.midonarhel.lumina.light.LampBlockers.capture(vertexBuffer.getBuffer(), blockerStart, lampBlockers);
 		}
 
 		DecorativeObject decorativeObject = t.getDecorativeObject();
@@ -504,12 +509,15 @@ public class SceneUploader
 				continue;
 			}
 
+			int blockerStart = vertexBuffer != null ? vertexBuffer.getBuffer().position() : 0;
 			owner = VoxelCapture.ownerOf(gameObject);
 			Renderable renderable = gameObject.getRenderable();
 			uploadZoneRenderable(renderable, zone, gameObject.getModelOrientation(), gameObject.getX(), gameObject.getZ(), gameObject.getY(),
 				min.getX(), min.getY(), max.getX(), max.getY(),
 				gameObject.getId(),
 				vertexBuffer, ab);
+			if (vertexBuffer != null && com.midonarhel.lumina.light.LampBlockers.blocks(gameObject.getConfig() & 31))
+				com.midonarhel.lumina.light.LampBlockers.capture(vertexBuffer.getBuffer(), blockerStart, lampBlockers);
 		}
 
 		Tile bridge = t.getBridge();
@@ -525,6 +533,7 @@ public class SceneUploader
 	{
 		// the client thread works out which objects have an action before the zone is uploaded (Interactables)
 		Interactables.want(id);
+		BoatObjects.want(id);
 		if (r instanceof DynamicObject)
 		{
 			var comp = ((DynamicObject) r).getRecordedObjectComposition();
@@ -638,6 +647,7 @@ public class SceneUploader
 
 	private void uploadZoneRenderable(Renderable r, Zone zone, int orient, int x, int y, int z, int lx, int lz, int ux, int uz, int id, GpuIntBuffer vb, GpuIntBuffer ab)
 	{
+		boat = BoatObjects.is(id, r);
 		int material = SurfaceMaterials.forObject(id, r) | WindSway.forObject(id, r);
 		int shading = SurfaceMaterials.shadingForObject(id, r);
 		if (!swayFlushing && WindSway.sways(material))
@@ -706,6 +716,14 @@ public class SceneUploader
 	}
 
 	private static final com.google.gson.Gson GSON = new com.google.gson.Gson();
+
+	private static int lavaVariant(Scene scene, int x, int y, int z, int overlay, int texture, boolean overlayFace)
+	{
+		int[] world = new int[3];
+		return EnvironmentManager.toWorld(scene, x, y, z, world)
+			? com.midonarhel.lumina.lava.LavaMaterials.variant(overlay, texture, overlayFace, world[0], world[1])
+			: com.midonarhel.lumina.lava.LavaMaterials.variant(overlay, texture, overlayFace);
+	}
 
 	private int upload(Scene scene, SceneTilePaint tile, int tileZ, int tileX, int tileY, GpuIntBuffer vertexBuffer, int lx, int lz)
 	{
@@ -778,6 +796,9 @@ public class SceneUploader
 		int tex = tile.getTexture() + 1;
 		tex |= SurfaceMaterials.texture(tex - 1) | WaterMap.LAND_FLAG
 			| snowBits(scene, sceneX, sceneY, tileZ, tileX, tileY, tile.getSwColor());
+		if (com.midonarhel.lumina.lava.LavaMaterials.enabled()) tex = com.midonarhel.lumina.lava.LavaMaterials.tag(tex,
+			lavaVariant(scene, sceneX, sceneY, tileZ, scene.getOverlayIds()[tileZ][tileX][tileY] & 0xffff,
+				tile.getTexture(), true));
 
 		final int[][] surface = surfaceHeights(scene, tileZ);
 		final int n0 = terrainNormal(surface, tileX, tileY);
@@ -903,11 +924,16 @@ public class SceneUploader
 
 	/**
 	 * 117 HD's inheritTileColorType (zone SceneUploader 1733-1793): the colour of the tile under the object being
-	 * uploaded, as the game gives it: an untextured, coloured, not hidden tile paint's four corners averaged, else an
+	 * uploaded, with the same baked-light correction as the rendered ground: an untextured, coloured, not hidden tile paint's four corners averaged, else an
 	 * untextured tile model's first underlay face's colour A (its first overlay face's, when {@code overlay} and the
 	 * tile has an overlay); -1 when the tile gives none.
 	 */
 	private int tileColor(boolean overlay)
+	{
+		return tileColor(scene, tile, overlay);
+	}
+
+	int tileColor(Scene scene, Tile tile, boolean overlay)
 	{
 		if (tile == null)
 		{
@@ -915,10 +941,27 @@ public class SceneUploader
 		}
 		SceneTilePaint paint = tile.getSceneTilePaint();
 		SceneTileModel model = tile.getSceneTileModel();
+		Point location = tile.getSceneLocation();
+		int offset = scene.getWorldViewId() == WorldView.TOPLEVEL ? LuminaPlugin.SCENE_OFFSET : 0;
+		int x = location.getX() + offset, y = location.getY() + offset, level = tile.getRenderLevel();
+		int[][] heights = scene.getTileHeights()[level];
+		boolean rawOverlay = GroundBlender.unblendedOverlay(scene.getOverlayIds()[level][x][y]);
 		if (paint != null && paint.getTexture() == -1 && paint.getRBG() != 0 && paint.getNeColor() != HIDDEN_HSL)
 		{
-			// one hue and saturation per tile, so the lightness can be averaged in packed form
-			return (paint.getSwColor() + paint.getNwColor() + paint.getNeColor() + paint.getSeColor()) / 4;
+			int sw = paint.getSwColor(), se = paint.getSeColor(), nw = paint.getNwColor(), ne = paint.getNeColor();
+			if (!rawOverlay)
+			{
+				GroundBlender.cornerSlope(heights, x, y, slope);
+				sw = groundColor(sw);
+				GroundBlender.cornerSlope(heights, x + 1, y, slope);
+				se = groundColor(se);
+				GroundBlender.cornerSlope(heights, x, y + 1, slope);
+				nw = groundColor(nw);
+				GroundBlender.cornerSlope(heights, x + 1, y + 1, slope);
+				ne = groundColor(ne);
+			}
+			// Correct each corner before averaging: the terrain correction is nonlinear and slope-dependent.
+			return (sw + nw + ne + se) / 4;
 		}
 		if (model != null && model.getTriangleTextureId() == null)
 		{
@@ -928,7 +971,18 @@ public class SceneUploader
 			{
 				if (GroundBlender.isOverlayFace(model.getShape(), i) == wantOverlay)
 				{
-					return colors[i] != HIDDEN_HSL ? colors[i] : -1;
+					int color = colors[i];
+					if (color == HIDDEN_HSL) return -1;
+					if (!wantOverlay || !rawOverlay)
+					{
+						int vertex = model.getFaceX()[i];
+						GroundBlender.tileSlopes(heights, x, y, slope, tileSlopes);
+						GroundBlender.interpolateSlope(tileSlopes,
+							(model.getVertexX()[vertex] - location.getX() * 128) / 128f,
+							(model.getVertexZ()[vertex] - location.getY() * 128) / 128f, slope);
+						color = groundColor(color);
+					}
+					return color;
 				}
 			}
 		}
@@ -1043,7 +1097,12 @@ public class SceneUploader
 			int lz2 = vertexZ[vertex2] - basez;
 
 			int tex = triangleTextures != null ? triangleTextures[i] + 1 : 0;
-			final int texMaterial = SurfaceMaterials.texture(tex - 1) | WaterMap.LAND_FLAG | snow;
+			final int texMaterial = !com.midonarhel.lumina.lava.LavaMaterials.enabled()
+				? SurfaceMaterials.texture(tex - 1) | WaterMap.LAND_FLAG | snow
+				: com.midonarhel.lumina.lava.LavaMaterials.tag(
+				SurfaceMaterials.texture(tex - 1) | WaterMap.LAND_FLAG | snow,
+				lavaVariant(scene, tileX, tileY, tileZ, scene.getOverlayIds()[tileZ][ex][ey] & 0xffff,
+					tex - 1, GroundBlender.isOverlayFace(shape, i)));
 
 			int n0 = modelNormal(vertexX[vertex0] - lx, vertexZ[vertex0] - lz);
 			float s0x = slope[0], s0z = slope[1];
@@ -1422,6 +1481,7 @@ public class SceneUploader
 	private static final int HIDDEN_HSL = 12345678;
 	// the tile whose objects are being uploaded (117 HD's inheritTileColorType reads its ground colour)
 	private Tile tile;
+	private boolean boat;
 
 	private int uploadStaticModel(Model model, int orient, int x, int y, int z, int material, int shading, int id,
 		GpuIntBuffer vb, GpuIntBuffer ab)
@@ -1482,7 +1542,7 @@ public class SceneUploader
 			&& water.nearWater((x + basex >> 7) + LuminaPlugin.SCENE_OFFSET, (z + basez >> 7) + LuminaPlugin.SCENE_OFFSET)
 			&& EnvironmentManager.toWorld(scene, x + basex >> 7, z + basez >> 7, level, objectWorld);
 		boolean standing = false;
-		if (sinkWater && !sway)
+		if (sinkWater && !sway && !boat)
 		{
 			for (int v = 0; v < vertexCount && !standing; ++v)
 			{
@@ -1536,7 +1596,7 @@ public class SceneUploader
 				int inherited = tileColor((shade & SurfaceMaterials.INHERIT_OVERLAY) != 0);
 				if (inherited != -1)
 				{
-					// the ground's colour as the game gives it, shading kept (117 HD: keepShading)
+					// Already corrected as ground: do not apply the model's different baked-light correction again.
 					color1 = color2 = color3 = inherited;
 					shade |= SurfaceMaterials.KEEP_SHADING;
 				}
@@ -1638,6 +1698,10 @@ public class SceneUploader
 				color1 = color2 = color3 = VertexShading.TEXTURED_COLOR;
 			}
 			texture |= bits;
+			if (com.midonarhel.lumina.lava.LavaMaterials.enabled())
+				texture = com.midonarhel.lumina.lava.LavaMaterials.tag(texture,
+					com.midonarhel.lumina.lava.LavaMaterials.objectFaceVariant(id, (texture & 511) - 1,
+						color1, color2, color3));
 			GpuIntBuffer buf = alpha && !fake ? ab : vb;
 			if (buf == ab)
 			{

@@ -23,6 +23,7 @@ public class ZoneSnapshotTest
 		s.bufLen = 6;
 		s.vertsO = new int[]{1, 2, 3, 4, 5, -6};
 		s.vertsA = null;
+		s.lampBlockers = new float[]{-32, -240, 128, 32, -240, 128, 32, 0, 128};
 		s.levelOffsets = new int[]{6, 6, 6, 6};
 		s.rids = new int[][]{{}, {4}, {}, {}};
 		s.roofStart = new int[][]{{}, {0}, {}, {}};
@@ -42,6 +43,7 @@ public class ZoneSnapshotTest
 		assertEquals(9, b.z);
 		assertArrayEquals(s.vertsO, b.vertsO);
 		assertNull(b.vertsA);
+		assertArrayEquals(s.lampBlockers, b.lampBlockers, 0);
 		assertArrayEquals(s.rids[1], b.rids[1]);
 		assertArrayEquals(s.roofEnd[1], b.roofEnd[1]);
 		assertEquals(2, b.swayRangeCount);

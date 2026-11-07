@@ -1,178 +1,16 @@
 package com.midonarhel.lumina.light;
 
-import com.midonarhel.lumina.common.LogLimiter;
-import com.midonarhel.lumina.visibility.VisibilityFrame;
-import com.midonarhel.lumina.sky.SkyFrame;
-import com.midonarhel.lumina.weather.WeatherFrame;
-import com.midonarhel.lumina.common.Mat4;
-import com.midonarhel.lumina.common.Rumble;
-import com.midonarhel.lumina.common.Shader;
-import com.midonarhel.lumina.common.ShaderException;
 import com.midonarhel.lumina.visibility.BuildingLights;
-import com.midonarhel.lumina.visibility.ModelBlockers;
 import com.midonarhel.lumina.visibility.WallMap;
-import com.midonarhel.lumina.visibility.OpenRooms;
 import com.midonarhel.lumina.visibility.RoomMap;
 import com.midonarhel.lumina.visibility.RoomTexture;
-import com.midonarhel.lumina.visibility.SkyFieldMap;
-import com.midonarhel.lumina.visibility.SkyGridMap;
-import com.midonarhel.lumina.visibility.VoxelBuilder;
-import com.midonarhel.lumina.fog.VolumetricFog;
-import com.midonarhel.lumina.water.Water;
-import com.midonarhel.lumina.water.WaterOverrides;
-import com.midonarhel.lumina.water.WaterSurface;
-import com.midonarhel.lumina.frame.InterfaceUpload;
-import com.midonarhel.lumina.frame.Composite;
-import com.midonarhel.lumina.frame.FramePacer;
-import com.midonarhel.lumina.frame.Programs;
-import com.midonarhel.lumina.frame.UiBlit;
-import com.midonarhel.lumina.frame.SceneTargets;
-import com.midonarhel.lumina.frame.Upscaler;
-import com.midonarhel.lumina.scene.AreaHiding;
 import com.midonarhel.lumina.scene.EdgeFade;
-import com.midonarhel.lumina.scene.GLBuffer;
-import com.midonarhel.lumina.scene.GpuFloatBuffer;
-import com.midonarhel.lumina.scene.GroundBlender;
-import com.midonarhel.lumina.scene.Interactables;
-import com.midonarhel.lumina.scene.ModelUploader;
-import com.midonarhel.lumina.scene.RegionManager;
-import com.midonarhel.lumina.scene.SceneJobs;
-import com.midonarhel.lumina.scene.SceneLoadReport;
-import com.midonarhel.lumina.scene.SceneLoader;
-import com.midonarhel.lumina.scene.SceneUploader;
-import com.midonarhel.lumina.scene.SurfaceMaterials;
-import com.midonarhel.lumina.scene.TempModels;
-import com.midonarhel.lumina.scene.TextureManager;
-import com.midonarhel.lumina.scene.VAO;
-import com.midonarhel.lumina.scene.VAOList;
-import com.midonarhel.lumina.scene.VertexShading;
-import com.midonarhel.lumina.scene.WindSway;
-import com.midonarhel.lumina.scene.Zone;
-import com.midonarhel.lumina.scene.ZonePool;
-import com.midonarhel.lumina.shadow.ShadowMap;
-import com.midonarhel.lumina.shadow.ShadowPass;
-import com.midonarhel.lumina.weather.Climate;
-import com.midonarhel.lumina.weather.WadeSteps;
-import com.midonarhel.lumina.weather.Weather;
-import com.midonarhel.lumina.weather.WeatherAudio;
-import com.midonarhel.lumina.weather.WeatherData;
-import com.midonarhel.lumina.weather.WeatherField;
-import com.midonarhel.lumina.weather.WeatherGround;
-import com.midonarhel.lumina.weather.Wind;
-import com.midonarhel.lumina.sky.Clouds;
-import com.midonarhel.lumina.sky.DayCycle;
-import com.midonarhel.lumina.sky.EnvironmentManager;
-import com.midonarhel.lumina.sky.EnvironmentUniforms;
-import com.midonarhel.lumina.sky.GameClock;
-import com.midonarhel.lumina.sky.Lightning;
-import com.midonarhel.lumina.sky.NightSky;
-import com.midonarhel.lumina.sky.SkyCache;
-import com.midonarhel.lumina.dev.BuildingOverlay;
-import com.midonarhel.lumina.dev.CommandFile;
-import com.midonarhel.lumina.dev.Commands;
 import com.midonarhel.lumina.dev.CpuTimer;
-import com.midonarhel.lumina.dev.FrameCapture;
-import com.midonarhel.lumina.dev.FrameSnapshot;
-import com.midonarhel.lumina.dev.HitchMonitor;
-import com.midonarhel.lumina.dev.LookMonitor;
-import com.midonarhel.lumina.dev.ShaderWatcher;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-import com.google.common.base.Stopwatch;
-import com.google.common.primitives.Ints;
-import com.google.gson.Gson;
-import com.google.inject.Provides;
-import java.awt.Canvas;
-import java.awt.Dimension;
-import java.awt.GraphicsConfiguration;
-import java.awt.Image;
-import java.awt.geom.AffineTransform;
-import java.awt.image.BufferedImage;
-import java.awt.image.DataBufferInt;
-import java.io.BufferedOutputStream;
-import java.io.DataOutputStream;
-import java.io.IOException;
-import java.nio.ByteBuffer;
-import java.nio.FloatBuffer;
-import java.nio.IntBuffer;
-import java.nio.file.Files;
-import java.nio.file.Path;
-import java.nio.file.Path;
-import java.time.LocalDateTime;
-import java.time.format.DateTimeFormatter;
-import java.util.ArrayList;
-import java.util.Arrays;
-import java.util.Collections;
-import java.util.HashMap;
-import java.util.List;
-import java.util.Map;
-import java.util.Set;
-import java.util.concurrent.CountDownLatch;
-import java.util.zip.GZIPOutputStream;
-import javax.inject.Inject;
-import javax.inject.Named;
-import javax.swing.SwingUtilities;
-import net.runelite.api.BufferProvider;
-import net.runelite.api.ChatMessageType;
-import net.runelite.api.Client;
-import net.runelite.api.Constants;
-import net.runelite.api.FloatProjection;
-import net.runelite.api.GameObject;
-import net.runelite.api.GameState;
-import net.runelite.api.Model;
-import net.runelite.api.ObjectComposition;
-import net.runelite.api.Perspective;
 import net.runelite.api.Player;
-import net.runelite.api.Preferences;
-import net.runelite.api.Projection;
-import net.runelite.api.Renderable;
-import net.runelite.api.Scene;
-import net.runelite.api.TextureProvider;
-import net.runelite.api.TileObject;
-import net.runelite.api.WorldEntity;
-import net.runelite.api.WorldView;
+import net.runelite.api.Perspective;
 import net.runelite.api.coords.LocalPoint;
-import net.runelite.api.events.CommandExecuted;
-import net.runelite.api.events.GameStateChanged;
-import net.runelite.api.events.PostClientTick;
-import net.runelite.api.hooks.DrawCallbacks;
-import net.runelite.client.RuneLite;
-import net.runelite.client.callback.ClientThread;
-import net.runelite.client.chat.ChatMessageManager;
-import net.runelite.client.chat.QueuedMessage;
-import net.runelite.client.callback.RenderCallbackManager;
-import net.runelite.client.config.ConfigManager;
-import net.runelite.client.eventbus.EventBus;
-import net.runelite.client.eventbus.Subscribe;
-import net.runelite.client.events.ConfigChanged;
-import net.runelite.client.plugins.Plugin;
-import net.runelite.client.plugins.PluginDescriptor;
-import net.runelite.client.plugins.PluginInstantiationException;
-import net.runelite.client.plugins.PluginManager;
-import com.midonarhel.lumina.config.AntiAliasingMode;
-import com.midonarhel.lumina.config.DebugView;
-import com.midonarhel.lumina.config.UIScalingMode;
-import com.midonarhel.lumina.config.WeatherMode;
-import com.midonarhel.lumina.template.Template;
-import net.runelite.client.ui.ClientUI;
-import net.runelite.client.ui.DrawManager;
-import net.runelite.client.ui.overlay.OverlayManager;
-import net.runelite.rlawt.AWTContext;
-import org.lwjgl.BufferUtils;
-import org.lwjgl.opengl.GL;
 import static org.lwjgl.opengl.GL33C.*;
-import static org.lwjgl.opengl.GL43C.GL_DEBUG_SOURCE_API;
-import static org.lwjgl.opengl.GL43C.GL_DEBUG_TYPE_OTHER;
-import static org.lwjgl.opengl.GL43C.GL_DEBUG_TYPE_PERFORMANCE;
-import static org.lwjgl.opengl.GL43C.glDebugMessageControl;
-import static org.lwjgl.opengl.GL45C.GL_ZERO_TO_ONE;
-import static org.lwjgl.opengl.GL45C.glClipControl;
-import org.lwjgl.opengl.GLCapabilities;
-import org.lwjgl.opengl.GLUtil;
-import org.lwjgl.system.Callback;
-import org.lwjgl.system.Configuration;
 import com.midonarhel.lumina.LuminaPlugin;
-import com.midonarhel.lumina.LuminaConfig;
 import com.midonarhel.lumina.LuminaPlugin.*;
 import static com.midonarhel.lumina.LuminaPlugin.*;
 
@@ -182,24 +20,10 @@ import static com.midonarhel.lumina.LuminaPlugin.*;
 public final class LampFrame
 {
 	private final LuminaPlugin plugin;
+	public final com.midonarhel.lumina.dev.PlayerLightTrace playerLightTrace = new com.midonarhel.lumina.dev.PlayerLightTrace();
 
-	// The light map's blocks are put into the light buffer by a scene job (LIGHT_MAP_JOB), a few a frame and more while
-	// the sending has taken less than the job's time, up to the most: a scene load has hundreds, and the light buffer's
-	// copies take them as they come round (LightClusters.upload).
-	static final String LIGHT_MAP_JOB = "light map";
-	private static final int LIGHT_MAP_BLOCKS_PER_FRAME = 2;
-	private static final int LIGHT_MAP_BLOCKS_MAX = 96;
-	// what the light map was last given to stop light, and what that was made from
-	private LightBlockers lightBlockers;
-	private WallMap blockerWalls;
-	private ModelBlockers blockerModels;
-	private RoomMap blockerRooms;
-	private byte[] blockerFloors;
-	private boolean lightMapJob;
-	// when the job last ran or was queued: a job the queue dropped (a shutdown) is queued again after a while
-	private long lightMapJobNanos;
-	// the offline renderer's lightMap=off: no light map, the walls alone stop the lamps (no setting of the plugin's)
-	public boolean lightMapOff = true;
+	/** Legacy replay option; the runtime no longer bakes point lighting. */
+	@Deprecated public boolean lightMapOff = true;
 	// the walls' scene (WallMap.scene, the same as a door opens or shuts) of the newest rooms BuildingLights gave, and of
 	// those the room light has: rooms of the same scene as the ones before them are a door's (RoomLight.setRooms)
 	private RoomMap newestRooms, roomLightRooms;
@@ -247,9 +71,9 @@ public final class LampFrame
 			{
 				plugin.frameLights.clear();
 			}
-			updateLightMap(points, buildings, rooms);
+
 			plugin.cpuTimer.end(CpuTimer.LIGHTS);
-			// the roofs as drawn: those the client hides over the player stop nothing
+			// Legacy wall data supplies wall-mounted lamp origins; LampBlockers owns visibility.
 			SceneContext drawn = plugin.root;
 			plugin.lampWalls.update(points && buildings != null ? buildings.getWalls() : null, rooms,
 				buildings != null ? buildings.getFloors() : null, buildings != null ? buildings.getRoofs() : null,
@@ -270,12 +94,6 @@ public final class LampFrame
 			plugin.lightClusters.setFog(plugin.frameFog, plugin.volumetricFog.getCenterX() - plugin.frameCameraX,
 				plugin.volumetricFog.getCenterZ() - plugin.frameCameraZ, plugin.volumetricFog.getRadius(),
 				plugin.volumetricFog.getTop() - plugin.frameCameraY, plugin.volumetricFog.getMinGlow());
-			// the lamps' shadow cubes: which are out of date, before each lamp kept is given its slot
-			plugin.lampCubes.beginFrame(plugin);
-			plugin.lightClusters.setCubes(plugin.lampCubes);
-			net.runelite.api.WorldView topView = plugin.client.getTopLevelWorldView();
-			plugin.lightClusters.setHidden(topView != null && topView.getScene() != null ? topView.getScene().getRoofs() : null,
-				drawn != null ? drawn.hideRoofIds : null, drawn != null ? drawn.level : 0);
 			plugin.lightClusters.cull(plugin.frameLights, plugin.frameViewProj, plugin.frameCameraX, plugin.frameCameraY, plugin.frameCameraZ);
 			if (plugin.lightClusters.getOverflows() > 0 && plugin.logLimiter.check("lightClusterOverflow") >= 0)
 			{
@@ -290,81 +108,17 @@ public final class LampFrame
 			plugin.lightClusters.bind(LIGHT_DATA_UNIT, CLUSTER_DATA_UNIT);
 			if (points)
 			{
-				plugin.lampVolume.update(plugin, plugin.frameLights, plugin.lampWalls, plugin.lightClusters);
-				plugin.lampVolume.bind(LuminaPlugin.LAMP_CUBE_UNIT);
+				plugin.lampBlockers.update(plugin.root);
+				plugin.lampBlockers.bind();
 			}
 			plugin.roomTexture.bind(ROOM_TEXELS_UNIT);
 		}
-	}
-
-	/**
-	 * Give the light map the scene's walls, solid objects, models and floors and the view; hand the frame's fixed lamps to
-	 * it (SceneLights.mapLamps: those it carries get their ids in it); and have its finished blocks sent by a scene job.
-	 * Without lamps, walls or floors there is no map, and every lamp is stopped by the walls alone.
-	 */
-	private void updateLightMap(boolean points, BuildingLights buildings, RoomMap rooms)
-	{
-		SceneLights lights = plugin.sceneLights;
-		WallMap walls = buildings != null ? buildings.getWalls() : null;
-		byte[] floors = buildings != null ? buildings.getFloors() : null;
-		LightMap map = plugin.lightMap;
-		if (!points || lightMapOff || lights == null || walls == null || rooms == null || floors == null || rooms.size != walls.size
-			|| floors.length != walls.size * walls.size || walls.size > LightMapBuffer.MAX_TILES)
+		if (playerLightTrace.enabled())
 		{
-			if (lights != null)
-			{
-				lights.setLightMap(null);
-				lights.mapLamps(plugin.frameLights);
-			}
-			plugin.lightMapBuffer.setScene(null, 0);
-			plugin.lightClusters.setLightMap(null);
-			return;
+			plugin.lightClusters.tracePlayerLight(playerLightTrace, plugin.testLight, plugin.frameLights,
+				points, plugin.config.testLight(), plugin.lampWalls.version(), plugin.frameViewProj,
+				plugin.frameCameraX, plugin.frameCameraY, plugin.frameCameraZ);
 		}
-		lights.setLightMap(map);
-		// a scene's models are not the previous scene's: the lights wait for them a moment (LightMap.setBlockers)
-		boolean modelsAwaited = plugin.voxelBuilder.modelsAwaited();
-		ModelBlockers models = modelsAwaited ? null : plugin.voxelBuilder.getModelBlockers();
-		if (models != null && models.cells != walls.size * LightBlockers.CELLS_PER_TILE)
-		{
-			models = null;
-		}
-		if (walls != blockerWalls || models != blockerModels || rooms != blockerRooms || floors != blockerFloors)
-		{
-			lightBlockers = new LightBlockers(walls, models, rooms.floors, floors);
-			blockerWalls = walls;
-			blockerModels = models;
-			blockerRooms = rooms;
-			blockerFloors = floors;
-		}
-		map.setBlockers(lightBlockers, modelsAwaited);
-		map.setFocus(plugin.edgeFade.focalX, plugin.edgeFade.focalZ);
-		plugin.lightMapBuffer.setScene(lightBlockers, lightBlockers.cells / LightMap.BLOCK);
-		lights.mapLamps(plugin.frameLights);
-		plugin.lightClusters.setLightMap(plugin.lightMapBuffer);
-		if (lightMapJob && System.nanoTime() - lightMapJobNanos < 2_000_000_000L)
-		{
-			return;
-		}
-		if (!map.hasReady())
-		{
-			// no block to send: the lights whose blocks are all sent go live, and the ids of those gone are freed
-			map.update(0, 0, 0, plugin.lightMapBuffer);
-			return;
-		}
-		lightMapJob = true;
-		lightMapJobNanos = System.nanoTime();
-		plugin.sceneLoader.jobs.add(LIGHT_MAP_JOB, SceneJobs.SHOWN, deadline ->
-		{
-			lightMapJobNanos = System.nanoTime();
-			long left = deadline - System.nanoTime();
-			map.update(LIGHT_MAP_BLOCKS_PER_FRAME, Math.max(0, left), LIGHT_MAP_BLOCKS_MAX, plugin.lightMapBuffer);
-			boolean done = !map.hasReady();
-			if (done)
-			{
-				lightMapJob = false;
-			}
-			return done;
-		});
 	}
 
 	/**
@@ -397,7 +151,7 @@ public final class LampFrame
 	}
 
 	/**
-	 * Gather this frame's point lights: scene lights from lights.json, plus the optional test light.
+	 * Gather imported scene lights and the optional developer light carried by the player.
 	 */
 	public void collectLights()
 	{
@@ -421,8 +175,8 @@ public final class LampFrame
 			if (lp != null)
 			{
 				float ground = Perspective.getTileHeight(plugin.client, lp, plugin.client.getTopLevelWorldView().getPlane());
-				// a little above head height (y points down), warm like a torch, reaching about 5 tiles
-				plugin.frameLights.add(plugin.testLight.set(lp.getX(), ground - 250, lp.getY(), 5 * Perspective.LOCAL_TILE_SIZE,
+				// Torso height keeps the carried light below doorway lintels; reach is about five tiles.
+				plugin.frameLights.add(plugin.testLight.set(lp.getX(), ground - 150, lp.getY(), 5 * Perspective.LOCAL_TILE_SIZE,
 					1.0f, 0.72f, 0.42f, 6f).onPlane(plugin.client.getTopLevelWorldView().getPlane()));
 			}
 		}

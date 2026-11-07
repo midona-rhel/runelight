@@ -37,6 +37,7 @@ public final class RenderDump
 		Path out = dump.dir != null ? dump.dir.resolve("offline") : Paths.get("build", "offline", "synthetic");
 		DumpRenderer.Options o = new DumpRenderer.Options();
 		int timeFrames = 0;
+		int cameraFrames = 0, cameraStep = 4;
 		List<Double> later = new ArrayList<>();
 		List<DebugView> views = new ArrayList<>(List.of(DebugView.NORMALS, DebugView.SKYLIGHT, DebugView.LIGHTING,
 			DebugView.SHADOWS, DebugView.AMBIENT_OCCLUSION, DebugView.DEPTH));
@@ -53,6 +54,15 @@ public final class RenderDump
 			{
 				case "out":
 					out = Paths.get(v);
+					break;
+				case "shaders":
+					o.shaderDirectory = Paths.get(v);
+					break;
+				case "cameraFrames":
+					cameraFrames = Integer.parseInt(v);
+					break;
+				case "cameraStep":
+					cameraStep = Integer.parseInt(v);
 					break;
 				case "views":
 					views.clear();
@@ -149,6 +159,7 @@ public final class RenderDump
 			}
 		}
 		Files.createDirectories(out);
+		if (cameraFrames > 0 && o.cameraYaw == null) o.cameraYaw = dump.manifest.cameraYaw;
 		try (DumpRenderer r = new DumpRenderer(dump, o))
 		{
 			long t0 = System.nanoTime();
@@ -157,6 +168,19 @@ public final class RenderDump
 				(System.nanoTime() - t0) / 1e9, img.getRGB(img.getWidth() / 2, 5) & 0xFFFFFF,
 				img.getRGB(img.getWidth() / 2, img.getHeight() / 2) & 0xFFFFFF, img.getRGB(img.getWidth() / 2, img.getHeight() - 6) & 0xFFFFFF);
 			ImageIO.write(img, "png", out.resolve("final.png").toFile());
+			// Freeze the scene clock while moving the camera to isolate sampling crawl from animation.
+			if (cameraFrames > 0)
+			{
+				Path frames = out.resolve("camera");
+				Files.createDirectories(frames);
+				int startYaw = r.world.cameraYaw;
+				for (int frame = 0; frame < cameraFrames; ++frame)
+				{
+					r.world.cameraYaw = startYaw + frame * cameraStep;
+					ImageIO.write(r.renderAgain(), "png", frames.resolve(String.format("frame-%04d.png", frame)).toFile());
+				}
+				r.world.cameraYaw = startYaw;
+			}
 			if (dump.dir != null && Files.exists(dump.dir.resolve("reference.png")))
 			{
 				BufferedImage ref = ImageIO.read(dump.dir.resolve("reference.png").toFile());

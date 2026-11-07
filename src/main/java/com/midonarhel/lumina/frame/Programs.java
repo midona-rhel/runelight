@@ -206,8 +206,7 @@ public final class Programs
 						+ "#define MAP_LAMPS_BASE " + LightClusters.MAP_LAMPS_BASE + "\n"
 						+ "#define CLUSTER_BASE " + LightClusters.CLUSTER_BASE + "\n"
 						+ com.midonarhel.lumina.light.LampReach.defines()
-						+ com.midonarhel.lumina.light.LightMapBuffer.defines()
-						+ com.midonarhel.lumina.light.LampVolume.defines();
+						+ com.midonarhel.lumina.light.LightMapBuffer.defines();
 				case "composite_mode":
 					// Compile out the diagnostic branches and intermediate samplers in normal rendering.
 					// Changing this diagnostic property requires a shader reload.
@@ -236,8 +235,12 @@ public final class Programs
 	/** One of the composite's programs (composite_frag.glsl's COMPOSITE_PASS), with the aurora or without. */
 	private int compileComposite(Composite.CompositeProgram c) throws ShaderException
 	{
+		// With no MSAA, EDGES duplicates FULL but is never drawn. Sample changes already reload
+		// all programs transactionally before the new scene targets can be used.
+		if (!c.needed(plugin.shaderSamples)) return 0;
 		String defines = "#define COMPOSITE_PASS " + c.pass + "\n" + (c.aurora ? "" : "#define NO_AURORA\n");
-		return COMPOSITE_PROGRAM.compile(createTemplate().add(key -> key.equals("composite_pass") ? defines : null));
+		return COMPOSITE_PROGRAM.compile(createTemplate().add(key -> key.equals("composite_pass") ? defines : null),
+			"composite pass=" + c.pass + " aurora=" + c.aurora);
 	}
 
 	public void initProgram() throws ShaderException
@@ -293,14 +296,10 @@ public final class Programs
 		uniBase = glGetUniformLocation(plugin.glProgram, "base");
 		plugin.uniColorblindIntensity = glGetUniformLocation(plugin.glProgram, "colorblindIntensity");
 
-		plugin.uniTexTargetDimensions = glGetUniformLocation(plugin.glUiProgram, "targetDimensions");
-		plugin.uniTexSourceDimensions = glGetUniformLocation(plugin.glUiProgram, "sourceDimensions");
-		plugin.uniUiAlphaOverlay = glGetUniformLocation(plugin.glUiProgram, "alphaOverlay");
-		plugin.uniUiColorblindIntensity = glGetUniformLocation(plugin.glUiProgram, "colorblindIntensity");
-		glUseProgram(plugin.glUiProgram);
-		glUniform1i(glGetUniformLocation(plugin.glUiProgram, "tex"), 0);
-		glUseProgram(0);
+		initUiUniforms();
 
+		plugin.water.locateAlpha(plugin.glProgram, WATER_DATA_UNIT);
+		plugin.frameState.locateAlphaIndoor(plugin.glProgram);
 		plugin.uniAlphaPass = glGetUniformLocation(plugin.glProgram, "alphaPass");
 		plugin.uniAlphaShadows = glGetUniformLocation(plugin.glProgram, "alphaShadows");
 		plugin.uniAlphaLightProj = glGetUniformLocation(plugin.glProgram, "alphaLightProj");
@@ -415,6 +414,44 @@ public final class Programs
 		plugin.water.freeSurfaceProgram();
 		plugin.skyCache.freePrograms();
 		plugin.upscaler.freeProgram();
+	}
+
+	private void initUiUniforms()
+	{
+		plugin.uniTexTargetDimensions = glGetUniformLocation(plugin.glUiProgram, "targetDimensions");
+		plugin.uniTexSourceDimensions = glGetUniformLocation(plugin.glUiProgram, "sourceDimensions");
+		plugin.uniUiAlphaOverlay = glGetUniformLocation(plugin.glUiProgram, "alphaOverlay");
+		plugin.uniUiColorblindIntensity = glGetUniformLocation(plugin.glUiProgram, "colorblindIntensity");
+		glUseProgram(plugin.glUiProgram);
+		glUniform1i(glGetUniformLocation(plugin.glUiProgram, "tex"), 0);
+		glUseProgram(0);
+	}
+
+	/** UI sampling mode affects only the UI shader. Keep the old program if compilation fails. */
+	public boolean reloadUiShader()
+	{
+		int replacement;
+		glBindVertexArray(plugin.vaoUiHandle);
+		try
+		{
+			replacement = UI_PROGRAM.compile(createTemplate());
+		}
+		catch (ShaderException ex)
+		{
+			log.error("UI shader reload failed:\n{}", ex.getMessage());
+			plugin.chat("UI shader error: " + firstLines(ex.getMessage(), 3));
+			return false;
+		}
+		finally
+		{
+			glBindVertexArray(0);
+		}
+		int previous = plugin.glUiProgram;
+		plugin.glUiProgram = replacement;
+		initUiUniforms();
+		glDeleteProgram(previous);
+		log.info("UI shader reloaded");
+		return true;
 	}
 
 	/**

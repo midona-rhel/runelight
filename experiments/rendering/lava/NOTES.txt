@@ -1,0 +1,31 @@
+Candidate only; no watched shaders changed.
+
+Runtime upload opt-in: -Dlumina.lavaMaterials=true. Do not enable until this shader set is deployed together.
+Exact terrain identities: overlay 19 on overlay faces; texture IDs 31 and 40. No RGB, region, or name heuristic.
+
+Staged files:
+- frag.glsl: accepted B15 snapshot, writes material target through updated include.
+- composite_frag.glsl: accepted B15 snapshot plus lavaSurface before ordinary fog/transparency composition.
+- material_target.glsl: preserves raw snow class 3; unpack exposes negative alpha as lava variant (1..3), emissive=1 prevents weather buildup.
+- shadow_vert.glsl: lava variant bits do not masquerade as shadow emissivity.
+- lava.glsl: very slow world-anchored drift, rounded crust islands, slow domes; no reflection sample or interaction.
+
+LavaDumpPreviewTest opts in through lumina.lavaDump and lumina.lavaShaders; skips otherwise.
+Old dump retagging accepts explicit textures and full overlay-19 tiles only; mixed shaped edges lack face provenance and remain unchanged.
+Optional lumina.lavaPalette=true changes only source-position-matched FOSSIL_ISLAND_LAVA_[0-9]+ RGB to shared (.65,.12,.006) linear hue, retaining intensity/radius.
+Output: build/lava-preview/captured-lava.png (lumina.lavaOut overrides directory).
+The preview is a candidate; actual shader compilation and visual judgment are still required.
+Additional capture findings (2026-11-07):
+- Fossil lava uses overlay152; all10 named Fossil lava sources sit on152. The152 paint color is HIDDEN_HSL12345678, so visible lava is object geometry rather than terrain.
+- Full lava sheets are exact object14427 (WILD_FALLOFF_12),166 captured4-vertex instances. Exact captured mesh matching identifies332 triangles.
+- Mixed boundary objects14417..14426 have rock and lava faces; whole-model tagging deliberately excluded. Need face material provenance before complete boundary coverage.
+- Runtime opt-in tags14427, as does offline preview through exact all-three-vertex membership in same captured instance.
+- Terrain152 rule is localized to Fossil volcanic map squares x3776..3839/y3712..3839; existing hidden terrain remains hidden.
+- CPU mesh matching verified332; GPU preview not yet rerun while user judges live moon.
+Update: boundary material identification completed.
+Captured mesh matching establishes the exact material family H=8,S=7 (packed HSL>>7 =71) on all332 sheet triangles. The same exact material exists on906 boundary triangles within explicit object IDs14417..14427 and14429. In total1238 molten faces selected;10261 matched rock/bank faces remain unchanged. Runtime selector additionally requires no texture and all3 corners matching. Ladder14428 and unrelated objectIDs are excluded even when colors match.
+Staged frag/composite/material_target/shadow_vert regenerated from current source after latest full-resolution water changes. No watchedshader edits. Pending coordinated GPU render.
+GPU validation completed successfully: LavaMaterialsTest and LavaDumpPreviewTest pass. Actual captured scene output build/lava-preview/captured-lava.png plus20/40/60s frames. Java preview confirms1238 molten triangles from370 exact objects, and10 source-position matched named lava lamps recolored. Visually inspected0/60s: animated orange/yellow main surface and dark crust present, rock islands/banks preserved. Orange volumetric glow remains strong; existing small vent lights retain yellow palette. No live shaders deployed and no user acceptance implied.
+User feedback on first preview: overall mostlyokay, notaccepted. Crust looked cereal/janky rather thanrocks, surface too gloopy and evenly/nicely patterned. Orangefog remainsunaccepted; palettefix separate.
+Revision: skewed/clipped angular plates, varied scale/aspect/rotation, sparse and dense patches, larger uninterrupted molten regions; reduced rounded outlines and repeated circular bubble rims. Slow viscous animation and subtle domes retained. Dead DAYLIGHT_FILL removed from staged composite only.
+Actual revised scene GPU render and20/40/60s frames passed; outputs build/lava-preview-fractured. Inspected0/60s. No live deployment or acceptance implied.

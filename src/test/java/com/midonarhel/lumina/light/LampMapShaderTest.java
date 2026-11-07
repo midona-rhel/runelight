@@ -25,7 +25,7 @@ public class LampMapShaderTest
 	private static final String FRAG = "#version 330\n"
 		+ "#include cluster_config\n"
 		+ "uniform vec3 cameraPos;\n"
-		+ "#include \"light/lamp.glsl\"\n"
+		+ "uniform samplerBuffer lightData;\n#define LAMP_WALL_NORTH 1u\n#define LAMP_WALL_EAST 2u\n#define LAMP_WALL_SOUTH 4u\n#define LAMP_WALL_WEST 8u\n#define LAMP_WALL_SW_NE 16u\n#define LAMP_WALL_NW_SE 32u\n#include \"light/lamp_map.glsl\"\n"
 		+ "uniform vec3 probeAt[" + 64 + "];\n"
 		+ "uniform int probeId;\n"
 		+ "out vec4 color;\n"

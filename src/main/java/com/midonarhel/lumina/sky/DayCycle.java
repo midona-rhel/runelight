@@ -57,7 +57,7 @@ public final class DayCycle
 			return 2.9f * (0.52f + (0.92f - 0.52f) * noon) * smoothstep(-4, 10, sunAltitude) * overcast;
 		}
 		// MOON_INTENSITY times the luminance of the moon's color
-		return 0.675f * 0.55f * smoothstep(-2, -14, sunAltitude) * overcast;
+		return 3.6f * 0.326576f * smoothstep(-2, -14, sunAltitude) * overcast;
 	}
 
 	private static float smoothstep(float a, float b, float x)

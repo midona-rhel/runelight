@@ -53,6 +53,7 @@ uniform sampler2D cloudHalf;
 
 #define TILE_SIZE 128.0
 
+uniform SCENE_SAMPLER sceneUnderwaterAlpha;
 uniform SCENE_SAMPLER sceneAlpha;  // transparent geometry, already lit, premultiplied; with MSAA per sample
 uniform SCENE_SAMPLER sceneMaterial;  // the material and the face's normal (material_target.glsl)
 #include debug_view
@@ -154,7 +155,7 @@ float upsampleAoFog(ivec2 px, float z, vec3 n, out vec4 fog, out float shadow, o
 }
 
 // the color of a room's fill, linear, of luminance 1 (BuildingLights.FILL_TINT)
-uniform vec3 interiorTint;
+#include "indoor_ambient.glsl"
 
 // The sky this pixel would show if nothing stood in front of it, in sRGB: what the world melts into at its edge.
 vec3 skyBehind(vec2 px, vec3 dir, vec3 fogColor, bool sunAndSky) {
@@ -202,32 +203,21 @@ void lampOnSurface(Lamp lamp, float open, vec3 p, vec3 n, vec3 viewDir, float tr
   through += c * transmission(ndl, dot(-ld, viewDir), transmissive);
 }
 
-// The lamps' light on a surface at camera-relative p with normal n, the smooth normal the sun uses, from the lamps of
-// cluster entry (light/lamp.glsl): on its front, and through thin foliage from behind into through. Surfaces turned
-// away receive neither. The face normal faceN only moves the point off its surface for the wall check.
-//
-// The lamps with a shadow cube (light/lamp_cube.glsl), drawn from what the frame draws, take it: of those that reach
-// the point, the LAMP_BUDGET brightest before anything stops them (the user's four a pixel, the fourth fading as the
-// fifth nears it), each stopped by its cube alone, read a texel and a half off the surface with tight taps (a wall's
-// foot and a jamb's edge sharp). No wall walk: the cube holds the walls as drawn, and the walk, walls as tall as the
-// world, cost 0.4-0.8 ms on fps1 and darkened the caps' tops a lamp sees (the user preferred the cube's look). A lamp
-// on a storey the client hides (lampHiddenCode) lights no surface: its light gets anywhere drawn only through floors
-// and walls that are not drawn. Not the light map: baked from the whole
-// building, the storeys and furniture the client hides too, it laid their shadows on the floors (the corridor's
-// blotches). A lamp without a cube (more in view than LampCubes' slots, or one whose cube waits) as before: the
-// lamps the light map carries in full from its read, once (a cell holds the at most four that light it, each no
-// more than its walls let through, lampMapLampOpen), the others stopped by their walls (lampOpen).
+// All lamps use the same wall/roof visibility, including moving lamps.
 vec3 lampsOnSurface(int entry, vec3 p, vec3 n, vec3 faceN, float transmissive, out vec3 through) {
   through = vec3(0.0);
-  vec3 w = p + cameraPos;
-  LampVolumeRead r = lampVolumeRead(w, faceN);
-  float ndl;
-  vec3 ld;
-  float k = lampVolumeOnSurface(r, w, n, ndl, ld);
-  if (transmissive > 0.0) {
-    through = r.light * transmission(ndl, dot(-ld, normalize(-p)), transmissive);
+  vec3 sum = vec3(0.0);
+  LightMask mask = clusterLights(entry);
+  int li;
+  while (nextLight(mask, li)) {
+    vec4 sphere = lampSphere(li);
+    if (!lampSphereReaches(sphere, p, n, transmissive > 0.0)) continue;
+    Lamp lamp = lampWith(li, sphere);
+    float side = dot(faceN, lamp.pos - p) >= 0.0 ? 1.0 : -1.0;
+    float open = lampOpen(lamp, p, p + faceN * (LAMP_WALL_BIAS * side), false);
+    lampOnSurface(lamp, open, p, n, normalize(-p), transmissive, sum, through);
   }
-  return r.light * k + (lampMoverCount > 0 ? lampMoversOnSurface(w, n, faceN) : vec3(0.0));
+  return sum;
 }
 
 // ---------------------------------------------------------------------------------------------------------------
@@ -314,7 +304,7 @@ SceneSample sceneSample(ivec2 px, int s) {
 
 // Lights one scene sample of the pixel px: sky or surface, then the transparent layer over it, then the fog.
 // transparent is the pixel's, already lit, premultiplied: the wet ground's coverage test and the final blend read it.
-vec4 shadeScene(ivec2 px, SceneSample sm, vec4 transparent) {
+vec4 shadeScene(ivec2 px, SceneSample sm, vec4 transparent, vec4 submerged) {
   vec4 color = sm.color;
   float d = sm.depth;
   bool inside = inViewport(px);
@@ -347,7 +337,7 @@ vec4 shadeScene(ivec2 px, SceneSample sm, vec4 transparent) {
       color.rgb *= 1.0 - voidBelow(dir);
     }
     // the color target's alpha says whether geometry covers it; the window wants opaque
-    vec4 result = overTransparent(transparent, vec4(color.rgb, 1.0));
+    vec4 result = overTransparent(transparent, overTransparent(submerged, vec4(color.rgb, 1.0)));
     // 0 is sky in both depth conventions
     result.rgb = applyVolumetricFog(px, result.rgb, 0.0);
     // the sky's broad gradients band in the 8-bit window: a triangular dither of one step hides it
@@ -400,21 +390,17 @@ vec4 shadeScene(ivec2 px, SceneSample sm, vec4 transparent) {
     shadow = overcastShadow(shadow);
     vec3 caster = strikeCaster(sunIsCaster == 1 ? sunLight(sunAltitude) : moonLight(sunAltitude));
     float up = max(-n.y, 0.0);
+    int roomId = roomOfSurface(p + cameraPos, n);
     if (compositePart != 2) {
-    vec3 plain = ambientLight(sunAltitude) + skyFill(n, sunAltitude, up);
-    indirect = skylightAmbient(plain) * envAmbient * ao;
-    // the daylight fill: sun put back inside shadows where the sky is open (open question 1 of
-    // docs/117hd-world-shading.md: 117 HD has none)
-    float daylightFill = skylightOn == 1 ? DAYLIGHT_FILL * clamp(skyUpsampled, 0.0, 1.0) : 0.0;
-    indirect += caster * envSun * max(ndl, 0.0) * (1.0 - shadow) * daylightFill * ao;
+    float exposure = skylightOn == 1 ? skyUpsampled : (roomId > 0 ? 0.0 : 1.0);
+    indirect = environmentSkylight(skyFill(n, sunAltitude, up), exposure) * ao;
     }
     light = indirect
       + caster * envSun * max(ndl, 0.0) * shadow * mix(1.0, ao, AO_DIRECT);
     // A room's fill: the interior brightness, one level for every room (RoomLight: the setting and the time of day,
-    // not its lamps), spread flat and directionless over the whole room like ambient, darkened by AO as the ambient is.
-    int roomId = roomOfSurface(p + cameraPos, n);
+    // not its lamps), directionless, with the original wall-distance shaping and local AO.
     if (roomId > 0) {
-      light += interiorTint * roomFillLevel(roomId) * ao;
+      light += roomWarmFill(roomId, p + cameraPos, n) * ao;
     }
     if (transmissive > 0.0) {
       // light through the leaf isn't occluded by the creases SSAO sees on its front
@@ -480,7 +466,7 @@ vec4 shadeScene(ivec2 px, SceneSample sm, vec4 transparent) {
   bool linearLit = false;
   if (compositePart != 5) {
     lit = shadeLinear(color.rgb, light);
-    linearLit = fogDone && compositePart == 0 && wet.x <= 0.0 && transparent == vec4(0.0)
+    linearLit = fogDone && compositePart == 0 && wet.x <= 0.0 && transparent == vec4(0.0) && submerged == vec4(0.0)
       && !waterUnder(px, material.b) && !materialFakeWater(material);
     if (!linearLit) {
       lit = linearToSrgb(lit);
@@ -490,6 +476,8 @@ vec4 shadeScene(ivec2 px, SceneSample sm, vec4 transparent) {
       // a face a model lays on a terrain fall as water is the bed of the fall's real surface over it (water_vert.glsl):
       // the pools above and below it and the fall are one surface
       bool fakeFall = materialFakeWater(material) && waterFakeFall(sm.faceNormal);
+      // Submerged transparent surfaces belong behind the water; above-water alpha stays at the end.
+      lit = overTransparent(submerged, vec4(lit, 1.0)).rgb;
       bool over;
       lit = waterOver(px, p, color.rgb, shadow, lit, material.b, fakeFall, over);
       if (materialFakeWater(material) && !(fakeFall && over)) {
@@ -563,12 +551,14 @@ vec4 shadeSamples(ivec2 px) {
   float vz = viewDepth(first.depth);
   vec4 colors = vec4(0.0);
   vec4 transparent = vec4(0.0);
+  vec4 submerged = vec4(0.0);
   int count = 0;
   int other = -1;
   for (int t = 1; t < MSAA_SAMPLES; ++t) {
     if (!sameSurface(first, vz, px, t)) {
       colors += texelFetch(sceneColor, px, t);
       transparent += texelFetch(sceneAlpha, px, t);
+      submerged += texelFetch(sceneUnderwaterAlpha, px, t);
       ++count;
       other = other < 0 ? t : other;
     }
@@ -578,7 +568,7 @@ vec4 shadeSamples(ivec2 px) {
   }
   SceneSample second = sceneSample(px, other);
   second.color = colors / float(count);
-  return vec4(shadeScene(px, second, transparent / float(count)).rgb, float(count) / float(MSAA_SAMPLES));
+  return vec4(shadeScene(px, second, transparent / float(count), submerged / float(count)).rgb, float(count) / float(MSAA_SAMPLES));
 }
 #elif COMPOSITE_PASS == COMPOSITE_FULL
 // the first surface; whether the pixel has a second, the edge pass's own test, marked in the depth (Composite.draw)
@@ -588,17 +578,19 @@ vec4 shadeSamples(ivec2 px) {
   float vz = viewDepth(first.depth);
   vec4 colors = first.color;
   vec4 transparent = texelFetch(sceneAlpha, px, 0);
+  vec4 submerged = texelFetch(sceneUnderwaterAlpha, px, 0);
   int count = 1;
   for (int t = 1; t < MSAA_SAMPLES; ++t) {
     if (sameSurface(first, vz, px, t)) {
       colors += texelFetch(sceneColor, px, t);
       transparent += texelFetch(sceneAlpha, px, t);
+      submerged += texelFetch(sceneUnderwaterAlpha, px, t);
       ++count;
     }
   }
   gl_FragDepth = count < MSAA_SAMPLES ? 1.0 : 0.0;
   first.color = colors / float(count);
-  return shadeScene(px, first, transparent / float(count));
+  return shadeScene(px, first, transparent / float(count), submerged / float(count));
 }
 #endif
 #endif
@@ -618,7 +610,7 @@ void main() {
   FragColor = cloudsHalf();
 #endif
 #if COMPOSITE_PASS != COMPOSITE_CLOUDS
-  waterShadeHalf(ivec2(gl_FragCoord.xy));
+  waterShadePixel(ivec2(gl_FragCoord.xy));
 #endif
 #else
   ivec2 px = ivec2(gl_FragCoord.xy);
@@ -627,7 +619,7 @@ void main() {
   FragColor = shadeSamples(px);
 #else
   // transparent geometry over this pixel (lit as it is drawn)
-  FragColor = shadeScene(px, sceneSample(px, 0), texelFetch(sceneAlpha, px, 0));
+  FragColor = shadeScene(px, sceneSample(px, 0), texelFetch(sceneAlpha, px, 0), texelFetch(sceneUnderwaterAlpha, px, 0));
 #endif
 #endif
 }

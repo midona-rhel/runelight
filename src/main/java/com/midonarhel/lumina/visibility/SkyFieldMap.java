@@ -51,7 +51,11 @@ public final class SkyFieldMap
 	// the field shown before the newest, easing out since the newest was uploaded (0: none)
 	private int prevTexture;
 	private long since;
-	private int uniOn, uniMap, uniPlane, uniWeight;
+	public static final class Uniforms
+	{
+		private int uniOn, uniMap, uniPlane, uniWeight;
+	}
+	private Uniforms aoUniforms;
 
 	/**
 	 * Once a frame: follow the scene's walls, rooms and floors for the plane. Passing nothing (the skylight is off, or
@@ -161,14 +165,21 @@ public final class SkyFieldMap
 	/** Look up the AO program's uniforms; the texture is sampled on {@code unit}, the one easing out on {@code prevUnit}. */
 	public void locateAo(int program, int unit, int prevUnit)
 	{
-		uniOn = glGetUniformLocation(program, "skyFieldOn");
-		uniMap = glGetUniformLocation(program, "skyFieldMap");
-		uniPlane = glGetUniformLocation(program, "skyFieldPlane");
-		uniWeight = glGetUniformLocation(program, "skyFieldWeight");
+		aoUniforms = locate(program, unit, prevUnit);
+	}
+
+	public Uniforms locate(int program, int unit, int prevUnit)
+	{
+		Uniforms uniforms = new Uniforms();
+		uniforms.uniOn = glGetUniformLocation(program, "skyFieldOn");
+		uniforms.uniMap = glGetUniformLocation(program, "skyFieldMap");
+		uniforms.uniPlane = glGetUniformLocation(program, "skyFieldPlane");
+		uniforms.uniWeight = glGetUniformLocation(program, "skyFieldWeight");
 		glUseProgram(program);
 		glUniform1i(glGetUniformLocation(program, "skyField"), unit);
 		glUniform1i(glGetUniformLocation(program, "skyFieldPrev"), prevUnit);
 		glUseProgram(0);
+		return uniforms;
 	}
 
 	/**
@@ -177,19 +188,24 @@ public final class SkyFieldMap
 	 */
 	public void bindAo(int unit, int prevUnit, float cameraX, float cameraZ)
 	{
+		bind(aoUniforms, unit, prevUnit, cameraX, cameraZ);
+	}
+
+	public void bind(Uniforms uniforms, int unit, int prevUnit, float cameraX, float cameraZ)
+	{
 		boolean on = texture != 0 && uploaded != null;
-		glUniform1i(uniOn, on ? 1 : 0);
+		glUniform1i(uniforms.uniOn, on ? 1 : 0);
 		if (on)
 		{
 			// camera-relative world units to texture coordinates: tiles of 128 in a grid of size, past the offset
 			float size = uploaded.walls.size;
 			float scale = 1 / (128 * size);
-			glUniform4f(uniMap, scale, scale, (cameraX / 128 + uploaded.walls.offset) / size,
+			glUniform4f(uniforms.uniMap, scale, scale, (cameraX / 128 + uploaded.walls.offset) / size,
 				(cameraZ / 128 + uploaded.walls.offset) / size);
-			glUniform1i(uniPlane, uploaded.plane);
+			glUniform1i(uniforms.uniPlane, uploaded.plane);
 			// LayerEase: the newest field's share since it was uploaded, the one before it the rest
 			float w = prevTexture != 0 ? LayerEase.weight(since, com.midonarhel.lumina.common.Clock.nanos()) : 1;
-			glUniform1f(uniWeight, w);
+			glUniform1f(uniforms.uniWeight, w);
 			glActiveTexture(GL_TEXTURE0 + unit);
 			glBindTexture(GL_TEXTURE_2D, texture);
 			glActiveTexture(GL_TEXTURE0 + prevUnit);

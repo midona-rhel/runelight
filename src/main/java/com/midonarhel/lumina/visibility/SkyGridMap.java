@@ -81,14 +81,17 @@ public final class SkyGridMap
 	private int[] pending;
 	private boolean pendingMove;
 	private int framesSinceUpload;
-	private int uniOn, uniOutdoors, uniCamera;
+	public static final class Uniforms
+	{
+		private int uniOn, uniCamera, uniWeight, uniPrevOn, uniPrevCamera;
+	}
+	private Uniforms aoUniforms;
 	// LayerEase: when the shown grid was swapped in, and the grid shown before it (and its place), whose share eases
 	// out meanwhile; where neither covers the scene, open sky stands in (a teleport, until the new place is traced)
 	private long shownSince;
 	private int prevTexture;
 	private int prevBaseX, prevBaseY;
 	private boolean prevInstance;
-	private int uniWeight, uniPrevOn, uniPrevCamera;
 	// how far (tiles) a grid's place may lie from the scene's for it to be shown there: a region load where the player
 	// walks moves the base by a few chunks, a teleport much further
 	private static final int COVER_TILES = 64;
@@ -484,16 +487,23 @@ public final class SkyGridMap
 	/** Look up the AO program's uniforms; the texture is sampled on {@code unit}, the one easing out on unit + 1. */
 	public void locateAo(int program, int unit)
 	{
-		uniOn = glGetUniformLocation(program, "skylightOn");
-		uniCamera = glGetUniformLocation(program, "skyGridCamera");
-		uniWeight = glGetUniformLocation(program, "skyGridWeight");
-		uniPrevOn = glGetUniformLocation(program, "skyGridPrevOn");
-		uniPrevCamera = glGetUniformLocation(program, "skyGridPrevCamera");
+		aoUniforms = locate(program, unit);
+	}
+
+	public Uniforms locate(int program, int unit)
+	{
+		Uniforms uniforms = new Uniforms();
+		uniforms.uniOn = glGetUniformLocation(program, "skylightOn");
+		uniforms.uniCamera = glGetUniformLocation(program, "skyGridCamera");
+		uniforms.uniWeight = glGetUniformLocation(program, "skyGridWeight");
+		uniforms.uniPrevOn = glGetUniformLocation(program, "skyGridPrevOn");
+		uniforms.uniPrevCamera = glGetUniformLocation(program, "skyGridPrevCamera");
 		glUseProgram(program);
 		glUniform1i(glGetUniformLocation(program, "skyGrid"), unit);
 		glUniform1i(glGetUniformLocation(program, "skyGridPrev"), unit + 1);
 		glUniform1f(glGetUniformLocation(program, "skyGridScale"), resolution);
 		glUseProgram(0);
+		return uniforms;
 	}
 
 	/**
@@ -502,12 +512,17 @@ public final class SkyGridMap
 	 */
 	public boolean bindAo(int unit, Scene scene, float cameraX, float cameraY, float cameraZ)
 	{
-		boolean on = isReady(scene);
-		glUniform1i(uniOn, on ? 1 : 0);
+		return bind(aoUniforms, unit, scene, cameraX, cameraY, cameraZ, true);
+	}
+
+	public boolean bind(Uniforms uniforms, int unit, Scene scene, float cameraX, float cameraY, float cameraZ, boolean enabled)
+	{
+		boolean on = enabled && scene != null && isReady(scene);
+		glUniform1i(uniforms.uniOn, on ? 1 : 0);
 		if (on)
 		{
 			// the camera in the texture's place, which lags the scene's for a moment after a move
-			glUniform3f(uniCamera, cameraX - (shownBaseX - scene.getBaseX()) * SkyGrid.TILE, cameraY,
+			glUniform3f(uniforms.uniCamera, cameraX - (shownBaseX - scene.getBaseX()) * SkyGrid.TILE, cameraY,
 				cameraZ - (shownBaseY - scene.getBaseY()) * SkyGrid.TILE);
 			glActiveTexture(GL_TEXTURE0 + unit);
 			glBindTexture(GL_TEXTURE_3D, texture);
@@ -518,11 +533,11 @@ public final class SkyGridMap
 			float w = covers(shownBaseX, shownBaseY, shownInstance, sx, sy, inst) ? LayerEase.weight(shownSince, com.midonarhel.lumina.common.Clock.nanos()) : 0;
 			boolean prevOn = w < 1 && prevTexture != 0 && prevTexture != texture
 				&& covers(prevBaseX, prevBaseY, prevInstance, sx, sy, inst);
-			glUniform1f(uniWeight, w);
-			glUniform1i(uniPrevOn, prevOn ? 1 : 0);
+			glUniform1f(uniforms.uniWeight, w);
+			glUniform1i(uniforms.uniPrevOn, prevOn ? 1 : 0);
 			if (prevOn)
 			{
-				glUniform3f(uniPrevCamera, cameraX - (prevBaseX - sx) * SkyGrid.TILE, cameraY,
+				glUniform3f(uniforms.uniPrevCamera, cameraX - (prevBaseX - sx) * SkyGrid.TILE, cameraY,
 					cameraZ - (prevBaseY - sy) * SkyGrid.TILE);
 			}
 			glActiveTexture(GL_TEXTURE0 + unit + 1);

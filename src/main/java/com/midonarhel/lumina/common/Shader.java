@@ -32,10 +32,13 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import static org.lwjgl.opengl.GL33C.*;
 
 public class Shader
 {
+	private static final Logger log = LoggerFactory.getLogger(Shader.class);
 	// Driver log line prefixes: "ERROR: 0:42:" (Apple/AMD/Intel), "0(42) :" (NVIDIA), "0:42(5):" (Mesa)
 	private static final Pattern LOG_LINE = Pattern.compile("^(\\s*(?:ERROR|WARNING|error|warning)?:?\\s*)\\d+[:(](\\d+)\\)?");
 
@@ -61,6 +64,12 @@ public class Shader
 
 	public int compile(Template template) throws ShaderException
 	{
+		return compile(template, describe());
+	}
+
+	/** CPU wall times include driver status waits, not rendering time. */
+	public int compile(Template template, String label) throws ShaderException
+	{
 		int program = glCreateProgram();
 		int[] shaders = new int[units.size()];
 		int i = 0;
@@ -76,11 +85,18 @@ public class Shader
 					throw new ShaderException("Unable to create shader of type " + unit.type);
 				}
 
+				long started = System.nanoTime();
 				Template.Source source = template.loadMapped(unit.filename);
+				long expanded = System.nanoTime();
 				glShaderSource(shader, source.getText());
 				glCompileShader(shader);
+				int status = glGetShaderi(shader, GL_COMPILE_STATUS);
+				long compiled = System.nanoTime();
+				log.debug("Shader timing [{}] {}: sourceExpandMs={}, compileAndStatusMs={}, success={}",
+					label, unit.filename, (expanded - started) / 1_000_000.0,
+					(compiled - expanded) / 1_000_000.0, status == GL_TRUE);
 
-				if (glGetShaderi(shader, GL_COMPILE_STATUS) != GL_TRUE)
+				if (status != GL_TRUE)
 				{
 					String err = glGetShaderInfoLog(shader);
 					glDeleteShader(shader);
@@ -90,9 +106,13 @@ public class Shader
 				shaders[i++] = shader;
 			}
 
+			long started = System.nanoTime();
 			glLinkProgram(program);
+			int status = glGetProgrami(program, GL_LINK_STATUS);
+			log.debug("Shader timing [{}]: linkAndStatusMs={}, success={}", label,
+				(System.nanoTime() - started) / 1_000_000.0, status == GL_TRUE);
 
-			if (glGetProgrami(program, GL_LINK_STATUS) == GL_FALSE)
+			if (status == GL_FALSE)
 			{
 				throw new ShaderException(describe() + " failed to link:\n" + glGetProgramInfoLog(program));
 			}

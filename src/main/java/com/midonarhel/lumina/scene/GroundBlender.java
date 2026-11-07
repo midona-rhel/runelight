@@ -155,7 +155,12 @@ public final class GroundBlender
 	 */
 	boolean unblended(int level, int ex, int ey)
 	{
-		return overlayIds != null && unblendedOverlay[overlayIds[level][ex][ey] & 0xffff];
+		return overlayIds != null && unblendedOverlay(overlayIds[level][ex][ey]);
+	}
+
+	static boolean unblendedOverlay(int id)
+	{
+		return unblendedOverlay[id & 0xffff];
 	}
 
 	static boolean isOverlayFace(int shape, int face)

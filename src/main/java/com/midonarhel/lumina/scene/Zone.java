@@ -98,6 +98,8 @@ public class Zone
 	public Voxelizer.Zone voxels;
 	// the zone's opaque triangles as plain data, for the lamps' volume (LampVolume.triangles)
 	public int[] lampTriangles;
+	// Only structural walls and roofs, independent of camera cutaways.
+	public float[] lampBlockers;
 	// the models that stop light at lamp height, rasterized with the voxels (ModelBlockers, for the light map)
 	public com.midonarhel.lumina.visibility.ModelBlockers.Zone modelBlockers;
 

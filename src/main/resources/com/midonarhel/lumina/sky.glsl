@@ -33,7 +33,7 @@ const vec3 HORIZON_COLOR[HORIZON_KEYS] = vec3[](
 #define NIGHT_LIGHT_BRIGHTNESS 1.5
 
 float nightGain(float alt, float gain) {
-  return mix(1.0, gain, smoothstep(-2.0, -14.0, alt));
+  return mix(1.0, gain, 1.0 - smoothstep(-14.0, -2.0, alt));
 }
 
 vec3 skyZenithPalette(float alt) {
@@ -234,7 +234,8 @@ vec3 skyHorizonAt(float alt) {
 // keep their soft, even light.
 #define CLEAR_AMBIENT 0.80
 #define HARSH_AMBIENT 0.08
-#define MOON_INTENSITY 0.675
+#define MOON_INTENSITY 3.6
+#define NIGHT_SKYLIGHT_STRENGTH 20.0
 #define SKY_LIGHT 0.45
 
 vec3 srgbToLinear(vec3 c) {
@@ -254,7 +255,10 @@ vec3 sunLightCover(float alt, float o) {
 }
 
 vec3 moonLightCover(float alt, float o) {
-  return overcastDirectAt(vec3(0.42, 0.55, 1.00) * MOON_INTENSITY * smoothstep(-2.0, -14.0, alt), o);
+  vec3 moon = vec3(0.12, 0.32, 1.00) * MOON_INTENSITY * (1.0 - smoothstep(-14.0, -2.0, alt));
+  // Clouds attenuate the blue moonlight; the daytime desaturation must not turn it white.
+  float transmission = mix(1.0, mix(OVERCAST_DIRECT_RAIN, OVERCAST_DIRECT_SNOW, weatherOvercast.y), o);
+  return moon * transmission * (1.0 - HAZE_DIRECT * weatherLight.y) * weatherTint(1.0);
 }
 
 // Light from the whole sky, cool blue by day; fills shadows (without lightning)
@@ -287,6 +291,9 @@ vec3 ambientLightAt(float alt) {
 // stays, and the sky light has to carry the rest. skyClear, skyOver: the sky light before the boost without and
 // with cover.
 float overcastSkyBoost(float alt, float skyClear, float skyOver) {
+  // Preserve the dark night palette: lost moonlight must not be replaced by boosted sky fill.
+  float daylight = smoothstep(-6.0, 0.0, alt);
+  if (daylight <= 0.0) return 1.0;
   float o = weatherOvercast.x;
   float ndl = sin(radians(clamp(abs(alt), OVERCAST_CASTER_ELEVATION.x, OVERCAST_CASTER_ELEVATION.y)));
   float clearLight = overcastLuma(sunLightCover(alt, 0.0) + moonLightCover(alt, 0.0)) * ndl
@@ -294,7 +301,7 @@ float overcastSkyBoost(float alt, float skyClear, float skyOver) {
   float direct = overcastLuma(sunLightCover(alt, o) + moonLightCover(alt, o)) * ndl
     + overcastLuma(ambientCover(alt, o));
   float need = clearLight * mix(1.0, OVERCAST_TARGET_BRIGHTNESS, o) - direct;
-  return clamp(need / max(skyOver, 1e-5), 1.0, OVERCAST_SKY_BOOST_MAX);
+  return mix(1.0, clamp(need / max(skyOver, 1e-5), 1.0, OVERCAST_SKY_BOOST_MAX), daylight);
 }
 
 // Light from the sky above on upward-facing surfaces, tinted by the sky (linear, before the lightning), and the
@@ -319,13 +326,13 @@ vec3 skyLightAt(float alt) {
   if (weatherOvercast.z > 0.0) {
     lin += srgbToLinear(base + LIGHTNING_COLOR * (LIGHTNING_SKY * weatherOvercast.z)) - srgbToLinear(base);
   }
-  return lin * SKY_LIGHT * flashDip();
+  return lin * SKY_LIGHT * flashDip() * nightGain(alt, NIGHT_SKYLIGHT_STRENGTH);
 }
 
 float skyBoostAt(float alt) {
   float boost;
   skyLightBase(alt, boost);
-  return boost * flashDip();
+  return boost * flashDip() * nightGain(alt, NIGHT_SKYLIGHT_STRENGTH);
 }
 
 // the lightning flash's part of skyLightAt, for light that leaves it out (atmosphere.glsl's sky cache)

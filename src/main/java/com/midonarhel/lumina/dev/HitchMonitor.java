@@ -54,8 +54,10 @@ public final class HitchMonitor
 	// the watchdog: how often it looks, how many stacks it takes in a long frame and how far apart, and how many of
 	// each stack's innermost frames the line names
 	private static final long WATCH_MS = 2;
-	private static final int SAMPLES = 3;
+	private static final int SAMPLES = 8;
+	private static final int FIRST_SAMPLES = 2;
 	private static final long SAMPLE_GAP_NANOS = 4_000_000;
+	private static final long MAX_SAMPLE_GAP_NANOS = 32_000_000;
 	private static final int STACK_FRAMES = 8;
 	// the ordinary frames' summary: how often, and the steps it names (at least this long on average)
 	private static final long SUMMARY_NANOS = 30_000_000_000L;
@@ -88,6 +90,7 @@ public final class HitchMonitor
 	private volatile long thresholdNanos = Long.MAX_VALUE;
 	private final String[] stacks = new String[SAMPLES];
 	private int stackCount;
+	private long sampleGapNanos = SAMPLE_GAP_NANOS;
 	private long lastSampleNanos;
 	private Thread watchdog;
 
@@ -148,6 +151,7 @@ public final class HitchMonitor
 		synchronized (stacks)
 		{
 			stackCount = 0;
+			sampleGapNanos = SAMPLE_GAP_NANOS;
 			lastSampleNanos = 0;
 			thresholdNanos = count >= WARMUP ? (long) (Math.max(MIN_MS, median * FACTOR) * 1e6) : Long.MAX_VALUE;
 			frameStartNanos = System.nanoTime();
@@ -207,7 +211,7 @@ public final class HitchMonitor
 			b.append(shown > 0 ? ", " : " ").append(CpuTimer.NAMES[best]).append(' ')
 				.append(String.format("%.2f", summarySteps[best] / n));
 		}
-		// the part of the frame no step covers: the plugin's untimed work, mostly the composite's submit
+		// Time not covered by named steps can include both client and renderer work; stacks are needed to attribute it.
 		b.append(String.format(", untimed %.2f", Math.max(summaryFrameMs - sum, 0) / n));
 		log.info("{}", b);
 		summaryStartNanos = now;
@@ -236,22 +240,30 @@ public final class HitchMonitor
 				Thread.sleep(WATCH_MS);
 				long now = System.nanoTime();
 				Thread client = clientThread;
+				long sampledFrame;
 				synchronized (stacks)
 				{
-					if (client == null || now - frameStartNanos < thresholdNanos || stackCount == SAMPLES
-						|| now - lastSampleNanos < SAMPLE_GAP_NANOS)
+					if (client == null || now - frameStartNanos < thresholdNanos
+						|| now - lastSampleNanos < sampleGapNanos)
 					{
 						continue;
 					}
 					lastSampleNanos = now;
+					sampledFrame = frameStartNanos;
 				}
-				String stack = describe(client.getStackTrace(), (now - frameStartNanos) / 1e6);
+				String stack = describe(client.getStackTrace(), (now - sampledFrame) / 1e6);
 				synchronized (stacks)
 				{
-					if (stackCount < SAMPLES)
+					// The frame can finish during getStackTrace: never attribute its sample to the next frame.
+					if (frameStartNanos != sampledFrame) continue;
+					if (stackCount == SAMPLES)
 					{
-						stacks[stackCount++] = stack;
+						// Preserve the onset and a rolling tail instead of exhausting every sample in the first 30 ms.
+						System.arraycopy(stacks, FIRST_SAMPLES + 1, stacks, FIRST_SAMPLES, SAMPLES - FIRST_SAMPLES - 1);
+						--stackCount;
 					}
+					stacks[stackCount++] = stack;
+					if (stackCount > 1) sampleGapNanos = Math.min(MAX_SAMPLE_GAP_NANOS, sampleGapNanos * 2);
 				}
 			}
 		}

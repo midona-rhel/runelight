@@ -62,6 +62,7 @@ void main() {
   vec2 g = texelFetch(sceneAo, px, 0).rg;
   bool sky = g.x <= 0.0;
   vec4 own = texelFetch(sceneShadow, px, 0);
+  int ownReach = shadowReachStep(own.r);
   own.r = shadowReachLit(own.r);
   // the sky has no AO or shadow to smooth, only fog
   if (sky && denoiseFog == 0) {
@@ -74,7 +75,7 @@ void main() {
   vec3 n = halfNormal(g);
   vec4 shadowSum = vec4(0.0);
   float shadowWsum = 0.0;
-  // the sun shadow apart: each tap only as far as its own penumbra reaches (shadow_reach.glsl)
+  // Both pixels must allow the blur: a broad neighbouring penumbra must not soften a sharp contact.
   float litSum = 0.0;
   float litWsum = 0.0;
   vec4 fogSum = vec4(0.0);
@@ -107,7 +108,7 @@ void main() {
         sq.r = shadowReachLit(sq.r);
         shadowSum += sq * w;
         shadowWsum += w;
-        if (float(a.x * a.x + a.y * a.y) <= SHADOW_REACH_D2[tapReach]) {
+        if (float(a.x * a.x + a.y * a.y) <= SHADOW_REACH_D2[min(ownReach, tapReach)]) {
           litSum += sq.r * w;
           litWsum += w;
         }

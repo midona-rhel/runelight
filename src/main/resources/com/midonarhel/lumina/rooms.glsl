@@ -2,8 +2,9 @@
 // roomTexels has a layer per kind, an RGBA texel per tile holding the four planes': the rooms (0 outdoors), the floor
 // heights (world y, down), the walls: the tile's wall bits (ROOM_WALL_*, as WallMap.java), plus 64 times the half the
 // tile's room has where a diagonal wall crosses it (0 the north-west or north-east one), plus 128 times the room of
-// the other half (0 outdoors; the tile's own room when both halves are in it), bit 19 a floor tile; and where rain
-// water collects on them (RoomMap.pool). Rooms don't touch the lamps: walls alone stop those (light/lamp.glsl).
+// the other half (0 outdoors; the tile's own room when both halves are in it), bit 19 a floor tile; where rain
+// water collects on them (RoomMap.pool); and packed corner wall distances for the warm fill (RoomAmbient).
+// Rooms don't touch the lamps: walls alone stop those (light/lamp.glsl).
 // The fill per room id is in lightData from ROOM_FILL_BASE. Needs lightData and cluster_config.
 
 uniform sampler2DArray roomTexels;
@@ -13,6 +14,7 @@ uniform vec3 roomHeader;  // RoomTexture.header: 1 when there is a map, tiles pe
 #define ROOM_LAYER_FLOORS 1
 #define ROOM_LAYER_WALLS 2
 #define ROOM_LAYER_POOLS 3
+#define ROOM_LAYER_WALL_DISTANCE 4
 // how far above a floor a point must be to be on that storey (world units): only a little slack for rounding. More
 // put the foot of an upper storey's walls on the storey below, lit by its indoor fill.
 #define ROOM_PLANE_MARGIN 2.0
@@ -84,6 +86,23 @@ float roomFillLevel(int room) {
 // (ROOM_NORMAL_BIAS); 0 outdoors or unknown
 int roomOfSurface(vec3 world, vec3 n) {
   return max(roomPlaneAt(world + n * ROOM_NORMAL_BIAS).x, 0);
+}
+
+// Restore the original warm room-fill shape: 35% at walls, full strength a tile away.
+// This is independent of sky exposure, so opening a door or hiding a roof cannot dim the whole room.
+float roomWallFill(vec3 world, vec3 normal) {
+  vec3 receiver = world + normal * ROOM_NORMAL_BIAS;
+  ivec2 room = roomPlaneAt(receiver);
+  if (room.x <= 0) return 1.0;
+  ivec2 tile = ivec2(floor(receiver.xz / 128.0)) + int(roomHeader.z);
+  vec2 f = fract(receiver.xz / 128.0);
+  int wallDistances = int(roomTexel(tile, ROOM_LAYER_WALL_DISTANCE)[room.y]);
+  vec4 distances = vec4(wallDistances & 63, (wallDistances >> 6) & 63, (wallDistances >> 12) & 63, (wallDistances >> 18) & 63) / 63.0;
+  float distance = mix(mix(distances.x, distances.y, f.x), mix(distances.z, distances.w, f.x), f.y);
+  int walls = int(roomTexel(tile, ROOM_LAYER_WALLS)[room.y]);
+  if ((walls & ROOM_WALL_SW_NE) != 0) distance = min(distance, abs(f.y - f.x) * 0.70710678);
+  if ((walls & ROOM_WALL_NW_SE) != 0) distance = min(distance, abs(f.x + f.y - 1.0) * 0.70710678);
+  return mix(0.35, 1.0, smoothstep(0.0, 1.0, distance));
 }
 
 // Where rain water collects on the ground at world point w (RoomMap.pool), 0 to 1, interpolated between the tiles'

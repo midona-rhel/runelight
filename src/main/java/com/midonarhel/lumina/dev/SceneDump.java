@@ -65,7 +65,7 @@ public final class SceneDump
 
 	// 2: zone vertices of 24 bytes (the normal's length), the shading group on dynamic and temporary models, the game's
 	// vertex normals with each model
-	public static final int VERSION = 2;
+	public static final int VERSION = 3;
 	public static final Path DIR = RuneLite.RUNELITE_DIR.toPath().resolve("lumina").resolve("dumps");
 
 	/** What the client said this frame, the settings and the time: manifest.json. */
@@ -337,7 +337,7 @@ public final class SceneDump
 	// what "*" leaves out: GL names, upload state, scratch
 	private static final java.util.Set<String> NOT_STATE = java.util.Set.of("texField", "texGround", "texSky", "texSizeX",
 		"texSizeZ", "uploaded", "fieldBytes", "groundBytes", "skyBytes", "blurTmp", "skySmooth", "transitions", "corner",
-		"cornerWeight");
+		"cornerWeight", "fieldSets", "groundSets", "skySets", "unpackBuffer", "set");
 
 	/** STATE with each "*" spelled out: owner, field. */
 	public static List<String[]> stateFields(LuminaPlugin plugin)
@@ -530,9 +530,9 @@ public final class SceneDump
 			}
 			d.put("sceneObjects", objects);
 		}
-		// what SceneLights.collect gave: the test light is the frame's own (LampFrame.collectLights adds it again)
+		// Replay adds the optional player light itself, so do not capture it twice.
 		List<PointLight> collected = new ArrayList<>(plugin.frameLights);
-		collected.removeIf(l -> l == plugin.testLight);
+		collected.removeIf(light -> light == plugin.testLight);
 		d.put("lamps.collected", collected);
 		m.lampsWithoutTestLight = true;
 		List<PointLight> steady = new ArrayList<>();
@@ -727,7 +727,7 @@ public final class SceneDump
 		l.dir = dir;
 		l.manifest = new Gson().fromJson(new String(Files.readAllBytes(dir.resolve("manifest.json")), StandardCharsets.UTF_8),
 			Manifest.class);
-		if (l.manifest.version != VERSION)
+		if (l.manifest.version != VERSION && l.manifest.version != 2)
 		{
 			throw new IOException("dump version " + l.manifest.version + ", this reads " + VERSION);
 		}

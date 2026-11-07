@@ -23,6 +23,7 @@ public class SamplerProbe
 			r.render();
 			for (Composite.CompositeProgram c : r.plugin.composite.composites)
 			{
+				if (c.program == 0) continue; // inactive MSAA passes are not compiled
 				int p = c.program, n = glGetProgrami(p, GL_ACTIVE_UNIFORMS);
 				StringBuilder s = new StringBuilder();
 				int count = 0;
